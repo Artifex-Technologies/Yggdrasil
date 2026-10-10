@@ -1,0 +1,32 @@
+# Maintainer: Labyrinth OS
+# Builds labyrinth-weather from packages/labyrinth-weather/ in this repository. Build from
+# this directory with `makepkg -s`. NOT yet built on Linux (built and tested on Windows).
+pkgname=labyrinth-weather
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Multi-model weather consensus for the Labyrinth bar, scored against measured temperatures"
+arch=('x86_64')
+url="https://github.com/Artifex-Technologies/Labyrinth_OS"
+license=('MIT')
+depends=('gcc-libs' 'ca-certificates')
+makedepends=('cargo')
+options=('!lto')
+
+_src="$startdir/../../labyrinth-weather"
+
+build() {
+  cd "$_src"
+  cargo build --release --locked --target-dir "$srcdir/target"
+}
+
+check() {
+  cd "$_src"
+  cargo test --release --locked --lib --target-dir "$srcdir/target"
+}
+
+package() {
+  install -Dm755 "$srcdir/target/release/labyrinth-weather" "$pkgdir/usr/bin/labyrinth-weather"
+  # Hourly recorder for accuracy weighting. Enabled by labyrinth-apps / the installer.
+  install -Dm644 "$_src/systemd/labyrinth-weather-record.service" "$pkgdir/usr/lib/systemd/user/labyrinth-weather-record.service"
+  install -Dm644 "$_src/systemd/labyrinth-weather-record.timer" "$pkgdir/usr/lib/systemd/user/labyrinth-weather-record.timer"
+}

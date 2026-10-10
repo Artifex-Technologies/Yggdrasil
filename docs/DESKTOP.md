@@ -1,0 +1,188 @@
+# Desktop
+
+Goal: a macOS-like desktop, left-side window buttons, a dock and blur like COSMIC's,
+and a top bar like the Omacosy one (workspaces, Spotify, weather, network, volume,
+clock, quick settings with power options).
+
+## Decision: Hyprland as the desktop, COSMIC as a second session
+
+| Wanted | COSMIC (cosmic-comp) | Hyprland + Waybar + dock |
+| --- | --- | --- |
+| Window blur | Merged to `master` 2026-07-09 ([PR #2179](https://github.com/pop-os/cosmic-comp/pull/2179)) but **opt-in per app** (`ext-background-effect-v1`); the PR says COSMIC's own apps do not use it yet and few others do. Release not stated. Reports of glitches on some AMD setups | Compositor blur on any translucent window, today |
+| Buttons on the left | No setting found in a search (I could not confirm one exists) | GTK apps: `gtk-decoration-layout` (done, below). Others: needs the `hyprbars` plugin (not done) |
+| Top bar with Spotify, weather | Applet list I found (cosmic-applets 1.0.3): app list, audio, battery, bluetooth, input sources, minimize, network, notifications, power, status area, tiling, time, workspaces. **No weather or media applet listed**; the audio applet has MPRIS support. Custom applets are possible in libcosmic (Rust) | Waybar has `mpris`, `network`, `bluetooth`, `pulseaudio`, `clock`, workspaces, and custom modules for the rest |
+| Dock | Built in | `nwg-dock-hyprland`, styled after COSMIC's |
+
+So the look you described is easiest and most complete on Hyprland. COSMIC stays
+installed (`cosmic-session`) and appears as another session at the login screen, so
+you keep the desktop you like and can compare. Making COSMIC itself match (a Rust
+applet for weather and Spotify, blur once apps adopt it) is possible later.
+
+**Omacosy** is macOS-only (a Swift bar, AeroSpace, Karabiner, launchd); none of its
+code can run here. Its **layout** is what we copy; its bar items map to Waybar modules.
+
+## What is built
+
+All under `profile/airootfs/home/live/.config/` (copied into new users' `/etc/skel` by
+`labyrinth-install-cleanup`) plus `/usr/local/bin`:
+
+| Piece | File | State |
+| --- | --- | --- |
+| Session, keybindings (Omarchy's), NVIDIA env | `hypr/hyprland.lua`, `hypr/bindings/tiling.lua` | Adapted from Chymaera's boot-tested Lua config. **Lua not parsed or run for Labyrinth** (no Lua on the dev machine) |
+| Look: rounding 12, shadows, blur, gaps 6/12 | `hypr/looks/labyrinth.lua` | Same constructs as Chymaera's tested look; values are a first guess |
+| Top bar | `waybar/config.jsonc`, `style.css` | JSON parses, every listed module is defined; **never rendered** |
+| Dock | `nwg-dock-hyprland/style.css`, started by `labyrinth-shell` | **Never rendered** |
+| Spotify controls | bar modules + `playerctl -p spotify` | **Never run.** Needs Spotify running |
+| Weather (optional component) | `packages/labyrinth-weather` (Rust) | **Tested**, and run live against the real services. See [WEATHER.md](WEATHER.md) |
+| Power / quick settings | `labyrinth-quick-settings` (fuzzel menu) | **Tested** with stand-in menu and systemctl |
+| Left-side buttons (GTK apps) | `gtk-3.0/settings.ini`, `gtk-4.0/settings.ini` | Standard GTK setting; not seen on screen |
+| Translucent terminal | `foot/foot.ini` | Needed so blur is visible |
+
+Tests: `tests/test_desktop_scripts.sh` (16 checks), `tests/test_bar_tools.py` (7).
+
+## What we took from Omacosy
+
+Omacosy ([MIT](https://github.com/paulsp94/omacosy)) is a macOS desktop, so these are its
+*ideas*, rewritten for Linux; none of its code is used.
+
+| Omacosy | Labyrinth | State |
+| --- | --- | --- |
+| Bar: workspaces, active app, Spotify, weather, network, volume, clock | Waybar modules, same order | Built, never rendered |
+| Floats pill (shown only when the workspace has floating windows) | `labyrinth-floats` | Built, **tested** with a fake `hyprctl`. Click action not added: the Lua-era `hyprctl dispatch` syntax is unverified |
+| Activity pill opens a floating btop | `custom/activity` + a float rule for `labyrinth-activity` | Built, never run |
+| `Super+K` keybinding cheat sheet | `labyrinth-keys` (reads `hyprctl binds -j`) | Built, **tested** with a fake `hyprctl` |
+| Caps Lock as the Super key | Not enabled. In Hyprland it is one input option (`kb_options = "caps:super"`); add it to `hyprland.lua` if you want it | Not done |
+| Workspace overview with live previews and search | Would need a Hyprland plugin (hyprexpo); its Lua configuration is unverified | Not done |
+| Focus follows mouse, focus ring | `follow_mouse = 1` and a thin border already set | Done |
+| Trackpad swipes, per-monitor workspace slots | Not applicable (desktop, one monitor assumed) | Skipped |
+| Theme system (one 22-color palette driving everything) | Colors are hard-coded in the CSS/Lua today | Not done; the Omarchy theme system is the likely route |
+| Bar popups and sliders (volume, brightness) | Clicks open pavucontrol and friends | Not done |
+| Clean uninstall manifest | Not needed: Labyrinth is the OS, not an overlay | Skipped |
+
+## Your two displays
+
+Read from Windows on 2026-10-10 (read-only):
+
+| | Display 1 (primary) | Display 2 |
+| --- | --- | --- |
+| Model (EDID) | Acer Predator X34 GS | LG DualUp (reported as "LG SDQHD") |
+| Shape | 3440x1440 ultrawide, 144 Hz (Windows showed 143 Hz) | Tall 2560x2880 (8:9), 60 Hz |
+| Windows scaling | 100% | 125% (shown as 2048x2304) |
+| Position | 0,0 | Right of display 1, top edge 783 px above display 1's top |
+
+`labyrinth-displays` (run at login) turns that into Hyprland's documented
+`hl.monitor({ output, mode, position, scale })` calls and saves them in
+`~/.config/hypr/monitors.lua`, which `hyprland.lua` loads in a protected call. Rules in
+`/usr/share/labyrinth/displays.json` match on the monitor's model, **not** its port name
+(Hyprland's names such as `DP-1` depend on which port each cable is in, which is unknown
+until the machine runs). So swapping ports does not break the layout. 125% of
+2560x2880 divides to whole pixels (2048x2304), so no rounding. A monitor it does not
+recognize is left to Hyprland (preferred mode, automatic position).
+
+**Tested:** the planning logic, with fixtures shaped like `hyprctl monitors all -j`
+(13 checks): your layout, either order, other ports, unknown monitors, missing modes,
+write-once-and-reload. **Not tested, because it needs the real machine:**
+
+- Whether Hyprland's real description/model strings contain "X34 GS" and "SDQHD". If not,
+  nothing breaks (both fall back to automatic) but the layout is not applied; run
+  `labyrinth-displays --list` and fix the `match` text.
+- Whether Linux offers the DualUp's 2560x2880 mode. One retailer review says it needed
+  fiddling; that is anecdotal. The rule asks for that exact mode and falls back to
+  preferred. A forced mode may be needed.
+- Whether the 144 Hz mode and G-Sync Compatible (variable refresh) work with the NVIDIA
+  driver on Wayland. VRR is **left off**; I found no source either way.
+- **Apps running through XWayland** (Steam, most Proton games) can look blurry on the
+  125% display. Not addressed.
+- The bar and dock appear on **both** monitors; pinning them to one is not set up.
+- Which monitor games use when fullscreen, and workspace assignment per monitor.
+
+## Optional software
+
+Spotify, Obsidian, Steam, Proton Drive, Proton Pass and the rest are optional
+*components*, not part of every install; see [COMPONENTS.md](COMPONENTS.md).
+
+## Quick settings and hibernate
+
+The power button opens a menu: Settings, Sleep, Hibernate, Log out, Restart, Power
+off. Log out, Restart and Power off ask to confirm. Settings opens Network, Sound,
+Bluetooth, Displays, Gaming check.
+
+**Hibernate is only listed when it can work**: the kernel supports it, a real (non-zram)
+swap at least as big as RAM exists, and `resume=` is on the kernel command line. The
+installer currently uses zram only, so today Hibernate does **not** appear. To get it,
+the install needs a swap file or partition of about 64 GB (~6% of the 1 TB disk) plus
+resume configuration. That is a decision for you; see the end of this file.
+
+## Not done / unknown
+
+- **Left buttons for non-GTK windows.** Hyprland draws no title bars. Qt, Electron
+  and Firefox windows follow their own settings. The `hyprbars` plugin can draw
+  macOS-style buttons on every window, but I do not know its Lua configuration syntax
+  for Hyprland 0.56 and did not guess.
+- **Dock is not COSMIC's dock.** It copies the look (translucent rounded shelf), not
+  its behavior (applet-based, panel integration).
+- **The bar has no popups** (no slider panel for volume or Wi-Fi); clicking opens the
+  matching app (pavucontrol, nm-connection-editor, blueman). A Quickshell shell like
+  Omarchy's would add them; it needs the Omarchy repo's packages, which Chymaera also
+  has not adopted.
+- **Battery and brightness** are left out (desktop PC).
+- **Weather privacy:** Open-Meteo and aviationweather.gov receive the coordinates of the
+  place you set (never guessed from your IP). See WEATHER.md.
+- **`finder` has no package yet**, so the `SUPER + SHIFT + F` binding will not
+  open it on an installed system until we write one.
+- **Package names**: all but the CachyOS/our-own ones were checked against Arch's live
+  package database (84 of 97 found). Not found there and so unverified: the
+  `linux-cachyos*` kernels, `proton-cachyos`, `protonup-qt` (likely AUR or a CachyOS
+  repo), and our two local packages (`calamares`, `proton-pass`).
+- Nothing here has run on a real GPU. Chymaera's equivalent was boot-tested only with
+  software rendering in a VM.
+
+## Seeing the real desktop in a VM (built 2026-10-10)
+
+WSLg cannot run Hyprland (it offers no `linux-dmabuf` and no `/dev/dri`), so the desktop is booted in
+QEMU/KVM instead. `scripts/vm/` builds a small bootable **stock Arch** disk image (no CachyOS repos,
+NVIDIA or installer) containing our desktop config and our two packages, and boots it:
+
+    sudo scripts/vm/build-vm-image.sh       # pacstrap + our config -> /root/vm/labyrinth.img
+    scripts/vm/run-vm.sh window             # a window you can use (or `headless`)
+    python3 scripts/vm/qmp-shot.py out.png [--key meta_l-ret] [--click X Y]   # screenshots, no window
+
+Login is automatic (user `labyrinth`, password `labyrinth`, for testing only). The weather slot uses a
+**demo location (New York)**, not anyone's real one. Software rendering, so it is slow and says nothing
+about GPU behavior. Your two monitors cannot be reproduced here.
+
+Bugs this found that no static check could (all fixed):
+- `foot.ini` used the section name `[colors]`; foot 1.28 renamed it `[colors-dark]`, so the terminal never
+  became translucent.
+- Opening the launcher changed the bar's "active app" label to `fuzzel`, widening the bar; on a narrow
+  screen the right-hand end (including the power button) was pushed off the edge. The label now ignores
+  fuzzel. The VM's window opened at 640x480, which made it obvious.
+- fuzzel's default theme is bright cream; it now matches the desktop (`fuzzel/fuzzel.ini`, checked with
+  `fuzzel --check-config`).
+- No wallpaper meant nothing for the bar or blur to sit on; added a placeholder (`scripts/gen-wallpaper.py`).
+- The explorer had no desktop entry, so the dock showed a broken icon.
+- An empty capsule showed in the bar when no window was open.
+
+Mouse use is the way to drive it in the VM window: Windows keeps the Super key for itself.
+Verified working there by screenshot: bar, dock, tiling, rounded translucent windows, the launcher, the
+power menu (no Hibernate entry, as designed), and the explorer and weather running inside it.
+**Not verified:** actual blur strength (no GPU), `rounding_power`, your multi-monitor layout, VRR.
+
+## Bar layout (updated) and the global menu
+
+- **Left:** launcher, workspaces (only existing ones, max 9, a `+` while fewer than 9), then the
+  focused app's name in bold (`hyprland/window`, with friendly names for common apps). With no
+  window focused the name disappears and it is the plain bar.
+- **Right:** Spotify controls, floats/activity, weather, network, Bluetooth, volume, clock, power.
+- **Tabs in the title bar** is the browser's own client-side title bar, not something the desktop
+  does: Chrome/Chromium/Brave on Linux do it unless "Use system title bar and borders" is on, and
+  Firefox does it by default. They take their button side from `gtk-decoration-layout`
+  (`close,minimize,maximize:`, already set), so the buttons sit on the left.
+- **Global menu (File, Edit, View... in the bar) is NOT built.** SmallSur, which this was taken
+  from, is an XFCE theme: XFCE's panel hosts `vala-panel-appmenu`, and Waybar has nothing like it.
+  It needs a small service (`labyrinth-appmenu`) that implements the `com.canonical.AppMenu.Registrar`
+  D-Bus name, follows the focused window through Hyprland's socket, reads that app's menu over
+  `com.canonical.dbusmenu`, and draws it in the bar. Apps that publish a menu that way: Chromium
+  family and Electron apps (VS Code, Obsidian), Qt apps with the appmenu platform theme, and GTK3
+  apps with `appmenu-gtk-module`. GTK4, Firefox and Spotify do not, so for them the bar would show
+  only the app name. Finder would get its own menu entries natively.

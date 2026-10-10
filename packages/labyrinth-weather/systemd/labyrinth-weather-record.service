@@ -1,0 +1,8 @@
+[Unit]
+Description=Record weather forecasts and measurements (for accuracy weighting)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/labyrinth-weather record
+# Exit 1 just means no location is set yet; not worth a failed-unit warning.
+SuccessExitStatus=1

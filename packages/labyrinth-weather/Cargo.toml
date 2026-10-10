@@ -1,0 +1,20 @@
+[package]
+name = "labyrinth-weather"
+version = "0.1.0"
+edition = "2021"
+description = "Multi-model weather consensus with measured-accuracy weighting, for the Labyrinth OS bar"
+license = "MIT"
+
+[lib]
+name = "labyrinth_weather"
+path = "src/lib.rs"
+
+[[bin]]
+name = "labyrinth-weather"
+path = "src/main.rs"
+
+[dependencies]
+dirs = "7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = "3"
