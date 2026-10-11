@@ -6,7 +6,7 @@ files, Finder, installer, snapshots and settings.
 | | macOS-style (default) | Tiling (Omarchy-style) |
 | --- | --- | --- |
 | Session | KDE Plasma (Wayland) | Hyprland |
-| Look | WhiteSur (macOS Big Sur), the look of SmallSur: traffic-light buttons on the left, Apple-style menu bar, floating dock | Dark green, blurred translucent windows, Waybar |
+| Look | WhiteSur (macOS Big Sur), the look of SmallSur: traffic-light-style buttons on the right in Windows order (minimize, maximize, close), Apple-style menu bar, floating dock | Dark green, blurred translucent windows, Waybar |
 | Windows | Float; snap to edges; Meta + T opens KDE's tiler | Float by default too (macOS-like rules), SUPER + T tiles one |
 | Menus | The focused app's File/Edit/View in the top bar (global menu) | None (apps keep their own) |
 | Terminal | Konsole, plus Yakuake drop-down (F12) | foot (SUPER + Return) |
@@ -166,19 +166,16 @@ resume configuration. That is a decision for you; see the end of this file.
 - Nothing here has run on a real GPU. Chymaera's equivalent was boot-tested only with
   software rendering in a VM.
 
-## Seeing the real desktop in a VM (built 2026-10-10)
+## Seeing the real desktop in a VM
 
-WSLg cannot run Hyprland (it offers no `linux-dmabuf` and no `/dev/dri`), so the desktop is booted in
-QEMU/KVM instead. `scripts/vm/` builds a small bootable **stock Arch** disk image (no CachyOS repos,
-NVIDIA or installer) containing our desktop config and our two packages, and boots it:
+The built ISO is booted in QEMU/KVM (WSLg cannot run Hyprland or Plasma's compositor):
 
-    sudo scripts/vm/build-vm-image.sh       # pacstrap + our config -> /root/vm/labyrinth.img
-    scripts/vm/run-vm.sh window             # a window you can use (or `headless`)
+    scripts/vm/run-iso.sh iso|disk|new      # boot the ISO, the installed disk, or a fresh disk
     python3 scripts/vm/qmp-shot.py out.png [--key meta_l-ret] [--click X Y]   # screenshots, no window
+    python3 scripts/vm/serial.py "command"  # a root shell on the live system's serial console
 
-Login is automatic (user `labyrinth`, password `labyrinth`, for testing only). The weather slot uses a
-**demo location (New York)**, not anyone's real one. Software rendering, so it is slow and says nothing
-about GPU behavior. Your two monitors cannot be reproduced here.
+Software rendering, so it is slow and says nothing about GPU behavior. Your two monitors cannot be
+reproduced here.
 
 Bugs this found that no static check could (all fixed):
 - `foot.ini` used the section name `[colors]`; foot 1.28 renamed it `[colors-dark]`, so the terminal never
