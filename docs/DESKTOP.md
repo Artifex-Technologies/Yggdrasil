@@ -18,6 +18,34 @@ files, Finder, installer, snapshots and settings.
 Switch: `labyrinth-switch-mode macos|tiling` (also in the launcher as "Switch to Tiling Desktop" and in
 the Hyprland power menu). It sets what the login screen starts on and logs you out.
 
+## One screen macOS-style, one screen Omarchy-style (2026-10-11)
+
+Inside the macOS-style desktop, one monitor can work like Omarchy while the others stay
+Windows/macOS-like. It is one Plasma session, so the clipboard, drag and drop and moving windows
+between screens all work. On this machine the LG DualUp is that screen (`"tiling": true` in
+`displays.json`; labyrinth-displays turns it on once per port). By hand: `labyrinth-tiling HDMI-A-1`,
+`labyrinth-tiling off`, `labyrinth-tiling` (show).
+
+| | Everyday screens | Tiling screen |
+| --- | --- | --- |
+| Windows | Float; new ones fit above the dock | Tiled by Krohnkite (`kwin-scripts-krohnkite`), 8 px gaps, no title bars |
+| Bar | Top bar + dock | Slim bar: workspaces left, clock centre, no dock |
+| Workspaces | One | Its own 1-9 (Plasma 6.7 per-screen virtual desktops) |
+| Win + Arrows | Snap, maximize, restore/minimize | Move focus |
+| Win + Shift + Arrows | Window to the other monitor | Swap tiles |
+| Win + 1..9 / Shift | Dock app N | Workspace N / send window there |
+| Win + W | Overview | Close window |
+| Win + Space | Dock and top bar over full screen | Launcher (KRunner) |
+| Win + T | Plasma's tile editor | Float or tile the window |
+| Win + - / = (Shift) | Zoom out / in | Shrink / grow tile width (height) |
+| Same everywhere | Win + Return terminal, Win + F full screen, Win + Shift + Alt + Left/Right window to the other monitor, Win + E/R/I/L/V | |
+
+How: the KWin script `labyrinth-screen-keys` owns these keys and calls the Windows-style action or
+the Krohnkite one depending on the screen of the focused window (the built-ins they replace are
+unbound in `kglobalshortcutsrc` and called by name). `labyrinth-tiling` writes Krohnkite's settings
+(`ignoreScreen` = every other connector), enables per-screen desktops and adds the slim bar.
+Verified in a VM with two monitors (shaped like the Acer and the DualUp, at half size).
+
 How the macOS mode is put together:
 - Packages: `plasma-desktop` etc. from Arch, and our `whitesur-*` packages (`packages/pkgbuilds/whitesur-*`,
   built from vinceliuice's WhiteSur projects, GPL-3, pinned to a commit with a checksum).
