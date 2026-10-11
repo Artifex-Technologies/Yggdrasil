@@ -11,6 +11,8 @@ files, Finder, installer, snapshots and settings.
 | Menus | The focused app's File/Edit/View in the top bar (global menu) | None (apps keep their own) |
 | Terminal | Konsole, plus Yakuake drop-down (F12) | foot (SUPER + Return) |
 | Launcher | Tap Meta (Kickoff), or Alt + F1 | SUPER + Space (fuzzel) |
+| Dock | Floating, always visible like the Windows taskbar: maximized and new windows stop above it | None (as in Omarchy) |
+| Full screen | Meta + F (or F11 in the app) covers the dock and top bar; Meta + Space brings them up over the app, Esc puts them away | SUPER + F |
 | Lock screen | Plasma's | hyprlock, the "Split" design from omarchy-lock-explorer |
 
 Switch: `labyrinth-switch-mode macos|tiling` (also in the launcher as "Switch to Tiling Desktop" and in
@@ -24,10 +26,16 @@ How the macOS mode is put together:
   tray, clock, power) and the floating dock. Delete `~/.config/labyrinth/plasma-setup-done` to redo it.
 - Monitors: `labyrinth-displays --kde` gives each new monitor its best mode (the largest resolution
   that runs at 60 Hz or more, at its highest refresh rate), once per monitor.
-- Verified in a VM: the desktop, the dock, left-side buttons, the global menu in the top bar, the
-  Meta-key launcher and the installer. Not yet verified: NVIDIA, the real monitors, Yakuake styling.
+- Windows never sit under the dock: KWin reserves its space for maximized windows, and the KWin
+  script `labyrinth-fit-windows` (`usr/share/kwin/scripts/`) shrinks a window that opens or grows
+  taller than the free area. Full-screen windows are exempt.
+- Verified in a VM: the desktop, the dock, the window buttons, the global menu in the top bar, the
+  Meta-key launcher, the installer, maximize stopping at the dock, full screen and Meta + Alt + P
+  (now also Meta + Space) raising the panels over it. Not yet verified: NVIDIA, the real monitors, Yakuake styling.
 
-# Desktop
+# Desktop (history: the Hyprland design notes)
+
+The dock described below was removed from the tiling desktop on 2026-10-11.
 
 Goal: a macOS-like desktop, left-side window buttons, a dock and blur like COSMIC's,
 and a top bar like the Omacosy one (workspaces, Spotify, weather, network, volume,
