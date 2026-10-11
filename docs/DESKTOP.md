@@ -1,3 +1,32 @@
+# Desktops (updated 2026-10-11): two modes, chosen at login
+
+Labyrinth ships two desktops and you pick one at the login screen. Both share the same apps,
+files, Finder, installer, snapshots and settings.
+
+| | macOS-style (default) | Tiling (Omarchy-style) |
+| --- | --- | --- |
+| Session | KDE Plasma (Wayland) | Hyprland |
+| Look | WhiteSur (macOS Big Sur), the look of SmallSur: traffic-light buttons on the left, Apple-style menu bar, floating dock | Dark green, blurred translucent windows, Waybar |
+| Windows | Float; snap to edges; Meta + T opens KDE's tiler | Float by default too (macOS-like rules), SUPER + T tiles one |
+| Menus | The focused app's File/Edit/View in the top bar (global menu) | None (apps keep their own) |
+| Terminal | Konsole, plus Yakuake drop-down (F12) | foot (SUPER + Return) |
+| Launcher | Tap Meta (Kickoff), or Alt + F1 | SUPER + Space (fuzzel) |
+| Lock screen | Plasma's | hyprlock, the "Split" design from omarchy-lock-explorer |
+
+Switch: `labyrinth-switch-mode macos|tiling` (also in the launcher as "Switch to Tiling Desktop" and in
+the Hyprland power menu). It sets what the login screen starts on and logs you out.
+
+How the macOS mode is put together:
+- Packages: `plasma-desktop` etc. from Arch, and our `whitesur-*` packages (`packages/pkgbuilds/whitesur-*`,
+  built from vinceliuice's WhiteSur projects, GPL-3, pinned to a commit with a checksum).
+- First login: `labyrinth-plasma-setup` applies the WhiteSur-dark look and runs
+  `usr/share/labyrinth/plasma/layout.js`, which builds the top bar (launcher, desktops, app menu,
+  tray, clock, power) and the floating dock. Delete `~/.config/labyrinth/plasma-setup-done` to redo it.
+- Monitors: `labyrinth-displays --kde` gives each new monitor its best mode (the largest resolution
+  that runs at 60 Hz or more, at its highest refresh rate), once per monitor.
+- Verified in a VM: the desktop, the dock, left-side buttons, the global menu in the top bar, the
+  Meta-key launcher and the installer. Not yet verified: NVIDIA, the real monitors, Yakuake styling.
+
 # Desktop
 
 Goal: a macOS-like desktop, left-side window buttons, a dock and blur like COSMIC's,
