@@ -1,0 +1,17 @@
+[package]
+name = "labyrinth-settings"
+version = "0.1.0"
+edition = "2021"
+description = "Labyrinth Settings: the everyday settings in one clean app (GNOME-style), on top of Plasma"
+license = "MIT"
+
+[[bin]]
+name = "labyrinth-settings"
+path = "src/main.rs"
+
+[dependencies]
+eframe = "0.36.2"
+egui_extras = { version = "0.36.2", features = ["file", "image"] }
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
+labyrinth-ui = { path = "../labyrinth-ui" }
+serde_json = "1.0.151"

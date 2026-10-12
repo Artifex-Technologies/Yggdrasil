@@ -1,0 +1,33 @@
+# Labyrinth Settings: the everyday settings in one app (GNOME-style), on top of Plasma.
+# Built from packages/settings in this repository (and the shared look in packages/labyrinth-ui).
+pkgname=labyrinth-settings
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Labyrinth Settings: Wi-Fi, Bluetooth, displays, sound, appearance, power and more"
+arch=('x86_64')
+url="https://github.com/Artifex-Technologies/Labyrinth_OS"
+license=('MIT')
+depends=('gcc-libs' 'libxkbcommon' 'wayland' 'vulkan-icd-loader' 'libglvnd' 'fontconfig'
+         'networkmanager' 'bluez-utils' 'libpulse' 'libkscreen' 'kconfig' 'power-profiles-daemon' 'pciutils')
+optdepends=('ufw: firewall page'
+            'systemsettings: "More settings" opens KDE System Settings'
+            'bluedevil: pairing new Bluetooth devices')
+makedepends=('cargo')
+options=('!lto')
+
+_src="$startdir/../../settings"
+
+build() {
+  cd "$_src"
+  cargo build --release --locked --target-dir "$srcdir/target"
+}
+
+check() {
+  cd "$_src"
+  cargo test --release --locked --target-dir "$srcdir/target"
+}
+
+package() {
+  install -Dm755 "$srcdir/target/release/labyrinth-settings" "$pkgdir/usr/bin/labyrinth-settings"
+  install -Dm644 "$_src/labyrinth-settings.desktop" "$pkgdir/usr/share/applications/labyrinth-settings.desktop"
+}
