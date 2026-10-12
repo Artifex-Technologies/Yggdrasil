@@ -1,5 +1,5 @@
 //! Labyrinth Calculator: a standard calculator with history that turns scientific when the window
-//! is widened. Same look as Finder and Settings (labyrinth-ui).
+//! is widened. Same look as Minos and Settings (labyrinth-ui).
 //!
 //! Width decides what shows: narrow is the standard pad, wider adds the history beside it, wider
 //! still adds the scientific pad on the left. Long expressions are typed or pasted into the
@@ -434,7 +434,7 @@ fn main() -> eframe::Result {
             .with_min_inner_size([340.0, 520.0])
             .with_title("Calculator")
             .with_app_id("labyrinth-calculator")
-            // Draws its own title bar like Finder and Settings (labyrinth-ui chrome).
+            // Draws its own title bar like Minos and Settings (labyrinth-ui chrome).
             .with_decorations(false),
         ..Default::default()
     };

@@ -1,7 +1,7 @@
 # Desktops (updated 2026-10-11): two modes, chosen at login
 
 Labyrinth ships two desktops and you pick one at the login screen. Both share the same apps,
-files, Finder, installer, snapshots and settings.
+files, Minos, installer, snapshots and settings.
 
 | | macOS-style (default) | Tiling (Omarchy-style) |
 | --- | --- | --- |
@@ -51,8 +51,8 @@ Verified in a VM with two monitors (shaped like the Acer and the DualUp, at half
 Goal: like Vivaldi and Spotify on Windows, or GNOME's header bars, the window buttons share the top
 row with the app's own controls, and there is no grey title bar or chin wasting space.
 
-- **Apps that draw their own title bar** (client-side decorations): Finder (its top strip is the
-  title bar: menu, theme, status, drag area and traffic lights; `packages/finder/src/chrome.rs`), GTK
+- **Apps that draw their own title bar** (client-side decorations): Minos (its top strip is the
+  title bar: menu, theme, status, drag area and traffic lights; `packages/minos/src/chrome.rs`), GTK
   and libadwaita (GNOME) apps, Chromium/Electron apps with their native-frame option off (Vivaldi:
   Settings > Appearance > "Use native window decoration" off; VS Code and Obsidian default to their
   own frame), Firefox, Steam, Spotify. Plasma draws nothing around them.
@@ -218,7 +218,7 @@ resume configuration. That is a decision for you; see the end of this file.
 - **Battery and brightness** are left out (desktop PC).
 - **Weather privacy:** Open-Meteo and aviationweather.gov receive the coordinates of the
   place you set (never guessed from your IP). See WEATHER.md.
-- **`finder` has no package yet**, so the `SUPER + SHIFT + F` binding will not
+- **`minos` has no package yet**, so the `SUPER + SHIFT + F` binding will not
   open it on an installed system until we write one.
 - **Package names**: all but the CachyOS/our-own ones were checked against Arch's live
   package database (84 of 97 found). Not found there and so unverified: the
@@ -272,4 +272,4 @@ power menu (no Hibernate entry, as designed), and the explorer and weather runni
   `com.canonical.dbusmenu`, and draws it in the bar. Apps that publish a menu that way: Chromium
   family and Electron apps (VS Code, Obsidian), Qt apps with the appmenu platform theme, and GTK3
   apps with `appmenu-gtk-module`. GTK4, Firefox and Spotify do not, so for them the bar would show
-  only the app name. Finder would get its own menu entries natively.
+  only the app name. Minos would get its own menu entries natively.

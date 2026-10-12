@@ -2,7 +2,7 @@
 name = "labyrinth-ui"
 version = "0.1.0"
 edition = "2021"
-description = "The shared look of Labyrinth's own apps (Finder, Settings): palette, theme, title bar"
+description = "The shared look of Labyrinth's own apps (Minos, Settings): palette, theme, title bar"
 license = "MIT"
 
 [lib]

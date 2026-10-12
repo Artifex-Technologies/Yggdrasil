@@ -1,0 +1,80 @@
+Path = docs
+Size = 0
+Packed Size = 0
+Modified = 2026-10-10 13:21:59.8010032
+Attributes = D
+CRC = 
+Encrypted = -
+Method = 
+Block = 
+
+Path = docs\deep
+Size = 0
+Packed Size = 0
+Modified = 2026-10-10 13:21:59.8260350
+Attributes = D
+CRC = 
+Encrypted = -
+Method = 
+Block = 
+
+Path = empty dir
+Size = 0
+Packed Size = 0
+Modified = 2026-10-10 13:21:59.7970045
+Attributes = D
+CRC = 
+Encrypted = -
+Method = 
+Block = 
+
+Path = Música
+Size = 0
+Packed Size = 0
+Modified = 2026-10-10 13:21:59.8550408
+Attributes = D
+CRC = 
+Encrypted = -
+Method = 
+Block = 
+
+Path = docs\deep\big.txt
+Size = 5000
+Packed Size = 59
+Modified = 2026-10-10 13:21:59.8400362
+Attributes = A
+CRC = 4CF45976
+Encrypted = -
+Method = LZMA2:6k
+Block = 0
+
+Path = docs\notes file.md
+Size = 6
+Packed Size = 
+Modified = 2026-10-10 13:21:59.8010032
+Attributes = A
+CRC = D6D8D23E
+Encrypted = -
+Method = LZMA2:6k
+Block = 0
+
+Path = Música\canción.txt
+Size = 2
+Packed Size = 
+Modified = 2026-10-10 13:21:59.8560431
+Attributes = A
+CRC = 46EA081F
+Encrypted = -
+Method = LZMA2:6k
+Block = 0
+
+Path = readme.txt
+Size = 12
+Packed Size = 
+Modified = 2026-10-10 13:21:59.8010032
+Attributes = A
+CRC = AF083B2D
+Encrypted = -
+Method = LZMA2:6k
+Block = 0
+

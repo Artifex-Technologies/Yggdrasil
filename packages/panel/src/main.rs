@@ -372,10 +372,10 @@ impl State {
         let items = shell::dock_items(&self.model);
         let Some(item) = items.iter().find(|i| i.app_id == app_id) else { return };
         if app_id == shell::TRASH_ID {
-            // Finder, on the trash folder.
+            // Minos, on the trash folder.
             if let Some(dir) = shell::trash_dir() {
                 let _ = std::fs::create_dir_all(&dir);
-                let _ = std::process::Command::new("setsid").arg("-f").arg("finder").arg(dir).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
+                let _ = std::process::Command::new("setsid").arg("-f").arg("minos").arg(dir).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
             }
             return;
         }

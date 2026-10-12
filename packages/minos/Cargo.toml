@@ -1,0 +1,27 @@
+[package]
+name = "minos"
+version = "0.1.0"
+edition = "2021"
+description = "GUI-independent core of minos, a Linux file explorer modelled on EdenExplorer"
+license = "MIT"
+
+[lib]
+name = "minos_core"
+path = "src/lib.rs"
+
+[[bin]]
+name = "minos"
+path = "src/main.rs"
+
+[dependencies]
+dirs = "7.0.0"
+eframe = "0.36.2"
+labyrinth-ui = { path = "../labyrinth-ui" }
+egui_extras = { version = "0.36.2", features = ["file", "image"] }
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
+lofty = "0.25.4"
+notify = "8.2.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sysinfo = { version = "0.39.6", default-features = false, features = ["disk"] }
+trash = "5.2.9"

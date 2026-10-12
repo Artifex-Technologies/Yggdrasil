@@ -1,5 +1,5 @@
 //! Icons from the system icon theme (Labyrinth, which is MacTahoe in dark plus per-app
-//! overrides), so Finder shows the same folders, files and drives as the dock and the launcher.
+//! overrides), so Minos shows the same folders, files and drives as the dock and the launcher.
 //! Rendering is cached as textures in egui's memory; nothing has to be passed around.
 //!
 //! Callers give a list of icon names to try, best first, and fall back to their own drawing

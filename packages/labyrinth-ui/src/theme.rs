@@ -26,7 +26,7 @@ pub struct Palette {
     pub red: Color32,
 }
 
-/// The default palette (Finder's own purple).
+/// The default palette (Minos's own purple).
 pub fn palette(dark: bool) -> Palette {
     palette_for(dark, None)
 }
@@ -72,7 +72,7 @@ pub fn parse_kde_accent(text: &str) -> Option<[u8; 3]> {
 }
 
 /// The system's accent color, if there is one to read (KDE Plasma's `kdeglobals`). None on other
-/// desktops, where Finder keeps its own purple.
+/// desktops, where Minos keeps its own purple.
 pub fn system_accent() -> Option<[u8; 3]> {
     let dir = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from).or_else(|| dirs::home_dir().map(|h| h.join(".config")))?;
     parse_kde_accent(&std::fs::read_to_string(dir.join("kdeglobals")).ok()?)

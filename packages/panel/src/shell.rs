@@ -23,7 +23,7 @@ pub struct Look {
 }
 
 /// Dark or light, tinted with the Labyrinth purple ("theme") or plain ("neutral"), at an opacity
-/// from 0 (nothing but the content) to 100. The default is Finder's near-black over the wallpaper.
+/// from 0 (nothing but the content) to 100. The default is Minos's near-black over the wallpaper.
 pub fn look(mode: ColorMode, opacity: u32, dark: bool) -> Look {
     let (r, g, b) = match (mode, dark) {
         (ColorMode::Theme, true) => (18, 11, 30),
@@ -298,9 +298,9 @@ mod tests {
 
     #[test]
     fn pinned_apps_come_first_and_missing_ones_are_skipped() {
-        let m = Model { apps: vec![app("finder", "Finder"), app("vivaldi-stable", "Vivaldi")], pinned: vec!["vivaldi-stable".into(), "ghost".into(), "finder".into()], wins: vec![], clock: String::new(), conf: PanelConf::default(), dark: true, trash_full: false };
+        let m = Model { apps: vec![app("minos", "Minos"), app("vivaldi-stable", "Vivaldi")], pinned: vec!["vivaldi-stable".into(), "ghost".into(), "minos".into()], wins: vec![], clock: String::new(), conf: PanelConf::default(), dark: true, trash_full: false };
         let items = dock_items(&m);
-        assert_eq!(items.iter().map(|i| i.app_id.as_str()).collect::<Vec<_>>(), vec!["vivaldi-stable", "finder", TRASH_ID]); // the trash is always last
+        assert_eq!(items.iter().map(|i| i.app_id.as_str()).collect::<Vec<_>>(), vec!["vivaldi-stable", "minos", TRASH_ID]); // the trash is always last
         assert!(items.iter().all(|i| i.pinned && i.wins.is_empty()));
     }
 

@@ -126,7 +126,7 @@ pub fn pinned() -> Vec<String> {
     let user = std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config/labyrinth/dock"));
     for p in [user, Some(PathBuf::from("/usr/share/labyrinth/dock"))].into_iter().flatten() {
         if let Ok(t) = std::fs::read_to_string(p) {
-            let v: Vec<String> = t.lines().map(|l| l.trim().trim_end_matches(".desktop").to_string()).filter(|l| !l.is_empty() && !l.starts_with('#')).collect();
+            let v: Vec<String> = t.lines().map(|l| l.trim().trim_end_matches(".desktop").replace("finder", "minos")).filter(|l| !l.is_empty() && !l.starts_with('#')).collect();
             if !v.is_empty() {
                 return v;
             }
@@ -141,9 +141,9 @@ mod tests {
 
     #[test]
     fn parses_a_desktop_entry() {
-        let t = "[Desktop Entry]\nType=Application\nName=Finder\nIcon=finder\nExec=finder %U\nStartupWMClass=finder\n[Desktop Action x]\nName=Other\n";
-        let a = parse_entry("finder", t, Path::new("/x/finder.desktop")).unwrap();
-        assert_eq!((a.name.as_str(), a.icon.as_str(), a.exec.as_str()), ("Finder", "finder", "finder %U"));
+        let t = "[Desktop Entry]\nType=Application\nName=Minos\nIcon=minos\nExec=minos %U\nStartupWMClass=minos\n[Desktop Action x]\nName=Other\n";
+        let a = parse_entry("minos", t, Path::new("/x/minos.desktop")).unwrap();
+        assert_eq!((a.name.as_str(), a.icon.as_str(), a.exec.as_str()), ("Minos", "minos", "minos %U"));
         assert!(parse_entry("h", "[Desktop Entry]\nType=Application\nName=H\nHidden=true\n", Path::new("/h")).is_none());
         assert!(parse_entry("l", "[Desktop Entry]\nType=Link\nName=L\n", Path::new("/l")).is_none());
     }

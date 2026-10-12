@@ -1,4 +1,4 @@
-//! Finder draws its own title bar, as Vivaldi and Spotify do: the top strip (menu, theme, status)
+//! Minos draws its own title bar, as Vivaldi and Spotify do: the top strip (menu, theme, status)
 //! doubles as the title bar, with the window buttons at its right end, so there is no separate
 //! grey system title bar above it and no frame below. The buttons are macOS traffic lights in the
 //! Windows order (minimize, maximize, close), matching the rest of the desktop.

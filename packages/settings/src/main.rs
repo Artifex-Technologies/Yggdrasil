@@ -1,5 +1,5 @@
 //! Labyrinth Settings: the everyday settings in one clean app, in the style of GNOME Settings,
-//! with the same look as Finder (labyrinth-ui). It changes Plasma's settings through the tools
+//! with the same look as Minos (labyrinth-ui). It changes Plasma's settings through the tools
 //! Plasma itself uses (sys.rs). KDE's System Settings is hidden (labyrinth-plasma-setup) and its
 //! command redirects here (/usr/local/bin/systemsettings); the few deep options not covered yet
 //! open one KDE panel on its own (kcmshell6), never the whole KDE app.
@@ -809,7 +809,7 @@ impl App {
 fn page_shortcuts(ui: &mut egui::Ui, pal: &Palette) {
     let groups: [(&str, &[(&str, &str)]); 3] = [
         ("Everywhere", &[
-            ("Win", "Launcher"), ("Win + E", "Finder"), ("Win + R", "Run"), ("Win + I", "Settings"), ("Win + L", "Lock"),
+            ("Win", "Launcher"), ("Win + E", "Minos"), ("Win + R", "Run"), ("Win + I", "Settings"), ("Win + L", "Lock"),
             ("Win + V", "Clipboard history"), ("Win + Shift + S", "Screenshot of a region"), ("Ctrl + Shift + Esc", "Task manager"),
             ("Win + Return", "Terminal"), ("F12", "Drop-down terminal"), ("Win + F", "Full screen"),
             ("Win + Shift + Alt + ← / →", "Window to the other monitor"), ("Alt + Tab", "Switch windows"),
@@ -849,7 +849,7 @@ fn main() -> eframe::Result {
             .with_min_inner_size([560.0, 400.0])
             .with_title("Settings")
             .with_app_id("labyrinth-settings")
-            // Draws its own title bar like Finder (labyrinth-ui chrome).
+            // Draws its own title bar like Minos (labyrinth-ui chrome).
             .with_decorations(false),
         ..Default::default()
     };
