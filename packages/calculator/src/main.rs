@@ -234,7 +234,22 @@ fn key_button(ui: &mut egui::Ui, pal: &Palette, rect: Rect, key: Key, angle: Ang
     ui.painter().rect_filled(rect.shrink(2.0), CornerRadius::same(10), fill);
     let size = if key.style == Style::Digit { 20.0 } else if key.label.chars().count() > 2 { 14.0 } else { 18.0 };
     let label = if key.act == Act::ToggleAngle { if angle == Angle::Degrees { "DEG" } else { "RAD" } } else { key.label };
-    ui.painter().text(rect.center(), Align2::CENTER_CENTER, label, FontId::proportional(size), text);
+    match label.split_once('^') {
+        // "x^y" is drawn as x with a small raised y; the font has no superscript letters.
+        Some((base, sup)) => {
+            let painter = ui.painter();
+            let b = painter.layout_no_wrap(base.to_string(), FontId::proportional(size), text);
+            let p = painter.layout_no_wrap(sup.to_string(), FontId::proportional(size * 0.62), text);
+            let total = b.size().x + p.size().x + 1.0;
+            let left = rect.center().x - total / 2.0;
+            let top = rect.center().y - b.size().y / 2.0;
+            painter.galley(pos2(left, top), b.clone(), text);
+            painter.galley(pos2(left + b.size().x + 1.0, top - size * 0.05), p, text);
+        }
+        None => {
+            ui.painter().text(rect.center(), Align2::CENTER_CENTER, label, FontId::proportional(size), text);
+        }
+    }
     resp.clicked()
 }
 
