@@ -5,7 +5,7 @@ use wayland_protocols_plasma::plasma_window_management::client::org_kde_plasma_w
 
 use crate::apps::{self, App};
 use crate::paint::{self, Fonts, Icons, Rgba};
-use labyrinth_conf::{ColorMode, PanelConf};
+use labyrinth_conf::{ColorMode, DockPos, PanelConf};
 
 // Plasma window state flags (org_kde_plasma_window_management.state).
 pub const ST_ACTIVE: u32 = 0x1;
@@ -82,6 +82,8 @@ pub struct Model {
     pub conf: PanelConf,
     /// The system style is dark (Settings > Appearance); light flips the panels' text colours.
     pub dark: bool,
+    /// The trash has files in it (its dock icon shows full).
+    pub trash_full: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -143,14 +145,36 @@ pub fn dock_items(m: &Model) -> Vec<DockItem> {
             items[pos].active = true;
         }
     }
+    // The trash sits at the right end, like on a Mac and in Windows' recycle bin.
+    items.push(DockItem {
+        app_id: TRASH_ID.into(),
+        name: "Trash".into(),
+        icon: if m.trash_full { "user-trash-full" } else { "user-trash" }.into(),
+        wins: vec![],
+        pinned: true,
+        active: false,
+    });
     items
 }
 
-/// The dock's size in logical pixels for the current items.
-pub fn dock_size(items: &[DockItem], icon: u32) -> (u32, u32) {
+/// Dock id of the trash, which is not an app.
+pub const TRASH_ID: &str = "labyrinth:trash";
+
+/// The freedesktop trash folder that holds the files.
+pub fn trash_dir() -> Option<std::path::PathBuf> {
+    let base = std::env::var_os("XDG_DATA_HOME").map(std::path::PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share")))?;
+    Some(base.join("Trash/files"))
+}
+
+pub fn trash_has_files() -> bool {
+    trash_dir().and_then(|d| std::fs::read_dir(d).ok()).map(|mut r| r.next().is_some()).unwrap_or(false)
+}
+
+/// The dock's size in logical pixels for the current items: wide on the bottom, tall on a side.
+pub fn dock_size(items: &[DockItem], icon: u32, pos: DockPos) -> (u32, u32) {
     let n = items.len().max(1) as f32;
-    let w = PAD_X * 2.0 + n * icon as f32 + (n - 1.0) * GAP;
-    (w.ceil() as u32, dock_h(icon))
+    let len = (PAD_X * 2.0 + n * icon as f32 + (n - 1.0) * GAP).ceil() as u32;
+    if pos.vertical() { (dock_h(icon), len) } else { (len, dock_h(icon)) }
 }
 
 pub fn app_name_for_bar(m: &Model) -> String {
@@ -221,30 +245,43 @@ pub fn paint_dock(pix: &mut Pixmap, s: f32, m: &Model, fonts: &Fonts, icons: &mu
     let items = dock_items(m);
     let mut hits = vec![];
     let isz = (icon * s) as u32;
-    let mut x = PAD_X * s;
+    let pos = m.conf.dock_pos;
+    // Along the dock's length the icons run from `PAD_X`; across it they sit `PAD_TOP` from the
+    // side that faces the screen (the top of a bottom dock), leaving the running dot room on the edge side.
+    let mut along = PAD_X * s;
+    let across = match pos {
+        DockPos::Bottom | DockPos::Right => PAD_TOP * s,
+        DockPos::Left => (dock_h(m.conf.dock_icon) as f32 - icon - PAD_TOP) * s,
+    };
     for (i, it) in items.iter().enumerate() {
-        let rect = (x - 4.0 * s, PAD_TOP * s - 4.0 * s, icon * s + 8.0 * s, icon * s + 8.0 * s);
+        let (x, y) = if pos.vertical() { (across, along) } else { (along, across) };
+        let rect = (x - 4.0 * s, y - 4.0 * s, icon * s + 8.0 * s, icon * s + 8.0 * s);
         if hover == Some(i) {
             paint::fill_rounded(pix, rect.0, rect.1, rect.2, rect.3, 12.0 * s, lk.hover);
         }
         match icons.get(&it.icon, isz) {
-            Some(p) => paint::draw_pixmap(pix, p, x.round() as i32, (PAD_TOP * s).round() as i32),
+            Some(p) => paint::draw_pixmap(pix, p, x.round() as i32, y.round() as i32),
             None => {
                 // No icon in the theme: a purple tile with the app's first letter.
-                paint::fill_rounded(pix, x, PAD_TOP * s, icon * s, icon * s, 11.0 * s, (84, 58, 140, 255));
+                paint::fill_rounded(pix, x, y, icon * s, icon * s, 11.0 * s, (84, 58, 140, 255));
                 let letter: String = it.name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
                 let size = icon * 0.5 * s;
                 let lw = paint::text_width(&fonts.bold, size, &letter);
-                paint::draw_text(pix, &fonts.bold, size, x + (icon * s - lw) / 2.0, PAD_TOP * s + icon * s / 2.0, (236, 230, 248, 255), &letter);
+                paint::draw_text(pix, &fonts.bold, size, x + (icon * s - lw) / 2.0, y + icon * s / 2.0, (236, 230, 248, 255), &letter);
             }
         }
         // Running indicator under the icon; brighter for the focused app.
         if !it.wins.is_empty() {
             let c = if it.active { lk.text } else { lk.dim };
-            paint::fill_circle(pix, x + icon * s / 2.0, h - 8.0 * s, 2.2 * s, c);
+            let (dx, dy) = match pos {
+                DockPos::Bottom => (x + icon * s / 2.0, h - 8.0 * s),
+                DockPos::Left => (8.0 * s, y + icon * s / 2.0),
+                DockPos::Right => (w - 8.0 * s, y + icon * s / 2.0),
+            };
+            paint::fill_circle(pix, dx, dy, 2.2 * s, c);
         }
         hits.push(Hit { rect, action: Action::Dock(it.app_id.clone()) });
-        x += (icon + GAP) * s;
+        along += (icon + GAP) * s;
     }
     hits
 }
@@ -261,21 +298,23 @@ mod tests {
 
     #[test]
     fn pinned_apps_come_first_and_missing_ones_are_skipped() {
-        let m = Model { apps: vec![app("finder", "Finder"), app("vivaldi-stable", "Vivaldi")], pinned: vec!["vivaldi-stable".into(), "ghost".into(), "finder".into()], wins: vec![], clock: String::new(), conf: PanelConf::default(), dark: true };
+        let m = Model { apps: vec![app("finder", "Finder"), app("vivaldi-stable", "Vivaldi")], pinned: vec!["vivaldi-stable".into(), "ghost".into(), "finder".into()], wins: vec![], clock: String::new(), conf: PanelConf::default(), dark: true, trash_full: false };
         let items = dock_items(&m);
-        assert_eq!(items.iter().map(|i| i.app_id.as_str()).collect::<Vec<_>>(), vec!["vivaldi-stable", "finder"]);
+        assert_eq!(items.iter().map(|i| i.app_id.as_str()).collect::<Vec<_>>(), vec!["vivaldi-stable", "finder", TRASH_ID]); // the trash is always last
         assert!(items.iter().all(|i| i.pinned && i.wins.is_empty()));
     }
 
     #[test]
     fn dock_width_grows_with_items() {
-        let one = dock_size(&[DockItem { app_id: "a".into(), name: "A".into(), icon: "a".into(), wins: vec![], pinned: true, active: false }], 44);
+        let one = dock_size(&[DockItem { app_id: "a".into(), name: "A".into(), icon: "a".into(), wins: vec![], pinned: true, active: false }], 44, DockPos::Bottom);
         let it = |n: &str| DockItem { app_id: n.into(), name: n.into(), icon: n.into(), wins: vec![], pinned: true, active: false };
-        let three = dock_size(&[it("a"), it("b"), it("c")], 44);
+        let three = dock_size(&[it("a"), it("b"), it("c")], 44, DockPos::Bottom);
+        let side = dock_size(&[it("a"), it("b"), it("c")], 44, DockPos::Left);
+        assert_eq!((side.0, side.1), (three.1, three.0)); // a side dock is the bottom dock turned on its end
         assert!(three.0 > one.0);
         assert_eq!(one.1, dock_h(44));
         assert_eq!(three.0 - one.0, 2 * (44 + GAP as u32));
-        assert!(dock_size(&[it("a")], 64).0 > one.0 && dock_size(&[it("a")], 64).1 > one.1); // bigger icons, bigger dock
+        assert!(dock_size(&[it("a")], 64, DockPos::Bottom).0 > one.0 && dock_size(&[it("a")], 64, DockPos::Bottom).1 > one.1); // bigger icons, bigger dock
     }
 
     #[test]

@@ -163,10 +163,14 @@ impl Icons {
         for root in Self::roots() {
             for theme in &self.themes {
                 let t = root.join(theme);
-                let mut dirs: Vec<PathBuf> = vec![t.join("apps/scalable"), t.join("scalable/apps")];
-                for s in [size, 512, 256, 128, 96, 64, 48, 32, 24, 22, 16] {
-                    dirs.push(t.join(format!("apps/{s}")));
-                    dirs.push(t.join(format!("{s}x{s}/apps")));
+                let mut dirs: Vec<PathBuf> = vec![];
+                for ctx in ["apps", "places"] {
+                    dirs.push(t.join(format!("{ctx}/scalable")));
+                    dirs.push(t.join(format!("scalable/{ctx}")));
+                    for s in [size, 512, 256, 128, 96, 64, 48, 32, 24, 22, 16] {
+                        dirs.push(t.join(format!("{ctx}/{s}")));
+                        dirs.push(t.join(format!("{s}x{s}/{ctx}")));
+                    }
                 }
                 for d in dirs {
                     for e in exts {

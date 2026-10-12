@@ -39,13 +39,17 @@ use wayland_protocols_plasma::plasma_window_management::client::org_kde_plasma_w
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::{Layer, ZwlrLayerShellV1};
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::{self, Anchor, KeyboardInteractivity, ZwlrLayerSurfaceV1};
 
-use labyrinth_conf::PanelConf;
+use labyrinth_conf::{DockPos, PanelConf};
 use shell::{Action, Hit, Model, Win};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Kind {
     Bar { slim: bool },
     Dock,
+    /// An invisible strip along the dock's edge that reserves the room for it (windows keep clear), so
+    /// the dock itself can sit right at the edge: KWin would otherwise push a surface that has its own
+    /// exclusive zone away from the edge by that zone.
+    Strut,
 }
 
 struct Buffer {
@@ -67,6 +71,8 @@ struct Surf {
     w: u32,
     h: u32,
     want: (u32, u32),
+    /// The dock's float distance last sent to the compositor.
+    gap: i32,
     configured: bool,
     bufs: Vec<Buffer>,
     hits: Vec<Hit>,
@@ -209,6 +215,7 @@ impl State {
             let slim = self.layout.tiling.contains(&name);
             self.add_surface(key, Kind::Bar { slim });
             if Some(key) == dock_out {
+                self.add_surface(key, Kind::Strut);
                 self.add_surface(key, Kind::Dock);
             }
         }
@@ -220,12 +227,30 @@ impl State {
         self.next_surf += 1;
         let Some(out) = self.outputs.get(&output) else { return };
         let wl = self.compositor.create_surface(&self.qh, ());
-        let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Top, "labyrinth-panel".into(), &self.qh, id);
+        // The strut lives a layer below, so the space it reserves does not move the dock it is for.
+        let layer_kind = if kind == Kind::Strut { Layer::Bottom } else { Layer::Top };
+        let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), layer_kind, "labyrinth-panel".into(), &self.qh, id);
         let (anchor, size, zone, margin) = match kind {
             Kind::Bar { .. } => (Anchor::Top | Anchor::Left | Anchor::Right, (0, shell::BAR_H), shell::BAR_H as i32, (0, 0, 0, 0)),
             Kind::Dock => {
-                let sz = shell::dock_size(&shell::dock_items(&self.model), self.model.conf.dock_icon);
-                (Anchor::Bottom, sz, sz.1 as i32 + 8, (0, 0, 8, 0))
+                let sz = shell::dock_size(&shell::dock_items(&self.model), self.model.conf.dock_icon, self.model.conf.dock_pos);
+                // Margin is (top, right, bottom, left): 8 px off the edge it sits on; a side dock is centred
+                // along it. Zone -1: placed against the screen edge, whatever else reserves space there.
+                let g = self.dock_margin(sz);
+                match self.model.conf.dock_pos {
+                    DockPos::Bottom => (Anchor::Bottom, sz, 0, (0, 0, g, 0)),
+                    DockPos::Left => (Anchor::Left, sz, 0, (0, 0, 0, g)),
+                    DockPos::Right => (Anchor::Right, sz, 0, (0, g, 0, 0)),
+                }
+            }
+            Kind::Strut => {
+                let sz = shell::dock_size(&shell::dock_items(&self.model), self.model.conf.dock_icon, self.model.conf.dock_pos);
+                let zone = self.dock_zone(sz);
+                match self.model.conf.dock_pos {
+                    DockPos::Bottom => (Anchor::Bottom | Anchor::Left | Anchor::Right, (0, 1), zone, (0, 0, 0, 0)),
+                    DockPos::Left => (Anchor::Left | Anchor::Top | Anchor::Bottom, (1, 0), zone, (0, 0, 0, 0)),
+                    DockPos::Right => (Anchor::Right | Anchor::Top | Anchor::Bottom, (1, 0), zone, (0, 0, 0, 0)),
+                }
             }
         };
         layer.set_anchor(anchor);
@@ -234,18 +259,45 @@ impl State {
         layer.set_margin(margin.0, margin.1, margin.2, margin.3);
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
         wl.commit();
-        self.surfs.push(Surf { id, kind, output, wl, layer, w: size.0, h: size.1, want: size, configured: false, bufs: vec![], hits: vec![], hover: None });
+        let want = if kind == Kind::Strut { (zone as u32, zone as u32) } else { size };
+        self.surfs.push(Surf { id, kind, output, wl, layer, w: size.0, h: size.1, want, gap: self.model.conf.dock_gap as i32, configured: false, bufs: vec![], hits: vec![], hover: None });
+    }
+
+    /// The dock's margin on its edge. KWin lays a layer surface out inside the room other layer surfaces
+    /// reserve (the strut's zone: the dock's thickness plus its gap), so the margin pulls it back out
+    /// to leave just the gap from the screen edge.
+    fn dock_margin(&self, size: (u32, u32)) -> i32 {
+        self.model.conf.dock_gap as i32 - self.dock_zone(size)
+    }
+
+    /// How far windows keep clear of the dock's edge: its thickness and the gap it floats at.
+    fn dock_zone(&self, size: (u32, u32)) -> i32 {
+        (if self.model.conf.dock_pos.vertical() { size.0 } else { size.1 }) as i32 + self.model.conf.dock_gap as i32
     }
 
     /// Ask for a new dock size if the items changed it.
     fn resize_dock(&mut self) {
-        let want = shell::dock_size(&shell::dock_items(&self.model), self.model.conf.dock_icon);
-        for s in self.surfs.iter_mut().filter(|s| s.kind == Kind::Dock) {
-            if s.want != want {
-                s.want = want;
-                s.layer.set_size(want.0, want.1);
-                s.layer.set_exclusive_zone(want.1 as i32 + 8); // windows keep clear of the dock at any size
-                s.wl.commit();
+        let pos = self.model.conf.dock_pos;
+        let want = shell::dock_size(&shell::dock_items(&self.model), self.model.conf.dock_icon, pos);
+        let zone = (if pos.vertical() { want.0 } else { want.1 }) as i32 + self.model.conf.dock_gap as i32;
+        let gap = self.model.conf.dock_gap as i32;
+        for s in self.surfs.iter_mut() {
+            match s.kind {
+                Kind::Dock if s.want != want || s.gap != gap => {
+                    s.want = want;
+                    s.gap = gap;
+                    s.layer.set_size(want.0, want.1);
+                    let m = gap - zone;
+                    s.layer.set_margin(0, if pos == DockPos::Right { m } else { 0 }, if pos == DockPos::Bottom { m } else { 0 }, if pos == DockPos::Left { m } else { 0 });
+                    s.wl.commit();
+                }
+                // windows keep clear of the dock at any size
+                Kind::Strut if s.want.0 != zone as u32 => {
+                    s.want = (zone as u32, zone as u32);
+                    s.layer.set_exclusive_zone(zone);
+                    s.wl.commit();
+                }
+                _ => {}
             }
         }
     }
@@ -274,6 +326,7 @@ impl State {
         let hits = match kind {
             Kind::Bar { slim } => shell::paint_bar(&mut pix, s, slim, &self.model, &self.assets.fonts, &mut self.assets.icons, hover),
             Kind::Dock => shell::paint_dock(&mut pix, s, &self.model, &self.assets.fonts, &mut self.assets.icons, hover),
+            Kind::Strut => vec![], // fully transparent
         };
         let surf = &mut self.surfs[i];
         surf.hits = hits;
@@ -318,6 +371,14 @@ impl State {
     fn click_dock(&mut self, app_id: &str) {
         let items = shell::dock_items(&self.model);
         let Some(item) = items.iter().find(|i| i.app_id == app_id) else { return };
+        if app_id == shell::TRASH_ID {
+            // Finder, on the trash folder.
+            if let Some(dir) = shell::trash_dir() {
+                let _ = std::fs::create_dir_all(&dir);
+                let _ = std::process::Command::new("setsid").arg("-f").arg("finder").arg(dir).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
+            }
+            return;
+        }
         if item.wins.is_empty() {
             if let Some(app) = self.model.apps.iter().find(|a| a.id == app_id) {
                 apps::launch(app);
@@ -416,6 +477,9 @@ impl Dispatch<ZwlrLayerSurfaceV1, usize> for State {
             zwlr_layer_surface_v1::Event::Configure { serial, width, height } => {
                 layer.ack_configure(serial);
                 let Some(i) = state.surfs.iter().position(|s| s.id == *id) else { return };
+                if std::env::var_os("LABYRINTH_PANEL_DEBUG").is_some() {
+                    eprintln!("configure surface {} ({:?}): {}x{}", id, state.surfs[i].kind, width, height);
+                }
                 let s = &mut state.surfs[i];
                 if width > 0 {
                     s.w = width;
@@ -571,7 +635,7 @@ fn main() {
         compositor,
         layer_shell,
         shm,
-        model: Model { apps: apps::load_all(), pinned: apps::pinned(), wins: vec![], clock: clock_text(), conf: PanelConf::load(), dark: system_dark() },
+        model: Model { apps: apps::load_all(), pinned: apps::pinned(), wins: vec![], clock: clock_text(), conf: PanelConf::load(), dark: system_dark(), trash_full: shell::trash_has_files() },
         assets: Assets { fonts, icons: paint::Icons::new() },
         surfs: vec![],
         next_surf: 0,
@@ -599,6 +663,11 @@ fn main() {
             let now = clock_text();
             if now != st.model.clock {
                 st.model.clock = now;
+                st.dirty = true;
+            }
+            let full = shell::trash_has_files();
+            if full != st.model.trash_full {
+                st.model.trash_full = full;
                 st.dirty = true;
             }
             TimeoutAction::ToDuration(Duration::from_secs(1))
@@ -630,7 +699,11 @@ fn main() {
             let now = PanelConf::modified();
             if now != seen {
                 seen = now;
+                let old = st.model.conf.dock_pos;
                 st.model.conf = PanelConf::load();
+                if st.model.conf.dock_pos != old {
+                    st.built_for = None; // another edge: the dock's surface is rebuilt
+                }
                 st.dirty = true;
             }
             TimeoutAction::ToDuration(Duration::from_secs(1))

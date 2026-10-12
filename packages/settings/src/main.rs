@@ -589,8 +589,28 @@ impl App {
         let mode_index = |m: labyrinth_conf::ColorMode| if m == labyrinth_conf::ColorMode::Theme { 0 } else { 1 };
         let mode_of = |i: usize| if i == 0 { labyrinth_conf::ColorMode::Theme } else { labyrinth_conf::ColorMode::Neutral };
         ui::group(ui, pal, Some("Dock"), |ui| {
+            let positions = ["Bottom", "Left", "Right"];
+            let pos_index = match conf.dock_pos {
+                labyrinth_conf::DockPos::Bottom => 0,
+                labyrinth_conf::DockPos::Left => 1,
+                labyrinth_conf::DockPos::Right => 2,
+            };
+            ui::row(ui, pal, true, "Position", Some("Which edge of the screen; left and right are vertical"), |ui| {
+                if let Some(i) = ui::segmented(ui, pal, &positions, pos_index) {
+                    conf.dock_pos = [labyrinth_conf::DockPos::Bottom, labyrinth_conf::DockPos::Left, labyrinth_conf::DockPos::Right][i];
+                    conf_changed = true;
+                }
+            });
+            let mut gap = conf.dock_gap as f32;
+            ui::row(ui, pal, false, "Distance from edge", Some("How far the dock floats off the screen edge; 0 puts it right on the edge"), |ui| {
+                let r = ui::slider_range(ui, pal, &mut gap, 0.0..=labyrinth_conf::DOCK_GAP_MAX as f32, " px");
+                if r.drag_stopped() || (r.changed() && !r.dragged()) {
+                    conf.dock_gap = gap as u32;
+                    conf_changed = true;
+                }
+            });
             let mut size = conf.dock_icon as f32;
-            ui::row(ui, pal, true, "Size", Some("Icon size"), |ui| {
+            ui::row(ui, pal, false, "Size", Some("Icon size"), |ui| {
                 let r = ui::slider_range(ui, pal, &mut size, labyrinth_conf::DOCK_ICON_MIN as f32..=labyrinth_conf::DOCK_ICON_MAX as f32, " px");
                 if r.drag_stopped() || (r.changed() && !r.dragged()) {
                     conf.dock_icon = size as u32;
