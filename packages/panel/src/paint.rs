@@ -142,7 +142,7 @@ pub struct Icons {
 
 impl Icons {
     pub fn new() -> Icons {
-        Icons { cache: HashMap::new(), themes: ["WhiteSur-dark", "WhiteSur", "hicolor", "breeze-dark", "breeze", "Adwaita"].iter().map(|s| s.to_string()).collect() }
+        Icons { cache: HashMap::new(), themes: ["Labyrinth", "MacTahoe-purple-dark", "MacTahoe-purple", "hicolor", "breeze-dark", "breeze", "Adwaita"].iter().map(|s| s.to_string()).collect() }
     }
 
     fn roots() -> Vec<PathBuf> {

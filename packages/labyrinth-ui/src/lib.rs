@@ -3,4 +3,5 @@
 //! (`chrome`).
 
 pub mod chrome;
+pub mod sysicon;
 pub mod theme;
