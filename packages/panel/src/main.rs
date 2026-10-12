@@ -8,6 +8,7 @@
 
 mod apps;
 mod paint;
+mod calendar;
 mod shell;
 mod status;
 
@@ -26,6 +27,7 @@ use wayland_client::globals::{registry_queue_init, GlobalList, GlobalListContent
 use wayland_client::protocol::wl_buffer::{self, WlBuffer};
 use wayland_client::protocol::wl_compositor::WlCompositor;
 use wayland_client::protocol::wl_output::{self, WlOutput};
+use wayland_client::protocol::wl_keyboard::{self, WlKeyboard};
 use wayland_client::protocol::wl_pointer::{self, WlPointer};
 use wayland_client::protocol::wl_region::WlRegion;
 use wayland_client::protocol::wl_registry::{self, WlRegistry};
@@ -62,6 +64,9 @@ enum Kind {
     /// An invisible layer-shell strip along the dock's screen edge. It only reserves the dock's room so
     /// windows keep clear of it (KWin takes that from layer surfaces, not from panel windows).
     Strut,
+    /// A popover (the calendar): a transparent surface over the whole screen, so a click anywhere
+    /// outside the card closes it. The card is drawn at the top right.
+    Popup,
 }
 
 struct Buffer {
@@ -157,6 +162,17 @@ struct State {
     seat: Option<WlSeat>,
     next_key: u32,
     dirty: bool,
+    /// The calendar popover, when open: its output and how many months from this one it shows.
+    popup: Option<(u32, i32)>,
+    /// The popover card's rectangle in logical pixels.
+    popup_card: (f32, f32, f32, f32),
+    pointer_pos: (f32, f32),
+    /// The output of the surface that was just clicked.
+    click_output: Option<u32>,
+    keyboard: Option<WlKeyboard>,
+    /// The scroll came from a wheel (counted in steps) rather than smoothly.
+    axis_wheel: bool,
+    axis_acc: f32,
 }
 
 // ------------------------------------------------------------------ small helpers
@@ -172,9 +188,24 @@ fn strftime_now(fmt: &std::ffi::CStr) -> String {
     }
 }
 
-/// The time, 24 hours.
-fn clock_text() -> String {
-    strftime_now(c"%H:%M")
+/// Today as (year, month, day).
+fn today_ymd() -> (i32, u32, u32) {
+    unsafe {
+        let t = libc::time(std::ptr::null_mut());
+        let mut tm: libc::tm = std::mem::zeroed();
+        libc::localtime_r(&t, &mut tm);
+        (tm.tm_year + 1900, (tm.tm_mon + 1) as u32, tm.tm_mday as u32)
+    }
+}
+
+/// The time for the bar: 24 hours ("16:41"), or 12 with AM/PM.
+fn clock_text(h24: bool) -> String {
+    strftime_now(if h24 { c"%H:%M" } else { c"%-I:%M %p" })
+}
+
+/// The time for the calendar: 24 hours with seconds ("16:41:23"), or 12 with AM/PM.
+fn secs_text(h24: bool) -> String {
+    strftime_now(if h24 { c"%H:%M:%S" } else { c"%-I:%M %p" })
 }
 
 /// The date with the day of the week: "Sun 19 Dec".
@@ -273,6 +304,7 @@ impl State {
             s.destroy();
         }
         self.pointer_surface = None;
+        self.popup = None;
         let dock_out = self.dock_output();
         let mut sorted = ready;
         sorted.sort_by(|a, b| a.1.cmp(&b.1));
@@ -334,6 +366,44 @@ impl State {
             eprintln!("dock {id}: {}x{} at {x},{y}", want.0, want.1);
         }
         self.surfs.push(Surf { id, kind: Kind::Dock, output, wl, layer: None, dock: Some(DockWin { xs, tl, ps }), w: want.0, h: want.1, want, gap: self.model.conf.dock_gap as i32, configured: false, bufs: vec![], hits: vec![], hover: None });
+    }
+
+    /// Open the calendar on the screen that was clicked, or close it if it is open.
+    fn toggle_calendar(&mut self) {
+        if self.popup.is_some() {
+            self.close_popup();
+            return;
+        }
+        let Some(output) = self.click_output.or_else(|| self.dock_output()) else { return };
+        let Some(out) = self.outputs.get(&output) else { return };
+        let id = self.next_surf;
+        self.next_surf += 1;
+        let wl = self.compositor.create_surface(&self.qh, ());
+        let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Overlay, "labyrinth-popup".into(), &self.qh, id);
+        layer.set_anchor(Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right);
+        layer.set_size(0, 0);
+        layer.set_exclusive_zone(-1);
+        layer.set_keyboard_interactivity(KeyboardInteractivity::OnDemand);
+        wl.commit();
+        self.surfs.push(Surf { id, kind: Kind::Popup, output, wl, layer: Some(layer), dock: None, w: 0, h: 0, want: (0, 0), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None });
+        self.popup = Some((output, 0));
+    }
+
+    fn close_popup(&mut self) {
+        if let Some(i) = self.surfs.iter().position(|s| s.kind == Kind::Popup) {
+            let s = self.surfs.remove(i);
+            s.destroy();
+            self.pointer_surface = None;
+        }
+        self.popup = None;
+    }
+
+    /// Show another month: +1 is the next one.
+    fn step_month(&mut self, by: i32) {
+        if let Some((_, off)) = &mut self.popup {
+            *off = (*off + by).clamp(-1200, 1200);
+            self.dirty = true;
+        }
     }
 
     fn add_strut(&mut self, output: u32) {
@@ -434,6 +504,12 @@ impl State {
         let s = scale as f32;
         let hits = match kind {
             Kind::Strut => vec![],
+            Kind::Popup => {
+                let off = self.popup.map(|p| p.1).unwrap_or(0);
+                let card = shell::paint_calendar(&mut pix, s, &self.model, off, &self.assets.fonts);
+                self.popup_card = card;
+                vec![]
+            }
             Kind::Bar { slim } => shell::paint_bar(&mut pix, s, slim, &self.model, &self.assets.fonts, &mut self.assets.icons, hover),
             Kind::Dock => shell::paint_dock(&mut pix, s, &self.model, &self.assets.fonts, &mut self.assets.icons, hover),
         };
@@ -472,7 +548,8 @@ impl State {
     fn click(&mut self, action: Action) {
         match action {
             Action::Logo => run(&["qdbus6", "org.kde.krunner", "/App", "org.kde.krunner.App.display"]),
-            Action::Clock | Action::Notch => {}
+            Action::Clock => self.toggle_calendar(),
+            Action::Notch => {}
             Action::Workspace(i) => {
                 if let Some(d) = self.model.status.desktops.get(i) {
                     run(&["busctl", "--user", "set-property", "org.kde.KWin", "/VirtualDesktopManager", "org.kde.KWin.VirtualDesktopManager", "current", "s", &d.id]);
@@ -670,6 +747,9 @@ impl Dispatch<ZwlrLayerSurfaceV1, usize> for State {
 impl Dispatch<WlSeat, ()> for State {
     fn event(state: &mut Self, seat: &WlSeat, event: wl_seat::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>) {
         if let wl_seat::Event::Capabilities { capabilities: WEnum::Value(c) } = event {
+            if c.contains(wl_seat::Capability::Keyboard) && state.keyboard.is_none() {
+                state.keyboard = Some(seat.get_keyboard(qh, ()));
+            }
             if c.contains(wl_seat::Capability::Pointer) && state.seat.is_none() {
                 state.seat = Some(seat.clone());
                 let p = seat.get_pointer(qh, ());
@@ -677,6 +757,15 @@ impl Dispatch<WlSeat, ()> for State {
                     state.cursor = Some(m.get_pointer(&p, qh, ()));
                 }
             }
+        }
+    }
+}
+
+impl Dispatch<WlKeyboard, ()> for State {
+    fn event(state: &mut Self, _: &WlKeyboard, event: wl_keyboard::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        // Escape (evdev key 1) closes the popover; nothing else here needs a keymap.
+        if let wl_keyboard::Event::Key { key: 1, state: WEnum::Value(wl_keyboard::KeyState::Pressed), .. } = event {
+            state.close_popup();
         }
     }
 }
@@ -696,11 +785,47 @@ impl Dispatch<WlPointer, ()> for State {
                     }
                 }
             }
-            wl_pointer::Event::Motion { surface_x, surface_y, .. } => state.hover_at(surface_x as f32, surface_y as f32),
+            wl_pointer::Event::Motion { surface_x, surface_y, .. } => {
+                state.pointer_pos = (surface_x as f32, surface_y as f32);
+                state.hover_at(surface_x as f32, surface_y as f32)
+            }
+            wl_pointer::Event::AxisSource { axis_source } => state.axis_wheel = matches!(axis_source, WEnum::Value(wl_pointer::AxisSource::Wheel)),
+            // a wheel click: one step
+            wl_pointer::Event::AxisDiscrete { discrete, .. } => {
+                if state.popup.is_some() {
+                    state.step_month(discrete.signum());
+                }
+            }
+            // smooth scrolling (a touchpad): a step for each stretch of scrolling
+            wl_pointer::Event::Axis { axis: WEnum::Value(wl_pointer::Axis::VerticalScroll), value, .. } => {
+                if state.popup.is_some() && !state.axis_wheel {
+                    state.axis_acc += value as f32;
+                    if state.axis_acc.abs() >= 20.0 {
+                        let by = state.axis_acc.signum() as i32;
+                        state.axis_acc = 0.0;
+                        state.step_month(by);
+                    }
+                }
+            }
             wl_pointer::Event::Button { state: WEnum::Value(wl_pointer::ButtonState::Pressed), button, .. } => {
                 // 272 = BTN_LEFT
                 if button == 272 {
+                    // On the popover: the header takes you back to this month; outside the card closes it.
+                    if state.pointer_surface.and_then(|i| state.surfs.get(i)).map(|s| s.kind == Kind::Popup).unwrap_or(false) {
+                        let (px, py) = state.pointer_pos;
+                        let (cx, cy, cw, ch) = state.popup_card;
+                        if px < cx || px > cx + cw || py < cy || py > cy + ch {
+                            state.close_popup();
+                        } else if py < cy + 62.0 {
+                            if let Some((_, off)) = &mut state.popup {
+                                *off = 0;
+                            }
+                            state.dirty = true;
+                        }
+                        return;
+                    }
                     if let Some(i) = state.pointer_surface {
+                        state.click_output = state.surfs.get(i).map(|s| s.output);
                         if let Some(h) = state.surfs.get(i).and_then(|s| s.hover) {
                             if let Some(hit) = state.surfs[i].hits.get(h).cloned() {
                                 state.click(hit.action);
@@ -808,7 +933,7 @@ fn main() {
         xdg_wm,
         plasma_shell,
         shm,
-        model: Model { apps: apps::load_all(), pinned: apps::pinned(), wins: vec![], clock: clock_text(), date: date_text(), conf: PanelConf::load(), dark: system_dark(), status: Default::default(), trash_full: shell::trash_has_files() },
+        model: Model { apps: apps::load_all(), pinned: apps::pinned(), wins: vec![], clock: clock_text(PanelConf::load().clock_24h), clock_secs: secs_text(PanelConf::load().clock_24h), date: date_text(), today: today_ymd(), conf: PanelConf::load(), dark: system_dark(), status: Default::default(), trash_full: shell::trash_has_files() },
         assets: Assets { fonts, icons: paint::Icons::new() },
         surfs: vec![],
         next_surf: 0,
@@ -821,6 +946,13 @@ fn main() {
         seat: None,
         next_key: 0,
         dirty: false,
+        popup: None,
+        popup_card: (0.0, 0.0, 0.0, 0.0),
+        pointer_pos: (0.0, 0.0),
+        click_output: None,
+        keyboard: None,
+        axis_wheel: false,
+        axis_acc: 0.0,
     };
     bind_outputs(&globals, &mut state, &qh);
 
@@ -851,11 +983,21 @@ fn main() {
                     st.dirty = true;
                 }
             }
-            let now = clock_text();
+            let h24 = st.model.conf.clock_24h;
+            let now = clock_text(h24);
             if now != st.model.clock {
                 st.model.clock = now;
                 st.model.date = date_text();
+                st.model.today = today_ymd();
                 st.dirty = true;
+            }
+            // The calendar shows seconds: redraw it each second while it is open.
+            let secs = secs_text(h24);
+            if secs != st.model.clock_secs {
+                st.model.clock_secs = secs;
+                if st.popup.is_some() {
+                    st.dirty = true;
+                }
             }
             let full = shell::trash_has_files();
             if full != st.model.trash_full {
@@ -893,6 +1035,8 @@ fn main() {
                 seen = now;
                 let old = st.model.conf.dock_pos;
                 st.model.conf = PanelConf::load();
+                st.model.clock = clock_text(st.model.conf.clock_24h);
+                st.model.clock_secs = secs_text(st.model.conf.clock_24h);
                 if st.model.conf.dock_pos != old {
                     st.built_for = None; // another edge: the dock's surface is rebuilt
                 }

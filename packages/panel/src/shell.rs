@@ -80,7 +80,11 @@ pub struct Model {
     pub wins: Vec<Win>,
     /// The time (24 hours) and the date ("Sun 19 Dec").
     pub clock: String,
+    /// The time for the calendar: seconds too in 24-hour mode ("16:41:23").
+    pub clock_secs: String,
     pub date: String,
+    /// Today as (year, month, day), for the calendar.
+    pub today: (i32, u32, u32),
     pub conf: PanelConf,
     /// The system style is dark (Settings > Appearance); light flips the panels' text colours.
     pub dark: bool,
@@ -250,8 +254,8 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
     if lit(&hits) {
         paint::fill_rounded(pix, x, py, lw, ph, r, lk.hover);
     }
-    let isz = (16.0 * s) as u32;
-    if let Some(ic) = icons.get("labyrinthos", isz) {
+    let isz = (15.0 * s) as u32;
+    if let Some(ic) = icons.get_svg("logo-solid", include_str!("../assets/logo-solid.svg"), isz, lk.text) {
         paint::draw_pixmap(pix, ic, (x + (lw - isz as f32) / 2.0) as i32, (cy - isz as f32 / 2.0).round() as i32);
     }
     hits.push(Hit { rect: (x, 0.0, lw, h), action: Action::Logo });
@@ -296,23 +300,16 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
 
     // ---- right: network, Bluetooth, the clock (24 hours)
     let mut rx = w - 8.0 * s;
-    let cw = paint::text_width(&fonts.regular, 12.5 * s, &m.clock) + 20.0 * s;
+    // The date and the time in one pill; clicking it opens the calendar.
+    let stamp = format!("{}   {}", m.date, m.clock);
+    let cw = paint::text_width(&fonts.regular, 12.5 * s, &stamp) + 20.0 * s;
     rx -= cw;
     pill(pix, rx, cw);
     if lit(&hits) {
         paint::fill_rounded(pix, rx, py, cw, ph, r, lk.hover);
     }
-    paint::draw_text(pix, &fonts.regular, 12.5 * s, rx + 10.0 * s, cy, lk.text, &m.clock);
+    paint::draw_text(pix, &fonts.regular, 12.5 * s, rx + 10.0 * s, cy, lk.text, &stamp);
     hits.push(Hit { rect: (rx, 0.0, cw, h), action: Action::Clock });
-    rx -= 6.0 * s;
-    let dw = paint::text_width(&fonts.regular, 12.5 * s, &m.date) + 20.0 * s;
-    rx -= dw;
-    pill(pix, rx, dw);
-    if lit(&hits) {
-        paint::fill_rounded(pix, rx, py, dw, ph, r, lk.hover);
-    }
-    paint::draw_text(pix, &fonts.regular, 12.5 * s, rx + 10.0 * s, cy, lk.text, &m.date);
-    hits.push(Hit { rect: (rx, 0.0, dw, h), action: Action::Clock });
     rx -= 6.0 * s;
 
     let iw = 28.0 * s;
@@ -347,6 +344,62 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
     };
     icon_pill(pix, icons, &mut hits, &mut rx, net, Action::Network);
     hits
+}
+
+/// The date popover: today's date and the time, then a month you can scroll through. `offset` is
+/// how many months from this one. Returns the card's rectangle (x, y, w, h) in logical pixels.
+pub fn paint_calendar(pix: &mut Pixmap, s: f32, m: &Model, offset: i32, fonts: &Fonts) -> (f32, f32, f32, f32) {
+    use crate::calendar;
+    pix.fill(paint::color((0, 0, 0, 0)));
+    let w = pix.width() as f32 / s;
+    let dark = m.dark;
+    let (bg, border, text, dim, faint): (Rgba, Rgba, Rgba, Rgba, Rgba) = if dark {
+        ((18, 18, 24, 240), (255, 255, 255, 36), (240, 240, 246, 255), (160, 160, 176, 255), (96, 96, 110, 255))
+    } else {
+        ((250, 250, 252, 244), (0, 0, 0, 30), (24, 24, 32, 255), (96, 96, 112, 255), (170, 170, 182, 255))
+    };
+    let (cw, pad, row) = (372.0, 16.0, 34.0);
+    let col = (cw - 2.0 * pad) / 7.0;
+    let ch = 104.0 + 6.0 * row + 12.0;
+    let (cx, cy) = (w - cw - 10.0, BAR_H as f32 + 6.0);
+    paint::fill_rounded(pix, cx * s, cy * s, cw * s, ch * s, 14.0 * s, bg);
+    paint::stroke_rounded(pix, (cx + 0.5) * s, (cy + 0.5) * s, (cw - 1.0) * s, (ch - 1.0) * s, 14.0 * s, s, border);
+
+    let (ty, tm, td) = m.today;
+    // header: today's date on the left, the time on the right
+    let title = calendar::full_date(ty, tm, td, !m.conf.clock_24h);
+    paint::draw_text(pix, &fonts.bold, 14.0 * s, (cx + pad) * s, (cy + 28.0) * s, text, &title);
+    let tw = paint::text_width(&fonts.bold, 14.0 * s, &m.clock_secs);
+    paint::draw_text(pix, &fonts.bold, 14.0 * s, (cx + cw - pad) * s - tw, (cy + 28.0) * s, text, &m.clock_secs);
+
+    // the month being shown
+    let (y, mo) = calendar::shift_month(ty, tm, offset);
+    let label = format!("{} {}", calendar::MONTHS[(mo - 1) as usize], y);
+    paint::draw_text(pix, &fonts.regular, 12.5 * s, (cx + pad) * s, (cy + 54.0) * s, if offset == 0 { dim } else { text }, &label);
+
+    // weekday letters
+    for (i, d) in calendar::DAYS.iter().enumerate() {
+        let l = &d[..1];
+        let lw = paint::text_width(&fonts.regular, 12.0 * s, l);
+        paint::draw_text(pix, &fonts.regular, 12.0 * s, (cx + pad + col * (i as f32 + 0.5)) * s - lw / 2.0, (cy + 82.0) * s, faint, l);
+    }
+    // the days
+    let g = calendar::grid(y, mo);
+    for (r, line) in g.iter().enumerate() {
+        for (c, (day, in_month)) in line.iter().enumerate() {
+            let mid_x = cx + pad + col * (c as f32 + 0.5);
+            let mid_y = cy + 104.0 + row * (r as f32 + 0.5);
+            let is_today = *in_month && (y, mo, *day) == (ty, tm, td);
+            if is_today {
+                paint::fill_circle(pix, mid_x * s, mid_y * s, 15.0 * s, if dark { (255, 255, 255, 70) } else { (124, 84, 214, 255) });
+            }
+            let label = day.to_string();
+            let lw = paint::text_width(&fonts.bold, 15.0 * s, &label);
+            let color = if is_today && !dark { (255, 255, 255, 255) } else if *in_month { text } else { faint };
+            paint::draw_text(pix, &fonts.bold, 15.0 * s, mid_x * s - lw / 2.0, mid_y * s, color, &label);
+        }
+    }
+    (cx, cy, cw, ch)
 }
 
 pub fn paint_dock(pix: &mut Pixmap, s: f32, m: &Model, fonts: &Fonts, icons: &mut Icons, hover: Option<usize>) -> Vec<Hit> {
@@ -415,7 +468,7 @@ mod tests {
 
     #[test]
     fn pinned_apps_come_first_and_missing_ones_are_skipped() {
-        let m = Model { apps: vec![app("minos", "Minos"), app("vivaldi-stable", "Vivaldi")], pinned: vec!["vivaldi-stable".into(), "ghost".into(), "minos".into()], wins: vec![], clock: String::new(), date: String::new(), conf: PanelConf::default(), dark: true, status: Default::default(), trash_full: false };
+        let m = Model { apps: vec![app("minos", "Minos"), app("vivaldi-stable", "Vivaldi")], pinned: vec!["vivaldi-stable".into(), "ghost".into(), "minos".into()], wins: vec![], clock: String::new(), clock_secs: String::new(), date: String::new(), today: (2026, 1, 1), conf: PanelConf::default(), dark: true, status: Default::default(), trash_full: false };
         let items = dock_items(&m);
         assert_eq!(items.iter().map(|i| i.app_id.as_str()).collect::<Vec<_>>(), vec!["vivaldi-stable", "minos", TRASH_ID]); // the trash is always last
         assert!(items.iter().all(|i| i.pinned && i.wins.is_empty()));

@@ -237,6 +237,23 @@ impl Icons {
         self.cache.get(&key).and_then(|o| o.as_ref())
     }
 
+    /// An SVG that ships inside the program, drawn in one colour (for the solid Labyrinth mark).
+    pub fn get_svg(&mut self, name: &str, svg: &str, size: u32, color: Rgba) -> Option<&Pixmap> {
+        let key = (format!("{name}#{:02x}{:02x}{:02x}", color.0, color.1, color.2), size);
+        if !self.cache.contains_key(&key) {
+            let tinted = svg.replacen("<path", &format!("<path fill='#{:02x}{:02x}{:02x}'", color.0, color.1, color.2), 1);
+            let r = resvg::usvg::Tree::from_data(tinted.as_bytes(), &resvg::usvg::Options::default()).ok().and_then(|tree| {
+                let sz = tree.size();
+                let mut pm = Pixmap::new(size, size)?;
+                let scale = (size as f32 / sz.width()).min(size as f32 / sz.height());
+                resvg::render(&tree, Transform::from_scale(scale, scale), &mut pm.as_mut());
+                Some(pm)
+            });
+            self.cache.insert(key.clone(), r);
+        }
+        self.cache.get(&key).and_then(|o| o.as_ref())
+    }
+
     pub fn get(&mut self, name: &str, size: u32) -> Option<&Pixmap> {
         let key = (name.to_string(), size);
         if !self.cache.contains_key(&key) {

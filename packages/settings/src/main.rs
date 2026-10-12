@@ -760,10 +760,15 @@ impl App {
         let Some(t) = self.data.time.clone() else { return loading(ui) };
         let mut ntp = t.ntp;
         let mut ntp_changed = false;
+        let mut clock = labyrinth_conf::PanelConf::load();
+        let mut clock_changed = false;
         let mut zone: Option<String> = None;
         ui::group(ui, pal, None, |ui| {
             ui::row(ui, pal, true, "Set the time automatically", Some("From time servers on the internet"), |ui| {
                 ntp_changed = ui::switch(ui, pal, &mut ntp).changed();
+            });
+            ui::row(ui, pal, false, "24-hour clock", Some("In the top bar and the calendar; off shows AM/PM"), |ui| {
+                clock_changed = ui::switch(ui, pal, &mut clock.clock_24h).changed();
             });
             ui::row(ui, pal, false, "Time zone", Some(&t.timezone), |ui| {
                 egui::ComboBox::from_id_salt("zone").selected_text(&t.timezone).width((ui.available_width() * 0.55).clamp(160.0, 260.0)).height(360.0).show_ui(ui, |ui| {
@@ -783,6 +788,9 @@ impl App {
         }
         if let Some(z) = zone {
             self.change(ctx, move || sys::act("timedatectl", &["set-timezone", &z]));
+        }
+        if clock_changed {
+            self.change(ctx, move || clock.save());
         }
     }
 
