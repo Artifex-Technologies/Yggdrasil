@@ -1,0 +1,10 @@
+[package]
+name = "labyrinth-conf"
+version = "0.1.0"
+edition = "2021"
+description = "The settings file shared by Labyrinth Settings and the panel (top bar and dock)"
+license = "MIT"
+
+[lib]
+name = "labyrinth_conf"
+path = "src/lib.rs"

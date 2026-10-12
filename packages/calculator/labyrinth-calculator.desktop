@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Calculator
+GenericName=Calculator
+Comment=Standard with history, scientific when widened
+Exec=labyrinth-calculator
+Icon=accessories-calculator
+Terminal=false
+Categories=Utility;Calculator;
+Keywords=calculator;math;tax;percent;scientific;
+StartupWMClass=labyrinth-calculator

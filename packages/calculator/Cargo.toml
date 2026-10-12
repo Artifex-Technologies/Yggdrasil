@@ -1,0 +1,17 @@
+[package]
+name = "labyrinth-calculator"
+version = "0.1.0"
+edition = "2021"
+description = "Labyrinth Calculator: standard with history, scientific when widened"
+license = "MIT"
+
+[[bin]]
+name = "labyrinth-calculator"
+path = "src/main.rs"
+
+[dependencies]
+eframe = "0.36.2"
+labyrinth-ui = { path = "../labyrinth-ui" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+dirs = "7.0.0"

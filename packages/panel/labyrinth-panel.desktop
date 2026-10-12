@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Labyrinth Panel
+Comment=The top bar and dock
+Exec=/usr/bin/labyrinth-panel
+Icon=labyrinthos
+NoDisplay=true
+Terminal=false
+# KWin only shows the window list to programs that ask for it here, by their exact path.
+X-KDE-Wayland-Interfaces=org_kde_plasma_window_management

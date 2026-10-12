@@ -554,6 +554,9 @@ impl App {
         let mut style: Option<bool> = None;
         let mut accent: Option<[u8; 3]> = None;
         let mut wallpaper: Option<String> = None;
+        let mut panel_switch: Option<bool> = None;
+        let mut conf = a.panel;
+        let mut conf_changed = false;
         ui::group(ui, pal, Some("Style"), |ui| {
             ui::row(ui, pal, true, "Look", None, |ui| {
                 if let Some(i) = ui::segmented(ui, pal, &["Dark", "Light"], if a.dark { 0 } else { 1 }) {
@@ -574,6 +577,57 @@ impl App {
                 }
             });
         });
+        ui::group(ui, pal, Some("Top bar and dock"), |ui| {
+            let mut on = a.panel_on;
+            ui::row(ui, pal, true, "Use the Labyrinth top bar and dock", Some("Replaces Plasma's panels. It has no system tray, quick settings or global menu yet."), |ui| {
+                if ui::switch(ui, pal, &mut on).changed() {
+                    panel_switch = Some(on);
+                }
+            });
+        });
+        let modes = ["Match theme", "Dark / light"];
+        let mode_index = |m: labyrinth_conf::ColorMode| if m == labyrinth_conf::ColorMode::Theme { 0 } else { 1 };
+        let mode_of = |i: usize| if i == 0 { labyrinth_conf::ColorMode::Theme } else { labyrinth_conf::ColorMode::Neutral };
+        ui::group(ui, pal, Some("Dock"), |ui| {
+            let mut size = conf.dock_icon as f32;
+            ui::row(ui, pal, true, "Size", Some("Icon size"), |ui| {
+                let r = ui::slider_range(ui, pal, &mut size, labyrinth_conf::DOCK_ICON_MIN as f32..=labyrinth_conf::DOCK_ICON_MAX as f32, " px");
+                if r.drag_stopped() || (r.changed() && !r.dragged()) {
+                    conf.dock_icon = size as u32;
+                    conf_changed = true;
+                }
+            });
+            let mut opacity = conf.dock_opacity as f32;
+            ui::row(ui, pal, false, "Background", Some("Opacity of the dock's shelf; 0% leaves just the icons"), |ui| {
+                let r = ui::slider(ui, pal, &mut opacity);
+                if r.drag_stopped() || (r.changed() && !r.dragged()) {
+                    conf.dock_opacity = opacity as u32;
+                    conf_changed = true;
+                }
+            });
+            ui::row(ui, pal, false, "Colour", Some("Match the theme's purple, or follow only dark and light"), |ui| {
+                if let Some(i) = ui::segmented(ui, pal, &modes, mode_index(conf.dock_color)) {
+                    conf.dock_color = mode_of(i);
+                    conf_changed = true;
+                }
+            });
+        });
+        ui::group(ui, pal, Some("Top bar"), |ui| {
+            let mut opacity = conf.bar_opacity as f32;
+            ui::row(ui, pal, true, "Background", Some("Opacity of the bar; 0% leaves just its text"), |ui| {
+                let r = ui::slider(ui, pal, &mut opacity);
+                if r.drag_stopped() || (r.changed() && !r.dragged()) {
+                    conf.bar_opacity = opacity as u32;
+                    conf_changed = true;
+                }
+            });
+            ui::row(ui, pal, false, "Colour", Some("Match the theme's purple, or follow only dark and light"), |ui| {
+                if let Some(i) = ui::segmented(ui, pal, &modes, mode_index(conf.bar_color)) {
+                    conf.bar_color = mode_of(i);
+                    conf_changed = true;
+                }
+            });
+        });
         ui::group(ui, pal, Some("Wallpaper"), |ui| {
             ui.add_space(6.0);
             ui.horizontal_wrapped(|ui| {
@@ -587,6 +641,12 @@ impl App {
             });
             ui.add_space(6.0);
         });
+        if conf_changed {
+            self.change(ctx, move || conf.save());
+        }
+        if let Some(on) = panel_switch {
+            self.change(ctx, move || sys::act("labyrinth-panel-mode", &[if on { "on" } else { "off" }]));
+        }
         if let Some(dark) = style {
             self.change(ctx, move || {
                 let scheme = if dark { "WhiteSurDark" } else { "WhiteSur" };

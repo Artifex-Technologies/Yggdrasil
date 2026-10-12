@@ -97,6 +97,11 @@ pub fn quiet(ui: &mut egui::Ui, pal: &Palette, label: &str) -> egui::Response {
 
 /// A 0–100 % slider with a visible track and an accent fill up to the handle.
 pub fn slider(ui: &mut egui::Ui, pal: &Palette, value: &mut f32) -> egui::Response {
+    slider_range(ui, pal, value, 0.0..=100.0, " %")
+}
+
+/// The same for any range and unit.
+pub fn slider_range(ui: &mut egui::Ui, pal: &Palette, value: &mut f32, range: std::ops::RangeInclusive<f32>, suffix: &str) -> egui::Response {
     ui.scope(|ui| {
         ui.spacing_mut().slider_width = (ui.available_width() * 0.55).clamp(120.0, 260.0);
         let v = &mut ui.style_mut().visuals;
@@ -104,7 +109,7 @@ pub fn slider(ui: &mut egui::Ui, pal: &Palette, value: &mut f32) -> egui::Respon
         v.widgets.inactive.fg_stroke = Stroke::new(1.0, pal.text);
         v.widgets.hovered.bg_fill = pal.hover;
         v.selection.bg_fill = pal.accent;
-        ui.add(egui::Slider::new(value, 0.0..=100.0).trailing_fill(true).show_value(true).suffix(" %").fixed_decimals(0))
+        ui.add(egui::Slider::new(value, range).trailing_fill(true).show_value(true).suffix(suffix.to_string()).fixed_decimals(0))
     })
     .inner
 }

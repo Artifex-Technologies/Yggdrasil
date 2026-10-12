@@ -424,6 +424,9 @@ pub struct Appearance {
     pub dark: bool,
     pub accent: Option<[u8; 3]>,
     pub wallpapers: Vec<std::path::PathBuf>,
+    /// Labyrinth's own top bar and dock are in use (labyrinth-panel-mode).
+    pub panel_on: bool,
+    pub panel: labyrinth_conf::PanelConf,
 }
 
 pub fn appearance() -> Appearance {
@@ -445,7 +448,8 @@ AccentColor={}", s.trim())));
         }
     }
     wallpapers.sort();
-    Appearance { dark: scheme.trim().to_lowercase().contains("dark") || scheme.trim().is_empty(), accent, wallpapers }
+    let panel_on = run("labyrinth-panel-mode", &["status"]).map(|s| s.trim() == "labyrinth-panel").unwrap_or(false);
+    Appearance { dark: scheme.trim().to_lowercase().contains("dark") || scheme.trim().is_empty(), accent, wallpapers, panel_on, panel: labyrinth_conf::PanelConf::load() }
 }
 
 /// The largest picture in a Plasma wallpaper package's images folder (named like 3840x2160.png).

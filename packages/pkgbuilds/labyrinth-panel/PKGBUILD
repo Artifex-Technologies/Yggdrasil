@@ -1,0 +1,29 @@
+# Labyrinth's top bar and dock (Rust, Wayland layer-shell, CPU-drawn): packages/panel.
+pkgname=labyrinth-panel
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Labyrinth top bar and dock"
+arch=('x86_64')
+url="https://github.com/Artifex-Technologies/Labyrinth_OS"
+license=('MIT')
+depends=('gcc-libs' 'wayland' 'fontconfig' 'libkscreen' 'kconfig')
+makedepends=('cargo')
+options=('!lto')
+
+_src="$startdir/../../panel"
+
+build() {
+  cd "$_src"
+  cargo build --release --locked --target-dir "$srcdir/target"
+}
+
+check() {
+  cd "$_src"
+  cargo test --release --locked --target-dir "$srcdir/target"
+}
+
+package() {
+  install -Dm755 "$srcdir/target/release/labyrinth-panel" "$pkgdir/usr/bin/labyrinth-panel"
+  # KWin gives the window list only to programs whose desktop file asks for it, by exact path.
+  install -Dm644 "$_src/labyrinth-panel.desktop" "$pkgdir/usr/share/applications/labyrinth-panel.desktop"
+}

@@ -14,4 +14,5 @@ eframe = "0.36.2"
 egui_extras = { version = "0.36.2", features = ["file", "image"] }
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
 labyrinth-ui = { path = "../labyrinth-ui" }
+labyrinth-conf = { path = "../labyrinth-conf" }
 serde_json = "1.0.151"

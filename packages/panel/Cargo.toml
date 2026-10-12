@@ -1,0 +1,30 @@
+[package]
+name = "labyrinth-panel"
+version = "0.1.0"
+edition = "2021"
+description = "Labyrinth's top bar and dock (Wayland layer-shell, software-rendered, tiny)"
+license = "MIT"
+
+[[bin]]
+name = "labyrinth-panel"
+path = "src/main.rs"
+
+[dependencies]
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+wayland-protocols-plasma = { version = "0.3", features = ["client"] }
+calloop = "0.14"
+calloop-wayland-source = "0.4"
+memmap2 = "0.9"
+rustix = { version = "1", features = ["fs", "shm"] }
+resvg = { version = "0.48", default-features = false }
+ab_glyph = "0.2"
+libc = "0.2"
+serde_json = "1"
+labyrinth-conf = { path = "../labyrinth-conf" }
+
+[profile.release]
+opt-level = 2
+lto = "thin"
+strip = true

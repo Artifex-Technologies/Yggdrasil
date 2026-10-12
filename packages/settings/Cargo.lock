@@ -1702,12 +1702,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "labyrinth-conf"
+version = "0.1.0"
+
+[[package]]
 name = "labyrinth-settings"
 version = "0.1.0"
 dependencies = [
  "eframe",
  "egui_extras",
  "image",
+ "labyrinth-conf",
  "labyrinth-ui",
  "serde_json",
 ]
