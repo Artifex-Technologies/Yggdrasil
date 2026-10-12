@@ -559,8 +559,8 @@ impl App {
         let mut conf_changed = false;
         ui::group(ui, pal, Some("Style"), |ui| {
             ui::row(ui, pal, true, "Look", None, |ui| {
-                if let Some(i) = ui::segmented(ui, pal, &["Dark", "Light"], if a.dark { 0 } else { 1 }) {
-                    style = Some(i == 0);
+                if let Some(i) = ui::segmented(ui, pal, &["Light", "Dark"], if a.dark { 1 } else { 0 }) {
+                    style = Some(i == 1);
                 }
             });
             ui::row(ui, pal, false, "Accent colour", Some("Selections, switches, the active window border"), |ui| {

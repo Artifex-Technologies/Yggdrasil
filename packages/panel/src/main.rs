@@ -26,6 +26,7 @@ use wayland_client::protocol::wl_buffer::{self, WlBuffer};
 use wayland_client::protocol::wl_compositor::WlCompositor;
 use wayland_client::protocol::wl_output::{self, WlOutput};
 use wayland_client::protocol::wl_pointer::{self, WlPointer};
+use wayland_client::protocol::wl_region::WlRegion;
 use wayland_client::protocol::wl_registry::{self, WlRegistry};
 use wayland_client::protocol::wl_seat::{self, WlSeat};
 use wayland_client::protocol::wl_shm::{self, WlShm};
@@ -34,6 +35,11 @@ use wayland_client::protocol::wl_surface::{self, WlSurface};
 use wayland_client::{delegate_noop, Connection, Dispatch, Proxy, QueueHandle, WEnum};
 use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::{Shape, WpCursorShapeDeviceV1};
 use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1;
+use wayland_protocols::xdg::shell::client::xdg_surface::{self, XdgSurface};
+use wayland_protocols::xdg::shell::client::xdg_toplevel::{self, XdgToplevel};
+use wayland_protocols::xdg::shell::client::xdg_wm_base::{self, XdgWmBase};
+use wayland_protocols_plasma::plasma_shell::client::org_kde_plasma_shell::OrgKdePlasmaShell;
+use wayland_protocols_plasma::plasma_shell::client::org_kde_plasma_surface::{self, OrgKdePlasmaSurface, Role};
 use wayland_protocols_plasma::plasma_window_management::client::org_kde_plasma_window::{self, OrgKdePlasmaWindow};
 use wayland_protocols_plasma::plasma_window_management::client::org_kde_plasma_window_management::{self, OrgKdePlasmaWindowManagement};
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::{Layer, ZwlrLayerShellV1};
@@ -45,10 +51,15 @@ use shell::{Action, Hit, Model, Win};
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Kind {
     Bar { slim: bool },
+    /// A strip along the dock's screen edge, as wide as the screen (or as tall): the dock is drawn in it
+    /// and only the dock itself takes clicks. Like the bar, a surface that spans its edge sits flush
+    /// against it, which a small centred surface with its own exclusive zone does not under KWin.
+    /// A strip along the dock's screen edge, as wide as the screen (or as tall): the dock is drawn in it
+    /// and only the dock itself takes clicks. Like the bar (and Plasma's own panels) the strip spans its
+    /// edge and reserves its thickness, so windows keep clear of the dock.
     Dock,
-    /// An invisible strip along the dock's edge that reserves the room for it (windows keep clear), so
-    /// the dock itself can sit right at the edge: KWin would otherwise push a surface that has its own
-    /// exclusive zone away from the edge by that zone.
+    /// An invisible layer-shell strip along the dock's screen edge. It only reserves the dock's room so
+    /// windows keep clear of it (KWin takes that from layer surfaces, not from panel windows).
     Strut,
 }
 
@@ -60,13 +71,22 @@ struct Buffer {
     busy: Arc<AtomicBool>,
 }
 
+/// The wayland objects of the dock window.
+struct DockWin {
+    xs: XdgSurface,
+    tl: XdgToplevel,
+    ps: OrgKdePlasmaSurface,
+}
+
 struct Surf {
     id: usize,
     kind: Kind,
     /// Global name of the output this sits on.
     output: u32,
     wl: WlSurface,
-    layer: ZwlrLayerSurfaceV1,
+    layer: Option<ZwlrLayerSurfaceV1>,
+    /// The dock is a Plasma panel window (xdg toplevel with the panel role), not a layer surface.
+    dock: Option<DockWin>,
     /// Logical size the compositor gave us, and the size we asked for.
     w: u32,
     h: u32,
@@ -77,6 +97,20 @@ struct Surf {
     bufs: Vec<Buffer>,
     hits: Vec<Hit>,
     hover: Option<usize>,
+}
+
+impl Surf {
+    fn destroy(self) {
+        if let Some(l) = &self.layer {
+            l.destroy();
+        }
+        if let Some(d) = &self.dock {
+            d.ps.destroy();
+            d.tl.destroy();
+            d.xs.destroy();
+        }
+        self.wl.destroy();
+    }
 }
 
 struct Out {
@@ -96,6 +130,9 @@ struct Assets {
 struct Layout {
     primary: String,
     tiling: Vec<String>,
+    /// Each enabled output's place in the global space, in logical pixels (name, x, y, width, height), for
+    /// placing the dock.
+    sizes: Vec<(String, i32, i32, u32, u32)>,
 }
 
 struct State {
@@ -103,6 +140,8 @@ struct State {
     conn: Connection,
     compositor: WlCompositor,
     layer_shell: ZwlrLayerShellV1,
+    xdg_wm: Option<XdgWmBase>,
+    plasma_shell: Option<OrgKdePlasmaShell>,
     shm: WlShm,
     model: Model,
     assets: Assets,
@@ -152,7 +191,24 @@ fn read_layout() -> Layout {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect();
-    Layout { primary, tiling }
+    let sizes = json["outputs"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter(|o| o["enabled"].as_bool().unwrap_or(false))
+                .filter_map(|o| {
+                    let name = o["name"].as_str()?.to_string();
+                    // The current mode is in device pixels; 2 and 8 are the sideways rotations.
+                    let (w, h) = (o["size"]["width"].as_f64()?, o["size"]["height"].as_f64()?);
+                    let scale = o["scale"].as_f64().unwrap_or(1.0).max(0.5);
+                    let (w, h) = if matches!(o["rotation"].as_i64(), Some(2) | Some(8)) { (h, w) } else { (w, h) };
+                    let (x, y) = (o["pos"]["x"].as_i64().unwrap_or(0) as i32, o["pos"]["y"].as_i64().unwrap_or(0) as i32);
+                    Some((name, x, y, (w / scale).round() as u32, (h / scale).round() as u32))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Layout { primary, tiling, sizes }
 }
 
 /// Whether the system style is dark (the colour scheme's name says so; Settings > Appearance).
@@ -204,8 +260,7 @@ impl State {
             return;
         }
         for s in self.surfs.drain(..) {
-            s.layer.destroy();
-            s.wl.destroy();
+            s.destroy();
         }
         self.pointer_surface = None;
         let dock_out = self.dock_output();
@@ -215,8 +270,8 @@ impl State {
             let slim = self.layout.tiling.contains(&name);
             self.add_surface(key, Kind::Bar { slim });
             if Some(key) == dock_out {
-                self.add_surface(key, Kind::Strut);
-                self.add_surface(key, Kind::Dock);
+                self.add_dock(key);
+                self.add_strut(key);
             }
         }
         self.built_for = Some(self.layout.clone());
@@ -227,77 +282,121 @@ impl State {
         self.next_surf += 1;
         let Some(out) = self.outputs.get(&output) else { return };
         let wl = self.compositor.create_surface(&self.qh, ());
-        // The strut lives a layer below, so the space it reserves does not move the dock it is for.
-        let layer_kind = if kind == Kind::Strut { Layer::Bottom } else { Layer::Top };
-        let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), layer_kind, "labyrinth-panel".into(), &self.qh, id);
-        let (anchor, size, zone, margin) = match kind {
-            Kind::Bar { .. } => (Anchor::Top | Anchor::Left | Anchor::Right, (0, shell::BAR_H), shell::BAR_H as i32, (0, 0, 0, 0)),
-            Kind::Dock => {
-                let sz = shell::dock_size(&shell::dock_items(&self.model), self.model.conf.dock_icon, self.model.conf.dock_pos);
-                // Margin is (top, right, bottom, left): 8 px off the edge it sits on; a side dock is centred
-                // along it. Zone -1: placed against the screen edge, whatever else reserves space there.
-                let g = self.dock_margin(sz);
-                match self.model.conf.dock_pos {
-                    DockPos::Bottom => (Anchor::Bottom, sz, 0, (0, 0, g, 0)),
-                    DockPos::Left => (Anchor::Left, sz, 0, (0, 0, 0, g)),
-                    DockPos::Right => (Anchor::Right, sz, 0, (0, g, 0, 0)),
-                }
-            }
-            Kind::Strut => {
-                let sz = shell::dock_size(&shell::dock_items(&self.model), self.model.conf.dock_icon, self.model.conf.dock_pos);
-                let zone = self.dock_zone(sz);
-                match self.model.conf.dock_pos {
-                    DockPos::Bottom => (Anchor::Bottom | Anchor::Left | Anchor::Right, (0, 1), zone, (0, 0, 0, 0)),
-                    DockPos::Left => (Anchor::Left | Anchor::Top | Anchor::Bottom, (1, 0), zone, (0, 0, 0, 0)),
-                    DockPos::Right => (Anchor::Right | Anchor::Top | Anchor::Bottom, (1, 0), zone, (0, 0, 0, 0)),
-                }
-            }
+        let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Top, "labyrinth-panel".into(), &self.qh, id);
+        let size = (0, shell::BAR_H);
+        layer.set_anchor(Anchor::Top | Anchor::Left | Anchor::Right);
+        layer.set_size(size.0, size.1);
+        layer.set_exclusive_zone(shell::BAR_H as i32);
+        layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+        wl.commit();
+        self.surfs.push(Surf { id, kind, output, wl, layer: Some(layer), dock: None, w: size.0, h: size.1, want: size, gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None });
+    }
+
+    /// The dock: a Plasma panel window, the way Plasma's own panels are. KWin puts it exactly where it
+    /// is told, so it can sit right on the screen edge, and keeps windows clear of it. (A layer-shell
+    /// surface with an exclusive zone is placed above that zone by KWin, so it floated.)
+    fn add_dock(&mut self, output: u32) {
+        let (Some(wm), Some(shell_g)) = (self.xdg_wm.clone(), self.plasma_shell.clone()) else {
+            eprintln!("labyrinth-panel: no xdg-shell or plasma-shell from the compositor; there will be no dock");
+            return;
         };
+        let id = self.next_surf;
+        self.next_surf += 1;
+        let Some(out) = self.outputs.get(&output) else { return };
+        let want = shell::dock_size(&shell::dock_items(&self.model), self.model.conf.dock_icon, self.model.conf.dock_pos);
+        let wl = self.compositor.create_surface(&self.qh, ());
+        let xs = wm.get_xdg_surface(&wl, &self.qh, id);
+        let tl = xs.get_toplevel(&self.qh, id);
+        tl.set_title("Labyrinth dock".into());
+        tl.set_app_id("labyrinth-dock".into());
+        tl.set_min_size(want.0 as i32, want.1 as i32);
+        tl.set_max_size(want.0 as i32, want.1 as i32);
+        let ps = shell_g.get_surface(&wl, &self.qh, id);
+        ps.set_role(Role::Panel as u32);
+        ps.set_output(&out.wl);
+        let (x, y) = self.dock_origin(output, want);
+        ps.set_position(x, y);
+        ps.set_skip_taskbar(1);
+        ps.set_skip_switcher(1);
+        ps.set_panel_takes_focus(0);
+        wl.commit();
+        if std::env::var_os("LABYRINTH_PANEL_DEBUG").is_some() {
+            eprintln!("dock {id}: {}x{} at {x},{y}", want.0, want.1);
+        }
+        self.surfs.push(Surf { id, kind: Kind::Dock, output, wl, layer: None, dock: Some(DockWin { xs, tl, ps }), w: want.0, h: want.1, want, gap: self.model.conf.dock_gap as i32, configured: false, bufs: vec![], hits: vec![], hover: None });
+    }
+
+    fn add_strut(&mut self, output: u32) {
+        let id = self.next_surf;
+        self.next_surf += 1;
+        let Some(out) = self.outputs.get(&output) else { return };
+        let dock = shell::dock_size(&shell::dock_items(&self.model), self.model.conf.dock_icon, self.model.conf.dock_pos);
+        let (anchor, size, zone) = self.strut_geometry(dock);
+        let wl = self.compositor.create_surface(&self.qh, ());
+        let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Background, "labyrinth-dock-room".into(), &self.qh, id);
         layer.set_anchor(anchor);
         layer.set_size(size.0, size.1);
         layer.set_exclusive_zone(zone);
-        layer.set_margin(margin.0, margin.1, margin.2, margin.3);
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
         wl.commit();
-        let want = if kind == Kind::Strut { (zone as u32, zone as u32) } else { size };
-        self.surfs.push(Surf { id, kind, output, wl, layer, w: size.0, h: size.1, want, gap: self.model.conf.dock_gap as i32, configured: false, bufs: vec![], hits: vec![], hover: None });
+        self.surfs.push(Surf { id, kind: Kind::Strut, output, wl, layer: Some(layer), dock: None, w: size.0, h: size.1, want: (zone as u32, zone as u32), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None });
     }
 
-    /// The dock's margin on its edge. KWin lays a layer surface out inside the room other layer surfaces
-    /// reserve (the strut's zone: the dock's thickness plus its gap), so the margin pulls it back out
-    /// to leave just the gap from the screen edge.
-    fn dock_margin(&self, size: (u32, u32)) -> i32 {
-        self.model.conf.dock_gap as i32 - self.dock_zone(size)
+    /// The strip's anchor, requested size and zone (the dock's thickness plus the gap it floats at).
+    fn strut_geometry(&self, dock: (u32, u32)) -> (Anchor, (u32, u32), i32) {
+        let gap = self.model.conf.dock_gap;
+        match self.model.conf.dock_pos {
+            DockPos::Bottom => (Anchor::Bottom | Anchor::Left | Anchor::Right, (0, 1), (dock.1 + gap) as i32),
+            DockPos::Left => (Anchor::Left | Anchor::Top | Anchor::Bottom, (1, 0), (dock.0 + gap) as i32),
+            DockPos::Right => (Anchor::Right | Anchor::Top | Anchor::Bottom, (1, 0), (dock.0 + gap) as i32),
+        }
     }
 
-    /// How far windows keep clear of the dock's edge: its thickness and the gap it floats at.
-    fn dock_zone(&self, size: (u32, u32)) -> i32 {
-        (if self.model.conf.dock_pos.vertical() { size.0 } else { size.1 }) as i32 + self.model.conf.dock_gap as i32
+    /// Where the dock's top left corner goes in the global space: against the edge it is on (the gap
+    /// away from it), centred along it.
+    fn dock_origin(&self, output: u32, dock: (u32, u32)) -> (i32, i32) {
+        let gap = self.model.conf.dock_gap as i32;
+        let (dw, dh) = (dock.0 as i32, dock.1 as i32);
+        let area = self.outputs.get(&output).and_then(|o| self.layout.sizes.iter().find(|(n, ..)| *n == o.name)).map(|(_, x, y, w, h)| (*x, *y, *w as i32, *h as i32)).unwrap_or((0, 0, 1920, 1080));
+        let (ox, oy, ow, oh) = area;
+        match self.model.conf.dock_pos {
+            DockPos::Bottom => (ox + (ow - dw) / 2, oy + oh - dh - gap),
+            DockPos::Left => (ox + gap, oy + shell::BAR_H as i32 + (oh - shell::BAR_H as i32 - dh) / 2),
+            DockPos::Right => (ox + ow - dw - gap, oy + shell::BAR_H as i32 + (oh - shell::BAR_H as i32 - dh) / 2),
+        }
     }
 
     /// Ask for a new dock size if the items changed it.
     fn resize_dock(&mut self) {
         let pos = self.model.conf.dock_pos;
         let want = shell::dock_size(&shell::dock_items(&self.model), self.model.conf.dock_icon, pos);
-        let zone = (if pos.vertical() { want.0 } else { want.1 }) as i32 + self.model.conf.dock_gap as i32;
         let gap = self.model.conf.dock_gap as i32;
-        for s in self.surfs.iter_mut() {
-            match s.kind {
-                Kind::Dock if s.want != want || s.gap != gap => {
-                    s.want = want;
-                    s.gap = gap;
-                    s.layer.set_size(want.0, want.1);
-                    let m = gap - zone;
-                    s.layer.set_margin(0, if pos == DockPos::Right { m } else { 0 }, if pos == DockPos::Bottom { m } else { 0 }, if pos == DockPos::Left { m } else { 0 });
-                    s.wl.commit();
-                }
-                // windows keep clear of the dock at any size
-                Kind::Strut if s.want.0 != zone as u32 => {
+        let (_, _, zone) = self.strut_geometry(want);
+        for i in 0..self.surfs.len() {
+            if self.surfs[i].kind == Kind::Strut {
+                if self.surfs[i].want.0 != zone as u32 {
+                    let s = &mut self.surfs[i];
                     s.want = (zone as u32, zone as u32);
-                    s.layer.set_exclusive_zone(zone);
+                    if let Some(l) = &s.layer {
+                        l.set_exclusive_zone(zone);
+                    }
                     s.wl.commit();
                 }
-                _ => {}
+                continue;
+            }
+            if self.surfs[i].kind != Kind::Dock || (self.surfs[i].want == want && self.surfs[i].gap == gap) {
+                continue;
+            }
+            let (x, y) = self.dock_origin(self.surfs[i].output, want);
+            let s = &mut self.surfs[i];
+            s.want = want;
+            s.gap = gap;
+            s.w = want.0;
+            s.h = want.1;
+            if let Some(d) = &s.dock {
+                d.tl.set_min_size(want.0 as i32, want.1 as i32);
+                d.tl.set_max_size(want.0 as i32, want.1 as i32);
+                d.ps.set_position(x, y);
             }
         }
     }
@@ -324,9 +423,9 @@ impl State {
         let Some(mut pix) = Pixmap::new(pw, ph) else { return };
         let s = scale as f32;
         let hits = match kind {
+            Kind::Strut => vec![],
             Kind::Bar { slim } => shell::paint_bar(&mut pix, s, slim, &self.model, &self.assets.fonts, &mut self.assets.icons, hover),
             Kind::Dock => shell::paint_dock(&mut pix, s, &self.model, &self.assets.fonts, &mut self.assets.icons, hover),
-            Kind::Strut => vec![], // fully transparent
         };
         let surf = &mut self.surfs[i];
         surf.hits = hits;
@@ -459,6 +558,45 @@ impl Dispatch<WlOutput, u32> for State {
     }
 }
 
+impl Dispatch<WlRegion, ()> for State {
+    fn event(_: &mut Self, _: &WlRegion, _: <WlRegion as wayland_client::Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+}
+
+impl Dispatch<XdgWmBase, ()> for State {
+    fn event(_: &mut Self, wm: &XdgWmBase, event: xdg_wm_base::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        if let xdg_wm_base::Event::Ping { serial } = event {
+            wm.pong(serial);
+        }
+    }
+}
+
+impl Dispatch<XdgSurface, usize> for State {
+    fn event(state: &mut Self, xs: &XdgSurface, event: xdg_surface::Event, id: &usize, _: &Connection, _: &QueueHandle<Self>) {
+        if let xdg_surface::Event::Configure { serial } = event {
+            xs.ack_configure(serial);
+            let Some(i) = state.surfs.iter().position(|s| s.id == *id) else { return };
+            let want = state.surfs[i].want;
+            state.surfs[i].w = want.0;
+            state.surfs[i].h = want.1;
+            state.surfs[i].configured = true;
+            state.draw(i);
+            let _ = state.conn.flush();
+        }
+    }
+}
+
+impl Dispatch<XdgToplevel, usize> for State {
+    fn event(_: &mut Self, _: &XdgToplevel, _: xdg_toplevel::Event, _: &usize, _: &Connection, _: &QueueHandle<Self>) {}
+}
+
+impl Dispatch<OrgKdePlasmaShell, ()> for State {
+    fn event(_: &mut Self, _: &OrgKdePlasmaShell, _: <OrgKdePlasmaShell as Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+}
+
+impl Dispatch<OrgKdePlasmaSurface, usize> for State {
+    fn event(_: &mut Self, _: &OrgKdePlasmaSurface, _: org_kde_plasma_surface::Event, _: &usize, _: &Connection, _: &QueueHandle<Self>) {}
+}
+
 impl Dispatch<WlSurface, ()> for State {
     fn event(_: &mut Self, _: &WlSurface, _: wl_surface::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
 }
@@ -495,8 +633,7 @@ impl Dispatch<ZwlrLayerSurfaceV1, usize> for State {
                 // The screen went away or the compositor revoked the surface; rebuild from scratch.
                 if let Some(i) = state.surfs.iter().position(|s| s.id == *id) {
                     let s = state.surfs.remove(i);
-                    s.layer.destroy();
-                    s.wl.destroy();
+                    s.destroy();
                     state.pointer_surface = None;
                 }
             }
@@ -615,9 +752,18 @@ fn main() {
     });
     let (globals, mut queue) = registry_queue_init::<State>(&conn).expect("registry");
     let qh = queue.handle();
+    if std::env::var_os("LABYRINTH_PANEL_DEBUG").is_some() {
+        globals.contents().with_list(|l| {
+            for g in l {
+                eprintln!("global {} v{}", g.interface, g.version);
+            }
+        });
+    }
 
     let compositor: WlCompositor = globals.bind(&qh, 4..=6, ()).expect("wl_compositor");
     let shm: WlShm = globals.bind(&qh, 1..=1, ()).expect("wl_shm");
+    let xdg_wm: Option<XdgWmBase> = globals.bind(&qh, 1..=6, ()).ok();
+    let plasma_shell: Option<OrgKdePlasmaShell> = globals.bind(&qh, 1..=8, ()).ok();
     let layer_shell: ZwlrLayerShellV1 = globals.bind(&qh, 1..=4, ()).unwrap_or_else(|_| {
         eprintln!("labyrinth-panel: the compositor has no wlr-layer-shell");
         std::process::exit(1);
@@ -634,6 +780,8 @@ fn main() {
         conn: conn.clone(),
         compositor,
         layer_shell,
+        xdg_wm,
+        plasma_shell,
         shm,
         model: Model { apps: apps::load_all(), pinned: apps::pinned(), wins: vec![], clock: clock_text(), conf: PanelConf::load(), dark: system_dark(), trash_full: shell::trash_has_files() },
         assets: Assets { fonts, icons: paint::Icons::new() },

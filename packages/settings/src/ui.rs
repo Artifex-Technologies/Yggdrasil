@@ -70,7 +70,8 @@ pub fn segmented(ui: &mut egui::Ui, pal: &Palette, options: &[&str], selected: u
     egui::Frame::new().fill(pal.hover).corner_radius(CornerRadius::same(9)).inner_margin(Margin::same(3)).show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
-            for (i, o) in options.iter().enumerate() {
+            // Rows are laid out right to left, which shows the options mirrored; drawing them last to first reads in the order given.
+            for (i, o) in options.iter().enumerate().rev() {
                 let sel = i == selected;
                 let b = egui::Button::new(RichText::new(*o).color(if sel { Color32::WHITE } else { pal.text }))
                     .fill(if sel { pal.accent } else { Color32::TRANSPARENT })

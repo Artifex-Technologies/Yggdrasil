@@ -4,3 +4,9 @@ __pycache__/
 work/
 out/
 repo/
+
+# Community macOS icons imported with labyrinth-icon for local ISO builds (only computer.png, the
+# supplied This PC icon, is committed).
+profile/airootfs/usr/share/icons/Labyrinth/apps/scalable/*
+!profile/airootfs/usr/share/icons/Labyrinth/apps/scalable/.keep
+!profile/airootfs/usr/share/icons/Labyrinth/apps/scalable/computer.png

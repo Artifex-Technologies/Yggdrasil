@@ -63,7 +63,7 @@ const fn k(label: &'static str, act: Act, style: Style) -> Key {
 
 const STANDARD: [[Key; 4]; 6] = [
     [k("(", Act::Ins("("), Style::Func), k(")", Act::Ins(")"), Style::Func), k("x²", Act::Ins("^2"), Style::Func), k("√", Act::Ins("sqrt("), Style::Func)],
-    [k("C", Act::Clear, Style::Func), k("⌫", Act::Back, Style::Func), k("%", Act::Ins("%"), Style::Func), k("÷", Act::Ins("÷"), Style::Op)],
+    [k("C", Act::Clear, Style::Func), k("DEL", Act::Back, Style::Func), k("%", Act::Ins("%"), Style::Func), k("÷", Act::Ins("÷"), Style::Op)],
     [k("7", Act::Ins("7"), Style::Digit), k("8", Act::Ins("8"), Style::Digit), k("9", Act::Ins("9"), Style::Digit), k("×", Act::Ins("×"), Style::Op)],
     [k("4", Act::Ins("4"), Style::Digit), k("5", Act::Ins("5"), Style::Digit), k("6", Act::Ins("6"), Style::Digit), k("−", Act::Ins("−"), Style::Op)],
     [k("1", Act::Ins("1"), Style::Digit), k("2", Act::Ins("2"), Style::Digit), k("3", Act::Ins("3"), Style::Digit), k("+", Act::Ins("+"), Style::Op)],
@@ -71,11 +71,11 @@ const STANDARD: [[Key; 4]; 6] = [
 ];
 
 const SCIENTIFIC: [[Key; 4]; 6] = [
-    [k("π", Act::Ins("π"), Style::Func), k("e", Act::Ins("e"), Style::Func), k("xʸ", Act::Ins("^"), Style::Func), k("n!", Act::Ins("!"), Style::Func)],
+    [k("π", Act::Ins("π"), Style::Func), k("e", Act::Ins("e"), Style::Func), k("x^y", Act::Ins("^"), Style::Func), k("n!", Act::Ins("!"), Style::Func)],
     [k("sin", Act::Ins("sin("), Style::Func), k("cos", Act::Ins("cos("), Style::Func), k("tan", Act::Ins("tan("), Style::Func), k("1/x", Act::Ins("1/("), Style::Func)],
     [k("asin", Act::Ins("asin("), Style::Func), k("acos", Act::Ins("acos("), Style::Func), k("atan", Act::Ins("atan("), Style::Func), k("|x|", Act::Ins("abs("), Style::Func)],
-    [k("ln", Act::Ins("ln("), Style::Func), k("log", Act::Ins("log("), Style::Func), k("eˣ", Act::Ins("exp("), Style::Func), k("10ˣ", Act::Ins("10^("), Style::Func)],
-    [k("sinh", Act::Ins("sinh("), Style::Func), k("cosh", Act::Ins("cosh("), Style::Func), k("tanh", Act::Ins("tanh("), Style::Func), k("∛", Act::Ins("cbrt("), Style::Func)],
+    [k("ln", Act::Ins("ln("), Style::Func), k("log", Act::Ins("log("), Style::Func), k("e^x", Act::Ins("exp("), Style::Func), k("10^x", Act::Ins("10^("), Style::Func)],
+    [k("sinh", Act::Ins("sinh("), Style::Func), k("cosh", Act::Ins("cosh("), Style::Func), k("tanh", Act::Ins("tanh("), Style::Func), k("cbrt", Act::Ins("cbrt("), Style::Func)],
     [k("MC", Act::MemClear, Style::Func), k("MR", Act::MemRecall, Style::Func), k("M+", Act::MemAdd, Style::Func), k("M−", Act::MemSub, Style::Func)],
 ];
 
@@ -362,7 +362,7 @@ impl eframe::App for Calc {
                     let mut rows = SCIENTIFIC;
                     rows[0][2] = k("DEG", Act::ToggleAngle, Style::Func);
                     rows[0][3] = k("n!", Act::Ins("!"), Style::Func);
-                    rows[1][3] = k("xʸ", Act::Ins("^"), Style::Func);
+                    rows[1][3] = k("x^y", Act::Ins("^"), Style::Func);
                     if let Some(a) = pad(ui, &pal, sr, &rows, self.angle) {
                         action = Some(a);
                     }

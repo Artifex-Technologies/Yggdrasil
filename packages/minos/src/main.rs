@@ -111,7 +111,16 @@ impl TabView {
         let dir = self.dir();
         self.address = dir.to_string_lossy().into_owned();
         if places::is_this_pc(&dir) {
-            self.entries = listing::drive_entries(&places::drives());
+            // The physical disks; with no lsblk, the mounted drives as before.
+            let disks = places::disks();
+            self.entries = if disks.is_empty() { listing::drive_entries(&places::drives()) } else { listing::disk_entries(&disks) };
+            self.error = None;
+            self.selected.clear();
+            return;
+        }
+        if let Some(name) = places::disk_name(&dir) {
+            // One disk: its partitions.
+            self.entries = places::disks().iter().find(|d| d.name == name).map(listing::partition_entries).unwrap_or_default();
             self.error = None;
             self.selected.clear();
             return;
@@ -199,7 +208,7 @@ impl Pane {
         let sort = Sort::default();
         let mut tabs: Vec<TabView> = saved
             .iter()
-            .filter(|t| t.path.is_dir() || places::is_this_pc(&t.path))
+            .filter(|t| t.path.is_dir() || places::is_virtual(&t.path))
             .map(|t| TabView::new(t.path.clone(), t.pinned, sort, hidden))
             .collect();
         if tabs.is_empty() {
@@ -515,7 +524,7 @@ fn entry_icon(ui: &mut egui::Ui, pal: &Palette, st: &State, e: &Entry, size: f32
 fn sys_entry_icon(p: &egui::Painter, rect: Rect, e: &Entry) -> bool {
     let name = e.path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     if e.usage.is_some() {
-        sysicon::paint(p, rect, &["drive-harddisk"])
+        false // drives keep the drawn drive icon
     } else if e.is_dir {
         sysicon::paint(p, rect, &sysicon::folder_names(&name))
     } else if archive::is_archive_name(&e.path) {
@@ -576,6 +585,13 @@ fn tab_title(dir: &Path) -> String {
     if places::is_this_pc(dir) {
         return places::pc_name();
     }
+    if let Some(name) = places::disk_name(dir) {
+        return name;
+    }
+    // The dock's Trash opens this folder.
+    if dir.ends_with("Trash/files") {
+        return "Trash".into();
+    }
     dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| dir.to_string_lossy().into_owned())
 }
 
@@ -599,12 +615,12 @@ fn tab_strip(ui: &mut egui::Ui, pane: &Pane, pi: usize, pal: &Palette, actions: 
                 Color32::TRANSPARENT
             };
             ui.painter().rect_filled(rect, CornerRadius { nw: 10, ne: 10, sw: 0, se: 0 }, fill);
-            let icon = if places::is_this_pc(&dir) { Icon::Computer } else { Icon::Folder };
-            let icon_col = if active { pal.text } else if places::is_this_pc(&dir) { pal.dim } else { pal.folder };
+            let icon = if places::is_this_pc(&dir) { Icon::Computer } else if places::is_virtual(&dir) { Icon::Drive } else { Icon::Folder };
+            let icon_col = if active { pal.text } else if places::is_virtual(&dir) { pal.dim } else { pal.folder };
             let tab_rect = Rect::from_min_size(rect.min + vec2(10.0, 7.0), vec2(18.0, 18.0));
             let dir_name = dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-            let sys_names = if places::is_this_pc(&dir) { vec!["computer"] } else { sysicon::folder_names(&dir_name) };
-            if !sysicon::paint(ui.painter(), tab_rect, &sys_names) {
+            let sys_names = if places::is_virtual(&dir) { vec![] } else { sysicon::folder_names(&dir_name) };
+            if sys_names.is_empty() || !sysicon::paint(ui.painter(), tab_rect, &sys_names) {
                 icons::paint(ui.painter(), tab_rect, icon, icon_col);
             }
             let mut x = rect.left() + 10.0 + 18.0 + 6.0;
@@ -651,6 +667,10 @@ fn tab_strip(ui: &mut egui::Ui, pane: &Pane, pi: usize, pal: &Palette, actions: 
 fn crumbs(dir: &Path) -> Vec<(String, PathBuf)> {
     let mut v = vec![(places::pc_name(), places::this_pc())];
     if places::is_this_pc(dir) {
+        return v;
+    }
+    if let Some(name) = places::disk_name(dir) {
+        v.push((name, dir.to_path_buf()));
         return v;
     }
     let mut chain: Vec<PathBuf> = dir.ancestors().map(Path::to_path_buf).collect();
@@ -765,7 +785,7 @@ fn toolbar(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, pal: &Palette, st: &St
             actions.push(Action::Reload);
         }
         ui.add_space(6.0);
-        let in_pc = places::is_this_pc(&t.dir());
+        let in_pc = places::is_virtual(&t.dir());
         if icon_button(ui, pal, Icon::NewFolder, "New folder (Ctrl+Shift+N)", !in_pc, false).clicked() {
             actions.push(Action::NewFolder(pi));
         }
@@ -850,7 +870,7 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
     }
 
     let searching = t.results.is_some();
-    let in_pc = places::is_this_pc(&t.dir());
+    let in_pc = places::is_virtual(&t.dir());
     let in_archive = archive::split(&t.dir()).is_some();
     let TabView { entries, results, query, selected, anchor, .. } = t;
     let shown: &[Entry] = results.as_deref().unwrap_or(entries);
@@ -1182,6 +1202,7 @@ struct App {
     rename: Option<RenameDlg>,
     status: String,
     drives: Vec<places::Drive>,
+    disks: Vec<places::Disk>,
     cloud: Option<CloudPlace>,
     links: Vec<Link>,
     reports: BTreeMap<String, Report>,
@@ -1219,6 +1240,7 @@ impl App {
             rename: None,
             status: String::new(),
             drives: places::drives(),
+            disks: places::disks(),
             cloud: places::proton_drive(),
             links,
             reports,
@@ -1234,6 +1256,7 @@ impl App {
 
     fn reload_all(&mut self) {
         self.drives = places::drives();
+        self.disks = places::disks();
         let hidden = self.st.show_hidden;
         for p in &mut self.panes {
             let sort = p.sort;
@@ -1294,11 +1317,11 @@ impl App {
                     let t = self.panes[p].cur();
                     t.editing = true;
                     t.edit_fresh = true;
-                    t.address = if places::is_this_pc(&t.dir()) { String::new() } else { t.dir().to_string_lossy().into_owned() };
+                    t.address = if places::is_virtual(&t.dir()) { String::new() } else { t.dir().to_string_lossy().into_owned() };
                 }
                 Action::NewFile(p) => {
                     let dir = self.panes[p].tabs[self.panes[p].active].dir();
-                    if places::is_this_pc(&dir) || archive::split(&dir).is_some() {
+                    if places::is_virtual(&dir) || archive::split(&dir).is_some() {
                         self.status = "Open a normal folder first (archives are read-only here)".into();
                         continue;
                     }
@@ -1315,8 +1338,10 @@ impl App {
                     self.focus = p;
                     let sort = self.panes[p].sort;
                     let t = self.panes[p].cur();
-                    if path.is_dir() || places::is_this_pc(&path) || archive::split(&path).is_some() {
+                    if path.is_dir() || places::is_virtual(&path) || archive::split(&path).is_some() {
                         t.navigate(path, sort, hidden);
+                    } else if path.to_string_lossy().starts_with(places::PART_PREFIX) {
+                        t.error = Some("This partition is not mounted".into());
                     } else {
                         t.error = Some(format!("{}: not a folder", path.display()));
                     }
@@ -1409,7 +1434,7 @@ impl App {
                 Action::Paste(p) => {
                     let Some((paths, cut)) = self.clipboard.clone() else { continue };
                     let dest = self.panes[p].tabs[self.panes[p].active].dir();
-                    if places::is_this_pc(&dest) {
+                    if places::is_virtual(&dest) {
                         self.status = "Open a drive or folder to paste into".into();
                         continue;
                     }
@@ -1443,7 +1468,7 @@ impl App {
                     self.reload_all();
                 }
                 Action::Move(paths, dest) => {
-                    if places::is_this_pc(&dest) {
+                    if places::is_virtual(&dest) {
                         self.status = "Drop on a drive or a folder".into();
                         continue;
                     }
@@ -1484,7 +1509,7 @@ impl App {
                 }
                 Action::NewFolder(p) => {
                     let dir = self.panes[p].tabs[self.panes[p].active].dir();
-                    if places::is_this_pc(&dir) || archive::split(&dir).is_some() {
+                    if places::is_virtual(&dir) || archive::split(&dir).is_some() {
                         self.status = "Open a normal folder first (archives are read-only here)".into();
                         continue;
                     }
@@ -1600,9 +1625,6 @@ impl App {
         // A folder that has a colour tag keeps its drawn, tinted icon; the rest use the system theme.
         let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
         let sys: Vec<&str> = match icon {
-            Icon::Computer => vec!["computer"],
-            Icon::Home => vec!["user-home"],
-            Icon::Drive => vec!["drive-harddisk"],
             Icon::Cloud => vec!["folder-cloud", "folder"],
             Icon::Folder if icon_color == pal.folder => sysicon::folder_names(&name),
             _ => vec![],
@@ -1614,7 +1636,7 @@ impl App {
         if r.middle_clicked() {
             actions.push(Action::OpenTab(self.focus, path.to_path_buf()));
         }
-        if !places::is_this_pc(path) {
+        if !places::is_virtual(path) {
             if let Some(d) = r.dnd_release_payload::<DragPaths>() {
                 actions.push(Action::Move(d.0.clone(), path.to_path_buf()));
             }
@@ -1655,9 +1677,16 @@ impl App {
             }
 
             section_heading(ui, pal, "Storage");
-            for d in &self.drives {
-                let frac = listing::used_fraction(d.total, d.free);
-                self.nav_row(ui, pal, Icon::Drive, pal.drive, &d.label, &d.path, Some((frac, theme::usage_color(pal, frac))), false, actions);
+            if self.disks.is_empty() {
+                for d in &self.drives {
+                    let frac = listing::used_fraction(d.total, d.free);
+                    self.nav_row(ui, pal, Icon::Drive, pal.drive, &d.label, &d.path, Some((frac, theme::usage_color(pal, frac))), false, actions);
+                }
+            }
+            for d in &self.disks {
+                let (total, free) = d.usage();
+                let frac = listing::used_fraction(total, free);
+                self.nav_row(ui, pal, Icon::Drive, pal.drive, &d.label, &places::disk_path(&d.name), Some((frac, theme::usage_color(pal, frac))), false, actions);
             }
 
             if self.cloud.is_some() || !self.links.is_empty() {
@@ -1895,7 +1924,7 @@ impl eframe::App for App {
                 let drive = {
                     let p = &self.panes[self.focus];
                     let t = &p.tabs[p.active];
-                    if want.len() == 1 && places::is_this_pc(&t.dir()) {
+                    if want.len() == 1 && places::is_virtual(&t.dir()) {
                         t.entries.iter().find(|e| e.path == want[0]).and_then(|e| e.usage.map(|(total, free)| preview::drive(&e.name, total, free)))
                     } else if want.len() == 1 && places::is_this_pc(&want[0]) {
                         Some(preview::message(&places::pc_name(), "Your drives", "Select a drive to see how full it is"))

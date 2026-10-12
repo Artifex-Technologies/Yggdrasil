@@ -115,6 +115,38 @@ pub fn drive_entries(drives: &[crate::places::Drive]) -> Vec<Entry> {
         .collect()
 }
 
+/// The "This PC" listing: one entry per physical disk, carrying the usage of what is mounted on it.
+pub fn disk_entries(disks: &[crate::places::Disk]) -> Vec<Entry> {
+    disks
+        .iter()
+        .map(|d| Entry {
+            name: d.label.clone(),
+            path: crate::places::disk_path(&d.name),
+            is_dir: true,
+            size: d.size,
+            modified: None,
+            hidden: false,
+            usage: Some(d.usage()),
+        })
+        .collect()
+}
+
+/// A disk's partitions. A mounted one opens at its mount point; one that is not mounted is listed but cannot be opened.
+pub fn partition_entries(disk: &crate::places::Disk) -> Vec<Entry> {
+    disk.parts
+        .iter()
+        .map(|p| Entry {
+            name: p.label.clone(),
+            path: p.mounts.first().cloned().unwrap_or_else(|| std::path::PathBuf::from(format!("{}{}", crate::places::PART_PREFIX, p.name))),
+            is_dir: true,
+            size: p.size,
+            modified: None,
+            hidden: false,
+            usage: p.usage,
+        })
+        .collect()
+}
+
 /// Used fraction 0..=1 of a drive.
 pub fn used_fraction(total: u64, free: u64) -> f32 {
     if total == 0 { 0.0 } else { (total.saturating_sub(free) as f64 / total as f64).clamp(0.0, 1.0) as f32 }
