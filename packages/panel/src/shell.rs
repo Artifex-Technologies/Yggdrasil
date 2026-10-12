@@ -78,10 +78,14 @@ pub struct Model {
     pub apps: Vec<App>,
     pub pinned: Vec<String>,
     pub wins: Vec<Win>,
+    /// The time (24 hours) and the date ("Sun 19 Dec").
     pub clock: String,
+    pub date: String,
     pub conf: PanelConf,
     /// The system style is dark (Settings > Appearance); light flips the panels' text colours.
     pub dark: bool,
+    /// Desktops, network and Bluetooth, read in the background.
+    pub status: crate::status::Status,
     /// The trash has files in it (its dock icon shows full).
     pub trash_full: bool,
 }
@@ -90,6 +94,13 @@ pub struct Model {
 pub enum Action {
     Logo,
     Clock,
+    /// A desktop (workspace) pill, by index.
+    Workspace(usize),
+    /// The "+" that adds a desktop.
+    NewWorkspace,
+    Notch,
+    Network,
+    Bluetooth,
     /// A dock icon: the app id of its group.
     Dock(String),
 }
@@ -184,51 +195,157 @@ pub fn app_name_for_bar(m: &Model) -> String {
     }
 }
 
+/// The Labyrinth purple, for the current desktop and the active bits.
+const ACCENT: Rgba = (124, 84, 214, 255);
+
+/// The top bar: no strip of its own, just pills over the wallpaper (their backdrop is the bar's
+/// opacity setting; 0 leaves floating text), a black tab in the middle where the notch will open.
 pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts, icons: &mut Icons, hover: Option<usize>) -> Vec<Hit> {
     let (w, h) = (pix.width() as f32, pix.height() as f32);
     pix.fill(paint::color((0, 0, 0, 0)));
     let lk = look(m.conf.bar_color, m.conf.bar_opacity, m.dark);
-    paint::fill_rounded(pix, 0.0, 0.0, w, h, 0.0, lk.bg);
     let cy = h / 2.0;
-    let mut hits = vec![];
+    let ph = 22.0 * s;
+    let py = (h - ph) / 2.0;
+    let r = 7.0 * s;
+    let mut hits: Vec<Hit> = vec![];
+    let pill = |pix: &mut Pixmap, x: f32, wd: f32| {
+        if lk.bg.3 > 0 {
+            paint::fill_rounded(pix, x, py, wd, ph, r, lk.bg);
+        }
+    };
+    let lit = |hits: &Vec<Hit>| hover == Some(hits.len());
+
+    // The notch's closed tab, hanging from the top edge in the middle of the main screen.
+    if !slim {
+        let nw = 150.0 * s;
+        let nx = (w - nw) / 2.0;
+        // drawn from above the edge so the top corners are square and the bottom ones round
+        paint::fill_rounded(pix, nx, -12.0 * s, nw, 12.0 * s + ph, 10.0 * s, (0, 0, 0, 255));
+        hits.push(Hit { rect: (nx, 0.0, nw, h), action: Action::Notch });
+    }
 
     if slim {
-        // The tiling screen's bar: just the focused app on the left and the clock in the middle.
+        // The tiling screen's bar: the focused app on the left and the clock in the middle.
         let name = app_name_for_bar(m);
-        paint::draw_text(pix, &fonts.bold, 12.0 * s, 14.0 * s, cy, lk.dim, &name);
-        let cw = paint::text_width(&fonts.regular, 12.0 * s, &m.clock);
+        let nw = paint::text_width(&fonts.bold, 12.0 * s, &name) + 20.0 * s;
+        pill(pix, 8.0 * s, nw);
+        paint::draw_text(pix, &fonts.bold, 12.0 * s, 18.0 * s, cy, lk.text, &name);
+        let stamp = format!("{}  {}", m.date, m.clock);
+        let cw = paint::text_width(&fonts.regular, 12.0 * s, &stamp) + 20.0 * s;
         let cx = (w - cw) / 2.0;
-        if hover == Some(0) {
-            paint::fill_rounded(pix, cx - 8.0 * s, 3.0 * s, cw + 16.0 * s, h - 6.0 * s, 6.0 * s, lk.hover);
+        pill(pix, cx, cw);
+        if lit(&hits) {
+            paint::fill_rounded(pix, cx, py, cw, ph, r, lk.hover);
         }
-        paint::draw_text(pix, &fonts.regular, 12.0 * s, cx, cy, lk.text, &m.clock);
-        return vec![Hit { rect: (cx - 8.0 * s, 0.0, cw + 16.0 * s, h), action: Action::Clock }];
+        paint::draw_text(pix, &fonts.regular, 12.0 * s, cx + 10.0 * s, cy, lk.text, &stamp);
+        hits.push(Hit { rect: (cx, 0.0, cw, h), action: Action::Clock });
+        return hits;
     }
 
-    // Logo (the launcher/system menu button).
+    // ---- left: the Labyrinth button, the desktops, the focused app's name
+    let mut x = 8.0 * s;
+    let lw = 30.0 * s;
+    pill(pix, x, lw);
+    if lit(&hits) {
+        paint::fill_rounded(pix, x, py, lw, ph, r, lk.hover);
+    }
     let isz = (16.0 * s) as u32;
-    let lx = 10.0 * s;
-    let logo_rect = (lx - 4.0 * s, 0.0, 28.0 * s, h);
-    if hover == Some(0) {
-        paint::fill_rounded(pix, logo_rect.0, 3.0 * s, logo_rect.2, h - 6.0 * s, 6.0 * s, lk.hover);
-    }
     if let Some(ic) = icons.get("labyrinthos", isz) {
-        paint::draw_pixmap(pix, ic, lx as i32, (cy - isz as f32 / 2.0).round() as i32);
+        paint::draw_pixmap(pix, ic, (x + (lw - isz as f32) / 2.0) as i32, (cy - isz as f32 / 2.0).round() as i32);
     }
-    hits.push(Hit { rect: logo_rect, action: Action::Logo });
+    hits.push(Hit { rect: (x, 0.0, lw, h), action: Action::Logo });
+    x += lw + 6.0 * s;
 
-    // The focused app's name, bold, like a Mac's menu bar.
+    let n = m.status.desktops.len().max(1);
+    let slot = 22.0 * s;
+    let can_add = n < crate::status::MAX_DESKTOPS;
+    let wpw = 4.0 * s * 2.0 + slot * (n as f32 + if can_add { 1.0 } else { 0.0 });
+    pill(pix, x, wpw);
+    let mut sx = x + 4.0 * s;
+    for i in 0..n {
+        let current = i == m.status.current.min(n - 1);
+        if current {
+            paint::fill_rounded(pix, sx + 1.0 * s, py + 2.0 * s, slot - 2.0 * s, ph - 4.0 * s, 5.0 * s, ACCENT);
+        } else if lit(&hits) {
+            paint::fill_rounded(pix, sx + 1.0 * s, py + 2.0 * s, slot - 2.0 * s, ph - 4.0 * s, 5.0 * s, lk.hover);
+        }
+        let label = (i + 1).to_string();
+        let tw = paint::text_width(&fonts.bold, 12.0 * s, &label);
+        paint::draw_text(pix, &fonts.bold, 12.0 * s, sx + (slot - tw) / 2.0, cy, if current { (255, 255, 255, 255) } else { lk.dim }, &label);
+        hits.push(Hit { rect: (sx, 0.0, slot, h), action: Action::Workspace(i) });
+        sx += slot;
+    }
+    if can_add {
+        if lit(&hits) {
+            paint::fill_rounded(pix, sx + 1.0 * s, py + 2.0 * s, slot - 2.0 * s, ph - 4.0 * s, 5.0 * s, lk.hover);
+        }
+        let tw = paint::text_width(&fonts.bold, 14.0 * s, "+");
+        paint::draw_text(pix, &fonts.bold, 14.0 * s, sx + (slot - tw) / 2.0, cy, lk.dim, "+");
+        hits.push(Hit { rect: (sx, 0.0, slot, h), action: Action::NewWorkspace });
+    }
+    x += wpw + 6.0 * s;
+
+    // The focused app's name; it gives way to the notch when the screen is narrow.
     let name = app_name_for_bar(m);
-    paint::draw_text(pix, &fonts.bold, 13.0 * s, 42.0 * s, cy, lk.text, &name);
-
-    // Clock, right-aligned.
-    let cw = paint::text_width(&fonts.regular, 13.0 * s, &m.clock);
-    let cx = w - cw - 14.0 * s;
-    if hover == Some(1) {
-        paint::fill_rounded(pix, cx - 8.0 * s, 3.0 * s, cw + 16.0 * s, h - 6.0 * s, 6.0 * s, lk.hover);
+    let nw = paint::text_width(&fonts.bold, 12.5 * s, &name) + 20.0 * s;
+    if x + nw < (w - 150.0 * s) / 2.0 - 8.0 * s {
+        pill(pix, x, nw);
+        paint::draw_text(pix, &fonts.bold, 12.5 * s, x + 10.0 * s, cy, lk.text, &name);
     }
-    paint::draw_text(pix, &fonts.regular, 13.0 * s, cx, cy, lk.text, &m.clock);
-    hits.push(Hit { rect: (cx - 8.0 * s, 0.0, cw + 16.0 * s, h), action: Action::Clock });
+
+    // ---- right: network, Bluetooth, the clock (24 hours)
+    let mut rx = w - 8.0 * s;
+    let cw = paint::text_width(&fonts.regular, 12.5 * s, &m.clock) + 20.0 * s;
+    rx -= cw;
+    pill(pix, rx, cw);
+    if lit(&hits) {
+        paint::fill_rounded(pix, rx, py, cw, ph, r, lk.hover);
+    }
+    paint::draw_text(pix, &fonts.regular, 12.5 * s, rx + 10.0 * s, cy, lk.text, &m.clock);
+    hits.push(Hit { rect: (rx, 0.0, cw, h), action: Action::Clock });
+    rx -= 6.0 * s;
+    let dw = paint::text_width(&fonts.regular, 12.5 * s, &m.date) + 20.0 * s;
+    rx -= dw;
+    pill(pix, rx, dw);
+    if lit(&hits) {
+        paint::fill_rounded(pix, rx, py, dw, ph, r, lk.hover);
+    }
+    paint::draw_text(pix, &fonts.regular, 12.5 * s, rx + 10.0 * s, cy, lk.text, &m.date);
+    hits.push(Hit { rect: (rx, 0.0, dw, h), action: Action::Clock });
+    rx -= 6.0 * s;
+
+    let iw = 28.0 * s;
+    let isz = (14.0 * s) as u32;
+    let icon_pill = |pix: &mut Pixmap, icons: &mut Icons, hits: &mut Vec<Hit>, rx: &mut f32, name: &str, action: Action| {
+        *rx -= iw;
+        pill(pix, *rx, iw);
+        if hover == Some(hits.len()) {
+            paint::fill_rounded(pix, *rx, py, iw, ph, r, lk.hover);
+        }
+        if let Some(ic) = icons.get_tinted(name, isz, lk.text) {
+            paint::draw_pixmap(pix, ic, (*rx + (iw - isz as f32) / 2.0) as i32, (cy - isz as f32 / 2.0).round() as i32);
+        }
+        hits.push(Hit { rect: (*rx, 0.0, iw, h), action });
+        *rx -= 6.0 * s;
+    };
+    if m.status.bt != crate::status::Bt::Missing {
+        let name = match m.status.bt {
+            crate::status::Bt::Off => "bluetooth-disabled-symbolic",
+            crate::status::Bt::Connected => "bluetooth-active-symbolic",
+            _ => "bluetooth-paired-symbolic",
+        };
+        icon_pill(pix, icons, &mut hits, &mut rx, name, Action::Bluetooth);
+    }
+    let net = match m.status.net {
+        crate::status::Net::Off => "network-offline-symbolic",
+        crate::status::Net::Wired => "network-wired-symbolic",
+        crate::status::Net::Wifi(sig) if sig >= 75 => "network-wireless-signal-excellent-symbolic",
+        crate::status::Net::Wifi(sig) if sig >= 50 => "network-wireless-signal-good-symbolic",
+        crate::status::Net::Wifi(sig) if sig >= 25 => "network-wireless-signal-ok-symbolic",
+        crate::status::Net::Wifi(_) => "network-wireless-signal-weak-symbolic",
+    };
+    icon_pill(pix, icons, &mut hits, &mut rx, net, Action::Network);
     hits
 }
 
@@ -298,7 +415,7 @@ mod tests {
 
     #[test]
     fn pinned_apps_come_first_and_missing_ones_are_skipped() {
-        let m = Model { apps: vec![app("minos", "Minos"), app("vivaldi-stable", "Vivaldi")], pinned: vec!["vivaldi-stable".into(), "ghost".into(), "minos".into()], wins: vec![], clock: String::new(), conf: PanelConf::default(), dark: true, trash_full: false };
+        let m = Model { apps: vec![app("minos", "Minos"), app("vivaldi-stable", "Vivaldi")], pinned: vec!["vivaldi-stable".into(), "ghost".into(), "minos".into()], wins: vec![], clock: String::new(), date: String::new(), conf: PanelConf::default(), dark: true, status: Default::default(), trash_full: false };
         let items = dock_items(&m);
         assert_eq!(items.iter().map(|i| i.app_id.as_str()).collect::<Vec<_>>(), vec!["vivaldi-stable", "minos", TRASH_ID]); // the trash is always last
         assert!(items.iter().all(|i| i.pinned && i.wins.is_empty()));

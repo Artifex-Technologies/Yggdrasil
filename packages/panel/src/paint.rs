@@ -164,9 +164,11 @@ impl Icons {
             for theme in &self.themes {
                 let t = root.join(theme);
                 let mut dirs: Vec<PathBuf> = vec![];
-                for ctx in ["apps", "places"] {
+                for ctx in ["apps", "places", "status"] {
                     dirs.push(t.join(format!("{ctx}/scalable")));
                     dirs.push(t.join(format!("scalable/{ctx}")));
+                    dirs.push(t.join(format!("{ctx}/symbolic")));
+                    dirs.push(t.join(format!("symbolic/{ctx}")));
                     for s in [size, 512, 256, 128, 96, 64, 48, 32, 24, 22, 16] {
                         dirs.push(t.join(format!("{ctx}/{s}")));
                         dirs.push(t.join(format!("{s}x{s}/{ctx}")));
@@ -211,6 +213,28 @@ impl Icons {
         let ty = (size as f32 - sz.height() * scale) / 2.0;
         resvg::render(&tree, Transform::from_scale(scale, scale).post_translate(tx, ty), &mut pm.as_mut());
         Some(pm)
+    }
+
+    /// A symbolic (single-colour) icon painted in `color`: these have no colour of their own and
+    /// would be black on a dark bar.
+    pub fn get_tinted(&mut self, name: &str, size: u32, color: Rgba) -> Option<&Pixmap> {
+        let key = (format!("{name}#{:02x}{:02x}{:02x}", color.0, color.1, color.2), size);
+        if !self.cache.contains_key(&key) {
+            let r = self.find(name, size).and_then(|path| {
+                let svg = std::fs::read_to_string(&path).ok()?;
+                let tinted = svg.replacen("<svg ", &format!("<svg fill='#{:02x}{:02x}{:02x}' ", color.0, color.1, color.2), 1);
+                let tree = resvg::usvg::Tree::from_data(tinted.as_bytes(), &resvg::usvg::Options::default()).ok()?;
+                let sz = tree.size();
+                let mut pm = Pixmap::new(size, size)?;
+                let scale = (size as f32 / sz.width()).min(size as f32 / sz.height());
+                let tx = (size as f32 - sz.width() * scale) / 2.0;
+                let ty = (size as f32 - sz.height() * scale) / 2.0;
+                resvg::render(&tree, Transform::from_scale(scale, scale).post_translate(tx, ty), &mut pm.as_mut());
+                Some(pm)
+            });
+            self.cache.insert(key.clone(), r);
+        }
+        self.cache.get(&key).and_then(|o| o.as_ref())
     }
 
     pub fn get(&mut self, name: &str, size: u32) -> Option<&Pixmap> {

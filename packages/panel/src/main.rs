@@ -9,6 +9,7 @@
 mod apps;
 mod paint;
 mod shell;
+mod status;
 
 use std::collections::HashMap;
 use std::os::fd::AsFd;
@@ -160,16 +161,25 @@ struct State {
 
 // ------------------------------------------------------------------ small helpers
 
-fn clock_text() -> String {
+fn strftime_now(fmt: &std::ffi::CStr) -> String {
     unsafe {
         let t = libc::time(std::ptr::null_mut());
         let mut tm: libc::tm = std::mem::zeroed();
         libc::localtime_r(&t, &mut tm);
         let mut buf = [0u8; 64];
-        let fmt = c"%a %b %-d  %-I:%M %p";
         let n = libc::strftime(buf.as_mut_ptr() as *mut libc::c_char, buf.len(), fmt.as_ptr(), &tm);
         String::from_utf8_lossy(&buf[..n]).to_string()
     }
+}
+
+/// The time, 24 hours.
+fn clock_text() -> String {
+    strftime_now(c"%H:%M")
+}
+
+/// The date with the day of the week: "Sun 19 Dec".
+fn date_text() -> String {
+    strftime_now(c"%a %-d %b")
 }
 
 fn command_output(cmd: &str, args: &[&str]) -> String {
@@ -462,7 +472,22 @@ impl State {
     fn click(&mut self, action: Action) {
         match action {
             Action::Logo => run(&["qdbus6", "org.kde.krunner", "/App", "org.kde.krunner.App.display"]),
-            Action::Clock => {}
+            Action::Clock | Action::Notch => {}
+            Action::Workspace(i) => {
+                if let Some(d) = self.model.status.desktops.get(i) {
+                    run(&["busctl", "--user", "set-property", "org.kde.KWin", "/VirtualDesktopManager", "org.kde.KWin.VirtualDesktopManager", "current", "s", &d.id]);
+                    self.model.status.current = i;
+                    self.dirty = true;
+                }
+            }
+            Action::NewWorkspace => {
+                let n = self.model.status.desktops.len();
+                if n < status::MAX_DESKTOPS {
+                    run(&["busctl", "--user", "call", "org.kde.KWin", "/VirtualDesktopManager", "org.kde.KWin.VirtualDesktopManager", "createDesktop", "us", &n.to_string(), &format!("Desktop {}", n + 1)]);
+                }
+            }
+            Action::Network => run(&["labyrinth-settings", "network"]),
+            Action::Bluetooth => run(&["labyrinth-settings", "bluetooth"]),
             Action::Dock(app_id) => self.click_dock(&app_id),
         }
     }
@@ -783,7 +808,7 @@ fn main() {
         xdg_wm,
         plasma_shell,
         shm,
-        model: Model { apps: apps::load_all(), pinned: apps::pinned(), wins: vec![], clock: clock_text(), conf: PanelConf::load(), dark: system_dark(), trash_full: shell::trash_has_files() },
+        model: Model { apps: apps::load_all(), pinned: apps::pinned(), wins: vec![], clock: clock_text(), date: date_text(), conf: PanelConf::load(), dark: system_dark(), status: Default::default(), trash_full: shell::trash_has_files() },
         assets: Assets { fonts, icons: paint::Icons::new() },
         surfs: vec![],
         next_surf: 0,
@@ -805,12 +830,31 @@ fn main() {
     queue.roundtrip(&mut state).expect("roundtrip");
     WaylandSource::new(conn.clone(), queue).insert(event_loop.handle()).expect("wayland source");
 
+    // Desktops, network and Bluetooth are read on a worker thread; the 1 s timer picks up the result.
+    let shared = Arc::new(std::sync::Mutex::new(status::Status::default()));
+    {
+        let shared = shared.clone();
+        std::thread::spawn(move || loop {
+            let now = status::poll();
+            if let Ok(mut g) = shared.lock() {
+                *g = now;
+            }
+            std::thread::sleep(Duration::from_secs(2));
+        });
+    }
     event_loop
         .handle()
-        .insert_source(Timer::from_duration(Duration::from_secs(1)), |_, _, st| {
+        .insert_source(Timer::from_duration(Duration::from_secs(1)), move |_, _, st| {
+            if let Ok(cur) = shared.lock() {
+                if *cur != st.model.status {
+                    st.model.status = cur.clone();
+                    st.dirty = true;
+                }
+            }
             let now = clock_text();
             if now != st.model.clock {
                 st.model.clock = now;
+                st.model.date = date_text();
                 st.dirty = true;
             }
             let full = shell::trash_has_files();
