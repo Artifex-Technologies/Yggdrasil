@@ -648,6 +648,16 @@ impl App {
                 }
             });
         });
+        ui::group(ui, pal, Some("Start menu"), |ui| {
+            let themes = ["Windows", "Folders"];
+            let current = if conf.start_theme == labyrinth_conf::StartTheme::Folders { 1 } else { 0 };
+            ui::row(ui, pal, true, "Theme", Some("Windows: pinned apps and every app in a list. Folders: narrow, apps in folders by kind, and a power button"), |ui| {
+                if let Some(i) = ui::segmented(ui, pal, &themes, current) {
+                    conf.start_theme = if i == 1 { labyrinth_conf::StartTheme::Folders } else { labyrinth_conf::StartTheme::Windows };
+                    conf_changed = true;
+                }
+            });
+        });
         ui::group(ui, pal, Some("Wallpaper"), |ui| {
             ui.add_space(6.0);
             ui.horizontal_wrapped(|ui| {

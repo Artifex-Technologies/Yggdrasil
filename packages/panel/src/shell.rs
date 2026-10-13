@@ -87,6 +87,8 @@ pub struct Model {
     pub today: (i32, u32, u32),
     /// The signed-in user's name, for the start menu.
     pub user: String,
+    /// This machine can hibernate (the Folders theme lists it then).
+    pub hibernate: bool,
     pub conf: PanelConf,
     /// The system style is dark (Settings > Appearance); light flips the panels' text colours.
     pub dark: bool,
@@ -411,6 +413,7 @@ pub fn paint_calendar(pix: &mut Pixmap, s: f32, m: &Model, offset: i32, fonts: &
 pub enum PowerAct {
     Lock,
     Sleep,
+    Hibernate,
     Restart,
     Shutdown,
 }
@@ -420,6 +423,10 @@ pub enum StartAct {
     /// Open the app with this desktop id.
     Launch(String),
     Power(PowerAct),
+    /// Open (or show) a folder of apps, by index (the Folders theme).
+    Folder(usize),
+    /// Open or close the power choices (the Folders theme).
+    TogglePower,
 }
 
 #[derive(Clone, Debug)]
@@ -631,6 +638,214 @@ pub fn paint_start(pix: &mut Pixmap, s: f32, m: &Model, query: &str, scroll: i32
     StartPaint { card: (cx, cy, cw, ch), hits, max_scroll }
 }
 
+// ---------------------------------------------------------------- the start menu, "Folders" theme
+
+/// Whether this machine can hibernate: the kernel offers "disk", the command line says where to resume
+/// from, and there is real swap (not zram) at least as big as the memory.
+pub fn hibernate_ok(state: &str, cmdline: &str, meminfo: &str, swaps: &str) -> bool {
+    if !state.split_whitespace().any(|w| w == "disk") || !cmdline.contains("resume=") {
+        return false;
+    }
+    let ram: u64 = meminfo.lines().find_map(|l| l.strip_prefix("MemTotal:")).and_then(|v| v.split_whitespace().next()).and_then(|v| v.parse().ok()).unwrap_or(0);
+    let swap: u64 = swaps.lines().skip(1).filter(|l| !l.starts_with("/dev/zram")).filter_map(|l| l.split_whitespace().nth(2)?.parse::<u64>().ok()).sum();
+    ram > 0 && swap >= ram
+}
+
+pub fn can_hibernate() -> bool {
+    let read = |p: &str| std::fs::read_to_string(p).unwrap_or_default();
+    hibernate_ok(&read("/sys/power/state"), &read("/proc/cmdline"), &read("/proc/meminfo"), &read("/proc/swaps"))
+}
+
+/// A folder's glyph: a small purple folder.
+fn folder_glyph(pix: &mut Pixmap, s: f32, x: f32, y: f32) {
+    paint::fill_rounded(pix, x * s, y * s, 9.0 * s, 6.0 * s, 2.0 * s, (150, 110, 235, 255));
+    paint::fill_rounded(pix, x * s, (y + 3.0) * s, 18.0 * s, 13.0 * s, 3.0 * s, (124, 84, 214, 255));
+}
+
+pub struct FoldersView<'a> {
+    pub query: &'a str,
+    pub scroll: i32,
+    /// The folder whose apps are showing to the side.
+    pub cat: Option<usize>,
+    pub sub_scroll: i32,
+    pub power_open: bool,
+}
+
+/// The "Folders" start menu: narrow, favourites on top, then your apps in folders by kind (a folder opens
+/// to the side while the pointer is on it), and a power button that opens the power choices.
+pub fn paint_start_folders(pix: &mut Pixmap, s: f32, m: &Model, v: &FoldersView, pointer: (f32, f32), fonts: &Fonts, icons: &mut Icons) -> StartPaint {
+    use crate::apps;
+    pix.fill(paint::color((0, 0, 0, 0)));
+    let pal = start_pal(m.dark);
+    let surf_h = pix.height() as f32 / s;
+    let (cx, cy, cw) = (8.0, 3.0, 300.0);
+    let ch = (surf_h - 12.0).min(640.0);
+    let rr = |pix: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, c: Rgba| paint::fill_rounded(pix, x * s, y * s, w * s, h * s, r * s, c);
+    let inside = |r: (f32, f32, f32, f32)| pointer.0 >= r.0 && pointer.0 < r.0 + r.2 && pointer.1 >= r.1 && pointer.1 < r.1 + r.3;
+    let text = |pix: &mut Pixmap, font: &ab_glyph::FontVec, size: f32, x: f32, y: f32, c: Rgba, t: &str| paint::draw_text(pix, font, size * s, x * s, y * s, c, t);
+    let card = |pix: &mut Pixmap, x: f32, y: f32, w: f32, h: f32| {
+        paint::fill_rounded(pix, x * s, y * s, w * s, h * s, 14.0 * s, pal.bg);
+        paint::stroke_rounded(pix, (x + 0.5) * s, (y + 0.5) * s, (w - 1.0) * s, (h - 1.0) * s, 14.0 * s, s, pal.border);
+    };
+    card(pix, cx, cy, cw, ch);
+    let mut hits: Vec<StartHit> = vec![];
+    let mut union = (cx, cy, cw, ch);
+
+    // search
+    let (fx, fw) = (cx + 12.0, cw - 24.0);
+    rr(pix, fx, cy + 12.0, fw, 36.0, 10.0, pal.field);
+    paint::stroke_rounded(pix, (fx + 0.5) * s, (cy + 12.5) * s, (fw - 1.0) * s, 35.0 * s, 10.0 * s, s, if v.query.is_empty() { pal.border } else { (124, 84, 214, 255) });
+    if v.query.is_empty() {
+        text(pix, &fonts.regular, 13.5, fx + 12.0, cy + 30.0, pal.dim, "Search apps");
+    } else {
+        text(pix, &fonts.regular, 13.5, fx + 12.0, cy + 30.0, pal.text, v.query);
+        let qw = paint::text_width(&fonts.regular, 13.5 * s, v.query) / s;
+        rr(pix, fx + 12.0 + qw + 1.0, cy + 21.0, 1.5, 18.0, 0.5, (124, 84, 214, 255));
+    }
+
+    let top = cy + 60.0;
+    let bottom = cy + ch - 56.0;
+    let row_h = 32.0;
+    let mut max_scroll = 0;
+    let mut cat_y = None;
+    let folders = apps::folders(&m.apps);
+
+    if !v.query.trim().is_empty() {
+        let found = search_apps(&m.apps, v.query);
+        if found.is_empty() {
+            text(pix, &fonts.regular, 13.0, cx + 18.0, top + 16.0, pal.dim, "No apps match");
+        }
+        let visible = ((bottom - top) / 38.0).floor().max(1.0) as usize;
+        for (n, a) in found.iter().take(visible).enumerate() {
+            let r = (fx, top + n as f32 * 38.0, fw, 38.0);
+            if n == 0 {
+                rr(pix, r.0, r.1, r.2, r.3 - 2.0, 8.0, pal.select);
+            } else if inside(r) {
+                rr(pix, r.0, r.1, r.2, r.3 - 2.0, 8.0, pal.hover);
+            }
+            app_icon(pix, s, icons, fonts, a, r.0 + 8.0, r.1 + 6.0, 24.0);
+            text(pix, &fonts.regular, 13.5, r.0 + 42.0, r.1 + 18.0, pal.text, &fit_text(&fonts.regular, 13.5 * s, &a.name, (fw - 56.0) * s));
+            hits.push(StartHit { rect: r, act: StartAct::Launch(a.id.clone()) });
+        }
+    } else {
+        // one scrolling list: Favorites, then Folders
+        enum Line<'a> {
+            Head(&'static str),
+            Fav(&'a App),
+            Folder(usize),
+        }
+        let favs = pinned_apps(m);
+        let mut lines: Vec<Line> = vec![Line::Head("Favorites")];
+        lines.extend(favs.iter().take(8).map(|a| Line::Fav(a)));
+        lines.push(Line::Head("Folders"));
+        lines.extend((0..folders.len()).map(Line::Folder));
+        let visible = (((bottom - 4.0) - top) / row_h).floor().max(1.0) as i32;
+        max_scroll = (lines.len() as i32 - visible).max(0);
+        let scroll = v.scroll.clamp(0, max_scroll);
+        for (n, line) in lines.iter().skip(scroll as usize).take(visible as usize).enumerate() {
+            let r = (fx, top + n as f32 * row_h, fw, row_h);
+            match line {
+                Line::Head(t) => {
+                    text(pix, &fonts.bold, 12.0, r.0 + 6.0, r.1 + 18.0, pal.dim, t);
+                }
+                Line::Fav(a) => {
+                    if inside(r) {
+                        rr(pix, r.0, r.1, r.2, r.3 - 2.0, 8.0, pal.hover);
+                    }
+                    app_icon(pix, s, icons, fonts, a, r.0 + 8.0, r.1 + 5.0, 22.0);
+                    text(pix, &fonts.regular, 13.5, r.0 + 40.0, r.1 + 16.0, pal.text, &fit_text(&fonts.regular, 13.5 * s, &a.name, (fw - 54.0) * s));
+                    hits.push(StartHit { rect: r, act: StartAct::Launch(a.id.clone()) });
+                }
+                Line::Folder(i) => {
+                    let open = v.cat == Some(*i);
+                    if open {
+                        rr(pix, r.0, r.1, r.2, r.3 - 2.0, 8.0, pal.select);
+                        cat_y = Some(r.1);
+                    } else if inside(r) {
+                        rr(pix, r.0, r.1, r.2, r.3 - 2.0, 8.0, pal.hover);
+                    }
+                    folder_glyph(pix, s, r.0 + 8.0, r.1 + 7.0);
+                    text(pix, &fonts.regular, 13.5, r.0 + 40.0, r.1 + 16.0, pal.text, folders[*i].0);
+                    text(pix, &fonts.regular, 13.5, r.0 + r.2 - 18.0, r.1 + 16.0, pal.dim, ">");
+                    hits.push(StartHit { rect: r, act: StartAct::Folder(*i) });
+                }
+            }
+        }
+        if max_scroll > 0 {
+            let track = bottom - 4.0 - top;
+            let th = (track * visible as f32 / lines.len() as f32).max(24.0);
+            rr(pix, cx + cw - 7.0, top + (track - th) * scroll as f32 / max_scroll as f32, 3.0, th, 1.5, (255, 255, 255, 40));
+        }
+    }
+
+    // bottom: your name, and the power button
+    paint::fill_rounded(pix, (cx + 1.0) * s, bottom * s, (cw - 2.0) * s, s, 0.0, pal.border);
+    let my = bottom + 28.0;
+    paint::fill_circle(pix, (cx + 30.0) * s, my * s, 14.0 * s, (124, 84, 214, 255));
+    let initial: String = m.user.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| "?".into());
+    let iw = paint::text_width(&fonts.bold, 14.0 * s, &initial) / s;
+    text(pix, &fonts.bold, 14.0, cx + 30.0 - iw / 2.0, my, (255, 255, 255, 255), &initial);
+    text(pix, &fonts.regular, 13.0, cx + 52.0, my, pal.text, &fit_text(&fonts.regular, 13.0 * s, &m.user, (cw - 120.0) * s));
+    let pbtn = (cx + cw - 12.0 - 34.0, my - 17.0, 34.0, 34.0);
+    rr(pix, pbtn.0, pbtn.1, pbtn.2, pbtn.3, 9.0, if v.power_open { pal.select } else if inside(pbtn) { pal.hover } else { pal.field });
+    let isz = (16.0 * s) as u32;
+    if let Some(ic) = icons.get_tinted("system-shutdown-symbolic", isz, pal.text) {
+        paint::draw_pixmap(pix, ic, ((pbtn.0 + 9.0) * s) as i32, ((pbtn.1 + 9.0) * s) as i32);
+    }
+    hits.push(StartHit { rect: pbtn, act: StartAct::TogglePower });
+
+    // the folder that is open, to the side
+    if let (Some(ci), Some(y0)) = (v.cat, cat_y) {
+        if let Some((name, list)) = folders.get(ci) {
+            let sw = 290.0;
+            let sx = cx + cw + 4.0;
+            let vis_max = (((surf_h - 16.0) - 52.0) / row_h).floor().max(3.0) as usize;
+            let shown = list.len().min(vis_max);
+            let sh = 44.0 + shown as f32 * row_h + 8.0;
+            let sy = (y0 - 8.0).min(surf_h - 8.0 - sh).max(cy);
+            card(pix, sx, sy, sw, sh);
+            text(pix, &fonts.bold, 12.0, sx + 16.0, sy + 24.0, pal.dim, name);
+            let max_sub = list.len().saturating_sub(shown) as i32;
+            let sub = v.sub_scroll.clamp(0, max_sub);
+            for (n, a) in list.iter().skip(sub as usize).take(shown).enumerate() {
+                let r = (sx + 8.0, sy + 38.0 + n as f32 * row_h, sw - 16.0, row_h);
+                if inside(r) {
+                    rr(pix, r.0, r.1, r.2, r.3 - 2.0, 8.0, pal.hover);
+                }
+                app_icon(pix, s, icons, fonts, a, r.0 + 8.0, r.1 + 5.0, 22.0);
+                text(pix, &fonts.regular, 13.5, r.0 + 40.0, r.1 + 16.0, pal.text, &fit_text(&fonts.regular, 13.5 * s, &a.name, (r.2 - 52.0) * s));
+                hits.push(StartHit { rect: r, act: StartAct::Launch(a.id.clone()) });
+            }
+            max_scroll = max_scroll.max(0);
+            union = (cx, cy.min(sy), sx + sw - cx, (cy + ch).max(sy + sh) - cy.min(sy));
+        }
+    }
+
+    // the power choices, above the button
+    if v.power_open {
+        let mut items = vec![("Lock", PowerAct::Lock), ("Sleep", PowerAct::Sleep)];
+        if m.hibernate {
+            items.push(("Hibernate", PowerAct::Hibernate));
+        }
+        items.push(("Restart", PowerAct::Restart));
+        items.push(("Shut down", PowerAct::Shutdown));
+        let pw = 170.0;
+        let ph = items.len() as f32 * 34.0 + 12.0;
+        let (px, py) = (pbtn.0 + pbtn.2 - pw, pbtn.1 - 8.0 - ph);
+        rr(pix, px, py, pw, ph, 12.0, pal.field);
+        paint::stroke_rounded(pix, (px + 0.5) * s, (py + 0.5) * s, (pw - 1.0) * s, (ph - 1.0) * s, 12.0 * s, s, pal.border);
+        for (n, (label, act)) in items.iter().enumerate() {
+            let r = (px + 6.0, py + 6.0 + n as f32 * 34.0, pw - 12.0, 34.0);
+            if inside(r) {
+                rr(pix, r.0, r.1, r.2, r.3 - 2.0, 8.0, pal.select);
+            }
+            text(pix, &fonts.regular, 13.5, r.0 + 12.0, r.1 + 17.0, pal.text, label);
+            hits.push(StartHit { rect: r, act: StartAct::Power(*act) });
+        }
+    }
+    StartPaint { card: union, hits, max_scroll }
+}
+
 pub fn paint_dock(pix: &mut Pixmap, s: f32, m: &Model, fonts: &Fonts, icons: &mut Icons, hover: Option<usize>) -> Vec<Hit> {
     let (w, h) = (pix.width() as f32, pix.height() as f32);
     pix.fill(paint::color((0, 0, 0, 0)));
@@ -689,6 +904,17 @@ pub fn paint_dock(pix: &mut Pixmap, s: f32, m: &Model, fonts: &Fonts, icons: &mu
 mod tests {
     use super::*;
 
+    #[test]
+    fn hibernate_needs_resume_and_real_swap() {
+        let mem = "MemTotal:       16000000 kB\n";
+        let swaps = "Filename Type Size Used Priority\n/swap/swapfile file 16777216 0 -2\n/dev/zram0 partition 8000000 0 100\n";
+        assert!(hibernate_ok("freeze mem disk", "quiet resume=UUID=abc", mem, swaps));
+        assert!(!hibernate_ok("freeze mem", "quiet resume=UUID=abc", mem, swaps), "the kernel does not offer it");
+        assert!(!hibernate_ok("freeze mem disk", "quiet", mem, swaps), "no resume= on the command line");
+        let zram_only = "Filename Type Size Used Priority\n/dev/zram0 partition 32000000 0 100\n";
+        assert!(!hibernate_ok("disk", "resume=x", mem, zram_only), "zram cannot hold the image");
+    }
+
     // Window proxies need a live connection, so the grouping logic is tested through a minimal
     // stand-in that mirrors dock_items' use of the model.
     fn app(id: &str, name: &str) -> App {
@@ -697,7 +923,7 @@ mod tests {
 
     #[test]
     fn pinned_apps_come_first_and_missing_ones_are_skipped() {
-        let m = Model { apps: vec![app("minos", "Minos"), app("vivaldi-stable", "Vivaldi")], pinned: vec!["vivaldi-stable".into(), "ghost".into(), "minos".into()], wins: vec![], clock: String::new(), clock_secs: String::new(), date: String::new(), today: (2026, 1, 1), user: String::new(), conf: PanelConf::default(), dark: true, status: Default::default(), trash_full: false };
+        let m = Model { apps: vec![app("minos", "Minos"), app("vivaldi-stable", "Vivaldi")], pinned: vec!["vivaldi-stable".into(), "ghost".into(), "minos".into()], wins: vec![], clock: String::new(), clock_secs: String::new(), date: String::new(), today: (2026, 1, 1), user: String::new(), hibernate: false, conf: PanelConf::default(), dark: true, status: Default::default(), trash_full: false };
         let items = dock_items(&m);
         assert_eq!(items.iter().map(|i| i.app_id.as_str()).collect::<Vec<_>>(), vec!["vivaldi-stable", "minos", TRASH_ID]); // the trash is always last
         assert!(items.iter().all(|i| i.pinned && i.wins.is_empty()));

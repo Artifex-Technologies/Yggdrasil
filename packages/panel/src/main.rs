@@ -49,7 +49,7 @@ use wayland_protocols_plasma::plasma_window_management::client::org_kde_plasma_w
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::{Layer, ZwlrLayerShellV1};
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::{self, Anchor, KeyboardInteractivity, ZwlrLayerSurfaceV1};
 
-use labyrinth_conf::{DockPos, PanelConf};
+use labyrinth_conf::{DockPos, PanelConf, StartTheme};
 use shell::{Action, Hit, Model, Win};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -79,8 +79,18 @@ struct Popup {
 enum PopupKind {
     /// The calendar, this many months from the current one.
     Calendar { offset: i32 },
-    /// The start menu: what was typed and how far the app list is scrolled.
-    Start { query: String, scroll: i32 },
+    Start(StartState),
+}
+
+/// The start menu's state: what was typed, how far its lists are scrolled, and (Folders theme) which
+/// folder is open at the side and whether the power choices are showing.
+#[derive(Default)]
+struct StartState {
+    query: String,
+    scroll: i32,
+    cat: Option<usize>,
+    sub_scroll: i32,
+    power_open: bool,
 }
 
 struct Buffer {
@@ -405,7 +415,7 @@ impl State {
     }
 
     fn toggle_start(&mut self) {
-        self.toggle_popup(PopupKind::Start { query: String::new(), scroll: 0 });
+        self.toggle_popup(PopupKind::Start(StartState::default()));
     }
 
     /// Open a popover on the screen that was clicked, or close it if one is open.
@@ -424,7 +434,7 @@ impl State {
         layer.set_size(0, 0);
         layer.set_exclusive_zone(-1);
         // The start menu takes the keyboard at once, so you can type as soon as it opens.
-        layer.set_keyboard_interactivity(if matches!(kind, PopupKind::Start { .. }) { KeyboardInteractivity::Exclusive } else { KeyboardInteractivity::OnDemand });
+        layer.set_keyboard_interactivity(if matches!(kind, PopupKind::Start(_)) { KeyboardInteractivity::Exclusive } else { KeyboardInteractivity::OnDemand });
         wl.commit();
         self.surfs.push(Surf { id, kind: Kind::Popup, output, wl, layer: Some(layer), dock: None, w: 0, h: 0, want: (0, 0), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None });
         self.popup = Some(Popup { output, kind });
@@ -442,12 +452,35 @@ impl State {
     /// The wheel: another month in the calendar (+1 is the next), or a few rows down the app list.
     fn step_month(&mut self, by: i32) {
         let max = self.start_max;
+        let pointer = self.pointer_pos;
         match self.popup.as_mut().map(|p| &mut p.kind) {
             Some(PopupKind::Calendar { offset }) => *offset = (*offset + by).clamp(-1200, 1200),
-            Some(PopupKind::Start { scroll, .. }) => *scroll = (*scroll + by * 3).clamp(0, max),
+            Some(PopupKind::Start(st)) => {
+                // over the folder's own list, the wheel scrolls that; elsewhere, the main list
+                if st.cat.is_some() && pointer.0 > 316.0 {
+                    st.sub_scroll = (st.sub_scroll + by * 3).clamp(0, 1000);
+                } else {
+                    st.scroll = (st.scroll + by * 3).clamp(0, max);
+                }
+            }
             None => return,
         }
         self.dirty = true;
+    }
+
+    /// The Folders theme: a folder opens to the side while the pointer is on it, and closes when it is on something else.
+    fn start_hover(&mut self) {
+        let (px, py) = self.pointer_pos;
+        let over = self.start_hits.iter().rev().find(|h| px >= h.rect.0 && px < h.rect.0 + h.rect.2 && py >= h.rect.1 && py < h.rect.1 + h.rect.3).map(|h| h.act.clone());
+        let Some(Popup { kind: PopupKind::Start(st), .. }) = &mut self.popup else { return };
+        match over {
+            Some(shell::StartAct::Folder(i)) if st.cat != Some(i) => {
+                st.cat = Some(i);
+                st.sub_scroll = 0;
+            }
+            Some(shell::StartAct::Launch(_)) if px < 316.0 => st.cat = None,
+            _ => {}
+        }
     }
 
     /// Something in the start menu was chosen.
@@ -459,9 +492,25 @@ impl State {
                     apps::launch(app);
                 }
             }
+            StartAct::Folder(i) => {
+                if let Some(Popup { kind: PopupKind::Start(st), .. }) = &mut self.popup {
+                    st.cat = Some(i);
+                    st.sub_scroll = 0;
+                }
+                self.dirty = true;
+                return;
+            }
+            StartAct::TogglePower => {
+                if let Some(Popup { kind: PopupKind::Start(st), .. }) = &mut self.popup {
+                    st.power_open = !st.power_open;
+                }
+                self.dirty = true;
+                return;
+            }
             StartAct::Power(p) => match p {
                 PowerAct::Lock => run(&["loginctl", "lock-session"]),
                 PowerAct::Sleep => run(&["systemctl", "suspend"]),
+                PowerAct::Hibernate => run(&["systemctl", "hibernate"]),
                 PowerAct::Restart => run(&["systemctl", "reboot"]),
                 PowerAct::Shutdown => run(&["systemctl", "poweroff"]),
             },
@@ -476,7 +525,8 @@ impl State {
             return;
         }
         let typed = self.xkb.as_ref().map(|x| x.key_get_utf8(xkb::Keycode::new(key + 8))).unwrap_or_default();
-        let Some(Popup { kind: PopupKind::Start { query, scroll }, .. }) = &mut self.popup else { return };
+        let Some(Popup { kind: PopupKind::Start(st), .. }) = &mut self.popup else { return };
+        let (query, scroll) = (&mut st.query, &mut st.scroll);
         match key {
             14 => {
                 query.pop(); // Backspace
@@ -601,8 +651,13 @@ impl State {
             Kind::Strut => vec![],
             Kind::Popup => {
                 match &self.popup {
-                    Some(Popup { kind: PopupKind::Start { query, scroll }, .. }) => {
-                        let sp = shell::paint_start(&mut pix, s, &self.model, query, *scroll, self.pointer_pos, &self.assets.fonts, &mut self.assets.icons);
+                    Some(Popup { kind: PopupKind::Start(st), .. }) => {
+                        let sp = if self.model.conf.start_theme == StartTheme::Folders {
+                            let view = shell::FoldersView { query: &st.query, scroll: st.scroll, cat: st.cat, sub_scroll: st.sub_scroll, power_open: st.power_open };
+                            shell::paint_start_folders(&mut pix, s, &self.model, &view, self.pointer_pos, &self.assets.fonts, &mut self.assets.icons)
+                        } else {
+                            shell::paint_start(&mut pix, s, &self.model, &st.query, st.scroll, self.pointer_pos, &self.assets.fonts, &mut self.assets.icons)
+                        };
                         self.popup_card = sp.card;
                         self.start_hits = sp.hits;
                         self.start_max = sp.max_scroll;
@@ -904,8 +959,9 @@ impl Dispatch<WlPointer, ()> for State {
             }
             wl_pointer::Event::Motion { surface_x, surface_y, .. } => {
                 state.pointer_pos = (surface_x as f32, surface_y as f32);
-                if matches!(state.popup, Some(Popup { kind: PopupKind::Start { .. }, .. })) {
+                if matches!(state.popup, Some(Popup { kind: PopupKind::Start(_), .. })) {
                     state.dirty = true; // the row under the pointer lights up
+                    state.start_hover();
                 }
                 state.hover_at(surface_x as f32, surface_y as f32)
             }
@@ -936,10 +992,14 @@ impl Dispatch<WlPointer, ()> for State {
                         let (cx, cy, cw, ch) = state.popup_card;
                         if px < cx || px > cx + cw || py < cy || py > cy + ch {
                             state.close_popup();
-                        } else if matches!(state.popup, Some(Popup { kind: PopupKind::Start { .. }, .. })) {
-                            let hit = state.start_hits.iter().find(|h| px >= h.rect.0 && px < h.rect.0 + h.rect.2 && py >= h.rect.1 && py < h.rect.1 + h.rect.3).map(|h| h.act.clone());
+                        } else if matches!(state.popup, Some(Popup { kind: PopupKind::Start(_), .. })) {
+                            // the last drawn is on top (the power choices over the list)
+                            let hit = state.start_hits.iter().rev().find(|h| px >= h.rect.0 && px < h.rect.0 + h.rect.2 && py >= h.rect.1 && py < h.rect.1 + h.rect.3).map(|h| h.act.clone());
                             if let Some(act) = hit {
                                 state.start_act(act);
+                            } else if let Some(Popup { kind: PopupKind::Start(st), .. }) = &mut state.popup {
+                                st.power_open = false; // a click elsewhere puts the power choices away
+                                state.dirty = true;
                             }
                         } else if py < cy + 62.0 {
                             // the calendar's header: back to this month
@@ -1059,7 +1119,7 @@ fn main() {
         xdg_wm,
         plasma_shell,
         shm,
-        model: Model { apps: apps::load_all(), pinned: apps::pinned(), wins: vec![], clock: clock_text(PanelConf::load().clock_24h), clock_secs: secs_text(PanelConf::load().clock_24h), date: date_text(), today: today_ymd(), user: user_name(), conf: PanelConf::load(), dark: system_dark(), status: Default::default(), trash_full: shell::trash_has_files() },
+        model: Model { apps: apps::load_all(), pinned: apps::pinned(), wins: vec![], clock: clock_text(PanelConf::load().clock_24h), clock_secs: secs_text(PanelConf::load().clock_24h), date: date_text(), today: today_ymd(), user: user_name(), hibernate: shell::can_hibernate(), conf: PanelConf::load(), dark: system_dark(), status: Default::default(), trash_full: shell::trash_has_files() },
         assets: Assets { fonts, icons: paint::Icons::new() },
         surfs: vec![],
         next_surf: 0,

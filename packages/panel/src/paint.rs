@@ -164,7 +164,7 @@ impl Icons {
             for theme in &self.themes {
                 let t = root.join(theme);
                 let mut dirs: Vec<PathBuf> = vec![];
-                for ctx in ["apps", "places", "status"] {
+                for ctx in ["apps", "places", "status", "actions"] {
                     dirs.push(t.join(format!("{ctx}/scalable")));
                     dirs.push(t.join(format!("scalable/{ctx}")));
                     dirs.push(t.join(format!("{ctx}/symbolic")));

@@ -14,6 +14,15 @@ pub enum ColorMode {
     Neutral,
 }
 
+/// How the start menu looks.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum StartTheme {
+    /// Search, pinned apps in a grid, every app A to Z (like Windows 11). The default.
+    Windows,
+    /// Narrow: favourites, then your apps in folders by kind, and a power button.
+    Folders,
+}
+
 /// Which screen edge the dock sits on (left and right are vertical).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum DockPos {
@@ -36,6 +45,7 @@ pub struct PanelConf {
     pub dock_icon: u32,
     /// How far the dock floats off the screen edge, in pixels (0 = right on the edge).
     pub dock_gap: u32,
+    pub start_theme: StartTheme,
     /// The clock shows 24 hours (with seconds in the calendar); off shows AM/PM.
     pub clock_24h: bool,
     /// Dock background opacity in percent; 0 hides the shelf and leaves just the icons.
@@ -47,7 +57,7 @@ pub struct PanelConf {
 
 impl Default for PanelConf {
     fn default() -> Self {
-        PanelConf { dock_pos: DockPos::Bottom, dock_icon: 44, dock_gap: 4, clock_24h: true, dock_opacity: 69, dock_color: ColorMode::Theme, bar_opacity: 69, bar_color: ColorMode::Theme }
+        PanelConf { dock_pos: DockPos::Bottom, dock_icon: 44, dock_gap: 4, start_theme: StartTheme::Windows, clock_24h: true, dock_opacity: 69, dock_color: ColorMode::Theme, bar_opacity: 69, bar_color: ColorMode::Theme }
     }
 }
 
@@ -91,6 +101,7 @@ impl PanelConf {
                     }
                 }
                 "dock_icon" => c.dock_icon = num.unwrap_or(c.dock_icon).clamp(DOCK_ICON_MIN, DOCK_ICON_MAX),
+                "start_theme" => c.start_theme = if v == "folders" { StartTheme::Folders } else if v == "windows" { StartTheme::Windows } else { c.start_theme },
                 "clock_24h" => c.clock_24h = !matches!(v, "no" | "false" | "off" | "0"),
                 "dock_gap" => c.dock_gap = num.unwrap_or(c.dock_gap).min(DOCK_GAP_MAX),
                 "dock_opacity" => c.dock_opacity = num.unwrap_or(c.dock_opacity).min(100),
@@ -106,7 +117,7 @@ impl PanelConf {
     pub fn to_text(&self) -> String {
         format!(
             "# How the top bar and dock look. Edited by Labyrinth Settings (Appearance).\n\
-             dock_pos = {}\ndock_icon = {}\ndock_gap = {}\nclock_24h = {}\ndock_opacity = {}\ndock_color = {}\nbar_opacity = {}\nbar_color = {}\n",
+             dock_pos = {}\ndock_icon = {}\ndock_gap = {}\nclock_24h = {}\nstart_theme = {}\ndock_opacity = {}\ndock_color = {}\nbar_opacity = {}\nbar_color = {}\n",
             match self.dock_pos {
                 DockPos::Bottom => "bottom",
                 DockPos::Left => "left",
@@ -115,6 +126,7 @@ impl PanelConf {
             self.dock_icon,
             self.dock_gap,
             if self.clock_24h { "yes" } else { "no" },
+            if self.start_theme == StartTheme::Folders { "folders" } else { "windows" },
             self.dock_opacity,
             mode_name(self.dock_color),
             self.bar_opacity,
@@ -158,7 +170,7 @@ mod tests {
 
     #[test]
     fn round_trips() {
-        let c = PanelConf { dock_pos: DockPos::Right, dock_icon: 60, dock_gap: 0, clock_24h: false, dock_opacity: 0, dock_color: ColorMode::Neutral, bar_opacity: 100, bar_color: ColorMode::Neutral };
+        let c = PanelConf { dock_pos: DockPos::Right, dock_icon: 60, dock_gap: 0, start_theme: StartTheme::Folders, clock_24h: false, dock_opacity: 0, dock_color: ColorMode::Neutral, bar_opacity: 100, bar_color: ColorMode::Neutral };
         assert_eq!(PanelConf::parse(&c.to_text()), c);
     }
 
@@ -173,6 +185,8 @@ mod tests {
         assert_eq!(PanelConf::parse("dock_icon = abc").dock_icon, 44);
         assert_eq!(PanelConf::parse("dock_gap = 900").dock_gap, DOCK_GAP_MAX);
         assert_eq!(PanelConf::parse("dock_gap = 0").dock_gap, 0);
+        assert_eq!(PanelConf::parse("start_theme = folders").start_theme, StartTheme::Folders);
+        assert_eq!(PanelConf::parse("start_theme = nonsense").start_theme, StartTheme::Windows);
         assert!(PanelConf::parse("").clock_24h && !PanelConf::parse("clock_24h = no").clock_24h);
         assert_eq!(PanelConf::parse("dock_pos = left").dock_pos, DockPos::Left);
         assert_eq!(PanelConf::parse("dock_pos = sideways").dock_pos, DockPos::Bottom);

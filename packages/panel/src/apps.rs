@@ -11,6 +11,8 @@ pub struct App {
     pub exec: String,
     pub wm_class: String,
     pub no_display: bool,
+    /// The desktop entry's Categories (Utility, Network, ...).
+    pub categories: Vec<String>,
     pub path: PathBuf,
 }
 
@@ -37,6 +39,7 @@ pub fn parse_entry(id: &str, text: &str, path: &Path) -> Option<App> {
             "Exec" => app.exec = v.to_string(),
             "StartupWMClass" => app.wm_class = v.to_string(),
             "NoDisplay" => app.no_display = v == "true",
+            "Categories" => app.categories = v.split(';').filter(|c| !c.is_empty()).map(str::to_string).collect(),
             "OnlyShowIn" => only_in = v.to_lowercase(),
             "NotShowIn" => not_in = v.to_lowercase(),
             "Hidden" if v == "true" => return None,
@@ -73,6 +76,47 @@ pub fn load_all() -> Vec<App> {
         }
     }
     apps
+}
+
+/// The start menu's folder for an app, from its freedesktop categories (the first kind that fits).
+pub fn folder_of(a: &App) -> &'static str {
+    const MAP: [(&str, &str); 12] = [
+        ("Game", "Games"),
+        ("AudioVideo", "Multimedia"),
+        ("Audio", "Multimedia"),
+        ("Video", "Multimedia"),
+        ("Graphics", "Graphics"),
+        ("Office", "Office"),
+        ("Development", "Development"),
+        ("Education", "Education"),
+        ("Science", "Science"),
+        ("Network", "Internet"),
+        ("Settings", "Settings"),
+        ("System", "System"),
+    ];
+    for (cat, folder) in MAP {
+        if a.categories.iter().any(|c| c == cat) {
+            return folder;
+        }
+    }
+    if a.categories.iter().any(|c| c == "Utility") { "Accessories" } else { "Other" }
+}
+
+/// The folders to show: each with its apps A to Z; folders A to Z with "Other" last, empty ones left out.
+pub fn folders(apps: &[App]) -> Vec<(&'static str, Vec<&App>)> {
+    let mut out: Vec<(&'static str, Vec<&App>)> = vec![];
+    let mut shown: Vec<&App> = apps.iter().filter(|a| !a.no_display).collect();
+    shown.sort_by_key(|a| a.name.to_lowercase());
+    shown.dedup_by(|a, b| a.name == b.name);
+    for a in shown {
+        let f = folder_of(a);
+        match out.iter_mut().find(|(n, _)| *n == f) {
+            Some((_, v)) => v.push(a),
+            None => out.push((f, vec![a])),
+        }
+    }
+    out.sort_by_key(|(n, _)| (*n == "Other", *n));
+    out
 }
 
 /// The app that goes with a window's app id.
@@ -147,6 +191,19 @@ pub fn pinned() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn apps_are_sorted_into_folders() {
+        let mk = |name: &str, cats: &str| App { id: name.into(), name: name.into(), categories: cats.split(';').filter(|c| !c.is_empty()).map(str::to_string).collect(), ..Default::default() };
+        let apps = vec![mk("Zed", "Development;TextEditor;"), mk("Browser", "Network;WebBrowser;"), mk("Amp", "AudioVideo;Audio;"), mk("Calc", "Utility;"), mk("Mystery", ""), mk("Chess", "Game;BoardGame;")];
+        let f = folders(&apps);
+        let names: Vec<&str> = f.iter().map(|(n, _)| *n).collect();
+        assert_eq!(names, ["Accessories", "Development", "Games", "Internet", "Multimedia", "Other"]);
+        assert_eq!(folder_of(&apps[2]), "Multimedia");
+        let mut hidden = mk("Hidden", "Utility;");
+        hidden.no_display = true;
+        assert!(folders(&[hidden]).is_empty());
+    }
 
     #[test]
     fn parses_a_desktop_entry() {
