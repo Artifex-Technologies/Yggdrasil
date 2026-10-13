@@ -96,6 +96,10 @@ pub struct Model {
     pub status: crate::status::Status,
     /// The trash has files in it (its dock icon shows full).
     pub trash_full: bool,
+    /// Fylgja (the notch) is open: its tab in the bar reaches down to meet the card.
+    pub notch_open: bool,
+    /// What Fylgja shows, read while it is open.
+    pub fylgja: crate::fylgja::Snapshot,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -229,7 +233,8 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
         let nw = 150.0 * s;
         let nx = (w - nw) / 2.0;
         // drawn from above the edge so the top corners are square and the bottom ones round
-        paint::fill_rounded(pix, nx, -12.0 * s, nw, 12.0 * s + ph, 10.0 * s, (0, 0, 0, 255));
+        let th = if m.notch_open { h } else { py + ph };
+        paint::fill_rounded(pix, nx, -12.0 * s, nw, 12.0 * s + th, if m.notch_open { 0.0 } else { 10.0 * s }, (0, 0, 0, 255));
         hits.push(Hit { rect: (nx, 0.0, nw, h), action: Action::Notch });
     }
 

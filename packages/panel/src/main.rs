@@ -9,6 +9,7 @@
 mod apps;
 mod paint;
 mod calendar;
+mod fylgja;
 mod shell;
 mod status;
 
@@ -92,6 +93,8 @@ enum PopupKind {
     /// The calendar, this many months from the current one.
     Calendar { offset: i32 },
     Start(StartState),
+    /// Fylgja, the notch, on this section.
+    Fylgja { section: usize },
 }
 
 /// The start menu's state: what was typed, how far its lists are scrolled, and (Folders theme) which
@@ -205,6 +208,10 @@ struct State {
     /// What can be clicked in the open start menu, and how far its list can scroll.
     start_hits: Vec<shell::StartHit>,
     start_max: i32,
+    /// What can be clicked in Fylgja (the notch), and what its poller last read.
+    fy_hits: Vec<fylgja::FHit>,
+    fy_active: Arc<AtomicBool>,
+    fy_shared: Arc<std::sync::Mutex<fylgja::Snapshot>>,
     /// Turns key presses into letters (set when the compositor sends its keymap).
     xkb: Option<xkb::State>,
     pointer_pos: (f32, f32),
@@ -449,7 +456,21 @@ impl State {
         layer.set_keyboard_interactivity(if matches!(kind, PopupKind::Start(_)) { KeyboardInteractivity::Exclusive } else { KeyboardInteractivity::OnDemand });
         wl.commit();
         self.surfs.push(Surf { id, kind: Kind::Popup, output, wl, layer: Some(layer), dock: None, w: 0, h: 0, want: (0, 0), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None });
+        if matches!(kind, PopupKind::Fylgja { .. }) {
+            self.model.notch_open = true;
+            self.fy_active.store(true, Ordering::Relaxed);
+            fylgja::spawn_poller(self.fy_active.clone(), self.fy_shared.clone());
+            self.dirty = true;
+        }
         self.popup = Some(Popup { output, kind });
+    }
+
+    /// The pointer is on the notch's tab: open Fylgja on that screen.
+    fn open_fylgja(&mut self, output: u32) {
+        if self.popup.is_none() {
+            self.click_output = Some(output);
+            self.toggle_popup(PopupKind::Fylgja { section: 0 });
+        }
     }
 
     fn close_popup(&mut self) {
@@ -459,6 +480,11 @@ impl State {
             self.pointer_surface = None;
         }
         self.popup = None;
+        self.fy_active.store(false, Ordering::Relaxed);
+        if self.model.notch_open {
+            self.model.notch_open = false;
+            self.dirty = true;
+        }
     }
 
     /// The wheel: another month in the calendar (+1 is the next), or a few rows down the app list.
@@ -467,6 +493,7 @@ impl State {
         let pointer = self.pointer_pos;
         match self.popup.as_mut().map(|p| &mut p.kind) {
             Some(PopupKind::Calendar { offset }) => *offset = (*offset + by).clamp(-1200, 1200),
+            Some(PopupKind::Fylgja { section }) => *section = (*section as i32 + by).clamp(0, fylgja::SECTIONS.len() as i32 - 1) as usize,
             Some(PopupKind::Start(st)) => {
                 // over the folder's own list, the wheel scrolls that; elsewhere, the main list
                 if st.cat.is_some() && pointer.0 > 316.0 {
@@ -478,6 +505,39 @@ impl State {
             None => return,
         }
         self.dirty = true;
+    }
+
+    /// Something in Fylgja was clicked; `x` is where, for the volume sliders.
+    fn fylgja_act(&mut self, hit: fylgja::FHit, x: f32) {
+        use fylgja::FAct;
+        match hit.act {
+            FAct::Section(i) => {
+                if let Some(Popup { kind: PopupKind::Fylgja { section }, .. }) = &mut self.popup {
+                    *section = i;
+                    self.dirty = true;
+                }
+            }
+            FAct::Prev | FAct::PlayPause | FAct::Next => {
+                if let Some(m) = self.model.fylgja.media.clone() {
+                    fylgja::media_control(&m.bus, match hit.act { FAct::Prev => "Previous", FAct::Next => "Next", _ => "PlayPause" });
+                }
+            }
+            FAct::Slide(who) => {
+                let percent = (((x - hit.rect.0) / hit.rect.2) * 100.0).round().clamp(0.0, 100.0) as u32;
+                fylgja::set_volume(&who, percent);
+                // show it at once; the next reading confirms it
+                match who {
+                    fylgja::Slider::Master => self.model.fylgja.master = self.model.fylgja.master.map(|(_, m)| (percent, m)),
+                    fylgja::Slider::App(id) => {
+                        if let Some(a) = self.model.fylgja.apps.iter_mut().find(|a| a.id == id) {
+                            a.percent = percent;
+                        }
+                    }
+                }
+                self.dirty = true;
+            }
+            FAct::Start(a) => self.start_act(a),
+        }
     }
 
     /// The Folders theme: a folder opens to the side while the pointer is on it, and closes when it is on something else.
@@ -674,6 +734,11 @@ impl State {
                         self.start_hits = sp.hits;
                         self.start_max = sp.max_scroll;
                     }
+                    Some(Popup { kind: PopupKind::Fylgja { section }, .. }) => {
+                        let (card, hits) = fylgja::paint(&mut pix, s, &self.model, *section, self.pointer_pos, &self.assets.fonts, &mut self.assets.icons);
+                        self.popup_card = card;
+                        self.fy_hits = hits;
+                    }
                     Some(Popup { kind: PopupKind::Calendar { offset }, .. }) => {
                         let card = shell::paint_calendar(&mut pix, s, &self.model, *offset, &self.assets.fonts);
                         self.popup_card = card;
@@ -789,6 +854,16 @@ impl State {
         if new != self.surfs[i].hover {
             self.surfs[i].hover = new;
             self.dirty = true;
+        }
+        // Fylgja opens when the pointer rests on the notch's tab, and closes when it leaves it
+        if matches!(self.surfs[i].kind, Kind::Bar { .. }) {
+            let on_tab = new.and_then(|h| self.surfs[i].hits.get(h)).map(|h| h.action == Action::Notch).unwrap_or(false);
+            let out = self.surfs[i].output;
+            if on_tab {
+                self.open_fylgja(out);
+            } else if matches!(self.popup, Some(Popup { kind: PopupKind::Fylgja { .. }, .. })) {
+                self.close_popup();
+            }
         }
     }
 }
@@ -971,6 +1046,16 @@ impl Dispatch<WlPointer, ()> for State {
             }
             wl_pointer::Event::Motion { surface_x, surface_y, .. } => {
                 state.pointer_pos = (surface_x as f32, surface_y as f32);
+                if matches!(state.popup, Some(Popup { kind: PopupKind::Fylgja { .. }, .. })) {
+                    let on_popup = state.pointer_surface.and_then(|i| state.surfs.get(i)).map(|s| s.kind == Kind::Popup).unwrap_or(false);
+                    let (cx, cy, cw, ch) = state.popup_card;
+                    let (px, py) = state.pointer_pos;
+                    if on_popup && (px < cx - 6.0 || px > cx + cw + 6.0 || py > cy + ch + 6.0) {
+                        state.close_popup(); // the pointer left the notch
+                        return;
+                    }
+                    state.dirty = true; // buttons light up under the pointer
+                }
                 if matches!(state.popup, Some(Popup { kind: PopupKind::Start(_), .. })) {
                     state.dirty = true; // the row under the pointer lights up
                     state.start_hover();
@@ -1004,6 +1089,11 @@ impl Dispatch<WlPointer, ()> for State {
                         let (cx, cy, cw, ch) = state.popup_card;
                         if px < cx || px > cx + cw || py < cy || py > cy + ch {
                             state.close_popup();
+                        } else if matches!(state.popup, Some(Popup { kind: PopupKind::Fylgja { .. }, .. })) {
+                            let hit = state.fy_hits.iter().find(|h| px >= h.rect.0 && px < h.rect.0 + h.rect.2 && py >= h.rect.1 && py < h.rect.1 + h.rect.3).cloned();
+                            if let Some(hit) = hit {
+                                state.fylgja_act(hit, px);
+                            }
                         } else if matches!(state.popup, Some(Popup { kind: PopupKind::Start(_), .. })) {
                             // the last drawn is on top (the power choices over the list)
                             let hit = state.start_hits.iter().rev().find(|h| px >= h.rect.0 && px < h.rect.0 + h.rect.2 && py >= h.rect.1 && py < h.rect.1 + h.rect.3).map(|h| h.act.clone());
@@ -1131,7 +1221,7 @@ fn main() {
         xdg_wm,
         plasma_shell,
         shm,
-        model: Model { apps: apps::load_all(), pinned: apps::pinned(), wins: vec![], clock: clock_text(PanelConf::load().clock_24h), clock_secs: secs_text(PanelConf::load().clock_24h), date: date_text(), today: today_ymd(), user: user_name(), hibernate: shell::can_hibernate(), conf: PanelConf::load(), dark: system_dark(), status: Default::default(), trash_full: shell::trash_has_files() },
+        model: Model { apps: apps::load_all(), pinned: apps::pinned(), wins: vec![], clock: clock_text(PanelConf::load().clock_24h), clock_secs: secs_text(PanelConf::load().clock_24h), date: date_text(), today: today_ymd(), user: user_name(), hibernate: shell::can_hibernate(), conf: PanelConf::load(), dark: system_dark(), status: Default::default(), trash_full: shell::trash_has_files(), notch_open: false, fylgja: Default::default() },
         assets: Assets { fonts, icons: paint::Icons::new() },
         surfs: vec![],
         next_surf: 0,
@@ -1148,6 +1238,9 @@ fn main() {
         popup_card: (0.0, 0.0, 0.0, 0.0),
         start_hits: vec![],
         start_max: 0,
+        fy_hits: vec![],
+        fy_active: Arc::new(AtomicBool::new(false)),
+        fy_shared: Arc::new(std::sync::Mutex::new(Default::default())),
         xkb: None,
         pointer_pos: (0.0, 0.0),
         click_output: None,
@@ -1217,8 +1310,16 @@ fn main() {
             let secs = secs_text(h24);
             if secs != st.model.clock_secs {
                 st.model.clock_secs = secs;
-                if matches!(st.popup, Some(Popup { kind: PopupKind::Calendar { .. }, .. })) {
+                if matches!(st.popup, Some(Popup { kind: PopupKind::Calendar { .. }, .. }) | Some(Popup { kind: PopupKind::Fylgja { .. }, .. })) {
                     st.dirty = true;
+                }
+            }
+            if matches!(st.popup, Some(Popup { kind: PopupKind::Fylgja { .. }, .. })) {
+                if let Ok(snap) = st.fy_shared.lock() {
+                    if *snap != st.model.fylgja {
+                        st.model.fylgja = snap.clone();
+                        st.dirty = true;
+                    }
                 }
             }
             let full = shell::trash_has_files();
