@@ -361,7 +361,8 @@ pub fn paint_calendar(pix: &mut Pixmap, s: f32, m: &Model, offset: i32, fonts: &
     let (cw, pad, row) = (372.0, 16.0, 34.0);
     let col = (cw - 2.0 * pad) / 7.0;
     let ch = 104.0 + 6.0 * row + 12.0;
-    let (cx, cy) = (w - cw - 10.0, BAR_H as f32 + 6.0);
+    // Under the date pill with the same 6 px the bar's pills have between them, and ending where the pill ends.
+    let (cx, cy) = (w - cw - 8.0, 3.0); // the surface starts at the bar's 28 px line; the pills end 3 px above it
     paint::fill_rounded(pix, cx * s, cy * s, cw * s, ch * s, 14.0 * s, bg);
     paint::stroke_rounded(pix, (cx + 0.5) * s, (cy + 0.5) * s, (cw - 1.0) * s, (ch - 1.0) * s, 14.0 * s, s, border);
 
