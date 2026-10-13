@@ -70,6 +70,18 @@ enum Kind {
     Popup,
 }
 
+/// The panel's own D-Bus service, so a key press elsewhere (the Super key, through KWin) can reach it:
+/// `busctl --user call org.labyrinth.Panel /Panel org.labyrinth.Panel ToggleStart`.
+struct PanelBus(calloop::channel::Sender<()>);
+
+#[zbus::interface(name = "org.labyrinth.Panel")]
+impl PanelBus {
+    /// Open the start menu, or close it if it is open.
+    fn toggle_start(&self) {
+        let _ = self.0.send(());
+    }
+}
+
 /// A popover and what it shows.
 struct Popup {
     output: u32,
@@ -1150,6 +1162,27 @@ fn main() {
     queue.roundtrip(&mut state).expect("roundtrip");
     queue.roundtrip(&mut state).expect("roundtrip");
     WaylandSource::new(conn.clone(), queue).insert(event_loop.handle()).expect("wayland source");
+
+    // The D-Bus service runs on its own thread and hands requests to the event loop through a channel.
+    let (bus_tx, bus_rx) = calloop::channel::channel::<()>();
+    std::thread::spawn(move || {
+        let conn = zbus::blocking::connection::Builder::session().and_then(|b| b.name("org.labyrinth.Panel")).and_then(|b| b.serve_at("/Panel", PanelBus(bus_tx))).and_then(|b| b.build());
+        match conn {
+            Ok(_c) => loop {
+                std::thread::park();
+            },
+            Err(e) => eprintln!("labyrinth-panel: no D-Bus service ({e}); the Super key will not open the start menu"),
+        }
+    });
+    event_loop
+        .handle()
+        .insert_source(bus_rx, |event, _, st| {
+            if let calloop::channel::Event::Msg(()) = event {
+                st.click_output = None; // the main screen
+                st.toggle_start();
+            }
+        })
+        .expect("bus channel");
 
     // Desktops, network and Bluetooth are read on a worker thread; the 1 s timer picks up the result.
     let shared = Arc::new(std::sync::Mutex::new(status::Status::default()));
