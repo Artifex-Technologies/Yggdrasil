@@ -85,6 +85,8 @@ pub struct Model {
     pub date: String,
     /// Today as (year, month, day), for the calendar.
     pub today: (i32, u32, u32),
+    /// The signed-in user's name, for the start menu.
+    pub user: String,
     pub conf: PanelConf,
     /// The system style is dark (Settings > Appearance); light flips the panels' text colours.
     pub dark: bool,
@@ -403,6 +405,232 @@ pub fn paint_calendar(pix: &mut Pixmap, s: f32, m: &Model, offset: i32, fonts: &
     (cx, cy, cw, ch)
 }
 
+// ---------------------------------------------------------------- the start menu
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PowerAct {
+    Lock,
+    Sleep,
+    Restart,
+    Shutdown,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum StartAct {
+    /// Open the app with this desktop id.
+    Launch(String),
+    Power(PowerAct),
+}
+
+#[derive(Clone, Debug)]
+pub struct StartHit {
+    /// (x, y, w, h) in logical pixels.
+    pub rect: (f32, f32, f32, f32),
+    pub act: StartAct,
+}
+
+pub struct StartPaint {
+    pub card: (f32, f32, f32, f32),
+    pub hits: Vec<StartHit>,
+    /// How far the "All apps" list can scroll (in rows).
+    pub max_scroll: i32,
+}
+
+/// Every app to list, A to Z, without the ones that hide themselves.
+pub fn all_apps(apps: &[App]) -> Vec<&App> {
+    let mut v: Vec<&App> = apps.iter().filter(|a| !a.no_display).collect();
+    v.sort_by_key(|a| a.name.to_lowercase());
+    v.dedup_by(|a, b| a.name == b.name);
+    v
+}
+
+/// What matches a search: names that start with it first, then names that contain it.
+pub fn search_apps<'a>(apps: &'a [App], q: &str) -> Vec<&'a App> {
+    let q = q.trim().to_lowercase();
+    if q.is_empty() {
+        return vec![];
+    }
+    let mut starts: Vec<&App> = vec![];
+    let mut has: Vec<&App> = vec![];
+    for a in all_apps(apps) {
+        let n = a.name.to_lowercase();
+        if n.starts_with(&q) {
+            starts.push(a);
+        } else if n.contains(&q) {
+            has.push(a);
+        }
+    }
+    starts.extend(has);
+    starts
+}
+
+/// The dock's pinned apps, for the start menu's grid.
+pub fn pinned_apps(m: &Model) -> Vec<&App> {
+    m.pinned.iter().filter_map(|id| m.apps.iter().find(|a| &a.id == id && !a.no_display)).collect()
+}
+
+/// `text` cut with an ellipsis to fit `max` logical pixels.
+fn fit_text(font: &ab_glyph::FontVec, size: f32, text: &str, max: f32) -> String {
+    if paint::text_width(font, size, text) <= max {
+        return text.to_string();
+    }
+    let mut t: String = text.to_string();
+    while !t.is_empty() && paint::text_width(font, size, &format!("{t}…")) > max {
+        t.pop();
+    }
+    format!("{}…", t.trim_end())
+}
+
+struct StartPal {
+    bg: Rgba,
+    border: Rgba,
+    field: Rgba,
+    text: Rgba,
+    dim: Rgba,
+    hover: Rgba,
+    select: Rgba,
+}
+
+/// The same palette as Minos and Settings: near-black with the Labyrinth purple.
+fn start_pal(dark: bool) -> StartPal {
+    if dark {
+        StartPal { bg: (14, 15, 20, 250), border: (38, 39, 53, 255), field: (27, 28, 37, 255), text: (230, 231, 238, 255), dim: (154, 155, 171, 255), hover: (255, 255, 255, 20), select: (58, 42, 107, 255) }
+    } else {
+        StartPal { bg: (248, 248, 251, 250), border: (214, 214, 224, 255), field: (234, 234, 242, 255), text: (28, 28, 38, 255), dim: (104, 104, 122, 255), hover: (0, 0, 0, 16), select: (218, 206, 246, 255) }
+    }
+}
+
+fn app_icon(pix: &mut Pixmap, s: f32, icons: &mut Icons, fonts: &Fonts, app: &App, x: f32, y: f32, size: f32) {
+    match icons.get(&app.icon, (size * s) as u32) {
+        Some(p) => paint::draw_pixmap(pix, p, (x * s) as i32, (y * s) as i32),
+        None => {
+            paint::fill_rounded(pix, x * s, y * s, size * s, size * s, size * 0.24 * s, (84, 58, 140, 255));
+            let letter: String = app.name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
+            let ls = size * 0.5 * s;
+            let lw = paint::text_width(&fonts.bold, ls, &letter);
+            paint::draw_text(pix, &fonts.bold, ls, x * s + (size * s - lw) / 2.0, (y + size / 2.0) * s, (236, 230, 248, 255), &letter);
+        }
+    }
+}
+
+/// The start menu: search, the pinned apps, every app A to Z (the wheel scrolls it), your name and
+/// the power buttons. `pointer` lights the row under it.
+pub fn paint_start(pix: &mut Pixmap, s: f32, m: &Model, query: &str, scroll: i32, pointer: (f32, f32), fonts: &Fonts, icons: &mut Icons) -> StartPaint {
+    pix.fill(paint::color((0, 0, 0, 0)));
+    let pal = start_pal(m.dark);
+    let surf_h = pix.height() as f32 / s;
+    let (cx, cy, cw) = (8.0, 3.0, 500.0);
+    let ch = (surf_h - 12.0).min(600.0);
+    let rr = |pix: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, c: Rgba| paint::fill_rounded(pix, x * s, y * s, w * s, h * s, r * s, c);
+    let inside = |r: (f32, f32, f32, f32)| pointer.0 >= r.0 && pointer.0 < r.0 + r.2 && pointer.1 >= r.1 && pointer.1 < r.1 + r.3;
+    rr(pix, cx, cy, cw, ch, 14.0, pal.bg);
+    paint::stroke_rounded(pix, (cx + 0.5) * s, (cy + 0.5) * s, (cw - 1.0) * s, (ch - 1.0) * s, 14.0 * s, s, pal.border);
+    let mut hits: Vec<StartHit> = vec![];
+    let text = |pix: &mut Pixmap, font: &ab_glyph::FontVec, size: f32, x: f32, y: f32, c: Rgba, t: &str| {
+        paint::draw_text(pix, font, size * s, x * s, y * s, c, t);
+    };
+
+    // search
+    let fx = cx + 16.0;
+    let fw = cw - 32.0;
+    rr(pix, fx, cy + 16.0, fw, 40.0, 10.0, pal.field);
+    paint::stroke_rounded(pix, (fx + 0.5) * s, (cy + 16.5) * s, (fw - 1.0) * s, 39.0 * s, 10.0 * s, s, if query.is_empty() { pal.border } else { (124, 84, 214, 255) });
+    if query.is_empty() {
+        text(pix, &fonts.regular, 14.0, fx + 14.0, cy + 36.0, pal.dim, "Search apps");
+    } else {
+        text(pix, &fonts.regular, 14.0, fx + 14.0, cy + 36.0, pal.text, query);
+        let qw = paint::text_width(&fonts.regular, 14.0 * s, query) / s;
+        rr(pix, fx + 14.0 + qw + 1.0, cy + 26.0, 1.5, 20.0, 0.5, (124, 84, 214, 255)); // the caret
+    }
+
+    let bottom = cy + ch - 62.0; // the power row starts here
+    let mut max_scroll = 0;
+    if query.trim().is_empty() {
+        // pinned
+        text(pix, &fonts.bold, 13.0, cx + 20.0, cy + 76.0, pal.text, "Pinned");
+        let pinned = pinned_apps(m);
+        let cell_w = (cw - 32.0) / 6.0;
+        for (i, a) in pinned.iter().take(12).enumerate() {
+            let (col, row) = ((i % 6) as f32, (i / 6) as f32);
+            let r = (fx + col * cell_w, cy + 90.0 + row * 84.0, cell_w, 80.0);
+            if inside(r) {
+                rr(pix, r.0, r.1, r.2, r.3, 10.0, pal.hover);
+            }
+            app_icon(pix, s, icons, fonts, a, r.0 + (cell_w - 34.0) / 2.0, r.1 + 10.0, 34.0);
+            let name = fit_text(&fonts.regular, 11.5 * s, &a.name, (cell_w - 6.0) * s);
+            let nw = paint::text_width(&fonts.regular, 11.5 * s, &name) / s;
+            text(pix, &fonts.regular, 11.5, r.0 + (cell_w - nw) / 2.0, r.1 + 62.0, pal.text, &name);
+            hits.push(StartHit { rect: r, act: StartAct::Launch(a.id.clone()) });
+        }
+        // all apps
+        let list_top = cy + 90.0 + if pinned.len() > 6 { 2.0 } else { 1.0 } * 84.0 + 16.0;
+        text(pix, &fonts.bold, 13.0, cx + 20.0, list_top, pal.text, "All apps");
+        let apps = all_apps(&m.apps);
+        let (row_h, top) = (36.0, list_top + 14.0);
+        let visible = (((bottom - 6.0) - top) / row_h).floor().max(1.0) as i32;
+        max_scroll = (apps.len() as i32 - visible).max(0);
+        let scroll = scroll.clamp(0, max_scroll);
+        for (n, a) in apps.iter().skip(scroll as usize).take(visible as usize).enumerate() {
+            let r = (fx, top + n as f32 * row_h, fw, row_h);
+            if inside(r) {
+                rr(pix, r.0, r.1, r.2, r.3 - 2.0, 8.0, pal.hover);
+            }
+            app_icon(pix, s, icons, fonts, a, r.0 + 10.0, r.1 + 6.0, 22.0);
+            let name = fit_text(&fonts.regular, 13.5 * s, &a.name, (fw - 60.0) * s);
+            text(pix, &fonts.regular, 13.5, r.0 + 44.0, r.1 + 17.0, pal.text, &name);
+            hits.push(StartHit { rect: r, act: StartAct::Launch(a.id.clone()) });
+        }
+        // a thin scroll bar when there is more
+        if max_scroll > 0 {
+            let track = bottom - 6.0 - top;
+            let th = (track * visible as f32 / apps.len() as f32).max(24.0);
+            let ty = top + (track - th) * scroll as f32 / max_scroll as f32;
+            rr(pix, cx + cw - 9.0, ty, 3.0, th, 1.5, (255, 255, 255, 40));
+        }
+    } else {
+        // search results
+        let found = search_apps(&m.apps, query);
+        if found.is_empty() {
+            text(pix, &fonts.regular, 13.5, cx + 20.0, cy + 90.0, pal.dim, "No apps match");
+        }
+        let (row_h, top) = (42.0, cy + 70.0);
+        let visible = (((bottom - 6.0) - top) / row_h).floor().max(1.0) as usize;
+        for (n, a) in found.iter().take(visible).enumerate() {
+            let r = (fx, top + n as f32 * row_h, fw, row_h);
+            if n == 0 {
+                rr(pix, r.0, r.1, r.2, r.3 - 2.0, 8.0, pal.select); // Enter opens this one
+            } else if inside(r) {
+                rr(pix, r.0, r.1, r.2, r.3 - 2.0, 8.0, pal.hover);
+            }
+            app_icon(pix, s, icons, fonts, a, r.0 + 10.0, r.1 + 7.0, 26.0);
+            let name = fit_text(&fonts.regular, 14.0 * s, &a.name, (fw - 70.0) * s);
+            text(pix, &fonts.regular, 14.0, r.0 + 48.0, r.1 + 19.0, pal.text, &name);
+            hits.push(StartHit { rect: r, act: StartAct::Launch(a.id.clone()) });
+        }
+    }
+
+    // bottom: your name on the left, the power buttons on the right
+    paint::fill_rounded(pix, (cx + 1.0) * s, bottom * s, (cw - 2.0) * s, s, 0.0, pal.border);
+    let my = bottom + 31.0;
+    paint::fill_circle(pix, (cx + 36.0) * s, my * s, 15.0 * s, (124, 84, 214, 255));
+    let initial: String = m.user.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| "?".into());
+    let iw = paint::text_width(&fonts.bold, 15.0 * s, &initial) / s;
+    text(pix, &fonts.bold, 15.0, cx + 36.0 - iw / 2.0, my, (255, 255, 255, 255), &initial);
+    text(pix, &fonts.regular, 13.5, cx + 60.0, my, pal.text, &m.user);
+    let buttons = [("Lock", PowerAct::Lock), ("Sleep", PowerAct::Sleep), ("Restart", PowerAct::Restart), ("Shut down", PowerAct::Shutdown)];
+    let mut bx = cx + cw - 16.0;
+    for (label, act) in buttons.iter().rev() {
+        let bw = paint::text_width(&fonts.regular, 12.5 * s, label) / s + 22.0;
+        bx -= bw;
+        let r = (bx, my - 15.0, bw, 30.0);
+        rr(pix, r.0, r.1, r.2, r.3, 8.0, if inside(r) { pal.select } else { pal.field });
+        text(pix, &fonts.regular, 12.5, r.0 + 11.0, my, pal.text, label);
+        hits.push(StartHit { rect: r, act: StartAct::Power(*act) });
+        bx -= 6.0;
+    }
+    StartPaint { card: (cx, cy, cw, ch), hits, max_scroll }
+}
+
 pub fn paint_dock(pix: &mut Pixmap, s: f32, m: &Model, fonts: &Fonts, icons: &mut Icons, hover: Option<usize>) -> Vec<Hit> {
     let (w, h) = (pix.width() as f32, pix.height() as f32);
     pix.fill(paint::color((0, 0, 0, 0)));
@@ -469,7 +697,7 @@ mod tests {
 
     #[test]
     fn pinned_apps_come_first_and_missing_ones_are_skipped() {
-        let m = Model { apps: vec![app("minos", "Minos"), app("vivaldi-stable", "Vivaldi")], pinned: vec!["vivaldi-stable".into(), "ghost".into(), "minos".into()], wins: vec![], clock: String::new(), clock_secs: String::new(), date: String::new(), today: (2026, 1, 1), conf: PanelConf::default(), dark: true, status: Default::default(), trash_full: false };
+        let m = Model { apps: vec![app("minos", "Minos"), app("vivaldi-stable", "Vivaldi")], pinned: vec!["vivaldi-stable".into(), "ghost".into(), "minos".into()], wins: vec![], clock: String::new(), clock_secs: String::new(), date: String::new(), today: (2026, 1, 1), user: String::new(), conf: PanelConf::default(), dark: true, status: Default::default(), trash_full: false };
         let items = dock_items(&m);
         assert_eq!(items.iter().map(|i| i.app_id.as_str()).collect::<Vec<_>>(), vec!["vivaldi-stable", "minos", TRASH_ID]); // the trash is always last
         assert!(items.iter().all(|i| i.pinned && i.wins.is_empty()));

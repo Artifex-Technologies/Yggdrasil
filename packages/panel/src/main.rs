@@ -28,6 +28,7 @@ use wayland_client::protocol::wl_buffer::{self, WlBuffer};
 use wayland_client::protocol::wl_compositor::WlCompositor;
 use wayland_client::protocol::wl_output::{self, WlOutput};
 use wayland_client::protocol::wl_keyboard::{self, WlKeyboard};
+use xkbcommon::xkb;
 use wayland_client::protocol::wl_pointer::{self, WlPointer};
 use wayland_client::protocol::wl_region::WlRegion;
 use wayland_client::protocol::wl_registry::{self, WlRegistry};
@@ -67,6 +68,19 @@ enum Kind {
     /// A popover (the calendar): a transparent surface over the whole screen, so a click anywhere
     /// outside the card closes it. The card is drawn at the top right.
     Popup,
+}
+
+/// A popover and what it shows.
+struct Popup {
+    output: u32,
+    kind: PopupKind,
+}
+
+enum PopupKind {
+    /// The calendar, this many months from the current one.
+    Calendar { offset: i32 },
+    /// The start menu: what was typed and how far the app list is scrolled.
+    Start { query: String, scroll: i32 },
 }
 
 struct Buffer {
@@ -163,9 +177,14 @@ struct State {
     next_key: u32,
     dirty: bool,
     /// The calendar popover, when open: its output and how many months from this one it shows.
-    popup: Option<(u32, i32)>,
+    popup: Option<Popup>,
     /// The popover card's rectangle in logical pixels.
     popup_card: (f32, f32, f32, f32),
+    /// What can be clicked in the open start menu, and how far its list can scroll.
+    start_hits: Vec<shell::StartHit>,
+    start_max: i32,
+    /// Turns key presses into letters (set when the compositor sends its keymap).
+    xkb: Option<xkb::State>,
     pointer_pos: (f32, f32),
     /// The output of the surface that was just clicked.
     click_output: Option<u32>,
@@ -195,6 +214,19 @@ fn today_ymd() -> (i32, u32, u32) {
         let mut tm: libc::tm = std::mem::zeroed();
         libc::localtime_r(&t, &mut tm);
         (tm.tm_year + 1900, (tm.tm_mon + 1) as u32, tm.tm_mday as u32)
+    }
+}
+
+/// The signed-in user's full name (or login) for the start menu.
+fn user_name() -> String {
+    unsafe {
+        let pw = libc::getpwuid(libc::getuid());
+        if pw.is_null() {
+            return std::env::var("USER").unwrap_or_default();
+        }
+        let gecos = std::ffi::CStr::from_ptr((*pw).pw_gecos).to_string_lossy().to_string();
+        let first = gecos.split(',').next().unwrap_or("").trim().to_string();
+        if first.is_empty() { std::ffi::CStr::from_ptr((*pw).pw_name).to_string_lossy().to_string() } else { first }
     }
 }
 
@@ -368,8 +400,16 @@ impl State {
         self.surfs.push(Surf { id, kind: Kind::Dock, output, wl, layer: None, dock: Some(DockWin { xs, tl, ps }), w: want.0, h: want.1, want, gap: self.model.conf.dock_gap as i32, configured: false, bufs: vec![], hits: vec![], hover: None });
     }
 
-    /// Open the calendar on the screen that was clicked, or close it if it is open.
     fn toggle_calendar(&mut self) {
+        self.toggle_popup(PopupKind::Calendar { offset: 0 });
+    }
+
+    fn toggle_start(&mut self) {
+        self.toggle_popup(PopupKind::Start { query: String::new(), scroll: 0 });
+    }
+
+    /// Open a popover on the screen that was clicked, or close it if one is open.
+    fn toggle_popup(&mut self, kind: PopupKind) {
         if self.popup.is_some() {
             self.close_popup();
             return;
@@ -383,10 +423,11 @@ impl State {
         layer.set_anchor(Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right);
         layer.set_size(0, 0);
         layer.set_exclusive_zone(-1);
-        layer.set_keyboard_interactivity(KeyboardInteractivity::OnDemand);
+        // The start menu takes the keyboard at once, so you can type as soon as it opens.
+        layer.set_keyboard_interactivity(if matches!(kind, PopupKind::Start { .. }) { KeyboardInteractivity::Exclusive } else { KeyboardInteractivity::OnDemand });
         wl.commit();
         self.surfs.push(Surf { id, kind: Kind::Popup, output, wl, layer: Some(layer), dock: None, w: 0, h: 0, want: (0, 0), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None });
-        self.popup = Some((output, 0));
+        self.popup = Some(Popup { output, kind });
     }
 
     fn close_popup(&mut self) {
@@ -398,12 +439,66 @@ impl State {
         self.popup = None;
     }
 
-    /// Show another month: +1 is the next one.
+    /// The wheel: another month in the calendar (+1 is the next), or a few rows down the app list.
     fn step_month(&mut self, by: i32) {
-        if let Some((_, off)) = &mut self.popup {
-            *off = (*off + by).clamp(-1200, 1200);
-            self.dirty = true;
+        let max = self.start_max;
+        match self.popup.as_mut().map(|p| &mut p.kind) {
+            Some(PopupKind::Calendar { offset }) => *offset = (*offset + by).clamp(-1200, 1200),
+            Some(PopupKind::Start { scroll, .. }) => *scroll = (*scroll + by * 3).clamp(0, max),
+            None => return,
         }
+        self.dirty = true;
+    }
+
+    /// Something in the start menu was chosen.
+    fn start_act(&mut self, act: shell::StartAct) {
+        use shell::{PowerAct, StartAct};
+        match act {
+            StartAct::Launch(id) => {
+                if let Some(app) = self.model.apps.iter().find(|a| a.id == id) {
+                    apps::launch(app);
+                }
+            }
+            StartAct::Power(p) => match p {
+                PowerAct::Lock => run(&["loginctl", "lock-session"]),
+                PowerAct::Sleep => run(&["systemctl", "suspend"]),
+                PowerAct::Restart => run(&["systemctl", "reboot"]),
+                PowerAct::Shutdown => run(&["systemctl", "poweroff"]),
+            },
+        }
+        self.close_popup();
+    }
+
+    /// A key was pressed while a popover has the keyboard.
+    fn key_pressed(&mut self, key: u32) {
+        if key == 1 {
+            self.close_popup(); // Escape
+            return;
+        }
+        let typed = self.xkb.as_ref().map(|x| x.key_get_utf8(xkb::Keycode::new(key + 8))).unwrap_or_default();
+        let Some(Popup { kind: PopupKind::Start { query, scroll }, .. }) = &mut self.popup else { return };
+        match key {
+            14 => {
+                query.pop(); // Backspace
+                *scroll = 0;
+            }
+            28 | 96 => {
+                // Enter opens the best match
+                let first = shell::search_apps(&self.model.apps, query).first().map(|a| a.id.clone());
+                if let Some(id) = first {
+                    self.start_act(shell::StartAct::Launch(id));
+                }
+                return;
+            }
+            _ => {
+                let before = query.len();
+                query.extend(typed.chars().filter(|c| !c.is_control()));
+                if query.len() != before {
+                    *scroll = 0;
+                }
+            }
+        }
+        self.dirty = true;
     }
 
     fn add_strut(&mut self, output: u32) {
@@ -505,9 +600,19 @@ impl State {
         let hits = match kind {
             Kind::Strut => vec![],
             Kind::Popup => {
-                let off = self.popup.map(|p| p.1).unwrap_or(0);
-                let card = shell::paint_calendar(&mut pix, s, &self.model, off, &self.assets.fonts);
-                self.popup_card = card;
+                match &self.popup {
+                    Some(Popup { kind: PopupKind::Start { query, scroll }, .. }) => {
+                        let sp = shell::paint_start(&mut pix, s, &self.model, query, *scroll, self.pointer_pos, &self.assets.fonts, &mut self.assets.icons);
+                        self.popup_card = sp.card;
+                        self.start_hits = sp.hits;
+                        self.start_max = sp.max_scroll;
+                    }
+                    Some(Popup { kind: PopupKind::Calendar { offset }, .. }) => {
+                        let card = shell::paint_calendar(&mut pix, s, &self.model, *offset, &self.assets.fonts);
+                        self.popup_card = card;
+                    }
+                    None => {}
+                }
                 vec![]
             }
             Kind::Bar { slim } => shell::paint_bar(&mut pix, s, slim, &self.model, &self.assets.fonts, &mut self.assets.icons, hover),
@@ -547,7 +652,7 @@ impl State {
 
     fn click(&mut self, action: Action) {
         match action {
-            Action::Logo => run(&["qdbus6", "org.kde.krunner", "/App", "org.kde.krunner.App.display"]),
+            Action::Logo => self.toggle_start(),
             Action::Clock => self.toggle_calendar(),
             Action::Notch => {}
             Action::Workspace(i) => {
@@ -763,9 +868,21 @@ impl Dispatch<WlSeat, ()> for State {
 
 impl Dispatch<WlKeyboard, ()> for State {
     fn event(state: &mut Self, _: &WlKeyboard, event: wl_keyboard::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
-        // Escape (evdev key 1) closes the popover; nothing else here needs a keymap.
-        if let wl_keyboard::Event::Key { key: 1, state: WEnum::Value(wl_keyboard::KeyState::Pressed), .. } = event {
-            state.close_popup();
+        match event {
+            wl_keyboard::Event::Keymap { format: WEnum::Value(wl_keyboard::KeymapFormat::XkbV1), fd, size } => {
+                let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+                // SAFETY: the compositor hands us a read-only descriptor of exactly `size` bytes.
+                if let Ok(Some(km)) = unsafe { xkb::Keymap::new_from_fd(&ctx, fd, size as usize, xkb::KEYMAP_FORMAT_TEXT_V1, xkb::KEYMAP_COMPILE_NO_FLAGS) } {
+                    state.xkb = Some(xkb::State::new(&km));
+                }
+            }
+            wl_keyboard::Event::Modifiers { mods_depressed, mods_latched, mods_locked, group, .. } => {
+                if let Some(x) = &mut state.xkb {
+                    x.update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, group);
+                }
+            }
+            wl_keyboard::Event::Key { key, state: WEnum::Value(wl_keyboard::KeyState::Pressed), .. } => state.key_pressed(key),
+            _ => {}
         }
     }
 }
@@ -787,6 +904,9 @@ impl Dispatch<WlPointer, ()> for State {
             }
             wl_pointer::Event::Motion { surface_x, surface_y, .. } => {
                 state.pointer_pos = (surface_x as f32, surface_y as f32);
+                if matches!(state.popup, Some(Popup { kind: PopupKind::Start { .. }, .. })) {
+                    state.dirty = true; // the row under the pointer lights up
+                }
                 state.hover_at(surface_x as f32, surface_y as f32)
             }
             wl_pointer::Event::AxisSource { axis_source } => state.axis_wheel = matches!(axis_source, WEnum::Value(wl_pointer::AxisSource::Wheel)),
@@ -816,9 +936,15 @@ impl Dispatch<WlPointer, ()> for State {
                         let (cx, cy, cw, ch) = state.popup_card;
                         if px < cx || px > cx + cw || py < cy || py > cy + ch {
                             state.close_popup();
+                        } else if matches!(state.popup, Some(Popup { kind: PopupKind::Start { .. }, .. })) {
+                            let hit = state.start_hits.iter().find(|h| px >= h.rect.0 && px < h.rect.0 + h.rect.2 && py >= h.rect.1 && py < h.rect.1 + h.rect.3).map(|h| h.act.clone());
+                            if let Some(act) = hit {
+                                state.start_act(act);
+                            }
                         } else if py < cy + 62.0 {
-                            if let Some((_, off)) = &mut state.popup {
-                                *off = 0;
+                            // the calendar's header: back to this month
+                            if let Some(Popup { kind: PopupKind::Calendar { offset }, .. }) = &mut state.popup {
+                                *offset = 0;
                             }
                             state.dirty = true;
                         }
@@ -933,7 +1059,7 @@ fn main() {
         xdg_wm,
         plasma_shell,
         shm,
-        model: Model { apps: apps::load_all(), pinned: apps::pinned(), wins: vec![], clock: clock_text(PanelConf::load().clock_24h), clock_secs: secs_text(PanelConf::load().clock_24h), date: date_text(), today: today_ymd(), conf: PanelConf::load(), dark: system_dark(), status: Default::default(), trash_full: shell::trash_has_files() },
+        model: Model { apps: apps::load_all(), pinned: apps::pinned(), wins: vec![], clock: clock_text(PanelConf::load().clock_24h), clock_secs: secs_text(PanelConf::load().clock_24h), date: date_text(), today: today_ymd(), user: user_name(), conf: PanelConf::load(), dark: system_dark(), status: Default::default(), trash_full: shell::trash_has_files() },
         assets: Assets { fonts, icons: paint::Icons::new() },
         surfs: vec![],
         next_surf: 0,
@@ -948,6 +1074,9 @@ fn main() {
         dirty: false,
         popup: None,
         popup_card: (0.0, 0.0, 0.0, 0.0),
+        start_hits: vec![],
+        start_max: 0,
+        xkb: None,
         pointer_pos: (0.0, 0.0),
         click_output: None,
         keyboard: None,
@@ -995,7 +1124,7 @@ fn main() {
             let secs = secs_text(h24);
             if secs != st.model.clock_secs {
                 st.model.clock_secs = secs;
-                if st.popup.is_some() {
+                if matches!(st.popup, Some(Popup { kind: PopupKind::Calendar { .. }, .. })) {
                     st.dirty = true;
                 }
             }

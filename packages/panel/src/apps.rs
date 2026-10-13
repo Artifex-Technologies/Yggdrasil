@@ -19,6 +19,8 @@ pub fn parse_entry(id: &str, text: &str, path: &Path) -> Option<App> {
     let mut app = App { id: id.to_string(), path: path.to_path_buf(), ..Default::default() };
     let mut in_main = false;
     let mut kind_ok = false;
+    let mut only_in = String::new();
+    let mut not_in = String::new();
     for line in text.lines() {
         let line = line.trim();
         if line.starts_with('[') {
@@ -35,10 +37,17 @@ pub fn parse_entry(id: &str, text: &str, path: &Path) -> Option<App> {
             "Exec" => app.exec = v.to_string(),
             "StartupWMClass" => app.wm_class = v.to_string(),
             "NoDisplay" => app.no_display = v == "true",
+            "OnlyShowIn" => only_in = v.to_lowercase(),
+            "NotShowIn" => not_in = v.to_lowercase(),
             "Hidden" if v == "true" => return None,
             "Type" => kind_ok = v == "Application",
             _ => {}
         }
+    }
+    // Apps that are for other desktops (GNOME-only tools, Avahi browsers) are not listed, as in KDE's menu.
+    let has = |list: &str| list.split(';').any(|d| d == "kde");
+    if (!only_in.is_empty() && !has(&only_in)) || has(&not_in) {
+        app.no_display = true;
     }
     (kind_ok && !app.name.is_empty()).then_some(app)
 }
@@ -144,6 +153,24 @@ mod tests {
         let t = "[Desktop Entry]\nType=Application\nName=Minos\nIcon=minos\nExec=minos %U\nStartupWMClass=minos\n[Desktop Action x]\nName=Other\n";
         let a = parse_entry("minos", t, Path::new("/x/minos.desktop")).unwrap();
         assert_eq!((a.name.as_str(), a.icon.as_str(), a.exec.as_str()), ("Minos", "minos", "minos %U"));
+        let gnome = "[Desktop Entry]
+Type=Application
+Name=G
+OnlyShowIn=GNOME;
+";
+        let not_kde = "[Desktop Entry]
+Type=Application
+Name=N
+NotShowIn=KDE;GNOME;
+";
+        let both = "[Desktop Entry]
+Type=Application
+Name=B
+OnlyShowIn=KDE;GNOME;
+";
+        assert!(parse_entry("g", gnome, Path::new("/g")).unwrap().no_display);
+        assert!(parse_entry("n", not_kde, Path::new("/n")).unwrap().no_display);
+        assert!(!parse_entry("b", both, Path::new("/b")).unwrap().no_display);
         assert!(parse_entry("h", "[Desktop Entry]\nType=Application\nName=H\nHidden=true\n", Path::new("/h")).is_none());
         assert!(parse_entry("l", "[Desktop Entry]\nType=Link\nName=L\n", Path::new("/l")).is_none());
     }
