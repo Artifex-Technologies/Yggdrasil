@@ -658,6 +658,13 @@ impl App {
                 }
             });
         });
+        ui::group(ui, pal, Some("Notch (Fylgja)"), |ui| {
+            ui::row(ui, pal, true, "Clipboard history", Some("Keeps what you copy (text) in memory only, to paste again from the notch or with Super+V. It is forgotten when you log out, and password managers are skipped"), |ui| {
+                if ui::switch(ui, pal, &mut conf.clipboard_history).changed() {
+                    conf_changed = true;
+                }
+            });
+        });
         ui::group(ui, pal, Some("Wallpaper"), |ui| {
             ui.add_space(6.0);
             ui.horizontal_wrapped(|ui| {
@@ -685,11 +692,18 @@ impl App {
                 let home = std::env::var("HOME").unwrap_or_default();
                 let _ = std::fs::create_dir_all(format!("{home}/.config/Kvantum"));
                 let _ = std::fs::write(format!("{home}/.config/Kvantum/kvantum.kvconfig"), format!("[General]\ntheme={scheme}\n"));
+                // Minos's icon follows: its dark or light version
+                let _ = std::process::Command::new("labyrinth-minos-icon").args(["-", if dark { "dark" } else { "light" }]).status();
                 Ok(())
             });
         }
         if let Some([r, g, b]) = accent {
-            self.change(ctx, move || sys::act("plasma-apply-colorscheme", &["--accent-color", &format!("#{r:02x}{g:02x}{b:02x}")]));
+            self.change(ctx, move || {
+                sys::act("plasma-apply-colorscheme", &["--accent-color", &format!("#{r:02x}{g:02x}{b:02x}")])?;
+                // Minos's icon takes the new accent
+                let _ = std::process::Command::new("labyrinth-minos-icon").args([format!("{r},{g},{b}"), String::new()]).status();
+                Ok(())
+            });
         }
         if let Some(p) = wallpaper {
             self.change(ctx, move || sys::act("plasma-apply-wallpaperimage", &[&p]));

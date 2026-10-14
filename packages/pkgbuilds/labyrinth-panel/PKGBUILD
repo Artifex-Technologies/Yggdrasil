@@ -6,7 +6,7 @@ pkgdesc="Labyrinth top bar and dock"
 arch=('x86_64')
 url="https://github.com/Artifex-Technologies/Labyrinth_OS"
 license=('MIT')
-depends=('gcc-libs' 'wayland' 'fontconfig' 'libkscreen' 'kconfig' 'libxkbcommon')
+depends=('gcc-libs' 'wayland' 'fontconfig' 'libkscreen' 'kconfig' 'libxkbcommon' 'wl-clipboard' 'curl' 'pipewire' 'wireplumber' 'libpulse')
 makedepends=('cargo')
 options=('!lto')
 

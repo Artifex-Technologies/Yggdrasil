@@ -9,6 +9,25 @@ use resvg::tiny_skia::{self, Color, FillRule, Paint, Path as SkPath, PathBuilder
 
 pub type Rgba = (u8, u8, u8, u8);
 
+/// The icon theme chosen in KDE (`[Icons] Theme` in kdeglobals).
+pub fn selected_icon_theme() -> Option<String> {
+    let dir = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
+    let text = std::fs::read_to_string(dir.join("kdeglobals")).ok()?;
+    let mut in_icons = false;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_icons = line == "[Icons]";
+        } else if in_icons {
+            if let Some(v) = line.strip_prefix("Theme=") {
+                let v = v.trim();
+                return (!v.is_empty()).then(|| v.to_string());
+            }
+        }
+    }
+    None
+}
+
 pub fn color(c: Rgba) -> Color {
     Color::from_rgba8(c.0, c.1, c.2, c.3)
 }
@@ -46,6 +65,32 @@ pub fn stroke_rounded(pix: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, 
         paint.set_color(color(c));
         paint.anti_alias = true;
         let stroke = tiny_skia::Stroke { width, ..Default::default() };
+        pix.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+    }
+}
+
+/// A ring segment: from the top, clockwise, `frac` of the way round (1.0 is the whole circle).
+pub fn stroke_arc(pix: &mut Pixmap, cx: f32, cy: f32, r: f32, width: f32, frac: f32, c: Rgba) {
+    let frac = frac.clamp(0.0, 1.0);
+    if frac <= 0.0 {
+        return;
+    }
+    let n = ((frac * 96.0).ceil() as usize).max(2);
+    let mut pb = PathBuilder::new();
+    for i in 0..=n {
+        let a = -std::f32::consts::FRAC_PI_2 + std::f32::consts::TAU * frac * (i as f32 / n as f32);
+        let (x, y) = (cx + r * a.cos(), cy + r * a.sin());
+        if i == 0 {
+            pb.move_to(x, y);
+        } else {
+            pb.line_to(x, y);
+        }
+    }
+    if let Some(path) = pb.finish() {
+        let mut paint = Paint::default();
+        paint.set_color(color(c));
+        paint.anti_alias = true;
+        let stroke = tiny_skia::Stroke { width, line_cap: tiny_skia::LineCap::Round, ..Default::default() };
         pix.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
     }
 }
@@ -142,7 +187,30 @@ pub struct Icons {
 
 impl Icons {
     pub fn new() -> Icons {
-        Icons { cache: HashMap::new(), themes: ["Labyrinth", "MacTahoe-purple-dark", "MacTahoe-purple", "hicolor", "breeze-dark", "breeze", "Adwaita"].iter().map(|s| s.to_string()).collect() }
+        Icons { cache: HashMap::new(), themes: Self::chain(selected_icon_theme().as_deref()) }
+    }
+
+    /// The lookup order: the icon pack chosen in KDE first (if it is not one of ours already), then
+    /// Labyrinth's own, which fills in whatever the pack has no icon for.
+    fn chain(chosen: Option<&str>) -> Vec<String> {
+        const BASE: [&str; 7] = ["Labyrinth", "MacTahoe-purple-dark", "MacTahoe-purple", "hicolor", "breeze-dark", "breeze", "Adwaita"];
+        let mut v: Vec<String> = vec![];
+        if let Some(c) = chosen {
+            if c != "Labyrinth" {
+                // another pack: then hicolor, where Minos's icon for that pack is put (the pack's own
+                // file-manager icon if it has no Minos one), then Labyrinth's to fill the gaps
+                v.push(c.to_string());
+                v.push("hicolor".to_string());
+            }
+        }
+        v.extend(BASE.iter().map(|s| s.to_string()));
+        v
+    }
+
+    /// The icon pack was changed in KDE: use it from now on.
+    pub fn set_pack(&mut self, chosen: Option<&str>) {
+        self.themes = Self::chain(chosen);
+        self.cache.clear();
     }
 
     fn roots() -> Vec<PathBuf> {
@@ -252,6 +320,11 @@ impl Icons {
             self.cache.insert(key.clone(), r);
         }
         self.cache.get(&key).and_then(|o| o.as_ref())
+    }
+
+    /// Forget every icon drawn so far (an icon file changed on disk, like Minos's when the accent colour changes).
+    pub fn clear(&mut self) {
+        self.cache.clear();
     }
 
     pub fn get(&mut self, name: &str, size: u32) -> Option<&Pixmap> {

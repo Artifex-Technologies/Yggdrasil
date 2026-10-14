@@ -53,11 +53,13 @@ pub struct PanelConf {
     pub dock_color: ColorMode,
     pub bar_opacity: u32,
     pub bar_color: ColorMode,
+    /// Fylgja (the notch) keeps what was copied, in memory only, so it can be pasted again.
+    pub clipboard_history: bool,
 }
 
 impl Default for PanelConf {
     fn default() -> Self {
-        PanelConf { dock_pos: DockPos::Bottom, dock_icon: 44, dock_gap: 4, start_theme: StartTheme::Windows, clock_24h: true, dock_opacity: 69, dock_color: ColorMode::Theme, bar_opacity: 69, bar_color: ColorMode::Theme }
+        PanelConf { dock_pos: DockPos::Bottom, dock_icon: 44, dock_gap: 4, start_theme: StartTheme::Windows, clock_24h: true, dock_opacity: 69, dock_color: ColorMode::Theme, bar_opacity: 69, bar_color: ColorMode::Theme, clipboard_history: true }
     }
 }
 
@@ -108,6 +110,7 @@ impl PanelConf {
                 "dock_color" => c.dock_color = mode(v).unwrap_or(c.dock_color),
                 "bar_opacity" => c.bar_opacity = num.unwrap_or(c.bar_opacity).min(100),
                 "bar_color" => c.bar_color = mode(v).unwrap_or(c.bar_color),
+                "clipboard_history" => c.clipboard_history = !matches!(v, "no" | "false" | "off" | "0"),
                 _ => {}
             }
         }
@@ -117,7 +120,7 @@ impl PanelConf {
     pub fn to_text(&self) -> String {
         format!(
             "# How the top bar and dock look. Edited by Labyrinth Settings (Appearance).\n\
-             dock_pos = {}\ndock_icon = {}\ndock_gap = {}\nclock_24h = {}\nstart_theme = {}\ndock_opacity = {}\ndock_color = {}\nbar_opacity = {}\nbar_color = {}\n",
+             dock_pos = {}\ndock_icon = {}\ndock_gap = {}\nclock_24h = {}\nstart_theme = {}\ndock_opacity = {}\ndock_color = {}\nbar_opacity = {}\nbar_color = {}\nclipboard_history = {}\n",
             match self.dock_pos {
                 DockPos::Bottom => "bottom",
                 DockPos::Left => "left",
@@ -130,7 +133,8 @@ impl PanelConf {
             self.dock_opacity,
             mode_name(self.dock_color),
             self.bar_opacity,
-            mode_name(self.bar_color)
+            mode_name(self.bar_color),
+            if self.clipboard_history { "yes" } else { "no" }
         )
     }
 
@@ -170,7 +174,7 @@ mod tests {
 
     #[test]
     fn round_trips() {
-        let c = PanelConf { dock_pos: DockPos::Right, dock_icon: 60, dock_gap: 0, start_theme: StartTheme::Folders, clock_24h: false, dock_opacity: 0, dock_color: ColorMode::Neutral, bar_opacity: 100, bar_color: ColorMode::Neutral };
+        let c = PanelConf { dock_pos: DockPos::Right, dock_icon: 60, dock_gap: 0, start_theme: StartTheme::Folders, clock_24h: false, dock_opacity: 0, dock_color: ColorMode::Neutral, bar_opacity: 100, bar_color: ColorMode::Neutral, clipboard_history: false };
         assert_eq!(PanelConf::parse(&c.to_text()), c);
     }
 
@@ -188,6 +192,7 @@ mod tests {
         assert_eq!(PanelConf::parse("start_theme = folders").start_theme, StartTheme::Folders);
         assert_eq!(PanelConf::parse("start_theme = nonsense").start_theme, StartTheme::Windows);
         assert!(PanelConf::parse("").clock_24h && !PanelConf::parse("clock_24h = no").clock_24h);
+        assert!(PanelConf::parse("").clipboard_history && !PanelConf::parse("clipboard_history = no").clipboard_history);
         assert_eq!(PanelConf::parse("dock_pos = left").dock_pos, DockPos::Left);
         assert_eq!(PanelConf::parse("dock_pos = sideways").dock_pos, DockPos::Bottom);
     }

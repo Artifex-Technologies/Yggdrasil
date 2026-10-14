@@ -10,6 +10,8 @@ mod apps;
 mod paint;
 mod calendar;
 mod fylgja;
+mod osd;
+mod stats;
 mod shell;
 mod status;
 
@@ -69,17 +71,37 @@ enum Kind {
     /// A popover (the calendar): a transparent surface over the whole screen, so a click anywhere
     /// outside the card closes it. The card is drawn at the top right.
     Popup,
+    /// The volume / brightness pop-up: a small pill a little above the dock.
+    Osd,
 }
 
 /// The panel's own D-Bus service, so a key press elsewhere (the Super key, through KWin) can reach it:
 /// `busctl --user call org.labyrinth.Panel /Panel org.labyrinth.Panel ToggleStart`.
-struct PanelBus(calloop::channel::Sender<()>);
+struct PanelBus(calloop::channel::Sender<BusMsg>);
+
+/// What a request over D-Bus asks the panel to do.
+#[derive(Clone, Copy, Debug)]
+enum BusMsg {
+    ToggleStart,
+    ShowClipboard,
+    AskSarina,
+}
 
 #[zbus::interface(name = "org.labyrinth.Panel")]
 impl PanelBus {
     /// Open the start menu, or close it if it is open.
     fn toggle_start(&self) {
-        let _ = self.0.send(());
+        let _ = self.0.send(BusMsg::ToggleStart);
+    }
+
+    /// Open Fylgja (the notch) on the clipboard history, or close it.
+    fn show_clipboard(&self) {
+        let _ = self.0.send(BusMsg::ShowClipboard);
+    }
+
+    /// Start recording a question for Sarina; call again to send it.
+    fn ask_sarina(&self) {
+        let _ = self.0.send(BusMsg::AskSarina);
     }
 }
 
@@ -94,7 +116,7 @@ enum PopupKind {
     Calendar { offset: i32 },
     Start(StartState),
     /// Fylgja, the notch, on this section.
-    Fylgja { section: usize },
+    Fylgja(fylgja::FyState),
 }
 
 /// The start menu's state: what was typed, how far its lists are scrolled, and (Folders theme) which
@@ -212,6 +234,41 @@ struct State {
     fy_hits: Vec<fylgja::FHit>,
     fy_active: Arc<AtomicBool>,
     fy_shared: Arc<std::sync::Mutex<fylgja::Snapshot>>,
+    /// A volume slider being dragged: which one, its rectangle, and the last level and time sent.
+    drag: Option<(fylgja::Slider, (f32, f32, f32, f32))>,
+    drag_sent: (std::time::Instant, u32),
+    /// Nothing was playing when the small card was last asked for: do not ask again for a few seconds.
+    peek_blocked: Option<std::time::Instant>,
+    /// The volume or brightness pop-up being shown, and a count that tells its hide timer if it is the latest.
+    osd: Option<osd::OsdState>,
+    osd_gen: u64,
+    osd_hide_tx: calloop::channel::Sender<u64>,
+    /// When Minos's generated icon file last changed (it follows the accent colour).
+    icon_stamp: Option<std::time::SystemTime>,
+    /// The icon pack chosen in KDE, to notice a change.
+    icon_pack: Option<String>,
+    /// The pointer is on the notch's tab (kept even when the small card was put away).
+    tab_hover: bool,
+    stats_shared: Arc<std::sync::Mutex<stats::StatsSnap>>,
+    stats_wanted: Arc<AtomicBool>,
+    /// Resting the pointer on the notch's tab opens Fylgja after a short delay: the count of the
+    /// latest rest, whether the pointer is still on the tab, and its screen.
+    tab_tx: calloop::channel::Sender<u64>,
+    tab_gen: u64,
+    tab_on: bool,
+    tab_output: u32,
+    /// A question for Sarina being recorded, and when it began; her answer comes back on `voice_tx`.
+    rec: Option<(std::process::Child, std::path::PathBuf)>,
+    rec_since: Option<std::time::Instant>,
+    voice_tx: calloop::channel::Sender<Result<String, String>>,
+    /// What was copied (in memory only) and the process that watches the clipboard.
+    clips: Arc<std::sync::Mutex<Vec<String>>>,
+    clip_child: Option<std::process::Child>,
+    thumbs_started: bool,
+    art_for: Option<String>,
+    /// Fylgja sliding down (opening) or up (closing): when it began, and ticks that redraw it.
+    fy_anim: Option<(std::time::Instant, bool)>,
+    anim_tx: calloop::channel::Sender<()>,
     /// Turns key presses into letters (set when the compositor sends its keymap).
     xkb: Option<xkb::State>,
     pointer_pos: (f32, f32),
@@ -453,27 +510,233 @@ impl State {
         layer.set_size(0, 0);
         layer.set_exclusive_zone(-1);
         // The start menu takes the keyboard at once, so you can type as soon as it opens.
-        layer.set_keyboard_interactivity(if matches!(kind, PopupKind::Start(_)) { KeyboardInteractivity::Exclusive } else { KeyboardInteractivity::OnDemand });
+        layer.set_keyboard_interactivity(if matches!(&kind, PopupKind::Start(_)) || matches!(&kind, PopupKind::Fylgja(f) if f.pinned) { KeyboardInteractivity::Exclusive } else { KeyboardInteractivity::OnDemand });
         wl.commit();
         self.surfs.push(Surf { id, kind: Kind::Popup, output, wl, layer: Some(layer), dock: None, w: 0, h: 0, want: (0, 0), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None });
-        if matches!(kind, PopupKind::Fylgja { .. }) {
-            self.model.notch_open = true;
+        if matches!(kind, PopupKind::Fylgja(_)) {
             self.fy_active.store(true, Ordering::Relaxed);
             fylgja::spawn_poller(self.fy_active.clone(), self.fy_shared.clone());
+            stats::spawn_poller(self.fy_active.clone(), self.stats_wanted.clone(), self.stats_shared.clone());
+            self.start_anim(true);
+            if !self.thumbs_started {
+                self.thumbs_started = true;
+                let scale = self.scale_of(self.surfs.last().unwrap()).max(1) as u32;
+                let walls = fylgja::wallpaper_list();
+                let map = Arc::new(std::sync::Mutex::new(HashMap::new()));
+                fylgja::spawn_thumbs(walls.clone(), (94 * scale, 53 * scale), map.clone());
+                self.model.fylgja.walls = walls;
+                self.model.fylgja.thumbs = Some(map);
+            }
             self.dirty = true;
         }
         self.popup = Some(Popup { output, kind });
     }
 
-    /// The pointer is on the notch's tab: open Fylgja on that screen.
+    /// The pointer has rested on the notch's tab: open Fylgja (the small card) on that screen.
     fn open_fylgja(&mut self, output: u32) {
         if self.popup.is_none() {
             self.click_output = Some(output);
-            self.toggle_popup(PopupKind::Fylgja { section: 0 });
+            self.toggle_popup(PopupKind::Fylgja(fylgja::FyState::default()));
+        }
+    }
+
+    /// The pointer is on the closed tab and the wheel turned (or it was clicked): open the full notch.
+    fn open_full_from_tab(&mut self) -> bool {
+        if self.popup.is_some() {
+            return false;
+        }
+        if !self.tab_hover {
+            return false;
+        }
+        self.click_output = Some(self.tab_output);
+        self.toggle_popup(PopupKind::Fylgja(fylgja::FyState { section: 0, open: true, pinned: false, voice_ui: false, picker: false, mixer: false }));
+        true
+    }
+
+    /// Open Fylgja on the clipboard history (Super+V), or close it if it is open.
+    fn show_clipboard(&mut self) {
+        let was_open = self.popup.is_some();
+        self.close_popup();
+        if !was_open {
+            self.toggle_popup(PopupKind::Fylgja(fylgja::FyState { section: 3, open: true, pinned: true, voice_ui: false, picker: false, mixer: false }));
+        }
+    }
+
+    /// The shortcut for asking Sarina: the first press records, the next sends it.
+    fn ask_sarina_key(&mut self) {
+        match self.model.fylgja.voice {
+            fylgja::Voice::Listening(_) => self.send_recording(),
+            fylgja::Voice::Thinking => {}
+            _ => {
+                self.close_popup();
+                self.model.fylgja.voice = match fylgja::start_recording() {
+                    Ok((child, path)) => {
+                        self.rec = Some((child, path));
+                        self.rec_since = Some(std::time::Instant::now());
+                        fylgja::Voice::Listening(0)
+                    }
+                    Err(e) => fylgja::Voice::Failed(e),
+                };
+                self.toggle_popup(PopupKind::Fylgja(fylgja::FyState { section: 0, open: false, pinned: true, voice_ui: true, picker: false, mixer: false }));
+            }
+        }
+    }
+
+    /// Ends the recording and hands it to Sarina.
+    fn send_recording(&mut self) {
+        if let Some((mut child, path)) = self.rec.take() {
+            fylgja::stop_recording(&mut child);
+            self.rec_since = None;
+            self.model.fylgja.voice = fylgja::Voice::Thinking;
+            fylgja::ask_sarina(path, self.voice_tx.clone());
+            self.dirty = true;
+        }
+    }
+
+    /// Drops a recording that was not sent, and clears an answer that was read.
+    fn cancel_voice(&mut self) {
+        if let Some((mut child, path)) = self.rec.take() {
+            fylgja::stop_recording(&mut child);
+            let _ = std::fs::remove_file(path);
+        }
+        self.rec_since = None;
+        if self.model.fylgja.voice != fylgja::Voice::Thinking {
+            self.model.fylgja.voice = fylgja::Voice::Idle;
+        }
+    }
+
+    /// Shows the volume or brightness pop-up (or updates it) and starts its hide timer.
+    fn show_osd(&mut self, st: osd::OsdState) {
+        // Fylgja shows the value itself while it is open, and a slider being dragged would flicker it
+        if self.drag.is_some() || matches!(&self.popup, Some(Popup { kind: PopupKind::Fylgja(f), .. }) if f.open) {
+            return;
+        }
+        self.osd = Some(st);
+        self.osd_gen += 1;
+        let (g, tx) = (self.osd_gen, self.osd_hide_tx.clone());
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(1800));
+            let _ = tx.send(g);
+        });
+        if !self.surfs.iter().any(|s| s.kind == Kind::Osd) {
+            let Some(output) = self.dock_output() else { return };
+            let Some(out) = self.outputs.get(&output) else { return };
+            let id = self.next_surf;
+            self.next_surf += 1;
+            let wl = self.compositor.create_surface(&self.qh, ());
+            let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Overlay, "labyrinth-osd".into(), &self.qh, id);
+            layer.set_anchor(Anchor::Bottom);
+            layer.set_size(osd::WIDTH, osd::HEIGHT);
+            layer.set_exclusive_zone(0);
+            // KWin puts a surface anchored to the bottom above the dock's reserved room; with the dock
+            // on a side there is none, so the margin has to make the room
+            let margin = if self.model.conf.dock_pos == DockPos::Bottom { 14 } else { 64 };
+            layer.set_margin(0, 0, margin, 0);
+            layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+            // it takes no clicks: they go to whatever is under it
+            let region = self.compositor.create_region(&self.qh, ());
+            wl.set_input_region(Some(&region));
+            region.destroy();
+            wl.commit();
+            self.surfs.push(Surf { id, kind: Kind::Osd, output, wl, layer: Some(layer), dock: None, w: osd::WIDTH, h: osd::HEIGHT, want: (osd::WIDTH, osd::HEIGHT), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None });
+        }
+        self.dirty = true;
+    }
+
+    /// Takes the pop-up away when its timer ran out and nothing newer replaced it.
+    fn hide_osd(&mut self, gen: u64) {
+        if gen != self.osd_gen {
+            return;
+        }
+        if let Some(i) = self.surfs.iter().position(|s| s.kind == Kind::Osd) {
+            let s = self.surfs.remove(i);
+            s.destroy();
+            self.pointer_surface = None;
+        }
+        self.osd = None;
+    }
+
+    /// Starts or stops watching the clipboard to follow the setting.
+    fn sync_clip(&mut self) {
+        let on = self.model.conf.clipboard_history;
+        self.model.fylgja.history_on = on;
+        if on && self.clip_child.is_none() {
+            self.clip_child = fylgja::start_clip_watch(self.clips.clone());
+        }
+        if !on {
+            if let Some(mut c) = self.clip_child.take() {
+                let _ = c.kill();
+                let _ = c.wait();
+            }
+            if let Ok(mut g) = self.clips.lock() {
+                g.clear();
+            }
+            self.model.fylgja.clips.clear();
+        }
+    }
+
+    /// Starts Fylgja sliding down (`opening`) or back up, redrawing for as long as it takes.
+    fn start_anim(&mut self, opening: bool) {
+        self.fy_anim = Some((std::time::Instant::now(), opening));
+        let tx = self.anim_tx.clone();
+        std::thread::spawn(move || {
+            for _ in 0..=(fylgja::SLIDE_MS / 16 + 2) {
+                std::thread::sleep(Duration::from_millis(16));
+                if tx.send(()).is_err() {
+                    break;
+                }
+            }
+        });
+    }
+
+    /// How far down Fylgja hangs now: 1 when settled, between 0 and 1 while it slides.
+    fn fy_slide(&self) -> f32 {
+        match self.fy_anim {
+            Some((t, true)) => fylgja::ease(t.elapsed().as_millis()),
+            Some((t, false)) => 1.0 - fylgja::ease(t.elapsed().as_millis()),
+            None => 1.0,
+        }
+    }
+
+    /// Closes Fylgja by sliding it back up into the bar.
+    fn retract_fylgja(&mut self) {
+        if !matches!(self.popup, Some(Popup { kind: PopupKind::Fylgja(_), .. })) {
+            return;
+        }
+        if matches!(self.fy_anim, Some((_, false))) {
+            return;
+        }
+        self.cancel_voice();
+        self.tab_on = false;
+        self.start_anim(false);
+    }
+
+    /// The bar's black tab widens to the card's width while Fylgja is open (and slides with it).
+    fn sync_notch(&mut self) {
+        let slide = self.fy_slide();
+        let (open, w) = match &self.popup {
+            Some(Popup { kind: PopupKind::Fylgja(st), .. }) if fylgja::visible(&self.model, st) => (true, 150.0 + (fylgja::card_size(&self.model, st).0 - 150.0) * slide),
+            _ => (false, 0.0),
+        };
+        let tab = match &self.popup {
+            Some(Popup { kind: PopupKind::Fylgja(st), .. }) if st.open && !(st.voice_ui && self.model.fylgja.voice != fylgja::Voice::Idle) => Some(st.section),
+            _ => None,
+        };
+        // the Stats readings are taken only while that section is showing
+        self.stats_wanted.store(tab == Some(2), Ordering::Relaxed);
+        if self.model.notch_open != open || self.model.notch_w != w || self.model.notch_tab != tab {
+            self.model.notch_open = open;
+            self.model.notch_w = w;
+            self.model.notch_tab = tab;
         }
     }
 
     fn close_popup(&mut self) {
+        self.fy_anim = None;
+        if matches!(self.popup, Some(Popup { kind: PopupKind::Fylgja(_), .. })) {
+            self.cancel_voice();
+        }
+        self.tab_on = false;
         if let Some(i) = self.surfs.iter().position(|s| s.kind == Kind::Popup) {
             let s = self.surfs.remove(i);
             s.destroy();
@@ -481,10 +744,7 @@ impl State {
         }
         self.popup = None;
         self.fy_active.store(false, Ordering::Relaxed);
-        if self.model.notch_open {
-            self.model.notch_open = false;
-            self.dirty = true;
-        }
+        self.dirty = true;
     }
 
     /// The wheel: another month in the calendar (+1 is the next), or a few rows down the app list.
@@ -493,7 +753,16 @@ impl State {
         let pointer = self.pointer_pos;
         match self.popup.as_mut().map(|p| &mut p.kind) {
             Some(PopupKind::Calendar { offset }) => *offset = (*offset + by).clamp(-1200, 1200),
-            Some(PopupKind::Fylgja { section }) => *section = (*section as i32 + by).clamp(0, fylgja::SECTIONS.len() as i32 - 1) as usize,
+            Some(PopupKind::Fylgja(st)) => {
+                if st.voice_ui {
+                    // the voice card has nothing to scroll
+                } else if !st.open {
+                    st.open = true; // the wheel opens the full notch at its first section
+                    st.section = 0;
+                } else {
+                    st.section = (st.section as i32 + by).clamp(0, fylgja::SECTIONS.len() as i32 - 1) as usize;
+                }
+            }
             Some(PopupKind::Start(st)) => {
                 // over the folder's own list, the wheel scrolls that; elsewhere, the main list
                 if st.cat.is_some() && pointer.0 > 316.0 {
@@ -507,18 +776,64 @@ impl State {
         self.dirty = true;
     }
 
+    /// The pointer moved or arrived while Fylgja is open: leaving the card closes it (true then),
+    /// unless a shortcut opened it.
+    fn fylgja_pointer_moved(&mut self) -> bool {
+        let pinned = match &self.popup {
+            Some(Popup { kind: PopupKind::Fylgja(st), .. }) => st.pinned,
+            _ => return false,
+        };
+        let on_popup = self.pointer_surface.and_then(|i| self.surfs.get(i)).map(|s| s.kind == Kind::Popup).unwrap_or(false);
+        let (cx, cy, cw, ch) = self.popup_card;
+        let (px, py) = self.pointer_pos;
+        if !pinned && on_popup && (px < cx - 6.0 || px > cx + cw + 6.0 || py > cy + ch + 6.0) {
+            self.retract_fylgja();
+            return true;
+        }
+        self.dirty = true; // buttons light up under the pointer
+        false
+    }
+
+    /// While a volume slider is held: follow the pointer (no more often than every 30 ms; `force` sends the last one).
+    fn drag_apply(&mut self, force: bool) {
+        let Some((who, rect)) = self.drag.clone() else { return };
+        let percent = (((self.pointer_pos.0 - rect.0) / rect.2) * 100.0).round().clamp(0.0, 100.0) as u32;
+        if percent == self.drag_sent.1 || (!force && self.drag_sent.0.elapsed() < Duration::from_millis(30)) {
+            return;
+        }
+        fylgja::set_volume(&who, percent);
+        self.drag_sent = (std::time::Instant::now(), percent);
+        let snap = &mut self.model.fylgja.snap;
+        match who {
+            fylgja::Slider::Master => snap.master = snap.master.map(|(_, m)| (percent, m)),
+            fylgja::Slider::App(id) => {
+                if let Some(a) = snap.apps.iter_mut().find(|a| a.id == id) {
+                    a.percent = percent;
+                }
+            }
+        }
+        self.dirty = true;
+    }
+
     /// Something in Fylgja was clicked; `x` is where, for the volume sliders.
     fn fylgja_act(&mut self, hit: fylgja::FHit, x: f32) {
         use fylgja::FAct;
         match hit.act {
             FAct::Section(i) => {
-                if let Some(Popup { kind: PopupKind::Fylgja { section }, .. }) = &mut self.popup {
-                    *section = i;
+                if let Some(Popup { kind: PopupKind::Fylgja(st), .. }) = &mut self.popup {
+                    st.section = i;
+                    self.dirty = true;
+                }
+            }
+            FAct::Expand => {
+                if let Some(Popup { kind: PopupKind::Fylgja(st), .. }) = &mut self.popup {
+                    st.open = true;
+                    st.section = 0;
                     self.dirty = true;
                 }
             }
             FAct::Prev | FAct::PlayPause | FAct::Next => {
-                if let Some(m) = self.model.fylgja.media.clone() {
+                if let Some(m) = self.model.fylgja.snap.media.clone() {
                     fylgja::media_control(&m.bus, match hit.act { FAct::Prev => "Previous", FAct::Next => "Next", _ => "PlayPause" });
                 }
             }
@@ -526,14 +841,107 @@ impl State {
                 let percent = (((x - hit.rect.0) / hit.rect.2) * 100.0).round().clamp(0.0, 100.0) as u32;
                 fylgja::set_volume(&who, percent);
                 // show it at once; the next reading confirms it
+                let snap = &mut self.model.fylgja.snap;
                 match who {
-                    fylgja::Slider::Master => self.model.fylgja.master = self.model.fylgja.master.map(|(_, m)| (percent, m)),
+                    fylgja::Slider::Master => snap.master = snap.master.map(|(_, m)| (percent, m)),
                     fylgja::Slider::App(id) => {
-                        if let Some(a) = self.model.fylgja.apps.iter_mut().find(|a| a.id == id) {
+                        if let Some(a) = snap.apps.iter_mut().find(|a| a.id == id) {
                             a.percent = percent;
                         }
                     }
                 }
+                self.dirty = true;
+            }
+            FAct::Clip(i) => {
+                if let Some(t) = self.model.fylgja.clips.get(i).cloned() {
+                    fylgja::copy_text(&t);
+                    self.close_popup();
+                }
+            }
+            FAct::ClipClear => {
+                if let Ok(mut g) = self.clips.lock() {
+                    g.clear();
+                }
+                self.model.fylgja.clips.clear();
+                self.dirty = true;
+            }
+            FAct::Wall(p) => run(&["plasma-apply-wallpaperimage", &p.display().to_string()]),
+            FAct::WallPage(by) => {
+                let pages = self.model.fylgja.walls.len().div_ceil(8).max(1) as i32;
+                self.model.fylgja.wall_page = (self.model.fylgja.wall_page as i32 + by).rem_euclid(pages) as usize;
+                self.dirty = true;
+            }
+            FAct::VoiceStop => self.send_recording(),
+            FAct::TopToggle => {
+                self.model.fylgja.top_ram = !self.model.fylgja.top_ram;
+                self.dirty = true;
+            }
+            FAct::SpeedTest => {
+                stats::run_speedtest(self.model.fylgja.speed.clone());
+                self.dirty = true;
+            }
+            FAct::Wifi => {
+                let on = !self.model.fylgja.snap.wifi.as_ref().map(|w| w.0).unwrap_or(false);
+                if let Some(w) = &mut self.model.fylgja.snap.wifi {
+                    w.0 = on;
+                    run(&["nmcli", "radio", "wifi", if on { "on" } else { "off" }]);
+                }
+                self.dirty = true;
+            }
+            FAct::Bt => {
+                let on = !self.model.fylgja.snap.bt.as_ref().map(|b| b.0).unwrap_or(false);
+                if let Some(b) = &mut self.model.fylgja.snap.bt {
+                    b.0 = on;
+                    run(&["bluetoothctl", "power", if on { "on" } else { "off" }]);
+                }
+                self.dirty = true;
+            }
+            FAct::WifiMore | FAct::BtMore => {
+                run(&["setsid", "-f", "labyrinth-settings", if hit.act == FAct::WifiMore { "network" } else { "bluetooth" }]);
+                self.close_popup();
+            }
+            FAct::Mute => {
+                run(&["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"]);
+                let snap = &mut self.model.fylgja.snap;
+                snap.master = snap.master.map(|(p, m)| (p, !m));
+                self.dirty = true;
+            }
+            FAct::Picker => {
+                if let Some(Popup { kind: PopupKind::Fylgja(st), .. }) = &mut self.popup {
+                    st.picker = !st.picker;
+                    self.dirty = true;
+                }
+            }
+            FAct::Night => {
+                let on = !self.model.fylgja.snap.night;
+                fylgja::set_night(on);
+                self.model.fylgja.snap.night = on;
+                self.dirty = true;
+            }
+            FAct::Dark => {
+                let dark = !self.model.dark;
+                fylgja::set_dark(dark);
+                self.model.dark = dark;
+                self.dirty = true;
+            }
+            FAct::Mixer => {
+                if let Some(Popup { kind: PopupKind::Fylgja(st), .. }) = &mut self.popup {
+                    st.mixer = !st.mixer;
+                    self.dirty = true;
+                }
+            }
+            FAct::PickerClose => {
+                if let Some(Popup { kind: PopupKind::Fylgja(st), .. }) = &mut self.popup {
+                    st.picker = false;
+                    self.dirty = true;
+                }
+            }
+            FAct::Sink(name) => {
+                if let Some(Popup { kind: PopupKind::Fylgja(st), .. }) = &mut self.popup {
+                    st.picker = false;
+                }
+                run(&["pactl", "set-default-sink", &name]);
+                self.model.fylgja.snap.default_sink = name;
                 self.dirty = true;
             }
             FAct::Start(a) => self.start_act(a),
@@ -699,6 +1107,7 @@ impl State {
     }
 
     fn redraw(&mut self) {
+        self.sync_notch();
         self.resize_dock();
         for i in 0..self.surfs.len() {
             self.draw(i);
@@ -708,6 +1117,7 @@ impl State {
     }
 
     fn draw(&mut self, i: usize) {
+        let slide = self.fy_slide();
         let (kind, w, h, hover, configured) = {
             let s = &self.surfs[i];
             (s.kind, s.w, s.h, s.hover, s.configured)
@@ -721,6 +1131,12 @@ impl State {
         let s = scale as f32;
         let hits = match kind {
             Kind::Strut => vec![],
+            Kind::Osd => {
+                if let Some(st) = self.osd {
+                    osd::paint(&mut pix, s, &st, &self.assets.fonts, &mut self.assets.icons);
+                }
+                vec![]
+            }
             Kind::Popup => {
                 match &self.popup {
                     Some(Popup { kind: PopupKind::Start(st), .. }) => {
@@ -734,8 +1150,8 @@ impl State {
                         self.start_hits = sp.hits;
                         self.start_max = sp.max_scroll;
                     }
-                    Some(Popup { kind: PopupKind::Fylgja { section }, .. }) => {
-                        let (card, hits) = fylgja::paint(&mut pix, s, &self.model, *section, self.pointer_pos, &self.assets.fonts, &mut self.assets.icons);
+                    Some(Popup { kind: PopupKind::Fylgja(st), .. }) => {
+                        let (card, hits) = fylgja::paint(&mut pix, s, &self.model, st, slide, self.pointer_pos, &self.assets.fonts, &mut self.assets.icons);
                         self.popup_card = card;
                         self.fy_hits = hits;
                     }
@@ -786,7 +1202,15 @@ impl State {
         match action {
             Action::Logo => self.toggle_start(),
             Action::Clock => self.toggle_calendar(),
-            Action::Notch => {}
+            Action::Notch => {
+                self.open_full_from_tab();
+            }
+            Action::NotchSection(i) => {
+                if let Some(Popup { kind: PopupKind::Fylgja(st), .. }) = &mut self.popup {
+                    st.section = i;
+                    self.dirty = true;
+                }
+            }
             Action::Workspace(i) => {
                 if let Some(d) = self.model.status.desktops.get(i) {
                     run(&["busctl", "--user", "set-property", "org.kde.KWin", "/VirtualDesktopManager", "org.kde.KWin.VirtualDesktopManager", "current", "s", &d.id]);
@@ -855,14 +1279,28 @@ impl State {
             self.surfs[i].hover = new;
             self.dirty = true;
         }
-        // Fylgja opens when the pointer rests on the notch's tab, and closes when it leaves it
+        // Fylgja opens when the pointer has rested on the notch's tab for a moment, and closes when it leaves
         if matches!(self.surfs[i].kind, Kind::Bar { .. }) {
-            let on_tab = new.and_then(|h| self.surfs[i].hits.get(h)).map(|h| h.action == Action::Notch).unwrap_or(false);
+            let on_tab = new.and_then(|h| self.surfs[i].hits.get(h)).map(|h| h.action == Action::Notch || matches!(h.action, Action::NotchSection(_))).unwrap_or(false);
             let out = self.surfs[i].output;
+            self.tab_hover = on_tab;
             if on_tab {
-                self.open_fylgja(out);
-            } else if matches!(self.popup, Some(Popup { kind: PopupKind::Fylgja { .. }, .. })) {
-                self.close_popup();
+                self.tab_output = out;
+                if !self.tab_on && self.popup.is_none() {
+                    self.tab_on = true;
+                    self.tab_output = out;
+                    self.tab_gen += 1;
+                    let (g, tx) = (self.tab_gen, self.tab_tx.clone());
+                    std::thread::spawn(move || {
+                        std::thread::sleep(Duration::from_millis(150));
+                        let _ = tx.send(g);
+                    });
+                }
+            } else {
+                self.tab_on = false;
+                if matches!(&self.popup, Some(Popup { kind: PopupKind::Fylgja(st), .. }) if !st.pinned) {
+                    self.retract_fylgja();
+                }
             }
         }
     }
@@ -1034,10 +1472,18 @@ impl Dispatch<WlPointer, ()> for State {
         match event {
             wl_pointer::Event::Enter { serial, surface, surface_x, surface_y } => {
                 state.pointer_surface = state.surf_index(&surface);
+                state.pointer_pos = (surface_x as f32, surface_y as f32);
                 state.set_cursor(serial);
+                if state.fylgja_pointer_moved() {
+                    return;
+                }
                 state.hover_at(surface_x as f32, surface_y as f32);
             }
             wl_pointer::Event::Leave { .. } => {
+                if state.popup.is_none() {
+                    state.tab_on = false;
+                    state.tab_hover = false;
+                }
                 if let Some(i) = state.pointer_surface.take() {
                     if state.surfs.get_mut(i).map(|s| s.hover.take().is_some()).unwrap_or(false) {
                         state.dirty = true;
@@ -1046,15 +1492,12 @@ impl Dispatch<WlPointer, ()> for State {
             }
             wl_pointer::Event::Motion { surface_x, surface_y, .. } => {
                 state.pointer_pos = (surface_x as f32, surface_y as f32);
-                if matches!(state.popup, Some(Popup { kind: PopupKind::Fylgja { .. }, .. })) {
-                    let on_popup = state.pointer_surface.and_then(|i| state.surfs.get(i)).map(|s| s.kind == Kind::Popup).unwrap_or(false);
-                    let (cx, cy, cw, ch) = state.popup_card;
-                    let (px, py) = state.pointer_pos;
-                    if on_popup && (px < cx - 6.0 || px > cx + cw + 6.0 || py > cy + ch + 6.0) {
-                        state.close_popup(); // the pointer left the notch
-                        return;
-                    }
-                    state.dirty = true; // buttons light up under the pointer
+                if state.drag.is_some() {
+                    state.drag_apply(false);
+                    return;
+                }
+                if state.fylgja_pointer_moved() {
+                    return;
                 }
                 if matches!(state.popup, Some(Popup { kind: PopupKind::Start(_), .. })) {
                     state.dirty = true; // the row under the pointer lights up
@@ -1067,6 +1510,8 @@ impl Dispatch<WlPointer, ()> for State {
             wl_pointer::Event::AxisDiscrete { discrete, .. } => {
                 if state.popup.is_some() {
                     state.step_month(discrete.signum());
+                } else {
+                    state.open_full_from_tab();
                 }
             }
             // smooth scrolling (a touchpad): a step for each stretch of scrolling
@@ -1080,6 +1525,12 @@ impl Dispatch<WlPointer, ()> for State {
                     }
                 }
             }
+            wl_pointer::Event::Button { state: WEnum::Value(wl_pointer::ButtonState::Released), .. } => {
+                if state.drag.is_some() {
+                    state.drag_apply(true);
+                    state.drag = None;
+                }
+            }
             wl_pointer::Event::Button { state: WEnum::Value(wl_pointer::ButtonState::Pressed), button, .. } => {
                 // 272 = BTN_LEFT
                 if button == 272 {
@@ -1089,10 +1540,18 @@ impl Dispatch<WlPointer, ()> for State {
                         let (cx, cy, cw, ch) = state.popup_card;
                         if px < cx || px > cx + cw || py < cy || py > cy + ch {
                             state.close_popup();
-                        } else if matches!(state.popup, Some(Popup { kind: PopupKind::Fylgja { .. }, .. })) {
-                            let hit = state.fy_hits.iter().find(|h| px >= h.rect.0 && px < h.rect.0 + h.rect.2 && py >= h.rect.1 && py < h.rect.1 + h.rect.3).cloned();
+                        } else if matches!(state.popup, Some(Popup { kind: PopupKind::Fylgja(_), .. })) {
+                            // the last drawn is on top (the buttons over the card)
+                            let hit = state.fy_hits.iter().rev().find(|h| px >= h.rect.0 && px < h.rect.0 + h.rect.2 && py >= h.rect.1 && py < h.rect.1 + h.rect.3).cloned();
                             if let Some(hit) = hit {
-                                state.fylgja_act(hit, px);
+                                if let fylgja::FAct::Slide(who) = &hit.act {
+                                    // pressing on a slider sets the level at once and then follows the pointer
+                                    state.drag = Some((who.clone(), hit.rect));
+                                    state.drag_sent.1 = 101;
+                                    state.drag_apply(true);
+                                } else {
+                                    state.fylgja_act(hit, px);
+                                }
                             }
                         } else if matches!(state.popup, Some(Popup { kind: PopupKind::Start(_), .. })) {
                             // the last drawn is on top (the power choices over the list)
@@ -1213,6 +1672,10 @@ fn main() {
         eprintln!("labyrinth-panel: KWin did not offer window management (is labyrinth-panel.desktop installed with X-KDE-Wayland-Interfaces?); the dock will only launch apps");
     }
 
+    let (tab_tx, tab_rx) = calloop::channel::channel::<u64>();
+    let (anim_tx, anim_rx) = calloop::channel::channel::<()>();
+    let (osd_hide_tx, osd_hide_rx) = calloop::channel::channel::<u64>();
+    let (voice_tx, voice_rx) = calloop::channel::channel::<Result<String, String>>();
     let mut state = State {
         qh: qh.clone(),
         conn: conn.clone(),
@@ -1221,7 +1684,7 @@ fn main() {
         xdg_wm,
         plasma_shell,
         shm,
-        model: Model { apps: apps::load_all(), pinned: apps::pinned(), wins: vec![], clock: clock_text(PanelConf::load().clock_24h), clock_secs: secs_text(PanelConf::load().clock_24h), date: date_text(), today: today_ymd(), user: user_name(), hibernate: shell::can_hibernate(), conf: PanelConf::load(), dark: system_dark(), status: Default::default(), trash_full: shell::trash_has_files(), notch_open: false, fylgja: Default::default() },
+        model: Model { apps: apps::load_all(), pinned: apps::pinned(), wins: vec![], clock: clock_text(PanelConf::load().clock_24h), clock_secs: secs_text(PanelConf::load().clock_24h), date: date_text(), today: today_ymd(), user: user_name(), hibernate: shell::can_hibernate(), conf: PanelConf::load(), dark: system_dark(), status: Default::default(), trash_full: shell::trash_has_files(), notch_open: false, fylgja: Default::default(), notch_w: 0.0, notch_tab: None },
         assets: Assets { fonts, icons: paint::Icons::new() },
         surfs: vec![],
         next_surf: 0,
@@ -1241,6 +1704,30 @@ fn main() {
         fy_hits: vec![],
         fy_active: Arc::new(AtomicBool::new(false)),
         fy_shared: Arc::new(std::sync::Mutex::new(Default::default())),
+        drag: None,
+        drag_sent: (std::time::Instant::now(), 101),
+        peek_blocked: None,
+        osd: None,
+        osd_gen: 0,
+        osd_hide_tx,
+        icon_stamp: None,
+        icon_pack: paint::selected_icon_theme(),
+        tab_hover: false,
+        stats_shared: Arc::new(std::sync::Mutex::new(Default::default())),
+        stats_wanted: Arc::new(AtomicBool::new(false)),
+        tab_tx,
+        tab_gen: 0,
+        tab_on: false,
+        tab_output: 0,
+        rec: None,
+        rec_since: None,
+        voice_tx,
+        clips: Arc::new(std::sync::Mutex::new(Vec::new())),
+        clip_child: None,
+        thumbs_started: false,
+        art_for: None,
+        fy_anim: None,
+        anim_tx,
         xkb: None,
         pointer_pos: (0.0, 0.0),
         click_output: None,
@@ -1249,6 +1736,7 @@ fn main() {
         axis_acc: 0.0,
     };
     bind_outputs(&globals, &mut state, &qh);
+    state.sync_clip();
 
     let mut event_loop: EventLoop<State> = EventLoop::try_new().expect("event loop");
     // Learn the outputs' names before drawing anything.
@@ -1257,7 +1745,7 @@ fn main() {
     WaylandSource::new(conn.clone(), queue).insert(event_loop.handle()).expect("wayland source");
 
     // The D-Bus service runs on its own thread and hands requests to the event loop through a channel.
-    let (bus_tx, bus_rx) = calloop::channel::channel::<()>();
+    let (bus_tx, bus_rx) = calloop::channel::channel::<BusMsg>();
     std::thread::spawn(move || {
         let conn = zbus::blocking::connection::Builder::session().and_then(|b| b.name("org.labyrinth.Panel")).and_then(|b| b.serve_at("/Panel", PanelBus(bus_tx))).and_then(|b| b.build());
         match conn {
@@ -1270,12 +1758,87 @@ fn main() {
     event_loop
         .handle()
         .insert_source(bus_rx, |event, _, st| {
-            if let calloop::channel::Event::Msg(()) = event {
+            if let calloop::channel::Event::Msg(m) = event {
                 st.click_output = None; // the main screen
-                st.toggle_start();
+                match m {
+                    BusMsg::ToggleStart => st.toggle_start(),
+                    BusMsg::ShowClipboard => st.show_clipboard(),
+                    BusMsg::AskSarina => st.ask_sarina_key(),
+                }
             }
         })
         .expect("bus channel");
+    // the pointer has rested on the notch's tab
+    event_loop
+        .handle()
+        .insert_source(tab_rx, |event, _, st| {
+            if let calloop::channel::Event::Msg(g) = event {
+                let blocked = st.peek_blocked.map(|t| t.elapsed() < Duration::from_secs(4)).unwrap_or(false);
+                if g == st.tab_gen && st.tab_on && st.popup.is_none() && !blocked {
+                    let out = st.tab_output;
+                    st.open_fylgja(out);
+                }
+            }
+        })
+        .expect("tab channel");
+    // the volume or brightness changed: show the pop-up; its timer ran out: put it away
+    let (osd_tx, osd_rx) = calloop::channel::channel::<osd::OsdState>();
+    osd::spawn_watchers(osd_tx);
+    event_loop
+        .handle()
+        .insert_source(osd_rx, |event, _, st| {
+            if let calloop::channel::Event::Msg(o) = event {
+                st.show_osd(o);
+            }
+        })
+        .expect("osd channel");
+    event_loop
+        .handle()
+        .insert_source(osd_hide_rx, |event, _, st| {
+            if let calloop::channel::Event::Msg(g) = event {
+                st.hide_osd(g);
+            }
+        })
+        .expect("osd hide channel");
+    // each step of Fylgja sliding: redraw, and finish a close once it has gone up
+    event_loop
+        .handle()
+        .insert_source(anim_rx, |event, _, st| {
+            if let calloop::channel::Event::Msg(()) = event {
+                if let Some((t, opening)) = st.fy_anim {
+                    if t.elapsed().as_millis() >= fylgja::SLIDE_MS {
+                        st.fy_anim = None;
+                        if !opening {
+                            st.close_popup();
+                        }
+                    }
+                    st.dirty = true;
+                }
+            }
+        })
+        .expect("animation channel");
+    // Sarina's answer (or why there is none)
+    event_loop
+        .handle()
+        .insert_source(voice_rx, |event, _, st| {
+            if let calloop::channel::Event::Msg(r) = event {
+                st.model.fylgja.voice = match r {
+                    Ok(t) if !t.is_empty() => fylgja::Voice::Reply(t),
+                    Ok(_) => fylgja::Voice::Failed("Sarina had nothing to say.".into()),
+                    Err(e) => fylgja::Voice::Failed(e),
+                };
+                match &mut st.popup {
+                    Some(Popup { kind: PopupKind::Fylgja(f), .. }) => f.voice_ui = true,
+                    _ => {
+                        // the card was closed while she thought: show the answer now
+                        st.click_output = None;
+                        st.toggle_popup(PopupKind::Fylgja(fylgja::FyState { section: 0, open: false, pinned: true, voice_ui: true, picker: false, mixer: false }));
+                    }
+                }
+                st.dirty = true;
+            }
+        })
+        .expect("voice channel");
 
     // Desktops, network and Bluetooth are read on a worker thread; the 1 s timer picks up the result.
     let shared = Arc::new(std::sync::Mutex::new(status::Status::default()));
@@ -1310,16 +1873,57 @@ fn main() {
             let secs = secs_text(h24);
             if secs != st.model.clock_secs {
                 st.model.clock_secs = secs;
-                if matches!(st.popup, Some(Popup { kind: PopupKind::Calendar { .. }, .. }) | Some(Popup { kind: PopupKind::Fylgja { .. }, .. })) {
+                if matches!(st.popup, Some(Popup { kind: PopupKind::Calendar { .. }, .. }) | Some(Popup { kind: PopupKind::Fylgja(_), .. })) {
                     st.dirty = true;
                 }
             }
-            if matches!(st.popup, Some(Popup { kind: PopupKind::Fylgja { .. }, .. })) {
-                if let Ok(snap) = st.fy_shared.lock() {
-                    if *snap != st.model.fylgja {
-                        st.model.fylgja = snap.clone();
+            // a question being recorded: the seconds, and a recording that stopped by itself (no microphone)
+            if let Some(since) = st.rec_since {
+                let ended = st.rec.as_mut().map(|(c, _)| c.try_wait().map(|r| r.is_some()).unwrap_or(false)).unwrap_or(false);
+                if ended {
+                    if let Some((_, path)) = st.rec.take() {
+                        let _ = std::fs::remove_file(path);
+                    }
+                    st.rec_since = None;
+                    st.model.fylgja.voice = fylgja::Voice::Failed("No microphone could be recorded. Check that one is plugged in and not muted, and that this app may use it.".into());
+                } else {
+                    st.model.fylgja.voice = fylgja::Voice::Listening(since.elapsed().as_secs());
+                }
+                st.dirty = true;
+            }
+            if matches!(st.popup, Some(Popup { kind: PopupKind::Fylgja(_), .. })) {
+                let snap = st.fy_shared.lock().map(|g| g.clone()).unwrap_or_default();
+                if snap != st.model.fylgja.snap && st.drag.is_none() {
+                    st.model.fylgja.snap = snap;
+                    st.dirty = true;
+                }
+                // the small card with nothing playing has nothing to show: put it away
+                let nothing = matches!(&st.popup, Some(Popup { kind: PopupKind::Fylgja(f), .. }) if !f.open && !f.pinned && !f.voice_ui) && st.model.fylgja.snap.ready && st.model.fylgja.snap.media.is_none();
+                if nothing {
+                    st.peek_blocked = Some(std::time::Instant::now());
+                    st.close_popup();
+                }
+                if st.model.notch_tab == Some(2) {
+                    let stats = st.stats_shared.lock().map(|g| g.clone()).unwrap_or_default();
+                    if stats != st.model.fylgja.stats {
+                        st.model.fylgja.stats = stats;
+                    }
+                    st.dirty = true; // the speed test's progress shows on the next draw
+                }
+                if st.model.fylgja.history_on {
+                    let clips = st.clips.lock().map(|g| g.clone()).unwrap_or_default();
+                    if clips != st.model.fylgja.clips {
+                        st.model.fylgja.clips = clips;
                         st.dirty = true;
                     }
+                }
+                // the cover of what is playing, loaded when the song changes
+                let want = st.model.fylgja.snap.media.as_ref().and_then(|m| m.art.clone());
+                if want != st.art_for {
+                    let scale = st.surfs.iter().find(|x| x.kind == Kind::Popup).map(|x| st.scale_of(x)).unwrap_or(1).max(1) as u32;
+                    st.model.fylgja.art = want.as_deref().and_then(|p| fylgja::load_image(p, 58 * scale, 58 * scale, 8.0 * scale as f32));
+                    st.art_for = want;
+                    st.dirty = true;
                 }
             }
             let full = shell::trash_has_files();
@@ -1344,6 +1948,21 @@ fn main() {
                 st.model.dark = dark;
                 st.dirty = true;
             }
+            // Minos's icon is redrawn in the new accent colour: take it up when its file changes
+            let stamp = std::env::var_os("HOME").and_then(|h| std::fs::metadata(std::path::PathBuf::from(h).join(".local/share/icons/Labyrinth/apps/scalable/minos.svg")).ok()?.modified().ok());
+            let pack = paint::selected_icon_theme();
+            if pack != st.icon_pack {
+                st.icon_pack = pack.clone();
+                // Minos's icon for the new pack (its own, the pack's file manager's, or our logo)
+                let _ = std::process::Command::new("labyrinth-minos-icon").status();
+                st.assets.icons.set_pack(pack.as_deref());
+                st.dirty = true;
+            }
+            if stamp != st.icon_stamp {
+                st.icon_stamp = stamp;
+                st.assets.icons.clear();
+                st.dirty = true;
+            }
             TimeoutAction::ToDuration(Duration::from_secs(4))
         })
         .expect("layout timer");
@@ -1358,6 +1977,7 @@ fn main() {
                 seen = now;
                 let old = st.model.conf.dock_pos;
                 st.model.conf = PanelConf::load();
+                st.sync_clip();
                 st.model.clock = clock_text(st.model.conf.clock_24h);
                 st.model.clock_secs = secs_text(st.model.conf.clock_24h);
                 if st.model.conf.dock_pos != old {

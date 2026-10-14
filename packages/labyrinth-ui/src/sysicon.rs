@@ -10,13 +10,57 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-const THEMES: [&str; 7] = ["Labyrinth", "MacTahoe-purple-dark", "MacTahoe-purple", "hicolor", "breeze-dark", "breeze", "Adwaita"];
+/// Labyrinth's own icons first (it is the icon pack Labyrinth ships: MacTahoe in dark plus its per-app
+/// icons), then what they stand on. See docs/ICONS.md.
+const BASE: [&str; 7] = ["Labyrinth", "MacTahoe-purple-dark", "MacTahoe-purple", "hicolor", "breeze-dark", "breeze", "Adwaita"];
 const CONTEXTS: [&str; 5] = ["places", "mimes", "devices", "apps", "status"];
 
 #[derive(Default)]
 struct Cache {
     found: HashMap<String, Option<PathBuf>>,
     tex: HashMap<(String, u32), Option<TextureHandle>>,
+}
+
+/// The icon theme chosen in KDE (`[Icons] Theme` in kdeglobals).
+pub fn parse_icon_theme(kdeglobals: &str) -> Option<String> {
+    let mut in_icons = false;
+    for line in kdeglobals.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_icons = line == "[Icons]";
+        } else if in_icons {
+            if let Some(v) = line.strip_prefix("Theme=") {
+                let v = v.trim();
+                return (!v.is_empty()).then(|| v.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// The chain to look icons up in: the pack chosen in KDE first (so another pack changes what Minos
+/// shows), then Labyrinth's own, which fills in whatever that pack has no icon for, so nothing is
+/// ever missing. Read once, when the first icon is wanted; a changed pack shows at the next start.
+fn themes() -> &'static Vec<String> {
+    static T: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    T.get_or_init(|| {
+        let chosen = std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+            .and_then(|d| std::fs::read_to_string(d.join("kdeglobals")).ok())
+            .and_then(|t| parse_icon_theme(&t));
+        let mut v: Vec<String> = vec![];
+        if let Some(c) = chosen {
+            if c != "Labyrinth" {
+                // another pack: then hicolor, where Minos's icon for that pack is put (the pack's own
+                // file-manager icon if it has no Minos one), then Labyrinth's to fill the gaps
+                v.push(c);
+                v.push("hicolor".to_string());
+            }
+        }
+        v.extend(BASE.iter().map(|s| s.to_string()));
+        v
+    })
 }
 
 fn roots() -> Vec<PathBuf> {
@@ -32,7 +76,7 @@ fn roots() -> Vec<PathBuf> {
 pub fn find(name: &str) -> Option<PathBuf> {
     let exts = ["svg", "png"];
     for root in roots() {
-        for theme in THEMES {
+        for theme in themes() {
             let t = root.join(theme);
             for ctx in CONTEXTS {
                 for sub in ["scalable", "48", "32", "24", "22", "16"] {

@@ -99,7 +99,11 @@ pub struct Model {
     /// Fylgja (the notch) is open: its tab in the bar reaches down to meet the card.
     pub notch_open: bool,
     /// What Fylgja shows, read while it is open.
-    pub fylgja: crate::fylgja::Snapshot,
+    pub fylgja: crate::fylgja::FyData,
+    /// How wide Fylgja's card is while open; the bar's black tab widens to meet it.
+    pub notch_w: f32,
+    /// The section Fylgja's full notch is on; its titles are drawn in the bar's black band.
+    pub notch_tab: Option<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -111,6 +115,8 @@ pub enum Action {
     /// The "+" that adds a desktop.
     NewWorkspace,
     Notch,
+    /// One of Fylgja's section titles in the bar, by index.
+    NotchSection(usize),
     Network,
     Bluetooth,
     /// A dock icon: the app id of its group.
@@ -230,11 +236,33 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
 
     // The notch's closed tab, hanging from the top edge in the middle of the main screen.
     if !slim {
-        let nw = 150.0 * s;
+        let nw = if m.notch_open { m.notch_w * s } else { 150.0 * s };
         let nx = (w - nw) / 2.0;
+        let cy_tab = h / 2.0;
         // drawn from above the edge so the top corners are square and the bottom ones round
         let th = if m.notch_open { h } else { py + ph };
         paint::fill_rounded(pix, nx, -12.0 * s, nw, 12.0 * s + th, if m.notch_open { 0.0 } else { 10.0 * s }, (0, 0, 0, 255));
+        // Fylgja's section titles, always shown while the full notch is open; the current one is lit
+        if let Some(sel) = m.notch_tab {
+            let names = crate::fylgja::SECTIONS;
+            let widths: Vec<f32> = names.iter().map(|n| paint::text_width(&fonts.bold, 11.5 * s, n)).collect();
+            let total: f32 = widths.iter().sum();
+            let side = 22.0 * s;
+            let gap = ((nw - 2.0 * side - total) / (names.len() as f32 - 1.0)).max(6.0 * s);
+            let mut x = nx + side;
+            for (i, n) in names.iter().enumerate() {
+                let rect = (x - gap / 2.0, 0.0, widths[i] + gap, h);
+                if i == sel {
+                    paint::fill_rounded(pix, x - 9.0 * s, cy_tab - 10.0 * s, widths[i] + 18.0 * s, 20.0 * s, 10.0 * s, (255, 255, 255, 30));
+                } else if hover == Some(hits.len()) {
+                    paint::fill_rounded(pix, x - 9.0 * s, cy_tab - 10.0 * s, widths[i] + 18.0 * s, 20.0 * s, 10.0 * s, (255, 255, 255, 14));
+                }
+                let col = if i == sel { (255, 255, 255, 255) } else { (150, 150, 165, 255) };
+                paint::draw_text(pix, &fonts.bold, 11.5 * s, x, cy_tab, col, n);
+                hits.push(Hit { rect, action: Action::NotchSection(i) });
+                x += widths[i] + gap;
+            }
+        }
         hits.push(Hit { rect: (nx, 0.0, nw, h), action: Action::Notch });
     }
 
@@ -928,7 +956,7 @@ mod tests {
 
     #[test]
     fn pinned_apps_come_first_and_missing_ones_are_skipped() {
-        let m = Model { apps: vec![app("minos", "Minos"), app("vivaldi-stable", "Vivaldi")], pinned: vec!["vivaldi-stable".into(), "ghost".into(), "minos".into()], wins: vec![], clock: String::new(), clock_secs: String::new(), date: String::new(), today: (2026, 1, 1), user: String::new(), hibernate: false, conf: PanelConf::default(), dark: true, status: Default::default(), trash_full: false };
+        let m = Model { apps: vec![app("minos", "Minos"), app("vivaldi-stable", "Vivaldi")], pinned: vec!["vivaldi-stable".into(), "ghost".into(), "minos".into()], wins: vec![], clock: String::new(), clock_secs: String::new(), date: String::new(), today: (2026, 1, 1), user: String::new(), notch_open: false, fylgja: Default::default(), notch_w: 0.0, notch_tab: None, hibernate: false, conf: PanelConf::default(), dark: true, status: Default::default(), trash_full: false };
         let items = dock_items(&m);
         assert_eq!(items.iter().map(|i| i.app_id.as_str()).collect::<Vec<_>>(), vec!["vivaldi-stable", "minos", TRASH_ID]); // the trash is always last
         assert!(items.iter().all(|i| i.pinned && i.wins.is_empty()));

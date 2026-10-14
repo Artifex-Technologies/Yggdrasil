@@ -98,7 +98,7 @@ pub fn poll() -> Status {
     let current_id = parse_current(&out("busctl", &["--user", "--json=short", "get-property", "org.kde.KWin", "/VirtualDesktopManager", "org.kde.KWin.VirtualDesktopManager", "current"]));
     let current = current_id.and_then(|id| desktops.iter().position(|d| d.id == id)).unwrap_or(0);
     let net = parse_net(&out("nmcli", &["-t", "-f", "TYPE,STATE", "device"]), &out("nmcli", &["-t", "-f", "IN-USE,SIGNAL", "dev", "wifi"]));
-    let bt = parse_bt(&out("bluetoothctl", &["show"]), &out("bluetoothctl", &["devices", "Connected"]));
+    let bt = parse_bt(&out("timeout", &["2", "bluetoothctl", "show"]), &out("timeout", &["2", "bluetoothctl", "devices", "Connected"]));
     Status { desktops, current, net, bt }
 }
 
