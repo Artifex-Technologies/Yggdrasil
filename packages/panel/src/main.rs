@@ -42,6 +42,10 @@ use wayland_client::protocol::wl_surface::{self, WlSurface};
 use wayland_client::{delegate_noop, Connection, Dispatch, Proxy, QueueHandle, WEnum};
 use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::{Shape, WpCursorShapeDeviceV1};
 use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1;
+use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1;
+use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1::{self, WpFractionalScaleV1};
+use wayland_protocols::wp::viewporter::client::wp_viewport::WpViewport;
+use wayland_protocols::wp::viewporter::client::wp_viewporter::WpViewporter;
 use wayland_protocols::xdg::shell::client::xdg_surface::{self, XdgSurface};
 use wayland_protocols::xdg::shell::client::xdg_toplevel::{self, XdgToplevel};
 use wayland_protocols::xdg::shell::client::xdg_wm_base::{self, XdgWmBase};
@@ -164,10 +168,18 @@ struct Surf {
     bufs: Vec<Buffer>,
     hits: Vec<Hit>,
     hover: Option<usize>,
+    /// Fractional scaling: the scale object and the viewport that lets the buffer be a fractional multiple of the surface.
+    frac: Option<(WpFractionalScaleV1, WpViewport)>,
+    /// The scale the compositor prefers for this surface (0 until it says).
+    fscale: f32,
 }
 
 impl Surf {
     fn destroy(self) {
+        if let Some((f, v)) = &self.frac {
+            f.destroy();
+            v.destroy();
+        }
         if let Some(l) = &self.layer {
             l.destroy();
         }
@@ -208,6 +220,8 @@ struct State {
     compositor: WlCompositor,
     layer_shell: ZwlrLayerShellV1,
     xdg_wm: Option<XdgWmBase>,
+    frac_mgr: Option<WpFractionalScaleManagerV1>,
+    viewporter: Option<WpViewporter>,
     plasma_shell: Option<OrgKdePlasmaShell>,
     shm: WlShm,
     model: Model,
@@ -397,8 +411,23 @@ fn run(cmd: &[&str]) {
 }
 
 impl State {
-    fn scale_of(&self, s: &Surf) -> i32 {
-        self.outputs.get(&s.output).map(|o| o.scale).unwrap_or(1).max(1)
+    /// The scale to draw a surface at: the fractional one the compositor prefers, else its screen's whole-number scale.
+    fn scale_of(&self, s: &Surf) -> f32 {
+        if s.fscale > 0.0 {
+            return s.fscale;
+        }
+        self.outputs.get(&s.output).map(|o| o.scale).unwrap_or(1).max(1) as f32
+    }
+
+    /// Ask for the fractional scale and a viewport on a surface, once; without them the whole-number scale is used.
+    fn scale_surface(&mut self, i: usize) {
+        let (Some(mgr), Some(vp)) = (self.frac_mgr.clone(), self.viewporter.clone()) else { return };
+        let s = &mut self.surfs[i];
+        if s.frac.is_none() {
+            let f = mgr.get_fractional_scale(&s.wl, &self.qh, s.id);
+            let v = vp.get_viewport(&s.wl, &self.qh, ());
+            s.frac = Some((f, v));
+        }
     }
 
     /// Which output the dock goes on: the main screen unless it is the tiling one.
@@ -449,7 +478,7 @@ impl State {
         layer.set_exclusive_zone(shell::BAR_H as i32);
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
         wl.commit();
-        self.surfs.push(Surf { id, kind, output, wl, layer: Some(layer), dock: None, w: size.0, h: size.1, want: size, gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None });
+        self.surfs.push(Surf { id, kind, output, wl, layer: Some(layer), dock: None, w: size.0, h: size.1, want: size, gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0 });
     }
 
     /// The dock: a Plasma panel window, the way Plasma's own panels are. KWin puts it exactly where it
@@ -483,7 +512,7 @@ impl State {
         if std::env::var_os("LABYRINTH_PANEL_DEBUG").is_some() {
             eprintln!("dock {id}: {}x{} at {x},{y}", want.0, want.1);
         }
-        self.surfs.push(Surf { id, kind: Kind::Dock, output, wl, layer: None, dock: Some(DockWin { xs, tl, ps }), w: want.0, h: want.1, want, gap: self.model.conf.dock_gap as i32, configured: false, bufs: vec![], hits: vec![], hover: None });
+        self.surfs.push(Surf { id, kind: Kind::Dock, output, wl, layer: None, dock: Some(DockWin { xs, tl, ps }), w: want.0, h: want.1, want, gap: self.model.conf.dock_gap as i32, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0 });
     }
 
     fn toggle_calendar(&mut self) {
@@ -512,7 +541,7 @@ impl State {
         // The start menu takes the keyboard at once, so you can type as soon as it opens.
         layer.set_keyboard_interactivity(if matches!(&kind, PopupKind::Start(_)) || matches!(&kind, PopupKind::Fylgja(f) if f.pinned) { KeyboardInteractivity::Exclusive } else { KeyboardInteractivity::OnDemand });
         wl.commit();
-        self.surfs.push(Surf { id, kind: Kind::Popup, output, wl, layer: Some(layer), dock: None, w: 0, h: 0, want: (0, 0), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None });
+        self.surfs.push(Surf { id, kind: Kind::Popup, output, wl, layer: Some(layer), dock: None, w: 0, h: 0, want: (0, 0), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0 });
         if matches!(kind, PopupKind::Fylgja(_)) {
             self.fy_active.store(true, Ordering::Relaxed);
             fylgja::spawn_poller(self.fy_active.clone(), self.fy_shared.clone());
@@ -520,7 +549,7 @@ impl State {
             self.start_anim(true);
             if !self.thumbs_started {
                 self.thumbs_started = true;
-                let scale = self.scale_of(self.surfs.last().unwrap()).max(1) as u32;
+                let scale = self.scale_of(self.surfs.last().unwrap()).ceil().max(1.0) as u32;
                 let walls = fylgja::wallpaper_list();
                 let map = Arc::new(std::sync::Mutex::new(HashMap::new()));
                 fylgja::spawn_thumbs(walls.clone(), (94 * scale, 53 * scale), map.clone());
@@ -638,7 +667,7 @@ impl State {
             wl.set_input_region(Some(&region));
             region.destroy();
             wl.commit();
-            self.surfs.push(Surf { id, kind: Kind::Osd, output, wl, layer: Some(layer), dock: None, w: osd::WIDTH, h: osd::HEIGHT, want: (osd::WIDTH, osd::HEIGHT), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None });
+            self.surfs.push(Surf { id, kind: Kind::Osd, output, wl, layer: Some(layer), dock: None, w: osd::WIDTH, h: osd::HEIGHT, want: (osd::WIDTH, osd::HEIGHT), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0 });
         }
         self.dirty = true;
     }
@@ -1044,7 +1073,7 @@ impl State {
         layer.set_exclusive_zone(zone);
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
         wl.commit();
-        self.surfs.push(Surf { id, kind: Kind::Strut, output, wl, layer: Some(layer), dock: None, w: size.0, h: size.1, want: (zone as u32, zone as u32), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None });
+        self.surfs.push(Surf { id, kind: Kind::Strut, output, wl, layer: Some(layer), dock: None, w: size.0, h: size.1, want: (zone as u32, zone as u32), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0 });
     }
 
     /// The strip's anchor, requested size and zone (the dock's thickness plus the gap it floats at).
@@ -1122,13 +1151,13 @@ impl State {
             let s = &self.surfs[i];
             (s.kind, s.w, s.h, s.hover, s.configured)
         };
-        let scale = self.scale_of(&self.surfs[i]);
         if !configured || w == 0 || h == 0 {
             return;
         }
-        let (pw, ph) = (w * scale as u32, h * scale as u32);
+        self.scale_surface(i);
+        let s = self.scale_of(&self.surfs[i]);
+        let (pw, ph) = ((w as f32 * s).round() as u32, (h as f32 * s).round() as u32);
         let Some(mut pix) = Pixmap::new(pw, ph) else { return };
-        let s = scale as f32;
         let hits = match kind {
             Kind::Strut => vec![],
             Kind::Osd => {
@@ -1190,7 +1219,11 @@ impl State {
             dst[3] = src[3];
         }
         b.busy.store(true, Ordering::Release);
-        surf.wl.set_buffer_scale(scale);
+        match &surf.frac {
+            // the buffer is `s` times the surface; the viewport says how big the surface is
+            Some((_, vp)) => vp.set_destination(w as i32, h as i32),
+            None => surf.wl.set_buffer_scale(s.round().max(1.0) as i32),
+        }
         surf.wl.attach(Some(&b.buffer), 0, 0);
         surf.wl.damage_buffer(0, 0, pw as i32, ph as i32);
         surf.wl.commit();
@@ -1273,7 +1306,7 @@ impl State {
 
     fn hover_at(&mut self, x: f32, y: f32) {
         let Some(i) = self.pointer_surface else { return };
-        let s = self.scale_of(&self.surfs[i]) as f32;
+        let s = self.scale_of(&self.surfs[i]);
         let new = self.surfs[i].hits.iter().position(|h| h.contains(x * s, y * s));
         if new != self.surfs[i].hover {
             self.surfs[i].hover = new;
@@ -1617,6 +1650,20 @@ impl Dispatch<OrgKdePlasmaWindow, u32> for State {
     }
 }
 
+impl Dispatch<WpFractionalScaleV1, usize> for State {
+    fn event(state: &mut Self, _: &WpFractionalScaleV1, event: wp_fractional_scale_v1::Event, id: &usize, _: &Connection, _: &QueueHandle<Self>) {
+        if let wp_fractional_scale_v1::Event::PreferredScale { scale } = event {
+            if let Some(s) = state.surfs.iter_mut().find(|s| s.id == *id) {
+                s.fscale = scale as f32 / 120.0;
+                state.dirty = true;
+            }
+        }
+    }
+}
+delegate_noop!(State: WpFractionalScaleManagerV1);
+delegate_noop!(State: WpViewporter);
+delegate_noop!(State: WpViewport);
+
 impl Dispatch<WpCursorShapeManagerV1, ()> for State {
     fn event(_: &mut Self, _: &WpCursorShapeManagerV1, _: <WpCursorShapeManagerV1 as Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
 }
@@ -1660,6 +1707,8 @@ fn main() {
     let compositor: WlCompositor = globals.bind(&qh, 4..=6, ()).expect("wl_compositor");
     let shm: WlShm = globals.bind(&qh, 1..=1, ()).expect("wl_shm");
     let xdg_wm: Option<XdgWmBase> = globals.bind(&qh, 1..=6, ()).ok();
+    let frac_mgr: Option<WpFractionalScaleManagerV1> = globals.bind(&qh, 1..=1, ()).ok();
+    let viewporter: Option<WpViewporter> = globals.bind(&qh, 1..=1, ()).ok();
     let plasma_shell: Option<OrgKdePlasmaShell> = globals.bind(&qh, 1..=8, ()).ok();
     let layer_shell: ZwlrLayerShellV1 = globals.bind(&qh, 1..=4, ()).unwrap_or_else(|_| {
         eprintln!("labyrinth-panel: the compositor has no wlr-layer-shell");
@@ -1682,6 +1731,8 @@ fn main() {
         compositor,
         layer_shell,
         xdg_wm,
+        frac_mgr,
+        viewporter,
         plasma_shell,
         shm,
         model: Model { apps: apps::load_all(), pinned: apps::pinned(), wins: vec![], clock: clock_text(PanelConf::load().clock_24h), clock_secs: secs_text(PanelConf::load().clock_24h), date: date_text(), today: today_ymd(), user: user_name(), hibernate: shell::can_hibernate(), conf: PanelConf::load(), dark: system_dark(), status: Default::default(), trash_full: shell::trash_has_files(), notch_open: false, fylgja: Default::default(), notch_w: 0.0, notch_tab: None },
@@ -1920,7 +1971,7 @@ fn main() {
                 // the cover of what is playing, loaded when the song changes
                 let want = st.model.fylgja.snap.media.as_ref().and_then(|m| m.art.clone());
                 if want != st.art_for {
-                    let scale = st.surfs.iter().find(|x| x.kind == Kind::Popup).map(|x| st.scale_of(x)).unwrap_or(1).max(1) as u32;
+                    let scale = st.surfs.iter().find(|x| x.kind == Kind::Popup).map(|x| st.scale_of(x)).unwrap_or(1.0).ceil().max(1.0) as u32;
                     st.model.fylgja.art = want.as_deref().and_then(|p| fylgja::load_image(p, 58 * scale, 58 * scale, 8.0 * scale as f32));
                     st.art_for = want;
                     st.dirty = true;

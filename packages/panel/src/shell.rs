@@ -51,6 +51,11 @@ pub fn dock_h(icon: u32) -> u32 {
     icon + 24
 }
 
+/// Room the dock takes at the bottom of the screen, which the start menu keeps clear of.
+fn dock_room(m: &Model) -> f32 {
+    if m.conf.dock_pos == DockPos::Bottom { (dock_h(m.conf.dock_icon) + m.conf.dock_gap) as f32 } else { 0.0 }
+}
+
 pub struct Win {
     pub key: u32,
     pub uuid: String,
@@ -560,7 +565,7 @@ pub fn paint_start(pix: &mut Pixmap, s: f32, m: &Model, query: &str, scroll: i32
     let pal = start_pal(m.dark);
     let surf_h = pix.height() as f32 / s;
     let (cx, cy, cw) = (8.0, 3.0, 500.0);
-    let ch = (surf_h - 12.0).min(600.0);
+    let ch = (surf_h - 12.0 - dock_room(m)).min(600.0).max(240.0);
     let rr = |pix: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, c: Rgba| paint::fill_rounded(pix, x * s, y * s, w * s, h * s, r * s, c);
     let inside = |r: (f32, f32, f32, f32)| pointer.0 >= r.0 && pointer.0 < r.0 + r.2 && pointer.1 >= r.1 && pointer.1 < r.1 + r.3;
     rr(pix, cx, cy, cw, ch, 14.0, pal.bg);
@@ -712,7 +717,7 @@ pub fn paint_start_folders(pix: &mut Pixmap, s: f32, m: &Model, v: &FoldersView,
     let pal = start_pal(m.dark);
     let surf_h = pix.height() as f32 / s;
     let (cx, cy, cw) = (8.0, 3.0, 300.0);
-    let ch = (surf_h - 12.0).min(640.0);
+    let ch = (surf_h - 12.0 - dock_room(m)).min(640.0).max(240.0);
     let rr = |pix: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, c: Rgba| paint::fill_rounded(pix, x * s, y * s, w * s, h * s, r * s, c);
     let inside = |r: (f32, f32, f32, f32)| pointer.0 >= r.0 && pointer.0 < r.0 + r.2 && pointer.1 >= r.1 && pointer.1 < r.1 + r.3;
     let text = |pix: &mut Pixmap, font: &ab_glyph::FontVec, size: f32, x: f32, y: f32, c: Rgba, t: &str| paint::draw_text(pix, font, size * s, x * s, y * s, c, t);
@@ -832,10 +837,10 @@ pub fn paint_start_folders(pix: &mut Pixmap, s: f32, m: &Model, v: &FoldersView,
         if let Some((name, list)) = folders.get(ci) {
             let sw = 290.0;
             let sx = cx + cw + 4.0;
-            let vis_max = (((surf_h - 16.0) - 52.0) / row_h).floor().max(3.0) as usize;
+            let vis_max = (((surf_h - 16.0 - dock_room(m)) - 52.0) / row_h).floor().max(3.0) as usize;
             let shown = list.len().min(vis_max);
             let sh = 44.0 + shown as f32 * row_h + 8.0;
-            let sy = (y0 - 8.0).min(surf_h - 8.0 - sh).max(cy);
+            let sy = (y0 - 8.0).min(surf_h - 8.0 - dock_room(m) - sh).max(cy);
             card(pix, sx, sy, sw, sh);
             text(pix, &fonts.bold, 12.0, sx + 16.0, sy + 24.0, pal.dim, name);
             let max_sub = list.len().saturating_sub(shown) as i32;
