@@ -826,6 +826,9 @@ impl App {
             ui::row(ui, pal, true, "Search inside subfolders", Some("Searching in Minos looks through every folder below the one you are in; off searches only that folder"), |ui| {
                 minos_changed = ui::switch(ui, pal, &mut minos.search_subfolders).changed();
             });
+            ui::row(ui, pal, false, "Show hidden items", Some("Files and folders whose names start with a dot"), |ui| {
+                minos_changed |= ui::switch(ui, pal, &mut minos.show_hidden).changed();
+            });
         });
         if minos_changed {
             self.change(ctx, move || minos.save());

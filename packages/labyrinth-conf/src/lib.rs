@@ -57,11 +57,13 @@ pub struct PanelConf {
     pub clipboard_history: bool,
     /// Minos's search looks inside the folders below the one you are in, not just that folder.
     pub search_subfolders: bool,
+    /// Minos lists hidden files and folders (the ones starting with a dot).
+    pub show_hidden: bool,
 }
 
 impl Default for PanelConf {
     fn default() -> Self {
-        PanelConf { dock_pos: DockPos::Bottom, dock_icon: 44, dock_gap: 4, start_theme: StartTheme::Windows, clock_24h: true, dock_opacity: 69, dock_color: ColorMode::Theme, bar_opacity: 69, bar_color: ColorMode::Theme, clipboard_history: true, search_subfolders: true }
+        PanelConf { dock_pos: DockPos::Bottom, dock_icon: 44, dock_gap: 4, start_theme: StartTheme::Windows, clock_24h: true, dock_opacity: 69, dock_color: ColorMode::Theme, bar_opacity: 69, bar_color: ColorMode::Theme, clipboard_history: true, search_subfolders: true, show_hidden: false }
     }
 }
 
@@ -114,6 +116,7 @@ impl PanelConf {
                 "bar_color" => c.bar_color = mode(v).unwrap_or(c.bar_color),
                 "clipboard_history" => c.clipboard_history = !matches!(v, "no" | "false" | "off" | "0"),
                 "search_subfolders" => c.search_subfolders = !matches!(v, "no" | "false" | "off" | "0"),
+                "show_hidden" => c.show_hidden = matches!(v, "yes" | "true" | "on" | "1"),
                 _ => {}
             }
         }
@@ -123,7 +126,7 @@ impl PanelConf {
     pub fn to_text(&self) -> String {
         format!(
             "# How the top bar and dock look. Edited by Labyrinth Settings (Appearance).\n\
-             dock_pos = {}\ndock_icon = {}\ndock_gap = {}\nclock_24h = {}\nstart_theme = {}\ndock_opacity = {}\ndock_color = {}\nbar_opacity = {}\nbar_color = {}\nclipboard_history = {}\nsearch_subfolders = {}\n",
+             dock_pos = {}\ndock_icon = {}\ndock_gap = {}\nclock_24h = {}\nstart_theme = {}\ndock_opacity = {}\ndock_color = {}\nbar_opacity = {}\nbar_color = {}\nclipboard_history = {}\nsearch_subfolders = {}\nshow_hidden = {}\n",
             match self.dock_pos {
                 DockPos::Bottom => "bottom",
                 DockPos::Left => "left",
@@ -138,7 +141,8 @@ impl PanelConf {
             self.bar_opacity,
             mode_name(self.bar_color),
             if self.clipboard_history { "yes" } else { "no" },
-            if self.search_subfolders { "yes" } else { "no" }
+            if self.search_subfolders { "yes" } else { "no" },
+            if self.show_hidden { "yes" } else { "no" }
         )
     }
 
@@ -178,7 +182,7 @@ mod tests {
 
     #[test]
     fn round_trips() {
-        let c = PanelConf { dock_pos: DockPos::Right, dock_icon: 60, dock_gap: 0, start_theme: StartTheme::Folders, clock_24h: false, dock_opacity: 0, dock_color: ColorMode::Neutral, bar_opacity: 100, bar_color: ColorMode::Neutral, clipboard_history: false, search_subfolders: false };
+        let c = PanelConf { dock_pos: DockPos::Right, dock_icon: 60, dock_gap: 0, start_theme: StartTheme::Folders, clock_24h: false, dock_opacity: 0, dock_color: ColorMode::Neutral, bar_opacity: 100, bar_color: ColorMode::Neutral, clipboard_history: false, search_subfolders: false, show_hidden: true };
         assert_eq!(PanelConf::parse(&c.to_text()), c);
     }
 

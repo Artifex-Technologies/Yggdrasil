@@ -58,7 +58,6 @@ enum Action {
     Verify(String),
     ToggleSplit,
     SetView(ViewMode),
-    LinkDialog,
     ProtonConnect,
 }
 
@@ -79,6 +78,9 @@ struct TabView {
     recursive: bool,
     /// Where the running search started (the folder, or / for the whole computer), for the names shown.
     search_root: PathBuf,
+    /// The search box under the magnifier is showing, and should take the keyboard when it opens.
+    search_open: bool,
+    search_focus: bool,
     search: Option<Search>,
     results: Option<Vec<Entry>>,
     /// The address bar is showing an editable path instead of clickable segments.
@@ -98,6 +100,8 @@ impl TabView {
             anchor: None,
             recursive: true,
             search_root: PathBuf::new(),
+            search_open: false,
+            search_focus: false,
             search: None,
             results: None,
             editing: false,
@@ -848,12 +852,35 @@ fn toolbar(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, pal: &Palette, st: &St
             actions.push(Action::Paste(pi));
         }
         ui.add_space(6.0);
-        let search_w = 210.0;
-        let w = ui.available_width() - search_w - 90.0 - 108.0;
+        let w = ui.available_width() - 32.0 - 90.0 - 108.0;
         breadcrumb(ui, pal, t, pi, w, actions);
-        let q = ui.add(egui::TextEdit::singleline(&mut t.query).hint_text("Search").desired_width(search_w));
-        if q.changed() {
-            t.restart_search(ui.ctx(), hidden);
+        let magnifier = icon_button(ui, pal, Icon::Search, "Search (Ctrl+F)", true, t.search_open || !t.query.is_empty());
+        if magnifier.clicked() {
+            t.search_open = !t.search_open;
+            t.search_focus = t.search_open;
+        }
+        if t.search_open {
+            let ctx = ui.ctx().clone();
+            let area = egui::Area::new(egui::Id::new(("minos-search", pi))).order(egui::Order::Foreground).fixed_pos(pos2(magnifier.rect.right() - 250.0, magnifier.rect.bottom() + 4.0)).show(&ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    let te = ui.add(egui::TextEdit::singleline(&mut t.query).hint_text("Search").desired_width(230.0));
+                    if t.search_focus {
+                        te.request_focus();
+                        t.search_focus = false;
+                    }
+                    if te.changed() {
+                        t.restart_search(&ctx, hidden);
+                    }
+                });
+            });
+            let (esc, pressed) = ctx.input(|i| (i.key_pressed(egui::Key::Escape), i.pointer.any_pressed()));
+            if esc {
+                t.search_open = false;
+                t.query.clear();
+                t.restart_search(&ctx, hidden);
+            } else if pressed && !area.response.contains_pointer() && !magnifier.contains_pointer() {
+                t.search_open = false; // the words stay, so the results do
+            }
         }
         if icon_button(ui, pal, Icon::List, "Details view", true, st.view == ViewMode::Details).clicked() {
             actions.push(Action::SetView(ViewMode::Details));
@@ -1265,7 +1292,6 @@ struct App {
     verifying: Vec<String>,
     verify_tx: Sender<(String, Result<Report, String>)>,
     verify_rx: Receiver<(String, Result<Report, String>)>,
-    link_form: Option<(String, String, String)>,
     /// Proton Drive sign-in form: email, password, mailbox password, 2FA code.
     proton_form: Option<[String; 4]>,
     proton_busy: bool,
@@ -1273,6 +1299,7 @@ struct App {
     proton_rx: Receiver<Result<(), String>>,
     applied_theme: Option<(bool, Option<[u8; 3]>)>,
     accent_checked: Instant,
+    conf_checked: Instant,
     pv: PreviewState,
     dnd: Option<dnd::Dnd>,
     dnd_tried: bool,
@@ -1284,6 +1311,8 @@ impl App {
     fn new() -> Self {
         let st_path = State::config_path();
         let mut st = st_path.as_deref().map(State::load_from).unwrap_or_default();
+        st.show_hidden = labyrinth_conf::PanelConf::load().show_hidden;
+        st.follow_accent = true;
         if st.favorites.is_empty() {
             st.favorites = places::favorites().into_iter().map(|p| p.path).collect();
         }
@@ -1313,13 +1342,13 @@ impl App {
             verifying: vec![],
             verify_tx,
             verify_rx,
-            link_form: None,
             proton_form: None,
             proton_busy: false,
             proton_tx,
             proton_rx,
             applied_theme: None,
             accent_checked: Instant::now(),
+            conf_checked: Instant::now(),
             pv: PreviewState::new(),
             dnd: None,
             dnd_tried: false,
@@ -1729,10 +1758,6 @@ impl App {
                         self.proton_form = Some(Default::default());
                     }
                 }
-                Action::LinkDialog => {
-                    let local = self.panes[self.focus].tabs[self.panes[self.focus].active].dir().to_string_lossy().into_owned();
-                    self.link_form = Some((String::new(), local, "proton:".into()));
-                }
             }
         }
     }
@@ -1894,11 +1919,6 @@ impl App {
                     }
                 });
             }
-            if self.cloud.is_some() || !self.links.is_empty() {
-                if ui.small_button("Link a folder...").clicked() {
-                    actions.push(Action::LinkDialog);
-                }
-            }
         });
     }
 }
@@ -1908,8 +1928,17 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         // Follow the system accent: read it now and then, so a change in the system settings
         // shows up without restarting Minos.
-        // light or dark follows the system's setting (Settings, Appearance)
+        // light or dark, and the accent, follow the system's setting (Settings, Appearance); hidden items follow Settings, Apps
         self.st.dark = theme::system_dark();
+        if self.conf_checked.elapsed() >= Duration::from_secs(1) {
+            self.conf_checked = Instant::now();
+            let show = labyrinth_conf::PanelConf::load().show_hidden;
+            if show != self.st.show_hidden {
+                self.st.show_hidden = show;
+                self.reload_all();
+            }
+            ctx.request_repaint_after(Duration::from_secs(1));
+        }
         if self.st.follow_accent && self.accent_checked.elapsed() >= Duration::from_secs(2) {
             self.st.system_accent = theme::system_accent();
             self.accent_checked = Instant::now();
@@ -1967,6 +1996,7 @@ impl eframe::App for App {
         if !ctx.egui_wants_keyboard_input() {
             let sel = self.selected_in_focus();
             let f = self.focus;
+            let mut open_search = false;
             ctx.input(|i| {
                 let cmd = i.modifiers.command;
                 // egui turns Ctrl+C / Ctrl+X / Ctrl+V into dedicated events and does NOT also
@@ -1979,6 +2009,9 @@ impl eframe::App for App {
                 }
                 if i.key_pressed(egui::Key::F3) {
                     actions.push(Action::TogglePreview);
+                }
+                if cmd && i.key_pressed(egui::Key::F) {
+                    open_search = true;
                 }
                 if cmd && i.key_pressed(egui::Key::L) {
                     actions.push(Action::EditAddress(f));
@@ -2033,17 +2066,6 @@ impl eframe::App for App {
                 ui.horizontal(|ui| {
                     let menu = icon_button(ui, &pal, Icon::Menu, "Menu", true, false);
                     egui::Popup::menu(&menu).show(|ui| {
-                        let mut h = self.st.show_hidden;
-                        if ui.checkbox(&mut h, "Show hidden items").changed() {
-                            self.st.show_hidden = h;
-                            self.dirty = true;
-                            actions.push(Action::Reload);
-                        }
-                        let mut f = self.st.follow_accent;
-                        if ui.checkbox(&mut f, "Follow system accent color").changed() {
-                            self.st.follow_accent = f;
-                            self.dirty = true;
-                        }
                         ui.separator();
                         if ui.selectable_label(self.st.view == ViewMode::Details, "Details view").clicked() {
                             actions.push(Action::SetView(ViewMode::Details));
@@ -2066,10 +2088,6 @@ impl eframe::App for App {
                         let mut sp = self.st.split;
                         if ui.checkbox(&mut sp, "Split pane").changed() {
                             actions.push(Action::ToggleSplit);
-                        }
-                        if ui.button("Link a folder to the cloud...").clicked() {
-                            actions.push(Action::LinkDialog);
-                            ui.close();
                         }
                     });
                     ui.add_space(6.0);
@@ -2206,44 +2224,6 @@ impl eframe::App for App {
             self.proton_form = None;
         }
 
-        let mut link_done: Option<bool> = None;
-        if let Some((name, local, remote)) = &mut self.link_form {
-            egui::Window::new("Link a folder to the cloud").collapsible(false).show(&ctx, |ui| {
-                ui.label("Name");
-                ui.text_edit_singleline(name);
-                ui.label("Local folder");
-                ui.text_edit_singleline(local);
-                ui.label("Remote folder (rclone path, e.g. proton:My files/Documents/Github)");
-                ui.text_edit_singleline(remote);
-                ui.horizontal(|ui| {
-                    if ui.button("Link").clicked() {
-                        link_done = Some(true);
-                    }
-                    if ui.button("Cancel").clicked() {
-                        link_done = Some(false);
-                    }
-                });
-            });
-        }
-        if let Some(ok) = link_done {
-            match (ok, self.link_form.take()) {
-                (true, Some((name, local, remote))) => {
-                    if name.trim().is_empty() || !Path::new(&local).is_dir() {
-                        self.status = "Link needs a name and an existing local folder".into();
-                    } else {
-                        self.links.retain(|l| l.name != name.trim());
-                        self.links.push(Link { name: name.trim().into(), local: local.into(), remote });
-                        if let Some(p) = cloud::links_path() {
-                            if let Err(e) = cloud::save_links(&p, &self.links) {
-                                self.status = format!("Could not save links: {e}");
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-
         self.pump_dnd(&ctx, _frame);
         if let Some(p) = egui::DragAndDrop::payload::<DragPaths>(&ctx) {
             if let Some(pos) = ctx.pointer_latest_pos() {
@@ -2302,6 +2282,7 @@ fn main() -> eframe::Result {
             egui_extras::install_image_loaders(&cc.egui_ctx);
             let mut st = State::config_path().as_deref().map(State::load_from).unwrap_or_default();
             st.dark = theme::system_dark();
+            st.follow_accent = true;
             theme::apply(&cc.egui_ctx, st.dark, if st.follow_accent { theme::system_accent() } else { None });
             let mut app = App::new();
             // `minos FOLDER` (the dock's Trash, "open with"): that folder in a new tab.
