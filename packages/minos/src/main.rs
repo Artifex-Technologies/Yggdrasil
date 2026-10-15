@@ -354,11 +354,13 @@ fn inline_rename(ui: &mut egui::Ui, pal: &Palette, e: &Entry) -> bool {
         r.request_focus();
         d.fresh = false;
     }
-    let (esc, enter) = ui.input(|i| (i.key_pressed(egui::Key::Escape), i.key_pressed(egui::Key::Enter)));
-    let result = if esc {
-        Some(None)
-    } else if enter || (r.lost_focus() && !d.fresh) {
+    let (esc, enter, window_unfocused) = ui.input(|i| (i.key_pressed(egui::Key::Escape), i.key_pressed(egui::Key::Enter), i.viewport().focused == Some(false)));
+    // Only Enter keeps the new name. Esc, a click anywhere else, or switching to another window drops it,
+    // so a stray keypress can never rename something by accident.
+    let result = if enter && r.lost_focus() {
         Some(Some((d.path.clone(), d.text.clone())))
+    } else if esc || r.lost_focus() || window_unfocused {
+        Some(None)
     } else {
         None
     };
