@@ -535,8 +535,16 @@ impl State {
         self.next_surf += 1;
         let wl = self.compositor.create_surface(&self.qh, ());
         let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Overlay, "labyrinth-popup".into(), &self.qh, id);
-        layer.set_anchor(Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right);
-        layer.set_size(0, 0);
+        // KWin lifts a surface that is taller than the room above the dock's reserved strip, so the top of
+        // every menu would end up above the screen. Ask for just that room, anchored to the top.
+        let full_h = self.layout.sizes.iter().find(|(n, ..)| *n == out.name).map(|(_, _, _, _, h)| *h).unwrap_or(0);
+        let h = if full_h > 0 && self.model.conf.dock_pos == DockPos::Bottom {
+            full_h.saturating_sub(shell::dock_h(self.model.conf.dock_icon) + self.model.conf.dock_gap)
+        } else {
+            full_h
+        };
+        layer.set_anchor(Anchor::Top | Anchor::Left | Anchor::Right);
+        layer.set_size(0, h);
         layer.set_exclusive_zone(-1);
         // The start menu takes the keyboard at once, so you can type as soon as it opens.
         layer.set_keyboard_interactivity(if matches!(&kind, PopupKind::Start(_)) || matches!(&kind, PopupKind::Fylgja(f) if f.pinned) { KeyboardInteractivity::Exclusive } else { KeyboardInteractivity::OnDemand });
