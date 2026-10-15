@@ -748,7 +748,7 @@ impl App {
             self.change(ctx, move || {
                 let (when, flag) = if minutes == 0 { ("-1".to_string(), "false") } else { ((minutes * 60).to_string(), "true") };
                 let enable_key = if group == "Display" { "TurnOffDisplayWhenIdle" } else { "AutoSuspendAction" };
-                sys::act("kwriteconfig6", &["--file", "powerdevilrc", "--group", "AC", "--group", group, "--key", key, &when])?;
+                sys::act("kwriteconfig6", &["--file", "powerdevilrc", "--group", "AC", "--group", group, "--key", key, "--", &when])?;
                 if group == "Display" {
                     sys::act("kwriteconfig6", &["--file", "powerdevilrc", "--group", "AC", "--group", group, "--key", enable_key, flag])?;
                 } else {
