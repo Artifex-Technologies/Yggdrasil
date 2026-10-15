@@ -281,7 +281,23 @@ fn cache_dir() -> Option<PathBuf> {
 /// The cover as a file here: a file:// address is used as it is, a web address is fetched once and kept.
 fn cover_file(url: &str) -> Option<String> {
     if let Some(p) = url.strip_prefix("file://") {
-        return Some(p.replace("%20", " "));
+        let p = p.replace("%20", " ");
+        // a browser's cover is often a bare temp file: the decoder needs an extension, so keep a copy that has one
+        let known = Path::new(&p).extension().and_then(|e| e.to_str()).map(|e| matches!(e.to_lowercase().as_str(), "jpg" | "jpeg" | "png" | "webp" | "gif")).unwrap_or(false);
+        if known {
+            return Some(p);
+        }
+        let data = std::fs::read(&p).ok()?;
+        let ext = image_ext(&data)?;
+        let mut h: u64 = 0xcbf29ce484222325;
+        for b in p.bytes().chain(data.len().to_string().bytes()) {
+            h = (h ^ b as u64).wrapping_mul(0x100000001b3);
+        }
+        let copy = cache_dir()?.join(format!("cover-{h:016x}.{ext}"));
+        if !copy.is_file() {
+            std::fs::write(&copy, &data).ok()?;
+        }
+        return Some(copy.display().to_string());
     }
     if !(url.starts_with("https://") || url.starts_with("http://")) {
         return None;
@@ -290,15 +306,43 @@ fn cover_file(url: &str) -> Option<String> {
     for b in url.bytes() {
         h = (h ^ b as u64).wrapping_mul(0x100000001b3);
     }
-    let path = cache_dir()?.join(format!("cover-{h:016x}"));
-    if !path.is_file() {
-        let ok = Command::new("curl").args(["-sfL", "--max-time", "6", "-o"]).arg(&path).arg(url).status().map(|s| s.success()).unwrap_or(false);
-        if !ok {
-            let _ = std::fs::remove_file(&path);
-            return None;
+    // The picture decoder goes by the file's extension, and a web cover has none: keep it under one that matches
+    // what it really is (told by its first bytes).
+    let base = cache_dir()?.join(format!("cover-{h:016x}"));
+    for ext in ["jpg", "png", "webp", "gif"] {
+        let p = base.with_extension(ext);
+        if p.is_file() {
+            return Some(p.display().to_string());
         }
     }
+    let ok = Command::new("curl").args(["-sfL", "--max-time", "6", "-o"]).arg(&base).arg(url).status().map(|s| s.success()).unwrap_or(false);
+    if !ok {
+        let _ = std::fs::remove_file(&base);
+        return None;
+    }
+    let ext = std::fs::read(&base).ok().and_then(|d| image_ext(&d));
+    let Some(ext) = ext else {
+        let _ = std::fs::remove_file(&base);
+        return None;
+    };
+    let path = base.with_extension(ext);
+    std::fs::rename(&base, &path).ok()?;
     Some(path.display().to_string())
+}
+
+/// The extension for a picture, from its first bytes.
+fn image_ext(d: &[u8]) -> Option<&'static str> {
+    if d.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some("jpg")
+    } else if d.starts_with(&[0x89, b'P', b'N', b'G']) {
+        Some("png")
+    } else if d.len() > 12 && &d[0..4] == b"RIFF" && &d[8..12] == b"WEBP" {
+        Some("webp")
+    } else if d.starts_with(b"GIF8") {
+        Some("gif")
+    } else {
+        None
+    }
 }
 
 fn media() -> Option<Media> {
@@ -1161,6 +1205,14 @@ mod tests {
         assert_eq!((busy, total), (150, 1000));
         let mem = "MemTotal:       16384000 kB\nMemFree:  1 kB\nMemAvailable:    8192000 kB\n";
         assert_eq!(parse_meminfo(mem), Some((8000, 16000)));
+    }
+
+    #[test]
+    fn covers_are_named_by_what_they_are() {
+        assert_eq!(image_ext(&[0xFF, 0xD8, 0xFF, 0xE0, 0, 0]), Some("jpg"));
+        assert_eq!(image_ext(b"\x89PNG\r\n\x1a\n"), Some("png"));
+        assert_eq!(image_ext(b"RIFF\x00\x00\x00\x00WEBPVP8 "), Some("webp"));
+        assert_eq!(image_ext(b"<html>not a picture"), None);
     }
 
     #[test]

@@ -535,14 +535,12 @@ impl State {
         self.next_surf += 1;
         let wl = self.compositor.create_surface(&self.qh, ());
         let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Overlay, "labyrinth-popup".into(), &self.qh, id);
-        // KWin lifts a surface that is taller than the room above the dock's reserved strip, so the top of
-        // every menu would end up above the screen. Ask for just that room, anchored to the top.
+        // KWin puts a surface that fits the free room (under the bar, above the dock's strip) at the top of that
+        // room, and lifts one that is taller up by the overhang. So ask for exactly that room: then the
+        // menus start just under the bar, where Fylgja's section titles stay in view.
         let full_h = self.layout.sizes.iter().find(|(n, ..)| *n == out.name).map(|(_, _, _, _, h)| *h).unwrap_or(0);
-        let h = if full_h > 0 && self.model.conf.dock_pos == DockPos::Bottom {
-            full_h.saturating_sub(shell::dock_h(self.model.conf.dock_icon) + self.model.conf.dock_gap)
-        } else {
-            full_h
-        };
+        let strut = if self.model.conf.dock_pos == DockPos::Bottom && Some(output) == self.dock_output() { shell::dock_h(self.model.conf.dock_icon) + self.model.conf.dock_gap } else { 0 };
+        let h = if full_h > 0 { full_h.saturating_sub(shell::BAR_H + strut) } else { 0 };
         layer.set_anchor(Anchor::Top | Anchor::Left | Anchor::Right);
         layer.set_size(0, h);
         layer.set_exclusive_zone(-1);
