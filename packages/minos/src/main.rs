@@ -856,7 +856,7 @@ fn toolbar(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, pal: &Palette, st: &St
             }
             ui.add_space(6.0);
         }
-        let w = ui.available_width() - 32.0 - if compact { 32.0 } else { 90.0 + 108.0 };
+        let w = ui.available_width() - 34.0 - if compact { 34.0 } else { 3.0 * 32.0 + 4.0 };
         breadcrumb(ui, pal, t, pi, w, actions);
         let magnifier = icon_button(ui, pal, Icon::Search, "Search (Ctrl+F)", true, t.search_open || !t.query.is_empty());
         if magnifier.clicked() {
