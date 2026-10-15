@@ -245,7 +245,7 @@ impl eframe::App for App {
                         Page::Power => self.page_power(ui, &pal, &ctx),
                         Page::Firewall => self.page_firewall(ui, &pal, &ctx),
                         Page::DateTime => self.page_time(ui, &pal, &ctx),
-                        Page::Apps => self.page_apps(ui, &pal),
+                        Page::Apps => self.page_apps(ui, &pal, &ctx),
                         Page::Shortcuts => page_shortcuts(ui, &pal),
                     }
                 });
@@ -818,8 +818,18 @@ impl App {
         }
     }
 
-    fn page_apps(&mut self, ui: &mut egui::Ui, pal: &Palette) {
+    fn page_apps(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         let Some(apps) = self.data.apps.clone() else { return loading(ui) };
+        let mut minos = labyrinth_conf::PanelConf::load();
+        let mut minos_changed = false;
+        ui::group(ui, pal, Some("Minos"), |ui| {
+            ui::row(ui, pal, true, "Search inside subfolders", Some("Searching in Minos looks through every folder below the one you are in; off searches only that folder"), |ui| {
+                minos_changed = ui::switch(ui, pal, &mut minos.search_subfolders).changed();
+            });
+        });
+        if minos_changed {
+            self.change(ctx, move || minos.save());
+        }
         ui::group(ui, pal, Some("Labyrinth's optional software"), |ui| {
             for (i, c) in apps.iter().enumerate() {
                 let sub: String = c.description.chars().take(110).collect::<String>() + if c.description.chars().count() > 110 { "…" } else { "" };

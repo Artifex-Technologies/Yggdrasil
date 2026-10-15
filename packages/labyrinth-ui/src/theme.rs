@@ -78,6 +78,14 @@ pub fn system_accent() -> Option<[u8; 3]> {
     parse_kde_accent(&std::fs::read_to_string(dir.join("kdeglobals")).ok()?)
 }
 
+/// Whether the system is set to a dark style (KDE's colour scheme name in `kdeglobals`); dark when it cannot be read.
+pub fn system_dark() -> bool {
+    let Some(dir) = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from).or_else(|| dirs::home_dir().map(|h| h.join(".config"))) else { return true };
+    let Ok(text) = std::fs::read_to_string(dir.join("kdeglobals")) else { return true };
+    let scheme = text.lines().find_map(|l| l.trim().strip_prefix("ColorScheme=")).unwrap_or("").trim().to_lowercase();
+    scheme.is_empty() || scheme.contains("dark")
+}
+
 fn base_palette(dark: bool) -> Palette {
     if dark {
         Palette {

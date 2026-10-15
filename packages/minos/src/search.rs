@@ -8,6 +8,16 @@ use std::sync::Arc;
 pub struct Search {
     pub rx: Receiver<PathBuf>,
     cancel: Arc<AtomicBool>,
+    done: Arc<AtomicBool>,
+}
+
+/// Marks the search finished however its thread ends.
+struct Finish(Arc<AtomicBool>);
+
+impl Drop for Finish {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
 }
 
 impl Search {
@@ -17,7 +27,10 @@ impl Search {
         let (tx, rx) = channel();
         let cancel = Arc::new(AtomicBool::new(false));
         let flag = cancel.clone();
+        let done = Arc::new(AtomicBool::new(false));
+        let finish = Finish(done.clone());
         std::thread::spawn(move || {
+            let _finish = finish;
             let q = query.to_lowercase();
             let mut stack = vec![root];
             let mut hits = 0;
@@ -48,7 +61,12 @@ impl Search {
                 }
             }
         });
-        Self { rx, cancel }
+        Self { rx, cancel, done }
+    }
+
+    /// The walk has looked everywhere it was going to (results may still be waiting in `rx`).
+    pub fn finished(&self) -> bool {
+        self.done.load(Ordering::Relaxed)
     }
 
     pub fn cancel(&self) {

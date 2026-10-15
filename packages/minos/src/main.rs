@@ -58,7 +58,6 @@ enum Action {
     Verify(String),
     ToggleSplit,
     SetView(ViewMode),
-    ToggleTheme,
     LinkDialog,
     ProtonConnect,
 }
@@ -78,6 +77,8 @@ struct TabView {
     selected: BTreeSet<PathBuf>,
     anchor: Option<usize>,
     recursive: bool,
+    /// Where the running search started (the folder, or / for the whole computer), for the names shown.
+    search_root: PathBuf,
     search: Option<Search>,
     results: Option<Vec<Entry>>,
     /// The address bar is showing an editable path instead of clickable segments.
@@ -95,7 +96,8 @@ impl TabView {
             address: String::new(),
             selected: BTreeSet::new(),
             anchor: None,
-            recursive: false,
+            recursive: true,
+            search_root: PathBuf::new(),
             search: None,
             results: None,
             editing: false,
@@ -170,18 +172,26 @@ impl TabView {
     }
 
     fn restart_search(&mut self, ctx: &egui::Context, hidden: bool) {
+        self.search_from(ctx, hidden, self.dir());
+    }
+
+    /// Search from `root`: this folder, or `/` for the whole computer. Whether it goes into the
+    /// folders below is the Settings choice (Apps, Minos).
+    fn search_from(&mut self, ctx: &egui::Context, hidden: bool, root: PathBuf) {
         self.search = None;
         self.results = None;
+        self.recursive = root == Path::new("/") || labyrinth_conf::PanelConf::load().search_subfolders;
         if self.recursive && !self.query.trim().is_empty() {
             let ctx = ctx.clone();
             self.results = Some(vec![]);
-            self.search = Some(Search::start(self.dir(), self.query.clone(), hidden, 5000, move || ctx.request_repaint()));
+            self.search_root = root.clone();
+            self.search = Some(Search::start(root, self.query.clone(), hidden, 5000, move || ctx.request_repaint()));
         }
     }
 
     fn poll_search(&mut self) {
         let (Some(s), Some(res)) = (&self.search, &mut self.results) else { return };
-        let root = self.tab.history.current().to_path_buf();
+        let root = self.search_root.clone();
         while let Ok(p) = s.rx.try_recv() {
             if let Ok(m) = std::fs::metadata(&p) {
                 res.push(Entry {
@@ -845,9 +855,6 @@ fn toolbar(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, pal: &Palette, st: &St
         if q.changed() {
             t.restart_search(ui.ctx(), hidden);
         }
-        if ui.checkbox(&mut t.recursive, "Subfolders").on_hover_text("Search inside subfolders too").changed() {
-            t.restart_search(ui.ctx(), hidden);
-        }
         if icon_button(ui, pal, Icon::List, "Details view", true, st.view == ViewMode::Details).clicked() {
             actions.push(Action::SetView(ViewMode::Details));
         }
@@ -1074,6 +1081,15 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
         }
         if searching {
             ui.label(RichText::new("search results").color(pal.dim));
+        }
+        let t = &mut pane.tabs[pane.active];
+        let idle = t.search.as_ref().map(|s| s.finished()).unwrap_or(true);
+        if order.is_empty() && !t.query.trim().is_empty() && idle && t.search_root != Path::new("/") {
+            ui.label(RichText::new("Nothing found here.").color(pal.dim));
+            if ui.button("Search the whole computer").clicked() {
+                let c = ui.ctx().clone();
+                t.search_from(&c, hidden, PathBuf::from("/"));
+            }
         }
         let _ = focused;
     });
@@ -1700,10 +1716,6 @@ impl App {
                     self.st.view = v;
                     self.dirty = true;
                 }
-                Action::ToggleTheme => {
-                    self.st.dark = !self.st.dark;
-                    self.dirty = true;
-                }
                 Action::ProtonConnect => {
                     if cloud::proton_configured() {
                         // signed in already: the mount is just not running
@@ -1896,6 +1908,8 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         // Follow the system accent: read it now and then, so a change in the system settings
         // shows up without restarting Minos.
+        // light or dark follows the system's setting (Settings, Appearance)
+        self.st.dark = theme::system_dark();
         if self.st.follow_accent && self.accent_checked.elapsed() >= Duration::from_secs(2) {
             self.st.system_accent = theme::system_accent();
             self.accent_checked = Instant::now();
@@ -2058,10 +2072,6 @@ impl eframe::App for App {
                             ui.close();
                         }
                     });
-                    let (ticon, ttip) = if self.st.dark { (Icon::Sun, "Switch to light theme") } else { (Icon::Moon, "Switch to dark theme") };
-                    if icon_button(ui, &pal, ticon, ttip, true, false).clicked() {
-                        actions.push(Action::ToggleTheme);
-                    }
                     ui.add_space(6.0);
                     ui.label(RichText::new(&self.status).color(pal.dim));
                     // The strip is the title bar: empty space moves the window, buttons at the end.
@@ -2290,7 +2300,8 @@ fn main() -> eframe::Result {
         options,
         Box::new(|cc| {
             egui_extras::install_image_loaders(&cc.egui_ctx);
-            let st = State::config_path().as_deref().map(State::load_from).unwrap_or_default();
+            let mut st = State::config_path().as_deref().map(State::load_from).unwrap_or_default();
+            st.dark = theme::system_dark();
             theme::apply(&cc.egui_ctx, st.dark, if st.follow_accent { theme::system_accent() } else { None });
             let mut app = App::new();
             // `minos FOLDER` (the dock's Trash, "open with"): that folder in a new tab.
