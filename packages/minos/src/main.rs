@@ -335,8 +335,8 @@ struct Ctx<'a> {
 const RENAME_ID: &str = "minos-rename";
 const RENAME_RESULT_ID: &str = "minos-rename-result";
 
-/// If `e` is being renamed, shows the editor in place of its name and returns true. Enter or a click elsewhere keeps
-/// the new name, Esc drops it (the outcome goes to the App through the egui data, see `ui`).
+/// If `e` is being renamed, shows the editor in place of its name and returns true. Enter keeps
+/// the new name, Esc, a click elsewhere or another window drops it (the outcome goes to the App through the egui data, see `ui`).
 fn inline_rename(ui: &mut egui::Ui, pal: &Palette, e: &Entry) -> bool {
     let ctx = ui.ctx().clone();
     let Some(mut d) = ctx.data(|d| d.get_temp::<Option<RenameDlg>>(egui::Id::new(RENAME_ID))).flatten().filter(|d| d.path == e.path) else { return false };
