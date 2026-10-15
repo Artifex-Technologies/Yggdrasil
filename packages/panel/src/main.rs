@@ -129,6 +129,11 @@ enum PopupKind {
 struct StartState {
     query: String,
     scroll: i32,
+    /// Keyboard: where Tab has got to, and the selected row in the list, the folder at the side, and the power choices.
+    focus: shell::StartFocus,
+    sel: usize,
+    sub_sel: usize,
+    power_sel: usize,
     cat: Option<usize>,
     sub_scroll: i32,
     power_open: bool,
@@ -1040,28 +1045,125 @@ impl State {
             return;
         }
         let typed = self.xkb.as_ref().map(|x| x.key_get_utf8(xkb::Keycode::new(key + 8))).unwrap_or_default();
+        let folders_theme = self.model.conf.start_theme == StartTheme::Folders;
+        let (n_fav, n_folders) = shell::folders_counts(&self.model);
+        let folder_apps = |m: &shell::Model, i: usize| apps::folders(&m.apps).get(i).map(|(_, l)| l.len()).unwrap_or(0);
+        let power = shell::power_items(&self.model);
+        let results: Vec<String> = match &self.popup {
+            Some(Popup { kind: PopupKind::Start(st), .. }) => shell::search_apps(&self.model.apps, &st.query).iter().map(|a| a.id.clone()).collect(),
+            _ => return,
+        };
         let Some(Popup { kind: PopupKind::Start(st), .. }) = &mut self.popup else { return };
-        let (query, scroll) = (&mut st.query, &mut st.scroll);
+        use shell::StartFocus as F;
+        let searching = !st.query.trim().is_empty();
+        // what Enter does, worked out first (it needs the menu's data, not just its state)
+        let mut act: Option<shell::StartAct> = None;
         match key {
-            14 => {
-                query.pop(); // Backspace
-                *scroll = 0;
-            }
-            28 | 96 => {
-                // Enter opens the best match
-                let first = shell::search_apps(&self.model.apps, query).first().map(|a| a.id.clone());
-                if let Some(id) = first {
-                    self.start_act(shell::StartAct::Launch(id));
+            15 if folders_theme => {
+                // Tab: search -> the list -> the power choices -> search (the list is skipped while there are search results)
+                let next = match st.focus {
+                    F::Search if searching => F::Power,
+                    F::Search => F::List,
+                    F::List | F::Sub => F::Power,
+                    F::Power => F::Search,
+                };
+                st.focus = next;
+                st.power_open = next == F::Power;
+                if next == F::Search {
+                    st.cat = None;
                 }
-                return;
+                st.power_sel = 0;
+                if next == F::List {
+                    st.sel = st.sel.min((n_fav + n_folders).saturating_sub(1));
+                }
+            }
+            103 | 108 if folders_theme => {
+                let down = key == 108;
+                match st.focus {
+                    F::Search if searching => {
+                        let last = results.len().min(12).saturating_sub(1);
+                        st.sel = if down { (st.sel + 1).min(last) } else { st.sel.saturating_sub(1) };
+                    }
+                    F::Search => {
+                        if down {
+                            st.focus = F::List;
+                        }
+                    }
+                    F::List => {
+                        if down {
+                            st.sel = (st.sel + 1).min((n_fav + n_folders).saturating_sub(1));
+                        } else if st.sel == 0 {
+                            st.focus = F::Search;
+                        } else {
+                            st.sel -= 1;
+                        }
+                        // a folder under the selection shows its apps at the side, like hovering it
+                        st.cat = if st.sel >= n_fav { Some(st.sel - n_fav) } else { None };
+                        st.sub_sel = 0;
+                        st.sub_scroll = 0;
+                    }
+                    F::Sub => {
+                        let last = st.cat.map(|c| folder_apps(&self.model, c)).unwrap_or(0).saturating_sub(1);
+                        st.sub_sel = if down { (st.sub_sel + 1).min(last) } else { st.sub_sel.saturating_sub(1) };
+                    }
+                    F::Power => {
+                        let last = power.len().saturating_sub(1);
+                        st.power_sel = if down { (st.power_sel + 1).min(last) } else { st.power_sel.saturating_sub(1) };
+                    }
+                }
+            }
+            106 if folders_theme && st.focus == F::List && st.sel >= n_fav => {
+                // Right on a folder: into its apps
+                st.cat = Some(st.sel - n_fav);
+                st.sub_sel = 0;
+                st.sub_scroll = 0;
+                st.focus = F::Sub;
+            }
+            105 if folders_theme && st.focus == F::Sub => st.focus = F::List,
+            28 | 96 => match st.focus {
+                F::Search => {
+                    let i = if folders_theme { st.sel.min(results.len().saturating_sub(1)) } else { 0 };
+                    act = results.get(i).map(|id| shell::StartAct::Launch(id.clone()));
+                }
+                F::List if st.sel < n_fav => {
+                    act = shell::pinned_apps(&self.model).get(st.sel).map(|a| shell::StartAct::Launch(a.id.clone()));
+                }
+                F::List => {
+                    st.cat = Some(st.sel - n_fav);
+                    st.sub_sel = 0;
+                    st.sub_scroll = 0;
+                    st.focus = F::Sub;
+                }
+                F::Sub => {
+                    act = st.cat.and_then(|c| apps::folders(&self.model.apps).get(c).and_then(|(_, l)| l.get(st.sub_sel).map(|a| shell::StartAct::Launch(a.id.clone()))));
+                }
+                F::Power => act = power.get(st.power_sel).map(|(_, a)| shell::StartAct::Power(*a)),
+            },
+            14 => {
+                st.focus = F::Search;
+                st.power_open = false;
+                st.query.pop(); // Backspace
+                st.scroll = 0;
+                st.sel = 0;
             }
             _ => {
-                let before = query.len();
-                query.extend(typed.chars().filter(|c| !c.is_control()));
-                if query.len() != before {
-                    *scroll = 0;
+                let before = st.query.len();
+                let chars: String = typed.chars().filter(|c| !c.is_control()).collect();
+                if !chars.is_empty() {
+                    // typing goes to the search box from anywhere
+                    st.focus = F::Search;
+                    st.power_open = false;
+                    st.query.push_str(&chars);
+                }
+                if st.query.len() != before {
+                    st.scroll = 0;
+                    st.sel = 0;
                 }
             }
+        }
+        if let Some(a) = act {
+            self.start_act(a);
+            return;
         }
         self.dirty = true;
     }
@@ -1164,6 +1266,7 @@ impl State {
         let s = self.scale_of(&self.surfs[i]);
         let (pw, ph) = ((w as f32 * s).round() as u32, (h as f32 * s).round() as u32);
         let Some(mut pix) = Pixmap::new(pw, ph) else { return };
+        let mut start_scroll: Option<(i32, i32)> = None;
         let hits = match kind {
             Kind::Strut => vec![],
             Kind::Osd => {
@@ -1176,8 +1279,10 @@ impl State {
                 match &self.popup {
                     Some(Popup { kind: PopupKind::Start(st), .. }) => {
                         let sp = if self.model.conf.start_theme == StartTheme::Folders {
-                            let view = shell::FoldersView { query: &st.query, scroll: st.scroll, cat: st.cat, sub_scroll: st.sub_scroll, power_open: st.power_open };
-                            shell::paint_start_folders(&mut pix, s, &self.model, &view, self.pointer_pos, &self.assets.fonts, &mut self.assets.icons)
+                            let view = shell::FoldersView { query: &st.query, scroll: st.scroll, focus: st.focus, sel: st.sel, sub_sel: st.sub_sel, power_sel: st.power_sel, cat: st.cat, sub_scroll: st.sub_scroll, power_open: st.power_open };
+                            let sp = shell::paint_start_folders(&mut pix, s, &self.model, &view, self.pointer_pos, &self.assets.fonts, &mut self.assets.icons);
+                            start_scroll = Some((sp.scroll, sp.sub_scroll));
+                            sp
                         } else {
                             shell::paint_start(&mut pix, s, &self.model, &st.query, st.scroll, self.pointer_pos, &self.assets.fonts, &mut self.assets.icons)
                         };
@@ -1201,6 +1306,12 @@ impl State {
             Kind::Bar { slim } => shell::paint_bar(&mut pix, s, slim, &self.model, &self.assets.fonts, &mut self.assets.icons, hover),
             Kind::Dock => shell::paint_dock(&mut pix, s, &self.model, &self.assets.fonts, &mut self.assets.icons, hover),
         };
+        if let Some((sc, ssc)) = start_scroll {
+            if let Some(Popup { kind: PopupKind::Start(st), .. }) = &mut self.popup {
+                st.scroll = sc;
+                st.sub_scroll = ssc;
+            }
+        }
         let surf = &mut self.surfs[i];
         surf.hits = hits;
         let idx = match surf.bufs.iter().position(|b| !b.busy.load(Ordering::Acquire) && b.w == pw && b.h == ph) {
@@ -1803,12 +1914,31 @@ fn main() {
 
     // The D-Bus service runs on its own thread and hands requests to the event loop through a channel.
     let (bus_tx, bus_rx) = calloop::channel::channel::<BusMsg>();
+    let key_tx = bus_tx.clone();
     std::thread::spawn(move || {
         let conn = zbus::blocking::connection::Builder::session().and_then(|b| b.name("org.labyrinth.Panel")).and_then(|b| b.serve_at("/Panel", PanelBus(bus_tx))).and_then(|b| b.build());
         match conn {
-            Ok(_c) => loop {
-                std::thread::park();
-            },
+            Ok(c) => {
+                // The Super key on its own: KWin 6.7 hands a bare modifier tap to Plasma's global shortcut
+                // "activate application launcher" (kwinrc's ModifierOnlyShortcuts is no longer read), and
+                // kglobalacceld announces every press on the bus, so the menu opens when that one fires.
+                let rule = zbus::MatchRule::builder().msg_type(zbus::message::Type::Signal).interface("org.kde.kglobalaccel.Component").and_then(|b| b.member("globalShortcutPressed")).map(|b| b.build());
+                match rule.and_then(|r| zbus::blocking::MessageIterator::for_match_rule(r, &c, None)) {
+                    Ok(iter) => {
+                        for msg in iter.flatten() {
+                            if let Ok((component, action, _t)) = msg.body().deserialize::<(String, String, i64)>() {
+                                if component == "plasmashell" && action == "activate application launcher" {
+                                    let _ = key_tx.send(BusMsg::ToggleStart);
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => eprintln!("labyrinth-panel: cannot listen for the Super key ({e})"),
+                }
+                loop {
+                    std::thread::park();
+                }
+            }
             Err(e) => eprintln!("labyrinth-panel: no D-Bus service ({e}); the Super key will not open the start menu"),
         }
     });

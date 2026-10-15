@@ -474,6 +474,9 @@ pub struct StartPaint {
     pub hits: Vec<StartHit>,
     /// How far the "All apps" list can scroll (in rows).
     pub max_scroll: i32,
+    /// The scroll actually used, after keeping the keyboard selection in view.
+    pub scroll: i32,
+    pub sub_scroll: i32,
 }
 
 /// Every app to list, A to Z, without the ones that hide themselves.
@@ -668,7 +671,7 @@ pub fn paint_start(pix: &mut Pixmap, s: f32, m: &Model, query: &str, scroll: i32
         hits.push(StartHit { rect: r, act: StartAct::Power(*act) });
         bx -= 6.0;
     }
-    StartPaint { card: (cx, cy, cw, ch), hits, max_scroll }
+    StartPaint { card: (cx, cy, cw, ch), hits, max_scroll, scroll, sub_scroll: 0 }
 }
 
 // ---------------------------------------------------------------- the start menu, "Folders" theme
@@ -695,9 +698,43 @@ fn folder_glyph(pix: &mut Pixmap, s: f32, x: f32, y: f32) {
     paint::fill_rounded(pix, x * s, (y + 3.0) * s, 18.0 * s, 13.0 * s, 3.0 * s, (124, 84, 214, 255));
 }
 
+/// Where the keyboard is in the Folders start menu: Tab goes round Search, the list, and the power choices.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum StartFocus {
+    #[default]
+    Search,
+    /// Favourites and folders (Up / Down; Right or Enter on a folder opens it).
+    List,
+    /// The apps in the folder that is open at the side (Left goes back).
+    Sub,
+    /// The power choices.
+    Power,
+}
+
+/// The power choices, in the order they are listed.
+pub fn power_items(m: &Model) -> Vec<(&'static str, PowerAct)> {
+    let mut items = vec![("Lock", PowerAct::Lock), ("Sleep", PowerAct::Sleep)];
+    if m.hibernate {
+        items.push(("Hibernate", PowerAct::Hibernate));
+    }
+    items.push(("Restart", PowerAct::Restart));
+    items.push(("Shut down", PowerAct::Shutdown));
+    items
+}
+
+/// How many favourites are listed, and how many folders (the keyboard selection runs over both).
+pub fn folders_counts(m: &Model) -> (usize, usize) {
+    (pinned_apps(m).len().min(8), crate::apps::folders(&m.apps).len())
+}
+
 pub struct FoldersView<'a> {
     pub query: &'a str,
     pub scroll: i32,
+    pub focus: StartFocus,
+    /// The selected row: a search result, or a favourite / folder (favourites first).
+    pub sel: usize,
+    pub sub_sel: usize,
+    pub power_sel: usize,
     /// The folder whose apps are showing to the side.
     pub cat: Option<usize>,
     pub sub_scroll: i32,
@@ -727,7 +764,7 @@ pub fn paint_start_folders(pix: &mut Pixmap, s: f32, m: &Model, v: &FoldersView,
     // search
     let (fx, fw) = (cx + 12.0, cw - 24.0);
     rr(pix, fx, cy + 12.0, fw, 36.0, 10.0, pal.field);
-    paint::stroke_rounded(pix, (fx + 0.5) * s, (cy + 12.5) * s, (fw - 1.0) * s, 35.0 * s, 10.0 * s, s, if v.query.is_empty() { pal.border } else { (124, 84, 214, 255) });
+    paint::stroke_rounded(pix, (fx + 0.5) * s, (cy + 12.5) * s, (fw - 1.0) * s, 35.0 * s, 10.0 * s, s, if v.query.is_empty() && v.focus != StartFocus::Search { pal.border } else { (124, 84, 214, 255) });
     if v.query.is_empty() {
         text(pix, &fonts.regular, 13.5, fx + 12.0, cy + 30.0, pal.dim, "Search apps");
     } else {
@@ -740,6 +777,8 @@ pub fn paint_start_folders(pix: &mut Pixmap, s: f32, m: &Model, v: &FoldersView,
     let bottom = cy + ch - 56.0;
     let row_h = 32.0;
     let mut max_scroll = 0;
+    let mut eff_scroll = v.scroll;
+    let mut eff_sub_scroll = v.sub_scroll;
     let mut cat_y = None;
     let folders = apps::folders(&m.apps);
 
@@ -751,7 +790,7 @@ pub fn paint_start_folders(pix: &mut Pixmap, s: f32, m: &Model, v: &FoldersView,
         let visible = ((bottom - top) / 38.0).floor().max(1.0) as usize;
         for (n, a) in found.iter().take(visible).enumerate() {
             let r = (fx, top + n as f32 * 38.0, fw, 38.0);
-            if n == 0 {
+            if n == v.sel.min(visible.saturating_sub(1)).min(found.len().saturating_sub(1)) {
                 rr(pix, r.0, r.1, r.2, r.3 - 2.0, 8.0, pal.select);
             } else if inside(r) {
                 rr(pix, r.0, r.1, r.2, r.3 - 2.0, 8.0, pal.hover);
@@ -772,9 +811,24 @@ pub fn paint_start_folders(pix: &mut Pixmap, s: f32, m: &Model, v: &FoldersView,
         lines.extend(favs.iter().take(8).map(|a| Line::Fav(a)));
         lines.push(Line::Head("Folders"));
         lines.extend((0..folders.len()).map(Line::Folder));
+        // which keyboard-selectable item (favourites, then folders) each line is, if any
+        let mut k = 0;
+        let sel_idx: Vec<Option<usize>> = lines.iter().map(|l| if matches!(l, Line::Head(_)) { None } else { k += 1; Some(k - 1) }).collect();
         let visible = (((bottom - 4.0) - top) / row_h).floor().max(1.0) as i32;
         max_scroll = (lines.len() as i32 - visible).max(0);
-        let scroll = v.scroll.clamp(0, max_scroll);
+        let mut scroll = v.scroll.clamp(0, max_scroll);
+        // the keyboard selection is a favourite (0..n_fav) or a folder (after them); keep its line in view
+        let n_fav = favs.len().min(8);
+        let sel_line = if v.sel < n_fav { 1 + v.sel } else { 2 + n_fav + (v.sel - n_fav) } as i32;
+        if v.focus == StartFocus::List {
+            if sel_line - 1 < scroll {
+                scroll = (sel_line - 1).max(0); // show the heading above it too
+            } else if sel_line >= scroll + visible {
+                scroll = sel_line + 1 - visible;
+            }
+            scroll = scroll.clamp(0, max_scroll);
+        }
+        eff_scroll = scroll;
         for (n, line) in lines.iter().skip(scroll as usize).take(visible as usize).enumerate() {
             let r = (fx, top + n as f32 * row_h, fw, row_h);
             match line {
@@ -782,7 +836,10 @@ pub fn paint_start_folders(pix: &mut Pixmap, s: f32, m: &Model, v: &FoldersView,
                     text(pix, &fonts.bold, 12.0, r.0 + 6.0, r.1 + 18.0, pal.dim, t);
                 }
                 Line::Fav(a) => {
-                    if inside(r) {
+                    let kb = v.focus == StartFocus::List && sel_idx.get(scroll as usize + n).copied().flatten() == Some(v.sel);
+                    if kb {
+                        rr(pix, r.0, r.1, r.2, r.3 - 2.0, 8.0, pal.select);
+                    } else if inside(r) {
                         rr(pix, r.0, r.1, r.2, r.3 - 2.0, 8.0, pal.hover);
                     }
                     app_icon(pix, s, icons, fonts, a, r.0 + 8.0, r.1 + 5.0, 22.0);
@@ -790,7 +847,7 @@ pub fn paint_start_folders(pix: &mut Pixmap, s: f32, m: &Model, v: &FoldersView,
                     hits.push(StartHit { rect: r, act: StartAct::Launch(a.id.clone()) });
                 }
                 Line::Folder(i) => {
-                    let open = v.cat == Some(*i);
+                    let open = v.cat == Some(*i) || (v.focus == StartFocus::List && sel_idx.get(scroll as usize + n).copied().flatten() == Some(v.sel));
                     if open {
                         rr(pix, r.0, r.1, r.2, r.3 - 2.0, 8.0, pal.select);
                         cat_y = Some(r.1);
@@ -821,6 +878,9 @@ pub fn paint_start_folders(pix: &mut Pixmap, s: f32, m: &Model, v: &FoldersView,
     text(pix, &fonts.regular, 13.0, cx + 52.0, my, pal.text, &fit_text(&fonts.regular, 13.0 * s, &m.user, (cw - 120.0) * s));
     let pbtn = (cx + cw - 12.0 - 34.0, my - 17.0, 34.0, 34.0);
     rr(pix, pbtn.0, pbtn.1, pbtn.2, pbtn.3, 9.0, if v.power_open { pal.select } else if inside(pbtn) { pal.hover } else { pal.field });
+    if v.focus == StartFocus::Power {
+        paint::stroke_rounded(pix, (pbtn.0 + 0.5) * s, (pbtn.1 + 0.5) * s, (pbtn.2 - 1.0) * s, (pbtn.3 - 1.0) * s, 9.0 * s, s * 1.5, (124, 84, 214, 255));
+    }
     let isz = (16.0 * s) as u32;
     if let Some(ic) = icons.get_tinted("system-shutdown-symbolic", isz, pal.text) {
         paint::draw_pixmap(pix, ic, ((pbtn.0 + 9.0) * s) as i32, ((pbtn.1 + 9.0) * s) as i32);
@@ -839,10 +899,22 @@ pub fn paint_start_folders(pix: &mut Pixmap, s: f32, m: &Model, v: &FoldersView,
             card(pix, sx, sy, sw, sh);
             text(pix, &fonts.bold, 12.0, sx + 16.0, sy + 24.0, pal.dim, name);
             let max_sub = list.len().saturating_sub(shown) as i32;
-            let sub = v.sub_scroll.clamp(0, max_sub);
+            let mut sub = v.sub_scroll.clamp(0, max_sub);
+            if v.focus == StartFocus::Sub {
+                let k = v.sub_sel.min(list.len().saturating_sub(1)) as i32;
+                if k < sub {
+                    sub = k;
+                } else if k >= sub + shown as i32 {
+                    sub = k + 1 - shown as i32;
+                }
+                sub = sub.clamp(0, max_sub);
+            }
+            eff_sub_scroll = sub;
             for (n, a) in list.iter().skip(sub as usize).take(shown).enumerate() {
                 let r = (sx + 8.0, sy + 38.0 + n as f32 * row_h, sw - 16.0, row_h);
-                if inside(r) {
+                if v.focus == StartFocus::Sub && sub as usize + n == v.sub_sel.min(list.len().saturating_sub(1)) {
+                    rr(pix, r.0, r.1, r.2, r.3 - 2.0, 8.0, pal.select);
+                } else if inside(r) {
                     rr(pix, r.0, r.1, r.2, r.3 - 2.0, 8.0, pal.hover);
                 }
                 app_icon(pix, s, icons, fonts, a, r.0 + 8.0, r.1 + 5.0, 22.0);
@@ -856,12 +928,7 @@ pub fn paint_start_folders(pix: &mut Pixmap, s: f32, m: &Model, v: &FoldersView,
 
     // the power choices, above the button
     if v.power_open {
-        let mut items = vec![("Lock", PowerAct::Lock), ("Sleep", PowerAct::Sleep)];
-        if m.hibernate {
-            items.push(("Hibernate", PowerAct::Hibernate));
-        }
-        items.push(("Restart", PowerAct::Restart));
-        items.push(("Shut down", PowerAct::Shutdown));
+        let items = power_items(m);
         let pw = 170.0;
         let ph = items.len() as f32 * 34.0 + 12.0;
         let (px, py) = (pbtn.0 + pbtn.2 - pw, pbtn.1 - 8.0 - ph);
@@ -869,14 +936,14 @@ pub fn paint_start_folders(pix: &mut Pixmap, s: f32, m: &Model, v: &FoldersView,
         paint::stroke_rounded(pix, (px + 0.5) * s, (py + 0.5) * s, (pw - 1.0) * s, (ph - 1.0) * s, 12.0 * s, s, pal.border);
         for (n, (label, act)) in items.iter().enumerate() {
             let r = (px + 6.0, py + 6.0 + n as f32 * 34.0, pw - 12.0, 34.0);
-            if inside(r) {
+            if inside(r) || (v.focus == StartFocus::Power && n == v.power_sel.min(items.len() - 1)) {
                 rr(pix, r.0, r.1, r.2, r.3 - 2.0, 8.0, pal.select);
             }
             text(pix, &fonts.regular, 13.5, r.0 + 12.0, r.1 + 17.0, pal.text, label);
             hits.push(StartHit { rect: r, act: StartAct::Power(*act) });
         }
     }
-    StartPaint { card: union, hits, max_scroll }
+    StartPaint { card: union, hits, max_scroll, scroll: eff_scroll, sub_scroll: eff_sub_scroll }
 }
 
 pub fn paint_dock(pix: &mut Pixmap, s: f32, m: &Model, fonts: &Fonts, icons: &mut Icons, hover: Option<usize>) -> Vec<Hit> {
