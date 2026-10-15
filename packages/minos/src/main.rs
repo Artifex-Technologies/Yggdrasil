@@ -26,6 +26,11 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 /// A copy or move running on its own thread (see App::start_transfer).
 struct Transfer {
     rx: Receiver<TEvent>,
+    prog: Arc<fileops::Progress>,
+    what: String,
+    started: Instant,
+    /// Recent (seconds, bytes done) readings, for the speed.
+    samples: std::collections::VecDeque<(f64, u64)>,
     /// The file the thread is waiting for an answer about: what is coming, what is there, where to send the answer.
     ask: Option<(PathBuf, PathBuf, Sender<Option<fileops::Decision>>)>,
     /// "Do this for all": the answer given to every later question.
@@ -1557,6 +1562,13 @@ impl App {
         let (tx, rx) = channel();
         let c = ctx.clone();
         let n = paths.len();
+        let prog = Arc::new(fileops::Progress::default());
+        let what = format!("{} {} to {}", if mv { "Moving" } else { "Copying" }, if n == 1 { paths[0].file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default() } else { format!("{n} items") }, dest.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_else(|| dest.display().to_string()));
+        {
+            let (srcs, p) = (paths.clone(), prog.clone());
+            std::thread::spawn(move || fileops::scan(&srcs, &p));
+        }
+        let wp = prog.clone();
         std::thread::spawn(move || {
             let mut stats = fileops::Stats::default();
             let mut done = vec![];
@@ -1567,7 +1579,7 @@ impl App {
                     tx.send(TEvent::Conflict(a.to_path_buf(), b.to_path_buf(), rt)).ok()?;
                     c.request_repaint();
                     rr.recv().ok().flatten()
-                }, &mut stats);
+                }, &mut stats, &wp);
                 match res {
                     Ok(new) => done.push((src.clone(), new)),
                     Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
@@ -1581,7 +1593,7 @@ impl App {
             c.request_repaint();
         });
         self.status = format!("{} {n} item(s)...", if mv { "Moving" } else { "Copying" });
-        self.transfer = Some(Transfer { rx, ask: None, sticky: None, all: false });
+        self.transfer = Some(Transfer { rx, prog, what, started: Instant::now(), samples: Default::default(), ask: None, sticky: None, all: false });
     }
 
     /// Take what the transfer thread reports, and show the "already exists" dialog while it waits for an answer.
@@ -1642,6 +1654,59 @@ impl App {
                     tr.sticky = ans;
                 }
             }
+        }
+        if finished.is_none() {
+            // Like Windows' copy window: what, how far, how fast, how long left.
+            use std::sync::atomic::Ordering::Relaxed;
+            let p = tr.prog.clone();
+            let now = tr.started.elapsed().as_secs_f64();
+            let (done, total) = (p.done_bytes.load(Relaxed), p.total_bytes.load(Relaxed));
+            let (fdone, ftotal) = (p.done_files.load(Relaxed), p.total_files.load(Relaxed));
+            let scanning = p.scanning.load(Relaxed);
+            tr.samples.push_back((now, done));
+            while tr.samples.len() > 2 && now - tr.samples[0].0 > 4.0 {
+                tr.samples.pop_front();
+            }
+            let (t0, b0) = tr.samples[0];
+            let speed = if now - t0 > 0.4 { done.saturating_sub(b0) as f64 / (now - t0) } else { 0.0 };
+            let fspeed = fdone as f64 / now.max(0.5);
+            let current = p.current.lock().map(|c| c.clone()).unwrap_or_default();
+            let mut cancel = false;
+            egui::Window::new(&tr.what).id(egui::Id::new("minos-transfer")).collapsible(false).resizable(false).anchor(Align2::RIGHT_BOTTOM, vec2(-16.0, -16.0)).default_width(420.0).show(ctx, |ui| {
+                ui.set_min_width(400.0);
+                if total > 0 {
+                    let frac = (done as f32 / total as f32).clamp(0.0, 1.0);
+                    ui.add(egui::ProgressBar::new(frac).text(format!("{:.0}%{}", frac * 100.0, if scanning { " so far" } else { "" })).animate(scanning));
+                } else {
+                    ui.add(egui::ProgressBar::new(0.0).text("Counting files...").animate(true));
+                }
+                ui.add_space(4.0);
+                ui.label(RichText::new(format!("{} of {}{}", listing::human_size(done), listing::human_size(total), if scanning { " (still counting)" } else { "" })).strong());
+                let mut line = format!("{}/s", listing::human_size(speed as u64));
+                if fspeed > 0.0 {
+                    line += &format!("   {:.1} files/s", fspeed);
+                }
+                if !scanning && speed > 1.0 && total > done {
+                    let left = ((total - done) as f64 / speed) as u64;
+                    line += &format!("   about {} left", if left >= 3600 { format!("{} h {} min", left / 3600, left % 3600 / 60) } else if left >= 60 { format!("{} min", left / 60 + 1) } else { format!("{left} s") });
+                }
+                ui.label(line);
+                ui.label(format!("{fdone} of {ftotal} files{}", if scanning { "+" } else { "" }));
+                if !current.is_empty() {
+                    ui.add(egui::Label::new(RichText::new(format!("Now: {current}")).color(ui.visuals().weak_text_color())).truncate());
+                }
+                ui.add_space(4.0);
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+            });
+            if cancel {
+                p.cancel.store(true, Relaxed);
+                if let Some((_, _, reply)) = tr.ask.take() {
+                    let _ = reply.send(None);
+                }
+            }
+            ctx.request_repaint_after(Duration::from_millis(250));
         }
         if let Some((stats, done, mv, stopped, dest)) = finished {
             self.transfer = None;

@@ -1,7 +1,9 @@
 //! File operations: copy, move, rename, new folder, trash.
 
-use std::io;
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Mutex;
 
 /// `name`, or `name (2)`, `name (3)` ... if something already exists in `dir`.
 pub fn unique_path(dir: &Path, name: &str) -> PathBuf {
@@ -74,6 +76,58 @@ pub fn move_into(src: &Path, dest_dir: &Path) -> io::Result<PathBuf> {
     Ok(dst)
 }
 
+/// How far a transfer has got, written by the worker (and a counting thread) and read by the window that shows it.
+#[derive(Default)]
+pub struct Progress {
+    pub total_bytes: AtomicU64,
+    pub total_files: AtomicU64,
+    pub done_bytes: AtomicU64,
+    pub done_files: AtomicU64,
+    /// The counting of everything to copy is still going, so the totals are not final.
+    pub scanning: AtomicBool,
+    /// Set by the Cancel button; the transfer stops at the next chunk.
+    pub cancel: AtomicBool,
+    pub current: Mutex<String>,
+}
+
+impl Progress {
+    fn add(&self, bytes: u64) {
+        self.done_bytes.fetch_add(bytes, Ordering::Relaxed);
+    }
+    fn file_done(&self) {
+        self.done_files.fetch_add(1, Ordering::Relaxed);
+    }
+    fn cancelled(&self) -> bool {
+        self.cancel.load(Ordering::Relaxed)
+    }
+    fn at(&self, p: &Path) {
+        if let Ok(mut c) = self.current.lock() {
+            *c = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        }
+    }
+}
+
+/// Count the files and bytes under `srcs` into `prog`, so the window can show a percentage.
+pub fn scan(srcs: &[PathBuf], prog: &Progress) {
+    prog.scanning.store(true, Ordering::Relaxed);
+    let mut stack: Vec<PathBuf> = srcs.to_vec();
+    while let Some(p) = stack.pop() {
+        if prog.cancelled() {
+            break;
+        }
+        let Ok(m) = std::fs::symlink_metadata(&p) else { continue };
+        if m.is_dir() {
+            if let Ok(rd) = std::fs::read_dir(&p) {
+                stack.extend(rd.flatten().map(|e| e.path()));
+            }
+        } else {
+            prog.total_files.fetch_add(1, Ordering::Relaxed);
+            prog.total_bytes.fetch_add(m.len(), Ordering::Relaxed);
+        }
+    }
+    prog.scanning.store(false, Ordering::Relaxed);
+}
+
 /// What to do with a file that is already at the destination.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Decision {
@@ -122,28 +176,55 @@ fn identical(src: &Path, dst: &Path, a: &std::fs::Metadata, b: &std::fs::Metadat
     true
 }
 
-/// Copy one file (or link), keeping its modified time so a later transfer can tell it is the same.
-fn copy_file(src: &Path, dst: &Path) -> io::Result<()> {
+/// Copy one file (or link) in 1 MiB pieces, counting them into `prog` and stopping if it is cancelled (the
+/// half-written copy is removed). The modified time is kept so a later transfer can tell it is the same.
+fn copy_file(src: &Path, dst: &Path, prog: &Progress) -> io::Result<()> {
     let meta = std::fs::symlink_metadata(src)?;
     if meta.file_type().is_symlink() {
         std::os::unix::fs::symlink(std::fs::read_link(src)?, dst)?;
         return Ok(());
     }
-    std::fs::copy(src, dst)?;
-    if let Ok(m) = meta.modified() {
-        if let Ok(f) = std::fs::File::options().write(true).open(dst) {
-            let _ = f.set_modified(m);
+    let mut r = std::fs::File::open(src)?;
+    let mut w = std::fs::File::create_new(dst)?;
+    let mut buf = vec![0u8; 1 << 20];
+    loop {
+        if prog.cancelled() {
+            drop(w);
+            let _ = std::fs::remove_file(dst);
+            return Err(cancelled());
         }
+        let n = match r.read(&mut buf) {
+            Ok(n) => n,
+            Err(e) => {
+                drop(w);
+                let _ = std::fs::remove_file(dst);
+                return Err(e);
+            }
+        };
+        if n == 0 {
+            break;
+        }
+        if let Err(e) = w.write_all(&buf[..n]) {
+            drop(w);
+            let _ = std::fs::remove_file(dst);
+            return Err(e);
+        }
+        prog.add(n as u64);
+    }
+    let _ = std::fs::set_permissions(dst, meta.permissions());
+    if let Ok(m) = meta.modified() {
+        let _ = w.set_modified(m);
     }
     Ok(())
 }
 
 /// Put `src` at `dst` (which must not exist): moved when asked and possible, else copied (and then removed).
-fn put(src: &Path, dst: &Path, mv: bool) -> io::Result<()> {
+fn put(src: &Path, dst: &Path, mv: bool, prog: &Progress) -> io::Result<()> {
     if mv && std::fs::rename(src, dst).is_ok() {
+        prog.add(std::fs::symlink_metadata(dst).map(|m| m.len()).unwrap_or(0));
         return Ok(());
     }
-    copy_file(src, dst)?;
+    copy_file(src, dst, prog)?;
     if mv {
         std::fs::remove_file(src)?;
     }
@@ -152,11 +233,11 @@ fn put(src: &Path, dst: &Path, mv: bool) -> io::Result<()> {
 
 /// Put `src` over the existing `dst`: written beside it first, then swapped in, so a failure halfway
 /// never leaves a half-written file where a good one was.
-fn put_over(src: &Path, dst: &Path, mv: bool) -> io::Result<()> {
+fn put_over(src: &Path, dst: &Path, mv: bool, prog: &Progress) -> io::Result<()> {
     let name = dst.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let tmp = dst.with_file_name(format!(".{name}.minos-tmp"));
     let _ = std::fs::remove_file(&tmp);
-    copy_file(src, &tmp)?;
+    copy_file(src, &tmp, prog)?;
     if let Err(e) = std::fs::rename(&tmp, dst) {
         let _ = std::fs::remove_file(&tmp);
         return Err(e);
@@ -171,7 +252,7 @@ fn put_over(src: &Path, dst: &Path, mv: bool) -> io::Result<()> {
 /// files are added, and a file that is already there (and not the same) is put to `ask`, which answers
 /// `None` to stop the whole transfer. Nothing is overwritten without a `Replace`. With `mv`, a source file
 /// is removed only after it has been put in place. Returns where the item ended up.
-pub fn transfer(src: &Path, dest_dir: &Path, mv: bool, ask: &mut dyn FnMut(&Path, &Path) -> Option<Decision>, stats: &mut Stats) -> io::Result<PathBuf> {
+pub fn transfer(src: &Path, dest_dir: &Path, mv: bool, ask: &mut dyn FnMut(&Path, &Path) -> Option<Decision>, stats: &mut Stats, prog: &Progress) -> io::Result<PathBuf> {
     refuse_root(src)?;
     if src.is_dir() && dest_dir.starts_with(src) {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "cannot copy or move a folder into itself"));
@@ -188,11 +269,11 @@ pub fn transfer(src: &Path, dest_dir: &Path, mv: bool, ask: &mut dyn FnMut(&Path
         return Ok(dst);
     }
     let target = dest_dir.join(name);
-    merge(src, &target, mv, ask, stats)?;
+    merge(src, &target, mv, ask, stats, prog)?;
     Ok(target)
 }
 
-fn merge(src: &Path, dst: &Path, mv: bool, ask: &mut dyn FnMut(&Path, &Path) -> Option<Decision>, stats: &mut Stats) -> io::Result<()> {
+fn merge(src: &Path, dst: &Path, mv: bool, ask: &mut dyn FnMut(&Path, &Path) -> Option<Decision>, stats: &mut Stats, prog: &Progress) -> io::Result<()> {
     let sm = std::fs::symlink_metadata(src)?;
     let parent = dst.parent().unwrap_or(Path::new("/"));
     let name = dst.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -209,7 +290,7 @@ fn merge(src: &Path, dst: &Path, mv: bool, ask: &mut dyn FnMut(&Path, &Path) -> 
                     }
                     Decision::KeepBoth => {
                         stats.kept_both += 1;
-                        return merge(src, &unique_path(parent, &name), mv, ask, stats);
+                        return merge(src, &unique_path(parent, &name), mv, ask, stats, prog);
                     }
                 }
             }
@@ -224,7 +305,7 @@ fn merge(src: &Path, dst: &Path, mv: bool, ask: &mut dyn FnMut(&Path, &Path) -> 
         for e in std::fs::read_dir(src)? {
             let e = e?;
             let (from, to) = (e.path(), dst.join(e.file_name()));
-            match merge(&from, &to, mv, ask, stats) {
+            match merge(&from, &to, mv, ask, stats, prog) {
                 Err(err) if err.kind() == io::ErrorKind::Interrupted => return Err(err),
                 Err(err) => stats.errors.push(format!("{}: {err}", from.display())),
                 Ok(()) => {}
@@ -235,29 +316,37 @@ fn merge(src: &Path, dst: &Path, mv: bool, ask: &mut dyn FnMut(&Path, &Path) -> 
         }
         return Ok(());
     }
+    prog.at(src);
     match std::fs::symlink_metadata(dst) {
         Err(_) => {
-            put(src, dst, mv)?;
+            put(src, dst, mv, prog)?;
             stats.copied += 1;
         }
         Ok(dm) if dm.is_dir() => {
             // a folder is in the way of this file: keep both, never touch the folder
-            put(src, &unique_path(parent, &name), mv)?;
+            put(src, &unique_path(parent, &name), mv, prog)?;
             stats.kept_both += 1;
         }
-        Ok(dm) if identical(src, dst, &sm, &dm) => stats.same += 1,
+        Ok(dm) if identical(src, dst, &sm, &dm) => {
+            stats.same += 1;
+            prog.add(sm.len());
+        }
         Ok(_) => match ask(src, dst).ok_or_else(cancelled)? {
             Decision::Replace => {
-                put_over(src, dst, mv)?;
+                put_over(src, dst, mv, prog)?;
                 stats.replaced += 1;
             }
-            Decision::Skip => stats.skipped += 1,
+            Decision::Skip => {
+                stats.skipped += 1;
+                prog.add(sm.len());
+            }
             Decision::KeepBoth => {
-                put(src, &unique_path(parent, &name), mv)?;
+                put(src, &unique_path(parent, &name), mv, prog)?;
                 stats.kept_both += 1;
             }
         },
     }
+    prog.file_done();
     Ok(())
 }
 
@@ -391,7 +480,7 @@ mod tests {
         let out = transfer(&d.join("src/Sarina"), &d.join("dest"), false, &mut |s, t| {
             asked.push((s.to_path_buf(), t.to_path_buf()));
             Some(Decision::Skip)
-        }, &mut stats)
+        }, &mut stats, &Progress::default())
         .unwrap();
         assert_eq!(out, d.join("dest/Sarina"));
         assert_eq!(std::fs::read_to_string(d.join("dest/Sarina/b.txt")).unwrap(), "old b");
@@ -404,14 +493,14 @@ mod tests {
 
         // the same again: a.txt and c.txt are now identical, so only b.txt is asked about; Replace swaps it
         let mut stats = Stats::default();
-        transfer(&d.join("src/Sarina"), &d.join("dest"), false, &mut |_, _| Some(Decision::Replace), &mut stats).unwrap();
+        transfer(&d.join("src/Sarina"), &d.join("dest"), false, &mut |_, _| Some(Decision::Replace), &mut stats, &Progress::default()).unwrap();
         assert_eq!(std::fs::read_to_string(d.join("dest/Sarina/b.txt")).unwrap(), "NEW b");
         assert_eq!((stats.replaced, stats.same), (1, 2));
 
         // KeepBoth keeps the old one and numbers the new
         std::fs::write(d.join("src/Sarina/b.txt"), "third b").unwrap();
         let mut stats = Stats::default();
-        transfer(&d.join("src/Sarina"), &d.join("dest"), false, &mut |_, _| Some(Decision::KeepBoth), &mut stats).unwrap();
+        transfer(&d.join("src/Sarina"), &d.join("dest"), false, &mut |_, _| Some(Decision::KeepBoth), &mut stats, &Progress::default()).unwrap();
         assert_eq!(std::fs::read_to_string(d.join("dest/Sarina/b.txt")).unwrap(), "NEW b");
         assert_eq!(std::fs::read_to_string(d.join("dest/Sarina/b (2).txt")).unwrap(), "third b");
     }
@@ -425,15 +514,39 @@ mod tests {
         std::fs::write(d.join("src/x/new.txt"), "n").unwrap();
         std::fs::write(d.join("dest/x/clash.txt"), "dest").unwrap();
         let mut stats = Stats::default();
-        let r = transfer(&d.join("src/x"), &d.join("dest"), true, &mut |_, _| None, &mut stats);
+        let r = transfer(&d.join("src/x"), &d.join("dest"), true, &mut |_, _| None, &mut stats, &Progress::default());
         assert_eq!(r.unwrap_err().kind(), io::ErrorKind::Interrupted);
         assert_eq!(std::fs::read_to_string(d.join("dest/x/clash.txt")).unwrap(), "dest");
         assert!(d.join("src/x/clash.txt").exists());
 
         let mut stats = Stats::default();
-        transfer(&d.join("src/x"), &d.join("dest"), true, &mut |_, _| Some(Decision::Skip), &mut stats).unwrap();
+        transfer(&d.join("src/x"), &d.join("dest"), true, &mut |_, _| Some(Decision::Skip), &mut stats, &Progress::default()).unwrap();
         assert!(d.join("dest/x/new.txt").exists() && !d.join("src/x/new.txt").exists(), "what was added is moved");
         assert!(d.join("src/x/clash.txt").exists(), "what was skipped stays in the source");
         assert_eq!(std::fs::read_to_string(d.join("dest/x/clash.txt")).unwrap(), "dest");
+    }
+
+    #[test]
+    fn progress_counts_bytes_and_cancel_stops_without_leaving_halves() {
+        let d = tmp("prog");
+        std::fs::create_dir_all(d.join("src/sub")).unwrap();
+        std::fs::create_dir(d.join("dest")).unwrap();
+        std::fs::write(d.join("src/a.bin"), vec![1u8; 3_000_000]).unwrap();
+        std::fs::write(d.join("src/sub/b.bin"), vec![2u8; 500]).unwrap();
+        let prog = Progress::default();
+        scan(&[d.join("src")], &prog);
+        assert_eq!((prog.total_files.load(Ordering::Relaxed), prog.total_bytes.load(Ordering::Relaxed)), (2, 3_000_500));
+        let mut stats = Stats::default();
+        transfer(&d.join("src"), &d.join("dest"), false, &mut |_, _| Some(Decision::Skip), &mut stats, &prog).unwrap();
+        assert_eq!((prog.done_files.load(Ordering::Relaxed), prog.done_bytes.load(Ordering::Relaxed)), (2, 3_000_500));
+        assert_eq!(std::fs::metadata(d.join("dest/src/a.bin")).unwrap().len(), 3_000_000);
+
+        // cancelled before it starts: nothing half-written is left behind
+        let _ = std::fs::remove_dir_all(d.join("dest/src"));
+        let prog = Progress::default();
+        prog.cancel.store(true, Ordering::Relaxed);
+        let r = transfer(&d.join("src"), &d.join("dest"), false, &mut |_, _| Some(Decision::Skip), &mut Stats::default(), &prog);
+        assert_eq!(r.unwrap_err().kind(), io::ErrorKind::Interrupted);
+        assert!(!d.join("dest/src/a.bin").exists());
     }
 }
