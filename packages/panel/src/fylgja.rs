@@ -477,15 +477,77 @@ fn xml(s: &str) -> String {
 
 /// A picture file drawn to fill `w` x `h` (cropped to fit) with round corners; None if it will not load.
 pub fn load_image(path: &str, w: u32, h: u32, radius: f32) -> Option<Pixmap> {
+    // Drawn several times larger and then averaged down: a cover shrunk straight to 58 px loses its thin lines
+    // (frames, small print, hairline strokes), which looked like the picture was cut off.
+    let k = if w.max(h) <= 160 { 6 } else { 2 };
+    let (bw, bh) = (w * k, h * k);
     let svg = format!(
-        "<svg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' width='{w}' height='{h}'><defs><clipPath id='c'><rect width='{w}' height='{h}' rx='{radius}'/></clipPath></defs><image clip-path='url(#c)' width='{w}' height='{h}' preserveAspectRatio='xMidYMid slice' xlink:href=\"{}\"/></svg>",
+        "<svg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' width='{bw}' height='{bh}'><image width='{bw}' height='{bh}' preserveAspectRatio='xMidYMid slice' xlink:href=\"{}\"/></svg>",
         xml(path)
     );
     let tree = resvg::usvg::Tree::from_data(svg.as_bytes(), &resvg::usvg::Options::default()).ok()?;
-    let mut pm = Pixmap::new(w, h)?;
-    resvg::render(&tree, resvg::tiny_skia::Transform::identity(), &mut pm.as_mut());
+    let mut big = Pixmap::new(bw, bh)?;
+    resvg::render(&tree, resvg::tiny_skia::Transform::identity(), &mut big.as_mut());
     // an unreadable picture leaves it empty
-    pm.data().iter().any(|b| *b != 0).then_some(pm)
+    if !big.data().iter().any(|b| *b != 0) {
+        return None;
+    }
+    let mut pm = Pixmap::new(w, h)?;
+    average_down(&big, &mut pm, k);
+    round_corners(&mut pm, radius);
+    Some(pm)
+}
+
+/// Each pixel of `dst` is the average of the k x k block of `src` behind it (premultiplied, so edges stay right).
+fn average_down(src: &Pixmap, dst: &mut Pixmap, k: u32) {
+    let (sw, dw, dh) = (src.width() as usize, dst.width() as usize, dst.height() as usize);
+    let k = k as usize;
+    let s = src.data();
+    let d = dst.data_mut();
+    for y in 0..dh {
+        for x in 0..dw {
+            let mut acc = [0u32; 4];
+            for yy in 0..k {
+                let row = ((y * k + yy) * sw + x * k) * 4;
+                for xx in 0..k {
+                    for c in 0..4 {
+                        acc[c] += s[row + xx * 4 + c] as u32;
+                    }
+                }
+            }
+            let n = (k * k) as u32;
+            for c in 0..4 {
+                d[(y * dw + x) * 4 + c] = (acc[c] / n) as u8;
+            }
+        }
+    }
+}
+
+/// Fade the corners to transparent along a circle of `radius` (about a pixel of smoothing).
+fn round_corners(pm: &mut Pixmap, radius: f32) {
+    let (w, h) = (pm.width() as f32, pm.height() as f32);
+    let r = radius.min(w.min(h) / 2.0);
+    if r <= 0.0 {
+        return;
+    }
+    let stride = pm.width() as usize;
+    let rows = pm.height() as usize;
+    let data = pm.data_mut();
+    for y in 0..rows {
+        for x in 0..stride {
+            let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
+            let cx = if px < r { r } else if px > w - r { w - r } else { continue };
+            let cy = if py < r { r } else if py > h - r { h - r } else { continue };
+            let dist = ((px - cx).powi(2) + (py - cy).powi(2)).sqrt();
+            let cover = (r - dist + 0.5).clamp(0.0, 1.0);
+            if cover < 1.0 {
+                for c in 0..4 {
+                    let i = (y * stride + x) * 4 + c;
+                    data[i] = (data[i] as f32 * cover) as u8;
+                }
+            }
+        }
+    }
 }
 
 /// The pictures Settings offers as wallpapers (the same folders).
