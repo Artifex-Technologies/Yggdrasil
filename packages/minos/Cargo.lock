@@ -2018,6 +2018,7 @@ dependencies = [
  "egui_extras",
  "image",
  "labyrinth-ui",
+ "libc",
  "lofty",
  "notify",
  "raw-window-handle",

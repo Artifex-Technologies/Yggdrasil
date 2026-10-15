@@ -97,7 +97,24 @@ pub fn init(frame: &eframe::Frame, ctx: &eframe::egui::Context) -> Option<Dnd> {
     std::thread::Builder::new()
         .name("minos-dnd".into())
         .spawn(move || {
-            while queue.blocking_dispatch(&mut st).is_ok() {}
+            // Not blocking_dispatch: the window's own thread reads the same socket, and when it reads first
+            // our events sit in this queue with nobody to wake us (so a drop target waiting on the data
+            // timed out). Look again every few milliseconds instead.
+            use std::os::fd::AsRawFd;
+            loop {
+                if queue.dispatch_pending(&mut st).is_err() {
+                    break;
+                }
+                let _ = st.conn.flush();
+                let Some(guard) = queue.prepare_read() else { continue };
+                let mut p = libc::pollfd { fd: guard.connection_fd().as_raw_fd(), events: libc::POLLIN, revents: 0 };
+                // SAFETY: one valid pollfd.
+                if unsafe { libc::poll(&mut p, 1, 15) } > 0 {
+                    let _ = guard.read();
+                } else {
+                    drop(guard);
+                }
+            }
         })
         .ok()?;
     Some(Dnd { qh, manager, device, compositor, shm, surface, conn, serial, down, out_paths, events, dragging_out: false })

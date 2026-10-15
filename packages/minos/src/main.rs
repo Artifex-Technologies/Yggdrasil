@@ -667,6 +667,22 @@ fn tab_strip(ui: &mut egui::Ui, pane: &Pane, pi: usize, pal: &Palette, actions: 
             if let Some(p) = resp.dnd_release_payload::<DragPaths>() {
                 actions.push(Action::Move(p.0.clone(), dir.clone()));
             }
+            // Holding files over another tab for a moment opens it, so they can go into one of its folders.
+            if !active && egui::DragAndDrop::has_payload_of_type::<DragPaths>(ui.ctx()) {
+                let key = egui::Id::new(("minos-tab-hover", pi, i));
+                if resp.contains_pointer() {
+                    let now = ui.input(|inp| inp.time);
+                    let since: f64 = ui.ctx().data_mut(|d| *d.get_temp_mut_or_insert_with(key, || now));
+                    if now - since > 0.5 {
+                        actions.push(Action::SelectTab(pi, i));
+                        ui.ctx().data_mut(|d| d.remove::<f64>(key));
+                    } else {
+                        ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+                    }
+                } else {
+                    ui.ctx().data_mut(|d| d.remove::<f64>(key));
+                }
+            }
             let pinned = t.tab.pinned;
             resp.context_menu(|ui| {
                 if ui.button(if pinned { "Unpin tab" } else { "Pin tab" }).clicked() {
