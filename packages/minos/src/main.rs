@@ -319,7 +319,7 @@ struct Ctx<'a> {
 
 /// Selection, drag source, drop target and context menu shared by both views.
 fn entry_interact(
-    ui: &mut egui::Ui,
+    ctx: &egui::Context,
     r: &egui::Response,
     e: &Entry,
     pos: usize,
@@ -332,7 +332,21 @@ fn entry_interact(
 ) {
     if r.clicked() || r.secondary_clicked() {
         actions.push(Action::Focus(cx.pi));
-        let m = ui.input(|i| i.modifiers);
+        let m = ctx.input(|i| i.modifiers);
+        // Two slow clicks on the same, already selected item rename it (a quick pair is a double click and opens it).
+        let was_only_selected = selected.len() == 1 && selected.contains(&e.path);
+        let now = ctx.input(|i| i.time);
+        let last_id = egui::Id::new("minos-last-click");
+        if r.clicked() && !m.shift && !m.command {
+            let last: Option<(PathBuf, f64)> = ctx.data(|d| d.get_temp(last_id));
+            let slow = matches!(&last, Some((p, at)) if *p == e.path && (0.5..=1.8).contains(&(now - at)));
+            if was_only_selected && slow && e.usage.is_none() {
+                actions.push(Action::Rename(e.path.clone()));
+                ctx.data_mut(|d| d.remove::<(PathBuf, f64)>(last_id));
+            } else {
+                ctx.data_mut(|d| d.insert_temp(last_id, (e.path.clone(), now)));
+            }
+        }
         if r.secondary_clicked() && selected.contains(&e.path) {
             // keep the existing multi-selection for the context menu
         } else if m.shift && anchor.is_some() {
@@ -368,9 +382,12 @@ fn entry_interact(
             selected.clear();
             selected.insert(e.path.clone());
         }
-        egui::DragAndDrop::set_payload(ui.ctx(), DragPaths(selected.iter().cloned().collect()));
+        egui::DragAndDrop::set_payload(ctx, DragPaths(selected.iter().cloned().collect()));
     }
     if e.is_dir {
+        if egui::DragAndDrop::has_payload_of_type::<DragPaths>(ctx) && r.contains_pointer() {
+            ctx.layer_painter(r.layer_id).rect_stroke(r.interact_rect, 6, egui::Stroke::new(2.0, Color32::from_rgb(124, 84, 214)), egui::StrokeKind::Inside);
+        }
         if let Some(p) = r.dnd_release_payload::<DragPaths>() {
             actions.push(Action::Move(p.0.clone(), e.path.clone()));
         }
@@ -880,7 +897,9 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
 
     match st.view {
         ViewMode::Details => {
-            let name_cell = |ui: &mut egui::Ui, e: &Entry, pos: usize, selected: &mut BTreeSet<PathBuf>, anchor: &mut Option<usize>, actions: &mut Vec<Action>| {
+            // The row, not the name, takes the clicks and drags (see entry_interact below).
+            let ectx = ui.ctx().clone();
+            let name_cell = |ui: &mut egui::Ui, e: &Entry| {
                 ui.horizontal(|ui| {
                     entry_icon(ui, &pal, st, e, 18.0);
                     if let Some(b) = cloud::badge_for(&e.path, cx.links, cx.reports) {
@@ -888,17 +907,14 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
                         paint_badge(ui.painter(), rect.center(), b, &pal);
                         r.on_hover_text(badge_tip(b));
                     }
-                    let sel = selected.contains(&e.path);
-                    let sense = if e.usage.is_some() { Sense::click() } else { Sense::click_and_drag() };
-                    let r = ui.add(egui::Button::selectable(sel, name_text(e, st, &pal)).sense(sense));
-                    entry_interact(ui, &r, e, pos, &order, shown, selected, anchor, &cx, actions);
+                    ui.add(egui::Label::new(name_text(e, st, &pal)).selectable(false));
                 });
             };
             if in_pc {
                 TableBuilder::new(ui)
                     .striped(true)
                     .resizable(true)
-                    .sense(Sense::click())
+                    .sense(Sense::click_and_drag())
                     .column(Column::initial(340.0).at_least(160.0).clip(true))
                     .column(Column::initial(90.0).at_least(60.0))
                     .column(Column::initial(210.0).at_least(120.0))
@@ -914,7 +930,7 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
                             let pos = row.index();
                             let e = &shown[order[pos]];
                             row.set_selected(selected.contains(&e.path));
-                            row.col(|ui| name_cell(ui, e, pos, selected, anchor, actions));
+                            row.col(|ui| name_cell(ui, e));
                             row.col(|ui| {
                                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                                     ui.label(RichText::new("Folder").color(pal.dim));
@@ -934,13 +950,15 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
                                     }
                                 });
                             });
+                            let r = row.response();
+                            entry_interact(&ectx, &r, e, pos, &order, shown, selected, anchor, &cx, actions);
                         });
                     });
             } else {
                 TableBuilder::new(ui)
                     .striped(true)
                     .resizable(true)
-                    .sense(Sense::click())
+                    .sense(Sense::click_and_drag())
                     .column(Column::initial(420.0).at_least(160.0).clip(true))
                     .column(Column::initial(160.0).at_least(80.0))
                     .column(Column::initial(120.0).at_least(60.0))
@@ -956,7 +974,7 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
                             let pos = row.index();
                             let e = &shown[order[pos]];
                             row.set_selected(selected.contains(&e.path));
-                            row.col(|ui| name_cell(ui, e, pos, selected, anchor, actions));
+                            row.col(|ui| name_cell(ui, e));
                             row.col(|ui| {
                                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                                     ui.label(RichText::new(e.modified.map(fmt_time).unwrap_or_default()).color(pal.dim));
@@ -972,6 +990,8 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
                                     ui.label(RichText::new(if e.is_dir { String::new() } else { listing::human_size(e.size) }).color(pal.dim));
                                 });
                             });
+                            let r = row.response();
+                            entry_interact(&ectx, &r, e, pos, &order, shown, selected, anchor, &cx, actions);
                         });
                     });
             }
@@ -1016,7 +1036,7 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
                         }
                         ui.painter().text(pos2(rect.center().x, rect.bottom() - 16.0), Align2::CENTER_CENTER, shown_name, FontId::proportional(13.0), tint.unwrap_or(pal.text));
                         let r = r.on_hover_text(&e.name);
-                        entry_interact(ui, &r, e, pos, &order, shown, selected, anchor, &cx, actions);
+                        entry_interact(ui.ctx(), &r, e, pos, &order, shown, selected, anchor, &cx, actions);
                     }
                 });
             });
@@ -2113,6 +2133,16 @@ impl eframe::App for App {
                     }
                 }
                 _ => {}
+            }
+        }
+
+        if let Some(p) = egui::DragAndDrop::payload::<DragPaths>(&ctx) {
+            if let Some(pos) = ctx.pointer_latest_pos() {
+                egui::Area::new("minos-drag-ghost".into()).order(egui::Order::Tooltip).fixed_pos(pos + vec2(14.0, 14.0)).interactable(false).show(&ctx, |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        ui.label(if p.0.len() == 1 { format!("Move {}", p.0[0].file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()) } else { format!("Move {} items", p.0.len()) });
+                    });
+                });
             }
         }
 
