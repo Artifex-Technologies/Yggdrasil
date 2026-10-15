@@ -302,3 +302,55 @@ mod tests {
         assert_ne!(b("/h/docs/sub2", Some(r)), Some(Badge::Problem));
     }
 }
+
+/// Whether rclone already has a Proton Drive remote called `proton`.
+pub fn proton_configured() -> bool {
+    Command::new("rclone").arg("listremotes").output().map(|o| String::from_utf8_lossy(&o.stdout).lines().any(|l| l.trim() == "proton:")).unwrap_or(false)
+}
+
+fn obscure(secret: &str) -> Result<String, String> {
+    use std::io::Write;
+    let mut child = Command::new("rclone").args(["obscure", "-"]).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).spawn().map_err(|e| format!("cannot run rclone (is it installed?): {e}"))?;
+    child.stdin.take().ok_or("no stdin")?.write_all(secret.as_bytes()).map_err(|e| e.to_string())?;
+    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// Sign in to Proton Drive (rclone's `protondrive` backend, remote `proton`) and start the mount at
+/// `~/ProtonDrive`, so the Cloud entry in the sidebar fills in. `mailbox` and `twofa` may be empty.
+pub fn connect_proton(user: &str, password: &str, mailbox: &str, twofa: &str) -> Result<(), String> {
+    let mut args: Vec<String> = ["config", "create", "proton", "protondrive", "username"].map(String::from).to_vec();
+    args.push(user.trim().to_string());
+    args.push("password".into());
+    args.push(obscure(password)?);
+    if !mailbox.is_empty() {
+        args.push("mailbox_password".into());
+        args.push(obscure(mailbox)?);
+    }
+    if !twofa.trim().is_empty() {
+        args.push("2fa".into());
+        args.push(twofa.trim().to_string());
+    }
+    let out = Command::new("rclone").args(&args).output().map_err(|e| format!("cannot run rclone: {e}"))?;
+    if !out.status.success() {
+        let _ = Command::new("rclone").args(["config", "delete", "proton"]).status();
+        return Err(format!("Proton refused the sign-in: {}", String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("").trim()));
+    }
+    start_proton_mount()
+}
+
+/// Put the mount service in place (once) and start it.
+pub fn start_proton_mount() -> Result<(), String> {
+    let home = dirs::home_dir().ok_or("no home folder")?;
+    let unit = home.join(".config/systemd/user/proton-drive.service");
+    if !unit.is_file() {
+        std::fs::create_dir_all(unit.parent().unwrap()).map_err(|e| e.to_string())?;
+        std::fs::copy("/usr/share/labyrinth/proton-drive.service", &unit).map_err(|e| format!("cannot install the mount service: {e}"))?;
+        let _ = Command::new("systemctl").args(["--user", "daemon-reload"]).status();
+    }
+    let st = Command::new("systemctl").args(["--user", "enable", "--now", "proton-drive"]).output().map_err(|e| e.to_string())?;
+    if !st.status.success() {
+        return Err(format!("could not start the mount: {}", String::from_utf8_lossy(&st.stderr).trim()));
+    }
+    Ok(())
+}

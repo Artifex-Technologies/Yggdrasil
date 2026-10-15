@@ -59,6 +59,7 @@ enum Action {
     SetView(ViewMode),
     ToggleTheme,
     LinkDialog,
+    ProtonConnect,
 }
 
 struct Watch {
@@ -1210,6 +1211,11 @@ struct App {
     verify_tx: Sender<(String, Result<Report, String>)>,
     verify_rx: Receiver<(String, Result<Report, String>)>,
     link_form: Option<(String, String, String)>,
+    /// Proton Drive sign-in form: email, password, mailbox password, 2FA code.
+    proton_form: Option<[String; 4]>,
+    proton_busy: bool,
+    proton_tx: Sender<Result<(), String>>,
+    proton_rx: Receiver<Result<(), String>>,
     applied_theme: Option<(bool, Option<[u8; 3]>)>,
     accent_checked: Instant,
     pv: PreviewState,
@@ -1226,6 +1232,7 @@ impl App {
         let links = cloud::links_path().map(|p| cloud::load_links(&p)).unwrap_or_default();
         let reports = links.iter().filter_map(|l| cloud::last_report(&l.name).map(|r| (l.name.clone(), r))).collect();
         let (verify_tx, verify_rx) = channel();
+        let (proton_tx, proton_rx) = channel();
         Self {
             panes: [
                 Pane::from_saved(&st.tabs, st.active, home.clone(), st.show_hidden),
@@ -1248,6 +1255,10 @@ impl App {
             verify_tx,
             verify_rx,
             link_form: None,
+            proton_form: None,
+            proton_busy: false,
+            proton_tx,
+            proton_rx,
             applied_theme: None,
             accent_checked: Instant::now(),
             pv: PreviewState::new(),
@@ -1575,6 +1586,19 @@ impl App {
                     self.st.dark = !self.st.dark;
                     self.dirty = true;
                 }
+                Action::ProtonConnect => {
+                    if cloud::proton_configured() {
+                        // signed in already: the mount is just not running
+                        self.proton_busy = true;
+                        let (tx, c) = (self.proton_tx.clone(), ctx.clone());
+                        std::thread::spawn(move || {
+                            let _ = tx.send(cloud::start_proton_mount());
+                            c.request_repaint();
+                        });
+                    } else {
+                        self.proton_form = Some(Default::default());
+                    }
+                }
                 Action::LinkDialog => {
                     let local = self.panes[self.focus].tabs[self.panes[self.focus].active].dir().to_string_lossy().into_owned();
                     self.link_form = Some((String::new(), local, "proton:".into()));
@@ -1696,10 +1720,17 @@ impl App {
                 match c.state {
                     CloudState::Ready => self.nav_row(ui, pal, Icon::Cloud, pal.dim, &c.label, &c.path, None, false, actions),
                     CloudState::NotMounted => {
-                        let (rect, r) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::hover());
+                        let (rect, r) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::click());
+                        if r.hovered() {
+                            ui.painter().rect_filled(rect, CornerRadius::same(8), pal.hover);
+                        }
                         icons::paint(ui.painter(), Rect::from_min_size(rect.min + vec2(8.0, 5.0), vec2(18.0, 18.0)), Icon::Cloud, pal.dim.gamma_multiply(0.5));
-                        ui.painter().text(pos2(rect.left() + 34.0, rect.center().y), Align2::LEFT_CENTER, format!("{} (not mounted)", c.label), FontId::proportional(13.5), pal.dim.gamma_multiply(0.7));
-                        r.on_hover_text(format!("Expected at {}", c.path.display()));
+                        let label = if self.proton_busy { format!("{} (connecting...)", c.label) } else { format!("{} (click to connect)", c.label) };
+                        ui.painter().text(pos2(rect.left() + 34.0, rect.center().y), Align2::LEFT_CENTER, label, FontId::proportional(13.5), pal.dim.gamma_multiply(0.7));
+                        if r.clicked() && !self.proton_busy {
+                            actions.push(Action::ProtonConnect);
+                        }
+                        r.on_hover_text(format!("Not connected. Click to sign in; it will appear at {}", c.path.display()));
                     }
                 }
             }
@@ -1769,6 +1800,22 @@ impl eframe::App for App {
                 p.ensure_watch(&ctx);
                 p.poll_watch(hidden);
             }
+        }
+        while let Ok(res) = self.proton_rx.try_recv() {
+            self.proton_busy = false;
+            match res {
+                Ok(()) => {
+                    self.status = "Proton Drive is connecting; its files appear in a few seconds".into();
+                    self.proton_form = None;
+                }
+                Err(e) => self.status = e,
+            }
+            self.cloud = places::proton_drive();
+        }
+        if self.proton_busy || self.cloud.as_ref().map(|c| c.state == CloudState::NotMounted).unwrap_or(false) && cloud::proton_configured() {
+            // keep looking while the mount comes up
+            self.cloud = places::proton_drive();
+            ctx.request_repaint_after(Duration::from_secs(2));
         }
         while let Ok((name, res)) = self.verify_rx.try_recv() {
             self.verifying.retain(|n| *n != name);
@@ -1993,6 +2040,44 @@ impl eframe::App for App {
                 }
                 self.reload_all();
             }
+        }
+
+        let mut proton_go = false;
+        let mut proton_cancel = false;
+        if let Some(f) = &mut self.proton_form {
+            let busy = self.proton_busy;
+            egui::Window::new("Connect Proton Drive").collapsible(false).show(&ctx, |ui| {
+                ui.label("Proton email or username");
+                ui.text_edit_singleline(&mut f[0]);
+                ui.label("Password");
+                ui.add(egui::TextEdit::singleline(&mut f[1]).password(true));
+                ui.label("Two-factor code (if you use one; it lasts about 30 seconds)");
+                ui.text_edit_singleline(&mut f[3]);
+                ui.label("Mailbox password (only if you set a separate one)");
+                ui.add(egui::TextEdit::singleline(&mut f[2]).password(true));
+                ui.label(RichText::new("Passed straight to rclone, which keeps a scrambled copy in its own config.").small());
+                ui.horizontal(|ui| {
+                    if ui.add_enabled(!busy && !f[0].is_empty() && !f[1].is_empty(), egui::Button::new(if busy { "Connecting..." } else { "Connect" })).clicked() {
+                        proton_go = true;
+                    }
+                    if ui.add_enabled(!busy, egui::Button::new("Cancel")).clicked() {
+                        proton_cancel = true;
+                    }
+                });
+            });
+        }
+        if proton_go {
+            if let Some(f) = self.proton_form.clone() {
+                self.proton_busy = true;
+                let (tx, c) = (self.proton_tx.clone(), ctx.clone());
+                std::thread::spawn(move || {
+                    let _ = tx.send(cloud::connect_proton(&f[0], &f[1], &f[2], &f[3]));
+                    c.request_repaint();
+                });
+            }
+        }
+        if proton_cancel {
+            self.proton_form = None;
         }
 
         let mut link_done: Option<bool> = None;
