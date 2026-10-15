@@ -339,7 +339,7 @@ impl Dispatch<WlDataSource, ()> for St {
 }
 delegate_noop!(St: WlDataDeviceManager);
 delegate_noop!(St: WlCompositor);
-delegate_noop!(St: WlSurface);
+delegate_noop!(St: ignore WlSurface);
 delegate_noop!(St: ignore WlShm);
 delegate_noop!(St: WlShmPool);
 delegate_noop!(St: ignore WlBuffer);
