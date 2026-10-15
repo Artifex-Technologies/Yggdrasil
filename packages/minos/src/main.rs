@@ -23,6 +23,30 @@ use minos_core::state::{SavedTab, State, ViewMode, GALLERY_SIZES};
 use minos_core::{expand_address, fileops, History, Tab};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
+/// A copy or move running on its own thread (see App::start_transfer).
+struct Transfer {
+    rx: Receiver<TEvent>,
+    /// The file the thread is waiting for an answer about: what is coming, what is there, where to send the answer.
+    ask: Option<(PathBuf, PathBuf, Sender<Option<fileops::Decision>>)>,
+    /// "Do this for all": the answer given to every later question.
+    sticky: Option<fileops::Decision>,
+    all: bool,
+}
+
+enum TEvent {
+    Conflict(PathBuf, PathBuf, Sender<Option<fileops::Decision>>),
+    Done { stats: fileops::Stats, done: Vec<(PathBuf, PathBuf)>, mv: bool, stopped: bool, dest: PathBuf },
+}
+
+/// Whether `dest` is on the same drive as `src` (a move there is just a rename, not a copy and a delete).
+fn same_drive(src: Option<&PathBuf>, dest: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (src.and_then(|s| s.parent()).and_then(|p| std::fs::metadata(p).ok()), std::fs::metadata(dest).ok()) {
+        (Some(a), Some(b)) => a.dev() == b.dev(),
+        _ => false,
+    }
+}
+
 /// Drag-and-drop payload: the files being dragged.
 struct DragPaths(Vec<PathBuf>);
 
@@ -1388,6 +1412,7 @@ struct App {
     clipboard: Option<(Vec<PathBuf>, bool)>,
     rename: Option<RenameDlg>,
     rename_unseen: u8,
+    transfer: Option<Transfer>,
     status: String,
     drives: Vec<places::Drive>,
     disks: Vec<places::Disk>,
@@ -1439,6 +1464,7 @@ impl App {
             clipboard: None,
             rename: None,
             rename_unseen: 0,
+            transfer: None,
             status: String::new(),
             drives: places::drives(),
             disks: places::disks(),
@@ -1516,19 +1542,137 @@ impl App {
                 self.status = "Drop on a drive or a folder".into();
                 continue;
             }
-            let mut errs = vec![];
+            let mv = moved && same_drive(paths.first(), &dest);
+            self.start_transfer(ctx, paths, dest, mv);
+        }
+    }
+
+    /// Copy or move these into `dest` on a worker thread, merging with what is there and asking about every
+    /// file that already exists (see fileops::transfer and the "already exists" dialog).
+    fn start_transfer(&mut self, ctx: &egui::Context, paths: Vec<PathBuf>, dest: PathBuf, mv: bool) {
+        if self.transfer.is_some() {
+            self.status = "Another copy is still running".into();
+            return;
+        }
+        let (tx, rx) = channel();
+        let c = ctx.clone();
+        let n = paths.len();
+        std::thread::spawn(move || {
+            let mut stats = fileops::Stats::default();
+            let mut done = vec![];
+            let mut stopped = false;
             for src in &paths {
-                if src.parent() == Some(dest.as_path()) {
-                    continue;
-                }
-                let r = if moved { fileops::move_into(src, &dest) } else { fileops::copy_into(src, &dest) };
-                match r {
-                    Ok(new) if moved => self.st.rekey(src, &new),
-                    Ok(_) => {}
-                    Err(e) => errs.push(format!("{}: {e}", src.display())),
+                let res = fileops::transfer(src, &dest, mv, &mut |a, b| {
+                    let (rt, rr) = channel();
+                    tx.send(TEvent::Conflict(a.to_path_buf(), b.to_path_buf(), rt)).ok()?;
+                    c.request_repaint();
+                    rr.recv().ok().flatten()
+                }, &mut stats);
+                match res {
+                    Ok(new) => done.push((src.clone(), new)),
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
+                        stopped = true;
+                        break;
+                    }
+                    Err(e) => stats.errors.push(format!("{}: {e}", src.display())),
                 }
             }
-            self.status = if errs.is_empty() { format!("{} {} item(s) to {}", if moved { "Moved" } else { "Copied" }, paths.len(), dest.display()) } else { errs.join("; ") };
+            let _ = tx.send(TEvent::Done { stats, done, mv, stopped, dest });
+            c.request_repaint();
+        });
+        self.status = format!("{} {n} item(s)...", if mv { "Moving" } else { "Copying" });
+        self.transfer = Some(Transfer { rx, ask: None, sticky: None, all: false });
+    }
+
+    /// Take what the transfer thread reports, and show the "already exists" dialog while it waits for an answer.
+    fn poll_transfer(&mut self, ctx: &egui::Context) {
+        let Some(tr) = &mut self.transfer else { return };
+        let mut finished: Option<(fileops::Stats, Vec<(PathBuf, PathBuf)>, bool, bool, PathBuf)> = None;
+        while let Ok(ev) = tr.rx.try_recv() {
+            match ev {
+                TEvent::Conflict(a, b, reply) => match tr.sticky {
+                    Some(d) => {
+                        let _ = reply.send(Some(d));
+                    }
+                    None => tr.ask = Some((a, b, reply)),
+                },
+                TEvent::Done { stats, done, mv, stopped, dest } => finished = Some((stats, done, mv, stopped, dest)),
+            }
+        }
+        if finished.is_none() && tr.ask.is_some() {
+            let mut answer: Option<Option<fileops::Decision>> = None;
+            let (a, b, _) = tr.ask.clone().unwrap();
+            let info = |p: &Path| match std::fs::metadata(p) {
+                Ok(m) => format!("{}, {}", listing::human_size(m.len()), m.modified().ok().map(fmt_time).unwrap_or_default()),
+                Err(_) => String::new(),
+            };
+            let name = b.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let folder = b.parent().map(|p| p.display().to_string()).unwrap_or_default();
+            let mut all = tr.all;
+            egui::Window::new("File already exists").collapsible(false).resizable(false).anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0)).show(ctx, |ui| {
+                ui.label(RichText::new(&name).strong());
+                ui.label(format!("is already in {folder}"));
+                ui.add_space(6.0);
+                ui.label(format!("Already there:  {}", info(&b)));
+                ui.label(format!("Coming in:  {}", info(&a)));
+                ui.add_space(6.0);
+                ui.checkbox(&mut all, "Do this for all remaining files that already exist");
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Replace").clicked() {
+                        answer = Some(Some(fileops::Decision::Replace));
+                    }
+                    if ui.button("Skip").clicked() {
+                        answer = Some(Some(fileops::Decision::Skip));
+                    }
+                    if ui.button("Keep both").clicked() {
+                        answer = Some(Some(fileops::Decision::KeepBoth));
+                    }
+                    if ui.button("Stop").clicked() {
+                        answer = Some(None);
+                    }
+                });
+            });
+            tr.all = all;
+            if let Some(ans) = answer {
+                if let Some((_, _, reply)) = tr.ask.take() {
+                    let _ = reply.send(ans);
+                }
+                if tr.all {
+                    tr.sticky = ans;
+                }
+            }
+        }
+        if let Some((stats, done, mv, stopped, dest)) = finished {
+            self.transfer = None;
+            if mv {
+                for (src, new) in &done {
+                    if !src.exists() {
+                        self.st.rekey(src, new);
+                    }
+                }
+            }
+            let mut parts = vec![];
+            if stats.copied > 0 {
+                parts.push(format!("{} {}", if mv { "moved" } else { "copied" }, stats.copied));
+            }
+            if stats.replaced > 0 {
+                parts.push(format!("replaced {}", stats.replaced));
+            }
+            if stats.kept_both > 0 {
+                parts.push(format!("kept both {}", stats.kept_both));
+            }
+            if stats.skipped > 0 {
+                parts.push(format!("skipped {}", stats.skipped));
+            }
+            if stats.same > 0 {
+                parts.push(format!("{} already there", stats.same));
+            }
+            if !stats.errors.is_empty() {
+                parts.push(format!("{} failed: {}", stats.errors.len(), stats.errors[0]));
+            }
+            let head = if stopped { "Stopped" } else { "Done" };
+            self.status = if parts.is_empty() { format!("{head}: nothing to do in {}", dest.display()) } else { format!("{head}: {} ({})", parts.join(", "), dest.display()) };
             self.dirty = true;
             self.reload_all();
         }
@@ -1723,6 +1867,7 @@ impl App {
                         continue;
                     }
                     let mut errs = vec![];
+                    let mut files = vec![];
                     for src in &paths {
                         if let Some((arc, inner)) = archive::split(src) {
                             // Copying out of an archive extracts. (Cut is blocked above.)
@@ -1731,21 +1876,21 @@ impl App {
                             if let Err(e) = r {
                                 errs.push(format!("{inner}: {e}"));
                             }
-                            continue;
-                        }
-                        let r = if cut { fileops::move_into(src, &dest) } else { fileops::copy_into(src, &dest) };
-                        match r {
-                            Ok(new) if cut => self.st.rekey(src, &new),
-                            Ok(_) => {}
-                            Err(e) => errs.push(format!("{}: {e}", src.display())),
+                        } else {
+                            files.push(src.clone());
                         }
                     }
                     if cut {
                         self.clipboard = None;
                     }
-                    self.status = if errs.is_empty() { format!("Pasted {} item(s)", paths.len()) } else { errs.join("; ") };
-                    self.dirty = true;
-                    self.reload_all();
+                    if !errs.is_empty() {
+                        self.status = errs.join("; ");
+                    }
+                    if !files.is_empty() {
+                        self.start_transfer(ctx, files, dest, cut);
+                    } else {
+                        self.reload_all();
+                    }
                 }
                 Action::Move(paths, dest) => {
                     if places::is_virtual(&dest) {
@@ -1756,16 +1901,10 @@ impl App {
                         self.status = "Archives are read-only here: use Extract, or copy and paste".into();
                         continue;
                     }
-                    let mut errs = vec![];
-                    for src in &paths {
-                        match fileops::move_into(src, &dest) {
-                            Ok(new) => self.st.rekey(src, &new),
-                            Err(e) => errs.push(format!("{}: {e}", src.display())),
-                        }
-                    }
-                    self.status = if errs.is_empty() { format!("Moved {} item(s) to {}", paths.len(), dest.display()) } else { errs.join("; ") };
-                    self.dirty = true;
-                    self.reload_all();
+                    // Like Windows: the same drive moves, another drive copies; Shift forces a move, Ctrl a copy.
+                    let m = ctx.input(|i| i.modifiers);
+                    let mv = if m.shift { true } else if m.command { false } else { same_drive(paths.first(), &dest) };
+                    self.start_transfer(ctx, paths, dest, mv);
                 }
                 Action::Rename(path) if archive::split(&path).is_some() => {
                     self.status = "Items inside an archive cannot be renamed".into();
@@ -2350,6 +2489,7 @@ impl eframe::App for App {
             self.proton_form = None;
         }
 
+        self.poll_transfer(&ctx);
         self.pump_dnd(&ctx, _frame);
         if let Some(p) = egui::DragAndDrop::payload::<DragPaths>(&ctx) {
             if let Some(pos) = ctx.pointer_latest_pos() {
