@@ -2053,8 +2053,6 @@ impl eframe::App for App {
                 ui.add(egui::TextEdit::singleline(&mut f[1]).password(true));
                 ui.label("Two-factor code (if you use one; it lasts about 30 seconds)");
                 ui.text_edit_singleline(&mut f[3]);
-                ui.label("Mailbox password (only if you set a separate one)");
-                ui.add(egui::TextEdit::singleline(&mut f[2]).password(true));
                 ui.label(RichText::new("Passed straight to rclone, which keeps a scrambled copy in its own config.").small());
                 ui.horizontal(|ui| {
                     if ui.add_enabled(!busy && !f[0].is_empty() && !f[1].is_empty(), egui::Button::new(if busy { "Connecting..." } else { "Connect" })).clicked() {
