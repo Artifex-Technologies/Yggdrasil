@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, Instant};
 
+mod dnd;
 mod icons;
 
 use eframe::egui::{self, pos2, vec2, Align, Align2, Color32, CornerRadius, FontId, Layout, Rect, RichText, Sense, UiBuilder};
@@ -385,6 +386,8 @@ fn entry_interact(
         egui::DragAndDrop::set_payload(ctx, DragPaths(selected.iter().cloned().collect()));
     }
     if e.is_dir {
+        // folders on screen this frame, for drops that arrive from other windows
+        ctx.data_mut(|d| d.get_temp_mut_or_default::<Vec<(Rect, PathBuf)>>(egui::Id::new("minos-drop-rows")).push((r.interact_rect, e.path.clone())));
         if egui::DragAndDrop::has_payload_of_type::<DragPaths>(ctx) && r.contains_pointer() {
             ctx.layer_painter(r.layer_id).rect_stroke(r.interact_rect, 6, egui::Stroke::new(2.0, Color32::from_rgb(124, 84, 214)), egui::StrokeKind::Inside);
         }
@@ -1239,6 +1242,10 @@ struct App {
     applied_theme: Option<(bool, Option<[u8; 3]>)>,
     accent_checked: Instant,
     pv: PreviewState,
+    dnd: Option<dnd::Dnd>,
+    dnd_tried: bool,
+    /// Where a drag from another window is hovering (logical pixels).
+    ext_hover: Option<(f32, f32)>,
 }
 
 impl App {
@@ -1282,6 +1289,81 @@ impl App {
             applied_theme: None,
             accent_checked: Instant::now(),
             pv: PreviewState::new(),
+            dnd: None,
+            dnd_tried: false,
+            ext_hover: None,
+        }
+    }
+
+    /// Drag and drop with other windows (see dnd.rs): start a drag out when the pointer leaves with files,
+    /// and take what is dropped on this window.
+    fn pump_dnd(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
+        let id = egui::Id::new("minos-drop-rows");
+        let rows: Vec<(Rect, PathBuf)> = ctx.data_mut(|d| d.get_temp::<Vec<(Rect, PathBuf)>>(id)).unwrap_or_default();
+        ctx.data_mut(|d| d.insert_temp(id, Vec::<(Rect, PathBuf)>::new()));
+        if !self.dnd_tried {
+            self.dnd_tried = true;
+            self.dnd = dnd::init(frame, ctx);
+            if std::env::var_os("MINOS_DEBUG").is_some() {
+                eprintln!("minos: window-to-window drag and drop {}", if self.dnd.is_some() { "ready" } else { "not available" });
+            }
+        }
+        let split = self.st.split;
+        let focus = self.focus;
+        let mut dropped: Vec<(Vec<PathBuf>, (f32, f32), bool)> = vec![];
+        let Some(dnd) = &mut self.dnd else { return };
+        while let Ok(ev) = dnd.events.try_recv() {
+            match ev {
+                dnd::DndEvent::Hover(p) => self.ext_hover = Some(p),
+                dnd::DndEvent::Leave => self.ext_hover = None,
+                dnd::DndEvent::Drop { paths, at, moved } => {
+                    self.ext_hover = None;
+                    dropped.push((paths, at, moved));
+                }
+                dnd::DndEvent::Finished => dnd.finished(),
+            }
+        }
+        // The pointer has left the window with files in hand: hand them to the compositor.
+        if !dnd.dragging_out() && egui::DragAndDrop::has_payload_of_type::<DragPaths>(ctx) && dnd.can_start() {
+            let outside = ctx.input(|i| i.pointer.latest_pos()).map(|p| !ctx.content_rect().contains(p)).unwrap_or(true);
+            if outside {
+                if let Some(p) = egui::DragAndDrop::payload::<DragPaths>(ctx) {
+                    dnd.start_drag(p.0.clone());
+                    egui::DragAndDrop::clear_payload(ctx);
+                }
+            }
+        }
+        if let Some(at) = self.ext_hover {
+            let pt = pos2(at.0, at.1);
+            if let Some((rect, _)) = rows.iter().find(|(r, _)| r.contains(pt)) {
+                ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("minos-ext-hover")))
+                    .rect_stroke(*rect, 6, egui::Stroke::new(2.0, Color32::from_rgb(124, 84, 214)), egui::StrokeKind::Inside);
+            }
+        }
+        let width = ctx.content_rect().width();
+        for (paths, at, moved) in dropped {
+            let pt = pos2(at.0, at.1);
+            let pane = if split && at.0 > width / 2.0 { 1 } else { focus };
+            let dest = rows.iter().find(|(r, _)| r.contains(pt)).map(|(_, p)| p.clone()).unwrap_or_else(|| self.panes[pane].tabs[self.panes[pane].active].dir());
+            if places::is_virtual(&dest) || archive::split(&dest).is_some() {
+                self.status = "Drop on a drive or a folder".into();
+                continue;
+            }
+            let mut errs = vec![];
+            for src in &paths {
+                if src.parent() == Some(dest.as_path()) {
+                    continue;
+                }
+                let r = if moved { fileops::move_into(src, &dest) } else { fileops::copy_into(src, &dest) };
+                match r {
+                    Ok(new) if moved => self.st.rekey(src, &new),
+                    Ok(_) => {}
+                    Err(e) => errs.push(format!("{}: {e}", src.display())),
+                }
+            }
+            self.status = if errs.is_empty() { format!("{} {} item(s) to {}", if moved { "Moved" } else { "Copied" }, paths.len(), dest.display()) } else { errs.join("; ") };
+            self.dirty = true;
+            self.reload_all();
         }
     }
 
@@ -2136,6 +2218,7 @@ impl eframe::App for App {
             }
         }
 
+        self.pump_dnd(&ctx, _frame);
         if let Some(p) = egui::DragAndDrop::payload::<DragPaths>(&ctx) {
             if let Some(pos) = ctx.pointer_latest_pos() {
                 egui::Area::new("minos-drag-ghost".into()).order(egui::Order::Tooltip).fixed_pos(pos + vec2(14.0, 14.0)).interactable(false).show(&ctx, |ui| {

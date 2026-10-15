@@ -2020,10 +2020,13 @@ dependencies = [
  "labyrinth-ui",
  "lofty",
  "notify",
+ "raw-window-handle",
  "serde",
  "serde_json",
  "sysinfo",
  "trash",
+ "wayland-backend",
+ "wayland-client",
 ]
 
 [[package]]

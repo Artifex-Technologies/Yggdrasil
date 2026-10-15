@@ -25,3 +25,6 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sysinfo = { version = "0.39.6", default-features = false, features = ["disk"] }
 trash = "5.2.9"
+wayland-client = "0.31"
+wayland-backend = { version = "0.3", features = ["client_system"] }
+raw-window-handle = "0.6"
