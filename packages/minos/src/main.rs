@@ -332,6 +332,43 @@ struct Ctx<'a> {
     pi: usize,
 }
 
+const RENAME_ID: &str = "minos-rename";
+const RENAME_RESULT_ID: &str = "minos-rename-result";
+
+/// If `e` is being renamed, shows the editor in place of its name and returns true. Enter or a click elsewhere keeps
+/// the new name, Esc drops it (the outcome goes to the App through the egui data, see `ui`).
+fn inline_rename(ui: &mut egui::Ui, pal: &Palette, e: &Entry) -> bool {
+    let ctx = ui.ctx().clone();
+    let Some(mut d) = ctx.data(|d| d.get_temp::<Option<RenameDlg>>(egui::Id::new(RENAME_ID))).flatten().filter(|d| d.path == e.path) else { return false };
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new("minos-rename-seen"), true));
+    let id = egui::Id::new(("minos-rename-edit", e.path.clone()));
+    if d.fresh {
+        // select the name without its extension, like other file managers
+        let stem = if e.is_dir { d.text.chars().count() } else { std::path::Path::new(&d.text).file_stem().map(|s| s.to_string_lossy().chars().count()).unwrap_or(0).max(1) };
+        let mut state = egui::TextEdit::load_state(&ctx, id).unwrap_or_default();
+        state.cursor.set_char_range(Some(egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(stem))));
+        state.store(&ctx, id);
+    }
+    let r = ui.add(egui::TextEdit::singleline(&mut d.text).id(id).desired_width(ui.available_width().max(80.0)).text_color(pal.text));
+    if d.fresh {
+        r.request_focus();
+        d.fresh = false;
+    }
+    let (esc, enter) = ui.input(|i| (i.key_pressed(egui::Key::Escape), i.key_pressed(egui::Key::Enter)));
+    let result = if esc {
+        Some(None)
+    } else if enter || (r.lost_focus() && !d.fresh) {
+        Some(Some((d.path.clone(), d.text.clone())))
+    } else {
+        None
+    };
+    if let Some(res) = result {
+        ctx.data_mut(|data| data.insert_temp(egui::Id::new(RENAME_RESULT_ID), res));
+    }
+    ctx.data_mut(|data| data.insert_temp(egui::Id::new(RENAME_ID), Some(d)));
+    true
+}
+
 /// Selection, drag source, drop target and context menu shared by both views.
 fn entry_interact(
     ctx: &egui::Context,
@@ -348,18 +385,22 @@ fn entry_interact(
     if r.clicked() || r.secondary_clicked() {
         actions.push(Action::Focus(cx.pi));
         let m = ctx.input(|i| i.modifiers);
-        // Two slow clicks on the same, already selected item rename it (a quick pair is a double click and opens it).
+        // A click on the name of an item that was already selected renames it, as in Windows and macOS, unless
+        // a second click follows quickly (that is a double click, and opens it). So the rename waits a moment.
         let was_only_selected = selected.len() == 1 && selected.contains(&e.path);
         let now = ctx.input(|i| i.time);
-        let last_id = egui::Id::new("minos-last-click");
-        if r.clicked() && !m.shift && !m.command {
-            let last: Option<(PathBuf, f64)> = ctx.data(|d| d.get_temp(last_id));
-            let slow = matches!(&last, Some((p, at)) if *p == e.path && (0.5..=1.8).contains(&(now - at)));
-            if was_only_selected && slow && e.usage.is_none() {
-                actions.push(Action::Rename(e.path.clone()));
-                ctx.data_mut(|d| d.remove::<(PathBuf, f64)>(last_id));
-            } else {
-                ctx.data_mut(|d| d.insert_temp(last_id, (e.path.clone(), now)));
+        let pending_id = egui::Id::new("minos-rename-pending");
+        if r.clicked() {
+            ctx.data_mut(|d| d.remove::<(PathBuf, f64)>(pending_id));
+            if !m.shift && !m.command && was_only_selected && e.usage.is_none() {
+                let on_name = ctx
+                    .data(|d| d.get_temp::<Rect>(egui::Id::new(("minos-name-rect", e.path.clone()))))
+                    .zip(r.interact_pointer_pos())
+                    .map(|(rect, p)| rect.contains(p))
+                    .unwrap_or(false);
+                if on_name {
+                    ctx.data_mut(|d| d.insert_temp(pending_id, (e.path.clone(), now)));
+                }
             }
         }
         if r.secondary_clicked() && selected.contains(&e.path) {
@@ -383,6 +424,7 @@ fn entry_interact(
         }
     }
     if r.double_clicked() {
+        ctx.data_mut(|d| d.remove::<(PathBuf, f64)>(egui::Id::new("minos-rename-pending")));
         if e.is_dir || archive::is_archive_file(&e.path) {
             actions.push(Action::Go(cx.pi, e.path.clone()));
         } else {
@@ -998,7 +1040,10 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
                         paint_badge(ui.painter(), rect.center(), b, &pal);
                         r.on_hover_text(badge_tip(b));
                     }
-                    ui.add(egui::Label::new(name_text(e, st, &pal)).selectable(false));
+                    if !inline_rename(ui, &pal, e) {
+                        let lr = ui.add(egui::Label::new(name_text(e, st, &pal)).selectable(false));
+                        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new(("minos-name-rect", e.path.clone())), lr.rect.expand2(vec2(6.0, 4.0))));
+                    }
                 });
             };
             if in_pc {
@@ -1135,7 +1180,15 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
                         if shown_name.chars().count() > max_chars {
                             shown_name = shown_name.chars().take(max_chars.saturating_sub(1)).collect::<String>() + "...";
                         }
-                        ui.painter().text(pos2(rect.center().x, rect.bottom() - 16.0), Align2::CENTER_CENTER, shown_name, FontId::proportional(13.0), tint.unwrap_or(pal.text));
+                        let name_rect = Rect::from_min_max(pos2(rect.left() + 2.0, rect.bottom() - 28.0), pos2(rect.right() - 2.0, rect.bottom() - 4.0));
+                        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new(("minos-name-rect", e.path.clone())), name_rect));
+                        let mut editing = false;
+                        ui.scope_builder(UiBuilder::new().max_rect(name_rect), |ui| {
+                            editing = inline_rename(ui, &pal, e);
+                        });
+                        if !editing {
+                            ui.painter().text(pos2(rect.center().x, rect.bottom() - 16.0), Align2::CENTER_CENTER, shown_name, FontId::proportional(13.0), tint.unwrap_or(pal.text));
+                        }
                         let r = r.on_hover_text(&e.name);
                         entry_interact(ui.ctx(), &r, e, pos, &order, shown, selected, anchor, &cx, actions);
                     }
@@ -1314,6 +1367,7 @@ fn draw_preview(ui: &mut egui::Ui, pal: &Palette, ps: &PreviewState) {
     }
 }
 
+#[derive(Clone)]
 struct RenameDlg {
     path: PathBuf,
     text: String,
@@ -1331,6 +1385,7 @@ struct App {
     dirty: bool,
     clipboard: Option<(Vec<PathBuf>, bool)>,
     rename: Option<RenameDlg>,
+    rename_unseen: u8,
     status: String,
     drives: Vec<places::Drive>,
     disks: Vec<places::Disk>,
@@ -1381,6 +1436,7 @@ impl App {
             dirty: false,
             clipboard: None,
             rename: None,
+            rename_unseen: 0,
             status: String::new(),
             drives: places::drives(),
             disks: places::disks(),
@@ -2186,6 +2242,11 @@ impl eframe::App for App {
                 });
         }
 
+        ctx.data_mut(|d| {
+            d.insert_temp(egui::Id::new(RENAME_ID), self.rename.clone());
+            d.remove::<Option<(PathBuf, String)>>(egui::Id::new(RENAME_RESULT_ID));
+            d.insert_temp(egui::Id::new("minos-rename-seen"), false);
+        });
         let clip_has = self.clipboard.is_some();
         let focus = self.focus;
         let st = &self.st;
@@ -2203,23 +2264,38 @@ impl eframe::App for App {
         });
 
         // Dialogs.
+        // The rename happens in place, in the row (inline_rename); take back what it did.
         let mut rename_done: Option<Option<(PathBuf, String)>> = None;
-        if let Some(d) = &mut self.rename {
-            egui::Window::new("Rename").collapsible(false).resizable(false).show(&ctx, |ui| {
-                let r = ui.text_edit_singleline(&mut d.text);
-                if d.fresh {
-                    r.request_focus();
-                    d.fresh = false;
-                }
-                ui.horizontal(|ui| {
-                    let ok = ui.button("OK").clicked() || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
-                    if ok {
-                        rename_done = Some(Some((d.path.clone(), d.text.clone())));
-                    } else if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                        rename_done = Some(None);
-                    }
-                });
+        if self.rename.is_some() {
+            let (cur, seen, res) = ctx.data(|d| {
+                (
+                    d.get_temp::<Option<RenameDlg>>(egui::Id::new(RENAME_ID)).flatten(),
+                    d.get_temp::<bool>(egui::Id::new("minos-rename-seen")).unwrap_or(false),
+                    d.get_temp::<Option<(PathBuf, String)>>(egui::Id::new(RENAME_RESULT_ID)),
+                )
             });
+            if let Some(res) = res {
+                rename_done = Some(res);
+            } else if !seen {
+                // the item is not on screen any more (another folder, another view): drop it
+                if self.rename_unseen > 2 {
+                    rename_done = Some(None);
+                }
+                self.rename_unseen += 1;
+                ctx.request_repaint();
+            } else {
+                self.rename_unseen = 0;
+                self.rename = cur;
+            }
+        }
+        // a click on a name that was waiting out the double-click time now starts renaming
+        if let Some((p, at)) = ctx.data(|d| d.get_temp::<(PathBuf, f64)>(egui::Id::new("minos-rename-pending"))) {
+            if ctx.input(|i| i.time) - at > 0.45 {
+                ctx.data_mut(|d| d.remove::<(PathBuf, f64)>(egui::Id::new("minos-rename-pending")));
+                actions.push(Action::Rename(p));
+            } else {
+                ctx.request_repaint_after(Duration::from_millis(100));
+            }
         }
         if let Some(done) = rename_done {
             self.rename = None;
