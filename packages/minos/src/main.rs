@@ -738,7 +738,7 @@ fn crumbs(dir: &Path) -> Vec<(String, PathBuf)> {
 
 /// The address bar: clickable path segments (also drop targets); click the empty part to type a path.
 fn breadcrumb(ui: &mut egui::Ui, pal: &Palette, t: &mut TabView, pi: usize, width: f32, actions: &mut Vec<Action>) {
-    let (rect, bg) = ui.allocate_exact_size(vec2(width.max(120.0), 30.0), Sense::click());
+    let (rect, bg) = ui.allocate_exact_size(vec2(width.max(60.0), 30.0), Sense::click());
     ui.painter().rect_filled(rect, CornerRadius::same(9), pal.field);
     ui.painter().rect_stroke(rect, CornerRadius::same(9), egui::Stroke::new(1.0, pal.border), egui::StrokeKind::Inside);
 
@@ -837,22 +837,26 @@ fn toolbar(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, pal: &Palette, st: &St
         }
         ui.add_space(6.0);
         let in_pc = places::is_virtual(&t.dir());
-        if icon_button(ui, pal, Icon::NewFolder, "New folder (Ctrl+Shift+N)", !in_pc, false).clicked() {
-            actions.push(Action::NewFolder(pi));
-        }
-        if icon_button(ui, pal, Icon::NewFile, "New file", !in_pc, false).clicked() {
-            actions.push(Action::NewFile(pi));
-        }
         let dir = t.dir();
         let fav = st.favorites.contains(&dir);
-        if icon_button(ui, pal, if fav { Icon::StarFilled } else { Icon::Star }, if fav { "Remove from favorites" } else { "Add to favorites" }, !in_pc, fav).clicked() {
-            actions.push(Action::ToggleFav(dir));
+        // A narrow pane (split view, a small window) keeps the essentials and puts the rest under "..."
+        let compact = ui.available_width() < 640.0;
+        if !compact {
+            if icon_button(ui, pal, Icon::NewFolder, "New folder (Ctrl+Shift+N)", !in_pc, false).clicked() {
+                actions.push(Action::NewFolder(pi));
+            }
+            if icon_button(ui, pal, Icon::NewFile, "New file", !in_pc, false).clicked() {
+                actions.push(Action::NewFile(pi));
+            }
+            if icon_button(ui, pal, if fav { Icon::StarFilled } else { Icon::Star }, if fav { "Remove from favorites" } else { "Add to favorites" }, !in_pc, fav).clicked() {
+                actions.push(Action::ToggleFav(dir.clone()));
+            }
+            if clip_has && !in_pc && icon_button(ui, pal, Icon::NewFile, "Paste (Ctrl+V)", true, false).clicked() {
+                actions.push(Action::Paste(pi));
+            }
+            ui.add_space(6.0);
         }
-        if clip_has && !in_pc && icon_button(ui, pal, Icon::NewFile, "Paste (Ctrl+V)", true, false).clicked() {
-            actions.push(Action::Paste(pi));
-        }
-        ui.add_space(6.0);
-        let w = ui.available_width() - 32.0 - 90.0 - 108.0;
+        let w = ui.available_width() - 32.0 - if compact { 32.0 } else { 90.0 + 108.0 };
         breadcrumb(ui, pal, t, pi, w, actions);
         let magnifier = icon_button(ui, pal, Icon::Search, "Search (Ctrl+F)", true, t.search_open || !t.query.is_empty());
         if magnifier.clicked() {
@@ -881,6 +885,38 @@ fn toolbar(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, pal: &Palette, st: &St
             } else if pressed && !area.response.contains_pointer() && !magnifier.contains_pointer() {
                 t.search_open = false; // the words stay, so the results do
             }
+        }
+        if compact {
+            let more = icon_button(ui, pal, Icon::Menu, "More", true, false);
+            egui::Popup::menu(&more).show(|ui| {
+                if ui.add_enabled(!in_pc, egui::Button::new("New folder")).clicked() {
+                    actions.push(Action::NewFolder(pi));
+                    ui.close();
+                }
+                if ui.add_enabled(!in_pc, egui::Button::new("New file")).clicked() {
+                    actions.push(Action::NewFile(pi));
+                    ui.close();
+                }
+                if ui.add_enabled(!in_pc, egui::Button::new(if fav { "Remove from favorites" } else { "Add to favorites" })).clicked() {
+                    actions.push(Action::ToggleFav(dir.clone()));
+                    ui.close();
+                }
+                if ui.add_enabled(clip_has && !in_pc, egui::Button::new("Paste")).clicked() {
+                    actions.push(Action::Paste(pi));
+                    ui.close();
+                }
+                ui.separator();
+                if ui.selectable_label(st.view == ViewMode::Details, "Details view").clicked() {
+                    actions.push(Action::SetView(ViewMode::Details));
+                }
+                if ui.selectable_label(st.view == ViewMode::Gallery, "Gallery view").clicked() {
+                    actions.push(Action::SetView(ViewMode::Gallery));
+                }
+                if ui.selectable_label(st.preview, "Preview pane (F3)").clicked() {
+                    actions.push(Action::TogglePreview);
+                }
+            });
+            return;
         }
         if icon_button(ui, pal, Icon::List, "Details view", true, st.view == ViewMode::Details).clicked() {
             actions.push(Action::SetView(ViewMode::Details));
@@ -920,6 +956,8 @@ fn usage_bar(ui: &mut egui::Ui, pal: &Palette, total: u64, free: u64, width: f32
 }
 
 fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &State, cloud_ctx: (&[Link], &BTreeMap<String, Report>), clip_has: bool, actions: &mut Vec<Action>) {
+    // Whatever does not fit stays inside this pane instead of painting over its neighbour.
+    ui.shrink_clip_rect(ui.max_rect());
     if ui.input(|i| i.pointer.any_pressed()) && ui.rect_contains_pointer(ui.max_rect()) {
         actions.push(Action::Focus(pi));
     }
@@ -1008,26 +1046,35 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
                         });
                     });
             } else {
-                TableBuilder::new(ui)
-                    .striped(true)
-                    .resizable(true)
-                    .sense(Sense::click_and_drag())
-                    .column(Column::initial(420.0).at_least(160.0).clip(true))
-                    .column(Column::initial(160.0).at_least(80.0))
-                    .column(Column::initial(120.0).at_least(60.0))
-                    .column(Column::remainder().at_least(70.0))
-                    .header(26.0, |mut h| {
-                        h.col(|ui| header_cell(ui, &pal, "Name", Some(SortKey::Name), sort, &mut new_sort));
+                // In a narrow pane only the name and the size are kept, so the table never outgrows the pane.
+                let avail_w = ui.available_width();
+                let narrow = avail_w < 560.0;
+                let mut tb = TableBuilder::new(ui).striped(true).resizable(!narrow).sense(Sense::click_and_drag());
+                if narrow {
+                    let name_w = (avail_w - 84.0).max(100.0);
+                    tb = tb.column(Column::exact(name_w).clip(true)).column(Column::exact(70.0));
+                } else {
+                    tb = tb
+                        .column(Column::initial(420.0).at_least(160.0).clip(true))
+                        .column(Column::initial(160.0).at_least(80.0))
+                        .column(Column::initial(120.0).at_least(60.0))
+                        .column(Column::remainder().at_least(70.0));
+                }
+                tb.header(26.0, |mut h| {
+                    h.col(|ui| header_cell(ui, &pal, "Name", Some(SortKey::Name), sort, &mut new_sort));
+                    if !narrow {
                         h.col(|ui| header_cell(ui, &pal, "Date modified", Some(SortKey::Modified), sort, &mut new_sort));
                         h.col(|ui| header_cell(ui, &pal, "Type", None, sort, &mut new_sort));
-                        h.col(|ui| header_cell(ui, &pal, "Size", Some(SortKey::Size), sort, &mut new_sort));
-                    })
-                    .body(|body| {
-                        body.rows(28.0, order.len(), |mut row| {
-                            let pos = row.index();
-                            let e = &shown[order[pos]];
-                            row.set_selected(selected.contains(&e.path));
-                            row.col(|ui| name_cell(ui, e));
+                    }
+                    h.col(|ui| header_cell(ui, &pal, "Size", Some(SortKey::Size), sort, &mut new_sort));
+                })
+                .body(|body| {
+                    body.rows(28.0, order.len(), |mut row| {
+                        let pos = row.index();
+                        let e = &shown[order[pos]];
+                        row.set_selected(selected.contains(&e.path));
+                        row.col(|ui| name_cell(ui, e));
+                        if !narrow {
                             row.col(|ui| {
                                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                                     ui.label(RichText::new(e.modified.map(fmt_time).unwrap_or_default()).color(pal.dim));
@@ -1038,15 +1085,16 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
                                     ui.label(RichText::new(listing::type_name(e)).color(pal.dim));
                                 });
                             });
-                            row.col(|ui| {
-                                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                                    ui.label(RichText::new(if e.is_dir { String::new() } else { listing::human_size(e.size) }).color(pal.dim));
-                                });
+                        }
+                        row.col(|ui| {
+                            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                                ui.label(RichText::new(if e.is_dir { String::new() } else { listing::human_size(e.size) }).color(pal.dim));
                             });
-                            let r = row.response();
-                            entry_interact(&ectx, &r, e, pos, &order, shown, selected, anchor, &cx, actions);
                         });
+                        let r = row.response();
+                        entry_interact(&ectx, &r, e, pos, &order, shown, selected, anchor, &cx, actions);
                     });
+                });
             }
         }
         ViewMode::Gallery => {
