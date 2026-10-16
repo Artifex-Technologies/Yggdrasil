@@ -168,6 +168,14 @@ pub fn command(exec: &str) -> Vec<String> {
 }
 
 pub fn launch(app: &App) {
+    // Through labyrinth-launch when it is there: the app then runs in its own slice (per-app network rules), is
+    // counted for Settings > Apps, and follows its sandbox settings.
+    if !app.id.is_empty() {
+        let started = std::process::Command::new("labyrinth-launch").arg(&app.id).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
+        if started {
+            return;
+        }
+    }
     let cmd = command(&app.exec);
     let Some((prog, args)) = cmd.split_first() else { return };
     let _ = std::process::Command::new("setsid").arg("-f").arg(prog).args(args).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
