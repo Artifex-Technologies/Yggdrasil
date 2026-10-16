@@ -491,6 +491,36 @@ pub struct Power {
     pub sleep_min: i64,
     /// Lock the screen after this many idle minutes (0 = never), from kscreenlockerrc.
     pub lock_min: i64,
+    /// What the hardware allows and what is set for each mode (Developer options only).
+    pub limits: Option<PowerLimits>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GpuLimits {
+    pub name: String,
+    pub default: i64,
+    pub min: i64,
+    pub max: i64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PowerLimits {
+    pub gpu: Option<GpuLimits>,
+    /// Per mode: (processor percent, graphics watts), each None when not limited.
+    pub modes: std::collections::BTreeMap<String, (Option<i64>, Option<i64>)>,
+}
+
+/// Parse `labyrinth-powerlimit get`.
+pub fn parse_power_limits(json: &str) -> Option<PowerLimits> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    let gpu = v["gpu"].as_object().map(|g| GpuLimits {
+        name: g.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+        default: g.get("default").and_then(|x| x.as_i64()).unwrap_or(0),
+        min: g.get("min").and_then(|x| x.as_i64()).unwrap_or(0),
+        max: g.get("max").and_then(|x| x.as_i64()).unwrap_or(0),
+    });
+    let modes = v["limits"].as_object().map(|m| m.iter().map(|(k, l)| (k.clone(), (l["cpu"].as_i64(), l["gpu"].as_i64()))).collect()).unwrap_or_default();
+    Some(PowerLimits { gpu, modes })
 }
 
 /// `powerprofilesctl list`: profile names ("* performance:" marks the active one).
@@ -519,10 +549,12 @@ pub fn power() -> Power {
     };
     let lock = |key: &str, default: &str| run("kreadconfig6", &["--file", "kscreenlockerrc", "--group", "Daemon", "--key", key, "--default", default]).map(|s| s.trim().to_string()).unwrap_or_default();
     let lock_min = if lock("Autolock", "true") == "false" { 0 } else { lock("Timeout", "5").parse::<i64>().unwrap_or(5) };
+    let limits = if labyrinth_conf::PanelConf::load().developer { run("labyrinth-powerlimit", &["get"]).and_then(|s| parse_power_limits(&s)) } else { None };
     Power {
         profile: active,
         profiles,
         lock_min,
+        limits,
         screen_off_min: read("Display", "TurnOffDisplayIdleTimeoutSec", 600) / 60,
         sleep_min: read("SuspendAndShutdown", "AutoSuspendIdleTimeoutSec", 0) / 60,
     }
@@ -878,6 +910,21 @@ pub fn remove_icon_pack(id: &str) -> Result<(), String> {
         return Err("That pack is not in your own icons folder.".into());
     }
     std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod limit_tests {
+    use super::*;
+
+    #[test]
+    fn power_limits_parse() {
+        let l = parse_power_limits(r#"{"cpu_max_khz":5000000,"gpu":{"name":"RTX","watts":260,"default":260,"min":130,"max":290},"active":"balanced","limits":{"balanced":{"cpu":80,"gpu":200},"power-saver":{"cpu":50}}}"#).unwrap();
+        assert_eq!(l.gpu.as_ref().unwrap().max, 290);
+        assert_eq!(l.modes["balanced"], (Some(80), Some(200)));
+        assert_eq!(l.modes["power-saver"], (Some(50), None));
+        assert!(parse_power_limits(r#"{"gpu":null,"limits":{}}"#).unwrap().gpu.is_none());
+        assert!(parse_power_limits("nope").is_none());
+    }
 }
 
 #[cfg(test)]

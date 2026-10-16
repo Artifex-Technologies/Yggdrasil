@@ -151,6 +151,10 @@ impl App {
             brand_style: 0,
             refreshed: std::time::Instant::now(),
         };
+        // `labyrinth-settings apps:ID` opens that app's own page (links from the dock or the notch)
+        if let Some(id) = std::env::args().nth(1).and_then(|a| a.strip_prefix("apps:").map(String::from)).filter(|s| !s.is_empty()) {
+            app.app_sel = Some(id);
+        }
         app.load(app.page, ctx);
         app
     }
@@ -235,6 +239,7 @@ impl App {
 /// `labyrinth-settings displays` opens on a page (for links from the top bar or other apps).
 fn start_page() -> Page {
     let arg = std::env::args().nth(1).unwrap_or_default().to_lowercase();
+    let arg = arg.split(':').next().unwrap_or_default().to_string();
     PAGES.iter().find(|(p, name, _)| format!("{p:?}").to_lowercase() == arg || name.to_lowercase().starts_with(&arg) && !arg.is_empty())
         .map(|(p, _, _)| *p)
         .unwrap_or(Page::Network)
@@ -952,6 +957,45 @@ impl App {
                 });
             }
         });
+        // Developer options: limits for each power mode
+        let mut limit: Option<(String, &'static str, Option<i64>)> = None;
+        if let Some(l) = p.limits.clone() {
+            for mode in &p.profiles {
+                let label = match mode.as_str() { "performance" => "Performance", "balanced" => "Balanced", "power-saver" => "Power saver", o => o };
+                let (cpu, gpu) = l.modes.get(mode).copied().unwrap_or((None, None));
+                ui::group(ui, pal, Some(&format!("{label} mode limits")), |ui| {
+                    let mut c = cpu.unwrap_or(100) as f32;
+                    ui::row(ui, pal, true, "Processor", Some("The most it may clock, as a share of its top speed"), |ui| {
+                        if cpu.is_some() && ui::quiet(ui, pal, "Reset").clicked() {
+                            limit = Some((mode.clone(), "cpu", None));
+                        }
+                        let r = ui::slider_range(ui, pal, &mut c, 20.0..=100.0, " %");
+                        if r.drag_stopped() || (r.changed() && !r.dragged()) {
+                            limit = Some((mode.clone(), "cpu", if c as i64 >= 100 { None } else { Some(c as i64) }));
+                        }
+                    });
+                    if let Some(g) = &l.gpu {
+                        let mut w = gpu.unwrap_or(g.default) as f32;
+                        ui::row(ui, pal, false, &g.name, Some(&format!("The most power the graphics card may draw (it allows {}-{} W, default {} W)", g.min, g.max, g.default)), |ui| {
+                            if gpu.is_some() && ui::quiet(ui, pal, "Reset").clicked() {
+                                limit = Some((mode.clone(), "gpu", None));
+                            }
+                            let r = ui::slider_range(ui, pal, &mut w, g.min as f32..=g.max as f32, " W");
+                            if r.drag_stopped() || (r.changed() && !r.dragged()) {
+                                limit = Some((mode.clone(), "gpu", if w as i64 == g.default { None } else { Some(w as i64) }));
+                            }
+                        });
+                    }
+                });
+            }
+            ui.label(RichText::new("These only hold things back; nothing here overclocks. Changing a limit asks for your password.").size(11.5).color(pal.dim));
+        }
+        if let Some((mode, which, v)) = limit {
+            self.change(ctx, move || {
+                let arg = format!("{which}={}", v.map(|n| n.to_string()).unwrap_or_else(|| "default".into()));
+                sys::act("pkexec", &["/usr/local/bin/labyrinth-powerlimit", "set", &mode, &arg])
+            });
+        }
         if let Some(name) = profile {
             self.change(ctx, move || sys::act("powerprofilesctl", &["set", &name]));
         }

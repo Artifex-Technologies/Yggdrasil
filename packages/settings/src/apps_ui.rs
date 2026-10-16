@@ -217,7 +217,9 @@ impl App {
 
         ui::group(ui, pal, Some("Network"), |ui| {
             let allowed = a.net != NetMode::Block;
-            ui::row(ui, pal, true, "Can use the network", Some(if allowed { "Click the name or the switch to cut this app off from the network" } else { "This app cannot send anything off this computer" }), |ui| {
+            let top = ui.cursor().top();
+            let left = ui.min_rect().left();
+            ui::row(ui, pal, true, "Can use the network", Some(if allowed { "Switch it off, or click its name, to cut this app off from the network" } else { "This app cannot send anything off this computer" }), |ui| {
                 let mut on = allowed;
                 if ui::switch(ui, pal, &mut on).changed() {
                     net = Some(if on { NetMode::Allow } else { NetMode::Block });
@@ -238,6 +240,11 @@ impl App {
                     });
                 }
             });
+            // clicking the name toggles it too (the part of the row left of the controls)
+            let name_area = Rect::from_min_max(pos2(left, top), pos2(left + (ui.available_width() - 260.0).max(120.0), top + 44.0));
+            if ui.interact(name_area, ui.id().with("net-name"), Sense::click()).clicked() {
+                net = Some(if allowed { NetMode::Block } else { NetMode::Allow });
+            }
             ui.label(RichText::new("Applies to the app when it is opened from the dock, the start menu or here. Changing it asks for your password. A running app picks it up after a restart.").size(11.5).color(pal.dim));
             ui.add_space(6.0);
         });
