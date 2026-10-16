@@ -57,6 +57,10 @@ use wayland_protocols_plasma::plasma_shell::client::org_kde_plasma_shell::OrgKde
 use wayland_protocols_plasma::plasma_shell::client::org_kde_plasma_surface::{self, OrgKdePlasmaSurface, Role};
 use wayland_protocols_plasma::plasma_window_management::client::org_kde_plasma_window::{self, OrgKdePlasmaWindow};
 use wayland_protocols_plasma::plasma_window_management::client::org_kde_plasma_window_management::{self, OrgKdePlasmaWindowManagement};
+use wayland_protocols_wlr::foreign_toplevel::v1::client::{
+    zwlr_foreign_toplevel_handle_v1::{self, ZwlrForeignToplevelHandleV1},
+    zwlr_foreign_toplevel_manager_v1::{self, ZwlrForeignToplevelManagerV1},
+};
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::{Layer, ZwlrLayerShellV1};
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::{self, Anchor, KeyboardInteractivity, ZwlrLayerSurfaceV1};
 
@@ -511,8 +515,13 @@ impl State {
             }
             self.add_surface(key, Kind::Bar { slim });
             if Some(key) == dock_out {
-                self.add_dock(key);
-                self.add_strut(key);
+                if self.xdg_wm.is_some() && self.plasma_shell.is_some() {
+                    self.add_dock(key);
+                    self.add_strut(key);
+                } else {
+                    // no KWin: a layer-shell surface on the edge that reserves its own room
+                    self.add_layer_dock(key);
+                }
             }
         }
         self.built_for = Some(self.layout.clone());
@@ -550,6 +559,35 @@ impl State {
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
         wl.commit();
         self.surfs.push(Surf { id, kind, output, wl, layer: Some(layer), dock: None, w: size.0, h: size.1, want: size, gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
+    }
+
+    /// The dock for compositors without KDE's panel role: a layer-shell surface anchored to the dock's edge (centred along it)
+    /// that reserves its own room.
+    fn add_layer_dock(&mut self, output: u32) {
+        let id = self.next_surf;
+        self.next_surf += 1;
+        let Some(out) = self.outputs.get(&output) else { return };
+        let want = shell::dock_size(&shell::dock_items(&self.model), self.model.conf.dock_icon, self.model.conf.dock_pos);
+        let wl = self.compositor.create_surface(&self.qh, ());
+        let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Top, "labyrinth-dock".into(), &self.qh, id);
+        self.configure_layer_dock(&layer, want);
+        wl.commit();
+        self.surfs.push(Surf { id, kind: Kind::Dock, output, wl, layer: Some(layer), dock: None, w: want.0, h: want.1, want, gap: self.model.conf.dock_gap as i32, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
+    }
+
+    /// The edge, size, reserved room and distance from the edge of a layer-shell dock.
+    fn configure_layer_dock(&self, layer: &ZwlrLayerSurfaceV1, want: (u32, u32)) {
+        let gap = self.model.conf.dock_gap as i32;
+        let (anchor, zone, margin) = match self.model.conf.dock_pos {
+            DockPos::Bottom => (Anchor::Bottom, want.1 as i32 + gap, (0, 0, gap, 0)),
+            DockPos::Left => (Anchor::Left, want.0 as i32 + gap, (0, 0, 0, gap)),
+            DockPos::Right => (Anchor::Right, want.0 as i32 + gap, (0, gap, 0, 0)),
+        };
+        layer.set_anchor(anchor);
+        layer.set_size(want.0, want.1);
+        layer.set_exclusive_zone(zone);
+        layer.set_margin(margin.0, margin.1, margin.2, margin.3);
+        layer.set_keyboard_interactivity(KeyboardInteractivity::None);
     }
 
     /// The dock: a Plasma panel window, the way Plasma's own panels are. KWin puts it exactly where it
@@ -882,7 +920,7 @@ impl State {
             by_app || (!w.app_id.is_empty() && w.app_id.to_lowercase() == name)
         });
         if let Some(w) = win {
-            w.proxy.set_state(shell::ST_ACTIVE | shell::ST_MINIMIZED, shell::ST_ACTIVE);
+            w.proxy.activate(self.seat.as_ref());
         } else if let Some(a) = app {
             apps::launch(a);
         }
@@ -1533,6 +1571,7 @@ impl State {
         let want = shell::dock_size(&shell::dock_items(&self.model), self.model.conf.dock_icon, pos);
         let gap = self.model.conf.dock_gap as i32;
         let (_, _, zone) = self.strut_geometry(want);
+        let mut layer_updates: Vec<(usize, ZwlrLayerSurfaceV1)> = vec![];
         for i in 0..self.surfs.len() {
             if self.surfs[i].kind == Kind::Strut {
                 if self.surfs[i].want.0 != zone as u32 {
@@ -1559,6 +1598,16 @@ impl State {
                 d.tl.set_max_size(want.0 as i32, want.1 as i32);
                 d.ps.set_position(x, y);
             }
+            if s.dock.is_none() {
+                if let Some(l) = s.layer.clone() {
+                    layer_updates.push((i, l));
+                }
+            }
+        }
+        // a layer-shell dock (no KWin): ask for the new size and room
+        for (i, l) in layer_updates {
+            self.configure_layer_dock(&l, want);
+            self.surfs[i].wl.commit();
         }
     }
 
@@ -1806,13 +1855,13 @@ impl State {
         let active_pos = item.wins.iter().position(|&i| wins[i].active());
         let target = match active_pos {
             Some(p) if item.wins.len() == 1 => {
-                wins[item.wins[p]].proxy.set_state(shell::ST_MINIMIZED, shell::ST_MINIMIZED);
+                wins[item.wins[p]].proxy.minimize();
                 return;
             }
             Some(p) => item.wins[(p + 1) % item.wins.len()],
             None => item.wins[0],
         };
-        wins[target].proxy.set_state(shell::ST_ACTIVE | shell::ST_MINIMIZED, shell::ST_ACTIVE);
+        wins[target].proxy.activate(self.seat.as_ref());
     }
 
     fn surf_index(&self, wl: &WlSurface) -> Option<usize> {
@@ -2165,8 +2214,52 @@ impl Dispatch<OrgKdePlasmaWindowManagement, ()> for State {
             state.next_key += 1;
             let key = state.next_key;
             let proxy = wm.get_window_by_uuid(uuid.clone(), qh, key);
-            state.model.wins.push(Win { key, uuid, title: String::new(), app_id: String::new(), flags: 0, ready: false, menu: None, proxy });
+            state.model.wins.push(Win { key, uuid, title: String::new(), app_id: String::new(), flags: 0, ready: false, menu: None, proxy: shell::WinHandle::Plasma(proxy) });
         }
+    }
+}
+
+impl Dispatch<ZwlrForeignToplevelManagerV1, ()> for State {
+    fn event(state: &mut Self, _: &ZwlrForeignToplevelManagerV1, event: zwlr_foreign_toplevel_manager_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        if let zwlr_foreign_toplevel_manager_v1::Event::Toplevel { toplevel } = event {
+            state.next_key += 1;
+            let key = state.next_key;
+            state.model.wins.push(Win { key, uuid: format!("wlr-{key}"), title: String::new(), app_id: String::new(), flags: 0, ready: false, menu: None, proxy: shell::WinHandle::Wlr(toplevel) });
+        }
+    }
+
+    wayland_client::event_created_child!(State, ZwlrForeignToplevelManagerV1, [
+        zwlr_foreign_toplevel_manager_v1::EVT_TOPLEVEL_OPCODE => (ZwlrForeignToplevelHandleV1, ()),
+    ]);
+}
+
+impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for State {
+    fn event(state: &mut Self, h: &ZwlrForeignToplevelHandleV1, event: zwlr_foreign_toplevel_handle_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        use zwlr_foreign_toplevel_handle_v1::Event as E;
+        let Some(pos) = state.model.wins.iter().position(|w| matches!(&w.proxy, shell::WinHandle::Wlr(x) if x == h)) else { return };
+        match event {
+            E::Title { title } => state.model.wins[pos].title = title,
+            E::AppId { app_id } => state.model.wins[pos].app_id = app_id,
+            E::State { state: bytes } => {
+                // an array of u32 states: 0 maximized, 1 minimized, 2 activated, 3 fullscreen
+                let mut flags = 0;
+                for c in bytes.chunks_exact(4) {
+                    match u32::from_ne_bytes([c[0], c[1], c[2], c[3]]) {
+                        1 => flags |= shell::ST_MINIMIZED,
+                        2 => flags |= shell::ST_ACTIVE,
+                        _ => {}
+                    }
+                }
+                state.model.wins[pos].flags = flags;
+            }
+            E::Done => state.model.wins[pos].ready = true,
+            E::Closed => {
+                let w = state.model.wins.remove(pos);
+                w.proxy.destroy();
+            }
+            _ => return,
+        }
+        state.dirty = true;
     }
 }
 
@@ -2257,8 +2350,12 @@ fn main() {
     let _seat: Option<WlSeat> = globals.bind(&qh, 1..=7, ()).ok();
     let cursor_mgr: Option<WpCursorShapeManagerV1> = globals.bind(&qh, 1..=1, ()).ok();
     let wm: Option<OrgKdePlasmaWindowManagement> = globals.bind(&qh, 1..=18, ()).ok();
-    if wm.is_none() {
-        eprintln!("labyrinth-panel: KWin did not offer window management (is labyrinth-panel.desktop installed with X-KDE-Wayland-Interfaces?); the dock will only launch apps");
+    // Without KWin's protocol the standard one (Hyprland, Sway, labwc ...) gives the window list
+    let wlr_wm: Option<ZwlrForeignToplevelManagerV1> = if wm.is_none() { globals.bind(&qh, 1..=3, ()).ok() } else { None };
+    if wm.is_none() && wlr_wm.is_none() {
+        eprintln!("labyrinth-panel: the compositor offers no window management (KWin needs labyrinth-panel.desktop installed with X-KDE-Wayland-Interfaces); the dock will only launch apps");
+    } else if wlr_wm.is_some() {
+        eprintln!("labyrinth-panel: window list through wlr-foreign-toplevel-management");
     }
 
     let (tab_tx, tab_rx) = calloop::channel::channel::<u64>();

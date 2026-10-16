@@ -70,3 +70,12 @@ what blanks and locks the screen; read both after the next time it happens. To m
 
 ## Users page and keyring sync (2026-10-16)
 Built: Settings > Users (change password through `passwd` so the keyring follows) and `labyrinth-keyring-sync` (one question at login if they drifted apart). See USERS_KEYRING.md.
+
+## The panel on a compositor that is not KWin (2026-10-16)
+The panel now runs in a nested Hyprland 0.56 window (a private D-Bus session, `WAYLAND_DISPLAY` pointing at it): the top bar, the focused app's name and the clock draw,
+the **window list works through `wlr-foreign-toplevel-management`** (a Ghostty window showed as the bar's app name and as a running dot in the dock), and the **dock is a
+layer-shell surface** that reserves its own room (used when KWin's `org_kde_plasma_shell` and xdg panel role are not offered). `WinHandle` (shell.rs) hides which protocol
+a window came from: activate, minimize and destroy go through it. KWin's own path is unchanged and checked on the real session.
+Still tied to KDE, and what happens elsewhere: desktops pills and the notification of "current desktop" (KWin D-Bus: empty elsewhere); the screen layout (kscreen-doctor: falls back to
+1920x1080 for popup sizing); the Super key (kglobalaccel signal: nothing arrives, use a compositor binding that runs `busctl --user call org.labyrinth.Panel /Panel org.labyrinth.Panel ToggleStart`);
+wallpaper (use `own_wallpaper`); tiling and the screen-key script (KWin scripts). Not tried: Sway, labwc, several outputs, fractional scale elsewhere.

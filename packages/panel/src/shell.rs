@@ -1,7 +1,9 @@
 //! What the bar and the dock show and where things are: pure layout and drawing, no Wayland.
 
 use resvg::tiny_skia::Pixmap;
+use wayland_client::protocol::wl_seat::WlSeat;
 use wayland_protocols_plasma::plasma_window_management::client::org_kde_plasma_window::OrgKdePlasmaWindow;
+use wayland_protocols_wlr::foreign_toplevel::v1::client::zwlr_foreign_toplevel_handle_v1::ZwlrForeignToplevelHandleV1;
 
 use crate::apps::{self, App};
 use crate::paint::{self, Fonts, Icons, Rgba};
@@ -59,7 +61,43 @@ pub struct Win {
     pub flags: u32,
     pub ready: bool,
     pub menu: Option<(String, String)>,
-    pub proxy: OrgKdePlasmaWindow,
+    pub proxy: WinHandle,
+}
+
+/// A window as the compositor lets the panel handle it: KWin's own protocol, or the standard wlr-foreign-toplevel-management one
+/// (Hyprland, Sway, labwc ...). Everything the panel does to a window goes through these methods.
+pub enum WinHandle {
+    Plasma(OrgKdePlasmaWindow),
+    Wlr(ZwlrForeignToplevelHandleV1),
+}
+
+impl WinHandle {
+    /// Bring the window forward (and out of the minimized state).
+    pub fn activate(&self, seat: Option<&WlSeat>) {
+        match self {
+            WinHandle::Plasma(p) => p.set_state(ST_ACTIVE | ST_MINIMIZED, ST_ACTIVE),
+            WinHandle::Wlr(h) => {
+                h.unset_minimized();
+                if let Some(seat) = seat {
+                    h.activate(seat);
+                }
+            }
+        }
+    }
+
+    pub fn minimize(&self) {
+        match self {
+            WinHandle::Plasma(p) => p.set_state(ST_MINIMIZED, ST_MINIMIZED),
+            WinHandle::Wlr(h) => h.set_minimized(),
+        }
+    }
+
+    pub fn destroy(&self) {
+        match self {
+            WinHandle::Plasma(p) => p.destroy(),
+            WinHandle::Wlr(h) => h.destroy(),
+        }
+    }
 }
 
 impl Win {
