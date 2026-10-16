@@ -895,6 +895,7 @@ mod icon_tests {
 
     #[test]
     fn a_folder_pack_installs_into_the_home_folder_and_can_be_removed() {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let home = std::env::temp_dir().join(format!("lf-icons-home-{}", std::process::id()));
         let src = std::env::temp_dir().join(format!("lf-icons-src-{}/TestPack", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);

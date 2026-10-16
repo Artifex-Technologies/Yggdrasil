@@ -7,9 +7,15 @@
 //! Reading the system can be slow (Wi-Fi scans, Bluetooth), so every page loads on a background
 //! thread and every change runs on one too; the window never freezes.
 
+mod appmgr;
+mod apps_ui;
 mod icons;
 mod sys;
 mod ui;
+
+/// Tests that change HOME or XDG_* (process-wide) take this lock, so they run one at a time.
+#[cfg(test)]
+pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::Duration;
@@ -59,6 +65,9 @@ enum Msg {
     Firewall(bool),
     Time(sys::Time),
     Apps(Vec<sys::Component>),
+    Installed(Vec<appmgr::AppInfo>),
+    AppSizes(std::collections::HashMap<String, u64>),
+    DirSize(std::path::PathBuf, u64),
     Done(Page, Result<(), String>),
 }
 
@@ -74,6 +83,7 @@ struct Data {
     firewall: Option<bool>,
     time: Option<sys::Time>,
     apps: Option<Vec<sys::Component>>,
+    installed: Option<Vec<appmgr::AppInfo>>,
 }
 
 struct App {
@@ -88,6 +98,21 @@ struct App {
     zone_filter: String,
     /// What the icon-pack install box holds: a folder, an archive or a link.
     icon_src: String,
+    // Apps page
+    app_tab: usize,
+    app_sort: usize,
+    app_sel: Option<String>,
+    // Developer options: logo clicks (while the ` key is held) toward the unlock, and its confirmation
+    dev_clicks: u8,
+    dev_last: std::time::Instant,
+    dev_prompt: bool,
+    app_filter: String,
+    app_system: bool,
+    app_folder: String,
+    app_confirm: Option<apps_ui::Confirm>,
+    app_sizes: std::collections::HashMap<String, u64>,
+    dir_sizes: std::collections::HashMap<std::path::PathBuf, u64>,
+    owners: std::collections::HashMap<String, Option<(String, bool)>>,
     /// The shape and colouring chosen for the Labyrinth Brands pack (indexes into BRAND_SHAPES and BRAND_STYLES).
     brand_shape: usize,
     brand_style: usize,
@@ -109,6 +134,19 @@ impl App {
             wifi_password: None,
             zone_filter: String::new(),
             icon_src: String::new(),
+            app_tab: 0,
+            app_sort: 0,
+            app_sel: None,
+            dev_clicks: 0,
+            dev_last: std::time::Instant::now(),
+            dev_prompt: false,
+            app_filter: String::new(),
+            app_system: false,
+            app_folder: String::new(),
+            app_confirm: None,
+            app_sizes: Default::default(),
+            dir_sizes: Default::default(),
+            owners: Default::default(),
             brand_shape: 0,
             brand_style: 0,
             refreshed: std::time::Instant::now(),
@@ -134,7 +172,10 @@ impl App {
                 Page::Power => Msg::Power(sys::power()),
                 Page::Firewall => Msg::Firewall(sys::firewall_on()),
                 Page::DateTime => Msg::Time(sys::time()),
-                Page::Apps => Msg::Apps(sys::apps()),
+                Page::Apps => {
+                    let _ = tx.send(Msg::Installed(load_installed(&tx)));
+                    Msg::Apps(sys::apps())
+                }
                 Page::Shortcuts => return,
             };
             let _ = tx.send(msg);
@@ -167,6 +208,15 @@ impl App {
                 Msg::Firewall(v) => self.data.firewall = Some(v),
                 Msg::Time(v) => self.data.time = Some(v),
                 Msg::Apps(v) => self.data.apps = Some(v),
+                Msg::Installed(v) => self.data.installed = Some(v),
+                Msg::AppSizes(m) => {
+                    self.app_sizes = m;
+                    continue;
+                }
+                Msg::DirSize(p, n) => {
+                    self.dir_sizes.insert(p, n);
+                    continue;
+                }
                 Msg::Done(page, r) => {
                     self.status = match r {
                         Ok(()) => String::new(),
@@ -204,6 +254,19 @@ impl eframe::App for App {
             if idle && self.refreshed.elapsed() >= std::time::Duration::from_secs(4) {
                 let page = self.page;
                 self.load(page, &ctx);
+            }
+            ctx.request_repaint_after(std::time::Duration::from_secs(4));
+        } else if self.page == Page::Apps && self.app_tab == 0 && self.app_confirm.is_none() {
+            // the app list: running or not, new launches, and changes made from the command line
+            let idle = self.loading.is_none() && !ctx.input(|i| i.pointer.any_down()) && ctx.memory(|m| m.focused().is_none()) && ctx.input(|i| i.viewport().focused != Some(false));
+            if idle && self.refreshed.elapsed() >= std::time::Duration::from_secs(4) {
+                self.refreshed = std::time::Instant::now();
+                let (tx, c) = (self.tx.clone(), ctx.clone());
+                std::thread::spawn(move || {
+                    let theme = sys::run("kreadconfig6", &["--file", "kdeglobals", "--group", "Icons", "--key", "Theme"]).map(|s| s.trim().to_string()).unwrap_or_default();
+                    let _ = tx.send(Msg::Installed(appmgr::list_apps(&theme)));
+                    c.request_repaint();
+                });
             }
             ctx.request_repaint_after(std::time::Duration::from_secs(4));
         }
@@ -261,7 +324,7 @@ impl eframe::App for App {
                         ui.colored_label(pal.red, &self.status);
                     }
                     match self.page {
-                        Page::About => self.page_about(ui, &pal),
+                        Page::About => self.page_about(ui, &pal, &ctx),
                         Page::Network => self.page_network(ui, &pal, &ctx),
                         Page::Bluetooth => self.page_bluetooth(ui, &pal, &ctx),
                         Page::Displays => self.page_displays(ui, &pal, &ctx),
@@ -283,6 +346,18 @@ impl eframe::App for App {
     }
 }
 
+/// The installed apps, and (in the background) how much space each takes.
+fn load_installed(tx: &std::sync::mpsc::Sender<Msg>) -> Vec<appmgr::AppInfo> {
+    let theme = sys::run("kreadconfig6", &["--file", "kdeglobals", "--group", "Icons", "--key", "Theme"]).map(|s| s.trim().to_string()).unwrap_or_default();
+    let apps = appmgr::list_apps(&theme);
+    let (tx, list) = (tx.clone(), apps.clone());
+    std::thread::spawn(move || {
+        let sizes = list.iter().map(|a| (a.id.clone(), appmgr::data_dirs(a).iter().map(|(p, _)| appmgr::dir_size(p)).sum::<u64>())).collect();
+        let _ = tx.send(Msg::AppSizes(sizes));
+    });
+    apps
+}
+
 const BRAND_SHAPES: [(&str, &str); 5] = [("glyph", "Logo only"), ("squircle", "Squircle"), ("rounded", "Rounded square"), ("circle", "Circle"), ("hexagon", "Hexagon")];
 const BRAND_STYLES: [(&str, &str); 3] = [("brand", "Brand colours"), ("dark", "Dark tile"), ("purple", "Labyrinth purple")];
 
@@ -295,13 +370,59 @@ fn loading(ui: &mut egui::Ui) {
 }
 
 impl App {
-    fn page_about(&mut self, ui: &mut egui::Ui, pal: &Palette) {
+    fn page_about(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         let Some(a) = self.data.about.clone() else { return loading(ui) };
+        let developer = labyrinth_conf::PanelConf::load().developer;
         ui.add_space(12.0);
         ui.vertical_centered(|ui| {
-            ui.add(egui::Image::new("file:///usr/share/icons/hicolor/256x256/apps/labyrinthos.png").fit_to_exact_size(vec2(96.0, 96.0)));
+            // Five clicks on the logo while the ` key is held offer Developer options, like tapping the build number on Android.
+            let logo = ui.add(egui::Image::new("file:///usr/share/icons/hicolor/256x256/apps/labyrinthos.png").fit_to_exact_size(vec2(96.0, 96.0)).sense(Sense::click()));
+            if logo.clicked() {
+                if ctx.input(|i| i.key_down(egui::Key::Backtick)) {
+                    if self.dev_last.elapsed() > std::time::Duration::from_secs(3) {
+                        self.dev_clicks = 0;
+                    }
+                    self.dev_clicks += 1;
+                    self.dev_last = std::time::Instant::now();
+                    if self.dev_clicks >= 5 {
+                        self.dev_clicks = 0;
+                        self.dev_prompt = !developer;
+                    }
+                } else {
+                    self.dev_clicks = 0;
+                }
+            }
             ui.label(RichText::new(if a.os.is_empty() { "Labyrinth OS" } else { &a.os }).size(22.0).strong());
         });
+        if self.dev_prompt {
+            egui::Window::new("Turn on Developer options?").collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0)).show(ctx, |ui| {
+                ui.set_max_width(400.0);
+                ui.label("They add more technical settings: per-mode CPU and graphics limits under Power, and choosing which kind of connection an app may use under Apps. Nothing changes until you use them.");
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Turn on").clicked() {
+                        self.dev_prompt = false;
+                        let mut c = labyrinth_conf::PanelConf::load();
+                        c.developer = true;
+                        self.change(ctx, move || c.save());
+                    }
+                    if ui.button("Not now").clicked() {
+                        self.dev_prompt = false;
+                    }
+                });
+            });
+        }
+        if developer {
+            ui::group(ui, pal, None, |ui| {
+                ui::row(ui, pal, true, "Developer options", Some("On: more technical settings show under Power and Apps"), |ui| {
+                    if ui::quiet(ui, pal, "Turn off").clicked() {
+                        let mut c = labyrinth_conf::PanelConf::load();
+                        c.developer = false;
+                        self.change(ctx, move || c.save());
+                    }
+                });
+            });
+        }
         ui::group(ui, pal, None, |ui| {
             ui::row(ui, pal, true, "Device name", None, |ui| { ui.label(&a.hostname); });
             ui::row(ui, pal, false, "Processor", None, |ui| { ui.label(&a.cpu); });
@@ -917,8 +1038,7 @@ impl App {
         }
     }
 
-    fn page_apps(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
-        let Some(apps) = self.data.apps.clone() else { return loading(ui) };
+    fn page_apps_minos(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         let mut minos = labyrinth_conf::PanelConf::load();
         let mut minos_changed = false;
         ui::group(ui, pal, Some("Minos"), |ui| {
@@ -932,6 +1052,10 @@ impl App {
         if minos_changed {
             self.change(ctx, move || minos.save());
         }
+    }
+
+    fn page_apps_software(&mut self, ui: &mut egui::Ui, pal: &Palette) {
+        let Some(apps) = self.data.apps.clone() else { return loading(ui) };
         ui::group(ui, pal, Some("Labyrinth's optional software"), |ui| {
             for (i, c) in apps.iter().enumerate() {
                 let sub: String = c.description.chars().take(110).collect::<String>() + if c.description.chars().count() > 110 { "…" } else { "" };

@@ -16,6 +16,10 @@ pub enum Icon {
     Apps,
     Keyboard,
     Info,
+    Restart,
+    Close,
+    Trash,
+    Back,
 }
 
 fn arc(c: Pos2, r: f32, from: f32, to: f32) -> Vec<Pos2> {
@@ -79,6 +83,22 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
                 p.circle_filled(at(x, 0.42), 0.035 * w, color);
             }
             p.line_segment([at(0.3, 0.6), at(0.7, 0.6)], s);
+        }
+        Icon::Restart => {
+            p.add(Shape::line(arc(c, 0.3 * w, 60.0, 340.0), s));
+            p.add(Shape::line(vec![at(0.62, 0.12), at(0.8, 0.28), at(0.58, 0.34)], s));
+        }
+        Icon::Close => {
+            p.line_segment([at(0.26, 0.26), at(0.74, 0.74)], s);
+            p.line_segment([at(0.74, 0.26), at(0.26, 0.74)], s);
+        }
+        Icon::Trash => {
+            p.add(Shape::closed_line(vec![at(0.26, 0.3), at(0.74, 0.3), at(0.68, 0.86), at(0.32, 0.86)], s));
+            p.line_segment([at(0.18, 0.3), at(0.82, 0.3)], s);
+            p.add(Shape::line(vec![at(0.4, 0.3), at(0.4, 0.18), at(0.6, 0.18), at(0.6, 0.3)], s));
+        }
+        Icon::Back => {
+            p.add(Shape::line(vec![at(0.6, 0.22), at(0.34, 0.5), at(0.6, 0.78)], s));
         }
         Icon::Info => {
             p.circle_stroke(c, 0.38 * w, s);
