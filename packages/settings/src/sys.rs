@@ -738,11 +738,26 @@ pub fn icon_packs() -> Vec<IconPack> {
             if theme_key(&index, "Hidden").map(|h| h.eq_ignore_ascii_case("true")).unwrap_or(false) || theme_key(&index, "Directories").is_none() {
                 continue;
             }
-            if matches!(id.as_str(), "default" | "hicolor" | "locolor") || out.iter().any(|p| p.id == id) {
+            if matches!(id.as_str(), "default" | "hicolor" | "locolor") {
+                continue;
+            }
+            let samples = ["folder", "system-file-manager", "file-manager", "minos", "steam", "spotify", "vivaldi", "firefox", "preferences-system", "web-browser"];
+            if let Some(have) = out.iter_mut().find(|p| p.id == id) {
+                // the same pack is in the user's folder and the system's (the user's adds to it): borrow samples from the system copy
+                for n in samples {
+                    if have.preview.len() >= 4 {
+                        break;
+                    }
+                    if let Some(p) = theme_icon(&d, n) {
+                        if !have.preview.contains(&p) {
+                            have.preview.push(p);
+                        }
+                    }
+                }
                 continue;
             }
             let name = theme_key(&index, "Name").filter(|n| !n.is_empty()).unwrap_or_else(|| id.clone());
-            let preview = ["folder", "system-file-manager", "file-manager", "minos", "steam", "spotify", "vivaldi", "firefox", "preferences-system", "web-browser"].iter().filter_map(|n| theme_icon(&d, n)).take(4).collect();
+            let preview = samples.iter().filter_map(|n| theme_icon(&d, n)).take(4).collect();
             out.push(IconPack { id, name, user, preview });
         }
     }
