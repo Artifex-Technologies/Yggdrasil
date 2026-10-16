@@ -1177,6 +1177,32 @@ impl App {
         });
         ui.add_space(8.0);
         let mut scan: Option<String> = None;
+        let mut auto_change: Option<bool> = None;
+        let mut restore_id: Option<String> = None;
+        let mut delete_id: Option<String> = None;
+        ui::group(ui, pal, Some("Quarantine"), |ui| {
+            ui::row(ui, pal, true, "Move certain malware to quarantine automatically", Some("New files in Downloads, Desktop, drives and mail attachment folders are checked as they arrive. Only definite finds in your own files are moved; guesses and anything else just warn. Nothing is ever deleted without you"), |ui| {
+                let mut on = o.auto_quarantine;
+                if ui::switch(ui, pal, &mut on).changed() {
+                    auto_change = Some(on);
+                }
+            });
+            if o.quarantine.is_empty() {
+                ui::row(ui, pal, false, "Nothing in quarantine", None, |_| {});
+            }
+            for q in &o.quarantine {
+                let name = q.original.rsplit('/').next().unwrap_or(&q.original).to_string();
+                ui::row(ui, pal, false, &name, Some(&format!("{} · {} · from {}", q.signature, q.when, q.original)), |ui| {
+                    if ui::quiet(ui, pal, "Delete").clicked() {
+                        delete_id = Some(q.id.clone());
+                    }
+                    if ui::quiet(ui, pal, "Restore").clicked() {
+                        restore_id = Some(q.id.clone());
+                    }
+                });
+            }
+        });
+        ui.add_space(8.0);
         ui::group(ui, pal, Some("Malware scan"), |ui| {
             let sub = match (o.clamav, o.signatures) {
                 (false, _) => "ClamAV is not installed (sudo pacman -S clamav)".to_string(),
@@ -1200,6 +1226,15 @@ impl App {
                 }
             }
         });
+        if let Some(on) = auto_change {
+            self.change(ctx, move || security::set_auto_quarantine(on));
+        }
+        if let Some(id) = restore_id {
+            self.change(ctx, move || security::quarantine_restore(&id));
+        }
+        if let Some(id) = delete_id {
+            self.change(ctx, move || security::quarantine_delete(&id));
+        }
         if let Some(folder) = scan {
             self.scan_busy = true;
             let (tx, ctx2) = (self.tx.clone(), ctx.clone());

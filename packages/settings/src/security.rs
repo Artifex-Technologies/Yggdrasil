@@ -24,6 +24,49 @@ pub struct Overview {
     /// ClamAV's signature database date (seconds since 1970), when ClamAV is installed.
     pub signatures: Option<i64>,
     pub clamav: bool,
+    /// Files the malware scan moved to quarantine.
+    pub quarantine: Vec<Quarantined>,
+    /// Move certain finds to quarantine (true) or only warn (false).
+    pub auto_quarantine: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Quarantined {
+    pub id: String,
+    pub original: String,
+    pub signature: String,
+    pub when: String,
+}
+
+/// The JSON of `labyrinth-quarantine list --json`.
+pub fn parse_quarantine(json: &str) -> Vec<Quarantined> {
+    let v: Value = serde_json::from_str(json).unwrap_or(Value::Null);
+    v.as_array().map(|a| a.iter().filter_map(|i| Some(Quarantined { id: i["id"].as_str()?.to_string(), original: i["original"].as_str()?.to_string(), signature: i["signature"].as_str().unwrap_or("").to_string(), when: i["when"].as_str().unwrap_or("").to_string() })).collect()).unwrap_or_default()
+}
+
+fn scan_conf_path() -> std::path::PathBuf {
+    std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".config/labyrinth/scan.conf")
+}
+
+/// `action = notify` in scan.conf turns automatic quarantine off.
+pub fn auto_quarantine_on(conf: &str) -> bool {
+    !conf.lines().any(|l| { let l = l.trim(); !l.starts_with('#') && l.replace(' ', "") == "action=notify" })
+}
+
+pub fn set_auto_quarantine(on: bool) -> Result<(), String> {
+    let p = scan_conf_path();
+    if let Some(d) = p.parent() {
+        std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&p, if on { "action = quarantine\n" } else { "action = notify\n" }).map_err(|e| e.to_string())
+}
+
+pub fn quarantine_restore(id: &str) -> Result<(), String> {
+    crate::sys::act("labyrinth-quarantine", &["restore", id])
+}
+
+pub fn quarantine_delete(id: &str) -> Result<(), String> {
+    crate::sys::act("labyrinth-quarantine", &["delete", id])
 }
 
 /// Days since 1970-01-01 for a civil date (proleptic Gregorian).
@@ -90,7 +133,9 @@ pub fn overview() -> Overview {
     let mtime = |p: &str| std::fs::metadata(p).ok().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64);
     let signatures = ["/var/lib/clamav/daily.cld", "/var/lib/clamav/daily.cvd"].iter().find_map(|p| mtime(p));
     let clamav = run("which", &["clamscan"]).map(|s| !s.trim().is_empty()).unwrap_or(false);
-    Overview { running, alerts, signatures, clamav }
+    let quarantine = run("labyrinth-quarantine", &["list", "--json"]).map(|b| parse_quarantine(&b)).unwrap_or_default();
+    let auto_quarantine = auto_quarantine_on(&std::fs::read_to_string(scan_conf_path()).unwrap_or_default());
+    Overview { running, alerts, signatures, clamav, quarantine, auto_quarantine }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -121,6 +166,18 @@ pub fn scan_folder(folder: &str) -> ScanReport {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn quarantine_list_and_setting() {
+        let q = parse_quarantine(r#"[{"id":"abc123def456","original":"/home/u/Downloads/a.exe","signature":"Win.Trojan.X","when":"2026-10-16 10:00:00"}]"#);
+        assert_eq!(q.len(), 1);
+        assert_eq!((q[0].id.as_str(), q[0].signature.as_str()), ("abc123def456", "Win.Trojan.X"));
+        assert!(parse_quarantine("nonsense").is_empty());
+        assert!(auto_quarantine_on(""));
+        assert!(auto_quarantine_on("action = quarantine\n"));
+        assert!(!auto_quarantine_on("action = notify\n"));
+        assert!(auto_quarantine_on("# action = notify\n"));
+    }
+
     use super::*;
 
     #[test]
