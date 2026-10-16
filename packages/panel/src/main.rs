@@ -57,6 +57,10 @@ use wayland_protocols_plasma::plasma_shell::client::org_kde_plasma_shell::OrgKde
 use wayland_protocols_plasma::plasma_shell::client::org_kde_plasma_surface::{self, OrgKdePlasmaSurface, Role};
 use wayland_protocols_plasma::plasma_window_management::client::org_kde_plasma_window::{self, OrgKdePlasmaWindow};
 use wayland_protocols_plasma::plasma_window_management::client::org_kde_plasma_window_management::{self, OrgKdePlasmaWindowManagement};
+use wayland_protocols::xdg::xdg_output::zv1::client::{
+    zxdg_output_manager_v1::ZxdgOutputManagerV1,
+    zxdg_output_v1::{self, ZxdgOutputV1},
+};
 use wayland_protocols_wlr::foreign_toplevel::v1::client::{
     zwlr_foreign_toplevel_handle_v1::{self, ZwlrForeignToplevelHandleV1},
     zwlr_foreign_toplevel_manager_v1::{self, ZwlrForeignToplevelManagerV1},
@@ -230,6 +234,9 @@ struct Out {
     name: String,
     scale: i32,
     ready: bool,
+    /// Where the compositor says this output is in the global space, in logical pixels (x, y, width, height), from xdg-output.
+    logical: Option<(i32, i32, u32, u32)>,
+    xdg: Option<ZxdgOutputV1>,
 }
 
 struct Assets {
@@ -253,6 +260,7 @@ struct State {
     compositor: WlCompositor,
     layer_shell: ZwlrLayerShellV1,
     xdg_wm: Option<XdgWmBase>,
+    xdg_output_mgr: Option<ZxdgOutputManagerV1>,
     frac_mgr: Option<WpFractionalScaleManagerV1>,
     viewporter: Option<WpViewporter>,
     plasma_shell: Option<OrgKdePlasmaShell>,
@@ -483,6 +491,13 @@ impl State {
     }
 
     /// Which output the dock goes on: the main screen unless it is the tiling one.
+    /// An output's place in the global space (x, y, width, height in logical pixels): from the compositor (xdg-output) when it says,
+    /// else from kscreen-doctor's reading.
+    fn area_of(&self, output: u32) -> Option<(i32, i32, u32, u32)> {
+        let o = self.outputs.get(&output)?;
+        o.logical.filter(|(_, _, w, h)| *w > 0 && *h > 0).or_else(|| self.layout.sizes.iter().find(|(n, ..)| *n == o.name).map(|(_, x, y, w, h)| (*x, *y, *w, *h)))
+    }
+
     fn dock_output(&self) -> Option<u32> {
         let ready = || self.outputs.iter().filter(|(_, o)| o.ready && !o.name.is_empty());
         let is_tiling = |o: &Out| self.layout.tiling.contains(&o.name);
@@ -647,7 +662,7 @@ impl State {
         // KWin puts a surface that fits the free room (under the bar, above the dock's strip) at the top of that
         // room, and lifts one that is taller up by the overhang. So ask for exactly that room: then the
         // menus start just under the bar, where Fylgja's section titles stay in view.
-        let full_h = self.layout.sizes.iter().find(|(n, ..)| *n == out.name).map(|(_, _, _, _, h)| *h).unwrap_or(0);
+        let full_h = self.area_of(output).map(|(_, _, _, h)| h).unwrap_or(0);
         let strut = if self.model.conf.dock_pos == DockPos::Bottom && Some(output) == self.dock_output() { shell::dock_h(self.model.conf.dock_icon) + self.model.conf.dock_gap } else { 0 };
         let h = if full_h > 0 { full_h.saturating_sub(shell::BAR_H + strut) } else { 0 };
         layer.set_anchor(Anchor::Top | Anchor::Left | Anchor::Right);
@@ -1556,7 +1571,7 @@ impl State {
     fn dock_origin(&self, output: u32, dock: (u32, u32)) -> (i32, i32) {
         let gap = self.model.conf.dock_gap as i32;
         let (dw, dh) = (dock.0 as i32, dock.1 as i32);
-        let area = self.outputs.get(&output).and_then(|o| self.layout.sizes.iter().find(|(n, ..)| *n == o.name)).map(|(_, x, y, w, h)| (*x, *y, *w as i32, *h as i32)).unwrap_or((0, 0, 1920, 1080));
+        let area = self.area_of(output).map(|(x, y, w, h)| (x, y, w as i32, h as i32)).unwrap_or((0, 0, 1920, 1080));
         let (ox, oy, ow, oh) = area;
         match self.model.conf.dock_pos {
             DockPos::Bottom => (ox + (ow - dw) / 2, oy + oh - dh - gap),
@@ -1916,7 +1931,8 @@ impl Dispatch<WlRegistry, GlobalListContents> for State {
         match event {
             wl_registry::Event::Global { name, interface, version } if interface == "wl_output" => {
                 let wl = registry.bind::<WlOutput, _, _>(name, version.min(4), qh, name);
-                state.outputs.insert(name, Out { wl, name: String::new(), scale: 1, ready: false });
+                let xdg = state.xdg_output_mgr.as_ref().map(|m| m.get_xdg_output(&wl, qh, name));
+                state.outputs.insert(name, Out { wl, name: String::new(), scale: 1, ready: false, logical: None, xdg });
             }
             wl_registry::Event::GlobalRemove { name } => {
                 if state.outputs.remove(&name).is_some() {
@@ -1944,6 +1960,35 @@ impl Dispatch<WlOutput, u32> for State {
                 }
             }
             _ => {}
+        }
+    }
+}
+
+delegate_noop!(State: ZxdgOutputManagerV1);
+
+impl Dispatch<ZxdgOutputV1, u32> for State {
+    fn event(state: &mut Self, _: &ZxdgOutputV1, event: zxdg_output_v1::Event, key: &u32, _: &Connection, _: &QueueHandle<Self>) {
+        let Some(o) = state.outputs.get_mut(key) else { return };
+        let (mut x, mut y, mut w, mut h) = o.logical.unwrap_or((0, 0, 0, 0));
+        match event {
+            zxdg_output_v1::Event::LogicalPosition { x: nx, y: ny } => {
+                x = nx;
+                y = ny;
+            }
+            zxdg_output_v1::Event::LogicalSize { width, height } => {
+                w = width.max(0) as u32;
+                h = height.max(0) as u32;
+            }
+            zxdg_output_v1::Event::Done if w > 0 && h > 0 => {}
+            _ => return,
+        }
+        let new = Some((x, y, w, h));
+        if new != o.logical && w > 0 && h > 0 {
+            o.logical = new;
+            state.built_for = None; // the screen's size or place changed: place the dock and the popups again
+            state.dirty = true;
+        } else if w == 0 || h == 0 {
+            o.logical = new;
         }
     }
 }
@@ -2314,7 +2359,8 @@ fn bind_outputs(globals: &GlobalList, state: &mut State, qh: &QueueHandle<State>
     let existing: Vec<(u32, u32)> = globals.contents().clone_list().iter().filter(|g| g.interface == "wl_output").map(|g| (g.name, g.version)).collect();
     for (name, version) in existing {
         let wl = globals.registry().bind::<WlOutput, _, _>(name, version.min(4), qh, name);
-        state.outputs.insert(name, Out { wl, name: String::new(), scale: 1, ready: false });
+        let xdg = state.xdg_output_mgr.as_ref().map(|m| m.get_xdg_output(&wl, qh, name));
+        state.outputs.insert(name, Out { wl, name: String::new(), scale: 1, ready: false, logical: None, xdg });
     }
 }
 
@@ -2340,6 +2386,7 @@ fn main() {
     let compositor: WlCompositor = globals.bind(&qh, 4..=6, ()).expect("wl_compositor");
     let shm: WlShm = globals.bind(&qh, 1..=1, ()).expect("wl_shm");
     let xdg_wm: Option<XdgWmBase> = globals.bind(&qh, 1..=6, ()).ok();
+    let xdg_output_mgr: Option<ZxdgOutputManagerV1> = globals.bind(&qh, 1..=3, ()).ok();
     let frac_mgr: Option<WpFractionalScaleManagerV1> = globals.bind(&qh, 1..=1, ()).ok();
     let viewporter: Option<WpViewporter> = globals.bind(&qh, 1..=1, ()).ok();
     let plasma_shell: Option<OrgKdePlasmaShell> = globals.bind(&qh, 1..=8, ()).ok();
@@ -2370,6 +2417,7 @@ fn main() {
         compositor,
         layer_shell,
         xdg_wm,
+        xdg_output_mgr,
         frac_mgr,
         viewporter,
         plasma_shell,
