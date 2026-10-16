@@ -671,6 +671,44 @@ fn paint_badge(p: &egui::Painter, center: egui::Pos2, b: Badge, pal: &Palette) {
     }
 }
 
+/// Proton Drive file status: only for files under the mount, and only when Settings has it on.
+fn drive_avail(st: &State, e: &Entry) -> Option<cloud::Avail> {
+    if !st.drive_status || e.is_dir || e.usage.is_some() {
+        return None;
+    }
+    let root = places::proton_drive_candidates().into_iter().find(|r| e.path.starts_with(r))?;
+    cloud::availability(&root, &e.path, e.size)
+}
+
+/// Green ring with a check: on this computer. Blue disc with a down arrow: cloud only. Half ring: partly downloaded.
+fn paint_avail(p: &egui::Painter, center: egui::Pos2, a: cloud::Avail, pal: &Palette) {
+    let w = |c: Color32| egui::Stroke::new(1.6, c);
+    match a {
+        cloud::Avail::Local => {
+            p.circle_stroke(center, 6.0, w(pal.green));
+            p.add(egui::Shape::line(vec![center + vec2(-3.0, 0.2), center + vec2(-0.8, 2.6), center + vec2(3.2, -2.4)], w(pal.green)));
+        }
+        cloud::Avail::Partial => {
+            p.circle_stroke(center, 6.0, w(pal.amber));
+            p.line_segment([center + vec2(0.0, -3.0), center + vec2(0.0, 3.0)], w(pal.amber));
+        }
+        cloud::Avail::Cloud => {
+            let blue = Color32::from_rgb(110, 150, 220);
+            p.circle_filled(center, 6.5, blue);
+            p.line_segment([center + vec2(0.0, -3.2), center + vec2(0.0, 2.6)], w(Color32::WHITE));
+            p.add(egui::Shape::line(vec![center + vec2(-2.6, 0.2), center + vec2(0.0, 3.0), center + vec2(2.6, 0.2)], w(Color32::WHITE)));
+        }
+    }
+}
+
+fn avail_tip(a: cloud::Avail) -> &'static str {
+    match a {
+        cloud::Avail::Local => "On this computer (also in Proton Drive)",
+        cloud::Avail::Partial => "Partly downloaded; the rest comes from Proton Drive when opened",
+        cloud::Avail::Cloud => "Only in Proton Drive; opening it downloads it",
+    }
+}
+
 fn badge_tip(b: Badge) -> &'static str {
     match b {
         Badge::Synced => "Synced with Proton Drive (verified by hash)",
@@ -1071,6 +1109,11 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
                         paint_badge(ui.painter(), rect.center(), b, &pal);
                         r.on_hover_text(badge_tip(b));
                     }
+                    if let Some(a) = drive_avail(cx.st, e) {
+                        let (rect, r) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
+                        paint_avail(ui.painter(), rect.center(), a, &pal);
+                        r.on_hover_text(avail_tip(a));
+                    }
                     if !inline_rename(ui, &pal, e) {
                         let lr = ui.add(egui::Label::new(name_text(e, st, &pal)).selectable(false));
                         ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new(("minos-name-rect", e.path.clone())), lr.rect.expand2(vec2(6.0, 4.0))));
@@ -1203,8 +1246,13 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
                                 icons::paint(ui.painter(), img_rect.shrink(size * 0.08), icon, color);
                             }
                         }
+                        let mut badge_x = -10.0;
                         if let Some(b) = cloud::badge_for(&e.path, cx.links, cx.reports) {
-                            paint_badge(ui.painter(), rect.right_top() + vec2(-10.0, 12.0), b, &pal);
+                            paint_badge(ui.painter(), rect.right_top() + vec2(badge_x, 12.0), b, &pal);
+                            badge_x -= 16.0;
+                        }
+                        if let Some(a) = drive_avail(cx.st, e) {
+                            paint_avail(ui.painter(), rect.right_top() + vec2(badge_x, 12.0), a, &pal);
                         }
                         let mut shown_name = e.name.clone();
                         let max_chars = ((size + 12.0) / 7.0) as usize;
@@ -1447,6 +1495,7 @@ impl App {
         let st_path = State::config_path();
         let mut st = st_path.as_deref().map(State::load_from).unwrap_or_default();
         st.show_hidden = labyrinth_conf::PanelConf::load().show_hidden;
+        st.drive_status = labyrinth_conf::PanelConf::load().drive_status;
         st.follow_accent = true;
         if st.favorites.is_empty() {
             st.favorites = places::favorites().into_iter().map(|p| p.path).collect();
@@ -2242,7 +2291,9 @@ impl eframe::App for App {
         self.st.dark = theme::system_dark();
         if self.conf_checked.elapsed() >= Duration::from_secs(1) {
             self.conf_checked = Instant::now();
-            let show = labyrinth_conf::PanelConf::load().show_hidden;
+            let conf = labyrinth_conf::PanelConf::load();
+            self.st.drive_status = conf.drive_status;
+            let show = conf.show_hidden;
             if show != self.st.show_hidden {
                 self.st.show_hidden = show;
                 self.reload_all();

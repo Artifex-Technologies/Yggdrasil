@@ -45,6 +45,8 @@ pub struct State {
     /// Custom folder colors, independent of tags.
     pub folder_colors: BTreeMap<PathBuf, [u8; 3]>,
     pub show_hidden: bool,
+    /// Mark Proton Drive files as on this computer or cloud only (from Settings, not saved here).
+    pub drive_status: bool,
     pub dark: bool,
     pub view: ViewMode,
     pub gallery_size: usize,
@@ -83,6 +85,7 @@ impl Default for State {
             tags: BTreeMap::new(),
             folder_colors: BTreeMap::new(),
             show_hidden: false,
+            drive_status: true,
             dark: true,
             view: ViewMode::Details,
             gallery_size: 1,

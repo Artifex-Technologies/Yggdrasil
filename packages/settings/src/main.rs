@@ -1413,6 +1413,9 @@ impl App {
             ui::row(ui, pal, false, "Show hidden items", Some("Files and folders whose names start with a dot"), |ui| {
                 minos_changed |= ui::switch(ui, pal, &mut minos.show_hidden).changed();
             });
+            ui::row(ui, pal, false, "Show Proton Drive file status", Some("A mark on each Proton Drive file: kept on this computer, or only in the cloud"), |ui| {
+                minos_changed |= ui::switch(ui, pal, &mut minos.drive_status).changed();
+            });
         });
         if minos_changed {
             self.change(ctx, move || minos.save());

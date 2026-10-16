@@ -217,6 +217,88 @@ pub fn badge_for(path: &Path, links: &[Link], reports: &BTreeMap<String, Report>
     None
 }
 
+/// Where a Proton Drive file's bytes are: rclone's mount keeps downloaded files in its cache, everything else is fetched on demand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Avail {
+    /// Fully on this computer (also a file waiting to upload).
+    Local,
+    /// Some of it downloaded.
+    Partial,
+    /// Only in the cloud; opening it downloads it.
+    Cloud,
+}
+
+/// rclone's cache for one file: `meta` is its `vfsMeta` record, `on_disk` the bytes the cached data file really occupies (None = no cached file).
+/// `Rs` lists the downloaded ranges when rclone has written them; otherwise a cached file counts as complete when it is not sparse.
+pub fn avail_from_meta(meta: Option<&str>, size: u64, on_disk: Option<u64>) -> Avail {
+    let v: serde_json::Value = meta.and_then(|m| serde_json::from_str(m).ok()).unwrap_or(serde_json::Value::Null);
+    if v.get("Dirty").and_then(|d| d.as_bool()) == Some(true) {
+        return Avail::Local;
+    }
+    let Some(on_disk) = on_disk else { return Avail::Cloud };
+    let mut ranges: Vec<(u64, u64)> = v
+        .get("Rs")
+        .and_then(|r| r.as_array())
+        .map(|a| a.iter().filter_map(|r| Some((r.get("Pos")?.as_u64()?, r.get("Size")?.as_u64()?))).collect())
+        .unwrap_or_default();
+    if ranges.is_empty() {
+        // No range list: judge by how much of the file is really on disk (a sparse, partly downloaded file takes less).
+        return if size == 0 || on_disk >= size { Avail::Local } else if on_disk > 0 { Avail::Partial } else { Avail::Cloud };
+    }
+    ranges.sort();
+    let mut covered = 0u64;
+    for (pos, len) in ranges {
+        if len > 0 && pos <= covered {
+            covered = covered.max(pos + len);
+        }
+    }
+    if covered >= size {
+        Avail::Local
+    } else {
+        Avail::Partial
+    }
+}
+
+fn cache_root() -> Option<PathBuf> {
+    if let Ok(d) = std::env::var("RCLONE_CACHE_DIR") {
+        if !d.is_empty() {
+            return Some(PathBuf::from(d));
+        }
+    }
+    Some(dirs::cache_dir()?.join("rclone"))
+}
+
+/// Availability of a file under the Proton Drive mount, cached for a few seconds (this is asked for every visible file on every redraw).
+pub fn availability(drive_root: &Path, path: &Path, size: u64) -> Option<Avail> {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static CACHE: Mutex<Option<HashMap<PathBuf, (Instant, Avail)>>> = Mutex::new(None);
+    let rel = path.strip_prefix(drive_root).ok()?;
+    if rel.as_os_str().is_empty() {
+        return None;
+    }
+    let mut guard = CACHE.lock().ok()?;
+    let map = guard.get_or_insert_with(HashMap::new);
+    if let Some((t, a)) = map.get(path) {
+        if t.elapsed() < Duration::from_secs(4) {
+            return Some(*a);
+        }
+    }
+    let root = cache_root();
+    let meta = root.as_ref().and_then(|c| std::fs::read_to_string(c.join("vfsMeta").join("proton").join(rel)).ok());
+    let on_disk = root.as_ref().and_then(|c| {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::metadata(c.join("vfs").join("proton").join(rel)).ok().filter(|m| m.is_file()).map(|m| m.blocks() * 512)
+    });
+    let a = avail_from_meta(meta.as_deref(), size, on_disk);
+    if map.len() > 5000 {
+        map.clear();
+    }
+    map.insert(path.to_path_buf(), (Instant::now(), a));
+    Some(a)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,6 +382,24 @@ mod tests {
         // "sub" must not match a sibling named "sub2".
         let r = Report { files_compared: 1, problems: vec![Problem::SizeDiffers("sub/a".into())], ..Default::default() };
         assert_ne!(b("/h/docs/sub2", Some(r)), Some(Badge::Problem));
+    }
+
+    #[test]
+    fn availability_from_rclone_cache() {
+        let m = |rs: &str, dirty: bool| format!(r#"{{"Size":100,"Rs":{rs},"Dirty":{dirty}}}"#);
+        // nothing cached
+        assert_eq!(avail_from_meta(None, 100, None), Avail::Cloud);
+        assert_eq!(avail_from_meta(Some(&m("null", false)), 100, None), Avail::Cloud);
+        // rclone wrote no range list (what a fully downloaded file looked like on the real mount): judged by the data file
+        assert_eq!(avail_from_meta(Some(&m("null", false)), 100, Some(4096)), Avail::Local);
+        assert_eq!(avail_from_meta(Some(&m("null", false)), 10_000, Some(4096)), Avail::Partial);
+        assert_eq!(avail_from_meta(Some(&m("null", false)), 10_000, Some(0)), Avail::Cloud);
+        // range lists
+        assert_eq!(avail_from_meta(Some(&m(r#"[{"Pos":0,"Size":40},{"Pos":40,"Size":60}]"#, false)), 100, Some(100)), Avail::Local);
+        assert_eq!(avail_from_meta(Some(&m(r#"[{"Pos":0,"Size":40},{"Pos":60,"Size":40}]"#, false)), 100, Some(100)), Avail::Partial);
+        // waiting to upload
+        assert_eq!(avail_from_meta(Some(&m("null", true)), 100, None), Avail::Local);
+        assert_eq!(avail_from_meta(Some("garbage"), 100, None), Avail::Cloud);
     }
 }
 
