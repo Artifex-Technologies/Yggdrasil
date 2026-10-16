@@ -680,23 +680,20 @@ fn drive_avail(st: &State, e: &Entry) -> Option<cloud::Avail> {
     cloud::availability(&root, &e.path, e.size)
 }
 
-/// Green ring with a check: on this computer. Blue disc with a down arrow: cloud only. Half ring: partly downloaded.
+/// The Status column's marks, like Windows: a green ring with a check = on this computer; a blue cloud outline = in Proton Drive
+/// (a partly downloaded file counts as in the cloud until it is whole).
 fn paint_avail(p: &egui::Painter, center: egui::Pos2, a: cloud::Avail, pal: &Palette) {
     let w = |c: Color32| egui::Stroke::new(1.6, c);
     match a {
         cloud::Avail::Local => {
-            p.circle_stroke(center, 6.0, w(pal.green));
-            p.add(egui::Shape::line(vec![center + vec2(-3.0, 0.2), center + vec2(-0.8, 2.6), center + vec2(3.2, -2.4)], w(pal.green)));
+            p.circle_stroke(center, 7.0, w(pal.green));
+            p.add(egui::Shape::line(vec![center + vec2(-3.2, 0.2), center + vec2(-0.9, 2.8), center + vec2(3.4, -2.6)], w(pal.green)));
         }
-        cloud::Avail::Partial => {
-            p.circle_stroke(center, 6.0, w(pal.amber));
-            p.line_segment([center + vec2(0.0, -3.0), center + vec2(0.0, 3.0)], w(pal.amber));
-        }
-        cloud::Avail::Cloud => {
-            let blue = Color32::from_rgb(110, 150, 220);
-            p.circle_filled(center, 6.5, blue);
-            p.line_segment([center + vec2(0.0, -3.2), center + vec2(0.0, 2.6)], w(Color32::WHITE));
-            p.add(egui::Shape::line(vec![center + vec2(-2.6, 0.2), center + vec2(0.0, 3.0), center + vec2(2.6, 0.2)], w(Color32::WHITE)));
+        cloud::Avail::Partial | cloud::Avail::Cloud => {
+            let blue = Color32::from_rgb(70, 130, 220);
+            const CLOUD: &[(f32, f32)] = &[(6.8, 1.0), (6.9, 1.3), (6.9, 1.6), (6.9, 2.0), (6.8, 2.3), (6.7, 2.6), (6.6, 2.9), (6.5, 3.1), (6.3, 3.4), (6.1, 3.6), (5.9, 3.9), (5.6, 4.1), (5.3, 4.2), (5.1, 4.4), (4.8, 4.5), (4.5, 4.5), (4.2, 4.6), (-3.8, 4.6), (-4.1, 4.6), (-4.4, 4.5), (-4.7, 4.5), (-5.0, 4.3), (-5.3, 4.2), (-5.6, 4.0), (-5.8, 3.8), (-6.0, 3.6), (-6.2, 3.4), (-6.4, 3.1), (-6.5, 2.8), (-6.7, 2.5), (-6.7, 2.2), (-6.8, 1.9), (-6.8, 1.6), (-6.8, 1.3), (-6.7, 1.0), (-6.7, 0.7), (-6.5, 0.4), (-6.4, 0.1), (-6.2, -0.2), (-6.0, -0.4), (-5.8, -0.6), (-5.6, -0.8), (-5.3, -1.0), (-5.0, -1.1), (-4.7, -1.2), (-4.4, -1.3), (-4.3, -1.7), (-4.2, -2.1), (-4.0, -2.5), (-3.9, -2.9), (-3.6, -3.2), (-3.4, -3.6), (-3.1, -3.9), (-2.8, -4.1), (-2.4, -4.4), (-2.0, -4.5), (-1.6, -4.7), (-1.2, -4.8), (-0.8, -4.9), (-0.4, -4.9), (0.0, -4.9), (0.4, -4.8), (0.8, -4.7), (1.2, -4.5), (1.6, -4.4), (1.9, -4.1), (2.3, -3.9), (2.6, -3.6), (2.8, -3.2), (3.1, -2.9), (3.2, -2.5), (3.4, -2.1), (3.5, -1.7), (3.9, -1.4), (4.2, -1.4), (4.5, -1.3), (4.8, -1.2), (5.1, -1.1), (5.4, -1.0), (5.7, -0.8), (5.9, -0.6), (6.1, -0.4), (6.3, -0.2), (6.5, 0.1), (6.6, 0.4), (6.8, 0.7), (6.8, 1.0)];
+            let path: Vec<egui::Pos2> = CLOUD.iter().map(|&(x, y)| center + vec2(x, y) * 0.95 - vec2(0.0, 1.2)).collect();
+            p.add(egui::Shape::closed_line(path, w(blue)));
         }
     }
 }
@@ -1092,6 +1089,7 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
     let searching = t.results.is_some();
     let in_pc = places::is_virtual(&t.dir());
     let in_archive = archive::split(&t.dir()).is_some();
+    let dir = t.dir();
     let TabView { entries, results, query, selected, anchor, .. } = t;
     let shown: &[Entry] = results.as_deref().unwrap_or(entries);
     let order: Vec<usize> = if searching || in_pc { (0..shown.len()).collect() } else { listing::visible(shown, query, hidden) };
@@ -1101,6 +1099,8 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
         ViewMode::Details => {
             // The row, not the name, takes the clicks and drags (see entry_interact below).
             let ectx = ui.ctx().clone();
+            // A Status column (like Windows) in Proton Drive folders, when the pane is wide enough for the other columns too.
+            let status_col = st.drive_status && !in_pc && !in_archive && ui.available_width() >= 560.0 && places::proton_drive_candidates().iter().any(|r| dir.starts_with(r));
             let name_cell = |ui: &mut egui::Ui, e: &Entry| {
                 ui.horizontal(|ui| {
                     entry_icon(ui, &pal, st, e, 18.0);
@@ -1109,10 +1109,12 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
                         paint_badge(ui.painter(), rect.center(), b, &pal);
                         r.on_hover_text(badge_tip(b));
                     }
-                    if let Some(a) = drive_avail(cx.st, e) {
-                        let (rect, r) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
-                        paint_avail(ui.painter(), rect.center(), a, &pal);
-                        r.on_hover_text(avail_tip(a));
+                    if !status_col {
+                        if let Some(a) = drive_avail(cx.st, e) {
+                            let (rect, r) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
+                            paint_avail(ui.painter(), rect.center(), a, &pal);
+                            r.on_hover_text(avail_tip(a));
+                        }
                     }
                     if !inline_rename(ui, &pal, e) {
                         let lr = ui.add(egui::Label::new(name_text(e, st, &pal)).selectable(false));
@@ -1173,14 +1175,20 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
                     let name_w = (avail_w - 84.0).max(100.0);
                     tb = tb.column(Column::exact(name_w).clip(true)).column(Column::exact(70.0));
                 } else {
+                    tb = tb.column(Column::initial(420.0).at_least(160.0).clip(true));
+                    if status_col {
+                        tb = tb.column(Column::initial(80.0).at_least(60.0));
+                    }
                     tb = tb
-                        .column(Column::initial(420.0).at_least(160.0).clip(true))
                         .column(Column::initial(160.0).at_least(80.0))
                         .column(Column::initial(120.0).at_least(60.0))
                         .column(Column::remainder().at_least(70.0));
                 }
                 tb.header(26.0, |mut h| {
                     h.col(|ui| header_cell(ui, &pal, "Name", Some(SortKey::Name), sort, &mut new_sort));
+                    if status_col {
+                        h.col(|ui| header_cell(ui, &pal, "Status", None, sort, &mut new_sort));
+                    }
                     if !narrow {
                         h.col(|ui| header_cell(ui, &pal, "Date modified", Some(SortKey::Modified), sort, &mut new_sort));
                         h.col(|ui| header_cell(ui, &pal, "Type", None, sort, &mut new_sort));
@@ -1193,6 +1201,17 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
                         let e = &shown[order[pos]];
                         row.set_selected(selected.contains(&e.path));
                         row.col(|ui| name_cell(ui, e));
+                        if status_col {
+                            row.col(|ui| {
+                                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                                    if let Some(a) = drive_avail(cx.st, e) {
+                                        let (rect, r) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
+                                        paint_avail(ui.painter(), rect.center(), a, &pal);
+                                        r.on_hover_text(avail_tip(a));
+                                    }
+                                });
+                            });
+                        }
                         if !narrow {
                             row.col(|ui| {
                                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
