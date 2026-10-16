@@ -10,6 +10,7 @@
 mod appmgr;
 mod apps_ui;
 mod icons;
+mod security;
 mod sys;
 mod ui;
 mod users;
@@ -35,6 +36,7 @@ enum Page {
     Appearance,
     Power,
     Users,
+    Security,
     Firewall,
     DateTime,
     Apps,
@@ -42,7 +44,7 @@ enum Page {
     About,
 }
 
-const PAGES: [(Page, &str, Icon); 12] = [
+const PAGES: [(Page, &str, Icon); 13] = [
     (Page::Network, "Wi-Fi & Network", Icon::Wifi),
     (Page::Bluetooth, "Bluetooth", Icon::Bluetooth),
     (Page::Displays, "Displays", Icon::Display),
@@ -50,6 +52,7 @@ const PAGES: [(Page, &str, Icon); 12] = [
     (Page::Appearance, "Appearance", Icon::Appearance),
     (Page::Power, "Power", Icon::Power),
     (Page::Users, "Users", Icon::User),
+    (Page::Security, "Security", Icon::Shield),
     (Page::Firewall, "Firewall", Icon::Shield),
     (Page::DateTime, "Date & Time", Icon::Clock),
     (Page::Apps, "Apps", Icon::Apps),
@@ -67,6 +70,8 @@ enum Msg {
     Power(sys::Power),
     Firewall(bool),
     Account(users::Account, String),
+    Security(security::Overview),
+    Scan(security::ScanReport),
     Password(Result<(), String>),
     Time(sys::Time),
     Apps(Vec<sys::Component>),
@@ -78,6 +83,7 @@ enum Msg {
 
 #[derive(Default)]
 struct Data {
+    security: Option<security::Overview>,
     account: Option<(users::Account, String)>,
     about: Option<sys::About>,
     network: Option<sys::Network>,
@@ -101,6 +107,10 @@ struct App {
     loading: Option<Page>,
     status: String,
     wifi_password: Option<(String, String)>,
+    // Security page
+    sec_filter: usize,
+    scan_busy: bool,
+    scan_report: Option<security::ScanReport>,
     // Users page: the password form
     pw_open: bool,
     pw_cur: String,
@@ -145,6 +155,9 @@ impl App {
             loading: None,
             status: String::new(),
             wifi_password: None,
+            sec_filter: 1,
+            scan_busy: false,
+            scan_report: None,
             pw_open: false,
             pw_cur: String::new(),
             pw_new: String::new(),
@@ -195,6 +208,7 @@ impl App {
                 Page::Power => Msg::Power(sys::power()),
                 Page::Firewall => Msg::Firewall(sys::firewall_on()),
                 Page::Users => Msg::Account(users::account(), users::keyring_state()),
+                Page::Security => Msg::Security(security::overview()),
                 Page::DateTime => Msg::Time(sys::time()),
                 Page::Apps => {
                     let _ = tx.send(Msg::Installed(load_installed(&tx)));
@@ -231,6 +245,12 @@ impl App {
                 Msg::Power(v) => self.data.power = Some(v),
                 Msg::Firewall(v) => self.data.firewall = Some(v),
                 Msg::Account(a, k) => self.data.account = Some((a, k)),
+                Msg::Security(o) => self.data.security = Some(o),
+                Msg::Scan(r) => {
+                    self.scan_busy = false;
+                    self.scan_report = Some(r);
+                    continue;
+                }
                 Msg::Password(r) => {
                     self.pw_busy = false;
                     match r {
@@ -286,7 +306,7 @@ impl eframe::App for App {
         // panel, a command) shows up without closing Settings. Not while something is being dragged or typed, not
         // for pages that are slow to read (Wi-Fi scans, Bluetooth discovery, the package list), and not when
         // the window is in the background.
-        let refreshable = matches!(self.page, Page::About | Page::Displays | Page::Sound | Page::Appearance | Page::Power | Page::Firewall | Page::DateTime);
+        let refreshable = matches!(self.page, Page::About | Page::Displays | Page::Sound | Page::Appearance | Page::Power | Page::Firewall | Page::DateTime | Page::Security);
         if refreshable {
             let idle = self.loading.is_none() && !ctx.input(|i| i.pointer.any_down()) && ctx.memory(|m| m.focused().is_none()) && ctx.input(|i| i.viewport().focused != Some(false));
             if idle && self.refreshed.elapsed() >= std::time::Duration::from_secs(4) {
@@ -371,6 +391,7 @@ impl eframe::App for App {
                         Page::Power => self.page_power(ui, &pal, &ctx),
                         Page::Firewall => self.page_firewall(ui, &pal, &ctx),
                         Page::Users => self.page_users(ui, &pal, &ctx),
+                        Page::Security => self.page_security(ui, &pal, &ctx),
                         Page::DateTime => self.page_time(ui, &pal, &ctx),
                         Page::Apps => self.page_apps(ui, &pal, &ctx),
                         Page::Shortcuts => page_shortcuts(ui, &pal),
@@ -1087,6 +1108,93 @@ impl App {
                 }
                 let _ = sys::act("qdbus6", &["org.kde.Solid.PowerManagement", "/org/kde/Solid/PowerManagement", "org.kde.Solid.PowerManagement.reparseConfiguration"]);
                 Ok(())
+            });
+        }
+    }
+
+    fn page_security(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
+        let Some(o) = self.data.security.clone() else { return loading(ui) };
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+        let day = |a: &&security::Alert| now - a.time < 86400;
+        let count = |sev: &str| o.alerts.iter().filter(day).filter(|a| a.severity == sev).count();
+        ui::group(ui, pal, Some("Heimdall"), |ui| {
+            let (title, sub) = if o.running { ("Watching".to_string(), format!("Last 24 hours: {} critical, {} warnings, {} notes", count("critical"), count("warning"), count("info"))) } else { ("Not running".to_string(), "Heimdall does not answer on this computer".to_string()) };
+            ui::row(ui, pal, true, &title, Some(&sub), |ui| {
+                let (rect, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
+                ui.painter().circle_filled(rect.center(), 6.0, if !o.running { pal.red } else if count("critical") > 0 { pal.red } else if count("warning") > 0 { pal.amber } else { pal.green });
+            });
+        });
+        ui.add_space(8.0);
+        ui::group(ui, pal, Some("Recent alerts"), |ui| {
+            let levels = ["Everything", "Warnings and worse", "Critical only"];
+            ui::row(ui, pal, true, "Show", None, |ui| {
+                if let Some(i) = ui::segmented(ui, pal, &levels, self.sec_filter) {
+                    self.sec_filter = i;
+                }
+            });
+            let keep = |a: &&security::Alert| match self.sec_filter {
+                0 => true,
+                1 => a.severity != "info",
+                _ => a.severity == "critical",
+            };
+            let shown: Vec<&security::Alert> = o.alerts.iter().filter(keep).take(25).collect();
+            if shown.is_empty() {
+                ui::row(ui, pal, false, "Nothing to show", Some("No alerts at this level"), |_| {});
+            }
+            for a in shown {
+                let color = match a.severity.as_str() {
+                    "critical" => pal.red,
+                    "warning" => pal.amber,
+                    _ => pal.dim,
+                };
+                let text: String = a.summary.chars().take(160).collect();
+                ui::row(ui, pal, false, &text, Some(&format!("{} · {}", a.detector, security::ago(a.time, now))), |ui| {
+                    let (rect, _) = ui.allocate_exact_size(vec2(12.0, 12.0), Sense::hover());
+                    ui.painter().circle_filled(rect.center(), 5.0, color);
+                });
+            }
+        });
+        ui.add_space(8.0);
+        let conns: Vec<&security::Alert> = o.alerts.iter().filter(|a| a.detector == "connection-watch" && !a.process.is_empty()).take(12).collect();
+        ui::group(ui, pal, Some("Who connected where (new destinations)"), |ui| {
+            if conns.is_empty() {
+                ui::row(ui, pal, true, "Nothing new", Some("Each program is listed the first time it talks to an address"), |_| {});
+            }
+            for (i, a) in conns.iter().enumerate() {
+                ui::row(ui, pal, i == 0, &a.process, Some(&format!("{} · {}", a.remote, security::ago(a.time, now))), |_| {});
+            }
+        });
+        ui.add_space(8.0);
+        let mut scan: Option<String> = None;
+        ui::group(ui, pal, Some("Malware scan"), |ui| {
+            let sub = match (o.clamav, o.signatures) {
+                (false, _) => "ClamAV is not installed (sudo pacman -S clamav)".to_string(),
+                (true, Some(t)) => format!("ClamAV, signatures from {}", security::ago(t, now)),
+                (true, None) => "ClamAV is installed; signatures are not downloaded yet (sudo freshclam)".to_string(),
+            };
+            ui::row(ui, pal, true, "Scan the Downloads folder", Some(&sub), |ui| {
+                if ui.add_enabled(o.clamav && !self.scan_busy, egui::Button::new(if self.scan_busy { "Scanning…" } else { "Scan now" })).clicked() {
+                    scan = Some(format!("{}/Downloads", std::env::var("HOME").unwrap_or_default()));
+                }
+            });
+            if let Some(r) = &self.scan_report {
+                if !r.error.is_empty() {
+                    ui::row(ui, pal, false, "The scan did not run", Some(&r.error), |_| {});
+                } else {
+                    let title = if r.infected.is_empty() { "No malware found".to_string() } else { format!("{} infected file(s)", r.infected.len()) };
+                    ui::row(ui, pal, false, &title, Some(&r.summary), |_| {});
+                    for f in &r.infected {
+                        ui::row(ui, pal, false, f, Some("Nothing was moved or deleted: decide what to do with it"), |_| {});
+                    }
+                }
+            }
+        });
+        if let Some(folder) = scan {
+            self.scan_busy = true;
+            let (tx, ctx2) = (self.tx.clone(), ctx.clone());
+            std::thread::spawn(move || {
+                let _ = tx.send(Msg::Scan(security::scan_folder(&folder)));
+                ctx2.request_repaint();
             });
         }
     }
