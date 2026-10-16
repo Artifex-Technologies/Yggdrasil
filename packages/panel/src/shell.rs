@@ -106,6 +106,8 @@ pub struct Model {
     pub notch_tab: Option<usize>,
     /// The notifications kept until opened or cleared, and how the list is opened out.
     pub notifs: crate::notify::Store,
+    /// Apps' notification-area icons (the tray), as the StatusNotifierWatcher lists them.
+    pub tray: Vec<crate::tray::TrayItem>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -130,6 +132,8 @@ pub enum Action {
     ToastAction(u32, usize),
     /// The unread badge in the bar: open the list.
     Notifications,
+    /// A tray icon, by its registration key: left click activates it, right click opens its menu.
+    Tray(String),
 }
 
 #[derive(Clone, Debug)]
@@ -368,6 +372,33 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
         paint::draw_text(pix, &fonts.bold, 11.5 * s, rx + (bw - paint::text_width(&fonts.bold, 11.5 * s, &label)) / 2.0, cy, (255, 255, 255, 255), &label);
         hits.push(Hit { rect: (rx, 0.0, bw, h), action: Action::Notifications });
         rx -= 6.0 * s;
+    }
+
+    // The tray: the icons apps put in the notification area, right to left, beside the system icons.
+    {
+        let tsz = (16.0 * s) as u32;
+        let tw = 26.0 * s;
+        for it in m.tray.iter().filter(|t| t.shown()).take(8) {
+            rx -= tw;
+            pill(pix, rx, tw);
+            if hover == Some(hits.len()) {
+                paint::fill_rounded(pix, rx, py, tw, ph, r, lk.hover);
+            }
+            let (ix, iy) = ((rx + (tw - tsz as f32) / 2.0) as i32, (cy - tsz as f32 / 2.0).round() as i32);
+            let named = (!it.icon_name.is_empty()).then(|| icons.get(&it.icon_name, tsz).map(|p| p.clone())).flatten();
+            let themed = || if it.theme_path.is_empty() || it.icon_name.is_empty() { None } else { crate::tray::icon_in(&it.theme_path, &it.icon_name, tsz) };
+            let drawn = named.or_else(themed).or_else(|| it.pixmap.as_ref().and_then(|p| if p.width() == tsz && p.height() == tsz { Some(p.clone()) } else { paint::area_resize(p, tsz, tsz) }));
+            match drawn {
+                Some(pm) => paint::draw_pixmap(pix, &pm, ix, iy),
+                None => {
+                    let letter: String = it.title.chars().chain(it.id.chars()).next().map(|c| c.to_uppercase().collect()).unwrap_or_else(|| "?".into());
+                    let lw = paint::text_width(&fonts.bold, 11.0 * s, &letter);
+                    paint::draw_text(pix, &fonts.bold, 11.0 * s, rx + (tw - lw) / 2.0, cy, lk.text, &letter);
+                }
+            }
+            hits.push(Hit { rect: (rx, 0.0, tw, h), action: Action::Tray(it.key.clone()) });
+            rx -= 6.0 * s;
+        }
     }
 
     let iw = 28.0 * s;
@@ -1061,7 +1092,7 @@ mod tests {
     fn pane_draws() {
         let Some(fonts) = Fonts::load() else { return };
         let mut icons = Icons::new();
-        let mut m = Model { apps: vec![], pinned: vec![], wins: vec![], clock: String::new(), clock_secs: "05:03:11".into(), date: String::new(), today: (2026, 10, 16), user: String::new(), notch_open: false, fylgja: Default::default(), notch_w: 0.0, notch_tab: None, notifs: Default::default(), hibernate: false, conf: PanelConf::default(), dark: true, status: Default::default(), trash_full: false };
+        let mut m = Model { apps: vec![], pinned: vec![], wins: vec![], clock: String::new(), clock_secs: "05:03:11".into(), date: String::new(), today: (2026, 10, 16), user: String::new(), notch_open: false, fylgja: Default::default(), notch_w: 0.0, notch_tab: None, notifs: Default::default(), tray: vec![], hibernate: false, conf: PanelConf::default(), dark: true, status: Default::default(), trash_full: false };
         m.conf.notify_pane = true;
         let now = crate::notify::now_secs();
         for (id, app, sum, age) in [(1, "Mail", "Alice", 600), (2, "Mail", "Bob", 120), (3, "Heimdall", "Critical", 30)] {
@@ -1083,7 +1114,7 @@ mod tests {
 
     #[test]
     fn pinned_apps_come_first_and_missing_ones_are_skipped() {
-        let m = Model { apps: vec![app("minos", "Minos"), app("vivaldi-stable", "Vivaldi")], pinned: vec!["vivaldi-stable".into(), "ghost".into(), "minos".into()], wins: vec![], clock: String::new(), clock_secs: String::new(), date: String::new(), today: (2026, 1, 1), user: String::new(), notch_open: false, fylgja: Default::default(), notch_w: 0.0, notch_tab: None, notifs: Default::default(), hibernate: false, conf: PanelConf::default(), dark: true, status: Default::default(), trash_full: false };
+        let m = Model { apps: vec![app("minos", "Minos"), app("vivaldi-stable", "Vivaldi")], pinned: vec!["vivaldi-stable".into(), "ghost".into(), "minos".into()], wins: vec![], clock: String::new(), clock_secs: String::new(), date: String::new(), today: (2026, 1, 1), user: String::new(), notch_open: false, fylgja: Default::default(), notch_w: 0.0, notch_tab: None, notifs: Default::default(), tray: vec![], hibernate: false, conf: PanelConf::default(), dark: true, status: Default::default(), trash_full: false };
         let items = dock_items(&m);
         assert_eq!(items.iter().map(|i| i.app_id.as_str()).collect::<Vec<_>>(), vec!["vivaldi-stable", "minos", TRASH_ID]); // the trash is always last
         assert!(items.iter().all(|i| i.pinned && i.wins.is_empty()));

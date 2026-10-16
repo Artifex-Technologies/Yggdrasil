@@ -15,6 +15,7 @@ mod osd;
 mod stats;
 mod shell;
 mod status;
+mod tray;
 
 use std::collections::HashMap;
 use std::os::fd::AsFd;
@@ -878,6 +879,14 @@ impl State {
         }
     }
 
+    /// A tray icon was clicked: tell its app (the screen position is just under the icon).
+    fn tray_click(&mut self, key: &str, kind: &'static str) {
+        if let Some(it) = self.model.tray.iter().find(|t| t.key == key) {
+            let (x, y) = (self.pointer_pos.0 as i32, shell::BAR_H as i32);
+            tray::call(it, kind, x, y);
+        }
+    }
+
     /// Something in the notification list was clicked.
     fn notif_act(&mut self, act: notify::NAct) {
         use notify::NAct;
@@ -1690,6 +1699,7 @@ impl State {
                 }
                 self.remove_notif(id, 2);
             }
+            Action::Tray(key) => self.tray_click(&key, "Activate"),
             Action::Notifications => {
                 if self.model.conf.notify_pane {
                     self.toggle_calendar();
@@ -2059,6 +2069,15 @@ impl Dispatch<WlPointer, ()> for State {
                             }
                         }
                     }
+                } else if button == 273 {
+                    // 273 = BTN_RIGHT: on a tray icon it asks the app for its menu
+                    if let Some(i) = state.pointer_surface {
+                        if let Some(h) = state.surfs.get(i).and_then(|s| s.hover) {
+                            if let Some(Hit { action: Action::Tray(key), .. }) = state.surfs[i].hits.get(h).cloned() {
+                                state.tray_click(&key, "ContextMenu");
+                            }
+                        }
+                    }
                 }
             }
             _ => {}
@@ -2184,7 +2203,7 @@ fn main() {
         viewporter,
         plasma_shell,
         shm,
-        model: Model { apps: apps::load_all(), pinned: apps::pinned(), wins: vec![], clock: clock_text(PanelConf::load().clock_24h), clock_secs: secs_text(PanelConf::load().clock_24h), date: date_text(), today: today_ymd(), user: user_name(), hibernate: shell::can_hibernate(), conf: PanelConf::load(), dark: system_dark(), status: Default::default(), trash_full: shell::trash_has_files(), notch_open: false, fylgja: Default::default(), notch_w: 0.0, notch_tab: None, notifs: notify::Store::load(notify::state_path()) },
+        model: Model { apps: apps::load_all(), pinned: apps::pinned(), wins: vec![], clock: clock_text(PanelConf::load().clock_24h), clock_secs: secs_text(PanelConf::load().clock_24h), date: date_text(), today: today_ymd(), user: user_name(), hibernate: shell::can_hibernate(), conf: PanelConf::load(), dark: system_dark(), status: Default::default(), trash_full: shell::trash_has_files(), notch_open: false, fylgja: Default::default(), notch_w: 0.0, notch_tab: None, notifs: notify::Store::load(notify::state_path()), tray: vec![] },
         assets: Assets { fonts, icons: paint::Icons::new() },
         surfs: vec![],
         next_surf: 0,
@@ -2349,6 +2368,24 @@ fn main() {
             }
         })
         .expect("toast hide channel");
+    // the system tray: apps' icons come and go
+    let (tray_tx, tray_rx) = calloop::channel::channel::<tray::TrayMsg>();
+    tray::spawn(tray_tx);
+    event_loop
+        .handle()
+        .insert_source(tray_rx, |event, _, st| {
+            if let calloop::channel::Event::Msg(m) = event {
+                match m {
+                    tray::TrayMsg::Set(it) => match st.model.tray.iter().position(|t| t.key == it.key) {
+                        Some(i) => st.model.tray[i] = it,
+                        None => st.model.tray.push(it),
+                    },
+                    tray::TrayMsg::Remove(k) => st.model.tray.retain(|t| t.key != k),
+                }
+                st.dirty = true;
+            }
+        })
+        .expect("tray channel");
     // each step of Fylgja sliding: redraw, and finish a close once it has gone up
     event_loop
         .handle()
