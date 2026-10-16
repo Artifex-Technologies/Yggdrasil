@@ -33,6 +33,14 @@ fn human(bytes: u64) -> String {
     }
 }
 
+fn span(secs: u64) -> String {
+    match secs {
+        0..=59 => format!("{secs} s"),
+        60..=3599 => format!("{} min", secs / 60),
+        _ => format!("{} h {} min", secs / 3600, secs % 3600 / 60),
+    }
+}
+
 fn ago(last: u64) -> String {
     if last == 0 {
         return "never opened from here".into();
@@ -77,7 +85,7 @@ fn sorted<'a>(apps: &'a [AppInfo], sort: usize, sizes: &HashMap<String, u64>, fi
     let f = filter.trim().to_lowercase();
     let mut v: Vec<&AppInfo> = apps.iter().filter(|a| (system || !a.system || a.running.len() > 0 || a.net != NetMode::Allow) && (f.is_empty() || a.name.to_lowercase().contains(&f) || a.id.to_lowercase().contains(&f))).collect();
     match sort {
-        0 => v.sort_by(|a, b| b.launches.cmp(&a.launches).then(b.last_used.cmp(&a.last_used)).then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))),
+        0 => v.sort_by(|a, b| b.seconds.cmp(&a.seconds).then(b.launches.cmp(&a.launches)).then(b.last_used.cmp(&a.last_used)).then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))),
         1 => v.sort_by(|a, b| sizes.get(&b.id).unwrap_or(&0).cmp(sizes.get(&a.id).unwrap_or(&0)).then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))),
         _ => v.sort_by_key(|a| a.name.to_lowercase()),
     }
@@ -142,6 +150,9 @@ impl App {
                         bits.push("Running".into());
                     }
                     bits.push(if a.launches > 0 { format!("opened {} time{} here", a.launches, if a.launches == 1 { "" } else { "s" }) } else { "not opened from here yet".into() });
+                    if a.seconds >= 60 {
+                        bits.push(format!("used {}", span(a.seconds)));
+                    }
                     if !size.is_empty() && size != "0 B" {
                         bits.push(size);
                     }
@@ -256,7 +267,7 @@ impl App {
                     startup = Some(on);
                 }
             });
-            ui::row(ui, pal, false, "Status", Some(&format!("Opened {} time{} from here, last {}", a.launches, if a.launches == 1 { "" } else { "s" }, ago(a.last_used))), |ui| {
+            ui::row(ui, pal, false, "Status", Some(&format!("Opened {} time{} from here, last {}. Used for {} in total", a.launches, if a.launches == 1 { "" } else { "s" }, ago(a.last_used), span(a.seconds))), |ui| {
                 if icon_button(ui, pal, Icon::Close, "Close", !a.running.is_empty(), false).clicked() {
                     close = true;
                 }

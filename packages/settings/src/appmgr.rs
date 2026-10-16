@@ -69,6 +69,8 @@ pub struct AppInfo {
     pub running: Vec<String>,
     pub launches: u64,
     pub last_used: u64,
+    /// How long it has been running in total (labyrinth-appusage counts this).
+    pub seconds: u64,
     pub net: NetMode,
     /// A technical tool (settings panels, network helpers) rather than an app people open, hidden unless asked for.
     pub system: bool,
@@ -254,9 +256,9 @@ unsafe fn libc_getuid() -> u32 {
     getuid()
 }
 
-pub fn load_usage() -> HashMap<String, (u64, u64)> {
+pub fn load_usage() -> HashMap<String, (u64, u64, u64)> {
     let v = read_json(&data_home().join("labyrinth/app-usage.json"));
-    v.as_object().map(|m| m.iter().map(|(k, e)| (k.clone(), (e["launches"].as_u64().unwrap_or(0), e["last"].as_u64().unwrap_or(0)))).collect()).unwrap_or_default()
+    v.as_object().map(|m| m.iter().map(|(k, e)| (k.clone(), (e["launches"].as_u64().unwrap_or(0), e["last"].as_u64().unwrap_or(0), e["seconds"].as_u64().unwrap_or(0)))).collect()).unwrap_or_default()
 }
 
 /// Whether the app starts when you log in: your own autostart entry decides, else the system's.
@@ -320,7 +322,7 @@ pub fn list_apps(icon_theme: &str) -> Vec<AppInfo> {
             }
             seen.insert(id.clone());
             let icon = d.get("Icon").cloned().unwrap_or_default();
-            let (launches, last_used) = usage.get(&id).copied().unwrap_or((0, 0));
+            let (launches, last_used, seconds) = usage.get(&id).copied().unwrap_or((0, 0, 0));
             out.push(AppInfo {
                 name: d.get("Name").cloned().unwrap_or_else(|| id.clone()),
                 comment: d.get("Comment").cloned().unwrap_or_default(),
@@ -332,6 +334,7 @@ pub fn list_apps(icon_theme: &str) -> Vec<AppInfo> {
                 running: units_of(&id, &units),
                 launches,
                 last_used,
+                seconds,
                 net: rules.get(&id).copied().unwrap_or_default(),
                 system: d.get("Categories").map(|c| c.split(';').any(|x| matches!(x, "Settings" | "DesktopSettings" | "HardwareSettings"))).unwrap_or(false) || id.starts_with("avahi") || id.starts_with("bssh") || id.starts_with("bvnc") || id.starts_with("qv4l2") || id.starts_with("qvidcap"),
                 startup: startup_enabled(&id),
