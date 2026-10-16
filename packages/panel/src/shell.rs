@@ -134,6 +134,8 @@ pub enum Action {
     Notifications,
     /// A tray icon, by its registration key: left click activates it, right click opens its menu.
     Tray(String),
+    /// The chevron beside the tray icons: the ones that are hidden.
+    TrayMore,
 }
 
 #[derive(Clone, Debug)]
@@ -385,9 +387,7 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
                 paint::fill_rounded(pix, rx, py, tw, ph, r, lk.hover);
             }
             let (ix, iy) = ((rx + (tw - tsz as f32) / 2.0) as i32, (cy - tsz as f32 / 2.0).round() as i32);
-            let named = (!it.icon_name.is_empty()).then(|| icons.get(&it.icon_name, tsz).map(|p| p.clone())).flatten();
-            let themed = || if it.theme_path.is_empty() || it.icon_name.is_empty() { None } else { crate::tray::icon_in(&it.theme_path, &it.icon_name, tsz) };
-            let drawn = named.or_else(themed).or_else(|| it.pixmap.as_ref().and_then(|p| if p.width() == tsz && p.height() == tsz { Some(p.clone()) } else { paint::area_resize(p, tsz, tsz) }));
+            let drawn = crate::tray::icon_pixmap(it, icons, tsz);
             match drawn {
                 Some(pm) => paint::draw_pixmap(pix, &pm, ix, iy),
                 None => {
@@ -397,6 +397,19 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
                 }
             }
             hits.push(Hit { rect: (rx, 0.0, tw, h), action: Action::Tray(it.key.clone()) });
+            rx -= 6.0 * s;
+        }
+        // icons the apps keep hidden (status "Passive") are one click away
+        if m.tray.iter().any(|t| !t.shown()) {
+            let cw = 18.0 * s;
+            rx -= cw;
+            pill(pix, rx, cw);
+            if hover == Some(hits.len()) {
+                paint::fill_rounded(pix, rx, py, cw, ph, r, lk.hover);
+            }
+            let w2 = paint::text_width(&fonts.bold, 13.0 * s, "‹");
+            paint::draw_text(pix, &fonts.bold, 13.0 * s, rx + (cw - w2) / 2.0, cy - 1.0 * s, lk.dim, "‹");
+            hits.push(Hit { rect: (rx, 0.0, cw, h), action: Action::TrayMore });
             rx -= 6.0 * s;
         }
     }

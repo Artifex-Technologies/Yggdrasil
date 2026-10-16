@@ -26,6 +26,8 @@ pub struct TrayItem {
     pub pixmap: Option<Pixmap>,
     /// "Passive" items are hidden, "NeedsAttention" ones are shown.
     pub status: String,
+    /// The object path of the item's dbusmenu (its menu), when it has one.
+    pub menu_path: String,
 }
 
 impl TrayItem {
@@ -38,6 +40,8 @@ impl TrayItem {
 pub enum TrayMsg {
     Set(TrayItem),
     Remove(String),
+    /// An item's menu was read: its key, the entries, and where on the bar it was asked for.
+    Menu(String, Vec<MenuItem>, f32),
 }
 
 /// "name/path" or just "name" -> (bus name, object path). libappindicator items register as ":1.23/org/ayatana/NotificationItem/x".
@@ -92,6 +96,7 @@ pub fn fetch(conn: &Connection, key: &str) -> Option<TrayItem> {
         theme_path: text(&props, "IconThemePath"),
         pixmap,
         status: if props.contains_key("Status") { text(&props, "Status") } else { "Active".into() },
+        menu_path: props.get("Menu").and_then(|v| v.try_clone().ok()).and_then(|v| zbus::zvariant::OwnedObjectPath::try_from(v).ok()).map(|p| p.to_string()).filter(|p| p != "/").unwrap_or_default(),
     })
 }
 
@@ -172,6 +177,14 @@ pub fn spawn(tx: calloop::channel::Sender<TrayMsg>) {
     });
 }
 
+/// The item's icon at `px`: from the icon theme by name, else from the item's own icon folder, else its pixels.
+pub fn icon_pixmap(it: &TrayItem, icons: &mut crate::paint::Icons, px: u32) -> Option<Pixmap> {
+    let named = (!it.icon_name.is_empty()).then(|| icons.get(&it.icon_name, px).cloned()).flatten();
+    named
+        .or_else(|| if it.theme_path.is_empty() || it.icon_name.is_empty() { None } else { icon_in(&it.theme_path, &it.icon_name, px) })
+        .or_else(|| it.pixmap.as_ref().and_then(|p| if p.width() == px && p.height() == px { Some(p.clone()) } else { crate::paint::area_resize(p, px, px) }))
+}
+
 /// An icon the item ships in its own theme folder (`IconThemePath`): NAME.png or NAME.svg, scaled to `px`.
 pub fn icon_in(dir: &str, name: &str, px: u32) -> Option<Pixmap> {
     for ext in ["png", "svg"] {
@@ -192,6 +205,106 @@ pub fn call(item: &TrayItem, kind: &'static str, x: i32, y: i32) {
         if let Ok(conn) = Connection::session() {
             if let Ok(p) = Proxy::new(&conn, bus, path, "org.kde.StatusNotifierItem") {
                 let _ = p.call::<_, _, ()>(kind, &(x, y));
+            }
+        }
+    });
+}
+
+// ---------------------------------------------------------------- dbusmenu (the items' own menus)
+
+/// One entry of an item's menu (com.canonical.dbusmenu).
+#[derive(Clone, Debug, PartialEq)]
+pub struct MenuItem {
+    pub id: i32,
+    pub label: String,
+    pub enabled: bool,
+    pub separator: bool,
+    /// Some(true) for a ticked check or selected radio entry, Some(false) for an unticked one, None for a plain entry.
+    pub checked: Option<bool>,
+    pub children: Vec<MenuItem>,
+}
+
+/// A label without its keyboard-shortcut underscore ("_Open" -> "Open", "a__b" -> "a_b").
+pub fn clean_label(l: &str) -> String {
+    l.replace("__", "\u{1}").replace('_', "").replace('\u{1}', "_")
+}
+
+fn menu_from_value(v: &zbus::zvariant::Value) -> Option<MenuItem> {
+    use zbus::zvariant::Value;
+    let fields = match v {
+        Value::Structure(s) => s.fields(),
+        Value::Value(inner) => return menu_from_value(inner),
+        _ => return None,
+    };
+    let id = i32::try_from(fields.first()?).ok()?;
+    let mut props: HashMap<String, OwnedValue> = HashMap::new();
+    if let Value::Dict(d) = fields.get(1)? {
+        for (k, val) in d.iter() {
+            // dictionary values are variants: look at what is inside
+            let val = match val {
+                Value::Value(inner) => &**inner,
+                other => other,
+            };
+            if let (Ok(k), Ok(val)) = (<&str>::try_from(k), val.try_clone().and_then(OwnedValue::try_from)) {
+                props.insert(k.to_string(), val);
+            }
+        }
+    }
+    let flag = |k: &str, default: bool| props.get(k).and_then(|v| bool::try_from(v).ok()).unwrap_or(default);
+    let text = |k: &str| props.get(k).and_then(|v| <&str>::try_from(v).ok()).unwrap_or("").to_string();
+    if !flag("visible", true) {
+        return None;
+    }
+    let toggle = text("toggle-type");
+    let state = props.get("toggle-state").and_then(|v| i32::try_from(v).ok()).unwrap_or(0);
+    let mut children = vec![];
+    if let Some(Value::Array(a)) = fields.get(2) {
+        for c in a.iter() {
+            if let Some(m) = menu_from_value(c) {
+                children.push(m);
+            }
+        }
+    }
+    Some(MenuItem { id, label: clean_label(&text("label")), enabled: flag("enabled", true), separator: text("type") == "separator", checked: if toggle == "checkmark" || toggle == "radio" { Some(state == 1) } else { None }, children })
+}
+
+/// Reads an item's menu: the entries under the root.
+pub fn fetch_menu(bus: &str, path: &str) -> Option<Vec<MenuItem>> {
+    let conn = Connection::session().ok()?;
+    let p = Proxy::new(&conn, bus.to_string(), path.to_string(), "com.canonical.dbusmenu").ok()?;
+    let _ = p.call::<_, _, bool>("AboutToShow", &(0i32,)); // some apps build the menu only now
+    let reply = p.call_method("GetLayout", &(0i32, -1i32, Vec::<String>::new()));
+    let reply = match reply {
+        Ok(r) => r,
+        Err(e) => {
+            if std::env::var_os("LABYRINTH_PANEL_DEBUG").is_some() {
+                eprintln!("tray: GetLayout on {bus}{path} failed: {e}");
+            }
+            return None;
+        }
+    };
+    let body = reply.body();
+    // u(ia{sv}av): a revision, then the root node (id, properties, children as variants)
+    let parsed: Result<(u32, (i32, HashMap<String, OwnedValue>, Vec<OwnedValue>)), _> = body.deserialize();
+    match parsed {
+        Ok((_, (_, _, kids))) => Some(kids.iter().filter_map(|k| menu_from_value(k)).collect()),
+        Err(e) => {
+            if std::env::var_os("LABYRINTH_PANEL_DEBUG").is_some() {
+                eprintln!("tray: GetLayout reply not understood: {e}");
+            }
+            None
+        }
+    }
+}
+
+/// Tells the app an entry was chosen.
+pub fn menu_event(bus: &str, path: &str, id: i32) {
+    let (bus, path) = (bus.to_string(), path.to_string());
+    std::thread::spawn(move || {
+        if let Ok(conn) = Connection::session() {
+            if let Ok(p) = Proxy::new(&conn, bus, path, "com.canonical.dbusmenu") {
+                let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as u32).unwrap_or(0);
+                let _ = p.call::<_, _, ()>("Event", &(id, "clicked", zbus::zvariant::Value::from(0i32), stamp));
             }
         }
     });
@@ -220,8 +333,52 @@ mod tests {
     }
 
     #[test]
+    fn mnemonic_underscores_go() {
+        assert_eq!(clean_label("_Open window"), "Open window");
+        assert_eq!(clean_label("Save_as__x"), "Saveas_x");
+        assert_eq!(clean_label("Plain"), "Plain");
+    }
+
+    #[test]
+    fn a_menu_layout_is_read_with_submenus_separators_and_checks() {
+        use zbus::zvariant::{Array, Dict, Signature, StructureBuilder, Value};
+        let props = |kv: Vec<(&'static str, Value<'static>)>| -> Value<'static> {
+            let mut d = Dict::new(&Signature::Str, &Signature::Variant);
+            for (k, v) in kv {
+                d.append(Value::from(k), Value::new(v)).unwrap();
+            }
+            Value::Dict(d)
+        };
+        let node = |id: i32, kv: Vec<(&'static str, Value<'static>)>, kids: Vec<Value<'static>>| -> Value<'static> {
+            let mut a = Array::new(&Signature::Variant);
+            for k in kids {
+                a.append(Value::new(k)).unwrap();
+            }
+            Value::Structure(StructureBuilder::new().add_field(id).append_field(props(kv)).append_field(Value::Array(a)).build().unwrap())
+        };
+        let root = node(
+            0,
+            vec![],
+            vec![
+                node(1, vec![("label", Value::from("_Play"))], vec![]),
+                node(2, vec![("type", Value::from("separator"))], vec![]),
+                node(3, vec![("label", Value::from("Repeat")), ("toggle-type", Value::from("checkmark")), ("toggle-state", Value::from(1i32))], vec![]),
+                node(4, vec![("label", Value::from("More")), ("enabled", Value::from(false))], vec![node(5, vec![("label", Value::from("Inner"))], vec![])]),
+                node(6, vec![("label", Value::from("Hidden")), ("visible", Value::from(false))], vec![]),
+            ],
+        );
+        let m = menu_from_value(&root).unwrap();
+        assert_eq!(m.children.len(), 4, "the invisible entry is left out");
+        assert_eq!(m.children[0].label, "Play");
+        assert!(m.children[1].separator);
+        assert_eq!(m.children[2].checked, Some(true));
+        assert!(!m.children[3].enabled);
+        assert_eq!(m.children[3].children[0].label, "Inner");
+    }
+
+    #[test]
     fn passive_items_are_hidden() {
-        let mut it = TrayItem { key: "k".into(), bus: "b".into(), path: "/p".into(), id: String::new(), title: String::new(), icon_name: String::new(), theme_path: String::new(), pixmap: None, status: "Active".into() };
+        let mut it = TrayItem { key: "k".into(), bus: "b".into(), path: "/p".into(), id: String::new(), title: String::new(), icon_name: String::new(), theme_path: String::new(), pixmap: None, status: "Active".into(), menu_path: String::new() };
         assert!(it.shown());
         it.status = "Passive".into();
         assert!(!it.shown());

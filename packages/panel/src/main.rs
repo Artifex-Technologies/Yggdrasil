@@ -17,6 +17,7 @@ mod stats;
 mod shell;
 mod status;
 mod tray;
+mod trayui;
 
 use std::collections::HashMap;
 use std::os::fd::AsFd;
@@ -138,6 +139,8 @@ enum PopupKind {
     /// The calendar, this many months from the current one.
     Calendar { offset: i32 },
     Start(StartState),
+    /// The tray: an app's menu, or the hidden icons.
+    Tray(trayui::TrayPop),
     /// Fylgja, the notch, on this section.
     Fylgja(fylgja::FyState),
 }
@@ -288,6 +291,9 @@ struct State {
     pane_hits: Vec<(notify::Rect, notify::NAct)>,
     pane_top: f32,
     toasts: Vec<u32>,
+    /// What can be clicked in the tray pop-up, and the sender the tray threads report through.
+    tray_hits: Vec<(trayui::Rect, trayui::RowAct)>,
+    tray_tx: Option<calloop::channel::Sender<tray::TrayMsg>>,
     /// Wallpaper pictures already scaled to a screen's size.
     wall_cache: Vec<((String, u32, u32), Pixmap)>,
     toast_hide_tx: calloop::channel::Sender<u32>,
@@ -884,9 +890,59 @@ impl State {
 
     /// A tray icon was clicked: tell its app (the screen position is just under the icon).
     fn tray_click(&mut self, key: &str, kind: &'static str) {
-        if let Some(it) = self.model.tray.iter().find(|t| t.key == key) {
-            let (x, y) = (self.pointer_pos.0 as i32, shell::BAR_H as i32);
-            tray::call(it, kind, x, y);
+        let Some(it) = self.model.tray.iter().find(|t| t.key == key).cloned() else { return };
+        let (x, y) = (self.pointer_pos.0 as i32, shell::BAR_H as i32);
+        // an item with a dbusmenu gets Labyrinth's own menu (themed, placed under the bar); the rest are asked to show theirs
+        if kind == "ContextMenu" && !it.menu_path.is_empty() {
+            if let Some(tx) = self.tray_tx.clone() {
+                let ax = self.pointer_pos.0;
+                std::thread::spawn(move || match tray::fetch_menu(&it.bus, &it.menu_path) {
+                    Some(items) if !items.is_empty() => {
+                        let _ = tx.send(tray::TrayMsg::Menu(it.key.clone(), items, ax));
+                    }
+                    _ => tray::call(&it, "ContextMenu", x, y),
+                });
+                return;
+            }
+        }
+        tray::call(&it, kind, x, y);
+    }
+
+    /// Opens (or replaces) the tray pop-up under the bar.
+    fn open_tray_popup(&mut self, pop: trayui::TrayPop) {
+        if self.popup.is_some() {
+            self.close_popup();
+        }
+        self.toggle_popup(PopupKind::Tray(pop));
+        self.dirty = true;
+    }
+
+    /// A row of the tray pop-up was clicked.
+    fn tray_row(&mut self, act: trayui::RowAct) {
+        use trayui::RowAct;
+        match act {
+            RowAct::Activate(key) => {
+                self.close_popup();
+                self.tray_click(&key, "Activate");
+            }
+            RowAct::Choose(key, id) => {
+                if let Some(it) = self.model.tray.iter().find(|t| t.key == key) {
+                    tray::menu_event(&it.bus, &it.menu_path, id);
+                }
+                self.close_popup();
+            }
+            RowAct::Sub(id) => {
+                if let Some(Popup { kind: PopupKind::Tray(trayui::TrayPop { mode: trayui::TrayMode::Menu { path, .. }, .. }), .. }) = &mut self.popup {
+                    path.push(id);
+                }
+                self.dirty = true;
+            }
+            RowAct::Back => {
+                if let Some(Popup { kind: PopupKind::Tray(trayui::TrayPop { mode: trayui::TrayMode::Menu { path, .. }, .. }), .. }) = &mut self.popup {
+                    path.pop();
+                }
+                self.dirty = true;
+            }
         }
     }
 
@@ -1063,7 +1119,7 @@ impl State {
                     st.scroll = (st.scroll + by * 3).clamp(0, max);
                 }
             }
-            None => return,
+            Some(PopupKind::Tray(_)) | None => return,
         }
         self.dirty = true;
     }
@@ -1599,6 +1655,12 @@ impl State {
                         self.popup_card = card;
                         self.fy_hits = hits;
                     }
+                    Some(Popup { kind: PopupKind::Tray(pop), .. }) => {
+                        let pop = pop.clone();
+                        let (card, hits) = trayui::paint(&mut pix, s, &pop, &self.model, self.pointer_pos, &self.assets.fonts, &mut self.assets.icons);
+                        self.popup_card = card;
+                        self.tray_hits = hits;
+                    }
                     Some(Popup { kind: PopupKind::Calendar { offset }, .. }) => {
                         let pane = self.model.conf.notify_pane;
                         let card = shell::paint_calendar(&mut pix, s, &self.model, *offset, &self.assets.fonts, pane);
@@ -1703,6 +1765,10 @@ impl State {
                 self.remove_notif(id, 2);
             }
             Action::Tray(key) => self.tray_click(&key, "Activate"),
+            Action::TrayMore => {
+                let x = self.pointer_pos.0;
+                self.open_tray_popup(trayui::TrayPop { anchor_x: x, mode: trayui::TrayMode::Overflow });
+            }
             Action::Notifications => {
                 if self.model.conf.notify_pane {
                     self.toggle_calendar();
@@ -2050,6 +2116,11 @@ impl Dispatch<WlPointer, ()> for State {
                                 st.power_open = false; // a click elsewhere puts the power choices away
                                 state.dirty = true;
                             }
+                        } else if matches!(state.popup, Some(Popup { kind: PopupKind::Tray(_), .. })) {
+                            let hit = state.tray_hits.iter().rev().find(|(r, _)| px >= r.0 && px < r.0 + r.2 && py >= r.1 && py < r.1 + r.3).map(|(_, a)| a.clone());
+                            if let Some(a) = hit {
+                                state.tray_row(a);
+                            }
                         } else if state.model.conf.notify_pane && py >= state.pane_top {
                             let hit = state.pane_hits.iter().rev().find(|(r, _)| px >= r.0 && px < r.0 + r.2 && py >= r.1 && py < r.1 + r.3).map(|(_, a)| a.clone());
                             if let Some(a) = hit {
@@ -2235,6 +2306,8 @@ fn main() {
         pane_hits: vec![],
         pane_top: 0.0,
         toasts: vec![],
+        tray_hits: vec![],
+        tray_tx: None,
         wall_cache: vec![],
         toast_hide_tx,
         icon_stamp: None,
@@ -2374,7 +2447,8 @@ fn main() {
         .expect("toast hide channel");
     // the system tray: apps' icons come and go
     let (tray_tx, tray_rx) = calloop::channel::channel::<tray::TrayMsg>();
-    tray::spawn(tray_tx);
+    tray::spawn(tray_tx.clone());
+    state.tray_tx = Some(tray_tx);
     event_loop
         .handle()
         .insert_source(tray_rx, |event, _, st| {
@@ -2385,6 +2459,7 @@ fn main() {
                         None => st.model.tray.push(it),
                     },
                     tray::TrayMsg::Remove(k) => st.model.tray.retain(|t| t.key != k),
+                    tray::TrayMsg::Menu(key, items, x) => st.open_tray_popup(trayui::TrayPop { anchor_x: x, mode: trayui::TrayMode::Menu { key, items, path: vec![] } }),
                 }
                 st.dirty = true;
             }
