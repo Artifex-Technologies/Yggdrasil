@@ -1,0 +1,22 @@
+[package]
+name = "labyrinth-polkit"
+version = "0.1.0"
+edition = "2021"
+description = "Labyrinth's polkit authentication agent: the password box that appears when something asks for administrator rights (pkexec, Settings)"
+license = "MIT"
+
+[[bin]]
+name = "labyrinth-polkit"
+path = "src/main.rs"
+
+[dependencies]
+eframe = "0.36.2"
+zbus = "5"
+libc = "0.2"
+zeroize = "1"
+labyrinth-ui = { path = "../labyrinth-ui" }
+
+[profile.release]
+opt-level = 2
+lto = "thin"
+strip = true
