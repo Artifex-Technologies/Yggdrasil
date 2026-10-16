@@ -9,6 +9,7 @@
 mod apps;
 mod paint;
 mod calendar;
+mod devices;
 mod fylgja;
 mod notify;
 mod osd;
@@ -856,7 +857,9 @@ impl State {
         if n.actions.iter().any(|(k, _)| k == "default") {
             notify::emit_action(id, "default");
         }
-        if !n.link.is_empty() {
+        if let Some(dev) = n.link.strip_prefix("mount:") {
+            run(&["labyrinth-mount-open", dev]);
+        } else if !n.link.is_empty() {
             run(&["labyrinth-settings", &n.link]);
         } else if n.app != notify::HEIMDALL_APP {
             self.focus_or_launch(&n);
@@ -2351,7 +2354,8 @@ fn main() {
     notify::set_next_id(state.model.notifs.max_id());
     state.model.notifs.dnd = state.model.conf.notify_dnd;
     notify::spawn_server(note_tx.clone());
-    notify::spawn_heimdall(note_tx);
+    notify::spawn_heimdall(note_tx.clone());
+    devices::spawn(note_tx);
     event_loop
         .handle()
         .insert_source(note_rx, |event, _, st| {
