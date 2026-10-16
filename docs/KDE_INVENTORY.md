@@ -28,7 +28,7 @@ files. Companion to `DESKTOP_ROADMAP.md` (which fixes the order). Effort: **S** 
 | `ksmserver` / `startplasma-wayland` | starts the session, autostart, logout | a small session script + a systemd user target | M | After the compositor question is settled. |
 | `sddm` (+ `sddm-helper`) | login screen | `greetd` with a Labyrinth greeter (greetd is a plain protocol; the greeter is our own Rust program, same look as the locker) | M | Roadmap item 5. |
 | `baloo_file` | file indexing (CPU and disk, and a privacy question: it reads everything) | nothing: Minos has its own search | S | **Quick win, not done:** `balooctl6 disable`. Reversible. |
-| `kactivitymanagerd`, `kaccess` | activities, accessibility bell | drop (accessibility needs a plan before `kaccess`/`screenreader` go) | S | |
+| `kactivitymanagerd`, `kaccess` | activities, accessibility bell | drop later: see [ACCESSIBILITY.md](ACCESSIBILITY.md) (the plan) before `kaccess`/`screenreader` go | S | |
 
 ## Installed KDE packages that matter (explicit)
 
