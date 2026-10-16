@@ -10,6 +10,7 @@
 mod appmgr;
 mod apps_ui;
 mod icons;
+mod restore;
 mod security;
 mod sys;
 mod ui;
@@ -37,6 +38,7 @@ enum Page {
     Power,
     Users,
     Security,
+    Restore,
     Firewall,
     DateTime,
     Apps,
@@ -44,7 +46,7 @@ enum Page {
     About,
 }
 
-const PAGES: [(Page, &str, Icon); 13] = [
+const PAGES: [(Page, &str, Icon); 14] = [
     (Page::Network, "Wi-Fi & Network", Icon::Wifi),
     (Page::Bluetooth, "Bluetooth", Icon::Bluetooth),
     (Page::Displays, "Displays", Icon::Display),
@@ -53,6 +55,7 @@ const PAGES: [(Page, &str, Icon); 13] = [
     (Page::Power, "Power", Icon::Power),
     (Page::Users, "Users", Icon::User),
     (Page::Security, "Security", Icon::Shield),
+    (Page::Restore, "Restore points", Icon::Restart),
     (Page::Firewall, "Firewall", Icon::Shield),
     (Page::DateTime, "Date & Time", Icon::Clock),
     (Page::Apps, "Apps", Icon::Apps),
@@ -71,6 +74,7 @@ enum Msg {
     Firewall(bool),
     Account(users::Account, String),
     Security(security::Overview),
+    Restore(restore::State),
     Scan(security::ScanReport),
     Password(Result<(), String>),
     Time(sys::Time),
@@ -83,6 +87,7 @@ enum Msg {
 
 #[derive(Default)]
 struct Data {
+    restore: Option<restore::State>,
     security: Option<security::Overview>,
     account: Option<(users::Account, String)>,
     about: Option<sys::About>,
@@ -209,6 +214,7 @@ impl App {
                 Page::Firewall => Msg::Firewall(sys::firewall_on()),
                 Page::Users => Msg::Account(users::account(), users::keyring_state()),
                 Page::Security => Msg::Security(security::overview()),
+                Page::Restore => Msg::Restore(restore::load()),
                 Page::DateTime => Msg::Time(sys::time()),
                 Page::Apps => {
                     let _ = tx.send(Msg::Installed(load_installed(&tx)));
@@ -246,6 +252,7 @@ impl App {
                 Msg::Firewall(v) => self.data.firewall = Some(v),
                 Msg::Account(a, k) => self.data.account = Some((a, k)),
                 Msg::Security(o) => self.data.security = Some(o),
+                Msg::Restore(r) => self.data.restore = Some(r),
                 Msg::Scan(r) => {
                     self.scan_busy = false;
                     self.scan_report = Some(r);
@@ -392,6 +399,7 @@ impl eframe::App for App {
                         Page::Firewall => self.page_firewall(ui, &pal, &ctx),
                         Page::Users => self.page_users(ui, &pal, &ctx),
                         Page::Security => self.page_security(ui, &pal, &ctx),
+                        Page::Restore => self.page_restore(ui, &pal, &ctx),
                         Page::DateTime => self.page_time(ui, &pal, &ctx),
                         Page::Apps => self.page_apps(ui, &pal, &ctx),
                         Page::Shortcuts => page_shortcuts(ui, &pal),
@@ -1196,6 +1204,55 @@ impl App {
                 let _ = tx.send(Msg::Scan(security::scan_folder(&folder)));
                 ctx2.request_repaint();
             });
+        }
+    }
+
+    fn page_restore(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
+        let Some(state) = self.data.restore.clone() else { return loading(ui) };
+        match state {
+            restore::State::Unavailable(why) => {
+                ui::group(ui, pal, None, |ui| {
+                    ui::row(ui, pal, true, "Restore points are not available", Some(&why), |_| {});
+                });
+            }
+            restore::State::NoPermission => {
+                let mut allow = false;
+                ui::group(ui, pal, None, |ui| {
+                    ui::row(ui, pal, true, "Restore points exist, but you are not allowed to see them yet", Some("One administrator question lets you list, create and delete them here"), |ui| {
+                        allow = ui::quiet(ui, pal, "Allow me…").clicked();
+                    });
+                });
+                if allow {
+                    self.change(ctx, || restore::allow_me());
+                }
+            }
+            restore::State::Ready(list) => {
+                let mut make = false;
+                let mut remove: Option<u64> = None;
+                ui::group(ui, pal, Some("Restore points"), |ui| {
+                    ui::row(ui, pal, true, "Make one now", Some("A copy of the system as it is: go back to it if an update or a change goes wrong. Your files in the home folder are not part of it"), |ui| {
+                        make = ui::quiet(ui, pal, "Make restore point").clicked();
+                    });
+                    for s in list.iter().take(40) {
+                        let sub = format!("{}{}", s.date, if s.important { " · kept until you delete it" } else { "" });
+                        ui::row(ui, pal, false, &restore::title(s), Some(&sub), |ui| {
+                            if s.cleanup.is_empty() && ui.button("Delete").clicked() {
+                                remove = Some(s.number);
+                            }
+                        });
+                    }
+                });
+                ui.add_space(8.0);
+                ui::group(ui, pal, Some("Going back to one"), |ui| {
+                    ui::row(ui, pal, true, "From the boot menu", Some("Restart, choose \"Arch Linux snapshots\" in the boot menu, pick the restore point and start it. If it is what you want, make it permanent with: sudo snapper rollback"), |_| {});
+                });
+                if make {
+                    self.change(ctx, || restore::create("Restore point made in Settings"));
+                }
+                if let Some(n) = remove {
+                    self.change(ctx, move || restore::delete(n));
+                }
+            }
         }
     }
 
