@@ -867,6 +867,31 @@ impl App {
                 }
             });
         });
+        ui::group(ui, pal, Some("Notifications"), |ui| {
+            ui::row(ui, pal, true, "Pop-ups", Some("A new notification slides in at the bottom right for a few seconds. They are all kept in the Notification Center either way"), |ui| {
+                if ui::switch(ui, pal, &mut conf.notify_toasts).changed() {
+                    conf_changed = true;
+                }
+            });
+            ui::row(ui, pal, false, "Notification Center pane", Some("Off: notifications are in Fylgja's Notifications section. On: a pane down the right edge, opened with the calendar (click the date)"), |ui| {
+                if ui::switch(ui, pal, &mut conf.notify_pane).changed() {
+                    conf_changed = true;
+                }
+            });
+            let levels = ["Off", "Critical", "Warnings", "Everything"];
+            let cur = match conf.heimdall_alerts {
+                labyrinth_conf::AlertLevel::Off => 0,
+                labyrinth_conf::AlertLevel::Critical => 1,
+                labyrinth_conf::AlertLevel::Warning => 2,
+                labyrinth_conf::AlertLevel::Info => 3,
+            };
+            ui::row(ui, pal, false, "Heimdall alerts", Some("Which of Heimdall's security alerts show up as notifications. Everything includes each new place a program connects to"), |ui| {
+                if let Some(i) = ui::segmented(ui, pal, &levels, cur) {
+                    conf.heimdall_alerts = [labyrinth_conf::AlertLevel::Off, labyrinth_conf::AlertLevel::Critical, labyrinth_conf::AlertLevel::Warning, labyrinth_conf::AlertLevel::Info][i];
+                    conf_changed = true;
+                }
+            });
+        });
         ui::group(ui, pal, Some("Wallpaper"), |ui| {
             ui.add_space(6.0);
             ui.horizontal_wrapped(|ui| {

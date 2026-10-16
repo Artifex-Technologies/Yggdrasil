@@ -26,7 +26,7 @@ Each step must work alongside KDE until it has earned the place, and each can be
    2026-10-15 with "never sleep" written in its config; a system-level block (`/etc/systemd/sleep.conf.d/10-never-sleep.conf`)
    is the stopgap. Own it: read the idle state through Wayland, honour logind inhibitors, one clear setting
    per behaviour, an honest log of why it slept.
-2. **Notification service** (`org.freedesktop.Notifications`), with the notch or a right-hand pane (see STATUS.md).
+2. **Notification service** (`org.freedesktop.Notifications`), with the notch or a right-hand pane (see STATUS.md). **Built 2026-10-16** (see NOTIFICATIONS.md): service, grouped list, pop-ups, Fylgja section, right pane, Heimdall feed; to check on a fresh install.
 3. **Portals backend** (replaces xdg-desktop-portal-kde): **Minos as the file chooser** (the open/save dialog
    every app shows), screenshot and screencast. This is also where per-app permissions (files, camera,
    microphone, location, screen) are asked and remembered, so it is the heart of the privacy model.

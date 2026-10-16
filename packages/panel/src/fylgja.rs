@@ -19,8 +19,9 @@ use serde_json::Value;
 use crate::paint::{self, Fonts, Icons, Rgba};
 use crate::shell::{Model, PowerAct, StartAct};
 
-pub const SECTIONS: [&str; 7] = ["Controls", "Today", "Stats", "Clipboard", "Apps", "Wallpaper", "Power"];
+pub const SECTIONS: [&str; 7] = ["Controls", "Today", "Stats", "Clipboard", "Notifications", "Wallpaper", "Power"];
 const CLIPBOARD: usize = 3;
+pub const NOTIFS: usize = 4;
 const WALLPAPER: usize = 5;
 const WALL_PAGE: usize = 8;
 const MAX_CLIPS: usize = 25;
@@ -659,6 +660,8 @@ pub enum FAct {
     /// Copy this item of the clipboard history again.
     Clip(usize),
     ClipClear,
+    /// Something in the notification list (shared with the right-hand pane).
+    Notif(crate::notify::NAct),
     Wall(PathBuf),
     /// The wallpaper page: -1 back, +1 on.
     WallPage(i32),
@@ -765,6 +768,7 @@ pub fn card_size(m: &Model, st: &FyState) -> (f32, f32) {
         return match st.section {
             0 => (440.0, controls_height(m, st)),
             2 => (crate::stats::CARD_W, crate::stats::card_h(m)),
+            NOTIFS => (440.0, 372.0),
             _ => (440.0, 192.0),
         };
     }
@@ -1144,22 +1148,10 @@ pub fn paint(pix: &mut Pixmap, s: f32, m: &Model, st: &FyState, slide: f32, poin
                 hits.push(FHit { rect: b, act: FAct::ClipClear });
             }
         }
-        4 => {
-            let apps = crate::shell::pinned_apps(m);
-            let (cell, cols) = (62.0, 6usize);
-            for (i, a) in apps.iter().take(cols * 2).enumerate() {
-                let (c, r) = (i % cols, i / cols);
-                let rect = (x0 + 4.0 + c as f32 * cell, top + r as f32 * 78.0, cell - 4.0, 70.0);
-                if over(pointer, rect) {
-                    paint::fill_rounded(pix, rect.0 * s, rect.1 * s, rect.2 * s, rect.3 * s, 10.0 * s, (255, 255, 255, 24));
-                }
-                if let Some(ic) = icons.get(&a.icon, (36.0 * s) as u32) {
-                    paint::draw_pixmap(pix, ic, ((rect.0 + (rect.2 - 36.0) / 2.0) * s) as i32, ((rect.1 + 6.0) * s) as i32);
-                }
-                let label = fit(&fonts.regular, 10.5 * s, &a.name, (rect.2 - 2.0) * s);
-                let lw = paint::text_width(&fonts.regular, 10.5 * s, &label);
-                paint::draw_text(pix, &fonts.regular, 10.5 * s, (rect.0 + rect.2 / 2.0) * s - lw / 2.0, (rect.1 + 56.0) * s, DIM, &label);
-                hits.push(FHit { rect, act: FAct::Start(StartAct::Launch(a.id.clone())) });
+        NOTIFS => {
+            let area = (x0, cy + 14.0, inner, ch - 22.0);
+            for (rect, act) in crate::notify::paint_list(pix, s, area, &m.notifs, pointer, crate::notify::now_secs(), fonts, icons) {
+                hits.push(FHit { rect, act: FAct::Notif(act) });
             }
         }
         WALLPAPER => {

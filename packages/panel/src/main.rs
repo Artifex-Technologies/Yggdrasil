@@ -10,6 +10,7 @@ mod apps;
 mod paint;
 mod calendar;
 mod fylgja;
+mod notify;
 mod osd;
 mod stats;
 mod shell;
@@ -77,6 +78,8 @@ enum Kind {
     Popup,
     /// The volume / brightness pop-up: a small pill a little above the dock.
     Osd,
+    /// Notification pop-ups, stacked at the bottom right of the main screen.
+    Toast,
 }
 
 /// The panel's own D-Bus service, so a key press elsewhere (the Super key, through KWin) can reach it:
@@ -262,6 +265,12 @@ struct State {
     osd: Option<osd::OsdState>,
     osd_gen: u64,
     osd_hide_tx: calloop::channel::Sender<u64>,
+    /// Notification pop-ups on screen (ids, oldest first), and how their hide timers report.
+    /// The Notification Center pane (when on): what can be clicked in its list, and where the list starts.
+    pane_hits: Vec<(notify::Rect, notify::NAct)>,
+    pane_top: f32,
+    toasts: Vec<u32>,
+    toast_hide_tx: calloop::channel::Sender<u32>,
     /// When Minos's generated icon file last changed (it follows the accent colour).
     icon_stamp: Option<std::time::SystemTime>,
     /// The icon pack chosen in KDE, to notice a change.
@@ -696,6 +705,154 @@ impl State {
         self.osd = None;
     }
 
+    /// A notification arrived from an app or from Heimdall (or an app asked to take one away).
+    fn on_notif(&mut self, msg: notify::NMsg) {
+        match msg {
+            notify::NMsg::New(n) => {
+                let (id, urgency) = (n.id, n.urgency);
+                self.model.notifs.add(n);
+                if self.model.conf.notify_toasts && urgency > 0 {
+                    self.toasts.retain(|t| *t != id);
+                    self.toasts.push(id);
+                    while self.toasts.len() > 3 {
+                        self.toasts.remove(0);
+                    }
+                    let (tx, secs) = (self.toast_hide_tx.clone(), if urgency == 2 { 14 } else { 7 });
+                    std::thread::spawn(move || {
+                        std::thread::sleep(Duration::from_secs(secs));
+                        let _ = tx.send(id);
+                    });
+                    self.sync_toasts();
+                }
+                self.dirty = true;
+            }
+            notify::NMsg::Close(id) => self.remove_notif(id, 3),
+        }
+    }
+
+    /// Takes a notification away for good (reason 2: the user did it, 3: the app asked) and tells its app.
+    fn remove_notif(&mut self, id: u32, reason: u32) {
+        if self.model.notifs.remove(id).is_some() {
+            notify::emit_closed(id, reason);
+        }
+        self.toasts.retain(|t| *t != id);
+        let max = notify::max_scroll(&self.model.notifs);
+        self.model.notifs.scroll = self.model.notifs.scroll.min(max);
+        self.sync_toasts();
+        self.dirty = true;
+    }
+
+    /// The pop-up's time is up: it goes from the screen, but stays in the Notification Center.
+    fn hide_toast(&mut self, id: u32) {
+        // keep it while the pointer is on the pop-ups
+        let hovered = self.surfs.iter().any(|s| s.kind == Kind::Toast && s.hover.is_some());
+        if hovered {
+            let tx = self.toast_hide_tx.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_secs(2));
+                let _ = tx.send(id);
+            });
+            return;
+        }
+        if self.toasts.contains(&id) {
+            self.toasts.retain(|t| *t != id);
+            self.sync_toasts();
+        }
+    }
+
+    /// Makes the pop-up surface match the list: one while there is anything to show, none otherwise.
+    fn sync_toasts(&mut self) {
+        let have = self.surfs.iter().position(|s| s.kind == Kind::Toast);
+        if self.toasts.is_empty() {
+            if let Some(i) = have {
+                let s = self.surfs.remove(i);
+                s.destroy();
+                self.pointer_surface = None;
+            }
+            return;
+        }
+        if have.is_none() {
+            let Some(output) = self.dock_output() else { return };
+            let Some(out) = self.outputs.get(&output) else { return };
+            let (w, h) = (notify::TOAST_W, notify::surface_h());
+            let id = self.next_surf;
+            self.next_surf += 1;
+            let wl = self.compositor.create_surface(&self.qh, ());
+            let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Overlay, "labyrinth-toast".into(), &self.qh, id);
+            layer.set_anchor(Anchor::Bottom | Anchor::Right);
+            layer.set_size(w, h);
+            layer.set_exclusive_zone(0);
+            layer.set_margin(0, 16, 16, 0);
+            layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+            wl.commit();
+            self.surfs.push(Surf { id, kind: Kind::Toast, output, wl, layer: Some(layer), dock: None, w, h, want: (w, h), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0 });
+        }
+    }
+
+    /// Goes to the app a notification came from: asks it to show what the notification is about (its default
+    /// action), then brings its window forward, or starts it. Heimdall's alerts open their page in Settings.
+    fn open_notification(&mut self, id: u32) {
+        let Some(n) = self.model.notifs.get(id).cloned() else { return };
+        if n.actions.iter().any(|(k, _)| k == "default") {
+            notify::emit_action(id, "default");
+        }
+        if !n.link.is_empty() {
+            run(&["labyrinth-settings", &n.link]);
+        } else if n.app != notify::HEIMDALL_APP {
+            self.focus_or_launch(&n);
+        }
+        self.remove_notif(id, 2);
+    }
+
+    fn focus_or_launch(&mut self, n: &notify::Notif) {
+        let apps = &self.model.apps;
+        let name = n.app.to_lowercase();
+        let app = apps::for_app_id(apps, &n.entry).or_else(|| apps.iter().find(|a| a.name.to_lowercase() == name || a.id.to_lowercase() == name));
+        let win = self.model.wins.iter().find(|w| {
+            let by_app = app.map(|a| apps::for_app_id(apps, &w.app_id).map(|x| x.id == a.id).unwrap_or(false)).unwrap_or(false);
+            by_app || (!w.app_id.is_empty() && w.app_id.to_lowercase() == name)
+        });
+        if let Some(w) = win {
+            w.proxy.set_state(shell::ST_ACTIVE | shell::ST_MINIMIZED, shell::ST_ACTIVE);
+        } else if let Some(a) = app {
+            apps::launch(a);
+        }
+    }
+
+    /// Something in the notification list was clicked.
+    fn notif_act(&mut self, act: notify::NAct) {
+        use notify::NAct;
+        match act {
+            NAct::Toggle(key) => self.model.notifs.toggle_group(&key),
+            NAct::Open(id) => {
+                self.open_notification(id);
+                self.close_popup();
+            }
+            NAct::Dismiss(id) => self.remove_notif(id, 2),
+            NAct::ClearGroup(key) => {
+                for id in self.model.notifs.clear_group(&key) {
+                    notify::emit_closed(id, 2);
+                    self.toasts.retain(|t| *t != id);
+                }
+                self.sync_toasts();
+            }
+            NAct::ClearAll => {
+                for id in self.model.notifs.clear_all() {
+                    notify::emit_closed(id, 2);
+                }
+                self.toasts.clear();
+                self.sync_toasts();
+            }
+            NAct::Scroll(by) => {
+                let max = notify::max_scroll(&self.model.notifs) as i32;
+                self.model.notifs.scroll = (self.model.notifs.scroll as i32 + by).clamp(0, max) as usize;
+            }
+        }
+        let max = notify::max_scroll(&self.model.notifs);
+        self.model.notifs.scroll = self.model.notifs.scroll.min(max);
+        self.dirty = true;
+    }
+
     /// Starts or stops watching the clipboard to follow the setting.
     fn sync_clip(&mut self) {
         let on = self.model.conf.clipboard_history;
@@ -792,6 +949,10 @@ impl State {
         let max = self.start_max;
         let pointer = self.pointer_pos;
         match self.popup.as_mut().map(|p| &mut p.kind) {
+            Some(PopupKind::Calendar { .. }) if self.model.conf.notify_pane && pointer.1 >= self.pane_top => {
+                let max = notify::max_scroll(&self.model.notifs) as i32;
+                self.model.notifs.scroll = (self.model.notifs.scroll as i32 + by).clamp(0, max) as usize;
+            }
             Some(PopupKind::Calendar { offset }) => *offset = (*offset + by).clamp(-1200, 1200),
             Some(PopupKind::Fylgja(st)) => {
                 if st.voice_ui {
@@ -799,6 +960,10 @@ impl State {
                 } else if !st.open {
                     st.open = true; // the wheel opens the full notch at its first section
                     st.section = 0;
+                } else if st.section == fylgja::NOTIFS && self.pointer_pos.1 > 40.0 {
+                    // over the list the wheel scrolls it; over the section titles it changes section
+                    let max = notify::max_scroll(&self.model.notifs) as i32;
+                    self.model.notifs.scroll = (self.model.notifs.scroll as i32 + by).clamp(0, max) as usize;
                 } else {
                     st.section = (st.section as i32 + by).clamp(0, fylgja::SECTIONS.len() as i32 - 1) as usize;
                 }
@@ -905,6 +1070,7 @@ impl State {
                 self.model.fylgja.clips.clear();
                 self.dirty = true;
             }
+            FAct::Notif(a) => self.notif_act(a),
             FAct::Wall(p) => run(&["plasma-apply-wallpaperimage", &p.display().to_string()]),
             FAct::WallPage(by) => {
                 let pages = self.model.fylgja.walls.len().div_ceil(8).max(1) as i32;
@@ -1275,6 +1441,20 @@ impl State {
                 }
                 vec![]
             }
+            Kind::Toast => {
+                let list: Vec<notify::Notif> = self.toasts.iter().filter_map(|id| self.model.notifs.get(*id).cloned()).collect();
+                let hits = notify::paint_toasts(&mut pix, s, &list, hover, &self.assets.fonts, &mut self.assets.icons);
+                // only the cards take clicks: the rest of this surface is see-through, for whatever is under it
+                let region = self.compositor.create_region(&self.qh, ());
+                for h in &hits {
+                    if matches!(h.action, Action::ToastOpen(_)) {
+                        region.add((h.rect.0 / s) as i32, (h.rect.1 / s) as i32, (h.rect.2 / s).ceil() as i32, (h.rect.3 / s).ceil() as i32);
+                    }
+                }
+                self.surfs[i].wl.set_input_region(Some(&region));
+                region.destroy();
+                hits
+            }
             Kind::Popup => {
                 match &self.popup {
                     Some(Popup { kind: PopupKind::Start(st), .. }) => {
@@ -1296,8 +1476,20 @@ impl State {
                         self.fy_hits = hits;
                     }
                     Some(Popup { kind: PopupKind::Calendar { offset }, .. }) => {
-                        let card = shell::paint_calendar(&mut pix, s, &self.model, *offset, &self.assets.fonts);
-                        self.popup_card = card;
+                        let pane = self.model.conf.notify_pane;
+                        let card = shell::paint_calendar(&mut pix, s, &self.model, *offset, &self.assets.fonts, pane);
+                        if pane {
+                            // the Notification Center: the list under the calendar, in a pane down the right edge
+                            let (w, h) = (pix.width() as f32 / s, pix.height() as f32 / s);
+                            self.popup_card = shell::pane_rect(w, h);
+                            let top = card.1 + card.3 + 10.0;
+                            let area = (card.0, top, card.2, h - top - 10.0);
+                            self.pane_hits = notify::paint_list(&mut pix, s, area, &self.model.notifs, self.pointer_pos, notify::now_secs(), &self.assets.fonts, &mut self.assets.icons);
+                            self.pane_top = top;
+                        } else {
+                            self.popup_card = card;
+                            self.pane_hits.clear();
+                        }
                     }
                     None => {}
                 }
@@ -1377,6 +1569,12 @@ impl State {
             Action::Network => run(&["labyrinth-settings", "network"]),
             Action::Bluetooth => run(&["labyrinth-settings", "bluetooth"]),
             Action::Dock(app_id) => self.click_dock(&app_id),
+            Action::ToastOpen(id) => self.open_notification(id),
+            Action::ToastClose(id) => {
+                self.toasts.retain(|t| *t != id);
+                self.sync_toasts();
+                self.dirty = true;
+            }
         }
     }
 
@@ -1712,6 +1910,11 @@ impl Dispatch<WlPointer, ()> for State {
                                 st.power_open = false; // a click elsewhere puts the power choices away
                                 state.dirty = true;
                             }
+                        } else if state.model.conf.notify_pane && py >= state.pane_top {
+                            let hit = state.pane_hits.iter().rev().find(|(r, _)| px >= r.0 && px < r.0 + r.2 && py >= r.1 && py < r.1 + r.3).map(|(_, a)| a.clone());
+                            if let Some(a) = hit {
+                                state.notif_act(a);
+                            }
                         } else if py < cy + 62.0 {
                             // the calendar's header: back to this month
                             if let Some(Popup { kind: PopupKind::Calendar { offset }, .. }) = &mut state.popup {
@@ -1841,6 +2044,7 @@ fn main() {
     let (tab_tx, tab_rx) = calloop::channel::channel::<u64>();
     let (anim_tx, anim_rx) = calloop::channel::channel::<()>();
     let (osd_hide_tx, osd_hide_rx) = calloop::channel::channel::<u64>();
+    let (toast_hide_tx, toast_hide_rx) = calloop::channel::channel::<u32>();
     let (voice_tx, voice_rx) = calloop::channel::channel::<Result<String, String>>();
     let mut state = State {
         qh: qh.clone(),
@@ -1852,7 +2056,7 @@ fn main() {
         viewporter,
         plasma_shell,
         shm,
-        model: Model { apps: apps::load_all(), pinned: apps::pinned(), wins: vec![], clock: clock_text(PanelConf::load().clock_24h), clock_secs: secs_text(PanelConf::load().clock_24h), date: date_text(), today: today_ymd(), user: user_name(), hibernate: shell::can_hibernate(), conf: PanelConf::load(), dark: system_dark(), status: Default::default(), trash_full: shell::trash_has_files(), notch_open: false, fylgja: Default::default(), notch_w: 0.0, notch_tab: None },
+        model: Model { apps: apps::load_all(), pinned: apps::pinned(), wins: vec![], clock: clock_text(PanelConf::load().clock_24h), clock_secs: secs_text(PanelConf::load().clock_24h), date: date_text(), today: today_ymd(), user: user_name(), hibernate: shell::can_hibernate(), conf: PanelConf::load(), dark: system_dark(), status: Default::default(), trash_full: shell::trash_has_files(), notch_open: false, fylgja: Default::default(), notch_w: 0.0, notch_tab: None, notifs: notify::Store::load(notify::state_path()) },
         assets: Assets { fonts, icons: paint::Icons::new() },
         surfs: vec![],
         next_surf: 0,
@@ -1878,6 +2082,10 @@ fn main() {
         osd: None,
         osd_gen: 0,
         osd_hide_tx,
+        pane_hits: vec![],
+        pane_top: 0.0,
+        toasts: vec![],
+        toast_hide_tx,
         icon_stamp: None,
         icon_pack: paint::selected_icon_theme(),
         tab_hover: false,
@@ -1987,6 +2195,27 @@ fn main() {
             }
         })
         .expect("osd hide channel");
+    // notifications: from apps (D-Bus) and from Heimdall; a pop-up's timer ran out
+    let (note_tx, note_rx) = calloop::channel::channel::<notify::NMsg>();
+    notify::set_next_id(state.model.notifs.max_id());
+    notify::spawn_server(note_tx.clone());
+    notify::spawn_heimdall(note_tx);
+    event_loop
+        .handle()
+        .insert_source(note_rx, |event, _, st| {
+            if let calloop::channel::Event::Msg(m) = event {
+                st.on_notif(m);
+            }
+        })
+        .expect("notification channel");
+    event_loop
+        .handle()
+        .insert_source(toast_hide_rx, |event, _, st| {
+            if let calloop::channel::Event::Msg(id) = event {
+                st.hide_toast(id);
+            }
+        })
+        .expect("toast hide channel");
     // each step of Fylgja sliding: redraw, and finish a close once it has gone up
     event_loop
         .handle()

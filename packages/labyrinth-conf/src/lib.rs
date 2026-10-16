@@ -37,6 +37,38 @@ impl DockPos {
     }
 }
 
+/// Which of Heimdall's alerts become notifications.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AlertLevel {
+    Off,
+    Critical,
+    /// Warnings and critical alerts.
+    Warning,
+    /// Everything (every new connection destination too).
+    Info,
+}
+
+impl AlertLevel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AlertLevel::Off => "off",
+            AlertLevel::Critical => "critical",
+            AlertLevel::Warning => "warning",
+            AlertLevel::Info => "info",
+        }
+    }
+
+    pub fn parse(v: &str) -> Option<AlertLevel> {
+        Some(match v {
+            "off" => AlertLevel::Off,
+            "critical" => AlertLevel::Critical,
+            "warning" => AlertLevel::Warning,
+            "info" => AlertLevel::Info,
+            _ => return None,
+        })
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct PanelConf {
     /// The screen edge the dock sits on.
@@ -61,11 +93,17 @@ pub struct PanelConf {
     pub show_hidden: bool,
     /// Developer options are on (Settings > About, the logo clicked five times): extra, more technical settings show.
     pub developer: bool,
+    /// A new notification pops up at the bottom right for a few seconds.
+    pub notify_toasts: bool,
+    /// The Notification Center is a pane on the right edge (opened with the calendar) instead of a section of Fylgja.
+    pub notify_pane: bool,
+    /// Which Heimdall alerts become notifications: "off", "critical", "warning" (and critical) or "info" (all).
+    pub heimdall_alerts: AlertLevel,
 }
 
 impl Default for PanelConf {
     fn default() -> Self {
-        PanelConf { dock_pos: DockPos::Bottom, dock_icon: 44, dock_gap: 4, start_theme: StartTheme::Windows, clock_24h: true, dock_opacity: 69, dock_color: ColorMode::Theme, bar_opacity: 69, bar_color: ColorMode::Theme, clipboard_history: true, search_subfolders: true, show_hidden: false, developer: false }
+        PanelConf { dock_pos: DockPos::Bottom, dock_icon: 44, dock_gap: 4, start_theme: StartTheme::Windows, clock_24h: true, dock_opacity: 69, dock_color: ColorMode::Theme, bar_opacity: 69, bar_color: ColorMode::Theme, clipboard_history: true, search_subfolders: true, show_hidden: false, developer: false, notify_toasts: true, notify_pane: false, heimdall_alerts: AlertLevel::Warning }
     }
 }
 
@@ -120,6 +158,9 @@ impl PanelConf {
                 "search_subfolders" => c.search_subfolders = !matches!(v, "no" | "false" | "off" | "0"),
                 "show_hidden" => c.show_hidden = matches!(v, "yes" | "true" | "on" | "1"),
                 "developer" => c.developer = matches!(v, "yes" | "true" | "on" | "1"),
+                "notify_toasts" => c.notify_toasts = !matches!(v, "no" | "false" | "off" | "0"),
+                "notify_pane" => c.notify_pane = matches!(v, "yes" | "true" | "on" | "1"),
+                "heimdall_alerts" => c.heimdall_alerts = AlertLevel::parse(v).unwrap_or(c.heimdall_alerts),
                 _ => {}
             }
         }
@@ -129,7 +170,7 @@ impl PanelConf {
     pub fn to_text(&self) -> String {
         format!(
             "# How the top bar and dock look. Edited by Labyrinth Settings (Appearance).\n\
-             dock_pos = {}\ndock_icon = {}\ndock_gap = {}\nclock_24h = {}\nstart_theme = {}\ndock_opacity = {}\ndock_color = {}\nbar_opacity = {}\nbar_color = {}\nclipboard_history = {}\nsearch_subfolders = {}\nshow_hidden = {}\ndeveloper = {}\n",
+             dock_pos = {}\ndock_icon = {}\ndock_gap = {}\nclock_24h = {}\nstart_theme = {}\ndock_opacity = {}\ndock_color = {}\nbar_opacity = {}\nbar_color = {}\nclipboard_history = {}\nsearch_subfolders = {}\nshow_hidden = {}\ndeveloper = {}\nnotify_toasts = {}\nnotify_pane = {}\nheimdall_alerts = {}\n",
             match self.dock_pos {
                 DockPos::Bottom => "bottom",
                 DockPos::Left => "left",
@@ -146,7 +187,10 @@ impl PanelConf {
             if self.clipboard_history { "yes" } else { "no" },
             if self.search_subfolders { "yes" } else { "no" },
             if self.show_hidden { "yes" } else { "no" },
-            if self.developer { "yes" } else { "no" }
+            if self.developer { "yes" } else { "no" },
+            if self.notify_toasts { "yes" } else { "no" },
+            if self.notify_pane { "yes" } else { "no" },
+            self.heimdall_alerts.as_str()
         )
     }
 
@@ -186,7 +230,7 @@ mod tests {
 
     #[test]
     fn round_trips() {
-        let c = PanelConf { dock_pos: DockPos::Right, dock_icon: 60, dock_gap: 0, start_theme: StartTheme::Folders, clock_24h: false, dock_opacity: 0, dock_color: ColorMode::Neutral, bar_opacity: 100, bar_color: ColorMode::Neutral, clipboard_history: false, search_subfolders: false, show_hidden: true, developer: true };
+        let c = PanelConf { dock_pos: DockPos::Right, dock_icon: 60, dock_gap: 0, start_theme: StartTheme::Folders, clock_24h: false, dock_opacity: 0, dock_color: ColorMode::Neutral, bar_opacity: 100, bar_color: ColorMode::Neutral, clipboard_history: false, search_subfolders: false, show_hidden: true, developer: true, notify_toasts: false, notify_pane: true, heimdall_alerts: AlertLevel::Critical };
         assert_eq!(PanelConf::parse(&c.to_text()), c);
     }
 

@@ -104,6 +104,8 @@ pub struct Model {
     pub notch_w: f32,
     /// The section Fylgja's full notch is on; its titles are drawn in the bar's black band.
     pub notch_tab: Option<usize>,
+    /// The notifications kept until opened or cleared, and how the list is opened out.
+    pub notifs: crate::notify::Store,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -121,6 +123,9 @@ pub enum Action {
     Bluetooth,
     /// A dock icon: the app id of its group.
     Dock(String),
+    /// A notification pop-up: open it (go to the app), or put the pop-up away.
+    ToastOpen(u32),
+    ToastClose(u32),
 }
 
 #[derive(Clone, Debug)]
@@ -385,7 +390,14 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
 
 /// The date popover: today's date and the time, then a month you can scroll through. `offset` is
 /// how many months from this one. Returns the card's rectangle (x, y, w, h) in logical pixels.
-pub fn paint_calendar(pix: &mut Pixmap, s: f32, m: &Model, offset: i32, fonts: &Fonts) -> (f32, f32, f32, f32) {
+/// The Notification Center pane: as wide as the calendar card plus its margins, from the top of the free area to the bottom.
+pub fn pane_rect(w: f32, h: f32) -> (f32, f32, f32, f32) {
+    (w - 388.0, 0.0, 388.0, h)
+}
+
+/// With `pane` the calendar sits at the top of a pane that runs the full height of the right edge (the
+/// Notification Center draws its list below the calendar); the pane's own rectangle is `pane_rect`.
+pub fn paint_calendar(pix: &mut Pixmap, s: f32, m: &Model, offset: i32, fonts: &Fonts, pane: bool) -> (f32, f32, f32, f32) {
     use crate::calendar;
     pix.fill(paint::color((0, 0, 0, 0)));
     let w = pix.width() as f32 / s;
@@ -400,8 +412,15 @@ pub fn paint_calendar(pix: &mut Pixmap, s: f32, m: &Model, offset: i32, fonts: &
     let ch = 104.0 + 6.0 * row + 12.0;
     // Under the date pill with the same 6 px the bar's pills have between them, and ending where the pill ends.
     let (cx, cy) = (w - cw - 8.0, 3.0); // the surface starts at the bar's 28 px line; the pills end 3 px above it
-    paint::fill_rounded(pix, cx * s, cy * s, cw * s, ch * s, 14.0 * s, bg);
-    paint::stroke_rounded(pix, (cx + 0.5) * s, (cy + 0.5) * s, (cw - 1.0) * s, (ch - 1.0) * s, 14.0 * s, s, border);
+    if pane {
+        let r = pane_rect(w, pix.height() as f32 / s);
+        // taller and wider than the screen's edge on the top and right, so only the inner corners show round
+        paint::fill_rounded(pix, r.0 * s, -20.0 * s, (r.2 + 20.0) * s, (r.3 + 40.0) * s, 14.0 * s, bg);
+        paint::stroke_rounded(pix, (r.0 + 0.5) * s, -19.5 * s, (r.2 + 20.0) * s, (r.3 + 39.0) * s, 14.0 * s, s, border);
+    } else {
+        paint::fill_rounded(pix, cx * s, cy * s, cw * s, ch * s, 14.0 * s, bg);
+        paint::stroke_rounded(pix, (cx + 0.5) * s, (cy + 0.5) * s, (cw - 1.0) * s, (ch - 1.0) * s, 14.0 * s, s, border);
+    }
 
     let (ty, tm, td) = m.today;
     // header: today's date on the left, the time on the right
@@ -1021,9 +1040,34 @@ mod tests {
         App { id: id.into(), name: name.into(), icon: id.into(), ..Default::default() }
     }
 
+    /// Writes the Notification Center pane to $NOTIFY_PNG_DIR/pane.png (run by hand to look at it).
+    #[test]
+    fn pane_draws() {
+        let Some(fonts) = Fonts::load() else { return };
+        let mut icons = Icons::new();
+        let mut m = Model { apps: vec![], pinned: vec![], wins: vec![], clock: String::new(), clock_secs: "05:03:11".into(), date: String::new(), today: (2026, 10, 16), user: String::new(), notch_open: false, fylgja: Default::default(), notch_w: 0.0, notch_tab: None, notifs: Default::default(), hibernate: false, conf: PanelConf::default(), dark: true, status: Default::default(), trash_full: false };
+        m.conf.notify_pane = true;
+        let now = crate::notify::now_secs();
+        for (id, app, sum, age) in [(1, "Mail", "Alice", 600), (2, "Mail", "Bob", 120), (3, "Heimdall", "Critical", 30)] {
+            m.notifs.add(crate::notify::Notif { id, app: app.into(), entry: String::new(), icon: String::new(), summary: sum.into(), body: "something happened".into(), urgency: 1, time: now - age, actions: vec![], link: String::new() });
+        }
+        let s = 1.0;
+        let mut pix = Pixmap::new(1720, 1100).unwrap();
+        pix.fill(paint::color((60, 80, 120, 255)));
+        let card = paint_calendar(&mut pix, s, &m, 0, &fonts, true);
+        let (w, h) = (1720.0, 1100.0);
+        let top = card.1 + card.3 + 10.0;
+        let hits = crate::notify::paint_list(&mut pix, s, (card.0, top, card.2, h - top - 10.0), &m.notifs, (0.0, 0.0), now, &fonts, &mut icons);
+        assert!(!hits.is_empty());
+        assert_eq!(pane_rect(w, h).0, w - 388.0);
+        if let Some(dir) = std::env::var_os("NOTIFY_PNG_DIR") {
+            pix.save_png(std::path::Path::new(&dir).join("pane.png")).unwrap();
+        }
+    }
+
     #[test]
     fn pinned_apps_come_first_and_missing_ones_are_skipped() {
-        let m = Model { apps: vec![app("minos", "Minos"), app("vivaldi-stable", "Vivaldi")], pinned: vec!["vivaldi-stable".into(), "ghost".into(), "minos".into()], wins: vec![], clock: String::new(), clock_secs: String::new(), date: String::new(), today: (2026, 1, 1), user: String::new(), notch_open: false, fylgja: Default::default(), notch_w: 0.0, notch_tab: None, hibernate: false, conf: PanelConf::default(), dark: true, status: Default::default(), trash_full: false };
+        let m = Model { apps: vec![app("minos", "Minos"), app("vivaldi-stable", "Vivaldi")], pinned: vec!["vivaldi-stable".into(), "ghost".into(), "minos".into()], wins: vec![], clock: String::new(), clock_secs: String::new(), date: String::new(), today: (2026, 1, 1), user: String::new(), notch_open: false, fylgja: Default::default(), notch_w: 0.0, notch_tab: None, notifs: Default::default(), hibernate: false, conf: PanelConf::default(), dark: true, status: Default::default(), trash_full: false };
         let items = dock_items(&m);
         assert_eq!(items.iter().map(|i| i.app_id.as_str()).collect::<Vec<_>>(), vec!["vivaldi-stable", "minos", TRASH_ID]); // the trash is always last
         assert!(items.iter().all(|i| i.pinned && i.wins.is_empty()));
