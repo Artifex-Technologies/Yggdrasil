@@ -61,3 +61,25 @@ Boot with the user's keys as an installer option; the read-only root comes later
 A separate project (`Daedalus_CAD`, SketchUp-style modeller in Rust: half-edge mesh, solid inspector and
 repair, sheet-metal flat patterns, wgpu viewer). First milestone: build and test it on Linux. Windows CAD
 programs the user may still need run through Limbo, with GPU passthrough (not yet tested).
+
+## Screen locker, and keeping a replacement desktop current and safe (decided 2026-10-16)
+
+**Replace kscreenlocker: yes, later, on the standard protocol.** Wayland has `ext-session-lock-v1`: the compositor hands the whole screen to one
+client until that client says "unlocked". A Labyrinth locker would be a small Rust program that speaks that protocol, draws our own
+look, and checks the password through PAM. It does not depend on KDE internals, so a KDE update cannot break it the way the 6.8 upgrade broke
+kscreenlocker's greeter (that failure was an upgrade of one KDE piece under a running older KWin, not a protocol change).
+- A locker is security-critical: a bug is either a lock-out or a bypass. So: keep kscreenlocker as the fallback and test ours in the VM first
+  (lock, wrong password, right password, a crash of the locker must leave the screen LOCKED, switching to a text console must not bypass it,
+  suspend and resume, multiple monitors), then switch the default. Never ship it untested.
+- Order: (1) our own power / idle manager (it decides when to dim, lock, sleep: this also explains and fixes the unexplained locks),
+  (2) the locker, (3) the next KDE pieces on the roadmap (portals, tray). Each piece replaces a KDE one only when it has passed its tests.
+
+**Staying current and security-compliant while replacing KDE piece by piece:**
+- Our programs talk to the system through stable, documented interfaces (Wayland protocols, freedesktop D-Bus APIs, PAM, logind, PipeWire),
+  not KDE internals; where we must read a KDE tool (kscreen-doctor, powerdevil) we parse it defensively and test against its newest output
+  (the 6.8 "enabled" key is the example, now covered by a test).
+- `labyrinth-selfcheck` after every upgrade; the pacman hook reminds to log out after Plasma upgrades.
+- Rust dependencies: run `cargo audit` and `cargo deny` in the build; update crates on a schedule; the lock files are committed.
+- System updates stay the distribution's job (CachyOS/Arch `pacman -Syu`, weekly), with Heimdall's integrity checks now package-aware (an update is info, an unexplained change is critical).
+- A short security checklist per release (secrets scan, dependency audit, VM boot and install test, selfcheck clean) before an ISO is published.
+- Replacing KDE is a long road; until a piece is replaced and proven, the KDE one keeps receiving the distribution's security fixes.
