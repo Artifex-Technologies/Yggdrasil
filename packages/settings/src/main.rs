@@ -88,6 +88,11 @@ struct App {
     zone_filter: String,
     /// What the icon-pack install box holds: a folder, an archive or a link.
     icon_src: String,
+    /// The shape and colouring chosen for the Labyrinth Brands pack (indexes into BRAND_SHAPES and BRAND_STYLES).
+    brand_shape: usize,
+    brand_style: usize,
+    /// When the open page was last read, so it can be read again now and then and follow changes made elsewhere.
+    refreshed: std::time::Instant,
 }
 
 impl App {
@@ -104,6 +109,9 @@ impl App {
             wifi_password: None,
             zone_filter: String::new(),
             icon_src: String::new(),
+            brand_shape: 0,
+            brand_style: 0,
+            refreshed: std::time::Instant::now(),
         };
         app.load(app.page, ctx);
         app
@@ -111,6 +119,7 @@ impl App {
 
     /// Read a page's state on a background thread.
     fn load(&mut self, page: Page, ctx: &egui::Context) {
+        self.refreshed = std::time::Instant::now();
         self.loading = Some(page);
         let tx = self.tx.clone();
         let ctx = ctx.clone();
@@ -185,6 +194,19 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.receive(&ctx);
+        // Read the open page again every few seconds, so a change made somewhere else (Fylgja's dark mode, the
+        // panel, a command) shows up without closing Settings. Not while something is being dragged or typed, not
+        // for pages that are slow to read (Wi-Fi scans, Bluetooth discovery, the package list), and not when
+        // the window is in the background.
+        let refreshable = matches!(self.page, Page::About | Page::Displays | Page::Sound | Page::Appearance | Page::Power | Page::Firewall | Page::DateTime);
+        if refreshable {
+            let idle = self.loading.is_none() && !ctx.input(|i| i.pointer.any_down()) && ctx.memory(|m| m.focused().is_none()) && ctx.input(|i| i.viewport().focused != Some(false));
+            if idle && self.refreshed.elapsed() >= std::time::Duration::from_secs(4) {
+                let page = self.page;
+                self.load(page, &ctx);
+            }
+            ctx.request_repaint_after(std::time::Duration::from_secs(4));
+        }
         chrome::resize_edges(&ctx);
         let accent = theme::system_accent();
         let dark = self.data.appearance.as_ref().map(|a| a.dark).unwrap_or(true);
@@ -260,6 +282,9 @@ impl eframe::App for App {
         ctx.request_repaint_after(Duration::from_secs(5));
     }
 }
+
+const BRAND_SHAPES: [(&str, &str); 5] = [("glyph", "Logo only"), ("squircle", "Squircle"), ("rounded", "Rounded square"), ("circle", "Circle"), ("hexagon", "Hexagon")];
+const BRAND_STYLES: [(&str, &str); 3] = [("brand", "Brand colours"), ("dark", "Dark tile"), ("purple", "Labyrinth purple")];
 
 fn loading(ui: &mut egui::Ui) {
     ui.add_space(40.0);
@@ -560,6 +585,7 @@ impl App {
         let mut icon_use: Option<String> = None;
         let mut icon_remove: Option<String> = None;
         let mut icon_install: Option<String> = None;
+        let mut brand_build = false;
         let mut panel_switch: Option<bool> = None;
         let mut conf = a.panel;
         let mut conf_changed = false;
@@ -601,7 +627,26 @@ impl App {
                     }
                 });
             }
-            ui::row(ui, pal, a.icon_packs.is_empty(), "Install an icon pack", Some("A folder, an archive (.tar.gz, .tar.xz, .zip) or an https link. It goes in your own icons folder; nothing needs a password"), |ui| {
+            ui::row(ui, pal, a.icon_packs.is_empty(), "Labyrinth Brands", Some("App logos from Simple Icons in the shape and colours you pick; apps it has no logo for keep the other pack's icon. Make it, then choose it above"), |ui| {
+                if ui::action(ui, pal, "Make").clicked() {
+                    brand_build = true;
+                }
+                egui::ComboBox::from_id_salt("brand-style").selected_text(BRAND_STYLES[self.brand_style].1).show_ui(ui, |ui| {
+                    for (i, (_, l)) in BRAND_STYLES.iter().enumerate() {
+                        if ui.selectable_label(i == self.brand_style, *l).clicked() {
+                            self.brand_style = i;
+                        }
+                    }
+                });
+                egui::ComboBox::from_id_salt("brand-shape").selected_text(BRAND_SHAPES[self.brand_shape].1).show_ui(ui, |ui| {
+                    for (i, (_, l)) in BRAND_SHAPES.iter().enumerate() {
+                        if ui.selectable_label(i == self.brand_shape, *l).clicked() {
+                            self.brand_shape = i;
+                        }
+                    }
+                });
+            });
+            ui::row(ui, pal, false, "Install an icon pack", Some("A folder, an archive (.tar.gz, .tar.xz, .zip) or an https link. It goes in your own icons folder; nothing needs a password"), |ui| {
                 if ui::action(ui, pal, "Install").clicked() && !self.icon_src.trim().is_empty() {
                     icon_install = Some(self.icon_src.trim().to_string());
                 }
@@ -738,6 +783,10 @@ impl App {
         }
         if let Some(p) = wallpaper {
             self.change(ctx, move || sys::act("plasma-apply-wallpaperimage", &[&p]));
+        }
+        if brand_build {
+            let (shape, style) = (BRAND_SHAPES[self.brand_shape].0, BRAND_STYLES[self.brand_style].0);
+            self.change(ctx, move || sys::build_brand_pack(shape, style));
         }
         if let Some(id) = icon_use {
             self.change(ctx, move || sys::set_icon_pack(&id));

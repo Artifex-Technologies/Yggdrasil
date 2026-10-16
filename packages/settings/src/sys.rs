@@ -742,7 +742,7 @@ pub fn icon_packs() -> Vec<IconPack> {
                 continue;
             }
             let name = theme_key(&index, "Name").filter(|n| !n.is_empty()).unwrap_or_else(|| id.clone());
-            let preview = ["folder", "system-file-manager", "file-manager", "minos", "preferences-system", "web-browser"].iter().filter_map(|n| theme_icon(&d, n)).take(4).collect();
+            let preview = ["folder", "system-file-manager", "file-manager", "minos", "steam", "spotify", "vivaldi", "firefox", "preferences-system", "web-browser"].iter().filter_map(|n| theme_icon(&d, n)).take(4).collect();
             out.push(IconPack { id, name, user, preview });
         }
     }
@@ -896,4 +896,14 @@ mod icon_tests {
         assert!(!home.join(".local/share/icons/TestPack").exists());
         assert!(remove_icon_pack("../etc").is_err());
     }
+}
+
+/// Build the "Labyrinth Brands" pack (app logos from Simple Icons, in the chosen shape and colouring) into the
+/// user's icons folder, by running labyrinth-brand-pack. `shape` is glyph, squircle, rounded, circle or hexagon;
+/// `style` is brand, dark or purple.
+pub fn build_brand_pack(shape: &str, style: &str) -> Result<(), String> {
+    if !["glyph", "squircle", "rounded", "circle", "hexagon"].contains(&shape) || !["brand", "dark", "purple"].contains(&style) {
+        return Err("unknown shape or style".into());
+    }
+    act("labyrinth-brand-pack", &["--shape", shape, "--style", style])
 }
