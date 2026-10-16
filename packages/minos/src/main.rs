@@ -88,6 +88,7 @@ enum Action {
     ToggleSplit,
     SetView(ViewMode),
     ProtonConnect,
+    RetrySync(PathBuf),
 }
 
 struct Watch {
@@ -523,6 +524,10 @@ fn entry_interact(
             actions.push(Action::CopyPath(e.path.clone()));
             ui.close();
         }
+        if drive_avail(cx.st, e) == Some(cloud::Avail::Failed) && ui.button("Retry sync").clicked() {
+            actions.push(Action::RetrySync(e.path.clone()));
+            ui.close();
+        }
         // Archives (7-Zip): extract from one, or compress the selection into one.
         if e.usage.is_none() && !places::is_this_pc(&e.path) {
             let inside = archive::split(&e.path).is_some();
@@ -689,6 +694,29 @@ fn paint_avail(p: &egui::Painter, center: egui::Pos2, a: cloud::Avail, pal: &Pal
             p.circle_stroke(center, 7.0, w(pal.green));
             p.add(egui::Shape::line(vec![center + vec2(-3.2, 0.2), center + vec2(-0.9, 2.8), center + vec2(3.4, -2.6)], w(pal.green)));
         }
+        cloud::Avail::Syncing => {
+            // two half circles chasing each other, each ending in an arrow head
+            let blue = Color32::from_rgb(70, 130, 220);
+            for sign in [1.0f32, -1.0] {
+                let pt = |deg: f32| {
+                    let t = deg.to_radians();
+                    center + vec2(t.cos(), -t.sin()) * 5.6 * sign
+                };
+                let arc: Vec<egui::Pos2> = (0..=12).map(|k| pt(160.0 - 125.0 * k as f32 / 12.0)).collect();
+                let tip = pt(28.0);
+                let back = pt(46.0);
+                let dir = (tip - back).normalized();
+                let side = vec2(-dir.y, dir.x);
+                p.add(egui::Shape::line(arc, w(blue)));
+                p.add(egui::Shape::line(vec![tip - dir * 3.2 + side * 2.6, tip + dir * 0.6, tip - dir * 3.2 - side * 2.6], w(blue)));
+            }
+        }
+        cloud::Avail::Failed => {
+            let red = Color32::from_rgb(205, 60, 50);
+            p.circle_filled(center, 7.0, red);
+            p.line_segment([center + vec2(-2.8, -2.8), center + vec2(2.8, 2.8)], w(Color32::WHITE));
+            p.line_segment([center + vec2(2.8, -2.8), center + vec2(-2.8, 2.8)], w(Color32::WHITE));
+        }
         cloud::Avail::Partial | cloud::Avail::Cloud => {
             let blue = Color32::from_rgb(70, 130, 220);
             const CLOUD: &[(f32, f32)] = &[(6.8, 1.0), (6.9, 1.3), (6.9, 1.6), (6.9, 2.0), (6.8, 2.3), (6.7, 2.6), (6.6, 2.9), (6.5, 3.1), (6.3, 3.4), (6.1, 3.6), (5.9, 3.9), (5.6, 4.1), (5.3, 4.2), (5.1, 4.4), (4.8, 4.5), (4.5, 4.5), (4.2, 4.6), (-3.8, 4.6), (-4.1, 4.6), (-4.4, 4.5), (-4.7, 4.5), (-5.0, 4.3), (-5.3, 4.2), (-5.6, 4.0), (-5.8, 3.8), (-6.0, 3.6), (-6.2, 3.4), (-6.4, 3.1), (-6.5, 2.8), (-6.7, 2.5), (-6.7, 2.2), (-6.8, 1.9), (-6.8, 1.6), (-6.8, 1.3), (-6.7, 1.0), (-6.7, 0.7), (-6.5, 0.4), (-6.4, 0.1), (-6.2, -0.2), (-6.0, -0.4), (-5.8, -0.6), (-5.6, -0.8), (-5.3, -1.0), (-5.0, -1.1), (-4.7, -1.2), (-4.4, -1.3), (-4.3, -1.7), (-4.2, -2.1), (-4.0, -2.5), (-3.9, -2.9), (-3.6, -3.2), (-3.4, -3.6), (-3.1, -3.9), (-2.8, -4.1), (-2.4, -4.4), (-2.0, -4.5), (-1.6, -4.7), (-1.2, -4.8), (-0.8, -4.9), (-0.4, -4.9), (0.0, -4.9), (0.4, -4.8), (0.8, -4.7), (1.2, -4.5), (1.6, -4.4), (1.9, -4.1), (2.3, -3.9), (2.6, -3.6), (2.8, -3.2), (3.1, -2.9), (3.2, -2.5), (3.4, -2.1), (3.5, -1.7), (3.9, -1.4), (4.2, -1.4), (4.5, -1.3), (4.8, -1.2), (5.1, -1.1), (5.4, -1.0), (5.7, -0.8), (5.9, -0.6), (6.1, -0.4), (6.3, -0.2), (6.5, 0.1), (6.6, 0.4), (6.8, 0.7), (6.8, 1.0)];
@@ -703,6 +731,8 @@ fn avail_tip(a: cloud::Avail) -> &'static str {
         cloud::Avail::Local => "On this computer (also in Proton Drive)",
         cloud::Avail::Partial => "Partly downloaded; the rest comes from Proton Drive when opened",
         cloud::Avail::Cloud => "Only in Proton Drive; opening it downloads it",
+        cloud::Avail::Syncing => "Syncing to Proton Drive",
+        cloud::Avail::Failed => "Could not sync to Proton Drive. Right-click it and choose Retry sync",
     }
 }
 
@@ -2101,6 +2131,13 @@ impl App {
                     self.dirty = true;
                 }
                 Action::CopyPath(p) => ctx.copy_text(p.to_string_lossy().into_owned()),
+                Action::RetrySync(p) => {
+                    if let Some(root) = places::proton_drive_candidates().into_iter().find(|r| p.starts_with(r)) {
+                        if let Err(e) = cloud::retry_sync(&root, &p) {
+                            self.status = format!("Retry sync: {e}");
+                        }
+                    }
+                }
                 Action::Verify(name) => {
                     if let Some(link) = self.links.iter().find(|l| l.name == name).cloned() {
                         if !self.verifying.contains(&name) {

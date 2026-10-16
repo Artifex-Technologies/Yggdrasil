@@ -226,6 +226,98 @@ pub enum Avail {
     Partial,
     /// Only in the cloud; opening it downloads it.
     Cloud,
+    /// Being uploaded, or waiting its turn.
+    Syncing,
+    /// The upload failed; rclone tries again later, or now on request.
+    Failed,
+}
+
+/// One entry of rclone's upload queue (`vfs/queue`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct QueueItem {
+    pub id: u64,
+    /// Path inside the mount, e.g. "Documents/a.txt".
+    pub name: String,
+    pub tries: u64,
+    pub uploading: bool,
+}
+
+pub fn parse_queue(json: &str) -> Vec<QueueItem> {
+    let v: serde_json::Value = serde_json::from_str(json).unwrap_or(serde_json::Value::Null);
+    v.get("queue")
+        .and_then(|q| q.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|i| {
+                    Some(QueueItem {
+                        id: i.get("id")?.as_u64()?,
+                        name: i.get("name")?.as_str()?.to_string(),
+                        tries: i.get("tries").and_then(|t| t.as_u64()).unwrap_or(0),
+                        uploading: i.get("uploading").and_then(|t| t.as_bool()).unwrap_or(false),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// A file in the queue is syncing until an upload has failed at least once (and is not running right now).
+pub fn queue_state(i: &QueueItem) -> Avail {
+    if i.tries > 0 && !i.uploading {
+        Avail::Failed
+    } else {
+        Avail::Syncing
+    }
+}
+
+/// The mount's control socket (the unit starts rclone with `--rc --rc-addr unix://$XDG_RUNTIME_DIR/rclone-proton.sock`).
+fn rc_socket() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("LABYRINTH_RCLONE_SOCKET") {
+        if !p.is_empty() {
+            return Some(PathBuf::from(p));
+        }
+    }
+    Some(PathBuf::from(std::env::var("XDG_RUNTIME_DIR").ok()?).join("rclone-proton.sock"))
+}
+
+fn rc_call(cmd: &str, body: &str) -> Option<String> {
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
+    use std::time::Duration;
+    let mut s = UnixStream::connect(rc_socket()?).ok()?;
+    s.set_read_timeout(Some(Duration::from_secs(3))).ok()?;
+    s.set_write_timeout(Some(Duration::from_secs(3))).ok()?;
+    let req = format!("POST /{cmd} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+    s.write_all(req.as_bytes()).ok()?;
+    let mut out = String::new();
+    s.read_to_string(&mut out).ok()?;
+    let status_ok = out.starts_with("HTTP/1.1 200");
+    let body = out.split_once("\r\n\r\n")?.1;
+    status_ok.then(|| body.to_string())
+}
+
+/// The upload queue, asked for at most every 2 seconds. None when the mount has no control socket (an older unit): then a changed-but-not-yet-uploaded file just counts as syncing.
+fn queue() -> Option<Vec<QueueItem>> {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static LAST: Mutex<Option<(Instant, Option<Vec<QueueItem>>)>> = Mutex::new(None);
+    let mut g = LAST.lock().ok()?;
+    if let Some((t, q)) = g.as_ref() {
+        if t.elapsed() < Duration::from_secs(2) {
+            return q.clone();
+        }
+    }
+    let q = rc_call("vfs/queue", "{}").map(|b| parse_queue(&b));
+    *g = Some((Instant::now(), q.clone()));
+    q
+}
+
+/// Ask rclone to retry a failed upload now.
+pub fn retry_sync(drive_root: &Path, path: &Path) -> Result<(), String> {
+    let rel = path.strip_prefix(drive_root).map_err(|_| "not inside Proton Drive".to_string())?.to_string_lossy().to_string();
+    let q = rc_call("vfs/queue", "{}").map(|b| parse_queue(&b)).ok_or("the Proton Drive mount has no control socket: restart it (systemctl --user restart proton-drive)")?;
+    let item = q.iter().find(|i| i.name == rel).ok_or("it is not waiting to upload any more")?;
+    rc_call("vfs/queue-set-expiry", &format!(r#"{{"id":{},"expiry":0}}"#, item.id)).map(|_| ()).ok_or_else(|| "rclone did not accept the retry".to_string())
 }
 
 /// rclone's cache for one file: `meta` is its `vfsMeta` record, `on_disk` the bytes the cached data file really occupies (None = no cached file).
@@ -233,7 +325,7 @@ pub enum Avail {
 pub fn avail_from_meta(meta: Option<&str>, size: u64, on_disk: Option<u64>) -> Avail {
     let v: serde_json::Value = meta.and_then(|m| serde_json::from_str(m).ok()).unwrap_or(serde_json::Value::Null);
     if v.get("Dirty").and_then(|d| d.as_bool()) == Some(true) {
-        return Avail::Local;
+        return Avail::Syncing;
     }
     let Some(on_disk) = on_disk else { return Avail::Cloud };
     let mut ranges: Vec<(u64, u64)> = v
@@ -291,7 +383,10 @@ pub fn availability(drive_root: &Path, path: &Path, size: u64) -> Option<Avail> 
         use std::os::unix::fs::MetadataExt;
         std::fs::metadata(c.join("vfs").join("proton").join(rel)).ok().filter(|m| m.is_file()).map(|m| m.blocks() * 512)
     });
-    let a = avail_from_meta(meta.as_deref(), size, on_disk);
+    let mut a = avail_from_meta(meta.as_deref(), size, on_disk);
+    if let Some(item) = queue().and_then(|q| q.into_iter().find(|i| Path::new(&i.name) == rel)) {
+        a = queue_state(&item);
+    }
     if map.len() > 5000 {
         map.clear();
     }
@@ -385,6 +480,16 @@ mod tests {
     }
 
     #[test]
+    fn the_upload_queue_says_syncing_or_failed() {
+        let q = parse_queue(r#"{"queue":[{"name":"a.txt","id":1,"size":3,"expiry":57.9,"tries":0,"delay":60,"uploading":false},{"name":"d/b.txt","id":2,"size":2,"expiry":107.9,"tries":1,"delay":120,"uploading":false},{"name":"c","id":3,"tries":2,"uploading":true}]}"#);
+        assert_eq!(q.len(), 3);
+        assert_eq!(queue_state(&q[0]), Avail::Syncing);
+        assert_eq!(queue_state(&q[1]), Avail::Failed);
+        assert_eq!(queue_state(&q[2]), Avail::Syncing);
+        assert!(parse_queue("nonsense").is_empty());
+    }
+
+    #[test]
     fn availability_from_rclone_cache() {
         let m = |rs: &str, dirty: bool| format!(r#"{{"Size":100,"Rs":{rs},"Dirty":{dirty}}}"#);
         // nothing cached
@@ -398,7 +503,7 @@ mod tests {
         assert_eq!(avail_from_meta(Some(&m(r#"[{"Pos":0,"Size":40},{"Pos":40,"Size":60}]"#, false)), 100, Some(100)), Avail::Local);
         assert_eq!(avail_from_meta(Some(&m(r#"[{"Pos":0,"Size":40},{"Pos":60,"Size":40}]"#, false)), 100, Some(100)), Avail::Partial);
         // waiting to upload
-        assert_eq!(avail_from_meta(Some(&m("null", true)), 100, None), Avail::Local);
+        assert_eq!(avail_from_meta(Some(&m("null", true)), 100, None), Avail::Syncing);
         assert_eq!(avail_from_meta(Some("garbage"), 100, None), Avail::Cloud);
     }
 }
