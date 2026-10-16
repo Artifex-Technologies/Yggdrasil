@@ -35,7 +35,8 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
 - **Privacy sandbox** (experimental): bubblewrap, set per app. "Chosen folders" gives the app a tmpfs home with only those
   folders (and its own config/cache/data folders) bound in; "cannot see other programs" gives it its own PID namespace.
   Verified with the calculator: its home showed only the shared folder, and only two processes were visible.
-  Not tried on Electron apps (Chromium's own sandbox inside bubblewrap may need extra care).
+  Also started, with the sandbox on and chosen folders empty: Ghostty (GTK) and Vivaldi (Chromium): both came up and Vivaldi
+  opened a window (not driven further). Because the app's own folders are shared, Vivaldi used its normal profile.
 - **Power limits** (labyrinth-powerlimit): /etc/labyrinth/power-limits.json; the root service
   `labyrinth-powerlimit.service` applies the active mode's limits on every mode change (CPU: `scaling_max_freq` as a percent
   of `cpuinfo_max_freq`; GPU: `nvidia-smi -pl`). Verified on the RTX 2080 Ti and the Intel pstate CPU; restored to defaults.
