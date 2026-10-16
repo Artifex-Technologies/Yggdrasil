@@ -615,6 +615,8 @@ pub fn start_recording() -> Result<(Child, PathBuf), String> {
     let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let path = dir.join(format!("ask-{stamp}.wav"));
     let child = Command::new("pw-record").args(["--rate", "16000", "--channels", "1", "--format", "s16"]).arg(&path).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|_| "Recording needs PipeWire (pw-record), which is not installed.".to_string())?;
+    // the model loads while the question is being said, so the answer does not wait for it
+    let _ = Command::new("labyrinth-sarina-warm").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
     Ok((child, path))
 }
 
