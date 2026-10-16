@@ -12,6 +12,7 @@ pub enum Icon {
     Appearance,
     Power,
     Shield,
+    User,
     Clock,
     Apps,
     Keyboard,
@@ -66,6 +67,10 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
         }
         Icon::Shield => {
             p.add(Shape::closed_line(vec![at(0.5, 0.1), at(0.84, 0.24), at(0.8, 0.56), at(0.5, 0.9), at(0.2, 0.56), at(0.16, 0.24)], s));
+        }
+        Icon::User => {
+            p.circle_stroke(at(0.5, 0.34), 0.16 * w, s);
+            p.add(Shape::line(arc(at(0.5, 0.92), 0.34 * w, 20.0, 160.0), s));
         }
         Icon::Clock => {
             p.circle_stroke(c, 0.38 * w, s);

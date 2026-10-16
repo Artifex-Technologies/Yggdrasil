@@ -12,6 +12,7 @@ mod apps_ui;
 mod icons;
 mod sys;
 mod ui;
+mod users;
 
 /// Tests that change HOME or XDG_* (process-wide) take this lock, so they run one at a time.
 #[cfg(test)]
@@ -33,6 +34,7 @@ enum Page {
     Sound,
     Appearance,
     Power,
+    Users,
     Firewall,
     DateTime,
     Apps,
@@ -40,13 +42,14 @@ enum Page {
     About,
 }
 
-const PAGES: [(Page, &str, Icon); 11] = [
+const PAGES: [(Page, &str, Icon); 12] = [
     (Page::Network, "Wi-Fi & Network", Icon::Wifi),
     (Page::Bluetooth, "Bluetooth", Icon::Bluetooth),
     (Page::Displays, "Displays", Icon::Display),
     (Page::Sound, "Sound", Icon::Sound),
     (Page::Appearance, "Appearance", Icon::Appearance),
     (Page::Power, "Power", Icon::Power),
+    (Page::Users, "Users", Icon::User),
     (Page::Firewall, "Firewall", Icon::Shield),
     (Page::DateTime, "Date & Time", Icon::Clock),
     (Page::Apps, "Apps", Icon::Apps),
@@ -63,6 +66,8 @@ enum Msg {
     Appearance(sys::Appearance),
     Power(sys::Power),
     Firewall(bool),
+    Account(users::Account, String),
+    Password(Result<(), String>),
     Time(sys::Time),
     Apps(Vec<sys::Component>),
     Installed(Vec<appmgr::AppInfo>),
@@ -73,6 +78,7 @@ enum Msg {
 
 #[derive(Default)]
 struct Data {
+    account: Option<(users::Account, String)>,
     about: Option<sys::About>,
     network: Option<sys::Network>,
     bluetooth: Option<sys::Bluetooth>,
@@ -95,6 +101,13 @@ struct App {
     loading: Option<Page>,
     status: String,
     wifi_password: Option<(String, String)>,
+    // Users page: the password form
+    pw_open: bool,
+    pw_cur: String,
+    pw_new: String,
+    pw_confirm: String,
+    pw_msg: Option<(String, bool)>,
+    pw_busy: bool,
     zone_filter: String,
     /// What the icon-pack install box holds: a folder, an archive or a link.
     icon_src: String,
@@ -132,6 +145,12 @@ impl App {
             loading: None,
             status: String::new(),
             wifi_password: None,
+            pw_open: false,
+            pw_cur: String::new(),
+            pw_new: String::new(),
+            pw_confirm: String::new(),
+            pw_msg: None,
+            pw_busy: false,
             zone_filter: String::new(),
             icon_src: String::new(),
             app_tab: 0,
@@ -175,6 +194,7 @@ impl App {
                 Page::Appearance => Msg::Appearance(sys::appearance()),
                 Page::Power => Msg::Power(sys::power()),
                 Page::Firewall => Msg::Firewall(sys::firewall_on()),
+                Page::Users => Msg::Account(users::account(), users::keyring_state()),
                 Page::DateTime => Msg::Time(sys::time()),
                 Page::Apps => {
                     let _ = tx.send(Msg::Installed(load_installed(&tx)));
@@ -210,6 +230,19 @@ impl App {
                 Msg::Appearance(v) => self.data.appearance = Some(v),
                 Msg::Power(v) => self.data.power = Some(v),
                 Msg::Firewall(v) => self.data.firewall = Some(v),
+                Msg::Account(a, k) => self.data.account = Some((a, k)),
+                Msg::Password(r) => {
+                    self.pw_busy = false;
+                    match r {
+                        Ok(()) => {
+                            self.pw_msg = Some(("Password changed. Your keyring follows it.".into(), true));
+                            self.pw_open = false;
+                            self.load(Page::Users, ctx);
+                        }
+                        Err(e) => self.pw_msg = Some((e, false)),
+                    }
+                    continue;
+                }
                 Msg::Time(v) => self.data.time = Some(v),
                 Msg::Apps(v) => self.data.apps = Some(v),
                 Msg::Installed(v) => self.data.installed = Some(v),
@@ -337,6 +370,7 @@ impl eframe::App for App {
                         Page::Appearance => self.page_appearance(ui, &pal, &ctx),
                         Page::Power => self.page_power(ui, &pal, &ctx),
                         Page::Firewall => self.page_firewall(ui, &pal, &ctx),
+                        Page::Users => self.page_users(ui, &pal, &ctx),
                         Page::DateTime => self.page_time(ui, &pal, &ctx),
                         Page::Apps => self.page_apps(ui, &pal, &ctx),
                         Page::Shortcuts => page_shortcuts(ui, &pal),
@@ -1055,6 +1089,96 @@ impl App {
                 Ok(())
             });
         }
+    }
+
+    fn page_users(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
+        let Some((acct, keyring)) = self.data.account.clone() else { return loading(ui) };
+        let name = if acct.full_name.is_empty() { acct.login.clone() } else { acct.full_name.clone() };
+        ui::group(ui, pal, Some("Your account"), |ui| {
+            ui::row(ui, pal, true, &name, Some(&format!("{} · {}", acct.login, if acct.admin { "Administrator" } else { "Standard user" })), |ui| {
+                let (rect, _) = ui.allocate_exact_size(vec2(40.0, 40.0), Sense::hover());
+                ui.painter().circle_filled(rect.center(), 20.0, pal.accent);
+                let initial = name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
+                ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, initial, egui::FontId::proportional(18.0), egui::Color32::WHITE);
+            });
+            ui::row(ui, pal, false, "Home folder", Some(&acct.home), |_| {});
+        });
+        ui.add_space(8.0);
+        let mut start = false;
+        ui::group(ui, pal, Some("Password"), |ui| {
+            ui::row(ui, pal, true, "Login password", Some("Also the password of your keyring (saved passwords and keys for your apps): they change together"), |ui| {
+                if ui.button(if self.pw_open { "Cancel" } else { "Change…" }).clicked() {
+                    self.pw_open = !self.pw_open;
+                    self.pw_msg = None;
+                }
+            });
+            if self.pw_open {
+                ui.add_space(6.0);
+                ui.label(RichText::new("Current password").color(pal.dim));
+                ui.add(egui::TextEdit::singleline(&mut self.pw_cur).password(true).desired_width(f32::INFINITY));
+                ui.add_space(4.0);
+                ui.label(RichText::new("New password").color(pal.dim));
+                ui.add(egui::TextEdit::singleline(&mut self.pw_new).password(true).desired_width(f32::INFINITY));
+                let (word, frac) = users::strength(&self.pw_new);
+                if !word.is_empty() {
+                    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width().min(320.0), 6.0), Sense::hover());
+                    ui.painter().rect_filled(rect, 3.0, pal.field);
+                    let mut fill = rect;
+                    fill.set_width(rect.width() * frac);
+                    ui.painter().rect_filled(fill, 3.0, theme::usage_color(pal, 1.0 - frac));
+                    ui.label(RichText::new(word).small().color(pal.dim));
+                }
+                ui.add_space(4.0);
+                ui.label(RichText::new("New password again").color(pal.dim));
+                ui.add(egui::TextEdit::singleline(&mut self.pw_confirm).password(true).desired_width(f32::INFINITY));
+                ui.add_space(8.0);
+                let mismatch = !self.pw_confirm.is_empty() && self.pw_confirm != self.pw_new;
+                if mismatch {
+                    ui.label(RichText::new("The two new passwords do not match.").color(pal.red));
+                }
+                let ready = !self.pw_busy && !self.pw_cur.is_empty() && self.pw_new.chars().count() >= 8 && self.pw_new == self.pw_confirm && self.pw_new != self.pw_cur;
+                if ui.add_enabled(ready, egui::Button::new(if self.pw_busy { "Changing…" } else { "Change password" })).clicked() {
+                    start = true;
+                }
+                if self.pw_new == self.pw_cur && !self.pw_new.is_empty() {
+                    ui.label(RichText::new("The new password must be different from the current one.").small().color(pal.dim));
+                }
+                ui.add_space(6.0);
+            }
+            if let Some((m, ok)) = &self.pw_msg {
+                ui.label(RichText::new(m.as_str()).color(if *ok { pal.green } else { pal.red }));
+                ui.add_space(6.0);
+            }
+        });
+        if start {
+            self.pw_busy = true;
+            self.pw_msg = None;
+            let (cur, new) = (std::mem::take(&mut self.pw_cur), std::mem::take(&mut self.pw_new));
+            self.pw_confirm.clear();
+            let (tx, ctx2) = (self.tx.clone(), ctx.clone());
+            std::thread::spawn(move || {
+                let r = users::change_password(&cur, &new);
+                let _ = tx.send(Msg::Password(r));
+                ctx2.request_repaint();
+            });
+        }
+        ui.add_space(8.0);
+        let (state, hint, fixable) = match keyring.as_str() {
+            "unlocked" => ("Unlocked", "Saved passwords and keys are available to your apps", false),
+            "locked" => ("Locked", "Still locked with a previous password: it needs one question answered", true),
+            "noservice" => ("Not running", "The keyring service is not running", false),
+            "nokeyring" => ("None yet", "It is created the next time you log in", false),
+            _ => ("Unknown", "The keyring check is not installed", false),
+        };
+        ui::group(ui, pal, Some("Keyring"), |ui| {
+            ui::row(ui, pal, true, state, Some(hint), |ui| {
+                if fixable && ui.button("Fix…").clicked() {
+                    sys::spawn("labyrinth-keyring-sync", &[]);
+                }
+            });
+        });
+        ui.add_space(8.0);
+        ui.label(RichText::new("Adding and removing other accounts is not here yet.").small().color(pal.dim));
     }
 
     fn page_firewall(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {

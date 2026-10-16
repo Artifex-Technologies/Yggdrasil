@@ -1,0 +1,22 @@
+[package]
+name = "labyrinth-keyring-sync"
+version = "0.1.0"
+edition = "2021"
+description = "Keeps gnome-keyring's login keyring and the login password together: one clear question when they have drifted apart"
+license = "MIT"
+
+[[bin]]
+name = "labyrinth-keyring-sync"
+path = "src/main.rs"
+
+[dependencies]
+eframe = "0.36.2"
+zbus = "5"
+libc = "0.2"
+zeroize = "1"
+labyrinth-ui = { path = "../labyrinth-ui" }
+
+[profile.release]
+opt-level = 2
+lto = "thin"
+strip = true

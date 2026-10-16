@@ -67,3 +67,6 @@ seen: `idle 30s  locked=false inhibitors=[NetworkManager(sleep), UPower(sleep), 
 nothing holds an *idle* inhibitor (so nothing stops the screen from dimming, blanking or locking). Together with `labyrinth-lockwatch`'s log this should name
 what blanks and locks the screen; read both after the next time it happens. To make it act (lock, display off, suspend) write `~/.config/labyrinth/idle.conf`
 (`mode = act`, then `lock = 600` etc.) and turn the matching PowerDevil/kscreenlocker settings off first, or both will act.
+
+## Users page and keyring sync (2026-10-16)
+Built: Settings > Users (change password through `passwd` so the keyring follows) and `labyrinth-keyring-sync` (one question at login if they drifted apart). See USERS_KEYRING.md.
