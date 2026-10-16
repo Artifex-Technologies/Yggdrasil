@@ -92,6 +92,8 @@ enum BusMsg {
     ToggleStart,
     ShowClipboard,
     AskSarina,
+    ToggleCalendar,
+    FylgjaSection(u32),
 }
 
 #[zbus::interface(name = "org.labyrinth.Panel")]
@@ -109,6 +111,16 @@ impl PanelBus {
     /// Start recording a question for Sarina; call again to send it.
     fn ask_sarina(&self) {
         let _ = self.0.send(BusMsg::AskSarina);
+    }
+
+    /// Open the calendar (with the Notification Center pane when that is on), or close it.
+    fn toggle_calendar(&self) {
+        let _ = self.0.send(BusMsg::ToggleCalendar);
+    }
+
+    /// Open Fylgja on a section (0 Controls, 1 Today, 2 Stats, 3 Clipboard, 4 Notifications, 5 Wallpaper, 6 Power), or close it.
+    fn show_fylgja(&self, section: u32) {
+        let _ = self.0.send(BusMsg::FylgjaSection(section));
     }
 }
 
@@ -366,11 +378,17 @@ fn command_output(cmd: &str, args: &[&str]) -> String {
 }
 
 /// The main screen (kscreen priority 1) and the tiling screens, from KDE.
+/// Whether kscreen reports an output as in use. Plasma 6.8's `kscreen-doctor -j` no longer has an `enabled` key (it was
+/// there before): a connected output with a current mode is the same thing.
+fn output_enabled(o: &serde_json::Value) -> bool {
+    o["enabled"].as_bool().unwrap_or_else(|| o["connected"].as_bool().unwrap_or(false) && o["currentModeId"].as_str().map(|m| !m.is_empty()).unwrap_or(false))
+}
+
 fn read_layout() -> Layout {
     let json: serde_json::Value = serde_json::from_str(&command_output("kscreen-doctor", &["-j"])).unwrap_or(serde_json::Value::Null);
     let primary = json["outputs"]
         .as_array()
-        .and_then(|a| a.iter().find(|o| o["priority"].as_i64() == Some(1) && o["enabled"].as_bool().unwrap_or(false)))
+        .and_then(|a| a.iter().find(|o| o["priority"].as_i64() == Some(1) && output_enabled(o)))
         .and_then(|o| o["name"].as_str())
         .unwrap_or("")
         .to_string();
@@ -384,7 +402,7 @@ fn read_layout() -> Layout {
         .as_array()
         .map(|a| {
             a.iter()
-                .filter(|o| o["enabled"].as_bool().unwrap_or(false))
+                .filter(|o| output_enabled(o))
                 .filter_map(|o| {
                     let name = o["name"].as_str()?.to_string();
                     // The current mode is in device pixels; 2 and 8 are the sideways rotations.
@@ -610,6 +628,16 @@ impl State {
         self.close_popup();
         if !was_open {
             self.toggle_popup(PopupKind::Fylgja(fylgja::FyState { section: 3, open: true, pinned: true, voice_ui: false, picker: false, mixer: false }));
+        }
+    }
+
+    /// Opens Fylgja pinned on a section, or closes it if anything is open.
+    fn show_fylgja_section(&mut self, section: usize) {
+        let was_open = self.popup.is_some();
+        self.close_popup();
+        if !was_open {
+            let section = section.min(fylgja::SECTIONS.len() - 1);
+            self.toggle_popup(PopupKind::Fylgja(fylgja::FyState { section, open: true, pinned: true, voice_ui: false, picker: false, mixer: false }));
         }
     }
 
@@ -2163,6 +2191,8 @@ fn main() {
                     BusMsg::ToggleStart => st.toggle_start(),
                     BusMsg::ShowClipboard => st.show_clipboard(),
                     BusMsg::AskSarina => st.ask_sarina_key(),
+                    BusMsg::ToggleCalendar => st.toggle_calendar(),
+                    BusMsg::FylgjaSection(n) => st.show_fylgja_section(n as usize),
                 }
             }
         })
@@ -2431,4 +2461,18 @@ fn main() {
             }
         })
         .expect("event loop run");
+}
+
+#[cfg(test)]
+mod layout_tests {
+    #[test]
+    fn output_in_use_with_or_without_the_enabled_key() {
+        let j = |t: &str| serde_json::from_str::<serde_json::Value>(t).unwrap();
+        let old = j(r#"{"enabled":true,"connected":true}"#);
+        let new_68 = j(r#"{"connected":true,"currentModeId":"6"}"#);
+        let off = j(r#"{"connected":true,"enabled":false,"currentModeId":"6"}"#);
+        let unplugged = j(r#"{"connected":false}"#);
+        assert!(super::output_enabled(&old) && super::output_enabled(&new_68));
+        assert!(!super::output_enabled(&off) && !super::output_enabled(&unplugged));
+    }
 }

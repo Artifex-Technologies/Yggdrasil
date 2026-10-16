@@ -365,7 +365,8 @@ pub fn outputs(json: &str) -> Vec<Output> {
                 .filter(|o| o["connected"].as_bool().unwrap_or(false))
                 .map(|o| Output {
                     name: o["name"].as_str().unwrap_or("").to_string(),
-                    enabled: o["enabled"].as_bool().unwrap_or(false),
+                    // Plasma 6.8 dropped the `enabled` key: a connected output with a current mode is in use
+                    enabled: o["enabled"].as_bool().unwrap_or_else(|| o["currentModeId"].as_str().map(|m| !m.is_empty()).unwrap_or(false)),
                     primary: o["priority"].as_i64() == Some(1),
                     scale: o["scale"].as_f64().unwrap_or(1.0),
                     current: o["currentModeId"].as_str().map(str::to_string).unwrap_or_else(|| o["currentModeId"].to_string()),
