@@ -289,6 +289,8 @@ struct State {
     rec: Option<(std::process::Child, std::path::PathBuf)>,
     rec_since: Option<std::time::Instant>,
     voice_tx: calloop::channel::Sender<Result<String, String>>,
+    /// What Sarina understood of the question, sent as soon as it is known (before her answer).
+    heard_tx: calloop::channel::Sender<String>,
     /// What was copied (in memory only) and the process that watches the clipboard.
     clips: Arc<std::sync::Mutex<Vec<String>>>,
     clip_child: Option<std::process::Child>,
@@ -615,7 +617,7 @@ impl State {
     fn ask_sarina_key(&mut self) {
         match self.model.fylgja.voice {
             fylgja::Voice::Listening(_) => self.send_recording(),
-            fylgja::Voice::Thinking => {}
+            fylgja::Voice::Thinking(_) => {}
             _ => {
                 self.close_popup();
                 self.model.fylgja.voice = match fylgja::start_recording() {
@@ -636,8 +638,8 @@ impl State {
         if let Some((mut child, path)) = self.rec.take() {
             fylgja::stop_recording(&mut child);
             self.rec_since = None;
-            self.model.fylgja.voice = fylgja::Voice::Thinking;
-            fylgja::ask_sarina(path, self.voice_tx.clone());
+            self.model.fylgja.voice = fylgja::Voice::Thinking(String::new());
+            fylgja::ask_sarina(path, self.heard_tx.clone(), self.voice_tx.clone());
             self.dirty = true;
         }
     }
@@ -649,7 +651,7 @@ impl State {
             let _ = std::fs::remove_file(path);
         }
         self.rec_since = None;
-        if self.model.fylgja.voice != fylgja::Voice::Thinking {
+        if !matches!(self.model.fylgja.voice, fylgja::Voice::Thinking(_)) {
             self.model.fylgja.voice = fylgja::Voice::Idle;
         }
     }
@@ -2046,6 +2048,7 @@ fn main() {
     let (osd_hide_tx, osd_hide_rx) = calloop::channel::channel::<u64>();
     let (toast_hide_tx, toast_hide_rx) = calloop::channel::channel::<u32>();
     let (voice_tx, voice_rx) = calloop::channel::channel::<Result<String, String>>();
+    let (heard_tx, heard_rx) = calloop::channel::channel::<String>();
     let mut state = State {
         qh: qh.clone(),
         conn: conn.clone(),
@@ -2098,6 +2101,7 @@ fn main() {
         rec: None,
         rec_since: None,
         voice_tx,
+        heard_tx,
         clips: Arc::new(std::sync::Mutex::new(Vec::new())),
         clip_child: None,
         thumbs_started: false,
@@ -2233,6 +2237,18 @@ fn main() {
             }
         })
         .expect("animation channel");
+    // what she understood, while she is still working on the answer
+    event_loop
+        .handle()
+        .insert_source(heard_rx, |event, _, st| {
+            if let calloop::channel::Event::Msg(h) = event {
+                if matches!(st.model.fylgja.voice, fylgja::Voice::Thinking(_)) {
+                    st.model.fylgja.voice = fylgja::Voice::Thinking(h);
+                    st.dirty = true;
+                }
+            }
+        })
+        .expect("heard channel");
     // Sarina's answer (or why there is none)
     event_loop
         .handle()

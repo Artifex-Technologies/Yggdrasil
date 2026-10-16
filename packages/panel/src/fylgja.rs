@@ -48,8 +48,8 @@ pub enum Voice {
     Idle,
     /// Recording a question, this many seconds so far.
     Listening(u64),
-    /// The recording is with Sarina.
-    Thinking,
+    /// The recording is with Sarina; what she heard once the words are known (empty before).
+    Thinking(String),
     Reply(String),
     Failed(String),
 }
@@ -627,19 +627,43 @@ pub fn stop_recording(child: &mut Child) {
 }
 
 /// Gives the recording to Sarina (`labyrinth-sarina-ask`) and reports her reply or why there is none.
-pub fn ask_sarina(wav: PathBuf, done: calloop::channel::Sender<Result<String, String>>) {
+pub fn ask_sarina(wav: PathBuf, heard: calloop::channel::Sender<String>, done: calloop::channel::Sender<Result<String, String>>) {
     std::thread::spawn(move || {
-        let r = match Command::new("labyrinth-sarina-ask").arg(&wav).output() {
-            Ok(o) if o.status.success() => Ok(String::from_utf8_lossy(&o.stdout).trim().to_string()),
-            Ok(o) => {
-                let msg = String::from_utf8_lossy(if o.stdout.is_empty() { &o.stderr } else { &o.stdout }).trim().to_string();
-                Err(if msg.is_empty() { "Sarina could not answer.".to_string() } else { msg })
-            }
-            Err(_) => Err("labyrinth-sarina-ask is missing from this system.".to_string()),
-        };
+        let r = run_ask(&wav, &heard);
         let _ = std::fs::remove_file(&wav); // the question is not kept
         let _ = done.send(r);
     });
+}
+
+/// Runs `labyrinth-sarina-ask`, passing on its first line (`Heard: "..."`) as soon as it is printed, so the card can show
+/// what was understood while Sarina is still working on the answer.
+fn run_ask(wav: &PathBuf, heard: &calloop::channel::Sender<String>) -> Result<String, String> {
+    use std::io::{BufRead, BufReader};
+    let mut child = Command::new("labyrinth-sarina-ask").arg(wav).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|_| "labyrinth-sarina-ask is missing from this system.".to_string())?;
+    let mut text = String::new();
+    if let Some(out) = child.stdout.take() {
+        for (i, line) in BufReader::new(out).lines().map_while(Result::ok).enumerate() {
+            if i == 0 {
+                if let Some(h) = line.strip_prefix("Heard: ") {
+                    let _ = heard.send(h.to_string());
+                }
+            }
+            text.push_str(&line);
+            text.push('\n');
+        }
+    }
+    let status = child.wait().map_err(|_| "Sarina could not answer.".to_string())?;
+    let text = text.trim().to_string();
+    if status.success() {
+        return Ok(text);
+    }
+    let mut err = String::new();
+    if let Some(mut e) = child.stderr.take() {
+        use std::io::Read;
+        let _ = e.read_to_string(&mut err);
+    }
+    let msg = if text.is_empty() { err.trim().to_string() } else { text };
+    Err(if msg.is_empty() { "Sarina could not answer.".to_string() } else { msg })
 }
 
 // ---------------------------------------------------------------- acting
@@ -760,7 +784,8 @@ pub fn card_size(m: &Model, st: &FyState) -> (f32, f32) {
     if st.voice_ui && m.fylgja.voice != Voice::Idle {
         let h = match &m.fylgja.voice {
             Voice::Listening(_) => 128.0,
-            Voice::Thinking => 96.0,
+            Voice::Thinking(h) if !h.is_empty() => 118.0,
+            Voice::Thinking(_) => 96.0,
             Voice::Reply(_) => 230.0,
             _ => 130.0,
         };
@@ -1061,9 +1086,12 @@ pub fn paint(pix: &mut Pixmap, s: f32, m: &Model, st: &FyState, slide: f32, poin
                 paint::draw_text(pix, &fonts.bold, 12.5 * s, (b.0 + b.2 / 2.0) * s - lw / 2.0, (b.1 + b.3 / 2.0) * s, WHITE, "Send");
                 hits.push(FHit { rect: b, act: FAct::VoiceStop });
             }
-            Voice::Thinking => {
+            Voice::Thinking(heard) => {
                 paint::fill_circle(pix, (x0 + 14.0) * s, (cy + 40.0) * s, 7.0 * s, ACCENT);
                 paint::draw_text(pix, &fonts.bold, 15.0 * s, (x0 + 42.0) * s, (cy + 40.0) * s, WHITE, "Sarina is thinking…");
+                if !heard.is_empty() {
+                    paint::draw_text(pix, &fonts.regular, 12.5 * s, x0 * s, (cy + 76.0) * s, DIM, &fit(&fonts.regular, 12.5 * s, heard, inner * s));
+                }
             }
             Voice::Reply(text) => {
                 paint::draw_text(pix, &fonts.bold, 13.0 * s, x0 * s, (cy + 26.0) * s, ACCENT, "Sarina");
