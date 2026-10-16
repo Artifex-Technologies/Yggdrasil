@@ -86,6 +86,8 @@ struct App {
     status: String,
     wifi_password: Option<(String, String)>,
     zone_filter: String,
+    /// What the icon-pack install box holds: a folder, an archive or a link.
+    icon_src: String,
 }
 
 impl App {
@@ -101,6 +103,7 @@ impl App {
             status: String::new(),
             wifi_password: None,
             zone_filter: String::new(),
+            icon_src: String::new(),
         };
         app.load(app.page, ctx);
         app
@@ -554,6 +557,9 @@ impl App {
         let mut style: Option<bool> = None;
         let mut accent: Option<[u8; 3]> = None;
         let mut wallpaper: Option<String> = None;
+        let mut icon_use: Option<String> = None;
+        let mut icon_remove: Option<String> = None;
+        let mut icon_install: Option<String> = None;
         let mut panel_switch: Option<bool> = None;
         let mut conf = a.panel;
         let mut conf_changed = false;
@@ -575,6 +581,31 @@ impl App {
                         accent = Some(*rgb);
                     }
                 }
+            });
+        });
+        ui::group(ui, pal, Some("Icons"), |ui| {
+            for (i, pack) in a.icon_packs.iter().enumerate() {
+                let current = pack.id == a.icon_theme;
+                let sub = if pack.user { "Installed by you" } else { "Comes with the system" };
+                ui::row(ui, pal, i == 0, &pack.name, Some(sub), |ui| {
+                    if current {
+                        ui.label(RichText::new("In use").color(pal.accent));
+                    } else if ui::action(ui, pal, "Use").clicked() {
+                        icon_use = Some(pack.id.clone());
+                    }
+                    if pack.user && !current && ui::quiet(ui, pal, "Remove").clicked() {
+                        icon_remove = Some(pack.id.clone());
+                    }
+                    for p in pack.preview.iter().rev() {
+                        ui.add(egui::Image::new(format!("file://{}", p.display())).fit_to_exact_size(vec2(28.0, 28.0)));
+                    }
+                });
+            }
+            ui::row(ui, pal, a.icon_packs.is_empty(), "Install an icon pack", Some("A folder, an archive (.tar.gz, .tar.xz, .zip) or an https link. It goes in your own icons folder; nothing needs a password"), |ui| {
+                if ui::action(ui, pal, "Install").clicked() && !self.icon_src.trim().is_empty() {
+                    icon_install = Some(self.icon_src.trim().to_string());
+                }
+                ui.add(egui::TextEdit::singleline(&mut self.icon_src).hint_text("~/Downloads/pack.tar.gz or https://...").desired_width((ui.available_width() - 10.0).clamp(160.0, 340.0)));
             });
         });
         ui::group(ui, pal, Some("Top bar and dock"), |ui| {
@@ -707,6 +738,16 @@ impl App {
         }
         if let Some(p) = wallpaper {
             self.change(ctx, move || sys::act("plasma-apply-wallpaperimage", &[&p]));
+        }
+        if let Some(id) = icon_use {
+            self.change(ctx, move || sys::set_icon_pack(&id));
+        }
+        if let Some(id) = icon_remove {
+            self.change(ctx, move || sys::remove_icon_pack(&id));
+        }
+        if let Some(src) = icon_install {
+            self.icon_src.clear();
+            self.change(ctx, move || sys::install_icon_pack(&src).map(|_| ()));
         }
     }
 

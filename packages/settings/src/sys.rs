@@ -419,8 +419,23 @@ pub const ACCENTS: [(&str, [u8; 3]); 8] = [
     ("Pink", [220, 90, 160]),
 ];
 
+/// An icon pack (a freedesktop icon theme) that can be chosen.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct IconPack {
+    /// The folder name, which is what KDE's settings store.
+    pub id: String,
+    pub name: String,
+    /// Installed by the user (in ~/.local/share/icons), so it can be removed from here.
+    pub user: bool,
+    /// A few sample icons (folder, files, settings, a browser) to show what the pack looks like.
+    pub preview: Vec<std::path::PathBuf>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Appearance {
+    pub icon_packs: Vec<IconPack>,
+    /// The id of the pack in use.
+    pub icon_theme: String,
     pub dark: bool,
     pub accent: Option<[u8; 3]>,
     pub wallpapers: Vec<std::path::PathBuf>,
@@ -449,7 +464,7 @@ AccentColor={}", s.trim())));
     }
     wallpapers.sort();
     let panel_on = run("labyrinth-panel-mode", &["status"]).map(|s| s.trim() == "labyrinth-panel").unwrap_or(false);
-    Appearance { dark: scheme.trim().to_lowercase().contains("dark") || scheme.trim().is_empty(), accent, wallpapers, panel_on, panel: labyrinth_conf::PanelConf::load() }
+    Appearance { icon_packs: icon_packs(), icon_theme: run("kreadconfig6", &["--file", "kdeglobals", "--group", "Icons", "--key", "Theme"]).map(|s| s.trim().to_string()).unwrap_or_default(), dark: scheme.trim().to_lowercase().contains("dark") || scheme.trim().is_empty(), accent, wallpapers, panel_on, panel: labyrinth_conf::PanelConf::load() }
 }
 
 /// The largest picture in a Plasma wallpaper package's images folder (named like 3840x2160.png).
@@ -657,5 +672,223 @@ mod tests {
         let c = components(j, &|p| p == "steam" || p == "gamemode");
         assert!(c[0].installed);
         assert!(!c[1].installed);
+    }
+}
+
+
+// ---------------------------------------------------------------- Icon packs
+
+fn user_icons_dir() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share/icons"))
+}
+
+/// `Key=value` from the `[Icon Theme]` section of an index.theme.
+fn theme_key(index: &str, key: &str) -> Option<String> {
+    let mut inside = false;
+    for line in index.lines() {
+        let l = line.trim();
+        if l.starts_with('[') {
+            inside = l == "[Icon Theme]";
+        } else if inside {
+            if let Some((k, v)) = l.split_once('=') {
+                if k.trim() == key {
+                    return Some(v.trim().to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// One sample icon from a pack, by name (the pack's own files only, not what it inherits).
+fn theme_icon(theme: &std::path::Path, name: &str) -> Option<std::path::PathBuf> {
+    for ctx in ["places", "apps", "devices", "mimetypes"] {
+        for size in ["scalable", "512", "256", "128", "96", "64", "48", "32"] {
+            for dir in [theme.join(ctx).join(size), theme.join(size).join(ctx), theme.join(format!("{size}x{size}")).join(ctx)] {
+                for ext in ["svg", "png"] {
+                    let p = dir.join(format!("{name}.{ext}"));
+                    if p.is_file() {
+                        return Some(p);
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Every icon pack on the system and in the user's own folder, user ones first. Cursor themes, hidden
+/// themes and the empty base themes are left out.
+pub fn icon_packs() -> Vec<IconPack> {
+    let mut out: Vec<IconPack> = vec![];
+    let roots = [(user_icons_dir(), true), (Some(std::path::PathBuf::from("/usr/share/icons")), false)];
+    for (root, user) in roots {
+        let Some(root) = root else { continue };
+        let Ok(rd) = std::fs::read_dir(&root) else { continue };
+        let mut dirs: Vec<_> = rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+        dirs.sort();
+        for d in dirs {
+            let id = d.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let Ok(index) = std::fs::read_to_string(d.join("index.theme")) else { continue };
+            if theme_key(&index, "Hidden").map(|h| h.eq_ignore_ascii_case("true")).unwrap_or(false) || theme_key(&index, "Directories").is_none() {
+                continue;
+            }
+            if matches!(id.as_str(), "default" | "hicolor" | "locolor") || out.iter().any(|p| p.id == id) {
+                continue;
+            }
+            let name = theme_key(&index, "Name").filter(|n| !n.is_empty()).unwrap_or_else(|| id.clone());
+            let preview = ["folder", "system-file-manager", "file-manager", "minos", "preferences-system", "web-browser"].iter().filter_map(|n| theme_icon(&d, n)).take(4).collect();
+            out.push(IconPack { id, name, user, preview });
+        }
+    }
+    out
+}
+
+/// Choose an icon pack for the whole desktop (KDE, the panel and Minos follow it).
+pub fn set_icon_pack(id: &str) -> Result<(), String> {
+    if id.is_empty() || id.contains('/') || id.starts_with('.') {
+        return Err("not an icon pack name".into());
+    }
+    act("/usr/lib/plasma-changeicons", &[id])
+}
+
+fn safe_name(n: &str) -> bool {
+    !n.is_empty() && !n.starts_with('.') && n.chars().all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | ' ' | '+'))
+}
+
+fn copy_tree(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for e in std::fs::read_dir(src)? {
+        let e = e?;
+        let (from, to) = (e.path(), dst.join(e.file_name()));
+        let t = e.file_type()?;
+        if t.is_dir() {
+            copy_tree(&from, &to)?;
+        } else if t.is_file() {
+            std::fs::copy(&from, &to)?;
+        } else if t.is_symlink() {
+            // a link inside the pack stays a link only when it points inside the pack (relative); others are skipped
+            if let Ok(target) = std::fs::read_link(&from) {
+                if target.is_relative() && !target.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+                    let _ = std::os::unix::fs::symlink(target, &to);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Install an icon pack from a folder, an archive (.tar.gz, .tar.xz, .tar.bz2, .zip) or an https link to one.
+/// It goes into ~/.local/share/icons, so nothing needs root. Returns the names of the packs installed.
+pub fn install_icon_pack(src: &str) -> Result<Vec<String>, String> {
+    let src = src.trim();
+    let dest_root = user_icons_dir().ok_or("no home folder")?;
+    let tmp = std::env::temp_dir().join(format!("labyrinth-icons-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
+    let result = (|| -> Result<Vec<String>, String> {
+        let local: std::path::PathBuf = if src.starts_with("https://") {
+            let file = tmp.join("download");
+            act("curl", &["-fsSL", "--max-time", "300", "--max-filesize", "500000000", "-o", &file.to_string_lossy(), src])?;
+            file
+        } else if let Some(rest) = src.strip_prefix("~/") {
+            std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(rest)
+        } else if let Some(rest) = src.strip_prefix("file://") {
+            std::path::PathBuf::from(rest)
+        } else {
+            std::path::PathBuf::from(src)
+        };
+        if !local.exists() {
+            return Err("That path does not exist.".into());
+        }
+        let unpacked = tmp.join("unpacked");
+        std::fs::create_dir_all(&unpacked).map_err(|e| e.to_string())?;
+        if local.is_dir() {
+            copy_tree(&local, &unpacked.join(local.file_name().unwrap_or_default())).map_err(|e| e.to_string())?;
+        } else {
+            // bsdtar reads zip and every tar flavour, and refuses paths that climb out of the folder
+            act("bsdtar", &["-xf", &local.to_string_lossy(), "-C", &unpacked.to_string_lossy()]).map_err(|e| format!("Could not open it as an archive: {e}"))?;
+        }
+        // packs are the folders with an index.theme: at the top, or one level down (an archive of several packs)
+        let mut found: Vec<std::path::PathBuf> = vec![];
+        let mut stack = vec![(unpacked.clone(), 0)];
+        while let Some((d, depth)) = stack.pop() {
+            if d != unpacked && d.join("index.theme").is_file() {
+                found.push(d);
+                continue;
+            }
+            if depth < 2 {
+                if let Ok(rd) = std::fs::read_dir(&d) {
+                    stack.extend(rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).map(|p| (p, depth + 1)));
+                }
+            }
+        }
+        if found.is_empty() {
+            return Err("No icon pack found there (an icon pack is a folder with an index.theme file).".into());
+        }
+        std::fs::create_dir_all(&dest_root).map_err(|e| e.to_string())?;
+        let mut names = vec![];
+        for pack in found {
+            let name = pack.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            if !safe_name(&name) {
+                return Err(format!("The folder name {name:?} is not usable as an icon pack name."));
+            }
+            let target = dest_root.join(&name);
+            if target.exists() {
+                std::fs::remove_dir_all(&target).map_err(|e| e.to_string())?;
+            }
+            copy_tree(&pack, &target).map_err(|e| e.to_string())?;
+            names.push(name);
+        }
+        let _ = Command::new("gtk-update-icon-cache").arg("-q").arg("-t").arg(&dest_root).status();
+        Ok(names)
+    })();
+    let _ = std::fs::remove_dir_all(&tmp);
+    result
+}
+
+/// Remove an icon pack the user installed (never a system one).
+pub fn remove_icon_pack(id: &str) -> Result<(), String> {
+    if !safe_name(id) {
+        return Err("not an icon pack name".into());
+    }
+    let dir = user_icons_dir().ok_or("no home folder")?.join(id);
+    let meta = std::fs::symlink_metadata(&dir).map_err(|_| "That pack is not in your own icons folder.".to_string())?;
+    if !meta.is_dir() {
+        return Err("That pack is not in your own icons folder.".into());
+    }
+    std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod icon_tests {
+    use super::*;
+
+    #[test]
+    fn index_keys_and_names() {
+        let idx = "[Icon Theme]\nName=My Pack\nDirectories=apps/scalable\nHidden=false\n[apps/scalable]\nSize=128\n";
+        assert_eq!(theme_key(idx, "Name").as_deref(), Some("My Pack"));
+        assert_eq!(theme_key(idx, "Directories").as_deref(), Some("apps/scalable"));
+        assert_eq!(theme_key(idx, "Size"), None, "only the [Icon Theme] section counts");
+        assert!(safe_name("MacTahoe-purple") && safe_name("Pack 2.0") && !safe_name("../x") && !safe_name(".hidden") && !safe_name("a/b"));
+    }
+
+    #[test]
+    fn a_folder_pack_installs_into_the_home_folder_and_can_be_removed() {
+        let home = std::env::temp_dir().join(format!("lf-icons-home-{}", std::process::id()));
+        let src = std::env::temp_dir().join(format!("lf-icons-src-{}/TestPack", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(src.join("apps/scalable")).unwrap();
+        std::fs::write(src.join("index.theme"), "[Icon Theme]\nName=Test Pack\nDirectories=apps/scalable\n").unwrap();
+        std::fs::write(src.join("apps/scalable/x.svg"), "<svg xmlns='http://www.w3.org/2000/svg'/>").unwrap();
+        std::env::set_var("HOME", &home);
+        assert_eq!(install_icon_pack(&src.to_string_lossy()).unwrap(), vec!["TestPack".to_string()]);
+        assert!(home.join(".local/share/icons/TestPack/apps/scalable/x.svg").is_file());
+        let packs = icon_packs();
+        assert!(packs.iter().any(|p| p.id == "TestPack" && p.user && p.name == "Test Pack"));
+        assert!(install_icon_pack("/nonexistent/path").is_err());
+        remove_icon_pack("TestPack").unwrap();
+        assert!(!home.join(".local/share/icons/TestPack").exists());
+        assert!(remove_icon_pack("../etc").is_err());
     }
 }
