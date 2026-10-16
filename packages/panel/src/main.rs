@@ -6,6 +6,7 @@
 //! the main screen. Which screen is which comes from KDE (kscreen priority, the tiling setting);
 //! it is re-read every few seconds, so changing it in Settings takes effect live.
 
+mod a11y;
 mod apps;
 mod paint;
 mod calendar;
@@ -266,6 +267,8 @@ struct State {
     plasma_shell: Option<OrgKdePlasmaShell>,
     shm: WlShm,
     model: Model,
+    /// The panel for screen readers (AT-SPI); None when switched off with LABYRINTH_A11Y=off.
+    a11y: Option<a11y::A11y>,
     assets: Assets,
     surfs: Vec<Surf>,
     next_surf: usize,
@@ -1790,6 +1793,22 @@ impl State {
 
     // -------------------------------------------------------------- actions
 
+    /// Describe the bar, dock and pop-ups to screen readers (only sent when something a reader can see changed).
+    fn a11y_sync(&mut self) {
+        let Some(a) = self.a11y.as_mut() else { return };
+        let mut parts: Vec<(a11y::Part, Vec<Hit>)> = vec![];
+        for s in &self.surfs {
+            let part = match s.kind {
+                Kind::Bar { .. } => a11y::Part::Bar,
+                Kind::Dock => a11y::Part::Dock,
+                Kind::Toast => a11y::Part::Toasts,
+                _ => continue,
+            };
+            parts.push((part, s.hits.clone()));
+        }
+        a.sync(&self.model, &parts);
+    }
+
     fn click(&mut self, action: Action) {
         match action {
             Action::Logo => self.toggle_start(),
@@ -2423,6 +2442,7 @@ fn main() {
         plasma_shell,
         shm,
         model: Model { apps: apps::load_all(), pinned: apps::pinned(), wins: vec![], clock: clock_text(PanelConf::load().clock_24h), clock_secs: secs_text(PanelConf::load().clock_24h), date: date_text(), today: today_ymd(), user: user_name(), hibernate: shell::can_hibernate(), conf: PanelConf::load(), dark: system_dark(), status: Default::default(), trash_full: shell::trash_has_files(), notch_open: false, fylgja: Default::default(), notch_w: 0.0, notch_tab: None, notifs: notify::Store::load(notify::state_path()), tray: vec![] },
+        a11y: None,
         assets: Assets { fonts, icons: paint::Icons::new() },
         surfs: vec![],
         next_surf: 0,
@@ -2610,6 +2630,26 @@ fn main() {
             }
         })
         .expect("tray channel");
+    // screen readers: the bar, dock and pop-ups as an AT-SPI tree, and a reader's "click" back as a real click
+    if std::env::var("LABYRINTH_A11Y").map(|v| v != "off").unwrap_or(true) {
+        let (a11y_tx, a11y_rx) = calloop::channel::channel::<Action>();
+        state.a11y = Some(a11y::A11y::new(a11y_tx));
+        event_loop
+            .handle()
+            .insert_source(a11y_rx, |event, _, st| {
+                if let calloop::channel::Event::Msg(a) = event {
+                    st.click(a);
+                }
+            })
+            .expect("accessibility channel");
+        event_loop
+            .handle()
+            .insert_source(Timer::from_duration(Duration::from_millis(500)), |_, _, st| {
+                st.a11y_sync();
+                TimeoutAction::ToDuration(Duration::from_millis(500))
+            })
+            .expect("accessibility timer");
+    }
     // each step of Fylgja sliding: redraw, and finish a close once it has gone up
     event_loop
         .handle()
