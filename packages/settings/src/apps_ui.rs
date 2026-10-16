@@ -160,6 +160,7 @@ impl App {
                         bits.push(match a.net {
                             NetMode::Block => "no network".into(),
                             NetMode::Ethernet => "Ethernet only".into(),
+                            NetMode::Ask => "asks before connecting".into(),
                             _ => "Wi-Fi only".into(),
                         });
                     }
@@ -256,9 +257,45 @@ impl App {
             if ui.interact(name_area, ui.id().with("net-name"), Sense::click()).clicked() {
                 net = Some(if allowed { NetMode::Block } else { NetMode::Allow });
             }
+            if a.net != NetMode::Block {
+                ui::row(ui, pal, false, "Ask before connecting to a new place", Some("A notification asks Allow or Deny the first time the app reaches an address. Until you answer, that connection waits"), |ui| {
+                    let mut on = a.net == NetMode::Ask;
+                    if ui::switch(ui, pal, &mut on).changed() {
+                        net = Some(if on { NetMode::Ask } else { NetMode::Allow });
+                    }
+                });
+            }
             ui.label(RichText::new("Applies to the app when it is opened from the dock, the start menu or here. Changing it asks for your password. A running app picks it up after a restart.").size(11.5).color(pal.dim));
             ui.add_space(6.0);
         });
+
+        if a.net == NetMode::Ask {
+            let stale = self.ask_cache.as_ref().map(|(t, app, _)| app != &a.id || t.elapsed().as_secs() >= 3).unwrap_or(true);
+            if stale {
+                self.ask_cache = Some((std::time::Instant::now(), a.id.clone(), appmgr::ask_decisions(&a.id)));
+            }
+            ctx.request_repaint_after(std::time::Duration::from_secs(3));
+            let decisions = self.ask_cache.as_ref().map(|c| c.2.clone()).unwrap_or_default();
+            let mut forget: Option<String> = None;
+            ui::group(ui, pal, Some("Places you decided about"), |ui| {
+                if decisions.is_empty() {
+                    ui::row(ui, pal, true, "Nothing yet", Some("When the app first tries to reach somewhere new, a notification asks. Your answers are listed here"), |_| {});
+                }
+                for (i, d) in decisions.iter().enumerate() {
+                    let title = if d.name.is_empty() { d.ip.clone() } else { d.name.clone() };
+                    let sub = format!("{}{}", if d.allowed { "Allowed" } else { "Denied" }, if d.name.is_empty() { String::new() } else { format!(" · {}", d.ip) });
+                    ui::row(ui, pal, i == 0, &title, Some(&sub), |ui| {
+                        if ui::quiet(ui, pal, "Forget").clicked() {
+                            forget = Some(d.ip.clone());
+                        }
+                    });
+                }
+            });
+            if let Some(ip) = forget {
+                appmgr::ask_forget(&a.id, &ip);
+                self.ask_cache = None;
+            }
+        }
 
         ui::group(ui, pal, Some("General"), |ui| {
             ui::row(ui, pal, true, "Open when I log in", None, |ui| {

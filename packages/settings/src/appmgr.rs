@@ -17,6 +17,8 @@ pub enum NetMode {
     Block,
     Ethernet,
     Wifi,
+    /// Every new destination is held until you answer a notification.
+    Ask,
 }
 
 impl NetMode {
@@ -26,6 +28,7 @@ impl NetMode {
             NetMode::Block => "block",
             NetMode::Ethernet => "ethernet",
             NetMode::Wifi => "wifi",
+            NetMode::Ask => "ask",
         }
     }
     pub fn from_word(w: &str) -> NetMode {
@@ -33,6 +36,7 @@ impl NetMode {
             "block" => NetMode::Block,
             "ethernet" => NetMode::Ethernet,
             "wifi" => NetMode::Wifi,
+            "ask" => NetMode::Ask,
             _ => NetMode::Allow,
         }
     }
@@ -457,6 +461,17 @@ pub fn protected(pkg: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ask_decisions_are_read_allowed_first() {
+        let v: Value = serde_json::from_str(r#"{"type":"list","apps":{"pdfcraft":{"allow":{"9.9.9.9":"dns.example","1.1.1.1":""},"deny":{"5.5.5.5":""}},"x":{"allow":{},"deny":{}}}}"#).unwrap();
+        let d = parse_decisions(&v, "pdfcraft");
+        assert_eq!(d.iter().map(|x| (x.ip.as_str(), x.allowed)).collect::<Vec<_>>(), vec![("1.1.1.1", true), ("9.9.9.9", true), ("5.5.5.5", false)]);
+        assert_eq!(d[1].name, "dns.example");
+        assert!(parse_decisions(&v, "missing").is_empty());
+        assert_eq!(NetMode::from_word("ask"), NetMode::Ask);
+        assert_eq!(NetMode::Ask.word(), "ask");
+    }
+
     use super::*;
     use crate::ENV_LOCK as ENV;
 
@@ -547,4 +562,53 @@ mod tests {
     fn desktop_packages_are_protected() {
         assert!(protected("labyrinth-minos") && protected("plasma-desktop") && protected("kwin") && !protected("firefox"));
     }
+}
+
+/// A destination you decided about for an app in "Ask" mode.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Decision {
+    pub ip: String,
+    pub name: String,
+    pub allowed: bool,
+}
+
+const ASK_SOCKET: &str = "/run/labyrinth/appnet-ask.sock";
+
+fn ask_call(request: &str) -> Option<Value> {
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixStream;
+    use std::time::Duration;
+    let mut s = UnixStream::connect(std::env::var("LABYRINTH_ASK_SOCKET").unwrap_or_else(|_| ASK_SOCKET.into())).ok()?;
+    s.set_read_timeout(Some(Duration::from_millis(800))).ok()?;
+    s.write_all(request.as_bytes()).ok()?;
+    s.write_all(b"\n").ok()?;
+    let mut line = String::new();
+    BufReader::new(s).read_line(&mut line).ok()?;
+    serde_json::from_str(&line).ok()
+}
+
+/// The text of what labyrinth-appnet-ask answers to {"op":"list"}, as one app's decisions: allowed ones first, then by address.
+pub fn parse_decisions(reply: &Value, app: &str) -> Vec<Decision> {
+    let mut out = vec![];
+    let Some(a) = reply["apps"][app].as_object() else { return out };
+    for (key, allowed) in [("allow", true), ("deny", false)] {
+        if let Some(m) = a.get(key).and_then(|m| m.as_object()) {
+            for (ip, name) in m {
+                out.push(Decision { ip: ip.clone(), name: name.as_str().unwrap_or("").to_string(), allowed });
+            }
+        }
+    }
+    out.sort_by(|x, y| y.allowed.cmp(&x.allowed).then(x.ip.cmp(&y.ip)));
+    out
+}
+
+/// Asks the Ask service (a local socket, no password) what you decided for an app. Empty when the service is not running.
+pub fn ask_decisions(app: &str) -> Vec<Decision> {
+    ask_call(r#"{"op":"list"}"#).map(|v| parse_decisions(&v, app)).unwrap_or_default()
+}
+
+/// Forget one decision: that destination is asked about again next time.
+pub fn ask_forget(app: &str, ip: &str) {
+    let req = json!({"op": "forget", "app": app, "ip": ip}).to_string();
+    let _ = ask_call(&req);
 }

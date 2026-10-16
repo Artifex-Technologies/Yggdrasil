@@ -41,6 +41,31 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
   `labyrinth-powerlimit.service` applies the active mode's limits on every mode change (CPU: `scaling_max_freq` as a percent
   of `cpuinfo_max_freq`; GPU: `nvidia-smi -pl`). Verified on the RTX 2080 Ti and the Intel pstate CPU; restored to defaults.
 
+## Ask before connecting (built 2026-10-16)
+
+An app's page has "Ask before connecting to a new place". In that mode (`labyrinth-appnet set APP ask`) the app may use loopback and
+the destinations you have allowed; any other connection is dropped by nftables after one rate-limited log line (with the user id).
+Three small pieces turn that into a question:
+
+- `labyrinth-appnet-ask` (root service `labyrinth-appnet-ask.service`) reads those kernel-log lines and makes ONE question per app and
+  destination address (not per connection). Allow adds the address to the app's nftables set at once (the app's next retry connects,
+  and TCP retries by itself within a second or so) and remembers it in `/var/lib/labyrinth/app-ask.json` (root only, 0600). Deny is
+  remembered and never asked again. "Allow all" puts the app back to any connection. No answer: asked again after a minute.
+- `labyrinth-appnet-ask-agent` (user service) shows each question as a notification with Allow / Allow all / Deny, with the host name
+  when a reverse lookup answers quickly.
+- Settings lists "Places you decided about" with Forget (asked again next time). It talks to the service through
+  `/run/labyrinth/appnet-ask.sock`, so changing a decision needs no password; the kernel tells the service whose apps are whose.
+
+Only apps you set to Ask are affected, so the package manager, time sync and Heimdall are never asked about (the roadmap's "do not
+repeat Vipre's over-protectiveness"). Honest limits: an address, not a name (a big content network can look like many addresses);
+your own programs could answer the questions too (OpenSnitch and Little Snitch share this); a connection waits for your answer, so
+apps may show a short "connecting" delay the first time. Not built: names from DNS or SNI, incoming connections, a default of Ask for
+new apps.
+
+Tests: `python tests/test_labyrinth_appnet_ask.py` (rules, question engine, the real socket service with a fake kernel log and a fake
+notify-send); `unshare -Urn bash tests/appnet_ask/netns_test.sh` (real nftables: dropped, allowed, allowed at run time, in a throw-away
+namespace); `sudo bash tests/appnet_ask/kernel_log_check.sh` (the real kernel log line against the parser: NOT run yet, it needs root).
+
 ## Limits (be honest about them)
 
 - Network rules cover apps started through labyrinth-launch (dock, start menu, Settings). An app started another way, or one

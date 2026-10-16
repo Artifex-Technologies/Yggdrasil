@@ -130,6 +130,8 @@ struct App {
     app_tab: usize,
     app_sort: usize,
     app_sel: Option<String>,
+    /// What you decided for the open app in Ask mode, refreshed every few seconds.
+    ask_cache: Option<(std::time::Instant, String, Vec<appmgr::Decision>)>,
     // Developer options: logo clicks (while the ` key is held) toward the unlock, and its confirmation
     dev_clicks: u8,
     dev_last: std::time::Instant,
@@ -174,6 +176,7 @@ impl App {
             app_tab: 0,
             app_sort: 0,
             app_sel: None,
+            ask_cache: None,
             dev_clicks: 0,
             dev_last: std::time::Instant::now(),
             dev_prompt: false,
