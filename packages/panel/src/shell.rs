@@ -126,6 +126,10 @@ pub enum Action {
     /// A notification pop-up: open it (go to the app), or put the pop-up away.
     ToastOpen(u32),
     ToastClose(u32),
+    /// One of a pop-up's buttons: the notification's id and which button.
+    ToastAction(u32, usize),
+    /// The unread badge in the bar: open the list.
+    Notifications,
 }
 
 #[derive(Clone, Debug)]
@@ -353,6 +357,18 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
     paint::draw_text(pix, &fonts.regular, 12.5 * s, rx + 10.0 * s, cy, lk.text, &stamp);
     hits.push(Hit { rect: (rx, 0.0, cw, h), action: Action::Clock });
     rx -= 6.0 * s;
+
+    // Unread notifications: a small purple count beside the clock; clicking it opens the list.
+    let unread = m.notifs.unread_count();
+    if unread > 0 {
+        let label = if unread > 9 { "9+".to_string() } else { unread.to_string() };
+        let bw = (paint::text_width(&fonts.bold, 11.5 * s, &label) + 16.0 * s).max(24.0 * s);
+        rx -= bw;
+        paint::fill_rounded(pix, rx, py, bw, ph, r, (124, 84, 214, 235));
+        paint::draw_text(pix, &fonts.bold, 11.5 * s, rx + (bw - paint::text_width(&fonts.bold, 11.5 * s, &label)) / 2.0, cy, (255, 255, 255, 255), &label);
+        hits.push(Hit { rect: (rx, 0.0, bw, h), action: Action::Notifications });
+        rx -= 6.0 * s;
+    }
 
     let iw = 28.0 * s;
     let isz = (14.0 * s) as u32;

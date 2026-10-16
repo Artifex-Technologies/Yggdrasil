@@ -105,6 +105,10 @@ pub struct Store {
     pub expanded: HashSet<String>,
     /// How many rows the list is scrolled down.
     pub scroll: usize,
+    /// Do not disturb is on (copied from the settings; shown on the list's footer button).
+    pub dnd: bool,
+    /// Arrived since the list was last looked at (in memory only: after a restart everything counts as seen).
+    unread: HashSet<u32>,
     path: Option<PathBuf>,
 }
 
@@ -156,6 +160,7 @@ impl Store {
 
     /// Adds a notification; one with the same id (an app updating its own) is replaced in place.
     pub fn add(&mut self, n: Notif) {
+        self.unread.insert(n.id);
         if let Some(old) = self.items.iter_mut().find(|o| o.id == n.id) {
             *old = n;
         } else {
@@ -171,12 +176,25 @@ impl Store {
     pub fn remove(&mut self, id: u32) -> Option<Notif> {
         let i = self.items.iter().position(|n| n.id == id)?;
         let n = self.items.remove(i);
+        self.unread.remove(&id);
         self.save();
         Some(n)
     }
 
+    pub fn unread_count(&self) -> usize {
+        self.unread.len()
+    }
+
+    /// The list was looked at.
+    pub fn mark_read(&mut self) {
+        self.unread.clear();
+    }
+
     pub fn clear_group(&mut self, key: &str) -> Vec<u32> {
         let ids: Vec<u32> = self.items.iter().filter(|n| n.group_key() == key).map(|n| n.id).collect();
+        for id in &ids {
+            self.unread.remove(id);
+        }
         self.items.retain(|n| n.group_key() != key);
         self.expanded.remove(key);
         self.save();
@@ -186,6 +204,7 @@ impl Store {
     pub fn clear_all(&mut self) -> Vec<u32> {
         let ids = self.items.iter().map(|n| n.id).collect();
         self.items.clear();
+        self.unread.clear();
         self.expanded.clear();
         self.scroll = 0;
         self.save();
@@ -472,6 +491,8 @@ pub enum NAct {
     Dismiss(u32),
     ClearGroup(String),
     ClearAll,
+    /// Turn Do not disturb on or off.
+    ToggleDnd,
     /// Scroll the list by this many rows.
     Scroll(i32),
 }
@@ -540,7 +561,6 @@ pub fn paint_list(pix: &mut Pixmap, s: f32, area: Rect, store: &Store, pointer: 
         let msg = "No notifications";
         let w = paint::text_width(&fonts.regular, 13.0 * s, msg);
         paint::draw_text(pix, &fonts.regular, 13.0 * s, (ax + aw / 2.0) * s - w / 2.0, (ay + ah / 2.0 - 10.0) * s, DIM, msg);
-        return hits;
     }
     let list_h = ah - FOOT_H;
     let all = rows(&groups, &store.expanded);
@@ -633,6 +653,13 @@ pub fn paint_list(pix: &mut Pixmap, s: f32, area: Rect, store: &Store, pointer: 
     let fy = ay + ah - FOOT_H + 6.0;
     let count = format!("{} notification{}", store.len(), if store.len() == 1 { "" } else { "s" });
     paint::draw_text(pix, &fonts.regular, 11.5 * s, (ax + 6.0) * s, (fy + 11.0) * s, DIM, &count);
+    let dl = "Do not disturb";
+    let dw = paint::text_width(&fonts.regular, 11.0 * s, dl) / s + 18.0;
+    let db = (ax + aw / 2.0 - dw / 2.0 + 20.0, fy, dw, 22.0);
+    let dhot = over(pointer, db);
+    paint::fill_rounded(pix, db.0 * s, db.1 * s, db.2 * s, db.3 * s, 11.0 * s, if store.dnd { ACCENT } else if dhot { (255, 255, 255, 40) } else { (255, 255, 255, 18) });
+    paint::draw_text(pix, &fonts.regular, 11.0 * s, (db.0 + 9.0) * s, (db.1 + 11.0) * s, if store.dnd || dhot { WHITE } else { (210, 210, 222, 255) }, dl);
+    hits.push((db, NAct::ToggleDnd));
     let label = "Clear all";
     let lw = paint::text_width(&fonts.bold, 11.5 * s, label) / s;
     let b = (ax + aw - lw - 22.0, fy, lw + 20.0, 22.0);
@@ -647,27 +674,48 @@ pub fn paint_list(pix: &mut Pixmap, s: f32, area: Rect, store: &Store, pointer: 
 
 pub const TOAST_W: u32 = 360;
 const TOAST_H: f32 = 78.0;
+const TOAST_ACTIONS_H: f32 = 36.0;
 const TOAST_GAP: f32 = 8.0;
 const TOAST_MAX: usize = 3;
 
-/// The pop-up surface is as tall as three cards; the cards stack up from its bottom.
-pub fn surface_h() -> u32 {
-    (TOAST_MAX as f32 * (TOAST_H + TOAST_GAP)) as u32
+/// The buttons a pop-up shows: the app's own actions except "default" (that is a click on the pop-up), at most two.
+pub fn toast_actions(n: &Notif) -> Vec<&(String, String)> {
+    n.actions.iter().filter(|(k, l)| k != "default" && !l.is_empty()).take(2).collect()
 }
 
-/// Draws the pop-ups (oldest on top, newest at the bottom corner) and returns their hits in physical pixels:
-/// each card's close button first, then the card, so the button wins where they overlap.
+fn toast_height(n: &Notif) -> f32 {
+    if toast_actions(n).is_empty() {
+        TOAST_H
+    } else {
+        TOAST_H + TOAST_ACTIONS_H
+    }
+}
+
+/// The pop-up surface is as tall as three cards with buttons; the cards stack up from its bottom.
+pub fn surface_h() -> u32 {
+    (TOAST_MAX as f32 * (TOAST_H + TOAST_ACTIONS_H + TOAST_GAP)) as u32
+}
+
+/// Draws the pop-ups (oldest on top, newest at the bottom corner) and returns their hits in physical pixels: first a card's
+/// close button and its action buttons, then the card, so the buttons win where they overlap.
 pub fn paint_toasts(pix: &mut Pixmap, s: f32, list: &[Notif], hover: Option<usize>, fonts: &Fonts, icons: &mut Icons) -> Vec<crate::shell::Hit> {
     use crate::shell::{Action, Hit};
     pix.fill(paint::color((0, 0, 0, 0)));
     let (w, h) = (pix.width() as f32 / s, pix.height() as f32 / s);
     let mut hits = vec![];
     let now = now_secs();
-    for (k, n) in list.iter().rev().enumerate() {
-        let y = h - (k as f32 + 1.0) * (TOAST_H + TOAST_GAP) + TOAST_GAP;
-        let r = (0.0, y, w, TOAST_H);
-        let card_hit = hits.len() + 1; // the card's hit comes after its close button's
-        let lit = hover == Some(card_hit) || hover == Some(card_hit - 1);
+    let phys = |r: Rect| (r.0 * s, r.1 * s, r.2 * s, r.3 * s);
+    let mut bottom = h;
+    for n in list.iter().rev() {
+        let ch = toast_height(n);
+        let y = bottom - ch;
+        bottom = y - TOAST_GAP;
+        let r = (0.0, y, w, ch);
+        let first_hit = hits.len();
+        let acts = toast_actions(n);
+        // hits are pushed close, then actions, then the card; the card's index is known once they are
+        let card_idx = first_hit + 1 + acts.len();
+        let lit = hover.map(|i| i >= first_hit && i <= card_idx).unwrap_or(false);
         paint::fill_rounded(pix, r.0 * s, r.1 * s, r.2 * s, r.3 * s, 16.0 * s, if lit { (14, 14, 18, 245) } else { (0, 0, 0, 238) });
         paint::stroke_rounded(pix, (r.0 + 0.5) * s, (r.1 + 0.5) * s, (r.2 - 1.0) * s, (r.3 - 1.0) * s, 16.0 * s, s, if n.urgency == 2 { (232, 84, 84, 140) } else { (255, 255, 255, 34) });
         draw_app_icon(pix, s, icons, fonts, &n.app, &n.icon, 14.0, y + 14.0, 36.0, n.urgency == 2);
@@ -683,9 +731,19 @@ pub fn paint_toasts(pix: &mut Pixmap, s: f32, list: &[Notif], hover: Option<usiz
             paint::draw_text(pix, &fonts.regular, 12.0 * s, tx * s, (y + 58.0) * s, DIM, &fit(&fonts.regular, 12.0 * s, &n.body, (right - tx) * s));
         }
         let x = (right - 14.0, y + 6.0, 20.0, 20.0);
-        paint::draw_text(pix, &fonts.bold, 14.0 * s, (x.0 + 4.0) * s, (x.1 + 10.0) * s, if hover == Some(card_hit - 1) { WHITE } else { DIM }, "×");
-        let phys = |r: Rect| (r.0 * s, r.1 * s, r.2 * s, r.3 * s);
+        paint::draw_text(pix, &fonts.bold, 14.0 * s, (x.0 + 4.0) * s, (x.1 + 10.0) * s, if hover == Some(first_hit) { WHITE } else { DIM }, "×");
         hits.push(Hit { rect: phys(x), action: Action::ToastClose(n.id) });
+        // the app's buttons along the bottom
+        let mut bx = tx;
+        for (i, (_, label)) in acts.iter().enumerate() {
+            let bw = paint::text_width(&fonts.bold, 11.5 * s, label) / s + 24.0;
+            let b = (bx, y + TOAST_H - 6.0, bw, 26.0);
+            let bl = hover == Some(first_hit + 1 + i);
+            paint::fill_rounded(pix, b.0 * s, b.1 * s, b.2 * s, b.3 * s, 13.0 * s, if bl { ACCENT } else { (255, 255, 255, 28) });
+            paint::draw_text(pix, &fonts.bold, 11.5 * s, (b.0 + 12.0) * s, (b.1 + 13.0) * s, WHITE, label);
+            hits.push(Hit { rect: phys(b), action: Action::ToastAction(n.id, i) });
+            bx += bw + 8.0;
+        }
         hits.push(Hit { rect: phys(r), action: Action::ToastOpen(n.id) });
     }
     hits
@@ -742,6 +800,35 @@ mod tests {
         assert!(s.is_empty());
         s.add(n(3, "C", "z", 4));
         assert_eq!(s.clear_all(), vec![3]);
+    }
+
+    #[test]
+    fn unread_counts_arrivals_until_looked_at() {
+        let mut s = Store::default();
+        s.add(n(1, "A", "x", 1));
+        s.add(n(2, "A", "y", 2));
+        assert_eq!(s.unread_count(), 2);
+        s.remove(1);
+        assert_eq!(s.unread_count(), 1);
+        s.mark_read();
+        assert_eq!(s.unread_count(), 0);
+        s.add(n(3, "B", "z", 3));
+        s.add(n(3, "B", "z again", 4)); // an app updating its own notification is still one unread
+        assert_eq!(s.unread_count(), 1);
+        s.clear_group("b");
+        assert_eq!(s.unread_count(), 0);
+        s.add(n(4, "C", "w", 5));
+        s.clear_all();
+        assert_eq!(s.unread_count(), 0);
+    }
+
+    #[test]
+    fn toast_buttons_skip_default_and_cap_at_two() {
+        let mut a = n(1, "A", "x", 1);
+        a.actions = vec![("default".into(), "Open".into()), ("allow".into(), "Allow".into()), ("deny".into(), "Deny".into()), ("more".into(), "More".into())];
+        let acts = toast_actions(&a);
+        assert_eq!(acts.iter().map(|x| x.0.as_str()).collect::<Vec<_>>(), vec!["allow", "deny"]);
+        assert!(toast_actions(&n(2, "B", "y", 1)).is_empty());
     }
 
     #[test]
@@ -829,9 +916,11 @@ mod render {
         assert!(hits.iter().any(|(_, a)| *a == NAct::ClearAll));
         assert!(hits.iter().any(|(_, a)| matches!(a, NAct::Open(_))));
         let mut pix = Pixmap::new(720, 2 * surface_h()).unwrap();
-        let list = vec![s.get(2).unwrap().clone(), s.get(3).unwrap().clone()];
+        let mut with_buttons = s.get(2).unwrap().clone();
+        with_buttons.actions = vec![("allow".into(), "Allow".into()), ("deny".into(), "Deny".into())];
+        let list = vec![with_buttons, s.get(3).unwrap().clone()];
         let th = paint_toasts(&mut pix, 2.0, &list, None, &fonts, &mut icons);
-        assert_eq!(th.len(), 4);
+        assert_eq!(th.len(), 6); // first: close, two buttons, card; second: close, card
         if let Some(dir) = std::env::var_os("NOTIFY_PNG_DIR") {
             pix.save_png(std::path::Path::new(&dir).join("toast.png")).unwrap();
         }

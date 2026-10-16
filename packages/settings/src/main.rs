@@ -873,6 +873,11 @@ impl App {
                     conf_changed = true;
                 }
             });
+            ui::row(ui, pal, false, "Do not disturb", Some("No pop-ups (critical alerts still show). Also a button at the bottom of the notification list. Everything is still kept"), |ui| {
+                if ui::switch(ui, pal, &mut conf.notify_dnd).changed() {
+                    conf_changed = true;
+                }
+            });
             ui::row(ui, pal, false, "Notification Center pane", Some("Off: notifications are in Fylgja's Notifications section. On: a pane down the right edge, opened with the calendar (click the date)"), |ui| {
                 if ui::switch(ui, pal, &mut conf.notify_pane).changed() {
                     conf_changed = true;

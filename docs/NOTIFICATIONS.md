@@ -39,10 +39,13 @@ Only one program can own the name `org.freedesktop.Notifications`. What decides 
 - Tested on this machine: with the panel killed, `notify-send` started the panel through D-Bus and the notification landed. Not yet
   tested: a full fresh install from the ISO.
 
+## Added 2026-10-16 (later)
+- **Buttons on pop-ups:** an app's own actions (besides "default", which is a click on the pop-up) show as up to two buttons on its pop-up; pressing one tells the app (`ActionInvoked`) and removes the notification. Rendered and tested with `notify-send -A key=Label`; the click path itself was not exercised end to end yet. (This is the piece the future Allow / Deny prompts for apps build on.)
+- **Do not disturb:** a switch at the bottom of the list and in Settings > Appearance > Notifications (`notify_dnd`). No pop-ups while on (critical ones still show); everything is still kept.
+- **Unread badge:** a purple count beside the clock in the bar for notifications that arrived since the list was last looked at (Fylgja's Notifications section, or the pane, counts as looking). Click it to open the list. Kept in memory only.
+
 ## Not built yet (list for later)
 - The theme option (macOS look vs a more Windows-like look) in Settings > Appearance.
-- Do Not Disturb / quiet hours; per-app mute.
-- Action buttons on the pop-up (apps send actions besides "default"); inline reply.
+- Quiet hours; per-app mute; inline reply.
 - A notification sound; images/avatars sent by apps (`image-data`).
 - Heimdall alerts de-duplicated when it replays old session alerts after a restart.
-- A badge on Fylgja's tab or the bar when there are unread notifications.

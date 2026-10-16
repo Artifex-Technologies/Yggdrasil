@@ -741,7 +741,7 @@ impl State {
             notify::NMsg::New(n) => {
                 let (id, urgency) = (n.id, n.urgency);
                 self.model.notifs.add(n);
-                if self.model.conf.notify_toasts && urgency > 0 {
+                if self.model.conf.notify_toasts && urgency > 0 && (!self.model.conf.notify_dnd || urgency == 2) {
                     self.toasts.retain(|t| *t != id);
                     self.toasts.push(id);
                     while self.toasts.len() > 3 {
@@ -873,6 +873,15 @@ impl State {
                 self.toasts.clear();
                 self.sync_toasts();
             }
+            NAct::ToggleDnd => {
+                self.model.conf.notify_dnd = !self.model.conf.notify_dnd;
+                self.model.notifs.dnd = self.model.conf.notify_dnd;
+                let _ = self.model.conf.save();
+                if self.model.conf.notify_dnd {
+                    self.toasts.clear();
+                    self.sync_toasts();
+                }
+            }
             NAct::Scroll(by) => {
                 let max = notify::max_scroll(&self.model.notifs) as i32;
                 self.model.notifs.scroll = (self.model.notifs.scroll as i32 + by).clamp(0, max) as usize;
@@ -949,6 +958,13 @@ impl State {
             Some(Popup { kind: PopupKind::Fylgja(st), .. }) if st.open && !(st.voice_ui && self.model.fylgja.voice != fylgja::Voice::Idle) => Some(st.section),
             _ => None,
         };
+        // looking at the notification list reads it
+        if tab == Some(fylgja::NOTIFS) || (self.model.conf.notify_pane && matches!(self.popup, Some(Popup { kind: PopupKind::Calendar { .. }, .. }))) {
+            if self.model.notifs.unread_count() > 0 {
+                self.model.notifs.mark_read();
+                self.dirty = true;
+            }
+        }
         // the Stats readings are taken only while that section is showing
         self.stats_wanted.store(tab == Some(2), Ordering::Relaxed);
         if self.model.notch_open != open || self.model.notch_w != w || self.model.notch_tab != tab {
@@ -1600,6 +1616,21 @@ impl State {
             Action::Bluetooth => run(&["labyrinth-settings", "bluetooth"]),
             Action::Dock(app_id) => self.click_dock(&app_id),
             Action::ToastOpen(id) => self.open_notification(id),
+            Action::ToastAction(id, i) => {
+                if let Some(n) = self.model.notifs.get(id).cloned() {
+                    if let Some((key, _)) = notify::toast_actions(&n).get(i) {
+                        notify::emit_action(id, key);
+                    }
+                }
+                self.remove_notif(id, 2);
+            }
+            Action::Notifications => {
+                if self.model.conf.notify_pane {
+                    self.toggle_calendar();
+                } else {
+                    self.show_fylgja_section(fylgja::NOTIFS);
+                }
+            }
             Action::ToastClose(id) => {
                 self.toasts.retain(|t| *t != id);
                 self.sync_toasts();
@@ -2232,6 +2263,7 @@ fn main() {
     // notifications: from apps (D-Bus) and from Heimdall; a pop-up's timer ran out
     let (note_tx, note_rx) = calloop::channel::channel::<notify::NMsg>();
     notify::set_next_id(state.model.notifs.max_id());
+    state.model.notifs.dnd = state.model.conf.notify_dnd;
     notify::spawn_server(note_tx.clone());
     notify::spawn_heimdall(note_tx);
     event_loop
@@ -2439,6 +2471,7 @@ fn main() {
                 seen = now;
                 let old = st.model.conf.dock_pos;
                 st.model.conf = PanelConf::load();
+                st.model.notifs.dnd = st.model.conf.notify_dnd;
                 st.sync_clip();
                 st.model.clock = clock_text(st.model.conf.clock_24h);
                 st.model.clock_secs = secs_text(st.model.conf.clock_24h);
