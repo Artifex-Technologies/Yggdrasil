@@ -1,0 +1,19 @@
+[package]
+name = "labyrinth-idle"
+version = "0.1.0"
+edition = "2021"
+description = "Labyrinth's idle manager: watches how long the user has been away (Wayland ext-idle-notify) and, when told to, dims, locks, turns the display off or sleeps. Starts in observe-only mode."
+license = "MIT"
+
+[[bin]]
+name = "labyrinth-idle"
+path = "src/main.rs"
+
+[dependencies]
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+
+[profile.release]
+opt-level = 2
+lto = "thin"
+strip = true

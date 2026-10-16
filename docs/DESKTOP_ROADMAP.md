@@ -11,6 +11,8 @@ Replacing the base distribution was considered and rejected: its kernel, optimis
 are real work the project would otherwise have to do and keep patched, and none of it is where the goals are
 won. What the project builds sits above that layer.
 
+See also [KDE_INVENTORY.md](KDE_INVENTORY.md): everything KDE still does on the running machine, what replaces it, effort, and the suggested order (2026-10-16).
+
 ## Already ours
 
 Top bar and dock, start menu (Folders theme, keyboard use: Tab, arrows, Super), Fylgja (the notch: controls,
