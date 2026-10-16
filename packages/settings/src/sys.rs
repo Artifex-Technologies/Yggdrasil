@@ -489,6 +489,8 @@ pub struct Power {
     pub profiles: Vec<String>,
     pub screen_off_min: i64,
     pub sleep_min: i64,
+    /// Lock the screen after this many idle minutes (0 = never), from kscreenlockerrc.
+    pub lock_min: i64,
 }
 
 /// `powerprofilesctl list`: profile names ("* performance:" marks the active one).
@@ -515,9 +517,12 @@ pub fn power() -> Power {
             .and_then(|s| s.trim().parse::<i64>().ok())
             .unwrap_or(default)
     };
+    let lock = |key: &str, default: &str| run("kreadconfig6", &["--file", "kscreenlockerrc", "--group", "Daemon", "--key", key, "--default", default]).map(|s| s.trim().to_string()).unwrap_or_default();
+    let lock_min = if lock("Autolock", "true") == "false" { 0 } else { lock("Timeout", "5").parse::<i64>().unwrap_or(5) };
     Power {
         profile: active,
         profiles,
+        lock_min,
         screen_off_min: read("Display", "TurnOffDisplayIdleTimeoutSec", 600) / 60,
         sleep_min: read("SuspendAndShutdown", "AutoSuspendIdleTimeoutSec", 0) / 60,
     }

@@ -767,10 +767,10 @@ impl App {
                 });
             });
         }
-        let choices: [(i64, &str); 7] = [(0, "Never"), (1, "1 minute"), (2, "2 minutes"), (5, "5 minutes"), (10, "10 minutes"), (15, "15 minutes"), (30, "30 minutes")];
+        let choices: [(i64, &str); 8] = [(0, "Never"), (1, "1 minute"), (2, "2 minutes"), (5, "5 minutes"), (10, "10 minutes"), (15, "15 minutes"), (30, "30 minutes"), (60, "1 hour")];
         let label = |m: i64| choices.iter().find(|c| c.0 == m).map(|c| c.1.to_string()).unwrap_or(format!("{m} minutes"));
         ui::group(ui, pal, Some("When idle"), |ui| {
-            for (first, title, group, key, cur) in [(true, "Turn off the screen after", "Display", "TurnOffDisplayIdleTimeoutSec", p.screen_off_min), (false, "Sleep after", "SuspendAndShutdown", "AutoSuspendIdleTimeoutSec", p.sleep_min)] {
+            for (first, title, group, key, cur) in [(true, "Turn off the screen after", "Display", "TurnOffDisplayIdleTimeoutSec", p.screen_off_min), (false, "Lock the screen after", "Lock", "Timeout", p.lock_min), (false, "Sleep after", "SuspendAndShutdown", "AutoSuspendIdleTimeoutSec", p.sleep_min)] {
                 ui::row(ui, pal, first, title, None, |ui| {
                     egui::ComboBox::from_id_salt(key).selected_text(label(cur)).show_ui(ui, |ui| {
                         for (m, l) in choices {
@@ -785,7 +785,16 @@ impl App {
         if let Some(name) = profile {
             self.change(ctx, move || sys::act("powerprofilesctl", &["set", &name]));
         }
-        if let Some((group, key, minutes)) = timer {
+        if let Some(("Lock", _, minutes)) = timer {
+            // the screen locker's own setting (kscreenlockerrc), not PowerDevil's
+            self.change(ctx, move || {
+                sys::act("kwriteconfig6", &["--file", "kscreenlockerrc", "--group", "Daemon", "--key", "Autolock", if minutes == 0 { "false" } else { "true" }])?;
+                if minutes > 0 {
+                    sys::act("kwriteconfig6", &["--file", "kscreenlockerrc", "--group", "Daemon", "--key", "Timeout", &minutes.to_string()])?;
+                }
+                Ok(())
+            });
+        } else if let Some((group, key, minutes)) = timer {
             self.change(ctx, move || {
                 let (when, flag) = if minutes == 0 { ("-1".to_string(), "false") } else { ((minutes * 60).to_string(), "true") };
                 let enable_key = if group == "Display" { "TurnOffDisplayWhenIdle" } else { "AutoSuspendAction" };
