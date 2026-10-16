@@ -268,6 +268,15 @@ impl Icons {
         if path.extension().map(|e| e == "png").unwrap_or(false) {
             let src = Pixmap::decode_png(&data).ok()?;
             let scale = (size as f32 / src.width() as f32).min(size as f32 / src.height() as f32);
+            if scale < 1.0 {
+                // Shrinking a big picture (the pack's app icons are 1024 px) straight to a few dozen pixels
+                // samples it too sparsely and looks jagged: average it down instead, then place it as it is.
+                let (tw, th) = (((src.width() as f32 * scale).round() as u32).max(1), ((src.height() as f32 * scale).round() as u32).max(1));
+                let small = area_resize(&src, tw, th)?;
+                let (tx, ty) = ((size - tw) / 2, (size - th) / 2);
+                pm.draw_pixmap(tx as i32, ty as i32, small.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), None);
+                return Some(pm);
+            }
             let tx = (size as f32 - src.width() as f32 * scale) / 2.0;
             let ty = (size as f32 - src.height() as f32 * scale) / 2.0;
             let paint = tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bicubic, ..Default::default() };
@@ -339,4 +348,73 @@ impl Icons {
 
 pub fn draw_pixmap(dst: &mut Pixmap, src: &Pixmap, x: i32, y: i32) {
     dst.draw_pixmap(x, y, src.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), None);
+}
+
+/// `src` shrunk to `dw` x `dh` by averaging every source pixel under each new one (a box filter with
+/// fractional edges, on premultiplied colour, so thin lines fade instead of vanishing and edges stay clean).
+pub fn area_resize(src: &Pixmap, dw: u32, dh: u32) -> Option<Pixmap> {
+    let (sw, sh, dw_, dh_) = (src.width() as usize, src.height() as usize, dw as usize, dh as usize);
+    let (kx, ky) = (sw as f32 / dw_ as f32, sh as f32 / dh_ as f32);
+    let s = src.data();
+    // horizontal pass: sh rows of dw pixels
+    let mut mid = vec![0f32; sh * dw_ * 4];
+    for y in 0..sh {
+        for x in 0..dw_ {
+            let (a, b) = (x as f32 * kx, (x + 1) as f32 * kx);
+            let mut acc = [0f32; 4];
+            let mut sx = a.floor() as usize;
+            while (sx as f32) < b && sx < sw {
+                let w = (b.min(sx as f32 + 1.0) - a.max(sx as f32)).max(0.0);
+                for c in 0..4 {
+                    acc[c] += s[(y * sw + sx) * 4 + c] as f32 * w;
+                }
+                sx += 1;
+            }
+            for c in 0..4 {
+                mid[(y * dw_ + x) * 4 + c] = acc[c] / kx;
+            }
+        }
+    }
+    let mut out = Pixmap::new(dw, dh)?;
+    let d = out.data_mut();
+    for y in 0..dh_ {
+        let (a, b) = (y as f32 * ky, (y + 1) as f32 * ky);
+        for x in 0..dw_ {
+            let mut acc = [0f32; 4];
+            let mut sy = a.floor() as usize;
+            while (sy as f32) < b && sy < sh {
+                let w = (b.min(sy as f32 + 1.0) - a.max(sy as f32)).max(0.0);
+                for c in 0..4 {
+                    acc[c] += mid[(sy * dw_ + x) * 4 + c] * w;
+                }
+                sy += 1;
+            }
+            for c in 0..4 {
+                d[(y * dw_ + x) * 4 + c] = (acc[c] / ky).round().clamp(0.0, 255.0) as u8;
+            }
+        }
+    }
+    Some(out)
+}
+
+#[cfg(test)]
+mod resize_tests {
+    use super::*;
+
+    #[test]
+    fn a_thin_line_fades_instead_of_vanishing_and_flat_colour_stays() {
+        // 64x64 transparent with one opaque white 1px vertical line, shrunk 8x
+        let mut src = Pixmap::new(64, 64).unwrap();
+        for y in 0..64 {
+            let i = (y * 64 + 20) * 4;
+            src.data_mut()[i..i + 4].copy_from_slice(&[255, 255, 255, 255]);
+        }
+        let small = area_resize(&src, 8, 8).unwrap();
+        let a = small.data()[(4 * 8 + 2) * 4 + 3];
+        assert!((25..=35).contains(&a), "one pixel in eight should leave about 1/8 alpha, got {a}");
+        let mut flat = Pixmap::new(40, 40).unwrap();
+        flat.fill(tiny_skia::Color::from_rgba8(200, 100, 50, 255));
+        let f = area_resize(&flat, 7, 7).unwrap();
+        assert_eq!(&f.data()[..4], &[200, 100, 50, 255]);
+    }
 }
