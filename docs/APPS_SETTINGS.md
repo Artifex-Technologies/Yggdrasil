@@ -47,12 +47,12 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
   that was already running, is not in its slice until restarted. Single-instance apps already running elsewhere (a browser)
   need a full restart.
 - The sandbox does not cover Flatpak apps (they have their own); Location is not controlled yet.
-- "Usage" counts launches only (no running-time logger yet). The sizes are the app's folders in your home, not the package.
+- "Usage" is the time an app has been running (`labyrinth-appusage`, a user service that samples every 30 s; apps running before it started are counted from then), then launches. The sizes are the app's folders in your home, not the package.
 - The Optional software tab and the start of removing packages use pkexec; the live image has a passwordless polkit rule, so
   prompts only appear on an installed system.
 
 ## Not done yet
 
 - Per-app Location and "which other apps it can see" for Flatpak apps (Flatpak overrides could do both).
-- A running-time and network-usage logger (needs a small background service); then the Usage sort can use real time.
+- A network-usage logger per app (the running-time logger exists).
 - A right-click "App settings" entry in the dock that runs `labyrinth-settings apps:ID`.
