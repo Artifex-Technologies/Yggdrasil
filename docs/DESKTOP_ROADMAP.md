@@ -85,3 +85,17 @@ kscreenlocker's greeter (that failure was an upgrade of one KDE piece under a ru
 - System updates stay the distribution's job (CachyOS/Arch `pacman -Syu`, weekly), with Heimdall's integrity checks now package-aware (an update is info, an unexplained change is critical).
 - A short security checklist per release (secrets scan, dependency audit, VM boot and install test, selfcheck clean) before an ISO is published.
 - Replacing KDE is a long road; until a piece is replaced and proven, the KDE one keeps receiving the distribution's security fixes.
+
+## Keeping the keyring password and the login password together (decided 2026-10-16)
+
+gnome-keyring's login keyring is locked with the login password; `pam_gnome_keyring.so` unlocks it at login and, when it sits in the PAM
+*password* stack, changes the keyring's password whenever the login password is changed through PAM (it is given the old and the new one).
+- **Shipped in the ISO profile:** the `-password optional pam_gnome_keyring.so use_authtok` line in `/etc/pam.d/passwd` and `/etc/pam.d/chpasswd`.
+  `passwd` in a terminal and anything that calls `chpasswd` or `passwd` therefore keeps the two together. `system-auth` itself is left alone (it belongs to
+  the `pambase` package and an upgrade would overwrite a change).
+- **Labyrinth Settings (a Users page, not built yet) must change passwords through the PAM password stack** with the old and the new password
+  (a small helper speaking PAM, like `passwd`), never through AccountsService's `SetPassword` or by writing the shadow file: those have no old password,
+  so the keyring would be left behind. KDE's own Users page does exactly that, and Settings hides it.
+- **When they do get out of step anyway** (an administrator reset the password, a tool that bypassed PAM): `labyrinth-keyring-sync` (to build, autostart at login):
+  if the login keyring is locked after login, ask once for the *previous* password in our own dialog and change the keyring to the current one through
+  gnome-keyring's `ChangeWithMasterPassword` (the call Seahorse uses). The end user sees one clear question, not an app asking for a password they do not remember.
