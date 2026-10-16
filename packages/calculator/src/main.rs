@@ -290,6 +290,7 @@ fn clock_icon(ui: &mut egui::Ui, pal: &Palette, active: bool) -> egui::Response 
 
 impl eframe::App for Calc {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        theme::apply_accessibility(ui.ctx());
         let ctx = ui.ctx().clone();
         chrome::resize_edges(&ctx);
         let accent = theme::system_accent();

@@ -2340,6 +2340,7 @@ impl App {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        theme::apply_accessibility(ui.ctx());
         let ctx = ui.ctx().clone();
         // Follow the system accent: read it now and then, so a change in the system settings
         // shows up without restarting Minos.

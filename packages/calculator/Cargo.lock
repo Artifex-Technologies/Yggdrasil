@@ -1708,11 +1708,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "labyrinth-conf"
+version = "0.1.0"
+
+[[package]]
 name = "labyrinth-ui"
 version = "0.1.0"
 dependencies = [
  "dirs",
  "eframe",
+ "labyrinth-conf",
  "resvg",
 ]
 

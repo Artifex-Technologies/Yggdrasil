@@ -69,6 +69,9 @@ impl AlertLevel {
     }
 }
 
+pub const TEXT_SCALE_MIN: u16 = 100;
+pub const TEXT_SCALE_MAX: u16 = 250;
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct PanelConf {
     /// The screen edge the dock sits on.
@@ -103,13 +106,17 @@ pub struct PanelConf {
     pub notify_dnd: bool,
     /// Labyrinth draws the wallpaper itself (so plasmashell is not needed for it); the picture's path is in ~/.config/labyrinth/wallpaper.
     pub own_wallpaper: bool,
+    /// Size of text and controls in Labyrinth's own apps, in percent (100 to 250).
+    pub text_scale: u16,
+    /// No animations (the apps' fades and slides).
+    pub reduce_motion: bool,
     /// Which Heimdall alerts become notifications: "off", "critical", "warning" (and critical) or "info" (all).
     pub heimdall_alerts: AlertLevel,
 }
 
 impl Default for PanelConf {
     fn default() -> Self {
-        PanelConf { dock_pos: DockPos::Bottom, dock_icon: 44, dock_gap: 4, start_theme: StartTheme::Windows, clock_24h: true, dock_opacity: 69, dock_color: ColorMode::Theme, bar_opacity: 69, bar_color: ColorMode::Theme, clipboard_history: true, search_subfolders: true, show_hidden: false, drive_status: true, developer: false, notify_toasts: true, notify_pane: false, notify_dnd: false, own_wallpaper: false, heimdall_alerts: AlertLevel::Warning }
+        PanelConf { dock_pos: DockPos::Bottom, dock_icon: 44, dock_gap: 4, start_theme: StartTheme::Windows, clock_24h: true, dock_opacity: 69, dock_color: ColorMode::Theme, bar_opacity: 69, bar_color: ColorMode::Theme, clipboard_history: true, search_subfolders: true, show_hidden: false, drive_status: true, developer: false, notify_toasts: true, notify_pane: false, notify_dnd: false, own_wallpaper: false, text_scale: 100, reduce_motion: false, heimdall_alerts: AlertLevel::Warning }
     }
 }
 
@@ -168,6 +175,8 @@ impl PanelConf {
                 "notify_toasts" => c.notify_toasts = !matches!(v, "no" | "false" | "off" | "0"),
                 "notify_pane" => c.notify_pane = matches!(v, "yes" | "true" | "on" | "1"),
                 "notify_dnd" => c.notify_dnd = matches!(v, "yes" | "true" | "on" | "1"),
+                "text_scale" => c.text_scale = v.trim_end_matches('%').parse::<u16>().map(|n| n.clamp(TEXT_SCALE_MIN, TEXT_SCALE_MAX)).unwrap_or(c.text_scale),
+                "reduce_motion" => c.reduce_motion = matches!(v, "yes" | "true" | "on" | "1"),
                 "own_wallpaper" => c.own_wallpaper = matches!(v, "yes" | "true" | "on" | "1"),
                 "heimdall_alerts" => c.heimdall_alerts = AlertLevel::parse(v).unwrap_or(c.heimdall_alerts),
                 _ => {}
@@ -179,7 +188,7 @@ impl PanelConf {
     pub fn to_text(&self) -> String {
         format!(
             "# How the top bar and dock look. Edited by Labyrinth Settings (Appearance).\n\
-             dock_pos = {}\ndock_icon = {}\ndock_gap = {}\nclock_24h = {}\nstart_theme = {}\ndock_opacity = {}\ndock_color = {}\nbar_opacity = {}\nbar_color = {}\nclipboard_history = {}\nsearch_subfolders = {}\nshow_hidden = {}\ndrive_status = {}\ndeveloper = {}\nnotify_toasts = {}\nnotify_pane = {}\nnotify_dnd = {}\nown_wallpaper = {}\nheimdall_alerts = {}\n",
+             dock_pos = {}\ndock_icon = {}\ndock_gap = {}\nclock_24h = {}\nstart_theme = {}\ndock_opacity = {}\ndock_color = {}\nbar_opacity = {}\nbar_color = {}\nclipboard_history = {}\nsearch_subfolders = {}\nshow_hidden = {}\ndrive_status = {}\ndeveloper = {}\nnotify_toasts = {}\nnotify_pane = {}\nnotify_dnd = {}\nown_wallpaper = {}\ntext_scale = {}\nreduce_motion = {}\nheimdall_alerts = {}\n",
             match self.dock_pos {
                 DockPos::Bottom => "bottom",
                 DockPos::Left => "left",
@@ -202,6 +211,8 @@ impl PanelConf {
             if self.notify_pane { "yes" } else { "no" },
             if self.notify_dnd { "yes" } else { "no" },
             if self.own_wallpaper { "yes" } else { "no" },
+            self.text_scale,
+            if self.reduce_motion { "yes" } else { "no" },
             self.heimdall_alerts.as_str()
         )
     }
@@ -242,7 +253,7 @@ mod tests {
 
     #[test]
     fn round_trips() {
-        let c = PanelConf { dock_pos: DockPos::Right, dock_icon: 60, dock_gap: 0, start_theme: StartTheme::Folders, clock_24h: false, dock_opacity: 0, dock_color: ColorMode::Neutral, bar_opacity: 100, bar_color: ColorMode::Neutral, clipboard_history: false, search_subfolders: false, show_hidden: true, drive_status: false, developer: true, notify_toasts: false, notify_pane: true, notify_dnd: true, own_wallpaper: true, heimdall_alerts: AlertLevel::Critical };
+        let c = PanelConf { dock_pos: DockPos::Right, dock_icon: 60, dock_gap: 0, start_theme: StartTheme::Folders, clock_24h: false, dock_opacity: 0, dock_color: ColorMode::Neutral, bar_opacity: 100, bar_color: ColorMode::Neutral, clipboard_history: false, search_subfolders: false, show_hidden: true, drive_status: false, developer: true, notify_toasts: false, notify_pane: true, notify_dnd: true, own_wallpaper: true, text_scale: 150, reduce_motion: true, heimdall_alerts: AlertLevel::Critical };
         assert_eq!(PanelConf::parse(&c.to_text()), c);
     }
 

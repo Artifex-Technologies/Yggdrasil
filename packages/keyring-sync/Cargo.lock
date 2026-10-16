@@ -1691,6 +1691,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "labyrinth-conf"
+version = "0.1.0"
+
+[[package]]
 name = "labyrinth-keyring-sync"
 version = "0.1.0"
 dependencies = [
@@ -1707,6 +1711,7 @@ version = "0.1.0"
 dependencies = [
  "dirs",
  "eframe",
+ "labyrinth-conf",
  "resvg",
 ]
 

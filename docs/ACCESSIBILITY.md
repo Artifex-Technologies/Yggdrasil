@@ -28,7 +28,7 @@ On this machine: the AT-SPI bus is running; **Orca and Speech Dispatcher are not
    short audible cue for people without a reader). Keep the keyboard path exactly as it is.
 3. **No keyboard path to the dock, bar, tray and toast buttons.** Add a focus ring and a shortcut to move into the panel (for example
    Super+Tab for the dock, Super+N for the newest notification's buttons: Allow / Deny prompts from "Ask before connecting" are otherwise mouse-only).
-4. **No text size setting.** Settings > Appearance has display scale (fractional) but no "text size" for our apps. Add a 100/125/150/200 % setting
+4. **Text size and reduce motion: built for the egui apps (2026-10-16), not yet for the panel.** Settings > Appearance > Accessibility sets 100/125/150/200 % for Settings, Minos, the admin password box, Calculator and the keyring tool (egui zoom, applied within a second), and "Reduce motion" for their animations. The bar, dock, start menu, toasts and lock screen still follow only the screen scale. Original finding: **No text size setting.** Settings > Appearance has display scale (fractional) but no "text size" for our apps. Add a 100/125/150/200 % setting
    read by the panel and every egui app (`pixels_per_point` multiplier), so low-vision users need not enlarge the whole desktop.
 5. **No high-contrast or reduced-motion setting, no big-cursor setting.** Add a high-contrast palette variant in `labyrinth-ui`, a "reduce
    motion" switch (animations in the panel are short, but there are some), and cursor size in Settings.

@@ -62,6 +62,7 @@ impl App {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        theme::apply_accessibility(ui.ctx());
         let ctx = ui.ctx().clone();
         self.receive();
         let want = self.dialog.is_some();

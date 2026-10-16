@@ -310,6 +310,7 @@ fn start_page() -> Page {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        theme::apply_accessibility(ui.ctx());
         let ctx = ui.ctx().clone();
         self.receive(&ctx);
         // Read the open page again every few seconds, so a change made somewhere else (Fylgja's dark mode, the
@@ -922,6 +923,21 @@ impl App {
             ui::row(ui, pal, true, "Theme", Some("Windows: pinned apps and every app in a list. Folders: narrow, apps in folders by kind, and a power button"), |ui| {
                 if let Some(i) = ui::segmented(ui, pal, &themes, current) {
                     conf.start_theme = if i == 1 { labyrinth_conf::StartTheme::Folders } else { labyrinth_conf::StartTheme::Windows };
+                    conf_changed = true;
+                }
+            });
+        });
+        ui::group(ui, pal, Some("Accessibility"), |ui| {
+            let sizes = ["100%", "125%", "150%", "200%"];
+            let cur = match conf.text_scale { 0..=112 => 0, 113..=137 => 1, 138..=174 => 2, _ => 3 };
+            ui::row(ui, pal, true, "Text and control size", Some("Makes everything in Labyrinth's own apps (Settings, Minos, the admin password box, Calculator) larger. The top bar, dock and start menu follow the screen scale in Displays for now"), |ui| {
+                if let Some(i) = ui::segmented(ui, pal, &sizes, cur) {
+                    conf.text_scale = [100, 125, 150, 200][i];
+                    conf_changed = true;
+                }
+            });
+            ui::row(ui, pal, false, "Reduce motion", Some("No fades or slides in Labyrinth's own apps"), |ui| {
+                if ui::switch(ui, pal, &mut conf.reduce_motion).changed() {
                     conf_changed = true;
                 }
             });

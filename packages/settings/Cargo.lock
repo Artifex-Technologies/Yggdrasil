@@ -1781,6 +1781,7 @@ version = "0.1.0"
 dependencies = [
  "dirs",
  "eframe",
+ "labyrinth-conf",
  "resvg 0.48.1",
 ]
 

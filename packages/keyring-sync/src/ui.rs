@@ -76,6 +76,7 @@ impl App {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        theme::apply_accessibility(ui.ctx());
         let ctx = ui.ctx().clone();
         while let Ok(Msg::Done(r)) = self.rx.try_recv() {
             self.busy = false;

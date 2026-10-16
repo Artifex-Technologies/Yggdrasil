@@ -227,3 +227,24 @@ mod tests {
         assert!(p.select.r() > 190, "light selection should be pale, got {:?}", p.select);
     }
 }
+
+
+/// Text size and reduced motion from Settings > Appearance (read from panel.conf at most once a second, so a change shows without a restart).
+/// Call it at the top of every frame of every app.
+pub fn apply_accessibility(ctx: &egui::Context) {
+    let id = egui::Id::new("labyrinth-accessibility-checked");
+    let now = ctx.input(|i| i.time);
+    let last: f64 = ctx.data(|d| d.get_temp(id)).unwrap_or(-10.0);
+    if now - last < 1.0 {
+        return;
+    }
+    ctx.data_mut(|d| d.insert_temp(id, now));
+    let c = labyrinth_conf::PanelConf::load();
+    let zoom = f32::from(c.text_scale.clamp(labyrinth_conf::TEXT_SCALE_MIN, labyrinth_conf::TEXT_SCALE_MAX)) / 100.0;
+    if (ctx.zoom_factor() - zoom).abs() > 0.001 {
+        ctx.set_zoom_factor(zoom);
+    }
+    let anim = if c.reduce_motion { 0.0 } else { 1.0 / 12.0 };
+    ctx.all_styles_mut(|s| s.animation_time = anim);
+    ctx.request_repaint_after(std::time::Duration::from_secs(1));
+}
