@@ -481,6 +481,15 @@ pub fn load_image(path: &str, w: u32, h: u32, radius: f32) -> Option<Pixmap> {
     // Drawn several times larger and then averaged down: a cover shrunk straight to 58 px loses its thin lines
     // (frames, small print, hairline strokes), which looked like the picture was cut off.
     let k = if w.max(h) <= 160 { 6 } else { 2 };
+    load_image_k(path, w, h, radius, k)
+}
+
+/// A picture scaled to fill the whole of a screen (cropped to fit), drawn once at that size: for the wallpaper.
+pub fn load_cover(path: &str, w: u32, h: u32) -> Option<Pixmap> {
+    load_image_k(path, w, h, 0.0, 1)
+}
+
+fn load_image_k(path: &str, w: u32, h: u32, radius: f32, k: u32) -> Option<Pixmap> {
     let (bw, bh) = (w * k, h * k);
     let svg = format!(
         "<svg xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' width='{bw}' height='{bh}'><image width='{bw}' height='{bh}' preserveAspectRatio='xMidYMid slice' xlink:href=\"{}\"/></svg>",

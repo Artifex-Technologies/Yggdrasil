@@ -76,6 +76,8 @@ enum Kind {
     /// A popover (the calendar): a transparent surface over the whole screen, so a click anywhere
     /// outside the card closes it. The card is drawn at the top right.
     Popup,
+    /// The wallpaper, when Labyrinth draws it itself (own_wallpaper): a background layer under everything.
+    Wallpaper,
     /// The volume / brightness pop-up: a small pill a little above the dock.
     Osd,
     /// Notification pop-ups, stacked at the bottom right of the main screen.
@@ -192,6 +194,8 @@ struct Surf {
     frac: Option<(WpFractionalScaleV1, WpViewport)>,
     /// The scale the compositor prefers for this surface (0 until it says).
     fscale: f32,
+    /// What the wallpaper surface last drew (picture, width, height), so it is not redrawn for nothing.
+    stamp: Option<(String, u32, u32)>,
 }
 
 impl Surf {
@@ -282,6 +286,8 @@ struct State {
     pane_hits: Vec<(notify::Rect, notify::NAct)>,
     pane_top: f32,
     toasts: Vec<u32>,
+    /// Wallpaper pictures already scaled to a screen's size.
+    wall_cache: Vec<((String, u32, u32), Pixmap)>,
     toast_hide_tx: calloop::channel::Sender<u32>,
     /// When Minos's generated icon file last changed (it follows the accent colour).
     icon_stamp: Option<std::time::SystemTime>,
@@ -489,8 +495,12 @@ impl State {
         let dock_out = self.dock_output();
         let mut sorted = ready;
         sorted.sort_by(|a, b| a.1.cmp(&b.1));
+        let own_wall = self.model.conf.own_wallpaper && labyrinth_conf::wallpaper().is_some();
         for (key, name) in sorted {
             let slim = self.layout.tiling.contains(&name);
+            if own_wall {
+                self.add_wallpaper(key);
+            }
             self.add_surface(key, Kind::Bar { slim });
             if Some(key) == dock_out {
                 self.add_dock(key);
@@ -498,6 +508,25 @@ impl State {
             }
         }
         self.built_for = Some(self.layout.clone());
+    }
+
+    /// The wallpaper: a layer-shell surface on the background layer that fills the screen, drawn from the picture in
+    /// ~/.config/labyrinth/wallpaper. It takes no input and reserves no room.
+    fn add_wallpaper(&mut self, output: u32) {
+        let id = self.next_surf;
+        self.next_surf += 1;
+        let Some(out) = self.outputs.get(&output) else { return };
+        let wl = self.compositor.create_surface(&self.qh, ());
+        let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Background, "labyrinth-wallpaper".into(), &self.qh, id);
+        layer.set_anchor(Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right);
+        layer.set_size(0, 0);
+        layer.set_exclusive_zone(-1);
+        layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+        let region = self.compositor.create_region(&self.qh, ());
+        wl.set_input_region(Some(&region));
+        region.destroy();
+        wl.commit();
+        self.surfs.push(Surf { id, kind: Kind::Wallpaper, output, wl, layer: Some(layer), dock: None, w: 0, h: 0, want: (0, 0), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
     }
 
     fn add_surface(&mut self, output: u32, kind: Kind) {
@@ -512,7 +541,7 @@ impl State {
         layer.set_exclusive_zone(shell::BAR_H as i32);
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
         wl.commit();
-        self.surfs.push(Surf { id, kind, output, wl, layer: Some(layer), dock: None, w: size.0, h: size.1, want: size, gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0 });
+        self.surfs.push(Surf { id, kind, output, wl, layer: Some(layer), dock: None, w: size.0, h: size.1, want: size, gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
     }
 
     /// The dock: a Plasma panel window, the way Plasma's own panels are. KWin puts it exactly where it
@@ -546,7 +575,7 @@ impl State {
         if std::env::var_os("LABYRINTH_PANEL_DEBUG").is_some() {
             eprintln!("dock {id}: {}x{} at {x},{y}", want.0, want.1);
         }
-        self.surfs.push(Surf { id, kind: Kind::Dock, output, wl, layer: None, dock: Some(DockWin { xs, tl, ps }), w: want.0, h: want.1, want, gap: self.model.conf.dock_gap as i32, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0 });
+        self.surfs.push(Surf { id, kind: Kind::Dock, output, wl, layer: None, dock: Some(DockWin { xs, tl, ps }), w: want.0, h: want.1, want, gap: self.model.conf.dock_gap as i32, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
     }
 
     fn toggle_calendar(&mut self) {
@@ -581,7 +610,7 @@ impl State {
         // The start menu takes the keyboard at once, so you can type as soon as it opens.
         layer.set_keyboard_interactivity(if matches!(&kind, PopupKind::Start(_)) || matches!(&kind, PopupKind::Fylgja(f) if f.pinned) { KeyboardInteractivity::Exclusive } else { KeyboardInteractivity::OnDemand });
         wl.commit();
-        self.surfs.push(Surf { id, kind: Kind::Popup, output, wl, layer: Some(layer), dock: None, w: 0, h: 0, want: (0, 0), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0 });
+        self.surfs.push(Surf { id, kind: Kind::Popup, output, wl, layer: Some(layer), dock: None, w: 0, h: 0, want: (0, 0), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
         if matches!(kind, PopupKind::Fylgja(_)) {
             self.fy_active.store(true, Ordering::Relaxed);
             fylgja::spawn_poller(self.fy_active.clone(), self.fy_shared.clone());
@@ -717,7 +746,7 @@ impl State {
             wl.set_input_region(Some(&region));
             region.destroy();
             wl.commit();
-            self.surfs.push(Surf { id, kind: Kind::Osd, output, wl, layer: Some(layer), dock: None, w: osd::WIDTH, h: osd::HEIGHT, want: (osd::WIDTH, osd::HEIGHT), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0 });
+            self.surfs.push(Surf { id, kind: Kind::Osd, output, wl, layer: Some(layer), dock: None, w: osd::WIDTH, h: osd::HEIGHT, want: (osd::WIDTH, osd::HEIGHT), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
         }
         self.dirty = true;
     }
@@ -815,7 +844,7 @@ impl State {
             layer.set_margin(0, 16, 16, 0);
             layer.set_keyboard_interactivity(KeyboardInteractivity::None);
             wl.commit();
-            self.surfs.push(Surf { id, kind: Kind::Toast, output, wl, layer: Some(layer), dock: None, w, h, want: (w, h), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0 });
+            self.surfs.push(Surf { id, kind: Kind::Toast, output, wl, layer: Some(layer), dock: None, w, h, want: (w, h), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
         }
     }
 
@@ -1117,7 +1146,17 @@ impl State {
                 self.dirty = true;
             }
             FAct::Notif(a) => self.notif_act(a),
-            FAct::Wall(p) => run(&["plasma-apply-wallpaperimage", &p.display().to_string()]),
+            FAct::Wall(p) => {
+                if self.model.conf.own_wallpaper {
+                    let _ = labyrinth_conf::set_wallpaper(&p.display().to_string());
+                    for s in &mut self.surfs {
+                        s.stamp = None; // redraw the wallpaper with the new picture
+                    }
+                    self.dirty = true;
+                } else {
+                    run(&["plasma-apply-wallpaperimage", &p.display().to_string()]);
+                }
+            }
             FAct::WallPage(by) => {
                 let pages = self.model.fylgja.walls.len().div_ceil(8).max(1) as i32;
                 self.model.fylgja.wall_page = (self.model.fylgja.wall_page as i32 + by).rem_euclid(pages) as usize;
@@ -1393,7 +1432,7 @@ impl State {
         layer.set_exclusive_zone(zone);
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
         wl.commit();
-        self.surfs.push(Surf { id, kind: Kind::Strut, output, wl, layer: Some(layer), dock: None, w: size.0, h: size.1, want: (zone as u32, zone as u32), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0 });
+        self.surfs.push(Surf { id, kind: Kind::Strut, output, wl, layer: Some(layer), dock: None, w: size.0, h: size.1, want: (zone as u32, zone as u32), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
     }
 
     /// The strip's anchor, requested size and zone (the dock's thickness plus the gap it floats at).
@@ -1477,10 +1516,37 @@ impl State {
         self.scale_surface(i);
         let s = self.scale_of(&self.surfs[i]);
         let (pw, ph) = ((w as f32 * s).round() as u32, (h as f32 * s).round() as u32);
+        let wall_path = if kind == Kind::Wallpaper { labyrinth_conf::wallpaper() } else { None };
+        if kind == Kind::Wallpaper {
+            let key = (wall_path.clone().unwrap_or_default(), pw, ph);
+            if self.surfs[i].stamp.as_ref() == Some(&key) {
+                return; // already showing this picture at this size
+            }
+            self.surfs[i].stamp = Some(key);
+        }
         let Some(mut pix) = Pixmap::new(pw, ph) else { return };
         let mut start_scroll: Option<(i32, i32)> = None;
         let hits = match kind {
             Kind::Strut => vec![],
+            Kind::Wallpaper => {
+                let path = wall_path.unwrap_or_default();
+                let cached = self.wall_cache.iter().position(|(k, _)| k.0 == path && k.1 == pw && k.2 == ph);
+                let idx = match cached {
+                    Some(i) => Some(i),
+                    None => fylgja::load_cover(&path, pw, ph).map(|pm| {
+                        self.wall_cache.push(((path.clone(), pw, ph), pm));
+                        while self.wall_cache.len() > 4 {
+                            self.wall_cache.remove(0);
+                        }
+                        self.wall_cache.len() - 1
+                    }),
+                };
+                match idx {
+                    Some(i) => paint::draw_pixmap(&mut pix, &self.wall_cache[i].1, 0, 0),
+                    None => pix.fill(paint::color((12, 12, 17, 255))),
+                }
+                vec![]
+            }
             Kind::Osd => {
                 if let Some(st) = self.osd {
                     osd::paint(&mut pix, s, &st, &self.assets.fonts, &mut self.assets.icons);
@@ -2147,6 +2213,7 @@ fn main() {
         pane_hits: vec![],
         pane_top: 0.0,
         toasts: vec![],
+        wall_cache: vec![],
         toast_hide_tx,
         icon_stamp: None,
         icon_pack: paint::selected_icon_theme(),
@@ -2470,7 +2537,11 @@ fn main() {
             if now != seen {
                 seen = now;
                 let old = st.model.conf.dock_pos;
+                let old_wall = st.model.conf.own_wallpaper;
                 st.model.conf = PanelConf::load();
+                if st.model.conf.own_wallpaper != old_wall {
+                    st.built_for = None; // the wallpaper surface comes or goes
+                }
                 st.model.notifs.dnd = st.model.conf.notify_dnd;
                 st.sync_clip();
                 st.model.clock = clock_text(st.model.conf.clock_24h);

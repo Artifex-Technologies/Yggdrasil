@@ -99,13 +99,15 @@ pub struct PanelConf {
     pub notify_pane: bool,
     /// Do not disturb: no pop-ups (critical ones still show); everything is still kept in the list.
     pub notify_dnd: bool,
+    /// Labyrinth draws the wallpaper itself (so plasmashell is not needed for it); the picture's path is in ~/.config/labyrinth/wallpaper.
+    pub own_wallpaper: bool,
     /// Which Heimdall alerts become notifications: "off", "critical", "warning" (and critical) or "info" (all).
     pub heimdall_alerts: AlertLevel,
 }
 
 impl Default for PanelConf {
     fn default() -> Self {
-        PanelConf { dock_pos: DockPos::Bottom, dock_icon: 44, dock_gap: 4, start_theme: StartTheme::Windows, clock_24h: true, dock_opacity: 69, dock_color: ColorMode::Theme, bar_opacity: 69, bar_color: ColorMode::Theme, clipboard_history: true, search_subfolders: true, show_hidden: false, developer: false, notify_toasts: true, notify_pane: false, notify_dnd: false, heimdall_alerts: AlertLevel::Warning }
+        PanelConf { dock_pos: DockPos::Bottom, dock_icon: 44, dock_gap: 4, start_theme: StartTheme::Windows, clock_24h: true, dock_opacity: 69, dock_color: ColorMode::Theme, bar_opacity: 69, bar_color: ColorMode::Theme, clipboard_history: true, search_subfolders: true, show_hidden: false, developer: false, notify_toasts: true, notify_pane: false, notify_dnd: false, own_wallpaper: false, heimdall_alerts: AlertLevel::Warning }
     }
 }
 
@@ -163,6 +165,7 @@ impl PanelConf {
                 "notify_toasts" => c.notify_toasts = !matches!(v, "no" | "false" | "off" | "0"),
                 "notify_pane" => c.notify_pane = matches!(v, "yes" | "true" | "on" | "1"),
                 "notify_dnd" => c.notify_dnd = matches!(v, "yes" | "true" | "on" | "1"),
+                "own_wallpaper" => c.own_wallpaper = matches!(v, "yes" | "true" | "on" | "1"),
                 "heimdall_alerts" => c.heimdall_alerts = AlertLevel::parse(v).unwrap_or(c.heimdall_alerts),
                 _ => {}
             }
@@ -173,7 +176,7 @@ impl PanelConf {
     pub fn to_text(&self) -> String {
         format!(
             "# How the top bar and dock look. Edited by Labyrinth Settings (Appearance).\n\
-             dock_pos = {}\ndock_icon = {}\ndock_gap = {}\nclock_24h = {}\nstart_theme = {}\ndock_opacity = {}\ndock_color = {}\nbar_opacity = {}\nbar_color = {}\nclipboard_history = {}\nsearch_subfolders = {}\nshow_hidden = {}\ndeveloper = {}\nnotify_toasts = {}\nnotify_pane = {}\nnotify_dnd = {}\nheimdall_alerts = {}\n",
+             dock_pos = {}\ndock_icon = {}\ndock_gap = {}\nclock_24h = {}\nstart_theme = {}\ndock_opacity = {}\ndock_color = {}\nbar_opacity = {}\nbar_color = {}\nclipboard_history = {}\nsearch_subfolders = {}\nshow_hidden = {}\ndeveloper = {}\nnotify_toasts = {}\nnotify_pane = {}\nnotify_dnd = {}\nown_wallpaper = {}\nheimdall_alerts = {}\n",
             match self.dock_pos {
                 DockPos::Bottom => "bottom",
                 DockPos::Left => "left",
@@ -194,6 +197,7 @@ impl PanelConf {
             if self.notify_toasts { "yes" } else { "no" },
             if self.notify_pane { "yes" } else { "no" },
             if self.notify_dnd { "yes" } else { "no" },
+            if self.own_wallpaper { "yes" } else { "no" },
             self.heimdall_alerts.as_str()
         )
     }
@@ -234,7 +238,7 @@ mod tests {
 
     #[test]
     fn round_trips() {
-        let c = PanelConf { dock_pos: DockPos::Right, dock_icon: 60, dock_gap: 0, start_theme: StartTheme::Folders, clock_24h: false, dock_opacity: 0, dock_color: ColorMode::Neutral, bar_opacity: 100, bar_color: ColorMode::Neutral, clipboard_history: false, search_subfolders: false, show_hidden: true, developer: true, notify_toasts: false, notify_pane: true, notify_dnd: true, heimdall_alerts: AlertLevel::Critical };
+        let c = PanelConf { dock_pos: DockPos::Right, dock_icon: 60, dock_gap: 0, start_theme: StartTheme::Folders, clock_24h: false, dock_opacity: 0, dock_color: ColorMode::Neutral, bar_opacity: 100, bar_color: ColorMode::Neutral, clipboard_history: false, search_subfolders: false, show_hidden: true, developer: true, notify_toasts: false, notify_pane: true, notify_dnd: true, own_wallpaper: true, heimdall_alerts: AlertLevel::Critical };
         assert_eq!(PanelConf::parse(&c.to_text()), c);
     }
 
@@ -257,4 +261,26 @@ mod tests {
         assert_eq!(PanelConf::parse("dock_pos = left").dock_pos, DockPos::Left);
         assert_eq!(PanelConf::parse("dock_pos = sideways").dock_pos, DockPos::Bottom);
     }
+}
+
+/// Where the picture Labyrinth draws as the wallpaper is named (one line: a path).
+pub fn wallpaper_path_file() -> Option<std::path::PathBuf> {
+    let base = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))?;
+    Some(base.join("labyrinth").join("wallpaper"))
+}
+
+/// The wallpaper picture's path, if one was chosen.
+pub fn wallpaper() -> Option<String> {
+    let t = std::fs::read_to_string(wallpaper_path_file()?).ok()?;
+    let p = t.lines().next()?.trim().to_string();
+    (!p.is_empty()).then_some(p)
+}
+
+/// Remember the wallpaper picture's path (written beside and renamed, so the panel never reads half a file).
+pub fn set_wallpaper(path: &str) -> Result<(), String> {
+    let p = wallpaper_path_file().ok_or("no config folder")?;
+    std::fs::create_dir_all(p.parent().unwrap()).map_err(|e| e.to_string())?;
+    let tmp = p.with_extension("tmp");
+    std::fs::write(&tmp, format!("{path}\n")).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &p).map_err(|e| e.to_string())
 }

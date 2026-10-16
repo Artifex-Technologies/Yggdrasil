@@ -938,7 +938,9 @@ impl App {
             });
         }
         if let Some(p) = wallpaper {
-            self.change(ctx, move || sys::act("plasma-apply-wallpaperimage", &[&p]));
+            // when Labyrinth draws the wallpaper itself the panel shows the picture named in ~/.config/labyrinth/wallpaper
+            let own = labyrinth_conf::PanelConf::load().own_wallpaper;
+            self.change(ctx, move || if own { labyrinth_conf::set_wallpaper(&p) } else { sys::act("plasma-apply-wallpaperimage", &[&p]) });
         }
         if brand_build {
             let (shape, style) = (BRAND_SHAPES[self.brand_shape].0, BRAND_STYLES[self.brand_style].0);
