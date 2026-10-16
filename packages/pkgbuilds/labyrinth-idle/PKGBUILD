@@ -1,0 +1,36 @@
+# Labyrinth idle manager: watches how long you are away (observe-only unless configured) (Rust): built from packages/idle in this repository.
+pkgname=labyrinth-idle
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Labyrinth idle manager: watches how long you are away (observe-only unless configured)"
+arch=('x86_64')
+url="https://github.com/Artifex-Technologies/Labyrinth_OS"
+license=('MIT')
+depends=('gcc-libs' 'wayland' 'systemd' 'libnotify')
+makedepends=('cargo')
+options=('!lto')
+
+_src="$startdir/../../idle"
+
+build() {
+  cd "$_src"
+  cargo build --release --locked --target-dir "$srcdir/target"
+}
+
+check() {
+  cd "$_src"
+  cargo test --release --locked --target-dir "$srcdir/target"
+}
+
+package() {
+  install -Dm755 "$srcdir/target/release/labyrinth-idle" "$pkgdir/usr/bin/labyrinth-idle"
+  install -Dm644 /dev/stdin "$pkgdir/etc/xdg/autostart/labyrinth-idle.desktop" <<'EOT'
+[Desktop Entry]
+Type=Application
+Name=Labyrinth idle watch
+Comment=Logs how long you have been away (observe-only unless idle.conf says mode = act)
+Exec=/usr/bin/labyrinth-idle
+NoDisplay=true
+X-KDE-autostart-phase=2
+EOT
+}
