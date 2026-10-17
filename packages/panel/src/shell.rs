@@ -92,6 +92,14 @@ impl WinHandle {
         }
     }
 
+    /// Ask the window to close (the app may still ask to save first).
+    pub fn close(&self) {
+        match self {
+            WinHandle::Plasma(p) => p.close(),
+            WinHandle::Wlr(h) => h.close(),
+        }
+    }
+
     pub fn destroy(&self) {
         match self {
             WinHandle::Plasma(p) => p.destroy(),

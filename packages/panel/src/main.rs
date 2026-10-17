@@ -1275,6 +1275,10 @@ impl State {
                 self.close_popup();
                 self.tray_click(&key, "Activate");
             }
+            RowAct::Choose(key, id) if key.starts_with("dock:") => {
+                self.close_popup();
+                self.dock_menu_choose(&key["dock:".len()..], id);
+            }
             RowAct::Choose(key, id) => {
                 if let Some(it) = self.model.tray.iter().find(|t| t.key == key) {
                     tray::menu_event(&it.bus, &it.menu_path, id);
@@ -1425,6 +1429,58 @@ impl State {
             self.model.notch_w = w;
             self.model.notch_tab = tab;
         }
+    }
+
+    /// Right click on a dock app: its menu above the dock.
+    fn open_dock_menu(&mut self, app_id: &str, x: f32, output: u32) {
+        if app_id == shell::TRASH_ID {
+            return;
+        }
+        if self.popup.is_some() {
+            self.close_popup();
+        }
+        let items = shell::dock_items(&self.model);
+        let running = items.iter().find(|i| i.app_id == app_id).map(|i| !i.wins.is_empty()).unwrap_or(false);
+        let pinned = self.model.pinned.iter().any(|p| p == app_id);
+        let mk = |id: i32, label: &str| tray::MenuItem { id, label: label.into(), enabled: true, separator: false, checked: None, children: vec![] };
+        let mut menu = vec![mk(1, if running { "New window" } else { "Open" })];
+        if running {
+            menu.push(mk(2, "Close"));
+        }
+        menu.push(tray::MenuItem { id: 0, label: String::new(), enabled: false, separator: true, checked: None, children: vec![] });
+        menu.push(mk(3, if pinned { "Remove from dock" } else { "Keep in dock" }));
+        self.click_output = Some(output);
+        self.toggle_popup(PopupKind::Tray(trayui::TrayPop { anchor_x: x, mode: trayui::TrayMode::Menu { key: format!("dock:{app_id}"), items: menu, path: vec![] } }));
+        self.dirty = true;
+    }
+
+    fn dock_menu_choose(&mut self, app_id: &str, choice: i32) {
+        match choice {
+            1 => {
+                if let Some(app) = self.model.apps.iter().find(|a| a.id == app_id) {
+                    apps::launch(app);
+                }
+            }
+            2 => {
+                let items = shell::dock_items(&self.model);
+                if let Some(item) = items.iter().find(|i| i.app_id == app_id) {
+                    for &i in &item.wins {
+                        self.model.wins[i].proxy.close();
+                    }
+                }
+            }
+            3 => {
+                if let Some(pos) = self.model.pinned.iter().position(|p| p == app_id) {
+                    self.model.pinned.remove(pos);
+                } else {
+                    self.model.pinned.push(app_id.to_string());
+                }
+                apps::save_pinned(&self.model.pinned);
+                self.resize_dock();
+            }
+            _ => {}
+        }
+        self.dirty = true;
     }
 
     fn windows_popup_open(&self) -> bool {
@@ -2663,6 +2719,16 @@ impl Dispatch<WlPointer, ()> for State {
                         }
                     }
                 } else if button == 273 {
+                    // on a dock app: its menu (new window, close, keep in dock)
+                    if let Some(i) = state.pointer_surface {
+                        let hover = state.surfs.get(i).and_then(|s| s.hover);
+                        if let Some((id, along)) = state.dock_item_at(i, hover) {
+                            let out = state.surfs[i].output;
+                            state.dock_hover = None;
+                            state.open_dock_menu(&id, along, out);
+                            return;
+                        }
+                    }
                     // 273 = BTN_RIGHT: on a tray icon it asks the app for its menu
                     if let Some(i) = state.pointer_surface {
                         if let Some(h) = state.surfs.get(i).and_then(|s| s.hover) {

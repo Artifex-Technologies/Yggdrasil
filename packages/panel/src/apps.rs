@@ -196,6 +196,15 @@ pub fn pinned() -> Vec<String> {
     vec![]
 }
 
+/// Write the dock's pinned apps (one id per line) to ~/.config/labyrinth/dock.
+pub fn save_pinned(ids: &[String]) {
+    let Some(p) = std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config/labyrinth/dock")) else { return };
+    if let Some(d) = p.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    let _ = std::fs::write(p, ids.join("\n") + "\n");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
