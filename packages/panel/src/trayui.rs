@@ -119,12 +119,12 @@ fn paint_windows(pix: &mut Pixmap, s: f32, anchor_x: f32, app_id: &str, model: &
         let shown = crate::fylgja::fit(&fonts.regular, 12.5 * s, &title, (THUMB_W - 4.0) * s);
         paint::draw_text(pix, &fonts.regular, 12.5 * s, (bx + 2.0) * s, (by + THUMB_H + 14.0) * s, if win.active() { text } else { dim }, &shown);
         hits.push((card, RowAct::Window(wi)));
-        // the cross, top right of the picture
-        let xr = (bx + THUMB_W - 24.0, by + 4.0, 20.0, 20.0);
+        // the cross: a red tab in the card's top right corner, so it is easy to spot
+        let xr = (card.0 + card.2 - 40.0, card.1, 40.0, 32.0);
         let hot = over(xr);
-        paint::fill_circle(pix, (xr.0 + 10.0) * s, (xr.1 + 10.0) * s, 10.0 * s, if hot { (226, 80, 80, 255) } else { (20, 20, 28, 200) });
-        let tw = paint::text_width(&fonts.bold, 15.0 * s, "\u{d7}");
-        paint::draw_text(pix, &fonts.bold, 15.0 * s, (xr.0 + 10.0) * s - tw / 2.0, (xr.1 + 10.5) * s, (255, 255, 255, 255), "\u{d7}");
+        paint::fill_rounded(pix, xr.0 * s, xr.1 * s, xr.2 * s, xr.3 * s, 10.0 * s, if hot { (236, 84, 92, 255) } else { (190, 56, 66, 245) });
+        let tw = paint::text_width(&fonts.bold, 22.0 * s, "\u{d7}");
+        paint::draw_text(pix, &fonts.bold, 22.0 * s, (xr.0 + xr.2 / 2.0) * s - tw / 2.0, (xr.1 + xr.3 / 2.0 + 0.5) * s, (255, 255, 255, 255), "\u{d7}");
         hits.push((xr, RowAct::CloseWin(wi)));
     }
     ((cx, cy, cw, ch), hits)
