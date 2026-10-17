@@ -991,16 +991,16 @@ impl App {
                     }
                 }
             });
-        });
-        }
-        if self.app_sub == AppSub::Main {
-            ui::group(ui, pal, None, |ui| {
-                ui::row(ui, pal, true, "Top bar and dock", Some("The bar, the dock, the start menu and the notch: how they look and what they do"), |ui| {
+                ui::row(ui, pal, false, "Top bar and dock", Some("The bar, the dock, the start menu and the notch: how they look and what they do"), |ui| {
                     if ui::quiet(ui, pal, "Open  \u{203a}").clicked() {
                         self.app_sub = AppSub::Bar;
                     }
                 });
-                ui::row(ui, pal, false, "Icons", Some("Icon packs"), |ui| {
+        });
+        }
+        if self.app_sub == AppSub::Main {
+            ui::group(ui, pal, None, |ui| {
+                ui::row(ui, pal, true, "Icons", Some("Icon packs"), |ui| {
                     if ui::quiet(ui, pal, "Open  \u{203a}").clicked() {
                         self.app_sub = AppSub::Icons;
                     }
