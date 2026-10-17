@@ -1406,6 +1406,8 @@ impl State {
                 PowerAct::Lock => run(&["loginctl", "lock-session"]),
                 PowerAct::Sleep => run(&["systemctl", "suspend"]),
                 PowerAct::Hibernate => run(&["systemctl", "hibernate"]),
+                // Plasma's own logout (it saves the session) when it is there, else end the login session
+                PowerAct::Logout => run(&["sh", "-c", "qdbus6 org.kde.Shutdown /Shutdown org.kde.Shutdown.logout 2>/dev/null || loginctl terminate-session \"${XDG_SESSION_ID:-self}\""]),
                 PowerAct::Restart => run(&["systemctl", "reboot"]),
                 PowerAct::Shutdown => run(&["systemctl", "poweroff"]),
             },

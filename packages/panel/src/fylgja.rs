@@ -1228,6 +1228,7 @@ pub fn paint(pix: &mut Pixmap, s: f32, m: &Model, st: &FyState, slide: f32, poin
             if m.hibernate {
                 acts.push(("system-hibernate-symbolic", "Hibernate", PowerAct::Hibernate));
             }
+            acts.push(("system-log-out-symbolic", "Log out", PowerAct::Logout));
             acts.push(("system-reboot-symbolic", "Restart", PowerAct::Restart));
             acts.push(("system-shutdown-symbolic", "Shut down", PowerAct::Shutdown));
             let cell = inner / acts.len() as f32;

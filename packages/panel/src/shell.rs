@@ -564,6 +564,7 @@ pub enum PowerAct {
     Lock,
     Sleep,
     Hibernate,
+    Logout,
     Restart,
     Shutdown,
 }
@@ -777,7 +778,7 @@ pub fn paint_start(pix: &mut Pixmap, s: f32, m: &Model, query: &str, scroll: i32
     let iw = paint::text_width(&fonts.bold, 15.0 * s, &initial) / s;
     text(pix, &fonts.bold, 15.0, cx + 36.0 - iw / 2.0, my, (255, 255, 255, 255), &initial);
     text(pix, &fonts.regular, 13.5, cx + 60.0, my, pal.text, &m.user);
-    let buttons = [("Lock", PowerAct::Lock), ("Sleep", PowerAct::Sleep), ("Restart", PowerAct::Restart), ("Shut down", PowerAct::Shutdown)];
+    let buttons = [("Lock", PowerAct::Lock), ("Sleep", PowerAct::Sleep), ("Log out", PowerAct::Logout), ("Restart", PowerAct::Restart), ("Shut down", PowerAct::Shutdown)];
     let mut bx = cx + cw - 16.0;
     for (label, act) in buttons.iter().rev() {
         let bw = paint::text_width(&fonts.regular, 12.5 * s, label) / s + 22.0;
@@ -834,6 +835,7 @@ pub fn power_items(m: &Model) -> Vec<(&'static str, PowerAct)> {
     if m.hibernate {
         items.push(("Hibernate", PowerAct::Hibernate));
     }
+    items.push(("Log out", PowerAct::Logout));
     items.push(("Restart", PowerAct::Restart));
     items.push(("Shut down", PowerAct::Shutdown));
     items
