@@ -502,7 +502,7 @@ fn load_installed(tx: &std::sync::mpsc::Sender<Msg>) -> Vec<appmgr::AppInfo> {
 }
 
 const BRAND_SHAPES: [(&str, &str); 5] = [("glyph", "Logo only"), ("squircle", "Squircle"), ("rounded", "Rounded square"), ("circle", "Circle"), ("hexagon", "Hexagon")];
-const BRAND_STYLES: [(&str, &str); 3] = [("brand", "Brand colours"), ("dark", "Dark tile"), ("purple", "Labyrinth purple")];
+const BRAND_STYLES: [(&str, &str); 3] = [("brand", "Brand colors"), ("dark", "Dark tile"), ("purple", "Labyrinth purple")];
 
 fn loading(ui: &mut egui::Ui) {
     ui.add_space(40.0);
@@ -910,7 +910,7 @@ impl App {
                 }
             });
             let waves = ["Copper", "Siri", "Labyrinth"];
-            ui::row(ui, pal, false, "Wave colours", Some("The glowing wave that grows out of the notch while you talk and while she answers"), |ui| {
+            ui::row(ui, pal, false, "Wave colors", Some("The glowing wave that grows out of the notch while you talk and while she answers"), |ui| {
                 if let Some(i) = ui::segmented(ui, pal, &waves, conf.sarina_wave.min(2) as usize) {
                     conf.sarina_wave = i as u8;
                     conf_changed = true;
@@ -980,7 +980,7 @@ impl App {
                     style = Some(i == 1);
                 }
             });
-            ui::row(ui, pal, false, "Accent colour", Some("Selections, switches, the active window border"), |ui| {
+            ui::row(ui, pal, false, "Accent color", Some("Selections, switches, the active window border"), |ui| {
                 for (name, rgb) in sys::ACCENTS.iter().rev() {
                     let (rect, resp) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::click());
                     let c = egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
@@ -1072,7 +1072,7 @@ impl App {
                     }
                 });
             }
-            ui::row(ui, pal, a.icon_packs.is_empty(), "Labyrinth Brands", Some("App logos from Simple Icons in the shape and colours you pick; apps it has no logo for keep the other pack's icon. Make it, then choose it above"), |ui| {
+            ui::row(ui, pal, a.icon_packs.is_empty(), "Labyrinth Brands", Some("App logos from Simple Icons in the shape and colors you pick; apps it has no logo for keep the other pack's icon. Make it, then choose it above"), |ui| {
                 if ui::action(ui, pal, "Make").clicked() {
                     brand_build = true;
                 }
@@ -1150,7 +1150,7 @@ impl App {
                     conf_changed = true;
                 }
             });
-            ui::row(ui, pal, false, "Colour", Some("Match the theme's purple, or follow only dark and light"), |ui| {
+            ui::row(ui, pal, false, "Color", Some("Match the theme's purple, or follow only dark and light"), |ui| {
                 if let Some(i) = ui::segmented(ui, pal, &modes, mode_index(conf.dock_color)) {
                     conf.dock_color = mode_of(i);
                     conf_changed = true;
@@ -1168,7 +1168,7 @@ impl App {
                     conf_changed = true;
                 }
             });
-            ui::row(ui, pal, false, "Colour", Some("Match the theme's purple, or follow only dark and light"), |ui| {
+            ui::row(ui, pal, false, "Color", Some("Match the theme's purple, or follow only dark and light"), |ui| {
                 if let Some(i) = ui::segmented(ui, pal, &modes, mode_index(conf.bar_color)) {
                     conf.bar_color = mode_of(i);
                     conf_changed = true;
@@ -1291,6 +1291,13 @@ impl App {
         if let Some([r, g, b]) = accent {
             self.change(ctx, move || {
                 sys::act("plasma-apply-colorscheme", &["--accent-color", &format!("#{r:02x}{g:02x}{b:02x}")])?;
+                // Plasma 6.8 leaves the AccentColor key itself to a background service that is not running here; the apps
+                // (and this one) read that key, so write it too
+                let rgb = format!("{r},{g},{b}");
+                for key in ["AccentColor", "LastUsedCustomAccentColor"] {
+                    let _ = sys::act("kwriteconfig6", &["--file", "kdeglobals", "--group", "General", "--key", key, &rgb]);
+                }
+                let _ = sys::act("kwriteconfig6", &["--file", "kdeglobals", "--group", "General", "--key", "AccentColorFromWallpaper", "false"]);
                 // Minos's icon takes the new accent
                 let _ = std::process::Command::new("labyrinth-minos-icon").args([format!("{r},{g},{b}"), String::new()]).status();
                 Ok(())

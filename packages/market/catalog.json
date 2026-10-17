@@ -913,7 +913,7 @@
   {
    "id": "ghidra",
    "name": "Ghidra and reverse engineering",
-   "subtitle": "Analyse programs safely",
+   "subtitle": "Analyze programs safely",
    "description": "Ghidra and friends, run through Labyrinth's sandbox.",
    "category": "Develop",
    "subcategory": "Reverse Engineering",
@@ -928,7 +928,7 @@
   {
    "id": "wireshark",
    "name": "Wireshark",
-   "subtitle": "Network analyser",
+   "subtitle": "Network analyzer",
    "description": "Look inside network traffic, packet by packet.",
    "category": "Develop",
    "subcategory": "Networking",
@@ -993,7 +993,7 @@
    "id": "vivaldi",
    "name": "Vivaldi",
    "subtitle": "Web browser",
-   "description": "A fast, customisable browser.",
+   "description": "A fast, customizable browser.",
    "category": "Internet",
    "subcategory": "Browsers",
    "source": {
