@@ -131,7 +131,11 @@ pub fn parse_omarchy(text: &str, from: &str) -> Result<Catalog, String> {
             apps.push(Entry {
                 id: pid.clone(),
                 name,
-                subtitle: if cat.is_empty() { "Omarchy plugin".into() } else { format!("Omarchy plugin: {cat}") },
+                subtitle: {
+                    let owner = pid.rsplit_once('.').map(|x| x.0).unwrap_or("");
+                    let base = if cat.is_empty() { "Omarchy plugin".to_string() } else { format!("Omarchy plugin: {cat}") };
+                    if owner.is_empty() { base } else { format!("{base}  \u{b7}  {owner}") }
+                },
                 description: format!("{} Source: {repo}", if tags.is_empty() { String::new() } else { format!("Tags: {}.", tags.join(", ")) }),
                 category: if games { "Play".into() } else { "Plugins".into() },
                 subcategory: if games { "Plugin games".into() } else if cat.is_empty() { "Other".into() } else { cat },
