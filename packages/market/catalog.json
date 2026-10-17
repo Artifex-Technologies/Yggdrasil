@@ -1363,11 +1363,13 @@
   "limbo-git",
   "mactahoe-icon-theme",
   "plasma6-applets-window-title",
-  "proton-pass",
   "sarina-git",
-  "visual-studio-code-bin",
   "whitesur-cursor-theme",
   "whitesur-gtk-theme",
   "whitesur-kde-theme"
+ ],
+ "aur_updates_ok": [
+  "visual-studio-code-bin",
+  "proton-pass"
  ]
 }

@@ -3554,6 +3554,10 @@ fn main() {
                 st.assets.icons.clear();
                 st.dirty = true;
             }
+            // any icon file added or replaced in the pack in use (a rebuilt pack, a new app icon)
+            if st.assets.icons.refresh_if_changed() {
+                st.dirty = true;
+            }
             TimeoutAction::ToDuration(Duration::from_secs(4))
         })
         .expect("layout timer");

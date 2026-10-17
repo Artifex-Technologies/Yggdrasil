@@ -223,11 +223,40 @@ pub fn draw_text(pix: &mut Pixmap, font: &FontVec, size: f32, x: f32, cy: f32, c
 pub struct Icons {
     cache: HashMap<(String, u32), Option<Pixmap>>,
     themes: Vec<String>,
+    /// What the icon folders looked like when the cache was filled (see `refresh_if_changed`).
+    fp: u64,
 }
 
 impl Icons {
     pub fn new() -> Icons {
-        Icons { cache: HashMap::new(), themes: Self::chain(selected_icon_theme().as_deref()) }
+        let mut i = Icons { cache: HashMap::new(), themes: Self::chain(selected_icon_theme().as_deref()), fp: 0 };
+        i.fp = i.fingerprint();
+        i
+    }
+
+    /// A number that changes when files appear in, or leave, the icon folders of the packs in use.
+    fn fingerprint(&self) -> u64 {
+        let mut h: u64 = 1469598103934665603;
+        for root in Self::roots() {
+            for theme in &self.themes {
+                for sub in ["", "apps/scalable", "scalable/apps", "places/scalable", "apps", "256x256/apps", "192x192/apps", "128x128/apps"] {
+                    let t = std::fs::metadata(root.join(theme).join(sub)).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos() as u64).unwrap_or(0);
+                    h = (h ^ t).wrapping_mul(1099511628211);
+                }
+            }
+        }
+        h
+    }
+
+    /// Forget every icon found so far when the icon pack's files changed (an app's icon added or replaced); true when that happened.
+    pub fn refresh_if_changed(&mut self) -> bool {
+        let fp = self.fingerprint();
+        if fp != self.fp {
+            self.fp = fp;
+            self.cache.clear();
+            return true;
+        }
+        false
     }
 
     /// The lookup order: the icon pack chosen in KDE first (if it is not one of ours already), then

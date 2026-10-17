@@ -362,6 +362,11 @@ pub fn local_builds() -> Vec<String> {
     if let Ok(c) = serde_json::from_str::<Value>(BUILTIN) {
         v.extend(strings(&c["local_builds"]));
     }
+    // the same programs as upstream (VS Code, Proton Pass): their updates do come from the AUR
+    if let Ok(c) = serde_json::from_str::<Value>(BUILTIN) {
+        let ok = strings(&c["aur_updates_ok"]);
+        v.retain(|n| !ok.contains(n));
+    }
     v.sort();
     v.dedup();
     v
