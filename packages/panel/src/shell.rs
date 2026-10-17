@@ -686,7 +686,7 @@ fn app_icon(pix: &mut Pixmap, s: f32, icons: &mut Icons, fonts: &Fonts, app: &Ap
 
 /// The start menu: search, the pinned apps, every app A to Z (the wheel scrolls it), your name and
 /// the power buttons. `pointer` lights the row under it.
-pub fn paint_start(pix: &mut Pixmap, s: f32, m: &Model, query: &str, scroll: i32, pointer: (f32, f32), fonts: &Fonts, icons: &mut Icons) -> StartPaint {
+pub fn paint_start(pix: &mut Pixmap, s: f32, m: &Model, query: &str, select_all: bool, scroll: i32, pointer: (f32, f32), fonts: &Fonts, icons: &mut Icons) -> StartPaint {
     pix.fill(paint::color((0, 0, 0, 0)));
     let pal = start_pal(m.dark);
     let surf_h = pix.height() as f32 / s;
@@ -709,8 +709,11 @@ pub fn paint_start(pix: &mut Pixmap, s: f32, m: &Model, query: &str, scroll: i32
     if query.is_empty() {
         text(pix, &fonts.regular, 14.0, fx + 14.0, cy + 36.0, pal.dim, "Search apps");
     } else {
-        text(pix, &fonts.regular, 14.0, fx + 14.0, cy + 36.0, pal.text, query);
         let qw = paint::text_width(&fonts.regular, 14.0 * s, query) / s;
+        if select_all {
+            rr(pix, fx + 12.0, cy + 25.0, qw + 4.0, 22.0, 4.0, (124, 84, 214, 120)); // everything typed is selected
+        }
+        text(pix, &fonts.regular, 14.0, fx + 14.0, cy + 36.0, pal.text, query);
         rr(pix, fx + 14.0 + qw + 1.0, cy + 26.0, 1.5, 20.0, 0.5, (124, 84, 214, 255)); // the caret
     }
 
@@ -858,6 +861,8 @@ pub fn folders_counts(m: &Model) -> (usize, usize) {
 
 pub struct FoldersView<'a> {
     pub query: &'a str,
+    /// Ctrl+A was pressed: the whole query is selected (the next key replaces it).
+    pub select_all: bool,
     pub scroll: i32,
     pub focus: StartFocus,
     /// The selected row: a search result, or a favourite / folder (favourites first).
@@ -897,8 +902,11 @@ pub fn paint_start_folders(pix: &mut Pixmap, s: f32, m: &Model, v: &FoldersView,
     if v.query.is_empty() {
         text(pix, &fonts.regular, 13.5, fx + 12.0, cy + 30.0, pal.dim, "Search apps");
     } else {
-        text(pix, &fonts.regular, 13.5, fx + 12.0, cy + 30.0, pal.text, v.query);
         let qw = paint::text_width(&fonts.regular, 13.5 * s, v.query) / s;
+        if v.select_all {
+            rr(pix, fx + 10.0, cy + 19.0, qw + 4.0, 21.0, 4.0, (124, 84, 214, 120)); // everything typed is selected
+        }
+        text(pix, &fonts.regular, 13.5, fx + 12.0, cy + 30.0, pal.text, v.query);
         rr(pix, fx + 12.0 + qw + 1.0, cy + 21.0, 1.5, 18.0, 0.5, (124, 84, 214, 255));
     }
 

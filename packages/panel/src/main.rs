@@ -166,6 +166,8 @@ enum PopupKind {
 #[derive(Default)]
 struct StartState {
     query: String,
+    /// Ctrl+A: the whole query is selected.
+    all: bool,
     scroll: i32,
     /// Keyboard: where Tab has got to, and the selected row in the list, the folder at the side, and the power choices.
     focus: shell::StartFocus,
@@ -294,6 +296,10 @@ struct State {
     popup_card: (f32, f32, f32, f32),
     /// The dock app the pointer rests on, since when, where (screen x of its icon) and on which output; opens the window list after a second.
     dock_hover: Option<(String, Instant, f32, u32)>,
+    /// The key being held (for the start menu) and when it repeats next; Wayland leaves repeating to the client.
+    repeat: Option<(u32, Instant)>,
+    repeat_rate: u32,
+    repeat_delay: u32,
     /// When the window list should close if the pointer has not come back to it or the dock.
     preview_close: Option<Instant>,
     /// What can be clicked in the open start menu, and how far its list can scroll.
@@ -1818,6 +1824,7 @@ impl State {
             return;
         }
         let typed = self.xkb.as_ref().map(|x| x.key_get_utf8(xkb::Keycode::new(key + 8))).unwrap_or_default();
+        let ctrl = self.xkb.as_ref().map(|x| x.mod_name_is_active(xkb::MOD_NAME_CTRL, xkb::STATE_MODS_EFFECTIVE)).unwrap_or(false);
         let folders_theme = self.model.conf.start_theme == StartTheme::Folders;
         let (n_fav, n_folders) = shell::folders_counts(&self.model);
         let folder_apps = |m: &shell::Model, i: usize| apps::folders(&m.apps).get(i).map(|(_, l)| l.len()).unwrap_or(0);
@@ -1912,10 +1919,26 @@ impl State {
                 }
                 F::Power => act = power.get(st.power_sel).map(|(_, a)| shell::StartAct::Power(*a)),
             },
-            14 => {
+            // Ctrl+A: select what was typed (the next key replaces it, Backspace clears it)
+            30 if ctrl => {
                 st.focus = F::Search;
                 st.power_open = false;
-                st.query.pop(); // Backspace
+                st.all = !st.query.is_empty();
+            }
+            14 | 111 => {
+                st.focus = F::Search;
+                st.power_open = false;
+                if st.all {
+                    st.query.clear(); // Backspace or Delete over a selection
+                } else if ctrl {
+                    // Ctrl+Backspace: the last word
+                    let t = st.query.trim_end().len();
+                    let cut = st.query[..t].rfind(' ').map(|i| i + 1).unwrap_or(0);
+                    st.query.truncate(cut);
+                } else if key == 14 {
+                    st.query.pop(); // Backspace
+                }
+                st.all = false;
                 st.scroll = 0;
                 st.sel = 0;
             }
@@ -1923,9 +1946,13 @@ impl State {
                 let before = st.query.len();
                 let chars: String = typed.chars().filter(|c| !c.is_control()).collect();
                 if !chars.is_empty() {
-                    // typing goes to the search box from anywhere
+                    // typing goes to the search box from anywhere; over a selection it replaces it
                     st.focus = F::Search;
                     st.power_open = false;
+                    if st.all {
+                        st.query.clear();
+                        st.all = false;
+                    }
                     st.query.push_str(&chars);
                 }
                 if st.query.len() != before {
@@ -2110,12 +2137,12 @@ impl State {
                 match &self.popup {
                     Some(Popup { kind: PopupKind::Start(st), .. }) => {
                         let sp = if self.model.conf.start_theme == StartTheme::Folders {
-                            let view = shell::FoldersView { query: &st.query, scroll: st.scroll, focus: st.focus, sel: st.sel, sub_sel: st.sub_sel, power_sel: st.power_sel, cat: st.cat, sub_scroll: st.sub_scroll, power_open: st.power_open };
+                            let view = shell::FoldersView { query: &st.query, select_all: st.all, scroll: st.scroll, focus: st.focus, sel: st.sel, sub_sel: st.sub_sel, power_sel: st.power_sel, cat: st.cat, sub_scroll: st.sub_scroll, power_open: st.power_open };
                             let sp = shell::paint_start_folders(&mut pix, s, &self.model, &view, self.pointer_pos, &self.assets.fonts, &mut self.assets.icons);
                             start_scroll = Some((sp.scroll, sp.sub_scroll));
                             sp
                         } else {
-                            shell::paint_start(&mut pix, s, &self.model, &st.query, st.scroll, self.pointer_pos, &self.assets.fonts, &mut self.assets.icons)
+                            shell::paint_start(&mut pix, s, &self.model, &st.query, st.all, st.scroll, self.pointer_pos, &self.assets.fonts, &mut self.assets.icons)
                         };
                         self.popup_card = sp.card;
                         self.start_hits = sp.hits;
@@ -2582,7 +2609,22 @@ impl Dispatch<WlKeyboard, ()> for State {
                     x.update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, group);
                 }
             }
-            wl_keyboard::Event::Key { key, state: WEnum::Value(wl_keyboard::KeyState::Pressed), .. } => state.key_pressed(key),
+            wl_keyboard::Event::RepeatInfo { rate, delay } => {
+                state.repeat_rate = rate.max(0) as u32;
+                state.repeat_delay = delay.max(0) as u32;
+            }
+            wl_keyboard::Event::Key { key, state: WEnum::Value(wl_keyboard::KeyState::Pressed), .. } => {
+                state.key_pressed(key);
+                // holding Backspace, an arrow or a letter in the start menu repeats it
+                let in_start = matches!(state.popup, Some(Popup { kind: PopupKind::Start(_), .. }));
+                let repeats = state.xkb.as_ref().map(|x| x.get_keymap().key_repeats(xkb::Keycode::new(key + 8))).unwrap_or(false);
+                state.repeat = if in_start && repeats && state.repeat_rate > 0 { Some((key, Instant::now() + Duration::from_millis(state.repeat_delay as u64))) } else { None };
+            }
+            wl_keyboard::Event::Key { key, state: WEnum::Value(wl_keyboard::KeyState::Released), .. } => {
+                if state.repeat.map(|r| r.0) == Some(key) {
+                    state.repeat = None;
+                }
+            }
             _ => {}
         }
     }
@@ -2946,6 +2988,9 @@ fn main() {
         popup: None,
         popup_card: (0.0, 0.0, 0.0, 0.0),
         dock_hover: None,
+        repeat: None,
+        repeat_rate: 25,
+        repeat_delay: 400,
         preview_close: None,
         start_hits: vec![],
         start_max: 0,
@@ -3158,6 +3203,21 @@ fn main() {
             })
             .expect("accessibility timer");
     }
+    // a held key in the start menu repeats (the compositor only reports the press)
+    event_loop
+        .handle()
+        .insert_source(Timer::from_duration(Duration::from_millis(20)), |_, _, st| {
+            if let Some((key, next)) = st.repeat {
+                if !matches!(st.popup, Some(Popup { kind: PopupKind::Start(_), .. })) {
+                    st.repeat = None;
+                } else if Instant::now() >= next {
+                    st.repeat = Some((key, next + Duration::from_millis(1000 / st.repeat_rate.max(1) as u64)));
+                    st.key_pressed(key);
+                }
+            }
+            TimeoutAction::ToDuration(Duration::from_millis(if st.repeat.is_some() { 20 } else { 60 }))
+        })
+        .expect("key repeat timer");
     // resting on a dock app for a second lists its windows; the list goes when the pointer has left it
     event_loop
         .handle()
