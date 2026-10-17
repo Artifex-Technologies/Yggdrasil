@@ -635,8 +635,6 @@ impl App {
         let Some(idx) = self.apps.iter().position(|a| a.id == id) else { return };
         let e = self.apps[idx].clone();
         let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
-        let top = tint(&e.id, 0.55, 0.78);
-        let bottom = tint(&e.id, 0.75, 0.46);
         // a screenshot of the app behind the card, when there is one (and the internet was allowed): dimmed from the left,
         // where the text is, so it stays readable. Otherwise a colour gradient.
         let shot = self.details.get(&e.id).cloned().flatten().and_then(|d| d.screenshots.first().map(|s| s.url.clone())).and_then(|u| self.images.get(&u).cloned().flatten());
@@ -667,11 +665,8 @@ impl App {
             });
         }
         if tex.is_none() {
-            let (t0, h0) = (rect.top(), rect.height());
-            gradient_rounded(ui.painter(), rect, 14.0, |p| {
-                let t = ((p.y - t0) / h0).clamp(0.0, 1.0);
-                Color32::from_rgb((top.r() as f32 * (1.0 - t) + bottom.r() as f32 * t) as u8, (top.g() as f32 * (1.0 - t) + bottom.g() as f32 * t) as u8, (top.b() as f32 * (1.0 - t) + bottom.b() as f32 * t) as u8)
-            });
+            // one flat colour (no light from the top): the sideways shading below is the only shading
+            ui.painter().rect_filled(rect, CornerRadius::same(14), tint(&e.id, 0.62, 0.64));
         }
         if tex.is_none() {
             // the same sideways shading as the screenshot tiles, lighter because a flat colour needs less help: dark where the text is
