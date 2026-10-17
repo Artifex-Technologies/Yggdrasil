@@ -231,7 +231,7 @@ impl App {
             let allowed = a.net != NetMode::Block;
             let top = ui.cursor().top();
             let left = ui.min_rect().left();
-            ui::row(ui, pal, true, "Can use the network", Some(if allowed { "Switch it off, or click its name, to cut this app off from the network" } else { "This app cannot send anything off this computer" }), |ui| {
+            ui::row(ui, pal, true, "Network", Some(if allowed { "Switch it off, or click its name, to cut this app off from the network" } else { "This app cannot send anything off this computer" }), |ui| {
                 let mut on = allowed;
                 if ui::switch(ui, pal, &mut on).changed() {
                     net = Some(if on { NetMode::Allow } else { NetMode::Block });
@@ -298,7 +298,7 @@ impl App {
         }
 
         ui::group(ui, pal, Some("General"), |ui| {
-            ui::row(ui, pal, true, "Open when I log in", None, |ui| {
+            ui::row(ui, pal, true, "Startup", None, |ui| {
                 let mut on = a.startup;
                 if ui::switch(ui, pal, &mut on).changed() {
                     startup = Some(on);

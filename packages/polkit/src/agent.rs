@@ -1,7 +1,7 @@
 //! The D-Bus side: registers with polkit as an authentication agent and answers `BeginAuthentication`.
 
 use std::collections::HashMap;
-use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::Sender;
 
 use zbus::blocking::{Connection, Proxy};
 use zbus::zvariant::{OwnedValue, Value};
@@ -21,9 +21,9 @@ pub enum UiMsg {
 }
 
 pub struct Agent {
-    pub ui: Sender<UiMsg>,
-    pub wake: std::sync::Arc<dyn Fn() + Send + Sync>,
     pub uid: u32,
+    /// The password-box process of the request being answered (its pid), so a cancel from polkit can close it.
+    pub child: std::sync::Mutex<Option<u32>>,
 }
 
 /// The user name for a uid.
@@ -48,20 +48,33 @@ pub fn choose_identity(identities: &[(String, HashMap<String, OwnedValue>)], own
     }
 }
 
-struct Bridge<'a> {
-    agent: &'a Agent,
+/// The password box runs as its own process, one per request (`labyrinth-polkit --dialog`), talking JSON lines on its pipes:
+/// requests go to its stdin, the typed answers come back on its stdout. When the request is over the process ends and its
+/// window goes with it.
+struct Bridge {
+    stdin: std::process::ChildStdin,
+    stdout: std::io::BufReader<std::process::ChildStdout>,
 }
 
-impl Ui for Bridge<'_> {
+impl Bridge {
+    fn send(&mut self, v: serde_json::Value) {
+        use std::io::Write;
+        let _ = writeln!(self.stdin, "{v}");
+        let _ = self.stdin.flush();
+    }
+}
+
+impl Ui for Bridge {
     fn prompt(&mut self, text: &str, echo: bool) -> Option<String> {
-        let (tx, rx) = channel();
-        self.agent.ui.send(UiMsg::Prompt { text: text.to_string(), echo, reply: tx }).ok()?;
-        (self.agent.wake)();
-        rx.recv().ok().flatten()
+        use std::io::BufRead;
+        self.send(serde_json::json!({"t": "prompt", "text": text, "echo": echo}));
+        let mut line = String::new();
+        self.stdout.read_line(&mut line).ok()?;
+        let v: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+        v.get("answer").and_then(|a| a.as_str()).map(str::to_string)
     }
     fn message(&mut self, text: &str, error: bool) {
-        let _ = self.agent.ui.send(UiMsg::Message { text: text.to_string(), error });
-        (self.agent.wake)();
+        self.send(serde_json::json!({"t": "message", "text": text, "error": error}));
     }
 }
 
@@ -73,13 +86,27 @@ impl Agent {
             return Err(zbus::fdo::Error::Failed("no user to authenticate as".into()));
         };
         let user = user_name(uid).ok_or_else(|| zbus::fdo::Error::Failed("unknown user".into()))?;
-        let _ = self.ui.send(UiMsg::Begin { message, action_id, user: user.clone() });
-        (self.wake)();
+        let exe = std::env::current_exe().map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
+        let mut child = std::process::Command::new(exe)
+            .arg("--dialog")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| zbus::fdo::Error::Failed(format!("cannot open the password box: {e}")))?;
+        *self.child.lock().unwrap() = Some(child.id());
+        let mut ui = Bridge { stdin: child.stdin.take().unwrap(), stdout: std::io::BufReader::new(child.stdout.take().unwrap()) };
+        ui.send(serde_json::json!({"t": "begin", "message": message, "action_id": action_id, "user": user}));
         // a wrong password gets three tries, each a new session with the helper (as the standard agents do)
         let mut result = Outcome::Failed;
         for attempt in 0..3 {
-            let mut ui = Bridge { agent: self };
-            result = helper::authenticate(&user, &cookie, &mut ui).map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
+            result = match helper::authenticate(&user, &cookie, &mut ui) {
+                Ok(r) => r,
+                Err(e) => {
+                    ui.send(serde_json::json!({"t": "done"}));
+                    let _ = child.wait();
+                    return Err(zbus::fdo::Error::Failed(e.to_string()));
+                }
+            };
             if result != Outcome::Failed {
                 break;
             }
@@ -87,8 +114,10 @@ impl Agent {
                 ui.message("Wrong password, try again.", true);
             }
         }
-        let _ = self.ui.send(UiMsg::Done { ok: result == Outcome::Authenticated });
-        (self.wake)();
+        ui.send(serde_json::json!({"t": "done"}));
+        drop(ui);
+        let _ = child.wait();
+        *self.child.lock().unwrap() = None;
         match result {
             Outcome::Authenticated => Ok(()),
             Outcome::Cancelled => Err(zbus::fdo::Error::Failed("org.freedesktop.PolicyKit1.Error.Cancelled".into())),
@@ -96,10 +125,16 @@ impl Agent {
         }
     }
 
+    /// polkit gave up on the request (the program asking ended): close the box.
     fn cancel_authentication(&self, _cookie: String) {
-        let _ = self.ui.send(UiMsg::Done { ok: false });
-        (self.wake)();
+        if let Some(pid) = self.child.lock().unwrap().take() {
+            unsafe { kill(pid as i32, 15) };
+        }
     }
+}
+
+extern "C" {
+    fn kill(pid: i32, sig: i32) -> i32;
 }
 
 /// Which session or process the agent serves.

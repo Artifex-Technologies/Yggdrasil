@@ -23,21 +23,19 @@ pub struct App {
     rx: Receiver<UiMsg>,
     dialog: Option<Dialog>,
     ctx_slot: Arc<Mutex<Option<egui::Context>>>,
-    visible: bool,
+    /// A request has begun (so an empty dialog afterwards means it is over).
+    started: bool,
 }
 
 impl App {
     pub fn new(rx: Receiver<UiMsg>, ctx_slot: Arc<Mutex<Option<egui::Context>>>, ctx: &egui::Context) -> App {
         theme::apply(ctx, theme::system_dark(), theme::system_accent());
         *ctx_slot.lock().unwrap() = Some(ctx.clone());
-        App { rx, dialog: None, ctx_slot, visible: false }
+        App { rx, dialog: None, ctx_slot, started: false }
     }
 
     fn receive(&mut self) {
         while let Ok(m) = self.rx.try_recv() {
-            if std::env::var_os("LABYRINTH_POLKIT_DEBUG").is_some() {
-                eprintln!("labyrinth-polkit: ui message {}", match &m { UiMsg::Begin { .. } => "begin", UiMsg::Prompt { .. } => "prompt", UiMsg::Message { .. } => "message", UiMsg::Done { .. } => "done" });
-            }
             match m {
                 UiMsg::Begin { message, action_id, user } => {
                     self.dialog = Some(Dialog { message, action_id, user, asking: None, input: String::new(), notes: vec![] });
@@ -68,34 +66,23 @@ impl eframe::App for App {
         theme::apply_accessibility(ui.ctx());
         let ctx = ui.ctx().clone();
         self.receive();
-        // The root window is never shown (Wayland cannot hide a window again). The password box is a window of its own that
-        // exists only while polkit is asking, so it really goes away afterwards.
-        let want = self.dialog.is_some();
-        if want != self.visible {
-            self.visible = want;
-            if std::env::var_os("LABYRINTH_POLKIT_DEBUG").is_some() {
-                eprintln!("labyrinth-polkit: window visible = {want}");
-            }
-        }
         let pal = theme::palette(theme::system_dark());
-        let Some(d) = &mut self.dialog else { return };
+        let Some(d) = &mut self.dialog else {
+            // the request is over: this process only exists for one request, so it ends and the window goes with it
+            if self.started {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            return;
+        };
+        self.started = true;
         let mut answer: Option<Option<String>> = None;
-        let builder = egui::ViewportBuilder::default()
-            .with_title("Authentication required")
-            .with_app_id("labyrinth-polkit")
-            .with_inner_size([440.0, 250.0])
-            .with_resizable(false)
-            .with_always_on_top();
-        ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("labyrinth-polkit-box"), builder, |ui, _class| {
-            egui::CentralPanel::default().show_inside(ui, |ui| draw(ui, d, &pal, &mut answer));
-        });
+        egui::CentralPanel::default().show_inside(ui, |ui| draw(ui, d, &pal, &mut answer));
         if let Some(a) = answer {
             if let Some((_, _, reply)) = d.asking.take() {
                 let _ = reply.send(a);
             }
             d.input.zeroize();
         }
-        // when the dialog closes or text arrives the agent thread wakes us; keep polling slowly as a safety net
         ctx.request_repaint_after(std::time::Duration::from_millis(500));
         let _ = &self.ctx_slot;
     }

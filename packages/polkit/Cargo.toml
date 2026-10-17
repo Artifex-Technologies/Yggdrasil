@@ -14,6 +14,7 @@ eframe = "0.36.2"
 zbus = "5"
 libc = "0.2"
 zeroize = "1"
+serde_json = "1"
 labyrinth-ui = { path = "../labyrinth-ui" }
 
 [profile.release]
