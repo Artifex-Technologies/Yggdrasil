@@ -341,6 +341,9 @@ struct State {
     /// Sarina has been asked to speak (when); her loudness comes from the envelope file the speaking script writes.
     speech_since: Option<std::time::Instant>,
     speech_env: Option<(Vec<u8>, i64)>,
+    speech_env_mtime: Option<std::time::SystemTime>,
+    /// The speaking script was seen running (so its end means she is done).
+    speech_seen: bool,
     voice_tx: calloop::channel::Sender<Result<String, String>>,
     /// What Sarina understood of the question, sent as soon as it is known (before her answer).
     heard_tx: calloop::channel::Sender<String>,
@@ -838,6 +841,8 @@ impl State {
     fn start_speech(&mut self, text: &str) {
         self.speech_since = Some(std::time::Instant::now());
         self.speech_env = None;
+        self.speech_env_mtime = None;
+        self.speech_seen = false;
         fylgja::speak(text);
         self.start_viz();
     }
@@ -938,44 +943,41 @@ impl State {
         }
     }
 
-    /// How loud her voice is right now: from the envelope the speaking script writes just before it plays (one number per 50 ms);
-    /// until that file shows up (the voice is still being made) a gentle wave; when it has played out, speech is over.
+    /// How loud her voice is right now: from the envelope file the speaking script writes just before each sentence plays (one number per 50 ms),
+    /// read again whenever it changes (the next sentence). While the first sentence is still being made, a gentle wave. Speech is over when the
+    /// speaking script has been seen running and is no longer (or never showed up).
     fn speech_level(&mut self) -> f32 {
         let Some(since) = self.speech_since else { return 0.0 };
-        if self.speech_env.is_none() {
-            if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR") {
-                let p = std::path::Path::new(&dir).join("labyrinth-sarina").join("speech.env");
-                if let Ok(t) = std::fs::read_to_string(&p) {
-                    let mut lines = t.lines();
-                    let start: Option<i64> = lines.next().and_then(|l| l.trim().parse().ok());
-                    let env: Vec<u8> = lines.next().unwrap_or("").split_whitespace().filter_map(|n| n.parse().ok()).collect();
-                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
-                    // only an envelope written after this answer was asked for (not a left-over)
-                    if let Some(st) = start {
-                        if !env.is_empty() && now - st < 60_000 && st + 1000 >= now - since.elapsed().as_millis() as i64 {
-                            self.speech_env = Some((env, st));
-                        }
+        let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR").map(|d| std::path::PathBuf::from(d).join("labyrinth-sarina")) else { return 0.0 };
+        let alive = std::fs::read_to_string(dir.join("speaking.pid")).ok().and_then(|t| t.trim().parse::<u32>().ok()).map(|p| std::path::Path::new(&format!("/proc/{p}")).exists()).unwrap_or(false);
+        if alive {
+            self.speech_seen = true;
+        } else if self.speech_seen || since.elapsed() > Duration::from_secs(45) {
+            self.speech_since = None; // she has finished (or the voice never started: no voice installed)
+            self.speech_env = None;
+            self.speech_seen = false;
+            return 0.0;
+        }
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
+        let p = dir.join("speech.env");
+        let mtime = std::fs::metadata(&p).and_then(|m| m.modified()).ok();
+        if mtime.is_some() && mtime != self.speech_env_mtime {
+            if let Ok(t) = std::fs::read_to_string(&p) {
+                let mut lines = t.lines();
+                let start: Option<i64> = lines.next().and_then(|l| l.trim().parse().ok());
+                let env: Vec<u8> = lines.next().unwrap_or("").split_whitespace().filter_map(|n| n.parse().ok()).collect();
+                if let Some(st) = start {
+                    if !env.is_empty() && now - st < 60_000 {
+                        self.speech_env = Some((env, st));
+                        self.speech_env_mtime = mtime;
                     }
                 }
             }
         }
         match &self.speech_env {
             Some((env, start)) => {
-                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
                 let ms = (now - start).max(0) as u64;
-                match voicewave::envelope_at(env, ms) {
-                    Some(l) => l,
-                    None if ms > env.len() as u64 * 50 + 250 => {
-                        self.speech_since = None;
-                        self.speech_env = None;
-                        0.0
-                    }
-                    None => 0.0,
-                }
-            }
-            None if since.elapsed() > Duration::from_secs(25) => {
-                self.speech_since = None; // it never started (no voice installed): stop waiting
-                0.0
+                voicewave::envelope_at(env, ms).unwrap_or(0.0) // between sentences: flat until the next one
             }
             None => 0.2,
         }
@@ -2705,6 +2707,8 @@ fn main() {
         viz_tx,
         speech_since: None,
         speech_env: None,
+        speech_env_mtime: None,
+        speech_seen: false,
         voice_tx,
         heard_tx,
         clips: Arc::new(std::sync::Mutex::new(Vec::new())),
