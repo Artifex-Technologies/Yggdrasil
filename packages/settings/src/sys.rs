@@ -409,7 +409,7 @@ pub fn displays() -> Displays {
 
 // ---------------------------------------------------------------- Appearance
 
-pub const ACCENTS: [(&str, [u8; 3]); 8] = [
+pub const ACCENTS: [(&str, [u8; 3]); 9] = [
     ("Labyrinth purple", [124, 84, 214]),
     ("Blue", [61, 132, 245]),
     ("Teal", [38, 162, 158]),
@@ -418,6 +418,7 @@ pub const ACCENTS: [(&str, [u8; 3]); 8] = [
     ("Orange", [240, 120, 40]),
     ("Red", [224, 60, 70]),
     ("Pink", [220, 90, 160]),
+    ("White", [255, 255, 255]),
 ];
 
 /// An icon pack (a freedesktop icon theme) that can be chosen.

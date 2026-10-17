@@ -38,29 +38,82 @@ pub fn parse_icon_theme(kdeglobals: &str) -> Option<String> {
     None
 }
 
-/// The chain to look icons up in: the pack chosen in KDE first (so another pack changes what Minos
-/// shows), then Labyrinth's own, which fills in whatever that pack has no icon for, so nothing is
-/// ever missing. Read once, when the first icon is wanted; a changed pack shows at the next start.
-fn themes() -> &'static Vec<String> {
-    static T: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
-    T.get_or_init(|| {
-        let chosen = std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-            .and_then(|d| std::fs::read_to_string(d.join("kdeglobals")).ok())
-            .and_then(|t| parse_icon_theme(&t));
-        let mut v: Vec<String> = vec![];
-        if let Some(c) = chosen {
-            if c != "Labyrinth" {
-                // another pack: then hicolor, where Minos's icon for that pack is put (the pack's own
-                // file-manager icon if it has no Minos one), then Labyrinth's to fill the gaps
-                v.push(c);
-                v.push("hicolor".to_string());
+/// The chain to look icons up in: the pack chosen in KDE first (so another pack changes what is shown),
+/// then Labyrinth's own, which fills in whatever that pack has no icon for, so nothing is ever missing.
+/// Looked at again when the pack or its files change (see `refresh`), so a new pack or accent shows without a restart.
+fn compute_chain() -> Vec<String> {
+    let chosen = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+        .and_then(|d| std::fs::read_to_string(d.join("kdeglobals")).ok())
+        .and_then(|t| parse_icon_theme(&t));
+    let mut v: Vec<String> = vec![];
+    if let Some(c) = chosen {
+        if c != "Labyrinth" {
+            // another pack: then hicolor, where Minos's icon for that pack is put (the pack's own
+            // file-manager icon if it has no Minos one), then Labyrinth's to fill the gaps
+            v.push(c);
+            v.push("hicolor".to_string());
+        }
+    }
+    v.extend(BASE.iter().map(|s| s.to_string()));
+    v
+}
+
+static CHAIN: Mutex<Option<Vec<String>>> = Mutex::new(None);
+
+fn themes() -> Vec<String> {
+    let mut g = CHAIN.lock().unwrap_or_else(|e| e.into_inner());
+    g.get_or_insert_with(compute_chain).clone()
+}
+
+/// A number that changes when the icon pack in use, or any file folder of the packs in the chain, changes.
+fn fingerprint() -> u64 {
+    let mut h: u64 = 1469598103934665603;
+    let mut mix = |t: Option<std::time::SystemTime>| {
+        let n = t.and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos() as u64).unwrap_or(0);
+        h = (h ^ n).wrapping_mul(1099511628211);
+    };
+    let cfg = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")));
+    if let Some(c) = cfg {
+        mix(std::fs::metadata(c.join("kdeglobals")).and_then(|m| m.modified()).ok());
+    }
+    for theme in compute_chain() {
+        for byte in theme.bytes() {
+            mix(Some(std::time::UNIX_EPOCH + std::time::Duration::from_nanos(byte as u64)));
+        }
+        for root in roots() {
+            for sub in ["", "apps/scalable", "places/scalable", "apps", "256x256/apps", "192x192/apps"] {
+                mix(std::fs::metadata(root.join(&theme).join(sub)).and_then(|m| m.modified()).ok());
             }
         }
-        v.extend(BASE.iter().map(|s| s.to_string()));
-        v
-    })
+    }
+    h
+}
+
+/// Call now and then (every frame is fine: it looks at most once a second): when the icon pack or its files changed, forget
+/// every icon found so far, so they are looked up and drawn again. Returns true when that happened.
+pub fn refresh(ctx: &Context) -> bool {
+    static LAST: Mutex<Option<(std::time::Instant, u64)>> = Mutex::new(None);
+    let mut g = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, _)) = *g {
+        if at.elapsed() < std::time::Duration::from_secs(1) {
+            return false;
+        }
+    }
+    *CHAIN.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    let fp = fingerprint();
+    let changed = matches!(*g, Some((_, old)) if old != fp);
+    *g = Some((std::time::Instant::now(), fp));
+    drop(g);
+    if changed {
+        if let Ok(mut c) = cache(ctx).lock() {
+            c.tex.clear();
+            c.found.clear();
+        }
+        ctx.request_repaint();
+    }
+    changed
 }
 
 fn roots() -> Vec<PathBuf> {
@@ -136,6 +189,7 @@ fn cache(ctx: &Context) -> Arc<Mutex<Cache>> {
 /// Paint the first icon of `names` that exists in the theme into `rect`. False if none does.
 pub fn paint(painter: &Painter, rect: Rect, names: &[&str]) -> bool {
     let ctx = painter.ctx();
+    refresh(ctx);
     let px = ((rect.width().min(rect.height()) * ctx.pixels_per_point()).ceil() as u32).clamp(16, 512);
     let px = (px + 7) / 8 * 8; // fewer distinct sizes, fewer textures
     let c = cache(ctx);
@@ -201,6 +255,21 @@ pub fn file_names(file_name: &str) -> Vec<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_fingerprint_changes_when_a_pack_gets_a_new_icon() {
+        let tmp = std::env::temp_dir().join(format!("sysicon-fp-{}", std::process::id()));
+        let apps = tmp.join(".local/share/icons/Labyrinth/apps/scalable");
+        std::fs::create_dir_all(&apps).unwrap();
+        std::env::set_var("HOME", &tmp);
+        std::env::set_var("XDG_CONFIG_HOME", tmp.join(".config"));
+        let before = fingerprint();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(apps.join("minos.svg"), "<svg/>").unwrap();
+        assert_ne!(fingerprint(), before);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
 
     #[test]
     fn names_follow_the_extension_and_folder() {

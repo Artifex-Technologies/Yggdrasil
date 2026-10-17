@@ -235,7 +235,7 @@ impl App {
             _ => self.pal.field,
         };
         ui.painter().rect_filled(rect, CornerRadius::same(255), fill);
-        let col = if kind == "get" { Color32::WHITE } else { self.pal.accent };
+        let col = if kind == "get" { self.pal.on_accent() } else { self.pal.accent };
         ui.painter().text(rect.center(), Align2::CENTER_CENTER, label, FontId::proportional(if big { 14.0 } else { 12.5 }), col);
         if resp.clicked() && kind != "busy" {
             return Some(kind);
@@ -456,7 +456,7 @@ impl App {
         ui.horizontal(|ui| {
             ui.label(RichText::new(if n == 0 { "Everything is up to date.".to_string() } else { format!("{n} package{} can be updated.", if n == 1 { "" } else { "s" }) }).color(self.pal.dim));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.add(egui::Button::new(RichText::new("Update everything").color(Color32::WHITE)).fill(self.pal.accent).min_size(vec2(150.0, 30.0))).clicked() {
+                if ui.add(egui::Button::new(RichText::new("Update everything").color(self.pal.on_accent())).fill(self.pal.accent).min_size(vec2(150.0, 30.0))).clicked() {
                     self.busy.insert("*update*".into());
                     run_in_terminal("yay -Syu".into(), "*update*".into(), self.tx.clone(), ctx.clone());
                 }
@@ -751,7 +751,7 @@ impl eframe::App for App {
                     if let Some(n) = badge {
                         let c = rect.right_center() - vec2(20.0, 0.0);
                         ui.painter().circle_filled(c, 10.0, pal.accent.gamma_multiply(0.9));
-                        ui.painter().text(c, Align2::CENTER_CENTER, n.to_string().chars().take(3).collect::<String>(), FontId::proportional(10.5), Color32::WHITE);
+                        ui.painter().text(c, Align2::CENTER_CENTER, n.to_string().chars().take(3).collect::<String>(), FontId::proportional(10.5), pal.on_accent());
                     }
                     if resp.clicked() {
                         self.search.clear();

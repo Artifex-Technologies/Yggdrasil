@@ -31,6 +31,18 @@ pub fn palette(dark: bool) -> Palette {
     palette_for(dark, None)
 }
 
+impl Palette {
+    /// Text and marks that sit on the accent color: white, or near-black when the accent itself is light (a white accent).
+    pub fn on_accent(&self) -> Color32 {
+        let l = |c: u8| {
+            let v = c as f32 / 255.0;
+            if v <= 0.03928 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+        };
+        let lum = 0.2126 * l(self.accent.r()) + 0.7152 * l(self.accent.g()) + 0.0722 * l(self.accent.b());
+        if lum > 0.45 { Color32::from_rgb(24, 20, 36) } else { Color32::WHITE }
+    }
+}
+
 /// The palette with a different accent color: the accent itself, plus the active-tab and selection
 /// colors mixed from it so they stay readable on the background.
 pub fn palette_for(dark: bool, accent: Option<[u8; 3]>) -> Palette {

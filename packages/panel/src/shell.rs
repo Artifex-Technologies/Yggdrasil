@@ -375,7 +375,7 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
         }
         let label = (i + 1).to_string();
         let tw = paint::text_width(&fonts.bold, 12.0 * s, &label);
-        paint::draw_text(pix, &fonts.bold, 12.0 * s, sx + (slot - tw) / 2.0, cy, if current { (255, 255, 255, 255) } else { lk.dim }, &label);
+        paint::draw_text(pix, &fonts.bold, 12.0 * s, sx + (slot - tw) / 2.0, cy, if current { paint::on_accent() } else { lk.dim }, &label);
         hits.push(Hit { rect: (sx, 0.0, slot, h), action: Action::Workspace(i) });
         sx += slot;
     }

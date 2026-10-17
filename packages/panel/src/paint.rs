@@ -17,6 +17,16 @@ pub fn accent(a: u8) -> Rgba {
     (((v >> 16) & 255) as u8, ((v >> 8) & 255) as u8, (v & 255) as u8, a)
 }
 
+/// Text on the accent color: white, or near-black when the accent is light (a white accent).
+pub fn on_accent() -> Rgba {
+    let (r, g, b, _) = accent(255);
+    let l = |c: u8| {
+        let v = c as f32 / 255.0;
+        if v <= 0.03928 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+    };
+    if 0.2126 * l(r) + 0.7152 * l(g) + 0.0722 * l(b) > 0.45 { (24, 20, 36, 255) } else { (255, 255, 255, 255) }
+}
+
 /// Read the accent color from kdeglobals (`AccentColor=r,g,b` under [General]); true when it changed.
 pub fn refresh_accent() -> bool {
     let dir = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")));

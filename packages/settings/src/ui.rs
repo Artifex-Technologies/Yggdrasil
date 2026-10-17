@@ -60,7 +60,7 @@ pub fn switch(ui: &mut egui::Ui, pal: &Palette, on: &mut bool) -> egui::Response
     let track = if *on { pal.accent } else { pal.hover };
     ui.painter().rect_filled(rect, CornerRadius::same(12), track);
     let x = egui::lerp(rect.left() + 12.0..=rect.right() - 12.0, t);
-    ui.painter().circle_filled(egui::pos2(x, rect.center().y), 9.0, Color32::WHITE);
+    ui.painter().circle_filled(egui::pos2(x, rect.center().y), 9.0, if *on { pal.on_accent() } else { Color32::WHITE });
     resp
 }
 
@@ -77,7 +77,7 @@ pub fn segmented(ui: &mut egui::Ui, pal: &Palette, options: &[&str], selected: u
             for i in order {
                 let o = &options[i];
                 let sel = i == selected;
-                let b = egui::Button::new(RichText::new(*o).color(if sel { Color32::WHITE } else { pal.text }))
+                let b = egui::Button::new(RichText::new(*o).color(if sel { pal.on_accent() } else { pal.text }))
                     .fill(if sel { pal.accent } else { Color32::TRANSPARENT })
                     .corner_radius(CornerRadius::same(7))
                     .min_size(vec2(70.0, 26.0));
@@ -92,7 +92,7 @@ pub fn segmented(ui: &mut egui::Ui, pal: &Palette, options: &[&str], selected: u
 
 /// A flat button in the accent colour, for the main action of a row.
 pub fn action(ui: &mut egui::Ui, pal: &Palette, label: &str) -> egui::Response {
-    ui.add(egui::Button::new(RichText::new(label).color(Color32::WHITE)).fill(pal.accent).corner_radius(CornerRadius::same(8)).min_size(vec2(80.0, 28.0)))
+    ui.add(egui::Button::new(RichText::new(label).color(pal.on_accent())).fill(pal.accent).corner_radius(CornerRadius::same(8)).min_size(vec2(80.0, 28.0)))
 }
 
 /// A quiet button for secondary actions.
