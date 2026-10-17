@@ -163,6 +163,8 @@ pub enum Action {
     Bluetooth,
     /// A dock icon: the app id of its group.
     Dock(String),
+    /// One window of a dock app (an index into Model::wins), from its dot.
+    DockWin(String, usize),
     /// A notification pop-up: open it (go to the app), or put the pop-up away.
     ToastOpen(u32),
     ToastClose(u32),
@@ -1065,6 +1067,29 @@ pub fn paint_start_folders(pix: &mut Pixmap, s: f32, m: &Model, v: &FoldersView,
     StartPaint { card: union, hits, max_scroll, scroll: eff_scroll, sub_scroll: eff_sub_scroll }
 }
 
+/// One dot (or the merged oval at the end) of a dock item's window indicator: where it lies along
+/// the strip and which windows (positions in the item's list) it stands for.
+#[derive(Debug, PartialEq)]
+pub struct DotSlot {
+    pub start: f32,
+    pub end: f32,
+    pub first: usize,
+    pub last: usize,
+}
+
+/// Lay out `n` window dots in at most `max` px: one per window while they fit; beyond that the
+/// strip keeps its width and the last two dots merge into an oval standing for all the rest.
+pub fn dot_slots(n: usize, max: f32, d: f32, gap: f32) -> Vec<DotSlot> {
+    let cap = (((max - d) / (d + gap)).floor() as usize + 1).max(2);
+    let at = |k: usize| k as f32 * (d + gap);
+    if n <= cap {
+        return (0..n).map(|k| DotSlot { start: at(k), end: at(k) + d, first: k, last: k }).collect();
+    }
+    let mut v: Vec<DotSlot> = (0..cap - 2).map(|k| DotSlot { start: at(k), end: at(k) + d, first: k, last: k }).collect();
+    v.push(DotSlot { start: at(cap - 2), end: at(cap - 1) + d, first: cap - 2, last: n - 1 });
+    v
+}
+
 pub fn paint_dock(pix: &mut Pixmap, s: f32, m: &Model, fonts: &Fonts, icons: &mut Icons, hover: Option<usize>) -> Vec<Hit> {
     let (w, h) = (pix.width() as f32, pix.height() as f32);
     pix.fill(paint::color((0, 0, 0, 0)));
@@ -1086,10 +1111,13 @@ pub fn paint_dock(pix: &mut Pixmap, s: f32, m: &Model, fonts: &Fonts, icons: &mu
         DockPos::Bottom | DockPos::Right => PAD_TOP * s,
         DockPos::Left => (dock_h(m.conf.dock_icon) as f32 - icon - PAD_TOP) * s,
     };
-    for (i, it) in items.iter().enumerate() {
+    for it in items.iter() {
         let (x, y) = if pos.vertical() { (across, along) } else { (along, across) };
         let rect = (x - 4.0 * s, y - 4.0 * s, icon * s + 8.0 * s, icon * s + 8.0 * s);
-        if hover == Some(i) {
+        let slots = if it.wins.is_empty() { vec![] } else { dot_slots(it.wins.len(), icon * s, 4.4 * s, 3.2 * s) };
+        // this item's hits: its dots (when it has several windows), then the icon itself
+        let span = hits.len()..hits.len() + if it.wins.len() > 1 { slots.len() } else { 0 } + 1;
+        if hover.is_some_and(|h| span.contains(&h)) {
             paint::fill_rounded(pix, rect.0, rect.1, rect.2, rect.3, 12.0 * s, lk.hover);
         }
         match icons.get(&it.icon, isz) {
@@ -1103,15 +1131,35 @@ pub fn paint_dock(pix: &mut Pixmap, s: f32, m: &Model, fonts: &Fonts, icons: &mu
                 paint::draw_text(pix, &fonts.bold, size, x + (icon * s - lw) / 2.0, y + icon * s / 2.0, (236, 230, 248, 255), &letter);
             }
         }
-        // Running indicator under the icon; brighter for the focused app.
+        // Running indicator under the icon: one dot per window, the focused one lit, never wider
+        // than the icon (past that the last two merge into an oval).
         if !it.wins.is_empty() {
-            let c = if it.active { lk.text } else { lk.dim };
-            let (dx, dy) = match pos {
-                DockPos::Bottom => (x + icon * s / 2.0, h - 8.0 * s),
-                DockPos::Left => (8.0 * s, y + icon * s / 2.0),
-                DockPos::Right => (w - 8.0 * s, y + icon * s / 2.0),
+            let active = it.wins.iter().position(|&wi| m.wins[wi].active());
+            let edge = match pos {
+                DockPos::Bottom => h - 8.0 * s,
+                DockPos::Left => 8.0 * s,
+                DockPos::Right => w - 8.0 * s,
             };
-            paint::fill_circle(pix, dx, dy, 2.2 * s, c);
+            let mid = if pos.vertical() { y } else { x } + icon * s / 2.0;
+            let total = slots.last().map(|d| d.end).unwrap_or(0.0);
+            for d in &slots {
+                let lit = active.is_some_and(|a| a >= d.first && a <= d.last);
+                let c = if lit { lk.text } else { lk.dim };
+                let (a, b) = (mid - total / 2.0 + d.start, mid - total / 2.0 + d.end);
+                let (rx, ry, rw, rh) = if pos.vertical() { (edge - 4.0 * s, a, 8.0 * s, b - a) } else { (a, edge - 4.0 * s, b - a, 8.0 * s) };
+                paint::fill_rounded(pix, rx, ry, rw, rh, rw.min(rh) / 2.0, c);
+                // a click on a merged oval goes to the next window it stands for
+                let target = match active {
+                    Some(a) if lit && d.last > d.first => d.first + (a - d.first + 1) % (d.last - d.first + 1),
+                    _ => d.first,
+                };
+                let pad = (d.end - d.start).max(8.0 * s);
+                let cut = pad - (d.end - d.start);
+                let rect = if pos.vertical() { (edge - 6.0 * s, a - cut / 2.0, 12.0 * s, pad) } else { (a - cut / 2.0, edge - 6.0 * s, pad, 12.0 * s) };
+                if it.wins.len() > 1 {
+                    hits.push(Hit { rect, action: Action::DockWin(it.app_id.clone(), it.wins[target]) });
+                }
+            }
         }
         hits.push(Hit { rect, action: Action::Dock(it.app_id.clone()) });
         along += (icon + GAP) * s;
@@ -1122,6 +1170,17 @@ pub fn paint_dock(pix: &mut Pixmap, s: f32, m: &Model, fonts: &Fonts, icons: &mu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dots_fit_then_merge() {
+        let few = dot_slots(3, 44.0, 4.4, 3.2);
+        assert_eq!(few.len(), 3);
+        let many = dot_slots(20, 44.0, 4.4, 3.2);
+        assert!(many.last().unwrap().end <= 44.0 + 0.01, "never wider than the icon");
+        let last = many.last().unwrap();
+        assert_eq!((last.first, last.last), (many.len() - 1, 19), "the oval stands for the rest");
+        assert!(last.end - last.start > 4.4, "and is wider than a dot");
+    }
 
     #[test]
     fn hibernate_needs_resume_and_real_swap() {

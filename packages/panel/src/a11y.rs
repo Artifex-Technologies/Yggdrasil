@@ -44,6 +44,10 @@ pub fn describe(a: &Action, m: &Model) -> Option<(Role, String, String)> {
             let state = if it.active { ", focused" } else if !it.wins.is_empty() { ", running" } else { "" };
             button(format!("{}{}", it.name, state))
         }
+        Action::DockWin(_, wi) => {
+            let w = m.wins.get(*wi)?;
+            button(format!("Window: {}{}", if w.title.is_empty() { &w.app_id } else { &w.title }, if w.active() { ", focused" } else { "" }))
+        }
         Action::ToastOpen(id) => {
             let n = m.notifs.get(*id)?;
             Some((Role::ListItem, format!("{}: {}", n.app, n.summary), n.body.clone()))

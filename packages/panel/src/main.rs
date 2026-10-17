@@ -2135,6 +2135,11 @@ impl State {
             Action::Network => run(&["labyrinth-settings", "network"]),
             Action::Bluetooth => run(&["labyrinth-settings", "bluetooth"]),
             Action::Dock(app_id) => self.click_dock(&app_id),
+            Action::DockWin(_, wi) => {
+                if let Some(w) = self.model.wins.get(wi) {
+                    w.proxy.activate(self.seat.as_ref());
+                }
+            }
             Action::ToastOpen(id) => self.open_notification(id),
             Action::ToastAction(id, i) => {
                 if let Some(n) = self.model.notifs.get(id).cloned() {
