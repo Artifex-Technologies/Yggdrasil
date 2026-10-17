@@ -15,6 +15,8 @@ mod fylgja;
 mod notify;
 mod osd;
 mod stats;
+mod voicekey;
+mod voicewave;
 mod shell;
 mod status;
 mod tray;
@@ -24,6 +26,7 @@ use std::collections::HashMap;
 use std::os::fd::AsFd;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::process::Command;
 use std::time::Duration;
 
 use calloop::timer::{TimeoutAction, Timer};
@@ -94,6 +97,8 @@ enum Kind {
     Osd,
     /// Notification pop-ups, stacked at the bottom right of the main screen.
     Toast,
+    /// The voice island: grows out of the notch while Sarina listens, thinks or speaks.
+    Voice,
 }
 
 /// The panel's own D-Bus service, so a key press elsewhere (the Super key, through KWin) can reach it:
@@ -329,6 +334,13 @@ struct State {
     /// A question for Sarina being recorded, and when it began; her answer comes back on `voice_tx`.
     rec: Option<(std::process::Child, std::path::PathBuf)>,
     rec_since: Option<std::time::Instant>,
+    /// The voice island's state while it is showing, and whether its animation ticker should keep going.
+    viz: Option<voicewave::Viz>,
+    viz_alive: Arc<AtomicBool>,
+    viz_tx: calloop::channel::Sender<()>,
+    /// Sarina has been asked to speak (when); her loudness comes from the envelope file the speaking script writes.
+    speech_since: Option<std::time::Instant>,
+    speech_env: Option<(Vec<u8>, i64)>,
     voice_tx: calloop::channel::Sender<Result<String, String>>,
     /// What Sarina understood of the question, sent as soon as it is known (before her answer).
     heard_tx: calloop::channel::Sender<String>,
@@ -734,24 +746,47 @@ impl State {
         }
     }
 
-    /// The shortcut for asking Sarina: the first press records, the next sends it.
+    /// The shortcut for asking Sarina by D-Bus (a fallback when the held shortcut is not available): the first call records, the next sends it.
     fn ask_sarina_key(&mut self) {
         match self.model.fylgja.voice {
             fylgja::Voice::Listening(_) => self.send_recording(),
             fylgja::Voice::Thinking(_) => {}
-            _ => {
-                fylgja::stop_speaking(); // she stops talking when you start to
-                self.close_popup();
-                self.model.fylgja.voice = match fylgja::start_recording() {
-                    Ok((child, path)) => {
-                        self.rec = Some((child, path));
-                        self.rec_since = Some(std::time::Instant::now());
-                        fylgja::Voice::Listening(0)
-                    }
-                    Err(e) => fylgja::Voice::Failed(e),
-                };
-                self.toggle_popup(PopupKind::Fylgja(fylgja::FyState { section: 0, open: false, pinned: true, voice_ui: true, picker: false, mixer: false }));
+            _ => self.begin_listening(),
+        }
+    }
+
+    /// The held shortcut went down or up (hold to talk).
+    fn voice_key(&mut self, k: voicekey::Key) {
+        match k {
+            voicekey::Key::Down => {
+                if !matches!(self.model.fylgja.voice, fylgja::Voice::Listening(_) | fylgja::Voice::Thinking(_)) {
+                    self.begin_listening();
+                }
             }
+            voicekey::Key::Up => {
+                if matches!(self.model.fylgja.voice, fylgja::Voice::Listening(_)) {
+                    // a tap is not a question: it only stops her talking
+                    if self.rec_since.map(|t| t.elapsed() < Duration::from_millis(350)).unwrap_or(true) {
+                        self.cancel_voice();
+                    } else {
+                        self.send_recording();
+                    }
+                }
+            }
+        }
+    }
+
+    /// Starts recording a question. No card opens: the notch grows into the voice island and its wave follows the microphone.
+    fn begin_listening(&mut self) {
+        self.stop_speech();
+        match fylgja::start_recording() {
+            Ok((child, path)) => {
+                self.rec = Some((child, path));
+                self.rec_since = Some(std::time::Instant::now());
+                self.model.fylgja.voice = fylgja::Voice::Listening(0);
+                self.start_viz();
+            }
+            Err(e) => self.voice_failed(&e),
         }
     }
 
@@ -766,16 +801,173 @@ impl State {
         }
     }
 
-    /// Drops a recording that was not sent, and clears an answer that was read.
+    /// Drops a recording that was not sent, and stops Sarina talking.
     fn cancel_voice(&mut self) {
         if let Some((mut child, path)) = self.rec.take() {
             fylgja::stop_recording(&mut child);
             let _ = std::fs::remove_file(path);
         }
         self.rec_since = None;
-        fylgja::stop_speaking();
+        self.stop_speech();
         if !matches!(self.model.fylgja.voice, fylgja::Voice::Thinking(_)) {
             self.model.fylgja.voice = fylgja::Voice::Idle;
+        }
+    }
+
+    /// No answer to show: a notification says why (and she says it, when she speaks).
+    fn voice_failed(&mut self, why: &str) {
+        self.model.fylgja.voice = fylgja::Voice::Idle;
+        let _ = Command::new("notify-send").args(["-a", "Sarina", "-i", "audio-input-microphone", "Sarina", why]).stdin(std::process::Stdio::null()).spawn().map(|mut c| std::thread::spawn(move || { let _ = c.wait(); }));
+        if self.model.conf.sarina_speaks {
+            self.start_speech(why.split(['.', '!', '?']).next().unwrap_or(why));
+        }
+    }
+
+    /// Her answer: said aloud when she speaks, otherwise shown as a notification. No card either way.
+    fn voice_answer(&mut self, reply: &str) {
+        self.model.fylgja.voice = fylgja::Voice::Idle;
+        let text = fylgja::spoken_part(reply);
+        if self.model.conf.sarina_speaks {
+            self.start_speech(&text);
+        } else {
+            let _ = Command::new("notify-send").args(["-a", "Sarina", "-i", "dialog-information", "Sarina", &text]).stdin(std::process::Stdio::null()).spawn().map(|mut c| std::thread::spawn(move || { let _ = c.wait(); }));
+        }
+    }
+
+    fn start_speech(&mut self, text: &str) {
+        self.speech_since = Some(std::time::Instant::now());
+        self.speech_env = None;
+        fylgja::speak(text);
+        self.start_viz();
+    }
+
+    fn stop_speech(&mut self) {
+        if self.speech_since.take().is_some() {
+            fylgja::stop_speaking();
+        }
+        self.speech_env = None;
+    }
+
+    /// Makes the island appear (if it is not) and starts its animation ticker.
+    fn start_viz(&mut self) {
+        if self.viz.is_none() {
+            self.viz = Some(voicewave::Viz { mode: voicewave::Mode::Listening, level: 0.0, phase: 0.0, shown: 0.0 });
+        }
+        if !self.surfs.iter().any(|s| s.kind == Kind::Voice) {
+            let Some(output) = self.surfs.iter().find(|s| matches!(s.kind, Kind::Bar { slim: false })).map(|s| s.output).or_else(|| self.dock_output()) else { return };
+            let Some(out) = self.outputs.get(&output) else { return };
+            let id = self.next_surf;
+            self.next_surf += 1;
+            let wl = self.compositor.create_surface(&self.qh, ());
+            let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Overlay, "labyrinth-voice".into(), &self.qh, id);
+            layer.set_anchor(Anchor::Top);
+            layer.set_size(voicewave::WIDTH, voicewave::HEIGHT);
+            layer.set_exclusive_zone(-1);
+            layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+            // it takes no clicks: they go to whatever is under it
+            let region = self.compositor.create_region(&self.qh, ());
+            wl.set_input_region(Some(&region));
+            region.destroy();
+            wl.commit();
+            self.surfs.push(Surf { id, kind: Kind::Voice, output, wl, layer: Some(layer), dock: None, w: voicewave::WIDTH, h: voicewave::HEIGHT, want: (voicewave::WIDTH, voicewave::HEIGHT), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
+        }
+        if !self.viz_alive.swap(true, Ordering::AcqRel) {
+            let (alive, tx) = (self.viz_alive.clone(), self.viz_tx.clone());
+            std::thread::spawn(move || {
+                while alive.load(Ordering::Acquire) {
+                    std::thread::sleep(Duration::from_millis(33));
+                    if tx.send(()).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+    }
+
+    /// One step of the island's animation (about 30 a second while it shows).
+    fn viz_tick(&mut self) {
+        let mode = match &self.model.fylgja.voice {
+            fylgja::Voice::Listening(_) => Some(voicewave::Mode::Listening),
+            fylgja::Voice::Thinking(_) => Some(voicewave::Mode::Thinking),
+            _ if self.speech_since.is_some() => Some(voicewave::Mode::Speaking),
+            _ => None,
+        };
+        let phase_now = self.viz.map(|v| v.phase).unwrap_or(0.0);
+        let raw = match mode {
+            Some(voicewave::Mode::Listening) => self.rec.as_ref().map(|(_, p)| voicewave::mic_level(p)).unwrap_or(0.0),
+            Some(voicewave::Mode::Thinking) => 0.25 + 0.1 * (phase_now * 0.6).sin(),
+            Some(voicewave::Mode::Speaking) => self.speech_level(),
+            None => 0.0,
+        };
+        let Some(v) = self.viz.as_mut() else {
+            self.viz_alive.store(false, Ordering::Release);
+            return;
+        };
+        v.phase += 0.14;
+        v.level = voicewave::smooth(v.level, raw);
+        let target = if let Some(m) = mode {
+            v.mode = m;
+            1.0
+        } else {
+            0.0
+        };
+        v.shown += (target - v.shown) * 0.22;
+        if mode.is_none() && v.shown < 0.03 {
+            self.viz = None;
+            self.viz_alive.store(false, Ordering::Release);
+            if let Some(i) = self.surfs.iter().position(|s| s.kind == Kind::Voice) {
+                let s = self.surfs.remove(i);
+                s.destroy();
+                self.pointer_surface = None;
+            }
+            return;
+        }
+        if let Some(i) = self.surfs.iter().position(|s| s.kind == Kind::Voice) {
+            self.draw(i);
+            let _ = self.conn.flush();
+        }
+    }
+
+    /// How loud her voice is right now: from the envelope the speaking script writes just before it plays (one number per 50 ms);
+    /// until that file shows up (the voice is still being made) a gentle wave; when it has played out, speech is over.
+    fn speech_level(&mut self) -> f32 {
+        let Some(since) = self.speech_since else { return 0.0 };
+        if self.speech_env.is_none() {
+            if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR") {
+                let p = std::path::Path::new(&dir).join("labyrinth-sarina").join("speech.env");
+                if let Ok(t) = std::fs::read_to_string(&p) {
+                    let mut lines = t.lines();
+                    let start: Option<i64> = lines.next().and_then(|l| l.trim().parse().ok());
+                    let env: Vec<u8> = lines.next().unwrap_or("").split_whitespace().filter_map(|n| n.parse().ok()).collect();
+                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
+                    // only an envelope written after this answer was asked for (not a left-over)
+                    if let Some(st) = start {
+                        if !env.is_empty() && now - st < 60_000 && st + 1000 >= now - since.elapsed().as_millis() as i64 {
+                            self.speech_env = Some((env, st));
+                        }
+                    }
+                }
+            }
+        }
+        match &self.speech_env {
+            Some((env, start)) => {
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
+                let ms = (now - start).max(0) as u64;
+                match voicewave::envelope_at(env, ms) {
+                    Some(l) => l,
+                    None if ms > env.len() as u64 * 50 + 250 => {
+                        self.speech_since = None;
+                        self.speech_env = None;
+                        0.0
+                    }
+                    None => 0.0,
+                }
+            }
+            None if since.elapsed() > Duration::from_secs(25) => {
+                self.speech_since = None; // it never started (no voice installed): stop waiting
+                0.0
+            }
+            None => 0.2,
         }
     }
 
@@ -1692,6 +1884,12 @@ impl State {
                 }
                 vec![]
             }
+            Kind::Voice => {
+                if let Some(v) = self.viz {
+                    voicewave::paint(&mut pix, s, &v, voicewave::palette(self.model.conf.sarina_wave));
+                }
+                vec![]
+            }
             Kind::Toast => {
                 let list: Vec<notify::Notif> = self.toasts.iter().filter_map(|id| self.model.notifs.get(*id).cloned()).collect();
                 let hits = notify::paint_toasts(&mut pix, s, &list, hover, &self.assets.fonts, &mut self.assets.icons);
@@ -2434,6 +2632,8 @@ fn main() {
     let (toast_hide_tx, toast_hide_rx) = calloop::channel::channel::<u32>();
     let (voice_tx, voice_rx) = calloop::channel::channel::<Result<String, String>>();
     let (heard_tx, heard_rx) = calloop::channel::channel::<String>();
+    let (viz_tx, viz_rx) = calloop::channel::channel::<()>();
+    let (vkey_tx, vkey_rx) = calloop::channel::channel::<voicekey::Key>();
     let mut state = State {
         qh: qh.clone(),
         conn: conn.clone(),
@@ -2490,6 +2690,11 @@ fn main() {
         tab_output: 0,
         rec: None,
         rec_since: None,
+        viz: None,
+        viz_alive: Arc::new(AtomicBool::new(false)),
+        viz_tx,
+        speech_since: None,
+        speech_env: None,
         voice_tx,
         heard_tx,
         clips: Arc::new(std::sync::Mutex::new(Vec::new())),
@@ -2683,33 +2888,42 @@ fn main() {
             }
         })
         .expect("heard channel");
-    // Sarina's answer (or why there is none)
+    // Sarina's answer (or why there is none): said aloud or shown as a notification, never a card
     event_loop
         .handle()
         .insert_source(voice_rx, |event, _, st| {
             if let calloop::channel::Event::Msg(r) = event {
-                st.model.fylgja.voice = match r {
-                    Ok(t) if !t.is_empty() => {
-                        if st.model.conf.sarina_speaks {
-                            fylgja::speak(&fylgja::spoken_part(&t));
-                        }
-                        fylgja::Voice::Reply(t)
-                    }
-                    Ok(_) => fylgja::Voice::Failed("Sarina had nothing to say.".into()),
-                    Err(e) => fylgja::Voice::Failed(e),
-                };
-                match &mut st.popup {
-                    Some(Popup { kind: PopupKind::Fylgja(f), .. }) => f.voice_ui = true,
-                    _ => {
-                        // the card was closed while she thought: show the answer now
-                        st.click_output = None;
-                        st.toggle_popup(PopupKind::Fylgja(fylgja::FyState { section: 0, open: false, pinned: true, voice_ui: true, picker: false, mixer: false }));
-                    }
+                match r {
+                    Ok(t) if !t.is_empty() => st.voice_answer(&t),
+                    Ok(_) => st.voice_failed("Sarina had nothing to say."),
+                    Err(e) => st.voice_failed(&e),
                 }
                 st.dirty = true;
             }
         })
         .expect("voice channel");
+    // the voice island's animation, and the held shortcut
+    event_loop
+        .handle()
+        .insert_source(viz_rx, |event, _, st| {
+            if let calloop::channel::Event::Msg(()) = event {
+                st.viz_tick();
+            }
+        })
+        .expect("voice island channel");
+    event_loop
+        .handle()
+                .insert_source(vkey_rx, |event, _, st| {
+            if let calloop::channel::Event::Msg(k) = event {
+                st.voice_key(k);
+            }
+        })
+        .expect("voice key channel");
+    std::thread::spawn(move || {
+        if let Err(e) = voicekey::run(vkey_tx) {
+            eprintln!("labyrinth-panel: hold-to-talk is not available ({e}); the AskSarina D-Bus call still works");
+        }
+    });
 
     // Desktops, network and Bluetooth are read on a worker thread; the 1 s timer picks up the result.
     let shared = Arc::new(std::sync::Mutex::new(status::Status::default()));
@@ -2756,7 +2970,7 @@ fn main() {
                         let _ = std::fs::remove_file(path);
                     }
                     st.rec_since = None;
-                    st.model.fylgja.voice = fylgja::Voice::Failed("No microphone could be recorded. Check that one is plugged in and not muted, and that this app may use it.".into());
+                    st.voice_failed("No microphone could be recorded. Check that one is plugged in and not muted, and that this app may use it.");
                 } else {
                     st.model.fylgja.voice = fylgja::Voice::Listening(since.elapsed().as_secs());
                 }

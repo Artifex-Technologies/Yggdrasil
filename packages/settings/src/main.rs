@@ -830,6 +830,13 @@ impl App {
                     conf_changed = true;
                 }
             });
+            let waves = ["Copper", "Siri", "Labyrinth"];
+            ui::row(ui, pal, false, "Wave colours", Some("The glowing wave that grows out of the notch while you talk and while she answers"), |ui| {
+                if let Some(i) = ui::segmented(ui, pal, &waves, conf.sarina_wave.min(2) as usize) {
+                    conf.sarina_wave = i as u8;
+                    conf_changed = true;
+                }
+            });
             ui::row(ui, pal, false, "Voice", Some("Plays a short sentence when you press Hear it"), |ui| {
                 if ui::quiet(ui, pal, "Hear it").clicked() {
                     test = true;

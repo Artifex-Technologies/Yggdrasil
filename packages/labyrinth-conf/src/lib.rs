@@ -112,13 +112,15 @@ pub struct PanelConf {
     pub reduce_motion: bool,
     /// Sarina says her answer aloud after a spoken question (Super+S).
     pub sarina_speaks: bool,
+    /// The colours of the voice island's wave: 0 copper, 1 Siri, 2 Labyrinth.
+    pub sarina_wave: u8,
     /// Which Heimdall alerts become notifications: "off", "critical", "warning" (and critical) or "info" (all).
     pub heimdall_alerts: AlertLevel,
 }
 
 impl Default for PanelConf {
     fn default() -> Self {
-        PanelConf { dock_pos: DockPos::Bottom, dock_icon: 44, dock_gap: 4, start_theme: StartTheme::Windows, clock_24h: true, dock_opacity: 69, dock_color: ColorMode::Theme, bar_opacity: 69, bar_color: ColorMode::Theme, clipboard_history: true, search_subfolders: true, show_hidden: false, drive_status: true, developer: false, notify_toasts: true, notify_pane: false, notify_dnd: false, own_wallpaper: false, text_scale: 100, reduce_motion: false, sarina_speaks: true, heimdall_alerts: AlertLevel::Warning }
+        PanelConf { dock_pos: DockPos::Bottom, dock_icon: 44, dock_gap: 4, start_theme: StartTheme::Windows, clock_24h: true, dock_opacity: 69, dock_color: ColorMode::Theme, bar_opacity: 69, bar_color: ColorMode::Theme, clipboard_history: true, search_subfolders: true, show_hidden: false, drive_status: true, developer: false, notify_toasts: true, notify_pane: false, notify_dnd: false, own_wallpaper: false, text_scale: 100, reduce_motion: false, sarina_speaks: true, sarina_wave: 0, heimdall_alerts: AlertLevel::Warning }
     }
 }
 
@@ -178,6 +180,7 @@ impl PanelConf {
                 "notify_pane" => c.notify_pane = matches!(v, "yes" | "true" | "on" | "1"),
                 "notify_dnd" => c.notify_dnd = matches!(v, "yes" | "true" | "on" | "1"),
                 "text_scale" => c.text_scale = v.trim_end_matches('%').parse::<u16>().map(|n| n.clamp(TEXT_SCALE_MIN, TEXT_SCALE_MAX)).unwrap_or(c.text_scale),
+                "sarina_wave" => c.sarina_wave = v.parse::<u8>().map(|n| n.min(2)).unwrap_or(c.sarina_wave),
                 "sarina_speaks" => c.sarina_speaks = !matches!(v, "no" | "false" | "off" | "0"),
                 "reduce_motion" => c.reduce_motion = matches!(v, "yes" | "true" | "on" | "1"),
                 "own_wallpaper" => c.own_wallpaper = matches!(v, "yes" | "true" | "on" | "1"),
@@ -191,7 +194,7 @@ impl PanelConf {
     pub fn to_text(&self) -> String {
         format!(
             "# How the top bar and dock look. Edited by Labyrinth Settings (Appearance).\n\
-             dock_pos = {}\ndock_icon = {}\ndock_gap = {}\nclock_24h = {}\nstart_theme = {}\ndock_opacity = {}\ndock_color = {}\nbar_opacity = {}\nbar_color = {}\nclipboard_history = {}\nsearch_subfolders = {}\nshow_hidden = {}\ndrive_status = {}\ndeveloper = {}\nnotify_toasts = {}\nnotify_pane = {}\nnotify_dnd = {}\nown_wallpaper = {}\ntext_scale = {}\nreduce_motion = {}\nsarina_speaks = {}\nheimdall_alerts = {}\n",
+             dock_pos = {}\ndock_icon = {}\ndock_gap = {}\nclock_24h = {}\nstart_theme = {}\ndock_opacity = {}\ndock_color = {}\nbar_opacity = {}\nbar_color = {}\nclipboard_history = {}\nsearch_subfolders = {}\nshow_hidden = {}\ndrive_status = {}\ndeveloper = {}\nnotify_toasts = {}\nnotify_pane = {}\nnotify_dnd = {}\nown_wallpaper = {}\ntext_scale = {}\nreduce_motion = {}\nsarina_speaks = {}\nsarina_wave = {}\nheimdall_alerts = {}\n",
             match self.dock_pos {
                 DockPos::Bottom => "bottom",
                 DockPos::Left => "left",
@@ -217,6 +220,7 @@ impl PanelConf {
             self.text_scale,
             if self.reduce_motion { "yes" } else { "no" },
             if self.sarina_speaks { "yes" } else { "no" },
+            self.sarina_wave,
             self.heimdall_alerts.as_str()
         )
     }
@@ -257,7 +261,7 @@ mod tests {
 
     #[test]
     fn round_trips() {
-        let c = PanelConf { dock_pos: DockPos::Right, dock_icon: 60, dock_gap: 0, start_theme: StartTheme::Folders, clock_24h: false, dock_opacity: 0, dock_color: ColorMode::Neutral, bar_opacity: 100, bar_color: ColorMode::Neutral, clipboard_history: false, search_subfolders: false, show_hidden: true, drive_status: false, developer: true, notify_toasts: false, notify_pane: true, notify_dnd: true, own_wallpaper: true, text_scale: 150, reduce_motion: true, sarina_speaks: false, heimdall_alerts: AlertLevel::Critical };
+        let c = PanelConf { dock_pos: DockPos::Right, dock_icon: 60, dock_gap: 0, start_theme: StartTheme::Folders, clock_24h: false, dock_opacity: 0, dock_color: ColorMode::Neutral, bar_opacity: 100, bar_color: ColorMode::Neutral, clipboard_history: false, search_subfolders: false, show_hidden: true, drive_status: false, developer: true, notify_toasts: false, notify_pane: true, notify_dnd: true, own_wallpaper: true, text_scale: 150, reduce_motion: true, sarina_speaks: false, sarina_wave: 2, heimdall_alerts: AlertLevel::Critical };
         assert_eq!(PanelConf::parse(&c.to_text()), c);
     }
 
