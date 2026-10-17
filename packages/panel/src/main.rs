@@ -3563,15 +3563,16 @@ fn main() {
     event_loop
         .handle()
         .insert_source(Timer::from_duration(Duration::from_secs(1)), move |_, _, st| {
+            // the accent color is in kdeglobals, not panel.conf: look at it every second
+            if paint::refresh_accent() {
+                st.dirty = true;
+            }
             let now = PanelConf::modified();
             if now != seen {
                 seen = now;
                 let old = st.model.conf.dock_pos;
                 let old_wall = st.model.conf.own_wallpaper;
                 st.model.conf = PanelConf::load();
-                if paint::refresh_accent() {
-                    st.dirty = true; // the accent color changed in Settings
-                }
                 if st.model.conf.own_wallpaper != old_wall {
                     st.built_for = None; // the wallpaper surface comes or goes
                 }

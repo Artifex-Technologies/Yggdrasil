@@ -1298,8 +1298,10 @@ impl App {
                     let _ = sys::act("kwriteconfig6", &["--file", "kdeglobals", "--group", "General", "--key", key, &rgb]);
                 }
                 let _ = sys::act("kwriteconfig6", &["--file", "kdeglobals", "--group", "General", "--key", "AccentColorFromWallpaper", "false"]);
-                // Minos's icon takes the new accent
+                // Minos's icon takes the new accent, and so do Labyrinth's other app icons and the Labyrinth Brands pack
                 let _ = std::process::Command::new("labyrinth-minos-icon").args([format!("{r},{g},{b}"), String::new()]).status();
+                let _ = std::process::Command::new("labyrinth-app-icons").arg(format!("{r},{g},{b}")).status();
+                let _ = std::process::Command::new("labyrinth-brand-pack").arg("--rebuild").status();
                 Ok(())
             });
         }

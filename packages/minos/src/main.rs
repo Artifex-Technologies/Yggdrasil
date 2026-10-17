@@ -2481,7 +2481,7 @@ impl App {
         // A folder that has a colour tag keeps its drawn, tinted icon; the rest use the system theme.
         let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
         let sys: Vec<&str> = match icon {
-            Icon::Cloud => vec!["folder-cloud", "folder"],
+            Icon::Cloud => vec!["proton-drive", "folder-cloud", "folder"],
             Icon::Folder if icon_color == pal.folder => sysicon::folder_names(&name),
             _ => vec![],
         };
