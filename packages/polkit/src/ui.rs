@@ -3,7 +3,7 @@
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
-use eframe::egui::{self, Align, Key, Layout, RichText, TextEdit, ViewportCommand};
+use eframe::egui::{self, Align, Key, Layout, RichText, TextEdit};
 use labyrinth_ui::theme;
 use zeroize::Zeroize;
 
@@ -68,47 +68,26 @@ impl eframe::App for App {
         theme::apply_accessibility(ui.ctx());
         let ctx = ui.ctx().clone();
         self.receive();
+        // The root window is never shown (Wayland cannot hide a window again). The password box is a window of its own that
+        // exists only while polkit is asking, so it really goes away afterwards.
         let want = self.dialog.is_some();
         if want != self.visible {
             self.visible = want;
             if std::env::var_os("LABYRINTH_POLKIT_DEBUG").is_some() {
                 eprintln!("labyrinth-polkit: window visible = {want}");
             }
-            ctx.send_viewport_cmd(ViewportCommand::Visible(want));
-            if want {
-                ctx.send_viewport_cmd(ViewportCommand::Focus);
-            }
         }
         let pal = theme::palette(theme::system_dark());
         let Some(d) = &mut self.dialog else { return };
         let mut answer: Option<Option<String>> = None;
-        ui.vertical(|ui| {
-            ui.add_space(6.0);
-            ui.label(RichText::new("Authentication required").size(17.0).strong());
-            ui.add_space(6.0);
-            ui.label(RichText::new(if d.message.is_empty() { "A program is asking for administrator rights." } else { d.message.as_str() }).color(pal.text));
-            ui.label(RichText::new(format!("Action: {}", d.action_id)).small().color(pal.dim));
-            ui.add_space(10.0);
-            for (t, err) in &d.notes {
-                ui.label(RichText::new(t.as_str()).small().color(if *err { pal.red } else { pal.dim }));
-            }
-            if let Some((prompt, echo, _)) = &d.asking {
-                ui.label(RichText::new(format!("{} ({})", prompt.trim_end_matches(':'), d.user)).color(pal.dim));
-                let resp = ui.add(TextEdit::singleline(&mut d.input).password(!*echo).desired_width(f32::INFINITY));
-                resp.request_focus();
-                ui.add_space(10.0);
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
-                    if ui.button("Authenticate").clicked() || enter {
-                        answer = Some(Some(d.input.clone()));
-                    }
-                    if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
-                        answer = Some(None);
-                    }
-                });
-            } else {
-                ui.label(RichText::new("Checking…").color(pal.dim));
-            }
+        let builder = egui::ViewportBuilder::default()
+            .with_title("Authentication required")
+            .with_app_id("labyrinth-polkit")
+            .with_inner_size([440.0, 250.0])
+            .with_resizable(false)
+            .with_always_on_top();
+        ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("labyrinth-polkit-box"), builder, |ui, _class| {
+            egui::CentralPanel::default().show_inside(ui, |ui| draw(ui, d, &pal, &mut answer));
         });
         if let Some(a) = answer {
             if let Some((_, _, reply)) = d.asking.take() {
@@ -120,4 +99,38 @@ impl eframe::App for App {
         ctx.request_repaint_after(std::time::Duration::from_millis(500));
         let _ = &self.ctx_slot;
     }
+}
+
+fn draw(ui: &mut egui::Ui, d: &mut Dialog, pal: &theme::Palette, answer: &mut Option<Option<String>>) {
+    if ui.input(|i| i.viewport().close_requested()) {
+        *answer = Some(None);
+    }
+    ui.vertical(|ui| {
+        ui.add_space(6.0);
+        ui.label(RichText::new("Authentication required").size(17.0).strong());
+        ui.add_space(6.0);
+        ui.label(RichText::new(if d.message.is_empty() { "A program is asking for administrator rights." } else { d.message.as_str() }).color(pal.text));
+        ui.label(RichText::new(format!("Action: {}", d.action_id)).small().color(pal.dim));
+        ui.add_space(10.0);
+        for (t, err) in &d.notes {
+            ui.label(RichText::new(t.as_str()).small().color(if *err { pal.red } else { pal.dim }));
+        }
+        if let Some((prompt, echo, _)) = &d.asking {
+            ui.label(RichText::new(format!("{} ({})", prompt.trim_end_matches(':'), d.user)).color(pal.dim));
+            let resp = ui.add(TextEdit::singleline(&mut d.input).password(!*echo).desired_width(f32::INFINITY));
+            resp.request_focus();
+            ui.add_space(10.0);
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                if ui.button("Authenticate").clicked() || enter {
+                    *answer = Some(Some(d.input.clone()));
+                }
+                if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
+                    *answer = Some(None);
+                }
+            });
+        } else {
+            ui.label(RichText::new("Checking…").color(pal.dim));
+        }
+    });
 }
