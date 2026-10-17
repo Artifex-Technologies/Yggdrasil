@@ -44,9 +44,20 @@ enum Page {
     Apps,
     Shortcuts,
     About,
+    /// Shown under About while Developer options are on.
+    Developer,
 }
 
-const PAGES: [(Page, &str, Icon); 14] = [
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AppSub {
+    Main,
+    Icons,
+    Bar,
+    Notifs,
+    Wallpaper,
+}
+
+const PAGES: [(Page, &str, Icon); 15] = [
     (Page::Network, "Wi-Fi & Network", Icon::Wifi),
     (Page::Bluetooth, "Bluetooth", Icon::Bluetooth),
     (Page::Displays, "Displays", Icon::Display),
@@ -61,6 +72,7 @@ const PAGES: [(Page, &str, Icon); 14] = [
     (Page::Apps, "Apps", Icon::Apps),
     (Page::Shortcuts, "Keyboard Shortcuts", Icon::Keyboard),
     (Page::About, "About", Icon::Info),
+    (Page::Developer, "Developer Mode", Icon::Keyboard),
 ];
 
 enum Msg {
@@ -148,6 +160,10 @@ struct App {
     icon_src: String,
     // Apps page
     app_tab: usize,
+    /// Which part of Appearance is open.
+    app_sub: AppSub,
+    /// Developer page: the filter on the list of KDE settings.
+    dev_filter: String,
     app_sort: usize,
     app_sel: Option<String>,
     /// What you decided for the open app in Ask mode, refreshed every few seconds.
@@ -198,6 +214,8 @@ impl App {
             zone_filter: String::new(),
             icon_src: String::new(),
             app_tab: 0,
+            app_sub: AppSub::Main,
+            dev_filter: String::new(),
             app_sort: 0,
             app_sel: None,
             ask_cache: None,
@@ -251,7 +269,7 @@ impl App {
                     let _ = tx.send(Msg::Installed(load_installed(&tx)));
                     Msg::Apps(sys::apps())
                 }
-                Page::Shortcuts => return,
+                Page::Shortcuts | Page::Developer => return,
             };
             let _ = tx.send(msg);
             ctx.request_repaint();
@@ -401,7 +419,11 @@ impl eframe::App for App {
                 ui.add(egui::TextEdit::singleline(&mut self.search).hint_text("Search settings").desired_width(f32::INFINITY).margin(vec2(8.0, 6.0)));
                 ui.add_space(8.0);
                 let q = self.search.to_lowercase();
+                let developer_on = labyrinth_conf::PanelConf::load().developer;
                 for (p, name, icon) in PAGES {
+                    if p == Page::Developer && !developer_on {
+                        continue;
+                    }
                     if !q.is_empty() && !name.to_lowercase().contains(&q) {
                         continue;
                     }
@@ -415,6 +437,9 @@ impl eframe::App for App {
                     let icon_rect = egui::Rect::from_center_size(egui::pos2(rect.left() + 20.0, rect.center().y), vec2(18.0, 18.0));
                     icons::paint(ui.painter(), icon_rect, icon, if sel { pal.accent } else { pal.text });
                     ui.painter().text(egui::pos2(rect.left() + 40.0, rect.center().y), egui::Align2::LEFT_CENTER, name, egui::FontId::proportional(14.0), pal.text);
+                    if resp.clicked() && p == Page::Appearance {
+                        self.app_sub = AppSub::Main;
+                    }
                     if resp.clicked() && !sel {
                         self.page = p;
                         self.status.clear();
@@ -451,6 +476,7 @@ impl eframe::App for App {
                         Page::DateTime => self.page_time(ui, &pal, &ctx),
                         Page::Apps => self.page_apps(ui, &pal, &ctx),
                         Page::Shortcuts => page_shortcuts(ui, &pal),
+                        Page::Developer => self.page_developer(ui, &pal, &ctx),
                     }
                 });
             });
@@ -486,6 +512,47 @@ fn loading(ui: &mut egui::Ui) {
 }
 
 impl App {
+    /// Developer Mode: the developer options, and the KDE settings that Labyrinth's Settings hides (each opens in KDE's own panel).
+    fn page_developer(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
+        ui::group(ui, pal, None, |ui| {
+            ui::row(ui, pal, true, "Developer options", Some("On: more technical settings show under Power (limits for each power mode) and Apps (which kind of connection an app may use)"), |ui| {
+                if ui::quiet(ui, pal, "Turn off").clicked() {
+                    let mut c = labyrinth_conf::PanelConf::load();
+                    c.developer = false;
+                    self.page = Page::About;
+                    self.change(ctx, move || c.save());
+                }
+            });
+            ui::row(ui, pal, false, "KDE System Settings", Some("The whole of KDE's own settings window, with every panel Labyrinth Settings does not have"), |ui| {
+                if ui::action(ui, pal, "Open").clicked() {
+                    sys::spawn("/usr/bin/systemsettings", &[]);
+                }
+            });
+        });
+        let modules = kde_modules();
+        ui::group(ui, pal, Some("KDE settings Labyrinth hides"), |ui| {
+            ui.add_space(4.0);
+            ui.add(egui::TextEdit::singleline(&mut self.dev_filter).hint_text("Search these settings").desired_width(f32::INFINITY).margin(vec2(8.0, 6.0)));
+            ui.add_space(6.0);
+            let q = self.dev_filter.to_lowercase();
+            let mut first = true;
+            for (id, name, comment) in modules.iter() {
+                if !q.is_empty() && !name.to_lowercase().contains(&q) && !comment.to_lowercase().contains(&q) && !id.contains(&q) {
+                    continue;
+                }
+                ui::row(ui, pal, first, name, if comment.is_empty() { None } else { Some(comment.as_str()) }, |ui| {
+                    if ui::quiet(ui, pal, "Open").clicked() {
+                        sys::spawn("kcmshell6", &[id.as_str()]);
+                    }
+                });
+                first = false;
+            }
+            if first {
+                ui.label(RichText::new("Nothing matches").color(pal.dim));
+            }
+        });
+    }
+
     fn page_about(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         let Some(a) = self.data.about.clone() else { return loading(ui) };
         let developer = labyrinth_conf::PanelConf::load().developer;
@@ -886,8 +953,25 @@ impl App {
         let mut icon_install: Option<String> = None;
         let mut brand_build = false;
         let mut panel_switch: Option<bool> = None;
+        let mut go_minos = false;
         let mut conf = a.panel;
         let mut conf_changed = false;
+        if self.app_sub != AppSub::Main {
+            let title = match self.app_sub {
+                AppSub::Icons => "Icons",
+                AppSub::Bar => "Top bar and dock",
+                AppSub::Notifs => "Notifications",
+                _ => "Wallpaper",
+            };
+            ui.horizontal(|ui| {
+                if ui::quiet(ui, pal, "\u{2039}  Appearance").clicked() {
+                    self.app_sub = AppSub::Main;
+                }
+                ui.label(RichText::new(title).size(18.0).strong());
+            });
+            ui.add_space(6.0);
+        }
+        if self.app_sub == AppSub::Main {
         ui::group(ui, pal, Some("Style"), |ui| {
             ui::row(ui, pal, true, "Look", None, |ui| {
                 if let Some(i) = ui::segmented(ui, pal, &["Light", "Dark"], if a.dark { 1 } else { 0 }) {
@@ -908,6 +992,37 @@ impl App {
                 }
             });
         });
+        }
+        if self.app_sub == AppSub::Main {
+            ui::group(ui, pal, None, |ui| {
+                ui::row(ui, pal, true, "Top bar and dock", Some("The bar, the dock, the start menu and the notch: how they look and what they do"), |ui| {
+                    if ui::quiet(ui, pal, "Open  \u{203a}").clicked() {
+                        self.app_sub = AppSub::Bar;
+                    }
+                });
+                ui::row(ui, pal, false, "Icons", Some("Icon packs"), |ui| {
+                    if ui::quiet(ui, pal, "Open  \u{203a}").clicked() {
+                        self.app_sub = AppSub::Icons;
+                    }
+                });
+                ui::row(ui, pal, false, "Notifications", Some("Pop-ups, the Notification Center and Do not disturb"), |ui| {
+                    if ui::quiet(ui, pal, "Open  \u{203a}").clicked() {
+                        self.app_sub = AppSub::Notifs;
+                    }
+                });
+                ui::row(ui, pal, false, "Wallpaper", Some("The desktop picture"), |ui| {
+                    if ui::quiet(ui, pal, "Open  \u{203a}").clicked() {
+                        self.app_sub = AppSub::Wallpaper;
+                    }
+                });
+                ui::row(ui, pal, false, "Minos window transparency", Some("Make the file manager see-through (Apps, Minos)"), |ui| {
+                    if ui::quiet(ui, pal, "Open  \u{203a}").clicked() {
+                        go_minos = true;
+                    }
+                });
+            });
+        }
+        if self.app_sub == AppSub::Icons {
         ui::group(ui, pal, Some("Icons"), |ui| {
             for (i, pack) in a.icon_packs.iter().enumerate() {
                 let current = pack.id == a.icon_theme;
@@ -952,6 +1067,8 @@ impl App {
                 ui.add(egui::TextEdit::singleline(&mut self.icon_src).hint_text("~/Downloads/pack.tar.gz or https://...").desired_width((ui.available_width() - 10.0).clamp(160.0, 340.0)));
             });
         });
+        }
+        if self.app_sub == AppSub::Bar {
         ui::group(ui, pal, Some("Top bar and dock"), |ui| {
             let mut on = a.panel_on;
             ui::row(ui, pal, true, "Use the Labyrinth top bar and dock", Some("Replaces Plasma's panels. It has no system tray, quick settings or global menu yet."), |ui| {
@@ -960,9 +1077,11 @@ impl App {
                 }
             });
         });
+        }
         let modes = ["Match theme", "Dark / light"];
         let mode_index = |m: labyrinth_conf::ColorMode| if m == labyrinth_conf::ColorMode::Theme { 0 } else { 1 };
         let mode_of = |i: usize| if i == 0 { labyrinth_conf::ColorMode::Theme } else { labyrinth_conf::ColorMode::Neutral };
+        if self.app_sub == AppSub::Bar {
         ui::group(ui, pal, Some("Dock"), |ui| {
             let positions = ["Bottom", "Left", "Right"];
             let pos_index = match conf.dock_pos {
@@ -1007,6 +1126,8 @@ impl App {
                 }
             });
         });
+        }
+        if self.app_sub == AppSub::Bar {
         ui::group(ui, pal, Some("Top bar"), |ui| {
             let mut opacity = conf.bar_opacity as f32;
             ui::row(ui, pal, true, "Background", Some("Opacity of the bar; 0% leaves just its text"), |ui| {
@@ -1023,6 +1144,8 @@ impl App {
                 }
             });
         });
+        }
+        if self.app_sub == AppSub::Bar {
         ui::group(ui, pal, Some("Start menu"), |ui| {
             let themes = ["Windows", "Folders"];
             let current = if conf.start_theme == labyrinth_conf::StartTheme::Folders { 1 } else { 0 };
@@ -1033,6 +1156,8 @@ impl App {
                 }
             });
         });
+        }
+        if self.app_sub == AppSub::Main {
         ui::group(ui, pal, Some("Accessibility"), |ui| {
             let sizes = ["100%", "125%", "150%", "200%"];
             let cur = match conf.text_scale { 0..=112 => 0, 113..=137 => 1, 138..=174 => 2, _ => 3 };
@@ -1048,6 +1173,8 @@ impl App {
                 }
             });
         });
+        }
+        if self.app_sub == AppSub::Bar {
         ui::group(ui, pal, Some("Notch (Fylgja)"), |ui| {
             ui::row(ui, pal, true, "Clipboard history", Some("Keeps what you copy (text) in memory only, to paste again from the notch or with Super+V. It is forgotten when you log out, and password managers are skipped"), |ui| {
                 if ui::switch(ui, pal, &mut conf.clipboard_history).changed() {
@@ -1055,6 +1182,8 @@ impl App {
                 }
             });
         });
+        }
+        if self.app_sub == AppSub::Notifs {
         ui::group(ui, pal, Some("Notifications"), |ui| {
             ui::row(ui, pal, true, "Pop-ups", Some("A new notification slides in at the bottom right for a few seconds. They are all kept in the Notification Center either way"), |ui| {
                 if ui::switch(ui, pal, &mut conf.notify_toasts).changed() {
@@ -1085,6 +1214,8 @@ impl App {
                 }
             });
         });
+        }
+        if self.app_sub == AppSub::Wallpaper {
         ui::group(ui, pal, Some("Wallpaper"), |ui| {
             ui.add_space(6.0);
             ui.horizontal_wrapped(|ui| {
@@ -1098,6 +1229,12 @@ impl App {
             });
             ui.add_space(6.0);
         });
+        }
+        if go_minos {
+            self.page = Page::Apps;
+            self.app_tab = 2;
+            self.load(Page::Apps, ctx);
+        }
         if conf_changed {
             self.change(ctx, move || conf.save());
         }
@@ -1804,6 +1941,29 @@ impl App {
             }
         });
     }
+}
+
+/// KDE's single-setting panels (kcm_*.desktop): (module, name, description), by name. Read once.
+fn kde_modules() -> &'static Vec<(String, String, String)> {
+    static MODULES: std::sync::OnceLock<Vec<(String, String, String)>> = std::sync::OnceLock::new();
+    MODULES.get_or_init(|| {
+        let mut v = vec![];
+        if let Ok(rd) = std::fs::read_dir("/usr/share/applications") {
+            for e in rd.flatten() {
+                let file = e.file_name().to_string_lossy().into_owned();
+                let Some(id) = file.strip_suffix(".desktop").filter(|f| f.starts_with("kcm_")) else { continue };
+                let text = std::fs::read_to_string(e.path()).unwrap_or_default();
+                // the first (unlocalised) Name= and Comment= of the file
+                let field = |key: &str| text.lines().find_map(|l| l.strip_prefix(key).map(|v| v.trim().to_string())).unwrap_or_default();
+                let name = field("Name=");
+                if !name.is_empty() {
+                    v.push((id.to_string(), name, field("Comment=")));
+                }
+            }
+        }
+        v.sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()));
+        v
+    })
 }
 
 fn page_shortcuts(ui: &mut egui::Ui, pal: &Palette) {
