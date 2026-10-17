@@ -2596,6 +2596,8 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         theme::apply_accessibility(ui.ctx());
         let ctx = ui.ctx().clone();
+        static FIRST: std::sync::Once = std::sync::Once::new();
+        FIRST.call_once(|| since_start("first frame"));
         let here = self.panes[self.focus].tabs[self.panes[self.focus].active].dir();
         if here != self.published {
             session::publish(&here);
@@ -3031,7 +3033,17 @@ fn start_path(arg: &str) -> PathBuf {
     PathBuf::from(arg.strip_prefix("file://").unwrap_or(arg))
 }
 
+static STARTED: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+
+/// With MINOS_TIMING set, print how long after launch `what` happened.
+fn since_start(what: &str) {
+    if std::env::var_os("MINOS_TIMING").is_some() {
+        eprintln!("minos: {} ms since launch: {what}", STARTED.get().map(|t| t.elapsed().as_millis()).unwrap_or(0));
+    }
+}
+
 fn main() -> eframe::Result {
+    STARTED.get_or_init(Instant::now);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1200.0, 760.0])
@@ -3048,6 +3060,7 @@ fn main() -> eframe::Result {
         "Minos",
         options,
         Box::new(|cc| {
+            since_start("window and renderer ready");
             egui_extras::install_image_loaders(&cc.egui_ctx);
             let mut st = State::config_path().as_deref().map(State::load_from).unwrap_or_default();
             st.dark = theme::system_dark();
@@ -3060,6 +3073,7 @@ fn main() -> eframe::Result {
                 app.panes[0].tabs.push(TabView::new(p, false, sort, hidden));
                 app.panes[0].active = app.panes[0].tabs.len() - 1;
             }
+            since_start("app built");
             Ok(Box::new(app))
         }),
     )
