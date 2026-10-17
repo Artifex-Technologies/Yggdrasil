@@ -10,6 +10,7 @@ mod a11y;
 mod apps;
 mod paint;
 mod calendar;
+mod convo;
 mod devices;
 mod fylgja;
 mod notify;
@@ -344,6 +345,18 @@ struct State {
     speech_env_mtime: Option<std::time::SystemTime>,
     /// The speaking script was seen running (so its end means she is done).
     speech_seen: bool,
+    /// Conversation: a tap listens until you stop talking, and after her answer it listens again; a hold is one question.
+    conv: bool,
+    /// The current recording ends by itself when you stop talking (a tap), instead of when the key comes up (a hold).
+    vad_mode: bool,
+    vad: convo::Vad,
+    key_down_at: Option<std::time::Instant>,
+    /// The key went down while a conversation was listening (a tap then stops it).
+    down_in_conv: bool,
+    /// The conversation's id (her session continues across its turns), and how many turns in a row had nothing to hear.
+    conv_id: Option<String>,
+    conv_misses: u32,
+    last_tick: Option<std::time::Instant>,
     voice_tx: calloop::channel::Sender<Result<String, String>>,
     /// What Sarina understood of the question, sent as soon as it is known (before her answer).
     heard_tx: calloop::channel::Sender<String>,
@@ -759,25 +772,59 @@ impl State {
         }
     }
 
-    /// The held shortcut went down or up (hold to talk).
+    /// The shortcut went down or up. A tap starts a conversation (it listens until you stop talking, she answers, then it listens again; a tap stops
+    /// it); holding the key is one question, sent when you let go. Pressing while she talks stops her and listens.
     fn voice_key(&mut self, k: voicekey::Key) {
         match k {
             voicekey::Key::Down => {
-                if !matches!(self.model.fylgja.voice, fylgja::Voice::Listening(_) | fylgja::Voice::Thinking(_)) {
-                    self.begin_listening();
+                self.key_down_at = Some(std::time::Instant::now());
+                self.down_in_conv = self.conv && self.vad_mode && matches!(self.model.fylgja.voice, fylgja::Voice::Listening(_));
+                if self.down_in_conv || matches!(self.model.fylgja.voice, fylgja::Voice::Thinking(_)) {
+                    return; // already listening (this press may be the one that stops it) or busy answering
+                }
+                let interrupting = self.speech_since.is_some();
+                self.begin_listening();
+                if interrupting {
+                    self.vad_mode = false; // decided when the key comes up
                 }
             }
             voicekey::Key::Up => {
-                if matches!(self.model.fylgja.voice, fylgja::Voice::Listening(_)) {
-                    // a tap is not a question: it only stops her talking
-                    if self.rec_since.map(|t| t.elapsed() < Duration::from_millis(350)).unwrap_or(true) {
-                        self.cancel_voice();
-                    } else {
+                let held = self.key_down_at.take().map(|t| t.elapsed().as_millis()).unwrap_or(0);
+                if !matches!(self.model.fylgja.voice, fylgja::Voice::Listening(_)) {
+                    return;
+                }
+                match convo::classify(held, self.down_in_conv) {
+                    convo::Press::StopConversation => self.end_conversation(),
+                    convo::Press::SingleQuestion => {
+                        self.vad_mode = false;
+                        self.conv = false;
                         self.send_recording();
                     }
+                    convo::Press::StartConversation => {
+                        // keep recording: it ends when you stop talking. With her voice off there is no spoken back and forth, so one question only.
+                        self.vad_mode = true;
+                        self.conv = self.model.conf.sarina_speaks;
+                        self.vad = convo::Vad::new();
+                        self.conv_misses = 0;
+                        if self.conv && self.conv_id.is_none() {
+                            self.conv_id = Some(format!("{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)));
+                        }
+                    }
                 }
+                self.down_in_conv = false;
             }
         }
+    }
+
+    /// Ends the conversation: stops listening and talking, and forgets its session.
+    fn end_conversation(&mut self) {
+        self.conv = false;
+        self.vad_mode = false;
+        self.conv_misses = 0;
+        if let (Some(id), Some(dir)) = (self.conv_id.take(), std::env::var_os("XDG_RUNTIME_DIR")) {
+            let _ = std::fs::remove_file(std::path::Path::new(&dir).join("labyrinth-sarina").join(format!("conv-{id}.session")));
+        }
+        self.cancel_voice();
     }
 
     /// Starts recording a question. No card opens: the notch grows into the voice island and its wave follows the microphone.
@@ -788,9 +835,18 @@ impl State {
                 self.rec = Some((child, path));
                 self.rec_since = Some(std::time::Instant::now());
                 self.model.fylgja.voice = fylgja::Voice::Listening(0);
+                self.vad = convo::Vad::new();
                 self.start_viz();
             }
             Err(e) => self.voice_failed(&e),
+        }
+    }
+
+    /// She has finished talking: in a conversation, listen again.
+    fn after_speech(&mut self) {
+        if self.conv && matches!(self.model.fylgja.voice, fylgja::Voice::Idle) {
+            self.vad_mode = true;
+            self.begin_listening();
         }
     }
 
@@ -800,7 +856,7 @@ impl State {
             fylgja::stop_recording(&mut child);
             self.rec_since = None;
             self.model.fylgja.voice = fylgja::Voice::Thinking(String::new());
-            fylgja::ask_sarina(path, self.heard_tx.clone(), self.voice_tx.clone());
+            fylgja::ask_sarina(path, self.conv_id.clone(), self.heard_tx.clone(), self.voice_tx.clone());
             self.dirty = true;
         }
     }
@@ -821,6 +877,21 @@ impl State {
     /// No answer to show: a notification says why (and she says it, when she speaks).
     fn voice_failed(&mut self, why: &str) {
         self.model.fylgja.voice = fylgja::Voice::Idle;
+        if self.conv && why.starts_with("I did not catch") {
+            // nothing to hear in a conversation: listen once more quietly, and end it after two in a row
+            self.conv_misses += 1;
+            if self.conv_misses >= 2 {
+                self.end_conversation();
+            } else {
+                self.vad_mode = true;
+                self.begin_listening();
+            }
+            return;
+        }
+        if self.conv {
+            self.conv = false; // a real failure ends the conversation (she says why below)
+            self.vad_mode = false;
+        }
         let _ = Command::new("notify-send").args(["-a", "Sarina", "-i", "audio-input-microphone", "Sarina", why]).stdin(std::process::Stdio::null()).spawn().map(|mut c| std::thread::spawn(move || { let _ = c.wait(); }));
         if self.model.conf.sarina_speaks {
             self.start_speech(why.split(['.', '!', '?']).next().unwrap_or(why));
@@ -830,6 +901,7 @@ impl State {
     /// Her answer: said aloud when she speaks, otherwise shown as a notification. No card either way.
     fn voice_answer(&mut self, reply: &str) {
         self.model.fylgja.voice = fylgja::Voice::Idle;
+        self.conv_misses = 0;
         let text = fylgja::spoken_part(reply);
         if self.model.conf.sarina_speaks {
             self.start_speech(&text);
@@ -914,6 +986,16 @@ impl State {
             Some(voicewave::Mode::Speaking) => self.speech_level(),
             None => 0.0,
         };
+        // a tapped recording ends when you stop talking
+        let dt = self.last_tick.map(|t| t.elapsed().as_millis() as u32).unwrap_or(33).min(200);
+        self.last_tick = Some(std::time::Instant::now());
+        if mode == Some(voicewave::Mode::Listening) && self.vad_mode {
+            match self.vad.feed(raw, dt) {
+                convo::Event::EndOfSpeech => self.send_recording(),
+                convo::Event::GaveUp => self.end_conversation(),
+                _ => {}
+            }
+        }
         let Some(v) = self.viz.as_mut() else {
             self.viz_alive.store(false, Ordering::Release);
             return;
@@ -956,6 +1038,7 @@ impl State {
             self.speech_since = None; // she has finished (or the voice never started: no voice installed)
             self.speech_env = None;
             self.speech_seen = false;
+            self.after_speech();
             return 0.0;
         }
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
@@ -2709,6 +2792,14 @@ fn main() {
         speech_env: None,
         speech_env_mtime: None,
         speech_seen: false,
+        conv: false,
+        vad_mode: false,
+        vad: convo::Vad::new(),
+        key_down_at: None,
+        down_in_conv: false,
+        conv_id: None,
+        conv_misses: 0,
+        last_tick: None,
         voice_tx,
         heard_tx,
         clips: Arc::new(std::sync::Mutex::new(Vec::new())),

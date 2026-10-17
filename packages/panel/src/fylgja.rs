@@ -668,9 +668,9 @@ pub fn stop_speaking() {
 }
 
 /// Gives the recording to Sarina (`labyrinth-sarina-ask`) and reports her reply or why there is none.
-pub fn ask_sarina(wav: PathBuf, heard: calloop::channel::Sender<String>, done: calloop::channel::Sender<Result<String, String>>) {
+pub fn ask_sarina(wav: PathBuf, conversation: Option<String>, heard: calloop::channel::Sender<String>, done: calloop::channel::Sender<Result<String, String>>) {
     std::thread::spawn(move || {
-        let r = run_ask(&wav, &heard);
+        let r = run_ask(&wav, conversation.as_deref(), &heard);
         let _ = std::fs::remove_file(&wav); // the question is not kept
         let _ = done.send(r);
     });
@@ -678,9 +678,14 @@ pub fn ask_sarina(wav: PathBuf, heard: calloop::channel::Sender<String>, done: c
 
 /// Runs `labyrinth-sarina-ask`, passing on its first line (`Heard: "..."`) as soon as it is printed, so the card can show
 /// what was understood while Sarina is still working on the answer.
-fn run_ask(wav: &PathBuf, heard: &calloop::channel::Sender<String>) -> Result<String, String> {
+fn run_ask(wav: &PathBuf, conversation: Option<&str>, heard: &calloop::channel::Sender<String>) -> Result<String, String> {
     use std::io::{BufRead, BufReader};
-    let mut child = Command::new("labyrinth-sarina-ask").arg(wav).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|_| "labyrinth-sarina-ask is missing from this system.".to_string())?;
+    let mut cmd = Command::new("labyrinth-sarina-ask");
+    cmd.arg(wav);
+    if let Some(id) = conversation {
+        cmd.env("LABYRINTH_CONVERSATION", id); // her session continues across the turns of a conversation
+    }
+    let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|_| "labyrinth-sarina-ask is missing from this system.".to_string())?;
     let mut text = String::new();
     if let Some(out) = child.stdout.take() {
         for (i, line) in BufReader::new(out).lines().map_while(Result::ok).enumerate() {
