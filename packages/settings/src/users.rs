@@ -135,6 +135,26 @@ pub fn strength(pw: &str) -> (&'static str, f32) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn accounts_come_from_passwd_and_group() {
+        let p = "root:x:0:0::/root:/bin/bash\nzlothra:x:1000:1000:Zlothra,,,:/home/zlothra:/bin/bash\nsam:x:1002:1002:Sam Doe:/home/sam:/bin/bash\nnobody:x:65534:65534::/:/usr/bin/nologin\n";
+        let g = "wheel:x:998:zlothra,claude-agent\nusers:x:985:\n";
+        let a = parse_accounts(p, g);
+        assert_eq!(a.iter().map(|x| (x.login.as_str(), x.admin)).collect::<Vec<_>>(), vec![("zlothra", true), ("sam", false)]);
+        assert_eq!(a[1].full_name, "Sam Doe");
+    }
+
+    #[test]
+    fn login_names_are_checked_and_suggested() {
+        assert!(valid_login("alex") && valid_login("a-b_9"));
+        for bad in ["", "Alex", "1abc", "a b", "a:b", "a.b", &"x".repeat(32)] {
+            assert!(!valid_login(bad), "{bad}");
+        }
+        assert_eq!(suggest_login("Alex Rivera"), "alex");
+        assert_eq!(suggest_login("  Ana-Maria O'Neil "), "anamaria");
+        assert_eq!(suggest_login("9lives"), "");
+    }
+
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
@@ -201,5 +221,55 @@ echo "passwd: password updated successfully"
         let f = fake_passwd();
         let e = change_password_with(f.to_str().unwrap(), "cur-pass", "short").unwrap_err();
         assert!(e.contains("too weak"), "{e}");
+    }
+}
+
+/// Every login account (uid 1000 up) from the text of /etc/passwd and /etc/group; `admin` is membership of wheel.
+pub fn parse_accounts(passwd: &str, group: &str) -> Vec<Account> {
+    let admins: Vec<&str> = group.lines().find(|l| l.starts_with("wheel:")).map(|l| l.rsplit(':').next().unwrap_or("").split(',').filter(|s| !s.is_empty()).collect()).unwrap_or_default();
+    passwd.lines().filter_map(parse_passwd).filter(|a| a.uid >= 1000 && a.uid < 60000).map(|mut a| {
+        a.admin = admins.contains(&a.login.as_str());
+        a
+    }).collect()
+}
+
+/// The other people's accounts, for the Users page. The audited assistant account (claude-agent...) is left out: it has its own tool.
+pub fn others(me: &str) -> Vec<Account> {
+    let p = std::fs::read_to_string("/etc/passwd").unwrap_or_default();
+    let g = std::fs::read_to_string("/etc/group").unwrap_or_default();
+    parse_accounts(&p, &g).into_iter().filter(|a| a.login != me && !a.login.starts_with("claude-agent")).collect()
+}
+
+/// A login name the helper will accept: 1 to 31 lowercase letters, digits, - or _, starting with a letter.
+pub fn valid_login(s: &str) -> bool {
+    let mut c = s.chars();
+    s.len() <= 31 && c.next().map(|f| f.is_ascii_lowercase()).unwrap_or(false) && c.all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-' || ch == '_')
+}
+
+/// A login name suggested from a full name ("Alex Rivera" -> "alex").
+pub fn suggest_login(full: &str) -> String {
+    let first: String = full.trim().split_whitespace().next().unwrap_or("").to_lowercase().chars().filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit()).collect();
+    if first.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) { String::new() } else { first }
+}
+
+/// Runs `labyrinth-account` with the administrator question (pkexec). `stdin` carries a password, never a command line.
+pub fn manage(args: &[&str], stdin: Option<&str>) -> Result<String, String> {
+    let mut child = Command::new("pkexec").arg("/usr/local/bin/labyrinth-account").args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| format!("pkexec: {e}"))?;
+    if let Some(mut si) = child.stdin.take() {
+        if let Some(s) = stdin {
+            let _ = si.write_all(s.as_bytes());
+            let _ = si.write_all(b"\n");
+        }
+    }
+    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    match out.status.code() {
+        Some(0) => Ok(text),
+        Some(126) | Some(127) => Err("The administrator question was cancelled or refused.".into()),
+        _ => {
+            let msg: String = err.trim_start_matches("labyrinth-account: ").chars().take(300).collect();
+            Err(if msg.is_empty() { "That did not work.".to_string() } else { msg })
+        }
     }
 }

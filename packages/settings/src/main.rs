@@ -72,7 +72,8 @@ enum Msg {
     Appearance(sys::Appearance),
     Power(sys::Power),
     Firewall(bool),
-    Account(users::Account, String),
+    Account(users::Account, String, Vec<users::Account>),
+    AccountDone(Result<String, String>),
     Security(security::Overview),
     Restore(restore::State),
     Scan(security::ScanReport),
@@ -87,6 +88,7 @@ enum Msg {
 
 #[derive(Default)]
 struct Data {
+    others: Option<Vec<users::Account>>,
     restore: Option<restore::State>,
     security: Option<security::Overview>,
     account: Option<(users::Account, String)>,
@@ -101,6 +103,18 @@ struct Data {
     time: Option<sys::Time>,
     apps: Option<Vec<sys::Component>>,
     installed: Option<Vec<appmgr::AppInfo>>,
+}
+
+#[derive(Default)]
+struct AddForm {
+    open: bool,
+    full: String,
+    login: String,
+    /// The login name was typed by hand: stop suggesting one from the full name.
+    login_touched: bool,
+    admin: bool,
+    pw: String,
+    pw2: String,
 }
 
 struct App {
@@ -123,6 +137,12 @@ struct App {
     pw_confirm: String,
     pw_msg: Option<(String, bool)>,
     pw_busy: bool,
+    // Users page: adding and removing other accounts
+    acct_form: AddForm,
+    acct_busy: bool,
+    acct_msg: Option<(String, bool)>,
+    /// The account asked to be removed (waiting for the confirmation) and whether its home folder goes too.
+    acct_remove: Option<(String, bool)>,
     zone_filter: String,
     /// What the icon-pack install box holds: a folder, an archive or a link.
     icon_src: String,
@@ -171,6 +191,10 @@ impl App {
             pw_confirm: String::new(),
             pw_msg: None,
             pw_busy: false,
+            acct_form: AddForm::default(),
+            acct_busy: false,
+            acct_msg: None,
+            acct_remove: None,
             zone_filter: String::new(),
             icon_src: String::new(),
             app_tab: 0,
@@ -215,7 +239,11 @@ impl App {
                 Page::Appearance => Msg::Appearance(sys::appearance()),
                 Page::Power => Msg::Power(sys::power()),
                 Page::Firewall => Msg::Firewall(sys::firewall_on()),
-                Page::Users => Msg::Account(users::account(), users::keyring_state()),
+                Page::Users => {
+                    let me = users::account();
+                    let others = users::others(&me.login);
+                    Msg::Account(me, users::keyring_state(), others)
+                }
                 Page::Security => Msg::Security(security::overview()),
                 Page::Restore => Msg::Restore(restore::load()),
                 Page::DateTime => Msg::Time(sys::time()),
@@ -253,7 +281,23 @@ impl App {
                 Msg::Appearance(v) => self.data.appearance = Some(v),
                 Msg::Power(v) => self.data.power = Some(v),
                 Msg::Firewall(v) => self.data.firewall = Some(v),
-                Msg::Account(a, k) => self.data.account = Some((a, k)),
+                Msg::Account(a, k, o) => {
+                    self.data.account = Some((a, k));
+                    self.data.others = Some(o);
+                }
+                Msg::AccountDone(r) => {
+                    self.acct_busy = false;
+                    match r {
+                        Ok(m) => {
+                            self.acct_msg = Some((m, true));
+                            self.acct_form = AddForm::default();
+                            self.acct_remove = None;
+                            self.load(Page::Users, ctx);
+                        }
+                        Err(e) => self.acct_msg = Some((e, false)),
+                    }
+                    continue;
+                }
                 Msg::Security(o) => self.data.security = Some(o),
                 Msg::Restore(r) => self.data.restore = Some(r),
                 Msg::Scan(r) => {
@@ -1310,6 +1354,157 @@ impl App {
         }
     }
 
+    /// Other accounts on this computer: list, add, make administrator or standard, remove. Every change asks for an administrator password.
+    fn accounts_section(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
+        let others = self.data.others.clone().unwrap_or_default();
+        let mut toggle_admin: Option<(String, bool)> = None;
+        let mut ask_remove: Option<String> = None;
+        let mut open_form = false;
+        ui::group(ui, pal, Some("Other accounts"), |ui| {
+            if others.is_empty() {
+                ui::row(ui, pal, true, "No other accounts", Some("Add one for someone else who uses this computer"), |_| {});
+            }
+            for (i, a) in others.iter().enumerate() {
+                let title = if a.full_name.is_empty() { a.login.clone() } else { a.full_name.clone() };
+                ui::row(ui, pal, i == 0, &title, Some(&format!("{} · {}", a.login, if a.admin { "Administrator" } else { "Standard user" })), |ui| {
+                    if ui::quiet(ui, pal, "Remove…").clicked() {
+                        ask_remove = Some(a.login.clone());
+                    }
+                    if ui::quiet(ui, pal, if a.admin { "Make standard" } else { "Make administrator" }).clicked() {
+                        toggle_admin = Some((a.login.clone(), !a.admin));
+                    }
+                });
+            }
+            ui::row(ui, pal, others.is_empty(), "Add an account", Some("Standard users cannot change the system; administrators can"), |ui| {
+                if ui.button(if self.acct_form.open { "Cancel" } else { "Add account…" }).clicked() {
+                    open_form = true;
+                }
+            });
+            if self.acct_form.open {
+                ui.add_space(6.0);
+                ui.label(RichText::new("Full name").color(pal.dim));
+                let r = ui.add(egui::TextEdit::singleline(&mut self.acct_form.full).desired_width(f32::INFINITY));
+                if r.changed() && !self.acct_form.login_touched {
+                    self.acct_form.login = users::suggest_login(&self.acct_form.full);
+                }
+                ui.add_space(4.0);
+                ui.label(RichText::new("User name (lowercase letters, digits, - and _)").color(pal.dim));
+                if ui.add(egui::TextEdit::singleline(&mut self.acct_form.login).desired_width(f32::INFINITY)).changed() {
+                    self.acct_form.login_touched = true;
+                }
+                let bad_login = !self.acct_form.login.is_empty() && !users::valid_login(&self.acct_form.login);
+                let taken = others.iter().any(|a| a.login == self.acct_form.login) || self.data.account.as_ref().map(|(a, _)| a.login == self.acct_form.login).unwrap_or(false);
+                if bad_login {
+                    ui.label(RichText::new("Use lowercase letters, digits, - and _, starting with a letter.").small().color(pal.red));
+                } else if taken {
+                    ui.label(RichText::new("That user name is already used.").small().color(pal.red));
+                }
+                ui.add_space(4.0);
+                ui::row(ui, pal, false, "Administrator", Some("Can install software and change the system"), |ui| {
+                    ui::switch(ui, pal, &mut self.acct_form.admin);
+                });
+                ui.label(RichText::new("Password").color(pal.dim));
+                ui.add(egui::TextEdit::singleline(&mut self.acct_form.pw).password(true).desired_width(f32::INFINITY));
+                let (word, frac) = users::strength(&self.acct_form.pw);
+                if !word.is_empty() {
+                    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width().min(320.0), 6.0), Sense::hover());
+                    ui.painter().rect_filled(rect, 3.0, pal.field);
+                    let mut fill = rect;
+                    fill.set_width(rect.width() * frac);
+                    ui.painter().rect_filled(fill, 3.0, theme::usage_color(pal, 1.0 - frac));
+                    ui.label(RichText::new(word).small().color(pal.dim));
+                }
+                ui.add_space(4.0);
+                ui.label(RichText::new("Password again").color(pal.dim));
+                ui.add(egui::TextEdit::singleline(&mut self.acct_form.pw2).password(true).desired_width(f32::INFINITY));
+                if !self.acct_form.pw2.is_empty() && self.acct_form.pw2 != self.acct_form.pw {
+                    ui.label(RichText::new("The two passwords do not match.").small().color(pal.red));
+                }
+                ui.label(RichText::new("They can change it after they log in. It also becomes the password of their keyring.").small().color(pal.dim));
+                ui.add_space(8.0);
+                let f = &self.acct_form;
+                let ready = !self.acct_busy && users::valid_login(&f.login) && !taken && f.pw.chars().count() >= 8 && f.pw == f.pw2;
+                if ui.add_enabled(ready, egui::Button::new(if self.acct_busy { "Creating…" } else { "Create account" })).clicked() {
+                    let (login, full, admin, pw) = (f.login.clone(), f.full.clone(), f.admin, f.pw.clone());
+                    self.acct_busy = true;
+                    self.acct_msg = None;
+                    self.acct_form.pw.clear();
+                    self.acct_form.pw2.clear();
+                    let (tx, ctx2) = (self.tx.clone(), ctx.clone());
+                    std::thread::spawn(move || {
+                        let mut args = vec!["add", login.as_str()];
+                        if !full.trim().is_empty() {
+                            args.push("--full-name");
+                            args.push(full.as_str());
+                        }
+                        if admin {
+                            args.push("--admin");
+                        }
+                        let r = users::manage(&args, Some(&pw)).map(|_| format!("Account {login} created."));
+                        let _ = tx.send(Msg::AccountDone(r));
+                        ctx2.request_repaint();
+                    });
+                }
+                ui.add_space(6.0);
+            }
+            if let Some((m, ok)) = &self.acct_msg {
+                ui.label(RichText::new(m.as_str()).color(if *ok { pal.green } else { pal.red }));
+                ui.add_space(6.0);
+            }
+        });
+        if open_form {
+            self.acct_form.open = !self.acct_form.open;
+            self.acct_msg = None;
+        }
+        if let Some(login) = ask_remove {
+            self.acct_remove = Some((login, false));
+        }
+        if let Some((login, on)) = toggle_admin {
+            self.acct_busy = true;
+            let (tx, ctx2) = (self.tx.clone(), ctx.clone());
+            std::thread::spawn(move || {
+                let r = users::manage(&["admin", &login, if on { "on" } else { "off" }], None).map(|_| format!("{login} is now {}.", if on { "an administrator" } else { "a standard user" }));
+                let _ = tx.send(Msg::AccountDone(r));
+                ctx2.request_repaint();
+            });
+        }
+        if let Some((login, delete_home)) = self.acct_remove.clone() {
+            let mut keep = true;
+            let mut go = false;
+            let mut home = delete_home;
+            egui::Window::new(format!("Remove {login}?")).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0)).show(ctx, |ui| {
+                ui.set_max_width(380.0);
+                ui.label("They will no longer be able to log in. This cannot be undone.");
+                ui.add_space(6.0);
+                ui.checkbox(&mut home, "Also delete their files (home folder)");
+                ui.label(RichText::new(if home { "Their documents, pictures and settings will be erased." } else { "Their files stay on the disk, in /home, until you delete them." }).small().color(pal.dim));
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        keep = false;
+                    }
+                    if ui.button(if home { "Remove and delete files" } else { "Remove account" }).clicked() {
+                        go = true;
+                    }
+                });
+            });
+            self.acct_remove = if keep && !go { Some((login.clone(), home)) } else { None };
+            if go {
+                self.acct_busy = true;
+                let (tx, ctx2) = (self.tx.clone(), ctx.clone());
+                std::thread::spawn(move || {
+                    let mut args = vec!["remove", login.as_str()];
+                    if home {
+                        args.push("--delete-home");
+                    }
+                    let r = users::manage(&args, None).map(|_| format!("{login} was removed."));
+                    let _ = tx.send(Msg::AccountDone(r));
+                    ctx2.request_repaint();
+                });
+            }
+        }
+    }
+
     fn page_users(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         let Some((acct, keyring)) = self.data.account.clone() else { return loading(ui) };
         let name = if acct.full_name.is_empty() { acct.login.clone() } else { acct.full_name.clone() };
@@ -1397,7 +1592,7 @@ impl App {
             });
         });
         ui.add_space(8.0);
-        ui.label(RichText::new("Adding and removing other accounts is not here yet.").small().color(pal.dim));
+        self.accounts_section(ui, pal, ctx);
     }
 
     fn page_firewall(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
