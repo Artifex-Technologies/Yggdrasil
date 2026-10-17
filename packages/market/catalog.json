@@ -273,7 +273,8 @@
    ],
    "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
    "launch": "ai.storyteller.designcraft",
-   "appstream": "ai.storyteller.designcraft"
+   "appstream": "ai.storyteller.designcraft",
+   "repo": "https://github.com/storytold/designcraft"
   },
   {
    "id": "vectorcraft",
@@ -295,7 +296,8 @@
    ],
    "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
    "launch": "ai.storyteller.vectorcraft",
-   "appstream": "ai.storyteller.vectorcraft"
+   "appstream": "ai.storyteller.vectorcraft",
+   "repo": "https://github.com/storytold/vectorcraft"
   },
   {
    "id": "photocraft",
@@ -317,7 +319,8 @@
    ],
    "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
    "launch": "ai.storyteller.photocraft",
-   "appstream": "ai.storyteller.photocraft"
+   "appstream": "ai.storyteller.photocraft",
+   "repo": "https://github.com/storytold/photocraft"
   },
   {
    "id": "filmcraft",
@@ -339,7 +342,8 @@
    ],
    "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
    "launch": "ai.storyteller.filmcraft",
-   "appstream": "ai.storyteller.filmcraft"
+   "appstream": "ai.storyteller.filmcraft",
+   "repo": "https://github.com/storytold/filmcraft"
   },
   {
    "id": "soundcraft",
@@ -361,7 +365,8 @@
    ],
    "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
    "launch": "ai.storyteller.soundcraft",
-   "appstream": "ai.storyteller.soundcraft"
+   "appstream": "ai.storyteller.soundcraft",
+   "repo": "https://github.com/storytold/soundcraft"
   },
   {
    "id": "cadcraft",
@@ -383,7 +388,8 @@
    ],
    "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
    "launch": "ai.storyteller.cadcraft",
-   "appstream": "ai.storyteller.cadcraft"
+   "appstream": "ai.storyteller.cadcraft",
+   "repo": "https://github.com/storytold/cadcraft"
   },
   {
    "id": "figcraft",
@@ -405,7 +411,8 @@
    ],
    "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
    "launch": "ai.storyteller.figcraft",
-   "appstream": "ai.storyteller.figcraft"
+   "appstream": "ai.storyteller.figcraft",
+   "repo": "https://github.com/storytold/figcraft"
   },
   {
    "id": "libreoffice",
@@ -445,7 +452,8 @@
    ],
    "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
    "launch": "ai.storyteller.pdfcraft",
-   "appstream": "ai.storyteller.pdfcraft"
+   "appstream": "ai.storyteller.pdfcraft",
+   "repo": "https://github.com/storytold/pdfcraft"
   },
   {
    "id": "wordcraft",
@@ -467,7 +475,8 @@
    ],
    "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
    "launch": "ai.storyteller.wordcraft",
-   "appstream": "ai.storyteller.wordcraft"
+   "appstream": "ai.storyteller.wordcraft",
+   "repo": "https://github.com/storytold/wordcraft"
   },
   {
    "id": "gridcraft",
@@ -489,7 +498,8 @@
    ],
    "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
    "launch": "ai.storyteller.gridcraft",
-   "appstream": "ai.storyteller.gridcraft"
+   "appstream": "ai.storyteller.gridcraft",
+   "repo": "https://github.com/storytold/gridcraft"
   },
   {
    "id": "deckcraft",
@@ -511,7 +521,8 @@
    ],
    "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
    "launch": "ai.storyteller.deckcraft",
-   "appstream": "ai.storyteller.deckcraft"
+   "appstream": "ai.storyteller.deckcraft",
+   "repo": "https://github.com/storytold/deckcraft"
   },
   {
    "id": "obsidian",
@@ -936,7 +947,8 @@
    },
    "icon": "sarina",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "repo": "https://github.com/Artifex-Technologies/Sarina"
   },
   {
    "id": "local-ai",
@@ -1005,7 +1017,8 @@
    },
    "icon": "heimdall",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "repo": "https://github.com/Artifex-Technologies/Heimdall"
   },
   {
    "id": "limbo",
@@ -1022,7 +1035,8 @@
    "reviewed": true,
    "tags": [],
    "preinstalled": true,
-   "note": "Included with Labyrinth OS: parts of the system (the quarantine, risky files and apps) depend on it, so it cannot be removed here."
+   "note": "Included with Labyrinth OS: parts of the system (the quarantine, risky files and apps) depend on it, so it cannot be removed here.",
+   "repo": "https://github.com/Artifex-Technologies/Limbo"
   },
   {
    "id": "clamav",
@@ -1245,7 +1259,8 @@
    "tags": [
     "artifex",
     "cad"
-   ]
+   ],
+   "repo": "https://github.com/Artifex-Technologies/Daedalus_CAD"
   }
  ],
  "featured": [

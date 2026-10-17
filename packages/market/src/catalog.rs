@@ -68,6 +68,8 @@ pub struct Entry {
     pub editions: Vec<String>,
     /// Part of the base system: it is listed (and can be reinstalled) but not removed from here.
     pub preinstalled: bool,
+    /// Where the (open) source code is, if it is public: shown as a link on the app's page.
+    pub repo: String,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -130,6 +132,7 @@ pub fn parse_catalog(text: &str, from: &str, trusted: bool) -> Result<Catalog, S
             from: from.to_string(),
             launch: s(a, "launch"),
             editions: if trusted { strings(&a["editions"]) } else { vec![] },
+            repo: if trusted && s(a, "repo").starts_with("https://") { s(a, "repo") } else { String::new() },
             preinstalled: trusted && a.get("preinstalled").and_then(|p| p.as_bool()).unwrap_or(false),
             appstream: if trusted { s(a, "appstream") } else { String::new() },
             flathub: if trusted { s(a, "flathub") } else { String::new() },
@@ -194,6 +197,7 @@ pub fn parse_omarchy(text: &str, from: &str) -> Result<Catalog, String> {
                 flathub: String::new(),
                 editions: vec![],
                 preinstalled: false,
+                repo: String::new(),
             });
         }
     }

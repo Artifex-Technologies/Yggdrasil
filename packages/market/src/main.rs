@@ -395,7 +395,7 @@ impl App {
         if self.is_running("*update*") {
             return;
         }
-        let dummy = Entry { id: "*update*".into(), name: "Updates".into(), subtitle: String::new(), description: String::new(), category: String::new(), subcategory: String::new(), source: Source::Pacman(vec![]), icon: String::new(), reviewed: true, note: String::new(), tags: vec![], from: String::new(), launch: String::new(), appstream: String::new(), flathub: String::new(), editions: vec![], preinstalled: false };
+        let dummy = Entry { id: "*update*".into(), name: "Updates".into(), subtitle: String::new(), description: String::new(), category: String::new(), subcategory: String::new(), source: Source::Pacman(vec![]), icon: String::new(), reviewed: true, note: String::new(), tags: vec![], from: String::new(), launch: String::new(), appstream: String::new(), flathub: String::new(), editions: vec![], preinstalled: false, repo: String::new() };
         if let Some((prog, args)) = install::command(&dummy, install::Op::UpdateAll) {
             self.start_job(ctx, "*update*", "All updates", install::Op::UpdateAll, prog, args, install::Undo::default());
         }
@@ -858,6 +858,17 @@ impl App {
         if let Some(a) = asked {
             self.do_pill(ctx, idx, a);
         }
+        // the open source code, one click away
+        if !e.repo.is_empty() {
+            ui.scope_builder(UiBuilder::new().max_rect(Rect::from_min_size(pos2(rect.right() - 150.0, rect.top() + 92.0), vec2(150.0, 30.0))), |ui| {
+                let (r, resp) = ui.allocate_exact_size(vec2(150.0, 30.0), Sense::click());
+                ui.painter().rect_stroke(r, CornerRadius::same(255), Stroke::new(1.0, if resp.hovered() { self.pal.accent } else { self.pal.border }), egui::StrokeKind::Inside);
+                ui.painter().text(r.center(), Align2::CENTER_CENTER, "SOURCE CODE", FontId::proportional(13.0), self.pal.accent);
+                if resp.on_hover_text(&e.repo).clicked() {
+                    let _ = std::process::Command::new("xdg-open").arg(&e.repo).spawn();
+                }
+            });
+        }
         let installed = self.installed.has(&e);
         let can_remove = installed && !e.preinstalled && catalog::remove_script(&e).is_some();
         let idle = !self.is_running(&e.id) && !self.busy.contains(&e.id);
@@ -977,10 +988,19 @@ impl App {
             Source::Component(c) => format!("Labyrinth component: {c}"),
             Source::Plugin { repo } => format!("Plugin repository: {repo}"),
         };
-        for (k, v) in [("Source", src), ("Category", format!("{} \u{203a} {}", e.category, e.subcategory)), ("Catalog", e.from.clone())] {
+        for (k, v) in [("Source", src), ("Source code", e.repo.clone()), ("Category", format!("{} \u{203a} {}", e.category, e.subcategory)), ("Catalog", e.from.clone())] {
+            if v.is_empty() {
+                continue;
+            }
             ui.horizontal(|ui| {
                 ui.add_sized([110.0, 20.0], egui::Label::new(RichText::new(k).color(self.pal.dim)));
-                ui.label(v);
+                if k == "Source code" {
+                    if ui.add(egui::Label::new(RichText::new(&v).color(self.pal.accent)).sense(Sense::click())).clicked() {
+                        let _ = std::process::Command::new("xdg-open").arg(&v).spawn();
+                    }
+                } else {
+                    ui.label(v);
+                }
             });
         }
         if let Some(script) = catalog::install_script(&e) {
