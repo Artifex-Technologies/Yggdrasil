@@ -55,6 +55,18 @@ fn same_drive(src: Option<&PathBuf>, dest: &Path) -> bool {
 /// Drag-and-drop payload: the files being dragged.
 struct DragPaths(Vec<PathBuf>);
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Nav {
+    Up,
+    Down,
+    Left,
+    Right,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+}
+
 enum Action {
     Focus(usize),
     Up(usize),
@@ -67,6 +79,17 @@ enum Action {
     Go(usize, PathBuf),
     OpenTab(usize, PathBuf),
     CloseTab(usize, usize),
+    ReopenTab,
+    /// Arrow, Home, End and Page keys: move the selection (the bool extends it with Shift).
+    KeyNav(usize, Nav, bool),
+    /// Enter: open what is selected.
+    KeyOpen(usize),
+    /// Typing a name: jump to the first entry that starts with it.
+    TypeFind(usize, String),
+    Back(usize),
+    Forward(usize),
+    FocusOtherPane,
+    CloseWindow,
     SelectTab(usize, usize),
     PinTab(usize, usize),
     Reload,
@@ -105,6 +128,8 @@ struct TabView {
     address: String,
     selected: BTreeSet<PathBuf>,
     anchor: Option<usize>,
+    /// The keyboard's position in the list (a path, so it survives re-sorting).
+    cursor: Option<PathBuf>,
     recursive: bool,
     /// Where the running search started (the folder, or / for the whole computer), for the names shown.
     search_root: PathBuf,
@@ -128,6 +153,7 @@ impl TabView {
             address: String::new(),
             selected: BTreeSet::new(),
             anchor: None,
+            cursor: None,
             recursive: true,
             search_root: PathBuf::new(),
             search_open: false,
@@ -139,6 +165,21 @@ impl TabView {
         };
         t.reload(sort, hidden);
         t
+    }
+
+    /// What the list shows: the search results, or the folder's entries.
+    fn shown(&self) -> &[Entry] {
+        self.results.as_deref().unwrap_or(&self.entries)
+    }
+
+    /// Indices into `shown()` in the order they are drawn.
+    fn order(&self, hidden: bool) -> Vec<usize> {
+        let shown = self.shown();
+        if self.results.is_some() || places::is_virtual(&self.dir()) {
+            (0..shown.len()).collect()
+        } else {
+            listing::visible(shown, &self.query, hidden)
+        }
     }
 
     fn dir(&self) -> PathBuf {
@@ -1124,6 +1165,17 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
     let shown: &[Entry] = results.as_deref().unwrap_or(entries);
     let order: Vec<usize> = if searching || in_pc { (0..shown.len()).collect() } else { listing::visible(shown, query, hidden) };
     let mut new_sort = sort;
+    // a keyboard move asks for its row to be scrolled into view
+    let want_row: Option<usize> = ui.ctx().data_mut(|d| {
+        let id = egui::Id::new("minos-scroll-row");
+        match d.get_temp::<(usize, usize)>(id) {
+            Some((p, r)) if p == cx.pi => {
+                d.remove::<(usize, usize)>(id);
+                Some(r)
+            }
+            _ => None,
+        }
+    });
 
     match st.view {
         ViewMode::Details => {
@@ -1153,8 +1205,11 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
                 });
             };
             if in_pc {
-                TableBuilder::new(ui)
-                    .striped(true)
+                let mut tb = TableBuilder::new(ui);
+                if let Some(r) = want_row {
+                    tb = tb.scroll_to_row(r, None);
+                }
+                tb.striped(true)
                     .resizable(true)
                     .sense(Sense::click_and_drag())
                     .column(Column::initial(340.0).at_least(160.0).clip(true))
@@ -1201,6 +1256,9 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
                 let avail_w = ui.available_width();
                 let narrow = avail_w < 560.0;
                 let mut tb = TableBuilder::new(ui).striped(true).resizable(!narrow).sense(Sense::click_and_drag());
+                if let Some(r) = want_row {
+                    tb = tb.scroll_to_row(r, None);
+                }
                 if narrow {
                     let name_w = (avail_w - 84.0).max(100.0);
                     tb = tb.column(Column::exact(name_w).clip(true)).column(Column::exact(70.0));
@@ -1267,6 +1325,8 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
         }
         ViewMode::Gallery => {
             let size = GALLERY_SIZES[st.gallery_size.min(GALLERY_SIZES.len() - 1)];
+            let per_row = (ui.available_width() / (size + 12.0 + ui.spacing().item_spacing.x)).floor().max(1.0) as usize;
+            ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new("minos-cols"), per_row));
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     for (pos, &i) in order.iter().enumerate() {
@@ -1318,6 +1378,9 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
                             ui.painter().text(pos2(rect.center().x, rect.bottom() - 16.0), Align2::CENTER_CENTER, shown_name, FontId::proportional(13.0), tint.unwrap_or(pal.text));
                         }
                         let r = r.on_hover_text(&e.name);
+                        if want_row == Some(pos) {
+                            r.scroll_to_me(None);
+                        }
                         entry_interact(ui.ctx(), &r, e, pos, &order, shown, selected, anchor, &cx, actions);
                     }
                 });
@@ -1517,6 +1580,8 @@ struct App {
     transfer: Option<Transfer>,
     status: String,
     drives: Vec<places::Drive>,
+    /// Recently closed tabs (pane, folder), newest last, for Ctrl+Shift+T.
+    closed_tabs: Vec<(usize, PathBuf)>,
     drives_rx: Receiver<Vec<places::Drive>>,
     disks: Vec<places::Disk>,
     cloud: Option<CloudPlace>,
@@ -1587,6 +1652,7 @@ impl App {
             transfer: None,
             status: String::new(),
             drives,
+            closed_tabs: Vec::new(),
             drives_rx,
             disks,
             cloud: cloud_place,
@@ -1899,7 +1965,8 @@ impl App {
 
     fn apply(&mut self, ctx: &egui::Context, actions: Vec<Action>) {
         let hidden = self.st.show_hidden;
-        for a in actions {
+        let mut queue: std::collections::VecDeque<Action> = actions.into();
+        while let Some(a) = queue.pop_front() {
             match a {
                 Action::Focus(p) => self.focus = p,
                 Action::TogglePreview => {
@@ -1959,10 +2026,140 @@ impl App {
                 Action::CloseTab(p, i) => {
                     let pane = &mut self.panes[p];
                     if pane.tabs.len() > 1 && !pane.tabs[i].tab.pinned {
-                        pane.tabs.remove(i);
+                        let gone = pane.tabs.remove(i);
+                        self.closed_tabs.push((p, gone.dir()));
+                        self.closed_tabs.drain(..self.closed_tabs.len().saturating_sub(20));
                         pane.active = pane.active.min(pane.tabs.len() - 1);
                     }
                 }
+                Action::ReopenTab => {
+                    if let Some((p, path)) = self.closed_tabs.pop() {
+                        let sort = self.panes[p].sort;
+                        self.panes[p].tabs.push(TabView::new(path, false, sort, hidden));
+                        self.panes[p].active = self.panes[p].tabs.len() - 1;
+                        self.focus = p;
+                    }
+                }
+                Action::Back(p) => {
+                    let sort = self.panes[p].sort;
+                    let t = self.panes[p].cur();
+                    if t.tab.history.back().is_some() {
+                        t.search = None;
+                        t.results = None;
+                        t.reload(sort, hidden);
+                    }
+                }
+                Action::Forward(p) => {
+                    let sort = self.panes[p].sort;
+                    let t = self.panes[p].cur();
+                    if t.tab.history.forward().is_some() {
+                        t.search = None;
+                        t.results = None;
+                        t.reload(sort, hidden);
+                    }
+                }
+                Action::FocusOtherPane => {
+                    if self.st.split {
+                        self.focus = 1 - self.focus;
+                    }
+                }
+                Action::KeyOpen(p) => {
+                    let t = self.panes[p].cur();
+                    let sel: Vec<PathBuf> = t.selected.iter().cloned().collect();
+                    let dirs: Vec<&PathBuf> = sel.iter().filter(|s| s.is_dir() || places::is_virtual(s) || archive::split(s).is_some()).collect();
+                    if sel.len() == 1 && !dirs.is_empty() {
+                        let sort = self.panes[p].sort;
+                        self.panes[p].cur().navigate(sel[0].clone(), sort, hidden);
+                    } else {
+                        for f in sel {
+                            if archive::is_archive_file(&f) && f.is_file() {
+                                let sort = self.panes[p].sort;
+                                self.panes[p].cur().navigate(f, sort, hidden);
+                            } else if f.is_dir() {
+                                self.panes[p].tabs.push(TabView::new(f, false, self.panes[p].sort, hidden));
+                            } else {
+                                open_with_system(&f);
+                            }
+                        }
+                    }
+                }
+                Action::KeyNav(p, nav, extend) => {
+                    self.focus = p;
+                    let gallery = self.st.view == ViewMode::Gallery;
+                    let cols = if gallery { ctx.data(|d| d.get_temp::<usize>(egui::Id::new("minos-cols"))).unwrap_or(1).max(1) } else { 1 };
+                    // in the details list Left goes to the parent folder and Right into the selected folder
+                    if !gallery && matches!(nav, Nav::Left) {
+                        queue.push_front(Action::Up(p));
+                        continue;
+                    }
+                    if !gallery && matches!(nav, Nav::Right) {
+                        queue.push_front(Action::KeyOpen(p));
+                        continue;
+                    }
+                    let t = self.panes[p].cur();
+                    let order = t.order(hidden);
+                    if order.is_empty() {
+                        continue;
+                    }
+                    let shown = t.shown();
+                    let last = order.len() - 1;
+                    let cur = t
+                        .cursor
+                        .as_ref()
+                        .filter(|c| t.selected.contains(*c))
+                        .or_else(|| t.selected.iter().next())
+                        .and_then(|c| order.iter().position(|&i| shown[i].path == *c));
+                    let page = 10 * cols;
+                    let to = match (cur, nav) {
+                        (None, Nav::Up | Nav::End | Nav::PageUp | Nav::Left) => last,
+                        (None, _) => 0,
+                        (Some(c), Nav::Up) => c.saturating_sub(cols),
+                        (Some(c), Nav::Down) => (c + cols).min(last),
+                        (Some(c), Nav::Left) => c.saturating_sub(1),
+                        (Some(c), Nav::Right) => (c + 1).min(last),
+                        (Some(c), Nav::PageUp) => c.saturating_sub(page),
+                        (Some(c), Nav::PageDown) => (c + page).min(last),
+                        (Some(_), Nav::Home) => 0,
+                        (Some(_), Nav::End) => last,
+                    };
+                    let from = t.anchor.filter(|_| extend).or(cur).unwrap_or(to).min(last);
+                    t.selected.clear();
+                    if extend {
+                        for &i in &order[from.min(to)..=from.max(to)] {
+                            t.selected.insert(t.shown()[i].path.clone());
+                        }
+                    } else {
+                        t.selected.insert(t.shown()[order[to]].path.clone());
+                        t.anchor = Some(to);
+                    }
+                    t.cursor = Some(t.shown()[order[to]].path.clone());
+                    ctx.data_mut(|d| d.insert_temp(egui::Id::new("minos-scroll-row"), (p, to)));
+                }
+                Action::TypeFind(p, typed) => {
+                    let now = ctx.input(|i| i.time);
+                    let id = egui::Id::new("minos-typefind");
+                    let (mut buf, at) = ctx.data(|d| d.get_temp::<(String, f64)>(id)).unwrap_or_default();
+                    if now - at > 1.0 {
+                        buf.clear();
+                    }
+                    buf.push_str(&typed);
+                    ctx.data_mut(|d| d.insert_temp(id, (buf.clone(), now)));
+                    let t = self.panes[p].cur();
+                    let order = t.order(hidden);
+                    let lower = buf.to_lowercase();
+                    // typing the same letter again cycles through the names that start with it
+                    let start = t.cursor.as_ref().and_then(|c| order.iter().position(|&i| t.shown()[i].path == *c)).map(|c| if buf.chars().count() == 1 { c + 1 } else { c }).unwrap_or(0);
+                    let hit = (0..order.len()).map(|k| (start + k) % order.len()).find(|&k| t.shown()[order[k]].name.to_lowercase().starts_with(&lower));
+                    if let Some(k) = hit {
+                        let path = t.shown()[order[k]].path.clone();
+                        t.selected.clear();
+                        t.selected.insert(path.clone());
+                        t.anchor = Some(k);
+                        t.cursor = Some(path);
+                        ctx.data_mut(|d| d.insert_temp(egui::Id::new("minos-scroll-row"), (p, k)));
+                    }
+                }
+                Action::CloseWindow => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
                 Action::SelectTab(p, i) => {
                     self.panes[p].active = i;
                     let sort = self.panes[p].sort;
@@ -2434,11 +2631,77 @@ impl eframe::App for App {
         let mut actions: Vec<Action> = vec![];
         chrome::resize_edges(&ctx);
 
+        // Tab and window shortcuts work everywhere, even in a text field.
+        {
+            let f = self.focus;
+            let n = self.panes[f].tabs.len();
+            let cur = self.panes[f].active;
+            ctx.input_mut(|i| {
+                use egui::{Key, Modifiers};
+                if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Tab) {
+                    actions.push(Action::SelectTab(f, (cur + n - 1) % n));
+                } else if i.consume_key(Modifiers::COMMAND, Key::Tab) {
+                    actions.push(Action::SelectTab(f, (cur + 1) % n));
+                }
+                if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::T) {
+                    actions.push(Action::ReopenTab);
+                } else if i.consume_key(Modifiers::COMMAND, Key::T) {
+                    actions.push(Action::OpenTab(f, self.panes[f].tabs[cur].dir()));
+                }
+                if i.modifiers.alt && !i.modifiers.command {
+                    if i.consume_key(Modifiers::ALT, Key::ArrowLeft) {
+                        actions.push(Action::Back(f));
+                    }
+                    if i.consume_key(Modifiers::ALT, Key::ArrowRight) {
+                        actions.push(Action::Forward(f));
+                    }
+                }
+                for (k, key) in [Key::Num1, Key::Num2, Key::Num3, Key::Num4, Key::Num5, Key::Num6, Key::Num7, Key::Num8, Key::Num9].into_iter().enumerate() {
+                    // Ctrl+1..8 pick that tab, Ctrl+9 the last, as in browsers
+                    if i.consume_key(Modifiers::COMMAND, key) {
+                        let to = if k == 8 { n - 1 } else { k };
+                        if to < n {
+                            actions.push(Action::SelectTab(f, to));
+                        }
+                    }
+                }
+                if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::W) {
+                    actions.push(Action::CloseWindow);
+                } else if i.consume_key(Modifiers::COMMAND, Key::W) {
+                    actions.push(Action::CloseTab(f, cur));
+                }
+            });
+        }
+
         // Keyboard shortcuts, only when no text field has focus.
         if !ctx.egui_wants_keyboard_input() {
             let sel = self.selected_in_focus();
             let f = self.focus;
             let mut open_search = false;
+            ctx.input_mut(|i| {
+                use egui::{Key, Modifiers};
+                for (key, nav) in [(Key::ArrowUp, Nav::Up), (Key::ArrowDown, Nav::Down), (Key::ArrowLeft, Nav::Left), (Key::ArrowRight, Nav::Right), (Key::Home, Nav::Home), (Key::End, Nav::End), (Key::PageUp, Nav::PageUp), (Key::PageDown, Nav::PageDown)] {
+                    if i.consume_key(Modifiers::NONE, key) {
+                        actions.push(Action::KeyNav(f, nav, false));
+                    } else if i.consume_key(Modifiers::SHIFT, key) {
+                        actions.push(Action::KeyNav(f, nav, true));
+                    }
+                }
+                if i.consume_key(Modifiers::NONE, Key::Enter) {
+                    actions.push(Action::KeyOpen(f));
+                }
+                if i.consume_key(Modifiers::NONE, Key::Tab) {
+                    actions.push(Action::FocusOtherPane);
+                }
+                // plain typing finds an entry by its first letters (not with Ctrl or Alt held)
+                if !i.modifiers.command && !i.modifiers.alt {
+                    let typed: String = i.events.iter().filter_map(|e| if let egui::Event::Text(t) = e { Some(t.as_str()) } else { None }).collect();
+                    let typed: String = typed.chars().filter(|c| !c.is_control()).collect();
+                    if !typed.is_empty() {
+                        actions.push(Action::TypeFind(f, typed));
+                    }
+                }
+            });
             ctx.input(|i| {
                 let cmd = i.modifiers.command;
                 // egui turns Ctrl+C / Ctrl+X / Ctrl+V into dedicated events and does NOT also
@@ -2457,12 +2720,6 @@ impl eframe::App for App {
                 }
                 if cmd && i.key_pressed(egui::Key::L) {
                     actions.push(Action::EditAddress(f));
-                }
-                if cmd && i.key_pressed(egui::Key::T) {
-                    actions.push(Action::OpenTab(f, self.panes[f].tabs[self.panes[f].active].dir()));
-                }
-                if cmd && i.key_pressed(egui::Key::W) {
-                    actions.push(Action::CloseTab(f, self.panes[f].active));
                 }
                 if i.key_pressed(egui::Key::F5) {
                     actions.push(Action::Reload);
