@@ -1552,14 +1552,23 @@ impl State {
         }
         let on_popup = self.pointer_surface.and_then(|i| self.surfs.get(i)).map(|s| s.kind == Kind::Popup).unwrap_or(false);
         if on_popup {
-            let (cx, cy, cw, ch) = self.popup_card;
+            let (cx, cy, cw, _) = self.popup_card;
             let (px, py) = self.pointer_pos;
-            let m = 28.0;
-            if px < cx - m || px > cx + cw + m || py < cy - m {
-                self.close_popup();
-                return true;
+            // the safe ground: the card and the icon it came from (both widened), and everything between them, so a
+            // diagonal move from the icon to the card never crosses outside it
+            let anchor = match &self.popup {
+                Some(Popup { kind: PopupKind::Tray(p), .. }) => p.anchor_x,
+                _ => cx + cw / 2.0,
+            };
+            let (lo, hi) = ((cx).min(anchor - 70.0) - 40.0, (cx + cw).max(anchor + 70.0) + 40.0);
+            if px < lo || px > hi || py < cy - 40.0 {
+                // leaving it closes the list after a moment, not at once
+                if self.preview_close.is_none() {
+                    self.preview_close = Some(Instant::now() + Duration::from_millis(400));
+                }
+            } else {
+                self.preview_close = None;
             }
-            self.preview_close = None;
         }
         self.dirty = true; // the row under the pointer lights up
         false
@@ -2413,10 +2422,22 @@ impl State {
         // resting on a dock app starts the second after which its windows are listed
         match self.dock_item_at(i, new) {
             Some((id, along)) if id != shell::TRASH_ID => {
-                if self.dock_hover.as_ref().map(|h| h.0 != id).unwrap_or(true) {
-                    self.dock_hover = Some((id.clone(), Instant::now(), along, self.surfs[i].output));
-                    if matches!(self.popup, Some(Popup { kind: PopupKind::Tray(trayui::TrayPop { mode: trayui::TrayMode::Windows { .. }, .. }), .. })) {
+                let open_for = match &self.popup {
+                    Some(Popup { kind: PopupKind::Tray(trayui::TrayPop { mode: trayui::TrayMode::Windows { app_id }, .. }), .. }) => Some(app_id.clone()),
+                    _ => None,
+                };
+                match open_for {
+                    // still on the app whose windows are listed: leave everything as it is
+                    Some(open) if open == id => {}
+                    Some(_) => {
+                        // another app: its list comes after its own second
                         self.close_popup();
+                        self.dock_hover = Some((id.clone(), Instant::now(), along, self.surfs[i].output));
+                    }
+                    None => {
+                        if self.dock_hover.as_ref().map(|h| h.0 != id).unwrap_or(true) {
+                            self.dock_hover = Some((id.clone(), Instant::now(), along, self.surfs[i].output));
+                        }
                     }
                 }
                 self.preview_close = None;
