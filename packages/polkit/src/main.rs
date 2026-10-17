@@ -103,8 +103,9 @@ fn dialog() -> eframe::Result {
     });
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([440.0, 250.0])
+            .with_inner_size([480.0, 330.0])
             .with_resizable(false)
+            .with_decorations(false)
             .with_title("Authentication required")
             .with_app_id("labyrinth-polkit")
             .with_always_on_top(),
