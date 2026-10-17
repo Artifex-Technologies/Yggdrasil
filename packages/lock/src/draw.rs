@@ -103,5 +103,12 @@ pub fn fill_rounded(pix: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, c:
 }
 
 pub fn fill_circle(pix: &mut Pixmap, cx: f32, cy: f32, r: f32, c: Rgba) {
-    fill_rounded(pix, cx - r, cy - r, r * 2.0, r * 2.0, r, c);
+    let mut pb = PathBuilder::new();
+    pb.push_circle(cx, cy, r);
+    if let Some(path) = pb.finish() {
+        let mut paint = Paint::default();
+        paint.set_color(Color::from_rgba8(c.0, c.1, c.2, c.3));
+        paint.anti_alias = true;
+        pix.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+    }
 }

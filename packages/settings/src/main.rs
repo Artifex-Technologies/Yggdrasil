@@ -56,6 +56,7 @@ enum AppSub {
     Notifs,
     Wallpaper,
     Minos,
+    Lock,
 }
 
 const PAGES: [(Page, &str, Icon); 15] = [
@@ -165,6 +166,8 @@ struct App {
     app_sub: AppSub,
     /// Developer page: the filter on the list of KDE settings.
     dev_filter: String,
+    /// The lock screen previews are being (or have been) drawn for this visit to the page.
+    lock_previews_started: bool,
     app_sort: usize,
     app_sel: Option<String>,
     /// What you decided for the open app in Ask mode, refreshed every few seconds.
@@ -217,6 +220,7 @@ impl App {
             app_tab: 0,
             app_sub: AppSub::Main,
             dev_filter: String::new(),
+            lock_previews_started: false,
             app_sort: 0,
             app_sel: None,
             ask_cache: None,
@@ -513,6 +517,64 @@ fn loading(ui: &mut egui::Ui) {
 }
 
 impl App {
+    /// Appearance > Lock screen: the designs, each drawn by labyrinth-lock into a picture (nothing is locked), and which one is in use.
+    fn lock_page(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
+        const DESIGNS: [(&str, &str, &str); 4] = [
+            ("split", "Split", "Wallpaper on the left, a frosted sign-in panel on the right"),
+            ("classic", "Classic", "Clock and password field, centred on a dark background"),
+            ("zen", "Zen", "The wallpaper, a small clock and a quiet password field"),
+            ("poster", "Poster", "A huge stacked clock, the field tucked in the corner"),
+        ];
+        let cache = std::env::var("HOME").map(|h| std::path::PathBuf::from(h).join(".cache/labyrinth/lock-previews")).unwrap_or_default();
+        let conf = std::env::var("HOME").map(|h| std::path::PathBuf::from(h).join(".config/labyrinth/lock.conf")).unwrap_or_default();
+        let current = std::fs::read_to_string(&conf).ok().and_then(|t| t.lines().filter_map(|l| l.split_once('=')).find(|(k, _)| k.trim() == "design").map(|(_, v)| v.trim().to_string())).unwrap_or_else(|| "split".into());
+        if !self.lock_previews_started {
+            self.lock_previews_started = true;
+            let (dir, ctx2) = (cache.clone(), ctx.clone());
+            std::thread::spawn(move || {
+                let _ = std::fs::create_dir_all(&dir);
+                for (id, _, _) in DESIGNS {
+                    let out = dir.join(format!("{id}.png"));
+                    let _ = std::process::Command::new("labyrinth-lock").args(["--preview", id, "--size", "640x360", "--typed", "6", "--out"]).arg(&out).status();
+                    ctx2.forget_image(&format!("file://{}", out.display()));
+                }
+                ctx2.request_repaint();
+            });
+        }
+        ui::group(ui, pal, None, |ui| {
+            ui.add_space(6.0);
+            ui.label(RichText::new("Pick how the lock screen looks. Labyrinth's own lock screen needs a desktop that supports it (the screen is still locked by KDE's until then); your choice is kept and used as soon as it can be.").size(12.5).color(pal.dim));
+            ui.add_space(6.0);
+        });
+        for (id, name, about) in DESIGNS {
+            ui::group(ui, pal, None, |ui| {
+                ui.horizontal(|ui| {
+                    let img = cache.join(format!("{id}.png"));
+                    let (r, _) = ui.allocate_exact_size(vec2(224.0, 126.0), Sense::hover());
+                    ui.painter().rect_filled(r, CornerRadius::same(8), pal.bg);
+                    if img.is_file() {
+                        ui.put(r, egui::Image::new(format!("file://{}", img.display())).fit_to_exact_size(r.size()).corner_radius(8));
+                    }
+                    ui.add_space(8.0);
+                    ui.vertical(|ui| {
+                        ui.add_space(6.0);
+                        ui.label(RichText::new(name).size(16.0).strong());
+                        ui.add(egui::Label::new(RichText::new(about).size(12.5).color(pal.dim)).wrap());
+                        ui.add_space(8.0);
+                        if current == id {
+                            ui.label(RichText::new("In use").color(pal.accent));
+                        } else if ui::action(ui, pal, "Use").clicked() {
+                            if let Some(d) = conf.parent() {
+                                let _ = std::fs::create_dir_all(d);
+                            }
+                            let _ = std::fs::write(&conf, format!("# Which lock screen design labyrinth-lock draws (set in Settings > Appearance > Lock screen)\ndesign = {id}\n"));
+                        }
+                    });
+                });
+            });
+        }
+    }
+
     /// Developer Mode: the developer options, and the KDE settings that Labyrinth's Settings hides (each opens in KDE's own panel).
     fn page_developer(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         ui::group(ui, pal, None, |ui| {
@@ -963,6 +1025,7 @@ impl App {
                 AppSub::Bar => "Top bar and dock",
                 AppSub::Notifs => "Notifications",
                 AppSub::Minos => "Minos",
+                AppSub::Lock => "Lock screen",
                 _ => "Wallpaper",
             };
             ui.horizontal(|ui| {
@@ -1017,6 +1080,12 @@ impl App {
                         self.app_sub = AppSub::Wallpaper;
                     }
                 });
+                ui::row(ui, pal, false, "Lock screen", Some("How the screen looks while it is locked"), |ui| {
+                    if ui::quiet(ui, pal, "Open  \u{203a}").clicked() {
+                        self.app_sub = AppSub::Lock;
+                        self.lock_previews_started = false;
+                    }
+                });
                 ui::row(ui, pal, false, "Minos", Some("The file manager: make its window see-through"), |ui| {
                     if ui::quiet(ui, pal, "Open  \u{203a}").clicked() {
                         self.app_sub = AppSub::Minos;
@@ -1052,6 +1121,9 @@ impl App {
                 pt.rect_stroke(win, 6.0, egui::Stroke::new(1.0, dark.border), egui::StrokeKind::Inside);
             });
         });
+        }
+        if self.app_sub == AppSub::Lock {
+            self.lock_page(ui, pal, ctx);
         }
         if self.app_sub == AppSub::Icons {
         ui::group(ui, pal, Some("Icons"), |ui| {

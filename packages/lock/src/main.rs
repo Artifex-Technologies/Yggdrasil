@@ -9,6 +9,7 @@
 //! Exit status: 0 unlocked, 1 the compositor refused or ended the lock without an unlock, 2 setup problem.
 
 mod auth;
+mod design;
 mod draw;
 mod state;
 
@@ -62,6 +63,11 @@ struct App {
     auth: Box<dyn Authenticator>,
     user: String,
     fonts: draw::Fonts,
+    design: design::Design,
+    wallpaper: Option<tiny_skia::Pixmap>,
+    avatar: Option<Pixmap>,
+    /// The wallpaper scaled to a screen's size, with its blurred copy, by size.
+    walls: std::collections::HashMap<(u32, u32), (Pixmap, Pixmap)>,
     /// Set when the program should end, with its exit status.
     done: Option<i32>,
     /// Tests only (feature `test-auth`): keys to type by themselves once the screen is locked, from LABYRINTH_LOCK_TEST_KEYS.
@@ -225,38 +231,31 @@ impl App {
         s.wl.commit();
     }
 
-    fn paint(&self, pix: &mut Pixmap) {
-        let (w, h) = (pix.width() as f32, pix.height() as f32);
-        pix.fill(tiny_skia::Color::from_rgba8(10, 10, 16, 255));
-        let (time, date) = clock_text();
-        let f = &self.fonts;
-        let tw = draw::text_width(&f.bold, 104.0, &time);
-        draw::draw_text(pix, &f.bold, 104.0, (w - tw) / 2.0, h * 0.30, (240, 240, 246, 255), &time);
-        let dw = draw::text_width(&f.regular, 24.0, &date);
-        draw::draw_text(pix, &f.regular, 24.0, (w - dw) / 2.0, h * 0.30 + 82.0, (160, 160, 176, 255), &date);
-        // the password field
-        let (fw, fh) = (380.0, 52.0);
-        let (fx, fy) = ((w - fw) / 2.0, h * 0.52);
-        let waiting = self.lock_state.waiting(Instant::now());
-        draw::fill_rounded(pix, fx, fy, fw, fh, 14.0, (28, 28, 38, 255));
-        let n = self.lock_state.dots();
-        if n == 0 {
-            let hint = if waiting { "Please wait…" } else { "Password" };
-            draw::draw_text(pix, &f.regular, 18.0, fx + 20.0, fy + fh / 2.0, (120, 120, 138, 255), hint);
-        } else {
-            let shown = n.min(22);
-            let total = shown as f32 * 20.0;
-            for i in 0..shown {
-                draw::fill_circle(pix, fx + (fw - total) / 2.0 + i as f32 * 20.0 + 10.0, fy + fh / 2.0, 6.0, (240, 240, 246, 255));
+    fn paint(&mut self, pix: &mut Pixmap) {
+        let key = (pix.width(), pix.height());
+        if !self.walls.contains_key(&key) {
+            if let Some(w) = self.wallpaper.as_ref().and_then(|w| design::cover(w, key.0, key.1)) {
+                if let Some(b) = design::blur(&w) {
+                    self.walls.insert(key, (w, b));
+                }
             }
         }
-        let uw = draw::text_width(&f.bold, 18.0, &self.user);
-        draw::draw_text(pix, &f.bold, 18.0, (w - uw) / 2.0, fy - 30.0, (200, 200, 214, 255), &self.user);
-        if !self.lock_state.message.is_empty() {
-            let m = &self.lock_state.message;
-            let mw = draw::text_width(&f.regular, 16.0, m);
-            draw::draw_text(pix, &f.regular, 16.0, (w - mw) / 2.0, fy + fh + 34.0, (232, 84, 84, 255), m);
-        }
+        let (time, date) = clock_text();
+        let scene = design::Scene {
+            fonts: &self.fonts,
+            user: &self.user,
+            dots: self.lock_state.dots(),
+            waiting: self.lock_state.waiting(Instant::now()),
+            message: &self.lock_state.message,
+            time,
+            date,
+            greeting: design::greeting(current_hour()),
+            wall: self.walls.get(&key).map(|w| &w.0),
+            blurred: self.walls.get(&key).map(|w| &w.1),
+            avatar: self.avatar.as_ref(),
+            accent: accent(),
+        };
+        design::paint(self.design, pix, &scene);
     }
 }
 
@@ -276,6 +275,36 @@ fn clock_text() -> (String, String) {
     (fmt("%H:%M"), fmt("%A, %-d %B %Y"))
 }
 
+fn current_hour() -> u32 {
+    unsafe {
+        let t = libc::time(std::ptr::null_mut());
+        let mut tm: libc::tm = std::mem::zeroed();
+        libc::localtime_r(&t, &mut tm);
+        tm.tm_hour as u32
+    }
+}
+
+/// The desktop's accent color (kdeglobals), else Labyrinth purple.
+fn accent() -> (u8, u8, u8, u8) {
+    let dir = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")));
+    let text = dir.and_then(|d| std::fs::read_to_string(d.join("kdeglobals")).ok()).unwrap_or_default();
+    let mut general = false;
+    for l in text.lines() {
+        let l = l.trim();
+        if l.starts_with('[') {
+            general = l == "[General]";
+        } else if general {
+            if let Some(v) = l.strip_prefix("AccentColor=") {
+                let p: Vec<u8> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+                if p.len() == 3 {
+                    return (p[0], p[1], p[2], 255);
+                }
+            }
+        }
+    }
+    (124, 84, 214, 255)
+}
+
 fn user_name() -> String {
     std::env::var("USER").ok().filter(|u| !u.is_empty()).unwrap_or_else(|| {
         let mut buf = vec![0u8; 4096];
@@ -290,7 +319,31 @@ fn user_name() -> String {
     })
 }
 
+/// `labyrinth-lock --preview DESIGN --out FILE [--size 1280x720] [--typed N] [--message TEXT]`: draw a design into a picture; nothing is locked.
+fn preview(args: &[String]) -> ! {
+    let get = |k: &str| args.iter().position(|a| a == k).and_then(|i| args.get(i + 1)).cloned();
+    let Some(d) = get("--preview").and_then(|n| design::Design::parse(&n)) else { die("unknown design (split, classic, zen, poster)") };
+    let out = get("--out").unwrap_or_else(|| die("--out FILE is needed"));
+    let (w, h) = get("--size").and_then(|s| s.split_once('x').map(|(a, b)| (a.parse().unwrap_or(1280), b.parse().unwrap_or(720)))).unwrap_or((1280u32, 720u32));
+    let fonts = draw::Fonts::load().unwrap_or_else(|| die("no fonts found"));
+    let wall = get("--wallpaper").map(std::path::PathBuf::from).or_else(design::wallpaper_path).and_then(|p| design::load_picture(&p)).and_then(|p| design::cover(&p, w, h));
+    let blurred = wall.as_ref().and_then(design::blur);
+    let avatar = design::avatar_path().and_then(|p| design::load_picture(&p));
+    let (time, date) = clock_text();
+    let user = get("--user").unwrap_or_else(user_name);
+    let message = get("--message").unwrap_or_default();
+    let scene = design::Scene { fonts: &fonts, user: &user, dots: get("--typed").and_then(|n| n.parse().ok()).unwrap_or(0), waiting: false, message: &message, time, date, greeting: design::greeting(current_hour()), wall: wall.as_ref(), blurred: blurred.as_ref(), avatar: avatar.as_ref(), accent: accent() };
+    let mut pix = Pixmap::new(w, h).unwrap_or_else(|| die("bad size"));
+    design::paint(d, &mut pix, &scene);
+    pix.save_png(&out).unwrap_or_else(|e| die(&format!("cannot write {out}: {e}")));
+    std::process::exit(0)
+}
+
 fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--preview") {
+        preview(&args);
+    }
     let conn = match Connection::connect_to_env() {
         Ok(c) => c,
         Err(e) => {
@@ -320,7 +373,7 @@ fn main() {
 
     // Lock first, then cover every output with a lock surface (the compositor says "locked" once they are shown).
     let lock = manager.lock(&qh, ());
-    let mut app = App { qh: qh.clone(), conn: conn.clone(), shm, lock: lock.clone(), surfaces: vec![], locked: false, lock_state: Lock::default(), xkb: None, auth: authenticator, user: user_name(), fonts, done: None, #[cfg(feature = "test-auth")] test_keys: std::env::var("LABYRINTH_LOCK_TEST_KEYS").ok().map(|k| (Instant::now(), k)) };
+    let mut app = App { qh: qh.clone(), conn: conn.clone(), shm, lock: lock.clone(), surfaces: vec![], locked: false, lock_state: Lock::default(), xkb: None, auth: authenticator, user: user_name(), fonts, design: design::chosen(), wallpaper: design::wallpaper_path().and_then(|p| design::load_picture(&p)), avatar: design::avatar_path().and_then(|p| design::load_picture(&p)), walls: Default::default(), done: None, #[cfg(feature = "test-auth")] test_keys: std::env::var("LABYRINTH_LOCK_TEST_KEYS").ok().map(|k| (Instant::now(), k)) };
     for (i, out) in outputs.iter().enumerate() {
         let wl = compositor.create_surface(&qh, ());
         let ls = lock.get_lock_surface(&wl, out, &qh, i);
