@@ -31,3 +31,10 @@ An app's page can show a fuller description, screenshots, the licence, the maker
 - Pictures are downloaded from where that data points (Flathub's media server, the app's repository) into `~/.cache/labyrinth/market/img`, HTTPS only, 8 MB each.
 
 **Nothing is fetched until you say yes.** The first app page with remote data asks ("Show screenshots and a fuller description?"); the answer is kept in `~/.config/labyrinth/market/settings.json` and can be changed under Sources. Added repositories cannot set these fields (they are read only from Labyrinth's own catalog), so a repository cannot make the Marketplace contact an address of its choosing.
+
+## Install progress, reinstall (2026-10-17)
+Installs, removals and updates of **reviewed** apps now run inside the Marketplace: the Get pill fills as it goes, the app's page shows a progress card (what it is doing, a bar, and "Show details" for the output), and **Activity** in the sidebar lists everything running or finished (the badge counts running ones). A desktop notification says when it is done. **Reinstall** (next to Remove, on an installed reviewed app) runs the install again without `--needed`.
+- Commands: `pkexec pacman -S/-Rs --noconfirm` (repositories), `yay -S --noconfirm --sudo labyrinth-sudo-pkexec` (AUR), `flatpak install --user` (Flathub), `labyrinth-apps install/remove` (components, with `LABYRINTH_SUDO=labyrinth-sudo-pkexec`), `yay -Syu` for "Update everything".
+- Administrator rights are asked for through Labyrinth's own password box (polkit); `labyrinth-sudo-pkexec` is a stand-in for `sudo` that yay and labyrinth-apps use. A dismissed box shows as "Cancelled".
+- Apps from repositories you added are not run this way: they still open a terminal, so their prompts (an AUR build file, for instance) can be read before saying yes.
+- Not done: cancelling a running install (the root part cannot be signalled by the user), queueing, per-package progress for AUR builds (the bar moves while it builds).

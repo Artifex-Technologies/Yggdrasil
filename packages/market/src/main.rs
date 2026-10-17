@@ -3,6 +3,7 @@
 
 mod catalog;
 mod details;
+mod install;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -22,6 +23,8 @@ enum Page {
     /// A category's sub-category: (category, sub-category)
     Sub(String, String),
     Updates,
+    /// Installs and removals in progress, and finished ones.
+    Activity,
     Detail(usize),
     Sources,
     Search,
@@ -50,6 +53,9 @@ struct App {
     apps: Vec<Entry>,
     installed: Installed,
     busy: HashSet<String>,
+    /// Installs, removals and updates run inside the Marketplace (newest last), and which of them show their log.
+    jobs: Vec<install::Shared>,
+    show_log: HashSet<String>,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
     // the "add a repository" form
@@ -108,6 +114,8 @@ impl App {
             apps: vec![],
             installed: Installed::default(),
             busy: HashSet::new(),
+            jobs: vec![],
+            show_log: HashSet::new(),
             tx,
             rx,
             add_name: String::new(),
@@ -295,16 +303,20 @@ impl App {
 
     /// The Get / Open / Update pill for an entry. Returns what was asked.
     fn pill(&mut self, ui: &mut egui::Ui, e: &Entry, big: bool) -> Option<&'static str> {
-        let (label, kind) = if self.busy.contains(&e.id) {
-            ("...", "busy")
+        let job = self.job_snapshot(&e.id).filter(|j| j.status == install::Status::Running);
+        let running_label = job.as_ref().map(|j| j.frac.map(|f| format!("{}%", (f * 100.0) as u32)).unwrap_or_else(|| "...".into()));
+        let (label, kind) = if let Some(l) = running_label {
+            (l, "busy")
+        } else if self.busy.contains(&e.id) {
+            ("...".to_string(), "busy")
         } else if matches!(e.source, Source::Plugin { .. }) {
-            ("VIEW", "view")
+            ("VIEW".to_string(), "view")
         } else if self.installed.update_for(e) {
-            ("UPDATE", "get")
+            ("UPDATE".to_string(), "get")
         } else if self.installed.has(e) {
-            ("OPEN", "open")
+            ("OPEN".to_string(), "open")
         } else {
-            ("GET", "get")
+            ("GET".to_string(), "get")
         };
         let size = if big { vec2(92.0, 30.0) } else { vec2(70.0, 26.0) };
         let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
@@ -315,23 +327,168 @@ impl App {
             _ => self.pal.field,
         };
         ui.painter().rect_filled(rect, CornerRadius::same(255), fill);
+        if let Some(j) = &job {
+            // the pill fills with the accent as the install goes (a moving bit when no percentage is known)
+            let t = ui.input(|i| i.time) as f32;
+            let (a, b) = match j.frac {
+                Some(f) => (0.0, f.clamp(0.04, 1.0)),
+                None => (((t * 0.8) % 1.2 - 0.2).max(0.0), ((t * 0.8) % 1.2 + 0.2).min(1.0)),
+            };
+            if b > a {
+                let bar = Rect::from_min_max(pos2(rect.left() + rect.width() * a, rect.top()), pos2(rect.left() + rect.width() * b, rect.bottom()));
+                ui.painter().with_clip_rect(rect).rect_filled(bar, CornerRadius::same(255), self.pal.accent.gamma_multiply(0.45));
+            }
+        }
         let col = if kind == "get" { self.pal.on_accent() } else { self.pal.accent };
-        ui.painter().text(rect.center(), Align2::CENTER_CENTER, label, FontId::proportional(if big { 14.0 } else { 12.5 }), col);
+        ui.painter().text(rect.center(), Align2::CENTER_CENTER, &label, FontId::proportional(if big { 14.0 } else { 12.5 }), col);
         if resp.clicked() && kind != "busy" {
             return Some(kind);
         }
         None
     }
 
+    /// The newest job for an entry (running, or the last one that finished).
+    fn job_snapshot(&self, id: &str) -> Option<install::Job> {
+        self.jobs.iter().rev().filter_map(|j| j.lock().ok().map(|g| g.clone())).find(|j| j.id == id)
+    }
+
+    fn is_running(&self, id: &str) -> bool {
+        self.job_snapshot(id).map(|j| j.status == install::Status::Running).unwrap_or(false)
+    }
+
+    /// Install, reinstall or remove an entry. Reviewed apps run here with progress (the password asked for in Labyrinth's own box);
+    /// anything else opens a terminal, where the prompts can be read first.
+    fn run_job(&mut self, ctx: &egui::Context, idx: usize, op: install::Op) {
+        let e = self.apps[idx].clone();
+        if self.is_running(&e.id) {
+            return;
+        }
+        if e.reviewed {
+            if let Some((prog, args)) = install::command(&e, op) {
+                self.start_job(ctx, &e.id, &e.name, op, prog, args);
+                return;
+            }
+        }
+        let script = if op == install::Op::Remove { catalog::remove_script(&e) } else { catalog::install_script(&e) };
+        if let Some(script) = script {
+            self.busy.insert(e.id.clone());
+            run_in_terminal(script, e.id.clone(), self.tx.clone(), ctx.clone());
+        }
+    }
+
+    fn run_update_all(&mut self, ctx: &egui::Context) {
+        if self.is_running("*update*") {
+            return;
+        }
+        let dummy = Entry { id: "*update*".into(), name: "Updates".into(), subtitle: String::new(), description: String::new(), category: String::new(), subcategory: String::new(), source: Source::Pacman(vec![]), icon: String::new(), reviewed: true, note: String::new(), tags: vec![], from: String::new(), launch: String::new(), appstream: String::new(), flathub: String::new() };
+        if let Some((prog, args)) = install::command(&dummy, install::Op::UpdateAll) {
+            self.start_job(ctx, "*update*", "All updates", install::Op::UpdateAll, prog, args);
+        }
+    }
+
+    fn start_job(&mut self, ctx: &egui::Context, id: &str, name: &str, op: install::Op, prog: String, args: Vec<String>) {
+        let (tx, ctx_a, ctx_b, id2, name2) = (self.tx.clone(), ctx.clone(), ctx.clone(), id.to_string(), name.to_string());
+        let job = install::start(id, name, op, prog, args, move || ctx_a.request_repaint(), move |status| {
+            // tell the desktop, and the window (so it looks at what is installed again)
+            let text = match &status {
+                install::Status::Done => format!("{name2} {}", op.done()),
+                install::Status::Failed(why) => format!("{name2}: {why}"),
+                install::Status::Running => String::new(),
+            };
+            let _ = std::process::Command::new("notify-send").args(["-a", "Marketplace", "-i", "labyrinth-market", &text]).status();
+            let _ = tx.send(Msg::Finished(id2));
+            ctx_b.request_repaint();
+        });
+        self.jobs.push(job);
+        // hide the earlier finished jobs of the same entry
+        let keep = self.jobs.len() - 1;
+        let mut i = 0;
+        self.jobs.retain(|j| {
+            let k = i;
+            i += 1;
+            k == keep || j.lock().map(|g| g.id != id || g.status == install::Status::Running).unwrap_or(true)
+        });
+    }
+
+    /// What an install is doing: its phase, a bar, and (on request) the output.
+    fn progress_card(&mut self, ui: &mut egui::Ui, j: &install::Job) {
+        let (fill, tone) = match &j.status {
+            install::Status::Running => (self.pal.field, self.pal.accent),
+            install::Status::Done => (self.pal.field, self.pal.green),
+            install::Status::Failed(_) => (self.pal.red.gamma_multiply(0.15), self.pal.red),
+        };
+        egui::Frame::new().fill(fill).corner_radius(CornerRadius::same(10)).inner_margin(Margin::same(12)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                let head = match &j.status {
+                    install::Status::Running => format!("{} {}", j.op.verb(), j.title),
+                    install::Status::Done => format!("{} {}", j.title, j.op.done()),
+                    install::Status::Failed(_) => format!("{} could not be {}", j.title, j.op.done()),
+                };
+                ui.label(RichText::new(head).strong());
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let open = self.show_log.contains(&j.id);
+                    if ui.add(egui::Label::new(RichText::new(if open { "Hide details" } else { "Show details" }).size(12.5).color(self.pal.accent)).sense(Sense::click())).clicked() {
+                        if open {
+                            self.show_log.remove(&j.id);
+                        } else {
+                            self.show_log.insert(j.id.clone());
+                        }
+                    }
+                });
+            });
+            match &j.status {
+                install::Status::Failed(why) => {
+                    ui.label(RichText::new(why).color(self.pal.red));
+                }
+                _ => {
+                    ui.label(RichText::new(&j.phase).size(12.5).color(self.pal.dim));
+                }
+            }
+            // the bar
+            let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 8.0), Sense::hover());
+            ui.painter().rect_filled(r, CornerRadius::same(4), self.pal.border.gamma_multiply(0.8));
+            let t = ui.input(|i| i.time) as f32;
+            let (a, b) = match (&j.status, j.frac) {
+                (install::Status::Done, _) => (0.0, 1.0),
+                (install::Status::Failed(_), f) => (0.0, f.unwrap_or(0.0)),
+                (_, Some(f)) => (0.0, f.clamp(0.02, 1.0)),
+                (_, None) => (((t * 0.7) % 1.3 - 0.3).max(0.0), ((t * 0.7) % 1.3).min(1.0)),
+            };
+            if b > a {
+                ui.painter().rect_filled(Rect::from_min_max(pos2(r.left() + r.width() * a, r.top()), pos2(r.left() + r.width() * b, r.bottom())), CornerRadius::same(4), tone);
+            }
+            if self.show_log.contains(&j.id) {
+                ui.add_space(6.0);
+                egui::ScrollArea::vertical().id_salt(("log", &j.id)).max_height(180.0).stick_to_bottom(true).show(ui, |ui| {
+                    for l in j.log.iter().rev().take(60).rev() {
+                        ui.label(RichText::new(l).monospace().size(11.5).color(self.pal.dim));
+                    }
+                });
+            }
+        });
+    }
+
+    fn page_activity(&mut self, ui: &mut egui::Ui) {
+        self.heading(ui, "Activity");
+        let jobs: Vec<install::Job> = self.jobs.iter().rev().filter_map(|j| j.lock().ok().map(|g| g.clone())).collect();
+        if jobs.is_empty() {
+            ui.label(RichText::new("Nothing running. Installs, removals and updates show up here while they work.").color(self.pal.dim));
+            return;
+        }
+        for j in &jobs {
+            self.progress_card(ui, j);
+            ui.add_space(8.0);
+        }
+        if jobs.iter().any(|j| j.status != install::Status::Running) && ui.button("Clear finished").clicked() {
+            self.jobs.retain(|j| j.lock().map(|g| g.status == install::Status::Running).unwrap_or(false));
+        }
+    }
+
     fn do_pill(&mut self, ctx: &egui::Context, idx: usize, what: &str) {
         let e = self.apps[idx].clone();
         match what {
-            "get" => {
-                if let Some(script) = catalog::install_script(&e) {
-                    self.busy.insert(e.id.clone());
-                    run_in_terminal(script, e.id.clone(), self.tx.clone(), ctx.clone());
-                }
-            }
+            "get" => self.run_job(ctx, idx, install::Op::Install),
             "open" => {
                 let name = if e.launch.is_empty() { e.id.clone() } else { e.launch.clone() };
                 let _ = std::process::Command::new("gtk-launch").arg(name).spawn();
@@ -400,7 +557,6 @@ impl App {
             egui::load::TexturePoll::Ready { texture } => Some(texture),
             _ => None,
         });
-        let steps = 24;
         if let Some(t) = &tex {
             let (ta, ca) = (t.size.x / t.size.y, rect.width() / rect.height());
             let uv = if ta > ca {
@@ -415,24 +571,20 @@ impl App {
             // the app's own colour over it, then the dark band from the left
             let tintc = tint(&e.id, 0.7, 0.5);
             ui.painter().rect_filled(rect, CornerRadius::same(14), Color32::from_rgba_unmultiplied(tintc.r(), tintc.g(), tintc.b(), 70));
-            let n = 40;
-            for k in 0..n {
-                let f = k as f32 / (n - 1) as f32;
-                let a = (0.88 - 0.62 * f.powf(0.8)) * 255.0;
-                // edges on whole pixels and no overlap, so the translucent strips leave no lines
-                let ppp = ui.ctx().pixels_per_point();
-                let snap = |x: f32| (x * ppp).round() / ppp;
-                let r = Rect::from_min_max(pos2(snap(rect.left() + rect.width() * k as f32 / n as f32), rect.top()), pos2(snap(rect.left() + rect.width() * (k + 1) as f32 / n as f32), rect.bottom()));
-                let cr = CornerRadius { nw: if k == 0 { 14 } else { 0 }, sw: if k == 0 { 14 } else { 0 }, ne: if k == n - 1 { 14 } else { 0 }, se: if k == n - 1 { 14 } else { 0 } };
-                ui.painter().rect_filled(r.intersect(rect), cr, Color32::from_rgba_unmultiplied(8, 8, 16, a as u8));
-            }
+            // the dark band from the left, as one smooth gradient (dark where the text is, light on the right)
+            let (l, w) = (rect.left(), rect.width());
+            // a pixel wider than the picture, so its soft rounded edge never shows as light dots at the corners
+            gradient_rounded(ui.painter(), rect.expand(1.0), 15.0, |p| {
+                let f = ((p.x - l) / w).clamp(0.0, 1.0);
+                Color32::from_rgba_unmultiplied(8, 8, 16, ((0.88 - 0.64 * f) * 255.0) as u8)
+            });
         }
-        for k in 0..if tex.is_some() { 0 } else { steps } {
-            let t = k as f32 / (steps - 1) as f32;
-            let c = Color32::from_rgb((top.r() as f32 * (1.0 - t) + bottom.r() as f32 * t) as u8, (top.g() as f32 * (1.0 - t) + bottom.g() as f32 * t) as u8, (top.b() as f32 * (1.0 - t) + bottom.b() as f32 * t) as u8);
-            let r = Rect::from_min_max(pos2(rect.left(), rect.top() + rect.height() * k as f32 / steps as f32), pos2(rect.right(), rect.top() + rect.height() * (k + 1) as f32 / steps as f32 + 1.0));
-            let radius = if k == 0 || k == steps - 1 { 14 } else { 0 };
-            ui.painter().rect_filled(r.intersect(rect), CornerRadius { nw: if k == 0 { radius } else { 0 }, ne: if k == 0 { radius } else { 0 }, sw: if k == steps - 1 { radius } else { 0 }, se: if k == steps - 1 { radius } else { 0 } }, c);
+        if tex.is_none() {
+            let (t0, h0) = (rect.top(), rect.height());
+            gradient_rounded(ui.painter(), rect, 14.0, |p| {
+                let t = ((p.y - t0) / h0).clamp(0.0, 1.0);
+                Color32::from_rgb((top.r() as f32 * (1.0 - t) + bottom.r() as f32 * t) as u8, (top.g() as f32 * (1.0 - t) + bottom.g() as f32 * t) as u8, (top.b() as f32 * (1.0 - t) + bottom.b() as f32 * t) as u8)
+            });
         }
         let p = ui.painter();
         p.text(rect.left_top() + vec2(22.0, 24.0), Align2::LEFT_CENTER, kicker, FontId::proportional(11.5), Color32::from_white_alpha(200));
@@ -578,8 +730,7 @@ impl App {
             ui.label(RichText::new(if n == 0 { "Everything is up to date.".to_string() } else { format!("{n} package{} can be updated.", if n == 1 { "" } else { "s" }) }).color(self.pal.dim));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if ui.add(egui::Button::new(RichText::new("Update everything").color(self.pal.on_accent())).fill(self.pal.accent).min_size(vec2(150.0, 30.0))).clicked() {
-                    self.busy.insert("*update*".into());
-                    run_in_terminal("yay -Syu".into(), "*update*".into(), self.tx.clone(), ctx.clone());
+                    self.run_update_all(ctx);
                 }
             });
         });
@@ -615,20 +766,36 @@ impl App {
         if let Some(a) = asked {
             self.do_pill(ctx, idx, a);
         }
-        let can_remove = self.installed.has(&e) && catalog::remove_script(&e).is_some();
-        if can_remove {
+        let installed = self.installed.has(&e);
+        let can_remove = installed && catalog::remove_script(&e).is_some();
+        let idle = !self.is_running(&e.id) && !self.busy.contains(&e.id);
+        let mut x = 232.0;
+        // reinstall: only for reviewed apps, where it can run here with progress
+        if installed && idle && e.reviewed && install::command(&e, install::Op::Reinstall).is_some() {
+            ui.scope_builder(UiBuilder::new().max_rect(Rect::from_min_size(rect.left_top() + vec2(x, 92.0), vec2(108.0, 30.0))), |ui| {
+                let (r, resp) = ui.allocate_exact_size(vec2(108.0, 30.0), Sense::click());
+                ui.painter().rect_filled(r, CornerRadius::same(255), if resp.hovered() { self.pal.hover } else { self.pal.field });
+                ui.painter().text(r.center(), Align2::CENTER_CENTER, "REINSTALL", FontId::proportional(14.0), self.pal.accent);
+                if resp.clicked() {
+                    self.run_job(ctx, idx, install::Op::Reinstall);
+                }
+            });
+            x += 118.0;
+        }
+        if can_remove && idle {
             // the same pill as OPEN, beside it, with red text
-            ui.scope_builder(UiBuilder::new().max_rect(Rect::from_min_size(rect.left_top() + vec2(232.0, 92.0), vec2(92.0, 30.0))), |ui| {
+            ui.scope_builder(UiBuilder::new().max_rect(Rect::from_min_size(rect.left_top() + vec2(x, 92.0), vec2(92.0, 30.0))), |ui| {
                 let (r, resp) = ui.allocate_exact_size(vec2(92.0, 30.0), Sense::click());
                 ui.painter().rect_filled(r, CornerRadius::same(255), if resp.hovered() { self.pal.hover } else { self.pal.field });
                 ui.painter().text(r.center(), Align2::CENTER_CENTER, "REMOVE", FontId::proportional(14.0), self.pal.red);
                 if resp.clicked() {
-                    if let Some(script) = catalog::remove_script(&e) {
-                        self.busy.insert(e.id.clone());
-                        run_in_terminal(script, e.id.clone(), self.tx.clone(), ctx.clone());
-                    }
+                    self.run_job(ctx, idx, install::Op::Remove);
                 }
             });
+        }
+        if let Some(j) = self.job_snapshot(&e.id) {
+            ui.add_space(8.0);
+            self.progress_card(ui, &j);
         }
         ui.add_space(14.0);
         if !e.reviewed {
@@ -879,6 +1046,29 @@ impl App {
     }
 }
 
+/// A rounded rectangle filled with a smooth gradient: a triangle fan whose corner colours come from `color_at`, so the colour
+/// changes continuously (no steps) and the corners are properly round.
+fn gradient_rounded(painter: &egui::Painter, rect: Rect, radius: f32, color_at: impl Fn(egui::Pos2) -> Color32) {
+    let mut pts: Vec<egui::Pos2> = vec![];
+    let r = radius.min(rect.width() / 2.0).min(rect.height() / 2.0);
+    let corners = [(rect.right() - r, rect.top() + r, -90.0f32), (rect.right() - r, rect.bottom() - r, 0.0), (rect.left() + r, rect.bottom() - r, 90.0), (rect.left() + r, rect.top() + r, 180.0)];
+    for (cx, cy, start) in corners {
+        for k in 0..=8 {
+            let a = (start + 90.0 * k as f32 / 8.0).to_radians();
+            pts.push(pos2(cx + r * a.cos(), cy + r * a.sin()));
+        }
+    }
+    let mut mesh = egui::epaint::Mesh::default();
+    mesh.colored_vertex(rect.center(), color_at(rect.center()));
+    for p in &pts {
+        mesh.colored_vertex(*p, color_at(*p));
+    }
+    for i in 0..pts.len() {
+        mesh.add_triangle(0, 1 + i as u32, 1 + ((i + 1) % pts.len()) as u32);
+    }
+    painter.add(egui::Shape::mesh(mesh));
+}
+
 /// `text` cut with an ellipsis to fit `width` points.
 fn fit(ui: &egui::Ui, text: &str, size: f32, width: f32, _bold: bool) -> String {
     let font = FontId::proportional(size);
@@ -938,6 +1128,7 @@ impl eframe::App for App {
                     ("Develop", Page::Tab("Develop"), None),
                     ("Categories", Page::Categories, None),
                     ("Updates", Page::Updates, if n_up > 0 { Some(n_up) } else { None }),
+                    ("Activity", Page::Activity, { let n = self.jobs.iter().filter(|j| j.lock().map(|j| j.status == install::Status::Running).unwrap_or(false)).count(); if n > 0 { Some(n) } else { None } }),
                 ];
                 for (label, page, badge) in items {
                     let sel = self.page == page || (matches!(page, Page::Tab(t) if matches!(&self.page, Page::Sub(c, _) if c == t)));
@@ -995,6 +1186,7 @@ impl eframe::App for App {
                         self.page_list(ui, &ctx, &sub, list);
                     }
                     Page::Updates => self.page_updates(ui, &ctx),
+                    Page::Activity => self.page_activity(ui),
                     Page::Detail(i) => self.page_detail(ui, &ctx, i),
                     Page::Sources => self.page_sources(ui, &ctx),
                     Page::Search => {
@@ -1009,6 +1201,9 @@ impl eframe::App for App {
         chrome::outline(&ctx, &pal);
         if !self.busy.is_empty() {
             ctx.request_repaint_after(std::time::Duration::from_secs(2));
+        }
+        if self.jobs.iter().any(|j| j.lock().map(|j| j.status == install::Status::Running).unwrap_or(false)) {
+            ctx.request_repaint_after(std::time::Duration::from_millis(120)); // the bars move
         }
     }
 }
