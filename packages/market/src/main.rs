@@ -673,6 +673,14 @@ impl App {
                 Color32::from_rgb((top.r() as f32 * (1.0 - t) + bottom.r() as f32 * t) as u8, (top.g() as f32 * (1.0 - t) + bottom.g() as f32 * t) as u8, (top.b() as f32 * (1.0 - t) + bottom.b() as f32 * t) as u8)
             });
         }
+        if tex.is_none() {
+            // the same sideways shading as the screenshot tiles, lighter because a flat colour needs less help: dark where the text is
+            let (l, w) = (rect.left(), rect.width());
+            gradient_rounded(ui.painter(), rect, 14.0, |p| {
+                let f = ((p.x - l) / w).clamp(0.0, 1.0);
+                Color32::from_rgba_unmultiplied(8, 8, 16, ((0.50 - 0.48 * f) * 255.0) as u8)
+            });
+        }
         let p = ui.painter();
         p.text(rect.left_top() + vec2(22.0, 24.0), Align2::LEFT_CENTER, kicker, FontId::proportional(11.5), Color32::from_white_alpha(200));
         p.text(rect.left_top() + vec2(22.0, if big { 58.0 } else { 50.0 }), Align2::LEFT_CENTER, &e.name, FontId::proportional(if big { 32.0 } else { 22.0 }), Color32::WHITE);
