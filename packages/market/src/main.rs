@@ -395,7 +395,7 @@ impl App {
         if self.is_running("*update*") {
             return;
         }
-        let dummy = Entry { id: "*update*".into(), name: "Updates".into(), subtitle: String::new(), description: String::new(), category: String::new(), subcategory: String::new(), source: Source::Pacman(vec![]), icon: String::new(), reviewed: true, note: String::new(), tags: vec![], from: String::new(), launch: String::new(), appstream: String::new(), flathub: String::new(), editions: vec![] };
+        let dummy = Entry { id: "*update*".into(), name: "Updates".into(), subtitle: String::new(), description: String::new(), category: String::new(), subcategory: String::new(), source: Source::Pacman(vec![]), icon: String::new(), reviewed: true, note: String::new(), tags: vec![], from: String::new(), launch: String::new(), appstream: String::new(), flathub: String::new(), editions: vec![], preinstalled: false };
         if let Some((prog, args)) = install::command(&dummy, install::Op::UpdateAll) {
             self.start_job(ctx, "*update*", "All updates", install::Op::UpdateAll, prog, args, install::Undo::default());
         }
@@ -859,7 +859,7 @@ impl App {
             self.do_pill(ctx, idx, a);
         }
         let installed = self.installed.has(&e);
-        let can_remove = installed && catalog::remove_script(&e).is_some();
+        let can_remove = installed && !e.preinstalled && catalog::remove_script(&e).is_some();
         let idle = !self.is_running(&e.id) && !self.busy.contains(&e.id);
         let mut x = 232.0;
         // reinstall: only for reviewed apps, where it can run here with progress
@@ -985,7 +985,7 @@ impl App {
         }
         if let Some(script) = catalog::install_script(&e) {
             ui.add_space(6.0);
-            ui.label(RichText::new(format!("Installing runs, in a terminal: {script}")).size(12.0).color(self.pal.dim));
+            ui.label(RichText::new(if e.reviewed { format!("Installing runs: {script}") } else { format!("Installing runs, in a terminal: {script}") }).size(12.0).color(self.pal.dim));
         }
     }
 

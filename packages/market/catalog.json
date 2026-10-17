@@ -1020,7 +1020,9 @@
    },
    "icon": "limbo",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "preinstalled": true,
+   "note": "Included with Labyrinth OS: parts of the system (the quarantine, risky files and apps) depend on it, so it cannot be removed here."
   },
   {
    "id": "clamav",
@@ -1225,6 +1227,25 @@
    "icon": "weather",
    "reviewed": true,
    "tags": []
+  },
+  {
+   "id": "daedalus-cad",
+   "name": "Daedalus CAD",
+   "subtitle": "SketchUp-style 3D modeling and sheet metal",
+   "description": "A 3D modeler written from scratch in Rust by Artifex: draw and push/pull faces, check a model is a valid solid and repair it, and turn bent sheet-metal profiles into flat patterns for laser, waterjet and bending services (DXF with cut and bend layers). Opens and saves STL, OBJ, DXF and DAE. Early software: many modeling tools are still on the way.",
+   "category": "Create",
+   "subcategory": "3D & CAD",
+   "source": {
+    "type": "component",
+    "id": "daedalus-cad"
+   },
+   "icon": "daedalus-cad",
+   "reviewed": true,
+   "note": "Made by Artifex, built from source on your computer (a few minutes). It is early software: the viewer, push/pull, undo and the solid inspector work; drawing tools, groups and materials are still to come.",
+   "tags": [
+    "artifex",
+    "cad"
+   ]
   }
  ],
  "featured": [

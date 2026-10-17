@@ -66,6 +66,8 @@ pub struct Entry {
     pub flathub: String,
     /// Which editions of the OS list it ("labyrinth", "chymaera"); empty means all of them.
     pub editions: Vec<String>,
+    /// Part of the base system: it is listed (and can be reinstalled) but not removed from here.
+    pub preinstalled: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -128,6 +130,7 @@ pub fn parse_catalog(text: &str, from: &str, trusted: bool) -> Result<Catalog, S
             from: from.to_string(),
             launch: s(a, "launch"),
             editions: if trusted { strings(&a["editions"]) } else { vec![] },
+            preinstalled: trusted && a.get("preinstalled").and_then(|p| p.as_bool()).unwrap_or(false),
             appstream: if trusted { s(a, "appstream") } else { String::new() },
             flathub: if trusted { s(a, "flathub") } else { String::new() },
             id,
@@ -190,6 +193,7 @@ pub fn parse_omarchy(text: &str, from: &str) -> Result<Catalog, String> {
                 appstream: String::new(),
                 flathub: String::new(),
                 editions: vec![],
+                preinstalled: false,
             });
         }
     }
