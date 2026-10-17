@@ -666,7 +666,8 @@ impl App {
         }
         if tex.is_none() {
             // one flat colour (no light from the top): the sideways shading below is the only shading
-            ui.painter().rect_filled(rect, CornerRadius::same(14), tint(&e.id, 0.62, 0.64));
+            let base = self.catalogs.first().and_then(|c| c.tile_colors.get(&e.id)).map(|&(r, g, b)| Color32::from_rgb(r, g, b)).unwrap_or_else(|| tint(&e.id, 0.62, 0.64));
+            ui.painter().rect_filled(rect, CornerRadius::same(14), base);
         }
         if tex.is_none() {
             // the same sideways shading as the screenshot tiles, lighter because a flat colour needs less help: dark where the text is

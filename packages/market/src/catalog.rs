@@ -51,6 +51,8 @@ pub struct Catalog {
     pub apps: Vec<Entry>,
     /// (id, tagline, kicker)
     pub featured: Vec<(String, String, String)>,
+    /// A colour chosen for an app's tile on Discover (otherwise one is made from its name): id -> (r, g, b).
+    pub tile_colors: std::collections::HashMap<String, (u8, u8, u8)>,
 }
 
 fn s(v: &Value, k: &str) -> String {
@@ -110,7 +112,17 @@ pub fn parse_catalog(text: &str, from: &str, trusted: bool) -> Result<Catalog, S
         });
     }
     let featured = v.get("featured").and_then(|f| f.as_array()).map(|f| f.iter().map(|x| (s(x, "id"), s(x, "tagline"), s(x, "kicker"))).collect()).unwrap_or_default();
-    Ok(Catalog { name: if s(&v, "name").is_empty() { from.to_string() } else { s(&v, "name") }, apps, featured })
+    let mut tile_colors = std::collections::HashMap::new();
+    if let Some(o) = v.get("tile_colors").and_then(|t| t.as_object()) {
+        for (k, c) in o {
+            let Some(h) = c.as_str().and_then(|c| c.strip_prefix('#')).filter(|h| h.len() == 6) else { continue };
+            let part = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).ok();
+            if let (Some(r), Some(g), Some(b)) = (part(0), part(2), part(4)) {
+                tile_colors.insert(k.clone(), (r, g, b));
+            }
+        }
+    }
+    Ok(Catalog { name: if s(&v, "name").is_empty() { from.to_string() } else { s(&v, "name") }, apps, featured, tile_colors })
 }
 
 /// Omarchy's marketplace registry: a long list of plugin repositories. Listed for browsing; each is unreviewed and runs
@@ -156,7 +168,7 @@ pub fn parse_omarchy(text: &str, from: &str) -> Result<Catalog, String> {
             });
         }
     }
-    Ok(Catalog { name: "Omarchy plugins".into(), apps, featured: vec![] })
+    Ok(Catalog { name: "Omarchy plugins".into(), apps, featured: vec![], tile_colors: Default::default() })
 }
 
 // ------------------------------------------------------------------ repositories the user added

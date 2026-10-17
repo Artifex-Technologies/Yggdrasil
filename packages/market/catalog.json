@@ -1247,5 +1247,8 @@
    "tagline": "A new kind of office apps, written in Rust",
    "kicker": "ARTCRAFT"
   }
- ]
+ ],
+ "tile_colors": {
+  "sarina": "#1f8f95"
+ }
 }
