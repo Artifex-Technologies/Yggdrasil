@@ -247,6 +247,25 @@ impl App {
         }
     }
 
+    /// The one-time question about fetching screenshots and fuller descriptions (nothing is fetched before it is answered).
+    fn consent_banner(&mut self, ui: &mut egui::Ui) {
+        egui::Frame::new().fill(self.pal.field).corner_radius(CornerRadius::same(10)).inner_margin(Margin::same(12)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(RichText::new("Show screenshots and fuller descriptions?").strong());
+            ui.label(RichText::new("They are fetched from Flathub and the app's own site, which can see your address and which app you looked at. Nothing is sent until you say yes; you can change it later in Sources.").color(self.pal.dim));
+            ui.horizontal(|ui| {
+                if ui.add(egui::Button::new(RichText::new("Allow").color(self.pal.on_accent())).fill(self.pal.accent).min_size(vec2(90.0, 28.0))).clicked() {
+                    self.set_online(true);
+                }
+                if ui.add(egui::Button::new("Not now").min_size(vec2(90.0, 28.0))).clicked() {
+                    self.online = Some(false);
+                    details::set_online_allowed(false);
+                }
+            });
+        });
+        ui.add_space(8.0);
+    }
+
     fn set_online(&mut self, on: bool) {
         self.online = Some(on);
         details::set_online_allowed(on);
@@ -454,6 +473,9 @@ impl App {
 
     fn page_discover(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         self.heading(ui, "Discover");
+        if self.online.is_none() {
+            self.consent_banner(ui);
+        }
         let featured: Vec<(String, String, String)> = self.catalogs.first().map(|c| c.featured.clone()).unwrap_or_default();
         let w = ui.available_width();
         if let Some((id, tag, kick)) = featured.first() {
@@ -625,23 +647,7 @@ impl App {
         let has_remote = !e.appstream.is_empty() || !e.flathub.is_empty();
         if has_remote {
             match self.online {
-                None => {
-                    egui::Frame::new().fill(self.pal.field).corner_radius(CornerRadius::same(10)).inner_margin(Margin::same(12)).show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        ui.label(RichText::new("Show screenshots and a fuller description?").strong());
-                        ui.label(RichText::new("They are fetched from Flathub and the app's own site, which can see your address and which app you looked at. Nothing is sent until you say yes; you can change it later in Sources.").color(self.pal.dim));
-                        ui.horizontal(|ui| {
-                            if ui.add(egui::Button::new(RichText::new("Allow").color(self.pal.on_accent())).fill(self.pal.accent).min_size(vec2(90.0, 28.0))).clicked() {
-                                self.set_online(true);
-                            }
-                            if ui.add(egui::Button::new("Not now").min_size(vec2(90.0, 28.0))).clicked() {
-                                self.online = Some(false);
-                                details::set_online_allowed(false);
-                            }
-                        });
-                    });
-                    ui.add_space(8.0);
-                }
+                None => self.consent_banner(ui),
                 Some(true) => {
                     if let Some(d) = &info {
                         // only the pictures that came (or are still coming); with none at all there is no Screenshots section
