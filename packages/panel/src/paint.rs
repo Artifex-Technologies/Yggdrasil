@@ -237,7 +237,7 @@ impl Icons {
                     dirs.push(t.join(format!("scalable/{ctx}")));
                     dirs.push(t.join(format!("{ctx}/symbolic")));
                     dirs.push(t.join(format!("symbolic/{ctx}")));
-                    for s in [size, 512, 256, 128, 96, 64, 48, 32, 24, 22, 16] {
+                    for s in [size, 512, 384, 256, 192, 144, 128, 96, 72, 64, 48, 36, 32, 24, 22, 16] {
                         dirs.push(t.join(format!("{ctx}/{s}")));
                         dirs.push(t.join(format!("{s}x{s}/{ctx}")));
                     }
