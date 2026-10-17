@@ -3,6 +3,7 @@
 
 mod catalog;
 mod details;
+mod history;
 mod install;
 
 use std::collections::{HashMap, HashSet};
@@ -25,6 +26,8 @@ enum Page {
     Updates,
     /// Installs and removals in progress, and finished ones.
     Activity,
+    /// Apps installed through the Marketplace.
+    History,
     Detail(usize),
     Sources,
     Search,
@@ -55,6 +58,7 @@ struct App {
     busy: HashSet<String>,
     /// Installs, removals and updates run inside the Marketplace (newest last), and which of them show their log.
     jobs: Vec<install::Shared>,
+    installs: Vec<history::Item>,
     show_log: HashSet<String>,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
@@ -115,6 +119,7 @@ impl App {
             installed: Installed::default(),
             busy: HashSet::new(),
             jobs: vec![],
+            installs: history::load(),
             show_log: HashSet::new(),
             tx,
             rx,
@@ -211,6 +216,7 @@ impl App {
                 Msg::Finished(id) => {
                     self.busy.remove(&id);
                     self.refresh_installed(ctx);
+                    self.installs = history::load();
                 }
                 Msg::Details(id, d) => {
                     self.details_loading.remove(&id);
@@ -329,13 +335,9 @@ impl App {
         ui.painter().rect_filled(rect, CornerRadius::same(255), fill);
         if let Some(j) = &job {
             // the pill fills with the accent as the install goes (a moving bit when no percentage is known)
-            let t = ui.input(|i| i.time) as f32;
-            let (a, b) = match j.frac {
-                Some(f) => (0.0, f.clamp(0.04, 1.0)),
-                None => (((t * 0.8) % 1.2 - 0.2).max(0.0), ((t * 0.8) % 1.2 + 0.2).min(1.0)),
-            };
-            if b > a {
-                let bar = Rect::from_min_max(pos2(rect.left() + rect.width() * a, rect.top()), pos2(rect.left() + rect.width() * b, rect.bottom()));
+            let b = self.shown_frac(ui.ctx(), j);
+            if b > 0.0 {
+                let bar = Rect::from_min_max(rect.min, pos2(rect.left() + rect.width() * b.max(0.06), rect.bottom()));
                 ui.painter().with_clip_rect(rect).rect_filled(bar, CornerRadius::same(255), self.pal.accent.gamma_multiply(0.45));
             }
         }
@@ -365,7 +367,19 @@ impl App {
         }
         if e.reviewed {
             if let Some((prog, args)) = install::command(&e, op) {
-                self.start_job(ctx, &e.id, &e.name, op, prog, args);
+                // what to remove again if it is cancelled: an AUR build's folders, a Flatpak that was not there before
+                let mut undo = install::Undo::default();
+                if op == install::Op::Install || op == install::Op::Reinstall {
+                    if let (Source::Aur(p), Some(h)) = (&e.source, std::env::var_os("HOME")) {
+                        undo.dirs = p.iter().map(|x| std::path::PathBuf::from(&h).join(".cache/yay").join(x)).collect();
+                    }
+                    if let Source::Flatpak(a) = &e.source {
+                        if op == install::Op::Install && !self.installed.has(&e) {
+                            undo.flatpak = Some(a.clone());
+                        }
+                    }
+                }
+                self.start_job(ctx, &e.id, &e.name, op, prog, args, undo);
                 return;
             }
         }
@@ -382,19 +396,24 @@ impl App {
         }
         let dummy = Entry { id: "*update*".into(), name: "Updates".into(), subtitle: String::new(), description: String::new(), category: String::new(), subcategory: String::new(), source: Source::Pacman(vec![]), icon: String::new(), reviewed: true, note: String::new(), tags: vec![], from: String::new(), launch: String::new(), appstream: String::new(), flathub: String::new() };
         if let Some((prog, args)) = install::command(&dummy, install::Op::UpdateAll) {
-            self.start_job(ctx, "*update*", "All updates", install::Op::UpdateAll, prog, args);
+            self.start_job(ctx, "*update*", "All updates", install::Op::UpdateAll, prog, args, install::Undo::default());
         }
     }
 
-    fn start_job(&mut self, ctx: &egui::Context, id: &str, name: &str, op: install::Op, prog: String, args: Vec<String>) {
+    fn start_job(&mut self, ctx: &egui::Context, id: &str, name: &str, op: install::Op, prog: String, args: Vec<String>, undo: install::Undo) {
         let (tx, ctx_a, ctx_b, id2, name2) = (self.tx.clone(), ctx.clone(), ctx.clone(), id.to_string(), name.to_string());
-        let job = install::start(id, name, op, prog, args, move || ctx_a.request_repaint(), move |status| {
+        let job = install::start(id, name, op, prog, args, undo, move || ctx_a.request_repaint(), move |status| {
             // tell the desktop, and the window (so it looks at what is installed again)
             let text = match &status {
                 install::Status::Done => format!("{name2} {}", op.done()),
                 install::Status::Failed(why) => format!("{name2}: {why}"),
+                install::Status::Cancelled => format!("{name2}: cancelled, nothing was kept"),
                 install::Status::Running => String::new(),
             };
+            // only a finished install goes in the history: not a cancelled or failed one, and not a removal or an update
+            if status == install::Status::Done && matches!(op, install::Op::Install | install::Op::Reinstall) {
+                history::record(&id2, &name2, op.done());
+            }
             let _ = std::process::Command::new("notify-send").args(["-a", "Marketplace", "-i", "labyrinth-market", &text]).status();
             let _ = tx.send(Msg::Finished(id2));
             ctx_b.request_repaint();
@@ -416,6 +435,7 @@ impl App {
             install::Status::Running => (self.pal.field, self.pal.accent),
             install::Status::Done => (self.pal.field, self.pal.green),
             install::Status::Failed(_) => (self.pal.red.gamma_multiply(0.15), self.pal.red),
+            install::Status::Cancelled => (self.pal.field, self.pal.amber),
         };
         egui::Frame::new().fill(fill).corner_radius(CornerRadius::same(10)).inner_margin(Margin::same(12)).show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -424,9 +444,18 @@ impl App {
                     install::Status::Running => format!("{} {}", j.op.verb(), j.title),
                     install::Status::Done => format!("{} {}", j.title, j.op.done()),
                     install::Status::Failed(_) => format!("{} could not be {}", j.title, j.op.done()),
+                    install::Status::Cancelled => format!("{} was cancelled", j.title),
                 };
                 ui.label(RichText::new(head).strong());
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if j.status == install::Status::Running && !j.cancel_requested {
+                        if ui.add(egui::Label::new(RichText::new("Cancel").size(12.5).color(self.pal.red)).sense(Sense::click())).clicked() {
+                            if let Some(h) = self.jobs.iter().find(|h| h.lock().map(|g| g.id == j.id && g.status == install::Status::Running).unwrap_or(false)) {
+                                install::request_cancel(h);
+                            }
+                        }
+                        ui.add_space(10.0);
+                    }
                     let open = self.show_log.contains(&j.id);
                     if ui.add(egui::Label::new(RichText::new(if open { "Hide details" } else { "Show details" }).size(12.5).color(self.pal.accent)).sense(Sense::click())).clicked() {
                         if open {
@@ -448,15 +477,9 @@ impl App {
             // the bar
             let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 8.0), Sense::hover());
             ui.painter().rect_filled(r, CornerRadius::same(4), self.pal.border.gamma_multiply(0.8));
-            let t = ui.input(|i| i.time) as f32;
-            let (a, b) = match (&j.status, j.frac) {
-                (install::Status::Done, _) => (0.0, 1.0),
-                (install::Status::Failed(_), f) => (0.0, f.unwrap_or(0.0)),
-                (_, Some(f)) => (0.0, f.clamp(0.02, 1.0)),
-                (_, None) => (((t * 0.7) % 1.3 - 0.3).max(0.0), ((t * 0.7) % 1.3).min(1.0)),
-            };
-            if b > a {
-                ui.painter().rect_filled(Rect::from_min_max(pos2(r.left() + r.width() * a, r.top()), pos2(r.left() + r.width() * b, r.bottom())), CornerRadius::same(4), tone);
+            let b = self.shown_frac(ui.ctx(), j);
+            if b > 0.0 {
+                ui.painter().rect_filled(Rect::from_min_max(r.min, pos2(r.left() + r.width() * b.max(0.015), r.bottom())), CornerRadius::same(4), tone);
             }
             if self.show_log.contains(&j.id) {
                 ui.add_space(6.0);
@@ -467,6 +490,70 @@ impl App {
                 });
             }
         });
+    }
+
+    /// How far along to draw the bar: what the tool reported, moved on gently while nothing new comes in (a build gives no numbers),
+    /// and always eased toward, so it glides instead of jumping.
+    fn shown_frac(&self, ctx: &egui::Context, j: &install::Job) -> f32 {
+        let since = j.moved.elapsed().as_secs_f32();
+        let target = match &j.status {
+            install::Status::Done => 1.0,
+            install::Status::Failed(_) | install::Status::Cancelled => j.frac.unwrap_or(0.0),
+            install::Status::Running => {
+                // before anything is known the bar still starts moving, smoothly, from the moment it is begun
+                let start = if j.frac.is_none() { 0.05 * (1.0 - (-j.started.elapsed().as_secs_f32() / 1.2).exp()) } else { 0.0 };
+                (j.frac.unwrap_or(0.0).max(start) + 0.10 * (1.0 - (-since / 5.0).exp())).min(0.97)
+            }
+        };
+        ctx.animate_value_with_time(egui::Id::new(("bar", &j.id)), target, 0.5)
+    }
+
+    fn page_history(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        self.heading(ui, "History");
+        if self.installs.is_empty() {
+            ui.label(RichText::new("Apps you install through the Marketplace appear here once the installation has finished. Cancelled installs are not listed.").color(self.pal.dim));
+            return;
+        }
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(format!("{} app{}", self.installs.len(), if self.installs.len() == 1 { "" } else { "s" })).color(self.pal.dim));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ui.add(egui::Label::new(RichText::new("Clear history").size(12.5).color(self.pal.accent)).sense(Sense::click())).clicked() {
+                    history::forget(None);
+                    self.installs = history::load();
+                }
+            });
+        });
+        ui.add_space(6.0);
+        let items = self.installs.clone();
+        let w = ui.available_width();
+        for it in &items {
+            let idx = self.apps.iter().position(|a| a.id == it.id);
+            let (rect, resp) = ui.allocate_exact_size(vec2(w, 64.0), Sense::click());
+            if resp.hovered() {
+                ui.painter().rect_filled(rect, CornerRadius::same(10), self.pal.hover);
+            }
+            if let Some(i) = idx {
+                let e = self.apps[i].clone();
+                self.icon(ui, Rect::from_min_size(rect.min + vec2(6.0, 8.0), vec2(48.0, 48.0)), &e);
+            } else {
+                ui.painter().rect_filled(Rect::from_min_size(rect.min + vec2(6.0, 8.0), vec2(48.0, 48.0)), CornerRadius::same(11), tint(&it.id, 0.55, 0.78));
+            }
+            ui.painter().text(pos2(rect.left() + 64.0, rect.top() + 22.0), Align2::LEFT_CENTER, &it.name, FontId::proportional(14.5), self.pal.text);
+            ui.painter().text(pos2(rect.left() + 64.0, rect.top() + 42.0), Align2::LEFT_CENTER, format!("{} on {}", it.what[..1].to_uppercase() + &it.what[1..], it.when), FontId::proportional(12.0), self.pal.dim);
+            // its button: Open if it is still installed, Get to install it again
+            if let Some(i) = idx {
+                let e = self.apps[i].clone();
+                let mut asked = None;
+                ui.scope_builder(UiBuilder::new().max_rect(Rect::from_min_size(pos2(rect.right() - 82.0, rect.top() + 19.0), vec2(76.0, 28.0))), |ui| {
+                    asked = self.pill(ui, &e, false);
+                });
+                if let Some(a) = asked {
+                    self.do_pill(ctx, i, a);
+                } else if resp.clicked() {
+                    self.go(Page::Detail(i));
+                }
+            }
+        }
     }
 
     fn page_activity(&mut self, ui: &mut egui::Ui) {
@@ -1161,6 +1248,17 @@ impl eframe::App for App {
                     if resp.clicked() {
                         self.go(Page::Sources);
                     }
+                    // History sits just above it
+                    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
+                    if self.page == Page::History {
+                        ui.painter().rect_filled(rect, CornerRadius::same(8), pal.select);
+                    } else if resp.hovered() {
+                        ui.painter().rect_filled(rect, CornerRadius::same(8), pal.hover);
+                    }
+                    ui.painter().text(rect.left_center() + vec2(14.0, 0.0), Align2::LEFT_CENTER, "History", FontId::proportional(14.0), pal.dim);
+                    if resp.clicked() {
+                        self.go(Page::History);
+                    }
                 });
             });
 
@@ -1187,6 +1285,7 @@ impl eframe::App for App {
                     }
                     Page::Updates => self.page_updates(ui, &ctx),
                     Page::Activity => self.page_activity(ui),
+                    Page::History => self.page_history(ui, &ctx),
                     Page::Detail(i) => self.page_detail(ui, &ctx, i),
                     Page::Sources => self.page_sources(ui, &ctx),
                     Page::Search => {
@@ -1203,7 +1302,7 @@ impl eframe::App for App {
             ctx.request_repaint_after(std::time::Duration::from_secs(2));
         }
         if self.jobs.iter().any(|j| j.lock().map(|j| j.status == install::Status::Running).unwrap_or(false)) {
-            ctx.request_repaint_after(std::time::Duration::from_millis(120)); // the bars move
+            ctx.request_repaint_after(std::time::Duration::from_millis(33)); // the bars glide
         }
     }
 }
