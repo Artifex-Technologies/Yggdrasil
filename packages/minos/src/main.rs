@@ -1517,6 +1517,7 @@ struct App {
     transfer: Option<Transfer>,
     status: String,
     drives: Vec<places::Drive>,
+    drives_rx: Receiver<Vec<places::Drive>>,
     disks: Vec<places::Disk>,
     cloud: Option<CloudPlace>,
     links: Vec<Link>,
@@ -1541,6 +1542,8 @@ struct App {
 
 impl App {
     fn new() -> Self {
+        let t0 = Instant::now();
+        let lap = |what: &str| if std::env::var_os("MINOS_TIMING").is_some() { eprintln!("minos: {:>6.0} ms  {}", t0.elapsed().as_secs_f64() * 1000.0, what) };
         let st_path = State::config_path();
         let mut st = st_path.as_deref().map(State::load_from).unwrap_or_default();
         st.show_hidden = labyrinth_conf::PanelConf::load().show_hidden;
@@ -1549,16 +1552,30 @@ impl App {
         if st.favorites.is_empty() {
             st.favorites = places::favorites().into_iter().map(|p| p.path).collect();
         }
+        lap("state loaded");
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
         let links = cloud::links_path().map(|p| cloud::load_links(&p)).unwrap_or_default();
         let reports = links.iter().filter_map(|l| cloud::last_report(&l.name).map(|r| (l.name.clone(), r))).collect();
         let (verify_tx, verify_rx) = channel();
         let (proton_tx, proton_rx) = channel();
+        lap("links loaded");
+        let pane_l = Pane::from_saved(&st.tabs, st.active, home.clone(), st.show_hidden);
+        lap("left pane (tabs listed)");
+        let pane_r = Pane::from_saved(&st.right_tabs, st.right_active, home, st.show_hidden);
+        lap("right pane");
+        // Mounted drives can stall for seconds (statvfs on a cold mount), so the sidebar fills in after the window is up.
+        let (drives_tx, drives_rx) = channel();
+        std::thread::spawn(move || {
+            let _ = drives_tx.send(places::drives());
+        });
+        let drives = Vec::new();
+        lap("drives (background)");
+        let disks = places::disks();
+        lap("disks (lsblk)");
+        let cloud_place = places::proton_drive();
+        lap("proton drive place");
         Self {
-            panes: [
-                Pane::from_saved(&st.tabs, st.active, home.clone(), st.show_hidden),
-                Pane::from_saved(&st.right_tabs, st.right_active, home, st.show_hidden),
-            ],
+            panes: [pane_l, pane_r],
             focus: 0,
             st,
             st_path,
@@ -1569,9 +1586,10 @@ impl App {
             rename_unseen: 0,
             transfer: None,
             status: String::new(),
-            drives: places::drives(),
-            disks: places::disks(),
-            cloud: places::proton_drive(),
+            drives,
+            drives_rx,
+            disks,
+            cloud: cloud_place,
             links,
             reports,
             verifying: vec![],
@@ -2379,6 +2397,12 @@ impl eframe::App for App {
                 p.ensure_watch(&ctx);
                 p.poll_watch(hidden);
             }
+        }
+        while let Ok(d) = self.drives_rx.try_recv() {
+            self.drives = d;
+        }
+        if self.drives.is_empty() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
         }
         while let Ok(res) = self.proton_rx.try_recv() {
             self.proton_busy = false;
