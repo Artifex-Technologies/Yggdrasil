@@ -927,7 +927,7 @@
    "id": "sarina",
    "name": "Sarina",
    "subtitle": "Local AI assistant",
-   "description": "Labyrinth's own assistant: engineer, companion and pentest helper, running on your computer.",
+   "description": "Labyrinth's own assistant: a helper and companion that runs on your computer, with your files and your voice staying on it.",
    "category": "Develop",
    "subcategory": "AI",
    "source": {
@@ -966,7 +966,10 @@
    },
    "icon": "ghidra",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "editions": [
+    "chymaera"
+   ]
   },
   {
    "id": "wireshark",
@@ -984,7 +987,10 @@
    "icon": "wireshark",
    "reviewed": true,
    "tags": [],
-   "flathub": "org.wireshark.Wireshark"
+   "flathub": "org.wireshark.Wireshark",
+   "editions": [
+    "chymaera"
+   ]
   },
   {
    "id": "heimdall",

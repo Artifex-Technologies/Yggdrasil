@@ -158,7 +158,8 @@ impl App {
 
     /// Put the built-in catalog and every enabled repository (from its last download; `download` fetches them again) together.
     fn rebuild(&mut self, ctx: &egui::Context, download: bool) {
-        let mut cats = vec![catalog::parse_catalog(catalog::BUILTIN, "Labyrinth", true).unwrap_or_default()];
+        let edition = catalog::edition();
+        let mut cats = vec![catalog::for_edition(catalog::parse_catalog(catalog::BUILTIN, "Labyrinth", true).unwrap_or_default(), &edition)];
         self.repo_status = vec![String::new(); self.repos.len()];
         let repos = self.repos.clone();
         for (i, r) in repos.iter().enumerate() {
@@ -394,7 +395,7 @@ impl App {
         if self.is_running("*update*") {
             return;
         }
-        let dummy = Entry { id: "*update*".into(), name: "Updates".into(), subtitle: String::new(), description: String::new(), category: String::new(), subcategory: String::new(), source: Source::Pacman(vec![]), icon: String::new(), reviewed: true, note: String::new(), tags: vec![], from: String::new(), launch: String::new(), appstream: String::new(), flathub: String::new() };
+        let dummy = Entry { id: "*update*".into(), name: "Updates".into(), subtitle: String::new(), description: String::new(), category: String::new(), subcategory: String::new(), source: Source::Pacman(vec![]), icon: String::new(), reviewed: true, note: String::new(), tags: vec![], from: String::new(), launch: String::new(), appstream: String::new(), flathub: String::new(), editions: vec![] };
         if let Some((prog, args)) = install::command(&dummy, install::Op::UpdateAll) {
             self.start_job(ctx, "*update*", "All updates", install::Op::UpdateAll, prog, args, install::Undo::default());
         }

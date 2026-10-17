@@ -9,6 +9,27 @@ use serde_json::{json, Value};
 
 pub const BUILTIN: &str = include_str!("../catalog.json");
 
+/// Which edition of the OS this is: "labyrinth" or "chymaera" (from /etc/os-release, or LABYRINTH_EDITION to try the other one). Apps
+/// meant for one edition (the penetration-testing tools are Chymaera's) are not listed in the other.
+pub fn edition() -> String {
+    if let Ok(e) = std::env::var("LABYRINTH_EDITION") {
+        return e.to_lowercase();
+    }
+    let text = std::fs::read_to_string("/etc/os-release").unwrap_or_default();
+    for line in text.lines() {
+        if let Some(v) = line.strip_prefix("ID=") {
+            return v.trim().trim_matches('"').to_lowercase();
+        }
+    }
+    "labyrinth".into()
+}
+
+/// The apps of `catalog` that this edition lists.
+pub fn for_edition(mut c: Catalog, edition: &str) -> Catalog {
+    c.apps.retain(|a| a.editions.is_empty() || a.editions.iter().any(|e| e == edition));
+    c
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Source {
     /// Packages from the Arch repositories.
@@ -43,6 +64,8 @@ pub struct Entry {
     /// AppStream ids (only in Labyrinth's own catalog): the app's own, and its Flathub one.
     pub appstream: String,
     pub flathub: String,
+    /// Which editions of the OS list it ("labyrinth", "chymaera"); empty means all of them.
+    pub editions: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -104,6 +127,7 @@ pub fn parse_catalog(text: &str, from: &str, trusted: bool) -> Result<Catalog, S
             tags: strings(&a["tags"]),
             from: from.to_string(),
             launch: s(a, "launch"),
+            editions: if trusted { strings(&a["editions"]) } else { vec![] },
             appstream: if trusted { s(a, "appstream") } else { String::new() },
             flathub: if trusted { s(a, "flathub") } else { String::new() },
             id,
@@ -165,6 +189,7 @@ pub fn parse_omarchy(text: &str, from: &str) -> Result<Catalog, String> {
                 launch: String::new(),
                 appstream: String::new(),
                 flathub: String::new(),
+                editions: vec![],
             });
         }
     }
@@ -349,6 +374,16 @@ mod tests {
         let c = parse_omarchy(t, "Omarchy").unwrap();
         assert_eq!(c.apps[0].category, "Play");
         assert!(install_script(&c.apps[0]).is_none());
+    }
+
+    #[test]
+    fn chymaera_only_apps_are_not_listed_in_labyrinth() {
+        let c = parse_catalog(BUILTIN, "Labyrinth", true).unwrap();
+        let lab = for_edition(c.clone(), "labyrinth");
+        let chy = for_edition(c, "chymaera");
+        assert!(lab.apps.iter().all(|a| a.id != "ghidra" && a.id != "wireshark"));
+        assert!(chy.apps.iter().any(|a| a.id == "ghidra") && chy.apps.iter().any(|a| a.id == "krita"));
+        assert!(!lab.apps.iter().any(|a| a.description.to_lowercase().contains("pentest") || a.subtitle.to_lowercase().contains("pentest")), "nothing in the Labyrinth listing talks about penetration testing");
     }
 
     #[test]
