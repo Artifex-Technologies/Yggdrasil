@@ -2846,6 +2846,20 @@ delegate_noop!(State: ZwlrLayerShellV1);
 
 // ------------------------------------------------------------------ main
 
+/// Makes kglobalacceld announce a tap of the Super key (the "activate application launcher" action of the component
+/// "plasmashell") even when plasmashell is not running.
+fn register_launcher_shortcut(conn: &zbus::blocking::Connection) {
+    let Ok(ga) = zbus::blocking::Proxy::new(conn, "org.kde.kglobalaccel", "/kglobalaccel", "org.kde.KGlobalAccel") else { return };
+    let action: Vec<String> = vec!["plasmashell".into(), "activate application launcher".into(), "Plasma".into(), "Activate Application Launcher".into()];
+    if ga.call_method("doRegister", &(&action,)).is_err() {
+        return;
+    }
+    let have: Vec<i32> = ga.call("shortcut", &(&action,)).unwrap_or_default();
+    // Qt::Key_Meta alone, and Alt+F1 (Plasma's own default pair); 2 = SetPresent
+    let keys = if have.is_empty() { vec![0x0100_0022, 0x0800_0000 | 0x0100_0030] } else { have };
+    let _: Result<Vec<i32>, _> = ga.call("setShortcut", &(&action, keys, 2u32));
+}
+
 fn bind_outputs(globals: &GlobalList, state: &mut State, qh: &QueueHandle<State>) {
     let existing: Vec<(u32, u32)> = globals.contents().clone_list().iter().filter(|g| g.interface == "wl_output").map(|g| (g.name, g.version)).collect();
     for (name, version) in existing {
@@ -3011,6 +3025,9 @@ fn main() {
                 // The Super key on its own: KWin 6.7 hands a bare modifier tap to Plasma's global shortcut
                 // "activate application launcher" (kwinrc's ModifierOnlyShortcuts is no longer read), and
                 // kglobalacceld announces every press on the bus, so the menu opens when that one fires.
+                // Plasma's shell is what registers that shortcut, so with plasmashell off nobody does and the tap goes nowhere:
+                // register it here (same component and action, so KWin and kglobalacceld treat it the same).
+                register_launcher_shortcut(&c);
                 let rule = zbus::MatchRule::builder().msg_type(zbus::message::Type::Signal).interface("org.kde.kglobalaccel.Component").and_then(|b| b.member("globalShortcutPressed")).map(|b| b.build());
                 match rule.and_then(|r| zbus::blocking::MessageIterator::for_match_rule(r, &c, None)) {
                     Ok(iter) => {
