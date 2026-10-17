@@ -1717,6 +1717,30 @@ impl App {
     fn page_apps_minos(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         let mut minos = labyrinth_conf::PanelConf::load();
         let mut minos_changed = false;
+        ui::group(ui, pal, Some("Minos: where it opens"), |ui| {
+            use labyrinth_conf::StartIn;
+            ui::row(ui, pal, true, "First new window", Some("The first Minos window you open: your home folder, or the tabs you had when you last closed it"), |ui| {
+                let cur = (minos.minos_first_window == StartIn::Last) as usize;
+                if let Some(i) = ui::segmented(ui, pal, &["Home", "Where you left off"], cur) {
+                    minos.minos_first_window = [StartIn::Home, StartIn::Last][i];
+                    minos_changed = true;
+                }
+            });
+            ui::row(ui, pal, false, "New window while one is open", Some("Home, or a copy of the folder the open window is in"), |ui| {
+                let cur = (minos.minos_more_windows == StartIn::Here) as usize;
+                if let Some(i) = ui::segmented(ui, pal, &["Home", "Copy of where I am"], cur) {
+                    minos.minos_more_windows = [StartIn::Home, StartIn::Here][i];
+                    minos_changed = true;
+                }
+            });
+            ui::row(ui, pal, false, "New tab", Some("Home, or a copy of the folder the current tab is in"), |ui| {
+                let cur = (minos.minos_new_tab == StartIn::Here) as usize;
+                if let Some(i) = ui::segmented(ui, pal, &["Home", "Copy of where I am"], cur) {
+                    minos.minos_new_tab = [StartIn::Home, StartIn::Here][i];
+                    minos_changed = true;
+                }
+            });
+        });
         ui::group(ui, pal, Some("Minos"), |ui| {
             ui::row(ui, pal, true, "Search inside subfolders", Some("Searching in Minos looks through every folder below the one you are in; off searches only that folder"), |ui| {
                 minos_changed = ui::switch(ui, pal, &mut minos.search_subfolders).changed();

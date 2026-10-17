@@ -80,6 +80,8 @@ enum Action {
     OpenTab(usize, PathBuf),
     CloseTab(usize, usize),
     ReopenTab,
+    /// The + button and Ctrl+T: Home or the current folder, as set in Settings.
+    NewTab(usize),
     /// Arrow, Home, End and Page keys: move the selection (the bool extends it with Shift).
     KeyNav(usize, Nav, bool),
     /// Enter: open what is selected.
@@ -889,7 +891,7 @@ fn tab_strip(ui: &mut egui::Ui, pane: &Pane, pi: usize, pal: &Palette, actions: 
             });
         }
         if icon_button(ui, pal, Icon::Plus, "New tab (Ctrl+T)", true, false).clicked() {
-            actions.push(Action::OpenTab(pi, pane.tabs[pane.active].dir()));
+            actions.push(Action::NewTab(pi));
         }
     });
 }
@@ -1582,6 +1584,8 @@ struct App {
     drives: Vec<places::Drive>,
     /// Recently closed tabs (pane, folder), newest last, for Ctrl+Shift+T.
     closed_tabs: Vec<(usize, PathBuf)>,
+    /// The folder last published for other windows (see `session`).
+    published: PathBuf,
     drives_rx: Receiver<Vec<places::Drive>>,
     disks: Vec<places::Disk>,
     cloud: Option<CloudPlace>,
@@ -1618,6 +1622,26 @@ impl App {
             st.favorites = places::favorites().into_iter().map(|p| p.path).collect();
         }
         lap("state loaded");
+        // Where this window starts, from Settings: the first window, or one opened while another is open.
+        {
+            let conf = labyrinth_conf::PanelConf::load();
+            let others = session::others();
+            let (mode, here) = if others.is_empty() { (conf.minos_first_window, None) } else { (conf.minos_more_windows, others.first().cloned()) };
+            match (mode, here) {
+                (labyrinth_conf::StartIn::Last, _) => {}
+                (labyrinth_conf::StartIn::Here, Some(dir)) if dir.is_dir() || places::is_virtual(&dir) => {
+                    st.tabs = vec![SavedTab { path: dir, pinned: false }];
+                    st.active = 0;
+                    st.right_tabs.clear();
+                    st.split = false;
+                }
+                _ => {
+                    st.tabs.clear();
+                    st.right_tabs.clear();
+                    st.active = 0;
+                }
+            }
+        }
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
         let links = cloud::links_path().map(|p| cloud::load_links(&p)).unwrap_or_default();
         let reports = links.iter().filter_map(|l| cloud::last_report(&l.name).map(|r| (l.name.clone(), r))).collect();
@@ -1653,6 +1677,7 @@ impl App {
             status: String::new(),
             drives,
             closed_tabs: Vec::new(),
+            published: PathBuf::new(),
             drives_rx,
             disks,
             cloud: cloud_place,
@@ -2031,6 +2056,14 @@ impl App {
                         self.closed_tabs.drain(..self.closed_tabs.len().saturating_sub(20));
                         pane.active = pane.active.min(pane.tabs.len() - 1);
                     }
+                }
+                Action::NewTab(p) => {
+                    let path = if labyrinth_conf::PanelConf::load().minos_new_tab == labyrinth_conf::StartIn::Home {
+                        dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"))
+                    } else {
+                        self.panes[p].tabs[self.panes[p].active].dir()
+                    };
+                    queue.push_front(Action::OpenTab(p, path));
                 }
                 Action::ReopenTab => {
                     if let Some((p, path)) = self.closed_tabs.pop() {
@@ -2553,10 +2586,21 @@ impl App {
     }
 }
 
+impl Drop for App {
+    fn drop(&mut self) {
+        session::leave();
+    }
+}
+
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         theme::apply_accessibility(ui.ctx());
         let ctx = ui.ctx().clone();
+        let here = self.panes[self.focus].tabs[self.panes[self.focus].active].dir();
+        if here != self.published {
+            session::publish(&here);
+            self.published = here;
+        }
         // Follow the system accent: read it now and then, so a change in the system settings
         // shows up without restarting Minos.
         // light or dark, and the accent, follow the system's setting (Settings, Appearance); hidden items follow Settings, Apps
@@ -2646,7 +2690,7 @@ impl eframe::App for App {
                 if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::T) {
                     actions.push(Action::ReopenTab);
                 } else if i.consume_key(Modifiers::COMMAND, Key::T) {
-                    actions.push(Action::OpenTab(f, self.panes[f].tabs[cur].dir()));
+                    actions.push(Action::NewTab(f));
                 }
                 if i.modifiers.alt && !i.modifiers.command {
                     if i.consume_key(Modifiers::ALT, Key::ArrowLeft) {
@@ -3014,4 +3058,51 @@ fn main() -> eframe::Result {
             Ok(Box::new(app))
         }),
     )
+}
+
+/// Which Minos windows are open and the folder each is in, so a new window can start where another is.
+mod session {
+    use std::path::PathBuf;
+
+    fn dir() -> Option<PathBuf> {
+        std::env::var_os("XDG_RUNTIME_DIR").map(|d| PathBuf::from(d).join("minos"))
+    }
+
+    fn alive(pid: u32) -> bool {
+        std::fs::read_to_string(format!("/proc/{pid}/comm")).map(|c| c.trim() == "minos").unwrap_or(false)
+    }
+
+    /// Folders of the other open windows, most recently active first.
+    pub fn others() -> Vec<PathBuf> {
+        let Some(d) = dir() else { return vec![] };
+        let me = std::process::id();
+        let mut v: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(d)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| {
+                let pid: u32 = e.file_name().to_str()?.parse().ok()?;
+                if pid == me || !alive(pid) {
+                    let _ = if pid != me { std::fs::remove_file(e.path()) } else { Ok(()) };
+                    return None;
+                }
+                Some((e.metadata().ok()?.modified().ok()?, PathBuf::from(std::fs::read_to_string(e.path()).ok()?.trim_end_matches('\n'))))
+            })
+            .collect();
+        v.sort_by(|a, b| b.0.cmp(&a.0));
+        v.into_iter().map(|x| x.1).collect()
+    }
+
+    pub fn publish(folder: &std::path::Path) {
+        if let Some(d) = dir() {
+            let _ = std::fs::create_dir_all(&d);
+            let _ = std::fs::write(d.join(std::process::id().to_string()), folder.to_string_lossy().as_bytes());
+        }
+    }
+
+    pub fn leave() {
+        if let Some(d) = dir() {
+            let _ = std::fs::remove_file(d.join(std::process::id().to_string()));
+        }
+    }
 }

@@ -37,6 +37,36 @@ impl DockPos {
     }
 }
 
+/// Where Minos opens a new window or tab.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum StartIn {
+    /// The home folder.
+    Home,
+    /// Where the last window was left (first window only).
+    Last,
+    /// A copy of where you are now (the open window's folder, or the current tab's).
+    Here,
+}
+
+impl StartIn {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StartIn::Home => "home",
+            StartIn::Last => "last",
+            StartIn::Here => "here",
+        }
+    }
+
+    pub fn parse(v: &str) -> Option<StartIn> {
+        Some(match v {
+            "home" => StartIn::Home,
+            "last" => StartIn::Last,
+            "here" => StartIn::Here,
+            _ => return None,
+        })
+    }
+}
+
 /// Which of Heimdall's alerts become notifications.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum AlertLevel {
@@ -118,11 +148,17 @@ pub struct PanelConf {
     pub sarina_tone: bool,
     /// Which Heimdall alerts become notifications: "off", "critical", "warning" (and critical) or "info" (all).
     pub heimdall_alerts: AlertLevel,
+    /// The first Minos window: Home, or Last (where it was left).
+    pub minos_first_window: StartIn,
+    /// A Minos window opened while another is open: Home, or Here (the open window's folder).
+    pub minos_more_windows: StartIn,
+    /// A new Minos tab: Home, or Here (the current tab's folder).
+    pub minos_new_tab: StartIn,
 }
 
 impl Default for PanelConf {
     fn default() -> Self {
-        PanelConf { dock_pos: DockPos::Bottom, dock_icon: 44, dock_gap: 4, start_theme: StartTheme::Windows, clock_24h: true, dock_opacity: 69, dock_color: ColorMode::Theme, bar_opacity: 69, bar_color: ColorMode::Theme, clipboard_history: true, search_subfolders: true, show_hidden: false, drive_status: true, developer: false, notify_toasts: true, notify_pane: false, notify_dnd: false, own_wallpaper: false, text_scale: 100, reduce_motion: false, sarina_speaks: true, sarina_wave: 2, sarina_tone: true, heimdall_alerts: AlertLevel::Warning }
+        PanelConf { dock_pos: DockPos::Bottom, dock_icon: 44, dock_gap: 4, start_theme: StartTheme::Windows, clock_24h: true, dock_opacity: 69, dock_color: ColorMode::Theme, bar_opacity: 69, bar_color: ColorMode::Theme, clipboard_history: true, search_subfolders: true, show_hidden: false, drive_status: true, developer: false, notify_toasts: true, notify_pane: false, notify_dnd: false, own_wallpaper: false, text_scale: 100, reduce_motion: false, sarina_speaks: true, sarina_wave: 2, sarina_tone: true, heimdall_alerts: AlertLevel::Warning, minos_first_window: StartIn::Last, minos_more_windows: StartIn::Here, minos_new_tab: StartIn::Here }
     }
 }
 
@@ -187,6 +223,9 @@ impl PanelConf {
                 "sarina_speaks" => c.sarina_speaks = !matches!(v, "no" | "false" | "off" | "0"),
                 "reduce_motion" => c.reduce_motion = matches!(v, "yes" | "true" | "on" | "1"),
                 "own_wallpaper" => c.own_wallpaper = matches!(v, "yes" | "true" | "on" | "1"),
+                "minos_first_window" => c.minos_first_window = StartIn::parse(v).filter(|x| *x != StartIn::Here).unwrap_or(c.minos_first_window),
+                "minos_more_windows" => c.minos_more_windows = StartIn::parse(v).filter(|x| *x != StartIn::Last).unwrap_or(c.minos_more_windows),
+                "minos_new_tab" => c.minos_new_tab = StartIn::parse(v).filter(|x| *x == StartIn::Home || *x == StartIn::Here).unwrap_or(c.minos_new_tab),
                 "heimdall_alerts" => c.heimdall_alerts = AlertLevel::parse(v).unwrap_or(c.heimdall_alerts),
                 _ => {}
             }
@@ -197,7 +236,7 @@ impl PanelConf {
     pub fn to_text(&self) -> String {
         format!(
             "# How the top bar and dock look. Edited by Labyrinth Settings (Appearance).\n\
-             dock_pos = {}\ndock_icon = {}\ndock_gap = {}\nclock_24h = {}\nstart_theme = {}\ndock_opacity = {}\ndock_color = {}\nbar_opacity = {}\nbar_color = {}\nclipboard_history = {}\nsearch_subfolders = {}\nshow_hidden = {}\ndrive_status = {}\ndeveloper = {}\nnotify_toasts = {}\nnotify_pane = {}\nnotify_dnd = {}\nown_wallpaper = {}\ntext_scale = {}\nreduce_motion = {}\nsarina_speaks = {}\nsarina_wave = {}\nsarina_tone = {}\nheimdall_alerts = {}\n",
+             dock_pos = {}\ndock_icon = {}\ndock_gap = {}\nclock_24h = {}\nstart_theme = {}\ndock_opacity = {}\ndock_color = {}\nbar_opacity = {}\nbar_color = {}\nclipboard_history = {}\nsearch_subfolders = {}\nshow_hidden = {}\ndrive_status = {}\ndeveloper = {}\nnotify_toasts = {}\nnotify_pane = {}\nnotify_dnd = {}\nown_wallpaper = {}\ntext_scale = {}\nreduce_motion = {}\nsarina_speaks = {}\nsarina_wave = {}\nsarina_tone = {}\nheimdall_alerts = {}\nminos_first_window = {}\nminos_more_windows = {}\nminos_new_tab = {}\n",
             match self.dock_pos {
                 DockPos::Bottom => "bottom",
                 DockPos::Left => "left",
@@ -225,7 +264,10 @@ impl PanelConf {
             if self.sarina_speaks { "yes" } else { "no" },
             self.sarina_wave,
             if self.sarina_tone { "yes" } else { "no" },
-            self.heimdall_alerts.as_str()
+            self.heimdall_alerts.as_str(),
+            self.minos_first_window.as_str(),
+            self.minos_more_windows.as_str(),
+            self.minos_new_tab.as_str()
         )
     }
 
@@ -265,7 +307,7 @@ mod tests {
 
     #[test]
     fn round_trips() {
-        let c = PanelConf { dock_pos: DockPos::Right, dock_icon: 60, dock_gap: 0, start_theme: StartTheme::Folders, clock_24h: false, dock_opacity: 0, dock_color: ColorMode::Neutral, bar_opacity: 100, bar_color: ColorMode::Neutral, clipboard_history: false, search_subfolders: false, show_hidden: true, drive_status: false, developer: true, notify_toasts: false, notify_pane: true, notify_dnd: true, own_wallpaper: true, text_scale: 150, reduce_motion: true, sarina_speaks: false, sarina_wave: 2, sarina_tone: false, heimdall_alerts: AlertLevel::Critical };
+        let c = PanelConf { dock_pos: DockPos::Right, dock_icon: 60, dock_gap: 0, start_theme: StartTheme::Folders, clock_24h: false, dock_opacity: 0, dock_color: ColorMode::Neutral, bar_opacity: 100, bar_color: ColorMode::Neutral, clipboard_history: false, search_subfolders: false, show_hidden: true, drive_status: false, developer: true, notify_toasts: false, notify_pane: true, notify_dnd: true, own_wallpaper: true, text_scale: 150, reduce_motion: true, sarina_speaks: false, sarina_wave: 2, sarina_tone: false, heimdall_alerts: AlertLevel::Critical, minos_first_window: StartIn::Home, minos_more_windows: StartIn::Home, minos_new_tab: StartIn::Home };
         assert_eq!(PanelConf::parse(&c.to_text()), c);
     }
 
