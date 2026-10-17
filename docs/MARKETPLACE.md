@@ -23,3 +23,11 @@ No hidden installs. **Get** opens a terminal (Ghostty) and runs the command show
 
 ## Not done yet
 Installing Omarchy plugins (needs the sandboxed host), in-app progress instead of a terminal, ratings, screenshots, the Artifex apps (waiting to learn which), a dock/start-menu pin, remembering search history.
+
+## Descriptions and screenshots (added 2026-10-17)
+An app's page can show a fuller description, screenshots, the licence, the maker and the website. The data is AppStream, the standard store metadata:
+- **The app's own** (`appstreamcli dump`, from the installed app: no network). The ArtCraft apps ship good metadata with screenshots.
+- **Flathub's public AppStream service** (`https://flathub.org/api/v2/appstream/<id>`) for the 39 apps in Labyrinth's catalog that are on Flathub (`flathub` field in catalog.json). Cached in `~/.cache/labyrinth/market/details`.
+- Pictures are downloaded from where that data points (Flathub's media server, the app's repository) into `~/.cache/labyrinth/market/img`, HTTPS only, 8 MB each.
+
+**Nothing is fetched until you say yes.** The first app page with remote data asks ("Show screenshots and a fuller description?"); the answer is kept in `~/.config/labyrinth/market/settings.json` and can be changed under Sources. Added repositories cannot set these fields (they are read only from Labyrinth's own catalog), so a repository cannot make the Marketplace contact an address of its choosing.

@@ -2,8 +2,9 @@
 //! Updates). Sources: Labyrinth's own reviewed catalog, plus repositories you add (marked as not reviewed).
 
 mod catalog;
+mod details;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 use catalog::{Catalog, Entry, Installed, Repo, Source};
@@ -32,6 +33,9 @@ enum Msg {
     Fetched(usize, Result<String, String>),
     /// An install or remove finished (its entry id).
     Finished(String),
+    /// More about an app arrived (None: nothing found), or a picture did.
+    Details(String, Option<details::Details>),
+    Image(String, Option<std::path::PathBuf>),
 }
 
 struct App {
@@ -55,6 +59,12 @@ struct App {
     add_confirm: bool,
     pending_add: Option<Repo>,
     status: String,
+    // more about the app being looked at
+    details: HashMap<String, Option<details::Details>>,
+    details_loading: HashSet<String>,
+    images: HashMap<String, Option<std::path::PathBuf>>,
+    img_loading: HashSet<String>,
+    online: Option<bool>,
 }
 
 fn hue_of(id: &str) -> f32 {
@@ -106,6 +116,11 @@ impl App {
             add_confirm: false,
             pending_add: None,
             status: String::new(),
+            details: HashMap::new(),
+            details_loading: HashSet::new(),
+            images: HashMap::new(),
+            img_loading: HashSet::new(),
+            online: details::online_allowed(),
         };
         app.rebuild(ctx, false);
         app.refresh_installed(ctx);
@@ -189,8 +204,54 @@ impl App {
                     self.busy.remove(&id);
                     self.refresh_installed(ctx);
                 }
+                Msg::Details(id, d) => {
+                    self.details_loading.remove(&id);
+                    self.details.insert(id, d);
+                }
+                Msg::Image(url, p) => {
+                    self.img_loading.remove(&url);
+                    self.images.insert(url, p);
+                }
             }
         }
+    }
+
+    /// Start looking up more about an app (once), and its pictures when that is allowed.
+    fn want_details(&mut self, ctx: &egui::Context, idx: usize) {
+        let Some(e) = self.apps.get(idx).cloned() else { return };
+        if e.appstream.is_empty() && e.flathub.is_empty() {
+            return;
+        }
+        if !self.details.contains_key(&e.id) && !self.details_loading.contains(&e.id) {
+            self.details_loading.insert(e.id.clone());
+            let (tx, ctx2, online, e2) = (self.tx.clone(), ctx.clone(), self.online == Some(true), e.clone());
+            std::thread::spawn(move || {
+                let d = details::load(&e2.id, &e2.appstream, &e2.flathub, online);
+                let _ = tx.send(Msg::Details(e2.id.clone(), d));
+                ctx2.request_repaint();
+            });
+        }
+        if self.online == Some(true) {
+            let urls: Vec<String> = self.details.get(&e.id).and_then(|d| d.as_ref()).map(|d| d.screenshots.iter().take(6).map(|s| s.url.clone()).collect()).unwrap_or_default();
+            for url in urls {
+                if !self.images.contains_key(&url) && !self.img_loading.contains(&url) {
+                    self.img_loading.insert(url.clone());
+                    let (tx, ctx2) = (self.tx.clone(), ctx.clone());
+                    std::thread::spawn(move || {
+                        let p = details::fetch_image(&url);
+                        let _ = tx.send(Msg::Image(url, p));
+                        ctx2.request_repaint();
+                    });
+                }
+            }
+        }
+    }
+
+    fn set_online(&mut self, on: bool) {
+        self.online = Some(on);
+        details::set_online_allowed(on);
+        // what was looked up without the internet is looked up again with it
+        self.details.retain(|_, d| d.is_some());
     }
 
     fn go(&mut self, p: Page) {
@@ -477,6 +538,8 @@ impl App {
 
     fn page_detail(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, idx: usize) {
         let Some(e) = self.apps.get(idx).cloned() else { return };
+        self.want_details(ctx, idx);
+        let info = self.details.get(&e.id).cloned().flatten();
         ui.add_space(6.0);
         let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 120.0), Sense::hover());
         self.icon(ui, Rect::from_min_size(rect.min, vec2(110.0, 110.0)), &e);
@@ -516,9 +579,88 @@ impl App {
             self.section(ui, if e.reviewed { "Review notes" } else { "Notes" }, None);
             ui.label(RichText::new(&e.note).color(self.pal.dim));
         }
+        // pictures: shown when allowed; asked about once
+        let has_remote = !e.appstream.is_empty() || !e.flathub.is_empty();
+        if has_remote {
+            match self.online {
+                None => {
+                    egui::Frame::new().fill(self.pal.field).corner_radius(CornerRadius::same(10)).inner_margin(Margin::same(12)).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label(RichText::new("Show screenshots and a fuller description?").strong());
+                        ui.label(RichText::new("They are fetched from Flathub and the app's own site, which can see your address and which app you looked at. Nothing is sent until you say yes; you can change it later in Sources.").color(self.pal.dim));
+                        ui.horizontal(|ui| {
+                            if ui.add(egui::Button::new(RichText::new("Allow").color(self.pal.on_accent())).fill(self.pal.accent).min_size(vec2(90.0, 28.0))).clicked() {
+                                self.set_online(true);
+                            }
+                            if ui.add(egui::Button::new("Not now").min_size(vec2(90.0, 28.0))).clicked() {
+                                self.online = Some(false);
+                                details::set_online_allowed(false);
+                            }
+                        });
+                    });
+                    ui.add_space(8.0);
+                }
+                Some(true) => {
+                    if let Some(d) = &info {
+                        if !d.screenshots.is_empty() {
+                            self.section(ui, "Screenshots", None);
+                            egui::ScrollArea::horizontal().id_salt("shots").auto_shrink([false, true]).show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    for s in d.screenshots.iter().take(6) {
+                                        ui.vertical(|ui| {
+                                            match self.images.get(&s.url).cloned().flatten() {
+                                                Some(path) => {
+                                                    ui.add(egui::Image::new(format!("file://{}", path.display())).fit_to_exact_size(vec2(400.0, 250.0)).corner_radius(10));
+                                                }
+                                                None => {
+                                                    let (r, _) = ui.allocate_exact_size(vec2(400.0, 250.0), Sense::hover());
+                                                    ui.painter().rect_filled(r, CornerRadius::same(10), self.pal.field);
+                                                    ui.painter().text(r.center(), Align2::CENTER_CENTER, if self.img_loading.contains(&s.url) { "Loading..." } else { "No picture" }, FontId::proportional(13.0), self.pal.dim);
+                                                }
+                                            }
+                                            if !s.caption.is_empty() {
+                                                ui.add(egui::Label::new(RichText::new(&s.caption).size(12.0).color(self.pal.dim)).wrap());
+                                            }
+                                        });
+                                    }
+                                });
+                            });
+                        }
+                    } else if self.details_loading.contains(&e.id) {
+                        ui.label(RichText::new("Looking up screenshots...").color(self.pal.dim));
+                    }
+                }
+                Some(false) => {}
+            }
+        }
         self.section(ui, "About", None);
-        ui.label(&e.description);
+        match info.as_ref().filter(|d| d.description.len() > e.description.len()) {
+            Some(d) => {
+                ui.label(&d.description);
+            }
+            None => {
+                ui.label(&e.description);
+            }
+        }
         self.section(ui, "Information", None);
+        if let Some(d) = &info {
+            for (k, v) in [("Developer", d.developer.clone()), ("License", d.license.clone())] {
+                if !v.is_empty() {
+                    ui.horizontal(|ui| {
+                        ui.add_sized([110.0, 20.0], egui::Label::new(RichText::new(k).color(self.pal.dim)));
+                        ui.label(v);
+                    });
+                }
+            }
+            if d.homepage.starts_with("https://") {
+                ui.horizontal(|ui| {
+                    ui.add_sized([110.0, 20.0], egui::Label::new(RichText::new("Website").color(self.pal.dim)));
+                    if ui.add(egui::Label::new(RichText::new(&d.homepage).color(self.pal.accent)).sense(Sense::click())).clicked() {
+                        let _ = std::process::Command::new("xdg-open").arg(&d.homepage).spawn();
+                    }
+                });
+            }
+        }
         let src = match &e.source {
             Source::Pacman(p) => format!("Arch repositories: {}", p.join(", ")),
             Source::Aur(p) => format!("AUR (built with yay): {}", p.join(", ")),
@@ -541,6 +683,14 @@ impl App {
     fn page_sources(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         self.heading(ui, "Sources");
         ui.label(RichText::new("Where apps come from. Labyrinth's own catalog is built in and reviewed. Anything you add is not.").color(self.pal.dim));
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            let mut on = self.online == Some(true);
+            if ui.checkbox(&mut on, "Show screenshots and fuller descriptions from the internet").changed() {
+                self.set_online(on);
+            }
+        });
+        ui.label(RichText::new("Fetched from Flathub and the app's own site when you open an app. Off, nothing leaves this computer when you browse.").size(12.0).color(self.pal.dim));
         self.section(ui, "Your sources", None);
         let mut changed = false;
         let mut remove: Option<usize> = None;

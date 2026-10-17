@@ -40,6 +40,9 @@ pub struct Entry {
     /// The catalog this came from.
     pub from: String,
     pub launch: String,
+    /// AppStream ids (only in Labyrinth's own catalog): the app's own, and its Flathub one.
+    pub appstream: String,
+    pub flathub: String,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -99,6 +102,8 @@ pub fn parse_catalog(text: &str, from: &str, trusted: bool) -> Result<Catalog, S
             tags: strings(&a["tags"]),
             from: from.to_string(),
             launch: s(a, "launch"),
+            appstream: if trusted { s(a, "appstream") } else { String::new() },
+            flathub: if trusted { s(a, "flathub") } else { String::new() },
             id,
             name,
             source,
@@ -146,6 +151,8 @@ pub fn parse_omarchy(text: &str, from: &str) -> Result<Catalog, String> {
                 tags,
                 from: from.to_string(),
                 launch: String::new(),
+                appstream: String::new(),
+                flathub: String::new(),
             });
         }
     }

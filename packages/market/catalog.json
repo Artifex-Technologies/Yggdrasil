@@ -16,7 +16,8 @@
    },
    "icon": "krita",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "org.kde.krita"
   },
   {
    "id": "gimp",
@@ -33,7 +34,8 @@
    },
    "icon": "gimp",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "org.gimp.GIMP"
   },
   {
    "id": "inkscape",
@@ -50,7 +52,8 @@
    },
    "icon": "inkscape",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "org.inkscape.Inkscape"
   },
   {
    "id": "blender",
@@ -67,7 +70,8 @@
    },
    "icon": "blender",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "org.blender.Blender"
   },
   {
    "id": "darktable",
@@ -84,7 +88,8 @@
    },
    "icon": "darktable",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "org.darktable.Darktable"
   },
   {
    "id": "kdenlive",
@@ -101,7 +106,8 @@
    },
    "icon": "kdenlive",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "org.kde.kdenlive"
   },
   {
    "id": "obs-studio",
@@ -118,7 +124,8 @@
    },
    "icon": "com.obsproject.Studio",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "com.obsproject.Studio"
   },
   {
    "id": "handbrake",
@@ -135,7 +142,8 @@
    },
    "icon": "handbrake",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "fr.handbrake.ghb"
   },
   {
    "id": "audacity",
@@ -152,7 +160,8 @@
    },
    "icon": "audacity",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "org.audacityteam.Audacity"
   },
   {
    "id": "ardour",
@@ -169,7 +178,8 @@
    },
    "icon": "ardour",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "org.ardour.Ardour"
   },
   {
    "id": "lmms",
@@ -186,7 +196,8 @@
    },
    "icon": "lmms",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "io.lmms.LMMS"
   },
   {
    "id": "freecad",
@@ -203,7 +214,8 @@
    },
    "icon": "freecad",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "org.freecad.FreeCAD"
   },
   {
    "id": "kicad",
@@ -220,7 +232,8 @@
    },
    "icon": "kicad",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "org.kicad.KiCad"
   },
   {
    "id": "godot",
@@ -237,7 +250,8 @@
    },
    "icon": "godot",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "org.godotengine.Godot"
   },
   {
    "id": "designcraft",
@@ -258,7 +272,8 @@
     "artcraft"
    ],
    "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
-   "launch": "ai.storyteller.designcraft"
+   "launch": "ai.storyteller.designcraft",
+   "appstream": "ai.storyteller.designcraft"
   },
   {
    "id": "vectorcraft",
@@ -279,7 +294,8 @@
     "artcraft"
    ],
    "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
-   "launch": "ai.storyteller.vectorcraft"
+   "launch": "ai.storyteller.vectorcraft",
+   "appstream": "ai.storyteller.vectorcraft"
   },
   {
    "id": "photocraft",
@@ -300,7 +316,8 @@
     "artcraft"
    ],
    "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
-   "launch": "ai.storyteller.photocraft"
+   "launch": "ai.storyteller.photocraft",
+   "appstream": "ai.storyteller.photocraft"
   },
   {
    "id": "filmcraft",
@@ -321,7 +338,8 @@
     "artcraft"
    ],
    "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
-   "launch": "ai.storyteller.filmcraft"
+   "launch": "ai.storyteller.filmcraft",
+   "appstream": "ai.storyteller.filmcraft"
   },
   {
    "id": "soundcraft",
@@ -342,7 +360,8 @@
     "artcraft"
    ],
    "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
-   "launch": "ai.storyteller.soundcraft"
+   "launch": "ai.storyteller.soundcraft",
+   "appstream": "ai.storyteller.soundcraft"
   },
   {
    "id": "cadcraft",
@@ -363,7 +382,8 @@
     "artcraft"
    ],
    "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
-   "launch": "ai.storyteller.cadcraft"
+   "launch": "ai.storyteller.cadcraft",
+   "appstream": "ai.storyteller.cadcraft"
   },
   {
    "id": "figcraft",
@@ -384,7 +404,8 @@
     "artcraft"
    ],
    "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
-   "launch": "ai.storyteller.figcraft"
+   "launch": "ai.storyteller.figcraft",
+   "appstream": "ai.storyteller.figcraft"
   },
   {
    "id": "libreoffice",
@@ -401,7 +422,8 @@
    },
    "icon": "libreoffice-startcenter",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "org.libreoffice.LibreOffice"
   },
   {
    "id": "pdfcraft",
@@ -422,7 +444,8 @@
     "artcraft"
    ],
    "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
-   "launch": "ai.storyteller.pdfcraft"
+   "launch": "ai.storyteller.pdfcraft",
+   "appstream": "ai.storyteller.pdfcraft"
   },
   {
    "id": "wordcraft",
@@ -443,7 +466,8 @@
     "artcraft"
    ],
    "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
-   "launch": "ai.storyteller.wordcraft"
+   "launch": "ai.storyteller.wordcraft",
+   "appstream": "ai.storyteller.wordcraft"
   },
   {
    "id": "gridcraft",
@@ -464,7 +488,8 @@
     "artcraft"
    ],
    "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
-   "launch": "ai.storyteller.gridcraft"
+   "launch": "ai.storyteller.gridcraft",
+   "appstream": "ai.storyteller.gridcraft"
   },
   {
    "id": "deckcraft",
@@ -485,7 +510,8 @@
     "artcraft"
    ],
    "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
-   "launch": "ai.storyteller.deckcraft"
+   "launch": "ai.storyteller.deckcraft",
+   "appstream": "ai.storyteller.deckcraft"
   },
   {
    "id": "obsidian",
@@ -500,7 +526,8 @@
    },
    "icon": "obsidian",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "md.obsidian.Obsidian"
   },
   {
    "id": "thunderbird",
@@ -517,7 +544,8 @@
    },
    "icon": "thunderbird",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "org.mozilla.Thunderbird"
   },
   {
    "id": "proton-pass",
@@ -549,7 +577,8 @@
    },
    "icon": "keepassxc",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "org.keepassxc.KeePassXC"
   },
   {
    "id": "proton-drive",
@@ -596,7 +625,8 @@
    },
    "icon": "joplin",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "net.cozic.joplin_desktop"
   },
   {
    "id": "steam",
@@ -611,7 +641,8 @@
    },
    "icon": "steam",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "com.valvesoftware.Steam"
   },
   {
    "id": "lutris",
@@ -628,7 +659,8 @@
    },
    "icon": "lutris",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "net.lutris.Lutris"
   },
   {
    "id": "heroic",
@@ -645,7 +677,8 @@
    },
    "icon": "heroic",
    "reviewed": false,
-   "tags": []
+   "tags": [],
+   "flathub": "com.heroicgameslauncher.hgl"
   },
   {
    "id": "retroarch",
@@ -662,7 +695,8 @@
    },
    "icon": "retroarch",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "org.libretro.RetroArch"
   },
   {
    "id": "prismlauncher",
@@ -679,7 +713,8 @@
    },
    "icon": "prismlauncher",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "org.prismlauncher.PrismLauncher"
   },
   {
    "id": "supertuxkart",
@@ -696,7 +731,8 @@
    },
    "icon": "supertuxkart",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "net.supertuxkart.SuperTuxKart"
   },
   {
    "id": "0ad",
@@ -713,7 +749,8 @@
    },
    "icon": "0ad",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "com.play0ad.zeroad"
   },
   {
    "id": "spotify",
@@ -728,7 +765,8 @@
    },
    "icon": "spotify",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "com.spotify.Client"
   },
   {
    "id": "vlc",
@@ -745,7 +783,8 @@
    },
    "icon": "vlc",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "org.videolan.VLC"
   },
   {
    "id": "mpv",
@@ -762,7 +801,8 @@
    },
    "icon": "mpv",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "io.mpv.Mpv"
   },
   {
    "id": "vscode",
@@ -777,7 +817,8 @@
    },
    "icon": "visual-studio-code",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "com.visualstudio.code"
   },
   {
    "id": "neovim",
@@ -794,7 +835,8 @@
    },
    "icon": "neovim",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "io.neovim.nvim"
   },
   {
    "id": "lazygit",
@@ -878,7 +920,8 @@
    },
    "icon": "virt-manager",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "org.virt_manager.virt-manager"
   },
   {
    "id": "sarina",
@@ -940,7 +983,8 @@
    },
    "icon": "wireshark",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "org.wireshark.Wireshark"
   },
   {
    "id": "heimdall",
@@ -1004,7 +1048,8 @@
    },
    "icon": "vivaldi",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "com.vivaldi.Vivaldi"
   },
   {
    "id": "firefox",
@@ -1021,7 +1066,8 @@
    },
    "icon": "firefox",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "org.mozilla.firefox"
   },
   {
    "id": "tor-browser",
@@ -1038,7 +1084,8 @@
    },
    "icon": "tor-browser",
    "reviewed": false,
-   "tags": []
+   "tags": [],
+   "flathub": "org.torproject.torbrowser-launcher"
   },
   {
    "id": "discord",
@@ -1055,7 +1102,8 @@
    },
    "icon": "discord",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "com.discordapp.Discord"
   },
   {
    "id": "element",
@@ -1072,7 +1120,8 @@
    },
    "icon": "element",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "im.riot.Riot"
   },
   {
    "id": "qbittorrent",
@@ -1089,7 +1138,8 @@
    },
    "icon": "qbittorrent",
    "reviewed": true,
-   "tags": []
+   "tags": [],
+   "flathub": "org.qbittorrent.qBittorrent"
   },
   {
    "id": "btop",

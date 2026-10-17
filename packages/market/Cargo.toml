@@ -13,6 +13,7 @@ path = "src/main.rs"
 eframe = "0.36.2"
 egui_extras = { version = "0.36.2", features = ["file", "image", "svg"] }
 labyrinth-ui = { path = "../labyrinth-ui" }
+roxmltree = "0.21.1"
 serde_json = "1.0.151"
 
 [profile.release]
