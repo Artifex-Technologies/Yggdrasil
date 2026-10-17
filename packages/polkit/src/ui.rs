@@ -76,7 +76,7 @@ impl eframe::App for App {
         };
         self.started = true;
         let mut answer: Option<Option<String>> = None;
-        egui::CentralPanel::default().show_inside(ui, |ui| draw(ui, d, &pal, &mut answer));
+        egui::CentralPanel::default().show(ui, |ui| draw(ui, d, &pal, &mut answer));
         if let Some(a) = answer {
             if let Some((_, _, reply)) = d.asking.take() {
                 let _ = reply.send(a);
@@ -108,7 +108,7 @@ fn draw(ui: &mut egui::Ui, d: &mut Dialog, pal: &theme::Palette, answer: &mut Op
             resp.request_focus();
             ui.add_space(10.0);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                let enter = ui.input(|i| i.key_pressed(Key::Enter));
                 if ui.button("Authenticate").clicked() || enter {
                     *answer = Some(Some(d.input.clone()));
                 }
