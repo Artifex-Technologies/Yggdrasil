@@ -2787,6 +2787,11 @@ impl eframe::App for App {
                     actions.push(Action::NewFolder(f));
                 }
             });
+            if open_search {
+                let t = self.panes[self.focus].cur();
+                t.search_open = true;
+                t.search_focus = true;
+            }
             // Ctrl+A selects everything visible in the focused tab.
             if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::A)) {
                 let t = self.panes[self.focus].cur();
