@@ -755,6 +755,35 @@ fn theme_icon(theme: &std::path::Path, name: &str) -> Option<std::path::PathBuf>
     None
 }
 
+/// Up to `n` icon files from a pack, whatever it has (by size folder, then name), for a preview.
+fn any_icons(theme: &std::path::Path, n: usize) -> Vec<std::path::PathBuf> {
+    let mut out = vec![];
+    let mut dirs: Vec<std::path::PathBuf> = vec![];
+    if let Ok(rd) = std::fs::read_dir(theme) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                dirs.push(p.clone());
+                if let Ok(sub) = std::fs::read_dir(&p) {
+                    dirs.extend(sub.flatten().map(|s| s.path()).filter(|s| s.is_dir()));
+                }
+            }
+        }
+    }
+    dirs.sort();
+    for d in dirs {
+        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&d).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.extension().map(|x| x == "png" || x == "svg").unwrap_or(false)).collect()).unwrap_or_default();
+        files.sort();
+        for f in files {
+            out.push(f);
+            if out.len() >= n {
+                return out;
+            }
+        }
+    }
+    out
+}
+
 /// Every icon pack on the system and in the user's own folder, user ones first. Cursor themes, hidden
 /// themes and the empty base themes are left out.
 pub fn icon_packs() -> Vec<IconPack> {
@@ -790,7 +819,15 @@ pub fn icon_packs() -> Vec<IconPack> {
                 continue;
             }
             let name = theme_key(&index, "Name").filter(|n| !n.is_empty()).unwrap_or_else(|| id.clone());
-            let preview = samples.iter().filter_map(|n| theme_icon(&d, n)).take(4).collect();
+            let mut preview: Vec<std::path::PathBuf> = samples.iter().filter_map(|n| theme_icon(&d, n)).take(4).collect();
+            if preview.len() < 4 {
+                // a pack with none of the usual sample names (an imported Android pack): show whatever it has
+                for p in any_icons(&d, 4 - preview.len()) {
+                    if !preview.contains(&p) {
+                        preview.push(p);
+                    }
+                }
+            }
             out.push(IconPack { id, name, user, preview });
         }
     }
