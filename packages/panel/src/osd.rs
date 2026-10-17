@@ -27,7 +27,6 @@ pub struct OsdState {
 pub const WIDTH: u32 = 280;
 pub const HEIGHT: u32 = 52;
 
-const ACCENT: Rgba = (124, 84, 214, 255);
 
 /// The icon for what is shown.
 pub fn icon_for(st: &OsdState) -> &'static str {
@@ -56,7 +55,7 @@ pub fn paint(pix: &mut Pixmap, s: f32, st: &OsdState, fonts: &Fonts, icons: &mut
     paint::fill_rounded(pix, bx * s, (cy - 3.0) * s, bw * s, 6.0 * s, 3.0 * s, (255, 255, 255, 36));
     let frac = if st.muted { 0.0 } else { (st.percent.min(100) as f32) / 100.0 };
     if frac > 0.0 {
-        paint::fill_rounded(pix, bx * s, (cy - 3.0) * s, (bw * frac).max(6.0) * s, 6.0 * s, 3.0 * s, ACCENT);
+        paint::fill_rounded(pix, bx * s, (cy - 3.0) * s, (bw * frac).max(6.0) * s, 6.0 * s, 3.0 * s, paint::accent(255));
     }
     let label = if st.muted { "Muted".to_string() } else { format!("{}%", st.percent) };
     let lw = paint::text_width(&fonts.bold, 13.0 * s, &label);

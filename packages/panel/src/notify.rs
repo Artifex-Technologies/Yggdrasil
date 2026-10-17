@@ -501,7 +501,6 @@ pub type Rect = (f32, f32, f32, f32);
 
 const WHITE: Rgba = (255, 255, 255, 255);
 const DIM: Rgba = (150, 150, 165, 255);
-const ACCENT: Rgba = (124, 84, 214, 255);
 const RED: Rgba = (232, 84, 84, 255);
 const HEAD_H: f32 = 54.0;
 const ITEM_H: f32 = 46.0;
@@ -539,7 +538,7 @@ pub fn draw_app_icon(pix: &mut Pixmap, s: f32, icons: &mut Icons, fonts: &Fonts,
             return;
         }
     }
-    let col = if urgent { RED } else { ACCENT };
+    let col = if urgent { RED } else { paint::accent(255) };
     paint::fill_circle(pix, (x + size / 2.0) * s, (y + size / 2.0) * s, size / 2.0 * s, col);
     let letter: String = name.chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_else(|| "?".into());
     let lw = paint::text_width(&fonts.bold, size * 0.5 * s, &letter);
@@ -594,7 +593,7 @@ pub fn paint_list(pix: &mut Pixmap, s: f32, area: Rect, store: &Store, pointer: 
                 if many {
                     let badge = g.items.len().to_string();
                     let bw = (paint::text_width(&fonts.bold, 10.5 * s, &badge) / s + 12.0).max(20.0);
-                    paint::fill_rounded(pix, (right - bw) * s, (y + 27.0) * s, bw * s, 17.0 * s, 8.5 * s, if urgent { RED } else { ACCENT });
+                    paint::fill_rounded(pix, (right - bw) * s, (y + 27.0) * s, bw * s, 17.0 * s, 8.5 * s, if urgent { RED } else { paint::accent(255) });
                     let lw = paint::text_width(&fonts.bold, 10.5 * s, &badge);
                     paint::draw_text(pix, &fonts.bold, 10.5 * s, (right - bw / 2.0) * s - lw / 2.0, (y + 35.5) * s, WHITE, &badge);
                     name_right = name_right.min(right - 4.0);
@@ -657,7 +656,7 @@ pub fn paint_list(pix: &mut Pixmap, s: f32, area: Rect, store: &Store, pointer: 
     let dw = paint::text_width(&fonts.regular, 11.0 * s, dl) / s + 18.0;
     let db = (ax + aw / 2.0 - dw / 2.0 + 20.0, fy, dw, 22.0);
     let dhot = over(pointer, db);
-    paint::fill_rounded(pix, db.0 * s, db.1 * s, db.2 * s, db.3 * s, 11.0 * s, if store.dnd { ACCENT } else if dhot { (255, 255, 255, 40) } else { (255, 255, 255, 18) });
+    paint::fill_rounded(pix, db.0 * s, db.1 * s, db.2 * s, db.3 * s, 11.0 * s, if store.dnd { paint::accent(255) } else if dhot { (255, 255, 255, 40) } else { (255, 255, 255, 18) });
     paint::draw_text(pix, &fonts.regular, 11.0 * s, (db.0 + 9.0) * s, (db.1 + 11.0) * s, if store.dnd || dhot { WHITE } else { (210, 210, 222, 255) }, dl);
     hits.push((db, NAct::ToggleDnd));
     let label = "Clear all";
@@ -739,7 +738,7 @@ pub fn paint_toasts(pix: &mut Pixmap, s: f32, list: &[Notif], hover: Option<usiz
             let bw = paint::text_width(&fonts.bold, 11.5 * s, label) / s + 24.0;
             let b = (bx, y + TOAST_H - 6.0, bw, 26.0);
             let bl = hover == Some(first_hit + 1 + i);
-            paint::fill_rounded(pix, b.0 * s, b.1 * s, b.2 * s, b.3 * s, 13.0 * s, if bl { ACCENT } else { (255, 255, 255, 28) });
+            paint::fill_rounded(pix, b.0 * s, b.1 * s, b.2 * s, b.3 * s, 13.0 * s, if bl { paint::accent(255) } else { (255, 255, 255, 28) });
             paint::draw_text(pix, &fonts.bold, 11.5 * s, (b.0 + 12.0) * s, (b.1 + 13.0) * s, WHITE, label);
             hits.push(Hit { rect: phys(b), action: Action::ToastAction(n.id, i) });
             bx += bw + 8.0;

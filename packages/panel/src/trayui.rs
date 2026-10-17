@@ -97,7 +97,7 @@ fn paint_windows(pix: &mut Pixmap, s: f32, anchor_x: f32, app_id: &str, model: &
         let card = (x, y, WIN_CARD_W, WIN_CARD_H - 4.0);
         let over = |r: Rect| pointer.0 >= r.0 && pointer.0 < r.0 + r.2 && pointer.1 >= r.1 && pointer.1 < r.1 + r.3;
         if win.active() {
-            paint::stroke_rounded(pix, (card.0 + 1.0) * s, (card.1 + 1.0) * s, (card.2 - 2.0) * s, (card.3 - 2.0) * s, 10.0 * s, 2.0 * s, (124, 84, 214, 255));
+            paint::stroke_rounded(pix, (card.0 + 1.0) * s, (card.1 + 1.0) * s, (card.2 - 2.0) * s, (card.3 - 2.0) * s, 10.0 * s, 2.0 * s, paint::accent(255));
         } else if over(card) {
             paint::fill_rounded(pix, card.0 * s, card.1 * s, card.2 * s, card.3 * s, 10.0 * s, (255, 255, 255, 22));
         }

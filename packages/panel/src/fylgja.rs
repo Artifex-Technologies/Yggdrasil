@@ -818,7 +818,6 @@ pub fn set_volume(target: &Slider, percent: u32) {
 const WHITE: Rgba = (255, 255, 255, 255);
 const DIM: Rgba = (150, 150, 165, 255);
 const FAINT: Rgba = (60, 60, 72, 255);
-const ACCENT: Rgba = (124, 84, 214, 255);
 const RED: Rgba = (232, 120, 120, 255);
 
 /// Whether there is anything to show: the small card only appears when something is playing.
@@ -919,7 +918,7 @@ fn tile(pix: &mut Pixmap, s: f32, fonts: &Fonts, icons: &mut Icons, hits: &mut V
     let hot = over(pointer, rect);
     let fill = match (on, hot) {
         (true, true) => (140, 100, 226, 255),
-        (true, false) => ACCENT,
+        (true, false) => paint::accent(255),
         (false, true) => (44, 44, 54, 255),
         (false, false) => (30, 30, 38, 255),
     };
@@ -1001,7 +1000,7 @@ fn paint_controls(pix: &mut Pixmap, s: f32, m: &Model, st: &FyState, card: (f32,
     let pct = snap.master.map(|(p, _)| p).unwrap_or(0);
     let fillw = (inner * pct.min(100) as f32 / 100.0).max(30.0);
     if snap.master.is_some() {
-        paint::fill_rounded(pix, vr.0 * s, vr.1 * s, fillw * s, vr.3 * s, 15.0 * s, if muted { (90, 90, 104, 255) } else { ACCENT });
+        paint::fill_rounded(pix, vr.0 * s, vr.1 * s, fillw * s, vr.3 * s, 15.0 * s, if muted { (90, 90, 104, 255) } else { paint::accent(255) });
     }
     if let Some(ic) = icons.get_tinted(if muted { "audio-volume-muted-symbolic" } else { "audio-volume-high-symbolic" }, (16.0 * s) as u32, WHITE) {
         paint::draw_pixmap(pix, ic, ((x0 + 10.0) * s) as i32, ((vy + 7.0) * s) as i32);
@@ -1068,7 +1067,7 @@ fn paint_controls(pix: &mut Pixmap, s: f32, m: &Model, st: &FyState, card: (f32,
             let end = clock(md.len_us);
             let ew = paint::text_width(&fonts.regular, 10.0 * s, &end);
             paint::draw_text(pix, &fonts.regular, 10.0 * s, (x0 + inner - 14.0) * s - ew, by * s, DIM, &end);
-            slider(pix, s, bx, by, bw, ((md.pos_us as f32 / md.len_us as f32) * 100.0).min(100.0) as u32, ACCENT);
+            slider(pix, s, bx, by, bw, ((md.pos_us as f32 / md.len_us as f32) * 100.0).min(100.0) as u32, paint::accent(255));
         }
     }
 
@@ -1088,7 +1087,7 @@ fn paint_controls(pix: &mut Pixmap, s: f32, m: &Model, st: &FyState, card: (f32,
             let rect = (lx + 5.0, ly + 5.0 + 30.0 * i as f32, lw - 10.0, 28.0);
             let current = *name == snap.default_sink;
             if current || over(pointer, rect) {
-                paint::fill_rounded(pix, rect.0 * s, rect.1 * s, rect.2 * s, rect.3 * s, 8.0 * s, if current { (124, 84, 214, 90) } else { (255, 255, 255, 24) });
+                paint::fill_rounded(pix, rect.0 * s, rect.1 * s, rect.2 * s, rect.3 * s, 8.0 * s, if current { paint::accent(90) } else { (255, 255, 255, 24) });
             }
             paint::draw_text(pix, &fonts.regular, 11.5 * s, (rect.0 + 10.0) * s, (rect.1 + 14.0) * s, WHITE, &fit(&fonts.regular, 11.5 * s, desc, (rect.2 - 20.0) * s));
             hits.push(FHit { rect, act: FAct::Sink(name.clone()) });
@@ -1123,25 +1122,25 @@ pub fn paint(pix: &mut Pixmap, s: f32, m: &Model, st: &FyState, slide: f32, poin
             Voice::Listening(secs) => {
                 // a pulse that breathes with the seconds
                 let r = if secs % 2 == 0 { 9.0 } else { 7.0 };
-                paint::fill_circle(pix, (x0 + 14.0) * s, (cy + 34.0) * s, (r + 7.0) * s, (124, 84, 214, 70));
-                paint::fill_circle(pix, (x0 + 14.0) * s, (cy + 34.0) * s, r * s, ACCENT);
+                paint::fill_circle(pix, (x0 + 14.0) * s, (cy + 34.0) * s, (r + 7.0) * s, paint::accent(70));
+                paint::fill_circle(pix, (x0 + 14.0) * s, (cy + 34.0) * s, r * s, paint::accent(255));
                 paint::draw_text(pix, &fonts.bold, 15.0 * s, (x0 + 42.0) * s, (cy + 34.0) * s, WHITE, &format!("Listening…  {}:{:02}", secs / 60, secs % 60));
                 paint::draw_text(pix, &fonts.regular, 12.0 * s, x0 * s, (cy + 72.0) * s, DIM, "Ask your question. Press the shortcut again to send it, Esc to cancel.");
                 let b = (x0 + inner - 74.0, cy + ch - 40.0, 74.0, 28.0);
-                paint::fill_rounded(pix, b.0 * s, b.1 * s, b.2 * s, b.3 * s, 10.0 * s, if over(pointer, b) { (150, 110, 232, 255) } else { ACCENT });
+                paint::fill_rounded(pix, b.0 * s, b.1 * s, b.2 * s, b.3 * s, 10.0 * s, if over(pointer, b) { (150, 110, 232, 255) } else { paint::accent(255) });
                 let lw = paint::text_width(&fonts.bold, 12.5 * s, "Send");
                 paint::draw_text(pix, &fonts.bold, 12.5 * s, (b.0 + b.2 / 2.0) * s - lw / 2.0, (b.1 + b.3 / 2.0) * s, WHITE, "Send");
                 hits.push(FHit { rect: b, act: FAct::VoiceStop });
             }
             Voice::Thinking(heard) => {
-                paint::fill_circle(pix, (x0 + 14.0) * s, (cy + 40.0) * s, 7.0 * s, ACCENT);
+                paint::fill_circle(pix, (x0 + 14.0) * s, (cy + 40.0) * s, 7.0 * s, paint::accent(255));
                 paint::draw_text(pix, &fonts.bold, 15.0 * s, (x0 + 42.0) * s, (cy + 40.0) * s, WHITE, "Sarina is thinking…");
                 if !heard.is_empty() {
                     paint::draw_text(pix, &fonts.regular, 12.5 * s, x0 * s, (cy + 76.0) * s, DIM, &fit(&fonts.regular, 12.5 * s, heard, inner * s));
                 }
             }
             Voice::Reply(text) => {
-                paint::draw_text(pix, &fonts.bold, 13.0 * s, x0 * s, (cy + 26.0) * s, ACCENT, "Sarina");
+                paint::draw_text(pix, &fonts.bold, 13.0 * s, x0 * s, (cy + 26.0) * s, paint::accent(255), "Sarina");
                 let lines = wrap(&fonts.regular, 13.0 * s, text, inner * s);
                 let rows = 8;
                 for (i, l) in lines.iter().take(rows).enumerate() {
@@ -1248,7 +1247,7 @@ pub fn paint(pix: &mut Pixmap, s: f32, m: &Model, st: &FyState, slide: f32, poin
                         None => paint::fill_rounded(pix, rect.0 * s, rect.1 * s, rect.2 * s, rect.3 * s, 6.0 * s, (30, 30, 38, 255)),
                     }
                     if over(pointer, rect) {
-                        paint::stroke_rounded(pix, rect.0 * s, rect.1 * s, rect.2 * s, rect.3 * s, 6.0 * s, 2.0 * s, ACCENT);
+                        paint::stroke_rounded(pix, rect.0 * s, rect.1 * s, rect.2 * s, rect.3 * s, 6.0 * s, 2.0 * s, paint::accent(255));
                     }
                     hits.push(FHit { rect, act: FAct::Wall(p.clone()) });
                 }

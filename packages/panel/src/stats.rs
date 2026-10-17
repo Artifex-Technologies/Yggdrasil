@@ -24,7 +24,6 @@ const WHITE: Rgba = (255, 255, 255, 255);
 const DIM: Rgba = (150, 150, 165, 255);
 const FAINT: Rgba = (52, 52, 62, 255);
 const TILE: Rgba = (26, 26, 32, 255);
-const PURPLE: Rgba = (124, 84, 214, 255);
 const LILAC: Rgba = (206, 150, 232, 255);
 const GREEN: Rgba = (138, 204, 150, 255);
 
@@ -524,7 +523,7 @@ pub fn paint(pix: &mut Pixmap, s: f32, m: &Model, card: (f32, f32, f32, f32), po
     let chips = chip_texts(st);
 
     // processor
-    gauge(pix, s, fonts, (x0, y0, tw, th), st.cpu_percent as f32 / 100.0, &format!("{}%", st.cpu_percent), PURPLE, "CPU", &st.cpu_name, &chips[0]);
+    gauge(pix, s, fonts, (x0, y0, tw, th), st.cpu_percent as f32 / 100.0, &format!("{}%", st.cpu_percent), paint::accent(255), "CPU", &st.cpu_name, &chips[0]);
     // graphics card
     match &st.gpu {
         Some(g) => gauge(pix, s, fonts, (x0 + tw + 6.0, y0, tw, th), g.percent as f32 / 100.0, &format!("{}%", g.percent), LILAC, "GPU", &g.name, &chips[1]),
@@ -575,7 +574,7 @@ pub fn paint(pix: &mut Pixmap, s: f32, m: &Model, card: (f32, f32, f32, f32), po
     let seg = (rx + rw - 12.0 - 70.0, y0 + 4.0, 70.0, 18.0);
     paint::fill_rounded(pix, seg.0 * s, seg.1 * s, seg.2 * s, seg.3 * s, 9.0 * s, (40, 40, 50, 255));
     let on_x = if d.top_ram { seg.0 + 35.0 } else { seg.0 };
-    paint::fill_rounded(pix, on_x * s, seg.1 * s, 35.0 * s, seg.3 * s, 9.0 * s, PURPLE);
+    paint::fill_rounded(pix, on_x * s, seg.1 * s, 35.0 * s, seg.3 * s, 9.0 * s, paint::accent(255));
     for (i, label) in ["CPU", "RAM"].iter().enumerate() {
         let lw = paint::text_width(&fonts.bold, 9.0 * s, label);
         let lit = (i == 1) == d.top_ram;
@@ -604,7 +603,7 @@ pub fn paint(pix: &mut Pixmap, s: f32, m: &Model, card: (f32, f32, f32, f32), po
         paint::draw_text(pix, &fonts.bold, 10.0 * s, tx * s, ry * s, WHITE, &fit(&fonts.bold, 10.0 * s, name, (rx + rw - 12.0 - tx) * s - vw - 8.0 * s));
         let frac = (if d.top_ram { a.rss_mb as f32 } else { a.cpu }) / maxv;
         paint::fill_rounded(pix, tx * s, (ry + 6.0) * s, (rx + rw - 12.0 - tx) * s, 2.0 * s, 1.0 * s, FAINT);
-        paint::fill_rounded(pix, tx * s, (ry + 6.0) * s, ((rx + rw - 12.0 - tx) * frac).max(2.0) * s, 2.0 * s, 1.0 * s, if d.top_ram { GREEN } else { PURPLE });
+        paint::fill_rounded(pix, tx * s, (ry + 6.0) * s, ((rx + rw - 12.0 - tx) * frac).max(2.0) * s, 2.0 * s, 1.0 * s, if d.top_ram { GREEN } else { paint::accent(255) });
     }
 
     // the speed test
@@ -638,7 +637,7 @@ pub fn paint(pix: &mut Pixmap, s: f32, m: &Model, card: (f32, f32, f32, f32), po
     }
     let b = (rx + 12.0, sy + 50.0, rw - 24.0, 28.0);
     let running = matches!(speed, Speed::Running(_));
-    paint::fill_rounded(pix, b.0 * s, b.1 * s, b.2 * s, b.3 * s, 10.0 * s, if running { (60, 50, 90, 255) } else if over(pointer, b) { (150, 110, 232, 255) } else { PURPLE });
+    paint::fill_rounded(pix, b.0 * s, b.1 * s, b.2 * s, b.3 * s, 10.0 * s, if running { (60, 50, 90, 255) } else if over(pointer, b) { (150, 110, 232, 255) } else { paint::accent(255) });
     let label = if running { "Testing…" } else { "Run speed test" };
     let lw = paint::text_width(&fonts.bold, 11.0 * s, label);
     paint::draw_text(pix, &fonts.bold, 11.0 * s, (b.0 + b.2 / 2.0) * s - lw / 2.0, (b.1 + b.3 / 2.0) * s, WHITE, label);

@@ -9,6 +9,36 @@ use resvg::tiny_skia::{self, Color, FillRule, Paint, Path as SkPath, PathBuilder
 
 pub type Rgba = (u8, u8, u8, u8);
 
+static ACCENT_RGB: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0x007c_54d6);
+
+/// The accent color (the system's, from Settings > Appearance) at opacity `a`.
+pub fn accent(a: u8) -> Rgba {
+    let v = ACCENT_RGB.load(std::sync::atomic::Ordering::Relaxed);
+    (((v >> 16) & 255) as u8, ((v >> 8) & 255) as u8, (v & 255) as u8, a)
+}
+
+/// Read the accent color from kdeglobals (`AccentColor=r,g,b` under [General]); true when it changed.
+pub fn refresh_accent() -> bool {
+    let dir = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")));
+    let Some(text) = dir.and_then(|d| std::fs::read_to_string(d.join("kdeglobals")).ok()) else { return false };
+    let mut in_general = false;
+    for line in text.lines() {
+        let l = line.trim();
+        if l.starts_with('[') {
+            in_general = l == "[General]";
+        } else if in_general {
+            if let Some(v) = l.strip_prefix("AccentColor=") {
+                let p: Vec<u32> = v.trim().trim_matches('"').split(',').filter_map(|x| x.trim().parse().ok()).collect();
+                if p.len() == 3 && p.iter().all(|c| *c < 256) {
+                    let packed = (p[0] << 16) | (p[1] << 8) | p[2];
+                    return ACCENT_RGB.swap(packed, std::sync::atomic::Ordering::Relaxed) != packed;
+                }
+            }
+        }
+    }
+    false
+}
+
 /// The icon theme chosen in KDE (`[Icons] Theme` in kdeglobals).
 pub fn selected_icon_theme() -> Option<String> {
     let dir = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;

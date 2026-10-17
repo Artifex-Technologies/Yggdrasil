@@ -1984,7 +1984,7 @@ fn page_shortcuts(ui: &mut egui::Ui, pal: &Palette) {
     let groups: [(&str, &[(&str, &str)]); 3] = [
         ("Everywhere", &[
             ("Win", "Launcher"), ("Win + E", "Minos"), ("Win + R", "Run"), ("Win + I", "Settings"), ("Win + L", "Lock"),
-            ("Win + V", "Clipboard history"), ("Win + Shift + S", "Screenshot of a region"), ("Ctrl + Shift + Esc", "Task manager"),
+            ("Win + V", "Clipboard history"), ("Win + Shift + S", "Screenshot of a region"), ("Ctrl + Shift + Esc", "Task manager"), ("Win + Ctrl + Shift + W", "Remove the current desktop"),
             ("Win + Return", "Terminal"), ("F12", "Drop-down terminal"), ("Win + F", "Full screen"),
             ("Win + Shift + Alt + ← / →", "Window to the other monitor"), ("Alt + Tab", "Switch windows"),
         ]),

@@ -1285,6 +1285,17 @@ impl State {
                 self.close_popup();
                 self.tray_click(&key, "Activate");
             }
+            RowAct::Choose(key, id) if key.starts_with("ws:") => {
+                self.close_popup();
+                if let Some(d) = key["ws:".len()..].parse::<usize>().ok().and_then(|i| self.model.status.desktops.get(i)).cloned() {
+                    match id {
+                        1 => run(&["busctl", "--user", "set-property", "org.kde.KWin", "/VirtualDesktopManager", "org.kde.KWin.VirtualDesktopManager", "current", "s", &d.id]),
+                        // its windows move to the desktop before it
+                        2 => run(&["busctl", "--user", "call", "org.kde.KWin", "/VirtualDesktopManager", "org.kde.KWin.VirtualDesktopManager", "removeDesktop", "s", &d.id]),
+                        _ => {}
+                    }
+                }
+            }
             RowAct::Choose(key, id) if key.starts_with("dock:") => {
                 self.close_popup();
                 self.dock_menu_choose(&key["dock:".len()..], id);
@@ -1474,6 +1485,19 @@ impl State {
         menu.push(mk(3, if pinned { "Remove from dock" } else { "Keep in dock" }));
         self.click_output = Some(output);
         self.toggle_popup(PopupKind::Tray(trayui::TrayPop { anchor_x: x, mode: trayui::TrayMode::Menu { key: format!("dock:{app_id}"), items: menu, path: vec![] } }));
+        self.dirty = true;
+    }
+
+    /// Right click on a desktop in the bar: its menu.
+    fn open_workspace_menu(&mut self, index: usize, x: f32, output: u32) {
+        if self.popup.is_some() {
+            self.close_popup();
+        }
+        let many = self.model.status.desktops.len() > 1;
+        let mk = |id: i32, label: &str, enabled: bool| tray::MenuItem { id, label: label.into(), enabled, separator: false, checked: None, children: vec![] };
+        let items = vec![mk(1, &format!("Switch to desktop {}", index + 1), true), mk(2, &format!("Remove desktop {}", index + 1), many)];
+        self.click_output = Some(output);
+        self.toggle_popup(PopupKind::Tray(trayui::TrayPop { anchor_x: x, mode: trayui::TrayMode::Menu { key: format!("ws:{index}"), items, path: vec![] } }));
         self.dirty = true;
     }
 
@@ -2307,8 +2331,10 @@ impl State {
                 }
             }
             Action::NewWorkspace => {
-                let n = self.model.status.desktops.len();
-                if n < status::MAX_DESKTOPS {
+                // count the desktops now (not from the last refresh), so the new one always goes at the end
+                let json = Command::new("busctl").args(["--user", "--json=short", "get-property", "org.kde.KWin", "/VirtualDesktopManager", "org.kde.KWin.VirtualDesktopManager", "desktops"]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+                let n = status::parse_desktops(&json).len();
+                if n > 0 && n < status::MAX_DESKTOPS {
                     run(&["busctl", "--user", "call", "org.kde.KWin", "/VirtualDesktopManager", "org.kde.KWin.VirtualDesktopManager", "createDesktop", "us", &n.to_string(), &format!("Desktop {}", n + 1)]);
                 }
             }
@@ -2819,6 +2845,18 @@ impl Dispatch<WlPointer, ()> for State {
                         }
                     }
                 } else if button == 273 {
+                    // on a desktop in the bar: switch to it or remove it
+                    if let Some(i) = state.pointer_surface {
+                        let hit = state.surfs.get(i).and_then(|s| s.hover.and_then(|h| s.hits.get(h).cloned().map(|hit| (hit, s.output))));
+                        if let Some((hit, out)) = hit {
+                            if let Action::Workspace(w) = hit.action {
+                                let s = state.scale_of(&state.surfs[i]);
+                                let x = (hit.rect.0 + hit.rect.2 / 2.0) / s;
+                                state.open_workspace_menu(w, x, out);
+                                return;
+                            }
+                        }
+                    }
                     // on a dock app: its menu (new window, close, keep in dock)
                     if let Some(i) = state.pointer_surface {
                         let hover = state.surfs.get(i).and_then(|s| s.hover);
@@ -2970,6 +3008,7 @@ fn bind_outputs(globals: &GlobalList, state: &mut State, qh: &QueueHandle<State>
 }
 
 fn main() {
+    paint::refresh_accent();
     let Some(fonts) = paint::Fonts::load() else {
         eprintln!("labyrinth-panel: no sans-serif font found (fc-match)");
         std::process::exit(1);
@@ -3530,6 +3569,9 @@ fn main() {
                 let old = st.model.conf.dock_pos;
                 let old_wall = st.model.conf.own_wallpaper;
                 st.model.conf = PanelConf::load();
+                if paint::refresh_accent() {
+                    st.dirty = true; // the accent color changed in Settings
+                }
                 if st.model.conf.own_wallpaper != old_wall {
                     st.built_for = None; // the wallpaper surface comes or goes
                 }

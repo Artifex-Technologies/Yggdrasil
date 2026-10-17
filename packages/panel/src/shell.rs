@@ -277,7 +277,6 @@ pub fn app_name_for_bar(m: &Model) -> String {
 }
 
 /// The Labyrinth purple, for the current desktop and the active bits.
-const ACCENT: Rgba = (124, 84, 214, 255);
 
 /// The top bar: no strip of its own, just pills over the wallpaper (their backdrop is the bar's
 /// opacity setting; 0 leaves floating text), a black tab in the middle where the notch will open.
@@ -370,7 +369,7 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
     for i in 0..n {
         let current = i == m.status.current.min(n - 1);
         if current {
-            paint::fill_rounded(pix, sx + 1.0 * s, py + 2.0 * s, slot - 2.0 * s, ph - 4.0 * s, 5.0 * s, ACCENT);
+            paint::fill_rounded(pix, sx + 1.0 * s, py + 2.0 * s, slot - 2.0 * s, ph - 4.0 * s, 5.0 * s, paint::accent(255));
         } else if lit(&hits) {
             paint::fill_rounded(pix, sx + 1.0 * s, py + 2.0 * s, slot - 2.0 * s, ph - 4.0 * s, 5.0 * s, lk.hover);
         }
@@ -418,7 +417,7 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
         let label = if unread > 9 { "9+".to_string() } else { unread.to_string() };
         let bw = (paint::text_width(&fonts.bold, 11.5 * s, &label) + 16.0 * s).max(24.0 * s);
         rx -= bw;
-        paint::fill_rounded(pix, rx, py, bw, ph, r, (124, 84, 214, 235));
+        paint::fill_rounded(pix, rx, py, bw, ph, r, paint::accent(235));
         paint::draw_text(pix, &fonts.bold, 11.5 * s, rx + (bw - paint::text_width(&fonts.bold, 11.5 * s, &label)) / 2.0, cy, (255, 255, 255, 255), &label);
         hits.push(Hit { rect: (rx, 0.0, bw, h), action: Action::Notifications });
         rx -= 6.0 * s;
@@ -556,7 +555,7 @@ pub fn paint_calendar(pix: &mut Pixmap, s: f32, m: &Model, offset: i32, fonts: &
             let mid_y = cy + 104.0 + row * (r as f32 + 0.5);
             let is_today = *in_month && (y, mo, *day) == (ty, tm, td);
             if is_today {
-                paint::fill_circle(pix, mid_x * s, mid_y * s, 15.0 * s, if dark { (255, 255, 255, 70) } else { (124, 84, 214, 255) });
+                paint::fill_circle(pix, mid_x * s, mid_y * s, 15.0 * s, if dark { (255, 255, 255, 70) } else { paint::accent(255) });
             }
             let label = day.to_string();
             let lw = paint::text_width(&fonts.bold, 15.0 * s, &label);
@@ -705,16 +704,16 @@ pub fn paint_start(pix: &mut Pixmap, s: f32, m: &Model, query: &str, select_all:
     let fx = cx + 16.0;
     let fw = cw - 32.0;
     rr(pix, fx, cy + 16.0, fw, 40.0, 10.0, pal.field);
-    paint::stroke_rounded(pix, (fx + 0.5) * s, (cy + 16.5) * s, (fw - 1.0) * s, 39.0 * s, 10.0 * s, s, if query.is_empty() { pal.border } else { (124, 84, 214, 255) });
+    paint::stroke_rounded(pix, (fx + 0.5) * s, (cy + 16.5) * s, (fw - 1.0) * s, 39.0 * s, 10.0 * s, s, if query.is_empty() { pal.border } else { paint::accent(255) });
     if query.is_empty() {
         text(pix, &fonts.regular, 14.0, fx + 14.0, cy + 36.0, pal.dim, "Search apps");
     } else {
         let qw = paint::text_width(&fonts.regular, 14.0 * s, query) / s;
         if select_all {
-            rr(pix, fx + 12.0, cy + 25.0, qw + 4.0, 22.0, 4.0, (124, 84, 214, 120)); // everything typed is selected
+            rr(pix, fx + 12.0, cy + 25.0, qw + 4.0, 22.0, 4.0, paint::accent(120)); // everything typed is selected
         }
         text(pix, &fonts.regular, 14.0, fx + 14.0, cy + 36.0, pal.text, query);
-        rr(pix, fx + 14.0 + qw + 1.0, cy + 26.0, 1.5, 20.0, 0.5, (124, 84, 214, 255)); // the caret
+        rr(pix, fx + 14.0 + qw + 1.0, cy + 26.0, 1.5, 20.0, 0.5, paint::accent(255)); // the caret
     }
 
     let bottom = cy + ch - 62.0; // the power row starts here
@@ -786,7 +785,7 @@ pub fn paint_start(pix: &mut Pixmap, s: f32, m: &Model, query: &str, select_all:
     // bottom: your name on the left, the power buttons on the right
     paint::fill_rounded(pix, (cx + 1.0) * s, bottom * s, (cw - 2.0) * s, s, 0.0, pal.border);
     let my = bottom + 31.0;
-    paint::fill_circle(pix, (cx + 36.0) * s, my * s, 15.0 * s, (124, 84, 214, 255));
+    paint::fill_circle(pix, (cx + 36.0) * s, my * s, 15.0 * s, paint::accent(255));
     let initial: String = m.user.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| "?".into());
     let iw = paint::text_width(&fonts.bold, 15.0 * s, &initial) / s;
     text(pix, &fonts.bold, 15.0, cx + 36.0 - iw / 2.0, my, (255, 255, 255, 255), &initial);
@@ -826,7 +825,7 @@ pub fn can_hibernate() -> bool {
 /// A folder's glyph: a small purple folder.
 fn folder_glyph(pix: &mut Pixmap, s: f32, x: f32, y: f32) {
     paint::fill_rounded(pix, x * s, y * s, 9.0 * s, 6.0 * s, 2.0 * s, (150, 110, 235, 255));
-    paint::fill_rounded(pix, x * s, (y + 3.0) * s, 18.0 * s, 13.0 * s, 3.0 * s, (124, 84, 214, 255));
+    paint::fill_rounded(pix, x * s, (y + 3.0) * s, 18.0 * s, 13.0 * s, 3.0 * s, paint::accent(255));
 }
 
 /// Where the keyboard is in the Folders start menu: Tab goes round Search, the list, and the power choices.
@@ -898,16 +897,16 @@ pub fn paint_start_folders(pix: &mut Pixmap, s: f32, m: &Model, v: &FoldersView,
     // search
     let (fx, fw) = (cx + 12.0, cw - 24.0);
     rr(pix, fx, cy + 12.0, fw, 36.0, 10.0, pal.field);
-    paint::stroke_rounded(pix, (fx + 0.5) * s, (cy + 12.5) * s, (fw - 1.0) * s, 35.0 * s, 10.0 * s, s, if v.query.is_empty() && v.focus != StartFocus::Search { pal.border } else { (124, 84, 214, 255) });
+    paint::stroke_rounded(pix, (fx + 0.5) * s, (cy + 12.5) * s, (fw - 1.0) * s, 35.0 * s, 10.0 * s, s, if v.query.is_empty() && v.focus != StartFocus::Search { pal.border } else { paint::accent(255) });
     if v.query.is_empty() {
         text(pix, &fonts.regular, 13.5, fx + 12.0, cy + 30.0, pal.dim, "Search apps");
     } else {
         let qw = paint::text_width(&fonts.regular, 13.5 * s, v.query) / s;
         if v.select_all {
-            rr(pix, fx + 10.0, cy + 19.0, qw + 4.0, 21.0, 4.0, (124, 84, 214, 120)); // everything typed is selected
+            rr(pix, fx + 10.0, cy + 19.0, qw + 4.0, 21.0, 4.0, paint::accent(120)); // everything typed is selected
         }
         text(pix, &fonts.regular, 13.5, fx + 12.0, cy + 30.0, pal.text, v.query);
-        rr(pix, fx + 12.0 + qw + 1.0, cy + 21.0, 1.5, 18.0, 0.5, (124, 84, 214, 255));
+        rr(pix, fx + 12.0 + qw + 1.0, cy + 21.0, 1.5, 18.0, 0.5, paint::accent(255));
     }
 
     let top = cy + 60.0;
@@ -1008,7 +1007,7 @@ pub fn paint_start_folders(pix: &mut Pixmap, s: f32, m: &Model, v: &FoldersView,
     // bottom: your name, and the power button
     paint::fill_rounded(pix, (cx + 1.0) * s, bottom * s, (cw - 2.0) * s, s, 0.0, pal.border);
     let my = bottom + 28.0;
-    paint::fill_circle(pix, (cx + 30.0) * s, my * s, 14.0 * s, (124, 84, 214, 255));
+    paint::fill_circle(pix, (cx + 30.0) * s, my * s, 14.0 * s, paint::accent(255));
     let initial: String = m.user.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| "?".into());
     let iw = paint::text_width(&fonts.bold, 14.0 * s, &initial) / s;
     text(pix, &fonts.bold, 14.0, cx + 30.0 - iw / 2.0, my, (255, 255, 255, 255), &initial);
@@ -1016,7 +1015,7 @@ pub fn paint_start_folders(pix: &mut Pixmap, s: f32, m: &Model, v: &FoldersView,
     let pbtn = (cx + cw - 12.0 - 34.0, my - 17.0, 34.0, 34.0);
     rr(pix, pbtn.0, pbtn.1, pbtn.2, pbtn.3, 9.0, if v.power_open { pal.select } else if inside(pbtn) { pal.hover } else { pal.field });
     if v.focus == StartFocus::Power {
-        paint::stroke_rounded(pix, (pbtn.0 + 0.5) * s, (pbtn.1 + 0.5) * s, (pbtn.2 - 1.0) * s, (pbtn.3 - 1.0) * s, 9.0 * s, s * 1.5, (124, 84, 214, 255));
+        paint::stroke_rounded(pix, (pbtn.0 + 0.5) * s, (pbtn.1 + 0.5) * s, (pbtn.2 - 1.0) * s, (pbtn.3 - 1.0) * s, 9.0 * s, s * 1.5, paint::accent(255));
     }
     let isz = (16.0 * s) as u32;
     if let Some(ic) = icons.get_tinted("system-shutdown-symbolic", isz, pal.text) {
