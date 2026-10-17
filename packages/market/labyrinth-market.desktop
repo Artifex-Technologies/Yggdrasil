@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Marketplace
+GenericName=App Store
+Comment=Find and install apps
+Exec=labyrinth-market
+Icon=applications-all
+Terminal=false
+Categories=System;PackageManager;
+Keywords=apps;store;install;software;marketplace;games;plugins;
+StartupWMClass=labyrinth-market

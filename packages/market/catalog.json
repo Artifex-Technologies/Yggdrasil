@@ -1,0 +1,1190 @@
+{
+ "name": "Labyrinth",
+ "apps": [
+  {
+   "id": "krita",
+   "name": "Krita",
+   "subtitle": "Digital painting and illustration",
+   "description": "A full painting studio: brushes, layers, animation. Made by the KDE community.",
+   "category": "Create",
+   "subcategory": "Graphics & Design",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "krita"
+    ]
+   },
+   "icon": "krita",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "gimp",
+   "name": "GIMP",
+   "subtitle": "Photo editing and image manipulation",
+   "description": "The classic free image editor: retouching, composition and format conversion.",
+   "category": "Create",
+   "subcategory": "Photography",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "gimp"
+    ]
+   },
+   "icon": "gimp",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "inkscape",
+   "name": "Inkscape",
+   "subtitle": "Vector graphics",
+   "description": "Draw logos, icons and illustrations as scalable vector art.",
+   "category": "Create",
+   "subcategory": "Graphics & Design",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "inkscape"
+    ]
+   },
+   "icon": "inkscape",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "blender",
+   "name": "Blender",
+   "subtitle": "3D modelling, animation and rendering",
+   "description": "Modelling, sculpting, rigging, animation, simulation, rendering and video editing in one package.",
+   "category": "Create",
+   "subcategory": "3D & CAD",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "blender"
+    ]
+   },
+   "icon": "blender",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "darktable",
+   "name": "darktable",
+   "subtitle": "RAW photo workflow",
+   "description": "A virtual lightroom and darkroom for photographers: develop RAW images non-destructively.",
+   "category": "Create",
+   "subcategory": "Photography",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "darktable"
+    ]
+   },
+   "icon": "darktable",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "kdenlive",
+   "name": "Kdenlive",
+   "subtitle": "Video editing",
+   "description": "A multi-track video editor with effects, titles and proxy clips.",
+   "category": "Create",
+   "subcategory": "Video",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "kdenlive"
+    ]
+   },
+   "icon": "kdenlive",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "obs-studio",
+   "name": "OBS Studio",
+   "subtitle": "Recording and streaming",
+   "description": "Record your screen or stream live with scenes, sources and filters.",
+   "category": "Create",
+   "subcategory": "Video",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "obs-studio"
+    ]
+   },
+   "icon": "com.obsproject.Studio",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "handbrake",
+   "name": "HandBrake",
+   "subtitle": "Video converter",
+   "description": "Convert video between formats with presets for phones, tablets and the web.",
+   "category": "Create",
+   "subcategory": "Video",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "handbrake"
+    ]
+   },
+   "icon": "handbrake",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "audacity",
+   "name": "Audacity",
+   "subtitle": "Audio recording and editing",
+   "description": "Record, cut, mix and clean up sound.",
+   "category": "Create",
+   "subcategory": "Music & Audio",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "audacity"
+    ]
+   },
+   "icon": "audacity",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "ardour",
+   "name": "Ardour",
+   "subtitle": "Digital audio workstation",
+   "description": "Record, edit and mix music with plug-in support.",
+   "category": "Create",
+   "subcategory": "Music & Audio",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "ardour"
+    ]
+   },
+   "icon": "ardour",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "lmms",
+   "name": "LMMS",
+   "subtitle": "Music production",
+   "description": "Make beats and melodies with synthesizers, samples and a piano roll.",
+   "category": "Create",
+   "subcategory": "Music & Audio",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "lmms"
+    ]
+   },
+   "icon": "lmms",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "freecad",
+   "name": "FreeCAD",
+   "subtitle": "Parametric 3D CAD",
+   "description": "Design real-world objects with a parametric modeller.",
+   "category": "Create",
+   "subcategory": "3D & CAD",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "freecad"
+    ]
+   },
+   "icon": "freecad",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "kicad",
+   "name": "KiCad",
+   "subtitle": "Electronics design",
+   "description": "Schematics and circuit boards, with a 3D viewer.",
+   "category": "Create",
+   "subcategory": "3D & CAD",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "kicad"
+    ]
+   },
+   "icon": "kicad",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "godot",
+   "name": "Godot Engine",
+   "subtitle": "Game engine",
+   "description": "Make 2D and 3D games with a friendly editor.",
+   "category": "Create",
+   "subcategory": "Game Making",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "godot"
+    ]
+   },
+   "icon": "godot",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "designcraft",
+   "name": "DesignCraft",
+   "subtitle": "Page layout and publishing (ArtCraft)",
+   "description": "A Rust desktop app for page layout, in the spirit of InDesign.",
+   "category": "Create",
+   "subcategory": "Graphics & Design",
+   "source": {
+    "type": "aur",
+    "packages": [
+     "designcraft-bin"
+    ]
+   },
+   "icon": "designcraft",
+   "reviewed": true,
+   "tags": [
+    "artcraft"
+   ],
+   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written."
+  },
+  {
+   "id": "vectorcraft",
+   "name": "VectorCraft",
+   "subtitle": "Vector illustration (ArtCraft)",
+   "description": "A Rust desktop app for vector drawing, in the spirit of Illustrator.",
+   "category": "Create",
+   "subcategory": "Graphics & Design",
+   "source": {
+    "type": "aur",
+    "packages": [
+     "vectorcraft-bin"
+    ]
+   },
+   "icon": "vectorcraft",
+   "reviewed": true,
+   "tags": [
+    "artcraft"
+   ],
+   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written."
+  },
+  {
+   "id": "photocraft",
+   "name": "PhotoCraft",
+   "subtitle": "Photo editing (ArtCraft)",
+   "description": "A Rust desktop app for photo editing, in the spirit of Photoshop.",
+   "category": "Create",
+   "subcategory": "Photography",
+   "source": {
+    "type": "aur",
+    "packages": [
+     "photocraft-bin"
+    ]
+   },
+   "icon": "photocraft",
+   "reviewed": true,
+   "tags": [
+    "artcraft"
+   ],
+   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written."
+  },
+  {
+   "id": "filmcraft",
+   "name": "FilmCraft",
+   "subtitle": "Video editing (ArtCraft)",
+   "description": "A Rust desktop app for video editing, in the spirit of Premiere. Optional speech and voice models download from Hugging Face.",
+   "category": "Create",
+   "subcategory": "Video",
+   "source": {
+    "type": "aur",
+    "packages": [
+     "filmcraft-bin"
+    ]
+   },
+   "icon": "filmcraft",
+   "reviewed": true,
+   "tags": [
+    "artcraft"
+   ],
+   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written."
+  },
+  {
+   "id": "soundcraft",
+   "name": "SoundCraft",
+   "subtitle": "Audio production (ArtCraft)",
+   "description": "A Rust desktop app for audio production, in the spirit of Pro Tools.",
+   "category": "Create",
+   "subcategory": "Music & Audio",
+   "source": {
+    "type": "aur",
+    "packages": [
+     "soundcraft-bin"
+    ]
+   },
+   "icon": "soundcraft",
+   "reviewed": true,
+   "tags": [
+    "artcraft"
+   ],
+   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written."
+  },
+  {
+   "id": "cadcraft",
+   "name": "CADCraft",
+   "subtitle": "CAD (ArtCraft)",
+   "description": "A Rust desktop app for technical drawing, in the spirit of AutoCAD.",
+   "category": "Create",
+   "subcategory": "3D & CAD",
+   "source": {
+    "type": "aur",
+    "packages": [
+     "cadcraft-bin"
+    ]
+   },
+   "icon": "cadcraft",
+   "reviewed": true,
+   "tags": [
+    "artcraft"
+   ],
+   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written."
+  },
+  {
+   "id": "figcraft",
+   "name": "FigCraft",
+   "subtitle": "Interface design (ArtCraft)",
+   "description": "A Rust desktop app for interface design, in the spirit of Figma. Built from source, so it takes a while to install.",
+   "category": "Create",
+   "subcategory": "Graphics & Design",
+   "source": {
+    "type": "aur",
+    "packages": [
+     "figcraft"
+    ]
+   },
+   "icon": "figcraft",
+   "reviewed": true,
+   "tags": [
+    "artcraft"
+   ],
+   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written."
+  },
+  {
+   "id": "libreoffice",
+   "name": "LibreOffice",
+   "subtitle": "Office suite",
+   "description": "Writer, Calc, Impress, Draw and Base: documents, spreadsheets, presentations and more, compatible with Microsoft Office files.",
+   "category": "Work",
+   "subcategory": "Office",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "libreoffice-fresh"
+    ]
+   },
+   "icon": "libreoffice-startcenter",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "pdfcraft",
+   "name": "PdfCraft",
+   "subtitle": "PDF editing (ArtCraft)",
+   "description": "A Rust desktop app for reading and editing PDFs, in the spirit of Acrobat.",
+   "category": "Work",
+   "subcategory": "Office",
+   "source": {
+    "type": "aur",
+    "packages": [
+     "pdfcraft-bin"
+    ]
+   },
+   "icon": "pdfcraft",
+   "reviewed": true,
+   "tags": [
+    "artcraft"
+   ],
+   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written."
+  },
+  {
+   "id": "wordcraft",
+   "name": "WordCraft",
+   "subtitle": "Word processing (ArtCraft)",
+   "description": "A Rust desktop app for documents, in the spirit of Word.",
+   "category": "Work",
+   "subcategory": "Office",
+   "source": {
+    "type": "aur",
+    "packages": [
+     "wordcraft-bin"
+    ]
+   },
+   "icon": "wordcraft",
+   "reviewed": true,
+   "tags": [
+    "artcraft"
+   ],
+   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written."
+  },
+  {
+   "id": "gridcraft",
+   "name": "GridCraft",
+   "subtitle": "Spreadsheets (ArtCraft)",
+   "description": "A Rust desktop app for spreadsheets, in the spirit of Excel.",
+   "category": "Work",
+   "subcategory": "Office",
+   "source": {
+    "type": "aur",
+    "packages": [
+     "gridcraft-bin"
+    ]
+   },
+   "icon": "gridcraft",
+   "reviewed": true,
+   "tags": [
+    "artcraft"
+   ],
+   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written."
+  },
+  {
+   "id": "deckcraft",
+   "name": "DeckCraft",
+   "subtitle": "Presentations (ArtCraft)",
+   "description": "A Rust desktop app for slides, in the spirit of PowerPoint.",
+   "category": "Work",
+   "subcategory": "Office",
+   "source": {
+    "type": "aur",
+    "packages": [
+     "deckcraft-bin"
+    ]
+   },
+   "icon": "deckcraft",
+   "reviewed": true,
+   "tags": [
+    "artcraft"
+   ],
+   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written."
+  },
+  {
+   "id": "obsidian",
+   "name": "Obsidian",
+   "subtitle": "Notes that link together",
+   "description": "A private, local-first notebook of linked Markdown files. Sarina can keep her own vault in it.",
+   "category": "Work",
+   "subcategory": "Notes & Writing",
+   "source": {
+    "type": "component",
+    "id": "obsidian"
+   },
+   "icon": "obsidian",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "thunderbird",
+   "name": "Thunderbird",
+   "subtitle": "Email, calendar and contacts",
+   "description": "Mozilla's mail client with a built-in calendar.",
+   "category": "Work",
+   "subcategory": "Email & Calendar",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "thunderbird"
+    ]
+   },
+   "icon": "thunderbird",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "proton-pass",
+   "name": "Proton Pass",
+   "subtitle": "Password manager",
+   "description": "Proton's end-to-end encrypted password manager.",
+   "category": "Work",
+   "subcategory": "Passwords & Privacy",
+   "source": {
+    "type": "component",
+    "id": "proton-pass"
+   },
+   "icon": "proton-pass",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "keepassxc",
+   "name": "KeePassXC",
+   "subtitle": "Offline password manager",
+   "description": "A password manager that keeps its encrypted database in a file you control.",
+   "category": "Work",
+   "subcategory": "Passwords & Privacy",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "keepassxc"
+    ]
+   },
+   "icon": "keepassxc",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "proton-drive",
+   "name": "Proton Drive",
+   "subtitle": "Encrypted cloud storage",
+   "description": "Mounts your Proton Drive as a folder in Minos.",
+   "category": "Work",
+   "subcategory": "Cloud",
+   "source": {
+    "type": "component",
+    "id": "proton-drive"
+   },
+   "icon": "proton-drive",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "proton-vpn",
+   "name": "Proton VPN",
+   "subtitle": "VPN",
+   "description": "Proton's VPN client, built into Labyrinth's network controls.",
+   "category": "Work",
+   "subcategory": "Passwords & Privacy",
+   "source": {
+    "type": "component",
+    "id": "proton-vpn"
+   },
+   "icon": "proton-vpn",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "joplin",
+   "name": "Joplin",
+   "subtitle": "Notes and to-dos",
+   "description": "Markdown notes with sync and end-to-end encryption.",
+   "category": "Work",
+   "subcategory": "Notes & Writing",
+   "source": {
+    "type": "aur",
+    "packages": [
+     "joplin-desktop"
+    ]
+   },
+   "icon": "joplin",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "steam",
+   "name": "Steam and Proton",
+   "subtitle": "Games from Steam",
+   "description": "Steam with Proton, GameMode, MangoHud and the 32-bit libraries Windows games need. Run 'labyrinth-gaming setup' after the first sign-in.",
+   "category": "Play",
+   "subcategory": "Game Stores",
+   "source": {
+    "type": "component",
+    "id": "steam"
+   },
+   "icon": "steam",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "lutris",
+   "name": "Lutris",
+   "subtitle": "Play any game",
+   "description": "One place for games from GOG, Epic, emulators and Windows installers.",
+   "category": "Play",
+   "subcategory": "Game Stores",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "lutris"
+    ]
+   },
+   "icon": "lutris",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "heroic",
+   "name": "Heroic Games Launcher",
+   "subtitle": "Epic, GOG and Amazon games",
+   "description": "An open launcher for the Epic Games Store, GOG and Amazon Prime Gaming.",
+   "category": "Play",
+   "subcategory": "Game Stores",
+   "source": {
+    "type": "aur",
+    "packages": [
+     "heroic-games-launcher-bin"
+    ]
+   },
+   "icon": "heroic",
+   "reviewed": false,
+   "tags": []
+  },
+  {
+   "id": "retroarch",
+   "name": "RetroArch",
+   "subtitle": "Retro game systems",
+   "description": "Play classic console games through one front end.",
+   "category": "Play",
+   "subcategory": "Emulation",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "retroarch"
+    ]
+   },
+   "icon": "retroarch",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "prismlauncher",
+   "name": "Prism Launcher",
+   "subtitle": "Minecraft launcher",
+   "description": "Manage many Minecraft installations, mods and accounts.",
+   "category": "Play",
+   "subcategory": "Games",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "prismlauncher"
+    ]
+   },
+   "icon": "prismlauncher",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "supertuxkart",
+   "name": "SuperTuxKart",
+   "subtitle": "Kart racing",
+   "description": "A free 3D kart racing game with many tracks and modes.",
+   "category": "Play",
+   "subcategory": "Games",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "supertuxkart"
+    ]
+   },
+   "icon": "supertuxkart",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "0ad",
+   "name": "0 A.D.",
+   "subtitle": "Ancient warfare strategy",
+   "description": "A historical real-time strategy game.",
+   "category": "Play",
+   "subcategory": "Games",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "0ad"
+    ]
+   },
+   "icon": "0ad",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "spotify",
+   "name": "Spotify",
+   "subtitle": "Music streaming",
+   "description": "Spotify's desktop app.",
+   "category": "Play",
+   "subcategory": "Music & Video",
+   "source": {
+    "type": "component",
+    "id": "spotify"
+   },
+   "icon": "spotify",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "vlc",
+   "name": "VLC",
+   "subtitle": "Media player",
+   "description": "Plays almost any audio or video file or stream.",
+   "category": "Play",
+   "subcategory": "Music & Video",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "vlc"
+    ]
+   },
+   "icon": "vlc",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "mpv",
+   "name": "mpv",
+   "subtitle": "Minimal video player",
+   "description": "A small, fast player driven by the keyboard.",
+   "category": "Play",
+   "subcategory": "Music & Video",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "mpv"
+    ]
+   },
+   "icon": "mpv",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "vscode",
+   "name": "Visual Studio Code",
+   "subtitle": "Code editor",
+   "description": "Microsoft's code editor with extensions, built from the official release.",
+   "category": "Develop",
+   "subcategory": "Editors & IDEs",
+   "source": {
+    "type": "component",
+    "id": "vscode"
+   },
+   "icon": "visual-studio-code",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "neovim",
+   "name": "Neovim",
+   "subtitle": "Modal text editor",
+   "description": "A fast, extensible Vim-based editor for the terminal.",
+   "category": "Develop",
+   "subcategory": "Editors & IDEs",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "neovim"
+    ]
+   },
+   "icon": "neovim",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "lazygit",
+   "name": "lazygit",
+   "subtitle": "Git in the terminal",
+   "description": "A simple terminal interface for git.",
+   "category": "Develop",
+   "subcategory": "Version Control",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "lazygit"
+    ]
+   },
+   "icon": "lazygit",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "github-cli",
+   "name": "GitHub CLI",
+   "subtitle": "GitHub from the terminal",
+   "description": "Pull requests, issues and releases from the command line.",
+   "category": "Develop",
+   "subcategory": "Version Control",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "github-cli"
+    ]
+   },
+   "icon": "github-cli",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "docker",
+   "name": "Docker",
+   "subtitle": "Containers",
+   "description": "Build and run containers.",
+   "category": "Develop",
+   "subcategory": "Containers & VMs",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "docker",
+     "docker-compose"
+    ]
+   },
+   "icon": "docker",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "podman",
+   "name": "Podman",
+   "subtitle": "Containers without a daemon",
+   "description": "Run containers rootless, compatible with Docker's commands.",
+   "category": "Develop",
+   "subcategory": "Containers & VMs",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "podman"
+    ]
+   },
+   "icon": "podman",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "virt-manager",
+   "name": "Virtual Machine Manager",
+   "subtitle": "Virtual machines",
+   "description": "Create and manage virtual machines with QEMU and KVM.",
+   "category": "Develop",
+   "subcategory": "Containers & VMs",
+   "source": {
+    "type": "component",
+    "id": "virtualization"
+   },
+   "icon": "virt-manager",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "sarina",
+   "name": "Sarina",
+   "subtitle": "Local AI assistant",
+   "description": "Labyrinth's own assistant: engineer, companion and pentest helper, running on your computer.",
+   "category": "Develop",
+   "subcategory": "AI",
+   "source": {
+    "type": "component",
+    "id": "sarina"
+   },
+   "icon": "sarina",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "local-ai",
+   "name": "Local AI models",
+   "subtitle": "Run AI on your computer",
+   "description": "Ollama and the tools to run language models locally.",
+   "category": "Develop",
+   "subcategory": "AI",
+   "source": {
+    "type": "component",
+    "id": "local-ai"
+   },
+   "icon": "local-ai",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "ghidra",
+   "name": "Ghidra and reverse engineering",
+   "subtitle": "Analyse programs safely",
+   "description": "Ghidra and friends, run through Labyrinth's sandbox.",
+   "category": "Develop",
+   "subcategory": "Reverse Engineering",
+   "source": {
+    "type": "component",
+    "id": "reverse-engineering"
+   },
+   "icon": "ghidra",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "wireshark",
+   "name": "Wireshark",
+   "subtitle": "Network analyser",
+   "description": "Look inside network traffic, packet by packet.",
+   "category": "Develop",
+   "subcategory": "Networking",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "wireshark-qt"
+    ]
+   },
+   "icon": "wireshark",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "heimdall",
+   "name": "Heimdall",
+   "subtitle": "Security watcher",
+   "description": "Labyrinth's security watcher: what connects where, quarantine and alerts.",
+   "category": "Security",
+   "subcategory": "Protection",
+   "source": {
+    "type": "component",
+    "id": "heimdall"
+   },
+   "icon": "heimdall",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "limbo",
+   "name": "Limbo",
+   "subtitle": "Disposable virtual machines",
+   "description": "Open risky files and run risky programs in a throw-away virtual machine.",
+   "category": "Security",
+   "subcategory": "Protection",
+   "source": {
+    "type": "component",
+    "id": "limbo"
+   },
+   "icon": "limbo",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "clamav",
+   "name": "ClamAV",
+   "subtitle": "Malware scanner",
+   "description": "An open antivirus engine for scanning files and downloads.",
+   "category": "Security",
+   "subcategory": "Protection",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "clamav"
+    ]
+   },
+   "icon": "clamav",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "vivaldi",
+   "name": "Vivaldi",
+   "subtitle": "Web browser",
+   "description": "A fast, customisable browser.",
+   "category": "Internet",
+   "subcategory": "Browsers",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "vivaldi"
+    ]
+   },
+   "icon": "vivaldi",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "firefox",
+   "name": "Firefox",
+   "subtitle": "Web browser",
+   "description": "Mozilla's privacy-minded browser.",
+   "category": "Internet",
+   "subcategory": "Browsers",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "firefox"
+    ]
+   },
+   "icon": "firefox",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "tor-browser",
+   "name": "Tor Browser",
+   "subtitle": "Private browsing",
+   "description": "Browse through the Tor network.",
+   "category": "Internet",
+   "subcategory": "Browsers",
+   "source": {
+    "type": "aur",
+    "packages": [
+     "tor-browser-bin"
+    ]
+   },
+   "icon": "tor-browser",
+   "reviewed": false,
+   "tags": []
+  },
+  {
+   "id": "discord",
+   "name": "Discord",
+   "subtitle": "Chat",
+   "description": "Voice, video and text chat for communities.",
+   "category": "Internet",
+   "subcategory": "Chat",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "discord"
+    ]
+   },
+   "icon": "discord",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "element",
+   "name": "Element",
+   "subtitle": "Matrix chat",
+   "description": "Private, decentralised chat and calls.",
+   "category": "Internet",
+   "subcategory": "Chat",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "element-desktop"
+    ]
+   },
+   "icon": "element",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "qbittorrent",
+   "name": "qBittorrent",
+   "subtitle": "Torrent client",
+   "description": "A clean BitTorrent client.",
+   "category": "Internet",
+   "subcategory": "Downloads",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "qbittorrent"
+    ]
+   },
+   "icon": "qbittorrent",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "btop",
+   "name": "btop",
+   "subtitle": "Resource monitor",
+   "description": "A friendly view of CPU, memory, disks, network and processes.",
+   "category": "Utilities",
+   "subcategory": "System",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "btop"
+    ]
+   },
+   "icon": "btop",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "gparted",
+   "name": "GParted",
+   "subtitle": "Partition editor",
+   "description": "Create, resize and move disk partitions.",
+   "category": "Utilities",
+   "subcategory": "System",
+   "source": {
+    "type": "pacman",
+    "packages": [
+     "gparted"
+    ]
+   },
+   "icon": "gparted",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "flatpak",
+   "name": "Flatpak apps",
+   "subtitle": "Apps from Flathub",
+   "description": "Adds Flatpak and the Flathub store, for apps that are not in the Arch repositories.",
+   "category": "Utilities",
+   "subcategory": "System",
+   "source": {
+    "type": "component",
+    "id": "flatpak"
+   },
+   "icon": "flatpak",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "accessibility",
+   "name": "Accessibility tools",
+   "subtitle": "Screen reader and more",
+   "description": "Orca screen reader, magnifier and related tools.",
+   "category": "Utilities",
+   "subcategory": "Accessibility",
+   "source": {
+    "type": "component",
+    "id": "accessibility"
+   },
+   "icon": "accessibility",
+   "reviewed": true,
+   "tags": []
+  },
+  {
+   "id": "weather",
+   "name": "Weather",
+   "subtitle": "Forecast",
+   "description": "Labyrinth's weather app.",
+   "category": "Utilities",
+   "subcategory": "Everyday",
+   "source": {
+    "type": "component",
+    "id": "weather"
+   },
+   "icon": "weather",
+   "reviewed": true,
+   "tags": []
+  }
+ ],
+ "featured": [
+  {
+   "id": "libreoffice",
+   "tagline": "Everything for documents",
+   "kicker": "MAJOR APP"
+  },
+  {
+   "id": "krita",
+   "tagline": "Paint without limits",
+   "kicker": "CREATE"
+  },
+  {
+   "id": "steam",
+   "tagline": "Your games, ready to play",
+   "kicker": "PLAY"
+  },
+  {
+   "id": "sarina",
+   "tagline": "An assistant that lives on your computer",
+   "kicker": "MADE FOR LABYRINTH"
+  },
+  {
+   "id": "pdfcraft",
+   "tagline": "A new kind of office apps, written in Rust",
+   "kicker": "ARTCRAFT"
+  }
+ ]
+}

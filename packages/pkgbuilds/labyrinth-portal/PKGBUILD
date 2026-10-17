@@ -1,0 +1,27 @@
+# Labyrinth's xdg-desktop-portal backend: Minos as the open/save dialog of every application (built from packages/portal).
+pkgname=labyrinth-portal
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Labyrinth file-chooser portal backend: Minos as the open and save dialog"
+arch=('x86_64')
+url="https://github.com/Artifex-Technologies/Labyrinth_OS"
+license=('MIT')
+depends=('gcc-libs' 'xdg-desktop-portal' 'labyrinth-minos')
+makedepends=('cargo')
+options=('!lto')
+
+_src="$startdir/../../portal"
+
+build() {
+  cd "$_src"
+  cargo build --release --locked --target-dir "$srcdir/target"
+}
+
+check() {
+  cd "$_src"
+  cargo test --release --locked --target-dir "$srcdir/target"
+}
+
+package() {
+  install -Dm755 "$srcdir/target/release/labyrinth-portal" "$pkgdir/usr/bin/labyrinth-portal"
+}
