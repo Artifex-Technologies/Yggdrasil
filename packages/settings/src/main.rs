@@ -819,6 +819,7 @@ impl App {
         let mut conf_changed = false;
         let mut pick: Option<String> = None;
         let mut test = false;
+        let mut forget_tone = false;
         ui.add_space(8.0);
         ui::group(ui, pal, Some("Sarina's voice"), |ui| {
             if voices.is_empty() {
@@ -828,6 +829,16 @@ impl App {
             ui::row(ui, pal, true, "Speak her answers", Some("After you ask by voice, she says the answer aloud. Everything is made on this computer. Starting to speak again, or Esc, stops her"), |ui| {
                 if ui::switch(ui, pal, &mut conf.sarina_speaks).changed() {
                     conf_changed = true;
+                }
+            });
+            ui::row(ui, pal, false, "Notice how I sound", Some("She notices your pace, loudness, pitch and pauses compared with how you usually sound, and quietly adjusts (briefer when you sound rushed, gentler when you sound tired). It keeps only a few averages, no recordings and no words, on this computer, and she never says it out loud"), |ui| {
+                if ui::switch(ui, pal, &mut conf.sarina_tone).changed() {
+                    conf_changed = true;
+                }
+            });
+            ui::row(ui, pal, false, "Forget how I sound", Some("Deletes those averages; she starts learning again from the next question"), |ui| {
+                if ui::quiet(ui, pal, "Forget").clicked() {
+                    forget_tone = true;
                 }
             });
             let waves = ["Copper", "Siri", "Labyrinth"];
@@ -856,6 +867,9 @@ impl App {
         if let Some(v) = pick {
             let _ = labyrinth_conf::set_sarina_voice(&v);
             sys::spawn("labyrinth-sarina-speak", &["Hello. I am Sarina, and this is how I sound when I answer you."]);
+        }
+        if forget_tone {
+            sys::spawn("sarina-tone", &["--forget"]);
         }
         if test {
             sys::spawn("labyrinth-sarina-speak", &["Hello. I am Sarina, and this is how I sound when I answer you."]);

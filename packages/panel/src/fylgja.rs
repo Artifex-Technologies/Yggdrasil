@@ -682,6 +682,7 @@ fn run_ask(wav: &PathBuf, conversation: Option<&str>, heard: &calloop::channel::
     use std::io::{BufRead, BufReader};
     let mut cmd = Command::new("labyrinth-sarina-ask");
     cmd.arg(wav);
+    cmd.env("LABYRINTH_TONE", if labyrinth_conf::PanelConf::load().sarina_tone { "1" } else { "0" });
     if let Some(id) = conversation {
         cmd.env("LABYRINTH_CONVERSATION", id); // her session continues across the turns of a conversation
     }
