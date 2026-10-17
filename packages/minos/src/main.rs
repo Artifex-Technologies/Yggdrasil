@@ -2919,47 +2919,59 @@ impl eframe::App for App {
             }
             let mut choose: Option<Vec<PathBuf>> = None;
             let mut cancel = ctx.input(|i| i.key_pressed(egui::Key::Escape)) && !ctx.egui_wants_keyboard_input();
-            egui::Panel::bottom("picker").frame(egui::Frame::new().fill(pal.strip).inner_margin(egui::Margin::symmetric(10, 8))).show(ui, |ui| {
+            egui::Panel::bottom("picker").frame(egui::Frame::new().fill(pal.strip).inner_margin(egui::Margin::symmetric(14, 12))).show(ui, |ui| {
+                // like the Windows dialog: the name on top with the file type beside it, the buttons below on the right
+                let label_w = 78.0;
+                let filter_w = if pk.filters.is_empty() { 0.0 } else { 190.0 };
                 ui.horizontal(|ui| {
+                    ui.add_sized([label_w, 28.0], egui::Label::new(RichText::new(if pk.dir { "Folder:" } else { "File name:" }).size(14.0)));
+                    let field_w = (ui.available_width() - filter_w - if filter_w > 0.0 { 10.0 } else { 0.0 }).max(120.0);
                     if pk.save {
-                        ui.label("Name");
-                        ui.add(egui::TextEdit::singleline(&mut pk.name).desired_width(260.0));
-                    } else if pk.dir {
-                        ui.label(RichText::new(if sel.len() == 1 && sel[0].1 { sel[0].0.display().to_string() } else { cur.display().to_string() }).color(pal.dim));
+                        ui.add_sized([field_w, 28.0], egui::TextEdit::singleline(&mut pk.name).vertical_align(Align::Center));
                     } else {
-                        ui.label(RichText::new(format!("{} selected", sel.len())).color(pal.dim));
+                        let shown = if pk.dir {
+                            if sel.len() == 1 && sel[0].1 { sel[0].0.display().to_string() } else { cur.display().to_string() }
+                        } else {
+                            sel.iter().filter_map(|s| s.0.file_name()).map(|n| format!("\"{}\"", n.to_string_lossy())).collect::<Vec<_>>().join(" ")
+                        };
+                        let mut text = shown;
+                        ui.add_sized([field_w, 28.0], egui::TextEdit::singleline(&mut text).interactive(false).vertical_align(Align::Center));
                     }
                     if pk.filters.len() > 1 {
-                        egui::ComboBox::from_id_salt("pickfilter").selected_text(pk.filters[pk.filter].0.clone()).show_ui(ui, |ui| {
+                        egui::ComboBox::from_id_salt("pickfilter").width(filter_w - 20.0).selected_text(pk.filters[pk.filter].0.clone()).show_ui(ui, |ui| {
                             for (k, f) in pk.filters.iter().enumerate() {
                                 ui.selectable_value(&mut pk.filter, k, f.0.clone());
                             }
                         });
                     } else if let Some(f) = pk.filters.first() {
-                        ui.label(RichText::new(f.0.clone()).color(pal.dim));
+                        ui.add_sized([filter_w, 28.0], egui::Label::new(RichText::new(f.0.clone()).color(pal.dim)));
                     }
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        let ok = if pk.save {
-                            !pk.name.trim().is_empty() && !pk.name.contains('/')
+                });
+                ui.add_space(10.0);
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let ok = if pk.save {
+                        !pk.name.trim().is_empty() && !pk.name.contains('/')
+                    } else if pk.dir {
+                        true
+                    } else {
+                        !sel.is_empty() && sel.iter().all(|s| !s.1) && (pk.multiple || sel.len() == 1)
+                    };
+                    let label = if pk.save && cur.join(pk.name.trim()).exists() { "Replace".to_string() } else { pk.button() };
+                    let size = vec2(110.0, 34.0);
+                    // the main button first (it sits on the far right), filled with the accent so it is easy to see
+                    let main = egui::Button::new(RichText::new(label).size(15.0).strong().color(Color32::WHITE)).fill(pal.accent).min_size(size);
+                    if ui.add_enabled(ok, main).clicked() {
+                        choose = Some(if pk.save {
+                            vec![cur.join(pk.name.trim())]
                         } else if pk.dir {
-                            true
+                            if sel.len() == 1 && sel[0].1 { vec![sel[0].0.clone()] } else { vec![cur.clone()] }
                         } else {
-                            !sel.is_empty() && sel.iter().all(|s| !s.1) && (pk.multiple || sel.len() == 1)
-                        };
-                        let label = if pk.save && cur.join(pk.name.trim()).exists() { "Replace".to_string() } else { pk.button() };
-                        if ui.add_enabled(ok, egui::Button::new(label)).clicked() {
-                            choose = Some(if pk.save {
-                                vec![cur.join(pk.name.trim())]
-                            } else if pk.dir {
-                                if sel.len() == 1 && sel[0].1 { vec![sel[0].0.clone()] } else { vec![cur.clone()] }
-                            } else {
-                                sel.iter().map(|s| s.0.clone()).collect()
-                            });
-                        }
-                        if ui.button("Cancel").clicked() {
-                            cancel = true;
-                        }
-                    });
+                            sel.iter().map(|s| s.0.clone()).collect()
+                        });
+                    }
+                    if ui.add(egui::Button::new(RichText::new("Cancel").size(15.0)).min_size(size)).clicked() {
+                        cancel = true;
+                    }
                 });
             });
             if let Some(c) = choose {
