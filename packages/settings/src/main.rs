@@ -1091,11 +1091,11 @@ impl App {
                     }
                 });
             });
-            ui::row(ui, pal, false, "Install an icon pack", Some("A folder, an archive (.tar.gz, .tar.xz, .zip) or an https link. It goes in your own icons folder; nothing needs a password"), |ui| {
+            ui::row(ui, pal, false, "Install an icon pack", Some("A folder, an archive (.tar.gz, .tar.xz, .zip), an Android icon pack (.apk) or an https link. It goes in your own icons folder; nothing needs a password. An .apk is only read, never run, and gives icons to the programs installed here"), |ui| {
                 if ui::action(ui, pal, "Install").clicked() && !self.icon_src.trim().is_empty() {
                     icon_install = Some(self.icon_src.trim().to_string());
                 }
-                ui.add(egui::TextEdit::singleline(&mut self.icon_src).hint_text("~/Downloads/pack.tar.gz or https://...").desired_width((ui.available_width() - 10.0).clamp(160.0, 340.0)));
+                ui.add(egui::TextEdit::singleline(&mut self.icon_src).hint_text("~/Downloads/pack.tar.gz, pack.apk or https://...").desired_width((ui.available_width() - 10.0).clamp(160.0, 340.0)));
             });
         });
         }
