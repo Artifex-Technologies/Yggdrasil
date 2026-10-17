@@ -716,7 +716,7 @@ impl eframe::App for App {
             .resizable(false)
             .frame(egui::Frame::new().fill(pal.sidebar).inner_margin(Margin::symmetric(10, 10)))
             .show(ui, |ui| {
-                ui.add_space(30.0);
+                ui.add_space(2.0);
                 let r = ui.add(egui::TextEdit::singleline(&mut self.search).hint_text("Search").desired_width(f32::INFINITY).margin(vec2(8.0, 6.0)));
                 if r.changed() {
                     if self.search.trim().is_empty() {

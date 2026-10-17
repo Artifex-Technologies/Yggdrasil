@@ -87,6 +87,15 @@ pub fn find(name: &str) -> Option<PathBuf> {
                         }
                     }
                 }
+                // the other layout (hicolor and most app-installed icons): size first, then the context
+                for sub in ["scalable", "256x256", "128x128", "64x64", "48x48", "32x32"] {
+                    for e in exts {
+                        let p = t.join(sub).join(ctx).join(format!("{name}.{e}"));
+                        if p.is_file() {
+                            return Some(p);
+                        }
+                    }
+                }
             }
         }
     }

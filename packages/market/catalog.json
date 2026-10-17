@@ -252,12 +252,13 @@
      "designcraft-bin"
     ]
    },
-   "icon": "designcraft",
+   "icon": "ai.storyteller.designcraft",
    "reviewed": true,
    "tags": [
     "artcraft"
    ],
-   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written."
+   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
+   "launch": "ai.storyteller.designcraft"
   },
   {
    "id": "vectorcraft",
@@ -272,12 +273,13 @@
      "vectorcraft-bin"
     ]
    },
-   "icon": "vectorcraft",
+   "icon": "ai.storyteller.vectorcraft",
    "reviewed": true,
    "tags": [
     "artcraft"
    ],
-   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written."
+   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
+   "launch": "ai.storyteller.vectorcraft"
   },
   {
    "id": "photocraft",
@@ -292,12 +294,13 @@
      "photocraft-bin"
     ]
    },
-   "icon": "photocraft",
+   "icon": "ai.storyteller.photocraft",
    "reviewed": true,
    "tags": [
     "artcraft"
    ],
-   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written."
+   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
+   "launch": "ai.storyteller.photocraft"
   },
   {
    "id": "filmcraft",
@@ -312,12 +315,13 @@
      "filmcraft-bin"
     ]
    },
-   "icon": "filmcraft",
+   "icon": "ai.storyteller.filmcraft",
    "reviewed": true,
    "tags": [
     "artcraft"
    ],
-   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written."
+   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
+   "launch": "ai.storyteller.filmcraft"
   },
   {
    "id": "soundcraft",
@@ -332,12 +336,13 @@
      "soundcraft-bin"
     ]
    },
-   "icon": "soundcraft",
+   "icon": "ai.storyteller.soundcraft",
    "reviewed": true,
    "tags": [
     "artcraft"
    ],
-   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written."
+   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
+   "launch": "ai.storyteller.soundcraft"
   },
   {
    "id": "cadcraft",
@@ -352,12 +357,13 @@
      "cadcraft-bin"
     ]
    },
-   "icon": "cadcraft",
+   "icon": "ai.storyteller.cadcraft",
    "reviewed": true,
    "tags": [
     "artcraft"
    ],
-   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written."
+   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
+   "launch": "ai.storyteller.cadcraft"
   },
   {
    "id": "figcraft",
@@ -372,12 +378,13 @@
      "figcraft"
     ]
    },
-   "icon": "figcraft",
+   "icon": "ai.storyteller.figcraft",
    "reviewed": true,
    "tags": [
     "artcraft"
    ],
-   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written."
+   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
+   "launch": "ai.storyteller.figcraft"
   },
   {
    "id": "libreoffice",
@@ -409,12 +416,13 @@
      "pdfcraft-bin"
     ]
    },
-   "icon": "pdfcraft",
+   "icon": "ai.storyteller.pdfcraft",
    "reviewed": true,
    "tags": [
     "artcraft"
    ],
-   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written."
+   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
+   "launch": "ai.storyteller.pdfcraft"
   },
   {
    "id": "wordcraft",
@@ -429,12 +437,13 @@
      "wordcraft-bin"
     ]
    },
-   "icon": "wordcraft",
+   "icon": "ai.storyteller.wordcraft",
    "reviewed": true,
    "tags": [
     "artcraft"
    ],
-   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written."
+   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
+   "launch": "ai.storyteller.wordcraft"
   },
   {
    "id": "gridcraft",
@@ -449,12 +458,13 @@
      "gridcraft-bin"
     ]
    },
-   "icon": "gridcraft",
+   "icon": "ai.storyteller.gridcraft",
    "reviewed": true,
    "tags": [
     "artcraft"
    ],
-   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written."
+   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
+   "launch": "ai.storyteller.gridcraft"
   },
   {
    "id": "deckcraft",
@@ -469,12 +479,13 @@
      "deckcraft-bin"
     ]
    },
-   "icon": "deckcraft",
+   "icon": "ai.storyteller.deckcraft",
    "reviewed": true,
    "tags": [
     "artcraft"
    ],
-   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written."
+   "note": "Reviewed 2026-10-16 (docs/ARTCRAFT_REVIEW.md): prebuilt release from github.com/storytold with checksums; static analysis found only GitHub, getartcraft.com and optional model downloads. Young software (v0.6 to 0.10), largely AI-written.",
+   "launch": "ai.storyteller.deckcraft"
   },
   {
    "id": "obsidian",
