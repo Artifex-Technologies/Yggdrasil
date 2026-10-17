@@ -740,6 +740,7 @@ impl State {
             fylgja::Voice::Listening(_) => self.send_recording(),
             fylgja::Voice::Thinking(_) => {}
             _ => {
+                fylgja::stop_speaking(); // she stops talking when you start to
                 self.close_popup();
                 self.model.fylgja.voice = match fylgja::start_recording() {
                     Ok((child, path)) => {
@@ -772,6 +773,7 @@ impl State {
             let _ = std::fs::remove_file(path);
         }
         self.rec_since = None;
+        fylgja::stop_speaking();
         if !matches!(self.model.fylgja.voice, fylgja::Voice::Thinking(_)) {
             self.model.fylgja.voice = fylgja::Voice::Idle;
         }
@@ -2687,7 +2689,12 @@ fn main() {
         .insert_source(voice_rx, |event, _, st| {
             if let calloop::channel::Event::Msg(r) = event {
                 st.model.fylgja.voice = match r {
-                    Ok(t) if !t.is_empty() => fylgja::Voice::Reply(t),
+                    Ok(t) if !t.is_empty() => {
+                        if st.model.conf.sarina_speaks {
+                            fylgja::speak(&fylgja::spoken_part(&t));
+                        }
+                        fylgja::Voice::Reply(t)
+                    }
                     Ok(_) => fylgja::Voice::Failed("Sarina had nothing to say.".into()),
                     Err(e) => fylgja::Voice::Failed(e),
                 };

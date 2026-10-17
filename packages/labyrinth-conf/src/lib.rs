@@ -110,13 +110,15 @@ pub struct PanelConf {
     pub text_scale: u16,
     /// No animations (the apps' fades and slides).
     pub reduce_motion: bool,
+    /// Sarina says her answer aloud after a spoken question (Super+S).
+    pub sarina_speaks: bool,
     /// Which Heimdall alerts become notifications: "off", "critical", "warning" (and critical) or "info" (all).
     pub heimdall_alerts: AlertLevel,
 }
 
 impl Default for PanelConf {
     fn default() -> Self {
-        PanelConf { dock_pos: DockPos::Bottom, dock_icon: 44, dock_gap: 4, start_theme: StartTheme::Windows, clock_24h: true, dock_opacity: 69, dock_color: ColorMode::Theme, bar_opacity: 69, bar_color: ColorMode::Theme, clipboard_history: true, search_subfolders: true, show_hidden: false, drive_status: true, developer: false, notify_toasts: true, notify_pane: false, notify_dnd: false, own_wallpaper: false, text_scale: 100, reduce_motion: false, heimdall_alerts: AlertLevel::Warning }
+        PanelConf { dock_pos: DockPos::Bottom, dock_icon: 44, dock_gap: 4, start_theme: StartTheme::Windows, clock_24h: true, dock_opacity: 69, dock_color: ColorMode::Theme, bar_opacity: 69, bar_color: ColorMode::Theme, clipboard_history: true, search_subfolders: true, show_hidden: false, drive_status: true, developer: false, notify_toasts: true, notify_pane: false, notify_dnd: false, own_wallpaper: false, text_scale: 100, reduce_motion: false, sarina_speaks: true, heimdall_alerts: AlertLevel::Warning }
     }
 }
 
@@ -176,6 +178,7 @@ impl PanelConf {
                 "notify_pane" => c.notify_pane = matches!(v, "yes" | "true" | "on" | "1"),
                 "notify_dnd" => c.notify_dnd = matches!(v, "yes" | "true" | "on" | "1"),
                 "text_scale" => c.text_scale = v.trim_end_matches('%').parse::<u16>().map(|n| n.clamp(TEXT_SCALE_MIN, TEXT_SCALE_MAX)).unwrap_or(c.text_scale),
+                "sarina_speaks" => c.sarina_speaks = !matches!(v, "no" | "false" | "off" | "0"),
                 "reduce_motion" => c.reduce_motion = matches!(v, "yes" | "true" | "on" | "1"),
                 "own_wallpaper" => c.own_wallpaper = matches!(v, "yes" | "true" | "on" | "1"),
                 "heimdall_alerts" => c.heimdall_alerts = AlertLevel::parse(v).unwrap_or(c.heimdall_alerts),
@@ -188,7 +191,7 @@ impl PanelConf {
     pub fn to_text(&self) -> String {
         format!(
             "# How the top bar and dock look. Edited by Labyrinth Settings (Appearance).\n\
-             dock_pos = {}\ndock_icon = {}\ndock_gap = {}\nclock_24h = {}\nstart_theme = {}\ndock_opacity = {}\ndock_color = {}\nbar_opacity = {}\nbar_color = {}\nclipboard_history = {}\nsearch_subfolders = {}\nshow_hidden = {}\ndrive_status = {}\ndeveloper = {}\nnotify_toasts = {}\nnotify_pane = {}\nnotify_dnd = {}\nown_wallpaper = {}\ntext_scale = {}\nreduce_motion = {}\nheimdall_alerts = {}\n",
+             dock_pos = {}\ndock_icon = {}\ndock_gap = {}\nclock_24h = {}\nstart_theme = {}\ndock_opacity = {}\ndock_color = {}\nbar_opacity = {}\nbar_color = {}\nclipboard_history = {}\nsearch_subfolders = {}\nshow_hidden = {}\ndrive_status = {}\ndeveloper = {}\nnotify_toasts = {}\nnotify_pane = {}\nnotify_dnd = {}\nown_wallpaper = {}\ntext_scale = {}\nreduce_motion = {}\nsarina_speaks = {}\nheimdall_alerts = {}\n",
             match self.dock_pos {
                 DockPos::Bottom => "bottom",
                 DockPos::Left => "left",
@@ -213,6 +216,7 @@ impl PanelConf {
             if self.own_wallpaper { "yes" } else { "no" },
             self.text_scale,
             if self.reduce_motion { "yes" } else { "no" },
+            if self.sarina_speaks { "yes" } else { "no" },
             self.heimdall_alerts.as_str()
         )
     }
@@ -253,7 +257,7 @@ mod tests {
 
     #[test]
     fn round_trips() {
-        let c = PanelConf { dock_pos: DockPos::Right, dock_icon: 60, dock_gap: 0, start_theme: StartTheme::Folders, clock_24h: false, dock_opacity: 0, dock_color: ColorMode::Neutral, bar_opacity: 100, bar_color: ColorMode::Neutral, clipboard_history: false, search_subfolders: false, show_hidden: true, drive_status: false, developer: true, notify_toasts: false, notify_pane: true, notify_dnd: true, own_wallpaper: true, text_scale: 150, reduce_motion: true, heimdall_alerts: AlertLevel::Critical };
+        let c = PanelConf { dock_pos: DockPos::Right, dock_icon: 60, dock_gap: 0, start_theme: StartTheme::Folders, clock_24h: false, dock_opacity: 0, dock_color: ColorMode::Neutral, bar_opacity: 100, bar_color: ColorMode::Neutral, clipboard_history: false, search_subfolders: false, show_hidden: true, drive_status: false, developer: true, notify_toasts: false, notify_pane: true, notify_dnd: true, own_wallpaper: true, text_scale: 150, reduce_motion: true, sarina_speaks: false, heimdall_alerts: AlertLevel::Critical };
         assert_eq!(PanelConf::parse(&c.to_text()), c);
     }
 
@@ -298,4 +302,32 @@ pub fn set_wallpaper(path: &str) -> Result<(), String> {
     let tmp = p.with_extension("tmp");
     std::fs::write(&tmp, format!("{path}\n")).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, &p).map_err(|e| e.to_string())
+}
+
+/// Voices Sarina can speak with: the names of the Piper voice files (without .onnx) in ~/.local/share/labyrinth/tts/voices.
+pub fn sarina_voices() -> Vec<String> {
+    let Some(base) = std::env::var_os("XDG_DATA_HOME").map(std::path::PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share"))) else { return vec![] };
+    let mut v: Vec<String> = std::fs::read_dir(base.join("labyrinth/tts/voices")).map(|d| d.filter_map(|e| e.ok()).filter_map(|e| e.file_name().to_string_lossy().strip_suffix(".onnx").map(String::from)).collect()).unwrap_or_default();
+    v.sort();
+    v
+}
+
+/// The chosen voice (one line in ~/.config/labyrinth/sarina-voice), "en_US-amy-medium" until one is chosen.
+pub fn sarina_voice() -> String {
+    let base = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")));
+    base.and_then(|b| std::fs::read_to_string(b.join("labyrinth/sarina-voice")).ok()).and_then(|t| t.lines().next().map(|l| l.trim().to_string())).filter(|l| voice_name_ok(l)).unwrap_or_else(|| "en_US-amy-medium".into())
+}
+
+pub fn voice_name_ok(s: &str) -> bool {
+    !s.is_empty() && s.len() < 80 && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+}
+
+pub fn set_sarina_voice(name: &str) -> Result<(), String> {
+    if !voice_name_ok(name) {
+        return Err("bad voice name".into());
+    }
+    let base = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config"))).ok_or("no config folder")?;
+    let p = base.join("labyrinth/sarina-voice");
+    std::fs::create_dir_all(p.parent().unwrap()).map_err(|e| e.to_string())?;
+    std::fs::write(&p, format!("{name}\n")).map_err(|e| e.to_string())
 }

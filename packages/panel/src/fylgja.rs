@@ -635,6 +635,38 @@ pub fn stop_recording(child: &mut Child) {
     let _ = child.wait();
 }
 
+/// What Sarina says aloud for a reply: the answer without the `Heard: "..."` line the card shows above it.
+pub fn spoken_part(reply: &str) -> String {
+    let mut lines = reply.lines();
+    let first = lines.clone().next().unwrap_or("");
+    if first.starts_with("Heard: ") {
+        lines.next();
+    }
+    lines.collect::<Vec<_>>().join("\n").trim().to_string()
+}
+
+/// Says the answer aloud (`labyrinth-sarina-speak`: a local Piper voice), in the background. A missing voice just means silence.
+pub fn speak(text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    let text = text.to_string();
+    std::thread::spawn(move || {
+        use std::io::Write;
+        if let Ok(mut c) = Command::new("labyrinth-sarina-speak").stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
+            if let Some(mut si) = c.stdin.take() {
+                let _ = si.write_all(text.as_bytes());
+            }
+            let _ = c.wait();
+        }
+    });
+}
+
+/// Stops whatever Sarina is saying.
+pub fn stop_speaking() {
+    let _ = Command::new("labyrinth-sarina-speak").arg("--stop").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map(|mut c| std::thread::spawn(move || { let _ = c.wait(); }));
+}
+
 /// Gives the recording to Sarina (`labyrinth-sarina-ask`) and reports her reply or why there is none.
 pub fn ask_sarina(wav: PathBuf, heard: calloop::channel::Sender<String>, done: calloop::channel::Sender<Result<String, String>>) {
     std::thread::spawn(move || {
@@ -1251,6 +1283,13 @@ pub fn paint(pix: &mut Pixmap, s: f32, m: &Model, st: &FyState, slide: f32, poin
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_spoken_part_drops_the_heard_line() {
+        assert_eq!(spoken_part("Heard: \"what time is it\"\n\nIt is noon."), "It is noon.");
+        assert_eq!(spoken_part("It is noon."), "It is noon.");
+        assert_eq!(spoken_part("Heard: \"x\""), "");
+    }
+
     use super::*;
 
     #[test]

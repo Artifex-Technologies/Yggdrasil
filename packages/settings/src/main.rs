@@ -812,6 +812,47 @@ impl App {
                 Ok(())
             });
         }
+        // Sarina's voice: she can say her answers aloud after a question you spoke (Super+S)
+        let mut conf = labyrinth_conf::PanelConf::load();
+        let voices = labyrinth_conf::sarina_voices();
+        let current = labyrinth_conf::sarina_voice();
+        let mut conf_changed = false;
+        let mut pick: Option<String> = None;
+        let mut test = false;
+        ui.add_space(8.0);
+        ui::group(ui, pal, Some("Sarina's voice"), |ui| {
+            if voices.is_empty() {
+                ui::row(ui, pal, true, "No voice installed", Some("Speaking needs Piper and a voice (see docs/SARINA_VOICE.md)"), |_| {});
+                return;
+            }
+            ui::row(ui, pal, true, "Speak her answers", Some("After you ask by voice, she says the answer aloud. Everything is made on this computer. Starting to speak again, or Esc, stops her"), |ui| {
+                if ui::switch(ui, pal, &mut conf.sarina_speaks).changed() {
+                    conf_changed = true;
+                }
+            });
+            ui::row(ui, pal, false, "Voice", Some("Plays a short sentence when you press Hear it"), |ui| {
+                if ui::quiet(ui, pal, "Hear it").clicked() {
+                    test = true;
+                }
+                egui::ComboBox::from_id_salt("sarina-voice").selected_text(&current).width(200.0).show_ui(ui, |ui| {
+                    for v in &voices {
+                        if ui.selectable_label(v == &current, v).clicked() {
+                            pick = Some(v.clone());
+                        }
+                    }
+                });
+            });
+        });
+        if conf_changed {
+            self.change(ctx, move || conf.save());
+        }
+        if let Some(v) = pick {
+            let _ = labyrinth_conf::set_sarina_voice(&v);
+            sys::spawn("labyrinth-sarina-speak", &["Hello. I am Sarina, and this is how I sound when I answer you."]);
+        }
+        if test {
+            sys::spawn("labyrinth-sarina-speak", &["Hello. I am Sarina, and this is how I sound when I answer you."]);
+        }
     }
 
     fn page_appearance(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
