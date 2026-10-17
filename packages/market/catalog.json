@@ -1342,5 +1342,32 @@
  ],
  "tile_colors": {
   "sarina": "#1f8f95"
- }
+ },
+ "local_builds": [
+  "calamares",
+  "daedalus-cad-git",
+  "heimdall-git",
+  "klassy",
+  "kwin-scripts-krohnkite",
+  "labyrinth-calculator",
+  "labyrinth-idle",
+  "labyrinth-keyring-sync",
+  "labyrinth-lock",
+  "labyrinth-market",
+  "labyrinth-minos",
+  "labyrinth-panel",
+  "labyrinth-polkit",
+  "labyrinth-portal",
+  "labyrinth-settings",
+  "labyrinth-weather",
+  "limbo-git",
+  "mactahoe-icon-theme",
+  "plasma6-applets-window-title",
+  "proton-pass",
+  "sarina-git",
+  "visual-studio-code-bin",
+  "whitesur-cursor-theme",
+  "whitesur-gtk-theme",
+  "whitesur-kde-theme"
+ ]
 }

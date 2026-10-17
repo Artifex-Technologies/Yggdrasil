@@ -7,6 +7,7 @@ mod history;
 mod install;
 
 use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 use catalog::{Catalog, Entry, Installed, Repo, Source};
@@ -42,6 +43,8 @@ enum Msg {
     /// More about an app arrived (None: nothing found), or a picture did.
     Details(String, Option<details::Details>),
     Image(String, Option<std::path::PathBuf>),
+    /// The result of looking for updates.
+    Updates(Vec<catalog::Update>),
 }
 
 struct App {
@@ -59,6 +62,9 @@ struct App {
     /// Installs, removals and updates run inside the Marketplace (newest last), and which of them show their log.
     jobs: Vec<install::Shared>,
     installs: Vec<history::Item>,
+    update_list: Vec<catalog::Update>,
+    checking: bool,
+    last_check: Option<Instant>,
     show_log: HashSet<String>,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
@@ -120,6 +126,9 @@ impl App {
             busy: HashSet::new(),
             jobs: vec![],
             installs: history::load(),
+            update_list: vec![],
+            checking: false,
+            last_check: None,
             show_log: HashSet::new(),
             tx,
             rx,
@@ -137,6 +146,7 @@ impl App {
         };
         app.rebuild(ctx, false);
         app.refresh_installed(ctx);
+        app.check_updates(ctx);
         // LABYRINTH_MARKET_PAGE=tab:Create | categories | updates | sources | detail:krita | search:word (for screenshots and tests)
         if let Ok(p) = std::env::var("LABYRINTH_MARKET_PAGE") {
             let (kind, arg) = p.split_once(':').unwrap_or((p.as_str(), ""));
@@ -190,6 +200,20 @@ impl App {
         });
     }
 
+    /// Look for updates in the background (it needs the network and takes a few seconds).
+    fn check_updates(&mut self, ctx: &egui::Context) {
+        if self.checking {
+            return;
+        }
+        self.checking = true;
+        self.last_check = Some(Instant::now());
+        let (tx, ctx) = (self.tx.clone(), ctx.clone());
+        std::thread::spawn(move || {
+            let _ = tx.send(Msg::Updates(catalog::check_updates()));
+            ctx.request_repaint();
+        });
+    }
+
     fn refresh_installed(&self, ctx: &egui::Context) {
         let (tx, ctx) = (self.tx.clone(), ctx.clone());
         std::thread::spawn(move || {
@@ -201,7 +225,17 @@ impl App {
     fn receive(&mut self, ctx: &egui::Context) {
         while let Ok(m) = self.rx.try_recv() {
             match m {
-                Msg::Installed(i) => self.installed = i,
+                Msg::Installed(i) => {
+                    // the list of updates is looked for separately; keep it
+                    let u = std::mem::take(&mut self.installed.updates);
+                    self.installed = i;
+                    self.installed.updates = u;
+                }
+                Msg::Updates(list) => {
+                    self.checking = false;
+                    self.installed.updates = list.iter().map(|u| u.name.clone()).collect();
+                    self.update_list = list;
+                }
                 Msg::Fetched(i, res) => {
                     if i < self.repos.len() {
                         match res.and_then(|t| catalog::load_repo(&self.repos[i], &t)) {
@@ -217,6 +251,7 @@ impl App {
                 Msg::Finished(id) => {
                     self.busy.remove(&id);
                     self.refresh_installed(ctx);
+                    self.last_check = None; // look again soon: what was just installed may change the list
                     self.installs = history::load();
                 }
                 Msg::Details(id, d) => {
@@ -449,7 +484,7 @@ impl App {
                 };
                 ui.label(RichText::new(head).strong());
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if j.status == install::Status::Running && !j.cancel_requested {
+                    if j.status == install::Status::Running && !j.cancel_requested && j.op != install::Op::UpdateAll {
                         if ui.add(egui::Label::new(RichText::new("Cancel").size(12.5).color(self.pal.red)).sense(Sense::click())).clicked() {
                             if let Some(h) = self.jobs.iter().find(|h| h.lock().map(|g| g.id == j.id && g.status == install::Status::Running).unwrap_or(false)) {
                                 install::request_cancel(h);
@@ -817,15 +852,29 @@ impl App {
 
     fn page_updates(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         self.heading(ui, "Updates");
-        let n = self.installed.updates.len();
+        let n = self.update_list.len();
         ui.horizontal(|ui| {
-            ui.label(RichText::new(if n == 0 { "Everything is up to date.".to_string() } else { format!("{n} package{} can be updated.", if n == 1 { "" } else { "s" }) }).color(self.pal.dim));
+            let text = if self.checking {
+                "Checking for updates...".to_string()
+            } else if n == 0 {
+                "Everything is up to date.".to_string()
+            } else {
+                format!("{n} package{} can be updated.", if n == 1 { "" } else { "s" })
+            };
+            ui.label(RichText::new(text).color(self.pal.dim));
+            if !self.checking && ui.add(egui::Label::new(RichText::new("Check again").size(12.5).color(self.pal.accent)).sense(Sense::click())).clicked() {
+                self.check_updates(ctx);
+            }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.add(egui::Button::new(RichText::new("Update everything").color(self.pal.on_accent())).fill(self.pal.accent).min_size(vec2(150.0, 30.0))).clicked() {
+                if n > 0 && !self.is_running("*update*") && ui.add(egui::Button::new(RichText::new("Update everything").color(self.pal.on_accent())).fill(self.pal.accent).min_size(vec2(150.0, 30.0))).clicked() {
                     self.run_update_all(ctx);
                 }
             });
         });
+        if let Some(j) = self.job_snapshot("*update*") {
+            ui.add_space(8.0);
+            self.progress_card(ui, &j);
+        }
         ui.add_space(8.0);
         let mine: Vec<usize> = (0..self.apps.len()).filter(|&i| self.installed.update_for(&self.apps[i])).collect();
         if !mine.is_empty() {
@@ -833,9 +882,17 @@ impl App {
             self.grid(ui, ctx, &mine);
         }
         if n > 0 {
-            self.section(ui, "All packages with updates", None);
-            let list = self.installed.updates.join("   ");
-            ui.label(RichText::new(list).size(12.0).color(self.pal.dim));
+            self.section(ui, "All updates", None);
+            let list = self.update_list.clone();
+            for u in &list {
+                ui.horizontal(|ui| {
+                    ui.add_sized([260.0, 20.0], egui::Label::new(RichText::new(&u.name).size(13.0)));
+                    ui.label(RichText::new(format!("{}  ->  {}", u.old, u.new)).size(12.0).color(self.pal.dim));
+                    if u.aur {
+                        ui.label(RichText::new("AUR").size(11.0).color(self.pal.amber));
+                    }
+                });
+            }
         }
     }
 
@@ -1211,6 +1268,10 @@ impl eframe::App for App {
         theme::apply(&ctx, dark, accent);
         self.pal = theme::palette_for(dark, accent);
         let pal = self.pal.clone();
+        // look for updates every half hour while the window is open (and again soon after an install)
+        if !self.checking && self.last_check.map(|t| t.elapsed() > Duration::from_secs(if self.update_list.is_empty() { 1800 } else { 1800 })).unwrap_or(true) && self.jobs.iter().all(|j| j.lock().map(|g| g.status != install::Status::Running).unwrap_or(true)) {
+            self.check_updates(&ctx);
+        }
 
         // sidebar: search, then the sections
         egui::Panel::left("sections")

@@ -100,7 +100,12 @@ pub fn command(e: &Entry, op: Op) -> Option<(String, Vec<String>)> {
         (Source::Component(c), Op::Install) => ("labyrinth-apps".into(), s(&["install", c])),
         (Source::Component(c), Op::Reinstall) => ("labyrinth-apps".into(), s(&["install", c])),
         (Source::Component(c), Op::Remove) => ("labyrinth-apps".into(), s(&["remove", c])),
-        (_, Op::UpdateAll) => ("yay".into(), s(&["-Syu", "--noconfirm", "--sudo", SUDO_WRAPPER])),
+        (_, Op::UpdateAll) => {
+            // the repositories through the administrator helper, then the AUR; Labyrinth's own builds are never taken from the AUR
+            let skip = crate::catalog::local_builds().join(",");
+            let ign = if skip.is_empty() { String::new() } else { format!(" --ignore {skip}") };
+            ("sh".into(), s(&["-c", &format!("pkexec {ROOT_HELPER} \"$LABYRINTH_CANCEL_FILE\" pacman -Syu --noconfirm{ign} && yay -Sua --noconfirm --sudo {SUDO_WRAPPER}{ign}")]))
+        }
         (Source::Plugin { .. }, _) => return None,
     })
 }
@@ -433,6 +438,17 @@ mod tests {
         let j = wait(&job);
         assert!(matches!(j.status, Status::Failed(ref w) if w.contains("code 3")));
         assert!(j.log.iter().any(|l| l == "oops"), "errors are read too");
+    }
+
+    #[test]
+    fn update_everything_goes_through_the_helper_and_skips_local_builds() {
+        let c = parse_catalog(BUILTIN, "Labyrinth", true).unwrap();
+        let e = c.apps[0].clone();
+        let (p, a) = command(&e, Op::UpdateAll).unwrap();
+        assert_eq!(p, "sh");
+        let script = &a[1];
+        assert!(script.contains("pacman -Syu --noconfirm") && script.contains("yay -Sua") && script.contains(ROOT_HELPER));
+        assert!(!script.contains("yay -Syu"), "the repositories are not updated by yay");
     }
 
     #[test]
