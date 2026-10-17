@@ -374,9 +374,41 @@ impl App {
         let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
         let top = tint(&e.id, 0.55, 0.78);
         let bottom = tint(&e.id, 0.75, 0.46);
-        // a vertical gradient
+        // a screenshot of the app behind the card, when there is one (and the internet was allowed): dimmed from the left,
+        // where the text is, so it stays readable. Otherwise a colour gradient.
+        let shot = self.details.get(&e.id).cloned().flatten().and_then(|d| d.screenshots.first().map(|s| s.url.clone())).and_then(|u| self.images.get(&u).cloned().flatten());
+        let tex = shot.and_then(|path| ui.ctx().try_load_texture(&format!("file://{}", path.display()), egui::TextureOptions::LINEAR, egui::SizeHint::default()).ok()).and_then(|poll| match poll {
+            egui::load::TexturePoll::Ready { texture } => Some(texture),
+            _ => None,
+        });
         let steps = 24;
-        for k in 0..steps {
+        if let Some(t) = &tex {
+            let (ta, ca) = (t.size.x / t.size.y, rect.width() / rect.height());
+            let uv = if ta > ca {
+                let fw = ca / ta;
+                Rect::from_min_max(pos2((1.0 - fw) / 2.0, 0.0), pos2((1.0 + fw) / 2.0, 1.0))
+            } else {
+                let fh = ta / ca;
+                let v0 = (1.0 - fh) * 0.35;
+                Rect::from_min_max(pos2(0.0, v0), pos2(1.0, v0 + fh))
+            };
+            ui.painter().add(egui::epaint::RectShape::filled(rect, CornerRadius::same(14), Color32::WHITE).with_texture(t.id, uv));
+            // the app's own colour over it, then the dark band from the left
+            let tintc = tint(&e.id, 0.7, 0.5);
+            ui.painter().rect_filled(rect, CornerRadius::same(14), Color32::from_rgba_unmultiplied(tintc.r(), tintc.g(), tintc.b(), 70));
+            let n = 40;
+            for k in 0..n {
+                let f = k as f32 / (n - 1) as f32;
+                let a = (0.88 - 0.62 * f.powf(0.8)) * 255.0;
+                // edges on whole pixels and no overlap, so the translucent strips leave no lines
+                let ppp = ui.ctx().pixels_per_point();
+                let snap = |x: f32| (x * ppp).round() / ppp;
+                let r = Rect::from_min_max(pos2(snap(rect.left() + rect.width() * k as f32 / n as f32), rect.top()), pos2(snap(rect.left() + rect.width() * (k + 1) as f32 / n as f32), rect.bottom()));
+                let cr = CornerRadius { nw: if k == 0 { 14 } else { 0 }, sw: if k == 0 { 14 } else { 0 }, ne: if k == n - 1 { 14 } else { 0 }, se: if k == n - 1 { 14 } else { 0 } };
+                ui.painter().rect_filled(r.intersect(rect), cr, Color32::from_rgba_unmultiplied(8, 8, 16, a as u8));
+            }
+        }
+        for k in 0..if tex.is_some() { 0 } else { steps } {
             let t = k as f32 / (steps - 1) as f32;
             let c = Color32::from_rgb((top.r() as f32 * (1.0 - t) + bottom.r() as f32 * t) as u8, (top.g() as f32 * (1.0 - t) + bottom.g() as f32 * t) as u8, (top.b() as f32 * (1.0 - t) + bottom.b() as f32 * t) as u8);
             let r = Rect::from_min_max(pos2(rect.left(), rect.top() + rect.height() * k as f32 / steps as f32), pos2(rect.right(), rect.top() + rect.height() * (k + 1) as f32 / steps as f32 + 1.0));
@@ -437,6 +469,12 @@ impl App {
                     self.card(ui, id, tag, kick, vec2(cw, 150.0), false);
                 }
             });
+        }
+        // the featured apps' screenshots, for the cards (only once the internet was allowed)
+        for (id, _, _) in featured.iter().take(4) {
+            if let Some(i) = self.apps.iter().position(|a| &a.id == id) {
+                self.want_details(ctx, i);
+            }
         }
         for tab in TABS {
             let list: Vec<usize> = (0..self.apps.len()).filter(|&i| self.apps[i].category == tab && self.apps[i].from == "Labyrinth").take(6).collect();
@@ -557,8 +595,12 @@ impl App {
         }
         let can_remove = self.installed.has(&e) && catalog::remove_script(&e).is_some();
         if can_remove {
-            ui.scope_builder(UiBuilder::new().max_rect(Rect::from_min_size(rect.left_top() + vec2(240.0, 92.0), vec2(100.0, 30.0))), |ui| {
-                if ui.add(egui::Button::new("Remove").min_size(vec2(90.0, 30.0))).clicked() {
+            // the same pill as OPEN, beside it, with red text
+            ui.scope_builder(UiBuilder::new().max_rect(Rect::from_min_size(rect.left_top() + vec2(232.0, 92.0), vec2(92.0, 30.0))), |ui| {
+                let (r, resp) = ui.allocate_exact_size(vec2(92.0, 30.0), Sense::click());
+                ui.painter().rect_filled(r, CornerRadius::same(255), if resp.hovered() { self.pal.hover } else { self.pal.field });
+                ui.painter().text(r.center(), Align2::CENTER_CENTER, "REMOVE", FontId::proportional(14.0), self.pal.red);
+                if resp.clicked() {
                     if let Some(script) = catalog::remove_script(&e) {
                         self.busy.insert(e.id.clone());
                         run_in_terminal(script, e.id.clone(), self.tx.clone(), ctx.clone());
@@ -602,11 +644,13 @@ impl App {
                 }
                 Some(true) => {
                     if let Some(d) = &info {
-                        if !d.screenshots.is_empty() {
+                        // only the pictures that came (or are still coming); with none at all there is no Screenshots section
+                        let shots: Vec<details::Shot> = d.screenshots.iter().take(6).filter(|s| !matches!(self.images.get(&s.url), Some(None))).cloned().collect();
+                        if !shots.is_empty() {
                             self.section(ui, "Screenshots", None);
                             egui::ScrollArea::horizontal().id_salt("shots").auto_shrink([false, true]).show(ui, |ui| {
                                 ui.horizontal(|ui| {
-                                    for s in d.screenshots.iter().take(6) {
+                                    for s in shots.iter() {
                                         ui.vertical(|ui| {
                                             match self.images.get(&s.url).cloned().flatten() {
                                                 Some(path) => {
