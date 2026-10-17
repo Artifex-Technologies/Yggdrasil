@@ -40,7 +40,7 @@ pub struct Viz {
 pub fn palette(index: u8) -> [Rgba; 3] {
     match index {
         1 => [(32, 133, 252, 255), (94, 252, 169, 255), (253, 71, 103, 255)],     // Siri
-        2 => [(124, 84, 214, 255), (92, 160, 255, 255), (232, 110, 200, 255)],    // Labyrinth: the accent, a sky blue, a pink
+        2 => [(150, 100, 240, 255), (196, 150, 255, 255), (236, 222, 255, 255)],  // Labyrinth: the OS purple (accent 124,84,214), lighter and lighter
         _ => [(214, 120, 52, 255), (255, 178, 92, 255), (255, 226, 176, 255)],    // copper, like the ribbon the owner chose
     }
 }
@@ -68,7 +68,9 @@ pub fn paint(pix: &mut Pixmap, s: f32, v: &Viz, colors: [Rgba; 3]) {
         return;
     }
     // the pill grows out of the notch: it hangs from the top edge and its height follows `shown`
-    let pw = w * (0.55 + 0.45 * a);
+    // the surface spans the screen; the pill is WIDTH wide, centred
+    let full = (WIDTH as f32 * s).min(w);
+    let pw = full * (0.55 + 0.45 * a);
     let ph = (12.0 * s) + (h - 12.0 * s) * a;
     let px = (w - pw) / 2.0;
     paint::fill_rounded(pix, px, -20.0 * s, pw, 20.0 * s + ph, 30.0 * s, (0, 0, 0, 255));

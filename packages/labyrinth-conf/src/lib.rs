@@ -112,7 +112,7 @@ pub struct PanelConf {
     pub reduce_motion: bool,
     /// Sarina says her answer aloud after a spoken question (Super+S).
     pub sarina_speaks: bool,
-    /// The colours of the voice island's wave: 0 copper, 1 Siri, 2 Labyrinth.
+    /// The colours of the voice island wave: 0 copper, 1 Siri, 2 Labyrinth purple (the default).
     pub sarina_wave: u8,
     /// Which Heimdall alerts become notifications: "off", "critical", "warning" (and critical) or "info" (all).
     pub heimdall_alerts: AlertLevel,
@@ -120,7 +120,7 @@ pub struct PanelConf {
 
 impl Default for PanelConf {
     fn default() -> Self {
-        PanelConf { dock_pos: DockPos::Bottom, dock_icon: 44, dock_gap: 4, start_theme: StartTheme::Windows, clock_24h: true, dock_opacity: 69, dock_color: ColorMode::Theme, bar_opacity: 69, bar_color: ColorMode::Theme, clipboard_history: true, search_subfolders: true, show_hidden: false, drive_status: true, developer: false, notify_toasts: true, notify_pane: false, notify_dnd: false, own_wallpaper: false, text_scale: 100, reduce_motion: false, sarina_speaks: true, sarina_wave: 0, heimdall_alerts: AlertLevel::Warning }
+        PanelConf { dock_pos: DockPos::Bottom, dock_icon: 44, dock_gap: 4, start_theme: StartTheme::Windows, clock_24h: true, dock_opacity: 69, dock_color: ColorMode::Theme, bar_opacity: 69, bar_color: ColorMode::Theme, clipboard_history: true, search_subfolders: true, show_hidden: false, drive_status: true, developer: false, notify_toasts: true, notify_pane: false, notify_dnd: false, own_wallpaper: false, text_scale: 100, reduce_motion: false, sarina_speaks: true, sarina_wave: 2, heimdall_alerts: AlertLevel::Warning }
     }
 }
 

@@ -860,8 +860,10 @@ impl State {
             self.next_surf += 1;
             let wl = self.compositor.create_surface(&self.qh, ());
             let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Overlay, "labyrinth-voice".into(), &self.qh, id);
-            layer.set_anchor(Anchor::Top);
-            layer.set_size(voicewave::WIDTH, voicewave::HEIGHT);
+            // A surface that spans the screen's top edge sits flush against it (a small centred one is pushed down below the bar's
+            // reserved strip by KWin), so it spans the width, is see-through and takes no clicks, and the pill is drawn in its middle.
+            layer.set_anchor(Anchor::Top | Anchor::Left | Anchor::Right);
+            layer.set_size(0, voicewave::HEIGHT);
             layer.set_exclusive_zone(-1);
             layer.set_keyboard_interactivity(KeyboardInteractivity::None);
             // it takes no clicks: they go to whatever is under it
