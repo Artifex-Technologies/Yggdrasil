@@ -1,0 +1,19 @@
+[package]
+name = "labyrinth-portal"
+version = "0.1.0"
+edition = "2021"
+description = "Labyrinth's xdg-desktop-portal backend: Minos as the open/save dialog for every application"
+license = "MIT"
+
+[[bin]]
+name = "labyrinth-portal"
+path = "src/main.rs"
+
+[dependencies]
+zbus = "5"
+blocking = "1"
+
+[profile.release]
+opt-level = 2
+lto = "thin"
+strip = true

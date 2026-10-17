@@ -23,6 +23,7 @@ mod status;
 mod tray;
 mod trayui;
 
+use std::time::Instant;
 use std::collections::HashMap;
 use std::os::fd::AsFd;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -291,6 +292,10 @@ struct State {
     popup: Option<Popup>,
     /// The popover card's rectangle in logical pixels.
     popup_card: (f32, f32, f32, f32),
+    /// The dock app the pointer rests on, since when, where (screen x of its icon) and on which output; opens the window list after a second.
+    dock_hover: Option<(String, Instant, f32, u32)>,
+    /// When the window list should close if the pointer has not come back to it or the dock.
+    preview_close: Option<Instant>,
     /// What can be clicked in the open start menu, and how far its list can scroll.
     start_hits: Vec<shell::StartHit>,
     start_max: i32,
@@ -1282,6 +1287,12 @@ impl State {
                 }
                 self.dirty = true;
             }
+            RowAct::Window(i) => {
+                if let Some(w) = self.model.wins.get(i) {
+                    w.proxy.activate(self.seat.as_ref());
+                }
+                self.close_popup();
+            }
             RowAct::Back => {
                 if let Some(Popup { kind: PopupKind::Tray(trayui::TrayPop { mode: trayui::TrayMode::Menu { path, .. }, .. }), .. }) = &mut self.popup {
                     path.pop();
@@ -1414,6 +1425,46 @@ impl State {
             self.model.notch_w = w;
             self.model.notch_tab = tab;
         }
+    }
+
+    fn windows_popup_open(&self) -> bool {
+        matches!(self.popup, Some(Popup { kind: PopupKind::Tray(trayui::TrayPop { mode: trayui::TrayMode::Windows { .. }, .. }), .. }))
+    }
+
+    /// Open the list of a dock app's windows above the dock.
+    fn open_windows_popup(&mut self, app_id: &str, x: f32, output: u32) {
+        if self.popup.is_some() {
+            return;
+        }
+        let items = shell::dock_items(&self.model);
+        let Some(item) = items.iter().find(|i| i.app_id == app_id) else { return };
+        if item.wins.is_empty() {
+            return;
+        }
+        let rows: Vec<(usize, String, bool)> = item.wins.iter().map(|&i| (i, self.model.wins[i].title.clone(), self.model.wins[i].active())).collect();
+        self.click_output = Some(output);
+        self.toggle_popup(PopupKind::Tray(trayui::TrayPop { anchor_x: x, mode: trayui::TrayMode::Windows { rows } }));
+        self.dirty = true;
+    }
+
+    /// Pointer moves while the window list is open: leaving the card (and its margin) closes it.
+    fn preview_pointer_moved(&mut self) -> bool {
+        if !self.windows_popup_open() {
+            return false;
+        }
+        let on_popup = self.pointer_surface.and_then(|i| self.surfs.get(i)).map(|s| s.kind == Kind::Popup).unwrap_or(false);
+        if on_popup {
+            let (cx, cy, cw, ch) = self.popup_card;
+            let (px, py) = self.pointer_pos;
+            let m = 28.0;
+            if px < cx - m || px > cx + cw + m || py < cy - m {
+                self.close_popup();
+                return true;
+            }
+            self.preview_close = None;
+        }
+        self.dirty = true; // the row under the pointer lights up
+        false
     }
 
     fn close_popup(&mut self) {
@@ -2210,10 +2261,55 @@ impl State {
         }
     }
 
+    /// Which dock app the pointer is on (its id, its icon's centre along the screen), if any.
+    fn dock_item_at(&self, i: usize, new: Option<usize>) -> Option<(String, f32)> {
+        if self.surfs[i].kind != Kind::Dock {
+            return None;
+        }
+        let hit = self.surfs[i].hits.get(new?)?;
+        let id = match &hit.action {
+            Action::Dock(id) | Action::DockWin(id, _) => id.clone(),
+            _ => return None,
+        };
+        let s = self.scale_of(&self.surfs[i]);
+        let origin = self.dock_origin(self.surfs[i].output, self.surfs[i].want);
+        let pos = self.model.conf.dock_pos;
+        let (w, _) = self.surfs[i].want;
+        let along = if pos.vertical() {
+            match pos {
+                DockPos::Left => origin.0 as f32 + w as f32 + 150.0 + 8.0,
+                _ => origin.0 as f32 - 150.0 - 8.0,
+            }
+        } else {
+            origin.0 as f32 + (hit.rect.0 + hit.rect.2 / 2.0) / s
+        };
+        Some((id, along))
+    }
+
     fn hover_at(&mut self, x: f32, y: f32) {
         let Some(i) = self.pointer_surface else { return };
         let s = self.scale_of(&self.surfs[i]);
         let new = self.surfs[i].hits.iter().position(|h| h.contains(x * s, y * s));
+        // resting on a dock app starts the second after which its windows are listed
+        match self.dock_item_at(i, new) {
+            Some((id, along)) if id != shell::TRASH_ID => {
+                if self.dock_hover.as_ref().map(|h| h.0 != id).unwrap_or(true) {
+                    self.dock_hover = Some((id.clone(), Instant::now(), along, self.surfs[i].output));
+                    if matches!(self.popup, Some(Popup { kind: PopupKind::Tray(trayui::TrayPop { mode: trayui::TrayMode::Windows { .. }, .. }), .. })) {
+                        self.close_popup();
+                    }
+                }
+                self.preview_close = None;
+            }
+            _ => {
+                if self.surfs[i].kind == Kind::Dock {
+                    self.dock_hover = None;
+                    if self.preview_close.is_none() && self.windows_popup_open() {
+                        self.preview_close = Some(Instant::now() + Duration::from_millis(350));
+                    }
+                }
+            }
+        }
         if new != self.surfs[i].hover {
             self.surfs[i].hover = new;
             self.dirty = true;
@@ -2443,7 +2539,7 @@ impl Dispatch<WlPointer, ()> for State {
                 state.pointer_surface = state.surf_index(&surface);
                 state.pointer_pos = (surface_x as f32, surface_y as f32);
                 state.set_cursor(serial);
-                if state.fylgja_pointer_moved() {
+                if state.fylgja_pointer_moved() || state.preview_pointer_moved() {
                     return;
                 }
                 state.hover_at(surface_x as f32, surface_y as f32);
@@ -2452,6 +2548,14 @@ impl Dispatch<WlPointer, ()> for State {
                 if state.popup.is_none() {
                     state.tab_on = false;
                     state.tab_hover = false;
+                }
+                if let Some(i) = state.pointer_surface {
+                    if state.surfs.get(i).map(|s| s.kind == Kind::Dock).unwrap_or(false) {
+                        state.dock_hover = None;
+                        if state.windows_popup_open() && state.preview_close.is_none() {
+                            state.preview_close = Some(Instant::now() + Duration::from_millis(350));
+                        }
+                    }
                 }
                 if let Some(i) = state.pointer_surface.take() {
                     if state.surfs.get_mut(i).map(|s| s.hover.take().is_some()).unwrap_or(false) {
@@ -2465,7 +2569,7 @@ impl Dispatch<WlPointer, ()> for State {
                     state.drag_apply(false);
                     return;
                 }
-                if state.fylgja_pointer_moved() {
+                if state.fylgja_pointer_moved() || state.preview_pointer_moved() {
                     return;
                 }
                 if matches!(state.popup, Some(Popup { kind: PopupKind::Start(_), .. })) {
@@ -2761,6 +2865,8 @@ fn main() {
         dirty: false,
         popup: None,
         popup_card: (0.0, 0.0, 0.0, 0.0),
+        dock_hover: None,
+        preview_close: None,
         start_hits: vec![],
         start_max: 0,
         fy_hits: vec![],
@@ -2969,6 +3075,27 @@ fn main() {
             })
             .expect("accessibility timer");
     }
+    // resting on a dock app for a second lists its windows; the list goes when the pointer has left it
+    event_loop
+        .handle()
+        .insert_source(Timer::from_duration(Duration::from_millis(120)), |_, _, st| {
+            if st.popup.is_none() {
+                if let Some((id, at, x, out)) = st.dock_hover.clone() {
+                    if at.elapsed() >= Duration::from_millis(1000) {
+                        st.dock_hover = None;
+                        st.open_windows_popup(&id, x, out);
+                    }
+                }
+            }
+            if st.preview_close.is_some_and(|t| Instant::now() >= t) {
+                st.preview_close = None;
+                if st.windows_popup_open() {
+                    st.close_popup();
+                }
+            }
+            TimeoutAction::ToDuration(Duration::from_millis(120))
+        })
+        .expect("dock preview timer");
     // each step of Fylgja sliding: redraw, and finish a close once it has gone up
     event_loop
         .handle()

@@ -11,7 +11,7 @@ use eframe::egui::{self, pos2, vec2, Align, Align2, Color32, CornerRadius, FontI
 use icons::Icon;
 use labyrinth_ui::sysicon;
 use labyrinth_ui::{chrome, theme};
-use theme::{palette, palette_for, Palette};
+use theme::{palette_for, Palette};
 use egui_extras::{Column, TableBuilder};
 use minos_core::archive::{self, Format};
 use minos_core::cloud::{self, Badge, Link, Report};
@@ -180,7 +180,7 @@ impl TabView {
         if self.results.is_some() || places::is_virtual(&self.dir()) {
             (0..shown.len()).collect()
         } else {
-            listing::visible(shown, &self.query, hidden)
+            listing::visible(shown, &self.query, hidden).into_iter().filter(|&i| !pick_hides(&shown[i])).collect()
         }
     }
 
@@ -1165,7 +1165,7 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
     let dir = t.dir();
     let TabView { entries, results, query, selected, anchor, .. } = t;
     let shown: &[Entry] = results.as_deref().unwrap_or(entries);
-    let order: Vec<usize> = if searching || in_pc { (0..shown.len()).collect() } else { listing::visible(shown, query, hidden) };
+    let order: Vec<usize> = if searching || in_pc { (0..shown.len()).collect() } else { listing::visible(shown, query, hidden).into_iter().filter(|&i| !pick_hides(&shown[i])).collect() };
     let mut new_sort = sort;
     // a keyboard move asks for its row to be scrolled into view
     let want_row: Option<usize> = ui.ctx().data_mut(|d| {
@@ -1586,6 +1586,7 @@ struct App {
     closed_tabs: Vec<(usize, PathBuf)>,
     /// The folder last published for other windows (see `session`).
     published: PathBuf,
+    picker: Option<Picker>,
     drives_rx: Receiver<Vec<places::Drive>>,
     disks: Vec<places::Disk>,
     cloud: Option<CloudPlace>,
@@ -1682,6 +1683,7 @@ impl App {
             drives,
             closed_tabs: Vec::new(),
             published: PathBuf::new(),
+            picker: None,
             drives_rx,
             disks,
             cloud: cloud_place,
@@ -2115,7 +2117,7 @@ impl App {
                             } else if f.is_dir() {
                                 self.panes[p].tabs.push(TabView::new(f, false, self.panes[p].sort, hidden));
                             } else {
-                                open_with_system(&f);
+                                queue.push_back(Action::OpenFile(f));
                             }
                         }
                     }
@@ -2204,6 +2206,14 @@ impl App {
                 }
                 Action::PinTab(p, i) => self.panes[p].tabs[i].tab.pinned ^= true,
                 Action::Reload => self.reload_all(),
+                Action::OpenFile(p) if self.picker.is_some() => {
+                    let pk = self.picker.as_mut().unwrap();
+                    if pk.save {
+                        pk.name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    } else if !pk.dir {
+                        finish_pick(&[p]);
+                    }
+                }
                 Action::OpenFile(p) => match archive::split(&p) {
                     None => open_with_system(&p),
                     Some((arc, inner)) => {
@@ -2603,7 +2613,7 @@ impl eframe::App for App {
         static FIRST: std::sync::Once = std::sync::Once::new();
         FIRST.call_once(|| since_start("first frame"));
         let here = self.panes[self.focus].tabs[self.panes[self.focus].active].dir();
-        if here != self.published {
+        if here != self.published && self.picker.is_none() {
             session::publish(&here);
             self.published = here;
         }
@@ -2900,6 +2910,65 @@ impl eframe::App for App {
         });
         let clip_has = self.clipboard.is_some();
         let focus = self.focus;
+        if self.picker.is_some() {
+            let cur = self.panes[focus].tabs[self.panes[focus].active].dir();
+            let sel: Vec<(PathBuf, bool)> = self.panes[focus].tabs[self.panes[focus].active].selected.iter().map(|p| (p.clone(), p.is_dir())).collect();
+            let pk = self.picker.as_mut().unwrap();
+            if let Ok(mut g) = PICK_GLOBS.lock() {
+                *g = pk.filters.get(pk.filter).map(|f| f.1.clone()).unwrap_or_default();
+            }
+            let mut choose: Option<Vec<PathBuf>> = None;
+            let mut cancel = ctx.input(|i| i.key_pressed(egui::Key::Escape)) && !ctx.egui_wants_keyboard_input();
+            egui::Panel::bottom("picker").frame(egui::Frame::new().fill(pal.strip).inner_margin(egui::Margin::symmetric(10, 8))).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    if pk.save {
+                        ui.label("Name");
+                        ui.add(egui::TextEdit::singleline(&mut pk.name).desired_width(260.0));
+                    } else if pk.dir {
+                        ui.label(RichText::new(if sel.len() == 1 && sel[0].1 { sel[0].0.display().to_string() } else { cur.display().to_string() }).color(pal.dim));
+                    } else {
+                        ui.label(RichText::new(format!("{} selected", sel.len())).color(pal.dim));
+                    }
+                    if pk.filters.len() > 1 {
+                        egui::ComboBox::from_id_salt("pickfilter").selected_text(pk.filters[pk.filter].0.clone()).show_ui(ui, |ui| {
+                            for (k, f) in pk.filters.iter().enumerate() {
+                                ui.selectable_value(&mut pk.filter, k, f.0.clone());
+                            }
+                        });
+                    } else if let Some(f) = pk.filters.first() {
+                        ui.label(RichText::new(f.0.clone()).color(pal.dim));
+                    }
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let ok = if pk.save {
+                            !pk.name.trim().is_empty() && !pk.name.contains('/')
+                        } else if pk.dir {
+                            true
+                        } else {
+                            !sel.is_empty() && sel.iter().all(|s| !s.1) && (pk.multiple || sel.len() == 1)
+                        };
+                        let label = if pk.save && cur.join(pk.name.trim()).exists() { "Replace".to_string() } else { pk.button() };
+                        if ui.add_enabled(ok, egui::Button::new(label)).clicked() {
+                            choose = Some(if pk.save {
+                                vec![cur.join(pk.name.trim())]
+                            } else if pk.dir {
+                                if sel.len() == 1 && sel[0].1 { vec![sel[0].0.clone()] } else { vec![cur.clone()] }
+                            } else {
+                                sel.iter().map(|s| s.0.clone()).collect()
+                            });
+                        }
+                        if ui.button("Cancel").clicked() {
+                            cancel = true;
+                        }
+                    });
+                });
+            });
+            if let Some(c) = choose {
+                finish_pick(&c);
+            }
+            if cancel {
+                std::process::exit(1);
+            }
+        }
         let st = &self.st;
         let cloud_ctx = (self.links.as_slice(), &self.reports);
         let [left, right] = &mut self.panes;
@@ -3038,6 +3107,91 @@ fn start_path(arg: &str) -> PathBuf {
     PathBuf::from(arg.strip_prefix("file://").unwrap_or(arg))
 }
 
+/// File-chooser mode: `minos --pick open|save|dir ...` lets a program ask for files (the portal backend runs it).
+/// The chosen paths are printed one per line and it exits 0; closing it or Cancel exits 1.
+struct Picker {
+    save: bool,
+    dir: bool,
+    multiple: bool,
+    name: String,
+    accept: String,
+    /// (label, globs such as `*.png`)
+    filters: Vec<(String, Vec<String>)>,
+    filter: usize,
+}
+
+impl Picker {
+    /// Read the command line (everything after `--pick`); None when Minos is not asked to pick.
+    fn from_args(args: &[String]) -> Option<(Picker, Option<PathBuf>, String)> {
+        let i = args.iter().position(|a| a == "--pick")?;
+        let mode = args.get(i + 1).map(String::as_str).unwrap_or("open");
+        let mut p = Picker { save: mode == "save", dir: mode == "dir", multiple: false, name: String::new(), accept: String::new(), filters: vec![], filter: 0 };
+        let (mut folder, mut title) = (None, String::new());
+        let mut k = i + 2;
+        while k < args.len() {
+            let val = args.get(k + 1).cloned().unwrap_or_default();
+            match args[k].as_str() {
+                "--multiple" => p.multiple = true,
+                "--title" => { title = val; k += 1 }
+                "--name" => { p.name = val; k += 1 }
+                "--accept" => { p.accept = val; k += 1 }
+                "--folder" => { folder = Some(PathBuf::from(val)); k += 1 }
+                "--filter-index" => { p.filter = val.parse().unwrap_or(0); k += 1 }
+                "--filter" => {
+                    let (label, globs) = val.split_once('|').unwrap_or((val.as_str(), ""));
+                    p.filters.push((label.to_string(), globs.split(';').filter(|g| !g.is_empty()).map(str::to_string).collect()));
+                    k += 1
+                }
+                _ => {}
+            }
+            k += 1;
+        }
+        p.filter = p.filter.min(p.filters.len().saturating_sub(1));
+        Some((p, folder, title))
+    }
+
+    fn button(&self) -> String {
+        if !self.accept.is_empty() { self.accept.replace('_', "") } else if self.save { "Save".into() } else if self.dir { "Select".into() } else { "Open".into() }
+    }
+}
+
+/// The patterns of the chosen file type while picking, applied to the file list.
+static PICK_GLOBS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// `*.png`-style match, case-insensitive (`*` any run, `?` any one character).
+fn glob_match(pat: &str, name: &str) -> bool {
+    let (p, n): (Vec<char>, Vec<char>) = (pat.to_lowercase().chars().collect(), name.to_lowercase().chars().collect());
+    fn go(p: &[char], n: &[char]) -> bool {
+        match p.split_first() {
+            None => n.is_empty(),
+            Some(('*', rest)) => (0..=n.len()).any(|k| go(rest, &n[k..])),
+            Some(('?', rest)) => !n.is_empty() && go(rest, &n[1..]),
+            Some((c, rest)) => n.first() == Some(c) && go(rest, &n[1..]),
+        }
+    }
+    go(&p, &n)
+}
+
+/// Whether the picking filter hides this entry (folders always show).
+fn pick_hides(e: &Entry) -> bool {
+    if e.is_dir {
+        return false;
+    }
+    let g = PICK_GLOBS.lock().map(|g| g.clone()).unwrap_or_default();
+    !g.is_empty() && !g.iter().any(|p| glob_match(p, &e.name))
+}
+
+/// Print the chosen paths and leave, so the portal that started Minos can read them.
+fn finish_pick(paths: &[PathBuf]) -> ! {
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+    for p in paths {
+        let _ = writeln!(out, "{}", p.display());
+    }
+    let _ = out.flush();
+    std::process::exit(0)
+}
+
 static STARTED: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
 
 /// With MINOS_TIMING set, print how long after launch `what` happened.
@@ -3049,11 +3203,16 @@ fn since_start(what: &str) {
 
 fn main() -> eframe::Result {
     STARTED.get_or_init(Instant::now);
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    let pick = Picker::from_args(&argv);
+    let title = pick.as_ref().map(|p| p.2.clone()).filter(|t| !t.is_empty()).unwrap_or_else(|| "Minos".into());
+    let picking = pick.is_some();
+    let mut pick = Some(pick);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1200.0, 760.0])
             .with_min_inner_size([640.0, 400.0])
-            .with_title("Minos")
+            .with_title(title)
             // Minos draws its own title bar (chrome.rs): no grey system title bar or frame.
             .with_decorations(false)
             // see-through when Settings asks for it (it can only be chosen when the window is made)
@@ -3063,7 +3222,7 @@ fn main() -> eframe::Result {
             .with_app_id("minos"),
         ..Default::default()
     };
-    eframe::run_native(
+    let result = eframe::run_native(
         "Minos",
         options,
         Box::new(|cc| {
@@ -3075,7 +3234,18 @@ fn main() -> eframe::Result {
             theme::apply(&cc.egui_ctx, st.dark, if st.follow_accent { theme::system_accent() } else { None });
             let mut app = App::new();
             // `minos FOLDER` (the dock's Trash, "open with"): that folder in a new tab.
-            if let Some(p) = std::env::args().nth(1).map(|a| start_path(&a)).filter(|p| p.is_dir()) {
+            if let Some((pk, folder, _)) = pick.take().flatten() {
+                // choosing a file: no saved tabs, no saved state, starts in the folder asked for
+                let start = folder.filter(|f| f.is_dir()).or_else(dirs::home_dir).unwrap_or_else(|| PathBuf::from("/"));
+                let (sort, hidden) = (app.panes[0].sort, app.st.show_hidden);
+                app.panes[0].tabs = vec![TabView::new(start, false, sort, hidden)];
+                app.panes[0].active = 0;
+                app.st.split = false;
+                app.st.preview = false;
+                app.st_path = None;
+                PICK_GLOBS.lock().unwrap().clear();
+                app.picker = Some(pk);
+            } else if let Some(p) = std::env::args().nth(1).filter(|a| !a.starts_with("--")).map(|a| start_path(&a)).filter(|p| p.is_dir()) {
                 let (sort, hidden) = (app.panes[0].sort, app.st.show_hidden);
                 app.panes[0].tabs.push(TabView::new(p, false, sort, hidden));
                 app.panes[0].active = app.panes[0].tabs.len() - 1;
@@ -3083,7 +3253,12 @@ fn main() -> eframe::Result {
             since_start("app built");
             Ok(Box::new(app))
         }),
-    )
+    );
+    if picking {
+        // the window was closed without choosing
+        std::process::exit(1);
+    }
+    result
 }
 
 /// Which Minos windows are open and the folder each is in, so a new window can start where another is.

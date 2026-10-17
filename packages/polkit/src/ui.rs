@@ -35,6 +35,9 @@ impl App {
 
     fn receive(&mut self) {
         while let Ok(m) = self.rx.try_recv() {
+            if std::env::var_os("LABYRINTH_POLKIT_DEBUG").is_some() {
+                eprintln!("labyrinth-polkit: ui message {}", match &m { UiMsg::Begin { .. } => "begin", UiMsg::Prompt { .. } => "prompt", UiMsg::Message { .. } => "message", UiMsg::Done { .. } => "done" });
+            }
             match m {
                 UiMsg::Begin { message, action_id, user } => {
                     self.dialog = Some(Dialog { message, action_id, user, asking: None, input: String::new(), notes: vec![] });
@@ -68,6 +71,9 @@ impl eframe::App for App {
         let want = self.dialog.is_some();
         if want != self.visible {
             self.visible = want;
+            if std::env::var_os("LABYRINTH_POLKIT_DEBUG").is_some() {
+                eprintln!("labyrinth-polkit: window visible = {want}");
+            }
             ctx.send_viewport_cmd(ViewportCommand::Visible(want));
             if want {
                 ctx.send_viewport_cmd(ViewportCommand::Focus);

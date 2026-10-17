@@ -15,6 +15,8 @@ pub enum TrayMode {
     Overflow,
     /// One app's menu: the entries, and the ids of the submenus opened so far.
     Menu { key: String, items: Vec<MenuItem>, path: Vec<i32> },
+    /// The open windows of one dock app: (index into Model::wins, title, focused). Hangs above the dock.
+    Windows { rows: Vec<(usize, String, bool)> },
 }
 
 #[derive(Clone, Debug)]
@@ -33,6 +35,8 @@ pub enum RowAct {
     /// Open a submenu.
     Sub(i32),
     Back,
+    /// Go to this window (an index into Model::wins).
+    Window(usize),
 }
 
 const ROW_H: f32 = 30.0;
@@ -79,6 +83,11 @@ pub fn paint(pix: &mut Pixmap, s: f32, pop: &TrayPop, model: &Model, pointer: (f
                 rows.push(Row { label: "Nothing hidden".into(), sep: false, enabled: false, checked: None, sub: false, icon: None, act: None });
             }
         }
+        TrayMode::Windows { rows: wins } => {
+            for (i, title, active) in wins {
+                rows.push(Row { label: if title.is_empty() { "(untitled)".into() } else { title.clone() }, sep: false, enabled: true, checked: Some(*active), sub: false, icon: None, act: Some(RowAct::Window(*i)) });
+            }
+        }
         TrayMode::Menu { key, items, path } => {
             if !path.is_empty() {
                 rows.push(Row { label: "‹  Back".into(), sep: false, enabled: true, checked: None, sub: false, icon: None, act: Some(RowAct::Back) });
@@ -94,7 +103,7 @@ pub fn paint(pix: &mut Pixmap, s: f32, pop: &TrayPop, model: &Model, pointer: (f
     }
     let height: f32 = rows.iter().map(|r| if r.sep { SEP_H } else { ROW_H }).sum::<f32>() + 12.0;
     let cx = (pop.anchor_x - CARD_W / 2.0).clamp(8.0, (w - CARD_W - 8.0).max(8.0));
-    let cy = 3.0;
+    let cy = if matches!(pop.mode, TrayMode::Windows { .. }) { (pix.height() as f32 / s - height - 4.0).max(3.0) } else { 3.0 };
     paint::fill_rounded(pix, cx * s, cy * s, CARD_W * s, height * s, 12.0 * s, bg);
     paint::stroke_rounded(pix, (cx + 0.5) * s, (cy + 0.5) * s, (CARD_W - 1.0) * s, (height - 1.0) * s, 12.0 * s, s, border);
     let mut y = cy + 6.0;
