@@ -2607,6 +2607,11 @@ impl Drop for App {
 }
 
 impl eframe::App for App {
+    /// Fully see-through behind everything, so the translucent panels show the desktop (the default is a dark grey that would tint it).
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        [0.0, 0.0, 0.0, 0.0]
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         theme::apply_accessibility(ui.ctx());
         let ctx = ui.ctx().clone();
