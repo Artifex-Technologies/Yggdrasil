@@ -34,7 +34,9 @@
    },
    "icon": "gimp",
    "reviewed": true,
-   "tags": [],
+   "tags": [
+    "photoshop"
+   ],
    "flathub": "org.gimp.GIMP"
   },
   {
@@ -52,7 +54,9 @@
    },
    "icon": "inkscape",
    "reviewed": true,
-   "tags": [],
+   "tags": [
+    "illustrator"
+   ],
    "flathub": "org.inkscape.Inkscape"
   },
   {
@@ -70,7 +74,10 @@
    },
    "icon": "blender",
    "reviewed": true,
-   "tags": [],
+   "tags": [
+    "3d",
+    "maya"
+   ],
    "flathub": "org.blender.Blender"
   },
   {
@@ -106,7 +113,10 @@
    },
    "icon": "kdenlive",
    "reviewed": true,
-   "tags": [],
+   "tags": [
+    "premiere",
+    "video editor"
+   ],
    "flathub": "org.kde.kdenlive"
   },
   {
@@ -124,7 +134,11 @@
    },
    "icon": "com.obsproject.Studio",
    "reviewed": true,
-   "tags": [],
+   "tags": [
+    "obs",
+    "streaming",
+    "recording"
+   ],
    "flathub": "com.obsproject.Studio"
   },
   {
@@ -429,7 +443,12 @@
    },
    "icon": "libreoffice-startcenter",
    "reviewed": true,
-   "tags": [],
+   "tags": [
+    "word",
+    "excel",
+    "powerpoint",
+    "office"
+   ],
    "flathub": "org.libreoffice.LibreOffice"
   },
   {
@@ -555,7 +574,10 @@
    },
    "icon": "thunderbird",
    "reviewed": true,
-   "tags": [],
+   "tags": [
+    "email",
+    "mail"
+   ],
    "flathub": "org.mozilla.Thunderbird"
   },
   {
@@ -652,7 +674,10 @@
    },
    "icon": "steam",
    "reviewed": true,
-   "tags": [],
+   "tags": [
+    "valve",
+    "games"
+   ],
    "flathub": "com.valvesoftware.Steam"
   },
   {
@@ -776,7 +801,9 @@
    },
    "icon": "spotify",
    "reviewed": true,
-   "tags": [],
+   "tags": [
+    "music"
+   ],
    "flathub": "com.spotify.Client"
   },
   {
@@ -794,7 +821,10 @@
    },
    "icon": "vlc",
    "reviewed": true,
-   "tags": [],
+   "tags": [
+    "video player",
+    "media player"
+   ],
    "flathub": "org.videolan.VLC"
   },
   {
@@ -828,7 +858,13 @@
    },
    "icon": "visual-studio-code",
    "reviewed": true,
-   "tags": [],
+   "tags": [
+    "vs code",
+    "vscode",
+    "code",
+    "ide",
+    "microsoft"
+   ],
    "flathub": "com.visualstudio.code"
   },
   {
@@ -846,7 +882,10 @@
    },
    "icon": "neovim",
    "reviewed": true,
-   "tags": [],
+   "tags": [
+    "vim",
+    "nvim"
+   ],
    "flathub": "io.neovim.nvim"
   },
   {
@@ -881,7 +920,10 @@
    },
    "icon": "github-cli",
    "reviewed": true,
-   "tags": []
+   "tags": [
+    "gh",
+    "github"
+   ]
   },
   {
    "id": "docker",
@@ -931,7 +973,11 @@
    },
    "icon": "virt-manager",
    "reviewed": true,
-   "tags": [],
+   "tags": [
+    "vm",
+    "kvm",
+    "qemu"
+   ],
    "flathub": "org.virt_manager.virt-manager"
   },
   {
@@ -1070,7 +1116,9 @@
    },
    "icon": "vivaldi",
    "reviewed": true,
-   "tags": [],
+   "tags": [
+    "browser"
+   ],
    "flathub": "com.vivaldi.Vivaldi"
   },
   {
@@ -1088,7 +1136,9 @@
    },
    "icon": "firefox",
    "reviewed": true,
-   "tags": [],
+   "tags": [
+    "browser"
+   ],
    "flathub": "org.mozilla.firefox"
   },
   {
