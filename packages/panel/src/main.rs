@@ -554,6 +554,7 @@ impl State {
                 }
             }
         }
+        self.ensure_voice_surface();
         self.built_for = Some(self.layout.clone());
     }
 
@@ -848,31 +849,38 @@ impl State {
         self.speech_env = None;
     }
 
+    /// The voice island's surface is made once, when the bars are, and stays (empty and see-through) until it is needed: a surface
+    /// made on demand showed up in the wrong place for a moment (below the bar) before KWin put it at the top.
+    fn ensure_voice_surface(&mut self) {
+        if self.surfs.iter().any(|s| s.kind == Kind::Voice) {
+            return;
+        }
+        let Some(output) = self.surfs.iter().find(|s| matches!(s.kind, Kind::Bar { slim: false })).map(|s| s.output).or_else(|| self.dock_output()) else { return };
+        let Some(out) = self.outputs.get(&output) else { return };
+        let id = self.next_surf;
+        self.next_surf += 1;
+        let wl = self.compositor.create_surface(&self.qh, ());
+        let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Overlay, "labyrinth-voice".into(), &self.qh, id);
+        // A surface that spans the screen's top edge sits flush against it (a small centred one is pushed down below the bar's
+        // reserved strip by KWin), so it spans the width, is see-through and takes no clicks, and the pill is drawn in its middle.
+        layer.set_anchor(Anchor::Top | Anchor::Left | Anchor::Right);
+        layer.set_size(0, voicewave::HEIGHT);
+        layer.set_exclusive_zone(-1);
+        layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+        // it takes no clicks: they go to whatever is under it
+        let region = self.compositor.create_region(&self.qh, ());
+        wl.set_input_region(Some(&region));
+        region.destroy();
+        wl.commit();
+        self.surfs.push(Surf { id, kind: Kind::Voice, output, wl, layer: Some(layer), dock: None, w: voicewave::WIDTH, h: voicewave::HEIGHT, want: (voicewave::WIDTH, voicewave::HEIGHT), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
+    }
+
     /// Makes the island appear (if it is not) and starts its animation ticker.
     fn start_viz(&mut self) {
         if self.viz.is_none() {
             self.viz = Some(voicewave::Viz { mode: voicewave::Mode::Listening, level: 0.0, phase: 0.0, shown: 0.0 });
         }
-        if !self.surfs.iter().any(|s| s.kind == Kind::Voice) {
-            let Some(output) = self.surfs.iter().find(|s| matches!(s.kind, Kind::Bar { slim: false })).map(|s| s.output).or_else(|| self.dock_output()) else { return };
-            let Some(out) = self.outputs.get(&output) else { return };
-            let id = self.next_surf;
-            self.next_surf += 1;
-            let wl = self.compositor.create_surface(&self.qh, ());
-            let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Overlay, "labyrinth-voice".into(), &self.qh, id);
-            // A surface that spans the screen's top edge sits flush against it (a small centred one is pushed down below the bar's
-            // reserved strip by KWin), so it spans the width, is see-through and takes no clicks, and the pill is drawn in its middle.
-            layer.set_anchor(Anchor::Top | Anchor::Left | Anchor::Right);
-            layer.set_size(0, voicewave::HEIGHT);
-            layer.set_exclusive_zone(-1);
-            layer.set_keyboard_interactivity(KeyboardInteractivity::None);
-            // it takes no clicks: they go to whatever is under it
-            let region = self.compositor.create_region(&self.qh, ());
-            wl.set_input_region(Some(&region));
-            region.destroy();
-            wl.commit();
-            self.surfs.push(Surf { id, kind: Kind::Voice, output, wl, layer: Some(layer), dock: None, w: voicewave::WIDTH, h: voicewave::HEIGHT, want: (voicewave::WIDTH, voicewave::HEIGHT), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
-        }
+        self.ensure_voice_surface();
         if !self.viz_alive.swap(true, Ordering::AcqRel) {
             let (alive, tx) = (self.viz_alive.clone(), self.viz_tx.clone());
             std::thread::spawn(move || {
@@ -917,10 +925,10 @@ impl State {
         if mode.is_none() && v.shown < 0.03 {
             self.viz = None;
             self.viz_alive.store(false, Ordering::Release);
+            // one last, empty frame: the surface stays, see-through
             if let Some(i) = self.surfs.iter().position(|s| s.kind == Kind::Voice) {
-                let s = self.surfs.remove(i);
-                s.destroy();
-                self.pointer_surface = None;
+                self.draw(i);
+                let _ = self.conn.flush();
             }
             return;
         }
