@@ -1741,6 +1741,33 @@ impl App {
                 }
             });
         });
+        ui::group(ui, pal, Some("Minos: transparency"), |ui| {
+            ui::row(ui, pal, true, "See-through window", Some("Lets the desktop show through Minos. Applies to open windows within a second, no restart"), |ui| {
+                minos_changed |= ui::switch(ui, pal, &mut minos.minos_transparent).changed();
+            });
+            ui::row(ui, pal, false, "Transparency", Some("How solid the window is. The sample next to it shows the result"), |ui| {
+                ui.add_enabled_ui(minos.minos_transparent, |ui| {
+                    let mut v = minos.minos_opacity as f32;
+                    if ui::slider_range(ui, pal, &mut v, labyrinth_conf::MINOS_OPACITY_MIN as f32..=100.0, " %").changed() {
+                        minos.minos_opacity = v as u32;
+                        minos_changed = true;
+                    }
+                });
+                // a small sample window over a busy backdrop, so the effect is visible without opening Minos
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(120.0, 70.0), egui::Sense::hover());
+                let pt = ui.painter_at(rect);
+                pt.rect_filled(rect, 8.0, egui::Color32::from_rgb(92, 56, 170));
+                for (i, c) in [egui::Color32::from_rgb(235, 120, 180), egui::Color32::from_rgb(90, 190, 230), egui::Color32::from_rgb(250, 210, 90)].into_iter().enumerate() {
+                    pt.circle_filled(rect.left_top() + egui::vec2(24.0 + i as f32 * 34.0, 22.0 + (i % 2) as f32 * 26.0), 15.0, c);
+                }
+                let shown = if minos.minos_transparent { minos.minos_opacity } else { 100 };
+                let dark = theme::palette(true).translucent(shown);
+                let win = rect.shrink2(egui::vec2(14.0, 10.0));
+                pt.rect_filled(win, 6.0, dark.bg);
+                pt.rect_filled(egui::Rect::from_min_size(win.min, egui::vec2(win.width() * 0.3, win.height())), 6.0, dark.sidebar);
+                pt.rect_stroke(win, 6.0, egui::Stroke::new(1.0, dark.border), egui::StrokeKind::Inside);
+            });
+        });
         ui::group(ui, pal, Some("Minos"), |ui| {
             ui::row(ui, pal, true, "Search inside subfolders", Some("Searching in Minos looks through every folder below the one you are in; off searches only that folder"), |ui| {
                 minos_changed = ui::switch(ui, pal, &mut minos.search_subfolders).changed();
@@ -1753,7 +1780,9 @@ impl App {
             });
         });
         if minos_changed {
-            self.change(ctx, move || minos.save());
+            // saved right away (a tiny file), so the slider and the sample follow the drag
+            let _ = minos.save();
+            ctx.request_repaint();
         }
     }
 

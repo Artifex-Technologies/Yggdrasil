@@ -1143,7 +1143,7 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
         actions.push(Action::Focus(pi));
     }
     let hidden = st.show_hidden;
-    let pal = palette_for(st.dark, st.accent());
+    let pal = palette_for(st.dark, st.accent()).translucent(st.opacity);
     let cx = Ctx { st, links: cloud_ctx.0, reports: cloud_ctx.1, clip_has, pi };
 
     tab_strip(ui, pane, pi, &pal, actions);
@@ -1599,7 +1599,7 @@ struct App {
     proton_busy: bool,
     proton_tx: Sender<Result<(), String>>,
     proton_rx: Receiver<Result<(), String>>,
-    applied_theme: Option<(bool, Option<[u8; 3]>)>,
+    applied_theme: Option<(bool, Option<[u8; 3]>, u32)>,
     accent_checked: Instant,
     conf_checked: Instant,
     pv: PreviewState,
@@ -1617,6 +1617,10 @@ impl App {
         let mut st = st_path.as_deref().map(State::load_from).unwrap_or_default();
         st.show_hidden = labyrinth_conf::PanelConf::load().show_hidden;
         st.drive_status = labyrinth_conf::PanelConf::load().drive_status;
+        {
+            let c = labyrinth_conf::PanelConf::load();
+            st.opacity = if c.minos_transparent { c.minos_opacity } else { 100 };
+        }
         st.follow_accent = true;
         if st.favorites.is_empty() {
             st.favorites = places::favorites().into_iter().map(|p| p.path).collect();
@@ -2611,6 +2615,7 @@ impl eframe::App for App {
             self.conf_checked = Instant::now();
             let conf = labyrinth_conf::PanelConf::load();
             self.st.drive_status = conf.drive_status;
+            self.st.opacity = if conf.minos_transparent { conf.minos_opacity } else { 100 };
             let show = conf.show_hidden;
             if show != self.st.show_hidden {
                 self.st.show_hidden = show;
@@ -2627,12 +2632,12 @@ impl eframe::App for App {
         if self.st.follow_accent {
             ctx.request_repaint_after(Duration::from_secs(2));
         }
-        let want = (self.st.dark, self.st.accent());
+        let want = (self.st.dark, self.st.accent(), self.st.opacity);
         if self.applied_theme != Some(want) {
-            theme::apply(&ctx, want.0, want.1);
+            theme::apply_opacity(&ctx, want.0, want.1, want.2);
             self.applied_theme = Some(want);
         }
-        let pal = palette_for(self.st.dark, self.st.accent());
+        let pal = palette_for(self.st.dark, self.st.accent()).translucent(self.st.opacity);
         let hidden = self.st.show_hidden;
         let split = self.st.split;
         for (i, p) in self.panes.iter_mut().enumerate() {
@@ -3051,6 +3056,8 @@ fn main() -> eframe::Result {
             .with_title("Minos")
             // Minos draws its own title bar (chrome.rs): no grey system title bar or frame.
             .with_decorations(false)
+            // see-through when Settings asks for it (it can only be chosen when the window is made)
+            .with_transparent(true)
             // Wayland/X11 application id: matches minos.desktop so docks and the
             // bar can find the icon. Must be a plain name; "Minos" was not.
             .with_app_id("minos"),

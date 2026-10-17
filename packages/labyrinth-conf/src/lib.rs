@@ -99,6 +99,9 @@ impl AlertLevel {
     }
 }
 
+/// The least opaque Minos may be made, so it stays readable.
+pub const MINOS_OPACITY_MIN: u32 = 30;
+
 pub const TEXT_SCALE_MIN: u16 = 100;
 pub const TEXT_SCALE_MAX: u16 = 250;
 
@@ -154,11 +157,15 @@ pub struct PanelConf {
     pub minos_more_windows: StartIn,
     /// A new Minos tab: Home, or Here (the current tab's folder).
     pub minos_new_tab: StartIn,
+    /// Minos's window lets the desktop show through.
+    pub minos_transparent: bool,
+    /// How opaque it is then, in percent (MINOS_OPACITY_MIN to 100).
+    pub minos_opacity: u32,
 }
 
 impl Default for PanelConf {
     fn default() -> Self {
-        PanelConf { dock_pos: DockPos::Bottom, dock_icon: 44, dock_gap: 4, start_theme: StartTheme::Windows, clock_24h: true, dock_opacity: 69, dock_color: ColorMode::Theme, bar_opacity: 69, bar_color: ColorMode::Theme, clipboard_history: true, search_subfolders: true, show_hidden: false, drive_status: true, developer: false, notify_toasts: true, notify_pane: false, notify_dnd: false, own_wallpaper: false, text_scale: 100, reduce_motion: false, sarina_speaks: true, sarina_wave: 2, sarina_tone: true, heimdall_alerts: AlertLevel::Warning, minos_first_window: StartIn::Last, minos_more_windows: StartIn::Here, minos_new_tab: StartIn::Here }
+        PanelConf { dock_pos: DockPos::Bottom, dock_icon: 44, dock_gap: 4, start_theme: StartTheme::Windows, clock_24h: true, dock_opacity: 69, dock_color: ColorMode::Theme, bar_opacity: 69, bar_color: ColorMode::Theme, clipboard_history: true, search_subfolders: true, show_hidden: false, drive_status: true, developer: false, notify_toasts: true, notify_pane: false, notify_dnd: false, own_wallpaper: false, text_scale: 100, reduce_motion: false, sarina_speaks: true, sarina_wave: 2, sarina_tone: true, heimdall_alerts: AlertLevel::Warning, minos_first_window: StartIn::Last, minos_more_windows: StartIn::Here, minos_new_tab: StartIn::Here, minos_transparent: false, minos_opacity: 85 }
     }
 }
 
@@ -225,6 +232,8 @@ impl PanelConf {
                 "own_wallpaper" => c.own_wallpaper = matches!(v, "yes" | "true" | "on" | "1"),
                 "minos_first_window" => c.minos_first_window = StartIn::parse(v).filter(|x| *x != StartIn::Here).unwrap_or(c.minos_first_window),
                 "minos_more_windows" => c.minos_more_windows = StartIn::parse(v).filter(|x| *x != StartIn::Last).unwrap_or(c.minos_more_windows),
+                "minos_transparent" => c.minos_transparent = matches!(v, "yes" | "true" | "on" | "1"),
+                "minos_opacity" => c.minos_opacity = v.trim_end_matches('%').parse::<u32>().map(|n| n.clamp(MINOS_OPACITY_MIN, 100)).unwrap_or(c.minos_opacity),
                 "minos_new_tab" => c.minos_new_tab = StartIn::parse(v).filter(|x| *x == StartIn::Home || *x == StartIn::Here).unwrap_or(c.minos_new_tab),
                 "heimdall_alerts" => c.heimdall_alerts = AlertLevel::parse(v).unwrap_or(c.heimdall_alerts),
                 _ => {}
@@ -236,7 +245,7 @@ impl PanelConf {
     pub fn to_text(&self) -> String {
         format!(
             "# How the top bar and dock look. Edited by Labyrinth Settings (Appearance).\n\
-             dock_pos = {}\ndock_icon = {}\ndock_gap = {}\nclock_24h = {}\nstart_theme = {}\ndock_opacity = {}\ndock_color = {}\nbar_opacity = {}\nbar_color = {}\nclipboard_history = {}\nsearch_subfolders = {}\nshow_hidden = {}\ndrive_status = {}\ndeveloper = {}\nnotify_toasts = {}\nnotify_pane = {}\nnotify_dnd = {}\nown_wallpaper = {}\ntext_scale = {}\nreduce_motion = {}\nsarina_speaks = {}\nsarina_wave = {}\nsarina_tone = {}\nheimdall_alerts = {}\nminos_first_window = {}\nminos_more_windows = {}\nminos_new_tab = {}\n",
+             dock_pos = {}\ndock_icon = {}\ndock_gap = {}\nclock_24h = {}\nstart_theme = {}\ndock_opacity = {}\ndock_color = {}\nbar_opacity = {}\nbar_color = {}\nclipboard_history = {}\nsearch_subfolders = {}\nshow_hidden = {}\ndrive_status = {}\ndeveloper = {}\nnotify_toasts = {}\nnotify_pane = {}\nnotify_dnd = {}\nown_wallpaper = {}\ntext_scale = {}\nreduce_motion = {}\nsarina_speaks = {}\nsarina_wave = {}\nsarina_tone = {}\nheimdall_alerts = {}\nminos_first_window = {}\nminos_more_windows = {}\nminos_new_tab = {}\nminos_transparent = {}\nminos_opacity = {}\n",
             match self.dock_pos {
                 DockPos::Bottom => "bottom",
                 DockPos::Left => "left",
@@ -267,7 +276,9 @@ impl PanelConf {
             self.heimdall_alerts.as_str(),
             self.minos_first_window.as_str(),
             self.minos_more_windows.as_str(),
-            self.minos_new_tab.as_str()
+            self.minos_new_tab.as_str(),
+            if self.minos_transparent { "yes" } else { "no" },
+            self.minos_opacity
         )
     }
 
@@ -307,7 +318,7 @@ mod tests {
 
     #[test]
     fn round_trips() {
-        let c = PanelConf { dock_pos: DockPos::Right, dock_icon: 60, dock_gap: 0, start_theme: StartTheme::Folders, clock_24h: false, dock_opacity: 0, dock_color: ColorMode::Neutral, bar_opacity: 100, bar_color: ColorMode::Neutral, clipboard_history: false, search_subfolders: false, show_hidden: true, drive_status: false, developer: true, notify_toasts: false, notify_pane: true, notify_dnd: true, own_wallpaper: true, text_scale: 150, reduce_motion: true, sarina_speaks: false, sarina_wave: 2, sarina_tone: false, heimdall_alerts: AlertLevel::Critical, minos_first_window: StartIn::Home, minos_more_windows: StartIn::Home, minos_new_tab: StartIn::Home };
+        let c = PanelConf { dock_pos: DockPos::Right, dock_icon: 60, dock_gap: 0, start_theme: StartTheme::Folders, clock_24h: false, dock_opacity: 0, dock_color: ColorMode::Neutral, bar_opacity: 100, bar_color: ColorMode::Neutral, clipboard_history: false, search_subfolders: false, show_hidden: true, drive_status: false, developer: true, notify_toasts: false, notify_pane: true, notify_dnd: true, own_wallpaper: true, text_scale: 150, reduce_motion: true, sarina_speaks: false, sarina_wave: 2, sarina_tone: false, heimdall_alerts: AlertLevel::Critical, minos_first_window: StartIn::Home, minos_more_windows: StartIn::Home, minos_new_tab: StartIn::Home, minos_transparent: true, minos_opacity: 60 };
         assert_eq!(PanelConf::parse(&c.to_text()), c);
     }
 

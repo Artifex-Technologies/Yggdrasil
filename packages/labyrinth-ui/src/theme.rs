@@ -143,8 +143,32 @@ pub fn usage_color(p: &Palette, fraction: f32) -> Color32 {
     }
 }
 
+impl Palette {
+    /// The backgrounds at `pct` percent opaque (100 leaves them as they are); text, lines and accents stay solid.
+    pub fn translucent(mut self, pct: u32) -> Palette {
+        if pct >= 100 {
+            return self;
+        }
+        let f = |c: Color32| {
+            let [r, g, b, a] = c.to_srgba_unmultiplied();
+            Color32::from_rgba_unmultiplied(r, g, b, (a as u32 * pct / 100) as u8)
+        };
+        self.bg = f(self.bg);
+        self.sidebar = f(self.sidebar);
+        self.strip = f(self.strip);
+        self.field = f(self.field);
+        self.row_alt = f(self.row_alt);
+        self
+    }
+}
+
 pub fn apply(ctx: &egui::Context, dark: bool, accent: Option<[u8; 3]>) {
-    let p = palette_for(dark, accent);
+    apply_opacity(ctx, dark, accent, 100)
+}
+
+/// `apply`, with the window's backgrounds `pct` percent opaque (for a see-through window).
+pub fn apply_opacity(ctx: &egui::Context, dark: bool, accent: Option<[u8; 3]>, pct: u32) {
+    let p = palette_for(dark, accent).translucent(pct);
     ctx.set_theme(if dark { egui::Theme::Dark } else { egui::Theme::Light });
     ctx.all_styles_mut(|style| {
         let v = &mut style.visuals;

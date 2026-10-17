@@ -57,6 +57,9 @@ pub struct State {
     /// The system accent last read; not saved. Set by the app while it runs.
     #[serde(skip)]
     pub system_accent: Option<[u8; 3]>,
+    /// How opaque the window is, in percent (from Settings, not saved here); 100 is solid.
+    #[serde(skip)]
+    pub opacity: u32,
 }
 
 impl State {
@@ -92,6 +95,7 @@ impl Default for State {
             preview: true,
             follow_accent: true,
             system_accent: None,
+            opacity: 100,
         }
     }
 }
