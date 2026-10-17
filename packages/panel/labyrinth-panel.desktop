@@ -8,3 +8,5 @@ NoDisplay=true
 Terminal=false
 # KWin only shows the window list to programs that ask for it here, by their exact path.
 X-KDE-Wayland-Interfaces=org_kde_plasma_window_management
+# Pictures of windows for the dock's window list (KWin only answers programs that ask for the screenshot service here).
+X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2

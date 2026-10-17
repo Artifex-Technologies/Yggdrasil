@@ -16,6 +16,7 @@ mod fylgja;
 mod notify;
 mod osd;
 mod stats;
+mod thumb;
 mod voicekey;
 mod voicewave;
 mod shell;
@@ -340,6 +341,9 @@ struct State {
     /// Resting the pointer on the notch's tab opens Fylgja after a short delay: the count of the
     /// latest rest, whether the pointer is still on the tab, and its screen.
     tab_tx: calloop::channel::Sender<u64>,
+    /// Pictures of windows for the dock's window list, by window uuid, and where finished ones arrive.
+    thumbs: HashMap<String, Pixmap>,
+    thumb_tx: calloop::channel::Sender<(String, Pixmap)>,
     tab_gen: u64,
     tab_on: bool,
     tab_output: u32,
@@ -1297,6 +1301,19 @@ impl State {
                 }
                 self.dirty = true;
             }
+            RowAct::CloseWin(i) => {
+                let only = self.windows_popup_open() && {
+                    let items = shell::dock_items(&self.model);
+                    items.iter().any(|it| it.wins.contains(&i) && it.wins.len() == 1)
+                };
+                if let Some(w) = self.model.wins.get(i) {
+                    w.proxy.close();
+                }
+                if only {
+                    self.close_popup();
+                }
+                self.dirty = true;
+            }
             RowAct::Window(i) => {
                 if let Some(w) = self.model.wins.get(i) {
                     w.proxy.activate(self.seat.as_ref());
@@ -1503,9 +1520,28 @@ impl State {
         if item.wins.is_empty() {
             return;
         }
-        let rows: Vec<(usize, String, bool)> = item.wins.iter().map(|&i| (i, self.model.wins[i].title.clone(), self.model.wins[i].active())).collect();
+        // ask KWin for a picture of each window (in the background; the cards show a placeholder until it arrives)
+        let scale = self.outputs.get(&output).map(|o| o.scale).unwrap_or(1).max(1) as f32;
+        let (bw, bh) = trayui::thumb_box();
+        let (bw, bh) = ((bw * scale.max(1.0)) as u32, (bh * scale.max(1.0)) as u32);
+        for &i in &item.wins {
+            let (uuid, tx) = (self.model.wins[i].uuid.clone(), self.thumb_tx.clone());
+            if uuid.starts_with("wlr-") {
+                continue;
+            }
+            std::thread::spawn(move || match thumb::capture(&uuid, bw, bh) {
+                Ok(p) => {
+                    let _ = tx.send((uuid, p));
+                }
+                Err(e) => {
+                    if std::env::var_os("LABYRINTH_PANEL_DEBUG").is_some() {
+                        eprintln!("window picture {uuid}: {e}");
+                    }
+                }
+            });
+        }
         self.click_output = Some(output);
-        self.toggle_popup(PopupKind::Tray(trayui::TrayPop { anchor_x: x, mode: trayui::TrayMode::Windows { rows } }));
+        self.toggle_popup(PopupKind::Tray(trayui::TrayPop { anchor_x: x, mode: trayui::TrayMode::Windows { app_id: app_id.to_string() } }));
         self.dirty = true;
     }
 
@@ -1530,6 +1566,7 @@ impl State {
     }
 
     fn close_popup(&mut self) {
+        self.thumbs.clear(); // pictures of windows are not kept
         self.fy_anim = None;
         if matches!(self.popup, Some(Popup { kind: PopupKind::Fylgja(_), .. })) {
             self.cancel_voice();
@@ -2155,7 +2192,7 @@ impl State {
                     }
                     Some(Popup { kind: PopupKind::Tray(pop), .. }) => {
                         let pop = pop.clone();
-                        let (card, hits) = trayui::paint(&mut pix, s, &pop, &self.model, self.pointer_pos, &self.assets.fonts, &mut self.assets.icons);
+                        let (card, hits) = trayui::paint(&mut pix, s, &pop, &self.model, &self.thumbs, self.pointer_pos, &self.assets.fonts, &mut self.assets.icons);
                         self.popup_card = card;
                         self.tray_hits = hits;
                     }
@@ -2953,6 +2990,7 @@ fn main() {
     }
 
     let (tab_tx, tab_rx) = calloop::channel::channel::<u64>();
+    let (thumb_tx, thumb_rx) = calloop::channel::channel::<(String, Pixmap)>();
     let (anim_tx, anim_rx) = calloop::channel::channel::<()>();
     let (osd_hide_tx, osd_hide_rx) = calloop::channel::channel::<u64>();
     let (toast_hide_tx, toast_hide_rx) = calloop::channel::channel::<u32>();
@@ -3016,6 +3054,8 @@ fn main() {
         stats_shared: Arc::new(std::sync::Mutex::new(Default::default())),
         stats_wanted: Arc::new(AtomicBool::new(false)),
         tab_tx,
+        thumbs: HashMap::new(),
+        thumb_tx,
         tab_gen: 0,
         tab_on: false,
         tab_output: 0,
@@ -3218,6 +3258,32 @@ fn main() {
             TimeoutAction::ToDuration(Duration::from_millis(if st.repeat.is_some() { 20 } else { 60 }))
         })
         .expect("key repeat timer");
+    // LABYRINTH_PANEL_THUMBTEST=1: a few seconds after start, try a picture of every window and say what came of it
+    if std::env::var_os("LABYRINTH_PANEL_THUMBTEST").is_some() {
+        event_loop
+            .handle()
+            .insert_source(Timer::from_duration(Duration::from_secs(6)), |_, _, st| {
+                for w in &st.model.wins {
+                    let (uuid, title) = (w.uuid.clone(), w.title.clone());
+                    std::thread::spawn(move || match thumb::capture(&uuid, 416, 260) {
+                        Ok(p) => eprintln!("window picture ok: {uuid} {title:?} -> {}x{}", p.width(), p.height()),
+                        Err(e) => eprintln!("window picture failed: {uuid} {title:?}: {e}"),
+                    });
+                }
+                TimeoutAction::Drop
+            })
+            .expect("thumb test timer");
+    }
+    // a finished window picture: keep it and redraw the list
+    event_loop
+        .handle()
+        .insert_source(thumb_rx, |event, _, st| {
+            if let calloop::channel::Event::Msg((uuid, p)) = event {
+                st.thumbs.insert(uuid, p);
+                st.dirty = true;
+            }
+        })
+        .expect("window picture channel");
     // resting on a dock app for a second lists its windows; the list goes when the pointer has left it
     event_loop
         .handle()

@@ -15,8 +15,8 @@ pub enum TrayMode {
     Overflow,
     /// One app's menu: the entries, and the ids of the submenus opened so far.
     Menu { key: String, items: Vec<MenuItem>, path: Vec<i32> },
-    /// The open windows of one dock app: (index into Model::wins, title, focused). Hangs above the dock.
-    Windows { rows: Vec<(usize, String, bool)> },
+    /// The open windows of one dock app (the dock id), as pictures. Hangs above the dock.
+    Windows { app_id: String },
 }
 
 #[derive(Clone, Debug)]
@@ -37,6 +37,8 @@ pub enum RowAct {
     Back,
     /// Go to this window (an index into Model::wins).
     Window(usize),
+    /// Close this window.
+    CloseWin(usize),
 }
 
 const ROW_H: f32 = 30.0;
@@ -55,9 +57,85 @@ pub fn current<'a>(items: &'a [MenuItem], path: &[i32]) -> &'a [MenuItem] {
     level
 }
 
+const THUMB_W: f32 = 208.0;
+const THUMB_H: f32 = 130.0;
+const CARD_PAD: f32 = 8.0;
+const WIN_CARD_W: f32 = THUMB_W + 2.0 * CARD_PAD;
+const WIN_CARD_H: f32 = THUMB_H + 2.0 * CARD_PAD + 26.0;
+
+/// The size (logical px) of the picture box for a window, for asking KWin for a picture that fits.
+pub fn thumb_box() -> (f32, f32) {
+    (THUMB_W, THUMB_H)
+}
+
+/// The dock app's open windows as cards above the dock: a picture of each, its title, and a cross to close it.
+#[allow(clippy::too_many_arguments)]
+fn paint_windows(pix: &mut Pixmap, s: f32, anchor_x: f32, app_id: &str, model: &Model, thumbs: &std::collections::HashMap<String, Pixmap>, pointer: (f32, f32), fonts: &Fonts, icons: &mut Icons) -> (Rect, Vec<(Rect, RowAct)>) {
+    let (w, h) = (pix.width() as f32 / s, pix.height() as f32 / s);
+    let dark = model.dark;
+    let (bg, border, text, dim) = if dark { ((18, 18, 24, 244), (255, 255, 255, 36), (240, 240, 246, 255), (150, 150, 166, 255)) } else { ((250, 250, 252, 246), (0, 0, 0, 30), (24, 24, 32, 255), (120, 120, 136, 255)) };
+    let items = crate::shell::dock_items(model);
+    let wins: Vec<usize> = items.iter().find(|i| i.app_id == app_id).map(|i| i.wins.clone()).unwrap_or_default();
+    let icon_name = items.iter().find(|i| i.app_id == app_id).map(|i| i.icon.clone()).unwrap_or_default();
+    if wins.is_empty() {
+        return ((0.0, 0.0, 0.0, 0.0), vec![]);
+    }
+    let per_row = (((w - 40.0) / WIN_CARD_W).floor() as usize).clamp(1, 4).min(wins.len());
+    let rows = wins.len().div_ceil(per_row);
+    let cw = per_row as f32 * WIN_CARD_W + 2.0 * CARD_PAD;
+    let ch = rows as f32 * WIN_CARD_H + 2.0 * CARD_PAD;
+    let cx = (anchor_x - cw / 2.0).clamp(8.0, (w - cw - 8.0).max(8.0));
+    let cy = (h - ch - 4.0).max(3.0);
+    paint::fill_rounded(pix, cx * s, cy * s, cw * s, ch * s, 14.0 * s, bg);
+    paint::stroke_rounded(pix, (cx + 0.5) * s, (cy + 0.5) * s, (cw - 1.0) * s, (ch - 1.0) * s, 14.0 * s, s, border);
+    let mut hits = vec![];
+    for (k, &wi) in wins.iter().enumerate() {
+        let win = &model.wins[wi];
+        let (col, row) = (k % per_row, k / per_row);
+        let x = cx + CARD_PAD + col as f32 * WIN_CARD_W;
+        let y = cy + CARD_PAD + row as f32 * WIN_CARD_H;
+        let card = (x, y, WIN_CARD_W, WIN_CARD_H - 4.0);
+        let over = |r: Rect| pointer.0 >= r.0 && pointer.0 < r.0 + r.2 && pointer.1 >= r.1 && pointer.1 < r.1 + r.3;
+        if win.active() {
+            paint::stroke_rounded(pix, (card.0 + 1.0) * s, (card.1 + 1.0) * s, (card.2 - 2.0) * s, (card.3 - 2.0) * s, 10.0 * s, 2.0 * s, (124, 84, 214, 255));
+        } else if over(card) {
+            paint::fill_rounded(pix, card.0 * s, card.1 * s, card.2 * s, card.3 * s, 10.0 * s, (255, 255, 255, 22));
+        }
+        // the picture, centred in its box (a placeholder with the app's icon until it arrives)
+        let (bx, by) = (x + CARD_PAD, y + CARD_PAD);
+        paint::fill_rounded(pix, bx * s, by * s, THUMB_W * s, THUMB_H * s, 6.0 * s, (255, 255, 255, 14));
+        match thumbs.get(&win.uuid) {
+            Some(t) => {
+                let (tw, th) = (t.width() as f32 / s, t.height() as f32 / s);
+                paint::draw_pixmap(pix, t, ((bx + (THUMB_W - tw) / 2.0) * s) as i32, ((by + (THUMB_H - th) / 2.0) * s) as i32);
+            }
+            None => {
+                if let Some(ic) = icons.get(&icon_name, (40.0 * s) as u32) {
+                    paint::draw_pixmap(pix, ic, ((bx + THUMB_W / 2.0 - 20.0) * s) as i32, ((by + THUMB_H / 2.0 - 20.0) * s) as i32);
+                }
+            }
+        }
+        let title = if win.title.is_empty() { "(untitled)".to_string() } else { win.title.clone() };
+        let shown = crate::fylgja::fit(&fonts.regular, 12.5 * s, &title, (THUMB_W - 4.0) * s);
+        paint::draw_text(pix, &fonts.regular, 12.5 * s, (bx + 2.0) * s, (by + THUMB_H + 14.0) * s, if win.active() { text } else { dim }, &shown);
+        hits.push((card, RowAct::Window(wi)));
+        // the cross, top right of the picture
+        let xr = (bx + THUMB_W - 24.0, by + 4.0, 20.0, 20.0);
+        let hot = over(xr);
+        paint::fill_circle(pix, (xr.0 + 10.0) * s, (xr.1 + 10.0) * s, 10.0 * s, if hot { (226, 80, 80, 255) } else { (20, 20, 28, 200) });
+        let tw = paint::text_width(&fonts.bold, 15.0 * s, "\u{d7}");
+        paint::draw_text(pix, &fonts.bold, 15.0 * s, (xr.0 + 10.0) * s - tw / 2.0, (xr.1 + 10.5) * s, (255, 255, 255, 255), "\u{d7}");
+        hits.push((xr, RowAct::CloseWin(wi)));
+    }
+    ((cx, cy, cw, ch), hits)
+}
+
 /// Draws the card and returns its rectangle and the clickable rows (logical px; `s` is the scale).
-pub fn paint(pix: &mut Pixmap, s: f32, pop: &TrayPop, model: &Model, pointer: (f32, f32), fonts: &Fonts, icons: &mut Icons) -> (Rect, Vec<(Rect, RowAct)>) {
+pub fn paint(pix: &mut Pixmap, s: f32, pop: &TrayPop, model: &Model, thumbs: &std::collections::HashMap<String, Pixmap>, pointer: (f32, f32), fonts: &Fonts, icons: &mut Icons) -> (Rect, Vec<(Rect, RowAct)>) {
     pix.fill(paint::color((0, 0, 0, 0)));
+    if let TrayMode::Windows { app_id } = &pop.mode {
+        return paint_windows(pix, s, pop.anchor_x, app_id, model, thumbs, pointer, fonts, icons);
+    }
     let w = pix.width() as f32 / s;
     let dark = model.dark;
     let (bg, border, text, dim) = if dark { ((18, 18, 24, 244), (255, 255, 255, 36), (240, 240, 246, 255), (140, 140, 156, 255)) } else { ((250, 250, 252, 246), (0, 0, 0, 30), (24, 24, 32, 255), (130, 130, 146, 255)) };
@@ -83,11 +161,7 @@ pub fn paint(pix: &mut Pixmap, s: f32, pop: &TrayPop, model: &Model, pointer: (f
                 rows.push(Row { label: "Nothing hidden".into(), sep: false, enabled: false, checked: None, sub: false, icon: None, act: None });
             }
         }
-        TrayMode::Windows { rows: wins } => {
-            for (i, title, active) in wins {
-                rows.push(Row { label: if title.is_empty() { "(untitled)".into() } else { title.clone() }, sep: false, enabled: true, checked: Some(*active), sub: false, icon: None, act: Some(RowAct::Window(*i)) });
-            }
-        }
+        TrayMode::Windows { .. } => {}
         TrayMode::Menu { key, items, path } => {
             if !path.is_empty() {
                 rows.push(Row { label: "‹  Back".into(), sep: false, enabled: true, checked: None, sub: false, icon: None, act: Some(RowAct::Back) });
