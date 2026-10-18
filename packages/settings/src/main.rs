@@ -49,6 +49,14 @@ enum Page {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+enum SecSub {
+    Main,
+    Heimdall,
+    Logins,
+    Sudo,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum AppSub {
     Main,
     Icons,
@@ -91,6 +99,8 @@ enum Msg {
     Security(security::Overview),
     Restore(restore::State),
     Scan(security::ScanReport),
+    Logins((Vec<security::LogEntry>, Vec<security::LogEntry>)),
+    SudoLog(Vec<security::LogEntry>),
     Password(Result<(), String>),
     Time(sys::Time),
     Apps(Vec<sys::Component>),
@@ -142,6 +152,11 @@ struct App {
     wifi_password: Option<(String, String)>,
     // Security page
     sec_filter: usize,
+    sec_sub: SecSub,
+    /// Password logs: (sign-ins, failed attempts) and sudo history, read when the page opens.
+    logins: Option<(Vec<security::LogEntry>, Vec<security::LogEntry>)>,
+    sudo_log: Option<Vec<security::LogEntry>>,
+    log_busy: bool,
     scan_busy: bool,
     scan_report: Option<security::ScanReport>,
     // Users page: the password form
@@ -203,6 +218,10 @@ impl App {
             status: String::new(),
             wifi_password: None,
             sec_filter: 1,
+            sec_sub: SecSub::Main,
+            logins: None,
+            sudo_log: None,
+            log_busy: false,
             scan_busy: false,
             scan_report: None,
             pw_open: false,
@@ -322,6 +341,14 @@ impl App {
                     continue;
                 }
                 Msg::Security(o) => self.data.security = Some(o),
+                Msg::Logins(l) => {
+                    self.logins = Some(l);
+                    self.log_busy = false;
+                }
+                Msg::SudoLog(l) => {
+                    self.sudo_log = Some(l);
+                    self.log_busy = false;
+                }
                 Msg::Restore(r) => self.data.restore = Some(r),
                 Msg::Scan(r) => {
                     self.scan_busy = false;
@@ -444,6 +471,9 @@ impl eframe::App for App {
                     ui.painter().text(egui::pos2(rect.left() + 40.0, rect.center().y), egui::Align2::LEFT_CENTER, name, egui::FontId::proportional(14.0), pal.text);
                     if resp.clicked() && p == Page::Appearance {
                         self.app_sub = AppSub::Main;
+                    }
+                    if resp.clicked() && p == Page::Security {
+                        self.sec_sub = SecSub::Main;
                     }
                     if resp.clicked() && !sel {
                         self.page = p;
@@ -1497,7 +1527,8 @@ impl App {
         }
     }
 
-    fn page_security(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
+    /// Heimdall's own page: its state, alerts, connections, quarantine and the malware scan.
+    fn page_heimdall(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         let Some(o) = self.data.security.clone() else { return loading(ui) };
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
         let day = |a: &&security::Alert| now - a.time < 86400;
@@ -1616,6 +1647,104 @@ impl App {
                 let _ = tx.send(Msg::Scan(security::scan_folder(&folder)));
                 ctx2.request_repaint();
             });
+        }
+    }
+
+    fn page_security(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
+        if self.sec_sub != SecSub::Main {
+            let title = match self.sec_sub {
+                SecSub::Heimdall => "Heimdall",
+                SecSub::Logins => "Login history",
+                _ => "Sudo history",
+            };
+            ui.horizontal(|ui| {
+                if ui::quiet(ui, pal, "\u{2039}  Security").clicked() {
+                    self.sec_sub = SecSub::Main;
+                }
+                ui.label(RichText::new(title).size(18.0).strong());
+            });
+            ui.add_space(6.0);
+        }
+        match self.sec_sub {
+            SecSub::Heimdall => return self.page_heimdall(ui, pal, ctx),
+            SecSub::Logins => return self.page_log(ui, pal, ctx, false),
+            SecSub::Sudo => return self.page_log(ui, pal, ctx, true),
+            SecSub::Main => {}
+        }
+        let Some(o) = self.data.security.clone() else { return loading(ui) };
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+        let recent = |sev: &str| o.alerts.iter().filter(|a| now - a.time < 86400 && a.severity == sev).count();
+        let mut open: Option<SecSub> = None;
+        ui::group(ui, pal, None, |ui| {
+            let sub = if o.running { format!("Watching · last 24 hours: {} critical, {} warnings", recent("critical"), recent("warning")) } else { "Not running".to_string() };
+            ui::row(ui, pal, true, "Heimdall", Some(&sub), |ui| {
+                let (rect, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
+                ui.painter().circle_filled(rect.center(), 6.0, if !o.running || recent("critical") > 0 { pal.red } else if recent("warning") > 0 { pal.amber } else { pal.green });
+                if ui::quiet(ui, pal, "Open  \u{203a}").clicked() {
+                    open = Some(SecSub::Heimdall);
+                }
+            });
+        });
+        ui.add_space(8.0);
+        ui::group(ui, pal, Some("Password log"), |ui| {
+            ui::row(ui, pal, true, "Login history", Some("Who signed in, and every failed attempt at the lock screen, login or administrator question"), |ui| {
+                if ui::quiet(ui, pal, "Open  \u{203a}").clicked() {
+                    open = Some(SecSub::Logins);
+                }
+            });
+            ui::row(ui, pal, false, "Sudo history", Some("What sudo was used for, by whom, and failed attempts"), |ui| {
+                if ui::quiet(ui, pal, "Open  \u{203a}").clicked() {
+                    open = Some(SecSub::Sudo);
+                }
+            });
+        });
+        if let Some(s) = open {
+            self.sec_sub = s;
+            self.logins = None;
+            self.sudo_log = None;
+            self.log_busy = false;
+        }
+    }
+
+    /// The password logs: login history (sign-ins and failures) or sudo history, last 30 days.
+    fn page_log(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context, sudo: bool) {
+        if !self.log_busy && ((sudo && self.sudo_log.is_none()) || (!sudo && self.logins.is_none())) {
+            self.log_busy = true;
+            let (tx, ctx2) = (self.tx.clone(), ctx.clone());
+            std::thread::spawn(move || {
+                let _ = tx.send(if sudo { Msg::SudoLog(security::sudo_history()) } else { Msg::Logins(security::login_history()) });
+                ctx2.request_repaint();
+            });
+        }
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+        let show = |ui: &mut egui::Ui, title: &str, list: &[security::LogEntry], empty: &str| {
+            ui::group(ui, pal, Some(title), |ui| {
+                if list.is_empty() {
+                    ui::row(ui, pal, true, empty, None, |_| {});
+                }
+                for (i, e) in list.iter().take(100).enumerate() {
+                    let when = if e.time > 0 { format!(" · {}", security::ago(e.time, now)) } else { String::new() };
+                    let t: String = e.title.chars().take(150).collect();
+                    ui::row(ui, pal, i == 0, &t, Some(&format!("{}{}", e.detail, when)), |ui| {
+                        if e.failed {
+                            let (rect, _) = ui.allocate_exact_size(vec2(12.0, 12.0), Sense::hover());
+                            ui.painter().circle_filled(rect.center(), 5.0, pal.red);
+                        }
+                    });
+                }
+            });
+        };
+        if sudo {
+            let Some(l) = self.sudo_log.clone() else { return loading(ui) };
+            let failed: Vec<_> = l.iter().filter(|e| e.failed).cloned().collect();
+            show(ui, "Failed attempts (last 30 days)", &failed, "No failed sudo attempts");
+            ui.add_space(8.0);
+            show(ui, "Everything sudo ran (last 30 days)", &l, "Nothing recorded");
+        } else {
+            let Some((ok, bad)) = self.logins.clone() else { return loading(ui) };
+            show(ui, "Failed attempts (last 30 days)", &bad, "No failed attempts");
+            ui.add_space(8.0);
+            show(ui, "Sign-ins", &ok, "Nothing recorded");
         }
     }
 

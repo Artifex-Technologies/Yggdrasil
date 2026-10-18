@@ -217,3 +217,124 @@ mod tests {
         assert!(e.error.contains("not installed"));
     }
 }
+
+/// One line of the password logs.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LogEntry {
+    /// Seconds since 1970 (0 when unknown).
+    pub time: i64,
+    pub title: String,
+    pub detail: String,
+    /// A failed attempt.
+    pub failed: bool,
+}
+
+/// Parses `journalctl -o short-unix` lines for sudo into entries (newest first): what was run, as whom, and failed attempts.
+pub fn parse_sudo(journal: &str) -> Vec<LogEntry> {
+    let mut out = Vec::new();
+    for line in journal.lines() {
+        let Some((ts, rest)) = line.split_once(' ') else { continue };
+        let time = ts.split('.').next().and_then(|t| t.parse::<i64>().ok()).unwrap_or(0);
+        let Some((head, msg)) = rest.split_once("]: ") else { continue };
+        if !head.contains(" sudo[") {
+            continue;
+        }
+        let msg = msg.trim();
+        if let Some((who, tail)) = msg.split_once(" : ") {
+            if let Some(cmd) = tail.split("COMMAND=").nth(1) {
+                let user = tail.split("USER=").nth(1).and_then(|s| s.split(" ;").next()).unwrap_or("root");
+                let bad = tail.contains("incorrect password");
+                let title = if bad { format!("Wrong password: {}", cmd.trim()) } else { cmd.trim().to_string() };
+                out.push(LogEntry { time, title, detail: format!("{} as {}", who.trim(), user.trim()), failed: bad || tail.contains("NOT in sudoers") });
+                continue;
+            }
+            if tail.contains("NOT in sudoers") {
+                out.push(LogEntry { time, title: "Not allowed to use sudo".into(), detail: who.trim().to_string(), failed: true });
+            }
+        } else if msg.contains("authentication failure") {
+            let user = msg.rsplit("user=").next().unwrap_or("").trim();
+            out.push(LogEntry { time, title: "Wrong password".into(), detail: format!("sudo, user {user}"), failed: true });
+        }
+    }
+    out.reverse();
+    out
+}
+
+/// Sudo history from the journal of the last 30 days.
+pub fn sudo_history() -> Vec<LogEntry> {
+    crate::sys::run("journalctl", &["--no-pager", "-o", "short-unix", "--since", "-30d", "_COMM=sudo"]).map(|j| parse_sudo(&j)).unwrap_or_default()
+}
+
+/// Failed sign-in attempts (lock screen, login, polkit) from the journal; "Login", "lock" and "polkit" lines.
+pub fn parse_failed_logins(journal: &str) -> Vec<LogEntry> {
+    let mut out = Vec::new();
+    for line in journal.lines() {
+        let Some((ts, rest)) = line.split_once(' ') else { continue };
+        let time = ts.split('.').next().and_then(|t| t.parse::<i64>().ok()).unwrap_or(0);
+        let Some((head, msg)) = rest.split_once("]: ") else { continue };
+        let prog = head.split_whitespace().nth(1).unwrap_or("").split('[').next().unwrap_or("");
+        if prog == "sudo" || !(msg.contains("authentication failure") || msg.contains("FAILED LOGIN") || msg.contains("Failed password")) {
+            continue;
+        }
+        let user = msg.rsplit("user=").next().filter(|_| msg.contains("user=")).unwrap_or("").trim();
+        let place = match prog {
+            "labyrinth-lock" | "kscreenlocker_greet" => "Lock screen",
+            "sddm-helper" | "sddm-helper-start" | "login" => "Login screen",
+            "polkit-agent-helper-1" | "labyrinth-polkit" => "Administrator question",
+            "sshd" => "SSH",
+            other => other,
+        };
+        out.push(LogEntry { time, title: format!("Wrong password at {place}"), detail: if user.is_empty() { prog.to_string() } else { format!("user {user}") }, failed: true });
+    }
+    out.reverse();
+    out
+}
+
+/// Sign-ins (from the login records) followed by failed attempts (from the journal).
+pub fn login_history() -> (Vec<LogEntry>, Vec<LogEntry>) {
+    let mut ok = Vec::new();
+    if let Some(t) = crate::sys::run("last", &["-n", "40", "-F", "-w"]) {
+        for l in t.lines() {
+            let p: Vec<&str> = l.split_whitespace().collect();
+            if p.len() < 8 || p[0] == "reboot" || p[0] == "wtmp" {
+                continue;
+            }
+            // user tty ... Fri Oct 16 19:13:00 2026 ...
+            let Some(d) = p.iter().position(|w| matches!(*w, "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun")) else { continue };
+            if p.len() < d + 5 {
+                continue;
+            }
+            let when = p[d..d + 5].join(" ");
+            let ended = if l.contains("still logged in") { "still signed in".to_string() } else { "signed out".to_string() };
+            ok.push(LogEntry { time: 0, title: format!("{} on {}", p[0], p[1]), detail: format!("{when} · {ended}"), failed: false });
+        }
+    }
+    let bad = crate::sys::run("journalctl", &["--no-pager", "-o", "short-unix", "--since", "-30d", "-g", "authentication failure|FAILED LOGIN|Failed password"]).map(|j| parse_failed_logins(&j)).unwrap_or_default();
+    (ok, bad)
+}
+
+#[cfg(test)]
+mod log_tests {
+    use super::*;
+
+    #[test]
+    fn sudo_lines() {
+        let j = "1792281112.048605 Orthanc sudo[3504705]: claude-agent : PWD=/x ; USER=root ; TSID=00005E ; COMMAND=/usr/bin/install -m755 a b\n\
+                 1792165618.051855 Orthanc sudo[1339003]:  zlothra : 1 incorrect password attempt ; PWD=/x ; USER=root ; COMMAND=/usr/bin/ls\n\
+                 1792281112.9 Orthanc sudo[3]: pam_unix(sudo:session): session closed for user root\n";
+        let e = parse_sudo(j);
+        assert_eq!(e.len(), 2);
+        assert!(e[1].title.contains("install"));
+        assert_eq!(e[1].detail, "claude-agent as root");
+        assert!(e[0].failed && e[0].title.starts_with("Wrong password"));
+    }
+
+    #[test]
+    fn failed_logins_skip_sudo() {
+        let j = "1792170078.37 Orthanc labyrinth-lock[1]: pam_unix(login:auth): authentication failure; logname=z uid=1000 user=zlothra\n\
+                 1792170079.0 Orthanc sudo[2]: pam_unix(sudo:auth): authentication failure; user=zlothra\n";
+        let e = parse_failed_logins(j);
+        assert_eq!(e.len(), 1);
+        assert!(e[0].title.contains("Lock screen"));
+    }
+}
