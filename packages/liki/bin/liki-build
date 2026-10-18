@@ -1,0 +1,267 @@
+#!/usr/bin/env python3
+"""Build Liki, the icon pack of Yggdrasil (shared by Labyrinth and Chymaera): app logos for the apps installed here.
+
+  liki-build [--shape SHAPE] [--style STYLE] [--name NAME]
+
+  SHAPE  glyph    the bare logo in its colour, no tile (how the Simple Icons page shows them) [default]
+         rounded  a square with softly rounded corners (Windows / Material feeling)
+         circle   a round tile
+         hexagon  a hexagon (Labyrinth's own mark is one)
+         squircle the macOS / iOS tile
+  STYLE  brand    the brand's colour: a tile in it with a white logo (or, for glyph, the logo in it) [default]
+         dark     a dark tile with the logo in the brand's colour
+         purple   a dark tile with the logo in Labyrinth purple (the accent colour) for every app
+
+The logos are a selection from Simple Icons (/usr/share/liki/brand-icons, CC0); Minos, Settings,
+Calculator and the trash are Labyrinth's own glyphs in the same form. For each installed app (its desktop file's Icon=)
+that has a logo here the pack gets an icon of that name. Apps without one fall back to whatever the
+panel's other icon sources give. The pack is written to ~/.local/share/icons/<NAME> (default
+"Liki"); choose it in KDE's icon settings to use it.
+"""
+import argparse
+import glob
+import json
+import math
+import os
+import re
+import subprocess
+import sys
+
+SRC = os.environ.get("LIKI_BRAND_ICONS") or os.environ.get("LABYRINTH_BRAND_ICONS") or "/usr/share/liki/brand-icons"
+PURPLE = "7c54d6"
+
+
+def accent_hex():
+    """The desktop's accent color (kdeglobals), as rrggbb; Labyrinth purple if it is not set."""
+    base = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
+    try:
+        section = ""
+        for line in open(os.path.join(base, "kdeglobals"), encoding="utf-8", errors="replace"):
+            line = line.strip()
+            if line.startswith("["):
+                section = line
+            elif section == "[General]" and line.startswith("AccentColor="):
+                r, g, b = [int(x) for x in line.split("=", 1)[1].split(",")]
+                return "%02x%02x%02x" % (r, g, b)
+    except (OSError, ValueError):
+        pass
+    return PURPLE
+
+
+def conf_path():
+    return os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "labyrinth", "brand-pack.json")
+
+# desktop icon names (normalised: lower case, letters and digits only) that are not the logo's own name
+ALIASES = {
+    "vivaldistable": "vivaldi", "googlechrome": "googlechrome", "googlechromestable": "googlechrome",
+    "braverowser": "brave", "bravebrowser": "brave", "vlc": "vlcmediaplayer", "obs": "obsstudio",
+    "comobsprojectstudio": "obsstudio", "orgvideolanvlc": "vlcmediaplayer", "orgmozillafirefox": "firefox",
+    "firefoxesr": "firefox", "signaldesktop": "signal", "orgtelegramdesktop": "telegram",
+    "comdiscordapp": "discord", "discordcanary": "discord", "spotifylauncher": "spotify", "spotifyclient": "spotify",
+    "comspotifyclient": "spotify", "commitchellhghostty": "ghostty", "commitchellhghostty": "ghostty",
+    "commitchellhghosttydesktop": "ghostty", "comlibretroretroarch": "retroarch", "orgfreecadfreecad": "freecad",
+    "protonvpn": "protonvpn", "protonvpngtk": "protonvpn", "orgkdekdenlive": "kdenlive", "orggimpgimp": "gimp",
+    "orginkscapeinkscape": "inkscape", "orgblenderblender": "blender", "orgkritakrita": "krita",
+    "torbrowser": "torbrowser", "torbrowserlauncher": "torbrowser", "claudedesktop": "claude", "claudeai": "claude",
+    "orgqbittorrentqbittorrent": "qbittorrent", "libreofficestartcenter": "libreoffice",
+    "libreofficewriter": "libreoffice", "libreofficecalc": "libreoffice", "libreofficeimpress": "libreoffice",
+    "bitwardendesktop": "bitwarden", "heroicgameslauncher": "heroicgameslauncher", "githubdesktop": "github",
+    "sketchup": "sketchup", "obsidian": "obsidian", "vscode": "visualstudiocode", "code": "visualstudiocode", "comvisualstudiocode": "visualstudiocode", "commicrosoftvscode": "visualstudiocode", "visualstudiocodebin": "visualstudiocode", "visualstudiocode": "visualstudiocode", "steam": "steam", "steamicon": "steam",
+}
+# Names the Marketplace and Labyrinth's own components use, which no installed desktop file would ask for: icon name -> logo
+EXTRA = {"proton-vpn": "protonvpn", "proton-pass": "proton", "proton-mail": "protonmail"}
+# Labyrinth's own glyphs: file -> [(folder in the pack, icon name)]
+NATIVE = {
+    "sarina": [("apps", n) for n in ("sarina", "labyrinth-sarina")],
+    "daedalus": [("apps", "daedalus-cad")],
+    "heimdall": [("apps", "heimdall")],
+    "limbo": [("apps", "limbo")],
+    "marketplace": [("apps", n) for n in ("labyrinth-market", "applications-all")],
+    "minos": [("apps", "minos")],
+    "settings": [("apps", n) for n in ("labyrinth-settings", "preferences-system", "systemsettings", "org.kde.systemsettings")],
+    "calculator": [("apps", n) for n in ("labyrinth-calculator", "accessories-calculator", "org.kde.kcalc", "calculator")],
+    "trash": [("places", n) for n in ("user-trash", "trash-empty", "trashcan_empty")],
+    "trash-full": [("places", n) for n in ("user-trash-full", "trash-full", "trashcan_full")],
+    "folder": [("places", n) for n in ("folder", "folder-open", "folder-documents", "folder-download", "folder-music", "folder-pictures", "folder-videos", "folder-public", "folder-templates", "folder-desktop", "user-desktop", "folder-remote")] + [("mimetypes", "inode-directory")],
+    "home": [("places", n) for n in ("user-home", "folder-home")],
+    "drive": [("devices", n) for n in ("drive-harddisk", "drive-harddisk-solidstate", "drive-removable-media", "drive-multidisk")],
+    "document": [("mimetypes", n) for n in ("text-x-generic", "application-x-generic", "text-plain")],
+    # what an app gets when no pack has an icon for it
+    "default-app": [("apps", n) for n in ("application-default-icon", "application-x-executable", "applications-other", "unknown")],
+}
+CONTEXTS = {"apps": "Applications", "places": "Places", "mimetypes": "MimeTypes", "devices": "Devices"}
+NL = chr(10)
+SUFFIXES = ("stable", "launcher", "client", "desktop", "browser", "bin", "beta", "dev", "gtk", "flatpak")
+
+
+def norm(s):
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
+def squircle():
+    n, a = 5.0, 496.0
+    pts = []
+    for i in range(240):
+        t = 2 * math.pi * i / 240
+        c, s = math.cos(t), math.sin(t)
+        pts.append(f"{512 + a * math.copysign(abs(c) ** (2 / n), c):.1f},{512 + a * math.copysign(abs(s) ** (2 / n), s):.1f}")
+    return '<path d="M' + " L".join(pts) + ' Z" fill="{fill}"/>'
+
+
+SHAPES = {
+    "squircle": squircle(),
+    "rounded": '<rect x="40" y="40" width="944" height="944" rx="190" fill="{fill}"/>',
+    "circle": '<circle cx="512" cy="512" r="480" fill="{fill}"/>',
+    "hexagon": '<polygon points="512,40 921,276 921,748 512,984 103,748 103,276" fill="{fill}" stroke="{fill}" stroke-width="64" stroke-linejoin="round"/>',
+}
+# how large the logo is, as a share of the canvas, on each tile
+GLYPH_SIZE = {"glyph": 0.84, "squircle": 0.56, "rounded": 0.58, "circle": 0.52, "hexagon": 0.48}
+
+
+def luminance(hexc):
+    r, g, b = (int(hexc[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def inner(svg_text):
+    """The drawing inside an svg file and its viewBox."""
+    vb = re.search(r'viewBox="([^"]+)"', svg_text).group(1).split()
+    body = re.sub(r"^.*?<svg[^>]*>", "", svg_text, count=1, flags=re.S)
+    body = re.sub(r"</svg>\s*$", "", body)
+    body = re.sub(r"<title>.*?</title>", "", body, flags=re.S)
+    return [float(v) for v in vb], body
+
+
+def make(shape, style, svg_text, brand, purple=PURPLE):
+    """One icon: the logo (single colour) on the tile the shape and style ask for."""
+    vb, body = inner(svg_text)
+    size = GLYPH_SIZE[shape] * 1024
+    scale = size / max(vb[2], vb[3])
+    w, h = vb[2] * scale, vb[3] * scale
+    x, y = (1024 - w) / 2, (1024 - h) / 2
+    dark_brand = luminance(brand) < 0.14
+    if style == "purple":
+        tile, glyph = "1b1b22", purple
+    elif style == "dark":
+        tile, glyph = "1b1b22", ("ffffff" if dark_brand else brand)
+    else:
+        tile, glyph = (("2b2b36" if dark_brand else brand), "ffffff")
+    if shape == "glyph":
+        glyph = purple if style == "purple" else ("ffffff" if dark_brand else brand)
+        tilesvg = ""
+    else:
+        tilesvg = SHAPES[shape].format(fill="#" + tile)
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 1024 1024">{tilesvg}'
+        f'<svg x="{x:.1f}" y="{y:.1f}" width="{w:.1f}" height="{h:.1f}" viewBox="{vb[0]:g} {vb[1]:g} {vb[2]:g} {vb[3]:g}" fill="#{glyph}">{body}</svg></svg>\n'
+    )
+
+
+def installed_icon_names():
+    """(icon name, app name) for each desktop file here."""
+    out = []
+    dirs = ["/usr/share/applications", os.path.expanduser("~/.local/share/applications"), "/var/lib/flatpak/exports/share/applications"]
+    for d in dirs:
+        for f in glob.glob(os.path.join(d, "*.desktop")):
+            icon = name = ""
+            try:
+                for line in open(f, encoding="utf-8", errors="replace"):
+                    if line.startswith("Icon=") and not icon:
+                        icon = line[5:].strip()
+                    elif line.startswith("Name=") and not name:
+                        name = line[5:].strip()
+            except OSError:
+                continue
+            if icon and not icon.startswith("/"):
+                out.append((icon, name))
+    return out
+
+
+def find_logo(icon, name, slugs):
+    cands = []
+    for c in (icon, name):
+        n = norm(c)
+        cands.append(n)
+        for p in re.split(r"[.\-_ ]", c.lower()):
+            cands.append(norm(p))
+        for s in SUFFIXES:
+            if n.endswith(s):
+                cands.append(n[: -len(s)])
+    for c in cands:
+        if c in ALIASES and ALIASES[c] in slugs:
+            return ALIASES[c]
+        if c in slugs:
+            return c
+    return None
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Build an icon pack of app logos.")
+    ap.add_argument("--shape", choices=list(GLYPH_SIZE), default="glyph")
+    ap.add_argument("--style", choices=["brand", "dark", "purple"], default="brand")
+    ap.add_argument("--name", default="Liki")
+    ap.add_argument("--out", help="folder to write (default ~/.local/share/icons/NAME)")
+    ap.add_argument("--natives-only", action="store_true", help="only the pack's own icons (folders, drives, file types, Yggdrasil's apps, the default app icon), no app logos: what the package ships")
+    ap.add_argument("--rebuild", action="store_true", help="build again with the shape, style and name of the last build (used when the accent changes)")
+    a = ap.parse_args()
+    if a.rebuild:
+        try:
+            last = json.load(open(conf_path()))
+        except (OSError, ValueError):
+            print("No earlier build to repeat.")
+            return 0
+        a.shape, a.style, a.name = last.get("shape", a.shape), last.get("style", a.style), last.get("name", a.name)
+    accent = accent_hex()
+
+    colors = json.load(open(os.path.join(SRC, "colors.json")))
+    slugs = set(colors)
+    out = a.out or os.path.join(os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share")), "icons", a.name)
+    apps = os.path.join(out, "apps", "scalable")
+    for ctx in CONTEXTS:
+        d = os.path.join(out, ctx, "scalable")
+        os.makedirs(d, exist_ok=True)
+        for f in glob.glob(os.path.join(d, "*.svg")):
+            os.remove(f)
+
+    written = 0
+    # Labyrinth's own apps
+    for key, names in NATIVE.items():
+        svg = open(os.path.join(SRC, "native", key + ".svg"), encoding="utf-8").read()
+        icon = make(a.shape, a.style, svg, accent, accent)
+        for ctx, n in names:
+            open(os.path.join(out, ctx, "scalable", n + ".svg"), "w", encoding="utf-8").write(icon)
+            written += 1
+    # the brands' apps
+    seen = set()
+    for icon_name, app_name in ([] if a.natives_only else installed_icon_names()):
+        slug = find_logo(icon_name, app_name, slugs)
+        if not slug or icon_name in seen or any(icon_name == n for v in NATIVE.values() for _, n in v):
+            continue
+        seen.add(icon_name)
+        svg = open(os.path.join(SRC, "icons", slug + ".svg"), encoding="utf-8").read()
+        open(os.path.join(apps, icon_name + ".svg"), "w", encoding="utf-8").write(make(a.shape, a.style, svg, colors[slug].lower(), accent))
+        written += 1
+    for icon_name, slug in ({} if a.natives_only else EXTRA).items():
+        if icon_name in seen or slug not in slugs:
+            continue
+        seen.add(icon_name)
+        svg = open(os.path.join(SRC, "icons", slug + ".svg"), encoding="utf-8").read()
+        open(os.path.join(apps, icon_name + ".svg"), "w", encoding="utf-8").write(make(a.shape, a.style, svg, colors[slug].lower(), accent))
+        written += 1
+    dirs = ",".join(f"{c}/scalable" for c in CONTEXTS)
+    sections = "".join(f"{NL}[{c}/scalable]{NL}Size=128{NL}MinSize=8{NL}MaxSize=1024{NL}Type=Scalable{NL}Context={x}{NL}" for c, x in CONTEXTS.items())
+    text = f"[Icon Theme]{NL}Name={a.name}{NL}Comment=Yggdrasil's icon pack: app logos from Simple Icons ({a.shape}, {a.style}) and its own glyphs; an app without an icon gets the default app icon{NL}Inherits=hicolor{NL}Directories={dirs}{NL}{sections}"
+    open(os.path.join(out, "index.theme"), "w", encoding="utf-8").write(text)
+    subprocess.run(["gtk-update-icon-cache", "-qf", out], stderr=subprocess.DEVNULL, check=False)
+    if not a.out:
+        # remembered, so the pack can be rebuilt in the new accent color when it changes (--rebuild)
+        try:
+            os.makedirs(os.path.dirname(conf_path()), exist_ok=True)
+            json.dump({"shape": a.shape, "style": a.style, "name": a.name}, open(conf_path(), "w"))
+        except OSError:
+            pass
+    print(f"{a.name}: {written} icons ({a.shape}, {a.style}) in {out}")
+
+
+if __name__ == "__main__":
+    sys.exit(main())

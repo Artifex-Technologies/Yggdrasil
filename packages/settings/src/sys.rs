@@ -996,7 +996,7 @@ pub fn install_icon_pack(src: &str) -> Result<Vec<String>, String> {
             copy_tree(&local, &unpacked.join(local.file_name().unwrap_or_default())).map_err(|e| e.to_string())?;
         } else if local.extension().map(|e| e.eq_ignore_ascii_case("apk")).unwrap_or(false) {
             // an Android icon pack: only read (never run) and turned into a theme for the installed programs
-            act("labyrinth-icon-import", &[&local.to_string_lossy(), "--out", &unpacked.to_string_lossy()])?;
+            act("liki-icon-import", &[&local.to_string_lossy(), "--out", &unpacked.to_string_lossy()])?;
         } else {
             // bsdtar reads zip and every tar flavour, and refuses paths that climb out of the folder
             act("bsdtar", &["-xf", &local.to_string_lossy(), "-C", &unpacked.to_string_lossy()]).map_err(|e| format!("Could not open it as an archive: {e}"))?;
@@ -1101,12 +1101,12 @@ mod icon_tests {
     }
 }
 
-/// Build the "Labyrinth Brands" pack (app logos from Simple Icons, in the chosen shape and colouring) into the
-/// user's icons folder, by running labyrinth-brand-pack. `shape` is glyph, squircle, rounded, circle or hexagon;
+/// Build the Liki pack (app logos from Simple Icons, in the chosen shape and colouring) into the
+/// user's icons folder, by running liki-build. `shape` is glyph, squircle, rounded, circle or hexagon;
 /// `style` is brand, dark or purple.
 pub fn build_brand_pack(shape: &str, style: &str) -> Result<(), String> {
     if !["glyph", "squircle", "rounded", "circle", "hexagon"].contains(&shape) || !["brand", "dark", "purple"].contains(&style) {
         return Err("unknown shape or style".into());
     }
-    act("labyrinth-brand-pack", &["--shape", shape, "--style", style])
+    act("liki-build", &["--shape", shape, "--style", style])
 }

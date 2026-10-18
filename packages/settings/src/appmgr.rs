@@ -137,7 +137,7 @@ pub fn icon_path(name: &str, theme: &str) -> Option<PathBuf> {
         return Path::new(name).is_file().then(|| PathBuf::from(name));
     }
     let mut themes: Vec<String> = vec![];
-    for t in [theme, "Labyrinth", "MacTahoe-purple-dark", "hicolor", "breeze"] {
+    for t in [theme, "Liki", "hicolor"] {
         if !t.is_empty() && !themes.iter().any(|x| x == t) {
             themes.push(t.to_string());
         }

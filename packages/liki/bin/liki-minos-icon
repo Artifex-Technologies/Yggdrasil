@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# Give Minos the right icon for the icon pack in use, and colour it like the desktop.
+#   liki-minos-icon                  read the pack, accent and style from the desktop's settings
+#   liki-minos-icon R,G,B dark|light use these (Settings passes them as it changes them;
+#                                         "-" or nothing for one of them means read it)
+#   liki-minos-icon - - plain        the bare logo on the Labyrinth pack too (the default there is
+#                                         the logo on a rounded macOS-style tile). Make it stick with:
+#                                         echo plain > ~/.config/labyrinth/minos-icon-shape
+#
+# - Labyrinth's own pack: the tile icon, its lines in the accent
+#   colour, in the dark or light version to match the style. It goes to the user's copy of the
+#   Labyrinth theme.
+# - Another icon pack that has an icon called "minos": nothing to do, the pack's own is used.
+# - Another pack without one: that pack's own file-manager icon, so Minos looks like it belongs to the
+#   pack. If the pack has no file-manager icon either, the bare Minos logo (dark or light, accent lines).
+# The last two are put in the user's copy of the "hicolor" theme, which every pack falls back to.
+# Run at each login (autostart), by Settings when the accent or style changes, and by the panel when
+# the icon pack changes. The bare logos are also the system's plain fallback (hicolor/minos.svg).
+set -eu
+SRC=/usr/share/liki/minos-icon
+DATA=${XDG_DATA_HOME:-$HOME/.local/share}
+THEME=$DATA/icons/Liki
+HI=$DATA/icons/hicolor/scalable/apps
+HI_PNG=$DATA/icons/hicolor/256x256/apps
+accent=${1:-}
+mode=${2:-}
+shape=${3:-}
+[[ $accent == - ]] && accent=
+
+if [[ -z $accent ]]; then
+  accent=$(kreadconfig6 --file kdeglobals --group General --key AccentColor 2>/dev/null || true)
+  [[ $accent =~ ^[0-9]+,[0-9]+,[0-9]+$ ]] || accent=124,84,214
+fi
+if [[ -z $mode ]]; then
+  scheme=$(kreadconfig6 --file kdeglobals --group General --key ColorScheme 2>/dev/null || true)
+  case ${scheme,,} in *dark*|"") mode=dark ;; *) mode=light ;; esac
+fi
+[[ -n $shape ]] || shape=$(cat "${XDG_CONFIG_HOME:-$HOME/.config}/labyrinth/minos-icon-shape" 2>/dev/null || echo tile)
+[[ $shape == plain ]] || shape=tile
+pack=$(kreadconfig6 --file kdeglobals --group Icons --key Theme 2>/dev/null || true)
+[[ -n $pack ]] || pack=Liki
+
+IFS=, read -r r g b <<<"$accent"
+if [[ $mode == light ]]; then
+  # a darker shade of the accent, so the lines read on the light icon's grey
+  r=$((r * 62 / 100)); g=$((g * 62 / 100)); b=$((b * 62 / 100))
+fi
+hex=$(printf '#%02x%02x%02x' "$r" "$g" "$b")
+
+# write the logo (tile or plain) with the accent into FILE
+logo() {
+  local file=$mode.svg
+  [[ $1 == tile ]] && file=tile-$mode.svg
+  mkdir -p "$(dirname "$2")"
+  sed "s/@LINE@/$hex/" "$SRC/$file" >"$2.tmp" && mv "$2.tmp" "$2"
+}
+refresh() { gtk-update-icon-cache -qf "$1" 2>/dev/null || true; }
+clear_hicolor() { rm -f "$HI/minos.svg" "$HI_PNG/minos.png"; }
+
+# Liki draws Minos itself (liki-build writes the icon with the other app icons, in the accent), so with Liki in use there is nothing to put
+# in hicolor; with another pack, Minos gets that pack's own file-manager icon there.
+case $pack in
+  Liki)
+    clear_hicolor
+    refresh "$DATA/icons/hicolor"
+    ;;
+  *)
+    dirs=("/usr/share/icons/$pack" "$DATA/icons/$pack")
+    has() { find -L "${dirs[@]}" \( -name "$1.svg" -o -name "$1.png" \) 2>/dev/null | head -n1; }
+    if [[ -n $(has minos) ]]; then
+      clear_hicolor                       # the pack has its own Minos icon
+    else
+      # the pack's own file-manager icon: a vector if it has one, else its largest picture
+      found=
+      for n in system-file-manager file-manager org.kde.dolphin org.gnome.Nautilus nautilus; do
+        f=$(find -L "${dirs[@]}" -name "$n.svg" 2>/dev/null | head -n1)
+        if [[ -n $f ]]; then found=$f; break; fi
+      done
+      if [[ -n $found ]]; then
+        clear_hicolor; mkdir -p "$HI"; cp -fL "$found" "$HI/minos.svg"
+      else
+        for n in system-file-manager file-manager org.kde.dolphin; do
+          f=$(find -L "${dirs[@]}" -name "$n.png" -printf '%s %p\n' 2>/dev/null | sort -rn | head -n1 | cut -d' ' -f2-)
+          if [[ -n $f ]]; then found=$f; break; fi
+        done
+        if [[ -n $found ]]; then
+          clear_hicolor; mkdir -p "$HI_PNG"; cp -fL "$found" "$HI_PNG/minos.png"
+        else
+          clear_hicolor; logo plain "$HI/minos.svg"   # nothing of the pack's to use: the bare logo
+        fi
+      fi
+    fi
+    refresh "$DATA/icons/hicolor"
+    ;;
+esac

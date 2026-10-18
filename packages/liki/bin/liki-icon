@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# Give apps different icons, for instance dark macOS icons downloaded from macosicons.com.
+#   liki-icon APP FILE            one icon: APP is the app's icon name (the Icon= line of its
+#                                      .desktop file), FILE is a .png, .svg or macOS .icns
+#   liki-icon --import FOLDER     every .icns/.png/.svg in FOLDER whose file name says which
+#                                      app it is (Finder_..., Spotify_..., Steam_...); lists the rest
+#   liki-icon --reset APP         back to the theme's icon
+# Icons go to ~/.local/share/icons/Liki, the theme Yggdrasil uses everywhere, so the dock,
+# Minos, Settings and the launcher all pick them up (restart an app to see its new icon).
+set -eu
+THEME=${XDG_DATA_HOME:-$HOME/.local/share}/icons/Liki
+DIR=$THEME/apps/scalable
+
+refresh() {
+  [[ -e $THEME/index.theme ]] || { mkdir -p "$THEME" && cp /usr/share/icons/Liki/index.theme "$THEME/index.theme"; }
+  gtk-update-icon-cache -qf "$THEME" 2>/dev/null || true
+}
+
+# put FILE in the theme under each of the names
+install_icon() {
+  local file=$1; shift
+  local ext=${file##*.}; ext=${ext,,}
+  local tmp=
+  if [[ $ext == icns ]]; then
+    tmp=$(mktemp --suffix=.png); liki-icns "$file" "$tmp"; file=$tmp; ext=png
+  fi
+  [[ $ext == png || $ext == svg ]] || { echo "use an .svg, .png or .icns file: $file" >&2; return 1; }
+  mkdir -p "$DIR"
+  for name in "$@"; do
+    rm -f "$DIR/$name".{svg,png}
+    cp "$file" "$DIR/$name.$ext"
+  done
+  [[ -z $tmp ]] || rm -f "$tmp"
+}
+
+# File-name keyword -> icon names the app (or Labyrinth's own app) uses.
+names_for() {
+  case ${1,,} in
+    finder*|minos*)     echo system-file-manager file-manager org.kde.dolphin ;;
+    settings*)          echo preferences-system labyrinth-settings systemsettings ;;
+    terminal*)          echo utilities-terminal ;;
+    ghostty*)           echo com.mitchellh.ghostty ghostty ;;
+    spotify*)           echo spotify-launcher spotify-client spotify ;;
+    steam*)             echo steam ;;
+    obsidian*)          echo obsidian md.obsidian.Obsidian ;;
+    brave*)             echo brave-browser brave ;;
+    firefox*)           echo firefox ;;
+    vivaldi*)           echo vivaldi-stable vivaldi ;;
+    tor_browser*)       echo torbrowser tor-browser ;;
+    discord*)           echo discord ;;
+    signal*)            echo signal-desktop ;;
+    vs_code*)           echo code visual-studio-code vscode ;;
+    github*)            echo github-desktop ;;
+    claude*)            echo claude claude-desktop ;;
+    chatgpt*)           echo chatgpt ;;
+    vlc*)               echo vlc ;;
+    blender*)           echo blender ;;
+    freecad*)           echo org.freecad.FreeCAD freecad ;;
+    sketchup*)          echo sketchup ;;
+    protonvpn*)         echo protonvpn proton-vpn ;;
+    logi*)              echo logi-options-plus logiops solaar logitech-options ;;
+    minecraft_launcher*) echo minecraft-launcher minecraft ;;
+    duckstation*)       echo duckstation org.duckstation.DuckStation ;;
+    retroarch*)         echo retroarch com.libretro.RetroArch ;;
+    macos_bin*)         echo user-trash-full ;;
+    this_pc*|this-pc*)  echo computer ;;
+    *)                  return 1 ;;
+  esac
+}
+
+case ${1:-} in
+  --reset)
+    [[ -n ${2:-} ]] || exit 1
+    rm -f "$DIR/$2".{svg,png}; refresh; echo "reset $2" ;;
+  --import)
+    [[ -d ${2:-} ]] || { echo "give a folder" >&2; exit 1; }
+    done_n=0
+    shopt -s nullglob nocaseglob
+    for f in "$2"/*.icns "$2"/*.png "$2"/*.svg; do
+      base=$(basename "$f")
+      if names=$(names_for "$base"); then
+        install_icon "$f" $names && { echo "  $base -> ${names%% *}"; done_n=$((done_n+1)); }
+      else
+        echo "  (no app known for $base: liki-icon APP '$f')"
+      fi
+    done
+    refresh; echo "$done_n icons imported" ;;
+  "") sed -n 2,11p "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  *)
+    [[ $# -eq 2 && -r $2 ]] || { echo "usage: liki-icon APP FILE" >&2; exit 1; }
+    install_icon "$2" "$1"; refresh; echo "$1 now uses $2" ;;
+esac

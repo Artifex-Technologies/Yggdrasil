@@ -206,7 +206,7 @@ struct App {
     app_sizes: std::collections::HashMap<String, u64>,
     dir_sizes: std::collections::HashMap<std::path::PathBuf, u64>,
     owners: std::collections::HashMap<String, Option<(String, bool)>>,
-    /// The shape and colouring chosen for the Labyrinth Brands pack (indexes into BRAND_SHAPES and BRAND_STYLES).
+    /// The shape and colouring chosen for the Liki pack (indexes into BRAND_SHAPES and BRAND_STYLES).
     brand_shape: usize,
     brand_style: usize,
     /// When the open page was last read, so it can be read again now and then and follow changes made elsewhere.
@@ -1265,7 +1265,7 @@ impl App {
                     }
                 });
             }
-            ui::row(ui, pal, a.icon_packs.is_empty(), "Labyrinth Brands", Some("App logos from Simple Icons in the shape and colors you pick; apps it has no logo for keep the other pack's icon. Make it, then choose it above"), |ui| {
+            ui::row(ui, pal, a.icon_packs.is_empty(), "Liki", Some("Yggdrasil's own icon pack: app logos from Simple Icons in the shape and colours you pick. An app with no logo gets the default app icon. Make it, then choose it above"), |ui| {
                 if ui::action(ui, pal, "Make").clicked() {
                     brand_build = true;
                 }
@@ -1477,7 +1477,7 @@ impl App {
                 let _ = std::fs::create_dir_all(format!("{home}/.config/Kvantum"));
                 let _ = std::fs::write(format!("{home}/.config/Kvantum/kvantum.kvconfig"), format!("[General]\ntheme={scheme}\n"));
                 // Minos's icon follows: its dark or light version
-                let _ = std::process::Command::new("labyrinth-minos-icon").args(["-", if dark { "dark" } else { "light" }]).status();
+                let _ = std::process::Command::new("liki-minos-icon").args(["-", if dark { "dark" } else { "light" }]).status();
                 Ok(())
             });
         }
@@ -1491,10 +1491,9 @@ impl App {
                     let _ = sys::act("kwriteconfig6", &["--file", "kdeglobals", "--group", "General", "--key", key, &rgb]);
                 }
                 let _ = sys::act("kwriteconfig6", &["--file", "kdeglobals", "--group", "General", "--key", "AccentColorFromWallpaper", "false"]);
-                // Minos's icon takes the new accent, and so do Labyrinth's other app icons and the Labyrinth Brands pack
-                let _ = std::process::Command::new("labyrinth-minos-icon").args([format!("{r},{g},{b}"), String::new()]).status();
-                let _ = std::process::Command::new("labyrinth-app-icons").arg(format!("{r},{g},{b}")).status();
-                let _ = std::process::Command::new("labyrinth-brand-pack").arg("--rebuild").status();
+                // Minos's icon takes the new accent (when another pack is in use), and so does the Liki pack
+                let _ = std::process::Command::new("liki-minos-icon").args([format!("{r},{g},{b}"), String::new()]).status();
+                let _ = std::process::Command::new("liki-build").arg("--rebuild").status();
                 Ok(())
             });
         }

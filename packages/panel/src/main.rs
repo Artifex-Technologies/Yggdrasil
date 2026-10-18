@@ -3545,7 +3545,7 @@ fn main() {
             if pack != st.icon_pack {
                 st.icon_pack = pack.clone();
                 // Minos's icon for the new pack (its own, the pack's file manager's, or our logo)
-                let _ = std::process::Command::new("labyrinth-minos-icon").status();
+                let _ = std::process::Command::new("liki-minos-icon").status();
                 st.assets.icons.set_pack(pack.as_deref());
                 st.dirty = true;
             }

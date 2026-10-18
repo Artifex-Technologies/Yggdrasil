@@ -1,0 +1,28 @@
+#!/usr/bin/env python3
+"""Extract the biggest PNG from a macOS .icns file: liki-icns in.icns out.png
+An .icns is a list of (type, length, data) chunks; the modern ones (ic07..ic14, icp4..icp6) hold
+plain PNG data. Old ones (ARGB/JPEG 2000) are skipped."""
+import struct, sys
+
+def biggest_png(data):
+    if data[:4] != b"icns":
+        raise ValueError("not an .icns file")
+    pos, best = 8, None
+    while pos + 8 <= len(data):
+        kind, size = data[pos:pos + 4], struct.unpack(">I", data[pos + 4:pos + 8])[0]
+        if size < 8:
+            break
+        chunk = data[pos + 8:pos + size]
+        if chunk[:8] == b"\x89PNG\r\n\x1a\n":
+            w, h = struct.unpack(">II", chunk[16:24])
+            if best is None or w * h > best[0]:
+                best = (w * h, chunk)
+        pos += size
+    if best is None:
+        raise ValueError("no PNG data inside")
+    return best[1]
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        sys.exit(__doc__)
+    open(sys.argv[2], "wb").write(biggest_png(open(sys.argv[1], "rb").read()))

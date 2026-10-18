@@ -671,7 +671,7 @@ fn start_pal(dark: bool) -> StartPal {
 }
 
 fn app_icon(pix: &mut Pixmap, s: f32, icons: &mut Icons, fonts: &Fonts, app: &App, x: f32, y: f32, size: f32) {
-    match icons.get(&app.icon, (size * s) as u32) {
+    match icons.get_app(&app.icon, (size * s) as u32) {
         Some(p) => paint::draw_pixmap(pix, p, (x * s) as i32, (y * s) as i32),
         None => {
             paint::fill_rounded(pix, x * s, y * s, size * s, size * s, size * 0.24 * s, (84, 58, 140, 255));
@@ -1135,7 +1135,7 @@ pub fn paint_dock(pix: &mut Pixmap, s: f32, m: &Model, fonts: &Fonts, icons: &mu
         if hover.is_some_and(|h| span.contains(&h)) {
             paint::fill_rounded(pix, rect.0, rect.1, rect.2, rect.3, 12.0 * s, lk.hover);
         }
-        match icons.get(&it.icon, isz) {
+        match icons.get_app(&it.icon, isz) {
             Some(p) => paint::draw_pixmap(pix, p, x.round() as i32, y.round() as i32),
             None => {
                 // No icon in the theme: a purple tile with the app's first letter.

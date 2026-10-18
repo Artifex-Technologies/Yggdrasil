@@ -1,0 +1,280 @@
+#!/usr/bin/env python3
+"""liki-icon-import: turn an Android icon pack (an .apk, or its unpacked folder or zip) into a Linux icon theme.
+
+  liki-icon-import PACK [--name NAME] [--out FOLDER]
+
+The pack is only READ: the .apk is opened as a zip archive and nothing in it is ever run. What is used is the icon
+pack's own list (appfilter.xml: which Android app gets which picture) and its PNG pictures. Each picture is given to
+the installed program it fits, by comparing the pack's names (the app's package and picture name) with the installed
+programs' icon names, names and commands. The theme is written to FOLDER/NAME (default ~/.local/share/icons/NAME)
+with the programs' own icon names, so the desktop picks the pictures up once the theme is chosen.
+
+Only use packs you have the right to use; this reads the files, it does not check licences.
+"""
+import argparse
+import glob
+import os
+import re
+import struct
+import sys
+import xml.etree.ElementTree as ET
+import zipfile
+
+MAX_TOTAL = 700 * 1024 * 1024      # unpacked bytes read from one pack
+MAX_PNG = 6 * 1024 * 1024          # one picture
+GENERIC = {"com", "org", "net", "io", "android", "google", "apps", "app", "the", "activity", "main", "launcher", "mobile", "free", "pro", "lite", "beta", "dev", "desktop", "stable"}
+
+
+def norm(s):
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
+# ---------------------------------------------------------------- Android's compiled XML (res/xml/appfilter.xml)
+
+def parse_axml(data):
+    """The elements of a compiled Android XML file as (tag, {attribute: value}); only what appfilter.xml needs."""
+    if len(data) < 8 or struct.unpack_from("<H", data, 0)[0] != 0x0003:
+        raise ValueError("not compiled Android XML")
+    pos = struct.unpack_from("<H", data, 2)[0]
+    strings = []
+    out = []
+    end = struct.unpack_from("<I", data, 4)[0]
+    while pos + 8 <= min(end, len(data)):
+        ctype, hsize, csize = struct.unpack_from("<HHI", data, pos)
+        if csize < 8:
+            break
+        if ctype == 0x0001:   # string pool
+            count, _styles, flags, str_start, _sty_start = struct.unpack_from("<IIIII", data, pos + 8)
+            utf8 = bool(flags & 0x100)
+            offs = struct.unpack_from("<%dI" % count, data, pos + hsize)
+            base = pos + str_start
+            for o in offs:
+                p = base + o
+                if utf8:
+                    # two length fields (characters, bytes), each one or two bytes
+                    n = data[p]; p += 2 if n & 0x80 else 1
+                    b = data[p]; p += 1
+                    if b & 0x80:
+                        b = ((b & 0x7F) << 8) | data[p]; p += 1
+                    strings.append(data[p:p + b].decode("utf-8", "replace"))
+                else:
+                    n = struct.unpack_from("<H", data, p)[0]; p += 2
+                    if n & 0x8000:
+                        n = ((n & 0x7FFF) << 16) | struct.unpack_from("<H", data, p)[0]; p += 2
+                    strings.append(data[p:p + 2 * n].decode("utf-16-le", "replace"))
+        elif ctype == 0x0102:  # start element
+            _line, _cmt, _ns, name, astart, asize, acount = struct.unpack_from("<IIiiHHH", data, pos + 8)
+            attrs = {}
+            ap = pos + 16 + astart
+            for _ in range(acount):
+                _ans, aname, araw, _sz, _r0, atype, adata = struct.unpack_from("<iiiHBBI", data, ap)
+                ap += asize if asize >= 20 else 20
+                if aname < 0 or aname >= len(strings):
+                    continue
+                if araw >= 0 and araw < len(strings):
+                    attrs[strings[aname]] = strings[araw]
+                elif atype == 0x03 and adata < len(strings):
+                    attrs[strings[aname]] = strings[adata]
+            if 0 <= name < len(strings):
+                out.append((strings[name], attrs))
+        pos += csize
+    return out
+
+
+def parse_appfilter(zf):
+    """[(component, drawable)] from assets/appfilter.xml (plain) or res/xml/appfilter.xml (compiled)."""
+    names = {n.lower(): n for n in zf.namelist()}
+    items = []
+    for path in ("assets/appfilter.xml", "res/xml/appfilter.xml", "res/raw/appfilter.xml"):
+        real = names.get(path)
+        if not real:
+            continue
+        data = zf.read(real)
+        try:
+            elems = parse_axml(data) if data[:2] == b"\x03\x00" else [(e.tag, dict(e.attrib)) for e in ET.fromstring(data).iter()]
+        except (ValueError, ET.ParseError, struct.error):
+            continue
+        for tag, a in elems:
+            if tag == "item" and a.get("drawable"):
+                items.append((a.get("component", ""), a["drawable"]))
+        if items:
+            break
+    return items
+
+
+# ---------------------------------------------------------------- the pictures
+
+def png_size(b):
+    if b[:8] != b"\x89PNG\r\n\x1a\n" or len(b) < 24:
+        return None
+    return struct.unpack(">II", b[16:24])
+
+
+def collect_pngs(zf):
+    """name -> (width, bytes), the biggest picture of each name."""
+    best = {}
+    total = 0
+    for info in zf.infolist():
+        n = info.filename
+        if info.is_dir() or not n.lower().endswith(".png") or info.file_size > MAX_PNG:
+            continue
+        if not re.match(r"^(res/(drawable|mipmap)[^/]*/|assets/)[^/]+\.png$", n, re.I):
+            continue
+        total += info.file_size
+        if total > MAX_TOTAL:
+            break
+        b = zf.read(info)
+        size = png_size(b)
+        if not size or size[0] != size[1] or size[0] < 32:
+            continue
+        name = os.path.basename(n)[:-4]
+        if name not in best or size[0] > best[name][0]:
+            best[name] = (size[0], b)
+    return best
+
+
+# ---------------------------------------------------------------- matching
+
+def installed_apps():
+    """[(icon_name, keys)] for the installed programs: the names an Android pack might call them."""
+    dirs = ["/usr/share/applications", os.path.expanduser("~/.local/share/applications"), "/var/lib/flatpak/exports/share/applications", os.path.expanduser("~/.local/share/flatpak/exports/share/applications")]
+    apps = {}
+    for d in dirs:
+        for f in glob.glob(os.path.join(d, "*.desktop")):
+            try:
+                text = open(f, encoding="utf-8", errors="replace").read()
+            except OSError:
+                continue
+            sect = text.split("\n[", 1)[0]
+            def field(k):
+                m = re.search(r"^%s=(.*)$" % k, sect, re.M)
+                return m.group(1).strip() if m else ""
+            icon, name, ex, wm = field("Icon"), field("Name"), field("Exec"), field("StartupWMClass")
+            if not icon or icon.startswith("/") or field("NoDisplay").lower() == "true" and not name:
+                continue
+            keys = {norm(icon), norm(name), norm(os.path.basename(ex.split()[0])) if ex else "", norm(wm), norm(os.path.basename(f)[:-8])}
+            # reverse-DNS icon names: the last part is the program's own name
+            last = icon.split(".")[-1]
+            keys.add(norm(last))
+            keys.discard("")
+            apps.setdefault(icon, set()).update(keys)
+    return list(apps.items())
+
+
+def android_keys(component, drawable):
+    keys = {norm(drawable)}
+    m = re.search(r"ComponentInfo\{([^/}]+)/?([^}]*)\}", component or "")
+    if m:
+        pkg, cls = m.group(1), m.group(2)
+        for seg in pkg.split("."):
+            if norm(seg) and seg.lower() not in GENERIC:
+                keys.add(norm(seg))
+        keys.add(norm(pkg.split(".")[-1]))
+        last = cls.split(".")[-1]
+        if norm(last) and last.lower() not in GENERIC:
+            keys.add(norm(last))
+    keys.discard("")
+    return keys
+
+
+def match(items, pngs, apps):
+    """{linux icon name: picture name}. A program gets a picture when one of its own names (icon name, command, window
+    class, desktop file, display name) is the same as the picture's name; failing that, when it is the same as the pack's
+    package or class name for exactly one picture. A name that several pictures claim (generic ones like "settings")
+    is never guessed."""
+    by_name = {}      # normalised picture name -> picture
+    by_pkg = {}       # normalised package / class name -> set of pictures
+    for comp, drawable in items:
+        if drawable not in pngs:
+            continue
+        by_name.setdefault(norm(drawable), drawable)
+        for k in android_keys(comp, drawable) - {norm(drawable)}:
+            by_pkg.setdefault(k, set()).add(drawable)
+    chosen = {}
+    for icon, keys in apps:
+        order = sorted(keys, key=lambda x: (x != norm(icon), -len(x)))
+        for k in order:
+            if len(k) >= 3 and k in by_name:
+                chosen[icon] = by_name[k]
+                break
+        else:
+            for k in order:
+                if len(k) >= 4 and len(by_pkg.get(k, ())) == 1:
+                    chosen[icon] = next(iter(by_pkg[k]))
+                    break
+    return chosen
+
+
+def safe_icon_name(n):
+    return bool(re.match(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,120}$", n))
+
+
+def build(pack, name, out_root):
+    with zipfile.ZipFile(pack) as zf:
+        items = parse_appfilter(zf)
+        pngs = collect_pngs(zf)
+    if not pngs:
+        raise SystemExit("No PNG pictures found in that file (is it an Android icon pack?).")
+    if not items:
+        raise SystemExit("That file has no appfilter.xml, so there is no list of which app gets which picture.")
+    apps = installed_apps()
+    chosen = match(items, pngs, apps)
+    with_png = sum(1 for _, d in items if d in pngs)
+    print("The pack lists %d app(s), %d of them with a usable PNG picture (%d PNG pictures in all)." % (len(items), with_png, len(pngs)))
+    print("%d installed program(s) looked at, %d matched." % (len(apps), len(chosen)))
+    theme = os.path.join(out_root, name)
+    if os.path.isdir(theme) and os.path.isfile(os.path.join(theme, "index.theme")):
+        import shutil
+        shutil.rmtree(theme)   # a fresh import replaces the old one
+    sizes = set()
+    for icon, draw in chosen.items():
+        if not safe_icon_name(icon):
+            continue
+        w, b = pngs[draw]
+        d = os.path.join(theme, "%dx%d" % (w, w), "apps")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, icon + ".png"), "wb") as f:
+            f.write(b)
+        sizes.add(w)
+    if not chosen:
+        ex_pack = ", ".join(sorted({d for _, d in items})[:8])
+        ex_here = ", ".join(sorted(i for i, _ in apps)[:8])
+        raise SystemExit("None of the installed programs matched a picture in that pack.\n  The pack's picture names look like: %s\n  Installed icon names look like: %s" % (ex_pack, ex_here))
+    dirs = ",".join("%dx%d/apps" % (s, s) for s in sorted(sizes))
+    parts = "".join("\n[%dx%d/apps]\nSize=%d\nType=Threshold\nContext=Applications\n" % (s, s, s) for s in sorted(sizes))
+    with open(os.path.join(theme, "index.theme"), "w", encoding="utf-8") as f:
+        f.write("[Icon Theme]\nName=%s\nComment=Imported from an Android icon pack (%d of %d installed programs matched)\nInherits=hicolor\nDirectories=%s\n%s" % (name, len(chosen), len(apps), dirs, parts))
+    return theme, len(chosen), len(apps)
+
+
+def default_name(path):
+    stem = os.path.splitext(os.path.basename(path.rstrip("/")))[0]
+    stem = re.sub(r"\(.*?\)|\[.*?\]", " ", stem)
+    stem = re.sub(r"\bv?\d+(\.\d+)+\b", " ", stem)
+    stem = re.sub(r"[^A-Za-z0-9 -]", " ", stem)
+    return " ".join(stem.split()) or "Imported icons"
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(description="Turn an Android icon pack into a Linux icon theme.")
+    ap.add_argument("pack")
+    ap.add_argument("--name")
+    ap.add_argument("--out")
+    a = ap.parse_args(argv)
+    if not os.path.isfile(a.pack):
+        print("error: no such file: %s" % a.pack, file=sys.stderr)
+        return 2
+    name = a.name or default_name(a.pack)
+    out = a.out or os.path.join(os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share")), "icons")
+    try:
+        theme, n, total = build(a.pack, name, out)
+    except zipfile.BadZipFile:
+        print("error: that is not a zip/apk file", file=sys.stderr)
+        return 1
+    print("%s: %d of %d installed programs matched, written to %s" % (name, n, total, theme))
+    print("Choose it in Settings > Appearance > Icons (use the 'Use' button); programs without a match keep their usual icon.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

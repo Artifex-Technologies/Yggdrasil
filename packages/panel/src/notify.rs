@@ -538,6 +538,10 @@ pub fn draw_app_icon(pix: &mut Pixmap, s: f32, icons: &mut Icons, fonts: &Fonts,
             return;
         }
     }
+    if let Some(ic) = icons.get("application-default-icon", px) {
+        paint::draw_pixmap(pix, ic, (x * s) as i32, (y * s) as i32);
+        return;
+    }
     let col = if urgent { RED } else { paint::accent(255) };
     paint::fill_circle(pix, (x + size / 2.0) * s, (y + size / 2.0) * s, size / 2.0 * s, col);
     let letter: String = name.chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_else(|| "?".into());

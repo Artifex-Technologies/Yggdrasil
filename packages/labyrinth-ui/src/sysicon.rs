@@ -1,5 +1,4 @@
-//! Icons from the system icon theme (Labyrinth, which is MacTahoe in dark plus per-app
-//! overrides), so Minos shows the same folders, files and drives as the dock and the launcher.
+//! Icons from the system icon theme (Liki, Yggdrasil's own pack, standing on hicolor only: no KDE or macOS icons), so Minos shows the same folders, files and drives as the dock and the launcher.
 //! Rendering is cached as textures in egui's memory; nothing has to be passed around.
 //!
 //! Callers give a list of icon names to try, best first, and fall back to their own drawing
@@ -10,9 +9,11 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-/// Labyrinth's own icons first (it is the icon pack Labyrinth ships: MacTahoe in dark plus its per-app
-/// icons), then what they stand on. See docs/ICONS.md.
-const BASE: [&str; 7] = ["Labyrinth", "MacTahoe-purple-dark", "MacTahoe-purple", "hicolor", "breeze-dark", "breeze", "Adwaita"];
+/// Liki first (the icon pack Yggdrasil ships and uses by default), then hicolor, where programs put their own icons. See docs/ICONS.md.
+const BASE: [&str; 2] = ["Liki", "hicolor"];
+
+/// What an app gets when no pack has an icon for it.
+pub const DEFAULT_APP_ICON: &str = "application-default-icon";
 const CONTEXTS: [&str; 5] = ["places", "mimes", "devices", "apps", "status"];
 
 #[derive(Default)]
@@ -49,9 +50,9 @@ fn compute_chain() -> Vec<String> {
         .and_then(|t| parse_icon_theme(&t));
     let mut v: Vec<String> = vec![];
     if let Some(c) = chosen {
-        if c != "Labyrinth" {
+        if c != "Liki" {
             // another pack: then hicolor, where Minos's icon for that pack is put (the pack's own
-            // file-manager icon if it has no Minos one), then Labyrinth's to fill the gaps
+            // file-manager icon if it has no Minos one), then Liki's to fill the gaps
             v.push(c);
             v.push("hicolor".to_string());
         }
@@ -212,6 +213,11 @@ pub fn paint(painter: &Painter, rect: Rect, names: &[&str]) -> bool {
     false
 }
 
+/// Like `paint`, for an app: an app that no pack has an icon for gets the default app icon, never a blank.
+pub fn paint_app(painter: &Painter, rect: Rect, names: &[&str]) -> bool {
+    paint(painter, rect, names) || paint(painter, rect, &[DEFAULT_APP_ICON])
+}
+
 /// Icon names for a folder, by its name ("Documents" gets the documents folder).
 pub fn folder_names(dir_name: &str) -> Vec<&'static str> {
     let special = match dir_name.to_lowercase().as_str() {
@@ -259,7 +265,7 @@ mod tests {
     #[test]
     fn the_fingerprint_changes_when_a_pack_gets_a_new_icon() {
         let tmp = std::env::temp_dir().join(format!("sysicon-fp-{}", std::process::id()));
-        let apps = tmp.join(".local/share/icons/Labyrinth/apps/scalable");
+        let apps = tmp.join(".local/share/icons/Liki/apps/scalable");
         std::fs::create_dir_all(&apps).unwrap();
         std::env::set_var("HOME", &tmp);
         std::env::set_var("XDG_CONFIG_HOME", tmp.join(".config"));

@@ -262,10 +262,10 @@ impl Icons {
     /// The lookup order: the icon pack chosen in KDE first (if it is not one of ours already), then
     /// Labyrinth's own, which fills in whatever the pack has no icon for.
     fn chain(chosen: Option<&str>) -> Vec<String> {
-        const BASE: [&str; 7] = ["Labyrinth", "MacTahoe-purple-dark", "MacTahoe-purple", "hicolor", "breeze-dark", "breeze", "Adwaita"];
+        const BASE: [&str; 2] = ["Liki", "hicolor"];
         let mut v: Vec<String> = vec![];
         if let Some(c) = chosen {
-            if c != "Labyrinth" {
+            if c != "Liki" {
                 // another pack: then hicolor, where Minos's icon for that pack is put (the pack's own
                 // file-manager icon if it has no Minos one), then Labyrinth's to fill the gaps
                 v.push(c.to_string());
@@ -403,6 +403,14 @@ impl Icons {
     /// Forget every icon drawn so far (an icon file changed on disk, like Minos's when the accent colour changes).
     pub fn clear(&mut self) {
         self.cache.clear();
+    }
+
+    /// An app's icon; an app that no pack has an icon for gets the default app icon.
+    pub fn get_app(&mut self, name: &str, size: u32) -> Option<&Pixmap> {
+        if self.get(name, size).is_some() {
+            return self.get(name, size);
+        }
+        self.get("application-default-icon", size)
     }
 
     pub fn get(&mut self, name: &str, size: u32) -> Option<&Pixmap> {

@@ -337,7 +337,7 @@ impl App {
         let p = ui.painter();
         let names: Vec<&str> = [e.icon.as_str(), e.id.as_str()].into_iter().filter(|n| !n.is_empty()).collect();
         let r = rect.width() * 0.22;
-        if !sysicon::paint(p, rect, &names) {
+        if !sysicon::paint_app(p, rect, &names) {
             p.rect_filled(rect, CornerRadius::same(r as u8), tint(&e.id, 0.55, 0.78));
             p.text(rect.center(), Align2::CENTER_CENTER, e.name.chars().next().unwrap_or('?').to_uppercase().to_string(), FontId::proportional(rect.height() * 0.5), Color32::WHITE);
         }
