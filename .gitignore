@@ -10,3 +10,8 @@ repo/
 profile/airootfs/usr/share/icons/Labyrinth/apps/scalable/*
 !profile/airootfs/usr/share/icons/Labyrinth/apps/scalable/.keep
 !profile/airootfs/usr/share/icons/Labyrinth/apps/scalable/computer.png
+
+# makepkg build output
+packages/pkgbuilds/*/src/
+packages/pkgbuilds/*/pkg/
+packages/pkgbuilds/*/*.pkg.tar.*
