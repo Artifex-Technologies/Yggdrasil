@@ -58,17 +58,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut event_loop: EventLoop<App> = EventLoop::try_new()?;
     let display: Display<App> = Display::new()?;
     let dh = display.handle();
-    let (mut backend, winit) = winit::init::<GlesRenderer>().map_err(|e| format!("cannot open a window: {e}"))?;
+    let (backend, winit) = winit::init::<GlesRenderer>().map_err(|e| format!("cannot open a window: {e}"))?;
     backend.window().set_title("Labyrinth compositor (nested)");
+    let backend = std::rc::Rc::new(std::cell::RefCell::new(backend));
+    let (ping, ping_source) = smithay::reexports::calloop::ping::make_ping()?;
 
-    let mode = Mode { size: backend.window_size(), refresh: 60_000 };
+    let mode = Mode { size: backend.borrow().window_size(), refresh: 60_000 };
     let output = Output::new("labyrinth-1".into(), PhysicalProperties { size: (0, 0).into(), subpixel: Subpixel::Unknown, make: "Labyrinth".into(), model: "nested window".into() });
     let _global = output.create_global::<App>(&dh);
     toplevels::create_global(&dh);
     output.change_current_state(Some(mode), Some(Transform::Flipped180), None, Some((0, 0).into()));
     output.set_preferred(mode);
 
-    let mut app = App::new(&dh, output.clone(), event_loop.handle(), event_loop.get_signal());
+    let mut app = App::new(&dh, output.clone(), event_loop.handle(), event_loop.get_signal(), ping.clone());
+    // a wake-up asks the window for a new frame; nothing is drawn while nothing changes
+    let for_ping = backend.clone();
+    event_loop.handle().insert_source(ping_source, move |_, _, _| for_ping.borrow().window().request_redraw())?;
+    ping.ping();
     app.space.map_output(&output, (0, 0));
 
     // Wayland clients: the display itself, and the socket they connect to.
@@ -107,27 +113,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         WinitEvent::Input(event) => app.on_input(event),
         WinitEvent::Redraw => {
-            let size = backend.window_size();
-            let damage = Rectangle::from_size(size);
+            let mut backend = backend.borrow_mut();
+            let mut damage: Option<Vec<Rectangle<i32, smithay::utils::Physical>>> = None;
             {
                 let age = backend.buffer_age().unwrap_or(0);
                 let Ok((renderer, mut fb)) = backend.bind() else { return };
                 if app.locked {
                     // While the session is locked only the locker's own picture is drawn: nothing of the session shows.
                     let elements = app.lock_elements(renderer);
-                    let _ = damage_tracker.render_output(renderer, &mut fb, age, &elements, [0.0f32, 0.0, 0.0, 1.0]);
+                    damage = damage_tracker.render_output(renderer, &mut fb, age, &elements, [0.0f32, 0.0, 0.0, 1.0]).ok().and_then(|r| r.damage.cloned());
                 } else {
                     let elements = app.scene(renderer);
-                    let _ = damage_tracker.render_output(renderer, &mut fb, age, &elements, [0.05f32, 0.05, 0.08, 1.0]);
+                    damage = damage_tracker.render_output(renderer, &mut fb, age, &elements, [0.05f32, 0.05, 0.08, 1.0]).ok().and_then(|r| r.damage.cloned());
                 }
             }
-            let _ = backend.submit(Some(&[damage]));
+            // only what changed is sent on; a frame with no change at all is not even submitted
+            if let Some(d) = &damage {
+                let _ = backend.submit(Some(d));
+            }
             app.send_frames(start.elapsed());
             app.space.refresh();
             app.foreign_refresh();
             app.popups.cleanup();
             let _ = dh2.flush_clients();
-            backend.window().request_redraw();
         }
         WinitEvent::CloseRequested => app.quit(),
         _ => {}

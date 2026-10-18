@@ -39,3 +39,12 @@ portal, polkit), and each of them can be developed and tested on this compositor
 
 Debugging: `LABYRINTH_COMPOSITOR_DEBUG=1` prints pointer positions, button presses and move requests. To drive it from a script, move the host pointer
 with `ydotool` in small steps (the host accelerates movement by about 1.7x) and read the positions it prints.
+
+## Lightness (a rule for all of Yggdrasil)
+Yggdrasil must stay as light and quick as the features allow, on any machine, including old and small ones. For the compositor that means: nothing is drawn while
+nothing changes (a frame is drawn only after a program committed a picture, input arrived or a setting changed, and a frame with no change is not even sent on);
+no polling beyond a 2-second look at two small config files; pictures such as the window controls and the switcher are drawn once and kept until what they show changes.
+Measured 2026-10-18 on this computer, nested: the compositor used about 2 % of a core while idle because it redrew 60 times a second; after the change it uses 0 %.
+Its memory (about 117 MB) is mostly the graphics driver's context; the panel is about 89 MB, the idle manager 3 MB, the polkit agent 8 MB. Still to measure and trim: the panel's memory,
+start-up time of each program, and the compositor's cost with several large windows.
+

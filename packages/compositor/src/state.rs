@@ -60,6 +60,8 @@ use smithay::wayland::viewporter::ViewporterState;
 use smithay::{delegate_compositor, delegate_data_device, delegate_idle_notify, delegate_layer_shell, delegate_output, delegate_seat, delegate_session_lock, delegate_shm, delegate_viewporter, delegate_xdg_shell};
 
 pub struct App {
+    /// Wakes the drawing: the screen is drawn only when something changed (a program committed a picture, input, a setting).
+    ping: smithay::reexports::calloop::ping::Ping,
     pub display_handle: DisplayHandle,
     pub loop_signal: LoopSignal,
     pub space: Space<Window>,
@@ -142,12 +144,13 @@ impl ClientData for ClientState {
 }
 
 impl App {
-    pub fn new(dh: &DisplayHandle, output: Output, handle: LoopHandle<'static, App>, loop_signal: LoopSignal) -> App {
+    pub fn new(dh: &DisplayHandle, output: Output, handle: LoopHandle<'static, App>, loop_signal: LoopSignal, ping: smithay::reexports::calloop::ping::Ping) -> App {
         let mut seat_state = SeatState::new();
         let mut seat = seat_state.new_wl_seat(dh, "seat0");
         let keyboard = seat.add_keyboard(Default::default(), 300, 40).expect("keyboard");
         let pointer = seat.add_pointer();
         App {
+            ping,
             display_handle: dh.clone(),
             loop_signal,
             space: Space::default(),
@@ -250,6 +253,7 @@ impl App {
 
     /// Bring a window forward (from minimized too) and give it the keyboard.
     pub fn activate_surface(&mut self, surface: &WlSurface) {
+        self.wake();
         // a window on another workspace: go there first
         if let Some(ws) = self.parked.iter().find(|(w, _, _)| w.toplevel().map(|t| t.wl_surface() == surface).unwrap_or(false)).map(|(_, ws, _)| *ws) {
             self.switch_workspace(ws);
@@ -280,6 +284,7 @@ impl App {
     }
 
     pub fn minimize_surface(&mut self, surface: &WlSurface) {
+        self.wake();
         let Some(window) = self.space.elements().find(|w| w.toplevel().map(|t| t.wl_surface() == surface).unwrap_or(false)).cloned() else { return };
         let loc = self.space.element_location(&window).unwrap_or_default();
         self.saved.retain(|(s, _)| s != surface);
@@ -389,6 +394,7 @@ impl App {
     }
 
     pub fn run_action(&mut self, action: Action) {
+        self.wake();
         use xdg_toplevel::State as S;
         let current = self.focused();
         let has = |app: &App, s: &WlSurface, st: S| app.toplevel_of(s).map(|t| t.current_state().states.contains(st)).unwrap_or(false);
@@ -475,6 +481,7 @@ impl App {
 
     /// Lay the windows of a tiling workspace out again (does nothing on a standard one).
     pub fn retile(&mut self) {
+        self.wake();
         if self.ws_profile(self.current_ws) != Some(Profile::Tiling) {
             return;
         }
@@ -538,6 +545,7 @@ impl App {
 
     /// Read workspaces.conf and shortcuts.conf again when they changed (Settings writes the first).
     pub fn reload_config(&mut self) {
+        self.wake();
         let mtime = |p: std::path::PathBuf| std::fs::metadata(p).and_then(|m| m.modified()).ok();
         let (ws_t, sc_t) = (mtime(tiling::config_path()), mtime(shortcuts::config_path()));
         if ws_t != self.conf_times.0 {
@@ -590,6 +598,7 @@ impl App {
 
     /// Show another workspace: the windows of this one are put aside, those of the other come back.
     pub fn switch_workspace(&mut self, n: usize) {
+        self.wake();
         let n = n.min(WORKSPACES - 1);
         if n == self.current_ws {
             return;
@@ -840,12 +849,18 @@ impl App {
         out
     }
 
+    /// Something changed: draw the screen again soon.
+    pub fn wake(&self) {
+        self.ping.ping();
+    }
+
     pub fn quit(&mut self) {
         self.loop_signal.stop();
     }
 
     /// The window was resized: lay the panels out again and resize the lock surface.
     pub fn output_resized(&mut self) {
+        self.wake();
         layer_map_for_output(&self.output).arrange();
         self.retile();
         if let (Some(ls), Some(mode)) = (&self.lock_surface, self.output.current_mode()) {
@@ -938,6 +953,7 @@ impl App {
     }
 
     pub fn on_input(&mut self, event: InputEvent<WinitInput>) {
+        self.wake();
         if std::env::var_os("LABYRINTH_COMPOSITOR_DEBUG").is_some() {
             if let InputEvent::PointerButton { .. } = &event {
                 eprintln!("button at {:?}, over {:?}", self.pointer_location, self.surface_under(self.pointer_location).map(|x| x.0.id()));
@@ -1019,6 +1035,7 @@ impl CompositorHandler for App {
         &client.get_data::<ClientState>().unwrap().compositor_state
     }
     fn commit(&mut self, surface: &WlSurface) {
+        self.wake();
         on_commit_buffer_handler::<Self>(surface);
         self.popups.commit(surface);
         if !is_sync_subsurface(surface) {
@@ -1089,6 +1106,7 @@ impl XdgShellHandler for App {
     }
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
+        self.wake();
         // New windows open one after another, a little offset, and take the keyboard.
         let n = self.opened;
         self.opened += 1;
@@ -1112,6 +1130,7 @@ impl XdgShellHandler for App {
     }
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
+        self.wake();
         self.foreign_removed(surface.wl_surface());
         self.decorated.retain(|s| s != surface.wl_surface());
         self.focus_order.retain(|s| s != surface.wl_surface());
@@ -1197,12 +1216,14 @@ impl WlrLayerShellHandler for App {
     }
 
     fn new_layer_surface(&mut self, surface: WlrLayerSurface, output: Option<WlOutput>, _layer: Layer, namespace: String) {
+        self.wake();
         let out = output.as_ref().and_then(Output::from_resource).unwrap_or_else(|| self.output.clone());
         let mut map = layer_map_for_output(&out);
         let _ = map.map_layer(&LayerSurface::new(surface, namespace));
     }
 
     fn layer_destroyed(&mut self, surface: WlrLayerSurface) {
+        self.wake();
         let mut map = layer_map_for_output(&self.output);
         let found = map.layers().find(|l| l.layer_surface() == &surface).cloned();
         if let Some(l) = found {
@@ -1218,6 +1239,7 @@ impl SessionLockHandler for App {
     }
 
     fn lock(&mut self, confirmation: SessionLocker) {
+        self.wake();
         // From now on nothing of the session is drawn or receives input. Confirmed at once: the screen is already only the lock's.
         self.locked = true;
         confirmation.lock();
@@ -1228,6 +1250,7 @@ impl SessionLockHandler for App {
     }
 
     fn unlock(&mut self) {
+        self.wake();
         self.locked = false;
         self.lock_surface = None;
     }
