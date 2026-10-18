@@ -8,7 +8,7 @@
 //!     Super+Q = none                # removes a built-in binding
 //!
 //! Actions: start, clipboard, sarina, calendar, fylgja N, close, maximize, restore, fullscreen, minimize, snap-left, snap-right,
-//! next-window, prev-window, workspace N, move-to-workspace N, next-workspace, prev-workspace, lock, quit, exec COMMAND, none. Modifiers: Super (or Logo, Win), Ctrl, Alt, Shift.
+//! next-window, prev-window, toggle-float, workspace N, move-to-workspace N, next-workspace, prev-workspace, lock, quit, exec COMMAND, none. Modifiers: Super (or Logo, Win), Ctrl, Alt, Shift.
 
 use smithay::input::keyboard::{keysyms, xkb, ModifiersState};
 
@@ -33,6 +33,8 @@ pub enum Action {
     CommitSwitcher,
     /// Escape while the switcher is open.
     CancelSwitcher,
+    /// Float or tile the focused window on a tiling workspace.
+    ToggleFloat,
     Workspace(usize),
     MoveToWorkspace(usize),
     WorkspaceNext,
@@ -83,6 +85,7 @@ pub fn parse_action(s: &str) -> Option<Action> {
         "snap-right" => Action::SnapRight,
         "next-window" => Action::NextWindow,
         "prev-window" => Action::PrevWindow,
+        "toggle-float" => Action::ToggleFloat,
         "workspace" => Action::Workspace(rest.parse::<usize>().ok()?.checked_sub(1)?),
         "move-to-workspace" => Action::MoveToWorkspace(rest.parse::<usize>().ok()?.checked_sub(1)?),
         "next-workspace" => Action::WorkspaceNext,
@@ -152,6 +155,7 @@ pub fn defaults() -> Vec<Binding> {
         b("Super+Right", Action::SnapRight),
         b("Alt+Tab", Action::NextWindow),
         b("Alt+Shift+Tab", Action::PrevWindow),
+        b("Super+T", Action::ToggleFloat),
         b("Super+Ctrl+Left", Action::WorkspacePrev),
         b("Super+Ctrl+Right", Action::WorkspaceNext),
         b("Super+Ctrl+1", Action::Workspace(0)),

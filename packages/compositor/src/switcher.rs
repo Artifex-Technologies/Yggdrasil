@@ -90,3 +90,45 @@ mod tests {
         assert!(visible(20, 10).contains(&10));
     }
 }
+
+
+pub const CHOOSER_W: i32 = 270;
+pub const CHOOSER_H: i32 = 130;
+
+pub fn chooser_size() -> (i32, i32) {
+    (PAD * 2 + 2 * CHOOSER_W + GAP, PAD * 2 + CHOOSER_H + 34)
+}
+
+/// The question shown when an empty workspace is opened and the default profile is "ask": two cards, one chosen.
+pub fn make_chooser(fonts: &Fonts, workspace: usize, selected: usize, accent: (u8, u8, u8)) -> MemoryRenderBuffer {
+    let (w, h) = chooser_size();
+    let mut pix = Pixmap::new(w as u32, h as u32).expect("chooser size");
+    fill_rounded(&mut pix, 0.0, 0.0, w as f32, h as f32, 18.0, (18, 18, 26, 240));
+    fill_rounded(&mut pix, 0.0, 0.0, w as f32, 1.0, 0.0, (255, 255, 255, 20));
+    draw_text(&mut pix, &fonts.bold, 15.0, PAD as f32, 24.0, (240, 240, 248, 255), &format!("Workspace {}: how should windows behave here?", workspace + 1));
+    let cards = [("Standard", "Windows float. You move and size them."), ("Tiling", "Windows tile on their own, side by side.")];
+    for (i, (name, about)) in cards.iter().enumerate() {
+        let x = (PAD + i as i32 * (CHOOSER_W + GAP)) as f32;
+        let y = (PAD + 22) as f32;
+        let chosen = i == selected;
+        fill_rounded(&mut pix, x, y, CHOOSER_W as f32, CHOOSER_H as f32, 12.0, if chosen { (accent.0, accent.1, accent.2, 255) } else { (40, 40, 54, 255) });
+        draw_text(&mut pix, &fonts.bold, 17.0, x + 16.0, y + 30.0, (255, 255, 255, 255), name);
+        draw_text(&mut pix, &fonts.regular, 12.0, x + 16.0, y + 58.0, (255, 255, 255, if chosen { 230 } else { 150 }), &clip(fonts, 12.0, about, CHOOSER_W as f32 - 32.0));
+        // a little picture of the layout
+        let (px, py) = (x + 16.0, y + 76.0);
+        if i == 0 {
+            fill_rounded(&mut pix, px, py + 4.0, 60.0, 36.0, 4.0, (255, 255, 255, 120));
+            fill_rounded(&mut pix, px + 34.0, py, 60.0, 36.0, 4.0, (255, 255, 255, 190));
+        } else {
+            fill_rounded(&mut pix, px, py, 44.0, 40.0, 4.0, (255, 255, 255, 190));
+            fill_rounded(&mut pix, px + 48.0, py, 44.0, 18.0, 4.0, (255, 255, 255, 190));
+            fill_rounded(&mut pix, px + 48.0, py + 22.0, 44.0, 18.0, 4.0, (255, 255, 255, 190));
+        }
+    }
+    draw_text(&mut pix, &fonts.regular, 11.0, PAD as f32, h as f32 - 12.0, (160, 160, 176, 255), "Left / Right to choose, Enter to confirm, Escape for standard");
+    let mut data = Vec::with_capacity((w * h * 4) as usize);
+    for p in pix.data().chunks_exact(4) {
+        data.extend_from_slice(&[p[2], p[1], p[0], p[3]]);
+    }
+    MemoryRenderBuffer::from_slice(&data, Fourcc::Argb8888, (w, h), 1, Transform::Normal, None)
+}

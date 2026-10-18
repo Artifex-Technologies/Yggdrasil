@@ -13,6 +13,7 @@ mod draw;
 mod grabs;
 mod shortcuts;
 mod switcher;
+mod tiling;
 mod state;
 mod toplevels;
 
@@ -91,6 +92,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // workspaces.conf and shortcuts.conf are read again when they change (Settings writes them)
+    event_loop.handle().insert_source(smithay::reexports::calloop::timer::Timer::from_duration(std::time::Duration::from_secs(2)), |_, _, app| {
+        app.reload_config();
+        smithay::reexports::calloop::timer::TimeoutAction::ToDuration(std::time::Duration::from_secs(2))
+    })?;
     let mut damage_tracker = OutputDamageTracker::from_output(&output);
     let start = std::time::Instant::now();
     let mut dh2 = dh.clone();

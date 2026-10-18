@@ -35,6 +35,7 @@ use smithay::utils::Rectangle;
 use crate::grabs::{MoveGrab, ResizeGrab};
 use crate::shortcuts::{self, Action, Binding, Mods};
 use crate::switcher;
+use crate::tiling::{self, Profile};
 use crate::toplevels::Toplevels;
 use crate::deco::{self, Bar, Hit, Key as BarKey};
 use crate::draw::Fonts;
@@ -106,18 +107,30 @@ pub struct App {
     pub decoration_state: XdgDecorationState,
     /// Windows, most recently used first (for the switcher).
     focus_order: Vec<WlSurface>,
+    /// Windows in the order they were opened (tiling follows it).
+    opened_at: Vec<WlSurface>,
     /// The Alt+Tab switcher while it is open: the windows in order and which one is chosen.
     switcher: Option<(Vec<WlSurface>, usize)>,
     /// The modifiers held down to keep the switcher open (those of the Tab binding): letting go of one picks the window.
     switcher_hold: Mods,
     switcher_art: Option<((Vec<(String, String)>, usize), MemoryRenderBuffer)>,
     current_ws: usize,
+    /// The workspace profiles from workspaces.conf, and what was chosen for the workspaces that ask.
+    ws_conf: tiling::Conf,
+    asked: [Option<Profile>; WORKSPACES],
+    /// Windows the user set floating on a tiling workspace.
+    floating: Vec<WlSurface>,
+    /// The profile question: (workspace, chosen card), and its picture.
+    chooser: Option<(usize, usize)>,
+    chooser_art: Option<((usize, usize), MemoryRenderBuffer)>,
+    asked_at_start: bool,
+    conf_times: (Option<std::time::SystemTime>, Option<std::time::SystemTime>),
     /// Windows on other workspaces: where they were, and which workspace they are on.
     parked: Vec<(Window, usize, Point<i32, Logical>)>,
 }
 
 /// How many workspaces there are.
-pub const WORKSPACES: usize = 4;
+pub const WORKSPACES: usize = tiling::WORKSPACES;
 
 #[derive(Default)]
 pub struct ClientState {
@@ -180,10 +193,18 @@ impl App {
             last_click: None,
             decoration_state: XdgDecorationState::new::<Self>(dh),
             focus_order: vec![],
+            opened_at: vec![],
             switcher: None,
             switcher_hold: Mods::default(),
             switcher_art: None,
             current_ws: 0,
+            ws_conf: tiling::parse(&std::fs::read_to_string(tiling::config_path()).unwrap_or_default()),
+            asked: [None; WORKSPACES],
+            floating: vec![],
+            chooser: None,
+            chooser_art: None,
+            asked_at_start: false,
+            conf_times: (None, None),
             parked: vec![],
         }
     }
@@ -226,6 +247,7 @@ impl App {
         if let Some(r) = back {
             self.space.map_element(window, r.loc, false);
         }
+        self.retile();
     }
 
     pub fn toplevel_of(&self, surface: &WlSurface) -> Option<ToplevelSurface> {
@@ -242,6 +264,7 @@ impl App {
             let w = self.minimized.remove(i);
             let at = self.saved.iter().find(|(s, _)| s == surface).map(|(_, r)| r.loc).unwrap_or((80, 80).into());
             self.space.map_element(w, at, true);
+            self.retile();
         }
         let Some(window) = self.space.elements().find(|w| w.toplevel().map(|t| t.wl_surface() == surface).unwrap_or(false)).cloned() else { return };
         self.space.raise_element(&window, true);
@@ -269,6 +292,7 @@ impl App {
         self.saved.push((surface.clone(), Rectangle::new(loc, window.geometry().size)));
         self.space.unmap_elem(&window);
         self.minimized.push(window);
+        self.retile();
         // the keyboard goes to the window now on top
         let next = self.space.elements().last().and_then(|w| w.toplevel().map(|t| t.wl_surface().clone()));
         let kb = self.keyboard.clone();
@@ -297,6 +321,13 @@ impl App {
     fn key_filter(&mut self, code: u32, state: KeyState, mods: &ModifiersState, sym: u32) -> FilterResult<Action> {
         if self.locked {
             return FilterResult::Forward;
+        }
+        if self.chooser.is_some() {
+            // the profile question takes every key while it is open
+            if state == KeyState::Pressed {
+                self.chooser_key(sym);
+            }
+            return FilterResult::Intercept(Action::None);
         }
         if self.switcher.is_some() {
             // while the switcher is open: Tab moves on (below), Escape cancels, letting go of Alt picks
@@ -427,6 +458,11 @@ impl App {
                     }
                 }
             }
+            Action::ToggleFloat => {
+                if let Some(s) = current {
+                    self.toggle_floating(&s);
+                }
+            }
             Action::Workspace(n) => self.switch_workspace(n),
             Action::WorkspaceNext => self.switch_workspace((self.current_ws + 1) % WORKSPACES),
             Action::WorkspacePrev => self.switch_workspace((self.current_ws + WORKSPACES - 1) % WORKSPACES),
@@ -435,6 +471,96 @@ impl App {
                     self.move_to_workspace(&s, n);
                 }
             }
+        }
+    }
+
+    /// The profile of a workspace: set in workspaces.conf, or chosen when it was opened; None while it still has to be asked.
+    fn ws_profile(&self, ws: usize) -> Option<Profile> {
+        self.ws_conf.profile_of(ws).or(self.asked[ws])
+    }
+
+    /// Lay the windows of a tiling workspace out again (does nothing on a standard one).
+    pub fn retile(&mut self) {
+        if self.ws_profile(self.current_ws) != Some(Profile::Tiling) {
+            return;
+        }
+        let zone = layer_map_for_output(&self.output).non_exclusive_zone();
+        // windows in the order they were opened; maximized, full screen and floating ones keep out of it
+        let mut tiled: Vec<Window> = self
+            .space
+            .elements()
+            .filter(|w| {
+                let Some(t) = w.toplevel() else { return false };
+                let st = t.current_state().states;
+                !self.floating.contains(t.wl_surface()) && !st.contains(xdg_toplevel::State::Maximized) && !st.contains(xdg_toplevel::State::Fullscreen)
+            })
+            .cloned()
+            .collect();
+        tiled.sort_by_key(|w| w.toplevel().and_then(|t| self.opened_at.iter().position(|s| s == t.wl_surface())).unwrap_or(usize::MAX));
+        for (w, r) in tiled.iter().zip(tiling::dwindle(zone, tiled.len(), 8)) {
+            let Some(t) = w.toplevel().cloned() else { continue };
+            let mut r = r;
+            if self.decorated.contains(t.wl_surface()) {
+                r.loc.y += deco::BAR_H;
+                r.size.h = (r.size.h - deco::BAR_H).max(1);
+            }
+            t.with_pending_state(|s| s.size = Some(r.size));
+            t.send_pending_configure();
+            self.space.map_element(w.clone(), r.loc, false);
+        }
+    }
+
+    /// Ask for the profile of the workspace now showing, when it is empty and its profile is "ask".
+    pub fn maybe_ask(&mut self) {
+        if self.ws_profile(self.current_ws).is_none() && self.space.elements().next().is_none() && self.chooser.is_none() {
+            self.chooser = Some((self.current_ws, 0));
+        }
+    }
+
+    /// A key while the profile question is open.
+    fn chooser_key(&mut self, sym: u32) {
+        use smithay::input::keyboard::keysyms as k;
+        let Some((ws, sel)) = self.chooser else { return };
+        match sym {
+            k::KEY_Left | k::KEY_Up | k::KEY_1 => self.chooser = Some((ws, 0)),
+            k::KEY_Right | k::KEY_Down | k::KEY_Tab | k::KEY_2 => self.chooser = Some((ws, 1)),
+            k::KEY_Return | k::KEY_KP_Enter => {
+                self.asked[ws] = Some(if sel == 1 { Profile::Tiling } else { Profile::Standard });
+                self.chooser = None;
+                self.retile();
+            }
+            k::KEY_Escape => {
+                self.asked[ws] = Some(Profile::Standard);
+                self.chooser = None;
+            }
+            _ => {}
+        }
+    }
+
+    /// Float or tile one window on a tiling workspace (Super+T).
+    pub fn toggle_floating(&mut self, surface: &WlSurface) {
+        if let Some(i) = self.floating.iter().position(|s| s == surface) {
+            self.floating.remove(i);
+        } else {
+            self.floating.push(surface.clone());
+        }
+        self.retile();
+    }
+
+    /// Read workspaces.conf and shortcuts.conf again when they changed (Settings writes the first).
+    pub fn reload_config(&mut self) {
+        let mtime = |p: std::path::PathBuf| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+        let (ws_t, sc_t) = (mtime(tiling::config_path()), mtime(shortcuts::config_path()));
+        if ws_t != self.conf_times.0 {
+            self.conf_times.0 = ws_t;
+            self.ws_conf = tiling::parse(&std::fs::read_to_string(tiling::config_path()).unwrap_or_default());
+            self.retile();
+            self.maybe_ask();
+        }
+        if sc_t != self.conf_times.1 {
+            self.conf_times.1 = sc_t;
+            let (b, _) = shortcuts::load(&std::fs::read_to_string(shortcuts::config_path()).unwrap_or_default());
+            self.bindings = b;
         }
     }
 
@@ -496,6 +622,12 @@ impl App {
         }
         self.parked = still;
         self.current_ws = n;
+        // an empty workspace asks again (when its profile is "ask")
+        if self.space.elements().next().is_none() {
+            self.asked[n] = None;
+        }
+        self.retile();
+        self.maybe_ask();
         let next = self.focus_order.iter().find(|s| self.space.elements().any(|w| w.toplevel().map(|t| t.wl_surface() == *s).unwrap_or(false))).cloned();
         let kb = self.keyboard.clone();
         kb.set_focus(self, next, SERIAL_COUNTER.next_serial());
@@ -511,6 +643,7 @@ impl App {
         let loc = self.space.element_location(&window).unwrap_or_default();
         self.space.unmap_elem(&window);
         self.parked.push((window, n, loc));
+        self.retile();
         let next = self.focus_order.iter().find(|s| *s != surface && self.space.elements().any(|w| w.toplevel().map(|t| t.wl_surface() == *s).unwrap_or(false))).cloned();
         let kb = self.keyboard.clone();
         kb.set_focus(self, next, SERIAL_COUNTER.next_serial());
@@ -629,6 +762,24 @@ impl App {
                 }
             }
         };
+        if !self.asked_at_start {
+            self.asked_at_start = true;
+            self.maybe_ask();
+        }
+        if let Some((ws, sel)) = self.chooser {
+            if self.chooser_art.as_ref().map(|(k, _)| *k != (ws, sel)).unwrap_or(true) {
+                if let Some(f) = &self.fonts {
+                    self.chooser_art = Some(((ws, sel), switcher::make_chooser(f, ws, sel, (124, 84, 214))));
+                }
+            }
+            if let (Some((_, buf)), Some(mode)) = (&self.chooser_art, self.output.current_mode()) {
+                let (w, h) = switcher::chooser_size();
+                let at = ((mode.size.w - w) as f64 / 2.0, (mode.size.h - h) as f64 / 2.0);
+                if let Ok(el) = MemoryRenderBufferRenderElement::from_buffer(renderer, at, buf, None, None, None, Kind::Unspecified) {
+                    out.push(Elem::from(el));
+                }
+            }
+        }
         if let Some((list, index)) = self.switcher.clone() {
             let entries: Vec<(String, String)> = list.iter().map(|s| with_states(s, |st| st.data_map.get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>().map(|d| { let d = d.lock().unwrap(); (d.title.clone().unwrap_or_default(), d.app_id.clone().unwrap_or_default()) }).unwrap_or_default())).collect();
             if self.switcher_art.as_ref().map(|(k, _)| k != &(entries.clone(), index)).unwrap_or(true) {
@@ -683,6 +834,7 @@ impl App {
     /// The window was resized: lay the panels out again and resize the lock surface.
     pub fn output_resized(&mut self) {
         layer_map_for_output(&self.output).arrange();
+        self.retile();
         if let (Some(ls), Some(mode)) = (&self.lock_surface, self.output.current_mode()) {
             ls.with_pending_state(|s| s.size = Some((mode.size.w as u32, mode.size.h as u32).into()));
             ls.send_configure();
@@ -937,7 +1089,9 @@ impl XdgShellHandler for App {
         if self.decorate_all {
             self.decorated.push(surface.wl_surface().clone());
         }
+        self.opened_at.push(surface.wl_surface().clone());
         self.foreign_added(&window);
+        self.retile();
         let serial = SERIAL_COUNTER.next_serial();
         let kb = self.keyboard.clone();
         kb.set_focus(self, Some(surface.wl_surface().clone()), serial);
@@ -948,6 +1102,7 @@ impl XdgShellHandler for App {
         self.foreign_removed(surface.wl_surface());
         self.decorated.retain(|s| s != surface.wl_surface());
         self.focus_order.retain(|s| s != surface.wl_surface());
+        self.opened_at.retain(|s| s != surface.wl_surface());
         self.parked.retain(|(w, _, _)| w.toplevel().map(|t| t != &surface).unwrap_or(true));
         if let Some((list, i)) = &mut self.switcher {
             list.retain(|s| s != surface.wl_surface());
@@ -964,6 +1119,8 @@ impl XdgShellHandler for App {
         let serial = SERIAL_COUNTER.next_serial();
         let kb = self.keyboard.clone();
         kb.set_focus(self, next, serial);
+        self.floating.retain(|s| s != surface.wl_surface());
+        self.retile();
     }
 
     fn move_request(&mut self, surface: ToplevelSurface, _seat: wl_seat::WlSeat, serial: Serial) {
