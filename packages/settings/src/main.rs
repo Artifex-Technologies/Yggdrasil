@@ -1735,11 +1735,14 @@ impl App {
             }
         });
         ui.add_space(8.0);
+        // Labyrinth's distress password helper: the row only exists where it is installed (other systems using this desktop have none)
+        if std::path::Path::new("/usr/bin/labyrinth-distress").exists() {
         ui::group(ui, pal, Some("Protection"), |ui| {
             if ui::nav_row(ui, pal, true, "Distress password", Some("A second password that quietly does something else when it is typed. Needs your password to open"), |_| {}) {
                 open = Some(SecSub::Distress);
             }
         });
+        }
         if let Some(s) = open {
             self.sec_sub = s;
             self.logins = None;

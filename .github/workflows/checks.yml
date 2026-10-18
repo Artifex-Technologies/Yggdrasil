@@ -1,0 +1,32 @@
+# Tests and audits every crate on each push and pull request.
+name: checks
+on:
+  push:
+  pull_request:
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Tools
+        run: pacman -Syu --noconfirm --needed git rust base-devel pkgconf wayland libxkbcommon fontconfig pam dbus libxcrypt libinput mesa
+      - uses: actions/checkout@v4
+      - name: Test and audit every crate
+        run: |
+          cargo install cargo-audit --locked
+          for d in packages/*/; do
+            [ -f "$d/Cargo.toml" ] || continue
+            (cd "$d" && cargo test --quiet) || exit 1
+            (cd "$d" && ~/.cargo/bin/cargo-audit audit -D warnings --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2026-0192 --ignore RUSTSEC-2026-0370 --ignore RUSTSEC-2026-0371 --ignore RUSTSEC-2026-0372) || exit 1
+          done
+  recipes:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Tools
+        run: pacman -Syu --noconfirm --needed git base-devel
+      - uses: actions/checkout@v4
+      - name: Package recipes parse
+        run: |
+          useradd -m ci && chown -R ci "$GITHUB_WORKSPACE"
+          su ci -c "cd '$GITHUB_WORKSPACE' && for d in packages/pkgbuilds/*/; do (cd \$d && makepkg --printsrcinfo >/dev/null) || exit 1; done"

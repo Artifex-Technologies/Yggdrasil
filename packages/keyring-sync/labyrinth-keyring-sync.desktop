@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Keyring check
+Comment=Asks one question if the keyring and the login password have drifted apart; does nothing otherwise
+Exec=/usr/bin/labyrinth-keyring-sync
+NoDisplay=true
+X-KDE-autostart-phase=2
