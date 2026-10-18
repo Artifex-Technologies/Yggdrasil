@@ -224,7 +224,7 @@ impl State {
         let has_extra = self.cfg.enabled && self.cfg.extra != "none";
         if self.confirming_save {
             ui.add_space(8.0);
-            ui::group(ui, pal, Some("Save the second section?"), |ui| {
+            ui::group(ui, pal, Some("Save section 2?"), |ui| {
                 ui.add_space(6.0);
                 ui.label(RichText::new(self.warning()).size(13.0).color(pal.red));
                 ui.add_space(6.0);
