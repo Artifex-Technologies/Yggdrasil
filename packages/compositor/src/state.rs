@@ -650,7 +650,7 @@ impl App {
         }
         let loc = self.space.element_location(w)?;
         let size = w.geometry().size;
-        Some(Rectangle::new((loc.x + size.w - deco::PILL_W - deco::MARGIN, loc.y + deco::MARGIN).into(), (deco::PILL_W, deco::PILL_H).into()))
+        Some(Rectangle::new((loc.x + size.w - deco::PILL_W - deco::MARGIN_X, loc.y + deco::MARGIN_Y).into(), (deco::PILL_W, deco::PILL_H).into()))
     }
 
     /// The window controls under the point (looking from the top window down; a window in front hides the controls of one behind it).
