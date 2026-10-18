@@ -1,0 +1,19 @@
+[package]
+name = "labyrinth-compositor"
+version = "0.1.0"
+edition = "2021"
+description = "Labyrinth's own Wayland compositor (Smithay): the replacement for KWin. Runs nested in a window while it is built."
+license = "MIT"
+
+[[bin]]
+name = "labyrinth-compositor"
+path = "src/main.rs"
+
+[dependencies]
+smithay = { version = "0.7", default-features = false, features = ["backend_winit", "backend_egl", "renderer_gl", "desktop", "wayland_frontend", "use_system_lib"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+opt-level = 2
+lto = "thin"

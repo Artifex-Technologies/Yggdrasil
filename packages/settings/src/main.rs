@@ -607,7 +607,7 @@ impl App {
                 let _ = std::fs::create_dir_all(&dir);
                 for (id, _, _) in DESIGNS {
                     let out = dir.join(format!("{id}.png"));
-                    let _ = std::process::Command::new("labyrinth-lock").args(["--preview", id, "--size", "640x360", "--typed", "6", "--out"]).arg(&out).status();
+                    let _ = std::process::Command::new("labyrinth-lock").args(["--preview", id, "--size", "1920x1080", "--typed", "6", "--out"]).arg(&out).status();
                     ctx2.forget_image(&format!("file://{}", out.display()));
                 }
                 ctx2.request_repaint();
