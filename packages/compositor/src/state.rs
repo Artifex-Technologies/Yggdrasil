@@ -1240,11 +1240,16 @@ delegate_idle_notify!(App);
 
 impl XdgDecorationHandler for App {
     fn new_decoration(&mut self, toplevel: ToplevelSurface) {
+        // until the program says what it wants, a bar is the safe answer (a program that draws its own says so at once)
         self.use_server_side(&toplevel);
     }
-    fn request_mode(&mut self, toplevel: ToplevelSurface, _mode: DecoMode) {
-        // Programs that ask for a bar of their own are still given ours: the look stays the same everywhere.
-        self.use_server_side(&toplevel);
+    fn request_mode(&mut self, toplevel: ToplevelSurface, mode: DecoMode) {
+        // What the program asks for is what it gets: Settings, Minos and the Marketplace ask for client-side (they draw their own
+        // bar) and must not get a second one; Qt programs ask for server-side and get ours.
+        match mode {
+            DecoMode::ClientSide => self.use_client_side(&toplevel),
+            _ => self.use_server_side(&toplevel),
+        }
     }
     fn unset_mode(&mut self, toplevel: ToplevelSurface) {
         self.use_server_side(&toplevel);
@@ -1253,6 +1258,14 @@ impl XdgDecorationHandler for App {
 delegate_xdg_decoration!(App);
 
 impl App {
+    fn use_client_side(&mut self, t: &ToplevelSurface) {
+        t.with_pending_state(|s| s.decoration_mode = Some(DecoMode::ClientSide));
+        self.decorated.retain(|s| s != t.wl_surface());
+        self.bars.remove(t.wl_surface());
+        t.send_pending_configure();
+        self.retile();
+    }
+
     fn use_server_side(&mut self, t: &ToplevelSurface) {
         t.with_pending_state(|s| s.decoration_mode = Some(DecoMode::ServerSide));
         if !self.decorated.contains(t.wl_surface()) {
