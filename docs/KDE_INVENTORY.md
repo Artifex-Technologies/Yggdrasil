@@ -79,3 +79,13 @@ a window came from: activate, minimize and destroy go through it. KWin's own pat
 Still tied to KDE, and what happens elsewhere: desktops pills and the notification of "current desktop" (KWin D-Bus: empty elsewhere); the screen layout (kscreen-doctor: falls back to
 1920x1080 for popup sizing); the Super key (kglobalaccel signal: nothing arrives, use a compositor binding that runs `busctl --user call org.labyrinth.Panel /Panel org.labyrinth.Panel ToggleStart`);
 wallpaper (use `own_wallpaper`); tiling and the screen-key script (KWin scripts). Not tried: Sway, labwc, several outputs, fractional scale elsewhere.
+
+## Unused kded6 modules switched off (2026-10-18)
+Thirteen modules no longer load (`autoload=false` in `~/.config/kded6rc`, unloaded at once; undo by deleting their `[Module-...]` groups): `appmenu`, `baloosearchmodule`,
+`browserintegrationflatpakintegrator`, `browserintegrationreminder`, `desktopnotifier`, `donationmessage`, `kameleon`, `kded_accounts`, `ktimezoned`,
+`lookandfeelautoswitcher`, `remotenotifier`, `smbwatcher`, `wpad_detector`. Twelve stay because something uses them: `statusnotifierwatcher` (tray),
+`gtkconfig` and `plasma_accentcolor_service` (theme and accent), `plasma_session_shortcuts` (Super key), `mprisservice` and `audioshortcutsservice` (media keys),
+`bluedevil`, `networkmanagement`, `devicenotifications`, `freespacenotifier`, `oom_notifier`, `trashdirnotify`, `screenreader` (accessibility). The purple
+wallpaper is not Plasma's: it is `profile/airootfs/usr/share/labyrinth/wallpapers/labyrinth-purple.png` (made by `scripts/gen-wallpaper.py`), set through
+`~/.config/labyrinth/wallpaper` and drawn by the panel; a copy is in `~/.local/share/labyrinth/wallpapers/`.
+
