@@ -1461,7 +1461,6 @@ impl App {
     fn page_power(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         let Some(p) = self.data.power.clone() else { return loading(ui) };
         let mut profile: Option<String> = None;
-        let mut timer: Option<(&'static str, &'static str, i64)> = None;
         if !p.profiles.is_empty() {
             ui::group(ui, pal, Some("Power mode"), |ui| {
                 let labels: Vec<String> = p.profiles.iter().map(|x| match x.as_str() { "performance" => "Performance".into(), "balanced" => "Balanced".into(), "power-saver" => "Power saver".into(), o => o.to_string() }).collect();
@@ -1474,21 +1473,53 @@ impl App {
                 });
             });
         }
-        let choices: [(i64, &str); 8] = [(0, "Never"), (1, "1 minute"), (2, "2 minutes"), (5, "5 minutes"), (10, "10 minutes"), (15, "15 minutes"), (30, "30 minutes"), (60, "1 hour")];
+        let choices: [(i64, &str); 10] = [(0, "Never"), (1, "1 minute"), (2, "2 minutes"), (5, "5 minutes"), (10, "10 minutes"), (15, "15 minutes"), (30, "30 minutes"), (60, "1 hour"), (120, "2 hours"), (240, "4 hours")];
         let label = |m: i64| choices.iter().find(|c| c.0 == m).map(|c| c.1.to_string()).unwrap_or(format!("{m} minutes"));
+        let mut idle = p.idle.clone();
+        let mut idle_changed = false;
         ui::group(ui, pal, Some("When idle"), |ui| {
-            for (first, title, group, key, cur) in [(true, "Turn off the screen after", "Display", "TurnOffDisplayIdleTimeoutSec", p.screen_off_min), (false, "Lock the screen after", "Lock", "Timeout", p.lock_min), (false, "Sleep after", "SuspendAndShutdown", "AutoSuspendIdleTimeoutSec", p.sleep_min)] {
-                ui::row(ui, pal, first, title, None, |ui| {
-                    egui::ComboBox::from_id_salt(key).selected_text(label(cur)).show_ui(ui, |ui| {
-                        for (m, l) in choices {
-                            if ui.selectable_label(m == cur, l).clicked() {
-                                timer = Some((group, key, m));
+            let rows: [(&str, &str, i64, bool); 5] = [
+                ("dim", "Dim the screen after", p.idle.dim, true),
+                ("off", "Turn off the screen after", p.idle.screen_off, true),
+                ("lock", "Lock the screen after", p.idle.lock, true),
+                ("sleep", "Sleep after", p.idle.sleep, p.idle.can_sleep),
+                ("hib", "Hibernate after", p.idle.hibernate, p.idle.can_hibernate),
+            ];
+            for (n, (key, title, cur, ok)) in rows.into_iter().enumerate() {
+                let note = if p.idle.sleep_note.is_empty() { "Not available on this computer".to_string() } else { p.idle.sleep_note.clone() };
+                let sub = if ok { None } else { Some(note.as_str()) };
+                ui::row(ui, pal, n == 0, title, sub, |ui| {
+                    ui.add_enabled_ui(ok, |ui| {
+                        egui::ComboBox::from_id_salt(key).selected_text(if ok { label(cur) } else { "Not available".to_string() }).show_ui(ui, |ui| {
+                            for (m, l) in choices {
+                                if ui.selectable_label(m == cur, l).clicked() {
+                                    match key {
+                                        "dim" => idle.dim = m,
+                                        "off" => idle.screen_off = m,
+                                        "lock" => idle.lock = m,
+                                        "sleep" => idle.sleep = m,
+                                        _ => idle.hibernate = m,
+                                    }
+                                    idle_changed = true;
+                                }
                             }
-                        }
+                        });
                     });
                 });
             }
+            ui::row(ui, pal, false, "Brightness while dimmed", Some("The screen is dimmed by drawing over it, on every monitor. It comes back at the first key or mouse move. Nothing dims while a video plays"), |ui| {
+                let mut v = idle.dim_level as f32;
+                let r = ui::slider_range(ui, pal, &mut v, 10.0..=90.0, " %");
+                // saved when the slider is let go (or a click on the track), not on every pixel of a drag
+                if (r.drag_stopped() || (r.changed() && !r.dragged())) && (v as i64) != idle.dim_level {
+                    idle.dim_level = v as i64;
+                    idle_changed = true;
+                }
+            });
         });
+        if idle_changed {
+            self.change(ctx, move || sys::write_idle(&idle));
+        }
         // Developer options: limits for each power mode
         let mut limit: Option<(String, &'static str, Option<i64>)> = None;
         if let Some(l) = p.limits.clone() {
@@ -1530,30 +1561,6 @@ impl App {
         }
         if let Some(name) = profile {
             self.change(ctx, move || sys::act("powerprofilesctl", &["set", &name]));
-        }
-        if let Some(("Lock", _, minutes)) = timer {
-            // the screen locker's own setting (kscreenlockerrc), not PowerDevil's
-            self.change(ctx, move || {
-                sys::act("kwriteconfig6", &["--file", "kscreenlockerrc", "--group", "Daemon", "--key", "Autolock", if minutes == 0 { "false" } else { "true" }])?;
-                if minutes > 0 {
-                    sys::act("kwriteconfig6", &["--file", "kscreenlockerrc", "--group", "Daemon", "--key", "Timeout", &minutes.to_string()])?;
-                }
-                Ok(())
-            });
-        } else if let Some((group, key, minutes)) = timer {
-            self.change(ctx, move || {
-                let (when, flag) = if minutes == 0 { ("-1".to_string(), "false") } else { ((minutes * 60).to_string(), "true") };
-                let enable_key = if group == "Display" { "TurnOffDisplayWhenIdle" } else { "AutoSuspendAction" };
-                sys::act("kwriteconfig6", &["--file", "powerdevilrc", "--group", "AC", "--group", group, "--key", key, "--", &when])?;
-                if group == "Display" {
-                    sys::act("kwriteconfig6", &["--file", "powerdevilrc", "--group", "AC", "--group", group, "--key", enable_key, flag])?;
-                } else {
-                    // 1 = sleep, 0 = do nothing
-                    sys::act("kwriteconfig6", &["--file", "powerdevilrc", "--group", "AC", "--group", group, "--key", enable_key, if minutes == 0 { "0" } else { "1" }])?;
-                }
-                let _ = sys::act("qdbus6", &["org.kde.Solid.PowerManagement", "/org/kde/Solid/PowerManagement", "org.kde.Solid.PowerManagement.reparseConfiguration"]);
-                Ok(())
-            });
         }
     }
 

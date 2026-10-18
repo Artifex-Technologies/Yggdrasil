@@ -14,6 +14,7 @@
 //!   display_off = 900
 //!   suspend = 0
 
+mod dim;
 mod policy;
 
 use std::collections::HashMap;
@@ -22,7 +23,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use policy::{blocked_by_inhibitors, due_at, marks, Config, Step};
-use wayland_client::globals::{registry_queue_init, GlobalListContents};
+use wayland_client::globals::{registry_queue_init, GlobalList, GlobalListContents};
 use wayland_client::protocol::{wl_registry, wl_seat};
 use wayland_client::{delegate_noop, Connection, Dispatch, QueueHandle};
 use wayland_protocols::ext::idle_notify::v1::client::{
@@ -81,8 +82,11 @@ fn context() -> String {
     format!("locked={} inhibitors=[{}]", screensaver_active(), who.join(", "))
 }
 
-struct App {
+pub struct App {
     conf: Config,
+    dimmer: Option<dim::Dimmer>,
+    globals: GlobalList,
+    qh: QueueHandle<App>,
     /// The largest mark that has fired since the user was last active, and when.
     longest: Option<(u32, Instant)>,
     done: HashMap<Step, bool>,
@@ -106,6 +110,9 @@ impl Dispatch<ExtIdleNotificationV1, u32> for App {
             }
             ext_idle_notification_v1::Event::Resumed => {
                 // every mark reports its own resume; say it once, for the longest one that had fired
+                if let Some(d) = app.dimmer.as_mut() {
+                    d.hide();
+                }
                 if let Some((m, _)) = app.longest.take() {
                     log(&format!("active again (had been idle {}s or more)  {}", m, context()));
                     app.done.clear();
@@ -142,13 +149,25 @@ impl App {
             Step::Suspend => {
                 run("systemctl", &["suspend"]);
             }
-            Step::Dim => log("dim is not built yet"),
+            Step::Hibernate => {
+                run("systemctl", &["hibernate"]);
+            }
+            Step::Dim => match self.dimmer.as_mut() {
+                Some(d) => d.show(&self.globals, &self.qh, dim::alpha_for(self.conf.dim_level)),
+                None => log("cannot dim: the compositor lacks layer-shell or viewporter"),
+            },
         }
     }
 }
 
+fn read_conf() -> (Config, Option<std::time::SystemTime>) {
+    let p = config_path();
+    let m = std::fs::metadata(&p).and_then(|m| m.modified()).ok();
+    (std::fs::read_to_string(&p).map(|t| Config::parse(&t)).unwrap_or_default(), m)
+}
+
 fn main() {
-    let conf = std::fs::read_to_string(config_path()).map(|t| Config::parse(&t)).unwrap_or_default();
+    let (conf, mut conf_time) = read_conf();
     let conn = match Connection::connect_to_env() {
         Ok(c) => c,
         Err(e) => {
@@ -169,14 +188,54 @@ fn main() {
         std::process::exit(1);
     };
     let all = marks(&conf);
-    let _notes: Vec<ExtIdleNotificationV1> = all.iter().map(|m| notifier.get_input_idle_notification(m * 1000, &seat, &qh, *m)).collect();
+    let mut notes: Vec<ExtIdleNotificationV1> = all.iter().map(|m| notifier.get_input_idle_notification(m * 1000, &seat, &qh, *m)).collect();
     log(&format!("started: {} (marks: {:?}s; steps: {:?})", if conf.act { "ACTING" } else { "observing only" }, all, conf.steps().iter().map(|(s, st)| format!("{}@{}", st.name(), s)).collect::<Vec<_>>()));
-    let mut app = App { conf, longest: None, done: HashMap::new() };
+    let dimmer = dim::Dimmer::new(&globals, &qh);
+    if dimmer.is_none() {
+        log("dimming is not available here (needs layer-shell, wp-viewporter, wl_shm)");
+    }
+    let mut app = App { conf, dimmer, globals, qh: qh.clone(), longest: None, done: HashMap::new() };
+    let mut last_check = Instant::now();
     loop {
-        if queue.blocking_dispatch(&mut app).is_err() {
+        if queue.dispatch_pending(&mut app).is_err() || conn.flush().is_err() {
             eprintln!("labyrinth-idle: the Wayland connection ended");
             std::process::exit(1);
         }
-        let _ = Duration::from_secs(0);
+        let animating = app.dimmer.as_ref().map(|d| d.animating() || d.alpha > 0.0 && !d.is_shown()).unwrap_or(false);
+        if let Some(guard) = conn.prepare_read() {
+            use std::os::fd::AsRawFd;
+            let mut pfd = libc::pollfd { fd: guard.connection_fd().as_raw_fd(), events: libc::POLLIN, revents: 0 };
+            let timeout = if animating { 16 } else { 1000 };
+            let n = unsafe { libc::poll(&mut pfd, 1, timeout) };
+            if n > 0 && guard.read().is_err() {
+                eprintln!("labyrinth-idle: the Wayland connection ended");
+                std::process::exit(1);
+            }
+        }
+        if animating {
+            if let Some(d) = app.dimmer.as_mut() {
+                d.tick(&qh);
+            }
+            let _ = conn.flush();
+        }
+        // pick up a changed idle.conf (Settings writes it) without a restart
+        if last_check.elapsed() >= Duration::from_secs(2) {
+            last_check = Instant::now();
+            let (new, t) = read_conf();
+            if t != conf_time {
+                conf_time = t;
+                if new != app.conf {
+                    for n in notes.drain(..) {
+                        n.destroy();
+                    }
+                    let all = marks(&new);
+                    notes = all.iter().map(|m| notifier.get_input_idle_notification(m * 1000, &seat, &qh, *m)).collect();
+                    log(&format!("settings changed: {} (steps: {:?})", if new.act { "ACTING" } else { "observing only" }, new.steps().iter().map(|(s, st)| format!("{}@{}", st.name(), s)).collect::<Vec<_>>()));
+                    app.conf = new;
+                    app.done.clear();
+                    app.longest = None;
+                }
+            }
+        }
     }
 }

@@ -44,8 +44,10 @@ checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
 name = "labyrinth-idle"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "wayland-client",
  "wayland-protocols",
+ "wayland-protocols-wlr",
 ]
 
 [[package]]
@@ -164,6 +166,19 @@ dependencies = [
  "bitflags",
  "wayland-backend",
  "wayland-client",
+ "wayland-scanner",
+]
+
+[[package]]
+name = "wayland-protocols-wlr"
+version = "0.3.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb04e52f7836d7c7976c78ca0250d61e33873c34156a2a1fc9474828ec268234"
+dependencies = [
+ "bitflags",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
  "wayland-scanner",
 ]
 

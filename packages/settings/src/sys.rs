@@ -489,10 +489,8 @@ fn best_image(dir: &std::path::Path) -> Option<std::path::PathBuf> {
 pub struct Power {
     pub profile: String,
     pub profiles: Vec<String>,
-    pub screen_off_min: i64,
-    pub sleep_min: i64,
-    /// Lock the screen after this many idle minutes (0 = never), from kscreenlockerrc.
-    pub lock_min: i64,
+    /// The idle timers, in ~/.config/labyrinth/idle.conf (labyrinth-idle acts on them).
+    pub idle: Idle,
     /// What the hardware allows and what is set for each mode (Developer options only).
     pub limits: Option<PowerLimits>,
 }
@@ -544,21 +542,121 @@ pub fn profiles(text: &str) -> (Vec<String>, String) {
 
 pub fn power() -> Power {
     let (profiles, active) = profiles(&run("powerprofilesctl", &["list"]).unwrap_or_default());
-    let read = |group: &str, key: &str, default: i64| {
-        run("kreadconfig6", &["--file", "powerdevilrc", "--group", "AC", "--group", group, "--key", key, "--default", &default.to_string()])
-            .and_then(|s| s.trim().parse::<i64>().ok())
-            .unwrap_or(default)
-    };
-    let lock = |key: &str, default: &str| run("kreadconfig6", &["--file", "kscreenlockerrc", "--group", "Daemon", "--key", key, "--default", default]).map(|s| s.trim().to_string()).unwrap_or_default();
-    let lock_min = if lock("Autolock", "true") == "false" { 0 } else { lock("Timeout", "5").parse::<i64>().unwrap_or(5) };
     let limits = if labyrinth_conf::PanelConf::load().developer { run("labyrinth-powerlimit", &["get"]).and_then(|s| parse_power_limits(&s)) } else { None };
     Power {
         profile: active,
         profiles,
-        lock_min,
         limits,
-        screen_off_min: read("Display", "TurnOffDisplayIdleTimeoutSec", 600) / 60,
-        sleep_min: read("SuspendAndShutdown", "AutoSuspendIdleTimeoutSec", 0) / 60,
+        idle: read_idle(),
+    }
+}
+
+/// What to do as the user stays away, in minutes (0 = never), and whether this computer can sleep and hibernate.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Idle {
+    pub dim: i64,
+    /// How bright the screen is while dimmed, in percent.
+    pub dim_level: i64,
+    pub screen_off: i64,
+    pub lock: i64,
+    pub sleep: i64,
+    pub hibernate: i64,
+    pub can_sleep: bool,
+    pub can_hibernate: bool,
+    /// Why sleeping is not possible, when something switched it off (a systemd setting).
+    pub sleep_note: String,
+}
+
+impl Default for Idle {
+    fn default() -> Self {
+        Idle { dim: 5, dim_level: 30, screen_off: 0, lock: 0, sleep: 0, hibernate: 0, can_sleep: true, can_hibernate: true, sleep_note: String::new() }
+    }
+}
+
+pub fn idle_conf_path() -> std::path::PathBuf {
+    std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".config/labyrinth/idle.conf")
+}
+
+/// The timers from idle.conf (seconds there, minutes here). Without the file the defaults apply: dim after 5 minutes, nothing else.
+pub fn parse_idle(text: &str) -> Idle {
+    let mut i = Idle::default();
+    for line in text.lines() {
+        let line = line.split('#').next().unwrap_or("").trim();
+        let Some((k, v)) = line.split_once('=') else { continue };
+        let Ok(n) = v.trim().parse::<i64>() else { continue };
+        match k.trim() {
+            "dim" => i.dim = n / 60,
+            "dim_level" => i.dim_level = n.clamp(10, 90),
+            "display_off" => i.screen_off = n / 60,
+            "lock" => i.lock = n / 60,
+            "suspend" => i.sleep = n / 60,
+            "hibernate" => i.hibernate = n / 60,
+            _ => {}
+        }
+    }
+    i
+}
+
+pub fn idle_text(i: &Idle) -> String {
+    format!(
+        "# Written by Settings > Power. labyrinth-idle acts on these (seconds of inactivity, 0 = never).\nmode = act\ndim = {}\ndim_level = {}\ndisplay_off = {}\nlock = {}\nsuspend = {}\nhibernate = {}\n",
+        i.dim * 60, i.dim_level, i.screen_off * 60, i.lock * 60, i.sleep * 60, i.hibernate * 60
+    )
+}
+
+fn can(what: &str) -> bool {
+    run("busctl", &["call", "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager", what]).map(|s| s.contains("\"yes\"") || s.contains("\"challenge\"")).unwrap_or(false)
+}
+
+pub fn read_idle() -> Idle {
+    let mut i = std::fs::read_to_string(idle_conf_path()).map(|t| parse_idle(&t)).unwrap_or_default();
+    i.can_sleep = can("CanSuspend");
+    i.can_hibernate = can("CanHibernate");
+    if !i.can_sleep || !i.can_hibernate {
+        // a drop-in such as /etc/systemd/sleep.conf.d/10-never-sleep.conf that says AllowSuspend=no
+        if let Ok(rd) = std::fs::read_dir("/etc/systemd/sleep.conf.d") {
+            for e in rd.flatten() {
+                let t = std::fs::read_to_string(e.path()).unwrap_or_default();
+                if t.lines().any(|l| l.trim().starts_with("AllowSuspend=no") || l.trim().starts_with("AllowHibernation=no")) {
+                    i.sleep_note = format!("Switched off by {}", e.path().display());
+                }
+            }
+        }
+    }
+    i
+}
+
+/// Saves the timers and switches KDE's own dimming, screen-off, sleep and lock timers off, so the two never both act.
+pub fn write_idle(i: &Idle) -> Result<(), String> {
+    let p = idle_conf_path();
+    if let Some(d) = p.parent() {
+        std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&p, idle_text(i)).map_err(|e| e.to_string())?;
+    for state in ["AC", "Battery", "LowBattery"] {
+        let _ = act("kwriteconfig6", &["--file", "powerdevilrc", "--group", state, "--group", "Display", "--key", "DimDisplayWhenIdle", "false"]);
+        let _ = act("kwriteconfig6", &["--file", "powerdevilrc", "--group", state, "--group", "Display", "--key", "TurnOffDisplayWhenIdle", "false"]);
+        let _ = act("kwriteconfig6", &["--file", "powerdevilrc", "--group", state, "--group", "SuspendAndShutdown", "--key", "AutoSuspendAction", "0"]);
+    }
+    let _ = act("kwriteconfig6", &["--file", "kscreenlockerrc", "--group", "Daemon", "--key", "Autolock", "false"]);
+    let _ = act("qdbus6", &["org.kde.Solid.PowerManagement", "/org/kde/Solid/PowerManagement", "org.kde.Solid.PowerManagement.reparseConfiguration"]);
+    Ok(())
+}
+
+#[cfg(test)]
+mod idle_tests {
+    use super::*;
+
+    #[test]
+    fn round_trip() {
+        let i = Idle { dim: 7, dim_level: 40, screen_off: 15, lock: 10, sleep: 0, hibernate: 120, can_sleep: true, can_hibernate: true, sleep_note: String::new() };
+        assert_eq!(parse_idle(&idle_text(&i)), i);
+    }
+
+    #[test]
+    fn defaults_without_a_file() {
+        let i = parse_idle("");
+        assert_eq!((i.dim, i.dim_level, i.lock, i.sleep), (5, 30, 0, 0));
     }
 }
 
