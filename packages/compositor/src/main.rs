@@ -12,6 +12,7 @@ mod deco;
 mod draw;
 mod grabs;
 mod shortcuts;
+mod switcher;
 mod state;
 mod toplevels;
 

@@ -8,7 +8,7 @@
 //!     Super+Q = none                # removes a built-in binding
 //!
 //! Actions: start, clipboard, sarina, calendar, fylgja N, close, maximize, restore, fullscreen, minimize, snap-left, snap-right,
-//! next-window, prev-window, lock, quit, exec COMMAND, none. Modifiers: Super (or Logo, Win), Ctrl, Alt, Shift.
+//! next-window, prev-window, workspace N, move-to-workspace N, next-workspace, prev-workspace, lock, quit, exec COMMAND, none. Modifiers: Super (or Logo, Win), Ctrl, Alt, Shift.
 
 use smithay::input::keyboard::{keysyms, xkb, ModifiersState};
 
@@ -29,6 +29,14 @@ pub enum Action {
     SnapRight,
     NextWindow,
     PrevWindow,
+    /// Alt let go while the switcher is open: activate the chosen window.
+    CommitSwitcher,
+    /// Escape while the switcher is open.
+    CancelSwitcher,
+    Workspace(usize),
+    MoveToWorkspace(usize),
+    WorkspaceNext,
+    WorkspacePrev,
     Lock,
     Quit,
     Exec(String),
@@ -75,6 +83,10 @@ pub fn parse_action(s: &str) -> Option<Action> {
         "snap-right" => Action::SnapRight,
         "next-window" => Action::NextWindow,
         "prev-window" => Action::PrevWindow,
+        "workspace" => Action::Workspace(rest.parse::<usize>().ok()?.checked_sub(1)?),
+        "move-to-workspace" => Action::MoveToWorkspace(rest.parse::<usize>().ok()?.checked_sub(1)?),
+        "next-workspace" => Action::WorkspaceNext,
+        "prev-workspace" => Action::WorkspacePrev,
         "lock" => Action::Lock,
         "quit" => Action::Quit,
         "exec" if !rest.is_empty() => Action::Exec(rest.to_string()),
@@ -140,6 +152,27 @@ pub fn defaults() -> Vec<Binding> {
         b("Super+Right", Action::SnapRight),
         b("Alt+Tab", Action::NextWindow),
         b("Alt+Shift+Tab", Action::PrevWindow),
+        b("Super+Ctrl+Left", Action::WorkspacePrev),
+        b("Super+Ctrl+Right", Action::WorkspaceNext),
+        b("Super+Ctrl+1", Action::Workspace(0)),
+        b("Super+Ctrl+2", Action::Workspace(1)),
+        b("Super+Ctrl+3", Action::Workspace(2)),
+        b("Super+Ctrl+4", Action::Workspace(3)),
+        b("Super+Ctrl+Shift+1", Action::MoveToWorkspace(0)),
+        b("Super+Ctrl+Shift+2", Action::MoveToWorkspace(1)),
+        b("Super+Ctrl+Shift+3", Action::MoveToWorkspace(2)),
+        b("Super+Ctrl+Shift+4", Action::MoveToWorkspace(3)),
+        // the multimedia keys (labyrinth-mediakey: PipeWire volume, the running music player, brightness)
+        b("XF86AudioRaiseVolume", Action::Exec("labyrinth-mediakey volume-up".into())),
+        b("XF86AudioLowerVolume", Action::Exec("labyrinth-mediakey volume-down".into())),
+        b("XF86AudioMute", Action::Exec("labyrinth-mediakey mute".into())),
+        b("XF86AudioMicMute", Action::Exec("labyrinth-mediakey mic-mute".into())),
+        b("XF86AudioPlay", Action::Exec("labyrinth-mediakey play-pause".into())),
+        b("XF86AudioNext", Action::Exec("labyrinth-mediakey next".into())),
+        b("XF86AudioPrev", Action::Exec("labyrinth-mediakey previous".into())),
+        b("XF86AudioStop", Action::Exec("labyrinth-mediakey stop".into())),
+        b("XF86MonBrightnessUp", Action::Exec("labyrinth-mediakey brightness-up".into())),
+        b("XF86MonBrightnessDown", Action::Exec("labyrinth-mediakey brightness-down".into())),
     ]
 }
 
@@ -185,6 +218,19 @@ pub fn is_super(sym: u32) -> bool {
     sym == keysyms::KEY_Super_L || sym == keysyms::KEY_Super_R
 }
 
+pub fn is_alt(sym: u32) -> bool {
+    sym == keysyms::KEY_Alt_L || sym == keysyms::KEY_Alt_R
+}
+
+/// Is this key one of the modifiers that hold the switcher open?
+pub fn is_held_modifier(sym: u32, hold: Mods) -> bool {
+    (hold.alt && is_alt(sym)) || (hold.ctrl && (sym == keysyms::KEY_Control_L || sym == keysyms::KEY_Control_R)) || (hold.logo && is_super(sym))
+}
+
+pub fn is_escape(sym: u32) -> bool {
+    sym == keysyms::KEY_Escape
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,6 +255,8 @@ mod tests {
         assert_eq!(parse_action("exec minos /tmp"), Some(Action::Exec("minos /tmp".into())));
         assert_eq!(parse_action("fylgja 4"), Some(Action::Fylgja(4)));
         assert_eq!(parse_action("exec"), None);
+        assert_eq!(parse_action("workspace 2"), Some(Action::Workspace(1)));
+        assert_eq!(parse_action("workspace 0"), None);
         assert_eq!(parse_action("dance"), None);
     }
 

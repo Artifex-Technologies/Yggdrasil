@@ -34,10 +34,11 @@ use smithay::input::pointer::Focus;
 use smithay::utils::Rectangle;
 use crate::grabs::{MoveGrab, ResizeGrab};
 use crate::shortcuts::{self, Action, Binding, Mods};
+use crate::switcher;
 use crate::toplevels::Toplevels;
 use crate::deco::{self, Bar, Hit, Key as BarKey};
 use crate::draw::Fonts;
-use smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement;
+use smithay::backend::renderer::element::memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement};
 use smithay::backend::renderer::{ImportAll, ImportMem};
 use smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode as DecoMode;
 use smithay::utils::Scale;
@@ -103,7 +104,20 @@ pub struct App {
     bar_hover: Option<(WlSurface, Hit)>,
     last_click: Option<(std::time::Instant, WlSurface)>,
     pub decoration_state: XdgDecorationState,
+    /// Windows, most recently used first (for the switcher).
+    focus_order: Vec<WlSurface>,
+    /// The Alt+Tab switcher while it is open: the windows in order and which one is chosen.
+    switcher: Option<(Vec<WlSurface>, usize)>,
+    /// The modifiers held down to keep the switcher open (those of the Tab binding): letting go of one picks the window.
+    switcher_hold: Mods,
+    switcher_art: Option<((Vec<(String, String)>, usize), MemoryRenderBuffer)>,
+    current_ws: usize,
+    /// Windows on other workspaces: where they were, and which workspace they are on.
+    parked: Vec<(Window, usize, Point<i32, Logical>)>,
 }
+
+/// How many workspaces there are.
+pub const WORKSPACES: usize = 4;
 
 #[derive(Default)]
 pub struct ClientState {
@@ -165,6 +179,12 @@ impl App {
             bar_hover: None,
             last_click: None,
             decoration_state: XdgDecorationState::new::<Self>(dh),
+            focus_order: vec![],
+            switcher: None,
+            switcher_hold: Mods::default(),
+            switcher_art: None,
+            current_ws: 0,
+            parked: vec![],
         }
     }
 
@@ -209,11 +229,15 @@ impl App {
     }
 
     pub fn toplevel_of(&self, surface: &WlSurface) -> Option<ToplevelSurface> {
-        self.space.elements().chain(self.minimized.iter()).find_map(|w| w.toplevel().filter(|t| t.wl_surface() == surface).cloned())
+        self.space.elements().chain(self.minimized.iter()).chain(self.parked.iter().map(|(w, _, _)| w)).find_map(|w| w.toplevel().filter(|t| t.wl_surface() == surface).cloned())
     }
 
     /// Bring a window forward (from minimized too) and give it the keyboard.
     pub fn activate_surface(&mut self, surface: &WlSurface) {
+        // a window on another workspace: go there first
+        if let Some(ws) = self.parked.iter().find(|(w, _, _)| w.toplevel().map(|t| t.wl_surface() == surface).unwrap_or(false)).map(|(_, ws, _)| *ws) {
+            self.switch_workspace(ws);
+        }
         if let Some(i) = self.minimized.iter().position(|w| w.toplevel().map(|t| t.wl_surface() == surface).unwrap_or(false)) {
             let w = self.minimized.remove(i);
             let at = self.saved.iter().find(|(s, _)| s == surface).map(|(_, r)| r.loc).unwrap_or((80, 80).into());
@@ -229,6 +253,7 @@ impl App {
         }
         let kb = self.keyboard.clone();
         kb.set_focus(self, Some(surface.clone()), SERIAL_COUNTER.next_serial());
+        self.touch_focus(surface);
     }
 
     pub fn close_surface(&mut self, surface: &WlSurface) {
@@ -273,6 +298,16 @@ impl App {
         if self.locked {
             return FilterResult::Forward;
         }
+        if self.switcher.is_some() {
+            // while the switcher is open: Tab moves on (below), Escape cancels, letting go of Alt picks
+            if state == KeyState::Pressed && shortcuts::is_escape(sym) {
+                self.taken.push(code);
+                return FilterResult::Intercept(Action::CancelSwitcher);
+            }
+            if state == KeyState::Released && shortcuts::is_held_modifier(sym, self.switcher_hold) {
+                self.queued.push(Action::CommitSwitcher);
+            }
+        }
         if state == KeyState::Released {
             if shortcuts::is_super(sym) && std::mem::take(&mut self.super_tap) {
                 self.queued.push(Action::ToggleStart);
@@ -291,6 +326,10 @@ impl App {
         match shortcuts::find(&self.bindings, Mods::of(mods), sym) {
             Some(b) => {
                 self.taken.push(code);
+                if matches!(b.action, Action::NextWindow | Action::PrevWindow) {
+                    // the switcher stays open while these modifiers (Alt for Alt+Tab) are held
+                    self.switcher_hold = Mods { shift: false, ..Mods::of(mods) };
+                }
                 FilterResult::Intercept(b.action.clone())
             }
             None => FilterResult::Forward,
@@ -376,21 +415,105 @@ impl App {
                 let (area, st) = if action == Action::SnapLeft { (Rectangle::new(zone.loc, (half, zone.size.h).into()), S::TiledLeft) } else { (Rectangle::new((zone.loc.x + half, zone.loc.y).into(), (zone.size.w - half, zone.size.h).into()), S::TiledRight) };
                 self.fit_window(&t, area, st);
             }
-            Action::NextWindow => {
-                // the window at the bottom comes to the top: repeating goes through all of them
-                let next = self.space.elements().next().and_then(|w| w.toplevel().map(|t| t.wl_surface().clone()));
-                if let Some(s) = next {
-                    self.activate_surface(&s);
+            Action::NextWindow => self.cycle(1),
+            Action::PrevWindow => self.cycle(-1),
+            Action::CancelSwitcher => {
+                self.switcher = None;
+            }
+            Action::CommitSwitcher => {
+                if let Some((list, i)) = self.switcher.take() {
+                    if let Some(s) = list.get(i).cloned() {
+                        self.activate_surface(&s);
+                    }
                 }
             }
-            Action::PrevWindow => {
-                let n = self.space.elements().count();
-                let prev = self.space.elements().nth(n.saturating_sub(2)).and_then(|w| w.toplevel().map(|t| t.wl_surface().clone()));
-                if let Some(s) = prev {
-                    self.activate_surface(&s);
+            Action::Workspace(n) => self.switch_workspace(n),
+            Action::WorkspaceNext => self.switch_workspace((self.current_ws + 1) % WORKSPACES),
+            Action::WorkspacePrev => self.switch_workspace((self.current_ws + WORKSPACES - 1) % WORKSPACES),
+            Action::MoveToWorkspace(n) => {
+                if let Some(s) = current {
+                    self.move_to_workspace(&s, n);
                 }
             }
         }
+    }
+
+    pub fn touch_focus(&mut self, s: &WlSurface) {
+        self.focus_order.retain(|x| x != s);
+        self.focus_order.insert(0, s.clone());
+    }
+
+    /// Every window that exists, wherever it is (shown, minimized or on another workspace).
+    pub fn all_windows(&self) -> Vec<(Window, bool)> {
+        self.space.elements().map(|w| (w.clone(), false)).chain(self.minimized.iter().map(|w| (w.clone(), true))).chain(self.parked.iter().map(|(w, _, _)| (w.clone(), false))).collect()
+    }
+
+    /// Alt+Tab: open the switcher (or move on in it). The window used last comes first.
+    fn cycle(&mut self, dir: i32) {
+        match &mut self.switcher {
+            Some((list, i)) => {
+                if !list.is_empty() {
+                    *i = (*i as i32 + dir).rem_euclid(list.len() as i32) as usize;
+                }
+            }
+            None => {
+                let existing: Vec<WlSurface> = self.all_windows().iter().filter_map(|(w, _)| w.toplevel().map(|t| t.wl_surface().clone())).collect();
+                let mut list: Vec<WlSurface> = self.focus_order.iter().filter(|s| existing.contains(s)).cloned().collect();
+                for s in existing {
+                    if !list.contains(&s) {
+                        list.push(s);
+                    }
+                }
+                if list.len() < 2 {
+                    return;
+                }
+                let i = if dir > 0 { 1 } else { list.len() - 1 };
+                self.switcher = Some((list, i));
+            }
+        }
+    }
+
+    /// Show another workspace: the windows of this one are put aside, those of the other come back.
+    pub fn switch_workspace(&mut self, n: usize) {
+        let n = n.min(WORKSPACES - 1);
+        if n == self.current_ws {
+            return;
+        }
+        let here = self.current_ws;
+        let shown: Vec<Window> = self.space.elements().cloned().collect();
+        for w in shown {
+            let loc = self.space.element_location(&w).unwrap_or_default();
+            self.space.unmap_elem(&w);
+            self.parked.push((w, here, loc));
+        }
+        let mut still = vec![];
+        for (w, ws, loc) in std::mem::take(&mut self.parked) {
+            if ws == n {
+                self.space.map_element(w, loc, false);
+            } else {
+                still.push((w, ws, loc));
+            }
+        }
+        self.parked = still;
+        self.current_ws = n;
+        let next = self.focus_order.iter().find(|s| self.space.elements().any(|w| w.toplevel().map(|t| t.wl_surface() == *s).unwrap_or(false))).cloned();
+        let kb = self.keyboard.clone();
+        kb.set_focus(self, next, SERIAL_COUNTER.next_serial());
+    }
+
+    /// Send a window to another workspace (it disappears from this one).
+    pub fn move_to_workspace(&mut self, surface: &WlSurface, n: usize) {
+        let n = n.min(WORKSPACES - 1);
+        if n == self.current_ws {
+            return;
+        }
+        let Some(window) = self.space.elements().find(|w| w.toplevel().map(|t| t.wl_surface() == surface).unwrap_or(false)).cloned() else { return };
+        let loc = self.space.element_location(&window).unwrap_or_default();
+        self.space.unmap_elem(&window);
+        self.parked.push((window, n, loc));
+        let next = self.focus_order.iter().find(|s| *s != surface && self.space.elements().any(|w| w.toplevel().map(|t| t.wl_surface() == *s).unwrap_or(false))).cloned();
+        let kb = self.keyboard.clone();
+        kb.set_focus(self, next, SERIAL_COUNTER.next_serial());
     }
 
     fn bar_visible(&self, w: &Window) -> bool {
@@ -506,6 +629,21 @@ impl App {
                 }
             }
         };
+        if let Some((list, index)) = self.switcher.clone() {
+            let entries: Vec<(String, String)> = list.iter().map(|s| with_states(s, |st| st.data_map.get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>().map(|d| { let d = d.lock().unwrap(); (d.title.clone().unwrap_or_default(), d.app_id.clone().unwrap_or_default()) }).unwrap_or_default())).collect();
+            if self.switcher_art.as_ref().map(|(k, _)| k != &(entries.clone(), index)).unwrap_or(true) {
+                if let Some(f) = &self.fonts {
+                    self.switcher_art = Some(((entries.clone(), index), switcher::make(f, &entries, index, (124, 84, 214))));
+                }
+            }
+            if let (Some((_, buf)), Some(mode)) = (&self.switcher_art, self.output.current_mode()) {
+                let (w, h) = switcher::size(switcher::visible(entries.len(), index).len());
+                let at = ((mode.size.w - w) as f64 / 2.0, (mode.size.h - h) as f64 / 2.0);
+                if let Ok(el) = MemoryRenderBufferRenderElement::from_buffer(renderer, at, buf, None, None, None, Kind::Unspecified) {
+                    out.push(Elem::from(el));
+                }
+            }
+        }
         layer_els(self, renderer, &[Layer::Overlay, Layer::Top], &mut out);
         let windows: Vec<Window> = self.space.elements().rev().cloned().collect();
         for w in windows {
@@ -628,6 +766,9 @@ impl App {
             }
         }
         let kb = self.keyboard.clone();
+        if let Some(s) = &surface {
+            self.touch_focus(s);
+        }
         kb.set_focus(self, surface, serial);
     }
 
@@ -800,11 +941,18 @@ impl XdgShellHandler for App {
         let serial = SERIAL_COUNTER.next_serial();
         let kb = self.keyboard.clone();
         kb.set_focus(self, Some(surface.wl_surface().clone()), serial);
+        self.touch_focus(surface.wl_surface());
     }
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
         self.foreign_removed(surface.wl_surface());
         self.decorated.retain(|s| s != surface.wl_surface());
+        self.focus_order.retain(|s| s != surface.wl_surface());
+        self.parked.retain(|(w, _, _)| w.toplevel().map(|t| t != &surface).unwrap_or(true));
+        if let Some((list, i)) = &mut self.switcher {
+            list.retain(|s| s != surface.wl_surface());
+            *i = (*i).min(list.len().saturating_sub(1));
+        }
         self.bars.remove(surface.wl_surface());
         self.minimized.retain(|w| w.toplevel().map(|t| t != &surface).unwrap_or(true));
         let gone = self.space.elements().find(|w| w.toplevel().map(|t| *t == surface).unwrap_or(false)).cloned();

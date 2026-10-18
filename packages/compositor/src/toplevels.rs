@@ -115,7 +115,7 @@ impl App {
         if self.toplevels.entries.is_empty() {
             return;
         }
-        let windows: Vec<(Window, bool)> = self.space.elements().map(|w| (w.clone(), false)).chain(self.minimized.iter().map(|w| (w.clone(), true))).collect();
+        let windows: Vec<(Window, bool)> = self.all_windows();
         let mut entries = std::mem::take(&mut self.toplevels.entries);
         for e in entries.iter_mut() {
             let Some((w, min)) = windows.iter().find(|(w, _)| w.toplevel().map(|t| t.wl_surface() == &e.surface).unwrap_or(false)) else { continue };
@@ -134,7 +134,7 @@ impl GlobalDispatch<ZwlrForeignToplevelManagerV1, ()> for App {
     fn bind(state: &mut Self, _: &DisplayHandle, _: &Client, resource: New<ZwlrForeignToplevelManagerV1>, _: &(), init: &mut DataInit<'_, Self>) {
         let mgr = init.init(resource, ());
         state.toplevels.managers.push(mgr.clone());
-        let all: Vec<(Window, bool)> = state.space.elements().map(|w| (w.clone(), false)).chain(state.minimized.iter().map(|w| (w.clone(), true))).collect();
+        let all: Vec<(Window, bool)> = state.all_windows();
         for (w, min) in all {
             state.new_handle(&mgr, &w, min);
         }
