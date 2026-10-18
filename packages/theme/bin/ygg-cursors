@@ -1,0 +1,364 @@
+#!/usr/bin/env python3
+"""ygg-cursors: draws Yggdrasil's mouse cursors and writes them as an X cursor theme (also used by Wayland programs).
+
+  ygg-cursors OUTDIR            writes OUTDIR/cursors/* and OUTDIR/index.theme  (Name=Yggdrasil)
+  ygg-cursors OUTDIR --preview  also writes OUTDIR/preview.png, a sheet of every shape
+
+White shapes with a dark purple outline, so they read on any background; the busy ring uses the accent purple. Nothing is downloaded and
+no other theme is used: the shapes are drawn here (Pillow) at 8x and shrunk, in five sizes (24, 32, 48, 64, 96 px).
+"""
+import math
+import os
+import struct
+import sys
+
+from PIL import Image, ImageDraw, ImageFont
+
+SIZES = (24, 32, 48, 64, 96)
+SS = 8                                   # drawing is done at 8x and shrunk
+DARK = (24, 16, 40, 255)
+WHITE = (255, 255, 255, 255)
+PURPLE = (124, 84, 214, 255)
+RED = (225, 70, 82, 255)
+OUT = 2.2                                # outline width, in the 32-unit design grid
+
+
+def font(px):
+    try:
+        import subprocess
+        path = subprocess.run(["fc-match", "sans-serif:bold", "-f", "%{file}"], capture_output=True, text=True).stdout.strip()
+        return ImageFont.truetype(path, int(px))
+    except Exception:
+        return ImageFont.load_default()
+
+
+class Canvas:
+    def __init__(self, size):
+        self.size = size
+        self.k = size / 32.0 * SS
+        self.img = Image.new("RGBA", (size * SS, size * SS), (0, 0, 0, 0))
+        self.d = ImageDraw.Draw(self.img)
+
+    def p(self, pts):
+        return [(x * self.k, y * self.k) for x, y in pts]
+
+    def poly(self, pts, fill=WHITE, outline=DARK, w=OUT):
+        pts = self.p(pts)
+        if outline:
+            self.d.line(pts + [pts[0], pts[1]], fill=outline, width=int(w * self.k), joint="curve")
+            for x, y in pts:
+                r = w * self.k / 2
+                self.d.ellipse([x - r, y - r, x + r, y + r], fill=outline)
+        self.d.polygon(pts, fill=fill)
+
+    def line(self, pts, w, fill=WHITE, outline=DARK, ow=OUT):
+        pp = self.p(pts)
+        if outline:
+            self.d.line(pp, fill=outline, width=int((w + ow) * self.k), joint="curve")
+            for x, y in (pp[0], pp[-1]):
+                r = (w + ow) * self.k / 2
+                self.d.ellipse([x - r, y - r, x + r, y + r], fill=outline)
+        self.d.line(pp, fill=fill, width=int(w * self.k), joint="curve")
+        for x, y in (pp[0], pp[-1]):
+            r = w * self.k / 2
+            self.d.ellipse([x - r, y - r, x + r, y + r], fill=fill)
+
+    def circle(self, c, r, fill=WHITE, outline=DARK, w=OUT):
+        x, y = c[0] * self.k, c[1] * self.k
+        if outline:
+            R = (r + w / 2) * self.k
+            self.d.ellipse([x - R, y - R, x + R, y + R], fill=outline)
+        R = (r - (w / 2 if outline else 0)) * self.k
+        if fill:
+            self.d.ellipse([x - R, y - R, x + R, y + R], fill=fill)
+
+    def rrect(self, box, r, fill=WHITE, outline=DARK, w=OUT):
+        x0, y0, x1, y1 = [v * self.k for v in box]
+        if outline:
+            g = w / 2 * self.k
+            self.d.rounded_rectangle([x0 - g, y0 - g, x1 + g, y1 + g], radius=r * self.k + g, fill=outline)
+        self.d.rounded_rectangle([x0, y0, x1, y1], radius=r * self.k, fill=fill)
+
+    def text(self, xy, s, px, fill=DARK):
+        f = font(px * self.k)
+        self.d.text((xy[0] * self.k, xy[1] * self.k), s, font=f, fill=fill, anchor="mm")
+
+    def done(self):
+        return self.img.resize((self.size, self.size), Image.LANCZOS)
+
+
+ARROW = [(5, 3), (5, 25.5), (10.8, 20), (14.6, 28.5), (18.4, 26.8), (14.6, 18.5), (22.5, 18.5)]
+HAND = [(10, 5), (10.8, 3), (13.2, 3), (14, 5), (14, 13.5), (15.5, 12.5), (17.5, 12.5), (18.5, 13.8), (19.5, 13.2), (21.5, 13.2), (22.8, 14.8),
+        (23.6, 14.5), (25.4, 15), (26.4, 17.2), (26.4, 23), (24, 28.5), (15, 28.5), (11.8, 25), (8.5, 19.5), (7.3, 16.5), (8, 15.5), (9.8, 15.8), (10.2, 16.5)]
+
+
+def arrow(c, dx=0, dy=0):
+    c.poly([(x + dx, y + dy) for x, y in ARROW])
+
+
+def heads(c, pts_from, pts_to):
+    pass
+
+
+def arrow_head(c, tip, ang, n=5.2):
+    """A filled triangle with its point at `tip`, pointing along `ang` (radians)."""
+    a = ang
+    left = (tip[0] - n * math.cos(a) + n * 0.85 * math.sin(a), tip[1] - n * math.sin(a) - n * 0.85 * math.cos(a))
+    right = (tip[0] - n * math.cos(a) - n * 0.85 * math.sin(a), tip[1] - n * math.sin(a) + n * 0.85 * math.cos(a))
+    c.poly([tip, left, right], w=1.6)
+
+
+def double_arrow(c, ang):
+    """A line with a head at both ends, through the middle, at angle `ang`."""
+    cx = cy = 16.0
+    L = 11.5
+    ux, uy = math.cos(ang), math.sin(ang)
+    a, b = (cx - ux * L, cy - uy * L), (cx + ux * L, cy + uy * L)
+    c.line([a, b], 2.4)
+    arrow_head(c, (b[0] + ux * 1.2, b[1] + uy * 1.2), ang)
+    arrow_head(c, (a[0] - ux * 1.2, a[1] - uy * 1.2), ang + math.pi)
+
+
+def shape_arrow(c, f=0):
+    arrow(c)
+    return (5, 3)
+
+
+def shape_text(c, f=0, vertical=False):
+    if vertical:
+        c.line([(5, 16), (27, 16)], 2.0)
+        c.line([(5, 12.5), (5, 19.5)], 2.0)
+        c.line([(27, 12.5), (27, 19.5)], 2.0)
+        return (16, 16)
+    c.line([(16, 5), (16, 27)], 2.0)
+    c.line([(12.3, 5), (19.7, 5)], 2.0)
+    c.line([(12.3, 27), (19.7, 27)], 2.0)
+    return (16, 16)
+
+
+def shape_pointer(c, f=0):
+    c.poly(HAND)
+    for x in (14.6, 18.6, 22.4):
+        pass
+    return (12, 3)
+
+
+def palm(c, closed):
+    if closed:
+        c.rrect((8.5, 14.5, 25.5, 27.5), 5)
+        for i in range(4):
+            c.circle((11.2 + i * 4.4, 14.8), 2.6)
+        c.rrect((8.8, 15, 25.2, 27), 4.6, outline=None)
+    else:
+        for i, top in enumerate((5.5, 3.5, 4.5, 7.5)):
+            c.rrect((9.4 + i * 3.9, top, 12.6 + i * 3.9, 20), 1.6)
+        c.rrect((6, 14, 12.5, 21), 2.6)
+        c.rrect((8.5, 14.5, 25.5, 27.5), 5)
+        c.rrect((9, 15, 25, 27), 4.6, outline=None)
+
+
+def shape_grab(c, f=0):
+    palm(c, False)
+    return (16, 16)
+
+
+def shape_grabbing(c, f=0):
+    palm(c, True)
+    return (16, 17)
+
+
+def shape_cross(c, f=0):
+    c.line([(3, 16), (12.5, 16)], 1.8)
+    c.line([(19.5, 16), (29, 16)], 1.8)
+    c.line([(16, 3), (16, 12.5)], 1.8)
+    c.line([(16, 19.5), (16, 29)], 1.8)
+    c.circle((16, 16), 1.6, fill=DARK, outline=WHITE, w=1.2)
+    return (16, 16)
+
+
+def shape_no(c, f=0):
+    c.circle((16, 16), 10, fill=(255, 255, 255, 235), outline=DARK, w=2.2)
+    c.circle((16, 16), 8.4, fill=None, outline=None)
+    c.d.ellipse([16 * c.k - 8.2 * c.k, 16 * c.k - 8.2 * c.k, 16 * c.k + 8.2 * c.k, 16 * c.k + 8.2 * c.k], outline=RED, width=int(2.8 * c.k))
+    c.d.line([(16 * c.k - 5.8 * c.k, 16 * c.k - 5.8 * c.k), (16 * c.k + 5.8 * c.k, 16 * c.k + 5.8 * c.k)], fill=RED, width=int(2.8 * c.k))
+    return (16, 16)
+
+
+def ring(c, cx, cy, r, f, frames=12, w=3.0):
+    """A busy ring: white band with a dark edge on both sides, empty inside, and a purple arc that turns with the frame."""
+    def disc(rad, fill):
+        c.d.ellipse([(cx - rad) * c.k, (cy - rad) * c.k, (cx + rad) * c.k, (cy + rad) * c.k], fill=fill)
+    disc(r + w / 2 + OUT / 2, DARK)
+    disc(r + w / 2, WHITE)
+    disc(r - w / 2, DARK)
+    hole = Image.new("L", c.img.size, 0)
+    rad = r - w / 2 - OUT / 2
+    ImageDraw.Draw(hole).ellipse([(cx - rad) * c.k, (cy - rad) * c.k, (cx + rad) * c.k, (cy + rad) * c.k], fill=255)
+    c.img.paste((0, 0, 0, 0), mask=hole)
+    a0 = f * 360 / frames - 90
+    c.d.arc([(cx - r) * c.k, (cy - r) * c.k, (cx + r) * c.k, (cy + r) * c.k], a0, a0 + 100, fill=PURPLE, width=int(w * c.k))
+
+
+def shape_wait(c, f=0):
+    ring(c, 16, 16, 9.5, f)
+    return (16, 16)
+
+
+def shape_progress(c, f=0):
+    arrow(c)
+    ring(c, 23, 23, 5.2, f, w=2.4)
+    return (5, 3)
+
+
+def shape_move(c, f=0):
+    c.line([(16, 5), (16, 27)], 2.2)
+    c.line([(5, 16), (27, 16)], 2.2)
+    for a in (0, 90, 180, 270):
+        r = math.radians(a)
+        arrow_head(c, (16 + 13.2 * math.cos(r), 16 + 13.2 * math.sin(r)), r, n=4.6)
+    return (16, 16)
+
+
+def badge_plus(c):
+    c.circle((23.5, 23.5), 5.6)
+    c.line([(23.5, 20.7), (23.5, 26.3)], 1.6, outline=None)
+    c.line([(20.7, 23.5), (26.3, 23.5)], 1.6, outline=None)
+
+
+def shape_copy(c, f=0):
+    arrow(c)
+    c.circle((23.5, 23.5), 5.6)
+    c.line([(23.5, 20.7), (23.5, 26.3)], 1.5, fill=DARK, outline=None)
+    c.line([(20.7, 23.5), (26.3, 23.5)], 1.5, fill=DARK, outline=None)
+    return (5, 3)
+
+
+def shape_alias(c, f=0):
+    arrow(c)
+    c.circle((23.5, 23.5), 5.6)
+    c.line([(20.8, 25.5), (25.8, 21.5)], 1.5, fill=DARK, outline=None)
+    c.poly([(26.6, 20.8), (26.2, 25), (22.2, 21.2)], fill=DARK, outline=None)
+    return (5, 3)
+
+
+def shape_menu(c, f=0):
+    arrow(c)
+    c.rrect((17, 19, 28.5, 28.5), 1.8)
+    for y in (21.6, 24, 26.4):
+        c.line([(19, y), (26.5, y)], 1.0, fill=DARK, outline=None)
+    return (5, 3)
+
+
+def shape_help(c, f=0):
+    arrow(c)
+    c.circle((23, 22.5), 6)
+    c.text((23, 22.8), "?", 9, fill=DARK)
+    return (5, 3)
+
+
+def shape_cell(c, f=0):
+    c.line([(16, 6), (16, 26)], 4.2)
+    c.line([(6, 16), (26, 16)], 4.2)
+    return (16, 16)
+
+
+def shape_zoom(c, plus=True):
+    c.line([(18.5, 18.5), (27, 27)], 3.6)
+    c.circle((13, 13), 8.2, fill=(255, 255, 255, 120), outline=DARK, w=2.2)
+    c.line([(9.5, 13), (16.5, 13)], 1.8, fill=DARK, outline=None)
+    if plus:
+        c.line([(13, 9.5), (13, 16.5)], 1.8, fill=DARK, outline=None)
+    return (13, 13)
+
+
+SHAPES = {
+    "arrow": (shape_arrow, 1, ["left_ptr", "default", "arrow", "top_left_arrow", "right_ptr", "center_ptr", "dnd-move", "dnd-none", "draft", "context-menu-less"]),
+    "text": (shape_text, 1, ["text", "xterm", "ibeam"]),
+    "vtext": (lambda c, f=0: shape_text(c, f, True), 1, ["vertical-text"]),
+    "pointer": (shape_pointer, 1, ["pointer", "hand1", "hand2", "pointing_hand", "link"]),
+    "grab": (shape_grab, 1, ["grab", "openhand", "hand"]),
+    "grabbing": (shape_grabbing, 1, ["grabbing", "closedhand", "dnd-grab"]),
+    "cross": (shape_cross, 1, ["crosshair", "cross", "tcross", "color-picker", "pencil", "target"]),
+    "no": (shape_no, 1, ["not-allowed", "forbidden", "crossed_circle", "no-drop", "dnd-no-drop", "circle", "pirate"]),
+    "wait": (shape_wait, 12, ["wait", "watch"]),
+    "progress": (shape_progress, 12, ["progress", "left_ptr_watch", "half-busy"]),
+    "move": (shape_move, 1, ["move", "fleur", "all-scroll", "size_all"]),
+    "copy": (shape_copy, 1, ["copy", "dnd-copy"]),
+    "alias": (shape_alias, 1, ["alias", "dnd-link"]),
+    "menu": (shape_menu, 1, ["context-menu"]),
+    "help": (shape_help, 1, ["help", "question_arrow", "whats_this", "left_ptr_help"]),
+    "cell": (shape_cell, 1, ["cell", "plus"]),
+    "zoomin": (lambda c, f=0: shape_zoom(c, True), 1, ["zoom-in"]),
+    "zoomout": (lambda c, f=0: shape_zoom(c, False), 1, ["zoom-out"]),
+    "ew": (lambda c, f=0: (double_arrow(c, 0), (16, 16))[1], 1, ["ew-resize", "sb_h_double_arrow", "h_double_arrow", "col-resize", "split_h", "e-resize", "w-resize", "left_side", "right_side", "size_hor", "base_arrow_up"]),
+    "ns": (lambda c, f=0: (double_arrow(c, math.pi / 2), (16, 16))[1], 1, ["ns-resize", "sb_v_double_arrow", "v_double_arrow", "row-resize", "split_v", "n-resize", "s-resize", "top_side", "bottom_side", "size_ver", "base_arrow_down"]),
+    "nwse": (lambda c, f=0: (double_arrow(c, math.pi / 4), (16, 16))[1], 1, ["nwse-resize", "size_fdiag", "bd_double_arrow", "nw-resize", "se-resize", "top_left_corner", "bottom_right_corner"]),
+    "nesw": (lambda c, f=0: (double_arrow(c, -math.pi / 4), (16, 16))[1], 1, ["nesw-resize", "size_bdiag", "fd_double_arrow", "ne-resize", "sw-resize", "top_right_corner", "bottom_left_corner"]),
+}
+
+
+def render(shape, size, frame):
+    fn = SHAPES[shape][0]
+    c = Canvas(size)
+    hot = fn(c, frame)
+    return c.done(), (round(hot[0] * size / 32), round(hot[1] * size / 32))
+
+
+def xcursor(frames_by_size, delay):
+    """The X cursor file: header, table of contents, one image chunk per picture (premultiplied ARGB, little endian)."""
+    chunks = []
+    for size, frames in frames_by_size:
+        for img, hot in frames:
+            w, h = img.size
+            px = bytearray()
+            for r, g, b, a in list(img.tobytes() and zip(*[iter(img.tobytes())] * 4)):
+                px += struct.pack("<I", (a << 24) | ((r * a // 255) << 16) | ((g * a // 255) << 8) | (b * a // 255))
+            head = struct.pack("<IIIIIIIII", 36, 0xFFFD0002, size, 1, w, h, hot[0], hot[1], delay)
+            chunks.append((size, head + bytes(px)))
+    pos = 16 + 12 * len(chunks)
+    toc = b""
+    body = b""
+    for size, data in chunks:
+        toc += struct.pack("<III", 0xFFFD0002, size, pos + len(body))
+        body += data
+    return b"Xcur" + struct.pack("<III", 16, 0x10000, len(chunks)) + toc + body
+
+
+def main():
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    if not args:
+        print(__doc__)
+        return 2
+    out = args[0]
+    cur = os.path.join(out, "cursors")
+    os.makedirs(cur, exist_ok=True)
+    sheet_imgs = []
+    for shape, (fn, nframes, names) in SHAPES.items():
+        by_size = []
+        for size in SIZES:
+            by_size.append((size, [render(shape, size, f) for f in range(nframes)]))
+        data = xcursor(by_size, 80 if nframes > 1 else 0)
+        main_name = names[0]
+        with open(os.path.join(cur, main_name), "wb") as fh:
+            fh.write(data)
+        for n in names[1:]:
+            p = os.path.join(cur, n)
+            if os.path.lexists(p):
+                os.remove(p)
+            os.symlink(main_name, p)
+        sheet_imgs.append(by_size[2][1][0][0])
+    with open(os.path.join(out, "index.theme"), "w") as fh:
+        fh.write("[Icon Theme]\nName=Yggdrasil\nComment=Yggdrasil's mouse cursors: white shapes with a dark purple outline\n")
+    if "--preview" in sys.argv:
+        cols = 8
+        rows = (len(sheet_imgs) + cols - 1) // cols
+        sheet = Image.new("RGBA", (cols * 64, rows * 64), (60, 60, 70, 255))
+        for i, im in enumerate(sheet_imgs):
+            sheet.alpha_composite(im, ((i % cols) * 64 + 8, (i // cols) * 64 + 8))
+        sheet.resize((cols * 96, rows * 96), Image.LANCZOS).save(os.path.join(out, "preview.png"))
+    print(f"{sum(len(v[2]) for v in SHAPES.values())} cursor names, {len(SHAPES)} shapes, in {cur}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

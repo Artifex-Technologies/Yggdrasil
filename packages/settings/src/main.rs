@@ -1470,12 +1470,8 @@ impl App {
         }
         if let Some(dark) = style {
             self.change(ctx, move || {
-                let scheme = if dark { "WhiteSurDark" } else { "WhiteSur" };
-                sys::act("plasma-apply-colorscheme", &[scheme])?;
-                // Kvantum draws KDE apps' widgets; keep it in step with the colour scheme.
-                let home = std::env::var("HOME").unwrap_or_default();
-                let _ = std::fs::create_dir_all(format!("{home}/.config/Kvantum"));
-                let _ = std::fs::write(format!("{home}/.config/Kvantum/kvantum.kvconfig"), format!("[General]\ntheme={scheme}\n"));
+                // Yggdrasil's own colour scheme and GTK colours (ygg-theme), in the accent already chosen
+                sys::act("ygg-theme", &["apply", if dark { "--dark" } else { "--light" }])?;
                 // Minos's icon follows: its dark or light version
                 let _ = std::process::Command::new("liki-minos-icon").args(["-", if dark { "dark" } else { "light" }]).status();
                 Ok(())
@@ -1483,10 +1479,9 @@ impl App {
         }
         if let Some([r, g, b]) = accent {
             self.change(ctx, move || {
-                sys::act("plasma-apply-colorscheme", &["--accent-color", &format!("#{r:02x}{g:02x}{b:02x}")])?;
-                // Plasma 6.8 leaves the AccentColor key itself to a background service that is not running here; the apps
-                // (and this one) read that key, so write it too
                 let rgb = format!("{r},{g},{b}");
+                // the colour scheme and the GTK colours in the new accent (this also writes the AccentColor key the apps read)
+                sys::act("ygg-theme", &["apply", "--accent", &rgb])?;
                 for key in ["AccentColor", "LastUsedCustomAccentColor"] {
                     let _ = sys::act("kwriteconfig6", &["--file", "kdeglobals", "--group", "General", "--key", key, &rgb]);
                 }

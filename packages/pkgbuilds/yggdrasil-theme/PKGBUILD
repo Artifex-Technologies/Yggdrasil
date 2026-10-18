@@ -1,0 +1,41 @@
+# Yggdrasil's look for the programs it does not write (Qt, KDE and GTK programs) and its mouse cursors: packages/theme.
+# It replaces the WhiteSur KDE, GTK and cursor themes: a colour scheme (used with Qt's own Fusion style), GTK colours on GTK's own Adwaita,
+# and cursors drawn by ygg-cursors. Nothing is downloaded and no other theme package is needed.
+pkgname=yggdrasil-theme
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Yggdrasil's colour scheme, GTK colours and mouse cursors (replaces the WhiteSur themes)"
+arch=('any')
+url="https://github.com/Artifex-Technologies/Yggdrasil"
+license=('MIT')
+depends=('python')
+makedepends=('python-pillow')
+optdepends=('gtk3: GTK 3 programs use the Yggdrasil GTK theme'
+            'plasma-integration: Qt programs read the colour scheme through it until Yggdrasil has its own session')
+provides=('labyrinth-cursors')
+options=('!strip')
+
+_src="$startdir/../../theme"
+
+build() {
+  python3 "$_src/bin/ygg-cursors" "$srcdir/cursors"
+}
+
+package() {
+  install -Dm755 "$_src/bin/ygg-theme" "$pkgdir/usr/bin/ygg-theme"
+  install -Dm755 "$_src/bin/ygg-cursors" "$pkgdir/usr/bin/ygg-cursors"
+  # the cursors (an X cursor theme, which Wayland programs use as well)
+  install -d "$pkgdir/usr/share/icons"
+  cp -a "$srcdir/cursors" "$pkgdir/usr/share/icons/Yggdrasil"
+  # the colour schemes (each user's copy, in the accent they chose, is written by ygg-theme apply)
+  install -d "$pkgdir/usr/share/color-schemes"
+  "$_src/bin/ygg-theme" scheme dark  > "$pkgdir/usr/share/color-schemes/YggdrasilDark.colors"
+  "$_src/bin/ygg-theme" scheme light > "$pkgdir/usr/share/color-schemes/YggdrasilLight.colors"
+  # the GTK 3 theme: GTK's own Adwaita with Yggdrasil's colours (GTK 4 and libadwaita read the user's stylesheet that ygg-theme writes)
+  install -d "$pkgdir/usr/share/themes/Yggdrasil/gtk-3.0"
+  "$_src/bin/ygg-theme" gtk3-theme light > "$pkgdir/usr/share/themes/Yggdrasil/gtk-3.0/gtk.css"
+  "$_src/bin/ygg-theme" gtk3-theme dark  > "$pkgdir/usr/share/themes/Yggdrasil/gtk-3.0/gtk-dark.css"
+  printf '[Desktop Entry]\nType=X-GNOME-Metatheme\nName=Yggdrasil\nComment=Yggdrasil colours on GTK'"'"'s Adwaita\n\n[X-GNOME-Metatheme]\nGtkTheme=Yggdrasil\nIconTheme=Liki\nCursorTheme=Yggdrasil\n' > "$pkgdir/usr/share/themes/Yggdrasil/index.theme"
+  # the pointer for programs started at login
+  install -Dm644 /dev/stdin "$pkgdir/usr/lib/environment.d/50-yggdrasil-cursor.conf" <<<$'XCURSOR_THEME=Yggdrasil\nXCURSOR_SIZE=24'
+}

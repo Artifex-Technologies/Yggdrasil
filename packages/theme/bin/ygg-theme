@@ -1,0 +1,347 @@
+#!/usr/bin/env python3
+"""ygg-theme: Yggdrasil's look for the programs Yggdrasil does not write (Qt, KDE and GTK programs) and for the mouse pointer.
+
+  ygg-theme apply [--dark|--light] [--accent R,G,B]   write the colour scheme and the GTK settings for this user and switch to them
+  ygg-theme scheme dark|light [R,G,B]                  print a KDE colour scheme
+  ygg-theme gtk dark|light [R,G,B]                     print the GTK colour definitions
+  ygg-theme gtk3-theme dark|light                      print the system GTK 3 theme file (what the package installs)
+  ygg-theme --help
+
+Nothing here draws anything: it writes small text files (a KDE colour scheme, GTK colours, a few settings) from Yggdrasil's palette (the same
+colours the panel, Settings and Minos use) and the accent colour. Qt programs use Qt's own "Fusion" style with that scheme; GTK programs use
+GTK's own Adwaita with those colours; the mouse pointer is the Yggdrasil cursor theme (ygg-cursors). No other theme package is needed.
+
+The settings live where the desktop already keeps them: ~/.config/kdeglobals (the accent, the scheme name), ~/.config/gtk-3.0 and gtk-4.0.
+"""
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+DEFAULT_ACCENT = (124, 84, 214)
+
+# the palette of labyrinth-ui (theme.rs): window, view, field (buttons), strip (headers), borders, text
+DARK = dict(bg=(16, 17, 22), alt=(19, 20, 26), view=(14, 15, 20), field=(24, 25, 32), field_alt=(32, 34, 44), strip=(11, 12, 16), strip_alt=(14, 15, 20),
+            border=(38, 40, 52), text=(232, 233, 238), dim=(140, 143, 157), red=(232, 92, 106), amber=(225, 170, 70), green=(84, 190, 120))
+LIGHT = dict(bg=(250, 250, 252), alt=(244, 244, 248), view=(255, 255, 255), field=(243, 243, 247), field_alt=(232, 232, 240), strip=(232, 232, 238), strip_alt=(240, 240, 245),
+             border=(214, 214, 224), text=(28, 29, 36), dim=(110, 113, 128), red=(190, 50, 60), amber=(196, 130, 30), green=(46, 140, 80))
+
+
+def mix(a, b, t):
+    return tuple(round(x + (y - x) * t) for x, y in zip(a, b))
+
+
+def lum(c):
+    def f(v):
+        v /= 255
+        return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+    return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2])
+
+
+def on_accent(accent):
+    """Text on the accent: white, or near-black when the accent itself is light (the same rule as the apps')."""
+    return (24, 20, 36) if lum(accent) > 0.45 else (255, 255, 255)
+
+
+def rgb(c):
+    return "%d,%d,%d" % tuple(c)
+
+
+def css(c):
+    return "rgb(%d,%d,%d)" % tuple(c)
+
+
+def parse_accent(s):
+    try:
+        p = [int(x) for x in s.split(",")]
+        if len(p) == 3 and all(0 <= v <= 255 for v in p):
+            return tuple(p)
+    except ValueError:
+        pass
+    return None
+
+
+def scheme(dark, accent):
+    P = DARK if dark else LIGHT
+    name = "YggdrasilDark" if dark else "YggdrasilLight"
+    # readable accent text on the background: lifted on dark, darkened on light
+    acc_text = mix(accent, (255, 255, 255), 0.25) if dark else mix(accent, (0, 0, 0), 0.15)
+    link = mix(accent, (255, 255, 255), 0.35) if dark else mix(accent, (0, 0, 0), 0.25)
+    visited = mix(accent, (215, 130, 200), 0.5)
+    sel_alt = mix(accent, P["bg"], 0.25)
+
+    def block(bg, alt, fg=None, deco=None, active=None):
+        fg = fg or P["text"]
+        return [("BackgroundAlternate", alt), ("BackgroundNormal", bg), ("DecorationFocus", deco or accent), ("DecorationHover", deco or accent),
+                ("ForegroundActive", active or acc_text), ("ForegroundInactive", P["dim"]), ("ForegroundLink", link), ("ForegroundNegative", P["red"]),
+                ("ForegroundNeutral", P["amber"]), ("ForegroundNormal", fg), ("ForegroundPositive", P["green"]), ("ForegroundVisited", visited)]
+
+    sections = {
+        "Button": block(P["field"], P["field_alt"]),
+        "Complementary": block(P["strip"], P["strip_alt"]),
+        "Header": block(P["strip"], P["strip_alt"]),
+        "Selection": block(accent, sel_alt, fg=on_accent(accent), deco=mix(accent, (255, 255, 255), 0.3), active=on_accent(accent)),
+        "Tooltip": block(P["field"], P["field_alt"]),
+        "View": block(P["view"], P["alt"]),
+        "Window": block(P["bg"], P["alt"]),
+    }
+    out = ["# Yggdrasil colour scheme (written by ygg-theme from the palette Yggdrasil's own programs use)", ""]
+    out += ["[ColorEffects:Disabled]", "Color=56,56,56", "ColorAmount=0", "ColorEffect=0", "ContrastAmount=0.65", "ContrastEffect=1", "IntensityAmount=0.1", "IntensityEffect=2", ""]
+    out += ["[ColorEffects:Inactive]", "ChangeSelectionColor=true", "Color=112,111,110", "ColorAmount=0.025", "ColorEffect=2", "ContrastAmount=0.1", "ContrastEffect=2", "Enable=false", "IntensityAmount=0", "IntensityEffect=0", ""]
+    for sec, items in sections.items():
+        out.append(f"[Colors:{sec}]")
+        out += [f"{k}={rgb(v)}" for k, v in items]
+        out.append("")
+    out += ["[General]", f"ColorScheme={name}", f"Name={'Yggdrasil dark' if dark else 'Yggdrasil light'}", "shadeSortColumn=true", ""]
+    out += ["[KDE]", "contrast=4", ""]
+    out += ["[WM]", f"activeBackground={rgb(P['strip'])}", f"activeForeground={rgb(P['text'])}", f"inactiveBackground={rgb(P['bg'])}", f"inactiveForeground={rgb(P['dim'])}",
+            f"activeBlend={rgb(P['text'])}", f"inactiveBlend={rgb(P['dim'])}", ""]
+    return "\n".join(out)
+
+
+def gtk_colors(dark, accent):
+    """GTK colour definitions: libadwaita's names (GTK 4) and Adwaita's theme_* names (GTK 3)."""
+    P = DARK if dark else LIGHT
+    fg_on = on_accent(accent)
+    acc = mix(accent, (255, 255, 255), 0.25) if dark else mix(accent, (0, 0, 0), 0.15)
+    d = {
+        "accent_bg_color": accent, "accent_fg_color": fg_on, "accent_color": acc,
+        "destructive_bg_color": P["red"] if not dark else (180, 58, 69), "destructive_fg_color": (255, 255, 255), "destructive_color": P["red"],
+        "success_bg_color": P["green"] if not dark else (58, 158, 94), "success_fg_color": (255, 255, 255), "success_color": P["green"],
+        "warning_bg_color": P["amber"] if not dark else (201, 146, 58), "warning_fg_color": (24, 20, 36), "warning_color": P["amber"],
+        "error_bg_color": P["red"] if not dark else (180, 58, 69), "error_fg_color": (255, 255, 255), "error_color": P["red"],
+        "window_bg_color": P["bg"], "window_fg_color": P["text"],
+        "view_bg_color": P["view"], "view_fg_color": P["text"],
+        "headerbar_bg_color": P["strip"], "headerbar_fg_color": P["text"], "headerbar_border_color": P["border"], "headerbar_backdrop_color": P["bg"],
+        "headerbar_shade_color": P["strip"], "headerbar_darker_shade_color": P["strip"],
+        "card_bg_color": P["field"], "card_fg_color": P["text"], "card_shade_color": P["border"],
+        "dialog_bg_color": P["bg"], "dialog_fg_color": P["text"],
+        "popover_bg_color": P["field"], "popover_fg_color": P["text"], "popover_shade_color": P["border"],
+        "sidebar_bg_color": P["strip_alt"], "sidebar_fg_color": P["text"], "sidebar_backdrop_color": P["bg"], "sidebar_shade_color": P["border"],
+        "secondary_sidebar_bg_color": P["strip_alt"], "secondary_sidebar_fg_color": P["text"],
+        "thumbnail_bg_color": P["field"], "thumbnail_fg_color": P["text"],
+        "shade_color": (0, 0, 0), "scrollbar_outline_color": P["border"],
+        # GTK 3's Adwaita
+        "theme_bg_color": P["bg"], "theme_fg_color": P["text"], "theme_base_color": P["view"], "theme_text_color": P["text"],
+        "theme_selected_bg_color": accent, "theme_selected_fg_color": fg_on,
+        "theme_unfocused_bg_color": P["bg"], "theme_unfocused_fg_color": P["dim"], "theme_unfocused_base_color": P["view"], "theme_unfocused_text_color": P["dim"],
+        "theme_unfocused_selected_bg_color": mix(accent, P["bg"], 0.35), "theme_unfocused_selected_fg_color": P["text"],
+        "borders": P["border"], "unfocused_borders": P["border"], "insensitive_bg_color": P["alt"], "insensitive_fg_color": P["dim"],
+        "insensitive_base_color": P["view"], "insensitive_borders": P["border"], "unfocused_insensitive_borders": P["border"],
+        "content_view_bg": P["view"], "link_color": mix(accent, (255, 255, 255), 0.35) if dark else mix(accent, (0, 0, 0), 0.25),
+        "wm_title": P["text"], "wm_unfocused_title": P["dim"], "wm_bg": P["strip"], "wm_bg_a": P["strip"], "wm_bg_b": P["strip"],
+    }
+    lines = ["/* Yggdrasil colours (written by ygg-theme from the palette Yggdrasil's own programs use, with the accent) */"]
+    lines += [f"@define-color {k} {css(v)};" for k, v in d.items()]
+    return "\n".join(lines) + "\n"
+
+
+def gtk3_theme_css(dark):
+    return ('/* Yggdrasil for GTK 3: GTK\'s own Adwaita with Yggdrasil\'s colours (the accent is written to ~/.config/gtk-3.0/gtk.css by ygg-theme). */\n'
+            f'@import url("resource:///org/gtk/libgtk/theme/Adwaita/gtk-contained{"-dark" if dark else ""}.css");\n' + gtk_colors(dark, DEFAULT_ACCENT))
+
+
+# ---------------------------------------------------------------- the files of this user
+
+def home():
+    return os.environ.get("HOME", os.path.expanduser("~"))
+
+
+def config():
+    return os.environ.get("XDG_CONFIG_HOME") or os.path.join(home(), ".config")
+
+
+def data():
+    return os.environ.get("XDG_DATA_HOME") or os.path.join(home(), ".local", "share")
+
+
+def ini_update(path, updates):
+    """Set many `key=value` pairs in many `[group]`s of an INI file in one go, keeping everything else (and the order) as it is.
+    `updates` is {group: {key: value}}."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().split("\n")
+    except OSError:
+        lines = []
+    # split into (group, [lines]); the part before the first group has group None
+    blocks, cur = [], [None, []]
+    for line in lines:
+        s = line.strip()
+        if s.startswith("[") and s.endswith("]"):
+            blocks.append(cur)
+            cur = [s[1:-1], [line]]
+        else:
+            cur[1].append(line)
+    blocks.append(cur)
+    done = set()
+    for blk in blocks:
+        g = blk[0]
+        if g in updates:
+            pending = dict(updates[g])
+            out = []
+            for line in blk[1]:
+                k = line.split("=", 1)[0].strip() if "=" in line and not line.strip().startswith("#") else None
+                if k in pending:
+                    out.append(f"{k}={pending.pop(k)}")
+                else:
+                    out.append(line)
+            # new keys go after the last non-empty line of the group
+            while out and not out[-1].strip():
+                out.pop()
+            out += [f"{k}={v}" for k, v in pending.items()]
+            out.append("")
+            blk[1] = out
+            done.add(g)
+    for g, kv in updates.items():
+        if g not in done:
+            if blocks[-1][1] and blocks[-1][1][-1].strip():
+                blocks[-1][1].append("")
+            blocks.append([g, [f"[{g}]"] + [f"{k}={v}" for k, v in kv.items()] + [""]])
+    text = "\n".join("\n".join(b[1]) for b in blocks)
+    text = text.rstrip("\n") + "\n"
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+
+
+def ini_set(path, group, key, value):
+    ini_update(path, {group: {key: value}})
+
+
+def ini_get(path, group, key):
+    try:
+        in_group = False
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                s = line.strip()
+                if s.startswith("["):
+                    in_group = s == f"[{group}]"
+                elif in_group and s.split("=", 1)[0].strip() == key:
+                    return s.split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return None
+
+
+def run(*cmd):
+    try:
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def apply(dark, accent):
+    kdeglobals = os.path.join(config(), "kdeglobals")
+    name = "YggdrasilDark" if dark else "YggdrasilLight"
+    # the colour scheme, in the user's own folder (the accent is part of it)
+    sdir = os.path.join(data(), "color-schemes")
+    os.makedirs(sdir, exist_ok=True)
+    with open(os.path.join(sdir, name + ".colors"), "w", encoding="utf-8") as f:
+        f.write(scheme(dark, accent))
+    # KDE and Qt programs read the colours from kdeglobals itself (not from the scheme file), so they go in there, as plasma-apply-colorscheme does
+    updates = scheme_sections(scheme(dark, accent))
+    updates.setdefault("General", {}).update({"AccentColor": rgb(accent), "ColorScheme": name})
+    updates["KDE"] = dict(updates.get("KDE", {}), widgetStyle="Fusion")
+    updates["Icons"] = {"Theme": "Liki"}
+    ini_update(kdeglobals, updates)
+    ini_set(os.path.join(config(), "kcminputrc"), "Mouse", "cursorTheme", "Yggdrasil")
+    # GTK 3 and 4: the theme name, the dark flag, the pointer and the icons; the colours in each user stylesheet
+    for ver in ("gtk-3.0", "gtk-4.0"):
+        d = os.path.join(config(), ver)
+        os.makedirs(d, exist_ok=True)
+        ini = os.path.join(d, "settings.ini")
+        for k, v in (("gtk-application-prefer-dark-theme", "true" if dark else "false"), ("gtk-cursor-theme-name", "Yggdrasil"), ("gtk-icon-theme-name", "Liki")):
+            ini_set(ini, "Settings", k, v)
+        if ver == "gtk-3.0":
+            ini_set(ini, "Settings", "gtk-theme-name", "Yggdrasil")
+        # libadwaita and GTK 4 read only the user's stylesheet: put the colours there (kept apart from anything the user adds below the marker)
+        css_path = os.path.join(d, "gtk.css")
+        try:
+            with open(css_path, encoding="utf-8") as f:
+                old = f.read()
+        except OSError:
+            old = ""
+        marker = "/* --- yours below this line --- */"
+        mine = old.split(marker, 1)[1] if marker in old else ""
+        if old and marker not in old:
+            # a stylesheet from before (it imports colours.css): keep it below the marker, minus that import
+            mine = "\n" + re.sub(r"^@import\s+['\"]colors\.css['\"];\s*$", "", old, flags=re.M)
+        with open(css_path, "w", encoding="utf-8") as f:
+            f.write(gtk_colors(dark, accent) + marker + (mine if mine else "\n"))
+    # the pointer for programs started from now on (Wayland programs read these)
+    env = os.path.join(config(), "environment.d")
+    os.makedirs(env, exist_ok=True)
+    with open(os.path.join(env, "50-yggdrasil-cursor.conf"), "w", encoding="utf-8") as f:
+        f.write("XCURSOR_THEME=Yggdrasil\nXCURSOR_SIZE=24\n")
+    # tell what is running
+    if shutil.which("plasma-apply-colorscheme"):
+        run("plasma-apply-colorscheme", name)
+        # the scheme file does not carry the accent into kdeglobals' own keys
+        ini_set(kdeglobals, "General", "AccentColor", rgb(accent))
+    if shutil.which("plasma-apply-cursortheme"):
+        run("plasma-apply-cursortheme", "Yggdrasil")
+    if shutil.which("gsettings"):
+        run("gsettings", "set", "org.gnome.desktop.interface", "color-scheme", "prefer-dark" if dark else "default")
+        run("gsettings", "set", "org.gnome.desktop.interface", "gtk-theme", "Yggdrasil")
+        run("gsettings", "set", "org.gnome.desktop.interface", "icon-theme", "Liki")
+        run("gsettings", "set", "org.gnome.desktop.interface", "cursor-theme", "Yggdrasil")
+
+
+def scheme_sections(text):
+    """A colour scheme file as {group: {key: value}}."""
+    out, cur = {}, None
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("[") and line.endswith("]"):
+            cur = out.setdefault(line[1:-1], {})
+        elif "=" in line and cur is not None and not line.startswith("#"):
+            k, v = line.split("=", 1)
+            cur[k] = v
+    return out
+
+
+def current():
+    """(dark, accent) from the settings now."""
+    k = os.path.join(config(), "kdeglobals")
+    s = (ini_get(k, "General", "ColorScheme") or "").lower()
+    dark = "light" not in s
+    acc = parse_accent(ini_get(k, "General", "AccentColor") or "") or DEFAULT_ACCENT
+    return dark, acc
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__)
+        return 0
+    cmd = argv[0]
+    if cmd == "gtk3-theme":
+        print(gtk3_theme_css((argv[1] if len(argv) > 1 else "dark") != "light"), end="")
+        return 0
+    if cmd in ("scheme", "gtk"):
+        dark = (argv[1] if len(argv) > 1 else "dark") != "light"
+        acc = parse_accent(argv[2]) if len(argv) > 2 else DEFAULT_ACCENT
+        print(scheme(dark, acc or DEFAULT_ACCENT) if cmd == "scheme" else gtk_colors(dark, acc or DEFAULT_ACCENT))
+        return 0
+    if cmd == "apply":
+        dark, acc = current()
+        a = argv[1:]
+        i = 0
+        while i < len(a):
+            if a[i] == "--dark":
+                dark = True
+            elif a[i] == "--light":
+                dark = False
+            elif a[i] == "--accent" and i + 1 < len(a):
+                acc = parse_accent(a[i + 1]) or acc
+                i += 1
+            i += 1
+        apply(dark, acc)
+        print(f"Yggdrasil {'dark' if dark else 'light'}, accent {rgb(acc)}")
+        return 0
+    print(__doc__, file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

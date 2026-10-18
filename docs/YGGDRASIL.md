@@ -16,6 +16,8 @@ will use Yggdrasil as well, so Yggdrasil must never depend on anything that only
 | Polkit agent, keyring sync, distress password | `labyrinth-polkit`, `labyrinth-keyring-sync`, `labyrinth-distress` (+ PAM module) | |
 | Compositor | `labyrinth-compositor` | first version, nested only (COMPOSITOR.md) |
 | Calculator, weather | `labyrinth-calculator`, `labyrinth-weather` | small apps |
+| Look for other programs (colour scheme, GTK colours, cursors) | `ygg-theme`, `ygg-cursors` (package `yggdrasil-theme`; [THEME.md](THEME.md)) | replaces WhiteSur |
+| Icons | `liki-build` and the others (package `liki-icon-theme`; [LIKI.md](LIKI.md)) | the pack is Liki |
 | Shared library and settings file | `labyrinth-ui`, `labyrinth-conf`; `~/.config/labyrinth/` | |
 
 ## What stays Labyrinth's (not Yggdrasil)

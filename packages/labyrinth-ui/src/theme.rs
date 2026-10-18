@@ -215,7 +215,7 @@ mod tests {
 
     #[test]
     fn reads_the_kde_accent() {
-        let text = "[General]\nColorScheme=WhiteSurDark\nAccentColor=124,84,214\n\n[KDE]\nwidgetStyle=kvantum\n";
+        let text = "[General]\nColorScheme=YggdrasilDark\nAccentColor=124,84,214\n\n[KDE]\nwidgetStyle=Fusion\n";
         assert_eq!(parse_kde_accent(text), Some([124, 84, 214]));
     }
 

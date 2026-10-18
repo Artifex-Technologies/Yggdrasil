@@ -791,17 +791,11 @@ pub fn set_night(on: bool) {
     });
 }
 
-/// Dark or light, the way Settings > Appearance does it (colour scheme, and Kvantum for KDE apps).
+/// Dark or light, the way Settings > Appearance does it (Yggdrasil's colour scheme and GTK colours, by ygg-theme, in the accent already chosen).
 pub fn set_dark(dark: bool) {
     std::thread::spawn(move || {
-        let scheme = if dark { "WhiteSurDark" } else { "WhiteSur" };
-        let _ = Command::new("plasma-apply-colorscheme").arg(scheme).status();
+        let _ = Command::new("ygg-theme").args(["apply", if dark { "--dark" } else { "--light" }]).status();
         let _ = Command::new("liki-minos-icon").args(["-", if dark { "dark" } else { "light" }]).status();
-        if let Some(home) = std::env::var_os("HOME") {
-            let d = PathBuf::from(home).join(".config/Kvantum");
-            let _ = std::fs::create_dir_all(&d);
-            let _ = std::fs::write(d.join("kvantum.kvconfig"), format!("[General]\ntheme={scheme}\n"));
-        }
     });
 }
 
