@@ -240,7 +240,7 @@ impl App {
                 }
             }
         }
-        let (time, date) = clock_text();
+        let (time, date) = design::clock_text();
         let scene = design::Scene {
             fonts: &self.fonts,
             user: &self.user,
@@ -249,60 +249,14 @@ impl App {
             message: &self.lock_state.message,
             time,
             date,
-            greeting: design::greeting(current_hour()),
+            greeting: design::greeting(design::current_hour()),
             wall: self.walls.get(&key).map(|w| &w.0),
             blurred: self.walls.get(&key).map(|w| &w.1),
             avatar: self.avatar.as_ref(),
-            accent: accent(),
+            accent: design::accent(),
         };
         design::paint(self.design, pix, &scene);
     }
-}
-
-/// The time ("14:05") and date ("Friday, 16 October 2026") in the user's locale and time zone.
-fn clock_text() -> (String, String) {
-    let fmt = |f: &str| -> String {
-        let mut buf = [0u8; 96];
-        unsafe {
-            let t = libc::time(std::ptr::null_mut());
-            let mut tm: libc::tm = std::mem::zeroed();
-            libc::localtime_r(&t, &mut tm);
-            let cf = std::ffi::CString::new(f).unwrap();
-            let n = libc::strftime(buf.as_mut_ptr() as *mut libc::c_char, buf.len(), cf.as_ptr(), &tm);
-            String::from_utf8_lossy(&buf[..n]).into_owned()
-        }
-    };
-    (fmt("%H:%M"), fmt("%A, %-d %B %Y"))
-}
-
-fn current_hour() -> u32 {
-    unsafe {
-        let t = libc::time(std::ptr::null_mut());
-        let mut tm: libc::tm = std::mem::zeroed();
-        libc::localtime_r(&t, &mut tm);
-        tm.tm_hour as u32
-    }
-}
-
-/// The desktop's accent color (kdeglobals), else Labyrinth purple.
-fn accent() -> (u8, u8, u8, u8) {
-    let dir = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")));
-    let text = dir.and_then(|d| std::fs::read_to_string(d.join("kdeglobals")).ok()).unwrap_or_default();
-    let mut general = false;
-    for l in text.lines() {
-        let l = l.trim();
-        if l.starts_with('[') {
-            general = l == "[General]";
-        } else if general {
-            if let Some(v) = l.strip_prefix("AccentColor=") {
-                let p: Vec<u8> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
-                if p.len() == 3 {
-                    return (p[0], p[1], p[2], 255);
-                }
-            }
-        }
-    }
-    (124, 84, 214, 255)
 }
 
 fn user_name() -> String {
@@ -329,10 +283,10 @@ fn preview(args: &[String]) -> ! {
     let wall = get("--wallpaper").map(std::path::PathBuf::from).or_else(design::wallpaper_path).and_then(|p| design::load_picture(&p)).and_then(|p| design::cover(&p, w, h));
     let blurred = wall.as_ref().and_then(design::blur);
     let avatar = design::avatar_path().and_then(|p| design::load_picture(&p));
-    let (time, date) = clock_text();
+    let (time, date) = design::clock_text();
     let user = get("--user").unwrap_or_else(user_name);
     let message = get("--message").unwrap_or_default();
-    let scene = design::Scene { fonts: &fonts, user: &user, dots: get("--typed").and_then(|n| n.parse().ok()).unwrap_or(0), waiting: false, message: &message, time, date, greeting: design::greeting(current_hour()), wall: wall.as_ref(), blurred: blurred.as_ref(), avatar: avatar.as_ref(), accent: accent() };
+    let scene = design::Scene { fonts: &fonts, user: &user, dots: get("--typed").and_then(|n| n.parse().ok()).unwrap_or(0), waiting: false, message: &message, time, date, greeting: design::greeting(design::current_hour()), wall: wall.as_ref(), blurred: blurred.as_ref(), avatar: avatar.as_ref(), accent: design::accent() };
     let mut pix = Pixmap::new(w, h).unwrap_or_else(|| die("bad size"));
     design::paint(d, &mut pix, &scene);
     pix.save_png(&out).unwrap_or_else(|e| die(&format!("cannot write {out}: {e}")));
@@ -426,7 +380,7 @@ fn die(msg: &str) -> ! {
 mod tests {
     #[test]
     fn the_clock_has_two_parts() {
-        let (t, d) = super::clock_text();
+        let (t, d) = crate::design::clock_text();
         assert_eq!(t.len(), 5);
         assert!(d.contains(' '));
     }

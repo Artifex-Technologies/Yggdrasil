@@ -332,3 +332,49 @@ pub fn greeting(hour: u32) -> String {
     }
     .to_string()
 }
+
+/// The time ("14:05") and date ("Friday, 16 October 2026") in the user's locale and time zone.
+pub fn clock_text() -> (String, String) {
+    let fmt = |f: &str| -> String {
+        let mut buf = [0u8; 96];
+        unsafe {
+            let t = libc::time(std::ptr::null_mut());
+            let mut tm: libc::tm = std::mem::zeroed();
+            libc::localtime_r(&t, &mut tm);
+            let cf = std::ffi::CString::new(f).unwrap();
+            let n = libc::strftime(buf.as_mut_ptr() as *mut libc::c_char, buf.len(), cf.as_ptr(), &tm);
+            String::from_utf8_lossy(&buf[..n]).into_owned()
+        }
+    };
+    (fmt("%H:%M"), fmt("%A, %-d %B %Y"))
+}
+
+pub fn current_hour() -> u32 {
+    unsafe {
+        let t = libc::time(std::ptr::null_mut());
+        let mut tm: libc::tm = std::mem::zeroed();
+        libc::localtime_r(&t, &mut tm);
+        tm.tm_hour as u32
+    }
+}
+
+/// The desktop's accent color (kdeglobals), else Labyrinth purple.
+pub fn accent() -> (u8, u8, u8, u8) {
+    let dir = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")));
+    let text = dir.and_then(|d| std::fs::read_to_string(d.join("kdeglobals")).ok()).unwrap_or_default();
+    let mut general = false;
+    for l in text.lines() {
+        let l = l.trim();
+        if l.starts_with('[') {
+            general = l == "[General]";
+        } else if general {
+            if let Some(v) = l.strip_prefix("AccentColor=") {
+                let p: Vec<u8> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+                if p.len() == 3 {
+                    return (p[0], p[1], p[2], 255);
+                }
+            }
+        }
+    }
+    (124, 84, 214, 255)
+}
