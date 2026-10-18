@@ -13,6 +13,7 @@ mod icons;
 mod restore;
 mod distress;
 mod security;
+mod workspaces;
 mod sys;
 mod ui;
 mod users;
@@ -67,6 +68,7 @@ enum AppSub {
     Wallpaper,
     Minos,
     Lock,
+    Workspaces,
 }
 
 const PAGES: [(Page, &str, Icon); 15] = [
@@ -188,6 +190,7 @@ struct App {
     dev_filter: String,
     /// The lock screen previews are being (or have been) drawn for this visit to the page.
     lock_previews_started: bool,
+    ws_conf: workspaces::Conf,
     app_sort: usize,
     app_sel: Option<String>,
     /// What you decided for the open app in Ask mode, refreshed every few seconds.
@@ -263,10 +266,12 @@ impl App {
                 "wallpaper" => AppSub::Wallpaper,
                 "minos" => AppSub::Minos,
                 "lock" => AppSub::Lock,
+                "workspaces" => AppSub::Workspaces,
                 _ => AppSub::Main,
             },
             dev_filter: String::new(),
             lock_previews_started: false,
+            ws_conf: workspaces::load(),
             app_sort: 0,
             app_sel: None,
             ask_cache: None,
@@ -589,6 +594,53 @@ fn loading(ui: &mut egui::Ui) {
 }
 
 impl App {
+    /// Appearance > Workspaces: the default profile and one for each workspace.
+    fn workspaces_page(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
+        use workspaces::{Default as Dflt, Profile};
+        let mut c = self.ws_conf.clone();
+        ui::group(ui, pal, None, |ui| {
+            ui.add_space(6.0);
+            ui.label(RichText::new("Standard: windows float and you move and size them. Tiling: windows are laid out on their own, side by side, like Hyprland. This is used by Yggdrasil's own compositor (it takes effect once that replaces KWin); the choice is kept until then.").size(12.5).color(pal.dim));
+            ui.add_space(6.0);
+        });
+        ui::group(ui, pal, Some("Default"), |ui| {
+            let sel = match c.default {
+                Dflt::Fixed(Profile::Standard) => 0,
+                Dflt::Fixed(Profile::Tiling) => 1,
+                Dflt::Ask => 2,
+            };
+            ui::row(ui, pal, true, "Every workspace starts as", Some("Ask each time shows a question when you open an empty workspace"), |ui| {
+                if let Some(i) = ui::segmented(ui, pal, &["Standard", "Tiling", "Ask each time"], sel) {
+                    c.default = [Dflt::Fixed(Profile::Standard), Dflt::Fixed(Profile::Tiling), Dflt::Ask][i];
+                }
+            });
+        });
+        ui::group(ui, pal, Some("Each workspace"), |ui| {
+            for n in 0..4 {
+                let label = |p: Option<Profile>| match p {
+                    None => "Use the default",
+                    Some(Profile::Standard) => "Always standard",
+                    Some(Profile::Tiling) => "Always tiling",
+                };
+                ui::row(ui, pal, n == 0, &format!("Workspace {}", n + 1), None, |ui| {
+                    egui::ComboBox::from_id_salt(("ws", n)).selected_text(label(c.per[n])).show_ui(ui, |ui| {
+                        for p in [None, Some(Profile::Standard), Some(Profile::Tiling)] {
+                            if ui.selectable_label(c.per[n] == p, label(p)).clicked() {
+                                c.per[n] = p;
+                            }
+                        }
+                    });
+                });
+            }
+        });
+        ui.add_space(8.0);
+        ui.label(RichText::new("Super+T floats or tiles the focused window on a tiling workspace. Super+Ctrl+1 to 4 switch workspaces.").size(12.0).color(pal.dim));
+        if c != self.ws_conf {
+            self.ws_conf = c.clone();
+            self.change(ctx, move || workspaces::save(&c));
+        }
+    }
+
     /// Appearance > Lock screen: the designs, each drawn by labyrinth-lock into a picture (nothing is locked), and which one is in use.
     fn lock_page(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         const DESIGNS: [(&str, &str, &str); 4] = [
@@ -1099,6 +1151,7 @@ impl App {
                 AppSub::Notifs => "Notifications",
                 AppSub::Minos => "Minos",
                 AppSub::Lock => "Lock screen",
+                AppSub::Workspaces => "Workspaces",
                 _ => "Wallpaper",
             };
             ui.horizontal(|ui| {
@@ -1149,6 +1202,10 @@ impl App {
                         self.app_sub = AppSub::Lock;
                         self.lock_previews_started = false;
                 }
+                if ui::nav_row(ui, pal, false, "Workspaces", Some("How windows behave on each workspace: float, or tile on their own"), |_| {}) {
+                    self.app_sub = AppSub::Workspaces;
+                    self.ws_conf = workspaces::load();
+                }
                 if ui::nav_row(ui, pal, false, "Minos", Some("The file manager: make its window see-through"), |_| {}) {
                         self.app_sub = AppSub::Minos;
                 }
@@ -1185,6 +1242,9 @@ impl App {
         }
         if self.app_sub == AppSub::Lock {
             self.lock_page(ui, pal, ctx);
+        }
+        if self.app_sub == AppSub::Workspaces {
+            self.workspaces_page(ui, pal, ctx);
         }
         if self.app_sub == AppSub::Icons {
         ui::group(ui, pal, Some("Icons"), |ui| {
