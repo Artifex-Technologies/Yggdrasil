@@ -9,7 +9,7 @@ arch=('any')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
 license=('MIT')
 depends=('python')
-makedepends=('python-pillow')
+makedepends=('python-pillow' 'python-gobject' 'gtk4')
 optdepends=('gtk3: GTK 3 programs use the Yggdrasil GTK theme'
             'plasma-integration: Qt programs read the colour scheme through it until Yggdrasil has its own session')
 provides=('labyrinth-cursors')
@@ -31,10 +31,13 @@ package() {
   install -d "$pkgdir/usr/share/color-schemes"
   "$_src/bin/ygg-theme" scheme dark  > "$pkgdir/usr/share/color-schemes/YggdrasilDark.colors"
   "$_src/bin/ygg-theme" scheme light > "$pkgdir/usr/share/color-schemes/YggdrasilLight.colors"
-  # the GTK 3 theme: GTK's own Adwaita with Yggdrasil's colours (GTK 4 and libadwaita read the user's stylesheet that ygg-theme writes)
+  # the GTK 3 and GTK 4 themes: GTK's own with Yggdrasil's colours and surfaces (libadwaita programs read the colours in the user's stylesheet that ygg-theme writes)
   install -d "$pkgdir/usr/share/themes/Yggdrasil/gtk-3.0"
   "$_src/bin/ygg-theme" gtk3-theme light > "$pkgdir/usr/share/themes/Yggdrasil/gtk-3.0/gtk.css"
   "$_src/bin/ygg-theme" gtk3-theme dark  > "$pkgdir/usr/share/themes/Yggdrasil/gtk-3.0/gtk-dark.css"
+  install -d "$pkgdir/usr/share/themes/Yggdrasil/gtk-4.0"
+  "$_src/bin/ygg-theme" gtk4-theme light > "$pkgdir/usr/share/themes/Yggdrasil/gtk-4.0/gtk.css"
+  "$_src/bin/ygg-theme" gtk4-theme dark  > "$pkgdir/usr/share/themes/Yggdrasil/gtk-4.0/gtk-dark.css"
   printf '[Desktop Entry]\nType=X-GNOME-Metatheme\nName=Yggdrasil\nComment=Yggdrasil colours on GTK'"'"'s Adwaita\n\n[X-GNOME-Metatheme]\nGtkTheme=Yggdrasil\nIconTheme=Liki\nCursorTheme=Yggdrasil\n' > "$pkgdir/usr/share/themes/Yggdrasil/index.theme"
   # the pointer for programs started at login
   install -Dm644 /dev/stdin "$pkgdir/usr/lib/environment.d/50-yggdrasil-cursor.conf" <<<$'XCURSOR_THEME=Yggdrasil\nXCURSOR_SIZE=24'

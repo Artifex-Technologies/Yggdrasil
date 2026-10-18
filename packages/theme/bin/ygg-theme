@@ -4,7 +4,7 @@
   ygg-theme apply [--dark|--light] [--accent R,G,B]   write the colour scheme and the GTK settings for this user and switch to them
   ygg-theme scheme dark|light [R,G,B]                  print a KDE colour scheme
   ygg-theme gtk dark|light [R,G,B]                     print the GTK colour definitions
-  ygg-theme gtk3-theme dark|light                      print the system GTK 3 theme file (what the package installs)
+  ygg-theme gtk3-theme|gtk4-theme dark|light           print the system GTK 3 or GTK 4 theme file (what the package installs)
   ygg-theme --help
 
 Nothing here draws anything: it writes small text files (a KDE colour scheme, GTK colours, a few settings) from Yggdrasil's palette (the same
@@ -142,6 +142,145 @@ def gtk3_theme_css(dark):
             f'@import url("resource:///org/gtk/libgtk/theme/Adwaita/gtk-contained{"-dark" if dark else ""}.css");\n' + gtk_colors(dark, DEFAULT_ACCENT))
 
 
+GTK4_RULES = """
+/* GTK 4's own theme uses fixed greys (libadwaita programs read the colours above instead), so the plain GTK 4 programs get their surfaces here. */
+window, .background { background-color: @window_bg_color; color: @window_fg_color; }
+.view, textview > text, iconview, listview, columnview, treeview.view, entry, spinbutton, dropdown > button, searchentry { background-color: @view_bg_color; color: @view_fg_color; }
+headerbar, .titlebar, searchbar, actionbar { background-color: @headerbar_bg_color; color: @headerbar_fg_color; border-color: @headerbar_border_color; box-shadow: none; }
+headerbar:backdrop, .titlebar:backdrop { background-color: @headerbar_backdrop_color; }
+sidebar, .sidebar, placessidebar, stacksidebar { background-color: @sidebar_bg_color; color: @sidebar_fg_color; }
+notebook > header { background-color: @headerbar_bg_color; border-color: @borders; }
+notebook > header > tabs > tab:checked { box-shadow: inset 0 -2px @accent_bg_color; }
+notebook > stack { background-color: @window_bg_color; }
+button, button.flat:hover, entry, spinbutton, dropdown > button, combobox button { border-color: @borders; }
+button { background-image: none; background-color: @card_bg_color; color: @card_fg_color; box-shadow: none; }
+button:hover { background-color: mix(@card_bg_color, @accent_bg_color, 0.15); }
+button:checked, button:active { background-color: @accent_bg_color; color: @accent_fg_color; }
+button.suggested-action { background-color: @accent_bg_color; color: @accent_fg_color; }
+button.destructive-action { background-color: @destructive_bg_color; color: @destructive_fg_color; }
+button.flat, button.image-button.flat { background-color: transparent; border-color: transparent; }
+entry:focus-within, spinbutton:focus-within, searchentry:focus-within { border-color: @accent_bg_color; outline-color: @accent_bg_color; }
+selection, text selection, .view:selected, row:selected, listview > row:selected, columnview > listview > row:selected, treeview.view:selected, iconview:selected, menuitem:hover, modelbutton:hover { background-color: @accent_bg_color; color: @accent_fg_color; }
+row:hover:not(:selected), listview > row:hover:not(:selected) { background-color: mix(@view_bg_color, @accent_bg_color, 0.12); }
+scale highlight, progressbar progress, levelbar block.filled, switch:checked, check:checked, radio:checked { background-color: @accent_bg_color; color: @accent_fg_color; border-color: @accent_bg_color; }
+scale trough, progressbar trough, levelbar trough, switch { background-color: @card_bg_color; border-color: @borders; }
+scale slider, switch slider { background-color: @window_fg_color; border-color: @borders; }
+scrollbar slider { background-color: mix(@window_fg_color, @window_bg_color, 0.65); }
+popover, popover.background, menu, .menu, popover > contents, popover.menu > contents { background-color: @popover_bg_color; color: @popover_fg_color; border-color: @borders; }
+tooltip, tooltip.background { background-color: @card_bg_color; color: @card_fg_color; border: 1px solid @borders; }
+separator { background-color: @borders; }
+link, .link, label link { color: @link_color; }
+.error, label.error { color: @error_color; }
+.warning { color: @warning_color; }
+.success { color: @success_color; }
+"""
+
+
+# GTK 4's own theme (the "Default" one inside libgtk) has its colours written as fixed values, not named ones. So Yggdrasil's GTK 4 theme is made
+# from it by replacing those values: greys become Yggdrasil's own greys (same lightness order), blues become the accent (same lightness), anything
+# else (reds, greens, yellows: errors, warnings, success) stays. This is done when the package is built (it needs python-gobject then), from the
+# GTK version that is installed, and the result is plain CSS.
+GREY_RAMP_DARK = [(0, (0, 0, 0)), (30, (11, 12, 16)), (45, (14, 15, 20)), (53, (16, 17, 22)), (60, (28, 29, 38)), (75, (40, 42, 54)), (95, (56, 58, 72)),
+                  (140, (100, 102, 120)), (190, (150, 153, 168)), (230, (222, 223, 230)), (255, (255, 255, 255))]
+
+
+def ramp(g, stops):
+    for (g0, c0), (g1, c1) in zip(stops, stops[1:]):
+        if g <= g1:
+            t = 0 if g1 == g0 else (g - g0) / (g1 - g0)
+            return tuple(round(a + (b - a) * t) for a, b in zip(c0, c1))
+    return stops[-1][1]
+
+
+def retint_color(c, dark, accent):
+    """One colour of GTK's own theme as it becomes in Yggdrasil's."""
+    r, g, b = c
+    sat = max(c) - min(c)
+    if sat < 20:                                   # a grey
+        return ramp(round((r + g + b) / 3), GREY_RAMP_DARK) if dark else c
+    if b > r + 25 and b >= g and 150 <= hue(c) <= 270:   # GTK's blue: the accent, as light or dark as that blue was
+        # GTK's main accent surface is #15539e (white text on it): that one becomes the accent itself, darker blues darker, lighter blues lighter
+        t = lum(c) / lum((21, 83, 158))
+        return mix(accent, (0, 0, 0), min(0.85, 1 - t)) if t < 1 else mix(accent, (255, 255, 255), min(0.7, (t - 1) * 0.25))
+    return c
+
+
+def hue(c):
+    r, g, b = [v / 255 for v in c]
+    mx, mn = max(r, g, b), min(r, g, b)
+    if mx == mn:
+        return 0
+    d = mx - mn
+    h = ((g - b) / d) % 6 if mx == r else ((b - r) / d + 2 if mx == g else (r - g) / d + 4)
+    return h * 60
+
+
+def retint_css(css, dark, accent):
+    def hexrep(m):
+        t = m.group(0)
+        v = t[1:]
+        if len(v) == 3:
+            v = "".join(ch * 2 for ch in v)
+        c = tuple(int(v[i:i + 2], 16) for i in (0, 2, 4))
+        n = retint_color(c, dark, accent)
+        return "#%02x%02x%02x" % n
+    css = re.sub(r"#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b", hexrep, css)
+
+    def funcrep(m):
+        nums = [x.strip() for x in m.group(2).split(",")]
+        c = tuple(int(float(x)) for x in nums[:3])
+        n = retint_color(c, dark, accent)
+        return f"{m.group(1)}({n[0]}, {n[1]}, {n[2]}" + (f", {nums[3]}" if len(nums) > 3 else "") + ")"
+    return re.sub(r"(rgba?)\(\s*(\d+\s*,\s*\d+\s*,\s*\d+\s*(?:,\s*[\d.]+\s*)?)\)", funcrep, css)
+
+
+def gtk_own_css(dark):
+    """GTK 4's own theme file from the installed libgtk (needs python-gobject)."""
+    import gi
+    gi.require_version("Gtk", "4.0")
+    from gi.repository import Gio, Gtk
+    Gtk.init()
+    return Gio.resources_lookup_data("/org/gtk/libgtk/theme/Default/Default-%s.css" % ("dark" if dark else "light"), 0).get_data().decode()
+
+
+# after the colours are replaced a few small parts still need a push to read well on Yggdrasil's dark greys
+GTK4_FIXES = """
+window scale > trough > slider, window scale slider { background-color: @window_fg_color; background-image: none; border-color: @window_fg_color; box-shadow: none; }
+window scale > trough > slider:hover { background-color: @accent_color; border-color: @accent_color; }
+"""
+
+
+def scope_gtk4(rules):
+    """Each selector gets `window ` in front, so these rules are more specific than GTK's own theme (which they are written after) and win."""
+    out = []
+    for line in rules.strip().split("\n"):
+        if line.startswith("/*") or not line.strip():
+            out.append(line)
+            continue
+        sel, body = line.split("{", 1)
+        parts = []
+        for p in sel.split(","):
+            p = p.strip()
+            if p == "window":
+                parts.append("window.background")
+            elif p == ".background":
+                parts.append("window .background")
+            else:
+                parts.append("window " + p)
+        out.append(", ".join(parts) + " {" + body)
+    return "\n".join(out) + "\n"
+
+
+def gtk4_theme_css(dark):
+    head = '/* Yggdrasil for GTK 4: GTK\'s own theme with its colours replaced by Yggdrasil\'s (the accent is written to ~/.config/gtk-4.0/gtk.css by ygg-theme). */\n'
+    try:
+        body = retint_css(gtk_own_css(dark), dark, DEFAULT_ACCENT) + GTK4_FIXES
+    except Exception:
+        # without python-gobject: GTK's own theme underneath, Yggdrasil's surfaces on top
+        body = f'@import url("resource:///org/gtk/libgtk/theme/Default/Default-{"dark" if dark else "light"}.css");\n' + scope_gtk4(GTK4_RULES)
+    return head + gtk_colors(dark, DEFAULT_ACCENT) + body
+
+
 # ---------------------------------------------------------------- the files of this user
 
 def home():
@@ -253,8 +392,7 @@ def apply(dark, accent):
         ini = os.path.join(d, "settings.ini")
         for k, v in (("gtk-application-prefer-dark-theme", "true" if dark else "false"), ("gtk-cursor-theme-name", "Yggdrasil"), ("gtk-icon-theme-name", "Liki")):
             ini_set(ini, "Settings", k, v)
-        if ver == "gtk-3.0":
-            ini_set(ini, "Settings", "gtk-theme-name", "Yggdrasil")
+        ini_set(ini, "Settings", "gtk-theme-name", "Yggdrasil")
         # libadwaita and GTK 4 read only the user's stylesheet: put the colours there (kept apart from anything the user adds below the marker)
         css_path = os.path.join(d, "gtk.css")
         try:
@@ -269,6 +407,20 @@ def apply(dark, accent):
             mine = "\n" + re.sub(r"^@import\s+['\"]colors\.css['\"];\s*$", "", old, flags=re.M)
         with open(css_path, "w", encoding="utf-8") as f:
             f.write(gtk_colors(dark, accent) + marker + (mine if mine else "\n"))
+    # X11 (and XWayland) programs read their theme from xsettingsd, which KDE keeps in step; say the same there
+    xs = os.path.join(config(), "xsettingsd", "xsettingsd.conf")
+    if os.path.isfile(xs):
+        want = {"Net/ThemeName": "Yggdrasil", "Net/IconThemeName": "Liki", "Gtk/CursorThemeName": "Yggdrasil"}
+        with open(xs, encoding="utf-8") as f:
+            lines = f.read().split("\n")
+        for i, line in enumerate(lines):
+            key = line.split(" ", 1)[0]
+            if key in want:
+                lines[i] = f'{key} "{want.pop(key)}"'
+        lines = [l for l in lines if l.strip()] + [f'{k} "{v}"' for k, v in want.items()]
+        with open(xs, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        run("pkill", "-HUP", "-x", "xsettingsd")
     # the pointer for programs started from now on (Wayland programs read these)
     env = os.path.join(config(), "environment.d")
     os.makedirs(env, exist_ok=True)
@@ -315,6 +467,9 @@ def main(argv):
         print(__doc__)
         return 0
     cmd = argv[0]
+    if cmd == "gtk4-theme":
+        print(gtk4_theme_css((argv[1] if len(argv) > 1 else "dark") != "light"), end="")
+        return 0
     if cmd == "gtk3-theme":
         print(gtk3_theme_css((argv[1] if len(argv) > 1 else "dark") != "light"), end="")
         return 0
