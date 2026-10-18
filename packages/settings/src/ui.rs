@@ -141,7 +141,11 @@ pub fn nav_row(ui: &mut egui::Ui, pal: &Palette, first: bool, title: &str, subti
     });
     let resp = ui.interact(r.response.rect, id.with("nav"), Sense::click());
     if resp.hovered() {
-        ui.painter().set(bg, egui::Shape::rect_filled(r.response.rect, CornerRadius::same(8), pal.hover));
+        // Inside the card with an even gap, clear of the hairline above and the one below.
+        let mut hl = r.response.rect.expand2(vec2(6.0, 0.0));
+        hl.min.y += if first { 3.0 } else { 4.0 };
+        hl.max.y -= 3.0;
+        ui.painter().set(bg, egui::Shape::rect_filled(hl, CornerRadius::same(8), pal.hover));
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     resp.clicked()
