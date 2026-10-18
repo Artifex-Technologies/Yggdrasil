@@ -32,8 +32,14 @@ pack and the Labyrinth app tiles (`labyrinth-brand-pack`, `labyrinth-app-icons`)
 3. **Chymaera:** the Chymaera repository does not mention Labyrinth at all today. It takes the `yggdrasil-*` packages from the Yggdrasil repository when they exist; until then it
    keeps KDE.
 
-Not decided: whether Yggdrasil gets its own repository (recommended once step 2 is done, so Chymaera and Labyrinth both depend on it), and whether the D-Bus names and
-config format change in the same pass. Everything user-visible that already ships is renamed only with the owner's go-ahead.
+Decided (owner, 2026-10-18):
+- The operating system is still called **Labyrinth**; Yggdrasil is only the desktop environment.
+- Step 2 (the rename) **waits until the compositor can replace KWin**, so the whole desktop is renamed once, when it is whole.
+- Yggdrasil gets **its own repository**, but not yet: it is still being fine-tuned. No rush.
+- Chymaera is on hold: the owner wants Labyrinth in a better state first and does not have Chymaera's target device yet. When it starts, Chymaera uses **Labyrinth as a
+  template** (installer, boot theme and the like, with Chymaera's own branding) and Yggdrasil as its desktop. Until then, keep Labyrinth's installer and boot theme easy to
+  re-brand: one place for names, colours and logos, no Labyrinth wording baked into logic.
+Not decided: whether the D-Bus names and config format change in the same pass as the rename. Everything user-visible that already ships is renamed only with the owner's go-ahead.
 
 ## Survey of this computer (2026-10-18)
 - Repository `Labyrinth_OS`: 716 tracked files, 130 text files mention "labyrinth"; 24 package recipes of which 13 are Labyrinth's own (`labyrinth-*`).
