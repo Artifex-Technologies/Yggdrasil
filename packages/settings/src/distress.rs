@@ -54,6 +54,8 @@ pub struct State {
     plan: Option<Vec<String>>,
     message: String,
     busy: bool,
+    /// A preview with made-up settings (for pictures): talks to nothing and saves nothing.
+    demo: bool,
     rx: Option<Receiver<(String, Value)>>,
 }
 
@@ -82,6 +84,21 @@ fn wipe(s: &mut String) {
 }
 
 impl State {
+    /// `labyrinth-settings security:distress-demo` (or `-warn`): the page filled with sample settings, never reaching the helper.
+    pub fn demo(with_warning: bool) -> State {
+        let cfg = Cfg { enabled: true, hash: "set".into(), count: 3, window_secs: 90, expires: 0, silent_login: true, extra: "wipe_keys".into(), wipe_keys: true, shutdown: true, ..Cfg::default() };
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+        State {
+            unlocked: Some(String::new()),
+            saved: cfg.clone(),
+            cfg,
+            events: vec![json!({"time": now - 3 * 86400, "kind": "fired", "detail": "the distress password was used for demo at a password prompt"}), json!({"time": now - 9 * 86400, "kind": "saved", "detail": "distress password on (extra: WipeKeys)"})],
+            confirming_save: with_warning,
+            demo: true,
+            ..State::default()
+        }
+    }
+
     /// Called when the page is left: nothing secret stays in memory.
     pub fn close(&mut self) {
         for s in [&mut self.gate, &mut self.new_pw, &mut self.new_pw2, &mut self.enable_pw, &mut self.second_pw] {
@@ -139,6 +156,11 @@ impl State {
     }
 
     fn start(&mut self, cmd: &'static str, req: Value) {
+        if self.demo {
+            self.message = "This is a preview with sample settings; nothing is sent or saved".into();
+            self.confirming_save = false;
+            return;
+        }
         self.busy = true;
         self.message.clear();
         self.rx = Some(call(cmd, req));
@@ -170,7 +192,7 @@ impl State {
                 ui.add_space(6.0);
                 ui.label(RichText::new("When someone types the distress password, Labyrinth does what you choose below, and it does not tell them. Make sure you can remember both passwords and that you choose what it does carefully. Type your account password to continue.").size(12.5).color(pal.dim));
                 ui.add_space(6.0);
-                ui.add(egui::TextEdit::singleline(&mut self.enable_pw).password(true).hint_text("Your account password").desired_width(280.0));
+                ui::field(ui, pal, &mut self.enable_pw, "Your account password", 260.0, true);
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     if ui::action(ui, pal, "Yes, turn it on").clicked() {
@@ -206,7 +228,7 @@ impl State {
                 ui.add_space(6.0);
                 ui.label(RichText::new(self.warning()).size(13.0).color(pal.red));
                 ui.add_space(6.0);
-                ui.add(egui::TextEdit::singleline(&mut self.second_pw).password(true).hint_text("Your account password, once more").desired_width(280.0));
+                ui::field(ui, pal, &mut self.second_pw, "Your account password, once more", 260.0, true);
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     if ui.add_enabled(!self.busy && !self.second_pw.is_empty(), egui::Button::new(RichText::new("I understand. Save").color(pal.on_accent())).fill(pal.red)).clicked() {
@@ -278,7 +300,7 @@ impl State {
             ui.add_space(6.0);
             ui.label(RichText::new("Type your account password to open this page.").size(13.0));
             ui.add_space(6.0);
-            let r = ui.add(egui::TextEdit::singleline(&mut self.gate).password(true).hint_text("Your account password").desired_width(280.0));
+            let r = ui::field(ui, pal, &mut self.gate, "Your account password", 260.0, true);
             let go = ui.add_enabled(!self.busy && !self.gate.is_empty(), egui::Button::new(RichText::new("Open").color(pal.on_accent())).fill(pal.accent).min_size(vec2(90.0, 30.0))).clicked() || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && !self.gate.is_empty());
             if go && !self.busy {
                 let req = json!({"password": self.gate});
@@ -299,10 +321,10 @@ impl State {
         ui::group(ui, pal, Some("The distress password"), |ui| {
             let sub = if self.saved.hash.is_empty() { "None set yet" } else { "One is set. Type a new one below to replace it" };
             ui::row(ui, pal, true, "New distress password", Some(sub), |ui| {
-                ui.add(egui::TextEdit::singleline(&mut self.new_pw).password(true).desired_width(200.0));
+                ui::field(ui, pal, &mut self.new_pw, "New password", 200.0, true);
             });
             ui::row(ui, pal, false, "Type it again", Some("At least 6 characters, and different from your real password"), |ui| {
-                ui.add(egui::TextEdit::singleline(&mut self.new_pw2).password(true).desired_width(200.0));
+                ui::field(ui, pal, &mut self.new_pw2, "Again", 200.0, true);
             });
         });
         ui.add_space(8.0);
@@ -351,9 +373,8 @@ impl State {
             if self.cfg.decoy {
                 ui::row(ui, pal, false, "About the decoy session", Some("Not available yet: it needs Labyrinth's own session manager. Until then choosing it changes nothing (your account is never locked)"), |_| {});
             }
-            ui::row(ui, pal, false, "Also in terminals and other password prompts", Some("Not available yet: it needs Labyrinth's password module. Today it works on Labyrinth's own lock screen"), |ui| {
-                let mut off = false;
-                ui.add_enabled_ui(false, |ui| ui::switch(ui, pal, &mut off));
+            ui::row(ui, pal, false, "Also in terminals and other password prompts", Some("sudo, the login screen, su and administrator questions. Needs Labyrinth's password module. Only a silent login lets you in; the other choices act, and the prompt still says the password was wrong"), |ui| {
+                ui::switch(ui, pal, &mut self.cfg.in_prompts);
             });
         });
         ui.add_space(8.0);

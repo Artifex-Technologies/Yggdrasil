@@ -150,3 +150,14 @@ pub fn nav_row(ui: &mut egui::Ui, pal: &Palette, first: bool, title: &str, subti
     }
     resp.clicked()
 }
+
+/// A text box that can be seen on a card: dark field, hairline border, rounded. `secret` hides what is typed.
+pub fn field(ui: &mut egui::Ui, pal: &Palette, text: &mut String, hint: &str, width: f32, secret: bool) -> egui::Response {
+    egui::Frame::new()
+        .fill(pal.bg)
+        .stroke(Stroke::new(1.0, pal.border))
+        .corner_radius(CornerRadius::same(8))
+        .inner_margin(Margin::symmetric(8, 4))
+        .show(ui, |ui| ui.add(egui::TextEdit::singleline(text).password(secret).hint_text(hint).frame(egui::Frame::NONE).desired_width(width)))
+        .inner
+}

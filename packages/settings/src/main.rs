@@ -155,6 +155,8 @@ struct App {
     // Security page
     sec_filter: usize,
     sec_sub: SecSub,
+    demo_scroll: u32,
+    demo_offset: f32,
     distress: distress::State,
     /// Password logs: (sign-ins, failed attempts) and sudo history, read when the page opens.
     logins: Option<(Vec<security::LogEntry>, Vec<security::LogEntry>)>,
@@ -221,13 +223,21 @@ impl App {
             status: String::new(),
             wifi_password: None,
             sec_filter: 1,
+            demo_scroll: if start_sub().starts_with("distress-demo-") { 8 } else { 0 },
+            demo_offset: if start_sub() == "distress-demo-warn" { 100_000.0 } else { 430.0 },
             sec_sub: match start_sub().as_str() {
                 "heimdall" => SecSub::Heimdall,
                 "logins" => SecSub::Logins,
                 "sudo" => SecSub::Sudo,
+                "distress-demo" | "distress-demo-warn" | "distress-demo-mid" | "distress" => SecSub::Distress,
                 _ => SecSub::Main,
             },
-            distress: distress::State::default(),
+            distress: match start_sub().as_str() {
+                "distress-demo" => distress::State::demo(false),
+                "distress-demo-warn" => distress::State::demo(true),
+                "distress-demo-mid" => distress::State::demo(false),
+                _ => distress::State::default(),
+            },
             logins: None,
             sudo_log: None,
             log_busy: false,
@@ -515,7 +525,14 @@ impl eframe::App for App {
                     chrome::drag_area(ui, ui.available_width() - chrome::controls_width());
                     chrome::window_controls(ui, &pal);
                 });
-                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                let mut area = egui::ScrollArea::vertical().auto_shrink([false, false]);
+                if self.demo_scroll > 0 {
+                    // the preview for pictures: start scrolled to the bottom
+                    self.demo_scroll -= 1;
+                    area = area.vertical_scroll_offset(self.demo_offset);
+                    ctx.request_repaint();
+                }
+                area.show(ui, |ui| {
                     // Room for the scroll bar on the right, so cards are never cut off under it.
                     ui.set_max_width((ui.available_width() - 20.0).min(760.0));
                     if !self.status.is_empty() {
