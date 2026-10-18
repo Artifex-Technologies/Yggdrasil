@@ -25,6 +25,13 @@ pub struct Details {
     pub from: String,
 }
 
+/// Where the vendors' icons fetched from Flathub are kept.
+pub(crate) fn icon_cache_dir() -> Option<PathBuf> {
+    let d = cache_root().join("icons");
+    std::fs::create_dir_all(&d).ok()?;
+    Some(d)
+}
+
 fn cache_root() -> PathBuf {
     std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache"))).unwrap_or_default().join("labyrinth/market")
 }
@@ -47,7 +54,7 @@ pub fn set_online_allowed(on: bool) {
     let _ = std::fs::write(p, json!({"online_details": on}).to_string());
 }
 
-fn safe_id(id: &str) -> bool {
+pub(crate) fn safe_id(id: &str) -> bool {
     !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c))
 }
 
