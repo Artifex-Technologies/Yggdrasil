@@ -8,6 +8,7 @@
 //!
 //! See docs/COMPOSITOR.md for what is built and what is not.
 
+mod grabs;
 mod state;
 
 use std::sync::Arc;

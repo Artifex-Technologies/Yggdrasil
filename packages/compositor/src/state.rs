@@ -18,7 +18,7 @@ use smithay::reexports::calloop::{LoopHandle, LoopSignal};
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::reexports::wayland_server::backend::{ClientData, ClientId, DisconnectReason};
 use smithay::reexports::wayland_server::protocol::{wl_buffer, wl_output::WlOutput, wl_seat, wl_surface::WlSurface};
-use smithay::reexports::wayland_server::{Client, DisplayHandle};
+use smithay::reexports::wayland_server::{Client, DisplayHandle, Resource};
 use smithay::utils::{Logical, Point, Serial, SERIAL_COUNTER};
 use smithay::wayland::buffer::BufferHandler;
 use smithay::wayland::compositor::{get_parent, is_sync_subsurface, with_states, CompositorClientState, CompositorHandler, CompositorState};
@@ -29,6 +29,10 @@ use smithay::wayland::selection::SelectionHandler;
 use smithay::wayland::session_lock::{LockSurface, SessionLockHandler, SessionLockManagerState, SessionLocker};
 use smithay::wayland::shell::wlr_layer::{Layer, LayerSurface as WlrLayerSurface, WlrLayerShellHandler, WlrLayerShellState};
 use smithay::wayland::shell::xdg::{PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState};
+use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::ResizeEdge;
+use smithay::input::pointer::Focus;
+use smithay::utils::Rectangle;
+use crate::grabs::{MoveGrab, ResizeGrab};
 use smithay::wayland::shm::{ShmHandler, ShmState};
 use smithay::wayland::viewporter::ViewporterState;
 use smithay::{delegate_compositor, delegate_data_device, delegate_idle_notify, delegate_layer_shell, delegate_output, delegate_seat, delegate_session_lock, delegate_shm, delegate_viewporter, delegate_xdg_shell};
@@ -57,6 +61,8 @@ pub struct App {
     pub locked: bool,
     lock_surface: Option<LockSurface>,
     opened: usize,
+    /// Where a window was (and how big) before it was maximized or made full screen.
+    saved: Vec<(WlSurface, Rectangle<i32, Logical>)>,
 }
 
 #[derive(Default)]
@@ -97,6 +103,39 @@ impl App {
             locked: false,
             lock_surface: None,
             opened: 0,
+            saved: vec![],
+        }
+    }
+
+    pub fn window_of(&self, surface: &ToplevelSurface) -> Option<Window> {
+        self.space.elements().find(|w| w.toplevel().map(|t| t == surface).unwrap_or(false)).cloned()
+    }
+
+    /// Put a window on `area` (maximized or full screen), remembering where it was.
+    fn fit_window(&mut self, surface: &ToplevelSurface, area: Rectangle<i32, Logical>, state: xdg_toplevel::State) {
+        let Some(window) = self.window_of(surface) else { return };
+        if !self.saved.iter().any(|(s, _)| s == surface.wl_surface()) {
+            let loc = self.space.element_location(&window).unwrap_or_default();
+            self.saved.push((surface.wl_surface().clone(), Rectangle::new(loc, window.geometry().size)));
+        }
+        surface.with_pending_state(|s| {
+            s.states.set(state);
+            s.size = Some(area.size);
+        });
+        surface.send_configure();
+        self.space.map_element(window, area.loc, true);
+    }
+
+    fn restore_window(&mut self, surface: &ToplevelSurface, state: xdg_toplevel::State) {
+        let Some(window) = self.window_of(surface) else { return };
+        let back = self.saved.iter().position(|(s, _)| s == surface.wl_surface()).map(|i| self.saved.remove(i).1);
+        surface.with_pending_state(|s| {
+            s.states.unset(state);
+            s.size = back.map(|r| r.size);
+        });
+        surface.send_configure();
+        if let Some(r) = back {
+            self.space.map_element(window, r.loc, false);
         }
     }
 
@@ -191,6 +230,11 @@ impl App {
     }
 
     pub fn on_input(&mut self, event: InputEvent<WinitInput>) {
+        if std::env::var_os("LABYRINTH_COMPOSITOR_DEBUG").is_some() {
+            if let InputEvent::PointerButton { .. } = &event {
+                eprintln!("button at {:?}, over {:?}", self.pointer_location, self.surface_under(self.pointer_location).map(|x| x.0.id()));
+            }
+        }
         self.idle_state.notify_activity(&self.seat);
         let (keyboard, pointer) = (self.keyboard.clone(), self.pointer.clone());
         match event {
@@ -202,6 +246,9 @@ impl App {
                 let size = self.output.current_mode().map(|m| m.size).unwrap_or_default();
                 let pos = event.position_transformed(size.to_logical(1));
                 self.pointer_location = pos;
+                if std::env::var_os("LABYRINTH_COMPOSITOR_DEBUG").is_some() {
+                    eprintln!("pointer {:.0},{:.0}", pos.x, pos.y);
+                }
                 let serial = SERIAL_COUNTER.next_serial();
                 let under = self.surface_under(pos);
                 pointer.motion(self, under, &MotionEvent { location: pos, serial, time: event.time_msec() });
@@ -341,6 +388,42 @@ impl XdgShellHandler for App {
         let serial = SERIAL_COUNTER.next_serial();
         let kb = self.keyboard.clone();
         kb.set_focus(self, next, serial);
+    }
+
+    fn move_request(&mut self, surface: ToplevelSurface, _seat: wl_seat::WlSeat, serial: Serial) {
+        if std::env::var_os("LABYRINTH_COMPOSITOR_DEBUG").is_some() {
+            eprintln!("move request, serial {:?}, grab ok: {}", serial, self.pointer.has_grab(serial));
+        }
+        let pointer = self.pointer.clone();
+        let (Some(start), Some(window)) = (pointer.grab_start_data().filter(|_| pointer.has_grab(serial)), self.window_of(&surface)) else { return };
+        let origin = self.space.element_location(&window).unwrap_or_default();
+        pointer.set_grab(self, MoveGrab { start, window, origin }, serial, Focus::Clear);
+    }
+
+    fn resize_request(&mut self, surface: ToplevelSurface, _seat: wl_seat::WlSeat, serial: Serial, edges: ResizeEdge) {
+        let pointer = self.pointer.clone();
+        let (Some(start), Some(window)) = (pointer.grab_start_data().filter(|_| pointer.has_grab(serial)), self.window_of(&surface)) else { return };
+        let origin = self.space.element_location(&window).unwrap_or_default();
+        let size = window.geometry().size;
+        pointer.set_grab(self, ResizeGrab { start, window, edges, origin, size }, serial, Focus::Clear);
+    }
+
+    fn maximize_request(&mut self, surface: ToplevelSurface) {
+        let zone = layer_map_for_output(&self.output).non_exclusive_zone();
+        self.fit_window(&surface, zone, xdg_toplevel::State::Maximized);
+    }
+
+    fn unmaximize_request(&mut self, surface: ToplevelSurface) {
+        self.restore_window(&surface, xdg_toplevel::State::Maximized);
+    }
+
+    fn fullscreen_request(&mut self, surface: ToplevelSurface, _output: Option<WlOutput>) {
+        let size = self.output.current_mode().map(|m| m.size.to_logical(1)).unwrap_or_default();
+        self.fit_window(&surface, Rectangle::new((0, 0).into(), size), xdg_toplevel::State::Fullscreen);
+    }
+
+    fn unfullscreen_request(&mut self, surface: ToplevelSurface) {
+        self.restore_window(&surface, xdg_toplevel::State::Fullscreen);
     }
 
     fn new_popup(&mut self, surface: PopupSurface, positioner: PositionerState) {
