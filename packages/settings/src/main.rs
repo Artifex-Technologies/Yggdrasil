@@ -221,7 +221,12 @@ impl App {
             status: String::new(),
             wifi_password: None,
             sec_filter: 1,
-            sec_sub: SecSub::Main,
+            sec_sub: match start_sub().as_str() {
+                "heimdall" => SecSub::Heimdall,
+                "logins" => SecSub::Logins,
+                "sudo" => SecSub::Sudo,
+                _ => SecSub::Main,
+            },
             distress: distress::State::default(),
             logins: None,
             sudo_log: None,
@@ -241,7 +246,15 @@ impl App {
             zone_filter: String::new(),
             icon_src: String::new(),
             app_tab: 0,
-            app_sub: AppSub::Main,
+            app_sub: match start_sub().as_str() {
+                "icons" => AppSub::Icons,
+                "bar" => AppSub::Bar,
+                "notifs" => AppSub::Notifs,
+                "wallpaper" => AppSub::Wallpaper,
+                "minos" => AppSub::Minos,
+                "lock" => AppSub::Lock,
+                _ => AppSub::Main,
+            },
             dev_filter: String::new(),
             lock_previews_started: false,
             app_sort: 0,
@@ -395,6 +408,11 @@ impl App {
             self.loading = None;
         }
     }
+}
+
+/// `labyrinth-settings security:heimdall` (or `appearance:icons`) opens a page inside the page.
+fn start_sub() -> String {
+    std::env::args().nth(1).unwrap_or_default().to_lowercase().split_once(':').map(|(_, s)| s.to_string()).unwrap_or_default()
 }
 
 /// `labyrinth-settings displays` opens on a page (for links from the top bar or other apps).
