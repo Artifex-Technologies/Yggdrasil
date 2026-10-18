@@ -711,6 +711,7 @@ impl App {
                 }
             }
             ui.label(RichText::new(if a.os.is_empty() { "Labyrinth OS" } else { &a.os }).size(22.0).strong());
+            ui.label(RichText::new("Desktop: Yggdrasil").size(13.0).color(pal.dim));
         });
         if self.dev_prompt {
             egui::Window::new("Turn on Developer options?").collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0)).show(ctx, |ui| {
