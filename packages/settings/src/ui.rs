@@ -127,3 +127,22 @@ pub fn gib(bytes: u64) -> String {
         format!("{g:.0} GB")
     }
 }
+
+/// A row that opens a page: the whole row is the button, with a `>` at the end. `extra` draws anything between the text and the `>`.
+/// Returns true when it was clicked.
+pub fn nav_row(ui: &mut egui::Ui, pal: &Palette, first: bool, title: &str, subtitle: Option<&str>, extra: impl FnOnce(&mut egui::Ui)) -> bool {
+    let bg = ui.painter().add(egui::Shape::Noop);
+    let id = ui.next_auto_id();
+    let r = ui.scope(|ui| {
+        row(ui, pal, first, title, subtitle, |ui| {
+            ui.label(RichText::new("\u{203a}").size(20.0).color(pal.dim));
+            extra(ui);
+        });
+    });
+    let resp = ui.interact(r.response.rect, id.with("nav"), Sense::click());
+    if resp.hovered() {
+        ui.painter().set(bg, egui::Shape::rect_filled(r.response.rect, CornerRadius::same(8), pal.hover));
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    resp.clicked()
+}

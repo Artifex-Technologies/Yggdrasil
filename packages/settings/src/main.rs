@@ -1090,37 +1090,25 @@ impl App {
         }
         if self.app_sub == AppSub::Main {
             ui::group(ui, pal, None, |ui| {
-                ui::row(ui, pal, true, "Top bar and dock", Some("The bar, the dock, the start menu and the notch: how they look and what they do"), |ui| {
-                    if ui::quiet(ui, pal, "Open  \u{203a}").clicked() {
+                if ui::nav_row(ui, pal, true, "Top bar and dock", Some("The bar, the dock, the start menu and the notch: how they look and what they do"), |_| {}) {
                         self.app_sub = AppSub::Bar;
-                    }
-                });
-                ui::row(ui, pal, false, "Icons", Some("Icon packs"), |ui| {
-                    if ui::quiet(ui, pal, "Open  \u{203a}").clicked() {
+                }
+                if ui::nav_row(ui, pal, false, "Icons", Some("Icon packs"), |_| {}) {
                         self.app_sub = AppSub::Icons;
-                    }
-                });
-                ui::row(ui, pal, false, "Notifications", Some("Pop-ups, the Notification Center and Do not disturb"), |ui| {
-                    if ui::quiet(ui, pal, "Open  \u{203a}").clicked() {
+                }
+                if ui::nav_row(ui, pal, false, "Notifications", Some("Pop-ups, the Notification Center and Do not disturb"), |_| {}) {
                         self.app_sub = AppSub::Notifs;
-                    }
-                });
-                ui::row(ui, pal, false, "Wallpaper", Some("The desktop picture"), |ui| {
-                    if ui::quiet(ui, pal, "Open  \u{203a}").clicked() {
+                }
+                if ui::nav_row(ui, pal, false, "Wallpaper", Some("The desktop picture"), |_| {}) {
                         self.app_sub = AppSub::Wallpaper;
-                    }
-                });
-                ui::row(ui, pal, false, "Lock screen", Some("How the screen looks while it is locked"), |ui| {
-                    if ui::quiet(ui, pal, "Open  \u{203a}").clicked() {
+                }
+                if ui::nav_row(ui, pal, false, "Lock screen", Some("How the screen looks while it is locked"), |_| {}) {
                         self.app_sub = AppSub::Lock;
                         self.lock_previews_started = false;
-                    }
-                });
-                ui::row(ui, pal, false, "Minos", Some("The file manager: make its window see-through"), |ui| {
-                    if ui::quiet(ui, pal, "Open  \u{203a}").clicked() {
+                }
+                if ui::nav_row(ui, pal, false, "Minos", Some("The file manager: make its window see-through"), |_| {}) {
                         self.app_sub = AppSub::Minos;
-                    }
-                });
+                }
             });
         }
         if self.app_sub == AppSub::Minos {
@@ -1677,26 +1665,21 @@ impl App {
         let mut open: Option<SecSub> = None;
         ui::group(ui, pal, None, |ui| {
             let sub = if o.running { format!("Watching · last 24 hours: {} critical, {} warnings", recent("critical"), recent("warning")) } else { "Not running".to_string() };
-            ui::row(ui, pal, true, "Heimdall", Some(&sub), |ui| {
+            if ui::nav_row(ui, pal, true, "Heimdall", Some(&sub), |ui| {
                 let (rect, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
                 ui.painter().circle_filled(rect.center(), 6.0, if !o.running || recent("critical") > 0 { pal.red } else if recent("warning") > 0 { pal.amber } else { pal.green });
-                if ui::quiet(ui, pal, "Open  \u{203a}").clicked() {
-                    open = Some(SecSub::Heimdall);
-                }
-            });
+            }) {
+                open = Some(SecSub::Heimdall);
+            }
         });
         ui.add_space(8.0);
         ui::group(ui, pal, Some("Password log"), |ui| {
-            ui::row(ui, pal, true, "Login history", Some("Who signed in, and every failed attempt at the lock screen, login or administrator question"), |ui| {
-                if ui::quiet(ui, pal, "Open  \u{203a}").clicked() {
+            if ui::nav_row(ui, pal, true, "Login history", Some("Who signed in, and every failed attempt at the lock screen, login or administrator question"), |_| {}) {
                     open = Some(SecSub::Logins);
-                }
-            });
-            ui::row(ui, pal, false, "Sudo history", Some("What sudo was used for, by whom, and failed attempts"), |ui| {
-                if ui::quiet(ui, pal, "Open  \u{203a}").clicked() {
+            }
+            if ui::nav_row(ui, pal, false, "Sudo history", Some("What sudo was used for, by whom, and failed attempts"), |_| {}) {
                     open = Some(SecSub::Sudo);
-                }
-            });
+            }
         });
         if let Some(s) = open {
             self.sec_sub = s;
