@@ -10,6 +10,7 @@
 
 mod grabs;
 mod state;
+mod toplevels;
 
 use std::sync::Arc;
 
@@ -60,6 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mode = Mode { size: backend.window_size(), refresh: 60_000 };
     let output = Output::new("labyrinth-1".into(), PhysicalProperties { size: (0, 0).into(), subpixel: Subpixel::Unknown, make: "Labyrinth".into(), model: "nested window".into() });
     let _global = output.create_global::<App>(&dh);
+    toplevels::create_global(&dh);
     output.change_current_state(Some(mode), Some(Transform::Flipped180), None, Some((0, 0).into()));
     output.set_preferred(mode);
 
@@ -112,6 +114,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let _ = backend.submit(Some(&[damage]));
             app.send_frames(start.elapsed());
             app.space.refresh();
+            app.foreign_refresh();
             app.popups.cleanup();
             let _ = dh2.flush_clients();
             backend.window().request_redraw();

@@ -33,6 +33,7 @@ use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::Res
 use smithay::input::pointer::Focus;
 use smithay::utils::Rectangle;
 use crate::grabs::{MoveGrab, ResizeGrab};
+use crate::toplevels::Toplevels;
 use smithay::wayland::shm::{ShmHandler, ShmState};
 use smithay::wayland::viewporter::ViewporterState;
 use smithay::{delegate_compositor, delegate_data_device, delegate_idle_notify, delegate_layer_shell, delegate_output, delegate_seat, delegate_session_lock, delegate_shm, delegate_viewporter, delegate_xdg_shell};
@@ -63,6 +64,9 @@ pub struct App {
     opened: usize,
     /// Where a window was (and how big) before it was maximized or made full screen.
     saved: Vec<(WlSurface, Rectangle<i32, Logical>)>,
+    /// Windows hidden with minimize (still alive, listed to shell programs, brought back with activate).
+    pub minimized: Vec<Window>,
+    pub toplevels: Toplevels,
 }
 
 #[derive(Default)]
@@ -104,6 +108,8 @@ impl App {
             lock_surface: None,
             opened: 0,
             saved: vec![],
+            minimized: vec![],
+            toplevels: Toplevels::default(),
         }
     }
 
@@ -136,6 +142,66 @@ impl App {
         surface.send_configure();
         if let Some(r) = back {
             self.space.map_element(window, r.loc, false);
+        }
+    }
+
+    fn toplevel_of(&self, surface: &WlSurface) -> Option<ToplevelSurface> {
+        self.space.elements().chain(self.minimized.iter()).find_map(|w| w.toplevel().filter(|t| t.wl_surface() == surface).cloned())
+    }
+
+    /// Bring a window forward (from minimized too) and give it the keyboard.
+    pub fn activate_surface(&mut self, surface: &WlSurface) {
+        if let Some(i) = self.minimized.iter().position(|w| w.toplevel().map(|t| t.wl_surface() == surface).unwrap_or(false)) {
+            let w = self.minimized.remove(i);
+            let at = self.saved.iter().find(|(s, _)| s == surface).map(|(_, r)| r.loc).unwrap_or((80, 80).into());
+            self.space.map_element(w, at, true);
+        }
+        let Some(window) = self.space.elements().find(|w| w.toplevel().map(|t| t.wl_surface() == surface).unwrap_or(false)).cloned() else { return };
+        self.space.raise_element(&window, true);
+        for w in self.space.elements() {
+            w.set_activated(*w == window);
+            if let Some(t) = w.toplevel() {
+                t.send_pending_configure();
+            }
+        }
+        let kb = self.keyboard.clone();
+        kb.set_focus(self, Some(surface.clone()), SERIAL_COUNTER.next_serial());
+    }
+
+    pub fn close_surface(&mut self, surface: &WlSurface) {
+        if let Some(t) = self.toplevel_of(surface) {
+            t.send_close();
+        }
+    }
+
+    pub fn minimize_surface(&mut self, surface: &WlSurface) {
+        let Some(window) = self.space.elements().find(|w| w.toplevel().map(|t| t.wl_surface() == surface).unwrap_or(false)).cloned() else { return };
+        let loc = self.space.element_location(&window).unwrap_or_default();
+        self.saved.retain(|(s, _)| s != surface);
+        self.saved.push((surface.clone(), Rectangle::new(loc, window.geometry().size)));
+        self.space.unmap_elem(&window);
+        self.minimized.push(window);
+        // the keyboard goes to the window now on top
+        let next = self.space.elements().last().and_then(|w| w.toplevel().map(|t| t.wl_surface().clone()));
+        let kb = self.keyboard.clone();
+        kb.set_focus(self, next, SERIAL_COUNTER.next_serial());
+    }
+
+    pub fn set_maximized(&mut self, surface: &WlSurface, on: bool) {
+        let Some(t) = self.toplevel_of(surface) else { return };
+        if on {
+            self.maximize_request(t);
+        } else {
+            self.unmaximize_request(t);
+        }
+    }
+
+    pub fn set_fullscreen(&mut self, surface: &WlSurface, on: bool) {
+        let Some(t) = self.toplevel_of(surface) else { return };
+        if on {
+            self.fullscreen_request(t, None);
+        } else {
+            self.unfullscreen_request(t);
         }
     }
 
@@ -372,13 +438,16 @@ impl XdgShellHandler for App {
         });
         surface.send_configure();
         let at = (60 + 36 * (n as i32 % 8), 60 + 36 * (n as i32 % 8));
-        self.space.map_element(window, at, true);
+        self.space.map_element(window.clone(), at, true);
+        self.foreign_added(&window);
         let serial = SERIAL_COUNTER.next_serial();
         let kb = self.keyboard.clone();
         kb.set_focus(self, Some(surface.wl_surface().clone()), serial);
     }
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
+        self.foreign_removed(surface.wl_surface());
+        self.minimized.retain(|w| w.toplevel().map(|t| t != &surface).unwrap_or(true));
         let gone = self.space.elements().find(|w| w.toplevel().map(|t| *t == surface).unwrap_or(false)).cloned();
         if let Some(w) = gone {
             self.space.unmap_elem(&w);
@@ -406,6 +475,10 @@ impl XdgShellHandler for App {
         let origin = self.space.element_location(&window).unwrap_or_default();
         let size = window.geometry().size;
         pointer.set_grab(self, ResizeGrab { start, window, edges, origin, size }, serial, Focus::Clear);
+    }
+
+    fn minimize_request(&mut self, surface: ToplevelSurface) {
+        self.minimize_surface(surface.wl_surface());
     }
 
     fn maximize_request(&mut self, surface: ToplevelSurface) {

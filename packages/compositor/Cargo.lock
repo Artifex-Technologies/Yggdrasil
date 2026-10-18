@@ -660,6 +660,7 @@ dependencies = [
  "smithay",
  "tracing",
  "tracing-subscriber",
+ "wayland-protocols-wlr",
 ]
 
 [[package]]

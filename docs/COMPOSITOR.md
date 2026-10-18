@@ -17,12 +17,12 @@ What works (each checked by hand in the nested window):
 - **Screen lock** (ext-session-lock): `labyrinth-lock` locked, typed the test password and unlocked (exit 0). While locked only the locker's own picture is drawn and only it gets input.
 - **Idle** (ext-idle-notify): `labyrinth-idle` was told when the user went idle, and its dimming overlay (layer-shell + viewporter) was accepted.
 - **Moving a window** by its own title bar (the xdg `move` request): dragging Settings' title area moved the window; checked with a real pointer drag. **Resizing, maximize and full screen** (the matching requests, remembering and restoring the old size) are written but not yet tried by hand.
+- **Window list for the panel** (`wlr-foreign-toplevel-management`, written here because Smithay does not ship it): the panel found it, the top bar showed the active window's title ("Settings") and the dock lit a dot under its icon. Activate, close, minimize, maximize and full screen from the panel are written (minimized windows are kept aside and brought back by activate) but not yet tried by hand.
 - Pointer and keyboard (from the host window), wheel, wl_output with xdg-output, clipboard (data device), viewporter, shm.
 
 Not built yet (in the order I would do them):
-1. Minimize, window titles and app ids; trying resize, maximize and full screen by hand.
+1. Trying resize, maximize, full screen and minimize by hand.
 2. **Title bars drawn by the compositor** (`xdg-decoration`, in Labyrinth's own look, like Minos and Settings) for programs that do not draw their own, instead of a plain black bar. It needs a window element that carries its bar so overlapping windows stack correctly, and text drawn into a texture. Programs that draw their own (Minos, Settings, the Marketplace, most modern apps) keep theirs.
-3. Window list for the dock and the notch (`wlr-foreign-toplevel-management`, which Smithay does not ship: it has to be written; the panel already uses it).
 4. Shortcuts handled by the compositor (the Super key, Alt+Tab, workspaces) instead of KDE's `kglobalacceld`; tiling.
 5. GPU clients (linux-dmabuf), idle inhibit (videos), primary selection, cursor shapes, fractional scale, xdg-activation, xdg-decoration.
 6. **The hardware backend**: DRM/KMS output, libinput, a seat (logind or seatd), several monitors, scaling, VRR, NVIDIA. This is what lets it replace KWin for real; it should be developed in a virtual machine (Limbo), never on the live session.

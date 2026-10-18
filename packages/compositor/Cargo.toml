@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 smithay = { version = "0.7", default-features = false, features = ["backend_winit", "backend_egl", "renderer_gl", "desktop", "wayland_frontend", "use_system_lib"] }
 tracing = "0.1"
+wayland-protocols-wlr = { version = "0.3", features = ["server"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [profile.release]
