@@ -216,12 +216,6 @@ impl App {
     /// Put a window on `area` (maximized or full screen), remembering where it was.
     pub fn fit_window(&mut self, surface: &ToplevelSurface, area: Rectangle<i32, Logical>, state: xdg_toplevel::State) {
         let Some(window) = self.window_of(surface) else { return };
-        let mut area = area;
-        if self.decorated.contains(surface.wl_surface()) && state != xdg_toplevel::State::Fullscreen {
-            // the bar takes the top of the area
-            area.loc.y += deco::BAR_H;
-            area.size.h -= deco::BAR_H;
-        }
         if !self.saved.iter().any(|(s, _)| s == surface.wl_surface()) {
             let loc = self.space.element_location(&window).unwrap_or_default();
             self.saved.push((surface.wl_surface().clone(), Rectangle::new(loc, window.geometry().size)));
@@ -499,11 +493,6 @@ impl App {
         tiled.sort_by_key(|w| w.toplevel().and_then(|t| self.opened_at.iter().position(|s| s == t.wl_surface())).unwrap_or(usize::MAX));
         for (w, r) in tiled.iter().zip(tiling::dwindle(zone, tiled.len(), 8)) {
             let Some(t) = w.toplevel().cloned() else { continue };
-            let mut r = r;
-            if self.decorated.contains(t.wl_surface()) {
-                r.loc.y += deco::BAR_H;
-                r.size.h = (r.size.h - deco::BAR_H).max(1);
-            }
             t.with_pending_state(|s| s.size = Some(r.size));
             t.send_pending_configure();
             self.space.map_element(w.clone(), r.loc, false);
@@ -654,21 +643,22 @@ impl App {
         self.decorated.contains(t.wl_surface()) && !t.current_state().states.contains(xdg_toplevel::State::Fullscreen)
     }
 
-    /// The title bar of a window, in screen coordinates.
+    /// The window controls (the pill at the top right inside the window), in screen coordinates.
     fn bar_rect(&self, w: &Window) -> Option<Rectangle<i32, Logical>> {
         if !self.bar_visible(w) {
             return None;
         }
         let loc = self.space.element_location(w)?;
-        Some(Rectangle::new((loc.x, loc.y - deco::BAR_H).into(), (w.geometry().size.w, deco::BAR_H).into()))
+        let size = w.geometry().size;
+        Some(Rectangle::new((loc.x + size.w - deco::PILL_W - deco::MARGIN, loc.y + deco::MARGIN).into(), (deco::PILL_W, deco::PILL_H).into()))
     }
 
-    /// A title bar under the point (looking from the top window down; a window in front hides the bar of one behind it).
+    /// The window controls under the point (looking from the top window down; a window in front hides the controls of one behind it).
     fn bar_at(&self, pos: Point<f64, Logical>) -> Option<(Window, Hit)> {
         for w in self.space.elements().rev() {
             if let Some(r) = self.bar_rect(w) {
                 if r.to_f64().contains(pos) {
-                    return Some((w.clone(), deco::hit(pos.x - r.loc.x as f64, r.size.w)));
+                    return Some((w.clone(), deco::hit(pos.x - r.loc.x as f64)));
                 }
             }
             if let Some(loc) = self.space.element_location(w) {
@@ -680,7 +670,7 @@ impl App {
         None
     }
 
-    /// The resize grips just outside a decorated window (left, right and bottom).
+    /// The resize grips just outside a decorated window (all four sides).
     fn edge_at(&self, pos: Point<f64, Logical>) -> Option<(Window, ResizeEdge)> {
         for w in self.space.elements().rev() {
             if !self.bar_visible(w) {
@@ -688,20 +678,24 @@ impl App {
             }
             let loc = self.space.element_location(w)?;
             let size = w.geometry().size;
-            let inner = Rectangle::new((loc.x, loc.y - deco::BAR_H).into(), (size.w, size.h + deco::BAR_H).into()).to_f64();
+            let inner = Rectangle::new(loc, size).to_f64();
             let g = deco::GRIP as f64;
-            let outer = Rectangle::new((inner.loc.x - g, inner.loc.y).into(), (inner.size.w + 2.0 * g, inner.size.h + g).into());
+            let outer = Rectangle::new((inner.loc.x - g, inner.loc.y - g).into(), (inner.size.w + 2.0 * g, inner.size.h + 2.0 * g).into());
             if inner.contains(pos) {
                 return None;
             }
             if outer.contains(pos) {
-                let (left, right, bottom) = (pos.x < inner.loc.x, pos.x >= inner.loc.x + inner.size.w, pos.y >= inner.loc.y + inner.size.h);
-                let edge = match (left, right, bottom) {
-                    (true, _, true) => ResizeEdge::BottomLeft,
-                    (_, true, true) => ResizeEdge::BottomRight,
-                    (true, _, _) => ResizeEdge::Left,
-                    (_, true, _) => ResizeEdge::Right,
-                    (_, _, true) => ResizeEdge::Bottom,
+                let (left, right) = (pos.x < inner.loc.x, pos.x >= inner.loc.x + inner.size.w);
+                let (top, bottom) = (pos.y < inner.loc.y, pos.y >= inner.loc.y + inner.size.h);
+                let edge = match (left, right, top, bottom) {
+                    (true, _, true, _) => ResizeEdge::TopLeft,
+                    (_, true, true, _) => ResizeEdge::TopRight,
+                    (true, _, _, true) => ResizeEdge::BottomLeft,
+                    (_, true, _, true) => ResizeEdge::BottomRight,
+                    (true, ..) => ResizeEdge::Left,
+                    (_, true, ..) => ResizeEdge::Right,
+                    (_, _, true, _) => ResizeEdge::Top,
+                    (_, _, _, true) => ResizeEdge::Bottom,
                     _ => return None,
                 };
                 return Some((w.clone(), edge));
@@ -710,7 +704,34 @@ impl App {
         None
     }
 
-    /// A click on a title bar or a resize grip. Returns true when the compositor took it (the program under it never sees it).
+    /// Super and the left button move the window under the pointer, Super and the right button resize it (from the nearest corner).
+    fn super_drag(&mut self, serial: Serial, button: u32) -> bool {
+        if !self.keyboard.modifier_state().logo || !(button == 0x110 || button == 0x111) {
+            return false;
+        }
+        let pos = self.pointer_location;
+        let Some((window, loc)) = self.space.element_under(pos).map(|(w, l)| (w.clone(), l)) else { return false };
+        let Some(t) = window.toplevel() else { return false };
+        let pointer = self.pointer.clone();
+        let start = smithay::input::pointer::GrabStartData { focus: None, button, location: pos };
+        self.activate_surface(&t.wl_surface().clone());
+        let size = window.geometry().size;
+        if button == 0x110 {
+            pointer.set_grab(self, MoveGrab { start, window, origin: loc }, serial, Focus::Clear);
+        } else {
+            let (right, bottom) = (pos.x - loc.x as f64 > size.w as f64 / 2.0, pos.y - loc.y as f64 > size.h as f64 / 2.0);
+            let edges = match (right, bottom) {
+                (true, true) => ResizeEdge::BottomRight,
+                (true, false) => ResizeEdge::TopRight,
+                (false, true) => ResizeEdge::BottomLeft,
+                (false, false) => ResizeEdge::TopLeft,
+            };
+            pointer.set_grab(self, ResizeGrab { start, window, edges, origin: loc, size }, serial, Focus::Clear);
+        }
+        true
+    }
+
+    /// A click on the window controls or a resize grip. Returns true when the compositor took it (the program under it never sees it).
     fn press_on_decoration(&mut self, serial: Serial, button: u32) -> bool {
         let pos = self.pointer_location;
         let pointer = self.pointer.clone();
@@ -800,21 +821,12 @@ impl App {
         for w in windows {
             let Some(loc) = self.space.element_location(&w) else { continue };
             let geo = w.geometry();
-            out.extend(w.render_elements::<WaylandSurfaceRenderElement<GlesRenderer>>(renderer, (loc - geo.loc).to_physical(1), scale, 1.0).into_iter().map(Elem::from));
+            // the controls sit on top of the program's own picture, so they come first in a front-to-back list
             if let (Some(r), Some(t)) = (self.bar_rect(&w), w.toplevel()) {
                 let surface = t.wl_surface().clone();
-                let title = with_states(&surface, |st| st.data_map.get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>().and_then(|d| d.lock().unwrap().title.clone())).unwrap_or_default();
-                let key = BarKey {
-                    title,
-                    width: r.size.w,
-                    active: self.keyboard.current_focus().map(|f| f == surface).unwrap_or(false),
-                    hover: self.bar_hover.as_ref().filter(|(s, _)| s == &surface).map(|(_, h)| *h),
-                    maximized: t.current_state().states.contains(xdg_toplevel::State::Maximized),
-                };
+                let key = BarKey { active: self.keyboard.current_focus().map(|f| f == surface).unwrap_or(false), hover: self.bar_hover.as_ref().filter(|(s, _)| s == &surface).map(|(_, h)| *h) };
                 if self.bars.get(&surface).map(|b| b.key != key).unwrap_or(true) {
-                    if let Some(f) = &self.fonts {
-                        self.bars.insert(surface.clone(), deco::make(f, key));
-                    }
+                    self.bars.insert(surface.clone(), deco::make(key));
                 }
                 if let Some(bar) = self.bars.get(&surface) {
                     if let Ok(el) = MemoryRenderBufferRenderElement::from_buffer(renderer, (r.loc.x as f64, r.loc.y as f64), &bar.buffer, None, None, None, Kind::Unspecified) {
@@ -822,6 +834,7 @@ impl App {
                     }
                 }
             }
+            out.extend(w.render_elements::<WaylandSurfaceRenderElement<GlesRenderer>>(renderer, (loc - geo.loc).to_physical(1), scale, 1.0).into_iter().map(Elem::from));
         }
         layer_els(self, renderer, &[Layer::Bottom, Layer::Background], &mut out);
         out
@@ -966,7 +979,7 @@ impl App {
             }
             InputEvent::PointerButton { event } => {
                 let serial = SERIAL_COUNTER.next_serial();
-                if event.state() == ButtonState::Pressed && !pointer.is_grabbed() && !self.locked && self.press_on_decoration(serial, event.button_code()) {
+                if event.state() == ButtonState::Pressed && !pointer.is_grabbed() && !self.locked && (self.press_on_decoration(serial, event.button_code()) || self.super_drag(serial, event.button_code())) {
                     return;
                 }
                 if event.state() == ButtonState::Pressed && !pointer.is_grabbed() {
