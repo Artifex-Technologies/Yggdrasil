@@ -25,6 +25,8 @@ Status: it runs on top of KWin today (KWin is the only KDE piece left that matte
 | `packages/compositor` | `labyrinth-compositor` | the compositor (Smithay): the future replacement for KWin |
 | `packages/calculator`, `packages/labyrinth-weather` | | small apps ([docs/WEATHER.md](docs/WEATHER.md)) |
 | `packages/labyrinth-ui`, `packages/labyrinth-conf` | | the shared look (egui theme, icons, window chrome) and the shared settings file |
+| `packages/liki` | `liki-build` and others | **Liki**, the icon pack ([docs/LIKI.md](docs/LIKI.md)) |
+| `packages/theme` | `ygg-theme`, `ygg-cursors` | the look of Qt, KDE and GTK programs and the mouse pointer ([docs/THEME.md](docs/THEME.md)) |
 | `packages/pkgbuilds` | | an Arch package recipe for each program, built from this repository |
 
 The programs keep their `labyrinth-*` names until the rename to `yggdrasil-*` (it waits until the compositor can replace KWin: [docs/YGGDRASIL.md](docs/YGGDRASIL.md)).
