@@ -369,7 +369,7 @@ fn main() {
     #[cfg(feature = "test-auth")]
     let authenticator: Box<dyn Authenticator> = Box::new(auth::Fake);
     #[cfg(not(feature = "test-auth"))]
-    let authenticator: Box<dyn Authenticator> = Box::new(auth::Pam { service: std::env::var("LABYRINTH_LOCK_PAM").unwrap_or_else(|_| "login".into()) });
+    let authenticator: Box<dyn Authenticator> = Box::new(auth::WithDistress { inner: auth::Pam { service: std::env::var("LABYRINTH_LOCK_PAM").unwrap_or_else(|_| "login".into()) } });
 
     // Lock first, then cover every output with a lock surface (the compositor says "locked" once they are shown).
     let lock = manager.lock(&qh, ());

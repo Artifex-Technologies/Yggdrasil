@@ -11,6 +11,7 @@ mod appmgr;
 mod apps_ui;
 mod icons;
 mod restore;
+mod distress;
 mod security;
 mod sys;
 mod ui;
@@ -54,6 +55,7 @@ enum SecSub {
     Heimdall,
     Logins,
     Sudo,
+    Distress,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -153,6 +155,7 @@ struct App {
     // Security page
     sec_filter: usize,
     sec_sub: SecSub,
+    distress: distress::State,
     /// Password logs: (sign-ins, failed attempts) and sudo history, read when the page opens.
     logins: Option<(Vec<security::LogEntry>, Vec<security::LogEntry>)>,
     sudo_log: Option<Vec<security::LogEntry>>,
@@ -219,6 +222,7 @@ impl App {
             wifi_password: None,
             sec_filter: 1,
             sec_sub: SecSub::Main,
+            distress: distress::State::default(),
             logins: None,
             sudo_log: None,
             log_busy: false,
@@ -471,6 +475,9 @@ impl eframe::App for App {
                     ui.painter().text(egui::pos2(rect.left() + 40.0, rect.center().y), egui::Align2::LEFT_CENTER, name, egui::FontId::proportional(14.0), pal.text);
                     if resp.clicked() && p == Page::Appearance {
                         self.app_sub = AppSub::Main;
+                    }
+                    if resp.clicked() {
+                        self.distress.close();
                     }
                     if resp.clicked() && p == Page::Security {
                         self.sec_sub = SecSub::Main;
@@ -1643,11 +1650,13 @@ impl App {
             let title = match self.sec_sub {
                 SecSub::Heimdall => "Heimdall",
                 SecSub::Logins => "Login history",
+                SecSub::Distress => "Distress password",
                 _ => "Sudo history",
             };
             ui.horizontal(|ui| {
                 if ui::quiet(ui, pal, "\u{2039}  Security").clicked() {
                     self.sec_sub = SecSub::Main;
+                    self.distress.close();
                 }
                 ui.label(RichText::new(title).size(18.0).strong());
             });
@@ -1657,6 +1666,7 @@ impl App {
             SecSub::Heimdall => return self.page_heimdall(ui, pal, ctx),
             SecSub::Logins => return self.page_log(ui, pal, ctx, false),
             SecSub::Sudo => return self.page_log(ui, pal, ctx, true),
+            SecSub::Distress => return self.distress.page(ui, pal, ctx),
             SecSub::Main => {}
         }
         let Some(o) = self.data.security.clone() else { return loading(ui) };
@@ -1679,6 +1689,12 @@ impl App {
             }
             if ui::nav_row(ui, pal, false, "Sudo history", Some("What sudo was used for, by whom, and failed attempts"), |_| {}) {
                     open = Some(SecSub::Sudo);
+            }
+        });
+        ui.add_space(8.0);
+        ui::group(ui, pal, Some("Protection"), |ui| {
+            if ui::nav_row(ui, pal, true, "Distress password", Some("A second password that quietly does something else when it is typed. Needs your password to open"), |_| {}) {
+                open = Some(SecSub::Distress);
             }
         });
         if let Some(s) = open {

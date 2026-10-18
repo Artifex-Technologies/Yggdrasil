@@ -97,3 +97,53 @@ impl Authenticator for Fake {
         Ok(std::env::var("LABYRINTH_LOCK_TEST_PASSWORD").map(|p| p == password).unwrap_or(false))
     }
 }
+
+/// Asks the distress password helper when the real password was wrong. Only used when the distress password has been set up
+/// (its settings file exists). Unlocks only for a "silent login"; for anything else (a decoy session, or a distress password typed
+/// too few times so far) the screen simply stays locked, exactly as for any wrong password.
+pub struct WithDistress<A: Authenticator> {
+    pub inner: A,
+}
+
+impl<A: Authenticator> Authenticator for WithDistress<A> {
+    fn check(&self, user: &str, password: &str) -> Result<bool, String> {
+        match self.inner.check(user, password) {
+            Ok(false) if std::path::Path::new("/etc/labyrinth/distress.json").exists() => Ok(distress(password)),
+            other => other,
+        }
+    }
+}
+
+fn distress(password: &str) -> bool {
+    use std::io::Write;
+    let Ok(mut child) = std::process::Command::new("pkexec").arg("/usr/bin/labyrinth-distress").arg("check").stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).spawn() else { return false };
+    let body = format!("{{\"password\":{}}}", json_string(password));
+    if let Some(mut i) = child.stdin.take() {
+        let _ = i.write_all(body.as_bytes());
+    }
+    let Ok(out) = child.wait_with_output() else { return false };
+    let t = String::from_utf8_lossy(&out.stdout);
+    t.contains("\"result\":\"distress\"") && t.contains("\"unlock\":true")
+}
+
+fn json_string(s: &str) -> String {
+    let mut o = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '"' => o.push_str("\\\""),
+            '\\' => o.push_str("\\\\"),
+            c if (c as u32) < 0x20 => o.push_str(&format!("\\u{:04x}", c as u32)),
+            c => o.push(c),
+        }
+    }
+    o.push('"');
+    o
+}
+
+#[cfg(test)]
+mod distress_tests {
+    #[test]
+    fn json_escapes() {
+        assert_eq!(super::json_string("a\"b\\c"), "\"a\\\"b\\\\c\"");
+    }
+}

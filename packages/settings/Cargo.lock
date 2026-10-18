@@ -1772,6 +1772,7 @@ dependencies = [
  "image",
  "labyrinth-conf",
  "labyrinth-ui",
+ "serde",
  "serde_json",
 ]
 

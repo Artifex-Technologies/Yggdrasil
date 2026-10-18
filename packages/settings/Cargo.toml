@@ -16,3 +16,4 @@ image = { version = "0.25.10", default-features = false, features = ["png", "jpe
 labyrinth-ui = { path = "../labyrinth-ui" }
 labyrinth-conf = { path = "../labyrinth-conf" }
 serde_json = "1.0.151"
+serde = { version = "1", features = ["derive"] }
