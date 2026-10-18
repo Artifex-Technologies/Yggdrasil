@@ -8,6 +8,8 @@
 //!
 //! See docs/COMPOSITOR.md for what is built and what is not.
 
+mod deco;
+mod draw;
 mod grabs;
 mod shortcuts;
 mod state;
@@ -16,10 +18,8 @@ mod toplevels;
 use std::sync::Arc;
 
 use smithay::backend::renderer::damage::OutputDamageTracker;
-use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::backend::winit::{self, WinitEvent};
-use smithay::desktop::space::render_output;
 use smithay::output::{Mode, Output, PhysicalProperties, Subpixel};
 use smithay::reexports::calloop::generic::Generic;
 use smithay::reexports::calloop::{EventLoop, Interest, Mode as LoopMode, PostAction};
@@ -110,7 +110,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let elements = app.lock_elements(renderer);
                     let _ = damage_tracker.render_output(renderer, &mut fb, age, &elements, [0.0f32, 0.0, 0.0, 1.0]);
                 } else {
-                    let _ = render_output::<_, WaylandSurfaceRenderElement<GlesRenderer>, _, _>(&output, renderer, &mut fb, 1.0, age, [&app.space], &[], &mut damage_tracker, [0.05f32, 0.05, 0.08, 1.0]);
+                    let elements = app.scene(renderer);
+                    let _ = damage_tracker.render_output(renderer, &mut fb, age, &elements, [0.05f32, 0.05, 0.08, 1.0]);
                 }
             }
             let _ = backend.submit(Some(&[damage]));

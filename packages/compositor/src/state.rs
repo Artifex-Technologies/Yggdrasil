@@ -35,6 +35,22 @@ use smithay::utils::Rectangle;
 use crate::grabs::{MoveGrab, ResizeGrab};
 use crate::shortcuts::{self, Action, Binding, Mods};
 use crate::toplevels::Toplevels;
+use crate::deco::{self, Bar, Hit, Key as BarKey};
+use crate::draw::Fonts;
+use smithay::backend::renderer::element::memory::MemoryRenderBufferRenderElement;
+use smithay::backend::renderer::{ImportAll, ImportMem};
+use smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode as DecoMode;
+use smithay::utils::Scale;
+use smithay::wayland::shell::xdg::decoration::{XdgDecorationHandler, XdgDecorationState};
+use smithay::delegate_xdg_decoration;
+use std::collections::HashMap;
+
+smithay::render_elements! {
+    /// What is drawn each frame: the programs' own pictures and the title bars the compositor adds.
+    pub Elem<R> where R: ImportAll + ImportMem;
+    Surface = WaylandSurfaceRenderElement<R>,
+    Bar = MemoryRenderBufferRenderElement<R>,
+}
 use smithay::backend::input::KeyState;
 use smithay::input::keyboard::ModifiersState;
 use smithay::wayland::shm::{ShmHandler, ShmState};
@@ -79,6 +95,14 @@ pub struct App {
     queued: Vec<Action>,
     /// The Wayland socket programs started by shortcuts connect to.
     pub socket: String,
+    fonts: Option<Fonts>,
+    bars: HashMap<WlSurface, Bar>,
+    /// Windows that have a title bar drawn by the compositor (they asked for server-side decoration).
+    decorated: Vec<WlSurface>,
+    decorate_all: bool,
+    bar_hover: Option<(WlSurface, Hit)>,
+    last_click: Option<(std::time::Instant, WlSurface)>,
+    pub decoration_state: XdgDecorationState,
 }
 
 #[derive(Default)]
@@ -134,6 +158,13 @@ impl App {
             taken: vec![],
             queued: vec![],
             socket: String::new(),
+            fonts: Fonts::load(),
+            bars: HashMap::new(),
+            decorated: vec![],
+            decorate_all: std::env::var("LABYRINTH_COMPOSITOR_DECORATE").map(|v| v == "all").unwrap_or(false),
+            bar_hover: None,
+            last_click: None,
+            decoration_state: XdgDecorationState::new::<Self>(dh),
         }
     }
 
@@ -144,6 +175,12 @@ impl App {
     /// Put a window on `area` (maximized or full screen), remembering where it was.
     pub fn fit_window(&mut self, surface: &ToplevelSurface, area: Rectangle<i32, Logical>, state: xdg_toplevel::State) {
         let Some(window) = self.window_of(surface) else { return };
+        let mut area = area;
+        if self.decorated.contains(surface.wl_surface()) && state != xdg_toplevel::State::Fullscreen {
+            // the bar takes the top of the area
+            area.loc.y += deco::BAR_H;
+            area.size.h -= deco::BAR_H;
+        }
         if !self.saved.iter().any(|(s, _)| s == surface.wl_surface()) {
             let loc = self.space.element_location(&window).unwrap_or_default();
             self.saved.push((surface.wl_surface().clone(), Rectangle::new(loc, window.geometry().size)));
@@ -356,6 +393,151 @@ impl App {
         }
     }
 
+    fn bar_visible(&self, w: &Window) -> bool {
+        let Some(t) = w.toplevel() else { return false };
+        self.decorated.contains(t.wl_surface()) && !t.current_state().states.contains(xdg_toplevel::State::Fullscreen)
+    }
+
+    /// The title bar of a window, in screen coordinates.
+    fn bar_rect(&self, w: &Window) -> Option<Rectangle<i32, Logical>> {
+        if !self.bar_visible(w) {
+            return None;
+        }
+        let loc = self.space.element_location(w)?;
+        Some(Rectangle::new((loc.x, loc.y - deco::BAR_H).into(), (w.geometry().size.w, deco::BAR_H).into()))
+    }
+
+    /// A title bar under the point (looking from the top window down; a window in front hides the bar of one behind it).
+    fn bar_at(&self, pos: Point<f64, Logical>) -> Option<(Window, Hit)> {
+        for w in self.space.elements().rev() {
+            if let Some(r) = self.bar_rect(w) {
+                if r.to_f64().contains(pos) {
+                    return Some((w.clone(), deco::hit(pos.x - r.loc.x as f64, r.size.w)));
+                }
+            }
+            if let Some(loc) = self.space.element_location(w) {
+                if Rectangle::new(loc, w.geometry().size).to_f64().contains(pos) {
+                    return None;
+                }
+            }
+        }
+        None
+    }
+
+    /// The resize grips just outside a decorated window (left, right and bottom).
+    fn edge_at(&self, pos: Point<f64, Logical>) -> Option<(Window, ResizeEdge)> {
+        for w in self.space.elements().rev() {
+            if !self.bar_visible(w) {
+                continue;
+            }
+            let loc = self.space.element_location(w)?;
+            let size = w.geometry().size;
+            let inner = Rectangle::new((loc.x, loc.y - deco::BAR_H).into(), (size.w, size.h + deco::BAR_H).into()).to_f64();
+            let g = deco::GRIP as f64;
+            let outer = Rectangle::new((inner.loc.x - g, inner.loc.y).into(), (inner.size.w + 2.0 * g, inner.size.h + g).into());
+            if inner.contains(pos) {
+                return None;
+            }
+            if outer.contains(pos) {
+                let (left, right, bottom) = (pos.x < inner.loc.x, pos.x >= inner.loc.x + inner.size.w, pos.y >= inner.loc.y + inner.size.h);
+                let edge = match (left, right, bottom) {
+                    (true, _, true) => ResizeEdge::BottomLeft,
+                    (_, true, true) => ResizeEdge::BottomRight,
+                    (true, _, _) => ResizeEdge::Left,
+                    (_, true, _) => ResizeEdge::Right,
+                    (_, _, true) => ResizeEdge::Bottom,
+                    _ => return None,
+                };
+                return Some((w.clone(), edge));
+            }
+        }
+        None
+    }
+
+    /// A click on a title bar or a resize grip. Returns true when the compositor took it (the program under it never sees it).
+    fn press_on_decoration(&mut self, serial: Serial, button: u32) -> bool {
+        let pos = self.pointer_location;
+        let pointer = self.pointer.clone();
+        let start = smithay::input::pointer::GrabStartData { focus: None, button, location: pos };
+        if let Some((window, edges)) = self.edge_at(pos) {
+            let Some(t) = window.toplevel() else { return false };
+            self.activate_surface(&t.wl_surface().clone());
+            let origin = self.space.element_location(&window).unwrap_or_default();
+            let size = window.geometry().size;
+            pointer.set_grab(self, ResizeGrab { start, window, edges, origin, size }, serial, Focus::Clear);
+            return true;
+        }
+        let Some((window, hit)) = self.bar_at(pos) else { return false };
+        let Some(surface) = window.toplevel().map(|t| t.wl_surface().clone()) else { return false };
+        self.activate_surface(&surface);
+        match hit {
+            Hit::Close => self.close_surface(&surface),
+            Hit::Minimize => self.minimize_surface(&surface),
+            Hit::Maximize => {
+                let on = !self.toplevel_of(&surface).map(|t| t.current_state().states.contains(xdg_toplevel::State::Maximized)).unwrap_or(false);
+                self.set_maximized(&surface, on);
+            }
+            Hit::Drag => {
+                let double = matches!(&self.last_click, Some((t, s)) if s == &surface && t.elapsed() < std::time::Duration::from_millis(400));
+                self.last_click = Some((std::time::Instant::now(), surface.clone()));
+                if double {
+                    let on = !self.toplevel_of(&surface).map(|t| t.current_state().states.contains(xdg_toplevel::State::Maximized)).unwrap_or(false);
+                    self.set_maximized(&surface, on);
+                } else {
+                    let origin = self.space.element_location(&window).unwrap_or_default();
+                    pointer.set_grab(self, MoveGrab { start, window, origin }, serial, Focus::Clear);
+                }
+            }
+        }
+        true
+    }
+
+    /// What is drawn this frame, front to back: panels on the top layers, the windows with their title bars, then the layers behind.
+    pub fn scene(&mut self, renderer: &mut GlesRenderer) -> Vec<Elem<GlesRenderer>> {
+        use smithay::backend::renderer::element::AsRenderElements;
+        let mut out: Vec<Elem<GlesRenderer>> = vec![];
+        let scale = Scale::from(1.0);
+        let layer_els = |app: &App, renderer: &mut GlesRenderer, layers: &[Layer], out: &mut Vec<Elem<GlesRenderer>>| {
+            let map = layer_map_for_output(&app.output);
+            for layer in layers {
+                for l in map.layers_on(*layer).rev() {
+                    let Some(geo) = map.layer_geometry(l) else { continue };
+                    out.extend(l.render_elements::<WaylandSurfaceRenderElement<GlesRenderer>>(renderer, geo.loc.to_physical(1), scale, 1.0).into_iter().map(Elem::from));
+                }
+            }
+        };
+        layer_els(self, renderer, &[Layer::Overlay, Layer::Top], &mut out);
+        let windows: Vec<Window> = self.space.elements().rev().cloned().collect();
+        for w in windows {
+            let Some(loc) = self.space.element_location(&w) else { continue };
+            let geo = w.geometry();
+            out.extend(w.render_elements::<WaylandSurfaceRenderElement<GlesRenderer>>(renderer, (loc - geo.loc).to_physical(1), scale, 1.0).into_iter().map(Elem::from));
+            if let (Some(r), Some(t)) = (self.bar_rect(&w), w.toplevel()) {
+                let surface = t.wl_surface().clone();
+                let title = with_states(&surface, |st| st.data_map.get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>().and_then(|d| d.lock().unwrap().title.clone())).unwrap_or_default();
+                let key = BarKey {
+                    title,
+                    width: r.size.w,
+                    active: self.keyboard.current_focus().map(|f| f == surface).unwrap_or(false),
+                    hover: self.bar_hover.as_ref().filter(|(s, _)| s == &surface).map(|(_, h)| *h),
+                    maximized: t.current_state().states.contains(xdg_toplevel::State::Maximized),
+                };
+                if self.bars.get(&surface).map(|b| b.key != key).unwrap_or(true) {
+                    if let Some(f) = &self.fonts {
+                        self.bars.insert(surface.clone(), deco::make(f, key));
+                    }
+                }
+                if let Some(bar) = self.bars.get(&surface) {
+                    if let Ok(el) = MemoryRenderBufferRenderElement::from_buffer(renderer, (r.loc.x as f64, r.loc.y as f64), &bar.buffer, None, None, None, Kind::Unspecified) {
+                        out.push(Elem::from(el));
+                    }
+                }
+            }
+        }
+        layer_els(self, renderer, &[Layer::Bottom, Layer::Background], &mut out);
+        out
+    }
+
     pub fn quit(&mut self) {
         self.loop_signal.stop();
     }
@@ -405,6 +587,9 @@ impl App {
         };
         if let Some(x) = on_layer(Layer::Overlay).or_else(|| on_layer(Layer::Top)) {
             return Some(x);
+        }
+        if self.bar_at(pos).is_some() || self.edge_at(pos).is_some() {
+            return None;
         }
         if let Some((window, loc)) = self.space.element_under(pos) {
             if let Some((s, p)) = window.surface_under(pos - loc.to_f64(), WindowSurfaceType::ALL) {
@@ -478,12 +663,19 @@ impl App {
                     eprintln!("pointer {:.0},{:.0}", pos.x, pos.y);
                 }
                 let serial = SERIAL_COUNTER.next_serial();
+                let hover = self.bar_at(pos).and_then(|(w, h)| w.toplevel().map(|t| (t.wl_surface().clone(), h)));
+                if hover != self.bar_hover {
+                    self.bar_hover = hover;
+                }
                 let under = self.surface_under(pos);
                 pointer.motion(self, under, &MotionEvent { location: pos, serial, time: event.time_msec() });
                 pointer.frame(self);
             }
             InputEvent::PointerButton { event } => {
                 let serial = SERIAL_COUNTER.next_serial();
+                if event.state() == ButtonState::Pressed && !pointer.is_grabbed() && !self.locked && self.press_on_decoration(serial, event.button_code()) {
+                    return;
+                }
                 if event.state() == ButtonState::Pressed && !pointer.is_grabbed() {
                     self.focus_under_pointer(serial);
                 }
@@ -601,6 +793,9 @@ impl XdgShellHandler for App {
         surface.send_configure();
         let at = (60 + 36 * (n as i32 % 8), 60 + 36 * (n as i32 % 8));
         self.space.map_element(window.clone(), at, true);
+        if self.decorate_all {
+            self.decorated.push(surface.wl_surface().clone());
+        }
         self.foreign_added(&window);
         let serial = SERIAL_COUNTER.next_serial();
         let kb = self.keyboard.clone();
@@ -609,6 +804,8 @@ impl XdgShellHandler for App {
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
         self.foreign_removed(surface.wl_surface());
+        self.decorated.retain(|s| s != surface.wl_surface());
+        self.bars.remove(surface.wl_surface());
         self.minimized.retain(|w| w.toplevel().map(|t| t != &surface).unwrap_or(true));
         let gone = self.space.elements().find(|w| w.toplevel().map(|t| *t == surface).unwrap_or(false)).cloned();
         if let Some(w) = gone {
@@ -735,3 +932,27 @@ impl IdleNotifierHandler for App {
     }
 }
 delegate_idle_notify!(App);
+
+impl XdgDecorationHandler for App {
+    fn new_decoration(&mut self, toplevel: ToplevelSurface) {
+        self.use_server_side(&toplevel);
+    }
+    fn request_mode(&mut self, toplevel: ToplevelSurface, _mode: DecoMode) {
+        // Programs that ask for a bar of their own are still given ours: the look stays the same everywhere.
+        self.use_server_side(&toplevel);
+    }
+    fn unset_mode(&mut self, toplevel: ToplevelSurface) {
+        self.use_server_side(&toplevel);
+    }
+}
+delegate_xdg_decoration!(App);
+
+impl App {
+    fn use_server_side(&mut self, t: &ToplevelSurface) {
+        t.with_pending_state(|s| s.decoration_mode = Some(DecoMode::ServerSide));
+        if !self.decorated.contains(t.wl_surface()) {
+            self.decorated.push(t.wl_surface().clone());
+        }
+        t.send_pending_configure();
+    }
+}
