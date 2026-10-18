@@ -899,7 +899,9 @@ pub fn icon_packs() -> Vec<IconPack> {
             if theme_key(&index, "Hidden").map(|h| h.eq_ignore_ascii_case("true")).unwrap_or(false) || theme_key(&index, "Directories").is_none() {
                 continue;
             }
-            if matches!(id.as_str(), "default" | "hicolor" | "locolor") {
+            // KDE's, GNOME's and the toolkit's own packs are not choices: Yggdrasil's pack is Liki (they stay installed only because KDE programs need them)
+            let lower = id.to_lowercase();
+            if matches!(id.as_str(), "default" | "hicolor" | "locolor") || lower.starts_with("breeze") || lower.starts_with("klassy") || lower.starts_with("adwaita") || lower == "highcontrast" {
                 continue;
             }
             let samples = ["folder", "system-file-manager", "file-manager", "minos", "steam", "spotify", "vivaldi", "firefox", "preferences-system", "web-browser"];
