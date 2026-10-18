@@ -257,10 +257,16 @@ impl CompositorHandler for App {
                 w.on_commit();
             }
         }
-        // panels and backgrounds: the size they asked for and their place are settled on every commit
+        // Panels and backgrounds: their size and place are settled on every commit, and the first commit is answered with the
+        // first configure (arrange() never sends that one by itself).
+        use smithay::wayland::shell::wlr_layer::LayerSurfaceData;
         let mut map = layer_map_for_output(&self.output);
-        if map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL).is_some() {
+        if let Some(layer) = map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL).cloned() {
             map.arrange();
+            let sent = with_states(layer.wl_surface(), |st| st.data_map.get::<LayerSurfaceData>().map(|d| d.lock().unwrap().initial_configure_sent).unwrap_or(false));
+            if !sent {
+                layer.layer_surface().send_configure();
+            }
         }
     }
 }
