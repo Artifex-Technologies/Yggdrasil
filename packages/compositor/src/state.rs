@@ -33,7 +33,10 @@ use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::Res
 use smithay::input::pointer::Focus;
 use smithay::utils::Rectangle;
 use crate::grabs::{MoveGrab, ResizeGrab};
+use crate::shortcuts::{self, Action, Binding, Mods};
 use crate::toplevels::Toplevels;
+use smithay::backend::input::KeyState;
+use smithay::input::keyboard::ModifiersState;
 use smithay::wayland::shm::{ShmHandler, ShmState};
 use smithay::wayland::viewporter::ViewporterState;
 use smithay::{delegate_compositor, delegate_data_device, delegate_idle_notify, delegate_layer_shell, delegate_output, delegate_seat, delegate_session_lock, delegate_shm, delegate_viewporter, delegate_xdg_shell};
@@ -67,6 +70,15 @@ pub struct App {
     /// Windows hidden with minimize (still alive, listed to shell programs, brought back with activate).
     pub minimized: Vec<Window>,
     pub toplevels: Toplevels,
+    pub bindings: Vec<Binding>,
+    /// The Super key went down and nothing else was pressed since: letting go of it opens the start menu.
+    super_tap: bool,
+    /// Keys whose press was taken by a shortcut: their release is not passed on either.
+    taken: Vec<u32>,
+    /// What the shortcuts asked for while the keyboard handler was busy.
+    queued: Vec<Action>,
+    /// The Wayland socket programs started by shortcuts connect to.
+    pub socket: String,
 }
 
 #[derive(Default)]
@@ -110,6 +122,18 @@ impl App {
             saved: vec![],
             minimized: vec![],
             toplevels: Toplevels::default(),
+            bindings: {
+                let text = std::fs::read_to_string(shortcuts::config_path()).unwrap_or_default();
+                let (b, bad) = shortcuts::load(&text);
+                for l in bad {
+                    eprintln!("labyrinth-compositor: shortcuts.conf: cannot use the line: {l}");
+                }
+                b
+            },
+            super_tap: false,
+            taken: vec![],
+            queued: vec![],
+            socket: String::new(),
         }
     }
 
@@ -118,7 +142,7 @@ impl App {
     }
 
     /// Put a window on `area` (maximized or full screen), remembering where it was.
-    fn fit_window(&mut self, surface: &ToplevelSurface, area: Rectangle<i32, Logical>, state: xdg_toplevel::State) {
+    pub fn fit_window(&mut self, surface: &ToplevelSurface, area: Rectangle<i32, Logical>, state: xdg_toplevel::State) {
         let Some(window) = self.window_of(surface) else { return };
         if !self.saved.iter().any(|(s, _)| s == surface.wl_surface()) {
             let loc = self.space.element_location(&window).unwrap_or_default();
@@ -132,11 +156,13 @@ impl App {
         self.space.map_element(window, area.loc, true);
     }
 
-    fn restore_window(&mut self, surface: &ToplevelSurface, state: xdg_toplevel::State) {
+    pub fn restore_window(&mut self, surface: &ToplevelSurface) {
         let Some(window) = self.window_of(surface) else { return };
         let back = self.saved.iter().position(|(s, _)| s == surface.wl_surface()).map(|i| self.saved.remove(i).1);
         surface.with_pending_state(|s| {
-            s.states.unset(state);
+            for st in [xdg_toplevel::State::Maximized, xdg_toplevel::State::Fullscreen, xdg_toplevel::State::TiledLeft, xdg_toplevel::State::TiledRight] {
+                s.states.unset(st);
+            }
             s.size = back.map(|r| r.size);
         });
         surface.send_configure();
@@ -145,7 +171,7 @@ impl App {
         }
     }
 
-    fn toplevel_of(&self, surface: &WlSurface) -> Option<ToplevelSurface> {
+    pub fn toplevel_of(&self, surface: &WlSurface) -> Option<ToplevelSurface> {
         self.space.elements().chain(self.minimized.iter()).find_map(|w| w.toplevel().filter(|t| t.wl_surface() == surface).cloned())
     }
 
@@ -202,6 +228,131 @@ impl App {
             self.fullscreen_request(t, None);
         } else {
             self.unfullscreen_request(t);
+        }
+    }
+
+    /// Decides what a key does: a shortcut (taken, not passed to the focused program) or nothing special.
+    fn key_filter(&mut self, code: u32, state: KeyState, mods: &ModifiersState, sym: u32) -> FilterResult<Action> {
+        if self.locked {
+            return FilterResult::Forward;
+        }
+        if state == KeyState::Released {
+            if shortcuts::is_super(sym) && std::mem::take(&mut self.super_tap) {
+                self.queued.push(Action::ToggleStart);
+            }
+            if let Some(i) = self.taken.iter().position(|c| *c == code) {
+                self.taken.remove(i);
+                return FilterResult::Intercept(Action::None);
+            }
+            return FilterResult::Forward;
+        }
+        if shortcuts::is_super(sym) {
+            self.super_tap = true;
+            return FilterResult::Forward;
+        }
+        self.super_tap = false;
+        match shortcuts::find(&self.bindings, Mods::of(mods), sym) {
+            Some(b) => {
+                self.taken.push(code);
+                FilterResult::Intercept(b.action.clone())
+            }
+            None => FilterResult::Forward,
+        }
+    }
+
+    fn spawn(&self, cmd: &str) {
+        let mut c = std::process::Command::new("sh");
+        c.arg("-c").arg(cmd).env_remove("DISPLAY");
+        if !self.socket.is_empty() {
+            c.env("WAYLAND_DISPLAY", &self.socket);
+        }
+        match c.spawn() {
+            // reaped in the background so no defunct processes pile up
+            Ok(mut child) => {
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
+            }
+            Err(e) => eprintln!("labyrinth-compositor: cannot start {cmd}: {e}"),
+        }
+    }
+
+    fn panel(&self, method: &str, arg: Option<u32>) {
+        let a = arg.map(|n| format!(" u {n}")).unwrap_or_default();
+        self.spawn(&format!("busctl --user call org.labyrinth.Panel /Panel org.labyrinth.Panel {method}{a}"));
+    }
+
+    fn focused(&self) -> Option<WlSurface> {
+        let f = self.keyboard.current_focus()?;
+        self.space.elements().find(|w| w.toplevel().map(|t| t.wl_surface() == &f).unwrap_or(false)).and_then(|w| w.toplevel().map(|t| t.wl_surface().clone()))
+    }
+
+    pub fn run_action(&mut self, action: Action) {
+        use xdg_toplevel::State as S;
+        let current = self.focused();
+        let has = |app: &App, s: &WlSurface, st: S| app.toplevel_of(s).map(|t| t.current_state().states.contains(st)).unwrap_or(false);
+        match action {
+            Action::None => {}
+            Action::ToggleStart => self.panel("ToggleStart", None),
+            Action::Clipboard => self.panel("ShowClipboard", None),
+            Action::Sarina => self.panel("AskSarina", None),
+            Action::Calendar => self.panel("ToggleCalendar", None),
+            Action::Fylgja(n) => self.panel("ShowFylgja", Some(n)),
+            Action::Exec(cmd) => self.spawn(&cmd),
+            Action::Lock => self.spawn("labyrinth-lock"),
+            Action::Quit => self.quit(),
+            Action::Close => {
+                if let Some(s) = current {
+                    self.close_surface(&s);
+                }
+            }
+            Action::Maximize => {
+                if let Some(s) = current {
+                    self.set_maximized(&s, !has(self, &s, S::Maximized));
+                }
+            }
+            Action::Restore => {
+                if let Some(s) = current {
+                    if has(self, &s, S::Maximized) || has(self, &s, S::Fullscreen) || has(self, &s, S::TiledLeft) || has(self, &s, S::TiledRight) {
+                        if let Some(t) = self.toplevel_of(&s) {
+                            self.restore_window(&t);
+                        }
+                    } else {
+                        self.minimize_surface(&s);
+                    }
+                }
+            }
+            Action::Fullscreen => {
+                if let Some(s) = current {
+                    self.set_fullscreen(&s, !has(self, &s, S::Fullscreen));
+                }
+            }
+            Action::Minimize => {
+                if let Some(s) = current {
+                    self.minimize_surface(&s);
+                }
+            }
+            Action::SnapLeft | Action::SnapRight => {
+                let Some(t) = current.and_then(|s| self.toplevel_of(&s)) else { return };
+                let zone = layer_map_for_output(&self.output).non_exclusive_zone();
+                let half = zone.size.w / 2;
+                let (area, st) = if action == Action::SnapLeft { (Rectangle::new(zone.loc, (half, zone.size.h).into()), S::TiledLeft) } else { (Rectangle::new((zone.loc.x + half, zone.loc.y).into(), (zone.size.w - half, zone.size.h).into()), S::TiledRight) };
+                self.fit_window(&t, area, st);
+            }
+            Action::NextWindow => {
+                // the window at the bottom comes to the top: repeating goes through all of them
+                let next = self.space.elements().next().and_then(|w| w.toplevel().map(|t| t.wl_surface().clone()));
+                if let Some(s) = next {
+                    self.activate_surface(&s);
+                }
+            }
+            Action::PrevWindow => {
+                let n = self.space.elements().count();
+                let prev = self.space.elements().nth(n.saturating_sub(2)).and_then(|w| w.toplevel().map(|t| t.wl_surface().clone()));
+                if let Some(s) = prev {
+                    self.activate_surface(&s);
+                }
+            }
         }
     }
 
@@ -306,7 +457,18 @@ impl App {
         match event {
             InputEvent::Keyboard { event } => {
                 let serial = SERIAL_COUNTER.next_serial();
-                keyboard.input::<(), _>(self, event.key_code(), event.state(), serial, event.time_msec(), |_, _, _| FilterResult::Forward);
+                let state = event.state();
+                let code = event.key_code();
+                let taken = keyboard.input::<Action, _>(self, code, state, serial, event.time_msec(), |app, mods, handle| {
+                    let sym = handle.raw_latin_sym_or_raw_current_sym().map(|s| shortcuts::lower(s.raw())).unwrap_or(0);
+                    app.key_filter(u32::from(code), state, mods, sym)
+                });
+                if let Some(a) = taken {
+                    self.queued.push(a);
+                }
+                for a in std::mem::take(&mut self.queued) {
+                    self.run_action(a);
+                }
             }
             InputEvent::PointerMotionAbsolute { event } => {
                 let size = self.output.current_mode().map(|m| m.size).unwrap_or_default();
@@ -487,7 +649,7 @@ impl XdgShellHandler for App {
     }
 
     fn unmaximize_request(&mut self, surface: ToplevelSurface) {
-        self.restore_window(&surface, xdg_toplevel::State::Maximized);
+        self.restore_window(&surface);
     }
 
     fn fullscreen_request(&mut self, surface: ToplevelSurface, _output: Option<WlOutput>) {
@@ -496,7 +658,7 @@ impl XdgShellHandler for App {
     }
 
     fn unfullscreen_request(&mut self, surface: ToplevelSurface) {
-        self.restore_window(&surface, xdg_toplevel::State::Fullscreen);
+        self.restore_window(&surface);
     }
 
     fn new_popup(&mut self, surface: PopupSurface, positioner: PositionerState) {

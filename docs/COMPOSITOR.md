@@ -18,12 +18,13 @@ What works (each checked by hand in the nested window):
 - **Idle** (ext-idle-notify): `labyrinth-idle` was told when the user went idle, and its dimming overlay (layer-shell + viewporter) was accepted.
 - **Moving a window** by its own title bar (the xdg `move` request): dragging Settings' title area moved the window; checked with a real pointer drag. **Resizing, maximize and full screen** (the matching requests, remembering and restoring the old size) are written but not yet tried by hand.
 - **Window list for the panel** (`wlr-foreign-toplevel-management`, written here because Smithay does not ship it): the panel found it, the top bar showed the active window's title ("Settings") and the dock lit a dot under its icon. Activate, close, minimize, maximize and full screen from the panel are written (minimized windows are kept aside and brought back by activate) but not yet tried by hand.
+- **Shortcuts handled by the compositor** (`shortcuts.rs`, replacing `kglobalacceld`): the Super key on its own (start menu, through the panel's D-Bus service), Super+E/I/L/V/S/C/F/Q, Alt+F4, Alt+Tab, Super+arrows (maximize, restore or minimize, snap left and right), Super+Return. `~/.config/labyrinth/shortcuts.conf` changes or removes any of them. Checked in the nested window with test bindings (the host desktop keeps the Super key and Alt+Tab to itself): Ctrl+Shift+Left snapped the focused window to the left half, and Ctrl+Shift+Space opened the panel's start menu. The Super tap, Alt+Tab and the rest are written but could not be tried there.
 - Pointer and keyboard (from the host window), wheel, wl_output with xdg-output, clipboard (data device), viewporter, shm.
 
 Not built yet (in the order I would do them):
 1. Trying resize, maximize, full screen and minimize by hand.
 2. **Title bars drawn by the compositor** (`xdg-decoration`, in Labyrinth's own look, like Minos and Settings) for programs that do not draw their own, instead of a plain black bar. It needs a window element that carries its bar so overlapping windows stack correctly, and text drawn into a texture. Programs that draw their own (Minos, Settings, the Marketplace, most modern apps) keep theirs.
-4. Shortcuts handled by the compositor (the Super key, Alt+Tab, workspaces) instead of KDE's `kglobalacceld`; tiling.
+4. Workspaces (Super+1..9, sending windows to them), tiling, volume and media keys, and a window switcher that shows the windows while Alt is held.
 5. GPU clients (linux-dmabuf), idle inhibit (videos), primary selection, cursor shapes, fractional scale, xdg-activation, xdg-decoration.
 6. **The hardware backend**: DRM/KMS output, libinput, a seat (logind or seatd), several monitors, scaling, VRR, NVIDIA. This is what lets it replace KWin for real; it should be developed in a virtual machine (Limbo), never on the live session.
 7. Screen recording and screenshots (the portal), output management for Settings > Displays, an X11 layer (XWayland) for Steam and games.

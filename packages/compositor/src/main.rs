@@ -9,6 +9,7 @@
 //! See docs/COMPOSITOR.md for what is built and what is not.
 
 mod grabs;
+mod shortcuts;
 mod state;
 mod toplevels;
 
@@ -77,6 +78,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let socket = ListeningSocketSource::new_auto()?;
     let name = socket.socket_name().to_string_lossy().into_owned();
     println!("WAYLAND_DISPLAY={name}");
+    app.socket = name.clone();
     event_loop.handle().insert_source(socket, |stream, _, app| {
         let _ = app.display_handle.insert_client(stream, Arc::new(ClientState::default()));
     })?;
