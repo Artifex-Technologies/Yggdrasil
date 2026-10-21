@@ -1619,6 +1619,10 @@ impl State {
     fn step_month(&mut self, by: i32) {
         let max = self.start_max;
         let pointer = self.pointer_pos;
+        // turning the wheel while Fylgja is sliding back up means "stay": bring it down again
+        if matches!(self.fy_anim, Some((_, false))) && matches!(self.popup, Some(Popup { kind: PopupKind::Fylgja(_), .. })) {
+            self.start_anim(true);
+        }
         match self.popup.as_mut().map(|p| &mut p.kind) {
             Some(PopupKind::Calendar { .. }) if self.model.conf.notify_pane && pointer.1 >= self.pane_top => {
                 let max = notify::max_scroll(&self.model.notifs) as i32;
@@ -2771,7 +2775,14 @@ impl Dispatch<WlPointer, ()> for State {
             }
             // smooth scrolling (a touchpad): a step for each stretch of scrolling
             wl_pointer::Event::Axis { axis: WEnum::Value(wl_pointer::Axis::VerticalScroll), value, .. } => {
-                if state.popup.is_some() && !state.axis_wheel {
+                if state.popup.is_none() && !state.axis_wheel {
+                    // a touchpad scroll on the closed tab opens the notch, like the wheel
+                    state.axis_acc += value as f32;
+                    if state.axis_acc.abs() >= 20.0 {
+                        state.axis_acc = 0.0;
+                        state.open_full_from_tab();
+                    }
+                } else if state.popup.is_some() && !state.axis_wheel {
                     state.axis_acc += value as f32;
                     if state.axis_acc.abs() >= 20.0 {
                         let by = state.axis_acc.signum() as i32;
