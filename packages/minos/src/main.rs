@@ -1494,6 +1494,13 @@ impl PreviewState {
 
 fn draw_preview(ui: &mut egui::Ui, pal: &Palette, ps: &PreviewState) {
     ui.set_clip_rect(ui.max_rect());
+    // the whole pane scrolls with the wheel, so a long text or the details under a picture are never cut off
+    egui::ScrollArea::vertical().id_salt("preview-scroll").auto_shrink([false, false]).show(ui, |ui| {
+        draw_preview_body(ui, pal, ps);
+    });
+}
+
+fn draw_preview_body(ui: &mut egui::Ui, pal: &Palette, ps: &PreviewState) {
     let Some(d) = &ps.data else {
         ui.add_space(30.0);
         ui.vertical_centered(|ui| ui.label(RichText::new("Select a file to preview it").color(pal.dim)));
@@ -1507,7 +1514,7 @@ fn draw_preview(ui: &mut egui::Ui, pal: &Palette, ps: &PreviewState) {
     }
     ui.add_space(8.0);
 
-    // The picture or excerpt: always fitted into the pane, never scrolled.
+    // A picture is fitted into the pane; a text excerpt runs as long as it is and the pane scrolls.
     let box_h = 280.0_f32;
     match (&d.body, &ps.texture) {
         (Body::Image { width, height, .. }, Some(tex)) => {
@@ -1519,11 +1526,7 @@ fn draw_preview(ui: &mut egui::Ui, pal: &Palette, ps: &PreviewState) {
         }
         (Body::Text { text, truncated }, _) => {
             egui::Frame::new().fill(pal.field).corner_radius(8).inner_margin(egui::Margin::same(8)).show(ui, |ui| {
-                let h = box_h - 16.0;
-                ui.set_height(h);
                 ui.set_width(w - 16.0);
-                let clip = Rect::from_min_size(ui.cursor().min, vec2(w - 16.0, h));
-                ui.set_clip_rect(clip.intersect(ui.clip_rect()));
                 let mut shown = text.clone();
                 if *truncated {
                     shown.push_str("\n...");

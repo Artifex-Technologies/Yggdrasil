@@ -17,8 +17,8 @@ use crate::{archive, listing};
 
 pub const MAX_IMAGE_FILE: u64 = 150 * 1024 * 1024;
 pub const MAX_TEXT_BYTES: usize = 64 * 1024;
-const TEXT_LINES: usize = 40;
-const TEXT_CHARS: usize = 6000;
+const TEXT_LINES: usize = 400;
+const TEXT_CHARS: usize = 24000;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Body {
