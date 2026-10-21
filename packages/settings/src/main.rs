@@ -840,8 +840,7 @@ impl App {
                     ui::row(ui, pal, true, "No networks found", None, |_| {});
                 }
                 for (i, w) in n.networks.iter().enumerate() {
-                    let bars = match w.signal { 0..=25 => "▂", 26..=50 => "▂▄", 51..=75 => "▂▄▆", _ => "▂▄▆█" };
-                    let sub = format!("{bars}  {}{}", if w.secured { "Secured" } else { "Open" }, if w.in_use { " · Connected" } else { "" });
+                    let sub = format!("{}{}", if w.secured { "Secured" } else { "Open" }, if w.in_use { " · Connected" } else { "" });
                     ui::row(ui, pal, i == 0, &w.ssid, Some(&sub), |ui| {
                         if w.in_use {
                             if ui::quiet(ui, pal, "Disconnect").clicked() {
@@ -850,6 +849,8 @@ impl App {
                         } else if ui::action(ui, pal, "Connect").clicked() {
                             connect = Some((w.ssid.clone(), w.secured));
                         }
+                        ui.add_space(8.0);
+                        ui::signal_bars(ui, pal, w.signal);
                     });
                 }
             });

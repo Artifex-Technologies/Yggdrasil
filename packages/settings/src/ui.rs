@@ -49,6 +49,18 @@ pub fn row(ui: &mut egui::Ui, pal: &Palette, first: bool, title: &str, subtitle:
     });
 }
 
+/// Wi-Fi strength as four rising bars (0-100), the lit ones in the text colour.
+pub fn signal_bars(ui: &mut egui::Ui, pal: &Palette, signal: u8) {
+    let (rect, _) = ui.allocate_exact_size(vec2(22.0, 18.0), Sense::hover());
+    let lit = match signal { 0..=25 => 1, 26..=50 => 2, 51..=75 => 3, _ => 4 };
+    for i in 0..4 {
+        let h = 5.0 + 4.0 * i as f32;
+        let x = rect.left() + 1.0 + 5.0 * i as f32;
+        let bar = egui::Rect::from_min_max(egui::pos2(x, rect.bottom() - h), egui::pos2(x + 3.0, rect.bottom()));
+        ui.painter().rect_filled(bar, CornerRadius::same(1), if i < lit { pal.text } else { pal.hover });
+    }
+}
+
 /// An on/off switch, drawn like GNOME's (accent when on).
 pub fn switch(ui: &mut egui::Ui, pal: &Palette, on: &mut bool) -> egui::Response {
     let (rect, mut resp) = ui.allocate_exact_size(vec2(44.0, 24.0), Sense::click());

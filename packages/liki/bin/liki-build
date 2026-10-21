@@ -24,6 +24,7 @@ import json
 import math
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -89,7 +90,7 @@ NATIVE = {
     # what an app gets when no pack has an icon for it
     "default-app": [("apps", n) for n in ("application-default-icon", "application-x-executable", "applications-other", "unknown")],
 }
-CONTEXTS = {"apps": "Applications", "places": "Places", "mimetypes": "MimeTypes", "devices": "Devices"}
+CONTEXTS = {"apps": "Applications", "places": "Places", "mimetypes": "MimeTypes", "devices": "Devices", "status": "Status"}
 NL = chr(10)
 SUFFIXES = ("stable", "launcher", "client", "desktop", "browser", "bin", "beta", "dev", "gtk", "flatpak")
 
@@ -231,6 +232,10 @@ def main():
         for ctx, n in names:
             open(os.path.join(out, ctx, "scalable", n + ".svg"), "w", encoding="utf-8").write(icon)
             written += 1
+    # the system's symbolic icons (panel, Fylgja, Settings): Lucide, ISC, drawn in currentColor so the program tints them
+    for f in glob.glob(os.path.join(os.path.dirname(SRC), "symbolic", "*.svg")):
+        shutil.copy(f, os.path.join(out, "status", "scalable", os.path.basename(f)))
+        written += 1
     # the brands' apps
     seen = set()
     for icon_name, app_name in ([] if a.natives_only else installed_icon_names()):

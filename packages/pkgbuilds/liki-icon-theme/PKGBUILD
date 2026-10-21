@@ -5,7 +5,7 @@ pkgrel=1
 pkgdesc="Liki, Yggdrasil's icon pack: the system's own icons, the default app icon, and liki-build for app logos"
 arch=('any')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
-license=('MIT' 'CC0-1.0')
+license=('MIT' 'CC0-1.0' 'ISC')
 depends=('python' 'hicolor-icon-theme')
 optdepends=('gtk3: gtk-update-icon-cache for the user copy of the pack')
 provides=('labyrinth-brand-pack')
@@ -16,7 +16,7 @@ _src="$startdir/../../liki"
 package() {
   # the logos (a selection from Simple Icons, CC0) and the Minos artwork the tools read
   install -d "$pkgdir/usr/share/liki"
-  cp -r "$_src/share/brand-icons" "$_src/share/minos-icon" "$pkgdir/usr/share/liki/"
+  cp -r "$_src/share/brand-icons" "$_src/share/minos-icon" "$_src/share/symbolic" "$pkgdir/usr/share/liki/"
   # the pack itself: Yggdrasil's own icons and the default app icon (the apps' logos are made per user by liki-build)
   LIKI_BRAND_ICONS="$_src/share/brand-icons" python3 "$_src/bin/liki-build" --natives-only --out "$pkgdir/usr/share/icons/Liki"
   rm -f "$pkgdir/usr/share/icons/Liki/icon-theme.cache"

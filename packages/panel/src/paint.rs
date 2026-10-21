@@ -368,7 +368,9 @@ impl Icons {
         if !self.cache.contains_key(&key) {
             let r = self.find(name, size).and_then(|path| {
                 let svg = std::fs::read_to_string(&path).ok()?;
-                let tinted = svg.replacen("<svg ", &format!("<svg fill='#{:02x}{:02x}{:02x}' ", color.0, color.1, color.2), 1);
+                let hex = format!("#{:02x}{:02x}{:02x}", color.0, color.1, color.2);
+                // line icons draw in currentColor; solid ones take the colour as their fill
+                let tinted = if svg.contains("currentColor") { svg.replace("currentColor", &hex) } else { svg.replacen("<svg ", &format!("<svg fill='{hex}' "), 1) };
                 let tree = resvg::usvg::Tree::from_data(tinted.as_bytes(), &resvg::usvg::Options::default()).ok()?;
                 let sz = tree.size();
                 let mut pm = Pixmap::new(size, size)?;

@@ -14,7 +14,7 @@ const BASE: [&str; 2] = ["Liki", "hicolor"];
 
 /// What an app gets when no pack has an icon for it.
 pub const DEFAULT_APP_ICON: &str = "application-default-icon";
-const CONTEXTS: [&str; 5] = ["places", "mimes", "devices", "apps", "status"];
+const CONTEXTS: [&str; 6] = ["places", "mimetypes", "devices", "apps", "status", "actions"];
 
 #[derive(Default)]
 struct Cache {

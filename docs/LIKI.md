@@ -27,3 +27,7 @@ Another pack is used first; Liki and the default app icon fill in what it lacks.
 
 ## Chymaera
 Chymaera uses the same package; nothing in Liki is Labyrinth-specific.
+
+## System icons (symbolic)
+
+Liki also carries the small line icons the panel, Fylgja and Settings draw (volume, Wi-Fi strength, Bluetooth, brightness, power, media keys): 33 files in `packages/liki/share/symbolic`, taken from Lucide (ISC, see THIRD_PARTY_NOTICES.md) and named like the freedesktop symbolic icons. They are drawn in `currentColor`, so a program tints them to the theme.
