@@ -8,6 +8,7 @@
 //! thread and every change runs on one too; the window never freezes.
 
 mod appmgr;
+mod defaults;
 mod apps_ui;
 mod icons;
 mod restore;
@@ -44,6 +45,7 @@ enum Page {
     Firewall,
     DateTime,
     Apps,
+    DefaultApps,
     Shortcuts,
     About,
     /// Shown under About while Developer options are on.
@@ -71,7 +73,7 @@ enum AppSub {
     Workspaces,
 }
 
-const PAGES: [(Page, &str, Icon); 15] = [
+const PAGES: [(Page, &str, Icon); 16] = [
     (Page::Network, "Wi-Fi & Network", Icon::Wifi),
     (Page::Bluetooth, "Bluetooth", Icon::Bluetooth),
     (Page::Displays, "Displays", Icon::Display),
@@ -84,6 +86,7 @@ const PAGES: [(Page, &str, Icon); 15] = [
     (Page::Firewall, "Firewall", Icon::Shield),
     (Page::DateTime, "Date & Time", Icon::Clock),
     (Page::Apps, "Apps", Icon::Apps),
+    (Page::DefaultApps, "Default apps", Icon::Apps),
     (Page::Shortcuts, "Keyboard Shortcuts", Icon::Keyboard),
     (Page::About, "About", Icon::Info),
     (Page::Developer, "Developer Mode", Icon::Keyboard),
@@ -109,6 +112,7 @@ enum Msg {
     Time(sys::Time),
     Apps(Vec<sys::Component>),
     Installed(Vec<appmgr::AppInfo>),
+    Defaults(Vec<defaults::Row>),
     AppSizes(std::collections::HashMap<String, u64>),
     DirSize(std::path::PathBuf, u64),
     Done(Page, Result<(), String>),
@@ -131,6 +135,7 @@ struct Data {
     time: Option<sys::Time>,
     apps: Option<Vec<sys::Component>>,
     installed: Option<Vec<appmgr::AppInfo>>,
+    defaults: Option<Vec<defaults::Row>>,
 }
 
 #[derive(Default)]
@@ -325,6 +330,7 @@ impl App {
                     let _ = tx.send(Msg::Installed(load_installed(&tx)));
                     Msg::Apps(sys::apps())
                 }
+                Page::DefaultApps => Msg::Defaults(defaults::load()),
                 Page::Shortcuts | Page::Developer => return,
             };
             let _ = tx.send(msg);
@@ -382,6 +388,7 @@ impl App {
                     self.log_busy = false;
                 }
                 Msg::Restore(r) => self.data.restore = Some(r),
+                Msg::Defaults(r) => self.data.defaults = Some(r),
                 Msg::Scan(r) => {
                     self.scan_busy = false;
                     self.scan_report = Some(r);
@@ -555,6 +562,7 @@ impl eframe::App for App {
                         Page::Users => self.page_users(ui, &pal, &ctx),
                         Page::Security => self.page_security(ui, &pal, &ctx),
                         Page::Restore => self.page_restore(ui, &pal, &ctx),
+                        Page::DefaultApps => self.page_default_apps(ui, &pal, &ctx),
                         Page::DateTime => self.page_time(ui, &pal, &ctx),
                         Page::Apps => self.page_apps(ui, &pal, &ctx),
                         Page::Shortcuts => page_shortcuts(ui, &pal),
@@ -1845,6 +1853,32 @@ impl App {
             show(ui, "Failed attempts (last 30 days)", &bad, "No failed attempts");
             ui.add_space(8.0);
             show(ui, "Sign-ins", &ok, "Nothing recorded");
+        }
+    }
+
+    fn page_default_apps(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
+        let Some(rows) = self.data.defaults.clone() else { return loading(ui) };
+        let mut pick: Option<(usize, String)> = None;
+        ui::group(ui, pal, Some("Open files with"), |ui| {
+            for (n, r) in rows.iter().enumerate() {
+                let k = &defaults::KINDS[r.kind];
+                let shown = r.choices.iter().find(|c| c.id == r.current).map(|c| c.name.clone()).unwrap_or_else(|| if r.current.is_empty() { "Not set".into() } else { r.current.trim_end_matches(".desktop").to_string() });
+                ui::row(ui, pal, n == 0, k.name, Some(k.what), |ui| {
+                    egui::ComboBox::from_id_salt(("default-app", r.kind)).selected_text(shown).width(200.0).show_ui(ui, |ui| {
+                        if r.choices.is_empty() {
+                            ui.label("No installed program says it can open these");
+                        }
+                        for c in &r.choices {
+                            if ui.selectable_label(c.id == r.current, &c.name).clicked() {
+                                pick = Some((r.kind, c.id.clone()));
+                            }
+                        }
+                    });
+                });
+            }
+        });
+        if let Some((kind, id)) = pick {
+            self.change(ctx, move || defaults::set(kind, &id));
         }
     }
 

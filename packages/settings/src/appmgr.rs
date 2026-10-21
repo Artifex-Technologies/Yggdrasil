@@ -114,7 +114,7 @@ pub fn parse_desktop(text: &str) -> HashMap<String, String> {
     out
 }
 
-fn desktop_dirs() -> Vec<PathBuf> {
+pub fn desktop_dirs() -> Vec<PathBuf> {
     let mut v = vec![data_home().join("applications")];
     for d in std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into()).split(':') {
         if !d.is_empty() {
