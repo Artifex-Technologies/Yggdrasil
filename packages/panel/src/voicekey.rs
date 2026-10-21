@@ -38,7 +38,8 @@ pub fn run(tx: calloop::channel::Sender<Key>) -> Result<(), String> {
     if have.is_empty() {
         let _: Vec<i32> = ga.call("setShortcut", &(&action, vec![META_S, CTRL_ALT_S], 2u32)).map_err(|e| format!("setShortcut: {e}"))?;
     } else if have == vec![META_S] {
-        let _: Vec<i32> = ga.call("setShortcut", &(&action, vec![META_S, CTRL_ALT_S], 2u32)).map_err(|e| format!("setShortcut: {e}"))?;
+        // 2 | 4: set it even though a saved one exists (without the 4, kglobalacceld hands back what was saved)
+        let _: Vec<i32> = ga.call("setShortcut", &(&action, vec![META_S, CTRL_ALT_S], 6u32)).map_err(|e| format!("setShortcut: {e}"))?;
     }
     // the old way (a desktop file started by Meta+S) would also fire on the same keys: take its shortcut away
     let _: Result<bool, _> = ga.call("unregister", &("labyrinth-sarina-ask.desktop", "_launch"));
