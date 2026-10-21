@@ -1666,7 +1666,10 @@ impl State {
         let on_popup = self.pointer_surface.and_then(|i| self.surfs.get(i)).map(|s| s.kind == Kind::Popup).unwrap_or(false);
         let (cx, cy, cw, ch) = self.popup_card;
         let (px, py) = self.pointer_pos;
-        if !pinned && on_popup && (px < cx - 6.0 || px > cx + cw + 6.0 || py > cy + ch + 6.0) {
+        // judged against the settled card: while it slides down its bottom edge is still near the top,
+        // and a pointer resting lower in the bar would close it before it ever showed
+        let _ = cy;
+        if !pinned && on_popup && cw > 0.0 && (px < cx - 6.0 || px > cx + cw + 6.0 || py > ch + 6.0) {
             self.retract_fylgja();
             return true;
         }
