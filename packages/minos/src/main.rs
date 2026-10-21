@@ -2431,7 +2431,9 @@ impl App {
                         self.proton_busy = true;
                         let (tx, c) = (self.proton_tx.clone(), ctx.clone());
                         std::thread::spawn(move || {
-                            let _ = tx.send(cloud::start_proton_mount());
+                            // the saved sign-in may have lapsed (a two-factor code or password no longer accepted): then ask again
+                            let r = cloud::start_proton_mount().and_then(|_| cloud::wait_mounted(15).map_err(|_| format!("{}Proton Drive did not start with the saved sign-in. Please sign in again.", cloud::SIGN_IN_AGAIN)));
+                            let _ = tx.send(r);
                             c.request_repaint();
                         });
                     } else {
@@ -2677,7 +2679,15 @@ impl eframe::App for App {
                     self.status = "Proton Drive is connecting; its files appear in a few seconds".into();
                     self.proton_form = None;
                 }
-                Err(e) => self.status = e,
+                Err(e) => match e.strip_prefix(cloud::SIGN_IN_AGAIN) {
+                    Some(msg) => {
+                        self.status = msg.to_string();
+                        let mut f: [String; 4] = Default::default();
+                        f[0] = cloud::proton_username();
+                        self.proton_form = Some(f);
+                    }
+                    None => self.status = e,
+                },
             }
             self.cloud = places::proton_drive();
         }

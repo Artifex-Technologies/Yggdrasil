@@ -524,7 +524,9 @@ fn obscure(secret: &str) -> Result<String, String> {
 /// Sign in to Proton Drive (rclone's `protondrive` backend, remote `proton`) and start the mount at
 /// `~/ProtonDrive`, so the Cloud entry in the sidebar fills in. `mailbox` and `twofa` may be empty.
 pub fn connect_proton(user: &str, password: &str, mailbox: &str, twofa: &str) -> Result<(), String> {
-    let mut args: Vec<String> = ["config", "create", "proton", "protondrive", "username"].map(String::from).to_vec();
+    // a lapsed sign-in is renewed in place; a first one is created
+    let verb = if proton_configured() { "update" } else { "create" };
+    let mut args: Vec<String> = if verb == "update" { ["config", "update", "proton", "username"].map(String::from).to_vec() } else { ["config", "create", "proton", "protondrive", "username"].map(String::from).to_vec() };
     args.push(user.trim().to_string());
     args.push("password".into());
     args.push(obscure(password)?);
@@ -538,10 +540,34 @@ pub fn connect_proton(user: &str, password: &str, mailbox: &str, twofa: &str) ->
     }
     let out = Command::new("rclone").args(&args).output().map_err(|e| format!("cannot run rclone: {e}"))?;
     if !out.status.success() {
-        let _ = Command::new("rclone").args(["config", "delete", "proton"]).status();
+        if verb == "create" {
+            let _ = Command::new("rclone").args(["config", "delete", "proton"]).status();
+        }
         return Err(format!("Proton refused the sign-in: {}", String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("").trim()));
     }
-    start_proton_mount()
+    start_proton_mount()?;
+    wait_mounted(20).map_err(|_| "Proton did not accept that sign-in (check the password and the two-factor code, which lasts about 30 seconds)".to_string())
+}
+
+/// Marks an error that means "ask for the sign-in again".
+pub const SIGN_IN_AGAIN: &str = "SIGNIN:";
+
+/// The user name saved in rclone's `proton` remote, to prefill the form when the sign-in has lapsed.
+pub fn proton_username() -> String {
+    Command::new("rclone").args(["config", "show", "proton"]).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).lines().find_map(|l| l.strip_prefix("username = ").map(|v| v.trim().to_string())).unwrap_or_default()).unwrap_or_default()
+}
+
+/// Waits for the Proton Drive folder to be a mount (the service can start and then fail at its login).
+pub fn wait_mounted(seconds: u64) -> Result<(), ()> {
+    let Some(home) = dirs::home_dir() else { return Err(()) };
+    let dir = home.join("ProtonDrive");
+    for _ in 0..seconds * 2 {
+        if Command::new("mountpoint").arg("-q").arg(&dir).status().map(|s| s.success()).unwrap_or(false) {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    Err(())
 }
 
 /// Put the mount service in place (once) and start it.

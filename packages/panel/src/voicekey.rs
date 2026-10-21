@@ -19,6 +19,8 @@ const COMPONENT: &str = "labyrinth-panel";
 const ACTION: &str = "ask-sarina";
 /// Qt::MetaModifier | Qt::Key_S
 const META_S: i32 = 0x1000_0000 | 0x53;
+/// Qt::ControlModifier | Qt::AltModifier | Qt::Key_S: a second way in, for a keyboard whose Super key does not reach the desktop (some gaming keyboards lock it)
+const CTRL_ALT_S: i32 = 0x0400_0000 | 0x0800_0000 | 0x53;
 
 fn id() -> Vec<String> {
     vec![COMPONENT.into(), ACTION.into(), "Labyrinth Panel".into(), "Ask Sarina (hold to talk)".into()]
@@ -31,9 +33,12 @@ pub fn run(tx: calloop::channel::Sender<Key>) -> Result<(), String> {
     let action = id();
     ga.call_method("doRegister", &(&action,)).map_err(|e| format!("doRegister: {e}"))?;
     let have: Vec<i32> = ga.call("shortcut", &(&action,)).unwrap_or_default();
+    // flags: SetPresent (2) makes it the active shortcut. Only the defaults are ever set here: a change made in System Settings is kept (it is then
+    // neither empty nor exactly the old default).
     if have.is_empty() {
-        // flags: SetPresent (2) makes it the active shortcut; a change made later in System Settings is kept next time (it is then not empty)
-        let _: Vec<i32> = ga.call("setShortcut", &(&action, vec![META_S], 2u32)).map_err(|e| format!("setShortcut: {e}"))?;
+        let _: Vec<i32> = ga.call("setShortcut", &(&action, vec![META_S, CTRL_ALT_S], 2u32)).map_err(|e| format!("setShortcut: {e}"))?;
+    } else if have == vec![META_S] {
+        let _: Vec<i32> = ga.call("setShortcut", &(&action, vec![META_S, CTRL_ALT_S], 2u32)).map_err(|e| format!("setShortcut: {e}"))?;
     }
     // the old way (a desktop file started by Meta+S) would also fire on the same keys: take its shortcut away
     let _: Result<bool, _> = ga.call("unregister", &("labyrinth-sarina-ask.desktop", "_launch"));
