@@ -1311,6 +1311,50 @@
     "cad"
    ],
    "repo": "https://github.com/Artifex-Technologies/Daedalus_CAD"
+  },
+  {
+   "id": "printing",
+   "name": "Printing and scanning",
+   "subtitle": "Printers and scanners",
+   "description": "CUPS, network printers found by themselves, USB printers without drivers, HP, Epson, Canon and most other drivers, and Print to PDF. Most printers from the last ten years need no driver at all.",
+   "category": "Utilities",
+   "subcategory": "System",
+   "source": {
+    "type": "component",
+    "id": "printing"
+   },
+   "icon": "printer",
+   "reviewed": true,
+   "tags": [
+    "printer",
+    "cups",
+    "scanner",
+    "hp",
+    "epson",
+    "canon",
+    "brother"
+   ]
+  },
+  {
+   "id": "asus",
+   "name": "ASUS laptop tools",
+   "subtitle": "ROG and TUF control",
+   "description": "asusctl and ROG Control Center: fan and power profiles, keyboard lighting and the battery charge limit on ASUS laptops and tablets. Does nothing on other computers.",
+   "category": "Utilities",
+   "subcategory": "System",
+   "source": {
+    "type": "component",
+    "id": "asus"
+   },
+   "icon": "rog-control-center",
+   "reviewed": true,
+   "tags": [
+    "asus",
+    "rog",
+    "tuf",
+    "fans",
+    "keyboard"
+   ]
   }
  ],
  "featured": [
