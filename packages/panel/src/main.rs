@@ -44,6 +44,7 @@ use wayland_client::protocol::wl_output::{self, WlOutput};
 use wayland_client::protocol::wl_keyboard::{self, WlKeyboard};
 use xkbcommon::xkb;
 use wayland_client::protocol::wl_pointer::{self, WlPointer};
+use wayland_client::protocol::wl_touch::{self, WlTouch};
 use wayland_client::protocol::wl_region::WlRegion;
 use wayland_client::protocol::wl_registry::{self, WlRegistry};
 use wayland_client::protocol::wl_seat::{self, WlSeat};
@@ -346,6 +347,9 @@ struct State {
     thumb_tx: calloop::channel::Sender<(String, Pixmap)>,
     tab_gen: u64,
     tab_on: bool,
+    /// The touch screen (when the seat has one) and the finger being followed: taps act as clicks.
+    touch: Option<WlTouch>,
+    touch_id: Option<i32>,
     tab_output: u32,
     /// A question for Sarina being recorded, and when it began; her answer comes back on `voice_tx`.
     rec: Option<(std::process::Child, std::path::PathBuf)>,
@@ -2674,6 +2678,9 @@ impl Dispatch<WlSeat, ()> for State {
             if c.contains(wl_seat::Capability::Keyboard) && state.keyboard.is_none() {
                 state.keyboard = Some(seat.get_keyboard(qh, ()));
             }
+            if c.contains(wl_seat::Capability::Touch) && state.touch.is_none() {
+                state.touch = Some(seat.get_touch(qh, ()));
+            }
             if c.contains(wl_seat::Capability::Pointer) && state.seat.is_none() {
                 state.seat = Some(seat.clone());
                 let p = seat.get_pointer(qh, ());
@@ -2723,6 +2730,42 @@ impl Dispatch<WlKeyboard, ()> for State {
 
 impl Dispatch<WlPointer, ()> for State {
     fn event(state: &mut Self, _: &WlPointer, event: wl_pointer::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        pointer_event(state, event);
+    }
+}
+
+/// A finger on a touch screen (a tablet or a 2-in-1): a tap is the pointer arriving there, pressing and letting go; a drag moves it. Only the
+/// first finger counts. Wayland does not turn touches into clicks by itself, so without this nothing on the bar, dock or menus answered a tap.
+impl Dispatch<WlTouch, ()> for State {
+    fn event(state: &mut Self, _: &WlTouch, event: wl_touch::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        match event {
+            wl_touch::Event::Down { serial, time, surface, id, x, y } => {
+                if state.touch_id.is_some() {
+                    return;
+                }
+                state.touch_id = Some(id);
+                pointer_event(state, wl_pointer::Event::Enter { serial, surface, surface_x: x, surface_y: y });
+                pointer_event(state, wl_pointer::Event::Button { serial, time, button: 272, state: WEnum::Value(wl_pointer::ButtonState::Pressed) });
+            }
+            wl_touch::Event::Motion { time, id, x, y } if state.touch_id == Some(id) => {
+                pointer_event(state, wl_pointer::Event::Motion { time, surface_x: x, surface_y: y });
+            }
+            wl_touch::Event::Up { serial, time, id } if state.touch_id == Some(id) => {
+                state.touch_id = None;
+                pointer_event(state, wl_pointer::Event::Button { serial, time, button: 272, state: WEnum::Value(wl_pointer::ButtonState::Released) });
+            }
+            wl_touch::Event::Cancel => {
+                if state.touch_id.take().is_some() {
+                    pointer_event(state, wl_pointer::Event::Button { serial: 0, time: 0, button: 272, state: WEnum::Value(wl_pointer::ButtonState::Released) });
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn pointer_event(state: &mut State, event: wl_pointer::Event) {
+    {
         match event {
             wl_pointer::Event::Enter { serial, surface, surface_x, surface_y } => {
                 state.pointer_surface = state.surf_index(&surface);
@@ -3132,6 +3175,8 @@ fn main() {
         thumb_tx,
         tab_gen: 0,
         tab_on: false,
+        touch: None,
+        touch_id: None,
         tab_output: 0,
         rec: None,
         rec_since: None,
