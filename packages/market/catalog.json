@@ -1334,6 +1334,120 @@
     "canon",
     "brother"
    ]
+  },
+  {
+   "id": "coolercontrol",
+   "name": "CoolerControl",
+   "subtitle": "Fan curves and AIO coolers",
+   "description": "Fan curves and pump speeds for AIO coolers and fan controllers, Corsair Commander and iCUE coolers included, set from the temperatures you choose. Works in the background from start-up.",
+   "category": "Play",
+   "subcategory": "Gaming Gear",
+   "source": {
+    "type": "component",
+    "id": "coolercontrol"
+   },
+   "icon": "org.coolercontrol.CoolerControl",
+   "reviewed": true,
+   "tags": [
+    "corsair",
+    "icue",
+    "commander",
+    "nzxt",
+    "fan",
+    "cooler",
+    "aio",
+    "liquidctl"
+   ]
+  },
+  {
+   "id": "openrgb",
+   "name": "OpenRGB",
+   "subtitle": "RGB lighting for every brand",
+   "description": "One app for the lighting of Corsair, Razer, ASUS Aura, MSI, Gigabyte and many more keyboards, mice, fans and boards.",
+   "category": "Play",
+   "subcategory": "Gaming Gear",
+   "source": {
+    "type": "component",
+    "id": "openrgb"
+   },
+   "icon": "OpenRGB",
+   "reviewed": true,
+   "tags": [
+    "rgb",
+    "lighting",
+    "corsair",
+    "razer",
+    "asus",
+    "aura"
+   ]
+  },
+  {
+   "id": "ckb-next",
+   "name": "Corsair keyboards and mice",
+   "subtitle": "Lighting and macros (ckb-next)",
+   "description": "Lighting, macros and key remapping for Corsair keyboards and mice.",
+   "category": "Play",
+   "subcategory": "Gaming Gear",
+   "source": {
+    "type": "component",
+    "id": "ckb-next"
+   },
+   "icon": "ckb-next",
+   "reviewed": true,
+   "tags": [
+    "corsair",
+    "icue",
+    "keyboard",
+    "mouse",
+    "rgb",
+    "macros"
+   ]
+  },
+  {
+   "id": "razer",
+   "name": "Razer keyboards and mice",
+   "subtitle": "Lighting, DPI and extra buttons",
+   "description": "OpenRazer with Polychromatic for lighting, DPI and polling rate, and Input Remapper to give the extra mouse buttons any key, shortcut or macro.",
+   "category": "Play",
+   "subcategory": "Gaming Gear",
+   "source": {
+    "type": "component",
+    "id": "razer"
+   },
+   "icon": "polychromatic",
+   "reviewed": true,
+   "tags": [
+    "razer",
+    "synapse",
+    "mouse",
+    "keyboard",
+    "rgb",
+    "dpi",
+    "buttons",
+    "macros"
+   ]
+  },
+  {
+   "id": "asus",
+   "name": "ASUS laptop tools",
+   "subtitle": "ROG, TUF and Zenbook control",
+   "description": "asusctl and ROG Control Center: fan and power profiles, keyboard lighting and the battery charge limit on ASUS laptops and tablets.",
+   "category": "Play",
+   "subcategory": "Gaming Gear",
+   "source": {
+    "type": "component",
+    "id": "asus"
+   },
+   "icon": "rog-control-center",
+   "reviewed": true,
+   "tags": [
+    "asus",
+    "rog",
+    "tuf",
+    "armoury crate",
+    "fans",
+    "keyboard"
+   ]
   }
  ],
  "featured": [
