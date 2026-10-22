@@ -1425,6 +1425,27 @@
     "fans",
     "keyboard"
    ]
+  },
+  {
+   "id": "waydroid",
+   "name": "Waydroid",
+   "subtitle": "Android apps on Labyrinth",
+   "description": "Run Android apps in their own windows, at near-native speed: a full Android system in a container, no emulator. Setting it up downloads the Android image (about 1 GB).",
+   "category": "Utilities",
+   "subcategory": "Android",
+   "source": {
+    "type": "component",
+    "id": "waydroid"
+   },
+   "icon": "waydroid",
+   "reviewed": true,
+   "tags": [
+    "android",
+    "apk",
+    "apps",
+    "mobile",
+    "f-droid"
+   ]
   }
  ],
  "featured": [
