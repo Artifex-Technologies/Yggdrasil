@@ -1624,7 +1624,7 @@ impl App {
             });
         }
         if let Some(name) = profile {
-            self.change(ctx, move || sys::act("powerprofilesctl", &["set", &name]));
+            self.change(ctx, move || sys::set_profile(&name));
         }
     }
 

@@ -540,8 +540,32 @@ pub fn profiles(text: &str) -> (Vec<String>, String) {
     (names, active)
 }
 
+const PPD: [&str; 3] = ["org.freedesktop.UPower.PowerProfiles", "/org/freedesktop/UPower/PowerProfiles", "org.freedesktop.UPower.PowerProfiles"];
+
+/// The power modes and the active one, read from power-profiles-daemon over D-Bus. (`powerprofilesctl` is a Python program whose
+/// interpreter aborts at exit now and then, which left core dumps; it is only the fallback.)
+fn profiles_dbus() -> Option<(Vec<String>, String)> {
+    let list = run("busctl", &["--json=short", "get-property", PPD[0], PPD[1], PPD[2], "Profiles"])?;
+    let v: serde_json::Value = serde_json::from_str(&list).ok()?;
+    let names: Vec<String> = v["data"].as_array()?.iter().filter_map(|p| p["Profile"]["data"].as_str().map(String::from)).collect();
+    let active = run("busctl", &["--json=short", "get-property", PPD[0], PPD[1], PPD[2], "ActiveProfile"])
+        .and_then(|a| serde_json::from_str::<serde_json::Value>(&a).ok())
+        .and_then(|a| a["data"].as_str().map(String::from))
+        .unwrap_or_default();
+    if names.is_empty() {
+        None
+    } else {
+        Some((names, active))
+    }
+}
+
+/// Switches the power mode over D-Bus (the same permission check as powerprofilesctl).
+pub fn set_profile(name: &str) -> Result<(), String> {
+    act("busctl", &["set-property", PPD[0], PPD[1], PPD[2], "ActiveProfile", "s", name]).or_else(|_| act("powerprofilesctl", &["set", name]))
+}
+
 pub fn power() -> Power {
-    let (profiles, active) = profiles(&run("powerprofilesctl", &["list"]).unwrap_or_default());
+    let (profiles, active) = profiles_dbus().unwrap_or_else(|| profiles(&run("powerprofilesctl", &["list"]).unwrap_or_default()));
     let limits = if labyrinth_conf::PanelConf::load().developer { run("labyrinth-powerlimit", &["get"]).and_then(|s| parse_power_limits(&s)) } else { None };
     Power {
         profile: active,
