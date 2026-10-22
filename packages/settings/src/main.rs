@@ -7,6 +7,7 @@
 //! Reading the system can be slow (Wi-Fi scans, Bluetooth), so every page loads on a background
 //! thread and every change runs on one too; the window never freezes.
 
+mod agents;
 mod appmgr;
 mod defaults;
 mod apps_ui;
@@ -46,6 +47,8 @@ enum Page {
     DateTime,
     Apps,
     DefaultApps,
+    /// Sarina's agents (only when Sarina is installed).
+    Agents,
     Shortcuts,
     About,
     /// Shown under About while Developer options are on.
@@ -73,7 +76,7 @@ enum AppSub {
     Workspaces,
 }
 
-const PAGES: [(Page, &str, Icon); 16] = [
+const PAGES: [(Page, &str, Icon); 17] = [
     (Page::Network, "Wi-Fi & Network", Icon::Wifi),
     (Page::Bluetooth, "Bluetooth", Icon::Bluetooth),
     (Page::Displays, "Displays", Icon::Display),
@@ -87,6 +90,7 @@ const PAGES: [(Page, &str, Icon); 16] = [
     (Page::DateTime, "Date & Time", Icon::Clock),
     (Page::Apps, "Apps", Icon::Apps),
     (Page::DefaultApps, "Default apps", Icon::Apps),
+    (Page::Agents, "Sarina's agents", Icon::Shield),
     (Page::Shortcuts, "Keyboard Shortcuts", Icon::Keyboard),
     (Page::About, "About", Icon::Info),
     (Page::Developer, "Developer Mode", Icon::Keyboard),
@@ -113,6 +117,7 @@ enum Msg {
     Apps(Vec<sys::Component>),
     Installed(Vec<appmgr::AppInfo>),
     Defaults(Vec<defaults::Row>),
+    Agents(agents::State),
     AppSizes(std::collections::HashMap<String, u64>),
     DirSize(std::path::PathBuf, u64),
     Done(Page, Result<(), String>),
@@ -136,6 +141,7 @@ struct Data {
     apps: Option<Vec<sys::Component>>,
     installed: Option<Vec<appmgr::AppInfo>>,
     defaults: Option<Vec<defaults::Row>>,
+    agents: Option<agents::State>,
 }
 
 #[derive(Default)]
@@ -208,6 +214,8 @@ struct App {
     app_system: bool,
     app_folder: String,
     app_confirm: Option<apps_ui::Confirm>,
+    /// Sarina's agents: the one whose Remove was clicked, waiting for the second click.
+    agent_confirm: Option<String>,
     app_sizes: std::collections::HashMap<String, u64>,
     dir_sizes: std::collections::HashMap<std::path::PathBuf, u64>,
     owners: std::collections::HashMap<String, Option<(String, bool)>>,
@@ -287,6 +295,7 @@ impl App {
             app_system: false,
             app_folder: String::new(),
             app_confirm: None,
+            agent_confirm: None,
             app_sizes: Default::default(),
             dir_sizes: Default::default(),
             owners: Default::default(),
@@ -331,6 +340,7 @@ impl App {
                     Msg::Apps(sys::apps())
                 }
                 Page::DefaultApps => Msg::Defaults(defaults::load()),
+                Page::Agents => Msg::Agents(agents::load()),
                 Page::Shortcuts | Page::Developer => return,
             };
             let _ = tx.send(msg);
@@ -389,6 +399,7 @@ impl App {
                 }
                 Msg::Restore(r) => self.data.restore = Some(r),
                 Msg::Defaults(r) => self.data.defaults = Some(r),
+                Msg::Agents(a) => self.data.agents = Some(a),
                 Msg::Scan(r) => {
                     self.scan_busy = false;
                     self.scan_report = Some(r);
@@ -497,7 +508,7 @@ impl eframe::App for App {
                 let q = self.search.to_lowercase();
                 let developer_on = labyrinth_conf::PanelConf::load().developer;
                 for (p, name, icon) in PAGES {
-                    if p == Page::Developer && !developer_on {
+                    if p == Page::Developer && !developer_on || p == Page::Agents && !agents::available() {
                         continue;
                     }
                     if !q.is_empty() && !name.to_lowercase().contains(&q) {
@@ -563,6 +574,7 @@ impl eframe::App for App {
                         Page::Security => self.page_security(ui, &pal, &ctx),
                         Page::Restore => self.page_restore(ui, &pal, &ctx),
                         Page::DefaultApps => self.page_default_apps(ui, &pal, &ctx),
+                        Page::Agents => self.page_agents(ui, &pal, &ctx),
                         Page::DateTime => self.page_time(ui, &pal, &ctx),
                         Page::Apps => self.page_apps(ui, &pal, &ctx),
                         Page::Shortcuts => page_shortcuts(ui, &pal),
@@ -1853,6 +1865,64 @@ impl App {
             show(ui, "Failed attempts (last 30 days)", &bad, "No failed attempts");
             ui.add_space(8.0);
             show(ui, "Sign-ins", &ok, "Nothing recorded");
+        }
+    }
+
+    fn page_agents(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
+        let Some(st) = self.data.agents.clone() else { return loading(ui) };
+        let mut remove: Option<String> = None;
+        ui::group(ui, pal, None, |ui| {
+            let sub = if st.on {
+                "On: Sarina may write small programs and run them, only inside Limbo's disposable guests (no network, nothing on this computer)"
+            } else {
+                "Off. To let her build agents, add SARINA_FORGE=on to ~/.config/labyrinth/sarina.env"
+            };
+            ui::row(ui, pal, true, "Agent Forge", Some(sub), |_| {});
+        });
+        ui.add_space(12.0);
+        ui::group(ui, pal, Some("Agents she wrote"), |ui| {
+            if st.agents.is_empty() {
+                ui::row(ui, pal, true, "None yet", None, |_| {});
+            }
+            for (i, a) in st.agents.iter().enumerate() {
+                let sub = if a.problem.is_empty() {
+                    format!("{} · {} file{} · {} · starts with `{}` · version {}{}", a.language, a.files, if a.files == 1 { "" } else { "s" }, a.purpose, a.command, a.hash, if a.approved { " · approved by you" } else { " · not approved" })
+                } else {
+                    format!("Unusable: {}", a.problem)
+                };
+                ui::row(ui, pal, i == 0, &a.name, Some(&sub), |ui| {
+                    if self.agent_confirm.as_deref() == Some(a.name.as_str()) {
+                        if ui::action(ui, pal, "Delete it").clicked() {
+                            remove = Some(a.name.clone());
+                        }
+                        if ui::quiet(ui, pal, "Keep").clicked() {
+                            self.agent_confirm = None;
+                        }
+                    } else {
+                        if ui::quiet(ui, pal, "Remove…").clicked() {
+                            self.agent_confirm = Some(a.name.clone());
+                        }
+                        if a.problem.is_empty() && ui::quiet(ui, pal, if a.approved { "Review…" } else { "Review and approve…" }).clicked() {
+                            agents::open_review(&a.name);
+                        }
+                    }
+                });
+            }
+        });
+        ui.add_space(6.0);
+        ui.label(egui::RichText::new("Approving opens a terminal that shows every file of the agent; you approve by typing yes. Any later change to the agent voids the approval.").size(12.0).color(pal.dim));
+        ui.add_space(12.0);
+        ui::group(ui, pal, Some("Recent activity"), |ui| {
+            if st.activity.is_empty() {
+                ui::row(ui, pal, true, "Nothing yet", None, |_| {});
+            }
+            for (i, l) in st.activity.iter().enumerate() {
+                ui::row(ui, pal, i == 0, l, None, |_| {});
+            }
+        });
+        if let Some(name) = remove {
+            self.agent_confirm = None;
+            self.change(ctx, move || agents::remove(&name));
         }
     }
 
