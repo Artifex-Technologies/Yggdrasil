@@ -23,7 +23,7 @@ pub enum UiMsg {
 pub struct Agent {
     pub uid: u32,
     /// The password-box process of the request being answered (its pid), so a cancel from polkit can close it.
-    pub child: std::sync::Mutex<Option<u32>>,
+    pub child: std::sync::Arc<std::sync::Mutex<Option<u32>>>,
 }
 
 /// The user name for a uid.
@@ -80,9 +80,24 @@ impl Ui for Bridge {
 
 #[zbus::interface(name = "org.freedesktop.PolicyKit1.AuthenticationAgent")]
 impl Agent {
+    /// Runs on a thread of its own (the exchange with the password box blocks), so CancelAuthentication can be handled while it waits.
     #[allow(clippy::too_many_arguments)]
-    fn begin_authentication(&self, action_id: String, message: String, _icon_name: String, _details: HashMap<String, String>, cookie: String, identities: Vec<(String, HashMap<String, OwnedValue>)>) -> zbus::fdo::Result<()> {
-        let Some(uid) = choose_identity(&identities, self.uid) else {
+    async fn begin_authentication(&self, action_id: String, message: String, _icon_name: String, _details: HashMap<String, String>, cookie: String, identities: Vec<(String, HashMap<String, OwnedValue>)>) -> zbus::fdo::Result<()> {
+        let (me, slot) = (self.uid, self.child.clone());
+        blocking::unblock(move || authenticate(me, slot, action_id, message, cookie, identities)).await
+    }
+
+    /// polkit gave up on the request (the program asking ended): close the box.
+    fn cancel_authentication(&self, _cookie: String) {
+        if let Some(pid) = self.child.lock().unwrap().take() {
+            unsafe { kill(pid as i32, 15) };
+        }
+    }
+}
+
+fn authenticate(self_uid: u32, child_slot: std::sync::Arc<std::sync::Mutex<Option<u32>>>, action_id: String, message: String, cookie: String, identities: Vec<(String, HashMap<String, OwnedValue>)>) -> zbus::fdo::Result<()> {
+    {
+        let Some(uid) = choose_identity(&identities, self_uid) else {
             return Err(zbus::fdo::Error::Failed("no user to authenticate as".into()));
         };
         let user = user_name(uid).ok_or_else(|| zbus::fdo::Error::Failed("unknown user".into()))?;
@@ -93,7 +108,7 @@ impl Agent {
             .stdout(std::process::Stdio::piped())
             .spawn()
             .map_err(|e| zbus::fdo::Error::Failed(format!("cannot open the password box: {e}")))?;
-        *self.child.lock().unwrap() = Some(child.id());
+        *child_slot.lock().unwrap() = Some(child.id());
         let mut ui = Bridge { stdin: child.stdin.take().unwrap(), stdout: std::io::BufReader::new(child.stdout.take().unwrap()) };
         ui.send(serde_json::json!({"t": "begin", "message": message, "action_id": action_id, "user": user}));
         // a wrong password gets three tries, each a new session with the helper (as the standard agents do)
@@ -117,18 +132,11 @@ impl Agent {
         ui.send(serde_json::json!({"t": "done"}));
         drop(ui);
         let _ = child.wait();
-        *self.child.lock().unwrap() = None;
+        *child_slot.lock().unwrap() = None;
         match result {
             Outcome::Authenticated => Ok(()),
             Outcome::Cancelled => Err(zbus::fdo::Error::Failed("org.freedesktop.PolicyKit1.Error.Cancelled".into())),
             Outcome::Failed => Err(zbus::fdo::Error::AuthFailed("authentication failed".into())),
-        }
-    }
-
-    /// polkit gave up on the request (the program asking ended): close the box.
-    fn cancel_authentication(&self, _cookie: String) {
-        if let Some(pid) = self.child.lock().unwrap().take() {
-            unsafe { kill(pid as i32, 15) };
         }
     }
 }

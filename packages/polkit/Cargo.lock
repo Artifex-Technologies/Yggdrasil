@@ -1704,6 +1704,7 @@ version = "0.1.0"
 name = "labyrinth-polkit"
 version = "0.1.0"
 dependencies = [
+ "blocking",
  "eframe",
  "labyrinth-ui",
  "libc",

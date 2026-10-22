@@ -42,7 +42,7 @@ fn main() -> eframe::Result {
         }
     };
     let uid = unsafe { libc::getuid() };
-    let _conn = match agent::register(agent::Agent { uid, child: Mutex::new(None) }, subject) {
+    let _conn = match agent::register(agent::Agent { uid, child: std::sync::Arc::new(Mutex::new(None)) }, subject) {
         Ok(c) => c,
         Err(e) => {
             // another desktop's agent (KDE's, while KWin is still in use) already answers password requests: that is not a failure, and a
