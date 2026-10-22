@@ -45,6 +45,12 @@ fn main() -> eframe::Result {
     let _conn = match agent::register(agent::Agent { uid, child: Mutex::new(None) }, subject) {
         Ok(c) => c,
         Err(e) => {
+            // another desktop's agent (KDE's, while KWin is still in use) already answers password requests: that is not a failure, and a
+            // failed unit in every check-up list only hides real problems
+            if e.to_string().contains("already exists") {
+                eprintln!("labyrinth-polkit: another authentication agent is already running; leaving it to that one");
+                std::process::exit(0);
+            }
             eprintln!("labyrinth-polkit: could not register as the authentication agent: {e}");
             std::process::exit(1);
         }

@@ -20,6 +20,8 @@ pub struct Agent {
 #[derive(Clone, Debug, Default)]
 pub struct State {
     pub on: bool,
+    /// The daily check-up timer is switched on (only the owner does that, here).
+    pub checkup: bool,
     pub agents: Vec<Agent>,
     /// Newest first: "time  action  agent  outcome  detail".
     pub activity: Vec<String>,
@@ -79,7 +81,8 @@ pub fn parse_audit(text: &str, n: usize) -> Vec<String> {
 pub fn load() -> State {
     let agents = crate::sys::run("sarina", &["forge-list", "--json"]).map(|s| parse_list(&s)).unwrap_or_default();
     let audit = std::fs::read_to_string(home().join(".local/state/sarina/forge/forge-audit.jsonl")).unwrap_or_default();
-    State { on: forge_on(), agents, activity: parse_audit(&audit, 15) }
+    let checkup = crate::sys::run("systemctl", &["--user", "is-enabled", "labyrinth-sarina-checkup.timer"]).map(|s| s.trim() == "enabled").unwrap_or(false);
+    State { on: forge_on(), checkup, agents, activity: parse_audit(&audit, 15) }
 }
 
 /// Opens a terminal where the owner reviews every file of the agent and types "yes" to approve exactly that version.
@@ -116,5 +119,23 @@ mod tests {
     fn odd_names_are_not_passed_on() {
         assert!(remove("../x").is_err());
         assert!(remove("a b").is_err());
+    }
+}
+
+/// Switches the daily check-up on (installs the user units from /usr/share/labyrinth once) or off.
+pub fn set_checkup(on: bool) -> Result<(), String> {
+    if on {
+        let dir = home().join(".config/systemd/user");
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        for f in ["labyrinth-sarina-checkup.service", "labyrinth-sarina-checkup.timer"] {
+            let dst = dir.join(f);
+            if !dst.exists() {
+                std::fs::copy(PathBuf::from("/usr/share/labyrinth").join(f), &dst).map_err(|e| format!("cannot install {f}: {e}"))?;
+            }
+        }
+        let _ = crate::sys::act("systemctl", &["--user", "daemon-reload"]);
+        crate::sys::act("systemctl", &["--user", "enable", "--now", "labyrinth-sarina-checkup.timer"])
+    } else {
+        crate::sys::act("systemctl", &["--user", "disable", "--now", "labyrinth-sarina-checkup.timer"])
     }
 }

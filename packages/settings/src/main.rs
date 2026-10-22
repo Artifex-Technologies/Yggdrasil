@@ -1880,6 +1880,17 @@ impl App {
             ui::row(ui, pal, true, "Agent Forge", Some(sub), |_| {});
         });
         ui.add_space(12.0);
+        let mut checkup = st.checkup;
+        let mut checkup_changed = false;
+        ui::group(ui, pal, Some("Daily check-up"), |ui| {
+            ui::row(ui, pal, true, "Look at the computer once a day", Some("Crashes, failed services, full disks, kernel errors; read-only. Fine days get one line in her vault; a problem gets her short explanation and one notification. Skipped while a game uses the graphics card"), |ui| {
+                checkup_changed = ui::switch(ui, pal, &mut checkup).changed();
+            });
+        });
+        if checkup_changed {
+            self.change(ctx, move || agents::set_checkup(checkup));
+        }
+        ui.add_space(12.0);
         ui::group(ui, pal, Some("Agents she wrote"), |ui| {
             if st.agents.is_empty() {
                 ui::row(ui, pal, true, "None yet", None, |_| {});
