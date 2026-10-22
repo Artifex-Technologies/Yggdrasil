@@ -73,7 +73,7 @@ pub fn describe(message: &str) -> Option<String> {
     let remove = tokens.iter().any(|t| t.starts_with("-R"));
     let install = tokens.iter().any(|t| t.starts_with("-S") || *t == "-U");
     let what = if pkgs.is_empty() { "software".to_string() } else { pkgs.join(", ") };
-    let by = if message.contains("labyrinth-pkg-root") { "The Marketplace wants to " } else { "A program wants to " };
+    let by = if message.contains("labyrinth-pkg-root") { "Agora wants to " } else { "A program wants to " };
     Some(if remove {
         format!("{by}remove {what}.")
     } else if install {
@@ -205,13 +205,13 @@ mod tests {
     #[test]
     fn a_marketplace_remove_is_put_in_words() {
         let m = "Authentication is needed to run `/usr/local/bin/labyrinth-pkg-root /run ... 5.cancel pacman -Rs --noconfirm krita' as the super user";
-        assert_eq!(describe(m).unwrap(), "The Marketplace wants to remove krita.");
+        assert_eq!(describe(m).unwrap(), "Agora wants to remove krita.");
     }
 
     #[test]
     fn installs_name_their_packages() {
         let m = "Authentication is needed to run `/usr/local/bin/labyrinth-pkg-root /run/user/1000/labyrinth-market/x.cancel pacman -S --needed --noconfirm vlc gimp' as the super user";
-        assert_eq!(describe(m).unwrap(), "The Marketplace wants to install or reinstall vlc, gimp.");
+        assert_eq!(describe(m).unwrap(), "Agora wants to install or reinstall vlc, gimp.");
     }
 
     #[test]

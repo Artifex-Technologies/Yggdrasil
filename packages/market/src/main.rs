@@ -454,7 +454,7 @@ impl App {
             if status == install::Status::Done && matches!(op, install::Op::Install | install::Op::Reinstall) {
                 history::record(&id2, &name2, op.done());
             }
-            let _ = std::process::Command::new("notify-send").args(["-a", "Marketplace", "-i", "labyrinth-market", &text]).status();
+            let _ = std::process::Command::new("notify-send").args(["-a", "Agora", "-i", "labyrinth-market", &text]).status();
             let _ = tx.send(Msg::Finished(id2));
             ctx_b.request_repaint();
         });
@@ -551,7 +551,7 @@ impl App {
     fn page_history(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         self.heading(ui, "History");
         if self.installs.is_empty() {
-            ui.label(RichText::new("Apps you install through the Marketplace appear here once the installation has finished. Cancelled installs are not listed.").color(self.pal.dim));
+            ui.label(RichText::new("Apps you install through Agora appear here once the installation has finished. Cancelled installs are not listed.").color(self.pal.dim));
             return;
         }
         ui.horizontal(|ui| {
@@ -1399,11 +1399,11 @@ impl eframe::App for App {
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1180.0, 760.0]).with_min_inner_size([760.0, 480.0]).with_title("Marketplace").with_app_id("labyrinth-market").with_decorations(false),
+        viewport: egui::ViewportBuilder::default().with_inner_size([1180.0, 760.0]).with_min_inner_size([760.0, 480.0]).with_title("Agora").with_app_id("labyrinth-market").with_decorations(false),
         ..Default::default()
     };
     eframe::run_native(
-        "Marketplace",
+        "Agora",
         options,
         Box::new(|cc| {
             egui_extras::install_image_loaders(&cc.egui_ctx);

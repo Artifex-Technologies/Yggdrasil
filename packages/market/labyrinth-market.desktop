@@ -1,11 +1,11 @@
 [Desktop Entry]
 Type=Application
-Name=Marketplace
+Name=Agora
 GenericName=App Store
 Comment=Find and install apps
 Exec=labyrinth-market
 Icon=labyrinth-market
 Terminal=false
 Categories=System;PackageManager;
-Keywords=apps;store;install;software;marketplace;games;plugins;
+Keywords=apps;store;install;software;marketplace;market;games;plugins;agora;
 StartupWMClass=labyrinth-market
