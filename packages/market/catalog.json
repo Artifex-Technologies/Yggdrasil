@@ -1334,27 +1334,6 @@
     "canon",
     "brother"
    ]
-  },
-  {
-   "id": "asus",
-   "name": "ASUS laptop tools",
-   "subtitle": "ROG and TUF control",
-   "description": "asusctl and ROG Control Center: fan and power profiles, keyboard lighting and the battery charge limit on ASUS laptops and tablets. Does nothing on other computers.",
-   "category": "Utilities",
-   "subcategory": "System",
-   "source": {
-    "type": "component",
-    "id": "asus"
-   },
-   "icon": "rog-control-center",
-   "reviewed": true,
-   "tags": [
-    "asus",
-    "rog",
-    "tuf",
-    "fans",
-    "keyboard"
-   ]
   }
  ],
  "featured": [
