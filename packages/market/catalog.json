@@ -1313,29 +1313,6 @@
    "repo": "https://github.com/Artifex-Technologies/Daedalus_CAD"
   },
   {
-   "id": "printing",
-   "name": "Printing and scanning",
-   "subtitle": "Printers and scanners",
-   "description": "CUPS, network printers found by themselves, USB printers without drivers, HP, Epson, Canon and most other drivers, and Print to PDF. Most printers from the last ten years need no driver at all.",
-   "category": "Utilities",
-   "subcategory": "System",
-   "source": {
-    "type": "component",
-    "id": "printing"
-   },
-   "icon": "printer",
-   "reviewed": true,
-   "tags": [
-    "printer",
-    "cups",
-    "scanner",
-    "hp",
-    "epson",
-    "canon",
-    "brother"
-   ]
-  },
-  {
    "id": "coolercontrol",
    "name": "CoolerControl",
    "subtitle": "Fan curves and AIO coolers",

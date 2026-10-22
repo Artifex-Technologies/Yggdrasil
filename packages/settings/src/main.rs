@@ -8,6 +8,7 @@
 //! thread and every change runs on one too; the window never freezes.
 
 mod agents;
+mod printers;
 mod appmgr;
 mod defaults;
 mod apps_ui;
@@ -46,6 +47,7 @@ enum Page {
     Firewall,
     DateTime,
     Apps,
+    Printers,
     DefaultApps,
     /// Sarina's agents (only when Sarina is installed).
     Agents,
@@ -76,7 +78,7 @@ enum AppSub {
     Workspaces,
 }
 
-const PAGES: [(Page, &str, Icon); 17] = [
+const PAGES: [(Page, &str, Icon); 18] = [
     (Page::Network, "Wi-Fi & Network", Icon::Wifi),
     (Page::Bluetooth, "Bluetooth", Icon::Bluetooth),
     (Page::Displays, "Displays", Icon::Display),
@@ -88,6 +90,7 @@ const PAGES: [(Page, &str, Icon); 17] = [
     (Page::Restore, "Restore points", Icon::Restart),
     (Page::Firewall, "Firewall", Icon::Shield),
     (Page::DateTime, "Date & Time", Icon::Clock),
+    (Page::Printers, "Printers", Icon::Printer),
     (Page::Apps, "Apps", Icon::Apps),
     (Page::DefaultApps, "Default apps", Icon::Apps),
     (Page::Agents, "Sarina's agents", Icon::Shield),
@@ -118,6 +121,7 @@ enum Msg {
     Installed(Vec<appmgr::AppInfo>),
     Defaults(Vec<defaults::Row>),
     Agents(agents::State),
+    Printers(printers::State),
     AppSizes(std::collections::HashMap<String, u64>),
     DirSize(std::path::PathBuf, u64),
     Done(Page, Result<(), String>),
@@ -142,6 +146,7 @@ struct Data {
     installed: Option<Vec<appmgr::AppInfo>>,
     defaults: Option<Vec<defaults::Row>>,
     agents: Option<agents::State>,
+    printers: Option<printers::State>,
 }
 
 #[derive(Default)]
@@ -341,6 +346,7 @@ impl App {
                 }
                 Page::DefaultApps => Msg::Defaults(defaults::load()),
                 Page::Agents => Msg::Agents(agents::load()),
+                Page::Printers => Msg::Printers(printers::load()),
                 Page::Shortcuts | Page::Developer => return,
             };
             let _ = tx.send(msg);
@@ -400,6 +406,7 @@ impl App {
                 Msg::Restore(r) => self.data.restore = Some(r),
                 Msg::Defaults(r) => self.data.defaults = Some(r),
                 Msg::Agents(a) => self.data.agents = Some(a),
+                Msg::Printers(p) => self.data.printers = Some(p),
                 Msg::Scan(r) => {
                     self.scan_busy = false;
                     self.scan_report = Some(r);
@@ -575,6 +582,7 @@ impl eframe::App for App {
                         Page::Restore => self.page_restore(ui, &pal, &ctx),
                         Page::DefaultApps => self.page_default_apps(ui, &pal, &ctx),
                         Page::Agents => self.page_agents(ui, &pal, &ctx),
+                        Page::Printers => self.page_printers(ui, &pal, &ctx),
                         Page::DateTime => self.page_time(ui, &pal, &ctx),
                         Page::Apps => self.page_apps(ui, &pal, &ctx),
                         Page::Shortcuts => page_shortcuts(ui, &pal),
@@ -1865,6 +1873,115 @@ impl App {
             show(ui, "Failed attempts (last 30 days)", &bad, "No failed attempts");
             ui.add_space(8.0);
             show(ui, "Sign-ins", &ok, "Nothing recorded");
+        }
+    }
+
+    fn page_printers(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
+        let Some(st) = self.data.printers.clone() else { return loading(ui) };
+        if !st.ready {
+            ui::group(ui, pal, None, |ui| {
+                ui::row(ui, pal, true, "Printing is not running", Some("The print system (CUPS) is not installed or not started. On Labyrinth it is part of the system: run sudo systemctl enable --now cups.socket"), |_| {});
+            });
+            return;
+        }
+        enum Do {
+            Default(String),
+            Test(String),
+            Remove(String),
+            Opt(String, String, String),
+            Cancel(String),
+            Add(String, String),
+        }
+        let mut todo: Option<Do> = None;
+        if st.printers.is_empty() {
+            ui::group(ui, pal, None, |ui| {
+                ui::row(ui, pal, true, "No printers yet", Some("Printers on your network appear below. A USB printer appears here or below once it is plugged in and switched on"), |_| {});
+            });
+        }
+        for p in &st.printers {
+            ui.add_space(4.0);
+            ui::group(ui, pal, Some(&p.name), |ui| {
+                let state = match p.state.as_str() {
+                    "printing" => "Printing",
+                    "stopped" => "Stopped",
+                    _ => "Ready",
+                };
+                let sub = if p.message.is_empty() { format!("{state}{}", if p.default { " · default printer" } else { "" }) } else { format!("{state} · {}", p.message) };
+                ui::row(ui, pal, true, state, Some(&sub), |ui| {
+                    if ui::quiet(ui, pal, "Remove…").clicked() {
+                        todo = Some(Do::Remove(p.name.clone()));
+                    }
+                    if ui::quiet(ui, pal, "Print test page").clicked() {
+                        todo = Some(Do::Test(p.name.clone()));
+                    }
+                    if !p.default && ui::quiet(ui, pal, "Make default").clicked() {
+                        todo = Some(Do::Default(p.name.clone()));
+                    }
+                });
+                for m in &p.markers {
+                    let level = m.level.map(|l| format!("{l}%")).unwrap_or_else(|| "level not reported".into());
+                    ui::row(ui, pal, false, &m.name, Some(&level), |ui| {
+                        if let Some(l) = m.level {
+                            let (rect, _) = ui.allocate_exact_size(egui::vec2(140.0, 10.0), Sense::hover());
+                            ui.painter().rect_filled(rect, CornerRadius::same(5), pal.hover);
+                            let mut fill = rect;
+                            fill.set_width(rect.width() * l as f32 / 100.0);
+                            let c = u32::from_str_radix(m.color.trim_start_matches('#'), 16).ok().filter(|_| m.color.len() == 7).map(|v| egui::Color32::from_rgb((v >> 16) as u8, (v >> 8) as u8, v as u8)).unwrap_or(pal.accent);
+                            let c = if c == egui::Color32::BLACK { pal.text } else { c };
+                            ui.painter().rect_filled(fill, CornerRadius::same(5), if l <= 10 { pal.red } else { c });
+                        }
+                    });
+                }
+                // the everyday settings first; the rest are in CUPS's own pages (localhost:631)
+                for o in p.options.iter().filter(|o| matches!(o.key.as_str(), "PageSize" | "Duplex" | "sides" | "print-quality" | "ColorModel" | "print-color-mode" | "MediaType" | "InputSlot" | "cupsPrintQuality" | "Resolution")) {
+                    ui::row(ui, pal, false, &o.label, None, |ui| {
+                        egui::ComboBox::from_id_salt(("printer-opt", &p.name, &o.key)).selected_text(o.current.clone()).width(180.0).show_ui(ui, |ui| {
+                            for v in &o.values {
+                                if ui.selectable_label(*v == o.current, v).clicked() && *v != o.current {
+                                    todo = Some(Do::Opt(p.name.clone(), o.key.clone(), v.clone()));
+                                }
+                            }
+                        });
+                    });
+                }
+            });
+        }
+        if !st.jobs.is_empty() {
+            ui.add_space(12.0);
+            ui::group(ui, pal, Some("Waiting to print"), |ui| {
+                for (i, j) in st.jobs.iter().enumerate() {
+                    ui::row(ui, pal, i == 0, &j.id, Some(&format!("{} · {} bytes, from {}", j.printer, j.size, j.owner)), |ui| {
+                        if ui::quiet(ui, pal, "Cancel").clicked() {
+                            todo = Some(Do::Cancel(j.id.clone()));
+                        }
+                    });
+                }
+            });
+        }
+        ui.add_space(12.0);
+        ui::group(ui, pal, Some("Found on your network"), |ui| {
+            if st.found.is_empty() {
+                ui::row(ui, pal, true, "Nothing new found", Some("Printers that are on and on the same network show up here within a few seconds. Most need no driver"), |_| {});
+            }
+            for (i, (name, uri)) in st.found.iter().enumerate() {
+                ui::row(ui, pal, i == 0, name, Some(uri), |ui| {
+                    if ui::action(ui, pal, "Add").clicked() {
+                        todo = Some(Do::Add(name.clone(), uri.clone()));
+                    }
+                });
+            }
+        });
+        ui.add_space(6.0);
+        ui.label(egui::RichText::new("Everything else a printer offers (its driver, sharing, cleaning) is on CUPS's own page: http://localhost:631").size(12.0).color(pal.dim));
+        if let Some(d) = todo {
+            match d {
+                Do::Default(n) => self.change(ctx, move || printers::set_default(&n)),
+                Do::Test(n) => self.change(ctx, move || printers::test_page(&n)),
+                Do::Remove(n) => self.change(ctx, move || printers::remove(&n)),
+                Do::Opt(n, k, v) => self.change(ctx, move || printers::set_option(&n, &k, &v)),
+                Do::Cancel(j) => self.change(ctx, move || printers::cancel(&j)),
+                Do::Add(n, u) => self.change(ctx, move || printers::add(&n, &u)),
+            }
         }
     }
 

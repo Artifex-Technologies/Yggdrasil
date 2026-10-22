@@ -21,6 +21,7 @@ pub enum Icon {
     Close,
     Trash,
     Back,
+    Printer,
 }
 
 fn arc(c: Pos2, r: f32, from: f32, to: f32) -> Vec<Pos2> {
@@ -36,6 +37,12 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
     let w = rect.width();
     let at = |x: f32, y: f32| pos2(rect.left() + x * w, rect.top() + y * w);
     match icon {
+        Icon::Printer => {
+            // paper sticking out of the top, the body, and the tray the page comes out on
+            p.rect_stroke(Rect::from_min_max(at(0.3, 0.12), at(0.7, 0.36)), 1.0, s, eframe::egui::StrokeKind::Inside);
+            p.rect_stroke(Rect::from_min_max(at(0.12, 0.36), at(0.88, 0.7)), 2.0, s, eframe::egui::StrokeKind::Inside);
+            p.rect_stroke(Rect::from_min_max(at(0.28, 0.58), at(0.72, 0.88)), 1.0, s, eframe::egui::StrokeKind::Inside);
+        }
         Icon::Wifi => {
             for (i, r) in [0.42, 0.29, 0.16].iter().enumerate() {
                 let _ = i;
