@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+"""labyrinth-color-picker: pick a colour anywhere on the screen and copy it (Settings > Tools > Color Picker, Super+Shift+C).
+
+The pick goes through the desktop portal (org.freedesktop.portal.Screenshot.PickColor), the standard way on Wayland: the window
+manager shows its own picker, and only the one colour comes back. It is copied in the format chosen in Settings (HEX, RGB or HSL),
+shown in a notification with a swatch, and kept in a short history (~/.local/state/labyrinth/colors.txt) that Settings shows.
+Runs only while picking; nothing stays in the background.
+"""
+import colorsys
+import os
+import secrets
+import subprocess
+import sys
+
+STATE = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "labyrinth")
+HISTORY = os.path.join(STATE, "colors.txt")
+CONF = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "labyrinth", "tools.conf")
+
+
+def fmt():
+    try:
+        for line in open(CONF):
+            k, _, v = line.partition("=")
+            if k.strip() == "color_format":
+                return v.split("#")[0].strip()
+    except OSError:
+        pass
+    return "hex"
+
+
+def pick_portal():
+    import gi
+    gi.require_version("Gio", "2.0")
+    from gi.repository import Gio, GLib
+    bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+    token = "ygg" + secrets.token_hex(6)
+    sender = bus.get_unique_name()[1:].replace(".", "_")
+    handle = "/org/freedesktop/portal/desktop/request/%s/%s" % (sender, token)
+    loop, out = GLib.MainLoop(), {}
+
+    def on_response(_c, _s, _p, _i, _sig, params):
+        code, results = params.unpack()
+        out["code"], out["results"] = code, results
+        loop.quit()
+
+    bus.signal_subscribe("org.freedesktop.portal.Desktop", "org.freedesktop.portal.Request", "Response", handle, None,
+                         Gio.DBusSignalFlags.NO_MATCH_RULE, on_response)
+    bus.call_sync("org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop", "org.freedesktop.portal.Screenshot", "PickColor",
+                  GLib.Variant("(sa{sv})", ("", {"handle_token": GLib.Variant("s", token)})), None, Gio.DBusCallFlags.NONE, -1, None)
+    GLib.timeout_add_seconds(120, loop.quit)
+    loop.run()
+    if out.get("code") != 0:
+        return None  # cancelled (Escape) or timed out
+    r, g, b = out["results"]["color"]
+    return tuple(max(0, min(255, round(x * 255))) for x in (r, g, b))
+
+
+def text(rgb, kind):
+    r, g, b = rgb
+    if kind == "rgb":
+        return "rgb(%d, %d, %d)" % rgb
+    if kind == "hsl":
+        h, l, s = colorsys.rgb_to_hls(r / 255, g / 255, b / 255)
+        return "hsl(%d, %d%%, %d%%)" % (round(h * 360) % 360, round(s * 100), round(l * 100))
+    return "#%02x%02x%02x" % rgb
+
+
+def remember(hexv):
+    os.makedirs(STATE, exist_ok=True)
+    try:
+        old = [l.strip() for l in open(HISTORY) if l.strip() and l.strip() != hexv]
+    except OSError:
+        old = []
+    with open(HISTORY + ".tmp", "w") as f:
+        f.write("\n".join([hexv] + old[:49]) + "\n")
+    os.replace(HISTORY + ".tmp", HISTORY)
+
+
+def swatch(hexv):
+    run = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+    p = os.path.join(run, "labyrinth-color-%s.svg" % hexv[1:])
+    with open(p, "w") as f:
+        f.write('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect x="4" y="4" width="56" height="56" rx="12" fill="%s" stroke="#00000040" stroke-width="2"/></svg>' % hexv)
+    return p
+
+
+def main():
+    try:
+        rgb = pick_portal()
+    except Exception as e:  # no portal (another desktop): say so instead of failing silently
+        subprocess.run(["notify-send", "-a", "Color Picker", "Color Picker", "Could not ask the desktop for a colour: %s" % e])
+        return 1
+    if rgb is None:
+        return 0
+    hexv = text(rgb, "hex")
+    out = text(rgb, fmt())
+    subprocess.run(["wl-copy", out], timeout=5)
+    remember(hexv)
+    subprocess.run(["notify-send", "-a", "Color Picker", "-i", swatch(hexv), "-t", "4000", out, "Copied (Super+Shift+C picks another)"], timeout=5)
+    if "--print" in sys.argv:
+        print(out)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

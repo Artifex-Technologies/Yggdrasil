@@ -18,6 +18,7 @@ mod osd;
 mod stats;
 mod thumb;
 mod voicekey;
+mod toolkeys;
 mod voicewave;
 mod shell;
 mod status;
@@ -3484,6 +3485,12 @@ fn main() {
             }
         })
         .expect("voice key channel");
+    // the hotkeys of Settings > Tools (Color Picker, ...)
+    std::thread::spawn(|| {
+        if let Err(e) = toolkeys::run() {
+            eprintln!("labyrinth-panel: the Tools hotkeys are not available ({e})");
+        }
+    });
     std::thread::spawn(move || {
         if let Err(e) = voicekey::run(vkey_tx) {
             eprintln!("labyrinth-panel: hold-to-talk is not available ({e}); the AskSarina D-Bus call still works");

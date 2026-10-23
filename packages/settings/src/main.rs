@@ -17,6 +17,7 @@ mod restore;
 mod distress;
 mod security;
 mod workspaces;
+mod tools;
 mod sys;
 mod ui;
 mod users;
@@ -55,6 +56,7 @@ enum Page {
     About,
     /// Shown under About while Developer options are on.
     Developer,
+    Tools,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -78,7 +80,7 @@ enum AppSub {
     Workspaces,
 }
 
-const PAGES: [(Page, &str, Icon); 18] = [
+const PAGES: [(Page, &str, Icon); 19] = [
     (Page::Network, "Wi-Fi & Network", Icon::Wifi),
     (Page::Bluetooth, "Bluetooth", Icon::Bluetooth),
     (Page::Displays, "Displays", Icon::Display),
@@ -94,6 +96,7 @@ const PAGES: [(Page, &str, Icon); 18] = [
     (Page::Apps, "Apps", Icon::Apps),
     (Page::DefaultApps, "Default apps", Icon::Apps),
     (Page::Agents, "Sarina's agents", Icon::Shield),
+    (Page::Tools, "Tools", Icon::Tools),
     (Page::Shortcuts, "Keyboard Shortcuts", Icon::Keyboard),
     (Page::About, "About", Icon::Info),
     (Page::Developer, "Developer Mode", Icon::Keyboard),
@@ -207,6 +210,8 @@ struct App {
     /// The lock screen previews are being (or have been) drawn for this visit to the page.
     lock_previews_started: bool,
     ws_conf: workspaces::Conf,
+    tools_conf: labyrinth_conf::tools::ToolsConf,
+    tool_colors: Vec<String>,
     app_sort: usize,
     app_sel: Option<String>,
     /// What you decided for the open app in Ask mode, refreshed every few seconds.
@@ -290,6 +295,8 @@ impl App {
             dev_filter: String::new(),
             lock_previews_started: false,
             ws_conf: workspaces::load(),
+            tools_conf: labyrinth_conf::tools::ToolsConf::load(),
+            tool_colors: tools::color_history(),
             app_sort: 0,
             app_sel: None,
             ask_cache: None,
@@ -318,6 +325,9 @@ impl App {
 
     /// Read a page's state on a background thread.
     fn load(&mut self, page: Page, ctx: &egui::Context) {
+        if page == Page::Tools {
+            self.tool_colors = tools::color_history(); // a small file: read here, no thread needed
+        }
         self.refreshed = std::time::Instant::now();
         self.loading = Some(page);
         let tx = self.tx.clone();
@@ -347,7 +357,7 @@ impl App {
                 Page::DefaultApps => Msg::Defaults(defaults::load()),
                 Page::Agents => Msg::Agents(agents::load()),
                 Page::Printers => Msg::Printers(printers::load()),
-                Page::Shortcuts | Page::Developer => return,
+                Page::Shortcuts | Page::Developer | Page::Tools => return,
             };
             let _ = tx.send(msg);
             ctx.request_repaint();
@@ -586,6 +596,7 @@ impl eframe::App for App {
                         Page::DateTime => self.page_time(ui, &pal, &ctx),
                         Page::Apps => self.page_apps(ui, &pal, &ctx),
                         Page::Shortcuts => page_shortcuts(ui, &pal),
+                        Page::Tools => self.page_tools(ui, &pal, &ctx),
                         Page::Developer => self.page_developer(ui, &pal, &ctx),
                     }
                 });
@@ -622,6 +633,81 @@ fn loading(ui: &mut egui::Ui) {
 }
 
 impl App {
+    /// Tools: small built-in helpers in the spirit of PowerToys, each a switch with its options. While KWin is the window manager
+    /// the window and mouse tools are KWin's own settings; nothing keeps running for any of them.
+    fn page_tools(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
+        use labyrinth_conf::tools::{ColorFormat, Modifier};
+        let mut c = self.tools_conf.clone();
+        let key = |m: Modifier| if m == Modifier::Alt { "Alt" } else { "Super" };
+        ui::group(ui, pal, Some("Windows"), |ui| {
+            let k = key(c.grab_modifier);
+            ui::row(ui, pal, true, "Grab And Move", Some(&format!("Hold {k} and drag anywhere inside a window to move it, without aiming for the title bar")), |ui| {
+                ui::switch(ui, pal, &mut c.grab_move);
+            });
+            if c.grab_move {
+                ui::row(ui, pal, false, "Key to hold", Some("Alt is easy to reach, but some apps (image editors, 3D programs) use Alt + drag themselves"), |ui| {
+                    if let Some(i) = ui::segmented(ui, pal, &["Super", "Alt"], if c.grab_modifier == Modifier::Alt { 1 } else { 0 }) {
+                        c.grab_modifier = if i == 1 { Modifier::Alt } else { Modifier::Super };
+                    }
+                });
+                ui::row(ui, pal, false, "Resize with the right button", Some(&format!("{k} + right-drag resizes from the nearest edge or corner")), |ui| {
+                    ui::switch(ui, pal, &mut c.grab_resize);
+                });
+            }
+            ui::row(ui, pal, false, "Window Hopper", Some("Alt+` (or Super+`) goes through the windows of the app in front, one at a time"), |ui| {
+                ui::switch(ui, pal, &mut c.window_hopper);
+            });
+        });
+        ui::group(ui, pal, Some("Mouse"), |ui| {
+            ui::row(ui, pal, true, "Find my mouse", Some("Hold Ctrl + Super: a spotlight shows where the pointer is"), |ui| {
+                ui::switch(ui, pal, &mut c.find_mouse);
+            });
+            ui::row(ui, pal, false, "Shake to find", Some("Shake the mouse and the pointer grows for a moment"), |ui| {
+                ui::switch(ui, pal, &mut c.shake_find);
+            });
+            ui::row(ui, pal, false, "Highlight clicks", Some("Rings show where you click (for recordings and demos); Super + * turns them on and off"), |ui| {
+                ui::switch(ui, pal, &mut c.click_highlight);
+            });
+        });
+        ui::group(ui, pal, Some("Color Picker"), |ui| {
+            ui::row(ui, pal, true, "Color Picker", Some("Super + Shift + C, then click anywhere on the screen: the colour is copied"), |ui| {
+                ui::switch(ui, pal, &mut c.color_picker);
+            });
+            if c.color_picker {
+                let sel = match c.color_format { ColorFormat::Hex => 0, ColorFormat::Rgb => 1, ColorFormat::Hsl => 2 };
+                ui::row(ui, pal, false, "Copy as", Some("#7c54d6, rgb(124, 84, 214) or hsl(259, 61%, 58%)"), |ui| {
+                    if let Some(i) = ui::segmented(ui, pal, &["HEX", "RGB", "HSL"], sel) {
+                        c.color_format = [ColorFormat::Hex, ColorFormat::Rgb, ColorFormat::Hsl][i];
+                    }
+                });
+                if !self.tool_colors.is_empty() {
+                    ui::row(ui, pal, false, "Picked lately", Some("Click one to copy it again"), |ui| {
+                        for hex in self.tool_colors.iter().take(12) {
+                            let rgb = u32::from_str_radix(&hex[1..], 16).unwrap_or(0);
+                            let col = egui::Color32::from_rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8);
+                            let (r, resp) = ui.allocate_exact_size(vec2(20.0, 20.0), egui::Sense::click());
+                            ui.painter().rect_filled(r, CornerRadius::same(5), col);
+                            if resp.on_hover_text(hex.as_str()).clicked() {
+                                sys::spawn("wl-copy", &[hex.as_str()]);
+                            }
+                        }
+                    });
+                }
+            }
+        });
+        ui::group(ui, pal, Some("Files"), |ui| {
+            ui::row(ui, pal, true, "File Locksmith", Some("In Minos, right-click a file or folder: \"What is using this?\" lists the programs holding it open, and can close them"), |ui| {
+                ui::switch(ui, pal, &mut c.file_locksmith);
+            });
+        });
+        ui.add_space(8.0);
+        ui.label(RichText::new("Coming next: Peek (Space in Minos for a quick look), Text Extractor (copy the text out of any part of the screen), Screen Ruler, Keyboard Manager, and FancyZones (drop a window on Fylgja to place it in a zone).").size(12.0).color(pal.dim));
+        if c != self.tools_conf {
+            self.tools_conf = c.clone();
+            self.change(ctx, move || tools::apply(&c));
+        }
+    }
+
     /// Appearance > Workspaces: the default profile and one for each workspace.
     fn workspaces_page(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         use workspaces::{Default as Dflt, Profile};

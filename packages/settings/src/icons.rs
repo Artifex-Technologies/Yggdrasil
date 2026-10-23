@@ -22,6 +22,7 @@ pub enum Icon {
     Trash,
     Back,
     Printer,
+    Tools,
 }
 
 fn arc(c: Pos2, r: f32, from: f32, to: f32) -> Vec<Pos2> {
@@ -37,6 +38,11 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
     let w = rect.width();
     let at = |x: f32, y: f32| pos2(rect.left() + x * w, rect.top() + y * w);
     match icon {
+        Icon::Tools => {
+            // a wrench: an open ring at the top right, the handle down to the bottom left
+            p.add(eframe::egui::Shape::line(arc(at(0.66, 0.34), w * 0.2, 135.0, 405.0 - 90.0), s));
+            p.line_segment([at(0.52, 0.48), at(0.16, 0.84)], Stroke::new(3.0, color));
+        }
         Icon::Printer => {
             // paper sticking out of the top, the body, and the tray the page comes out on
             p.rect_stroke(Rect::from_min_max(at(0.3, 0.12), at(0.7, 0.36)), 1.0, s, eframe::egui::StrokeKind::Inside);

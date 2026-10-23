@@ -3,6 +3,8 @@
 //! `key = value` lines; unknown keys are ignored and values are clamped to what makes sense, so a
 //! hand-edited file can never break the panel.
 
+pub mod tools;
+
 use std::path::PathBuf;
 
 /// How a panel's colour is chosen.
