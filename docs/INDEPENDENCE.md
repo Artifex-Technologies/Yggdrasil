@@ -21,17 +21,20 @@ Labyrinth image configure KDE. **Yggdrasil's own packages depend on KDE librarie
 
 ### 1a. Can go before the compositor (each needs its Yggdrasil replacement finished and switched on first)
 
+**What KWin keeps tied to it (found 2026-10-23):** KWin 6.8 offers neither `ext-session-lock-v1` (Yggdrasil's lock screen), output power control (display off) nor the standard screen-copy protocols (the portal's screenshots and screen sharing). Those rows therefore move with the compositor (1b), not before it.
+
+
 | KDE piece | What it does today | Replacement | State |
 | --- | --- | --- | --- |
-| `powerdevil` | dim, screen off, sleep, brightness, power profiles, battery | `yggdrasil-idle` (Rust) + power-profiles-daemon | idle runs **beside** PowerDevil: finish and switch PowerDevil off |
+| ✅ 2026-10-23 `powerdevil` | dim, screen off, sleep, brightness, power profiles, battery | `yggdrasil-idle` (timers, and the "don't sleep" requests as logind block locks) + power-profiles-daemon; brightness keys through the panel and `brightnessctl` | masked; display-off still calls `kscreen-doctor` until the compositor offers output power. Not yet: low-battery warning (laptops) |
 | `xdg-desktop-portal-kde` | screenshot, screen sharing, colour pick, settings, inhibit, notifications, app chooser | `yggdrasil-portal` (Rust) | file chooser done; the rest to do (screen capture goes through KWin's interface until the compositor) |
 | `kwallet-pam`, `kwalletd6`, `ksecretd`, `signon-kwallet-extension` | secret storage | **oo7** (Rust Secret Service, MIT, in Arch extra; decided 2026-10-23 over gnome-keyring, on condition that it keeps secrets private: encrypted at rest with a key from the login password, unlocked by PAM, locked again when it should be; to be verified in its source before any secret moves) | `yggdrasil-keyring-sync` to be pointed at oo7; switch needs the owner (saved passwords move) |
 | `kscreenlocker` | lock screen | `yggdrasil-lock` (Rust, ext-session-lock) | built; switch on with a rescue path |
 | `sddm` | login screen | greetd + `yggdrasil-greeter` (Rust) | built, tested nested only; install with the old one as fallback |
-| `plasma-nm` (secret agent in kded) | Wi-Fi password prompts | NetworkManager secret agent in Yggdrasil | to do |
-| `bluedevil` | Bluetooth pairing prompts | BlueZ `Agent1` in Yggdrasil | to do |
+| ✅ 2026-10-23 `plasma-nm` (secret agent in kded) | Wi-Fi password prompts | NetworkManager secret agent in the question box (`yggdrasil-polkit`, netagent.rs): Wi-Fi, 802.1x, VPN, mobile; answers only NetworkManager, stores nothing | done |
+| ✅ 2026-10-23 `bluedevil` | Bluetooth pairing prompts | BlueZ `Agent1` in the question box (btagent.rs): codes shown, typed or confirmed; answers only BlueZ | done (pairing a new device not yet tried with real hardware) |
 | `plasma-pa` | volume applet (kded parts) | Yggdrasil sound (Settings + Fylgja already) | remove once nothing calls it |
-| `kded6` modules: tray watcher, media keys, device/space/OOM notices, time zone, accent colour, others | small background services | tray host (built), media keys in the panel, notices through our notifications; the rest dropped | to do (one by one) |
+| ✅ 2026-10-23 `kded6` (25 modules) | tray registry, Wi-Fi and Bluetooth prompts, media keys, GTK theme sync, accent, low-disk notice, and unused ones | panel: tray registry (snwatcher.rs), media keys (mediakeys.rs, the same shortcut names), low-disk warning; portal: dark/light and accent (`appearance.conf`); question box: Wi-Fi and Bluetooth | masked; kaccess stays (screen reader key, sticky keys) until the compositor. Not yet: the out-of-memory notice |
 | `plasma-workspace` (`plasmashell`, `startplasma`, `ksmserver`) | wallpaper, session start and logout, autostart | wallpaper layer in the panel; session = a systemd user target that starts the compositor and Yggdrasil | to do (session start with care: it is how you log in) |
 | `kscreen`, `libkscreen` (+ `kscreen-doctor` in 4 Yggdrasil files) | display layout and scale | Settings > Displays speaking the output-management Wayland protocol itself; drops the `libkscreen` dependency | to do |
 | `kconfig` (library dependency of panel and Settings) | reading KDE config files | plain file parsing; nothing of ours should read KDE config at all once KDE is gone | to do |
