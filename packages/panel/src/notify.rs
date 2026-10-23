@@ -1,11 +1,11 @@
-//! Notifications: the system's notification service (`org.freedesktop.Notifications`), the Heimdall alert
-//! feed, and the list both of Labyrinth's places for them draw (Fylgja's Notifications section and the
-//! right-hand pane).
+//! Notifications: the system's notification service (`org.freedesktop.Notifications`), the security
+//! monitor's alert feed (when the operating system has one: its `security` integration), and the list both of
+//! the desktop's places for them draw (Fylgja's Notifications section and the right-hand pane).
 //!
 //! What it does:
 //!   * Apps send notifications over D-Bus; they are kept (up to `MAX_KEPT`, in
 //!     ~/.local/state/yggdrasil/notifications.json) until the user opens or clears them.
-//!   * Heimdall's alerts (warning and critical by default) come in as notifications from "Heimdall".
+//!   * The security monitor's alerts (warning and critical by default) come in as notifications under its name.
 //!   * They are shown grouped by app, the groups ordered by their newest notification; a group with several
 //!     opens to show them all. Opening one goes to the app (and asks the app to show what it is about).
 //!   * A pop-up (a "toast") shows a new one at the bottom right for a few seconds.
@@ -26,7 +26,11 @@ use crate::paint::{self, Fonts, Icons, Rgba};
 
 pub const MAX_KEPT: usize = 200;
 const MAX_TEXT: usize = 400;
-pub const HEIMDALL_APP: &str = "Heimdall";
+/// The name the security monitor's alerts come under: its integration's `name`.
+pub fn security_app() -> &'static str {
+    static NAME: OnceLock<String> = OnceLock::new();
+    NAME.get_or_init(|| yggdrasil_conf::integrations::security().and_then(|i| i.get("name")).unwrap_or("Security").to_string())
+}
 
 pub fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
@@ -48,7 +52,7 @@ pub struct Notif {
     pub time: u64,
     /// (key, label) pairs the app offered; the key "default" is what a click on the notification means.
     pub actions: Vec<(String, String)>,
-    /// What to open for a notification that is not an app's (Heimdall's): a `yggdrasil-settings` page.
+    /// What to open for a notification that is not an app's (a security alert's): a `yggdrasil-settings` page.
     pub link: String,
 }
 
@@ -351,7 +355,7 @@ impl Server {
     }
 
     fn get_server_information(&self) -> (String, String, String, String) {
-        ("Labyrinth".into(), "Labyrinth".into(), env!("CARGO_PKG_VERSION").into(), "1.2".into())
+        ("Yggdrasil".into(), "Yggdrasil".into(), env!("CARGO_PKG_VERSION").into(), "1.2".into())
     }
 }
 
@@ -386,7 +390,7 @@ pub fn spawn_server(tx: calloop::channel::Sender<NMsg>) {
     });
 }
 
-// ------------------------------------------------------------------------------------------------ Heimdall
+// ------------------------------------------------------------------------------------------------ security alerts
 
 fn severity_rank(s: &str) -> u8 {
     match s {
@@ -396,7 +400,7 @@ fn severity_rank(s: &str) -> u8 {
     }
 }
 
-/// The notification for one Heimdall alert (a JSON object from /v1/alerts), if it is at least `min`
+/// The notification for one security alert (a JSON object from the monitor's /v1/alerts), if it is at least `min`
 /// ("info", "warning", "critical"). The summary can quote what a hostile file said, so it is only ever
 /// shown as text.
 pub fn from_alert(v: &serde_json::Value, min: &str, id: u32) -> Option<Notif> {
@@ -414,10 +418,10 @@ pub fn from_alert(v: &serde_json::Value, min: &str, id: u32) -> Option<Notif> {
         .and_then(|a| a.as_str())
         .filter(|a| !a.is_empty() && detector == "connection-watch")
         .map(|a| format!("apps:{a}"))
-        .unwrap_or_default();
+        .unwrap_or_else(|| "security:monitor".into());
     Some(Notif {
         id,
-        app: HEIMDALL_APP.into(),
+        app: security_app().into(),
         entry: String::new(),
         icon: "security-high".into(),
         summary: format!("{} · {}", if sev == "critical" { "Critical" } else { "Warning" }, detector),
@@ -439,15 +443,17 @@ fn http_get(addr: &str, path: &str) -> Option<String> {
     head.starts_with("HTTP/1.0 200").then(|| body.to_string()).or_else(|| head.starts_with("HTTP/1.1 200").then(|| body.to_string()))
 }
 
-/// Polls Heimdall's local API for alerts. What is already there when the panel starts is not announced.
-pub fn spawn_heimdall(tx: calloop::channel::Sender<NMsg>) {
+/// Polls the security monitor's local API (its integration's `api`) for alerts. What is already there when the panel starts is not
+/// announced. Nothing runs when the operating system has no security monitor.
+pub fn spawn_security_alerts(tx: calloop::channel::Sender<NMsg>) {
+    let Some(addr) = yggdrasil_conf::integrations::security().and_then(|i| i.loopback("api")) else { return };
     std::thread::spawn(move || {
         let mut seen: HashSet<String> = HashSet::new();
         let mut first = true;
         loop {
-            let min = yggdrasil_conf::PanelConf::load().heimdall_alerts.as_str();
+            let min = yggdrasil_conf::PanelConf::load().security_alerts.as_str();
             if min != "off" {
-                if let Some(body) = http_get("127.0.0.1:8930", "/v1/alerts?n=60") {
+                if let Some(body) = http_get(&addr, "/v1/alerts?n=60") {
                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) {
                         let list = v.as_array().cloned().or_else(|| v.get("alerts").and_then(|a| a.as_array()).cloned()).unwrap_or_default();
                         // oldest first, so they arrive in order
@@ -875,17 +881,17 @@ mod tests {
     }
 
     #[test]
-    fn heimdall_alert_to_notification() {
+    fn security_alert_to_notification() {
         let v = serde_json::json!({"time": "t", "detector_id": "connection-watch", "severity": "critical", "summary": "app \"x\" ...",
             "event": {"Fields": {"app": "x"}}});
         let note = from_alert(&v, "warning", 9).unwrap();
-        assert_eq!(note.app, "Heimdall");
+        assert_eq!(note.app, security_app());
         assert_eq!(note.urgency, 2);
         assert_eq!(note.link, "apps:x");
         assert!(note.summary.starts_with("Critical"));
         let info = serde_json::json!({"detector_id": "connection-watch", "severity": "info", "summary": "s"});
         assert!(from_alert(&info, "warning", 1).is_none());
-        assert!(from_alert(&info, "info", 1).is_some());
+        assert_eq!(from_alert(&info, "info", 1).unwrap().link, "security:monitor", "other alerts open the monitor's page");
     }
 }
 

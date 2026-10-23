@@ -1142,7 +1142,7 @@ impl State {
         self.osd = None;
     }
 
-    /// A notification arrived from an app or from Heimdall (or an app asked to take one away).
+    /// A notification arrived from an app or from the security monitor (or an app asked to take one away).
     fn on_notif(&mut self, msg: notify::NMsg) {
         match msg {
             notify::NMsg::New(n) => {
@@ -1227,7 +1227,7 @@ impl State {
     }
 
     /// Goes to the app a notification came from: asks it to show what the notification is about (its default
-    /// action), then brings its window forward, or starts it. Heimdall's alerts open their page in Settings.
+    /// action), then brings its window forward, or starts it. Security alerts open their page in Settings.
     fn open_notification(&mut self, id: u32) {
         let Some(n) = self.model.notifs.get(id).cloned() else { return };
         if n.actions.iter().any(|(k, _)| k == "default") {
@@ -1237,7 +1237,7 @@ impl State {
             run(&["labyrinth-mount-open", dev]);
         } else if !n.link.is_empty() {
             run(&["yggdrasil-settings", &n.link]);
-        } else if n.app != notify::HEIMDALL_APP {
+        } else if n.app != notify::security_app() {
             self.focus_or_launch(&n);
         }
         self.remove_notif(id, 2);
@@ -3305,12 +3305,12 @@ fn main() {
             }
         })
         .expect("osd hide channel");
-    // notifications: from apps (D-Bus) and from Heimdall; a pop-up's timer ran out
+    // notifications: from apps (D-Bus) and from the security monitor; a pop-up's timer ran out
     let (note_tx, note_rx) = calloop::channel::channel::<notify::NMsg>();
     notify::set_next_id(state.model.notifs.max_id());
     state.model.notifs.dnd = state.model.conf.notify_dnd;
     notify::spawn_server(note_tx.clone());
-    notify::spawn_heimdall(note_tx.clone());
+    notify::spawn_security_alerts(note_tx.clone());
     devices::spawn(note_tx);
     event_loop
         .handle()

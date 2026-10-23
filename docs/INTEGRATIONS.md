@@ -51,10 +51,18 @@ Without one, Agora lists only the sources the user adds (each marked as not revi
 ```
 kind = security
 name = Heimdall
-alerts = http://127.0.0.1:8930/v1/alerts   # read-only, loopback only
-scan = /usr/bin/heimdalld scan-files       # Settings > Security > Scan a folder
-quarantine = /usr/local/bin/labyrinth-quarantine
+api = http://127.0.0.1:8930                # GET /healthz answers "ok"; GET /v1/alerts?n=N lists alerts. Loopback addresses only
+scan = /usr/local/bin/labyrinth-security-setting scan   # + a folder; prints "INFECTED path: Signature" lines and a "scanned ..." line
+quarantine = /usr/local/bin/labyrinth-quarantine        # `list --json`, `restore ID`, `delete ID`
+distress = /usr/bin/labyrinth-distress     # optional: the distress password's root helper (run with pkexec), Settings and the lock screen
+distress_set = /etc/labyrinth/distress.json   # when this exists, a wrong password at the lock screen is shown to the helper
+switch.a_auto_quarantine = Move certain malware to quarantine automatically | ... | /usr/local/bin/labyrinth-security-setting auto-quarantine
 ```
+
+An alert is `{"time": RFC 3339, "detector_id", "severity": "info" | "warning" | "critical", "summary", "event": {"Fields": {...}}}`
+(`process`, `remote_addr`, `remote_port` and `app` are used when present). The panel turns them into notifications under `name`
+(Settings > Notifications chooses how many); Settings > Security gets a page named `name` with the state, alerts, new connections,
+the quarantine, the scan and the declared controls. Each part appears only when its key is there.
 
 ### `cloud` (a cloud drive in Minos)
 

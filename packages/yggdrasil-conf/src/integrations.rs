@@ -42,6 +42,15 @@ impl Integration {
         if parts.first().is_some_and(|p| p.starts_with('/')) { Some(parts) } else { None }
     }
 
+    /// A local web address (`http://127.0.0.1:PORT`, `http://localhost:PORT` or `http://[::1]:PORT`) as `host:port`. Anything that
+    /// is not on this computer is refused: the desktop never sends a request elsewhere because a file said so.
+    pub fn loopback(&self, key: &str) -> Option<String> {
+        let rest = self.get(key)?.strip_prefix("http://")?.trim_end_matches('/');
+        let (host, port) = rest.rsplit_once(':')?;
+        let local = matches!(host, "127.0.0.1" | "localhost" | "[::1]");
+        (local && !port.is_empty() && port.chars().all(|c| c.is_ascii_digit())).then(|| format!("{}:{port}", if host == "localhost" { "127.0.0.1" } else { host }))
+    }
+
     /// A path value (absolute only); `%u` becomes the user's name.
     pub fn path(&self, key: &str) -> Option<PathBuf> {
         let v = self.get(key)?;
@@ -126,6 +135,12 @@ pub fn first(kind: &str) -> Option<Integration> {
     of_kind(kind).into_iter().next()
 }
 
+/// The security monitor, if the operating system has one (read once per program).
+pub fn security() -> Option<&'static Integration> {
+    static SECURITY: std::sync::OnceLock<Option<Integration>> = std::sync::OnceLock::new();
+    SECURITY.get_or_init(|| first("security")).as_ref()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -150,6 +165,13 @@ mod tests {
         assert_eq!(c.command("sign_in"), None, "a command must be an absolute path");
         std::env::set_var("USER", "zl");
         assert_eq!(c.path("mount"), Some(PathBuf::from("/home/zl/Drive")));
+        let api = |v: &str| Integration::parse(Path::new("x.conf"), &format!("kind = security\napi = {v}\n")).unwrap().loopback("api");
+        assert_eq!(api("http://127.0.0.1:8930"), Some("127.0.0.1:8930".into()));
+        assert_eq!(api("http://localhost:8930/"), Some("127.0.0.1:8930".into()));
+        assert_eq!(api("http://[::1]:80"), Some("[::1]:80".into()));
+        for bad in ["https://127.0.0.1:8930", "http://example.com:80", "http://127.0.0.1.evil.com:80", "http://127.0.0.1", "http://127.0.0.1:80/x"] {
+            assert_eq!(api(bad), None, "{bad}");
+        }
         let only = all_in(&[a]);
         assert_eq!(only.iter().find(|i| i.kind == "assistant").unwrap().command("ask"), Some(vec!["/usr/bin/ask".into(), "--voice".into()]));
         let _ = std::fs::remove_dir_all(&d);

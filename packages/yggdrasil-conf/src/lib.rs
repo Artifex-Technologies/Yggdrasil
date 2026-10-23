@@ -70,7 +70,7 @@ impl StartIn {
     }
 }
 
-/// Which of Heimdall's alerts become notifications.
+/// Which of the security monitor's alerts become notifications.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum AlertLevel {
     Off,
@@ -150,8 +150,8 @@ pub struct PanelConf {
     pub assistant_speaks: bool,
     /// The colours of the voice island wave: 0 copper, 1 Siri, 2 the accent purple (the default).
     pub voice_wave: u8,
-    /// Which Heimdall alerts become notifications: "off", "critical", "warning" (and critical) or "info" (all).
-    pub heimdall_alerts: AlertLevel,
+    /// Which security alerts become notifications: "off", "critical", "warning" (and critical) or "info" (all).
+    pub security_alerts: AlertLevel,
     /// The first Minos window: Home, or Last (where it was left).
     pub minos_first_window: StartIn,
     /// A Minos window opened while another is open: Home, or Here (the open window's folder).
@@ -166,7 +166,7 @@ pub struct PanelConf {
 
 impl Default for PanelConf {
     fn default() -> Self {
-        PanelConf { dock_pos: DockPos::Bottom, dock_icon: 44, dock_gap: 4, start_theme: StartTheme::Windows, clock_24h: true, dock_opacity: 69, dock_color: ColorMode::Theme, bar_opacity: 69, bar_color: ColorMode::Theme, clipboard_history: true, search_subfolders: true, show_hidden: false, drive_status: true, developer: false, notify_toasts: true, notify_pane: false, notify_dnd: false, own_wallpaper: false, text_scale: 100, reduce_motion: false, assistant_speaks: true, voice_wave: 2, heimdall_alerts: AlertLevel::Warning, minos_first_window: StartIn::Last, minos_more_windows: StartIn::Here, minos_new_tab: StartIn::Here, minos_transparent: false, minos_opacity: 85 }
+        PanelConf { dock_pos: DockPos::Bottom, dock_icon: 44, dock_gap: 4, start_theme: StartTheme::Windows, clock_24h: true, dock_opacity: 69, dock_color: ColorMode::Theme, bar_opacity: 69, bar_color: ColorMode::Theme, clipboard_history: true, search_subfolders: true, show_hidden: false, drive_status: true, developer: false, notify_toasts: true, notify_pane: false, notify_dnd: false, own_wallpaper: false, text_scale: 100, reduce_motion: false, assistant_speaks: true, voice_wave: 2, security_alerts: AlertLevel::Warning, minos_first_window: StartIn::Last, minos_more_windows: StartIn::Here, minos_new_tab: StartIn::Here, minos_transparent: false, minos_opacity: 85 }
     }
 }
 
@@ -235,7 +235,7 @@ impl PanelConf {
                 "minos_transparent" => c.minos_transparent = matches!(v, "yes" | "true" | "on" | "1"),
                 "minos_opacity" => c.minos_opacity = v.trim_end_matches('%').parse::<u32>().map(|n| n.clamp(MINOS_OPACITY_MIN, 100)).unwrap_or(c.minos_opacity),
                 "minos_new_tab" => c.minos_new_tab = StartIn::parse(v).filter(|x| *x == StartIn::Home || *x == StartIn::Here).unwrap_or(c.minos_new_tab),
-                "heimdall_alerts" => c.heimdall_alerts = AlertLevel::parse(v).unwrap_or(c.heimdall_alerts),
+                "security_alerts" | "heimdall_alerts" => c.security_alerts = AlertLevel::parse(v).unwrap_or(c.security_alerts),
                 _ => {}
             }
         }
@@ -245,7 +245,7 @@ impl PanelConf {
     pub fn to_text(&self) -> String {
         format!(
             "# How the top bar and dock look. Edited by Settings (Appearance).\n\
-             dock_pos = {}\ndock_icon = {}\ndock_gap = {}\nclock_24h = {}\nstart_theme = {}\ndock_opacity = {}\ndock_color = {}\nbar_opacity = {}\nbar_color = {}\nclipboard_history = {}\nsearch_subfolders = {}\nshow_hidden = {}\ndrive_status = {}\ndeveloper = {}\nnotify_toasts = {}\nnotify_pane = {}\nnotify_dnd = {}\nown_wallpaper = {}\ntext_scale = {}\nreduce_motion = {}\nassistant_speaks = {}\nvoice_wave = {}\nheimdall_alerts = {}\nminos_first_window = {}\nminos_more_windows = {}\nminos_new_tab = {}\nminos_transparent = {}\nminos_opacity = {}\n",
+             dock_pos = {}\ndock_icon = {}\ndock_gap = {}\nclock_24h = {}\nstart_theme = {}\ndock_opacity = {}\ndock_color = {}\nbar_opacity = {}\nbar_color = {}\nclipboard_history = {}\nsearch_subfolders = {}\nshow_hidden = {}\ndrive_status = {}\ndeveloper = {}\nnotify_toasts = {}\nnotify_pane = {}\nnotify_dnd = {}\nown_wallpaper = {}\ntext_scale = {}\nreduce_motion = {}\nassistant_speaks = {}\nvoice_wave = {}\nsecurity_alerts = {}\nminos_first_window = {}\nminos_more_windows = {}\nminos_new_tab = {}\nminos_transparent = {}\nminos_opacity = {}\n",
             match self.dock_pos {
                 DockPos::Bottom => "bottom",
                 DockPos::Left => "left",
@@ -272,7 +272,7 @@ impl PanelConf {
             if self.reduce_motion { "yes" } else { "no" },
             if self.assistant_speaks { "yes" } else { "no" },
             self.voice_wave,
-            self.heimdall_alerts.as_str(),
+            self.security_alerts.as_str(),
             self.minos_first_window.as_str(),
             self.minos_more_windows.as_str(),
             self.minos_new_tab.as_str(),
@@ -316,7 +316,7 @@ mod tests {
 
     #[test]
     fn round_trips() {
-        let c = PanelConf { dock_pos: DockPos::Right, dock_icon: 60, dock_gap: 0, start_theme: StartTheme::Folders, clock_24h: false, dock_opacity: 0, dock_color: ColorMode::Neutral, bar_opacity: 100, bar_color: ColorMode::Neutral, clipboard_history: false, search_subfolders: false, show_hidden: true, drive_status: false, developer: true, notify_toasts: false, notify_pane: true, notify_dnd: true, own_wallpaper: true, text_scale: 150, reduce_motion: true, assistant_speaks: false, voice_wave: 2, heimdall_alerts: AlertLevel::Critical, minos_first_window: StartIn::Home, minos_more_windows: StartIn::Home, minos_new_tab: StartIn::Home, minos_transparent: true, minos_opacity: 60 };
+        let c = PanelConf { dock_pos: DockPos::Right, dock_icon: 60, dock_gap: 0, start_theme: StartTheme::Folders, clock_24h: false, dock_opacity: 0, dock_color: ColorMode::Neutral, bar_opacity: 100, bar_color: ColorMode::Neutral, clipboard_history: false, search_subfolders: false, show_hidden: true, drive_status: false, developer: true, notify_toasts: false, notify_pane: true, notify_dnd: true, own_wallpaper: true, text_scale: 150, reduce_motion: true, assistant_speaks: false, voice_wave: 2, security_alerts: AlertLevel::Critical, minos_first_window: StartIn::Home, minos_more_windows: StartIn::Home, minos_new_tab: StartIn::Home, minos_transparent: true, minos_opacity: 60 };
         assert_eq!(PanelConf::parse(&c.to_text()), c);
     }
 

@@ -1,4 +1,4 @@
-//! Settings > Security > Distress password. The page talks to the root helper `labyrinth-distress` (through pkexec); nothing is
+//! Settings > Security > Distress password. The page talks to the root helper the security integration names as `distress` (through pkexec); nothing is
 //! kept on the page's side except what is being edited, and nothing is sent until Save. The account password is held only while
 //! the page is open and is wiped when it closes.
 
@@ -61,12 +61,17 @@ pub struct State {
 
 const EXTRAS: [(&str, &str); 5] = [("none", "None"), ("commands", "Run commands"), ("wipe_keys", "Wipe keys"), ("factory_reset", "Factory reset"), ("wipe_system", "Wipe system")];
 
+/// The root helper, when the security integration names one and it is installed.
+pub fn helper() -> Option<std::path::PathBuf> {
+    yggdrasil_conf::integrations::security()?.path("distress").filter(|p| p.is_file())
+}
+
 fn call(cmd: &'static str, req: Value) -> Receiver<(String, Value)> {
     let (tx, rx) = channel();
     std::thread::spawn(move || {
         use std::io::Write;
         let out = (|| -> Result<Value, String> {
-            let mut child = std::process::Command::new("pkexec").arg("/usr/bin/labyrinth-distress").arg(cmd).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).spawn().map_err(|_| "pkexec is not available".to_string())?;
+            let mut child = std::process::Command::new("pkexec").arg(helper().ok_or("the distress helper is not installed")?).arg(cmd).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).spawn().map_err(|_| "pkexec is not available".to_string())?;
             child.stdin.take().ok_or("no input")?.write_all(req.to_string().as_bytes()).map_err(|e| e.to_string())?;
             let o = child.wait_with_output().map_err(|e| e.to_string())?;
             serde_json::from_slice(&o.stdout).map_err(|_| "The distress password helper is not installed or did not answer".to_string())
@@ -190,7 +195,7 @@ impl State {
             ui.add_space(8.0);
             ui::group(ui, pal, Some("Turn on the distress password?"), |ui| {
                 ui.add_space(6.0);
-                ui.label(RichText::new("When someone types the distress password, Labyrinth does what you choose below, and it does not tell them. Make sure you can remember both passwords and that you choose what it does carefully. Type your account password to continue.").size(12.5).color(pal.dim));
+                ui.label(RichText::new("When someone types the distress password, this computer does what you choose below, and it does not tell them. Make sure you can remember both passwords and that you choose what it does carefully. Type your account password to continue.").size(12.5).color(pal.dim));
                 ui.add_space(6.0);
                 ui::field(ui, pal, &mut self.enable_pw, "Your account password", 260.0, true);
                 ui.add_space(6.0);
@@ -363,7 +368,7 @@ impl State {
         ui.add_space(8.0);
         ui::group(ui, pal, Some("Section 1 · Saving needs no extra password"), |ui| {
             let mut pick = if self.cfg.silent_login { 1 } else if self.cfg.decoy { 2 } else { 0 };
-            ui::row(ui, pal, true, "What it does", Some("Silent login: you are let in as normal while Heimdall raises a hidden alert. Decoy session: your real account is locked and a decoy one opens"), |ui| {
+            ui::row(ui, pal, true, "What it does", Some("Silent login: you are let in as normal while a hidden alert is raised. Decoy session: your real account is locked and a decoy one opens"), |ui| {
                 if let Some(i) = ui::segmented(ui, pal, &["Nothing", "Silent login", "Decoy session"], pick) {
                     pick = i;
                 }
@@ -371,9 +376,9 @@ impl State {
             self.cfg.silent_login = pick == 1;
             self.cfg.decoy = pick == 2;
             if self.cfg.decoy {
-                ui::row(ui, pal, false, "About the decoy session", Some("Not available yet: it needs Labyrinth's own session manager. Until then choosing it changes nothing (your account is never locked)"), |_| {});
+                ui::row(ui, pal, false, "About the decoy session", Some("Not available yet: it needs the desktop's own session manager. Until then choosing it changes nothing (your account is never locked)"), |_| {});
             }
-            ui::row(ui, pal, false, "Also in terminals and other password prompts", Some("sudo, the login screen, su and administrator questions. Needs Labyrinth's password module. Only a silent login lets you in; the other choices act, and the prompt still says the password was wrong"), |ui| {
+            ui::row(ui, pal, false, "Also in terminals and other password prompts", Some("sudo, the login screen, su and administrator questions. Needs the system's password module. Only a silent login lets you in; the other choices act, and the prompt still says the password was wrong"), |ui| {
                 ui::switch(ui, pal, &mut self.cfg.in_prompts);
             });
         });

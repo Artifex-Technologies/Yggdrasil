@@ -99,7 +99,7 @@ impl Authenticator for Fake {
 }
 
 /// Asks the distress password helper when the real password was wrong. Only used when the distress password has been set up
-/// (its settings file exists). Unlocks only for a "silent login"; for anything else (a decoy session, or a distress password typed
+/// (the security integration's `distress_set` file exists; its `distress` names the helper). Unlocks only for a "silent login"; for anything else (a decoy session, or a distress password typed
 /// too few times so far) the screen simply stays locked, exactly as for any wrong password.
 pub struct WithDistress<A: Authenticator> {
     pub inner: A,
@@ -108,15 +108,22 @@ pub struct WithDistress<A: Authenticator> {
 impl<A: Authenticator> Authenticator for WithDistress<A> {
     fn check(&self, user: &str, password: &str) -> Result<bool, String> {
         match self.inner.check(user, password) {
-            Ok(false) if std::path::Path::new("/etc/labyrinth/distress.json").exists() => Ok(distress(password)),
+            Ok(false) => Ok(distress_helper().is_some_and(|h| distress(&h, password))),
             other => other,
         }
     }
 }
 
-fn distress(password: &str) -> bool {
+/// The distress helper, only when the distress password has been set up.
+fn distress_helper() -> Option<std::path::PathBuf> {
+    let i = yggdrasil_conf::integrations::security()?;
+    i.path("distress_set").filter(|p| p.exists())?;
+    i.path("distress").filter(|p| p.is_file())
+}
+
+fn distress(helper: &std::path::Path, password: &str) -> bool {
     use std::io::Write;
-    let Ok(mut child) = std::process::Command::new("pkexec").arg("/usr/bin/labyrinth-distress").arg("check").stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).spawn() else { return false };
+    let Ok(mut child) = std::process::Command::new("pkexec").arg(helper).arg("check").stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).spawn() else { return false };
     let body = format!("{{\"password\":{}}}", json_string(password));
     if let Some(mut i) = child.stdin.take() {
         let _ = i.write_all(body.as_bytes());

@@ -60,7 +60,8 @@ enum Page {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SecSub {
     Main,
-    Heimdall,
+    /// The operating system's security monitor (its `security` integration).
+    Monitor,
     Logins,
     Sudo,
     Distress,
@@ -247,7 +248,7 @@ impl App {
             demo_scroll: if start_sub().starts_with("distress-demo-") { 8 } else { 0 },
             demo_offset: if start_sub() == "distress-demo-warn" { 100_000.0 } else { 430.0 },
             sec_sub: match start_sub().as_str() {
-                "heimdall" => SecSub::Heimdall,
+                "monitor" | "heimdall" => SecSub::Monitor,
                 "logins" => SecSub::Logins,
                 "sudo" => SecSub::Sudo,
                 "distress-demo" | "distress-demo-warn" | "distress-demo-mid" | "distress" => SecSub::Distress,
@@ -1394,18 +1395,20 @@ impl App {
                 }
             });
             let levels = ["Off", "Critical", "Warnings", "Everything"];
-            let cur = match conf.heimdall_alerts {
+            let cur = match conf.security_alerts {
                 yggdrasil_conf::AlertLevel::Off => 0,
                 yggdrasil_conf::AlertLevel::Critical => 1,
                 yggdrasil_conf::AlertLevel::Warning => 2,
                 yggdrasil_conf::AlertLevel::Info => 3,
             };
-            ui::row(ui, pal, false, "Heimdall alerts", Some("Which of Heimdall's security alerts show up as notifications. Everything includes each new place a program connects to"), |ui| {
-                if let Some(i) = ui::segmented(ui, pal, &levels, cur) {
-                    conf.heimdall_alerts = [yggdrasil_conf::AlertLevel::Off, yggdrasil_conf::AlertLevel::Critical, yggdrasil_conf::AlertLevel::Warning, yggdrasil_conf::AlertLevel::Info][i];
-                    conf_changed = true;
-                }
-            });
+            if let Some(monitor) = yggdrasil_conf::integrations::security().map(security::monitor_name) {
+                ui::row(ui, pal, false, &format!("{monitor} alerts"), Some(&format!("Which of {monitor}'s security alerts show up as notifications. Everything includes each new place a program connects to")), |ui| {
+                    if let Some(i) = ui::segmented(ui, pal, &levels, cur) {
+                        conf.security_alerts = [yggdrasil_conf::AlertLevel::Off, yggdrasil_conf::AlertLevel::Critical, yggdrasil_conf::AlertLevel::Warning, yggdrasil_conf::AlertLevel::Info][i];
+                        conf_changed = true;
+                    }
+                });
+            }
         });
         }
         if self.app_sub == AppSub::Wallpaper {
@@ -1588,14 +1591,17 @@ impl App {
         }
     }
 
-    /// Heimdall's own page: its state, alerts, connections, quarantine and the malware scan.
-    fn page_heimdall(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
+    /// The security monitor's page: its state, alerts, connections, and what it declares (quarantine, the malware scan, settings).
+    fn page_monitor(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         let Some(o) = self.data.security.clone() else { return loading(ui) };
+        if o.name.is_empty() {
+            return;
+        }
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
         let day = |a: &&security::Alert| now - a.time < 86400;
         let count = |sev: &str| o.alerts.iter().filter(day).filter(|a| a.severity == sev).count();
-        ui::group(ui, pal, Some("Heimdall"), |ui| {
-            let (title, sub) = if o.running { ("Watching".to_string(), format!("Last 24 hours: {} critical, {} warnings, {} notes", count("critical"), count("warning"), count("info"))) } else { ("Not running".to_string(), "Heimdall does not answer on this computer".to_string()) };
+        ui::group(ui, pal, Some(&o.name), |ui| {
+            let (title, sub) = if o.running { ("Watching".to_string(), format!("Last 24 hours: {} critical, {} warnings, {} notes", count("critical"), count("warning"), count("info"))) } else { ("Not running".to_string(), format!("{} does not answer on this computer", o.name)) };
             ui::row(ui, pal, true, &title, Some(&sub), |ui| {
                 let (rect, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
                 ui.painter().circle_filled(rect.center(), 6.0, if !o.running { pal.red } else if count("critical") > 0 { pal.red } else if count("warning") > 0 { pal.amber } else { pal.green });
@@ -1642,19 +1648,18 @@ impl App {
             }
         });
         ui.add_space(8.0);
+        if !o.controls.is_empty() {
+            ui.add_space(8.0);
+            self.controls_group(ui, pal, ctx, "Settings", &o.controls);
+        }
         let mut scan: Option<String> = None;
-        let mut auto_change: Option<bool> = None;
         let mut restore_id: Option<String> = None;
         let mut delete_id: Option<String> = None;
+        if o.has_quarantine {
+        ui.add_space(8.0);
         ui::group(ui, pal, Some("Quarantine"), |ui| {
-            ui::row(ui, pal, true, "Move certain malware to quarantine automatically", Some("New files in Downloads, Desktop, drives and mail attachment folders are checked as they arrive. Only definite finds in your own files are moved; guesses and anything else just warn. Nothing is ever deleted without you"), |ui| {
-                let mut on = o.auto_quarantine;
-                if ui::switch(ui, pal, &mut on).changed() {
-                    auto_change = Some(on);
-                }
-            });
             if o.quarantine.is_empty() {
-                ui::row(ui, pal, false, "Nothing in quarantine", None, |_| {});
+                ui::row(ui, pal, true, "Nothing in quarantine", None, |_| {});
             }
             for q in &o.quarantine {
                 let name = q.original.rsplit('/').next().unwrap_or(&q.original).to_string();
@@ -1668,6 +1673,8 @@ impl App {
                 });
             }
         });
+        }
+        if o.has_scan {
         ui.add_space(8.0);
         ui::group(ui, pal, Some("Malware scan"), |ui| {
             let sub = match (o.clamav, o.signatures) {
@@ -1692,8 +1699,6 @@ impl App {
                 }
             }
         });
-        if let Some(on) = auto_change {
-            self.change(ctx, move || security::set_auto_quarantine(on));
         }
         if let Some(id) = restore_id {
             self.change(ctx, move || security::quarantine_restore(&id));
@@ -1713,8 +1718,9 @@ impl App {
 
     fn page_security(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         if self.sec_sub != SecSub::Main {
+            let monitor = yggdrasil_conf::integrations::security().map(security::monitor_name).unwrap_or_default();
             let title = match self.sec_sub {
-                SecSub::Heimdall => "Heimdall",
+                SecSub::Monitor => monitor.as_str(),
                 SecSub::Logins => "Login history",
                 SecSub::Distress => "Distress password",
                 _ => "Sudo history",
@@ -1729,7 +1735,7 @@ impl App {
             ui.add_space(6.0);
         }
         match self.sec_sub {
-            SecSub::Heimdall => return self.page_heimdall(ui, pal, ctx),
+            SecSub::Monitor => return self.page_monitor(ui, pal, ctx),
             SecSub::Logins => return self.page_log(ui, pal, ctx, false),
             SecSub::Sudo => return self.page_log(ui, pal, ctx, true),
             SecSub::Distress => return self.distress.page(ui, pal, ctx),
@@ -1739,16 +1745,18 @@ impl App {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
         let recent = |sev: &str| o.alerts.iter().filter(|a| now - a.time < 86400 && a.severity == sev).count();
         let mut open: Option<SecSub> = None;
+        if !o.name.is_empty() {
         ui::group(ui, pal, None, |ui| {
             let sub = if o.running { format!("Watching · last 24 hours: {} critical, {} warnings", recent("critical"), recent("warning")) } else { "Not running".to_string() };
-            if ui::nav_row(ui, pal, true, "Heimdall", Some(&sub), |ui| {
+            if ui::nav_row(ui, pal, true, &o.name, Some(&sub), |ui| {
                 let (rect, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
                 ui.painter().circle_filled(rect.center(), 6.0, if !o.running || recent("critical") > 0 { pal.red } else if recent("warning") > 0 { pal.amber } else { pal.green });
             }) {
-                open = Some(SecSub::Heimdall);
+                open = Some(SecSub::Monitor);
             }
         });
         ui.add_space(8.0);
+        }
         ui::group(ui, pal, Some("Password log"), |ui| {
             if ui::nav_row(ui, pal, true, "Login history", Some("Who signed in, and every failed attempt at the lock screen, login or administrator question"), |_| {}) {
                     open = Some(SecSub::Logins);
@@ -1758,8 +1766,8 @@ impl App {
             }
         });
         ui.add_space(8.0);
-        // Labyrinth's distress password helper: the row only exists where it is installed (other systems using this desktop have none)
-        if std::path::Path::new("/usr/bin/labyrinth-distress").exists() {
+        // the distress password: only where the security integration names its helper and the helper is installed
+        if distress::helper().is_some() {
         ui::group(ui, pal, Some("Protection"), |ui| {
             if ui::nav_row(ui, pal, true, "Distress password", Some("A second password that quietly does something else when it is typed. Needs your password to open"), |_| {}) {
                 open = Some(SecSub::Distress);
@@ -1952,9 +1960,14 @@ impl App {
         if states.is_empty() {
             return;
         }
-        let mut todo: Option<Box<dyn FnOnce() -> Result<(), String> + Send>> = None;
         ui.add_space(8.0);
-        ui::group(ui, pal, Some(&name), |ui| {
+        self.controls_group(ui, pal, ctx, &name, &states);
+    }
+
+    /// The switches, choices and buttons an integration declares, as one group.
+    fn controls_group(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context, title: &str, states: &[controls::State]) {
+        let mut todo: Option<Box<dyn FnOnce() -> Result<(), String> + Send>> = None;
+        ui::group(ui, pal, Some(title), |ui| {
             for (i, st) in states.iter().enumerate() {
                 let c = st.control.clone();
                 let (label, description) = (c.label.clone(), c.description.clone());

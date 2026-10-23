@@ -6,14 +6,14 @@ use std::process::{Command, Stdio};
 
 use yggdrasil_conf::integrations::{Control, ControlKind};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Switch(bool),
     Choice { options: Vec<String>, current: String },
     Action,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct State {
     pub control: Control,
     pub value: Value,
