@@ -2008,6 +2008,17 @@ impl App {
             self.change(ctx, move || agents::set_checkup(checkup));
         }
         ui.add_space(12.0);
+        let mut learn = st.learn;
+        let mut learn_changed = false;
+        ui::group(ui, pal, Some("What she learns about you"), |ui| {
+            ui::row(ui, pal, true, "Learn from our talks once a day", Some("Reads what you talked about (not about the computer) and keeps what it shows about you in her vault, Entities/About Zlothra, each with your own words as evidence. You can edit that note; what you move under Forgotten she will not add again. Local model only; skipped while a game uses the graphics card"), |ui| {
+                learn_changed = ui::switch(ui, pal, &mut learn).changed();
+            });
+        });
+        if learn_changed {
+            self.change(ctx, move || agents::set_learn(learn));
+        }
+        ui.add_space(12.0);
         ui::group(ui, pal, Some("Agents she wrote"), |ui| {
             if st.agents.is_empty() {
                 ui::row(ui, pal, true, "None yet", None, |_| {});
