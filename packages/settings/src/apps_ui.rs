@@ -1,5 +1,5 @@
 //! Settings > Apps: the installed apps (restart, close, remove), one page of choices per app (network, startup,
-//! storage, files, other programs), and Labyrinth's optional software and Minos on their own tabs.
+//! storage, files, other programs), and the operating system's optional software and Minos on their own tabs.
 
 use std::collections::HashMap;
 
@@ -190,7 +190,7 @@ impl App {
                 ("restart", Some(a)) => self.change(ctx, move || {
                     stop_app(&a)?;
                     std::thread::sleep(std::time::Duration::from_millis(900));
-                    crate::sys::act("labyrinth-launch", &[&a.id])
+                    appmgr::launch(&a)
                 }),
                 _ => {}
             }
@@ -227,6 +227,8 @@ impl App {
         let mut restart = false;
         let mut close = false;
 
+        let network_rules = appmgr::has_network_rules();
+        if network_rules {
         ui::group(ui, pal, Some("Network"), |ui| {
             let allowed = a.net != NetMode::Block;
             let top = ui.cursor().top();
@@ -268,8 +270,9 @@ impl App {
             ui.label(RichText::new("Applies to the app when it is opened from the dock, the start menu or here. Changing it asks for your password. A running app picks it up after a restart.").size(11.5).color(pal.dim));
             ui.add_space(6.0);
         });
+        }
 
-        if a.net == NetMode::Ask {
+        if network_rules && a.net == NetMode::Ask {
             let stale = self.ask_cache.as_ref().map(|(t, app, _)| app != &a.id || t.elapsed().as_secs() >= 3).unwrap_or(true);
             if stale {
                 self.ask_cache = Some((std::time::Instant::now(), a.id.clone(), appmgr::ask_decisions(&a.id)));
@@ -332,6 +335,7 @@ impl App {
         });
 
         let sandbox_ok = std::path::Path::new("/usr/bin/bwrap").exists();
+        if appmgr::has_sandbox() {
         ui::group(ui, pal, Some("Privacy sandbox (experimental)"), |ui| {
             if !sandbox_ok {
                 ui.add_space(8.0);
@@ -383,14 +387,11 @@ impl App {
                     changed |= ui::switch(ui, pal, &mut p.see_others).changed();
                 });
             }
-            if std::path::Path::new("/usr/bin/limbo").exists() {
-                ui.label(RichText::new("Limbo is installed: Windows apps and anything you do not trust can run in a Limbo guest instead (see `limbo doctor`).").size(11.5).color(pal.dim));
-                ui.add_space(6.0);
-            }
             if changed {
                 policy = Some(p);
             }
         });
+        }
 
         ui::group(ui, pal, None, |ui| {
             ui::row(ui, pal, true, "Remove this app", Some("Uninstalls it from the computer"), |ui| {
@@ -403,10 +404,7 @@ impl App {
         // apply
         if let Some(m) = net {
             let id = a.id.clone();
-            self.change(ctx, move || {
-                let _ = std::process::Command::new("systemctl").args(["--user", "start", &appmgr::slice_name(&id)]).status();
-                crate::sys::act("pkexec", &["/usr/local/bin/labyrinth-appnet", "set", &id, m.word()])
-            });
+            self.change(ctx, move || appmgr::set_network(&id, m));
         }
         if let Some(on) = startup {
             let app = a.clone();
@@ -435,7 +433,7 @@ impl App {
             self.change(ctx, move || {
                 stop_app(&app)?;
                 std::thread::sleep(std::time::Duration::from_millis(900));
-                crate::sys::act("labyrinth-launch", &[&app.id])
+                appmgr::launch(&app)
             });
         }
     }

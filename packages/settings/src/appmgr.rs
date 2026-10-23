@@ -1,8 +1,8 @@
 //! What Settings > Apps knows about each installed app, and the changes it can make to one.
 //!
-//! The apps are the visible desktop entries. Per-app choices live in two places: the network rule in
-//! /etc/labyrinth/app-network.json (written by labyrinth-appnet, with a password) and everything else in
-//! ~/.config/labyrinth/apps/ID.json (read by labyrinth-launch when it starts the app). See those scripts.
+//! The apps are the visible desktop entries. When the operating system has an app launcher with per-app rules (its `apps`
+//! integration, docs/INTEGRATIONS.md), the choices live in two places: the network rule in its rules file (written by its network
+//! command, with a password) and everything else in its settings folder as ID.json (read by its launcher when it starts the app).
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -80,6 +80,48 @@ pub struct AppInfo {
     pub system: bool,
     pub startup: bool,
     pub policy: AppPolicy,
+}
+
+/// The operating system's app launcher and app rules, if it has them.
+pub fn rules() -> Option<&'static yggdrasil_conf::integrations::Integration> {
+    static APPS: std::sync::OnceLock<Option<yggdrasil_conf::integrations::Integration>> = std::sync::OnceLock::new();
+    APPS.get_or_init(|| yggdrasil_conf::integrations::first("apps")).as_ref()
+}
+
+/// The prefix the launcher gives each app's slice and scopes (`PREFIXid.slice`, `PREFIXid_N.scope`), when it declares one.
+fn unit_prefix() -> Option<&'static str> {
+    rules()?.get("unit_prefix").filter(|p| p.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+}
+
+/// Whether apps can have their own network rules here (the launcher declares a network command).
+pub fn has_network_rules() -> bool {
+    rules().and_then(|r| r.path("network")).is_some()
+}
+
+/// Whether apps can run in the launcher's sandbox (it declares a settings folder).
+pub fn has_sandbox() -> bool {
+    rules().and_then(|r| r.path("settings")).is_some()
+}
+
+/// Starts an app: through the operating system's launcher when there is one (its rules then apply), else as the desktop entry says.
+pub fn launch(a: &AppInfo) -> Result<(), String> {
+    if let Some(mut cmd) = rules().and_then(|r| r.command("launch")) {
+        cmd.push(a.id.clone());
+        if Command::new(&cmd[0]).args(&cmd[1..]).status().is_ok_and(|s| s.success()) {
+            return Ok(());
+        }
+    }
+    let st = Command::new("gio").arg("launch").arg(&a.desktop).status().map_err(|e| format!("could not start it: {e}"))?;
+    if st.success() { Ok(()) } else { Err("could not start it".into()) }
+}
+
+/// Changes an app's network rule with the launcher's network command (asks for the password).
+pub fn set_network(id: &str, mode: NetMode) -> Result<(), String> {
+    let net = rules().and_then(|r| r.path("network")).ok_or("there are no network rules on this system")?;
+    if let Some(slice) = slice_name(id) {
+        let _ = Command::new("systemctl").args(["--user", "start", &slice]).status();
+    }
+    crate::sys::act("pkexec", &[&net.to_string_lossy(), "set", id, mode.word()])
 }
 
 fn home() -> PathBuf {
@@ -174,16 +216,24 @@ pub fn running_units() -> Vec<String> {
     String::from_utf8_lossy(&out.stdout).lines().filter_map(|l| l.split_whitespace().next()).map(|u| u.replace("\\x2d", "-")).collect()
 }
 
-/// The slice labyrinth-launch gives an app (same rule as the launcher and labyrinth-appnet).
-pub fn slice_name(id: &str) -> String {
-    format!("lapp_{}.slice", id.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' }).collect::<String>())
+/// The slice the launcher gives an app (the same rule as the launcher and its network command).
+pub fn slice_name(id: &str) -> Option<String> {
+    unit_prefix().map(|p| slice_name_with(p, id))
 }
 
-/// Which of `units` belong to the app `id`: our own scopes (`lapp_ID_N.scope`), KDE's (`app-ID-PID.scope` or
+fn slice_name_with(prefix: &str, id: &str) -> String {
+    format!("{prefix}{}.slice", id.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' }).collect::<String>())
+}
+
+/// Which of `units` belong to the app `id`: the launcher's scopes (`PREFIX_ID_N.scope`), KDE's (`app-ID-PID.scope` or
 /// `app-ID@HASH.scope`), and Flatpak's (`app-flatpak-ID-N.scope`).
 pub fn units_of(id: &str, units: &[String]) -> Vec<String> {
+    units_of_with(unit_prefix(), id, units)
+}
+
+fn units_of_with(prefix: Option<&str>, id: &str, units: &[String]) -> Vec<String> {
     let san: String = id.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' }).collect();
-    let ours = format!("lapp_{san}_");
+    let ours = prefix.map(|p| format!("{p}{san}_"));
     let digits_then_scope = |rest: &str| {
         let r = rest.strip_suffix(".scope").unwrap_or(rest);
         !r.is_empty() && r.chars().all(|c| c.is_ascii_digit())
@@ -191,7 +241,7 @@ pub fn units_of(id: &str, units: &[String]) -> Vec<String> {
     units
         .iter()
         .filter(|u| {
-            if let Some(rest) = u.strip_prefix(&ours) {
+            if let Some(rest) = ours.as_deref().and_then(|o| u.strip_prefix(o)) {
                 return digits_then_scope(rest);
             }
             for prefix in [format!("app-{id}"), format!("app-flatpak-{id}")] {
@@ -216,12 +266,20 @@ fn read_json(path: &Path) -> Value {
     std::fs::read_to_string(path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null)
 }
 
-pub fn policy_path(id: &str) -> PathBuf {
-    config_home().join("labyrinth/apps").join(format!("{id}.json"))
+fn policy_path(dir: &Path, id: &str) -> PathBuf {
+    dir.join(format!("{id}.json"))
 }
 
 pub fn load_policy(id: &str) -> AppPolicy {
-    let v = read_json(&policy_path(id));
+    rules().and_then(|r| r.path("settings")).map(|d| load_policy_in(&d, id)).unwrap_or_default()
+}
+
+pub fn save_policy(id: &str, p: &AppPolicy) -> Result<(), String> {
+    save_policy_in(&rules().and_then(|r| r.path("settings")).ok_or("there is no sandbox on this system")?, id, p)
+}
+
+fn load_policy_in(dir: &Path, id: &str) -> AppPolicy {
+    let v = read_json(&policy_path(dir, id));
     let mut p = AppPolicy::default();
     if let Some(b) = v["sandbox"].as_bool() {
         p.sandbox = b;
@@ -236,8 +294,8 @@ pub fn load_policy(id: &str) -> AppPolicy {
     p
 }
 
-pub fn save_policy(id: &str, p: &AppPolicy) -> Result<(), String> {
-    let path = policy_path(id);
+fn save_policy_in(dir: &Path, id: &str, p: &AppPolicy) -> Result<(), String> {
+    let path = policy_path(dir, id);
     std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
     let v = json!({"sandbox": p.sandbox, "files": if p.files_all { "all" } else { "folders" }, "folders": p.folders, "see_others": p.see_others});
     let tmp = path.with_extension("json.tmp");
@@ -247,7 +305,8 @@ pub fn save_policy(id: &str, p: &AppPolicy) -> Result<(), String> {
 
 /// Network modes from the system's rules file, for this user: app id to mode.
 pub fn load_net_rules() -> HashMap<String, NetMode> {
-    let v = read_json(Path::new(&std::env::var("LABYRINTH_APPNET_STATE").unwrap_or_else(|_| "/etc/labyrinth/app-network.json".into())));
+    let Some(file) = rules().and_then(|r| r.path("network_rules")) else { return HashMap::new() };
+    let v = read_json(&file);
     let uid = unsafe { libc_getuid() }.to_string();
     v["rules"][&uid].as_object().map(|m| m.iter().filter_map(|(k, x)| x.as_str().map(|s| (k.clone(), NetMode::from_word(s)))).collect()).unwrap_or_default()
 }
@@ -261,7 +320,8 @@ unsafe fn libc_getuid() -> u32 {
 }
 
 pub fn load_usage() -> HashMap<String, (u64, u64, u64)> {
-    let v = read_json(&data_home().join("labyrinth/app-usage.json"));
+    let Some(file) = rules().and_then(|r| r.path("usage")) else { return HashMap::new() };
+    let v = read_json(&file);
     v.as_object().map(|m| m.iter().map(|(k, e)| (k.clone(), (e["launches"].as_u64().unwrap_or(0), e["last"].as_u64().unwrap_or(0), e["seconds"].as_u64().unwrap_or(0)))).collect()).unwrap_or_default()
 }
 
@@ -502,31 +562,32 @@ mod tests {
             .iter()
             .map(|s| s.to_string())
             .collect();
-        assert_eq!(units_of("firefox", &units), vec!["app-firefox-1234.scope"]);
-        assert_eq!(units_of("firefox-nightly", &units), vec!["app-firefox-nightly-99.scope"]);
-        assert_eq!(units_of("spotify-launcher", &units), vec!["lapp_spotify_launcher_5.scope"]);
-        assert_eq!(units_of("com.microsoft.VSCode", &units).len(), 1);
-        assert_eq!(units_of("org.gimp.GIMP", &units).len(), 1);
-        assert_eq!(units_of("foo", &units).len(), 1);
-        assert!(units_of("bar", &units).is_empty());
+        let of = |id: &str| units_of_with(Some("lapp_"), id, &units);
+        assert_eq!(of("firefox"), vec!["app-firefox-1234.scope"]);
+        assert_eq!(of("firefox-nightly"), vec!["app-firefox-nightly-99.scope"]);
+        assert_eq!(of("spotify-launcher"), vec!["lapp_spotify_launcher_5.scope"]);
+        assert_eq!(of("com.microsoft.VSCode").len(), 1);
+        assert_eq!(of("org.gimp.GIMP").len(), 1);
+        assert_eq!(of("foo").len(), 1);
+        assert!(of("bar").is_empty());
+        assert!(units_of_with(None, "spotify-launcher", &units).is_empty(), "without a launcher only the standard scopes count");
     }
 
     #[test]
     fn slice_names_match_the_launcher() {
-        assert_eq!(slice_name("com.mitchellh.ghostty"), "lapp_com_mitchellh_ghostty.slice");
-        assert_eq!(slice_name("spotify-launcher"), "lapp_spotify_launcher.slice");
+        assert_eq!(slice_name_with("lapp_", "com.mitchellh.ghostty"), "lapp_com_mitchellh_ghostty.slice");
+        assert_eq!(slice_name_with("lapp_", "spotify-launcher"), "lapp_spotify_launcher.slice");
     }
 
     #[test]
     fn policy_round_trips_through_the_file_the_launcher_reads() {
         let _g = ENV.lock().unwrap_or_else(|e| e.into_inner());
         let d = std::env::temp_dir().join(format!("lf-appmgr-{}", std::process::id()));
-        std::env::set_var("XDG_CONFIG_HOME", &d);
-        assert_eq!(load_policy("demo"), AppPolicy::default());
+        assert_eq!(load_policy_in(&d, "demo"), AppPolicy::default());
         let p = AppPolicy { sandbox: true, files_all: false, folders: vec!["/home/x/Documents".into()], see_others: false };
-        save_policy("demo", &p).unwrap();
-        assert_eq!(load_policy("demo"), p);
-        let v: Value = serde_json::from_str(&std::fs::read_to_string(policy_path("demo")).unwrap()).unwrap();
+        save_policy_in(&d, "demo", &p).unwrap();
+        assert_eq!(load_policy_in(&d, "demo"), p);
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(policy_path(&d, "demo")).unwrap()).unwrap();
         assert_eq!(v["files"], "folders");
         assert_eq!(v["see_others"], false);
         let _ = std::fs::remove_dir_all(&d);
@@ -588,13 +649,11 @@ pub struct Decision {
     pub allowed: bool,
 }
 
-const ASK_SOCKET: &str = "/run/labyrinth/appnet-ask.sock";
-
 fn ask_call(request: &str) -> Option<Value> {
     use std::io::{BufRead, BufReader, Write};
     use std::os::unix::net::UnixStream;
     use std::time::Duration;
-    let mut s = UnixStream::connect(std::env::var("LABYRINTH_ASK_SOCKET").unwrap_or_else(|_| ASK_SOCKET.into())).ok()?;
+    let mut s = UnixStream::connect(rules()?.path("network_ask")?).ok()?;
     s.set_read_timeout(Some(Duration::from_millis(800))).ok()?;
     s.write_all(request.as_bytes()).ok()?;
     s.write_all(b"\n").ok()?;
@@ -603,7 +662,7 @@ fn ask_call(request: &str) -> Option<Value> {
     serde_json::from_str(&line).ok()
 }
 
-/// The text of what labyrinth-appnet-ask answers to {"op":"list"}, as one app's decisions: allowed ones first, then by address.
+/// The text of what the ask service answers to {"op":"list"}, as one app's decisions: allowed ones first, then by address.
 pub fn parse_decisions(reply: &Value, app: &str) -> Vec<Decision> {
     let mut out = vec![];
     let Some(a) = reply["apps"][app].as_object() else { return out };

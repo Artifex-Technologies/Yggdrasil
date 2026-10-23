@@ -167,11 +167,18 @@ pub fn command(exec: &str) -> Vec<String> {
     out
 }
 
+/// The operating system's app launcher (its apps integration's `launch`), read once.
+fn launcher() -> Option<Vec<String>> {
+    static LAUNCH: std::sync::OnceLock<Option<Vec<String>>> = std::sync::OnceLock::new();
+    LAUNCH.get_or_init(|| yggdrasil_conf::integrations::first("apps").and_then(|i| i.command("launch"))).clone()
+}
+
 pub fn launch(app: &App) {
-    // Through labyrinth-launch when it is there: the app then runs in its own slice (per-app network rules), is
-    // counted for Settings > Apps, and follows its sandbox settings.
-    if !app.id.is_empty() {
-        let started = std::process::Command::new("labyrinth-launch").arg(&app.id).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
+    // Through the operating system's launcher when it has one (its apps integration): the app then runs with the OS's per-app rules
+    // (network, sandbox) and is counted for Settings > Apps.
+    if let Some(mut cmd) = launcher().filter(|_| !app.id.is_empty()) {
+        cmd.push(app.id.clone());
+        let started = std::process::Command::new(&cmd[0]).args(&cmd[1..]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
         if started {
             return;
         }

@@ -49,7 +49,7 @@ enum Page {
     Apps,
     Printers,
     DefaultApps,
-    /// Sarina's agents (only when Sarina is installed).
+    /// The assistant the operating system provides (only when it has one: its assistant integration).
     Assistant,
     Shortcuts,
     About,
@@ -220,8 +220,6 @@ struct App {
     app_system: bool,
     app_folder: String,
     app_confirm: Option<apps_ui::Confirm>,
-    /// Sarina's agents: the one whose Remove was clicked, waiting for the second click.
-    agent_confirm: Option<String>,
     app_sizes: std::collections::HashMap<String, u64>,
     dir_sizes: std::collections::HashMap<std::path::PathBuf, u64>,
     owners: std::collections::HashMap<String, Option<(String, bool)>>,
@@ -301,7 +299,6 @@ impl App {
             app_system: false,
             app_folder: String::new(),
             app_confirm: None,
-            agent_confirm: None,
             app_sizes: Default::default(),
             dir_sizes: Default::default(),
             owners: Default::default(),

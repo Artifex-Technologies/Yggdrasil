@@ -64,6 +64,23 @@ An alert is `{"time": RFC 3339, "detector_id", "severity": "info" | "warning" | 
 (Settings > Notifications chooses how many); Settings > Security gets a page named `name` with the state, alerts, new connections,
 the quarantine, the scan and the declared controls. Each part appears only when its key is there.
 
+### `apps` (an app launcher with per-app rules)
+
+```
+kind = apps
+launch = /usr/local/bin/labyrinth-launch           # + a desktop id; exits 0 when it started the app (dock, start menu, Settings)
+unit_prefix = lapp_                                # its systemd units: PREFIXid.slice per app, PREFIXid_N.scope per run
+settings = %h/.config/labyrinth/apps               # ID.json per app, read by the launcher: {"sandbox", "files": "all" | "folders",
+                                                   #   "folders", "see_others"}; written by Settings > Apps
+usage = %h/.local/share/labyrinth/app-usage.json   # {ID: {"launches", "last", "seconds"}}: "sort by usage"
+network = /usr/local/bin/labyrinth-appnet          # run with pkexec: `set ID allow|block|ethernet|wifi|ask`
+network_rules = /etc/labyrinth/app-network.json    # {"rules": {UID: {ID: mode}}}, readable by the user
+network_ask = /run/labyrinth/appnet-ask.sock       # {"op":"list"} and {"op":"forget","app","ip"}, one JSON line each way
+```
+
+Without one, apps start as their desktop entries say, and Settings > Apps leaves out the network and sandbox sections. `%h` is the
+home folder.
+
 ### `branding`
 
 ```

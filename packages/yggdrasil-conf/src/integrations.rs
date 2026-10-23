@@ -51,12 +51,13 @@ impl Integration {
         (local && !port.is_empty() && port.chars().all(|c| c.is_ascii_digit())).then(|| format!("{}:{port}", if host == "localhost" { "127.0.0.1" } else { host }))
     }
 
-    /// A path value (absolute only); `%u` becomes the user's name.
+    /// A path value (absolute only); `%h` becomes the home folder and `%u` the user's name.
     pub fn path(&self, key: &str) -> Option<PathBuf> {
         let v = self.get(key)?;
         let user = std::env::var("USER").unwrap_or_default();
-        let v = v.replace("%u", &user);
-        v.starts_with('/').then(|| PathBuf::from(v))
+        let home = std::env::var("HOME").unwrap_or_default();
+        let v = v.replace("%h", home.trim_end_matches('/')).replace("%u", &user);
+        (v.starts_with('/') && !v.split('/').any(|part| part == "..")).then(|| PathBuf::from(v))
     }
 }
 
@@ -165,6 +166,10 @@ mod tests {
         assert_eq!(c.command("sign_in"), None, "a command must be an absolute path");
         std::env::set_var("USER", "zl");
         assert_eq!(c.path("mount"), Some(PathBuf::from("/home/zl/Drive")));
+        std::env::set_var("HOME", "/home/zl/");
+        let h = Integration::parse(Path::new("x.conf"), "kind = apps\nsettings = %h/.config/os/apps\nbad = /etc/../root\n").unwrap();
+        assert_eq!(h.path("settings"), Some(PathBuf::from("/home/zl/.config/os/apps")));
+        assert_eq!(h.path("bad"), None, "no way out of the folder named");
         let api = |v: &str| Integration::parse(Path::new("x.conf"), &format!("kind = security\napi = {v}\n")).unwrap().loopback("api");
         assert_eq!(api("http://127.0.0.1:8930"), Some("127.0.0.1:8930".into()));
         assert_eq!(api("http://localhost:8930/"), Some("127.0.0.1:8930".into()));
