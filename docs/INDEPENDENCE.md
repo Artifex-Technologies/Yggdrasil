@@ -79,17 +79,23 @@ Audit numbers: 11 packages named `labyrinth-*`; crates `labyrinth_conf`, `labyri
 
 | What | Today | Neutral |
 | --- | --- | --- |
-| Package and program names | `yggdrasil-panel`, `-settings`, `-minos`, `-market`, `-lock`, `-greeter`, `-polkit`, `-portal`, `-idle`, `-calculator`, `-weather`, `-keyring-sync` | `yggdrasil-*` (Minos, Agora, Liki keep their own names) |
-| Crates | `labyrinth_conf`, `labyrinth_ui`, `labyrinth_weather` | `yggdrasil_conf`, `yggdrasil_ui`, `yggdrasil_weather` |
-| Config and data | `~/.config/labyrinth/` (24 uses), `/usr/share/labyrinth/` (14), `~/.local/state/labyrinth/` | `~/.config/yggdrasil/`, `/usr/share/yggdrasil/`; old files migrated once on first start |
-| D-Bus | `org.yggdrasil.Panel` | `org.yggdrasil.Panel` |
-| Environment | `LABYRINTH_*` (panel debug, compositor debug, weather, greeter, lock tests, Proton Drive...) | `YGGDRASIL_*` |
-| UI text | "Settings", "Agora", "Calculator", "Yggdrasil Panel" | "Settings", "Agora", "Calculator"; the OS name, where shown (About), read from `/etc/os-release` |
+| ✅ 2026-10-23 Package and program names | `labyrinth-panel`, `-settings`, `-minos`, `-market`, `-lock`, `-greeter`, `-polkit`, `-portal`, `-idle`, `-calculator`, `-weather`, `-keyring-sync` | `yggdrasil-*`; Minos keeps `minos`, Agora is `agora` (package `yggdrasil-agora`), Liki keeps its name |
+| ✅ 2026-10-23 Crates | `labyrinth_conf`, `labyrinth_ui`, `labyrinth_weather` | `yggdrasil_conf`, `yggdrasil_ui`, `yggdrasil_weather` |
+| ✅ 2026-10-23 Config and data | `~/.config/labyrinth/` (24 uses), `/usr/share/labyrinth/` (14), `~/.local/state/labyrinth/` | `~/.config/yggdrasil/`, `/usr/share/yggdrasil/`; old files migrated once on first start |
+| ✅ 2026-10-23 D-Bus | `org.labyrinth.Panel`, portal `org.freedesktop.impl.portal.desktop.labyrinth` | `org.yggdrasil.Panel`, `org.freedesktop.impl.portal.desktop.yggdrasil` |
+| Environment | `LABYRINTH_*` | `YGGDRASIL_*`: ✅ 2026-10-23 for the desktop's own; the OS ones (Proton Drive, edition, Sarina, app network, Agora's install helper) go with the integration hooks |
+| ✅ 2026-10-23 UI text | "Labyrinth Settings", "Labyrinth Marketplace", "Labyrinth Calculator", "Labyrinth Panel" | "Settings", "Agora", "Calculator", "Yggdrasil Panel"; the OS name, where shown (About), read from `/etc/os-release` (with the integration hooks) |
 | Calls into Labyrinth OS | `labyrinth-apps` (Agora installs), `labyrinth-launch`, `labyrinth-panel-mode`, `labyrinth-quarantine`, `labyrinth-sarina`, `labyrinth-sarina-speak`, Sarina/Heimdall/Limbo pages in panel, Settings, Minos, compositor | **integration points**: Yggdrasil defines a small, documented hook (a folder of integration files, e.g. `/usr/share/yggdrasil/integrations/*.toml`: a Fylgja section, a Settings page, a shortcut, a Minos menu item, an Agora installer backend). Labyrinth ships its Sarina, Heimdall, Limbo and package-installer integrations there; another OS ships its own or none. Yggdrasil never names them. |
 | Proton Drive in Minos | `LABYRINTH_PROTON_DRIVE`, rclone glue | a generic "cloud drives" hook, Proton Drive provided by the OS (or kept as a neutral rclone feature) |
 | Branding assets | Labyrinth logos or colours inside Yggdrasil packages | Yggdrasil's own; the OS supplies its logo and default accent through the integration folder |
 
 ---
+
+| Desktop pieces living in Labyrinth's repository (found 2026-10-23) | `labyrinth-panelctl`, `labyrinth-notify-activate`, `labyrinth-mediakey`, the start-menu and clipboard launchers, the `systemsettings` wrapper, `labyrinth-panel-mode`, wallpapers and avatars in `/usr/share/labyrinth` | move into Yggdrasil (renamed) or drop; Labyrinth keeps only OS things |
+
+Done on the owner's machine 2026-10-23: all twelve packages replaced under the new names; the panel, password box, idle watch and
+portal running as `yggdrasil-*`; Super+S on the new panel; the desktop's files moved to `~/.config/yggdrasil` (old loose files are
+in the owner's cleanup script).
 
 ## Order of work
 
