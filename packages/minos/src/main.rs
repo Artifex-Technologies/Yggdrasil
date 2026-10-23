@@ -18,6 +18,7 @@ use minos_core::cloud::{self, Badge, Link, Report};
 use minos_core::listing::{self, Entry, Sort, SortKey};
 use minos_core::places::{self, CloudPlace, CloudState};
 use minos_core::preview::{self, Body, PreviewData};
+use minos_core::run;
 use minos_core::search::{display_relative, Search};
 use minos_core::state::{SavedTab, State, ViewMode, GALLERY_SIZES};
 use minos_core::{expand_address, fileops, History, Tab};
@@ -96,6 +97,8 @@ enum Action {
     PinTab(usize, usize),
     Reload,
     OpenFile(PathBuf),
+    /// Right-click > Run in terminal, for a program or script marked as runnable.
+    RunInTerminal(PathBuf),
     Cut(Vec<PathBuf>),
     Copy(Vec<PathBuf>),
     Paste(usize),
@@ -538,9 +541,16 @@ fn entry_interact(
                 actions.push(Action::OpenTab(cx.pi, e.path.clone()));
                 ui.close();
             }
-        } else if ui.button("Open").clicked() {
-            actions.push(Action::OpenFile(e.path.clone()));
-            ui.close();
+        } else {
+            if ui.button("Open").clicked() {
+                actions.push(Action::OpenFile(e.path.clone()));
+                ui.close();
+            }
+            // only for a file you have marked as runnable (double-click never runs anything)
+            if e.usage.is_none() && archive::split(&e.path).is_none() && run::runnable(&e.path) && ui.button("Run in terminal").clicked() {
+                actions.push(Action::RunInTerminal(e.path.clone()));
+                ui.close();
+            }
         }
         ui.separator();
         if ui.button("Cut").clicked() {
@@ -2230,6 +2240,11 @@ impl App {
                         pk.name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                     } else if !pk.dir {
                         finish_pick(&[p]);
+                    }
+                }
+                Action::RunInTerminal(p) => {
+                    if let Err(e) = run::run_in_terminal(&p) {
+                        self.status = format!("Could not run {}: {e}", p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
                     }
                 }
                 Action::OpenFile(p) => match archive::split(&p) {
