@@ -2,7 +2,7 @@
 name = "yggdrasil-compositor"
 version = "0.1.0"
 edition = "2021"
-description = "Labyrinth's own Wayland compositor (Smithay): the replacement for KWin. Runs nested in a window while it is built."
+description = "Yggdrasil's own Wayland compositor (Smithay): the replacement for KWin. Runs nested in a window while it is built."
 license = "MIT"
 
 [[bin]]

@@ -42,7 +42,7 @@ impl NetMode {
     }
 }
 
-/// The sandbox choices for an app (read by labyrinth-launch).
+/// The sandbox choices for an app (read by the operating system's launcher).
 #[derive(Clone, Debug, PartialEq)]
 pub struct AppPolicy {
     pub sandbox: bool,
@@ -73,7 +73,7 @@ pub struct AppInfo {
     pub running: Vec<String>,
     pub launches: u64,
     pub last_used: u64,
-    /// How long it has been running in total (labyrinth-appusage counts this).
+    /// How long it has been running in total (the launcher's usage file says).
     pub seconds: u64,
     pub net: NetMode,
     /// A technical tool (settings panels, network helpers) rather than an app people open, hidden unless asked for.

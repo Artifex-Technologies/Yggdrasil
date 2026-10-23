@@ -1,4 +1,4 @@
-//! yggdrasil-panel: Labyrinth's top bar and dock, written for Wayland (wlr-layer-shell) and drawn
+//! yggdrasil-panel: Yggdrasil's top bar and dock, written for Wayland (wlr-layer-shell) and drawn
 //! on the CPU. Windows come from KWin through the plasma-window-management protocol, which KWin
 //! only gives to programs whose desktop file asks for it (yggdrasil-panel.desktop).
 //!
@@ -96,13 +96,13 @@ enum Kind {
     /// A popover (the calendar): a transparent surface over the whole screen, so a click anywhere
     /// outside the card closes it. The card is drawn at the top right.
     Popup,
-    /// The wallpaper, when Labyrinth draws it itself (own_wallpaper): a background layer under everything.
+    /// The wallpaper, when the desktop draws it itself (own_wallpaper): a background layer under everything.
     Wallpaper,
     /// The volume / brightness pop-up: a small pill a little above the dock.
     Osd,
     /// Notification pop-ups, stacked at the bottom right of the main screen.
     Toast,
-    /// The voice island: grows out of the notch while Sarina listens, thinks or speaks.
+    /// The voice island: grows out of the notch while the assistant listens, thinks or speaks.
     Voice,
 }
 
@@ -279,7 +279,7 @@ struct State {
     plasma_shell: Option<OrgKdePlasmaShell>,
     shm: WlShm,
     model: Model,
-    /// The panel for screen readers (AT-SPI); None when switched off with LABYRINTH_A11Y=off.
+    /// The panel for screen readers (AT-SPI); None when switched off with YGGDRASIL_A11Y=off.
     a11y: Option<a11y::A11y>,
     assets: Assets,
     surfs: Vec<Surf>,
@@ -352,14 +352,14 @@ struct State {
     touch: Option<WlTouch>,
     touch_id: Option<i32>,
     tab_output: u32,
-    /// A question for Sarina being recorded, and when it began; her answer comes back on `voice_tx`.
+    /// A question for the assistant being recorded, and when it began; its answer comes back on `voice_tx`.
     rec: Option<(std::process::Child, std::path::PathBuf)>,
     rec_since: Option<std::time::Instant>,
     /// The voice island's state while it is showing, and whether its animation ticker should keep going.
     viz: Option<voicewave::Viz>,
     viz_alive: Arc<AtomicBool>,
     viz_tx: calloop::channel::Sender<()>,
-    /// Sarina has been asked to speak (when); her loudness comes from the envelope file the speaking script writes.
+    /// The assistant has been asked to speak (when); its loudness comes from the envelope file the speaking script writes.
     speech_since: Option<std::time::Instant>,
     speech_env: Option<(Vec<u8>, i64)>,
     speech_env_mtime: Option<std::time::SystemTime>,
@@ -378,7 +378,7 @@ struct State {
     conv_misses: u32,
     last_tick: Option<std::time::Instant>,
     voice_tx: calloop::channel::Sender<Result<String, String>>,
-    /// What Sarina understood of the question, sent as soon as it is known (before her answer).
+    /// What the assistant understood of the question, sent as soon as it is known (before her answer).
     heard_tx: calloop::channel::Sender<String>,
     /// What was copied (in memory only) and the process that watches the clipboard.
     clips: Arc<std::sync::Mutex<Vec<String>>>,
@@ -601,7 +601,7 @@ impl State {
         self.next_surf += 1;
         let Some(out) = self.outputs.get(&output) else { return };
         let wl = self.compositor.create_surface(&self.qh, ());
-        let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Background, "labyrinth-wallpaper".into(), &self.qh, id);
+        let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Background, "yggdrasil-wallpaper".into(), &self.qh, id);
         layer.set_anchor(Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right);
         layer.set_size(0, 0);
         layer.set_exclusive_zone(-1);
@@ -636,7 +636,7 @@ impl State {
         let Some(out) = self.outputs.get(&output) else { return };
         let want = shell::dock_size(&shell::dock_items(&self.model), self.model.conf.dock_icon, self.model.conf.dock_pos);
         let wl = self.compositor.create_surface(&self.qh, ());
-        let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Top, "labyrinth-dock".into(), &self.qh, id);
+        let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Top, "yggdrasil-dock".into(), &self.qh, id);
         self.configure_layer_dock(&layer, want);
         wl.commit();
         self.surfs.push(Surf { id, kind: Kind::Dock, output, wl, layer: Some(layer), dock: None, w: want.0, h: want.1, want, gap: self.model.conf.dock_gap as i32, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
@@ -672,8 +672,8 @@ impl State {
         let wl = self.compositor.create_surface(&self.qh, ());
         let xs = wm.get_xdg_surface(&wl, &self.qh, id);
         let tl = xs.get_toplevel(&self.qh, id);
-        tl.set_title("Labyrinth dock".into());
-        tl.set_app_id("labyrinth-dock".into());
+        tl.set_title("Dock".into());
+        tl.set_app_id("yggdrasil-dock".into());
         tl.set_min_size(want.0 as i32, want.1 as i32);
         tl.set_max_size(want.0 as i32, want.1 as i32);
         let ps = shell_g.get_surface(&wl, &self.qh, id);
@@ -710,7 +710,7 @@ impl State {
         let id = self.next_surf;
         self.next_surf += 1;
         let wl = self.compositor.create_surface(&self.qh, ());
-        let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Overlay, "labyrinth-popup".into(), &self.qh, id);
+        let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Overlay, "yggdrasil-popup".into(), &self.qh, id);
         // KWin puts a surface that fits the free room (under the bar, above the dock's strip) at the top of that
         // room, and lifts one that is taller up by the overhang. So ask for exactly that room: then the
         // menus start just under the bar, where Fylgja's section titles stay in view.
@@ -873,7 +873,7 @@ impl State {
         }
     }
 
-    /// Ends the recording and hands it to Sarina.
+    /// Ends the recording and hands it to the assistant.
     fn send_recording(&mut self) {
         if let Some((mut child, path)) = self.rec.take() {
             fylgja::stop_recording(&mut child);
@@ -884,7 +884,7 @@ impl State {
         }
     }
 
-    /// Drops a recording that was not sent, and stops Sarina talking.
+    /// Drops a recording that was not sent, and stops the assistant talking.
     fn cancel_voice(&mut self) {
         if let Some((mut child, path)) = self.rec.take() {
             fylgja::stop_recording(&mut child);
@@ -962,7 +962,7 @@ impl State {
         let id = self.next_surf;
         self.next_surf += 1;
         let wl = self.compositor.create_surface(&self.qh, ());
-        let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Overlay, "labyrinth-voice".into(), &self.qh, id);
+        let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Overlay, "yggdrasil-voice".into(), &self.qh, id);
         // A surface that spans the screen's top edge sits flush against it (a small centred one is pushed down below the bar's
         // reserved strip by KWin), so it spans the width, is see-through and takes no clicks, and the pill is drawn in its middle.
         layer.set_anchor(Anchor::Top | Anchor::Left | Anchor::Right);
@@ -1110,7 +1110,7 @@ impl State {
             let id = self.next_surf;
             self.next_surf += 1;
             let wl = self.compositor.create_surface(&self.qh, ());
-            let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Overlay, "labyrinth-osd".into(), &self.qh, id);
+            let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Overlay, "yggdrasil-osd".into(), &self.qh, id);
             layer.set_anchor(Anchor::Bottom);
             layer.set_size(osd::WIDTH, osd::HEIGHT);
             layer.set_exclusive_zone(0);
@@ -1215,7 +1215,7 @@ impl State {
             let id = self.next_surf;
             self.next_surf += 1;
             let wl = self.compositor.create_surface(&self.qh, ());
-            let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Overlay, "labyrinth-toast".into(), &self.qh, id);
+            let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Overlay, "yggdrasil-toast".into(), &self.qh, id);
             layer.set_anchor(Anchor::Bottom | Anchor::Right);
             layer.set_size(w, h);
             layer.set_exclusive_zone(0);
@@ -1234,7 +1234,7 @@ impl State {
             notify::emit_action(id, "default");
         }
         if let Some(dev) = n.link.strip_prefix("mount:") {
-            run(&["labyrinth-mount-open", dev]);
+            run(&["yggdrasil-mount-open", dev]);
         } else if !n.link.is_empty() {
             run(&["yggdrasil-settings", &n.link]);
         } else if n.app != notify::security_app() {
@@ -1262,7 +1262,7 @@ impl State {
     fn tray_click(&mut self, key: &str, kind: &'static str) {
         let Some(it) = self.model.tray.iter().find(|t| t.key == key).cloned() else { return };
         let (x, y) = (self.pointer_pos.0 as i32, shell::BAR_H as i32);
-        // an item with a dbusmenu gets Labyrinth's own menu (themed, placed under the bar); the rest are asked to show theirs
+        // an item with a dbusmenu gets the desktop's own menu (themed, placed under the bar); the rest are asked to show theirs
         if kind == "ContextMenu" && !it.menu_path.is_empty() {
             if let Some(tx) = self.tray_tx.clone() {
                 let ax = self.pointer_pos.0;
@@ -2062,7 +2062,7 @@ impl State {
         let dock = shell::dock_size(&shell::dock_items(&self.model), self.model.conf.dock_icon, self.model.conf.dock_pos);
         let (anchor, size, zone) = self.strut_geometry(dock);
         let wl = self.compositor.create_surface(&self.qh, ());
-        let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Background, "labyrinth-dock-room".into(), &self.qh, id);
+        let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Background, "yggdrasil-dock-room".into(), &self.qh, id);
         layer.set_anchor(anchor);
         layer.set_size(size.0, size.1);
         layer.set_exclusive_zone(zone);
@@ -3349,7 +3349,7 @@ fn main() {
         })
         .expect("tray channel");
     // screen readers: the bar, dock and pop-ups as an AT-SPI tree, and a reader's "click" back as a real click
-    if std::env::var("LABYRINTH_A11Y").map(|v| v != "off").unwrap_or(true) {
+    if std::env::var("YGGDRASIL_A11Y").map(|v| v != "off").unwrap_or(true) {
         let (a11y_tx, a11y_rx) = calloop::channel::channel::<Action>();
         state.a11y = Some(a11y::A11y::new(a11y_tx));
         event_loop
@@ -3459,7 +3459,7 @@ fn main() {
             }
         })
         .expect("heard channel");
-    // Sarina's answer (or why there is none): said aloud or shown as a notification, never a card
+    // the assistant's answer (or why there is none): said aloud or shown as a notification, never a card
     event_loop
         .handle()
         .insert_source(voice_rx, |event, _, st| {
@@ -3605,7 +3605,7 @@ fn main() {
                 st.dirty = true;
             }
             // Minos's icon is redrawn in the new accent colour: take it up when its file changes
-            let stamp = std::env::var_os("HOME").and_then(|h| std::fs::metadata(std::path::PathBuf::from(h).join(".local/share/icons/Labyrinth/apps/scalable/minos.svg")).ok()?.modified().ok());
+            let stamp = std::env::var_os("HOME").and_then(|h| std::fs::metadata(std::path::PathBuf::from(h).join(".local/share/icons/Liki/apps/scalable/minos.svg")).ok()?.modified().ok());
             let pack = paint::selected_icon_theme();
             if pack != st.icon_pack {
                 st.icon_pack = pack.clone();

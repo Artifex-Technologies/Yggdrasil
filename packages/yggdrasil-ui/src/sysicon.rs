@@ -40,7 +40,7 @@ pub fn parse_icon_theme(kdeglobals: &str) -> Option<String> {
 }
 
 /// The chain to look icons up in: the pack chosen in KDE first (so another pack changes what is shown),
-/// then Labyrinth's own, which fills in whatever that pack has no icon for, so nothing is ever missing.
+/// then Liki, the desktop's own, which fills in whatever that pack has no icon for, so nothing is ever missing.
 /// Looked at again when the pack or its files change (see `refresh`), so a new pack or accent shows without a restart.
 fn compute_chain() -> Vec<String> {
     let chosen = std::env::var_os("XDG_CONFIG_HOME")
@@ -184,7 +184,7 @@ fn render(path: &Path, px: u32) -> Option<ColorImage> {
 }
 
 fn cache(ctx: &Context) -> Arc<Mutex<Cache>> {
-    ctx.data_mut(|d| d.get_temp_mut_or_insert_with::<Arc<Mutex<Cache>>>(egui::Id::new("labyrinth-sysicons"), Default::default).clone())
+    ctx.data_mut(|d| d.get_temp_mut_or_insert_with::<Arc<Mutex<Cache>>>(egui::Id::new("yggdrasil-sysicons"), Default::default).clone())
 }
 
 /// Paint the first icon of `names` that exists in the theme into `rect`. False if none does.

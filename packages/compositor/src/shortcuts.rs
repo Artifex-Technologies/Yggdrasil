@@ -73,7 +73,7 @@ pub fn parse_action(s: &str) -> Option<Action> {
         "none" => Action::None,
         "start" => Action::ToggleStart,
         "clipboard" => Action::Clipboard,
-        "assistant" | "sarina" => Action::Assistant,
+        "assistant" | "sarina" => Action::Assistant, // "sarina": what older config files say
         "calendar" => Action::Calendar,
         "fylgja" => Action::Fylgja(rest.parse().ok()?),
         "close" => Action::Close,
@@ -166,17 +166,17 @@ pub fn defaults() -> Vec<Binding> {
         b("Super+Ctrl+Shift+2", Action::MoveToWorkspace(1)),
         b("Super+Ctrl+Shift+3", Action::MoveToWorkspace(2)),
         b("Super+Ctrl+Shift+4", Action::MoveToWorkspace(3)),
-        // the multimedia keys (labyrinth-mediakey: PipeWire volume, the running music player, brightness)
-        b("XF86AudioRaiseVolume", Action::Exec("labyrinth-mediakey volume-up".into())),
-        b("XF86AudioLowerVolume", Action::Exec("labyrinth-mediakey volume-down".into())),
-        b("XF86AudioMute", Action::Exec("labyrinth-mediakey mute".into())),
-        b("XF86AudioMicMute", Action::Exec("labyrinth-mediakey mic-mute".into())),
-        b("XF86AudioPlay", Action::Exec("labyrinth-mediakey play-pause".into())),
-        b("XF86AudioNext", Action::Exec("labyrinth-mediakey next".into())),
-        b("XF86AudioPrev", Action::Exec("labyrinth-mediakey previous".into())),
-        b("XF86AudioStop", Action::Exec("labyrinth-mediakey stop".into())),
-        b("XF86MonBrightnessUp", Action::Exec("labyrinth-mediakey brightness-up".into())),
-        b("XF86MonBrightnessDown", Action::Exec("labyrinth-mediakey brightness-down".into())),
+        // the multimedia keys (yggdrasil-mediakey: PipeWire volume, the running music player, brightness)
+        b("XF86AudioRaiseVolume", Action::Exec("yggdrasil-mediakey volume-up".into())),
+        b("XF86AudioLowerVolume", Action::Exec("yggdrasil-mediakey volume-down".into())),
+        b("XF86AudioMute", Action::Exec("yggdrasil-mediakey mute".into())),
+        b("XF86AudioMicMute", Action::Exec("yggdrasil-mediakey mic-mute".into())),
+        b("XF86AudioPlay", Action::Exec("yggdrasil-mediakey play-pause".into())),
+        b("XF86AudioNext", Action::Exec("yggdrasil-mediakey next".into())),
+        b("XF86AudioPrev", Action::Exec("yggdrasil-mediakey previous".into())),
+        b("XF86AudioStop", Action::Exec("yggdrasil-mediakey stop".into())),
+        b("XF86MonBrightnessUp", Action::Exec("yggdrasil-mediakey brightness-up".into())),
+        b("XF86MonBrightnessDown", Action::Exec("yggdrasil-mediakey brightness-down".into())),
     ]
 }
 

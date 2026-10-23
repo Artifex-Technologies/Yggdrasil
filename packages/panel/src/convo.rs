@@ -1,4 +1,4 @@
-//! Talking with Sarina without holding a key: when the speaker has stopped talking. A plain energy detector over the microphone level
+//! Talking with the assistant without holding a key: when the speaker has stopped talking. A plain energy detector over the microphone level
 //! that voicewave::mic_level gives every ~33 ms (0 is a quiet room, 1 is loud): it learns the room's noise in the first moments, notices
 //! when speech starts, and calls the end of an utterance after about a second of quiet.
 

@@ -1,4 +1,4 @@
-//! yggdrasil-greeter: the login screen. greetd starts it inside a small compositor (cage, or Labyrinth's own later) and it draws
+//! yggdrasil-greeter: the login screen. greetd starts it inside a small compositor (cage, or Yggdrasil's own later) and it draws
 //! the same designs as the lock screen; what is typed goes to greetd (greetd.rs), which runs PAM and starts the session.
 //!
 //! Settings: /etc/yggdrasil/greeter.conf (`design = split`, `session = startplasma-wayland`, `wallpaper = /path/to/picture`).
@@ -323,7 +323,7 @@ fn main() {
     let surface = compositor.create_surface(&qh, ());
     let xs = wm.get_xdg_surface(&surface, &qh, ());
     let top = xs.get_toplevel(&qh, ());
-    top.set_title("Labyrinth sign-in".into());
+    top.set_title("Sign in".into());
     top.set_app_id("yggdrasil-greeter".into());
     top.set_fullscreen(None);
     surface.commit();

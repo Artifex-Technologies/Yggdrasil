@@ -1,4 +1,4 @@
-//! The voice "island": a black pill that grows out of the notch while Sarina listens, thinks or speaks, with a waveform that
+//! The voice "island": a black pill that grows out of the notch while the assistant listens, thinks or speaks, with a waveform that
 //! follows the sound: your voice while you hold the shortcut, hers while she answers.
 //!
 //! The wave is the classic iOS 9 Siri wave (the algorithm of PXSiriWave9 / SiriWave.js, Apache-2.0): a few sine curves that
@@ -18,9 +18,9 @@ pub const HEIGHT: u32 = 104;
 pub enum Mode {
     /// Recording: the wave follows the microphone.
     Listening,
-    /// Sarina is working: a slow, small wave.
+    /// The assistant is working: a slow, small wave.
     Thinking,
-    /// Sarina is talking: the wave follows her voice.
+    /// The assistant is talking: the wave follows its voice.
     Speaking,
 }
 
@@ -40,7 +40,7 @@ pub struct Viz {
 pub fn palette(index: u8) -> [Rgba; 3] {
     match index {
         1 => [(32, 133, 252, 255), (94, 252, 169, 255), (253, 71, 103, 255)],     // Siri
-        2 => [(150, 100, 240, 255), (196, 150, 255, 255), (236, 222, 255, 255)],  // Labyrinth: the OS purple (accent 124,84,214), lighter and lighter
+        2 => [(150, 100, 240, 255), (196, 150, 255, 255), (236, 222, 255, 255)],  // accent: the default purple (124,84,214), lighter and lighter
         _ => [(214, 120, 52, 255), (255, 178, 92, 255), (255, 226, 176, 255)],    // copper, like the ribbon the owner chose
     }
 }
@@ -212,7 +212,7 @@ mod tests {
     #[test]
     fn render_pictures() {
         let Some(dir) = std::env::var_os("YGGDRASIL_VIZ_PNG") else { return };
-        for (name, level, shown, pal, phase) in [("copper-loud", 0.9, 1.0, 0u8, 2.0f32), ("copper-quiet", 0.25, 1.0, 0, 5.0), ("siri-loud", 0.9, 1.0, 1, 2.0), ("labyrinth-mid", 0.55, 1.0, 2, 3.5), ("growing", 0.5, 0.7, 0, 1.0)] {
+        for (name, level, shown, pal, phase) in [("copper-loud", 0.9, 1.0, 0u8, 2.0f32), ("copper-quiet", 0.25, 1.0, 0, 5.0), ("siri-loud", 0.9, 1.0, 1, 2.0), ("accent-mid", 0.55, 1.0, 2, 3.5), ("growing", 0.5, 0.7, 0, 1.0)] {
             let mut pix = Pixmap::new(840, 208).unwrap(); // 2x
             // a desktop-ish backdrop so the black island reads as it will
             pix.fill(tiny_skia::Color::from_rgba8(70, 50, 120, 255));

@@ -54,7 +54,7 @@ impl Dimmer {
         let layer_shell = globals.bind::<ZwlrLayerShellV1, _, _>(qh, 1..=4, ()).ok()?;
         let viewporter = globals.bind::<WpViewporter, _, _>(qh, 1..=1, ()).ok()?;
         // a pool with one pixel per opacity
-        let fd = unsafe { libc::memfd_create(c"labyrinth-idle-dim".as_ptr(), libc::MFD_CLOEXEC) };
+        let fd = unsafe { libc::memfd_create(c"yggdrasil-idle-dim".as_ptr(), libc::MFD_CLOEXEC) };
         if fd < 0 {
             return None;
         }
@@ -87,7 +87,7 @@ impl Dimmer {
                 let wl = self.compositor.create_surface(qh, ());
                 let id = self.next_id;
                 self.next_id += 1;
-                let layer = self.layer_shell.get_layer_surface(&wl, Some(&out), Layer::Overlay, "labyrinth-dim".into(), qh, id);
+                let layer = self.layer_shell.get_layer_surface(&wl, Some(&out), Layer::Overlay, "yggdrasil-dim".into(), qh, id);
                 layer.set_anchor(Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right);
                 layer.set_size(0, 0);
                 layer.set_exclusive_zone(-1);

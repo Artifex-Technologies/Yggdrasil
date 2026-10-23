@@ -1,0 +1,13 @@
+#!/bin/sh
+# yggdrasil-mount-open DEVICE: mount a drive through udisks2 (polkit decides whether that is allowed) and open it in Minos.
+# The panel runs it when you click the "Drive connected" notification.
+dev=${1:-}
+case $dev in /dev/*) ;; *) echo "usage: yggdrasil-mount-open /dev/DEVICE" >&2; exit 2 ;; esac
+case $dev in *[!A-Za-z0-9/_.-]*) echo "bad device name" >&2; exit 2 ;; esac
+where=$(findmnt -n -o TARGET --source "$dev" 2>/dev/null | head -n1)
+if [ -z "$where" ]; then
+  out=$(udisksctl mount -b "$dev" 2>&1) || { echo "$out" >&2; exit 1; }
+  where=$(printf '%s\n' "$out" | sed -n 's/^Mounted .* at \(.*\)\.$/\1/p')
+fi
+[ -n "$where" ] || exit 1
+exec setsid -f minos "$where"

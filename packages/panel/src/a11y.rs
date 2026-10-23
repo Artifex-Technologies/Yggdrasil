@@ -143,7 +143,7 @@ pub fn tree(m: &Model, parts: &[(Part, Vec<Hit>)]) -> (TreeUpdate, HashMap<u64, 
     nodes.push((TOASTS, part_node(Role::Log, "New notifications", toasts, true)));
     nodes.push((LIST, part_node(Role::List, "Kept notifications", list_kids, false)));
     let mut root = Node::new(Role::Window);
-    root.set_label("Labyrinth desktop");
+    root.set_label("Desktop");
     root.set_children(vec![BAR, DOCK, TOASTS, LIST]);
     nodes.push((ROOT, root));
     let mut t = Tree::new(ROOT);

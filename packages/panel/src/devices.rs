@@ -1,7 +1,7 @@
 //! Drives coming and going: a notification when a USB stick or SD card is plugged in (click it to open the drive in Minos) and a quiet one
 //! when it goes. This replaces KDE's "device notifier" for the one thing it did for us. It listens to udisks2 on the system bus
 //! (`InterfacesAdded` / `InterfacesRemoved` of the block devices) and never mounts anything by itself: opening the notification mounts the
-//! drive (through `labyrinth-mount-open`, which asks udisks2, so polkit decides whether it is allowed) and shows it in Minos.
+//! drive (through `yggdrasil-mount-open`, which asks udisks2, so polkit decides whether it is allowed) and shows it in Minos.
 
 use std::collections::HashMap;
 

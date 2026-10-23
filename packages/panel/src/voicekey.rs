@@ -35,7 +35,7 @@ pub fn run(tx: calloop::channel::Sender<Key>) -> Result<(), String> {
     let conn = Connection::session().map_err(|e| e.to_string())?;
     let ga = Proxy::new(&conn, "org.kde.kglobalaccel", "/kglobalaccel", "org.kde.KGlobalAccel").map_err(|e| e.to_string())?;
     // the action had another name before; its keys are given back so this one can have them
-    let _: Result<bool, _> = ga.call("unregister", &(COMPONENT, "ask-sarina"));
+    let _: Result<bool, _> = ga.call("unregister", &(COMPONENT, "ask-sarina")); // the action's name before the assistant was generic
     let action = id();
     ga.call_method("doRegister", &(&action,)).map_err(|e| format!("doRegister: {e}"))?;
     let have: Vec<i32> = ga.call("shortcut", &(&action,)).unwrap_or_default();

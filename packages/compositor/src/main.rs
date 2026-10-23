@@ -1,4 +1,4 @@
-//! yggdrasil-compositor: Labyrinth's own Wayland compositor, on Smithay. It is the piece that will replace KWin.
+//! yggdrasil-compositor: Yggdrasil's own Wayland compositor, on Smithay. It is the piece that will replace KWin.
 //!
 //! Today it runs nested in a window (winit backend) while it is being built, so it cannot touch the real session:
 //!
@@ -59,12 +59,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let display: Display<App> = Display::new()?;
     let dh = display.handle();
     let (backend, winit) = winit::init::<GlesRenderer>().map_err(|e| format!("cannot open a window: {e}"))?;
-    backend.window().set_title("Labyrinth compositor (nested)");
+    backend.window().set_title("Yggdrasil compositor (nested)");
     let backend = std::rc::Rc::new(std::cell::RefCell::new(backend));
     let (ping, ping_source) = smithay::reexports::calloop::ping::make_ping()?;
 
     let mode = Mode { size: backend.borrow().window_size(), refresh: 60_000 };
-    let output = Output::new("labyrinth-1".into(), PhysicalProperties { size: (0, 0).into(), subpixel: Subpixel::Unknown, make: "Labyrinth".into(), model: "nested window".into() });
+    let output = Output::new("yggdrasil-1".into(), PhysicalProperties { size: (0, 0).into(), subpixel: Subpixel::Unknown, make: "Yggdrasil".into(), model: "nested window".into() });
     let _global = output.create_global::<App>(&dh);
     toplevels::create_global(&dh);
     output.change_current_state(Some(mode), Some(Transform::Flipped180), None, Some((0, 0).into()));

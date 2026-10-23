@@ -3,7 +3,7 @@
 //! DESIGN --out FILE` draws one into a picture without locking anything (that is what Settings shows).
 //!
 //! "Split" follows the design of the same name in Omarchy's Lock Screen Explorer (https://github.com/SirJul1337/omarchy-lock-explorer, MIT,
-//! (c) 2026 SirJul1337): wallpaper on the left with the clock under it, a frosted sign-in panel on the right. Redrawn here for Labyrinth.
+//! (c) 2026 SirJul1337): wallpaper on the left with the clock under it, a frosted sign-in panel on the right. Redrawn here for Yggdrasil.
 
 use std::path::PathBuf;
 

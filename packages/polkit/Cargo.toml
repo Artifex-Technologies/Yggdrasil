@@ -2,7 +2,7 @@
 name = "yggdrasil-polkit"
 version = "0.1.0"
 edition = "2021"
-description = "Labyrinth's polkit authentication agent: the password box that appears when something asks for administrator rights (pkexec, Settings)"
+description = "Yggdrasil's polkit authentication agent: the password box that appears when something asks for administrator rights (pkexec, Settings)"
 license = "MIT"
 
 [[bin]]

@@ -1,0 +1,28 @@
+#!/bin/sh
+# yggdrasil-mediakey KEY: what the multimedia keys do, for compositor bindings (under KDE, KDE's own service handles them).
+#
+#   volume-up | volume-down | mute            the sound output (PipeWire, wpctl); the panel shows its own volume pop-up
+#   mic-mute                                   the microphone
+#   play-pause | next | previous | stop        the music player that is running (MPRIS)
+#   brightness-up | brightness-down            the screen brightness (brightnessctl, when installed)
+# Hyprland example:  bindel = , XF86AudioRaiseVolume, exec, yggdrasil-mediakey volume-up
+player() {
+  busctl --user list --no-legend 2>/dev/null | awk '/^org\.mpris\.MediaPlayer2\./{print $1; exit}'
+}
+mpris() {
+  p=$(player); [ -n "$p" ] || exit 0
+  busctl --user call "$p" /org/mpris/MediaPlayer2 org.mpris.MediaPlayer2.Player "$1" >/dev/null
+}
+case "${1:-}" in
+  volume-up) wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%+ ;;
+  volume-down) wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%- ;;
+  mute) wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle ;;
+  mic-mute) wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle ;;
+  play-pause) mpris PlayPause ;;
+  next) mpris Next ;;
+  previous) mpris Previous ;;
+  stop) mpris Stop ;;
+  brightness-up) brightnessctl set 5%+ ;;
+  brightness-down) brightnessctl set 5%- ;;
+  *) sed -n '2,12p' "$0" >&2; exit 2 ;;
+esac

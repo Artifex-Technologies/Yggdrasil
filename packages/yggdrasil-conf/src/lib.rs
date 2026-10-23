@@ -142,11 +142,11 @@ pub struct PanelConf {
     pub notify_dnd: bool,
     /// Yggdrasil draws the wallpaper itself (so plasmashell is not needed for it); the picture's path is in ~/.config/yggdrasil/wallpaper.
     pub own_wallpaper: bool,
-    /// Size of text and controls in Labyrinth's own apps, in percent (100 to 250).
+    /// Size of text and controls in the desktop's own apps, in percent (100 to 250).
     pub text_scale: u16,
     /// No animations (the apps' fades and slides).
     pub reduce_motion: bool,
-    /// Sarina says her answer aloud after a spoken question (Super+S).
+    /// The assistant says its answer aloud after a spoken question (Super+S).
     pub assistant_speaks: bool,
     /// The colours of the voice island wave: 0 copper, 1 Siri, 2 the accent purple (the default).
     pub voice_wave: u8,

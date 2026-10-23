@@ -448,7 +448,7 @@ impl App {
     }
 }
 
-/// `yggdrasil-settings security:heimdall` (or `appearance:icons`) opens a page inside the page.
+/// `yggdrasil-settings security:monitor` (or `appearance:icons`) opens a page inside the page.
 fn start_sub() -> String {
     std::env::args().nth(1).unwrap_or_default().to_lowercase().split_once(':').map(|(_, s)| s.to_string()).unwrap_or_default()
 }

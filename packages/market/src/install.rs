@@ -1,6 +1,6 @@
 //! Installing, reinstalling, removing and updating inside the Marketplace, with progress. The command runs as the user, with its output
-//! read line by line; anything that needs administrator rights asks through Labyrinth's own password box (pkexec / polkit), so no terminal
-//! is needed. Only apps from Labyrinth's own (reviewed) catalog are installed this way: for anything else the Marketplace keeps opening a
+//! read line by line; anything that needs administrator rights asks through the desktop's own password box (pkexec / polkit), so no terminal
+//! is needed. Only apps from the operating system's own (reviewed) catalog are installed this way: for anything else the Marketplace keeps opening a
 //! terminal, where the prompts (an AUR package's build file, for instance) can be read before saying yes.
 
 use std::io::{BufRead, BufReader, Read};

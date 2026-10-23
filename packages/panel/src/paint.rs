@@ -260,14 +260,14 @@ impl Icons {
     }
 
     /// The lookup order: the icon pack chosen in KDE first (if it is not one of ours already), then
-    /// Labyrinth's own, which fills in whatever the pack has no icon for.
+    /// Liki, the desktop's own pack, which fills in whatever the chosen pack has no icon for.
     fn chain(chosen: Option<&str>) -> Vec<String> {
         const BASE: [&str; 2] = ["Liki", "hicolor"];
         let mut v: Vec<String> = vec![];
         if let Some(c) = chosen {
             if c != "Liki" {
                 // another pack: then hicolor, where Minos's icon for that pack is put (the pack's own
-                // file-manager icon if it has no Minos one), then Labyrinth's to fill the gaps
+                // file-manager icon if it has no Minos one), then Liki's to fill the gaps
                 v.push(c.to_string());
                 v.push("hicolor".to_string());
             }
@@ -385,7 +385,7 @@ impl Icons {
         self.cache.get(&key).and_then(|o| o.as_ref())
     }
 
-    /// An SVG that ships inside the program, drawn in one colour (for the solid Labyrinth mark).
+    /// An SVG that ships inside the program, drawn in one colour (for a solid mark).
     pub fn get_svg(&mut self, name: &str, svg: &str, size: u32, color: Rgba) -> Option<&Pixmap> {
         let key = (format!("{name}#{:02x}{:02x}{:02x}", color.0, color.1, color.2), size);
         if !self.cache.contains_key(&key) {

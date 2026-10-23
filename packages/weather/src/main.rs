@@ -11,7 +11,7 @@ use yggdrasil_weather::report::{self, BarInput};
 use yggdrasil_weather::timeutil::{format_local, now_epoch, parse_local};
 use yggdrasil_weather::verify::{self, Obs, Record};
 
-const UA: &str = "yggdrasil-weather/0.1 (Labyrinth OS desktop widget)";
+const UA: &str = "yggdrasil-weather/0.1";
 const MIN_SCORED: usize = 24;
 const MAX_STATION_KM: f64 = 60.0;
 

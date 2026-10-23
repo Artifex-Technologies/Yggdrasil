@@ -1,4 +1,4 @@
-//! Labyrinth weather: several independent forecasts combined into one answer with an
+//! Yggdrasil weather: several independent forecasts combined into one answer with an
 //! honest uncertainty, scored against measured temperatures over time.
 //!
 //! Sources: Open-Meteo (free for non-commercial use, no key): GFS, ECMWF and ICON

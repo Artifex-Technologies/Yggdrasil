@@ -1,4 +1,4 @@
-//! yggdrasil-polkit: Labyrinth's polkit authentication agent. Run in the session (autostart):
+//! yggdrasil-polkit: Yggdrasil's polkit authentication agent. Run in the session (autostart):
 //!
 //!   yggdrasil-polkit                 serve this login session (replaces KDE's polkit agent: only one agent per session can be registered)
 //!   yggdrasil-polkit --process PID   serve only that process (for testing: `pkexec` run from PID asks this agent)

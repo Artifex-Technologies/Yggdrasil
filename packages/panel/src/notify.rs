@@ -285,7 +285,7 @@ pub fn ago(then: u64, now: u64) -> String {
 
 // ------------------------------------------------------------------------------------------------ messages
 
-/// What the D-Bus thread and the Heimdall thread tell the panel.
+/// What the D-Bus thread and the security-alert thread tell the panel.
 #[derive(Debug)]
 pub enum NMsg {
     New(Notif),

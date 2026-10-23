@@ -250,7 +250,7 @@ pub fn dock_items(m: &Model) -> Vec<DockItem> {
 }
 
 /// Dock id of the trash, which is not an app.
-pub const TRASH_ID: &str = "labyrinth:trash";
+pub const TRASH_ID: &str = "yggdrasil:trash";
 
 /// The freedesktop trash folder that holds the files.
 pub fn trash_dir() -> Option<std::path::PathBuf> {
@@ -346,7 +346,7 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
         return hits;
     }
 
-    // ---- left: the Labyrinth button, the desktops, the focused app's name
+    // ---- left: the start button, the desktops, the focused app's name
     let mut x = 8.0 * s;
     let lw = 30.0 * s;
     pill(pix, x, lw);

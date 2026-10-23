@@ -1,7 +1,7 @@
 //! The volume and brightness pop-up: a small black pill a little above the dock. It is drawn here, by
 //! the panel, because KWin puts Plasma's own on-screen displays at two thirds of the screen's height
 //! and nothing a theme does changes that. Plasma's own pop-up for these two is hidden (see
-//! usr/share/labyrinth/osd/Osd.qml); this one follows the real changes: the output's volume (read
+//! the operating system's Plasma OSD); this one follows the real changes: the output's volume (read
 //! from PipeWire when it changes) and the screen's brightness (from the power service).
 
 use std::io::{BufRead, BufReader};

@@ -190,7 +190,7 @@ fn valid_queue(name: &str) -> bool {
 const MARKERS_TEST: &str = "{\n OPERATION Get-Printer-Attributes\n GROUP operation-attributes-tag\n ATTR charset attributes-charset utf-8\n ATTR naturalLanguage attributes-natural-language en\n ATTR uri printer-uri $uri\n ATTR keyword requested-attributes marker-names,marker-levels,marker-colors,printer-state-message\n}\n";
 
 fn markers_of(name: &str) -> Vec<Marker> {
-    let path = std::env::temp_dir().join(format!("labyrinth-printers-{}.test", std::process::id()));
+    let path = std::env::temp_dir().join(format!("yggdrasil-printers-{}.test", std::process::id()));
     if std::fs::write(&path, MARKERS_TEST).is_err() {
         return vec![];
     }

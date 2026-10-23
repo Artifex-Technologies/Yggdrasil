@@ -1,0 +1,21 @@
+#!/bin/sh
+# yggdrasil-panelctl COMMAND: ask the running panel to do something. For compositor key bindings (Hyprland, Sway, labwc ...) and scripts;
+# under KDE the same things are wired through KDE's own shortcuts.
+#
+#   start            open or close the start menu         (bind to Super)
+#   calendar         open or close the calendar (and the notification pane when it is on)
+#   notifications    Fylgja on its Notifications section
+#   fylgja [N]       Fylgja on section N (0 Controls, 1 Today, 2 Stats, 3 Clipboard, 4 Notifications, 5 Wallpaper, 6 Power)
+#   clipboard        Fylgja on the clipboard history      (bind to Super+V)
+#   ask              start or send a spoken question to the assistant   (bind to Super+S)
+# Hyprland example (hyprland.conf):  bind = SUPER, S, exec, yggdrasil-panelctl ask
+call() { busctl --user call org.yggdrasil.Panel /Panel org.yggdrasil.Panel "$@" >/dev/null; }
+case "${1:-}" in
+  start) call ToggleStart ;;
+  calendar) call ToggleCalendar ;;
+  notifications) call ShowFylgja u 4 ;;
+  fylgja) call ShowFylgja u "${2:-0}" ;;
+  clipboard) call ShowClipboard ;;
+  ask) call Ask ;;
+  *) sed -n '2,12p' "$0" >&2; exit 2 ;;
+esac

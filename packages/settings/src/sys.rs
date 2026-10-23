@@ -458,7 +458,7 @@ pub struct Appearance {
     pub dark: bool,
     pub accent: Option<[u8; 3]>,
     pub wallpapers: Vec<std::path::PathBuf>,
-    /// Labyrinth's own top bar and dock are in use (labyrinth-panel-mode).
+    /// Yggdrasil's own top bar and dock are in use (labyrinth-panel-mode, while Plasma is still there).
     pub panel_on: bool,
     pub panel: yggdrasil_conf::PanelConf,
 }
@@ -1020,7 +1020,7 @@ fn copy_tree(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()
 pub fn install_icon_pack(src: &str) -> Result<Vec<String>, String> {
     let src = src.trim();
     let dest_root = user_icons_dir().ok_or("no home folder")?;
-    let tmp = std::env::temp_dir().join(format!("labyrinth-icons-{}", std::process::id()));
+    let tmp = std::env::temp_dir().join(format!("yggdrasil-icons-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     let result = (|| -> Result<Vec<String>, String> {

@@ -268,7 +268,7 @@ mod tests {
 /// Text size and reduced motion from Settings > Appearance (read from panel.conf at most once a second, so a change shows without a restart).
 /// Call it at the top of every frame of every app.
 pub fn apply_accessibility(ctx: &egui::Context) {
-    let id = egui::Id::new("labyrinth-accessibility-checked");
+    let id = egui::Id::new("yggdrasil-accessibility-checked");
     let now = ctx.input(|i| i.time);
     let last: f64 = ctx.data(|d| d.get_temp(id)).unwrap_or(-10.0);
     if now - last < 1.0 {

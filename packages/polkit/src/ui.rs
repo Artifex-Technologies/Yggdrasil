@@ -1,4 +1,4 @@
-//! The password box: a small window in Labyrinth's look. It stays hidden until polkit asks for something.
+//! The password box: a small window in the desktop's look. It stays hidden until polkit asks for something.
 
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
