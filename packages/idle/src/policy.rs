@@ -94,6 +94,11 @@ pub fn due_at(c: &Config, mark: u32) -> Vec<Step> {
 
 /// Something that must stop a step from happening (a video playing, a download, a game): the logind inhibitors that block idle
 /// (a video player or browser asks for this while a video plays) or sleep. A held-back dim happens as soon as the inhibitor goes.
+/// From logind's list (what, who, why, mode, uid, pid): the locks that block idling or sleeping, as (who, what).
+pub fn blocking_inhibitors(list: Vec<(String, String, String, String, u32, u32)>) -> Vec<(String, String)> {
+    list.into_iter().filter(|(what, _, _, mode, _, _)| mode == "block" && (what.contains("idle") || what.contains("sleep"))).map(|(what, who, ..)| (who, what)).collect()
+}
+
 pub fn blocked_by_inhibitors(step: Step, what: &[&str]) -> bool {
     match step {
         Step::Dim | Step::Lock | Step::DisplayOff => what.iter().any(|w| w.contains("idle")),
@@ -104,6 +109,13 @@ pub fn blocked_by_inhibitors(step: Step, what: &[&str]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_blocking_locks_hold_back_sleep() {
+        let l = |what: &str, who: &str, mode: &str| (what.to_string(), who.to_string(), String::new(), mode.to_string(), 0, 0);
+        let got = blocking_inhibitors(vec![l("sleep", "NetworkManager", "delay"), l("sleep", "UPower", "delay"), l("idle:sleep", "VLC", "block"), l("shutdown", "x", "block")]);
+        assert_eq!(got, vec![("VLC".to_string(), "idle:sleep".to_string())]);
+    }
 
     #[test]
     fn parses_and_ignores_junk() {

@@ -15,6 +15,7 @@
 //!   suspend = 0
 
 mod dim;
+mod inhibit;
 mod policy;
 
 use std::collections::HashMap;
@@ -61,17 +62,15 @@ fn screensaver_active() -> bool {
     run("busctl", &["--user", "call", "org.freedesktop.ScreenSaver", "/ScreenSaver", "org.freedesktop.ScreenSaver", "GetActive"]).ends_with("true")
 }
 
-/// logind's inhibitors as (who, what) pairs, e.g. ("Firefox", "idle").
+/// logind's blocking inhibitors on idling or sleeping, as (who, what) pairs, e.g. ("Firefox", "idle"). Only "block" locks count:
+/// "delay" locks (NetworkManager, UPower and the compositor always hold one) only ask logind to wait a moment before sleeping.
 fn inhibitors() -> Vec<(String, String)> {
-    let out = run("systemd-inhibit", &["--list", "--no-pager", "--no-legend"]);
-    out.lines()
-        .filter_map(|l| {
-            let f: Vec<&str> = l.split_whitespace().collect();
-            // WHO UID USER PID COMM WHAT WHY MODE
-            (f.len() >= 6).then(|| (f[0].to_string(), f[5].to_string()))
-        })
-        .filter(|(_, what)| what.contains("idle") || what.contains("sleep"))
-        .collect()
+    let list = || -> zbus::Result<Vec<(String, String, String, String, u32, u32)>> {
+        let sys = zbus::blocking::Connection::system()?;
+        let login = zbus::blocking::Proxy::new(&sys, "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager")?;
+        login.call("ListInhibitors", &())
+    };
+    policy::blocking_inhibitors(list().unwrap_or_default())
 }
 
 fn context() -> String {
@@ -165,6 +164,8 @@ fn read_conf() -> (Config, Option<std::time::SystemTime>) {
 }
 
 fn main() {
+    // "please don't sleep" requests from programs, as logind locks (waits while KDE's PowerDevil still answers them)
+    inhibit::spawn();
     let (conf, mut conf_time) = read_conf();
     let conn = match Connection::connect_to_env() {
         Ok(c) => c,
