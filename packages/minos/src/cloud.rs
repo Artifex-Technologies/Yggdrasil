@@ -534,9 +534,17 @@ pub fn connect_proton(user: &str, password: &str, mailbox: &str, twofa: &str) ->
         args.push("mailbox_password".into());
         args.push(obscure(mailbox)?);
     }
-    if !twofa.trim().is_empty() {
+    // The two-factor code is good for one sign-in only (about 30 seconds): it is handed over for this sign-in and removed again once
+    // the drive is mounted (rclone keeps a session instead). Signing in again also drops the old session, so the new code is used.
+    if verb == "update" || !twofa.trim().is_empty() {
         args.push("2fa".into());
         args.push(twofa.trim().to_string());
+    }
+    if verb == "update" {
+        for key in SESSION_KEYS {
+            args.push(key.into());
+            args.push(String::new());
+        }
     }
     let out = Command::new("rclone").args(&args).output().map_err(|e| format!("cannot run rclone: {e}"))?;
     if !out.status.success() {
@@ -545,8 +553,28 @@ pub fn connect_proton(user: &str, password: &str, mailbox: &str, twofa: &str) ->
         }
         return Err(format!("Proton refused the sign-in: {}", String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("").trim()));
     }
-    start_proton_mount()?;
-    wait_mounted(20).map_err(|_| "Proton did not accept that sign-in (check the password and the two-factor code, which lasts about 30 seconds)".to_string())
+    let mounted = start_proton_mount().and_then(|_| wait_mounted(20).map_err(|_| String::new()));
+    forget_twofa();
+    mounted.map_err(|_| {
+        // a refused sign-in must not be retried by the service: repeated failed sign-ins can lock a Proton account for a while
+        stop_proton_mount();
+        "Proton did not accept that sign-in (check the password and the two-factor code, which lasts about 30 seconds)".to_string()
+    })
+}
+
+/// rclone's saved Proton session (made at the first sign-in, renewed by itself).
+const SESSION_KEYS: [&str; 4] = ["client_uid", "client_access_token", "client_refresh_token", "client_salted_key_pass"];
+
+/// Removes the two-factor code from rclone's saved settings: it was for one sign-in, and a later start that sent it again would be
+/// refused (and keep being refused while the service retried).
+pub fn forget_twofa() {
+    let _ = Command::new("rclone").args(["config", "update", "proton", "2fa", ""]).output();
+}
+
+/// Stops the mount and its retries (after a sign-in Proton refused).
+pub fn stop_proton_mount() {
+    let _ = Command::new("systemctl").args(["--user", "stop", "proton-drive"]).status();
+    let _ = Command::new("systemctl").args(["--user", "reset-failed", "proton-drive"]).status();
 }
 
 /// Marks an error that means "ask for the sign-in again".

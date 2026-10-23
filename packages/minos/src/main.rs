@@ -2462,7 +2462,11 @@ impl App {
                         let (tx, c) = (self.proton_tx.clone(), ctx.clone());
                         std::thread::spawn(move || {
                             // the saved sign-in may have lapsed (a two-factor code or password no longer accepted): then ask again
-                            let r = cloud::start_proton_mount().and_then(|_| cloud::wait_mounted(15).map_err(|_| format!("{}Proton Drive did not start with the saved sign-in. Please sign in again.", cloud::SIGN_IN_AGAIN)));
+                            // any failure here (the service refused to start, or never mounted) means: stop it, and ask for the sign-in
+                            let r = cloud::start_proton_mount().and_then(|_| cloud::wait_mounted(15).map_err(|_| String::new())).map_err(|_| {
+                                cloud::stop_proton_mount();
+                                format!("{}Proton Drive did not start with the saved sign-in. Please sign in again.", cloud::SIGN_IN_AGAIN)
+                            });
                             let _ = tx.send(r);
                             c.request_repaint();
                         });
