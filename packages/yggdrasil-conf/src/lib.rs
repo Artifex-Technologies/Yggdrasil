@@ -4,6 +4,7 @@
 //! hand-edited file can never break the panel.
 
 pub mod dirs;
+pub mod integrations;
 
 use std::path::PathBuf;
 
