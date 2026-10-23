@@ -390,6 +390,60 @@ pub fn spawn_server(tx: calloop::channel::Sender<NMsg>) {
     });
 }
 
+// ------------------------------------------------------------------------------------------------ low disk space
+
+/// Free space below this (bytes, or percent of the disk) is worth a warning.
+const LOW_BYTES: u64 = 3 * 1024 * 1024 * 1024;
+const LOW_PERCENT: u64 = 3;
+
+/// Whether `free` of `total` bytes is low.
+pub fn space_is_low(free: u64, total: u64) -> bool {
+    total > 0 && (free < LOW_BYTES || free * 100 < total * LOW_PERCENT)
+}
+
+fn space_of(path: &str) -> Option<(u64, u64)> {
+    let c = std::ffi::CString::new(path).ok()?;
+    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+    // SAFETY: statvfs fills the struct it is given
+    (unsafe { libc::statvfs(c.as_ptr(), &mut st) } == 0).then(|| (st.f_bavail as u64 * st.f_frsize as u64, st.f_blocks as u64 * st.f_frsize as u64))
+}
+
+fn gib(b: u64) -> String {
+    format!("{:.1} GB", b as f64 / 1_073_741_824.0)
+}
+
+/// Checks the system disk and the home folder every ten minutes; warns once when one runs low, and again only after it had room.
+pub fn spawn_disk_watch(tx: calloop::channel::Sender<NMsg>) {
+    std::thread::spawn(move || {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/".into());
+        let mut warned: HashSet<String> = HashSet::new();
+        loop {
+            for (path, what) in [("/", "The system disk"), (home.as_str(), "Your home folder")] {
+                let Some((free, total)) = space_of(path) else { continue };
+                if !space_is_low(free, total) {
+                    warned.remove(path);
+                    continue;
+                }
+                if warned.insert(path.to_string()) {
+                    let _ = tx.send(NMsg::New(Notif {
+                        id: next_id(),
+                        app: "Storage".into(),
+                        entry: String::new(),
+                        icon: "drive-harddisk".into(),
+                        summary: "Running out of space".into(),
+                        body: format!("{what} has {} free of {}. Empty the trash or move files elsewhere.", gib(free), gib(total)),
+                        urgency: 2,
+                        time: now_secs(),
+                        actions: vec![],
+                        link: "about".into(),
+                    }));
+                }
+            }
+            std::thread::sleep(Duration::from_secs(600));
+        }
+    });
+}
+
 // ------------------------------------------------------------------------------------------------ security alerts
 
 fn severity_rank(s: &str) -> u8 {
@@ -878,6 +932,15 @@ mod tests {
         assert_eq!(ago(0, 300), "5m");
         assert_eq!(ago(0, 7200), "2h");
         assert_eq!(ago(0, 3 * 86400), "3d");
+    }
+
+    #[test]
+    fn low_space_is_little_room_left() {
+        const G: u64 = 1024 * 1024 * 1024;
+        assert!(space_is_low(2 * G, 500 * G), "under 3 GB");
+        assert!(space_is_low(20 * G, 1000 * G), "under 3% of a big disk");
+        assert!(!space_is_low(100 * G, 500 * G));
+        assert!(!space_is_low(0, 0), "no disk, no warning");
     }
 
     #[test]

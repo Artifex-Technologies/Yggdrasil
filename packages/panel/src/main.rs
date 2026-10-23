@@ -22,6 +22,7 @@ mod assistant;
 mod voicewave;
 mod shell;
 mod status;
+mod mediakeys;
 mod snwatcher;
 mod tray;
 mod trayui;
@@ -3287,6 +3288,8 @@ fn main() {
         .expect("tab channel");
     // the volume or brightness changed: show the pop-up; its timer ran out: put it away
     let (osd_tx, osd_rx) = calloop::channel::channel::<osd::OsdState>();
+    // the multimedia keys, once KDE's kded and PowerDevil no longer handle them
+    mediakeys::spawn(osd_tx.clone());
     osd::spawn_watchers(osd_tx);
     event_loop
         .handle()
@@ -3310,6 +3313,7 @@ fn main() {
     state.model.notifs.dnd = state.model.conf.notify_dnd;
     notify::spawn_server(note_tx.clone());
     notify::spawn_security_alerts(note_tx.clone());
+    notify::spawn_disk_watch(note_tx.clone());
     devices::spawn(note_tx);
     event_loop
         .handle()
