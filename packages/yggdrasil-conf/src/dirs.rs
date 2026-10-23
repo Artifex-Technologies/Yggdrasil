@@ -74,6 +74,8 @@ fn old_and_new(var: &str) -> (PathBuf, PathBuf) {
 /// Moves the desktop's own files from the old folders, once (a marker in the new config folder records it). Safe to call from every
 /// program at start: a file already in the new place is never overwritten, and a move is a rename (all or nothing).
 pub fn migrate() {
+    // renamed apps in the dock: every time (cheap, and harmless when there is nothing to rename), so a run that missed it catches up
+    rename_apps_in(&raw_config().join("dock"));
     let marker = raw_config().join(".moved-from-labyrinth");
     if marker.exists() {
         return;
