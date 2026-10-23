@@ -7,15 +7,15 @@ will use Yggdrasil as well, so Yggdrasil must never depend on anything that only
 
 | Piece | Today's program (package) | Notes |
 | --- | --- | --- |
-| Panel: top bar, dock, tray, Fylgja, notifications, start menu, wallpaper | `labyrinth-panel` | |
-| Settings | `labyrinth-settings` | Labyrinth-only pages (games, Artifex apps) are separable |
-| File manager and file chooser | `minos`, `labyrinth-portal` | |
-| Marketplace | `labyrinth-market` | shared by Labyrinth and Chymaera through editions |
-| Lock screen, login screen | `labyrinth-lock`, `labyrinth-greeter` (package `labyrinth-lock`) | designs shared |
-| Idle manager (dim, lock, screen off, sleep) | `labyrinth-idle` | |
-| Polkit agent, keyring sync, distress password | `labyrinth-polkit`, `labyrinth-keyring-sync`, `labyrinth-distress` (+ PAM module) | |
-| Compositor | `labyrinth-compositor` | first version, nested only (COMPOSITOR.md) |
-| Calculator, weather | `labyrinth-calculator`, `labyrinth-weather` | small apps |
+| Panel: top bar, dock, tray, Fylgja, notifications, start menu, wallpaper | `yggdrasil-panel` | |
+| Settings | `yggdrasil-settings` | Labyrinth-only pages (games, Artifex apps) are separable |
+| File manager and file chooser | `minos`, `yggdrasil-portal` | |
+| Marketplace | `agora` | shared by Labyrinth and Chymaera through editions |
+| Lock screen, login screen | `yggdrasil-lock`, `yggdrasil-greeter` (package `yggdrasil-lock`) | designs shared |
+| Idle manager (dim, lock, screen off, sleep) | `yggdrasil-idle` | |
+| Polkit agent, keyring sync, distress password | `yggdrasil-polkit`, `yggdrasil-keyring-sync`, `labyrinth-distress` (+ PAM module) | |
+| Compositor | `yggdrasil-compositor` | first version, nested only (COMPOSITOR.md) |
+| Calculator, weather | `yggdrasil-calculator`, `yggdrasil-weather` | small apps |
 | Look for other programs (colour scheme, GTK colours, cursors) | `ygg-theme`, `ygg-cursors` (package `yggdrasil-theme`; [THEME.md](THEME.md)) | replaces WhiteSur |
 | Icons | `liki-build` and the others (package `liki-icon-theme`; [LIKI.md](LIKI.md)) | the pack is Liki |
 | Shared library and settings file | `labyrinth-ui`, `labyrinth-conf`; `~/.config/labyrinth/` | |

@@ -123,7 +123,7 @@ All under `profile/airootfs/home/live/.config/` (copied into new users' `/etc/sk
 | Top bar | `waybar/config.jsonc`, `style.css` | JSON parses, every listed module is defined; **never rendered** |
 | Dock | `nwg-dock-hyprland/style.css`, started by `labyrinth-shell` | **Never rendered** |
 | Spotify controls | bar modules + `playerctl -p spotify` | **Never run.** Needs Spotify running |
-| Weather (optional component) | `packages/labyrinth-weather` (Rust) | **Tested**, and run live against the real services. See [WEATHER.md](WEATHER.md) |
+| Weather (optional component) | `packages/yggdrasil-weather` (Rust) | **Tested**, and run live against the real services. See [WEATHER.md](WEATHER.md) |
 | Power / quick settings | `labyrinth-quick-settings` (fuzzel menu) | **Tested** with stand-in menu and systemctl |
 | Left-side buttons (GTK apps) | `gtk-3.0/settings.ini`, `gtk-4.0/settings.ini` | Standard GTK setting; not seen on screen |
 | Translucent terminal | `foot/foot.ini` | Needed so blur is visible |

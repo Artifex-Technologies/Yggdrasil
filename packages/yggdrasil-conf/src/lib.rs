@@ -246,7 +246,7 @@ impl PanelConf {
 
     pub fn to_text(&self) -> String {
         format!(
-            "# How the top bar and dock look. Edited by Labyrinth Settings (Appearance).\n\
+            "# How the top bar and dock look. Edited by Settings (Appearance).\n\
              dock_pos = {}\ndock_icon = {}\ndock_gap = {}\nclock_24h = {}\nstart_theme = {}\ndock_opacity = {}\ndock_color = {}\nbar_opacity = {}\nbar_color = {}\nclipboard_history = {}\nsearch_subfolders = {}\nshow_hidden = {}\ndrive_status = {}\ndeveloper = {}\nnotify_toasts = {}\nnotify_pane = {}\nnotify_dnd = {}\nown_wallpaper = {}\ntext_scale = {}\nreduce_motion = {}\nsarina_speaks = {}\nsarina_wave = {}\nsarina_tone = {}\nheimdall_alerts = {}\nminos_first_window = {}\nminos_more_windows = {}\nminos_new_tab = {}\nminos_transparent = {}\nminos_opacity = {}\n",
             match self.dock_pos {
                 DockPos::Bottom => "bottom",

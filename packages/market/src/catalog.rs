@@ -388,7 +388,7 @@ fn newer(new: &str, old: &str) -> bool {
 /// checkupdates does), the AUR through yay; Labyrinth's own builds and anything that would go backwards are left out. Needs the network.
 pub fn check_updates() -> Vec<Update> {
     let mut out: Vec<Update> = vec![];
-    let run_dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/tmp")).join("labyrinth-market");
+    let run_dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/tmp")).join("agora");
     let tmp = run_dir.join(format!("updates-db-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     let made = std::fs::create_dir_all(tmp.join("sync")).is_ok() && std::os::unix::fs::symlink("/var/lib/pacman/local", tmp.join("local")).is_ok();

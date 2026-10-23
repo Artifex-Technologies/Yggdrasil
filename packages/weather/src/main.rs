@@ -11,7 +11,7 @@ use yggdrasil_weather::report::{self, BarInput};
 use yggdrasil_weather::timeutil::{format_local, now_epoch, parse_local};
 use yggdrasil_weather::verify::{self, Obs, Record};
 
-const UA: &str = "labyrinth-weather/0.1 (Labyrinth OS desktop widget)";
+const UA: &str = "yggdrasil-weather/0.1 (Labyrinth OS desktop widget)";
 const MIN_SCORED: usize = 24;
 const MAX_STATION_KM: f64 = 60.0;
 
@@ -53,7 +53,7 @@ fn learned_weights() -> HashMap<String, f64> {
 
 fn load_config() -> Result<Config, String> {
     let path = config::config_path().ok_or("no config directory on this system")?;
-    config::load(&path).ok_or_else(|| "no location set; run: labyrinth-weather set-location \"City name\"".to_string())
+    config::load(&path).ok_or_else(|| "no location set; run: yggdrasil-weather set-location \"City name\"".to_string())
 }
 
 fn hours_for(f: &Fetched, weights: &HashMap<String, f64>) -> Vec<Hour> {
@@ -229,7 +229,7 @@ fn cmd_score() -> ExitCode {
     let weights = verify::weights(&scores, MIN_SCORED);
     println!("{} predictions and {} measurements on file", records.len(), obs.len());
     if scores.is_empty() {
-        println!("nothing scored yet: needs predictions whose time has passed and a measurement near that time.\nRun `labyrinth-weather record` hourly (the systemd timer does this).");
+        println!("nothing scored yet: needs predictions whose time has passed and a measurement near that time.\nRun `yggdrasil-weather record` hourly (the systemd timer does this).");
         return ExitCode::SUCCESS;
     }
     println!("{:<16} {:>6} {:>9} {:>9} {:>8}", "source", "n", "MAE (C)", "bias (C)", "weight");
@@ -243,7 +243,7 @@ fn cmd_score() -> ExitCode {
 }
 
 fn die(msg: &str) -> ExitCode {
-    eprintln!("labyrinth-weather: {msg}");
+    eprintln!("yggdrasil-weather: {msg}");
     ExitCode::from(1)
 }
 
@@ -257,7 +257,7 @@ fn main() -> ExitCode {
         Some("record") => cmd_record(),
         Some("score") => cmd_score(),
         _ => {
-            eprintln!("usage: labyrinth-weather bar | forecast [HOURS] | set-location CITY | set-location --coords LAT LON [NAME] | units metric|us | record | score");
+            eprintln!("usage: yggdrasil-weather bar | forecast [HOURS] | set-location CITY | set-location --coords LAT LON [NAME] | units metric|us | record | score");
             ExitCode::from(2)
         }
     }

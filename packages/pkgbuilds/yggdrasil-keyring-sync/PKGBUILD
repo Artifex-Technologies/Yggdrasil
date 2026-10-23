@@ -1,0 +1,31 @@
+# Yggdrasil keyring sync: one question at login if the keyring and the login password drifted apart (Rust): built from packages/keyring-sync in this repository.
+pkgname=yggdrasil-keyring-sync
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Yggdrasil keyring sync: one question at login if the keyring and the login password drifted apart"
+arch=('x86_64')
+provides=('labyrinth-keyring-sync')
+conflicts=('labyrinth-keyring-sync')
+replaces=('labyrinth-keyring-sync')
+url="https://github.com/Artifex-Technologies/Yggdrasil"
+license=('MIT')
+depends=('gcc-libs' 'libxkbcommon' 'wayland' 'vulkan-icd-loader' 'libglvnd' 'fontconfig' 'pam' 'gnome-keyring')
+makedepends=('cargo')
+options=('!lto')
+
+_src="$startdir/../../keyring-sync"
+
+build() {
+  cd "$_src"
+  cargo build --release --locked --target-dir "$srcdir/target"
+}
+
+check() {
+  cd "$_src"
+  cargo test --release --locked --target-dir "$srcdir/target"
+}
+
+package() {
+  install -Dm755 "$srcdir/target/release/yggdrasil-keyring-sync" "$pkgdir/usr/bin/yggdrasil-keyring-sync"
+  install -Dm644 "$_src/yggdrasil-keyring-sync.desktop" "$pkgdir/etc/xdg/autostart/yggdrasil-keyring-sync.desktop"
+}

@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=Labyrinth Panel
+Name=Yggdrasil Panel
 Comment=The top bar and dock
-Exec=/usr/bin/labyrinth-panel
+Exec=/usr/bin/yggdrasil-panel
 Icon=labyrinthos
 NoDisplay=true
 Terminal=false

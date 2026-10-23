@@ -10,7 +10,7 @@ WAYLAND_DISPLAY=wayland-0 Hyprland --config /tmp/hypr-a11y-test.conf >/tmp/hypr-
 HP=$!
 sleep 5
 ls $XDG_RUNTIME_DIR | grep wayland
-WAYLAND_DISPLAY=wayland-1 ./target/debug/labyrinth-panel >/tmp/panel-a11y.log 2>&1 &
+WAYLAND_DISPLAY=wayland-1 ./target/debug/yggdrasil-panel >/tmp/panel-a11y.log 2>&1 &
 PP=$!
 sleep 6
 /usr/lib/at-spi2-registryd --use-gnome-session >/tmp/registryd.log 2>&1 &

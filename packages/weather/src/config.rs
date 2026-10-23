@@ -23,9 +23,9 @@ impl Config {
     }
 }
 
-/// `LABYRINTH_WEATHER_CONFIG` overrides the path (used by tests).
+/// `YGGDRASIL_WEATHER_CONFIG` overrides the path (used by tests).
 pub fn config_path() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("LABYRINTH_WEATHER_CONFIG") {
+    if let Ok(p) = std::env::var("YGGDRASIL_WEATHER_CONFIG") {
         if !p.is_empty() {
             return Some(PathBuf::from(p));
         }
@@ -33,9 +33,9 @@ pub fn config_path() -> Option<PathBuf> {
     Some(yggdrasil_conf::dirs::config().join("weather.json"))
 }
 
-/// `LABYRINTH_WEATHER_DATA` overrides the history directory.
+/// `YGGDRASIL_WEATHER_DATA` overrides the history directory.
 pub fn data_dir() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("LABYRINTH_WEATHER_DATA") {
+    if let Ok(p) = std::env::var("YGGDRASIL_WEATHER_DATA") {
         if !p.is_empty() {
             return Some(PathBuf::from(p));
         }

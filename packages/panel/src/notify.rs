@@ -48,7 +48,7 @@ pub struct Notif {
     pub time: u64,
     /// (key, label) pairs the app offered; the key "default" is what a click on the notification means.
     pub actions: Vec<(String, String)>,
-    /// What to open for a notification that is not an app's (Heimdall's): a `labyrinth-settings` page.
+    /// What to open for a notification that is not an app's (Heimdall's): a `yggdrasil-settings` page.
     pub link: String,
 }
 
@@ -368,7 +368,7 @@ pub fn spawn_server(tx: calloop::channel::Sender<NMsg>) {
             match built {
                 Ok(conn) => {
                     let _ = CONN.set(conn.clone());
-                    eprintln!("labyrinth-panel: serving notifications");
+                    eprintln!("yggdrasil-panel: serving notifications");
                     // the connection serves on its own threads; keep this one (and the connection) alive
                     loop {
                         std::thread::sleep(Duration::from_secs(3600));
@@ -376,7 +376,7 @@ pub fn spawn_server(tx: calloop::channel::Sender<NMsg>) {
                 }
                 Err(e) => {
                     if !told {
-                        eprintln!("labyrinth-panel: notifications not served (another program holds the name?): {e}");
+                        eprintln!("yggdrasil-panel: notifications not served (another program holds the name?): {e}");
                         told = true;
                     }
                     std::thread::sleep(Duration::from_secs(10));

@@ -1,12 +1,12 @@
 [package]
-name = "labyrinth-settings"
+name = "yggdrasil-settings"
 version = "0.1.0"
 edition = "2021"
-description = "Labyrinth Settings: the everyday settings in one clean app (GNOME-style), on top of Plasma"
+description = "Settings: the everyday settings in one clean app (GNOME-style), on top of Plasma"
 license = "MIT"
 
 [[bin]]
-name = "labyrinth-settings"
+name = "yggdrasil-settings"
 path = "src/main.rs"
 
 [dependencies]

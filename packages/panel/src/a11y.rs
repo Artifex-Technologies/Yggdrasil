@@ -147,7 +147,7 @@ pub fn tree(m: &Model, parts: &[(Part, Vec<Hit>)]) -> (TreeUpdate, HashMap<u64, 
     root.set_children(vec![BAR, DOCK, TOASTS, LIST]);
     nodes.push((ROOT, root));
     let mut t = Tree::new(ROOT);
-    t.toolkit_name = Some("labyrinth-panel".into());
+    t.toolkit_name = Some("yggdrasil-panel".into());
     (TreeUpdate { nodes, tree: Some(t), tree_id: TreeId::ROOT, focus: ROOT }, table)
 }
 

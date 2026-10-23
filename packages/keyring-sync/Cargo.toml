@@ -1,12 +1,12 @@
 [package]
-name = "labyrinth-keyring-sync"
+name = "yggdrasil-keyring-sync"
 version = "0.1.0"
 edition = "2021"
 description = "Keeps gnome-keyring's login keyring and the login password together: one clear question when they have drifted apart"
 license = "MIT"
 
 [[bin]]
-name = "labyrinth-keyring-sync"
+name = "yggdrasil-keyring-sync"
 path = "src/main.rs"
 
 [dependencies]

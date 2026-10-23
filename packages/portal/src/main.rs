@@ -1,4 +1,4 @@
-//! labyrinth-portal: the xdg-desktop-portal backend that makes Minos the open/save dialog of every application
+//! yggdrasil-portal: the xdg-desktop-portal backend that makes Minos the open/save dialog of every application
 //! (`org.freedesktop.impl.portal.FileChooser`). When a program asks for a file, this starts `minos --pick ...`, reads the
 //! paths Minos prints and answers with file:// URIs. It decides nothing about access itself; the portal frontend and the
 //! sandbox do that. Nothing is logged but errors.
@@ -104,7 +104,7 @@ fn pick(handle: &str, running: &Arc<Mutex<HashMap<String, u32>>>, args: Vec<Stri
     let child = match child {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("labyrinth-portal: could not start minos: {e}");
+            eprintln!("yggdrasil-portal: could not start minos: {e}");
             return None;
         }
     };

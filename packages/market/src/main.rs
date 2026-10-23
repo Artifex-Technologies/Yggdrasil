@@ -1,4 +1,4 @@
-//! Labyrinth Marketplace: apps in one place, laid out like an app store (Discover, Create, Work, Play, Develop, Categories,
+//! Agora: apps in one place, laid out like an app store (Discover, Create, Work, Play, Develop, Categories,
 //! Updates). Sources: Labyrinth's own reviewed catalog, plus repositories you add (marked as not reviewed).
 
 mod catalog;
@@ -148,8 +148,8 @@ impl App {
         app.rebuild(ctx, false);
         app.refresh_installed(ctx);
         app.check_updates(ctx);
-        // LABYRINTH_MARKET_PAGE=tab:Create | categories | updates | sources | detail:krita | search:word (for screenshots and tests)
-        if let Ok(p) = std::env::var("LABYRINTH_MARKET_PAGE") {
+        // AGORA_PAGE=tab:Create | categories | updates | sources | detail:krita | search:word (for screenshots and tests)
+        if let Ok(p) = std::env::var("AGORA_PAGE") {
             let (kind, arg) = p.split_once(':').unwrap_or((p.as_str(), ""));
             app.page = match kind {
                 "tab" => TABS.iter().find(|t| **t == arg).map(|t| Page::Tab(t)).unwrap_or(Page::Discover),
@@ -454,7 +454,7 @@ impl App {
             if status == install::Status::Done && matches!(op, install::Op::Install | install::Op::Reinstall) {
                 history::record(&id2, &name2, op.done());
             }
-            let _ = std::process::Command::new("notify-send").args(["-a", "Agora", "-i", "labyrinth-market", &text]).status();
+            let _ = std::process::Command::new("notify-send").args(["-a", "Agora", "-i", "agora", &text]).status();
             let _ = tx.send(Msg::Finished(id2));
             ctx_b.request_repaint();
         });
@@ -1399,7 +1399,7 @@ impl eframe::App for App {
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1180.0, 760.0]).with_min_inner_size([760.0, 480.0]).with_title("Agora").with_app_id("labyrinth-market").with_decorations(false),
+        viewport: egui::ViewportBuilder::default().with_inner_size([1180.0, 760.0]).with_min_inner_size([760.0, 480.0]).with_title("Agora").with_app_id("agora").with_decorations(false),
         ..Default::default()
     };
     eframe::run_native(

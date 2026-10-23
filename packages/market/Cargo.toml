@@ -1,12 +1,12 @@
 [package]
-name = "labyrinth-market"
+name = "agora"
 version = "0.1.0"
 edition = "2021"
-description = "Labyrinth Marketplace: one place for apps, from Labyrinth's own catalog and from repositories you add"
+description = "Agora: one place for apps, from Labyrinth's own catalog and from repositories you add"
 license = "MIT"
 
 [[bin]]
-name = "labyrinth-market"
+name = "agora"
 path = "src/main.rs"
 
 [dependencies]

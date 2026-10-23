@@ -37,7 +37,7 @@ install_icon() {
 names_for() {
   case ${1,,} in
     finder*|minos*)     echo system-file-manager file-manager org.kde.dolphin ;;
-    settings*)          echo preferences-system labyrinth-settings systemsettings ;;
+    settings*)          echo preferences-system yggdrasil-settings systemsettings ;;
     terminal*)          echo utilities-terminal ;;
     ghostty*)           echo com.mitchellh.ghostty ghostty ;;
     spotify*)           echo spotify-launcher spotify-client spotify ;;

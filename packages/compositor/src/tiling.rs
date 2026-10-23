@@ -73,7 +73,7 @@ impl Conf {
 }
 
 pub fn config_path() -> std::path::PathBuf {
-    if let Some(p) = std::env::var_os("LABYRINTH_COMPOSITOR_WORKSPACES") {
+    if let Some(p) = std::env::var_os("YGGDRASIL_COMPOSITOR_WORKSPACES") {
         return p.into();
     }
     yggdrasil_conf::dirs::config().join("workspaces.conf")

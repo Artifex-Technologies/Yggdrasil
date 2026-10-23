@@ -100,9 +100,9 @@ gnome-keyring's login keyring is locked with the login password; `pam_gnome_keyr
 - **Shipped in the ISO profile:** the `-password optional pam_gnome_keyring.so use_authtok` line in `/etc/pam.d/passwd` and `/etc/pam.d/chpasswd`.
   `passwd` in a terminal and anything that calls `chpasswd` or `passwd` therefore keeps the two together. `system-auth` itself is left alone (it belongs to
   the `pambase` package and an upgrade would overwrite a change).
-- **Labyrinth Settings (a Users page, not built yet) must change passwords through the PAM password stack** with the old and the new password
+- **Settings (a Users page, not built yet) must change passwords through the PAM password stack** with the old and the new password
   (a small helper speaking PAM, like `passwd`), never through AccountsService's `SetPassword` or by writing the shadow file: those have no old password,
   so the keyring would be left behind. KDE's own Users page does exactly that, and Settings hides it.
-- **When they do get out of step anyway** (an administrator reset the password, a tool that bypassed PAM): `labyrinth-keyring-sync` (to build, autostart at login):
+- **When they do get out of step anyway** (an administrator reset the password, a tool that bypassed PAM): `yggdrasil-keyring-sync` (to build, autostart at login):
   if the login keyring is locked after login, ask once for the *previous* password in our own dialog and change the keyring to the current one through
   gnome-keyring's `ChangeWithMasterPassword` (the call Seahorse uses). The end user sees one clear question, not an app asking for a password they do not remember.

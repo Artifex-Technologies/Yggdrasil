@@ -655,29 +655,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "labyrinth-panel"
-version = "0.1.0"
-dependencies = [
- "ab_glyph",
- "accesskit",
- "accesskit_unix",
- "calloop",
- "calloop-wayland-source",
- "libc",
- "memmap2",
- "resvg",
- "rustix",
- "serde_json",
- "wayland-client",
- "wayland-protocols",
- "wayland-protocols-plasma",
- "wayland-protocols-wlr",
- "xkbcommon",
- "yggdrasil-conf",
- "zbus",
-]
-
-[[package]]
 name = "libc"
 version = "0.2.190"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1472,6 +1449,29 @@ checksum = "b9cc00251562a284751c9973bace760d86c0276c471b4be569fe6b068ee97a56"
 [[package]]
 name = "yggdrasil-conf"
 version = "0.1.0"
+
+[[package]]
+name = "yggdrasil-panel"
+version = "0.1.0"
+dependencies = [
+ "ab_glyph",
+ "accesskit",
+ "accesskit_unix",
+ "calloop",
+ "calloop-wayland-source",
+ "libc",
+ "memmap2",
+ "resvg",
+ "rustix",
+ "serde_json",
+ "wayland-client",
+ "wayland-protocols",
+ "wayland-protocols-plasma",
+ "wayland-protocols-wlr",
+ "xkbcommon",
+ "yggdrasil-conf",
+ "zbus",
+]
 
 [[package]]
 name = "zbus"

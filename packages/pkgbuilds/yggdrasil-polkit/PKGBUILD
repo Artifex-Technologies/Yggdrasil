@@ -1,0 +1,33 @@
+# Yggdrasil polkit authentication agent (the password box for administrator actions): prototype (Rust): built from packages/polkit in this repository.
+pkgname=yggdrasil-polkit
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Yggdrasil polkit authentication agent (the password box for administrator actions): prototype"
+arch=('x86_64')
+provides=('labyrinth-polkit')
+conflicts=('labyrinth-polkit')
+replaces=('labyrinth-polkit')
+url="https://github.com/Artifex-Technologies/Yggdrasil"
+license=('MIT')
+depends=('gcc-libs' 'libxkbcommon' 'wayland' 'vulkan-icd-loader' 'libglvnd' 'fontconfig' 'polkit')
+makedepends=('cargo')
+options=('!lto')
+
+_src="$startdir/../../polkit"
+
+build() {
+  cd "$_src"
+  cargo build --release --locked --target-dir "$srcdir/target"
+}
+
+check() {
+  cd "$_src"
+  cargo test --release --locked --target-dir "$srcdir/target"
+}
+
+package() {
+  install -Dm755 "$srcdir/target/release/yggdrasil-polkit" "$pkgdir/usr/bin/yggdrasil-polkit"
+
+  # started at login by the desktop session
+  install -Dm644 "$_src/yggdrasil-polkit-autostart.desktop" "$pkgdir/etc/xdg/autostart/yggdrasil-polkit.desktop"
+}

@@ -1,6 +1,6 @@
-//! labyrinth-lock: the screen locker.
+//! yggdrasil-lock: the screen locker.
 //!
-//!   labyrinth-lock          lock the screen now; returns (exit 0) when the right password was typed
+//!   yggdrasil-lock          lock the screen now; returns (exit 0) when the right password was typed
 //!
 //! It speaks the standard Wayland session-lock protocol (`ext-session-lock-v1`): the compositor shows nothing of the session
 //! except what this program draws, and keeps the session locked even if this program crashes or is killed. A password is checked
@@ -70,7 +70,7 @@ struct App {
     walls: std::collections::HashMap<(u32, u32), (Pixmap, Pixmap)>,
     /// Set when the program should end, with its exit status.
     done: Option<i32>,
-    /// Tests only (feature `test-auth`): keys to type by themselves once the screen is locked, from LABYRINTH_LOCK_TEST_KEYS.
+    /// Tests only (feature `test-auth`): keys to type by themselves once the screen is locked, from YGGDRASIL_LOCK_TEST_KEYS.
     #[cfg(feature = "test-auth")]
     test_keys: Option<(Instant, String)>,
 }
@@ -101,7 +101,7 @@ impl Dispatch<ExtSessionLockV1, ()> for App {
             }
             ext_session_lock_v1::Event::Finished => {
                 // refused (another locker is running) or ended by the compositor
-                eprintln!("labyrinth-lock: the compositor ended the lock{}", if app.locked { "" } else { " (another locker may be running)" });
+                eprintln!("yggdrasil-lock: the compositor ended the lock{}", if app.locked { "" } else { " (another locker may be running)" });
                 app.done = Some(1);
             }
             _ => {}
@@ -209,7 +209,7 @@ impl App {
         // a shared-memory buffer holding the picture, handed to the compositor
         let stride = w * 4;
         let size = (stride * h) as usize;
-        let Ok(fd) = rustix::fs::memfd_create(c"labyrinth-lock", rustix::fs::MemfdFlags::CLOEXEC) else { return };
+        let Ok(fd) = rustix::fs::memfd_create(c"yggdrasil-lock", rustix::fs::MemfdFlags::CLOEXEC) else { return };
         if rustix::fs::ftruncate(&fd, size as u64).is_err() {
             return;
         }
@@ -273,7 +273,7 @@ fn user_name() -> String {
     })
 }
 
-/// `labyrinth-lock --preview DESIGN --out FILE [--size 1280x720] [--typed N] [--message TEXT]`: draw a design into a picture; nothing is locked.
+/// `yggdrasil-lock --preview DESIGN --out FILE [--size 1280x720] [--typed N] [--message TEXT]`: draw a design into a picture; nothing is locked.
 fn preview(args: &[String]) -> ! {
     let get = |k: &str| args.iter().position(|a| a == k).and_then(|i| args.get(i + 1)).cloned();
     let Some(d) = get("--preview").and_then(|n| design::Design::parse(&n)) else { die("unknown design (split, classic, zen, poster)") };
@@ -301,14 +301,14 @@ fn main() {
     let conn = match Connection::connect_to_env() {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("labyrinth-lock: no Wayland display: {e}");
+            eprintln!("yggdrasil-lock: no Wayland display: {e}");
             std::process::exit(2);
         }
     };
     let (globals, mut queue) = match registry_queue_init::<App>(&conn) {
         Ok(x) => x,
         Err(e) => {
-            eprintln!("labyrinth-lock: {e}");
+            eprintln!("yggdrasil-lock: {e}");
             std::process::exit(2);
         }
     };
@@ -323,11 +323,11 @@ fn main() {
     #[cfg(feature = "test-auth")]
     let authenticator: Box<dyn Authenticator> = Box::new(auth::Fake);
     #[cfg(not(feature = "test-auth"))]
-    let authenticator: Box<dyn Authenticator> = Box::new(auth::WithDistress { inner: auth::Pam { service: std::env::var("LABYRINTH_LOCK_PAM").unwrap_or_else(|_| "login".into()) } });
+    let authenticator: Box<dyn Authenticator> = Box::new(auth::WithDistress { inner: auth::Pam { service: std::env::var("YGGDRASIL_LOCK_PAM").unwrap_or_else(|_| "login".into()) } });
 
     // Lock first, then cover every output with a lock surface (the compositor says "locked" once they are shown).
     let lock = manager.lock(&qh, ());
-    let mut app = App { qh: qh.clone(), conn: conn.clone(), shm, lock: lock.clone(), surfaces: vec![], locked: false, lock_state: Lock::default(), xkb: None, auth: authenticator, user: user_name(), fonts, design: design::chosen(), wallpaper: design::wallpaper_path().and_then(|p| design::load_picture(&p)), avatar: design::avatar_path().and_then(|p| design::load_picture(&p)), walls: Default::default(), done: None, #[cfg(feature = "test-auth")] test_keys: std::env::var("LABYRINTH_LOCK_TEST_KEYS").ok().map(|k| (Instant::now(), k)) };
+    let mut app = App { qh: qh.clone(), conn: conn.clone(), shm, lock: lock.clone(), surfaces: vec![], locked: false, lock_state: Lock::default(), xkb: None, auth: authenticator, user: user_name(), fonts, design: design::chosen(), wallpaper: design::wallpaper_path().and_then(|p| design::load_picture(&p)), avatar: design::avatar_path().and_then(|p| design::load_picture(&p)), walls: Default::default(), done: None, #[cfg(feature = "test-auth")] test_keys: std::env::var("YGGDRASIL_LOCK_TEST_KEYS").ok().map(|k| (Instant::now(), k)) };
     for (i, out) in outputs.iter().enumerate() {
         let wl = compositor.create_surface(&qh, ());
         let ls = lock.get_lock_surface(&wl, out, &qh, i);
@@ -372,7 +372,7 @@ fn main() {
 }
 
 fn die(msg: &str) -> ! {
-    eprintln!("labyrinth-lock: {msg}");
+    eprintln!("yggdrasil-lock: {msg}");
     std::process::exit(2);
 }
 

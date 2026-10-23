@@ -1,6 +1,6 @@
 # Login screen (replaces SDDM)
 
-`labyrinth-greeter` (built from `packages/lock`, next to the lock screen) draws the login screen with the same designs as the lock
+`yggdrasil-greeter` (built from `packages/lock`, next to the lock screen) draws the login screen with the same designs as the lock
 screen (Split by default). It talks to **greetd**, which runs PAM and starts the session; the greeter only passes along what was typed.
 
 - Shown: the account's name and picture (AccountsService icon, else the initial), a password field, the clock.
@@ -15,7 +15,7 @@ screen (Split by default). It talks to **greetd**, which runs PAM and starts the
   shows "Wrong password" and cancels the session; the right password sends `start_session` with the configured command and the greeter
   exits 0. The protocol part (`greetd.rs`) has unit tests (right password, wrong password, info messages, a second question, a dead connection).
 - **Not tested with the real greetd**, and not enabled here: SDDM is still the login manager on this machine. The files are ready:
-  `/etc/greetd/config.toml` (starts `cage -s -- labyrinth-greeter` as the `greeter` user), `/etc/pam.d/greetd` (the keyring unlocks at
+  `/etc/greetd/config.toml` (starts `cage -s -- yggdrasil-greeter` as the `greeter` user), `/etc/pam.d/greetd` (the keyring unlocks at
   sign-in like with SDDM) and `/etc/labyrinth/greeter.conf`.
 - To try it in a virtual machine (Limbo): `pacman -S greetd cage`, `systemctl disable sddm`, `systemctl enable greetd`, restart.
   A way back: `systemctl disable greetd; systemctl enable sddm` from a text console (Ctrl+Alt+F3).

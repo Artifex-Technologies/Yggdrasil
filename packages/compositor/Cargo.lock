@@ -717,19 +717,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
-name = "labyrinth-compositor"
-version = "0.1.0"
-dependencies = [
- "ab_glyph",
- "smithay",
- "tiny-skia",
- "tracing",
- "tracing-subscriber",
- "wayland-protocols-wlr",
- "yggdrasil-conf",
-]
-
-[[package]]
 name = "lazy_static"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2323,6 +2310,19 @@ name = "xml-rs"
 version = "0.8.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
+
+[[package]]
+name = "yggdrasil-compositor"
+version = "0.1.0"
+dependencies = [
+ "ab_glyph",
+ "smithay",
+ "tiny-skia",
+ "tracing",
+ "tracing-subscriber",
+ "wayland-protocols-wlr",
+ "yggdrasil-conf",
+]
 
 [[package]]
 name = "yggdrasil-conf"

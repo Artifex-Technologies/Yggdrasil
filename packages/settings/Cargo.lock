@@ -1760,19 +1760,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "labyrinth-settings"
-version = "0.1.0"
-dependencies = [
- "eframe",
- "egui_extras",
- "image",
- "serde",
- "serde_json",
- "yggdrasil-conf",
- "yggdrasil-ui",
-]
-
-[[package]]
 name = "libc"
 version = "0.2.190"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4503,6 +4490,19 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 [[package]]
 name = "yggdrasil-conf"
 version = "0.1.0"
+
+[[package]]
+name = "yggdrasil-settings"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "egui_extras",
+ "image",
+ "serde",
+ "serde_json",
+ "yggdrasil-conf",
+ "yggdrasil-ui",
+]
 
 [[package]]
 name = "yggdrasil-ui"

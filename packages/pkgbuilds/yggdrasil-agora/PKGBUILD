@@ -1,0 +1,32 @@
+# Agora: apps in one place (built from packages/market in this repository).
+pkgname=yggdrasil-agora
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Agora: browse and install apps from Yggdrasil's catalog and repositories you add"
+arch=('x86_64')
+provides=('labyrinth-market')
+conflicts=('labyrinth-market')
+replaces=('labyrinth-market')
+url="https://github.com/Artifex-Technologies/Yggdrasil"
+license=('MIT')
+depends=('gcc-libs' 'libxkbcommon' 'wayland' 'vulkan-icd-loader' 'libglvnd' 'fontconfig' 'curl' 'yay' 'ghostty')
+optdepends=('flatpak: apps from Flathub')
+makedepends=('cargo')
+options=('!lto')
+
+_src="$startdir/../../market"
+
+build() {
+  cd "$_src"
+  cargo build --release --locked --target-dir "$srcdir/target"
+}
+
+check() {
+  cd "$_src"
+  cargo test --release --locked --target-dir "$srcdir/target"
+}
+
+package() {
+  install -Dm755 "$srcdir/target/release/agora" "$pkgdir/usr/bin/agora"
+  install -Dm644 "$_src/agora.desktop" "$pkgdir/usr/share/applications/agora.desktop"
+}

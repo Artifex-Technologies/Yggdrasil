@@ -1,9 +1,9 @@
-//! labyrinth-cloud: link local folders to cloud folders and verify they match.
+//! minos-cloud: link local folders to cloud folders and verify they match.
 //!
-//!   labyrinth-cloud link NAME LOCAL_DIR REMOTE     e.g. link docs ~/Documents/Github "proton:My files/Documents/Github"
-//!   labyrinth-cloud links
-//!   labyrinth-cloud verify [NAME]                  exit 0 only if every file was matched by hash
-//!   labyrinth-cloud unlink NAME
+//!   minos-cloud link NAME LOCAL_DIR REMOTE     e.g. link docs ~/Documents/Github "proton:My files/Documents/Github"
+//!   minos-cloud links
+//!   minos-cloud verify [NAME]                  exit 0 only if every file was matched by hash
+//!   minos-cloud unlink NAME
 //!
 //! Read-only: verification never changes either side. Needs `rclone` on PATH.
 
@@ -57,7 +57,7 @@ fn main() -> ExitCode {
             let wanted = args.get(1);
             let todo: Vec<&Link> = links.iter().filter(|l| wanted.is_none_or(|w| &l.name == w)).collect();
             if todo.is_empty() {
-                eprintln!("no matching link (see `labyrinth-cloud links`)");
+                eprintln!("no matching link (see `minos-cloud links`)");
                 return ExitCode::from(2);
             }
             let mut all_ok = true;
@@ -87,7 +87,7 @@ fn main() -> ExitCode {
             if all_ok { ExitCode::SUCCESS } else { ExitCode::from(1) }
         }
         _ => {
-            eprintln!("usage: labyrinth-cloud link NAME LOCAL REMOTE | links | verify [NAME] | unlink NAME");
+            eprintln!("usage: minos-cloud link NAME LOCAL REMOTE | links | verify [NAME] | unlink NAME");
             ExitCode::from(2)
         }
     }

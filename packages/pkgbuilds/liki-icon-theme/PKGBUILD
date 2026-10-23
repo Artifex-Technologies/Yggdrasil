@@ -1,4 +1,4 @@
-# Liki: Yggdrasil's icon pack (shared by Labyrinth and Chymaera) and the tools that build and manage it (packages/liki).
+# Liki: Yggdrasil's icon pack (used by every system that installs Yggdrasil) and the tools that build and manage it (packages/liki).
 pkgname=liki-icon-theme
 pkgver=0.1.0
 pkgrel=1
@@ -22,10 +22,5 @@ package() {
   rm -f "$pkgdir/usr/share/icons/Liki/icon-theme.cache"
   for f in "$_src"/bin/liki-*; do install -Dm755 "$f" "$pkgdir/usr/bin/$(basename "$f")"; done
   # the old names keep working until Yggdrasil's programs are renamed
-  ln -s liki-build "$pkgdir/usr/bin/labyrinth-brand-pack"
-  ln -s liki-icon "$pkgdir/usr/bin/labyrinth-icon"
-  ln -s liki-icon-import "$pkgdir/usr/bin/labyrinth-icon-import"
-  ln -s liki-minos-icon "$pkgdir/usr/bin/labyrinth-minos-icon"
-  ln -s liki-icns "$pkgdir/usr/bin/labyrinth-icns"
   install -Dm644 "$_src/liki-minos-icon.desktop" "$pkgdir/etc/xdg/autostart/liki-minos-icon.desktop"
 }

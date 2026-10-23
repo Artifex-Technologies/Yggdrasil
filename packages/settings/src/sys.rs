@@ -465,7 +465,7 @@ AccentColor={}", s.trim())));
         }
     }
     wallpapers.sort();
-    let panel_on = run("labyrinth-panel-mode", &["status"]).map(|s| s.trim() == "labyrinth-panel").unwrap_or(false);
+    let panel_on = run("labyrinth-panel-mode", &["status"]).map(|s| s.trim() == "yggdrasil-panel").unwrap_or(false);
     Appearance { icon_packs: icon_packs(), icon_theme: run("kreadconfig6", &["--file", "kdeglobals", "--group", "Icons", "--key", "Theme"]).map(|s| s.trim().to_string()).unwrap_or_default(), dark: scheme.trim().to_lowercase().contains("dark") || scheme.trim().is_empty(), accent, wallpapers, panel_on, panel: yggdrasil_conf::PanelConf::load() }
 }
 
@@ -489,7 +489,7 @@ fn best_image(dir: &std::path::Path) -> Option<std::path::PathBuf> {
 pub struct Power {
     pub profile: String,
     pub profiles: Vec<String>,
-    /// The idle timers, in ~/.config/yggdrasil/idle.conf (labyrinth-idle acts on them).
+    /// The idle timers, in ~/.config/yggdrasil/idle.conf (yggdrasil-idle acts on them).
     pub idle: Idle,
     /// What the hardware allows and what is set for each mode (Developer options only).
     pub limits: Option<PowerLimits>,
@@ -623,7 +623,7 @@ pub fn parse_idle(text: &str) -> Idle {
 
 pub fn idle_text(i: &Idle) -> String {
     format!(
-        "# Written by Settings > Power. labyrinth-idle acts on these (seconds of inactivity, 0 = never).\nmode = act\ndim = {}\ndim_level = {}\ndisplay_off = {}\nlock = {}\nsuspend = {}\nhibernate = {}\n",
+        "# Written by Settings > Power. yggdrasil-idle acts on these (seconds of inactivity, 0 = never).\nmode = act\ndim = {}\ndim_level = {}\ndisplay_off = {}\nlock = {}\nsuspend = {}\nhibernate = {}\n",
         i.dim * 60, i.dim_level, i.screen_off * 60, i.lock * 60, i.sleep * 60, i.hibernate * 60
     )
 }

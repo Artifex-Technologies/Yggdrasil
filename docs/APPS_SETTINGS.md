@@ -11,7 +11,7 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
   under ~/.config, ~/.cache, ~/.local/share, ~/.var/app) or A to Z. System tools (settings panels, Avahi, ...) are hidden
   unless "Show system tools" is ticked. Each row has icon-only buttons: restart, close (both only while it runs), remove
   (asks first; shows the package; the desktop's own packages are refused).
-- **An app's page** (click a row, or `labyrinth-settings apps:ID`): Network (switch; click the name too), open at login,
+- **An app's page** (click a row, or `yggdrasil-settings apps:ID`): Network (switch; click the name too), open at login,
   status, storage with Clear cache and Clear data (the latter lists the folders and asks for the password), the privacy
   sandbox, Remove.
 - **Optional software** and **Minos** are the other two tabs.
@@ -80,4 +80,4 @@ namespace); `sudo bash tests/appnet_ask/kernel_log_check.sh` (the real kernel lo
 
 - Per-app Location and "which other apps it can see" for Flatpak apps (Flatpak overrides could do both).
 - A network-usage logger per app (the running-time logger exists).
-- A right-click "App settings" entry in the dock that runs `labyrinth-settings apps:ID`.
+- A right-click "App settings" entry in the dock that runs `yggdrasil-settings apps:ID`.

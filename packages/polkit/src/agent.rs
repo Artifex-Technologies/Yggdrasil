@@ -8,7 +8,7 @@ use zbus::zvariant::{OwnedValue, Value};
 
 use crate::helper::{self, Outcome, Ui};
 
-pub const OBJECT_PATH: &str = "/org/labyrinth/PolicyKit1/AuthenticationAgent";
+pub const OBJECT_PATH: &str = "/org/yggdrasil/PolicyKit1/AuthenticationAgent";
 
 /// What the dialog is asked to do.
 pub enum UiMsg {
@@ -48,7 +48,7 @@ pub fn choose_identity(identities: &[(String, HashMap<String, OwnedValue>)], own
     }
 }
 
-/// The password box runs as its own process, one per request (`labyrinth-polkit --dialog`), talking JSON lines on its pipes:
+/// The password box runs as its own process, one per request (`yggdrasil-polkit --dialog`), talking JSON lines on its pipes:
 /// requests go to its stdin, the typed answers come back on its stdout. When the request is over the process ends and its
 /// window goes with it.
 struct Bridge {

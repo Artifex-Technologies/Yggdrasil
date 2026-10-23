@@ -10,8 +10,8 @@ on one: those results are listed as "unverified".
 | Piece | Toolkit | Screen reader (AT-SPI) | Keyboard only | Notes |
 | --- | --- | --- | --- | --- |
 | Settings, Minos, admin password box (polkit), keyring-sync | egui/eframe 0.36 | **Yes in principle, but probably not active on this system (see below)**: eframe builds with AccessKit, and `accesskit_unix` / `accesskit_atspi_common` are in their Cargo.lock | Tab and arrows work in egui widgets; some custom-drawn rows (Settings rows, Minos grid) may be skipped | unverified with Orca (not installed here) |
-| Top bar, dock, start menu, notification toasts, notification pane, tray | custom tiny-skia on layer-shell (`labyrinth-panel`) | **No**: not in the accessibility tree at all (no accesskit in its lock) | Start menu: Super, typing, Tab/arrows/Enter/Escape. Dock, bar, tray and toast buttons: no keyboard path | the biggest gap |
-| Lock screen | custom (`labyrinth-lock`) | **No** | Password typing and Enter only | a screen-reader user cannot tell that it is locked or whether a password failed |
+| Top bar, dock, start menu, notification toasts, notification pane, tray | custom tiny-skia on layer-shell (`yggdrasil-panel`) | **No**: not in the accessibility tree at all (no accesskit in its lock) | Start menu: Super, typing, Tab/arrows/Enter/Escape. Dock, bar, tray and toast buttons: no keyboard path | the biggest gap |
+| Lock screen | custom (`yggdrasil-lock`) | **No** | Password typing and Enter only | a screen-reader user cannot tell that it is locked or whether a password failed |
 | Calculator | egui | as above | as above | |
 | Boot menu / installer | GRUB / Calamares (Qt) | Calamares: Qt exposes AT-SPI; GRUB: none | | the live ISO has no speech boot entry |
 | Compositor features (zoom, high contrast colours, sticky keys) | KWin, kaccess | Still KDE's | | stay until a replacement exists |
@@ -30,7 +30,7 @@ with Orca before trusting the table below**, and again when eframe is upgraded.
 ## What is missing (in the order that hurts most)
 
 1. **Panel and screen readers: built 2026-10-16 (bar, dock, pop-ups, kept notifications; not the start menu, calendar, Fylgja or lock screen yet).** `packages/panel/src/a11y.rs` describes the surfaces through AccessKit (accesskit 0.25 + accesskit_unix 0.24); a reader's click on a node is sent back as the same action as a real click. Verified by reading the tree over AT-SPI in a nested session (`tests/a11y/nested_panel_a11y.sh`): "Top bar" (Start menu, Desktops, Fylgja, Network, Bluetooth, Clock), "Dock" (every app and the trash), "Kept notifications", each button offering `click`. **Not verified:** a real screen reader reading it, and the click from a reader actually opening the menu. Original finding: **Panel not exposed to screen readers.** A blind user cannot open an app, read a notification, or see the clock. Fix: give
-   `labyrinth-panel` an AT-SPI tree with `accesskit_unix` (it supports toolkits that are not winit): one node per button, the start menu list,
+   `yggdrasil-panel` an AT-SPI tree with `accesskit_unix` (it supports toolkits that are not winit): one node per button, the start menu list,
    toasts (with their action buttons) and the notification list, with roles and names. Announce new notifications (live region).
 2. **Lock screen silent.** Announce "Screen locked. Enter your password" and "Wrong password" (the same AccessKit route, plus a
    short audible cue for people without a reader). Keep the keyboard path exactly as it is.

@@ -25,4 +25,4 @@ Lightweight (a few text files and one small cursor set, nothing running), stable
 - A light variant exists but has had much less use than the dark one; check it before relying on it.
 - GTK 4 programs that do not use libadwaita get GTK's own shapes in Yggdrasil's colours; the accent in the system theme file is the default purple (a changed accent reaches them only through `~/.config/gtk-4.0/gtk.css`, which GTK 4 loads after the theme, so it does, but some small parts of GTK's theme keep their built-in values).
 - In one program (pavucontrol) the volume slider's knob is not visible; a plain GTK 4 slider is fine.
-- The login screen (SDDM, Breeze) is replaced by `labyrinth-greeter` later, with the same cursors.
+- The login screen (SDDM, Breeze) is replaced by `yggdrasil-greeter` later, with the same cursors.

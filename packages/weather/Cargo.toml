@@ -1,5 +1,5 @@
 [package]
-name = "labyrinth-weather"
+name = "yggdrasil-weather"
 version = "0.1.0"
 edition = "2021"
 description = "Multi-model weather consensus with measured-accuracy weighting, for the Labyrinth OS bar"
@@ -10,7 +10,7 @@ name = "yggdrasil_weather"
 path = "src/lib.rs"
 
 [[bin]]
-name = "labyrinth-weather"
+name = "yggdrasil-weather"
 path = "src/main.rs"
 
 [dependencies]

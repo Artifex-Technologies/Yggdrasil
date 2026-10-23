@@ -1,7 +1,7 @@
 # Weather
 
 **Optional component** (`labyrinth-apps install weather`; part of the `everything` preset, not of the base
-system). `packages/labyrinth-weather` (Rust). It does not claim to out-forecast the weather
+system). `packages/yggdrasil-weather` (Rust). It does not claim to out-forecast the weather
 services. What it does is combine several independent ones, show how much they
 disagree, and learn from measurements which to trust at your location.
 
@@ -27,9 +27,9 @@ information about how uncertain the forecast is.
 - **Ensemble:** the 30-member GFS ensemble contributes the uncertainty width. It is a
   different model run from the three, so its absolute range can sit off to one side of
   their average; only its width is shown (as "+/-").
-- **Learning:** `labyrinth-weather record` (hourly, via a systemd user timer) stores each
+- **Learning:** `yggdrasil-weather record` (hourly, via a systemd user timer) stores each
   model's predictions for the next 24 hours and the nearest station's measured
-  temperature. `labyrinth-weather score` compares them: average error and bias per model.
+  temperature. `yggdrasil-weather score` compares them: average error and bias per model.
   A model needs at least ~24 scored predictions before its weight changes anything, and
   weights only apply when at least two models qualify. Weight = 1 / (error + 0.5),
   scaled to average 1.
@@ -51,12 +51,12 @@ information about how uncertain the forecast is.
 
 ## Commands
 
-    labyrinth-weather set-location "Your city"      # or: --coords LAT LON [NAME]
-    labyrinth-weather units metric|us
-    labyrinth-weather forecast [HOURS]               # table, every 3 hours
-    labyrinth-weather bar                            # one line of Waybar JSON
-    labyrinth-weather record                         # what the hourly timer runs
-    labyrinth-weather score                          # accuracy per model
+    yggdrasil-weather set-location "Your city"      # or: --coords LAT LON [NAME]
+    yggdrasil-weather units metric|us
+    yggdrasil-weather forecast [HOURS]               # table, every 3 hours
+    yggdrasil-weather bar                            # one line of Waybar JSON
+    yggdrasil-weather record                         # what the hourly timer runs
+    yggdrasil-weather score                          # accuracy per model
 
 ## Status
 

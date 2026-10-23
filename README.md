@@ -13,17 +13,17 @@ Status: it runs on top of KWin today (KWin is the only KDE piece left that matte
 
 | Folder | Program | What it is |
 | --- | --- | --- |
-| `packages/panel` | `labyrinth-panel` | top bar, dock, tray, start menu, calendar, notifications, wallpaper, and Fylgja (the notch) ([docs/FYLGJA.md](docs/FYLGJA.md), [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md)) |
-| `packages/settings` | `labyrinth-settings` | Settings: network, displays, sound, appearance, power and idle timers, users, security, apps and more |
+| `packages/panel` | `yggdrasil-panel` | top bar, dock, tray, start menu, calendar, notifications, wallpaper, and Fylgja (the notch) ([docs/FYLGJA.md](docs/FYLGJA.md), [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md)) |
+| `packages/settings` | `yggdrasil-settings` | Settings: network, displays, sound, appearance, power and idle timers, users, security, apps and more |
 | `packages/minos` | `minos` | the file manager, and (through `packages/portal`) the open and save dialog of every program ([docs/MINOS_KEYS.md](docs/MINOS_KEYS.md)) |
-| `packages/market` | `labyrinth-market` | the Marketplace: the catalog, the Arch repositories, the AUR and Flathub in one place ([docs/MARKETPLACE.md](docs/MARKETPLACE.md)) |
-| `packages/lock` | `labyrinth-lock`, `labyrinth-greeter` | the lock screen and the login screen, with selectable designs ([docs/LOCKSCREEN.md](docs/LOCKSCREEN.md), [docs/LOGIN_SCREEN.md](docs/LOGIN_SCREEN.md)) |
-| `packages/idle` | `labyrinth-idle` | dims, locks, turns the screen off and sleeps when you are away |
-| `packages/polkit` | `labyrinth-polkit` | the password box for administrator actions |
-| `packages/portal` | `labyrinth-portal` | the file chooser portal (Minos) |
-| `packages/keyring-sync` | `labyrinth-keyring-sync` | keeps the keyring and the login password in step ([docs/USERS_KEYRING.md](docs/USERS_KEYRING.md)) |
-| `packages/compositor` | `labyrinth-compositor` | the compositor (Smithay): the future replacement for KWin |
-| `packages/calculator`, `packages/labyrinth-weather` | | small apps ([docs/WEATHER.md](docs/WEATHER.md)) |
+| `packages/market` | `agora` | the Marketplace: the catalog, the Arch repositories, the AUR and Flathub in one place ([docs/MARKETPLACE.md](docs/MARKETPLACE.md)) |
+| `packages/lock` | `yggdrasil-lock`, `yggdrasil-greeter` | the lock screen and the login screen, with selectable designs ([docs/LOCKSCREEN.md](docs/LOCKSCREEN.md), [docs/LOGIN_SCREEN.md](docs/LOGIN_SCREEN.md)) |
+| `packages/idle` | `yggdrasil-idle` | dims, locks, turns the screen off and sleeps when you are away |
+| `packages/polkit` | `yggdrasil-polkit` | the password box for administrator actions |
+| `packages/portal` | `yggdrasil-portal` | the file chooser portal (Minos) |
+| `packages/keyring-sync` | `yggdrasil-keyring-sync` | keeps the keyring and the login password in step ([docs/USERS_KEYRING.md](docs/USERS_KEYRING.md)) |
+| `packages/compositor` | `yggdrasil-compositor` | the compositor (Smithay): the future replacement for KWin |
+| `packages/calculator`, `packages/yggdrasil-weather` | | small apps ([docs/WEATHER.md](docs/WEATHER.md)) |
 | `packages/labyrinth-ui`, `packages/labyrinth-conf` | | the shared look (egui theme, icons, window chrome) and the shared settings file |
 | `packages/liki` | `liki-build` and others | **Liki**, the icon pack ([docs/LIKI.md](docs/LIKI.md)) |
 | `packages/theme` | `ygg-theme`, `ygg-cursors` | the look of Qt, KDE and GTK programs and the mouse pointer ([docs/THEME.md](docs/THEME.md)) |

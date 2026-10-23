@@ -1,5 +1,5 @@
 //! A picture of a window for the dock's window list, taken through KWin's screenshot service (`org.kde.KWin.ScreenShot2`).
-//! KWin only answers programs whose desktop file asks for that interface (labyrinth-panel.desktop does), and the picture
+//! KWin only answers programs whose desktop file asks for that interface (yggdrasil-panel.desktop does), and the picture
 //! never leaves this process: it is shrunk to a thumbnail, shown, and dropped.
 
 use std::collections::HashMap;

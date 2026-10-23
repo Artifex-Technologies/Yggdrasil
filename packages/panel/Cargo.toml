@@ -1,12 +1,12 @@
 [package]
-name = "labyrinth-panel"
+name = "yggdrasil-panel"
 version = "0.1.0"
 edition = "2021"
 description = "Labyrinth's top bar and dock (Wayland layer-shell, software-rendered, tiny)"
 license = "MIT"
 
 [[bin]]
-name = "labyrinth-panel"
+name = "yggdrasil-panel"
 path = "src/main.rs"
 
 [dependencies]

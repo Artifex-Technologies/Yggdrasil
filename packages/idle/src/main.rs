@@ -1,4 +1,4 @@
-//! labyrinth-idle: how long has the user been away, and what should happen about it.
+//! yggdrasil-idle: how long has the user been away, and what should happen about it.
 //!
 //! It asks the compositor (Wayland `ext-idle-notify-v1`) to tell it when the user has been idle for each of a list of times, and
 //! writes every change to ~/.local/state/yggdrasil/idle.log together with what else was going on (is the screen locked, which
@@ -6,7 +6,7 @@
 //! blanks and locks the screen. With `mode = act` in ~/.config/yggdrasil/idle.conf it also performs the configured steps
 //! (lock, display off, suspend; dimming is not built yet), holding back locking and sleeping while something inhibits idling.
 //!
-//!   labyrinth-idle            run in the foreground (autostart it)
+//!   yggdrasil-idle            run in the foreground (autostart it)
 //!
 //! idle.conf (seconds of inactivity, 0 = never):
 //!   mode = observe            # or: act
@@ -169,20 +169,20 @@ fn main() {
     let conn = match Connection::connect_to_env() {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("labyrinth-idle: no Wayland display: {e}");
+            eprintln!("yggdrasil-idle: no Wayland display: {e}");
             std::process::exit(1);
         }
     };
     let (globals, mut queue) = match registry_queue_init::<App>(&conn) {
         Ok(x) => x,
         Err(e) => {
-            eprintln!("labyrinth-idle: {e}");
+            eprintln!("yggdrasil-idle: {e}");
             std::process::exit(1);
         }
     };
     let qh = queue.handle();
     let (Ok(notifier), Ok(seat)) = (globals.bind::<ExtIdleNotifierV1, _, _>(&qh, 1..=2, ()), globals.bind::<wl_seat::WlSeat, _, _>(&qh, 1..=9, ())) else {
-        eprintln!("labyrinth-idle: the compositor does not offer ext-idle-notify-v1");
+        eprintln!("yggdrasil-idle: the compositor does not offer ext-idle-notify-v1");
         std::process::exit(1);
     };
     let all = marks(&conf);
@@ -196,7 +196,7 @@ fn main() {
     let mut last_check = Instant::now();
     loop {
         if queue.dispatch_pending(&mut app).is_err() || conn.flush().is_err() {
-            eprintln!("labyrinth-idle: the Wayland connection ended");
+            eprintln!("yggdrasil-idle: the Wayland connection ended");
             std::process::exit(1);
         }
         let animating = app.dimmer.as_ref().map(|d| d.animating() || d.alpha > 0.0 && !d.is_shown()).unwrap_or(false);
@@ -206,7 +206,7 @@ fn main() {
             let timeout = if animating { 16 } else { 1000 };
             let n = unsafe { libc::poll(&mut pfd, 1, timeout) };
             if n > 0 && guard.read().is_err() {
-                eprintln!("labyrinth-idle: the Wayland connection ended");
+                eprintln!("yggdrasil-idle: the Wayland connection ended");
                 std::process::exit(1);
             }
         }

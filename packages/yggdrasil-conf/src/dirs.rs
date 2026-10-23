@@ -84,8 +84,32 @@ pub fn migrate() {
             move_one(&old.join(n), &new.join(n));
         }
     }
+    rename_apps_in(&raw_config().join("dock"));
     if std::fs::create_dir_all(raw_config()).is_ok() {
         let _ = std::fs::write(&marker, "The desktop's own files were moved here from the old labyrinth folders.\n");
+    }
+}
+
+/// The desktop's apps got new desktop ids with the rename; a list of pinned apps (one id per line) is updated to them.
+const RENAMED_APPS: [(&str, &str); 4] = [
+    ("labyrinth-settings", "yggdrasil-settings"),
+    ("labyrinth-market", "agora"),
+    ("labyrinth-calculator", "yggdrasil-calculator"),
+    ("labyrinth-keyring-sync", "yggdrasil-keyring-sync"),
+];
+
+fn rename_apps_in(list: &Path) {
+    let Ok(text) = std::fs::read_to_string(list) else { return };
+    let new: Vec<String> = text
+        .lines()
+        .map(|l| {
+            let id = l.trim().trim_end_matches(".desktop");
+            RENAMED_APPS.iter().find(|(old, _)| *old == id).map(|(_, n)| n.to_string()).unwrap_or_else(|| l.to_string())
+        })
+        .collect();
+    let out = new.join("\n") + if text.ends_with('\n') { "\n" } else { "" };
+    if out != text {
+        let _ = std::fs::write(list, out);
     }
 }
 
@@ -116,6 +140,7 @@ mod tests {
         std::env::set_var("XDG_CACHE_HOME", &cache);
         std::fs::create_dir_all(cfg.join("labyrinth/market")).unwrap();
         std::fs::write(cfg.join("labyrinth/panel.conf"), "dock_icon = 50\n").unwrap();
+        std::fs::write(cfg.join("labyrinth/dock"), "minos\nlabyrinth-settings.desktop\nvivaldi-stable\nlabyrinth-market\n").unwrap();
         std::fs::write(cfg.join("labyrinth/sarina.env"), "OS file\n").unwrap();
         std::fs::write(cfg.join("labyrinth/market/repos.json"), "[]").unwrap();
         std::fs::create_dir_all(state.join("labyrinth")).unwrap();
@@ -127,14 +152,15 @@ mod tests {
         migrate();
         assert_eq!(std::fs::read_to_string(config().join("panel.conf")).unwrap(), "dock_icon = 50\n");
         assert!(config().join("market/repos.json").exists());
+        assert_eq!(std::fs::read_to_string(config().join("dock")).unwrap(), "minos\nyggdrasil-settings\nvivaldi-stable\nagora\n");
         assert!(super::state().join("notifications.json").exists());
         assert!(cfg.join("labyrinth/sarina.env").exists(), "the operating system's file stays");
         assert!(!config().join("sarina.env").exists());
         assert_eq!(std::fs::read_to_string(config().join("idle.conf")).unwrap(), "new");
         // once: a file put back in the old place later is left alone
-        std::fs::write(cfg.join("labyrinth/dock"), "x").unwrap();
+        std::fs::write(cfg.join("labyrinth/workspaces.conf"), "x").unwrap();
         migrate();
-        assert!(cfg.join("labyrinth/dock").exists());
+        assert!(cfg.join("labyrinth/workspaces.conf").exists());
         let _ = std::fs::remove_dir_all(&d);
     }
 }

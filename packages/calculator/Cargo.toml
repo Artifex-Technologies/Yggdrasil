@@ -1,12 +1,12 @@
 [package]
-name = "labyrinth-calculator"
+name = "yggdrasil-calculator"
 version = "0.1.0"
 edition = "2021"
-description = "Labyrinth Calculator: standard with history, scientific when widened"
+description = "Calculator: standard with history, scientific when widened"
 license = "MIT"
 
 [[bin]]
-name = "labyrinth-calculator"
+name = "yggdrasil-calculator"
 path = "src/main.rs"
 
 [dependencies]

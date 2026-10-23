@@ -34,9 +34,9 @@ pub fn account() -> Account {
     a
 }
 
-/// The state of gnome-keyring's login keyring as `labyrinth-keyring-sync --check` reports it ("locked", "unlocked", "noservice", "nokeyring"), or "" without the tool.
+/// The state of gnome-keyring's login keyring as `yggdrasil-keyring-sync --check` reports it ("locked", "unlocked", "noservice", "nokeyring"), or "" without the tool.
 pub fn keyring_state() -> String {
-    crate::sys::run("labyrinth-keyring-sync", &["--check"]).map(|s| s.trim().to_string()).unwrap_or_default()
+    crate::sys::run("yggdrasil-keyring-sync", &["--check"]).map(|s| s.trim().to_string()).unwrap_or_default()
 }
 
 /// What to tell the user about a failed change, from what `passwd` printed.
@@ -85,7 +85,7 @@ pub fn change_password_with(cmdline: &str, current: &str, new: &str) -> Result<(
         if let Ok(Some(status)) = child.try_wait() {
             let _ = reader.join();
             let text = buf.lock().unwrap().clone();
-            if std::env::var_os("LABYRINTH_PW_DEBUG").is_some() { eprintln!("passwd exit {:?}, output: {:?}", status, text); }
+            if std::env::var_os("YGGDRASIL_PW_DEBUG").is_some() { eprintln!("passwd exit {:?}, output: {:?}", status, text); }
             break if status.success() { Ok(()) } else { Err(explain_failure(&text)) };
         }
         let text = buf.lock().unwrap().clone();

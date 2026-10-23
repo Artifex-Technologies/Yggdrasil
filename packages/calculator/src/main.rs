@@ -1,4 +1,4 @@
-//! Labyrinth Calculator: a standard calculator with history that turns scientific when the window
+//! Calculator: a standard calculator with history that turns scientific when the window
 //! is widened. Same look as Minos and Settings (yggdrasil-ui).
 //!
 //! Width decides what shows: narrow is the standard pad, wider adds the history beside it, wider
@@ -449,7 +449,7 @@ fn main() -> eframe::Result {
             .with_inner_size([400.0, 640.0])
             .with_min_inner_size([340.0, 520.0])
             .with_title("Calculator")
-            .with_app_id("labyrinth-calculator")
+            .with_app_id("yggdrasil-calculator")
             // Draws its own title bar like Minos and Settings (yggdrasil-ui chrome).
             .with_decorations(false),
         ..Default::default()

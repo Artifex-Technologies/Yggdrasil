@@ -278,9 +278,9 @@ pub fn parse_failed_logins(journal: &str) -> Vec<LogEntry> {
         }
         let user = msg.rsplit("user=").next().filter(|_| msg.contains("user=")).unwrap_or("").trim();
         let place = match prog {
-            "labyrinth-lock" | "kscreenlocker_greet" => "Lock screen",
+            "yggdrasil-lock" | "kscreenlocker_greet" => "Lock screen",
             "sddm-helper" | "sddm-helper-start" | "login" => "Login screen",
-            "polkit-agent-helper-1" | "labyrinth-polkit" => "Administrator question",
+            "polkit-agent-helper-1" | "yggdrasil-polkit" => "Administrator question",
             "sshd" => "SSH",
             other => other,
         };
@@ -331,7 +331,7 @@ mod log_tests {
 
     #[test]
     fn failed_logins_skip_sudo() {
-        let j = "1792170078.37 Orthanc labyrinth-lock[1]: pam_unix(login:auth): authentication failure; logname=z uid=1000 user=zlothra\n\
+        let j = "1792170078.37 Orthanc yggdrasil-lock[1]: pam_unix(login:auth): authentication failure; logname=z uid=1000 user=zlothra\n\
                  1792170079.0 Orthanc sudo[2]: pam_unix(sudo:auth): authentication failure; user=zlothra\n";
         let e = parse_failed_logins(j);
         assert_eq!(e.len(), 1);

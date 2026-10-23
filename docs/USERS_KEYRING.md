@@ -12,13 +12,13 @@ Two pieces that keep the login password and gnome-keyring's login keyring togeth
 - Tested with a stand-in `passwd` (right answers, wrong current password, weak new password); the real `passwd` was never run by the tests.
 - **Not built:** adding and removing other accounts, changing the full name or the account type (they need administrator actions through polkit).
 
-## labyrinth-keyring-sync (`packages/keyring-sync`)
-- Runs at login (`/etc/xdg/autostart/labyrinth-keyring-sync.desktop` in the profile) and does nothing unless the login keyring is locked.
+## yggdrasil-keyring-sync (`packages/keyring-sync`)
+- Runs at login (`/etc/xdg/autostart/yggdrasil-keyring-sync.desktop` in the profile) and does nothing unless the login keyring is locked.
 - If it is locked (an administrator reset the password, or a tool changed it without PAM): a small window asks for the previous password and the current one.
   The current one is checked with PAM first, then the keyring's password is changed to it with gnome-keyring's `ChangeWithMasterPassword` (the call Seahorse uses)
   and the keyring is opened. "I don't remember it" starts a new, empty login keyring (after the current password is checked): the old file is moved aside as
   `login.keyring.old-<time>`, not deleted.
-- `--check` prints the state; `--cli` (tests only) changes the password from `LABYRINTH_KEYRING_OLD` / `LABYRINTH_KEYRING_CURRENT`.
+- `--check` prints the state; `--cli` (tests only) changes the password from `YGGDRASIL_KEYRING_OLD` / `YGGDRASIL_KEYRING_CURRENT`.
 - Tested end to end against a private gnome-keyring (`tests/test_keyring_sync.sh`, run inside `dbus-run-session`): a keyring locked with an old password; a wrong
   previous password is refused; the right one changes it and an item stays intact; the new password opens it and the old one no longer does.
 - The window itself was looked at on the real screen (against a private test keyring). The "start new keyring" path is written but not exercised.

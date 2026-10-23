@@ -1,0 +1,32 @@
+# Yggdrasil screen locker (Wayland ext-session-lock + PAM): needs a compositor that offers the protocol (Rust): built from packages/lock in this repository.
+pkgname=yggdrasil-lock
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Yggdrasil screen locker (Wayland ext-session-lock + PAM): needs a compositor that offers the protocol"
+arch=('x86_64')
+provides=('labyrinth-lock')
+conflicts=('labyrinth-lock')
+replaces=('labyrinth-lock')
+url="https://github.com/Artifex-Technologies/Yggdrasil"
+license=('MIT')
+depends=('gcc-libs' 'wayland' 'fontconfig' 'libxkbcommon' 'pam')
+makedepends=('cargo')
+options=('!lto')
+
+_src="$startdir/../../lock"
+
+build() {
+  cd "$_src"
+  cargo build --release --locked --target-dir "$srcdir/target"
+}
+
+check() {
+  cd "$_src"
+  cargo test --release --locked --target-dir "$srcdir/target"
+}
+
+package() {
+  install -Dm755 "$srcdir/target/release/yggdrasil-lock" "$pkgdir/usr/bin/yggdrasil-lock"
+  install -Dm755 "$srcdir/target/release/yggdrasil-greeter" "$pkgdir/usr/bin/yggdrasil-greeter"
+
+}

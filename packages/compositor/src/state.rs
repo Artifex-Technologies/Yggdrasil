@@ -180,7 +180,7 @@ impl App {
                 let text = std::fs::read_to_string(shortcuts::config_path()).unwrap_or_default();
                 let (b, bad) = shortcuts::load(&text);
                 for l in bad {
-                    eprintln!("labyrinth-compositor: shortcuts.conf: cannot use the line: {l}");
+                    eprintln!("yggdrasil-compositor: shortcuts.conf: cannot use the line: {l}");
                 }
                 b
             },
@@ -191,7 +191,7 @@ impl App {
             fonts: Fonts::load(),
             bars: HashMap::new(),
             decorated: vec![],
-            decorate_all: std::env::var("LABYRINTH_COMPOSITOR_DECORATE").map(|v| v == "all").unwrap_or(false),
+            decorate_all: std::env::var("YGGDRASIL_COMPOSITOR_DECORATE").map(|v| v == "all").unwrap_or(false),
             bar_hover: None,
             last_click: None,
             decoration_state: XdgDecorationState::new::<Self>(dh),
@@ -379,13 +379,13 @@ impl App {
                     let _ = child.wait();
                 });
             }
-            Err(e) => eprintln!("labyrinth-compositor: cannot start {cmd}: {e}"),
+            Err(e) => eprintln!("yggdrasil-compositor: cannot start {cmd}: {e}"),
         }
     }
 
     fn panel(&self, method: &str, arg: Option<u32>) {
         let a = arg.map(|n| format!(" u {n}")).unwrap_or_default();
-        self.spawn(&format!("busctl --user call org.labyrinth.Panel /Panel org.labyrinth.Panel {method}{a}"));
+        self.spawn(&format!("busctl --user call org.yggdrasil.Panel /Panel org.yggdrasil.Panel {method}{a}"));
     }
 
     fn focused(&self) -> Option<WlSurface> {
@@ -406,7 +406,7 @@ impl App {
             Action::Calendar => self.panel("ToggleCalendar", None),
             Action::Fylgja(n) => self.panel("ShowFylgja", Some(n)),
             Action::Exec(cmd) => self.spawn(&cmd),
-            Action::Lock => self.spawn("labyrinth-lock"),
+            Action::Lock => self.spawn("yggdrasil-lock"),
             Action::Quit => self.quit(),
             Action::Close => {
                 if let Some(s) = current {
@@ -954,7 +954,7 @@ impl App {
 
     pub fn on_input(&mut self, event: InputEvent<WinitInput>) {
         self.wake();
-        if std::env::var_os("LABYRINTH_COMPOSITOR_DEBUG").is_some() {
+        if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
             if let InputEvent::PointerButton { .. } = &event {
                 eprintln!("button at {:?}, over {:?}", self.pointer_location, self.surface_under(self.pointer_location).map(|x| x.0.id()));
             }
@@ -981,7 +981,7 @@ impl App {
                 let size = self.output.current_mode().map(|m| m.size).unwrap_or_default();
                 let pos = event.position_transformed(size.to_logical(1));
                 self.pointer_location = pos;
-                if std::env::var_os("LABYRINTH_COMPOSITOR_DEBUG").is_some() {
+                if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
                     eprintln!("pointer {:.0},{:.0}", pos.x, pos.y);
                 }
                 let serial = SERIAL_COUNTER.next_serial();
@@ -1156,7 +1156,7 @@ impl XdgShellHandler for App {
     }
 
     fn move_request(&mut self, surface: ToplevelSurface, _seat: wl_seat::WlSeat, serial: Serial) {
-        if std::env::var_os("LABYRINTH_COMPOSITOR_DEBUG").is_some() {
+        if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
             eprintln!("move request, serial {:?}, grab ok: {}", serial, self.pointer.has_grab(serial));
         }
         let pointer = self.pointer.clone();

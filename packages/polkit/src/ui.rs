@@ -210,7 +210,7 @@ mod tests {
 
     #[test]
     fn installs_name_their_packages() {
-        let m = "Authentication is needed to run `/usr/local/bin/labyrinth-pkg-root /run/user/1000/labyrinth-market/x.cancel pacman -S --needed --noconfirm vlc gimp' as the super user";
+        let m = "Authentication is needed to run `/usr/local/bin/labyrinth-pkg-root /run/user/1000/agora/x.cancel pacman -S --needed --noconfirm vlc gimp' as the super user";
         assert_eq!(describe(m).unwrap(), "Agora wants to install or reinstall vlc, gimp.");
     }
 

@@ -1,21 +1,21 @@
-# Maintainer: Labyrinth OS
-# Builds the file explorer (minos) and the cloud-link tool (labyrinth-cloud)
+# Maintainer: Yggdrasil
+# Builds the file explorer (minos) and the cloud-link tool (minos-cloud)
 # from this repository's source: packages/minos/. Build from this directory
 # with `makepkg -s`; the source path below is relative to it. NOT yet built on Linux:
 # the code is only built and tested on Windows so far.
-pkgname=labyrinth-minos
+pkgname=yggdrasil-minos
 pkgver=0.1.0
 pkgrel=1
-pkgdesc="Minos, the Labyrinth file explorer (egui), and the Proton Drive link verifier"
-replaces=('labyrinth-finder')
-conflicts=('labyrinth-finder')
-provides=('labyrinth-finder')
+pkgdesc="Minos, Yggdrasil's file explorer (egui), and the Proton Drive link verifier"
+replaces=('labyrinth-minos' 'labyrinth-finder')
+conflicts=('labyrinth-minos' 'labyrinth-finder')
+provides=('labyrinth-minos' 'labyrinth-finder')
 arch=('x86_64')
-url="https://github.com/Artifex-Technologies/Labyrinth_OS"
+url="https://github.com/Artifex-Technologies/Yggdrasil"
 license=('MIT')
 depends=('adwaita-icon-theme' 'gcc-libs' 'libxkbcommon' 'wayland' 'vulkan-icd-loader' 'libglvnd' 'fontconfig' 'xdg-utils' '7zip')
 makedepends=('cargo')
-optdepends=('rclone: Proton Drive links and verification (labyrinth-cloud)'
+optdepends=('rclone: Proton Drive links and verification (minos-cloud)'
             'poppler: PDF page previews (pdftoppm)'
             'ffmpegthumbnailer: video previews'
             'unrar: opening RAR archives with 7z')
@@ -35,7 +35,7 @@ check() {
 
 package() {
   install -Dm755 "$srcdir/target/release/minos" "$pkgdir/usr/bin/minos"
-  install -Dm755 "$srcdir/target/release/labyrinth-cloud" "$pkgdir/usr/bin/labyrinth-cloud"
+  install -Dm755 "$srcdir/target/release/minos-cloud" "$pkgdir/usr/bin/minos-cloud"
   # It was called Finder first: old shortcuts and scripts that run `finder` still work.
   ln -s minos "$pkgdir/usr/bin/finder"
   # StartupWMClass matches the window app id set in main.rs, so docks and bars find the icon.

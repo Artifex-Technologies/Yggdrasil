@@ -122,7 +122,7 @@ pub fn spawn(tx: calloop::channel::Sender<TrayMsg>) {
             std::thread::sleep(std::time::Duration::from_secs(2));
         }
         if !registered {
-            eprintln!("labyrinth-panel: no StatusNotifierWatcher: the tray stays empty");
+            eprintln!("yggdrasil-panel: no StatusNotifierWatcher: the tray stays empty");
             return;
         }
         for k in items {
@@ -277,7 +277,7 @@ pub fn fetch_menu(bus: &str, path: &str) -> Option<Vec<MenuItem>> {
     let reply = match reply {
         Ok(r) => r,
         Err(e) => {
-            if std::env::var_os("LABYRINTH_PANEL_DEBUG").is_some() {
+            if std::env::var_os("YGGDRASIL_PANEL_DEBUG").is_some() {
                 eprintln!("tray: GetLayout on {bus}{path} failed: {e}");
             }
             return None;
@@ -289,7 +289,7 @@ pub fn fetch_menu(bus: &str, path: &str) -> Option<Vec<MenuItem>> {
     match parsed {
         Ok((_, (_, _, kids))) => Some(kids.iter().filter_map(|k| menu_from_value(k)).collect()),
         Err(e) => {
-            if std::env::var_os("LABYRINTH_PANEL_DEBUG").is_some() {
+            if std::env::var_os("YGGDRASIL_PANEL_DEBUG").is_some() {
                 eprintln!("tray: GetLayout reply not understood: {e}");
             }
             None

@@ -2,7 +2,7 @@
 //!
 //! A shortcut that only starts a program (what Super+S was) cannot tell when the keys come up. An action registered through
 //! `org.kde.KGlobalAccel` is announced with `globalShortcutPressed` and `globalShortcutReleased` signals, which is what this
-//! thread listens for. The shortcut is registered once, as the component "labyrinth-panel" (changeable in System Settings >
+//! thread listens for. The shortcut is registered once, as the component "yggdrasil-panel" (changeable in System Settings >
 //! Shortcuts); if the user already changed it, theirs is kept.
 
 use zbus::blocking::{Connection, MessageIterator, Proxy};
@@ -15,7 +15,7 @@ pub enum Key {
     Up,
 }
 
-const COMPONENT: &str = "labyrinth-panel";
+const COMPONENT: &str = "yggdrasil-panel";
 const ACTION: &str = "ask-sarina";
 /// Qt::MetaModifier | Qt::Key_S
 const META_S: i32 = 0x1000_0000 | 0x53;
@@ -23,7 +23,7 @@ const META_S: i32 = 0x1000_0000 | 0x53;
 const CTRL_ALT_S: i32 = 0x0400_0000 | 0x0800_0000 | 0x53;
 
 fn id() -> Vec<String> {
-    vec![COMPONENT.into(), ACTION.into(), "Labyrinth Panel".into(), "Ask Sarina (hold to talk)".into()]
+    vec![COMPONENT.into(), ACTION.into(), "Yggdrasil Panel".into(), "Ask Sarina (hold to talk)".into()]
 }
 
 /// Registers the shortcut and listens. Returns when the bus goes away. Meant to run in its own thread.

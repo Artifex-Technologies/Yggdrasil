@@ -1,0 +1,35 @@
+# Maintainer: Yggdrasil
+# Builds yggdrasil-weather from packages/weather/ in this repository. Build from
+# this directory with `makepkg -s`. NOT yet built on Linux (built and tested on Windows).
+pkgname=yggdrasil-weather
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Multi-model weather consensus for the Yggdrasil bar, scored against measured temperatures"
+arch=('x86_64')
+provides=('labyrinth-weather')
+conflicts=('labyrinth-weather')
+replaces=('labyrinth-weather')
+url="https://github.com/Artifex-Technologies/Yggdrasil"
+license=('MIT')
+depends=('gcc-libs' 'ca-certificates')
+makedepends=('cargo')
+options=('!lto')
+
+_src="$startdir/../../weather"
+
+build() {
+  cd "$_src"
+  cargo build --release --locked --target-dir "$srcdir/target"
+}
+
+check() {
+  cd "$_src"
+  cargo test --release --locked --lib --target-dir "$srcdir/target"
+}
+
+package() {
+  install -Dm755 "$srcdir/target/release/yggdrasil-weather" "$pkgdir/usr/bin/yggdrasil-weather"
+  # Hourly recorder for accuracy weighting. Enabled by the operating system's installer or Settings.
+  install -Dm644 "$_src/systemd/yggdrasil-weather-record.service" "$pkgdir/usr/lib/systemd/user/yggdrasil-weather-record.service"
+  install -Dm644 "$_src/systemd/yggdrasil-weather-record.timer" "$pkgdir/usr/lib/systemd/user/yggdrasil-weather-record.timer"
+}

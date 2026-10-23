@@ -208,10 +208,10 @@ mod tests {
         assert_eq!(none.data().chunks_exact(4).filter(|p| p[3] > 0).count(), 0, "nothing when hidden");
     }
 
-    /// `LABYRINTH_VIZ_PNG=/tmp/x cargo test render_pictures` writes pictures of the island to look at.
+    /// `YGGDRASIL_VIZ_PNG=/tmp/x cargo test render_pictures` writes pictures of the island to look at.
     #[test]
     fn render_pictures() {
-        let Some(dir) = std::env::var_os("LABYRINTH_VIZ_PNG") else { return };
+        let Some(dir) = std::env::var_os("YGGDRASIL_VIZ_PNG") else { return };
         for (name, level, shown, pal, phase) in [("copper-loud", 0.9, 1.0, 0u8, 2.0f32), ("copper-quiet", 0.25, 1.0, 0, 5.0), ("siri-loud", 0.9, 1.0, 1, 2.0), ("labyrinth-mid", 0.55, 1.0, 2, 3.5), ("growing", 0.5, 0.7, 0, 1.0)] {
             let mut pix = Pixmap::new(840, 208).unwrap(); // 2x
             // a desktop-ish backdrop so the black island reads as it will

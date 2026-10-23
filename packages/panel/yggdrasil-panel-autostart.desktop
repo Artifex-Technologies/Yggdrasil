@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Yggdrasil Panel
+Comment=The top bar, the dock and Fylgja
+Exec=/usr/bin/yggdrasil-panel
+NoDisplay=true
+X-KDE-autostart-phase=2

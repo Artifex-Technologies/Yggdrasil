@@ -1,8 +1,8 @@
-//! labyrinth-compositor: Labyrinth's own Wayland compositor, on Smithay. It is the piece that will replace KWin.
+//! yggdrasil-compositor: Labyrinth's own Wayland compositor, on Smithay. It is the piece that will replace KWin.
 //!
 //! Today it runs nested in a window (winit backend) while it is being built, so it cannot touch the real session:
 //!
-//!   labyrinth-compositor [--run COMMAND ARGS... [--run COMMAND ...]]
+//!   yggdrasil-compositor [--run COMMAND ARGS... [--run COMMAND ...]]
 //!       opens a window and serves a Wayland socket (its name is printed as WAYLAND_DISPLAY=...);
 //!       programs given with --run are started inside it
 //!
@@ -94,7 +94,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut c = std::process::Command::new(&cmd[0]);
         c.args(&cmd[1..]).env("WAYLAND_DISPLAY", &name).env_remove("DISPLAY");
         if let Err(e) = c.spawn() {
-            eprintln!("labyrinth-compositor: cannot start {}: {e}", cmd[0]);
+            eprintln!("yggdrasil-compositor: cannot start {}: {e}", cmd[0]);
         }
     }
 

@@ -1,4 +1,4 @@
-//! labyrinth-greeter: the login screen. greetd starts it inside a small compositor (cage, or Labyrinth's own later) and it draws
+//! yggdrasil-greeter: the login screen. greetd starts it inside a small compositor (cage, or Labyrinth's own later) and it draws
 //! the same designs as the lock screen; what is typed goes to greetd (greetd.rs), which runs PAM and starts the session.
 //!
 //! Settings: /etc/labyrinth/greeter.conf (`design = split`, `session = startplasma-wayland`, `wallpaper = /path/to/picture`).
@@ -209,7 +209,7 @@ impl App {
                 self.draw();
             }
             Err(Fail::Other(e)) => {
-                eprintln!("labyrinth-greeter: {e}");
+                eprintln!("yggdrasil-greeter: {e}");
                 self.lock_state.message = "Cannot sign in right now".into();
                 self.draw();
             }
@@ -251,7 +251,7 @@ impl App {
         design::paint(self.design, &mut pix, &scene);
         let stride = w * 4;
         let size = (stride * h) as usize;
-        let Ok(fd) = rustix::fs::memfd_create(c"labyrinth-greeter", rustix::fs::MemfdFlags::CLOEXEC) else { return };
+        let Ok(fd) = rustix::fs::memfd_create(c"yggdrasil-greeter", rustix::fs::MemfdFlags::CLOEXEC) else { return };
         if rustix::fs::ftruncate(&fd, size as u64).is_err() {
             return;
         }
@@ -278,9 +278,9 @@ fn conf(key: &str) -> Option<String> {
     std::fs::read_to_string(path).ok()?.lines().filter_map(|l| l.split('#').next()?.split_once('=')).find(|(k, _)| k.trim() == key).map(|(_, v)| v.trim().to_string())
 }
 
-/// Normal accounts a person can sign in to: user ids from 1000, with a real shell. `LABYRINTH_GREETER_USERS=a,b` names them for tests.
+/// Normal accounts a person can sign in to: user ids from 1000, with a real shell. `YGGDRASIL_GREETER_USERS=a,b` names them for tests.
 fn list_users() -> Vec<String> {
-    if let Ok(v) = std::env::var("LABYRINTH_GREETER_USERS") {
+    if let Ok(v) = std::env::var("YGGDRASIL_GREETER_USERS") {
         return v.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect();
     }
     let mut out = vec![];
@@ -299,7 +299,7 @@ fn avatar_of(user: &str) -> Option<Pixmap> {
 }
 
 fn die(msg: &str) -> ! {
-    eprintln!("labyrinth-greeter: {msg}");
+    eprintln!("yggdrasil-greeter: {msg}");
     std::process::exit(2);
 }
 
@@ -324,7 +324,7 @@ fn main() {
     let xs = wm.get_xdg_surface(&surface, &qh, ());
     let top = xs.get_toplevel(&qh, ());
     top.set_title("Labyrinth sign-in".into());
-    top.set_app_id("labyrinth-greeter".into());
+    top.set_app_id("yggdrasil-greeter".into());
     top.set_fullscreen(None);
     surface.commit();
 
@@ -349,7 +349,7 @@ fn main() {
         tx,
         done: None,
         #[cfg(feature = "test-auth")]
-        test_keys: std::env::var("LABYRINTH_GREETER_TEST_KEYS").ok(),
+        test_keys: std::env::var("YGGDRASIL_GREETER_TEST_KEYS").ok(),
     };
     let _ = &app.conn;
     let mut event_loop: EventLoop<App> = EventLoop::try_new().unwrap_or_else(|_| die("no event loop"));

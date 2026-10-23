@@ -1,11 +1,14 @@
-# Labyrinth Settings: the everyday settings in one app (GNOME-style), on top of Plasma.
+# Settings: the everyday settings in one app (GNOME-style), on top of Plasma.
 # Built from packages/settings in this repository (and the shared look in packages/yggdrasil-ui).
-pkgname=labyrinth-settings
+pkgname=yggdrasil-settings
 pkgver=0.1.0
 pkgrel=1
-pkgdesc="Labyrinth Settings: Wi-Fi, Bluetooth, displays, sound, appearance, power and more"
+pkgdesc="Settings: Wi-Fi, Bluetooth, displays, sound, appearance, power and more"
 arch=('x86_64')
-url="https://github.com/Artifex-Technologies/Labyrinth_OS"
+provides=('labyrinth-settings')
+conflicts=('labyrinth-settings')
+replaces=('labyrinth-settings')
+url="https://github.com/Artifex-Technologies/Yggdrasil"
 license=('MIT')
 depends=('gcc-libs' 'libxkbcommon' 'wayland' 'vulkan-icd-loader' 'libglvnd' 'fontconfig'
          'networkmanager' 'bluez-utils' 'libpulse' 'libkscreen' 'kconfig' 'power-profiles-daemon' 'pciutils')
@@ -28,6 +31,6 @@ check() {
 }
 
 package() {
-  install -Dm755 "$srcdir/target/release/labyrinth-settings" "$pkgdir/usr/bin/labyrinth-settings"
-  install -Dm644 "$_src/labyrinth-settings.desktop" "$pkgdir/usr/share/applications/labyrinth-settings.desktop"
+  install -Dm755 "$srcdir/target/release/yggdrasil-settings" "$pkgdir/usr/bin/yggdrasil-settings"
+  install -Dm644 "$_src/yggdrasil-settings.desktop" "$pkgdir/usr/share/applications/yggdrasil-settings.desktop"
 }

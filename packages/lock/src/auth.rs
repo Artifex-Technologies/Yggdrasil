@@ -94,7 +94,7 @@ pub struct Fake;
 #[cfg(feature = "test-auth")]
 impl Authenticator for Fake {
     fn check(&self, _user: &str, password: &str) -> Result<bool, String> {
-        Ok(std::env::var("LABYRINTH_LOCK_TEST_PASSWORD").map(|p| p == password).unwrap_or(false))
+        Ok(std::env::var("YGGDRASIL_LOCK_TEST_PASSWORD").map(|p| p == password).unwrap_or(false))
     }
 }
 

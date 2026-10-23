@@ -1,12 +1,12 @@
 [package]
-name = "labyrinth-portal"
+name = "yggdrasil-portal"
 version = "0.1.0"
 edition = "2021"
 description = "Labyrinth's xdg-desktop-portal backend: Minos as the open/save dialog for every application"
 license = "MIT"
 
 [[bin]]
-name = "labyrinth-portal"
+name = "yggdrasil-portal"
 path = "src/main.rs"
 
 [dependencies]

@@ -140,7 +140,7 @@ fn b(combo: &str, action: Action) -> Binding {
 pub fn defaults() -> Vec<Binding> {
     vec![
         b("Super+E", Action::Exec("minos".into())),
-        b("Super+I", Action::Exec("labyrinth-settings".into())),
+        b("Super+I", Action::Exec("yggdrasil-settings".into())),
         b("Super+Return", Action::Exec("ghostty".into())),
         b("Super+L", Action::Lock),
         b("Super+V", Action::Clipboard),
@@ -207,7 +207,7 @@ pub fn load(text: &str) -> (Vec<Binding>, Vec<String>) {
 }
 
 pub fn config_path() -> std::path::PathBuf {
-    if let Some(p) = std::env::var_os("LABYRINTH_COMPOSITOR_SHORTCUTS") {
+    if let Some(p) = std::env::var_os("YGGDRASIL_COMPOSITOR_SHORTCUTS") {
         return p.into();
     }
     yggdrasil_conf::dirs::config().join("shortcuts.conf")

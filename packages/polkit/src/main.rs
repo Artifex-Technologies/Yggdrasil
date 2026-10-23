@@ -1,7 +1,7 @@
-//! labyrinth-polkit: Labyrinth's polkit authentication agent. Run in the session (autostart):
+//! yggdrasil-polkit: Labyrinth's polkit authentication agent. Run in the session (autostart):
 //!
-//!   labyrinth-polkit                 serve this login session (replaces KDE's polkit agent: only one agent per session can be registered)
-//!   labyrinth-polkit --process PID   serve only that process (for testing: `pkexec` run from PID asks this agent)
+//!   yggdrasil-polkit                 serve this login session (replaces KDE's polkit agent: only one agent per session can be registered)
+//!   yggdrasil-polkit --process PID   serve only that process (for testing: `pkexec` run from PID asks this agent)
 //!
 //! When something asks for administrator rights, polkit calls this program; it shows a password box, hands the password to polkit's
 //! own helper (which checks it through PAM and tells polkit the result), and wipes the password from memory. It never decides
@@ -25,19 +25,19 @@ fn main() -> eframe::Result {
         [flag, pid] if flag == "--process" => match pid.parse::<u32>() {
             Ok(p) => agent::Subject::Process(p),
             Err(_) => {
-                eprintln!("labyrinth-polkit: --process needs a number");
+                eprintln!("yggdrasil-polkit: --process needs a number");
                 std::process::exit(2);
             }
         },
         [] => match std::env::var("XDG_SESSION_ID") {
             Ok(id) if !id.is_empty() => agent::Subject::Session(id),
             _ => {
-                eprintln!("labyrinth-polkit: no XDG_SESSION_ID (run it inside the login session)");
+                eprintln!("yggdrasil-polkit: no XDG_SESSION_ID (run it inside the login session)");
                 std::process::exit(2);
             }
         },
         _ => {
-            eprintln!("usage: labyrinth-polkit [--process PID]");
+            eprintln!("usage: yggdrasil-polkit [--process PID]");
             std::process::exit(2);
         }
     };
@@ -48,14 +48,14 @@ fn main() -> eframe::Result {
             // another desktop's agent (KDE's, while KWin is still in use) already answers password requests: that is not a failure, and a
             // failed unit in every check-up list only hides real problems
             if e.to_string().contains("already exists") {
-                eprintln!("labyrinth-polkit: another authentication agent is already running; leaving it to that one");
+                eprintln!("yggdrasil-polkit: another authentication agent is already running; leaving it to that one");
                 std::process::exit(0);
             }
-            eprintln!("labyrinth-polkit: could not register as the authentication agent: {e}");
+            eprintln!("yggdrasil-polkit: could not register as the authentication agent: {e}");
             std::process::exit(1);
         }
     };
-    eprintln!("labyrinth-polkit: registered");
+    eprintln!("yggdrasil-polkit: registered");
     // no window here: each request opens the password box as a process of its own
     loop {
         std::thread::park();
@@ -113,7 +113,7 @@ fn dialog() -> eframe::Result {
             .with_resizable(false)
             .with_decorations(false)
             .with_title("Authentication required")
-            .with_app_id("labyrinth-polkit")
+            .with_app_id("yggdrasil-polkit")
             .with_always_on_top(),
         ..Default::default()
     };

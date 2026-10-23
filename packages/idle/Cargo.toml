@@ -1,12 +1,12 @@
 [package]
-name = "labyrinth-idle"
+name = "yggdrasil-idle"
 version = "0.1.0"
 edition = "2021"
 description = "Labyrinth's idle manager: watches how long the user has been away (Wayland ext-idle-notify) and, when told to, dims, locks, turns the display off or sleeps. Starts in observe-only mode."
 license = "MIT"
 
 [[bin]]
-name = "labyrinth-idle"
+name = "yggdrasil-idle"
 path = "src/main.rs"
 
 [dependencies]

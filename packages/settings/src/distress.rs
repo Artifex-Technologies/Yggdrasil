@@ -84,7 +84,7 @@ fn wipe(s: &mut String) {
 }
 
 impl State {
-    /// `labyrinth-settings security:distress-demo` (or `-warn`): the page filled with sample settings, never reaching the helper.
+    /// `yggdrasil-settings security:distress-demo` (or `-warn`): the page filled with sample settings, never reaching the helper.
     pub fn demo(with_warning: bool) -> State {
         let cfg = Cfg { enabled: true, hash: "set".into(), count: 3, window_secs: 90, expires: 0, silent_login: true, extra: "wipe_keys".into(), wipe_keys: true, shutdown: true, ..Cfg::default() };
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);

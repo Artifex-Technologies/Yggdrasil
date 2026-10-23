@@ -450,8 +450,21 @@ pub fn owner(app: &AppInfo) -> Option<(String, bool)> {
 }
 
 /// Packages the desktop is made of: removing them would break the system, so Settings does not offer to.
+/// Packages Settings will not uninstall: the desktop's own, the system's core, and what the operating system lists in
+/// /etc/yggdrasil/protected-packages (one name per line; `name*` covers every package starting with `name`).
 pub fn protected(pkg: &str) -> bool {
-    pkg.starts_with("labyrinth-")
+    let os_list = std::fs::read_to_string(yggdrasil_conf::dirs::system_config().join("protected-packages")).unwrap_or_default();
+    protected_with(pkg, &os_list)
+}
+
+fn protected_with(pkg: &str, os_list: &str) -> bool {
+    let listed = os_list.lines().map(|l| l.split('#').next().unwrap_or("").trim()).filter(|l| !l.is_empty()).any(|l| match l.strip_suffix('*') {
+        Some(prefix) => pkg.starts_with(prefix),
+        None => pkg == l,
+    });
+    listed
+        || pkg.starts_with("yggdrasil-")
+        || pkg.starts_with("liki-")
         || pkg.starts_with("plasma-")
         || pkg.starts_with("kde")
         || pkg.starts_with("kwin")
@@ -560,7 +573,10 @@ mod tests {
 
     #[test]
     fn desktop_packages_are_protected() {
-        assert!(protected("labyrinth-minos") && protected("plasma-desktop") && protected("kwin") && !protected("firefox"));
+        assert!(protected("yggdrasil-minos") && protected("liki-icon-theme") && protected("plasma-desktop") && protected("kwin") && !protected("firefox"));
+        let os = "# the operating system's own\nlabyrinth-*\nsarina-git\n";
+        assert!(super::protected_with("labyrinth-ollama-tuning", os) && super::protected_with("sarina-git", os) && !super::protected_with("sarina", os));
+        assert!(!super::protected_with("labyrinth-ollama-tuning", ""));
     }
 }
 

@@ -1,4 +1,4 @@
-//! labyrinth-keyring-sync: keeps gnome-keyring's login keyring and the login password together.
+//! yggdrasil-keyring-sync: keeps gnome-keyring's login keyring and the login password together.
 //!
 //! The keyring is locked with the login password and PAM unlocks it at login. If the two have drifted apart (an administrator reset the
 //! password, or a tool changed it without telling PAM), the keyring stays locked and the first app that needs a secret asks for a password
@@ -6,9 +6,9 @@
 //! current one. Then it changes the keyring's password to the current one (the call Seahorse uses), or, for someone who forgot the previous
 //! one, starts a new keyring and keeps the old file aside.
 //!
-//!   labyrinth-keyring-sync            (autostart) does nothing unless the login keyring is locked
-//!   labyrinth-keyring-sync --check    prints the state: locked / unlocked / no service / no keyring
-//!   labyrinth-keyring-sync --cli      for tests: LABYRINTH_KEYRING_OLD and LABYRINTH_KEYRING_CURRENT in the environment, no window and
+//!   yggdrasil-keyring-sync            (autostart) does nothing unless the login keyring is locked
+//!   yggdrasil-keyring-sync --check    prints the state: locked / unlocked / no service / no keyring
+//!   yggdrasil-keyring-sync --cli      for tests: YGGDRASIL_KEYRING_OLD and YGGDRASIL_KEYRING_CURRENT in the environment, no window and
 //!                                     no check of the current password (it only changes the keyring, which the caller could do over D-Bus)
 
 mod auth;
@@ -42,7 +42,7 @@ fn main() -> eframe::Result {
         return Ok(());
     }
     if args.iter().any(|a| a == "--cli") {
-        let (old, new) = (std::env::var("LABYRINTH_KEYRING_OLD").unwrap_or_default(), std::env::var("LABYRINTH_KEYRING_CURRENT").unwrap_or_default());
+        let (old, new) = (std::env::var("YGGDRASIL_KEYRING_OLD").unwrap_or_default(), std::env::var("YGGDRASIL_KEYRING_CURRENT").unwrap_or_default());
         let kr = match Keyring::open() {
             Ok(k) => k,
             Err(s) => {
@@ -65,7 +65,7 @@ fn main() -> eframe::Result {
         _ => return Ok(()),
     }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([460.0, 330.0]).with_resizable(false).with_title("Keyring").with_app_id("labyrinth-keyring-sync"),
+        viewport: egui::ViewportBuilder::default().with_inner_size([460.0, 330.0]).with_resizable(false).with_title("Keyring").with_app_id("yggdrasil-keyring-sync"),
         ..Default::default()
     };
     eframe::run_native("Keyring", options, Box::new(|cc| Ok(Box::new(ui::App::new(&cc.egui_ctx)))))

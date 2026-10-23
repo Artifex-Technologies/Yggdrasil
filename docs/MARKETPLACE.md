@@ -1,4 +1,4 @@
-# Labyrinth Marketplace (`labyrinth-market`)
+# Agora (`agora`)
 
 An app store laid out like the macOS one: **Discover** (featured cards, then picks for Create, Work, Play and Develop), the four tabs, **Categories** (every sub-category with its count), **Updates**, search, and an app page with a Get / Open button, the source, review notes and what installing will run.
 
@@ -40,7 +40,7 @@ Installs, removals and updates of **reviewed** apps now run inside the Marketpla
 - Not done: queueing several installs, per-package progress for AUR builds (the bar moves on gently while it builds).
 
 ## Cancel, history, smoother bar (2026-10-17)
-- **Cancel** (on the progress card): the user-level programs (yay, makepkg, flatpak) are stopped through their process group; the administrator part runs inside `labyrinth-pkg-root` (started with pkexec, one password box), which watches a cancel file in `/run/user/<uid>/labyrinth-market/` and, on cancel, stops pacman, removes the packages that run had added (the set of installed packages before and after) and the package files it downloaded. The Marketplace removes an AUR build's folders in `~/.cache/yay` and uninstalls a Flatpak it had just added. A cancelled install is not put in the history. `labyrinth-pkg-root` accepts only `pacman` install and remove commands with a short list of options, plain package names, and a cancel file inside the invoking user's runtime folder (`tests/test_labyrinth_pkg_root.py`).
+- **Cancel** (on the progress card): the user-level programs (yay, makepkg, flatpak) are stopped through their process group; the administrator part runs inside `labyrinth-pkg-root` (started with pkexec, one password box), which watches a cancel file in `/run/user/<uid>/agora/` and, on cancel, stops pacman, removes the packages that run had added (the set of installed packages before and after) and the package files it downloaded. The Marketplace removes an AUR build's folders in `~/.cache/yay` and uninstalls a Flatpak it had just added. A cancelled install is not put in the history. `labyrinth-pkg-root` accepts only `pacman` install and remove commands with a short list of options, plain package names, and a cancel file inside the invoking user's runtime folder (`tests/test_labyrinth_pkg_root.py`).
 - **History** (sidebar, above Sources): apps whose install (or reinstall) *finished*, newest first, with the date; Open or Get beside each one, "Clear history". Kept in `~/.local/share/labyrinth/market/history.json`. Cancelled and failed installs, removals and updates are not added.
 - **Bar:** downloading and installing are two stretches of one bar (each half, when there was a download; pacman's per-file download bars and its `(n/m)` install counts are read), it never goes backwards, it starts moving the moment the job begins, moves on gently while a build gives no numbers, and is eased toward each new value so it glides.
 

@@ -241,7 +241,7 @@ extern "C" {
 }
 
 fn cancel_dir() -> PathBuf {
-    std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/tmp")).join("labyrinth-market")
+    std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/tmp")).join("agora")
 }
 
 /// What to undo when a job is cancelled, beyond what the administrator helper removes: folders the build left in the user's cache, and

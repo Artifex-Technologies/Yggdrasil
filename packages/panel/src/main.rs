@@ -1,6 +1,6 @@
-//! labyrinth-panel: Labyrinth's top bar and dock, written for Wayland (wlr-layer-shell) and drawn
+//! yggdrasil-panel: Labyrinth's top bar and dock, written for Wayland (wlr-layer-shell) and drawn
 //! on the CPU. Windows come from KWin through the plasma-window-management protocol, which KWin
-//! only gives to programs whose desktop file asks for it (labyrinth-panel.desktop).
+//! only gives to programs whose desktop file asks for it (yggdrasil-panel.desktop).
 //!
 //! One full bar on every screen except the tiling screen (which gets a slim one), and the dock on
 //! the main screen. Which screen is which comes from KDE (kscreen priority, the tiling setting);
@@ -106,7 +106,7 @@ enum Kind {
 }
 
 /// The panel's own D-Bus service, so a key press elsewhere (the Super key, through KWin) can reach it:
-/// `busctl --user call org.labyrinth.Panel /Panel org.labyrinth.Panel ToggleStart`.
+/// `busctl --user call org.yggdrasil.Panel /Panel org.yggdrasil.Panel ToggleStart`.
 struct PanelBus(calloop::channel::Sender<BusMsg>);
 
 /// What a request over D-Bus asks the panel to do.
@@ -119,7 +119,7 @@ enum BusMsg {
     FylgjaSection(u32),
 }
 
-#[zbus::interface(name = "org.labyrinth.Panel")]
+#[zbus::interface(name = "org.yggdrasil.Panel")]
 impl PanelBus {
     /// Open the start menu, or close it if it is open.
     fn toggle_start(&self) {
@@ -504,7 +504,7 @@ fn system_dark() -> bool {
 fn new_buffer(shm: &WlShm, qh: &QueueHandle<State>, w: u32, h: u32) -> Option<Buffer> {
     let stride = w * 4;
     let size = (stride * h) as usize;
-    let fd = rustix::fs::memfd_create(c"labyrinth-panel", rustix::fs::MemfdFlags::CLOEXEC).ok()?;
+    let fd = rustix::fs::memfd_create(c"yggdrasil-panel", rustix::fs::MemfdFlags::CLOEXEC).ok()?;
     rustix::fs::ftruncate(&fd, size as u64).ok()?;
     let file = std::fs::File::from(fd);
     let map = unsafe { MmapMut::map_mut(&file).ok()? };
@@ -617,7 +617,7 @@ impl State {
         self.next_surf += 1;
         let Some(out) = self.outputs.get(&output) else { return };
         let wl = self.compositor.create_surface(&self.qh, ());
-        let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Top, "labyrinth-panel".into(), &self.qh, id);
+        let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Top, "yggdrasil-panel".into(), &self.qh, id);
         let size = (0, shell::BAR_H);
         layer.set_anchor(Anchor::Top | Anchor::Left | Anchor::Right);
         layer.set_size(size.0, size.1);
@@ -661,7 +661,7 @@ impl State {
     /// surface with an exclusive zone is placed above that zone by KWin, so it floated.)
     fn add_dock(&mut self, output: u32) {
         let (Some(wm), Some(shell_g)) = (self.xdg_wm.clone(), self.plasma_shell.clone()) else {
-            eprintln!("labyrinth-panel: no xdg-shell or plasma-shell from the compositor; there will be no dock");
+            eprintln!("yggdrasil-panel: no xdg-shell or plasma-shell from the compositor; there will be no dock");
             return;
         };
         let id = self.next_surf;
@@ -684,7 +684,7 @@ impl State {
         ps.set_skip_switcher(1);
         ps.set_panel_takes_focus(0);
         wl.commit();
-        if std::env::var_os("LABYRINTH_PANEL_DEBUG").is_some() {
+        if std::env::var_os("YGGDRASIL_PANEL_DEBUG").is_some() {
             eprintln!("dock {id}: {}x{} at {x},{y}", want.0, want.1);
         }
         self.surfs.push(Surf { id, kind: Kind::Dock, output, wl, layer: None, dock: Some(DockWin { xs, tl, ps }), w: want.0, h: want.1, want, gap: self.model.conf.dock_gap as i32, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
@@ -1230,7 +1230,7 @@ impl State {
         if let Some(dev) = n.link.strip_prefix("mount:") {
             run(&["labyrinth-mount-open", dev]);
         } else if !n.link.is_empty() {
-            run(&["labyrinth-settings", &n.link]);
+            run(&["yggdrasil-settings", &n.link]);
         } else if n.app != notify::HEIMDALL_APP {
             self.focus_or_launch(&n);
         }
@@ -1562,7 +1562,7 @@ impl State {
                     let _ = tx.send((uuid, p));
                 }
                 Err(e) => {
-                    if std::env::var_os("LABYRINTH_PANEL_DEBUG").is_some() {
+                    if std::env::var_os("YGGDRASIL_PANEL_DEBUG").is_some() {
                         eprintln!("window picture {uuid}: {e}");
                     }
                 }
@@ -1795,7 +1795,7 @@ impl State {
                 self.dirty = true;
             }
             FAct::WifiMore | FAct::BtMore => {
-                run(&["setsid", "-f", "labyrinth-settings", if hit.act == FAct::WifiMore { "network" } else { "bluetooth" }]);
+                run(&["setsid", "-f", "yggdrasil-settings", if hit.act == FAct::WifiMore { "network" } else { "bluetooth" }]);
                 self.close_popup();
             }
             FAct::Mute => {
@@ -2349,8 +2349,8 @@ impl State {
                     run(&["busctl", "--user", "call", "org.kde.KWin", "/VirtualDesktopManager", "org.kde.KWin.VirtualDesktopManager", "createDesktop", "us", &n.to_string(), &format!("Desktop {}", n + 1)]);
                 }
             }
-            Action::Network => run(&["labyrinth-settings", "network"]),
-            Action::Bluetooth => run(&["labyrinth-settings", "bluetooth"]),
+            Action::Network => run(&["yggdrasil-settings", "network"]),
+            Action::Bluetooth => run(&["yggdrasil-settings", "bluetooth"]),
             Action::Dock(app_id) => self.click_dock(&app_id),
             Action::DockWin(_, wi) => {
                 if let Some(w) = self.model.wins.get(wi) {
@@ -2645,7 +2645,7 @@ impl Dispatch<ZwlrLayerSurfaceV1, usize> for State {
             zwlr_layer_surface_v1::Event::Configure { serial, width, height } => {
                 layer.ack_configure(serial);
                 let Some(i) = state.surfs.iter().position(|s| s.id == *id) else { return };
-                if std::env::var_os("LABYRINTH_PANEL_DEBUG").is_some() {
+                if std::env::var_os("YGGDRASIL_PANEL_DEBUG").is_some() {
                     eprintln!("configure surface {} ({:?}): {}x{}", id, state.surfs[i].kind, width, height);
                 }
                 let s = &mut state.surfs[i];
@@ -3067,16 +3067,16 @@ fn bind_outputs(globals: &GlobalList, state: &mut State, qh: &QueueHandle<State>
 fn main() {
     paint::refresh_accent();
     let Some(fonts) = paint::Fonts::load() else {
-        eprintln!("labyrinth-panel: no sans-serif font found (fc-match)");
+        eprintln!("yggdrasil-panel: no sans-serif font found (fc-match)");
         std::process::exit(1);
     };
     let conn = Connection::connect_to_env().unwrap_or_else(|e| {
-        eprintln!("labyrinth-panel: cannot connect to Wayland: {e}");
+        eprintln!("yggdrasil-panel: cannot connect to Wayland: {e}");
         std::process::exit(1);
     });
     let (globals, mut queue) = registry_queue_init::<State>(&conn).expect("registry");
     let qh = queue.handle();
-    if std::env::var_os("LABYRINTH_PANEL_DEBUG").is_some() {
+    if std::env::var_os("YGGDRASIL_PANEL_DEBUG").is_some() {
         globals.contents().with_list(|l| {
             for g in l {
                 eprintln!("global {} v{}", g.interface, g.version);
@@ -3092,7 +3092,7 @@ fn main() {
     let viewporter: Option<WpViewporter> = globals.bind(&qh, 1..=1, ()).ok();
     let plasma_shell: Option<OrgKdePlasmaShell> = globals.bind(&qh, 1..=8, ()).ok();
     let layer_shell: ZwlrLayerShellV1 = globals.bind(&qh, 1..=4, ()).unwrap_or_else(|_| {
-        eprintln!("labyrinth-panel: the compositor has no wlr-layer-shell");
+        eprintln!("yggdrasil-panel: the compositor has no wlr-layer-shell");
         std::process::exit(1);
     });
     let _seat: Option<WlSeat> = globals.bind(&qh, 1..=7, ()).ok();
@@ -3101,9 +3101,9 @@ fn main() {
     // Without KWin's protocol the standard one (Hyprland, Sway, labwc ...) gives the window list
     let wlr_wm: Option<ZwlrForeignToplevelManagerV1> = if wm.is_none() { globals.bind(&qh, 1..=3, ()).ok() } else { None };
     if wm.is_none() && wlr_wm.is_none() {
-        eprintln!("labyrinth-panel: the compositor offers no window management (KWin needs labyrinth-panel.desktop installed with X-KDE-Wayland-Interfaces); the dock will only launch apps");
+        eprintln!("yggdrasil-panel: the compositor offers no window management (KWin needs yggdrasil-panel.desktop installed with X-KDE-Wayland-Interfaces); the dock will only launch apps");
     } else if wlr_wm.is_some() {
-        eprintln!("labyrinth-panel: window list through wlr-foreign-toplevel-management");
+        eprintln!("yggdrasil-panel: window list through wlr-foreign-toplevel-management");
     }
 
     let (tab_tx, tab_rx) = calloop::channel::channel::<u64>();
@@ -3223,7 +3223,7 @@ fn main() {
     let (bus_tx, bus_rx) = calloop::channel::channel::<BusMsg>();
     let key_tx = bus_tx.clone();
     std::thread::spawn(move || {
-        let conn = zbus::blocking::connection::Builder::session().and_then(|b| b.name("org.labyrinth.Panel")).and_then(|b| b.serve_at("/Panel", PanelBus(bus_tx))).and_then(|b| b.build());
+        let conn = zbus::blocking::connection::Builder::session().and_then(|b| b.name("org.yggdrasil.Panel")).and_then(|b| b.serve_at("/Panel", PanelBus(bus_tx))).and_then(|b| b.build());
         match conn {
             Ok(c) => {
                 // The Super key on its own: KWin 6.7 hands a bare modifier tap to Plasma's global shortcut
@@ -3243,13 +3243,13 @@ fn main() {
                             }
                         }
                     }
-                    Err(e) => eprintln!("labyrinth-panel: cannot listen for the Super key ({e})"),
+                    Err(e) => eprintln!("yggdrasil-panel: cannot listen for the Super key ({e})"),
                 }
                 loop {
                     std::thread::park();
                 }
             }
-            Err(e) => eprintln!("labyrinth-panel: no D-Bus service ({e}); the Super key will not open the start menu"),
+            Err(e) => eprintln!("yggdrasil-panel: no D-Bus service ({e}); the Super key will not open the start menu"),
         }
     });
     event_loop
@@ -3377,8 +3377,8 @@ fn main() {
             TimeoutAction::ToDuration(Duration::from_millis(if st.repeat.is_some() { 20 } else { 60 }))
         })
         .expect("key repeat timer");
-    // LABYRINTH_PANEL_THUMBTEST=1: a few seconds after start, try a picture of every window and say what came of it
-    if std::env::var_os("LABYRINTH_PANEL_THUMBTEST").is_some() {
+    // YGGDRASIL_PANEL_THUMBTEST=1: a few seconds after start, try a picture of every window and say what came of it
+    if std::env::var_os("YGGDRASIL_PANEL_THUMBTEST").is_some() {
         event_loop
             .handle()
             .insert_source(Timer::from_duration(Duration::from_secs(6)), |_, _, st| {
@@ -3486,7 +3486,7 @@ fn main() {
         .expect("voice key channel");
     std::thread::spawn(move || {
         if let Err(e) = voicekey::run(vkey_tx) {
-            eprintln!("labyrinth-panel: hold-to-talk is not available ({e}); the AskSarina D-Bus call still works");
+            eprintln!("yggdrasil-panel: hold-to-talk is not available ({e}); the AskSarina D-Bus call still works");
         }
     });
 

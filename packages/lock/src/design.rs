@@ -1,5 +1,5 @@
 //! The lock screen's looks. Several designs share one scene (who, what was typed, the time, the wallpaper) and draw it their own way; the chosen
-//! one is in ~/.config/yggdrasil/lock.conf (`design = split`) and Settings > Appearance > Lock screen changes it. `labyrinth-lock --preview
+//! one is in ~/.config/yggdrasil/lock.conf (`design = split`) and Settings > Appearance > Lock screen changes it. `yggdrasil-lock --preview
 //! DESIGN --out FILE` draws one into a picture without locking anything (that is what Settings shows).
 //!
 //! "Split" follows the design of the same name in Omarchy's Lock Screen Explorer (https://github.com/SirJul1337/omarchy-lock-explorer, MIT,

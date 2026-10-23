@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Yggdrasil authentication agent
+Comment=The password box for administrator rights
+Exec=/usr/bin/yggdrasil-polkit
+NoDisplay=true
+X-KDE-autostart-phase=1

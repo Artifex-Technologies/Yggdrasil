@@ -1,4 +1,4 @@
-//! Labyrinth Settings: the everyday settings in one clean app, in the style of GNOME Settings,
+//! Settings: the everyday settings in one clean app, in the style of GNOME Settings,
 //! with the same look as Minos (yggdrasil-ui). It changes Plasma's settings through the tools
 //! Plasma itself uses (sys.rs). KDE's System Settings is hidden (labyrinth-plasma-setup) and its
 //! command redirects here (/usr/local/bin/systemsettings); the few deep options not covered yet
@@ -308,7 +308,7 @@ impl App {
             brand_style: 0,
             refreshed: std::time::Instant::now(),
         };
-        // `labyrinth-settings apps:ID` opens that app's own page (links from the dock or the notch)
+        // `yggdrasil-settings apps:ID` opens that app's own page (links from the dock or the notch)
         if let Some(id) = std::env::args().nth(1).and_then(|a| a.strip_prefix("apps:").map(String::from)).filter(|s| !s.is_empty()) {
             app.app_sel = Some(id);
         }
@@ -450,12 +450,12 @@ impl App {
     }
 }
 
-/// `labyrinth-settings security:heimdall` (or `appearance:icons`) opens a page inside the page.
+/// `yggdrasil-settings security:heimdall` (or `appearance:icons`) opens a page inside the page.
 fn start_sub() -> String {
     std::env::args().nth(1).unwrap_or_default().to_lowercase().split_once(':').map(|(_, s)| s.to_string()).unwrap_or_default()
 }
 
-/// `labyrinth-settings displays` opens on a page (for links from the top bar or other apps).
+/// `yggdrasil-settings displays` opens on a page (for links from the top bar or other apps).
 fn start_page() -> Page {
     let arg = std::env::args().nth(1).unwrap_or_default().to_lowercase();
     let arg = arg.split(':').next().unwrap_or_default().to_string();
@@ -669,7 +669,7 @@ impl App {
         }
     }
 
-    /// Appearance > Lock screen: the designs, each drawn by labyrinth-lock into a picture (nothing is locked), and which one is in use.
+    /// Appearance > Lock screen: the designs, each drawn by yggdrasil-lock into a picture (nothing is locked), and which one is in use.
     fn lock_page(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         const DESIGNS: [(&str, &str, &str); 4] = [
             ("split", "Split", "Wallpaper on the left, a frosted sign-in panel on the right"),
@@ -687,7 +687,7 @@ impl App {
                 let _ = std::fs::create_dir_all(&dir);
                 for (id, _, _) in DESIGNS {
                     let out = dir.join(format!("{id}.png"));
-                    let _ = std::process::Command::new("labyrinth-lock").args(["--preview", id, "--size", "1920x1080", "--typed", "6", "--out"]).arg(&out).status();
+                    let _ = std::process::Command::new("yggdrasil-lock").args(["--preview", id, "--size", "1920x1080", "--typed", "6", "--out"]).arg(&out).status();
                     ctx2.forget_image(&format!("file://{}", out.display()));
                 }
                 ctx2.request_repaint();
@@ -719,7 +719,7 @@ impl App {
                             if let Some(d) = conf.parent() {
                                 let _ = std::fs::create_dir_all(d);
                             }
-                            let _ = std::fs::write(&conf, format!("# Which lock screen design labyrinth-lock draws (set in Settings > Appearance > Lock screen)\ndesign = {id}\n"));
+                            let _ = std::fs::write(&conf, format!("# Which lock screen design yggdrasil-lock draws (set in Settings > Appearance > Lock screen)\ndesign = {id}\n"));
                         }
                     });
                 });
@@ -738,7 +738,7 @@ impl App {
                     self.change(ctx, move || c.save());
                 }
             });
-            ui::row(ui, pal, false, "KDE System Settings", Some("The whole of KDE's own settings window, with every panel Labyrinth Settings does not have"), |ui| {
+            ui::row(ui, pal, false, "KDE System Settings", Some("The whole of KDE's own settings window, with every panel Settings does not have"), |ui| {
                 if ui::action(ui, pal, "Open").clicked() {
                     sys::spawn("/usr/bin/systemsettings", &[]);
                 }
@@ -2373,7 +2373,7 @@ impl App {
         ui::group(ui, pal, Some("Keyring"), |ui| {
             ui::row(ui, pal, true, state, Some(hint), |ui| {
                 if fixable && ui.button("Fix…").clicked() {
-                    sys::spawn("labyrinth-keyring-sync", &[]);
+                    sys::spawn("yggdrasil-keyring-sync", &[]);
                 }
             });
         });
@@ -2568,7 +2568,7 @@ fn main() -> eframe::Result {
             .with_inner_size([1060.0, 720.0])
             .with_min_inner_size([560.0, 400.0])
             .with_title("Settings")
-            .with_app_id("labyrinth-settings")
+            .with_app_id("yggdrasil-settings")
             // Draws its own title bar like Minos (yggdrasil-ui chrome).
             .with_decorations(false),
         ..Default::default()

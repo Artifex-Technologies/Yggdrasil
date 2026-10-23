@@ -1697,18 +1697,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "labyrinth-calculator"
-version = "0.1.0"
-dependencies = [
- "dirs",
- "eframe",
- "serde",
- "serde_json",
- "yggdrasil-conf",
- "yggdrasil-ui",
-]
-
-[[package]]
 name = "libc"
 version = "0.2.190"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4280,6 +4268,18 @@ name = "xml-rs"
 version = "0.8.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
+
+[[package]]
+name = "yggdrasil-calculator"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "eframe",
+ "serde",
+ "serde_json",
+ "yggdrasil-conf",
+ "yggdrasil-ui",
+]
 
 [[package]]
 name = "yggdrasil-conf"

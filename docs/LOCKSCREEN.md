@@ -1,8 +1,8 @@
 # Lock screen
 
-Labyrinth has its own locker, `labyrinth-lock` (Rust, tiny-skia, PAM). It uses the Wayland
+Labyrinth has its own locker, `yggdrasil-lock` (Rust, tiny-skia, PAM). It uses the Wayland
 `ext-session-lock-v1` protocol, which KWin 6.8 does not offer. So today KDE's lock screen still
-locks the session; `labyrinth-lock` takes over once Labyrinth runs on a compositor that offers the
+locks the session; `yggdrasil-lock` takes over once Labyrinth runs on a compositor that offers the
 protocol (the planned Smithay compositor).
 
 ## Designs
@@ -17,6 +17,6 @@ Pick one in Settings > Appearance > Lock screen, or set `design = split|classic|
 
 ## Previews
 
-`labyrinth-lock --preview DESIGN --out FILE.png [--size WxH] [--typed N] [--message T] [--wallpaper P] [--user U]`
+`yggdrasil-lock --preview DESIGN --out FILE.png [--size WxH] [--typed N] [--message T] [--wallpaper P] [--user U]`
 renders a design to a picture without touching Wayland or locking anything. Never test the locker
 on a live KWin session; use a nested compositor.
