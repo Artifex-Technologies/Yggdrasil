@@ -2011,7 +2011,7 @@ impl App {
         let mut learn = st.learn;
         let mut learn_changed = false;
         ui::group(ui, pal, Some("What she learns about you"), |ui| {
-            ui::row(ui, pal, true, "Learn from our talks once a day", Some("Reads what you talked about (not about the computer) and keeps what it shows about you in her vault, Entities/About Zlothra, each with your own words as evidence. You can edit that note; what you move under Forgotten she will not add again. Local model only; skipped while a game uses the graphics card"), |ui| {
+            ui::row(ui, pal, true, "Learn from our talks once a day", Some("Reads what you talked about (not about the computer) and keeps what it shows about you in her vault, Entities/About Zlothra, each with your own words as evidence. You can edit that note; what you move under Forgotten she will not add again. Files you drop in her Inbox folder become linked notes under Sources. Local model only; skipped while a game uses the graphics card"), |ui| {
                 learn_changed = ui::switch(ui, pal, &mut learn).changed();
             });
         });
