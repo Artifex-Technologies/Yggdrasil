@@ -15,7 +15,10 @@ import subprocess
 import sys
 import time
 
-ALLOWED_OPTS = {"-S", "-U", "-R", "-Rs", "-Rns", "-s", "-n", "-Syu", "--needed", "--noconfirm", "--asdeps", "--asexplicit"}
+ALLOWED_OPTS = {"-S", "-U", "-R", "-Rs", "-Rns", "-D", "-s", "-n", "-y", "-Syu", "--needed", "--noconfirm", "--asdeps", "--asexplicit"}
+# yay passes pacman's own settings file explicitly; no other one is accepted (another file could point pacman anywhere)
+CONFIG = "/etc/pacman.conf"
+PKG_FILE = re.compile(r"\.pkg\.tar\.(zst|xz|gz)$")
 CACHE = "/var/cache/pacman/pkg"
 
 
@@ -45,26 +48,55 @@ def main(argv):
     if not valid_cancel_file(cancel_file):
         die("the cancel file must be in the invoking user's runtime folder")
     packages = []
+    options = []
     skip = False
+    only_names = False
     for i, a in enumerate(args):
         if skip:
             skip = False
             continue
-        if a == "--ignore":
+        if only_names:
+            pass
+        elif a == "--":
+            # the end of the options: everything after it is a package
+            only_names = True
+            continue
+        elif a == "--config":
+            if i + 1 >= len(args) or args[i + 1] != CONFIG:
+                die("--config may only name " + CONFIG)
+            skip = True
+            continue
+        if not only_names and a == "--ignore":
             # --ignore takes the next argument: a comma-separated list of plain package names
             if i + 1 >= len(args) or not re.match(r"^[A-Za-z0-9@._+,-]+$", args[i + 1]):
                 die("--ignore needs a plain list of package names")
             skip = True
-        elif a.startswith("-"):
+        elif not only_names and a.startswith("-"):
             if a not in ALLOWED_OPTS:
                 die("option not allowed: " + a)
+            options.append(a)
         else:
             if not re.match(r"^[A-Za-z0-9@._+/:~-]+$", a):
                 die("odd package name: " + a)
             packages.append(a)
-    if not any(a in ("-S", "-U", "-R", "-Rs", "-Rns", "-Syu") for a in args):
-        die("only install and remove commands")
-    installing = "-S" in args or "-U" in args
+    ops = [a for a in options if a in ("-S", "-U", "-R", "-Rs", "-Rns", "-Syu", "-D")]
+    if len(ops) != 1:
+        die("one install, remove or mark command at a time")
+    if "-y" in options:
+        # a refresh of the package lists (yay's first step of an update). Refreshing without upgrading leaves the system half
+        # updated, where the next single install can break it, so a refresh is always a full upgrade of the repositories here.
+        if ops != ["-S"] or packages:
+            die("-y only refreshes, as the first step of a full update")
+        args = ["-Syu" if a == "-S" else a for a in args if a != "-y"]
+        ops = ["-Syu"]
+    if "-D" in ops and ("--asdeps" not in options and "--asexplicit" not in options):
+        die("-D only marks packages as dependencies or explicitly installed")
+    if "-U" in ops:
+        # package files only: what yay built (or a file you chose), never a web address or anything else
+        for p in packages:
+            if not (p.startswith("/") and PKG_FILE.search(p) and os.path.isfile(p)):
+                die("not a package file: " + p)
+    installing = ops[0] in ("-S", "-U")
     before = installed() if installing else set()
     started = time.time()
     child = subprocess.Popen(["pacman"] + args, start_new_session=True)

@@ -62,6 +62,15 @@ fn main() -> eframe::Result {
     }
 }
 
+/// Ends the password box's process at once. The box exists for one request; when it is over there is nothing to save, and a normal
+/// exit would tear the window's graphics down while the driver's exit handlers run (with NVIDIA's driver that crashed every time).
+pub fn quit_now(code: i32) -> ! {
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    // SAFETY: _exit only ends the process; nothing is touched afterwards
+    unsafe { libc::_exit(code) }
+}
+
 /// The password box for one request: reads what to show from stdin, writes the typed answers to stdout, ends when told.
 fn dialog() -> eframe::Result {
     use std::io::{BufRead, Write};
@@ -105,7 +114,7 @@ fn dialog() -> eframe::Result {
             wake();
         }
         // the agent went away: nothing more can be answered
-        std::process::exit(1);
+        quit_now(1);
     });
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()

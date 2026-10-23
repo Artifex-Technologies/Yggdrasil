@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN" "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>Yggdrasil</vendor>
+  <!-- Agora's root helper only: it runs one checked pacman command (install, remove, update) and nothing else. The password is
+       remembered for a few minutes for the process that asked, so one update (a single yay run) asks once. Every other pkexec use
+       still asks every time. -->
+  <action id="org.yggdrasil.agora.packages">
+    <description>Install, remove or update software with Agora</description>
+    <message>Authentication is required to install, remove or update software</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/agora/pkg-root</annotate>
+  </action>
+</policyconfig>

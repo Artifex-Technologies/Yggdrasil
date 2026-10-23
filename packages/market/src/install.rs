@@ -106,10 +106,15 @@ pub fn command(e: &Entry, op: Op) -> Option<(String, Vec<String>)> {
             (prog, cmd)
         }
         (_, Op::UpdateAll) => {
-            // the repositories through the administrator helper, then the AUR; the operating system's own builds are never taken from the AUR
+            // One yay run does it all: the repositories (its refresh becomes a full upgrade in the helper), then the AUR. Every root
+            // step then comes from the same process, so the password box asks once (polkit keeps it a few minutes for the helper only).
+            // The operating system's own builds are never taken from the AUR.
             let skip = crate::catalog::local_builds().join(",");
-            let ign = if skip.is_empty() { String::new() } else { format!(" --ignore {skip}") };
-            ("sh".into(), s(&["-c", &format!("pkexec {ROOT_HELPER} \"$AGORA_CANCEL_FILE\" pacman -Syu --noconfirm{ign} && yay -Sua --noconfirm --sudo {SUDO_WRAPPER}{ign}")]))
+            let mut a = s(&["-Syu", "--noconfirm", "--sudo", SUDO_WRAPPER]);
+            if !skip.is_empty() {
+                a.extend(s(&["--ignore", &skip]));
+            }
+            ("yay".into(), a)
         }
         (Source::Plugin { .. }, _) | (Source::Component(_), _) => return None,
     })
@@ -446,14 +451,13 @@ mod tests {
     }
 
     #[test]
-    fn update_everything_goes_through_the_helper_and_skips_local_builds() {
+    fn update_everything_is_one_yay_run_through_the_password_box() {
         let c = parse_catalog(SAMPLE, "Sample", true).unwrap();
         let e = c.apps[0].clone();
         let (p, a) = command(&e, Op::UpdateAll).unwrap();
-        assert_eq!(p, "sh");
-        let script = &a[1];
-        assert!(script.contains("pacman -Syu --noconfirm") && script.contains("yay -Sua") && script.contains(ROOT_HELPER));
-        assert!(!script.contains("yay -Syu"), "the repositories are not updated by yay");
+        assert_eq!(p, "yay", "one process asks for every root step, so the password is asked once");
+        assert_eq!(&a[..4], &["-Syu", "--noconfirm", "--sudo", SUDO_WRAPPER]);
+        assert!(!a.iter().any(|x| x == "sudo" || x == "-c"), "no shell, no plain sudo");
     }
 
     #[test]

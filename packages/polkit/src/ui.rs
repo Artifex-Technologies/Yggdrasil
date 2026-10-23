@@ -95,7 +95,7 @@ impl eframe::App for App {
         let Some(d) = &mut self.dialog else {
             // the request is over: this process only exists for one request, so it ends and the window goes with it
             if self.started {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                crate::quit_now(0);
             }
             return;
         };

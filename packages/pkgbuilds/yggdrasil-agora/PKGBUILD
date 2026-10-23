@@ -32,4 +32,6 @@ package() {
   # the administrator helpers: a password-box stand-in for sudo, and one narrow pacman command that can be cancelled and cleaned up
   install -Dm755 "$_src/helpers/sudo" "$pkgdir/usr/lib/agora/sudo"
   install -Dm755 "$_src/helpers/pkg-root" "$pkgdir/usr/lib/agora/pkg-root"
+  # the password is remembered a few minutes for the helper only, so one update asks once
+  install -Dm644 "$_src/data/org.yggdrasil.agora.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.agora.policy"
 }
