@@ -6,6 +6,7 @@ Per session: average FPS, 1% and 0.1% lows (the FPS of the slowest 1% and 0.1% o
 """
 import csv
 import os
+import re
 import statistics
 import sys
 
@@ -44,28 +45,39 @@ def summary(ft):
     }
 
 
+def game_of(filename):
+    """MangoHud names a log after the game's program and the time: "TheForest_2026-10-23_18-01-02.csv" -> "TheForest"."""
+    m = re.match(r"(.+?)_\d{4}-\d{2}-\d{2}", filename)
+    return m.group(1) if m else filename.rsplit(".", 1)[0]
+
+
 def main(root):
     if not os.path.isdir(root):
         print(f"nothing measured yet ({root} does not exist)")
         return 1
-    results = []
+    # game -> [(session, runs, summary)]
+    games = {}
     for d in sorted(os.listdir(root)):
         p = os.path.join(root, d)
         if not os.path.isdir(p):
             continue
-        ft = []
-        logs = [f for f in sorted(os.listdir(p)) if f.endswith(".csv") and "summary" not in f]
-        for f in logs:
-            ft += frametimes(os.path.join(p, f))
-        if len(ft) >= 100:
-            results.append((d, len(logs), summary(ft)))
-    if not results:
+        per_game = {}
+        for f in sorted(os.listdir(p)):
+            if f.endswith(".csv") and "summary" not in f:
+                per_game.setdefault(game_of(f), []).append(os.path.join(p, f))
+        for game, files in per_game.items():
+            ft = [v for f in files for v in frametimes(f)]
+            if len(ft) >= 100:
+                games.setdefault(game, []).append((d, len(files), summary(ft)))
+    if not games:
         print("no usable measurements yet (a run needs 20 s of play before logging starts, then 90 s)")
         return 1
-    print(f"{'session':<20}{'runs':>5}{'avg FPS':>9}{'1% low':>9}{'0.1% low':>10}{'spread ms':>11}{'stutters':>10}")
-    for name, runs, r in sorted(results, key=lambda x: -x[2]["low1"]):
-        print(f"{name:<20}{runs:>5}{r['avg_fps']:>9.1f}{r['low1']:>9.1f}{r['low01']:>10.1f}{r['spread_ms']:>11.2f}{r['stutters']:>10}")
-    print("\nSorted by the 1% low (smoothness). Stutters: frames taking more than twice the usual time.")
+    for game in sorted(games):
+        print(f"\n{game}")
+        print(f"  {'session':<20}{'runs':>5}{'avg FPS':>9}{'1% low':>9}{'0.1% low':>10}{'spread ms':>11}{'stutters':>10}")
+        for name, runs, r in sorted(games[game], key=lambda x: -x[2]["low1"]):
+            print(f"  {name:<20}{runs:>5}{r['avg_fps']:>9.1f}{r['low1']:>9.1f}{r['low01']:>10.1f}{r['spread_ms']:>11.2f}{r['stutters']:>10}")
+    print("\nEach game on its own, sessions sorted by the 1% low (smoothness). Stutters: frames taking more than twice the usual time.")
     return 0
 
 
