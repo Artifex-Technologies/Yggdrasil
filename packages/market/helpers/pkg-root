@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 
-ALLOWED_OPTS = {"-S", "-U", "-R", "-Rs", "-Rns", "-D", "-s", "-n", "-y", "-Syu", "--needed", "--noconfirm", "--asdeps", "--asexplicit"}
+ALLOWED_OPTS = {"-S", "-U", "-R", "-Rs", "-Rns", "-D", "-s", "-n", "-q", "-y", "-Syu", "--needed", "--noconfirm", "--asdeps", "--asexplicit"}
 # yay passes pacman's own settings file explicitly; no other one is accepted (another file could point pacman anywhere)
 CONFIG = "/etc/pacman.conf"
 PKG_FILE = re.compile(r"\.pkg\.tar\.(zst|xz|gz)$")

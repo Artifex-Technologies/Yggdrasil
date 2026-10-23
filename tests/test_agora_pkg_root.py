@@ -71,6 +71,8 @@ class WhatYaySends(unittest.TestCase):
 
     def test_marking_install_reasons_passes(self):
         self.assertEqual(self.go(["-D", "--asdeps", "--config", "/etc/pacman.conf", "--", "somelib"]).returncode, 0)
+        # exactly what yay sends after installing what it built
+        self.assertEqual(self.go(["-D", "-q", "--asexplicit", "--noconfirm", "--config", "/etc/pacman.conf", "--", "deckcraft-bin", "gridcraft-bin"]).returncode, 0)
         self.assertEqual(self.go(["-D", "--", "somelib"]).returncode, 2, "-D without --asdeps/--asexplicit")
 
     def test_another_config_file_is_refused(self):
