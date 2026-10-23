@@ -206,6 +206,10 @@ pub fn apply_opacity(ctx: &egui::Context, dark: bool, accent: Option<[u8; 3]>, p
         v.window_corner_radius = CornerRadius::same(12);
         v.menu_corner_radius = CornerRadius::same(10);
         style.spacing.item_spacing = egui::vec2(8.0, 6.0);
+        // Anything clickable (buttons, links like "Show details", rows) shows the pointing hand; text is not selectable, so it never
+        // shows the typing cursor. Text boxes still show it, where typing happens.
+        style.visuals.interact_cursor = Some(egui::CursorIcon::PointingHand);
+        style.interaction.selectable_labels = false;
     });
 }
 
