@@ -579,6 +579,8 @@ pub fn start_proton_mount() -> Result<(), String> {
         std::fs::copy("/usr/share/labyrinth/proton-drive.service", &unit).map_err(|e| format!("cannot install the mount service: {e}"))?;
         let _ = Command::new("systemctl").args(["--user", "daemon-reload"]).status();
     }
+    // a mount that kept failing (a lapsed sign-in) may have hit its retry limit: clear that, so this start is a fresh one
+    let _ = Command::new("systemctl").args(["--user", "reset-failed", "proton-drive"]).status();
     let st = Command::new("systemctl").args(["--user", "enable", "--now", "proton-drive"]).output().map_err(|e| e.to_string())?;
     if !st.status.success() {
         return Err(format!("could not start the mount: {}", String::from_utf8_lossy(&st.stderr).trim()));

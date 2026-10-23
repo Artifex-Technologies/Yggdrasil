@@ -46,7 +46,9 @@ pub fn proton_drive_candidates() -> Vec<PathBuf> {
 pub fn proton_drive() -> Option<CloudPlace> {
     let cands = proton_drive_candidates();
     let first = cands.first()?.clone();
-    let found = cands.into_iter().find(|p| p.is_dir());
+    // the mount's folder stays behind empty when the mount is down (a lapsed sign-in, no network): that is not a working Proton Drive,
+    // and showing it as one hid the way to sign in again. Usable = a mount, or a folder with files in it (a synced copy).
+    let found = cands.into_iter().find(|p| p.is_dir() && (is_mount(p) || std::fs::read_dir(p).map(|mut d| d.next().is_some()).unwrap_or(false)));
     Some(CloudPlace {
         label: "Proton Drive".into(),
         state: if found.is_some() { CloudState::Ready } else { CloudState::NotMounted },
@@ -385,5 +387,30 @@ mod tests {
     fn this_pc_is_virtual() {
         assert!(is_this_pc(&this_pc()));
         assert!(!is_this_pc(Path::new("/")));
+    }
+}
+
+/// Whether `p` is a mount point: a different device than its parent folder.
+pub fn is_mount(p: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let (Ok(m), Some(parent)) = (std::fs::metadata(p), p.parent()) else { return false };
+    std::fs::metadata(parent).map(|pm| pm.dev() != m.dev()).unwrap_or(false)
+}
+
+#[cfg(test)]
+mod mount_tests {
+    use super::*;
+
+    #[test]
+    fn an_empty_left_behind_folder_is_not_a_drive() {
+        let d = std::env::temp_dir().join(format!("minos-pd-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        std::env::set_var("LABYRINTH_PROTON_DRIVE", &d);
+        assert_eq!(proton_drive().unwrap().state, CloudState::NotMounted);
+        std::fs::write(d.join("file.txt"), "x").unwrap();
+        assert_eq!(proton_drive().unwrap().state, CloudState::Ready);
+        std::env::remove_var("LABYRINTH_PROTON_DRIVE");
+        let _ = std::fs::remove_dir_all(&d);
+        assert!(!is_mount(Path::new("/tmp/does-not-exist-here")));
     }
 }
