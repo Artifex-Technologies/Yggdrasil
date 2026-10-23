@@ -9,7 +9,7 @@ conflicts=('labyrinth-market')
 replaces=('labyrinth-market')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
 license=('MIT')
-depends=('gcc-libs' 'libxkbcommon' 'wayland' 'vulkan-icd-loader' 'libglvnd' 'fontconfig' 'curl' 'yay' 'ghostty')
+depends=('gcc-libs' 'libxkbcommon' 'wayland' 'vulkan-icd-loader' 'libglvnd' 'fontconfig' 'curl' 'yay' 'ghostty' 'polkit' 'python')
 optdepends=('flatpak: apps from Flathub')
 makedepends=('cargo')
 options=('!lto')
@@ -29,4 +29,7 @@ check() {
 package() {
   install -Dm755 "$srcdir/target/release/agora" "$pkgdir/usr/bin/agora"
   install -Dm644 "$_src/agora.desktop" "$pkgdir/usr/share/applications/agora.desktop"
+  # the administrator helpers: a password-box stand-in for sudo, and one narrow pacman command that can be cancelled and cleaned up
+  install -Dm755 "$_src/helpers/sudo" "$pkgdir/usr/lib/agora/sudo"
+  install -Dm755 "$_src/helpers/pkg-root" "$pkgdir/usr/lib/agora/pkg-root"
 }

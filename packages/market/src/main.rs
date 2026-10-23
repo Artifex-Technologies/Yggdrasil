@@ -1,5 +1,6 @@
 //! Agora: apps in one place, laid out like an app store (Discover, Create, Work, Play, Develop, Categories,
-//! Updates). Sources: Labyrinth's own reviewed catalog, plus repositories you add (marked as not reviewed).
+//! Updates). Sources: the operating system's own reviewed catalog (its `packages` integration), plus repositories you add (marked as
+//! not reviewed).
 
 mod catalog;
 mod details;
@@ -170,7 +171,9 @@ impl App {
     /// Put the built-in catalog and every enabled repository (from its last download; `download` fetches them again) together.
     fn rebuild(&mut self, ctx: &egui::Context, download: bool) {
         let edition = catalog::edition();
-        let mut cats = vec![catalog::for_edition(catalog::parse_catalog(catalog::BUILTIN, "Labyrinth", true).unwrap_or_default(), &edition)];
+        // the operating system's catalog is always first (empty when it has none)
+        let os = catalog::os_catalog().and_then(|t| catalog::parse_catalog(&t, catalog::os_name(), true).ok()).unwrap_or_default();
+        let mut cats = vec![catalog::for_edition(os, &edition)];
         self.repo_status = vec![String::new(); self.repos.len()];
         let repos = self.repos.clone();
         for (i, r) in repos.iter().enumerate() {
@@ -398,7 +401,7 @@ impl App {
         self.job_snapshot(id).map(|j| j.status == install::Status::Running).unwrap_or(false)
     }
 
-    /// Install, reinstall or remove an entry. Reviewed apps run here with progress (the password asked for in Labyrinth's own box);
+    /// Install, reinstall or remove an entry. Reviewed apps run here with progress (the password asked for in the desktop's own box);
     /// anything else opens a terminal, where the prompts can be read first.
     fn run_job(&mut self, ctx: &egui::Context, idx: usize, op: install::Op) {
         let e = self.apps[idx].clone();
@@ -782,7 +785,7 @@ impl App {
             }
         }
         for tab in TABS {
-            let list: Vec<usize> = (0..self.apps.len()).filter(|&i| self.apps[i].category == tab && self.apps[i].from == "Labyrinth").take(6).collect();
+            let list: Vec<usize> = (0..self.apps.len()).filter(|&i| self.apps[i].category == tab && self.apps[i].from == catalog::os_name()).take(6).collect();
             if list.is_empty() {
                 continue;
             }
@@ -909,7 +912,8 @@ impl App {
         self.icon(ui, Rect::from_min_size(rect.min, vec2(110.0, 110.0)), &e);
         ui.painter().text(rect.left_top() + vec2(130.0, 24.0), Align2::LEFT_CENTER, &e.name, FontId::proportional(28.0), self.pal.text);
         ui.painter().text(rect.left_top() + vec2(130.0, 54.0), Align2::LEFT_CENTER, &e.subtitle, FontId::proportional(14.0), self.pal.dim);
-        let (badge, bcol) = if e.reviewed { ("Reviewed by Labyrinth", self.pal.green) } else { ("Not reviewed by Labyrinth", self.pal.amber) };
+        let os = catalog::os_name();
+        let (badge, bcol) = if e.reviewed { (format!("Reviewed by {os}"), self.pal.green) } else { (format!("Not reviewed by {os}"), self.pal.amber) };
         ui.painter().circle_filled(rect.left_top() + vec2(136.0, 82.0), 4.0, bcol);
         ui.painter().text(rect.left_top() + vec2(148.0, 82.0), Align2::LEFT_CENTER, format!("{badge}  \u{b7}  from {}", e.from), FontId::proportional(12.5), self.pal.dim);
         let mut asked = None;
@@ -965,8 +969,8 @@ impl App {
         if !e.reviewed {
             egui::Frame::new().fill(self.pal.amber.gamma_multiply(0.18)).corner_radius(CornerRadius::same(10)).inner_margin(Margin::same(12)).show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.label(RichText::new("Labyrinth has not reviewed this app").strong());
-                ui.label(RichText::new("It comes from a catalog or repository that is not Labyrinth's own. Whether it works, and whether it is safe, is up to you: look at where it comes from before you install it.").color(self.pal.dim));
+                ui.label(RichText::new(format!("{} has not reviewed this app", catalog::os_name())).strong());
+                ui.label(RichText::new(format!("It comes from a catalog or repository that is not {}'s own. Whether it works, and whether it is safe, is up to you: look at where it comes from before you install it.", catalog::os_name())).color(self.pal.dim));
             });
             ui.add_space(10.0);
         }
@@ -1046,7 +1050,7 @@ impl App {
             Source::Pacman(p) => format!("Arch repositories: {}", p.join(", ")),
             Source::Aur(p) => format!("AUR (built with yay): {}", p.join(", ")),
             Source::Flatpak(a) => format!("Flathub: {a}"),
-            Source::Component(c) => format!("Labyrinth component: {c}"),
+            Source::Component(c) => format!("{} component: {c}", catalog::os_name()),
             Source::Plugin { repo } => format!("Plugin repository: {repo}"),
         };
         for (k, v) in [("Source", src), ("Source code", e.repo.clone()), ("Category", format!("{} \u{203a} {}", e.category, e.subcategory)), ("Catalog", e.from.clone())] {
@@ -1072,7 +1076,7 @@ impl App {
 
     fn page_sources(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         self.heading(ui, "Sources");
-        ui.label(RichText::new("Where apps come from. Labyrinth's own catalog is built in and reviewed. Anything you add is not.").color(self.pal.dim));
+        ui.label(RichText::new(format!("Where apps come from. {}'s own catalog comes with the system and is reviewed. Anything you add is not.", catalog::os_name())).color(self.pal.dim));
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             let mut on = self.online == Some(true);
@@ -1085,15 +1089,18 @@ impl App {
         let mut changed = false;
         let mut remove: Option<usize> = None;
         let mut refetch = false;
-        egui::Frame::new().fill(self.pal.field).corner_radius(CornerRadius::same(10)).inner_margin(Margin::same(12)).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                ui.painter().circle_filled(ui.cursor().left_center() + vec2(6.0, 0.0), 4.0, self.pal.green);
-                ui.add_space(16.0);
-                ui.label(RichText::new("Labyrinth").strong());
-                ui.label(RichText::new(format!("built in, reviewed, {} apps", self.catalogs.first().map(|c| c.apps.len()).unwrap_or(0))).color(self.pal.dim));
+        let os_apps = self.catalogs.first().map(|c| c.apps.len()).unwrap_or(0);
+        if os_apps > 0 {
+            egui::Frame::new().fill(self.pal.field).corner_radius(CornerRadius::same(10)).inner_margin(Margin::same(12)).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.painter().circle_filled(ui.cursor().left_center() + vec2(6.0, 0.0), 4.0, self.pal.green);
+                    ui.add_space(16.0);
+                    ui.label(RichText::new(catalog::os_name()).strong());
+                    ui.label(RichText::new(format!("comes with the system, reviewed, {os_apps} apps")).color(self.pal.dim));
+                });
             });
-        });
+        }
         for i in 0..self.repos.len() {
             ui.add_space(6.0);
             egui::Frame::new().fill(self.pal.field).corner_radius(CornerRadius::same(10)).inner_margin(Margin::same(12)).show(ui, |ui| {
@@ -1104,7 +1111,7 @@ impl App {
                     }
                     ui.vertical(|ui| {
                         ui.label(RichText::new(&self.repos[i].name).strong());
-                        ui.label(RichText::new(format!("{}  \u{b7}  {}", if self.repos[i].kind == "omarchy" { "Omarchy plugin registry" } else { "Labyrinth catalog" }, self.repos[i].url)).size(11.5).color(self.pal.dim));
+                        ui.label(RichText::new(format!("{}  \u{b7}  {}", if self.repos[i].kind == "omarchy" { "Omarchy plugin registry" } else { "Catalog" }, self.repos[i].url)).size(11.5).color(self.pal.dim));
                         if !self.repo_status.get(i).map(|s| s.is_empty()).unwrap_or(true) {
                             ui.label(RichText::new(&self.repo_status[i]).size(11.5).color(self.pal.amber));
                         }
@@ -1126,7 +1133,7 @@ impl App {
         self.section(ui, "Add a source", None);
         egui::Frame::new().fill(self.pal.amber.gamma_multiply(0.18)).corner_radius(CornerRadius::same(10)).inner_margin(Margin::same(12)).show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.label(RichText::new("Sources you add are not tested or reviewed by Labyrinth").strong());
+            ui.label(RichText::new(format!("Sources you add are not tested or reviewed by {}", catalog::os_name())).strong());
             ui.label(RichText::new("Their apps can do anything your account can do. Add a source only if you trust who runs it, and look at an app before you install it. Whether something works, and whether it is safe, is up to you.").color(self.pal.dim));
         });
         ui.add_space(8.0);
@@ -1140,8 +1147,8 @@ impl App {
         });
         ui.horizontal(|ui| {
             ui.add_sized([60.0, 24.0], egui::Label::new("Type"));
-            egui::ComboBox::from_id_salt("addkind").selected_text(["Labyrinth catalog (a JSON file)", "Omarchy plugin registry"][self.add_kind]).show_ui(ui, |ui| {
-                ui.selectable_value(&mut self.add_kind, 0, "Labyrinth catalog (a JSON file)");
+            egui::ComboBox::from_id_salt("addkind").selected_text(["Catalog (a JSON file)", "Omarchy plugin registry"][self.add_kind]).show_ui(ui, |ui| {
+                ui.selectable_value(&mut self.add_kind, 0, "Catalog (a JSON file)");
                 ui.selectable_value(&mut self.add_kind, 1, "Omarchy plugin registry");
             });
         });
@@ -1149,7 +1156,7 @@ impl App {
         ui.horizontal(|ui| {
             let ok = self.add_url.trim().starts_with("https://") && !self.add_name.trim().is_empty();
             if ui.add_enabled(ok, egui::Button::new("Add source").min_size(vec2(110.0, 28.0))).clicked() {
-                self.pending_add = Some(Repo { name: self.add_name.trim().to_string(), url: self.add_url.trim().to_string(), kind: if self.add_kind == 1 { "omarchy".into() } else { "labyrinth".into() }, enabled: true });
+                self.pending_add = Some(Repo { name: self.add_name.trim().to_string(), url: self.add_url.trim().to_string(), kind: if self.add_kind == 1 { "omarchy".into() } else { "catalog".into() }, enabled: true });
                 self.add_confirm = false;
             }
             if ui.button("Add the Omarchy plugin market").clicked() {
@@ -1177,7 +1184,7 @@ impl App {
             ui.label(RichText::new(&r.name).strong());
             ui.label(RichText::new(&r.url).size(12.0).color(self.pal.dim));
             ui.add_space(8.0);
-            ui.label("Labyrinth has not tested or reviewed anything from this source. Its apps can do anything your account can do, so it is up to you to decide what to trust.");
+            ui.label(format!("{} has not tested or reviewed anything from this source. Its apps can do anything your account can do, so it is up to you to decide what to trust.", catalog::os_name()));
             ui.add_space(6.0);
             ui.checkbox(&mut self.add_confirm, "I understand, add it");
             ui.add_space(8.0);

@@ -1,0 +1,17 @@
+#!/bin/sh
+# A stand-in for `sudo` that asks through the desktop's password box (polkit) instead of a terminal prompt. Agora gives it to `yay --sudo`
+# and to an operating system's component command (AGORA_SUDO) so installs can run without a terminal. `sudo -v` and other flags do nothing.
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --) shift; break ;;
+    -*) shift ;;
+    *) break ;;
+  esac
+done
+[ $# -eq 0 ] && exit 0
+# pacman goes through pkg-root when Agora gave a cancel file, so the install can be cancelled and cleaned up
+if [ "$1" = pacman ] && [ -n "$AGORA_CANCEL_FILE" ]; then
+  shift
+  exec pkexec /usr/lib/agora/pkg-root "$AGORA_CANCEL_FILE" pacman "$@"
+fi
+exec pkexec "$@"

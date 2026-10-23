@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+"""pkg-root: run one pacman command with administrator rights for Agora (the app store), so it can be cancelled and cleaned up.
+
+  pkexec /usr/lib/agora/pkg-root CANCELFILE pacman OPTIONS... PACKAGES...
+
+It is started through pkexec (the password box is the desktop's). Only pacman, and only install (-S, -U) and remove (-R) commands with a short
+list of plain options, are accepted. While pacman runs it watches CANCELFILE (a file Agora (the app store) creates under /run/user/<uid>/agora/
+to say "stop"): on cancel it stops pacman, removes the packages that this run had installed (that were not installed before it started) and the
+package files it downloaded, then exits with code 130. Nothing else is changed.
+"""
+import os
+import re
+import signal
+import subprocess
+import sys
+import time
+
+ALLOWED_OPTS = {"-S", "-U", "-R", "-Rs", "-Rns", "-s", "-n", "-Syu", "--needed", "--noconfirm", "--asdeps", "--asexplicit"}
+CACHE = "/var/cache/pacman/pkg"
+
+
+def die(msg, code=2):
+    print("agora pkg-root: " + msg, file=sys.stderr)
+    sys.exit(code)
+
+
+def installed():
+    out = subprocess.run(["pacman", "-Qq"], capture_output=True, text=True).stdout
+    return set(out.split())
+
+
+def valid_cancel_file(path):
+    uid = os.environ.get("PKEXEC_UID", "")
+    if not uid.isdigit():
+        return False
+    base = "/run/user/%s/agora/" % uid
+    real = os.path.normpath(path)
+    return real.startswith(base) and ".." not in path
+
+
+def main(argv):
+    if len(argv) < 4 or argv[1] != "pacman":
+        die("usage: pkg-root CANCELFILE pacman OPTIONS... PACKAGES...")
+    cancel_file, args = argv[0], argv[2:]
+    if not valid_cancel_file(cancel_file):
+        die("the cancel file must be in the invoking user's runtime folder")
+    packages = []
+    skip = False
+    for i, a in enumerate(args):
+        if skip:
+            skip = False
+            continue
+        if a == "--ignore":
+            # --ignore takes the next argument: a comma-separated list of plain package names
+            if i + 1 >= len(args) or not re.match(r"^[A-Za-z0-9@._+,-]+$", args[i + 1]):
+                die("--ignore needs a plain list of package names")
+            skip = True
+        elif a.startswith("-"):
+            if a not in ALLOWED_OPTS:
+                die("option not allowed: " + a)
+        else:
+            if not re.match(r"^[A-Za-z0-9@._+/:~-]+$", a):
+                die("odd package name: " + a)
+            packages.append(a)
+    if not any(a in ("-S", "-U", "-R", "-Rs", "-Rns", "-Syu") for a in args):
+        die("only install and remove commands")
+    installing = "-S" in args or "-U" in args
+    before = installed() if installing else set()
+    started = time.time()
+    child = subprocess.Popen(["pacman"] + args, start_new_session=True)
+    cancelled = False
+    while child.poll() is None:
+        if os.path.exists(cancel_file):
+            cancelled = True
+            try:
+                os.killpg(child.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                child.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                os.killpg(child.pid, signal.SIGKILL)
+                child.wait()
+            break
+        time.sleep(0.25)
+    if not cancelled and os.path.exists(cancel_file) and child.returncode == 0 and installing:
+        # cancelled just as it finished: undo it all the same
+        cancelled = True
+    if not cancelled:
+        return child.returncode
+    if installing:
+        newly = sorted(installed() - before)
+        if newly:
+            print("Removing what this install added: " + " ".join(newly), flush=True)
+            subprocess.run(["pacman", "-Rns", "--noconfirm"] + newly)
+        # the package files this run downloaded
+        try:
+            for f in os.listdir(CACHE):
+                p = os.path.join(CACHE, f)
+                if os.path.isfile(p) and os.path.getmtime(p) >= started - 2 and (f.endswith(".part") or ".pkg.tar" in f):
+                    os.remove(p)
+        except OSError:
+            pass
+    return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

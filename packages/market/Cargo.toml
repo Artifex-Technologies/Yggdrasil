@@ -2,7 +2,7 @@
 name = "agora"
 version = "0.1.0"
 edition = "2021"
-description = "Agora: one place for apps, from Labyrinth's own catalog and from repositories you add"
+description = "Agora: one place for apps, from the operating system's catalog and from repositories you add"
 license = "MIT"
 
 [[bin]]

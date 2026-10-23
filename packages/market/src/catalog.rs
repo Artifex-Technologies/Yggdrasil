@@ -1,5 +1,6 @@
-//! What the Marketplace lists and where it comes from: Labyrinth's own catalog (built in, reviewed), repositories the user adds
-//! (a Labyrinth catalog file, or Omarchy's plugin registry), and what is installed. Nothing here installs anything by itself;
+//! What the Marketplace lists and where it comes from: the operating system's own catalog (reviewed; declared in its `packages`
+//! integration, see Yggdrasil's docs/INTEGRATIONS.md), repositories the user adds (a catalog file, or Omarchy's plugin registry), and
+//! what is installed. Nothing here installs anything by itself;
 //! `install_script` and `remove_script` build the command that runs in a terminal, where the password prompt and the output are visible.
 
 use std::collections::{BTreeSet, HashSet};
@@ -7,21 +8,40 @@ use std::path::PathBuf;
 
 use serde_json::{json, Value};
 
-pub const BUILTIN: &str = include_str!("../catalog.json");
+/// The operating system's `packages` integration, if it has one.
+fn os() -> Option<&'static yggdrasil_conf::integrations::Integration> {
+    static OS: std::sync::OnceLock<Option<yggdrasil_conf::integrations::Integration>> = std::sync::OnceLock::new();
+    OS.get_or_init(|| yggdrasil_conf::integrations::first("packages")).as_ref()
+}
 
-/// Which edition of the OS this is: "labyrinth" or "chymaera" (from /etc/os-release, or LABYRINTH_EDITION to try the other one). Apps
-/// meant for one edition (the penetration-testing tools are Chymaera's) are not listed in the other.
+/// Whose reviewed catalog this is ("Reviewed by ..."): the integration's `name`, else the system's name from /etc/os-release.
+pub fn os_name() -> &'static str {
+    static NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    NAME.get_or_init(|| os().and_then(|i| i.get("name")).map(str::to_string).or_else(|| os_release("NAME")).unwrap_or_else(|| "this system".into()))
+}
+
+/// The operating system's own catalog file (its text), if it declares one.
+pub fn os_catalog() -> Option<String> {
+    std::fs::read_to_string(os()?.path("catalog")?).ok()
+}
+
+/// The program that installs and removes the operating system's optional components (`install ID` / `remove ID`), if any.
+pub fn component_command() -> Option<Vec<String>> {
+    os()?.command("component")
+}
+
+fn os_release(key: &str) -> Option<String> {
+    let text = std::fs::read_to_string("/etc/os-release").ok()?;
+    text.lines().find_map(|l| l.strip_prefix(key)?.strip_prefix('=').map(|v| v.trim().trim_matches('"').to_string())).filter(|v| !v.is_empty())
+}
+
+/// Which edition of the OS this is: the integration's `edition`, else ID from /etc/os-release (AGORA_EDITION tries another). Apps a
+/// catalog marks for some editions only are not listed in the others.
 pub fn edition() -> String {
-    if let Ok(e) = std::env::var("LABYRINTH_EDITION") {
+    if let Ok(e) = std::env::var("AGORA_EDITION") {
         return e.to_lowercase();
     }
-    let text = std::fs::read_to_string("/etc/os-release").unwrap_or_default();
-    for line in text.lines() {
-        if let Some(v) = line.strip_prefix("ID=") {
-            return v.trim().trim_matches('"').to_lowercase();
-        }
-    }
-    "labyrinth".into()
+    os().and_then(|i| i.get("edition")).map(str::to_string).or_else(|| os_release("ID")).unwrap_or_default().to_lowercase()
 }
 
 /// The apps of `catalog` that this edition lists.
@@ -37,7 +57,7 @@ pub enum Source {
     /// Packages built from the AUR with yay.
     Aur(Vec<String>),
     Flatpak(String),
-    /// One of Labyrinth's optional components (labyrinth-apps).
+    /// One of the operating system's optional components (its `component` command).
     Component(String),
     /// An Omarchy shell plugin: listed, not installable here yet.
     Plugin { repo: String },
@@ -54,17 +74,17 @@ pub struct Entry {
     pub subcategory: String,
     pub source: Source,
     pub icon: String,
-    /// Looked at by Labyrinth (only its own catalog).
+    /// Looked at by the operating system's makers (only in its own catalog).
     pub reviewed: bool,
     pub note: String,
     pub tags: Vec<String>,
     /// The catalog this came from.
     pub from: String,
     pub launch: String,
-    /// AppStream ids (only in Labyrinth's own catalog): the app's own, and its Flathub one.
+    /// AppStream ids (only in the operating system's catalog): the app's own, and its Flathub one.
     pub appstream: String,
     pub flathub: String,
-    /// Which editions of the OS list it ("labyrinth", "chymaera"); empty means all of them.
+    /// Which editions of the OS list it (os-release IDs); empty means all of them.
     pub editions: Vec<String>,
     /// Part of the base system: it is listed (and can be reinstalled) but not removed from here.
     pub preinstalled: bool,
@@ -90,7 +110,7 @@ fn strings(v: &Value) -> Vec<String> {
     v.as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default()
 }
 
-/// Read a Labyrinth catalog file. `trusted` marks its entries as reviewed only for the built-in one.
+/// Read a catalog file. `trusted` (the operating system's own catalog only) allows reviewed entries and components.
 pub fn parse_catalog(text: &str, from: &str, trusted: bool) -> Result<Catalog, String> {
     let v: Value = serde_json::from_str(text).map_err(|e| format!("not a catalog: {e}"))?;
     let list = v.get("apps").and_then(|a| a.as_array()).ok_or("no \"apps\" list in this file")?;
@@ -101,8 +121,8 @@ pub fn parse_catalog(text: &str, from: &str, trusted: bool) -> Result<Catalog, S
             Some("pacman") => Source::Pacman(strings(&src["packages"])),
             Some("aur") => Source::Aur(strings(&src["packages"])),
             Some("flatpak") => Source::Flatpak(s(&src, "app")),
-            // components exist only in Labyrinth's own catalog
-            Some("component") if trusted => Source::Component(s(&src, "id")),
+            // components exist only in the operating system's own catalog, and only when it says how to install them
+            Some("component") if trusted && component_command().is_some() => Source::Component(s(&src, "id")),
             _ => continue,
         };
         let id = s(a, "id");
@@ -210,7 +230,7 @@ pub fn parse_omarchy(text: &str, from: &str) -> Result<Catalog, String> {
 pub struct Repo {
     pub name: String,
     pub url: String,
-    /// "labyrinth" (a catalog file) or "omarchy" (the plugin registry)
+    /// "catalog" (a catalog file) or "omarchy" (the plugin registry)
     pub kind: String,
     pub enabled: bool,
 }
@@ -218,18 +238,18 @@ pub struct Repo {
 pub const OMARCHY_URL: &str = "https://raw.githubusercontent.com/omacom/omarchy-plugin-marketplace/main/registry.json";
 
 fn config_dir() -> PathBuf {
-    std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config"))).unwrap_or_default().join("labyrinth/market")
+    yggdrasil_conf::dirs::config().join("market")
 }
 
 fn cache_dir() -> PathBuf {
-    std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache"))).unwrap_or_default().join("labyrinth/market")
+    yggdrasil_conf::dirs::cache().join("market")
 }
 
 pub fn load_repos() -> Vec<Repo> {
     let text = std::fs::read_to_string(config_dir().join("repos.json")).unwrap_or_default();
     let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
     v.as_array()
-        .map(|a| a.iter().map(|r| Repo { name: s(r, "name"), url: s(r, "url"), kind: if s(r, "kind") == "omarchy" { "omarchy".into() } else { "labyrinth".into() }, enabled: r.get("enabled").and_then(|e| e.as_bool()).unwrap_or(true) }).filter(|r| r.url.starts_with("https://")).collect())
+        .map(|a| a.iter().map(|r| Repo { name: s(r, "name"), url: s(r, "url"), kind: if s(r, "kind") == "omarchy" { "omarchy".into() } else { "catalog".into() }, enabled: r.get("enabled").and_then(|e| e.as_bool()).unwrap_or(true) }).filter(|r| r.url.starts_with("https://")).collect())
         .unwrap_or_default()
 }
 
@@ -295,7 +315,7 @@ fn run(cmd: &str, args: &[&str]) -> String {
 pub fn read_installed() -> Installed {
     let pacman: HashSet<String> = run("pacman", &["-Qq"]).split_whitespace().map(str::to_string).collect();
     let flatpak: HashSet<String> = run("flatpak", &["list", "--app", "--columns=application"]).split_whitespace().map(str::to_string).collect();
-    let comps = std::fs::read_to_string("/usr/share/labyrinth/components.json").unwrap_or_default();
+    let comps = os().and_then(|i| i.path("components")).and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
     let v: Value = serde_json::from_str(&comps).unwrap_or(Value::Null);
     let components = v.get("components").and_then(|c| c.as_array()).map(|c| c.iter().map(|x| {
         let mut p = strings(&x["packages"]);
@@ -332,7 +352,7 @@ pub fn install_script(e: &Entry) -> Option<String> {
         Source::Pacman(p) => format!("sudo pacman -S --needed {}", p.join(" ")),
         Source::Aur(p) => format!("yay -S --needed {}", p.join(" ")),
         Source::Flatpak(a) => format!("flatpak install -y flathub {a}"),
-        Source::Component(c) => format!("labyrinth-apps install {c}"),
+        Source::Component(c) => format!("{} install {c}", component_command()?.join(" ")),
         Source::Plugin { .. } => return None,
     })
 }
@@ -341,7 +361,7 @@ pub fn remove_script(e: &Entry) -> Option<String> {
     Some(match &e.source {
         Source::Pacman(p) | Source::Aur(p) => format!("sudo pacman -Rs {}", p.join(" ")),
         Source::Flatpak(a) => format!("flatpak uninstall {a}"),
-        Source::Component(c) => format!("labyrinth-apps remove {c}"),
+        Source::Component(c) => format!("{} remove {c}", component_command()?.join(" ")),
         Source::Plugin { .. } => return None,
     })
 }
@@ -354,22 +374,21 @@ pub struct Update {
     pub aur: bool,
 }
 
-/// Programs built here from Labyrinth's own build files (Sarina, Heimdall, Limbo ...): they share a name with unrelated AUR packages
-/// (the AUR has a different "heimdall-git"), so they are never updated from the AUR.
+/// Programs the operating system builds from its own build files: they may share a name with unrelated AUR packages, so they are never
+/// updated from the AUR. From the integration's `own_builds` folder (one folder per package) and its catalog's `local_builds` list.
 pub fn local_builds() -> Vec<String> {
-    let mut v: Vec<String> = std::fs::read_dir("/usr/share/labyrinth/pkgbuilds").map(|rd| rd.flatten().filter_map(|e| e.file_name().to_str().map(str::to_string)).collect()).unwrap_or_default();
-    // and the list built into the catalog (Labyrinth's own build files), for systems where that folder is not complete
-    if let Ok(c) = serde_json::from_str::<Value>(BUILTIN) {
-        v.extend(strings(&c["local_builds"]));
-    }
-    // the same programs as upstream (VS Code, Proton Pass): their updates do come from the AUR
-    if let Ok(c) = serde_json::from_str::<Value>(BUILTIN) {
-        let ok = strings(&c["aur_updates_ok"]);
-        v.retain(|n| !ok.contains(n));
-    }
+    let mut v: Vec<String> = os().and_then(|i| i.path("own_builds")).and_then(|d| std::fs::read_dir(d).ok()).map(|rd| rd.flatten().filter_map(|e| e.file_name().to_str().map(str::to_string)).collect()).unwrap_or_default();
+    v.extend(local_builds_in(&os_catalog().unwrap_or_default()));
     v.sort();
     v.dedup();
     v
+}
+
+/// A catalog's `local_builds`, without its `aur_updates_ok` (the same programs as upstream: their updates do come from the AUR).
+fn local_builds_in(catalog: &str) -> Vec<String> {
+    let Ok(c) = serde_json::from_str::<Value>(catalog) else { return vec![] };
+    let ok = strings(&c["aur_updates_ok"]);
+    strings(&c["local_builds"]).into_iter().filter(|n| !ok.contains(n)).collect()
 }
 
 fn parse_updates(text: &str, aur: bool) -> Vec<Update> {
@@ -385,7 +404,8 @@ fn newer(new: &str, old: &str) -> bool {
 }
 
 /// What can be updated right now. The repositories are asked afresh (a private copy of the sync databases is refreshed without root, like
-/// checkupdates does), the AUR through yay; Labyrinth's own builds and anything that would go backwards are left out. Needs the network.
+/// checkupdates does), the AUR through yay; the operating system's own builds and anything that would go backwards are left out. Needs
+/// the network.
 pub fn check_updates() -> Vec<Update> {
     let mut out: Vec<Update> = vec![];
     let run_dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/tmp")).join("agora");
@@ -428,15 +448,19 @@ pub fn subcategories(apps: &[Entry], category: &str) -> Vec<String> {
 }
 
 #[cfg(test)]
+pub const SAMPLE: &str = include_str!("../test-catalog.json");
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn the_built_in_catalog_parses_and_every_app_has_a_category() {
-        let c = parse_catalog(BUILTIN, "Labyrinth", true).unwrap();
-        assert!(c.apps.len() > 50);
+    fn a_catalog_parses_and_every_app_has_a_category() {
+        let c = parse_catalog(SAMPLE, "Sample", true).unwrap();
+        assert!(c.apps.len() >= 4);
         assert!(c.apps.iter().all(|a| !a.category.is_empty() && !a.subcategory.is_empty() && a.reviewed || !a.reviewed));
         assert!(c.featured.iter().all(|(id, _, _)| c.apps.iter().any(|a| &a.id == id)), "featured apps exist");
+        assert_eq!(local_builds_in(SAMPLE), vec!["own-thing-git".to_string()], "aur_updates_ok is taken out");
     }
 
     #[test]
@@ -460,13 +484,12 @@ mod tests {
     }
 
     #[test]
-    fn chymaera_only_apps_are_not_listed_in_labyrinth() {
-        let c = parse_catalog(BUILTIN, "Labyrinth", true).unwrap();
-        let lab = for_edition(c.clone(), "labyrinth");
-        let chy = for_edition(c, "chymaera");
-        assert!(lab.apps.iter().all(|a| a.id != "ghidra" && a.id != "wireshark"));
-        assert!(chy.apps.iter().any(|a| a.id == "ghidra") && chy.apps.iter().any(|a| a.id == "krita"));
-        assert!(!lab.apps.iter().any(|a| a.description.to_lowercase().contains("pentest") || a.subtitle.to_lowercase().contains("pentest")), "nothing in the Labyrinth listing talks about penetration testing");
+    fn apps_for_one_edition_are_not_listed_in_another() {
+        let c = parse_catalog(SAMPLE, "Sample", true).unwrap();
+        let one = for_edition(c.clone(), "plain");
+        let other = for_edition(c, "lab");
+        assert!(one.apps.iter().all(|a| a.id != "ghidra"));
+        assert!(other.apps.iter().any(|a| a.id == "ghidra") && other.apps.iter().any(|a| a.id == "krita"));
     }
 
     #[test]
@@ -478,7 +501,7 @@ mod tests {
 
     #[test]
     fn install_commands() {
-        let c = parse_catalog(BUILTIN, "Labyrinth", true).unwrap();
+        let c = parse_catalog(SAMPLE, "Sample", true).unwrap();
         let e = c.apps.iter().find(|a| a.id == "krita").unwrap();
         assert_eq!(install_script(e).unwrap(), "sudo pacman -S --needed krita");
         let a = c.apps.iter().find(|a| a.id == "pdfcraft").unwrap();

@@ -58,7 +58,7 @@ const OLD: [(&str, &[&str]); 4] = [
     ("XDG_CONFIG_HOME", &["panel.conf", "idle.conf", "lock.conf", "dock", "wallpaper", "workspaces.conf", "shortcuts.conf", "tools.conf", "weather.json", "market"]),
     ("XDG_DATA_HOME", &["calculator-history.json", "weather", "market", "fylgja", "wallpapers"]),
     ("XDG_STATE_HOME", &["notifications.json", "idle.log", "colors.txt"]),
-    ("XDG_CACHE_HOME", &["lock-previews"]),
+    ("XDG_CACHE_HOME", &["lock-previews", "market", "fylgja"]),
 ];
 
 fn old_and_new(var: &str) -> (PathBuf, PathBuf) {
@@ -71,13 +71,16 @@ fn old_and_new(var: &str) -> (PathBuf, PathBuf) {
     (base.join("labyrinth"), base.join(NAME))
 }
 
+/// Which list of old files the marker records: raised when a file is added to `OLD`, so systems that already moved catch up.
+const MIGRATION: &str = "2";
+
 /// Moves the desktop's own files from the old folders, once (a marker in the new config folder records it). Safe to call from every
 /// program at start: a file already in the new place is never overwritten, and a move is a rename (all or nothing).
 pub fn migrate() {
     // renamed apps in the dock: every time (cheap, and harmless when there is nothing to rename), so a run that missed it catches up
     rename_apps_in(&raw_config().join("dock"));
     let marker = raw_config().join(".moved-from-labyrinth");
-    if marker.exists() {
+    if std::fs::read_to_string(&marker).is_ok_and(|t| t.lines().next() == Some(MIGRATION)) {
         return;
     }
     for (var, names) in OLD {
@@ -88,7 +91,7 @@ pub fn migrate() {
     }
     rename_apps_in(&raw_config().join("dock"));
     if std::fs::create_dir_all(raw_config()).is_ok() {
-        let _ = std::fs::write(&marker, "The desktop's own files were moved here from the old labyrinth folders.\n");
+        let _ = std::fs::write(&marker, format!("{MIGRATION}\nThe desktop's own files were moved here from the old labyrinth folders.\n"));
     }
 }
 

@@ -1,0 +1,12 @@
+{
+  "name": "Sample",
+  "featured": [{"id": "krita", "tagline": "Paint without limits", "kicker": "CREATE"}],
+  "local_builds": ["own-thing-git", "same-as-upstream-bin"],
+  "aur_updates_ok": ["same-as-upstream-bin"],
+  "apps": [
+    {"id": "krita", "name": "Krita", "subtitle": "Digital painting", "category": "Create", "subcategory": "Graphics & Design", "source": {"type": "pacman", "packages": ["krita"]}, "reviewed": true},
+    {"id": "pdfcraft", "name": "PDFCraft", "subtitle": "PDF tools", "category": "Work", "subcategory": "Documents", "source": {"type": "aur", "packages": ["pdfcraft-bin"]}, "reviewed": true},
+    {"id": "gimp", "name": "GIMP", "subtitle": "Image editor", "category": "Create", "subcategory": "Graphics & Design", "source": {"type": "flatpak", "app": "org.gimp.GIMP"}, "reviewed": true},
+    {"id": "ghidra", "name": "Ghidra", "subtitle": "Reverse engineering", "category": "Develop", "subcategory": "Tools", "source": {"type": "pacman", "packages": ["ghidra"]}, "reviewed": true, "editions": ["lab"]}
+  ]
+}

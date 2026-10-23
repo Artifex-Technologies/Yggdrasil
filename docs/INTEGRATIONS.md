@@ -36,14 +36,15 @@ Its settings are declared with the controls below and appear on Settings' Assist
 
 ```
 kind = packages
-install = /usr/bin/labyrinth-apps install     # + package or component names
-remove = /usr/bin/labyrinth-apps remove
-update = /usr/bin/labyrinth-apps update
-components = /usr/share/labyrinth/components.json   # the OS's own optional software, shown in Agora
-catalog_edition = labyrinth        # which entries of a shared catalog apply
+name = Labyrinth                   # whose catalog it is: "Reviewed by Labyrinth"
+catalog = /usr/share/labyrinth/agora/catalog.json     # the OS's reviewed catalog (format: docs/MARKETPLACE.md)
+components = /usr/share/labyrinth/components.json     # the OS's own optional software (id and packages of each)
+component = /usr/local/bin/labyrinth-apps             # run with `install ID` or `remove ID`; AGORA_SUDO names a password-box sudo
+own_builds = /usr/share/labyrinth/pkgbuilds           # one folder per package the OS builds itself: never updated from the AUR
+edition = labyrinth                # optional: which entries of a shared catalog apply (default: ID in /etc/os-release)
 ```
 
-Without one, Agora shows Flatpak and leaves system packages alone.
+Without one, Agora lists only the sources the user adds (each marked as not reviewed) and Flathub.
 
 ### `security` (a security monitor)
 

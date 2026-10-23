@@ -33,11 +33,11 @@ pub(crate) fn icon_cache_dir() -> Option<PathBuf> {
 }
 
 fn cache_root() -> PathBuf {
-    std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache"))).unwrap_or_default().join("labyrinth/market")
+    yggdrasil_conf::dirs::cache().join("market")
 }
 
 fn settings_path() -> PathBuf {
-    std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config"))).unwrap_or_default().join("labyrinth/market/settings.json")
+    yggdrasil_conf::dirs::config().join("market/settings.json")
 }
 
 /// Whether the user allowed fetching descriptions and pictures from the internet (None: not asked yet).

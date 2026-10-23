@@ -76,8 +76,10 @@ pub struct Job {
 
 pub type Shared = Arc<Mutex<Job>>;
 
-const SUDO_WRAPPER: &str = "/usr/local/bin/labyrinth-sudo-pkexec";
-const ROOT_HELPER: &str = "/usr/local/bin/labyrinth-pkg-root";
+/// A stand-in for `sudo` that asks through the desktop's password box (pkexec), for yay and for an OS's component command (AGORA_SUDO).
+const SUDO_WRAPPER: &str = "/usr/lib/agora/sudo";
+/// Runs one narrow pacman command as root and can cancel and clean it up (see packages/market/helpers/pkg-root).
+const ROOT_HELPER: &str = "/usr/lib/agora/pkg-root";
 /// Replaced by the job's cancel file when it starts.
 const CANCEL: &str = "{CANCEL}";
 
@@ -97,16 +99,19 @@ pub fn command(e: &Entry, op: Op) -> Option<(String, Vec<String>)> {
         (Source::Flatpak(a), Op::Install) => ("flatpak".into(), s(&["install", "--user", "-y", "--noninteractive", "flathub", a])),
         (Source::Flatpak(a), Op::Reinstall) => ("flatpak".into(), s(&["install", "--user", "-y", "--noninteractive", "--reinstall", "flathub", a])),
         (Source::Flatpak(a), Op::Remove) => ("flatpak".into(), s(&["uninstall", "--user", "-y", "--noninteractive", a])),
-        (Source::Component(c), Op::Install) => ("labyrinth-apps".into(), s(&["install", c])),
-        (Source::Component(c), Op::Reinstall) => ("labyrinth-apps".into(), s(&["install", c])),
-        (Source::Component(c), Op::Remove) => ("labyrinth-apps".into(), s(&["remove", c])),
+        (Source::Component(c), op) if op != Op::UpdateAll => {
+            let mut cmd = crate::catalog::component_command()?;
+            let prog = cmd.remove(0);
+            cmd.extend(s(&[if op == Op::Remove { "remove" } else { "install" }, c]));
+            (prog, cmd)
+        }
         (_, Op::UpdateAll) => {
-            // the repositories through the administrator helper, then the AUR; Labyrinth's own builds are never taken from the AUR
+            // the repositories through the administrator helper, then the AUR; the operating system's own builds are never taken from the AUR
             let skip = crate::catalog::local_builds().join(",");
             let ign = if skip.is_empty() { String::new() } else { format!(" --ignore {skip}") };
-            ("sh".into(), s(&["-c", &format!("pkexec {ROOT_HELPER} \"$LABYRINTH_CANCEL_FILE\" pacman -Syu --noconfirm{ign} && yay -Sua --noconfirm --sudo {SUDO_WRAPPER}{ign}")]))
+            ("sh".into(), s(&["-c", &format!("pkexec {ROOT_HELPER} \"$AGORA_CANCEL_FILE\" pacman -Syu --noconfirm{ign} && yay -Sua --noconfirm --sudo {SUDO_WRAPPER}{ign}")]))
         }
-        (Source::Plugin { .. }, _) => return None,
+        (Source::Plugin { .. }, _) | (Source::Component(_), _) => return None,
     })
 }
 
@@ -265,7 +270,7 @@ pub fn start(id: &str, title: &str, op: Op, prog: String, args: Vec<String>, und
     let repaint = Arc::new(repaint);
     let args: Vec<String> = args.into_iter().map(|a| if a == CANCEL { cancel_file.to_string_lossy().into_owned() } else { a }).collect();
     std::thread::spawn(move || {
-        let child = Command::new(&prog).args(&args).env("LABYRINTH_SUDO", SUDO_WRAPPER).env("LABYRINTH_CANCEL_FILE", &cancel_file).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).process_group(0).spawn();
+        let child = Command::new(&prog).args(&args).env("AGORA_SUDO", SUDO_WRAPPER).env("AGORA_CANCEL_FILE", &cancel_file).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).process_group(0).spawn();
         let mut child = match child {
             Ok(c) => c,
             Err(e) => {
@@ -353,7 +358,7 @@ pub fn start(id: &str, title: &str, op: Op, prog: String, args: Vec<String>, und
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::catalog::{parse_catalog, BUILTIN};
+    use crate::catalog::{parse_catalog, SAMPLE};
 
     fn job() -> Job {
         let now = Instant::now();
@@ -442,7 +447,7 @@ mod tests {
 
     #[test]
     fn update_everything_goes_through_the_helper_and_skips_local_builds() {
-        let c = parse_catalog(BUILTIN, "Labyrinth", true).unwrap();
+        let c = parse_catalog(SAMPLE, "Sample", true).unwrap();
         let e = c.apps[0].clone();
         let (p, a) = command(&e, Op::UpdateAll).unwrap();
         assert_eq!(p, "sh");
@@ -453,7 +458,7 @@ mod tests {
 
     #[test]
     fn commands_for_each_kind_of_source() {
-        let c = parse_catalog(BUILTIN, "Labyrinth", true).unwrap();
+        let c = parse_catalog(SAMPLE, "Sample", true).unwrap();
         let find = |id: &str| c.apps.iter().find(|a| a.id == id).unwrap().clone();
         let (p, a) = command(&find("krita"), Op::Install).unwrap();
         assert_eq!((p.as_str(), a.join(" ")), ("pkexec", format!("{ROOT_HELPER} {CANCEL} pacman -S --needed --noconfirm krita")));

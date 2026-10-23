@@ -37,8 +37,7 @@ impl Design {
 
 /// The chosen design (Split unless lock.conf says otherwise).
 pub fn chosen() -> Design {
-    let dir = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")));
-    let text = dir.and_then(|d| std::fs::read_to_string(d.join("labyrinth/lock.conf")).ok()).unwrap_or_default();
+    let text = std::fs::read_to_string(yggdrasil_conf::dirs::config().join("lock.conf")).unwrap_or_default();
     text.lines().filter_map(|l| l.split_once('=')).find(|(k, _)| k.trim() == "design").and_then(|(_, v)| Design::parse(v)).unwrap_or(Design::Split)
 }
 
