@@ -222,6 +222,13 @@ echo "passwd: password updated successfully"
         let e = change_password_with(f.to_str().unwrap(), "cur-pass", "short").unwrap_err();
         assert!(e.contains("too weak"), "{e}");
     }
+
+    #[test]
+    fn protected_accounts_are_names_or_prefixes() {
+        let list = "# kept by the OS\nclaude-agent*\nsarina\n";
+        assert!(super::protected("claude-agent", list) && super::protected("claude-agent-2", list) && super::protected("sarina", list));
+        assert!(!super::protected("sarina2", list) && !super::protected("sam", list) && !super::protected("claude", list));
+    }
 }
 
 /// Every login account (uid 1000 up) from the text of /etc/passwd and /etc/group; `admin` is membership of wheel.
@@ -233,11 +240,21 @@ pub fn parse_accounts(passwd: &str, group: &str) -> Vec<Account> {
     }).collect()
 }
 
-/// The other people's accounts, for the Users page. The audited assistant account (claude-agent...) is left out: it has its own tool.
+/// The other people's accounts, for the Users page. Accounts the operating system keeps for itself (/etc/yggdrasil/protected-accounts,
+/// the same list the account helper refuses to touch) are left out.
 pub fn others(me: &str) -> Vec<Account> {
     let p = std::fs::read_to_string("/etc/passwd").unwrap_or_default();
     let g = std::fs::read_to_string("/etc/group").unwrap_or_default();
-    parse_accounts(&p, &g).into_iter().filter(|a| a.login != me && !a.login.starts_with("claude-agent")).collect()
+    let kept = std::fs::read_to_string(yggdrasil_conf::dirs::system_config().join("protected-accounts")).unwrap_or_default();
+    parse_accounts(&p, &g).into_iter().filter(|a| a.login != me && !protected(&a.login, &kept)).collect()
+}
+
+/// Whether `login` is in a protected-accounts list (one name per line, `name*` for a prefix, `#` comments).
+fn protected(login: &str, list: &str) -> bool {
+    list.lines().map(|l| l.split('#').next().unwrap_or("").trim()).filter(|l| !l.is_empty()).any(|p| match p.strip_suffix('*') {
+        Some(prefix) => login.starts_with(prefix),
+        None => login == p,
+    })
 }
 
 /// A login name the helper will accept: 1 to 31 lowercase letters, digits, - or _, starting with a letter.
