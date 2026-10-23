@@ -1,4 +1,6 @@
-# What KDE still does on this machine, and what replaces it
+# What KDE still does on this machine
+
+> Superseded 2026-10-23 by [INDEPENDENCE.md](INDEPENDENCE.md), the complete checklist (no KDE, and no Labyrinth inside Yggdrasil). This file stays as the first snapshot., and what replaces it
 
 Taken from the running session (2026-10-16, Plasma 6.8.0): the processes, the loaded `kded6` modules, the installed KDE packages and their config
 files. Companion to `DESKTOP_ROADMAP.md` (which fixes the order). Effort: **S** = a day or less, **M** = a few days, **L** = weeks, **XL** = months.
