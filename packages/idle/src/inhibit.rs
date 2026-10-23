@@ -126,6 +126,25 @@ pub fn spawn() {
 mod tests {
     use super::*;
 
+    /// Against the running desktop: `cargo test -- --ignored live_lock` (needs yggdrasil-idle serving the interface).
+    #[test]
+    #[ignore]
+    fn live_lock_is_held_while_asked_and_released_after() {
+        let c = zbus::blocking::Connection::session().unwrap();
+        let p = zbus::blocking::Proxy::new(&c, NAME, PATH, "org.freedesktop.PowerManagement.Inhibit").unwrap();
+        let cookie: u32 = p.call("Inhibit", &("LiveTestPlayer", "Playing a video")).unwrap();
+        let list = || -> Vec<(String, String, String, String, u32, u32)> {
+            let sys = zbus::blocking::Connection::system().unwrap();
+            zbus::blocking::Proxy::new(&sys, "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager").unwrap().call("ListInhibitors", &()).unwrap()
+        };
+        let now = list();
+        assert!(now.iter().any(|l| l.1 == "LiveTestPlayer" && l.0.contains("idle") && l.0.contains("sleep") && l.3 == "block"), "a block lock on idle and sleep: {now:?}");
+        assert!(p.call::<_, _, bool>("HasInhibit", &()).unwrap());
+        let _: () = p.call("UnInhibit", &(cookie,)).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(!list().iter().any(|l| l.1 == "LiveTestPlayer"), "gone after UnInhibit");
+    }
+
     #[test]
     fn names_from_other_programs_are_tamed() {
         assert_eq!(clean("VLC\nmedia\x07 player", 60), "VLCmedia player");
