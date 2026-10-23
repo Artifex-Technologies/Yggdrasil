@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""yggdrasil-bakeoff report [DIR]: compare the frame times MangoHud logged in each bake-off session (~/bakeoff/NAME-vrrX/*.csv).
+
+Per session: average FPS, 1% and 0.1% lows (the FPS of the slowest 1% and 0.1% of frames), the frame-time spread, and stutters
+(frames that took more than twice the usual time). Higher lows and fewer stutters feel smoother; the average matters least.
+"""
+import csv
+import os
+import statistics
+import sys
+
+
+def frametimes(path):
+    """Frame times in milliseconds from one MangoHud log (two lines of system details, then a header row, then one row per frame)."""
+    with open(path, newline="", encoding="utf-8", errors="replace") as f:
+        rows = list(csv.reader(f))
+    for i, r in enumerate(rows):
+        if "frametime" in r:
+            col = r.index("frametime")
+            out = []
+            for row in rows[i + 1:]:
+                try:
+                    v = float(row[col])
+                except (IndexError, ValueError):
+                    continue
+                if 0 < v < 1000:
+                    out.append(v)
+            return out
+    return []
+
+
+def summary(ft):
+    s = sorted(ft)
+    n = len(s)
+    pct = lambda p: s[min(n - 1, int(n * p))]
+    med = statistics.median(s)
+    return {
+        "frames": n,
+        "avg_fps": 1000 * n / sum(s),
+        "low1": 1000 / pct(0.99),
+        "low01": 1000 / pct(0.999),
+        "spread_ms": statistics.pstdev(s),
+        "stutters": sum(1 for v in s if v > 2 * med),
+    }
+
+
+def main(root):
+    if not os.path.isdir(root):
+        print(f"nothing measured yet ({root} does not exist)")
+        return 1
+    results = []
+    for d in sorted(os.listdir(root)):
+        p = os.path.join(root, d)
+        if not os.path.isdir(p):
+            continue
+        ft = []
+        logs = [f for f in sorted(os.listdir(p)) if f.endswith(".csv") and "summary" not in f]
+        for f in logs:
+            ft += frametimes(os.path.join(p, f))
+        if len(ft) >= 100:
+            results.append((d, len(logs), summary(ft)))
+    if not results:
+        print("no usable measurements yet (a run needs 20 s of play before logging starts, then 90 s)")
+        return 1
+    print(f"{'session':<20}{'runs':>5}{'avg FPS':>9}{'1% low':>9}{'0.1% low':>10}{'spread ms':>11}{'stutters':>10}")
+    for name, runs, r in sorted(results, key=lambda x: -x[2]["low1"]):
+        print(f"{name:<20}{runs:>5}{r['avg_fps']:>9.1f}{r['low1']:>9.1f}{r['low01']:>10.1f}{r['spread_ms']:>11.2f}{r['stutters']:>10}")
+    print("\nSorted by the 1% low (smoothness). Stutters: frames taking more than twice the usual time.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1] if len(sys.argv) > 1 else os.path.expanduser("~/bakeoff")))

@@ -48,3 +48,23 @@ Measured 2026-10-18 on this computer, nested: the compositor used about 2 % of a
 Its memory (about 117 MB) is mostly the graphics driver's context; the panel is about 89 MB, the idle manager 3 MB, the polkit agent 8 MB. Still to measure and trim: the panel's memory,
 start-up time of each program, and the compositor's cost with several large windows.
 
+
+## The bake-off (set up 2026-10-23)
+
+Decision rule (owner, 2026-10-23): the compositor is chosen by measurement on this machine's real games and a CAD model, and the
+shell stays on standard protocols whichever wins. `tools/bakeoff/yggdrasil-bakeoff` adds one login entry per candidate, each
+starting the compositor with only Steam in it (Plasma is the full desktop, as the baseline):
+
+| Entry | Compositor | Notes |
+| --- | --- | --- |
+| Bake-off: KWin alone | `kwin_wayland --xwayland --exit-with-session=steam` | today's compositor without Plasma |
+| Bake-off: Hyprland | Hyprland 0.56, a generated Lua config | games may tear (`immediate` rule), VRR per `yggdrasil-bakeoff vrr` |
+| Bake-off: COSMIC compositor | cosmic-comp 1.0 (Smithay, Rust) | Steam is started into it once its Wayland and X sockets exist |
+| Bake-off: gamescope | Valve's, `gamescope -e -f -- steam -gamepadui` | the Steam Deck way; a candidate for a game session, not for the desktop |
+| Bake-off: Plasma | the full desktop | baseline |
+
+MangoHud measures every Vulkan game started there (Proton games are): 20 s after the game starts, 90 s of frame times, no overlay,
+into `~/bakeoff/NAME-vrrX/`. `yggdrasil-bakeoff report` compares average FPS, 1% and 0.1% lows, frame-time spread and stutters.
+Round 1 is with variable refresh off everywhere; round 2 (`yggdrasil-bakeoff vrr on`) with it on. Still to add: input latency (needs
+a camera or a photodiode, or at least the owner's judgement), and the CAD model in Daedalus. Yggdrasil's own compositor joins once it
+runs on the hardware (today it runs nested only).

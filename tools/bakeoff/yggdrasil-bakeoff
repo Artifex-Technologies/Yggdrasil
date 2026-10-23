@@ -1,0 +1,124 @@
+#!/bin/bash
+# yggdrasil-bakeoff: which compositor should Yggdrasil use? Measured, not guessed (docs/COMPOSITOR.md, "the bake-off").
+#
+#   yggdrasil-bakeoff install            add one login entry per compositor (needs root: run with sudo)
+#   yggdrasil-bakeoff uninstall          remove them again (sudo)
+#   yggdrasil-bakeoff session NAME       what a login entry runs (kwin, hyprland, cosmic, gamescope, plasma)
+#   yggdrasil-bakeoff vrr on|off         the next sessions use variable refresh or not (default: off)
+#   yggdrasil-bakeoff report             compare every run so far
+#
+# Each session starts one compositor and Steam in it, nothing else (no panel, no desktop), except "plasma", which is today's full
+# desktop as the baseline. Every Vulkan game started there (Proton games are) is measured by MangoHud: 20 seconds after the game
+# starts, 90 seconds of frame times are written to ~/bakeoff/NAME-vrrX/. Nothing is shown on screen, so the measuring costs nothing
+# that would differ between compositors.
+set -u
+NAMES="kwin hyprland cosmic gamescope plasma"
+out_root=${BAKEOFF_DIR:-$HOME/bakeoff}
+vrr_file=${XDG_CONFIG_HOME:-$HOME/.config}/yggdrasil/bakeoff-vrr
+
+vrr() { [[ $(cat "$vrr_file" 2>/dev/null) == on ]] && echo 1 || echo 0; }
+
+measure_env() { # NAME: MangoHud for every Vulkan program started from here on
+  local dir="$out_root/$1-vrr$(vrr)"
+  mkdir -p "$dir"
+  export MANGOHUD=1
+  export MANGOHUD_CONFIG="no_display,output_folder=$dir,autostart_log=20,log_duration=90,log_interval=0,fps_limit=0"
+  export XDG_SESSION_TYPE=wayland
+}
+
+nvidia_env() {
+  if [[ -e /proc/driver/nvidia/version ]]; then
+    export LIBVA_DRIVER_NAME=nvidia __GLX_VENDOR_LIBRARY_NAME=nvidia
+  fi
+}
+
+hypr_conf() { # a minimal Hyprland (Lua config, Hyprland 0.55 and later): the monitor at its fastest mode, Steam, games may tear
+  local f="$XDG_RUNTIME_DIR/bakeoff-hyprland.lua"
+  cat >"$f" <<EOF
+-- Yggdrasil's compositor bake-off: Hyprland with nothing but Steam. Super+Shift+E ends the session.
+hl.monitor({ output = "", mode = "highrr", position = "auto", scale = 1 })
+hl.config({
+    general = { allow_tearing = true },
+    misc = { vrr = $(vrr), disable_hyprland_logo = true, disable_splash_rendering = true },
+})
+hl.window_rule({ name = "games-may-tear", match = { class = "^(steam_app_.*)\$" }, immediate = true })
+hl.on("hyprland.start", function() hl.exec_cmd("steam") end)
+hl.bind("SUPER + SHIFT + E", hl.dsp.exit())
+EOF
+  echo "$f"
+}
+
+session() {
+  local name=$1
+  measure_env "$name"
+  nvidia_env
+  case $name in
+    kwin)
+      export XDG_CURRENT_DESKTOP=KDE
+      exec dbus-run-session -- kwin_wayland --xwayland --exit-with-session=/usr/bin/steam ;;
+    hyprland)
+      export XDG_CURRENT_DESKTOP=Hyprland
+      exec dbus-run-session -- Hyprland --config "$(hypr_conf)" ;;
+    cosmic)
+      # cosmic-comp starts no program itself: start it, wait for its Wayland socket, then Steam inside it (Steam ends the session)
+      export XDG_CURRENT_DESKTOP=COSMIC
+      exec dbus-run-session -- bash -c '
+        socks() { ls "$XDG_RUNTIME_DIR" | grep -E "^wayland-[0-9]+$"; }
+        xs() { ls /tmp/.X11-unix 2>/dev/null; }
+        before=$(socks); xbefore=$(xs)
+        cosmic-comp & comp=$!
+        for _ in $(seq 150); do
+          sock=$(socks | grep -vxF "$before" | head -n1)
+          x=$(xs | grep -vxF "$xbefore" | head -n1)
+          [[ -n $sock && -n $x ]] && break; sleep 0.1
+        done
+        WAYLAND_DISPLAY=$sock DISPLAY=:${x#X} steam
+        kill $comp' ;;
+    gamescope)
+      # Valve's: Steam's own big-screen mode, as on the Steam Deck
+      local adaptive=(); [[ $(vrr) == 1 ]] && adaptive=(--adaptive-sync)
+      exec dbus-run-session -- gamescope -e -f "${adaptive[@]}" -- steam -gamepadui ;;
+    plasma)
+      export XDG_CURRENT_DESKTOP=KDE XDG_SESSION_DESKTOP=KDE
+      exec /usr/lib/plasma-dbus-run-session-if-needed /usr/bin/startplasma-wayland ;;
+    *) echo "unknown session: $name (one of: $NAMES)" >&2; exit 2 ;;
+  esac
+}
+
+install_sessions() {
+  [[ $EUID -eq 0 ]] || { echo "run it with sudo" >&2; exit 1; }
+  local self; self=$(readlink -f "$0")
+  install -Dm755 "$self" /usr/local/bin/yggdrasil-bakeoff
+  install -Dm755 "$(dirname "$self")/bakeoff-report" /usr/local/bin/yggdrasil-bakeoff-report
+  for n in $NAMES; do
+    local label=$n
+    case $n in kwin) label="KWin alone";; hyprland) label=Hyprland;; cosmic) label="COSMIC compositor";; gamescope) label="gamescope (Steam big screen)";; plasma) label="Plasma (today's desktop)";; esac
+    cat >/usr/share/wayland-sessions/bakeoff-$n.desktop <<EOF
+[Desktop Entry]
+Name=Bake-off: $label
+Comment=Yggdrasil's compositor bake-off: one compositor and Steam, games measured by MangoHud
+Exec=/usr/local/bin/yggdrasil-bakeoff session $n
+Type=Application
+DesktopNames=$( [[ $n == plasma || $n == kwin ]] && echo KDE || echo Bakeoff )
+EOF
+  done
+  echo "Added: $(for n in $NAMES; do printf 'Bake-off: %s  ' $n; done)"
+  echo "Pick one at the login screen (the session menu), play, log out, pick the next."
+}
+
+uninstall_sessions() {
+  [[ $EUID -eq 0 ]] || { echo "run it with sudo" >&2; exit 1; }
+  rm -f /usr/share/wayland-sessions/bakeoff-*.desktop /usr/local/bin/yggdrasil-bakeoff /usr/local/bin/yggdrasil-bakeoff-report
+  echo "Removed the bake-off login entries (your measurements in ~/bakeoff stay)."
+}
+
+case ${1:-} in
+  session) session "${2:?which session}" ;;
+  install) install_sessions ;;
+  uninstall) uninstall_sessions ;;
+  vrr)
+    mkdir -p "$(dirname "$vrr_file")"
+    case ${2:-} in on|off) echo "$2" >"$vrr_file"; echo "variable refresh $2 for the next bake-off sessions" ;; *) echo "on or off" >&2; exit 2 ;; esac ;;
+  report) exec python3 -I /usr/local/bin/yggdrasil-bakeoff-report "$out_root" ;;
+  *) sed -n '2,13p' "$0" >&2; exit 2 ;;
+esac
