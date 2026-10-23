@@ -25,7 +25,7 @@ Labyrinth image configure KDE. **Yggdrasil's own packages depend on KDE librarie
 | --- | --- | --- | --- |
 | `powerdevil` | dim, screen off, sleep, brightness, power profiles, battery | `labyrinth-idle` (Rust) + power-profiles-daemon | idle runs **beside** PowerDevil: finish and switch PowerDevil off |
 | `xdg-desktop-portal-kde` | screenshot, screen sharing, colour pick, settings, inhibit, notifications, app chooser | `labyrinth-portal` (Rust) | file chooser done; the rest to do (screen capture goes through KWin's interface until the compositor) |
-| `kwallet-pam`, `kwalletd6`, `ksecretd`, `signon-kwallet-extension` | secret storage | gnome-keyring (decided) | `labyrinth-keyring-sync` built; switch needs the owner (saved passwords move) |
+| `kwallet-pam`, `kwalletd6`, `ksecretd`, `signon-kwallet-extension` | secret storage | **oo7** (Rust Secret Service, MIT, in Arch extra; decided 2026-10-23 over gnome-keyring, on condition that it keeps secrets private: encrypted at rest with a key from the login password, unlocked by PAM, locked again when it should be; to be verified in its source before any secret moves) | `labyrinth-keyring-sync` to be pointed at oo7; switch needs the owner (saved passwords move) |
 | `kscreenlocker` | lock screen | `labyrinth-lock` (Rust, ext-session-lock) | built; switch on with a rescue path |
 | `sddm` | login screen | greetd + `labyrinth-greeter` (Rust) | built, tested nested only; install with the old one as fallback |
 | `plasma-nm` (secret agent in kded) | Wi-Fi password prompts | NetworkManager secret agent in Yggdrasil | to do |
@@ -42,7 +42,16 @@ Labyrinth image configure KDE. **Yggdrasil's own packages depend on KDE librarie
 | `kdeplasma-addons`, `plasma6-applets-window-title`, `plasma-browser-integration`, `kio-extras`, `baloo`, `milou`, `kactivitymanagerd`, `kaccess`, `drkonqi`, `kinfocenter`, `systemsettings`, `kmenuedit` | Plasma extras | nothing (Minos has its own search; Settings is ours) | remove (kaccess: only after the accessibility plan) |
 | Labyrinth image: `labyrinth-plasma-setup`, `labyrinth-hide-kde-settings`, `labyrinth-displays(-kde)`, `labyrinth-panel-mode`, `labyrinth-switch-mode`, `labyrinth-tiling`, `labyrinth-lockwatch`, `labyrinth-keyring-migrate`, `labyrinth-selfcheck`; `/etc/xdg/kwinrc`, `kscreenlockerrc`, `powerdevilrc`, `plasma-workspace`, `kde-portals.conf`, `sddm.conf.d`, `kwinrulesrc`, `/usr/share/kwin`, `/usr/share/labyrinth/plasma` | configure KDE | each goes with the piece it configures | follows the rows above |
 
-### 1b. Only with the compositor (Yggdrasil's own, replacing KWin)
+### 1b. The compositor (decided 2026-10-23: chosen by measurement, the shell made independent of it)
+
+Yggdrasil's shell (panel, dock, Fylgja, launcher, lock, notifications) is moved onto **standard Wayland protocols only**
+(layer-shell, ext/wlr foreign-toplevel, wlr output management, ext-session-lock, ext-idle-notify, ext-workspace, screencopy through
+the portal), so it runs on any compliant compositor and does not care which one an OS picks. The compositor is then chosen by a
+**bake-off on real hardware** (first: RTX 2080 Ti, NVIDIA 615, 3440x1440 at 180 Hz, HDR-capable): KWin as the baseline, Hyprland,
+cosmic-comp, and Yggdrasil's own Smithay compositor, measured on idle memory and CPU, frame pacing and input latency in real games
+(MangoHud logs), VRR at 180 Hz, tearing for low latency, HDR, NVIDIA stability, Xwayland/Steam games, screen sharing. An upstream,
+distro-packaged compositor that wins is preferred (it updates with the system); window tools (FancyZones, Grab And Move, Window
+Hopper) then talk to it through one small adapter.
 
 | KDE piece | What it does today | Replacement |
 | --- | --- | --- |
