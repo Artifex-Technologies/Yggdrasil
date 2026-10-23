@@ -86,10 +86,72 @@ NATIVE = {
     "folder": [("places", n) for n in ("folder", "folder-open", "folder-documents", "folder-download", "folder-music", "folder-pictures", "folder-videos", "folder-public", "folder-templates", "folder-desktop", "user-desktop", "folder-remote")] + [("mimetypes", "inode-directory")],
     "home": [("places", n) for n in ("user-home", "folder-home")],
     "drive": [("devices", n) for n in ("drive-harddisk", "drive-harddisk-solidstate", "drive-removable-media", "drive-multidisk")],
-    "document": [("mimetypes", n) for n in ("text-x-generic", "application-x-generic", "text-plain")],
     # what an app gets when no pack has an icon for it
     "default-app": [("apps", n) for n in ("application-default-icon", "application-x-executable", "applications-other", "unknown")],
 }
+# File types: a page in a colour of its own (never the accent: only folders follow the accent) with a white glyph, so a PDF,
+# a spreadsheet and a script look different at a glance. Glyphs are drawn in a 24-unit box; no text (the icons are rendered
+# without fonts). Minos writes the file's extension on the page as well.
+G_LINES = '<path d="M5 7h14M5 12h14M5 17h9" stroke="#fff" stroke-width="2.2" stroke-linecap="round" fill="none"/>'
+GLYPHS = {
+    "lines": G_LINES,
+    "dots": '<g fill="#fff"><circle cx="7" cy="8" r="2"/><circle cx="17" cy="8" r="2"/><circle cx="7" cy="16" r="2"/><circle cx="17" cy="16" r="2"/></g>',
+    "markdown": '<path d="M3 18V6l4.5 5L12 6v12" stroke="#fff" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" fill="none"/><path d="M18 6v10M14.5 13l3.5 4 3.5-4" stroke="#fff" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round" fill="none"/>',
+    "pdf": '<path d="M4 19c3-2 6-7 7-13 1 5 4 10 9 11-5 0-11 1-16 2z" stroke="#fff" stroke-width="2" stroke-linejoin="round" fill="none"/>',
+    "image": '<circle cx="8" cy="8" r="2.4" fill="#fff"/><path d="M3 19l6-7 4 4 3-3 5 6z" fill="#fff"/>',
+    "audio": '<path d="M9 17V5l11-2v12" stroke="#fff" stroke-width="2.2" stroke-linejoin="round" fill="none"/><circle cx="6.5" cy="17.5" r="3" fill="#fff"/><circle cx="17.5" cy="15.5" r="3" fill="#fff"/>',
+    "video": '<path d="M8 5l11 7-11 7z" fill="#fff"/>',
+    "archive": '<path d="M12 2v3M10 5h4M12 5v3M10 8h4M12 8v3M10 11h4" stroke="#fff" stroke-width="2" fill="none"/><rect x="9" y="13" width="6" height="7" rx="1.5" stroke="#fff" stroke-width="2" fill="none"/>',
+    "package": '<path d="M12 3l8 4v10l-8 4-8-4V7z M4 7l8 4 8-4 M12 11v10" stroke="#fff" stroke-width="2" stroke-linejoin="round" fill="none"/>',
+    "document": '<path d="M4 6h16M4 10h16M4 14h16M4 18h10" stroke="#fff" stroke-width="2" stroke-linecap="round" fill="none"/>',
+    "grid": '<rect x="3" y="4" width="18" height="16" rx="1.5" stroke="#fff" stroke-width="2" fill="none"/><path d="M3 9.5h18M3 15h18M9 4v16M15 4v16" stroke="#fff" stroke-width="1.8" fill="none"/>',
+    "slides": '<rect x="3" y="4" width="18" height="12" rx="1.5" stroke="#fff" stroke-width="2" fill="none"/><path d="M8 12V9M12 12V7M16 12v-2M12 16v4M8 20h8" stroke="#fff" stroke-width="2" stroke-linecap="round" fill="none"/>',
+    "code": '<path d="M8 6l-6 6 6 6M16 6l6 6-6 6M14 4l-4 16" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>',
+    "shell": '<path d="M4 7l5 5-5 5M12 18h8" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>',
+    "braces": '<path d="M8 4c-3 0-3 2-3 4s0 3-2 4c2 1 2 2 2 4s0 4 3 4M16 4c3 0 3 2 3 4s0 3 2 4c-2 1-2 2-2 4s0 4-3 4" stroke="#fff" stroke-width="2.2" stroke-linecap="round" fill="none"/>',
+    "config": '<path d="M5 6h14M5 12h14M5 18h14" stroke="#fff" stroke-width="2" stroke-linecap="round" fill="none"/><circle cx="9" cy="6" r="2.4" fill="#fff"/><circle cx="15" cy="12" r="2.4" fill="#fff"/><circle cx="8" cy="18" r="2.4" fill="#fff"/>',
+    "log": '<path d="M9 6h11M9 12h11M9 18h11" stroke="#fff" stroke-width="2" stroke-linecap="round" fill="none"/><circle cx="4.5" cy="6" r="1.6" fill="#fff"/><circle cx="4.5" cy="12" r="1.6" fill="#fff"/><circle cx="4.5" cy="18" r="1.6" fill="#fff"/>',
+    "font": '<path d="M4 20L12 4l8 16M7.5 14h9" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>',
+    "disc": '<circle cx="12" cy="12" r="9" stroke="#fff" stroke-width="2.2" fill="none"/><circle cx="12" cy="12" r="2.5" fill="#fff"/>',
+    "gear": '<circle cx="12" cy="12" r="3.2" stroke="#fff" stroke-width="2.2" fill="none"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1" stroke="#fff" stroke-width="2.2" stroke-linecap="round" fill="none"/>',
+    "database": '<ellipse cx="12" cy="6" rx="7" ry="2.8" stroke="#fff" stroke-width="2" fill="none"/><path d="M5 6v12c0 1.5 3 2.8 7 2.8s7-1.3 7-2.8V6M5 12c0 1.5 3 2.8 7 2.8s7-1.3 7-2.8" stroke="#fff" stroke-width="2" fill="none"/>',
+    "book": '<path d="M4 5c3-1 6-1 8 1 2-2 5-2 8-1v14c-3-1-6-1-8 1-2-2-5-2-8-1zM12 6v14" stroke="#fff" stroke-width="2" stroke-linejoin="round" fill="none"/>',
+    "key": '<circle cx="8" cy="12" r="4" stroke="#fff" stroke-width="2.2" fill="none"/><path d="M12 12h9M18 12v3M21 12v2" stroke="#fff" stroke-width="2.2" stroke-linecap="round" fill="none"/>',
+    "web": '<circle cx="12" cy="12" r="9" stroke="#fff" stroke-width="2" fill="none"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18" stroke="#fff" stroke-width="2" fill="none"/>',
+}
+# freedesktop icon name -> (page colour, glyph)
+MIME = {
+    "text-x-generic": ("8a93a6", "lines"), "text-plain": ("8a93a6", "lines"), "application-x-generic": ("6b7280", "dots"),
+    "text-markdown": ("37474f", "markdown"), "text-x-markdown": ("37474f", "markdown"),
+    "application-pdf": ("d93025", "pdf"),
+    "image-x-generic": ("0d9488", "image"), "image-svg+xml": ("0f766e", "image"),
+    "audio-x-generic": ("ea8c00", "audio"), "video-x-generic": ("db2777", "video"),
+    "application-zip": ("b45309", "archive"), "application-x-archive": ("b45309", "archive"), "application-x-compressed-tar": ("b45309", "archive"),
+    "package-x-generic": ("8d5a2b", "package"),
+    "x-office-document": ("2563eb", "document"), "x-office-spreadsheet": ("15803d", "grid"), "text-csv": ("16a34a", "grid"),
+    "x-office-presentation": ("e0531f", "slides"),
+    "text-x-script": ("334155", "code"), "application-x-shellscript": ("1f2937", "shell"),
+    "text-x-python": ("3776ab", "code"), "text-x-rust": ("b7410e", "code"), "text-x-go": ("00a0c6", "code"), "text-x-csrc": ("555fa8", "code"),
+    "text-x-c++src": ("00599c", "code"), "text-x-chdr": ("6b6fb0", "code"), "text-x-java": ("d46a00", "code"),
+    "application-javascript": ("c79a00", "code"), "text-x-typescript": ("3178c6", "code"), "text-x-lua": ("2c2d72", "code"),
+    "text-html": ("e34f26", "web"), "text-css": ("2965f1", "braces"), "application-json": ("a16207", "braces"), "application-xml": ("7c6f1e", "code"),
+    "text-x-config": ("64748b", "config"), "text-x-log": ("475569", "log"), "text-x-patch": ("9a3412", "code"),
+    "font-x-generic": ("0f766e", "font"), "application-x-cd-image": ("4b5563", "disc"),
+    "application-x-executable": ("1f2937", "gear"), "application-x-sharedlib": ("374151", "gear"),
+    "application-sql": ("0369a1", "database"), "application-x-sqlite3": ("0369a1", "database"),
+    "application-epub+zip": ("9a3412", "book"), "application-pgp-keys": ("854d0e", "key"),
+}
+
+
+def mime_icon(colour, glyph):
+    def dark(c, k):
+        return "".join("%02x" % int(int(c[i:i + 2], 16) * k) for i in (0, 2, 4))
+    return ('<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 1024 1024">'
+            f'<path d="M260 72H650L840 262V900a52 52 0 0 1-52 52H260a52 52 0 0 1-52-52V124a52 52 0 0 1 52-52Z" fill="#{colour}"/>'
+            f'<path d="M650 72V214a48 48 0 0 0 48 48H840Z" fill="#{dark(colour, 0.72)}"/>'
+            f'<svg x="318" y="430" width="412" height="412" viewBox="0 0 24 24">{GLYPHS[glyph]}</svg></svg>\n')
+
+
 CONTEXTS = {"apps": "Applications", "places": "Places", "mimetypes": "MimeTypes", "devices": "Devices", "status": "Status"}
 NL = chr(10)
 SUFFIXES = ("stable", "launcher", "client", "desktop", "browser", "bin", "beta", "dev", "gtk", "flatpak")
@@ -232,6 +294,10 @@ def main():
         for ctx, n in names:
             open(os.path.join(out, ctx, "scalable", n + ".svg"), "w", encoding="utf-8").write(icon)
             written += 1
+    # file types, each in its own colour (not the accent)
+    for name, (colour, glyph) in MIME.items():
+        open(os.path.join(out, "mimetypes", "scalable", name + ".svg"), "w", encoding="utf-8").write(mime_icon(colour, glyph))
+        written += 1
     # the system's symbolic icons (panel, Fylgja, Settings): Lucide, ISC, drawn in currentColor so the program tints them
     for f in glob.glob(os.path.join(os.path.dirname(SRC), "symbolic", "*.svg")):
         shutil.copy(f, os.path.join(out, "status", "scalable", os.path.basename(f)))

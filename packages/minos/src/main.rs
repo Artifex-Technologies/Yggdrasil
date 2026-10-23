@@ -660,20 +660,44 @@ fn icon_button(ui: &mut egui::Ui, pal: &Palette, icon: Icon, tip: &str, enabled:
 
 fn entry_icon(ui: &mut egui::Ui, pal: &Palette, st: &State, e: &Entry, size: f32) {
     let (rect, _) = ui.allocate_exact_size(vec2(size, size), Sense::hover());
+    paint_entry_icon(ui.painter(), pal, st, e, rect);
+}
+
+/// A listing entry's icon. Only folders take a colour (the accent, or their colour tag); a file always shows its own type's icon,
+/// and a colour tag on a file is a small dot in the corner. Large icons carry the file's extension.
+fn paint_entry_icon(p: &egui::Painter, pal: &Palette, st: &State, e: &Entry, rect: Rect) {
     let tint = st.color_for(&e.path).map(rgb);
-    let (icon, color) = if e.usage.is_some() {
-        (Icon::Drive, pal.drive)
-    } else if e.is_dir {
-        (Icon::Folder, tint.unwrap_or(pal.folder))
-    } else if archive::is_archive_name(&e.path) {
-        (Icon::Archive, tint.unwrap_or(pal.amber))
-    } else {
-        (Icon::File, tint.unwrap_or(pal.file))
-    };
-    if tint.is_none() && sys_entry_icon(ui.painter(), rect, e) {
+    if e.usage.is_some() {
+        icons::paint(p, rect, Icon::Drive, pal.drive);
         return;
     }
-    icons::paint(ui.painter(), rect, icon, color);
+    if e.is_dir {
+        if !(tint.is_none() && sys_entry_icon(p, rect, e)) {
+            icons::paint(p, rect, Icon::Folder, tint.unwrap_or(pal.folder));
+        }
+        return;
+    }
+    if !sys_entry_icon(p, rect, e) {
+        let icon = if archive::is_archive_name(&e.path) { Icon::Archive } else { Icon::File };
+        icons::paint(p, rect, icon, if icon == Icon::Archive { pal.amber } else { pal.file });
+    }
+    if rect.width() >= 40.0 {
+        if let Some(ext) = e.path.extension().map(|x| x.to_string_lossy().to_uppercase()).filter(|x| !x.is_empty() && x.chars().count() <= 5) {
+            let font = egui::FontId::proportional((rect.width() * 0.16).clamp(8.0, 13.0));
+            let g = p.layout_no_wrap(ext, font, Color32::WHITE);
+            let pad = vec2(4.0, 1.5);
+            let at = pos2(rect.center().x, rect.top() + rect.height() * 0.3);
+            let bg = Rect::from_center_size(at, g.size() + pad * 2.0);
+            p.rect_filled(bg, CornerRadius::same(4), Color32::from_black_alpha(150));
+            p.galley(bg.min + pad, g, Color32::WHITE);
+        }
+    }
+    if let Some(c) = tint {
+        let r = (rect.width() * 0.12).clamp(3.0, 7.0);
+        let at = rect.right_bottom() - vec2(r, r);
+        p.circle_filled(at, r + 1.0, pal.bg);
+        p.circle_filled(at, r, c);
+    }
 }
 
 /// The system theme's icon for a listing entry (a tinted folder keeps the drawn one, so colour tags still show).
@@ -1346,16 +1370,7 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
                         if !e.is_dir && !in_archive && is_image(&e.path) && ui.is_rect_visible(rect) {
                             egui::Image::new(file_uri(&e.path)).fit_to_exact_size(img_rect.size()).corner_radius(6).paint_at(ui, img_rect);
                         } else {
-                            let (icon, color) = if e.usage.is_some() {
-                                (Icon::Drive, pal.drive)
-                            } else if e.is_dir {
-                                (Icon::Folder, tint.unwrap_or(pal.folder))
-                            } else {
-                                (Icon::File, tint.unwrap_or(pal.file))
-                            };
-                            if !(tint.is_none() && sys_entry_icon(ui.painter(), img_rect, e)) {
-                                icons::paint(ui.painter(), img_rect.shrink(size * 0.08), icon, color);
-                            }
+                            paint_entry_icon(ui.painter(), &pal, st, e, img_rect);
                         }
                         let mut badge_x = -10.0;
                         if let Some(b) = cloud::badge_for(&e.path, cx.links, cx.reports) {

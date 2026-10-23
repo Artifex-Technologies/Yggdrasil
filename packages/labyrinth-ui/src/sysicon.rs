@@ -234,28 +234,57 @@ pub fn folder_names(dir_name: &str) -> Vec<&'static str> {
     if special.is_empty() { vec!["folder"] } else { vec![special, "folder"] }
 }
 
-/// Icon names for a file, from its extension.
+/// Icon names for a file, from its extension: the most specific type first, then its family, then plain text. Each type has an
+/// icon of its own in Liki, in a colour of its own (only folders follow the accent).
 pub fn file_names(file_name: &str) -> Vec<&'static str> {
     let ext = file_name.rsplit_once('.').map(|(_, e)| e.to_lowercase()).unwrap_or_default();
-    let kind = match ext.as_str() {
-        "pdf" => "application-pdf",
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" | "tiff" | "heic" | "ico" => "image-x-generic",
-        "mp3" | "flac" | "wav" | "ogg" | "m4a" | "opus" | "aac" => "audio-x-generic",
-        "mp4" | "mkv" | "mov" | "avi" | "webm" | "m4v" => "video-x-generic",
-        "zip" | "7z" | "rar" | "tar" | "gz" | "xz" | "bz2" | "zst" => "application-zip",
-        "deb" | "rpm" | "pkg" | "appimage" | "flatpak" => "package-x-generic",
-        "doc" | "docx" | "odt" | "rtf" => "x-office-document",
-        "xls" | "xlsx" | "ods" | "csv" => "x-office-spreadsheet",
-        "ppt" | "pptx" | "odp" => "x-office-presentation",
-        "py" => "text-x-python",
-        "rs" => "text-x-rust",
-        "html" | "htm" => "text-html",
-        "json" => "application-json",
-        "sh" | "bash" | "js" | "ts" | "c" | "cpp" | "h" | "java" | "go" | "lua" => "text-x-script",
-        "exe" | "msi" | "bin" => "application-x-executable",
-        _ => "",
+    let (kind, family): (&str, &str) = match ext.as_str() {
+        "md" | "markdown" | "mdx" => ("text-markdown", "text-x-generic"),
+        "txt" | "text" => ("text-plain", "text-x-generic"),
+        "pdf" => ("application-pdf", ""),
+        "svg" | "svgz" => ("image-svg+xml", "image-x-generic"),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "tiff" | "tif" | "heic" | "heif" | "avif" | "ico" | "raw" | "cr2" | "nef" | "xcf" | "psd" | "kra" => ("image-x-generic", ""),
+        "mp3" | "flac" | "wav" | "ogg" | "m4a" | "opus" | "aac" | "wma" | "mid" | "midi" => ("audio-x-generic", ""),
+        "mp4" | "mkv" | "mov" | "avi" | "webm" | "m4v" | "wmv" | "flv" | "mpg" | "mpeg" => ("video-x-generic", ""),
+        "zip" | "7z" | "rar" => ("application-zip", "application-x-archive"),
+        "tar" | "gz" | "tgz" | "xz" | "bz2" | "zst" | "lz4" | "lzma" => ("application-x-compressed-tar", "application-x-archive"),
+        "deb" | "rpm" | "pkg" | "appimage" | "flatpak" | "snap" | "whl" | "jar" => ("package-x-generic", ""),
+        "doc" | "docx" | "odt" | "rtf" | "pages" => ("x-office-document", ""),
+        "xls" | "xlsx" | "ods" | "numbers" => ("x-office-spreadsheet", ""),
+        "csv" | "tsv" => ("text-csv", "x-office-spreadsheet"),
+        "ppt" | "pptx" | "odp" | "key" => ("x-office-presentation", ""),
+        "py" | "pyw" | "ipynb" => ("text-x-python", "text-x-script"),
+        "rs" => ("text-x-rust", "text-x-script"),
+        "go" => ("text-x-go", "text-x-script"),
+        "c" => ("text-x-csrc", "text-x-script"),
+        "cpp" | "cc" | "cxx" | "hpp" | "hh" => ("text-x-c++src", "text-x-script"),
+        "h" => ("text-x-chdr", "text-x-script"),
+        "java" | "kt" | "kts" => ("text-x-java", "text-x-script"),
+        "js" | "mjs" | "cjs" | "jsx" => ("application-javascript", "text-x-script"),
+        "ts" | "tsx" => ("text-x-typescript", "text-x-script"),
+        "lua" => ("text-x-lua", "text-x-script"),
+        "sh" | "bash" | "zsh" | "fish" | "ps1" | "bat" | "cmd" => ("application-x-shellscript", "text-x-script"),
+        "rb" | "php" | "pl" | "swift" | "cs" | "dart" | "zig" | "nim" | "hs" | "ex" | "exs" | "r" | "scala" | "vue" | "svelte" => ("text-x-script", ""),
+        "html" | "htm" | "xhtml" => ("text-html", ""),
+        "css" | "scss" | "sass" | "less" => ("text-css", ""),
+        "json" | "jsonc" | "json5" | "geojson" => ("application-json", ""),
+        "xml" | "plist" | "xsd" | "xsl" => ("application-xml", ""),
+        "toml" | "yaml" | "yml" | "ini" | "conf" | "cfg" | "env" | "desktop" | "service" | "properties" => ("text-x-config", "text-x-generic"),
+        "log" => ("text-x-log", "text-x-generic"),
+        "patch" | "diff" => ("text-x-patch", "text-x-generic"),
+        "ttf" | "otf" | "woff" | "woff2" => ("font-x-generic", ""),
+        "iso" | "img" | "dmg" | "qcow2" | "vdi" | "vmdk" => ("application-x-cd-image", ""),
+        "exe" | "msi" | "bin" | "run" | "elf" | "out" => ("application-x-executable", ""),
+        "so" | "dll" | "dylib" | "a" | "o" => ("application-x-sharedlib", "application-x-executable"),
+        "sql" => ("application-sql", ""),
+        "db" | "sqlite" | "sqlite3" => ("application-x-sqlite3", "application-sql"),
+        "epub" | "mobi" | "azw3" => ("application-epub+zip", ""),
+        "asc" | "gpg" | "pgp" | "pem" | "crt" | "pub" => ("application-pgp-keys", ""),
+        _ => ("", ""),
     };
-    if kind.is_empty() { vec!["text-x-generic", "application-x-generic"] } else { vec![kind, "text-x-generic"] }
+    let mut v: Vec<&'static str> = [kind, family].into_iter().filter(|s| !s.is_empty()).collect();
+    v.extend(["text-x-generic", "application-x-generic"]);
+    v
 }
 
 #[cfg(test)]
@@ -281,6 +310,10 @@ mod tests {
     fn names_follow_the_extension_and_folder() {
         assert_eq!(file_names("report.PDF")[0], "application-pdf");
         assert_eq!(file_names("README")[0], "text-x-generic");
+        assert_eq!(file_names("notes.md"), vec!["text-markdown", "text-x-generic", "text-x-generic", "application-x-generic"]);
+        assert_eq!(file_names("Cargo.toml")[0], "text-x-config");
+        assert_eq!(file_names("data.csv")[..2], ["text-csv", "x-office-spreadsheet"]);
+        assert_eq!(file_names("run.sh")[0], "application-x-shellscript");
         assert_eq!(folder_names("Downloads"), vec!["folder-download", "folder"]);
         assert_eq!(folder_names("src"), vec!["folder"]);
     }
