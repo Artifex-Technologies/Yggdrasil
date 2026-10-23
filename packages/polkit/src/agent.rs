@@ -12,9 +12,12 @@ pub const OBJECT_PATH: &str = "/org/yggdrasil/PolicyKit1/AuthenticationAgent";
 
 /// What the dialog is asked to do.
 pub enum UiMsg {
-    /// Start (or continue) a dialog for this request.
-    Begin { message: String, action_id: String, user: String },
+    /// Start (or continue) a dialog for this request. `kind` is "admin" (polkit), "network" or "bluetooth"; `title` replaces the
+    /// administrator heading for the other kinds.
+    Begin { kind: String, title: String, message: String, action_id: String, user: String },
     Prompt { text: String, echo: bool, reply: Sender<Option<String>> },
+    /// A yes-or-no question (Bluetooth pairing): `button` says yes, Cancel says no.
+    Confirm { button: String, reply: Sender<bool> },
     Message { text: String, error: bool },
     /// The request is over (close the dialog).
     Done { ok: bool },
@@ -51,13 +54,43 @@ pub fn choose_identity(identities: &[(String, HashMap<String, OwnedValue>)], own
 /// The password box runs as its own process, one per request (`yggdrasil-polkit --dialog`), talking JSON lines on its pipes:
 /// requests go to its stdin, the typed answers come back on its stdout. When the request is over the process ends and its
 /// window goes with it.
-struct Bridge {
+pub struct Bridge {
+    child: std::process::Child,
     stdin: std::process::ChildStdin,
     stdout: std::io::BufReader<std::process::ChildStdout>,
 }
 
 impl Bridge {
-    fn send(&mut self, v: serde_json::Value) {
+    /// Opens a box (a process of its own) and records its pid in `slot`, so a cancel can close it.
+    pub fn open(slot: &std::sync::Arc<std::sync::Mutex<Option<u32>>>) -> std::io::Result<Bridge> {
+        let exe = std::env::current_exe()?;
+        let mut child = std::process::Command::new(exe).arg("--dialog").stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).spawn()?;
+        *slot.lock().unwrap() = Some(child.id());
+        let stdin = child.stdin.take().ok_or_else(|| std::io::Error::other("no stdin"))?;
+        let stdout = std::io::BufReader::new(child.stdout.take().ok_or_else(|| std::io::Error::other("no stdout"))?);
+        Ok(Bridge { child, stdin, stdout })
+    }
+
+    /// Ends the box and forgets its pid.
+    pub fn close(mut self, slot: &std::sync::Arc<std::sync::Mutex<Option<u32>>>) {
+        self.send(serde_json::json!({"t": "done"}));
+        drop(self.stdin);
+        let _ = self.child.wait();
+        *slot.lock().unwrap() = None;
+    }
+
+    /// Asks a yes-or-no question; false when cancelled or when the box was closed.
+    pub fn confirm(&mut self, button: &str) -> bool {
+        use std::io::BufRead;
+        self.send(serde_json::json!({"t": "confirm", "button": button}));
+        let mut line = String::new();
+        if self.stdout.read_line(&mut line).unwrap_or(0) == 0 {
+            return false;
+        }
+        serde_json::from_str::<serde_json::Value>(line.trim()).ok().and_then(|v| v.get("answer").and_then(|a| a.as_bool())).unwrap_or(false)
+    }
+
+    pub fn send(&mut self, v: serde_json::Value) {
         use std::io::Write;
         let _ = writeln!(self.stdin, "{v}");
         let _ = self.stdin.flush();
@@ -101,24 +134,15 @@ fn authenticate(self_uid: u32, child_slot: std::sync::Arc<std::sync::Mutex<Optio
             return Err(zbus::fdo::Error::Failed("no user to authenticate as".into()));
         };
         let user = user_name(uid).ok_or_else(|| zbus::fdo::Error::Failed("unknown user".into()))?;
-        let exe = std::env::current_exe().map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
-        let mut child = std::process::Command::new(exe)
-            .arg("--dialog")
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| zbus::fdo::Error::Failed(format!("cannot open the password box: {e}")))?;
-        *child_slot.lock().unwrap() = Some(child.id());
-        let mut ui = Bridge { stdin: child.stdin.take().unwrap(), stdout: std::io::BufReader::new(child.stdout.take().unwrap()) };
-        ui.send(serde_json::json!({"t": "begin", "message": message, "action_id": action_id, "user": user}));
+        let mut ui = Bridge::open(&child_slot).map_err(|e| zbus::fdo::Error::Failed(format!("cannot open the password box: {e}")))?;
+        ui.send(serde_json::json!({"t": "begin", "kind": "admin", "message": message, "action_id": action_id, "user": user}));
         // a wrong password gets three tries, each a new session with the helper (as the standard agents do)
         let mut result = Outcome::Failed;
         for attempt in 0..3 {
             result = match helper::authenticate(&user, &cookie, &mut ui) {
                 Ok(r) => r,
                 Err(e) => {
-                    ui.send(serde_json::json!({"t": "done"}));
-                    let _ = child.wait();
+                    ui.close(&child_slot);
                     return Err(zbus::fdo::Error::Failed(e.to_string()));
                 }
             };
@@ -129,10 +153,7 @@ fn authenticate(self_uid: u32, child_slot: std::sync::Arc<std::sync::Mutex<Optio
                 ui.message("Wrong password, try again.", true);
             }
         }
-        ui.send(serde_json::json!({"t": "done"}));
-        drop(ui);
-        let _ = child.wait();
-        *child_slot.lock().unwrap() = None;
+        ui.close(&child_slot);
         match result {
             Outcome::Authenticated => Ok(()),
             Outcome::Cancelled => Err(zbus::fdo::Error::Failed("org.freedesktop.PolicyKit1.Error.Cancelled".into())),

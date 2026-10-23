@@ -1,4 +1,5 @@
-//! The password box: a small window in the desktop's look. It stays hidden until polkit asks for something.
+//! The question box: a small window in the desktop's look, one process per question. Three forms: the administrator password (polkit),
+//! a network password (Wi-Fi, VPN) and a Bluetooth pairing question (a code to type, or a yes-or-no).
 
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -11,6 +12,11 @@ use zeroize::Zeroize;
 use crate::agent::UiMsg;
 
 pub struct Dialog {
+    /// "admin", "network" or "bluetooth".
+    kind: String,
+    title: String,
+    /// A yes-or-no question waiting for its answer (the yes button's label).
+    confirming: Option<(String, Sender<bool>)>,
     message: String,
     action_id: String,
     user: String,
@@ -39,8 +45,14 @@ impl App {
     fn receive(&mut self) {
         while let Ok(m) = self.rx.try_recv() {
             match m {
-                UiMsg::Begin { message, action_id, user } => {
-                    self.dialog = Some(Dialog { message, action_id, user, asking: None, input: String::new(), notes: vec![], show_details: false });
+                UiMsg::Begin { kind, title, message, action_id, user } => {
+                    let kind = if kind.is_empty() { "admin".to_string() } else { kind };
+                    self.dialog = Some(Dialog { kind, title, confirming: None, message, action_id, user, asking: None, input: String::new(), notes: vec![], show_details: false });
+                }
+                UiMsg::Confirm { button, reply } => {
+                    if let Some(d) = &mut self.dialog {
+                        d.confirming = Some((button, reply));
+                    }
                 }
                 UiMsg::Prompt { text, echo, reply } => {
                     if let Some(d) = &mut self.dialog {
@@ -106,6 +118,9 @@ impl eframe::App for App {
         if let Some(a) = answer {
             if let Some((_, _, reply)) = d.asking.take() {
                 let _ = reply.send(a);
+            } else if let Some((_, reply)) = d.confirming.take() {
+                // a yes-or-no question: an answer with text means yes, a cancel means no
+                let _ = reply.send(a.is_some());
             }
             d.input.zeroize();
         }
@@ -157,16 +172,19 @@ fn draw(ui: &mut egui::Ui, d: &mut Dialog, pal: &theme::Palette, answer: &mut Op
         padlock(ui, pal, 48.0);
         ui.add_space(8.0);
         ui.vertical(|ui| {
-            ui.label(RichText::new("Administrator password needed").size(19.0).strong());
-            let summary = describe(&d.message).unwrap_or_else(|| "A program is asking for administrator rights.".to_string());
+            let admin = d.kind == "admin";
+            let heading = if admin || d.title.is_empty() { "Administrator password needed" } else { d.title.as_str() };
+            ui.label(RichText::new(heading).size(19.0).strong());
+            let summary = if admin { describe(&d.message).unwrap_or_else(|| "A program is asking for administrator rights.".to_string()) } else { d.message.clone() };
             ui.add(egui::Label::new(RichText::new(summary).color(pal.dim)).wrap());
         });
     });
     ui.add_space(4.0);
-    if ui.add(egui::Label::new(RichText::new(if d.show_details { "Hide details" } else { "Show details" }).size(12.5).color(pal.accent)).sense(Sense::click())).clicked() {
+    // the details are polkit's own words and action; the other questions say everything in their summary
+    if d.kind == "admin" && ui.add(egui::Label::new(RichText::new(if d.show_details { "Hide details" } else { "Show details" }).size(12.5).color(pal.accent)).sense(Sense::click())).clicked() {
         d.show_details = !d.show_details;
     }
-    if d.show_details {
+    if d.show_details && d.kind == "admin" {
         egui::Frame::new().fill(pal.field).corner_radius(CornerRadius::same(8)).inner_margin(Margin::same(10)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.add(egui::Label::new(RichText::new(if d.message.is_empty() { "(no description)" } else { d.message.as_str() }).monospace().size(11.5).color(pal.dim)).wrap());
@@ -177,15 +195,32 @@ fn draw(ui: &mut egui::Ui, d: &mut Dialog, pal: &theme::Palette, answer: &mut Op
     for (t, err) in &d.notes {
         ui.label(RichText::new(t.as_str()).size(12.5).color(if *err { pal.red } else { pal.dim }));
     }
-    if let Some((prompt, echo, _)) = &d.asking {
-        ui.label(RichText::new(format!("{} for {}", prompt.trim_end_matches(':'), d.user)).size(13.0).color(pal.dim));
+    if let Some((button, _)) = &d.confirming {
+        ui.add_space(6.0);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let yes = egui::Button::new(RichText::new(button.as_str()).size(14.5).strong().color(pal.on_accent())).fill(pal.accent).corner_radius(CornerRadius::same(8)).min_size(vec2(120.0, 36.0));
+            if ui.add(yes).clicked() || ui.input(|i| i.key_pressed(Key::Enter)) {
+                *answer = Some(Some(String::new()));
+            }
+            if button != "Close" && (ui.add(egui::Button::new(RichText::new("Cancel").size(14.5)).corner_radius(CornerRadius::same(8)).min_size(vec2(96.0, 36.0))).clicked() || ui.input(|i| i.key_pressed(Key::Escape))) {
+                *answer = Some(None);
+            }
+        });
+    } else if let Some((prompt, echo, _)) = &d.asking {
+        let label = if d.kind == "admin" { format!("{} for {}", prompt.trim_end_matches(':'), d.user) } else { prompt.trim_end_matches(':').to_string() };
+        ui.label(RichText::new(label).size(13.0).color(pal.dim));
         ui.add_space(4.0);
         let resp = ui.add(TextEdit::singleline(&mut d.input).password(!*echo).desired_width(f32::INFINITY).margin(vec2(12.0, 9.0)));
         resp.request_focus();
         ui.add_space(14.0);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let enter = ui.input(|i| i.key_pressed(Key::Enter));
-            let go = egui::Button::new(RichText::new("Authenticate").size(14.5).strong().color(pal.on_accent())).fill(pal.accent).corner_radius(CornerRadius::same(8)).min_size(vec2(140.0, 36.0));
+            let go_label = match d.kind.as_str() {
+                "network" => "Connect",
+                "bluetooth" => "OK",
+                _ => "Authenticate",
+            };
+            let go = egui::Button::new(RichText::new(go_label).size(14.5).strong().color(pal.on_accent())).fill(pal.accent).corner_radius(CornerRadius::same(8)).min_size(vec2(140.0, 36.0));
             if ui.add(go).clicked() || enter {
                 *answer = Some(Some(d.input.clone()));
             }

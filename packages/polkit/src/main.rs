@@ -1,4 +1,6 @@
-//! yggdrasil-polkit: Yggdrasil's polkit authentication agent. Run in the session (autostart):
+//! yggdrasil-polkit: the desktop's questions that need an answer typed or confirmed, each in a small box of its own: the administrator
+//! password (polkit's authentication agent), Wi-Fi and VPN passwords (NetworkManager's secret agent, netagent.rs) and Bluetooth
+//! pairing (BlueZ's agent, btagent.rs). Run in the session (autostart):
 //!
 //!   yggdrasil-polkit                 serve this login session (replaces KDE's polkit agent: only one agent per session can be registered)
 //!   yggdrasil-polkit --process PID   serve only that process (for testing: `pkexec` run from PID asks this agent)
@@ -8,7 +10,9 @@
 //! anything itself.
 
 mod agent;
+mod btagent;
 mod helper;
+mod netagent;
 mod ui;
 
 use std::sync::mpsc::channel;
@@ -42,20 +46,34 @@ fn main() -> eframe::Result {
         }
     };
     let uid = unsafe { libc::getuid() };
-    let _conn = match agent::register(agent::Agent { uid, child: std::sync::Arc::new(Mutex::new(None)) }, subject) {
-        Ok(c) => c,
+    let polkit = match agent::register(agent::Agent { uid, child: std::sync::Arc::new(Mutex::new(None)) }, subject) {
+        Ok(c) => {
+            eprintln!("yggdrasil-polkit: registered as the authentication agent");
+            Some(c)
+        }
+        Err(e) if e.contains("already exists") => {
+            // another desktop's agent already answers password requests: not a failure; the other questions are still ours
+            eprintln!("yggdrasil-polkit: another authentication agent is already running; leaving administrator passwords to it");
+            None
+        }
         Err(e) => {
-            // another desktop's agent (KDE's, while KWin is still in use) already answers password requests: that is not a failure, and a
-            // failed unit in every check-up list only hides real problems
-            if e.to_string().contains("already exists") {
-                eprintln!("yggdrasil-polkit: another authentication agent is already running; leaving it to that one");
-                std::process::exit(0);
-            }
             eprintln!("yggdrasil-polkit: could not register as the authentication agent: {e}");
-            std::process::exit(1);
+            None
         }
     };
-    eprintln!("yggdrasil-polkit: registered");
+    // Wi-Fi and VPN passwords; Bluetooth pairing. Each may be missing (no NetworkManager, no Bluetooth): then that one is skipped.
+    let net = netagent::register().map_err(|e| eprintln!("yggdrasil-polkit: no Wi-Fi/VPN password agent: {e}")).ok();
+    let bt = btagent::register().map_err(|e| eprintln!("yggdrasil-polkit: no Bluetooth pairing agent: {e}")).ok();
+    if polkit.is_none() && net.is_none() && bt.is_none() {
+        std::process::exit(0);
+    }
+    if net.is_some() {
+        eprintln!("yggdrasil-polkit: registered as the Wi-Fi and VPN password agent");
+    }
+    if bt.is_some() {
+        eprintln!("yggdrasil-polkit: registered as the Bluetooth pairing agent");
+    }
+    let _keep = (polkit, net, bt);
     // no window here: each request opens the password box as a process of its own
     loop {
         std::thread::park();
@@ -87,7 +105,17 @@ fn dialog() -> eframe::Result {
             let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
             let text = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
             let msg = match v.get("t").and_then(|t| t.as_str()).unwrap_or("") {
-                "begin" => agent::UiMsg::Begin { message: text("message"), action_id: text("action_id"), user: text("user") },
+                "begin" => agent::UiMsg::Begin { kind: text("kind"), title: text("title"), message: text("message"), action_id: text("action_id"), user: text("user") },
+                "confirm" => {
+                    let (rtx, rrx) = channel::<bool>();
+                    std::thread::spawn(move || {
+                        let yes = rrx.recv().unwrap_or(false);
+                        let mut out = std::io::stdout().lock();
+                        let _ = writeln!(out, "{}", serde_json::json!({"answer": yes}));
+                        let _ = out.flush();
+                    });
+                    agent::UiMsg::Confirm { button: text("button"), reply: rtx }
+                }
                 "prompt" => {
                     let (rtx, rrx) = channel::<Option<String>>();
                     std::thread::spawn(move || {
