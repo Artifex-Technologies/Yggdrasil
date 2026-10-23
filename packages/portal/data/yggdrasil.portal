@@ -1,0 +1,4 @@
+[portal]
+DBusName=org.freedesktop.impl.portal.desktop.yggdrasil
+Interfaces=org.freedesktop.impl.portal.FileChooser
+UseIn=Yggdrasil;KDE

@@ -3,7 +3,7 @@ Type=Application
 Name=Yggdrasil Panel
 Comment=The top bar and dock
 Exec=/usr/bin/yggdrasil-panel
-Icon=labyrinthos
+Icon=preferences-desktop
 NoDisplay=true
 Terminal=false
 # KWin only shows the window list to programs that ask for it here, by their exact path.

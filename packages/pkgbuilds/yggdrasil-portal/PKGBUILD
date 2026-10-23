@@ -27,4 +27,7 @@ check() {
 
 package() {
   install -Dm755 "$srcdir/target/release/yggdrasil-portal" "$pkgdir/usr/bin/yggdrasil-portal"
+  install -Dm644 "$_src/data/yggdrasil.portal" "$pkgdir/usr/share/xdg-desktop-portal/portals/yggdrasil.portal"
+  install -Dm644 "$_src/data/org.freedesktop.impl.portal.desktop.yggdrasil.service" "$pkgdir/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.yggdrasil.service"
+  install -Dm644 "$_src/data/yggdrasil-portals.conf" "$pkgdir/usr/share/xdg-desktop-portal/yggdrasil-portals.conf"
 }

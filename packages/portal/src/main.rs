@@ -205,7 +205,7 @@ impl Chooser {
 fn main() -> zbus::Result<()> {
     let running = Arc::new(Mutex::new(HashMap::new()));
     let _conn = zbus::blocking::connection::Builder::session()?
-        .name("org.freedesktop.impl.portal.desktop.labyrinth")?
+        .name("org.freedesktop.impl.portal.desktop.yggdrasil")?
         .serve_at("/org/freedesktop/portal/desktop", Chooser { running })?
         .build()?;
     loop {
