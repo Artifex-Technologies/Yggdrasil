@@ -464,10 +464,8 @@ pub struct Appearance {
 }
 
 pub fn appearance() -> Appearance {
-    let scheme = run("kreadconfig6", &["--file", "kdeglobals", "--group", "General", "--key", "ColorScheme"]).unwrap_or_default();
-    let accent = run("kreadconfig6", &["--file", "kdeglobals", "--group", "General", "--key", "AccentColor"])
-        .and_then(|s| yggdrasil_ui::theme::parse_kde_accent(&format!("[General]
-AccentColor={}", s.trim())));
+    let look = yggdrasil_conf::appearance::load();
+    let accent = look.accent;
     let mut wallpapers = vec![];
     for dir in yggdrasil_conf::integrations::wallpaper_dirs() {
         if let Ok(rd) = std::fs::read_dir(dir) {
@@ -483,7 +481,7 @@ AccentColor={}", s.trim())));
     }
     wallpapers.sort();
     let panel_on = run("labyrinth-panel-mode", &["status"]).map(|s| s.trim() == "yggdrasil-panel").unwrap_or(false);
-    Appearance { icon_packs: icon_packs(), icon_theme: run("kreadconfig6", &["--file", "kdeglobals", "--group", "Icons", "--key", "Theme"]).map(|s| s.trim().to_string()).unwrap_or_default(), dark: scheme.trim().to_lowercase().contains("dark") || scheme.trim().is_empty(), accent, wallpapers, panel_on, panel: yggdrasil_conf::PanelConf::load() }
+    Appearance { icon_packs: icon_packs(), icon_theme: run("kreadconfig6", &["--file", "kdeglobals", "--group", "Icons", "--key", "Theme"]).map(|s| s.trim().to_string()).unwrap_or_default(), dark: look.dark, accent, wallpapers, panel_on, panel: yggdrasil_conf::PanelConf::load() }
 }
 
 /// The largest picture in a Plasma wallpaper package's images folder (named like 3840x2160.png).

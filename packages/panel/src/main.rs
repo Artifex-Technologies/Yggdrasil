@@ -496,11 +496,9 @@ fn read_layout() -> Layout {
     Layout { primary, tiling, sizes }
 }
 
-/// Whether the system style is dark (the colour scheme's name says so; Settings > Appearance).
+/// Whether the desktop style is dark (Settings > Appearance; one small file read, no program started).
 fn system_dark() -> bool {
-    let scheme = command_output("kreadconfig6", &["--file", "kdeglobals", "--group", "General", "--key", "ColorScheme"]);
-    let scheme = scheme.trim().to_lowercase();
-    scheme.is_empty() || scheme.contains("dark")
+    yggdrasil_conf::appearance::load().dark
 }
 
 fn new_buffer(shm: &WlShm, qh: &QueueHandle<State>, w: u32, h: u32) -> Option<Buffer> {

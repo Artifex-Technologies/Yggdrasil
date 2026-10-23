@@ -1458,12 +1458,8 @@ impl App {
         if let Some([r, g, b]) = accent {
             self.change(ctx, move || {
                 let rgb = format!("{r},{g},{b}");
-                // the colour scheme and the GTK colours in the new accent (this also writes the AccentColor key the apps read)
+                // the desktop's record of the choice, the colour scheme and the GTK colours in the new accent (ygg-theme writes them all)
                 sys::act("ygg-theme", &["apply", "--accent", &rgb])?;
-                for key in ["AccentColor", "LastUsedCustomAccentColor"] {
-                    let _ = sys::act("kwriteconfig6", &["--file", "kdeglobals", "--group", "General", "--key", key, &rgb]);
-                }
-                let _ = sys::act("kwriteconfig6", &["--file", "kdeglobals", "--group", "General", "--key", "AccentColorFromWallpaper", "false"]);
                 // Minos's icon takes the new accent (when another pack is in use), and so does the Liki pack
                 let _ = std::process::Command::new("liki-minos-icon").args([format!("{r},{g},{b}"), String::new()]).status();
                 let _ = std::process::Command::new("liki-build").arg("--rebuild").status();

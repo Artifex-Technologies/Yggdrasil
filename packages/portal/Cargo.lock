@@ -736,10 +736,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "yggdrasil-conf"
+version = "0.1.0"
+
+[[package]]
 name = "yggdrasil-portal"
 version = "0.1.0"
 dependencies = [
  "blocking",
+ "libc",
+ "yggdrasil-conf",
  "zbus",
 ]
 

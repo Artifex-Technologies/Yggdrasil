@@ -3,6 +3,7 @@
 //! `key = value` lines; unknown keys are ignored and values are clamped to what makes sense, so a
 //! hand-edited file can never break the panel.
 
+pub mod appearance;
 pub mod dirs;
 pub mod integrations;
 

@@ -2,6 +2,10 @@
 //! (`org.freedesktop.impl.portal.FileChooser`). When a program asks for a file, this starts `minos --pick ...`, reads the
 //! paths Minos prints and answers with file:// URIs. It decides nothing about access itself; the portal frontend and the
 //! sandbox do that. Nothing is logged but errors.
+//!
+//! It also answers `org.freedesktop.impl.portal.Settings` (settings.rs): dark or light, and the accent colour, for every program.
+
+mod settings;
 
 use std::collections::HashMap;
 use std::process::{Command, Stdio};
@@ -204,10 +208,12 @@ impl Chooser {
 
 fn main() -> zbus::Result<()> {
     let running = Arc::new(Mutex::new(HashMap::new()));
-    let _conn = zbus::blocking::connection::Builder::session()?
+    let conn = zbus::blocking::connection::Builder::session()?
         .name("org.freedesktop.impl.portal.desktop.yggdrasil")?
         .serve_at("/org/freedesktop/portal/desktop", Chooser { running })?
+        .serve_at("/org/freedesktop/portal/desktop", settings::Settings)?
         .build()?;
+    settings::watch(conn.clone(), "/org/freedesktop/portal/desktop");
     loop {
         std::thread::park();
     }

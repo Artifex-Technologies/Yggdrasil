@@ -11,7 +11,8 @@ Nothing here draws anything: it writes small text files (a KDE colour scheme, GT
 colours the panel, Settings and Minos use) and the accent colour. Qt programs use Qt's own "Fusion" style with that scheme; GTK programs use
 GTK's own Adwaita with those colours; the mouse pointer is the Yggdrasil cursor theme (ygg-cursors). No other theme package is needed.
 
-The settings live where the desktop already keeps them: ~/.config/kdeglobals (the accent, the scheme name), ~/.config/gtk-3.0 and gtk-4.0.
+The choice itself is kept in ~/.config/yggdrasil/appearance.conf (style, accent); the files written for the other programs are
+~/.config/kdeglobals (Qt), ~/.config/gtk-3.0 and gtk-4.0 (GTK).
 """
 import os
 import re
@@ -370,7 +371,22 @@ def run(*cmd):
         pass
 
 
+def appearance_path():
+    return os.path.join(config(), "yggdrasil", "appearance.conf")
+
+
+def write_appearance(dark, accent):
+    """The desktop's own record of the choice (read by the panel, the apps and the portal, which tells other programs)."""
+    p = appearance_path()
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    tmp = p + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write("style = %s\naccent = %s\n" % ("dark" if dark else "light", rgb(accent)))
+    os.replace(tmp, p)
+
+
 def apply(dark, accent):
+    write_appearance(dark, accent)
     kdeglobals = os.path.join(config(), "kdeglobals")
     name = "YggdrasilDark" if dark else "YggdrasilLight"
     # the colour scheme, in the user's own folder (the accent is part of it)
@@ -454,7 +470,14 @@ def scheme_sections(text):
 
 
 def current():
-    """(dark, accent) from the settings now."""
+    """(dark, accent) from the settings now: the desktop's own file, else what KDE's settings said before it existed."""
+    try:
+        with open(appearance_path(), encoding="utf-8") as f:
+            vals = dict(l.split("=", 1) for l in (x.split("#")[0].strip() for x in f) if "=" in l)
+        vals = {k.strip(): v.strip() for k, v in vals.items()}
+        return vals.get("style", "dark") != "light", parse_accent(vals.get("accent", "")) or DEFAULT_ACCENT
+    except OSError:
+        pass
     k = os.path.join(config(), "kdeglobals")
     s = (ini_get(k, "General", "ColorScheme") or "").lower()
     dark = "light" not in s

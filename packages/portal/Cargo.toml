@@ -11,6 +11,8 @@ path = "src/main.rs"
 
 [dependencies]
 zbus = "5"
+libc = "0.2"
+yggdrasil-conf = { path = "../yggdrasil-conf" }
 blocking = "1"
 
 [profile.release]
