@@ -6,9 +6,17 @@ screen (Split by default). It talks to **greetd**, which runs PAM and starts the
 - Shown: the account's name and picture (AccountsService icon, else the initial), a password field, the clock.
 - Keys: type the password and press Enter; **Tab / Down** and **Shift+Tab / Up** switch account (only while nothing is typed); Escape clears.
 - After a wrong password nothing is revealed beyond "Wrong password"; from the fourth in a row the screen makes you wait (2 s doubling to 60 s).
-- Settings: `/etc/labyrinth/greeter.conf` (`design`, `session`, `wallpaper`).
+- Settings: `/etc/yggdrasil/greeter.conf` (`design`, `session`, `wallpaper`). `session` names a file in `/usr/share/wayland-sessions`
+  (e.g. `plasma`); the greeter starts its `Exec` and gives greetd the session's environment (`XDG_SESSION_TYPE=wayland`,
+  `XDG_CURRENT_DESKTOP` and `XDG_SESSION_DESKTOP` from `DesktopNames`), as SDDM does.
 - Accounts listed: user ids 1000 and up with a real shell.
 - A second question from PAM (a changed-password prompt, a second factor) is refused with a message; use a terminal for those.
+
+## Status (2026-10-23)
+- **Run with the real greetd** on this machine (a test instance on VT 8, greetd 0.10.3, cage 0.3.1): greetd opened the greeter's PAM
+  session for the `greeter` account, cage and the greeter started and stayed up. Note: greetd switches to its terminal by itself
+  (`switch = true` is its default), so a test instance takes the screen. Signing in through it, and the switch itself, are a step
+  in the owner's to-do script (with `back-to-sddm.sh` as the way back).
 
 ## Status (2026-10-18)
 - Built and **tested in a nested Hyprland window with a stand-in greetd** (a Python server speaking the same protocol): a wrong password
