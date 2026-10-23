@@ -1,7 +1,8 @@
 //! yggdrasil-greeter: the login screen. greetd starts it inside a small compositor (cage, or Yggdrasil's own later) and it draws
 //! the same designs as the lock screen; what is typed goes to greetd (greetd.rs), which runs PAM and starts the session.
 //!
-//! Settings: /etc/yggdrasil/greeter.conf (`design = split`, `session = startplasma-wayland`, `wallpaper = /path/to/picture`).
+//! Settings: /etc/yggdrasil/greeter.conf (`design = split`, `session = plasma`, `wallpaper = /path/to/picture`). The session is the
+//! name of a file in /usr/share/wayland-sessions (as other login screens list them), or a command; without one, the first session there.
 //! Tab (or Down) and Shift+Tab (or Up) switch user while nothing is typed; Enter signs in; Escape clears what was typed.
 //! Exit status: 0 the session was started (greetd takes over), 2 setup problem.
 
@@ -62,6 +63,8 @@ struct App {
     wallpaper: Option<Pixmap>,
     walls: std::collections::HashMap<(u32, u32), (Pixmap, Pixmap)>,
     session: Vec<String>,
+    /// The session's environment for greetd (session type, desktop name), from its description file.
+    session_env: Vec<String>,
     /// A sign-in is being checked: keys are ignored until it answers.
     busy: bool,
     tx: Sender<Result<(), Fail>>,
@@ -186,13 +189,13 @@ impl App {
             Action::Nothing => {}
             Action::Redraw => self.draw(),
             Action::Submit(mut pw) => {
-                let (user, cmd, tx) = (self.users[self.sel].name.clone(), self.session.clone(), self.tx.clone());
+                let (user, cmd, env, tx) = (self.users[self.sel].name.clone(), self.session.clone(), self.session_env.clone(), self.tx.clone());
                 self.busy = true;
                 self.lock_state.message = "Signing in".into();
                 self.draw();
                 // PAM can take a while (and waits on purpose after a wrong password): never on the thread that draws
                 std::thread::spawn(move || {
-                    let r = Greetd::connect().map_err(Fail::Other).and_then(|mut g| g.login(&user, &pw, &cmd, &[]));
+                    let r = Greetd::connect().map_err(Fail::Other).and_then(|mut g| g.login(&user, &pw, &cmd, &env));
                     zeroize::Zeroize::zeroize(&mut pw);
                     let _ = tx.send(r);
                 });
@@ -303,6 +306,55 @@ fn die(msg: &str) -> ! {
     std::process::exit(2);
 }
 
+/// Where Wayland sessions describe themselves (`NAME.desktop`: Exec, DesktopNames).
+const SESSIONS: &str = "/usr/share/wayland-sessions";
+
+/// A session description file: its command (field codes such as %U removed) and the environment greetd should give it.
+pub fn parse_session(text: &str) -> Option<(Vec<String>, Vec<String>)> {
+    let mut exec = None;
+    let mut names = String::new();
+    let mut in_entry = false;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_entry = line == "[Desktop Entry]";
+            continue;
+        }
+        if !in_entry {
+            continue;
+        }
+        if let Some(v) = line.strip_prefix("Exec=") {
+            exec = Some(v.split_whitespace().filter(|w| !(w.starts_with('%') && w.len() == 2)).map(String::from).collect::<Vec<_>>());
+        } else if let Some(v) = line.strip_prefix("DesktopNames=") {
+            names = v.trim_end_matches(';').to_string();
+        }
+    }
+    let cmd = exec.filter(|c| !c.is_empty())?;
+    let mut env = vec!["XDG_SESSION_TYPE=wayland".to_string()];
+    if !names.is_empty() {
+        env.push(format!("XDG_CURRENT_DESKTOP={}", names.replace(';', ":")));
+        env.push(format!("XDG_SESSION_DESKTOP={}", names.split(';').next().unwrap_or("")));
+    }
+    Some((cmd, env))
+}
+
+/// The session to start: `chosen` names a file in `dir` (with or without .desktop) or is a command; without it, the first file there.
+pub fn session_for(chosen: Option<&str>, dir: &std::path::Path) -> (Vec<String>, Vec<String>) {
+    let from_file = |p: std::path::PathBuf| std::fs::read_to_string(p).ok().and_then(|t| parse_session(&t));
+    if let Some(c) = chosen.map(str::trim).filter(|c| !c.is_empty()) {
+        let name = c.trim_end_matches(".desktop");
+        if !name.contains('/') && !name.contains(' ') {
+            if let Some(s) = from_file(dir.join(format!("{name}.desktop"))) {
+                return s;
+            }
+        }
+        return (c.split_whitespace().map(String::from).collect(), vec!["XDG_SESSION_TYPE=wayland".to_string()]);
+    }
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "desktop")).collect()).unwrap_or_default();
+    files.sort();
+    files.into_iter().find_map(from_file).unwrap_or_else(|| (vec!["startplasma-wayland".to_string()], vec!["XDG_SESSION_TYPE=wayland".to_string()]))
+}
+
 fn main() {
     let conn = Connection::connect_to_env().unwrap_or_else(|e| die(&format!("no Wayland display: {e}")));
     let (globals, queue) = registry_queue_init::<App>(&conn).unwrap_or_else(|e| die(&e.to_string()));
@@ -318,7 +370,7 @@ fn main() {
         die("no accounts to sign in to");
     }
     let wallpaper = conf("wallpaper").map(std::path::PathBuf::from).filter(|p| p.is_file()).or_else(yggdrasil_conf::integrations::default_wallpaper).and_then(|p| design::load_picture(&p));
-    let session: Vec<String> = conf("session").unwrap_or_else(|| "startplasma-wayland".into()).split_whitespace().map(String::from).collect();
+    let (session, session_env) = session_for(conf("session").as_deref(), std::path::Path::new(SESSIONS));
 
     let surface = compositor.create_surface(&qh, ());
     let xs = wm.get_xdg_surface(&surface, &qh, ());
@@ -345,6 +397,7 @@ fn main() {
         wallpaper,
         walls: Default::default(),
         session,
+        session_env,
         busy: false,
         tx,
         done: None,
@@ -379,4 +432,32 @@ fn main() {
         }
     };
     std::process::exit(status);
+}
+
+#[cfg(test)]
+mod session_tests {
+    use super::*;
+
+    #[test]
+    fn a_session_file_gives_command_and_environment() {
+        let t = "[Desktop Entry]\nName=Plasma\nExec=/usr/lib/plasma-dbus-run-session-if-needed /usr/bin/startplasma-wayland %U\nDesktopNames=KDE;Plasma\n";
+        let (cmd, env) = parse_session(t).unwrap();
+        assert_eq!(cmd, vec!["/usr/lib/plasma-dbus-run-session-if-needed", "/usr/bin/startplasma-wayland"]);
+        assert_eq!(env, vec!["XDG_SESSION_TYPE=wayland", "XDG_CURRENT_DESKTOP=KDE:Plasma", "XDG_SESSION_DESKTOP=KDE"]);
+        assert!(parse_session("[Desktop Entry]\nName=x\n").is_none(), "no Exec");
+    }
+
+    #[test]
+    fn the_session_is_chosen_by_name_or_command_or_the_first_one() {
+        let d = std::env::temp_dir().join(format!("ygg-sessions-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("b.desktop"), "[Desktop Entry]\nExec=start-b\nDesktopNames=B\n").unwrap();
+        std::fs::write(d.join("a.desktop"), "[Desktop Entry]\nExec=start-a\nDesktopNames=A\n").unwrap();
+        assert_eq!(session_for(Some("b"), &d).0, vec!["start-b"]);
+        assert_eq!(session_for(Some("b.desktop"), &d).1[1], "XDG_CURRENT_DESKTOP=B");
+        assert_eq!(session_for(Some("my-session --flag"), &d).0, vec!["my-session", "--flag"], "a command");
+        assert_eq!(session_for(None, &d).0, vec!["start-a"], "the first, in name order");
+        assert_eq!(session_for(Some("../etc/x"), &d).0, vec!["../etc/x"], "never a path out of the folder");
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }
