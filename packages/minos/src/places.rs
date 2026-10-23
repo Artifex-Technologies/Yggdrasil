@@ -30,9 +30,9 @@ pub struct CloudPlace {
 
 /// Candidate folders for Proton Drive, first existing one wins; if none exist the
 /// first candidate is reported as `NotMounted`.
-/// `LABYRINTH_PROTON_DRIVE` overrides everything.
+/// `MINOS_PROTON_DRIVE` overrides everything.
 pub fn proton_drive_candidates() -> Vec<PathBuf> {
-    if let Ok(p) = std::env::var("LABYRINTH_PROTON_DRIVE") {
+    if let Ok(p) = std::env::var("MINOS_PROTON_DRIVE") {
         if !p.is_empty() {
             return vec![PathBuf::from(p)];
         }
@@ -102,15 +102,20 @@ pub const THIS_PC: &str = "This PC";
 
 /// What "This PC" is called on screen: the computer's name once it has been given one, else "This PC".
 /// (The location itself stays `THIS_PC`; only the label changes.) The names a fresh install or the
-/// live session carries ("labyrinth", "archiso", "localhost") do not count as a name.
+/// live session carries ("archiso", "localhost", or the operating system's own ID from /etc/os-release, with or without "-os") do
+/// not count as a name.
 pub fn pc_name() -> String {
     let host = std::fs::read_to_string("/etc/hostname").ok().or_else(|| std::env::var("HOSTNAME").ok()).unwrap_or_default();
-    display_name(host.trim())
+    let os = std::fs::read_to_string("/etc/os-release").unwrap_or_default();
+    let id = os.lines().find_map(|l| l.strip_prefix("ID=")).map(|v| v.trim().trim_matches('"').to_lowercase()).unwrap_or_default();
+    display_name(host.trim(), &id)
 }
 
-fn display_name(host: &str) -> String {
-    let generic = ["", "localhost", "localhost.localdomain", "archiso", "labyrinth", "labyrinth-os"];
-    if generic.contains(&host.to_lowercase().as_str()) { THIS_PC.to_string() } else { host.to_string() }
+fn display_name(host: &str, os_id: &str) -> String {
+    let h = host.to_lowercase();
+    let generic = ["", "localhost", "localhost.localdomain", "archiso"];
+    let os_default = !os_id.is_empty() && (h == os_id || h == format!("{os_id}-os"));
+    if generic.contains(&h.as_str()) || os_default { THIS_PC.to_string() } else { host.to_string() }
 }
 
 pub fn this_pc() -> PathBuf {
@@ -376,11 +381,12 @@ mod tests {
 
     #[test]
     fn the_computer_name_replaces_this_pc_only_once_it_is_set() {
-        assert_eq!(display_name("OptiPlex"), "OptiPlex");
-        assert_eq!(display_name("Matthews-PC"), "Matthews-PC");
-        for unnamed in ["", "labyrinth", "Labyrinth", "archiso", "localhost"] {
-            assert_eq!(display_name(unnamed), "This PC");
+        assert_eq!(display_name("OptiPlex", "someos"), "OptiPlex");
+        assert_eq!(display_name("Matthews-PC", "someos"), "Matthews-PC");
+        for unnamed in ["", "someos", "SomeOS", "someos-os", "archiso", "localhost"] {
+            assert_eq!(display_name(unnamed, "someos"), "This PC");
         }
+        assert_eq!(display_name("someos", ""), "someos", "with no os-release ID only the generic names count");
     }
 
     #[test]
@@ -405,11 +411,11 @@ mod mount_tests {
     fn an_empty_left_behind_folder_is_not_a_drive() {
         let d = std::env::temp_dir().join(format!("minos-pd-{}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();
-        std::env::set_var("LABYRINTH_PROTON_DRIVE", &d);
+        std::env::set_var("MINOS_PROTON_DRIVE", &d);
         assert_eq!(proton_drive().unwrap().state, CloudState::NotMounted);
         std::fs::write(d.join("file.txt"), "x").unwrap();
         assert_eq!(proton_drive().unwrap().state, CloudState::Ready);
-        std::env::remove_var("LABYRINTH_PROTON_DRIVE");
+        std::env::remove_var("MINOS_PROTON_DRIVE");
         let _ = std::fs::remove_dir_all(&d);
         assert!(!is_mount(Path::new("/tmp/does-not-exist-here")));
     }

@@ -1,7 +1,7 @@
 # Integrations: how an operating system plugs into Yggdrasil
 
-Yggdrasil never names an operating system or its programs. What an OS adds (an assistant, a security monitor, a package backend, a
-cloud drive, its branding) it describes in **integration files**; Yggdrasil reads them and shows the matching features. With no file,
+Yggdrasil never names an operating system or its programs. What an OS adds (an assistant, a security monitor, a package backend,
+its branding) it describes in **integration files**; Yggdrasil reads them and shows the matching features. With no file,
 the feature is simply not there: Yggdrasil works on its own.
 
 ## Where
@@ -64,16 +64,6 @@ An alert is `{"time": RFC 3339, "detector_id", "severity": "info" | "warning" | 
 (Settings > Notifications chooses how many); Settings > Security gets a page named `name` with the state, alerts, new connections,
 the quarantine, the scan and the declared controls. Each part appears only when its key is there.
 
-### `cloud` (a cloud drive in Minos)
-
-```
-kind = cloud
-name = Proton Drive
-mount = /home/%u/ProtonDrive               # %u is the user
-service = /usr/share/labyrinth/proton-drive.service   # user unit Minos installs and starts
-sign_in = /usr/bin/minos-cloud sign-in proton
-```
-
 ### `branding`
 
 ```
@@ -109,4 +99,5 @@ Controls appear in the order of their IDs. A command that fails or is missing hi
 ## What stays out of integrations
 
 Anything every system needs is Yggdrasil's own: media keys, screen keys, user accounts, power limits, printers, the app launcher.
+Proton Drive in Minos is Minos's own feature too (an rclone mount; its user unit ships with Minos and runs only once you connect).
 Those helpers live in Yggdrasil under `yggdrasil-*` names.

@@ -1,0 +1,24 @@
+# systemd USER unit (shipped with Minos): mounts Proton Drive at ~/ProtonDrive so Minos shows it under "Cloud", like OneDrive in
+# Windows Explorer. The control socket (private to you, in the runtime folder) lets Minos show syncing / failed uploads and retry them.
+# Needs an rclone remote named "proton" of type "protondrive": Minos's "Connect Proton Drive" makes it (or `rclone config`).
+# Minos enables it when you connect (systemctl --user enable --now proton-drive); nothing runs until then.
+[Unit]
+Description=Proton Drive mount (rclone)
+After=network-online.target
+Wants=network-online.target
+# a login that fails (a lapsed 2FA, no network yet) must not be retried every few seconds: Proton may lock the account
+StartLimitIntervalSec=600
+StartLimitBurst=3
+
+[Service]
+Type=notify
+ExecStartPre=-/usr/bin/rm -f %t/rclone-proton.sock
+ExecStartPre=/usr/bin/mkdir -p %h/ProtonDrive
+ExecStart=/usr/bin/rclone mount proton: %h/ProtonDrive --vfs-cache-mode full --vfs-cache-max-size 20G --dir-cache-time 5m --rc --rc-addr unix://%t/rclone-proton.sock --rc-no-auth
+ExecStop=/usr/bin/fusermount3 -u %h/ProtonDrive
+ExecStopPost=-/usr/bin/rm -f %t/rclone-proton.sock
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target

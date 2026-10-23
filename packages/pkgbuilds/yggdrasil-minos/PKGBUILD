@@ -40,4 +40,6 @@ package() {
   ln -s minos "$pkgdir/usr/bin/finder"
   # StartupWMClass matches the window app id set in main.rs, so docks and bars find the icon.
   install -Dm644 "$_src/minos.desktop" "$pkgdir/usr/share/applications/minos.desktop"
+  # Proton Drive in the sidebar: the rclone mount, as a user unit that is only enabled when you connect
+  install -Dm644 "$_src/data/proton-drive.service" "$pkgdir/usr/lib/systemd/user/proton-drive.service"
 }

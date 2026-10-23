@@ -272,7 +272,7 @@ pub fn queue_state(i: &QueueItem) -> Avail {
 
 /// The mount's control socket (the unit starts rclone with `--rc --rc-addr unix://$XDG_RUNTIME_DIR/rclone-proton.sock`).
 fn rc_socket() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("LABYRINTH_RCLONE_SOCKET") {
+    if let Ok(p) = std::env::var("MINOS_RCLONE_SOCKET") {
         if !p.is_empty() {
             return Some(PathBuf::from(p));
         }
@@ -570,14 +570,12 @@ pub fn wait_mounted(seconds: u64) -> Result<(), ()> {
     Err(())
 }
 
-/// Put the mount service in place (once) and start it.
+/// Start the mount service (Minos's package ships it as a user unit; a copy in ~/.config/systemd/user wins, as systemd does it).
 pub fn start_proton_mount() -> Result<(), String> {
     let home = dirs::home_dir().ok_or("no home folder")?;
-    let unit = home.join(".config/systemd/user/proton-drive.service");
-    if !unit.is_file() {
-        std::fs::create_dir_all(unit.parent().unwrap()).map_err(|e| e.to_string())?;
-        std::fs::copy("/usr/share/labyrinth/proton-drive.service", &unit).map_err(|e| format!("cannot install the mount service: {e}"))?;
-        let _ = Command::new("systemctl").args(["--user", "daemon-reload"]).status();
+    let own = home.join(".config/systemd/user/proton-drive.service");
+    if !own.is_file() && !std::path::Path::new("/usr/lib/systemd/user/proton-drive.service").is_file() {
+        return Err("the Proton Drive mount service is not installed (it comes with Minos)".into());
     }
     // a mount that kept failing (a lapsed sign-in) may have hit its retry limit: clear that, so this start is a fresh one
     let _ = Command::new("systemctl").args(["--user", "reset-failed", "proton-drive"]).status();

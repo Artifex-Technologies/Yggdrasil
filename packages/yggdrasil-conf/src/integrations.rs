@@ -1,5 +1,5 @@
 //! Integration files: how an operating system plugs its own features into Yggdrasil (an assistant, a package backend, a security
-//! monitor, a cloud drive, its branding) without Yggdrasil naming it. See docs/INTEGRATIONS.md.
+//! monitor, its branding) without Yggdrasil naming it. See docs/INTEGRATIONS.md.
 //!
 //! `/usr/share/yggdrasil/integrations/*.conf` (the OS's packages), then `/etc/yggdrasil/integrations/*.conf` (the administrator; the
 //! same file name wins). Plain `key = value` lines; the first key is `kind`.
@@ -126,7 +126,7 @@ pub fn all() -> Vec<Integration> {
     all_in(&[crate::dirs::system_data().join("integrations"), crate::dirs::system_config().join("integrations")])
 }
 
-/// The integrations of one kind ("assistant", "packages", "security", "cloud", "branding", "settings-page").
+/// The integrations of one kind ("assistant", "packages", "security", "branding", "settings-page").
 pub fn of_kind(kind: &str) -> Vec<Integration> {
     all().into_iter().filter(|i| i.kind == kind).collect()
 }
