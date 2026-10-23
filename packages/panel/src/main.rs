@@ -22,6 +22,7 @@ mod assistant;
 mod voicewave;
 mod shell;
 mod status;
+mod snwatcher;
 mod tray;
 mod trayui;
 
@@ -3330,6 +3331,8 @@ fn main() {
         .expect("toast hide channel");
     // the system tray: apps' icons come and go
     let (tray_tx, tray_rx) = calloop::channel::channel::<tray::TrayMsg>();
+    // the tray registry first (it waits while KDE's kded still serves it), then the panel's tray as a host of it
+    snwatcher::spawn();
     tray::spawn(tray_tx.clone());
     state.tray_tx = Some(tray_tx);
     event_loop
@@ -3342,6 +3345,7 @@ fn main() {
                         None => st.model.tray.push(it),
                     },
                     tray::TrayMsg::Remove(k) => st.model.tray.retain(|t| t.key != k),
+                    tray::TrayMsg::Clear => st.model.tray.clear(),
                     tray::TrayMsg::Menu(key, items, x) => st.open_tray_popup(trayui::TrayPop { anchor_x: x, mode: trayui::TrayMode::Menu { key, items, path: vec![] } }),
                 }
                 st.dirty = true;

@@ -1,5 +1,6 @@
 //! The system tray: apps with a notification-area icon (Spotify, Steam, Solaar, Blueman ...) register on the session bus with the
-//! StatusNotifierWatcher (org.kde.StatusNotifierWatcher, kept running by KDE's kded for now). This module is the *host* side: it
+//! StatusNotifierWatcher (org.kde.StatusNotifierWatcher: the panel's own, snwatcher.rs, or KDE's kded while it still runs). This
+//! module is the *host* side: it
 //! registers with the watcher, reads every item's icon and title, follows their changes, and tells the panel. The panel draws the
 //! icons in the bar; a click calls the item's `Activate`, a right click its `ContextMenu`.
 //!
@@ -39,6 +40,8 @@ impl TrayItem {
 #[derive(Debug)]
 pub enum TrayMsg {
     Set(TrayItem),
+    /// The registry changed owner: forget every item (the new one's list follows).
+    Clear,
     Remove(String),
     /// An item's menu was read: its key, the entries, and where on the bar it was asked for.
     Menu(String, Vec<MenuItem>, f32),
@@ -129,6 +132,30 @@ pub fn spawn(tx: calloop::channel::Sender<TrayMsg>) {
             if let Some(it) = fetch(&conn, &k) {
                 let _ = tx.send(TrayMsg::Set(it));
             }
+        }
+        // the registry changed owner (KDE's kded stopped and the panel's own took over): start again with the new one
+        {
+            let (c3, tx3, host3) = (conn.clone(), tx.clone(), host.clone());
+            std::thread::spawn(move || {
+                let Ok(dbus) = zbus::blocking::fdo::DBusProxy::new(&c3) else { return };
+                let Ok(changes) = dbus.receive_name_owner_changed_with_args(&[(0, crate::snwatcher::NAME)]) else { return };
+                for sig in changes {
+                    let Ok(args) = sig.args() else { continue };
+                    if args.new_owner().is_none() {
+                        continue;
+                    }
+                    let _ = tx3.send(TrayMsg::Clear);
+                    std::thread::sleep(std::time::Duration::from_millis(300));
+                    let Ok(w) = Proxy::new(&c3, crate::snwatcher::NAME, crate::snwatcher::PATH, crate::snwatcher::NAME) else { continue };
+                    let _ = w.call::<_, _, ()>("RegisterStatusNotifierHost", &(host3.as_str(),));
+                    let list: Vec<String> = w.get_property("RegisteredStatusNotifierItems").unwrap_or_default();
+                    for k in list {
+                        if let Some(it) = fetch(&c3, &k) {
+                            let _ = tx3.send(TrayMsg::Set(it));
+                        }
+                    }
+                }
+            });
         }
         // items coming and going
         let c2 = conn.clone();
