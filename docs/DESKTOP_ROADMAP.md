@@ -20,6 +20,13 @@ clipboard, stats, wallpaper, power, now playing), Settings, Minos (file explorer
 windows and a copy window with merge, progress and Replace / Skip / Keep both), calculator, weather, tile
 borders, the dock's strut handling. Plus Sarina, Heimdall and Limbo as optional components.
 
+## Decision 2026-10-23: replace KDE before new desktop features
+
+The owner does not want KDE under Labyrinth at all. New desktop features wait until the KDE pieces below are replaced, so they are
+written once on Yggdrasil's own parts. First casualty: the PowerToys-style tools (Settings > Tools: Color Picker, FancyZones with a
+Fylgja drop zone, File Locksmith, Grab And Move, Keyboard Manager, Mouse Utilities, Peek, Screen Ruler, Text Extractor, Window
+Hopper), parked on the branch `tools-wip` (config file, Settings page and colour formatting carry over).
+
 ## Still KDE, in the order I would replace them
 
 Each step must work alongside KDE until it has earned the place, and each can be done and shipped alone.
