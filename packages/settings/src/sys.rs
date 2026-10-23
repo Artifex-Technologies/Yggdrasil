@@ -443,13 +443,13 @@ pub struct Appearance {
     pub wallpapers: Vec<std::path::PathBuf>,
     /// Labyrinth's own top bar and dock are in use (labyrinth-panel-mode).
     pub panel_on: bool,
-    pub panel: labyrinth_conf::PanelConf,
+    pub panel: yggdrasil_conf::PanelConf,
 }
 
 pub fn appearance() -> Appearance {
     let scheme = run("kreadconfig6", &["--file", "kdeglobals", "--group", "General", "--key", "ColorScheme"]).unwrap_or_default();
     let accent = run("kreadconfig6", &["--file", "kdeglobals", "--group", "General", "--key", "AccentColor"])
-        .and_then(|s| labyrinth_ui::theme::parse_kde_accent(&format!("[General]
+        .and_then(|s| yggdrasil_ui::theme::parse_kde_accent(&format!("[General]
 AccentColor={}", s.trim())));
     let mut wallpapers = vec![];
     for dir in ["/usr/share/labyrinth/wallpapers", "/usr/share/wallpapers"] {
@@ -466,7 +466,7 @@ AccentColor={}", s.trim())));
     }
     wallpapers.sort();
     let panel_on = run("labyrinth-panel-mode", &["status"]).map(|s| s.trim() == "labyrinth-panel").unwrap_or(false);
-    Appearance { icon_packs: icon_packs(), icon_theme: run("kreadconfig6", &["--file", "kdeglobals", "--group", "Icons", "--key", "Theme"]).map(|s| s.trim().to_string()).unwrap_or_default(), dark: scheme.trim().to_lowercase().contains("dark") || scheme.trim().is_empty(), accent, wallpapers, panel_on, panel: labyrinth_conf::PanelConf::load() }
+    Appearance { icon_packs: icon_packs(), icon_theme: run("kreadconfig6", &["--file", "kdeglobals", "--group", "Icons", "--key", "Theme"]).map(|s| s.trim().to_string()).unwrap_or_default(), dark: scheme.trim().to_lowercase().contains("dark") || scheme.trim().is_empty(), accent, wallpapers, panel_on, panel: yggdrasil_conf::PanelConf::load() }
 }
 
 /// The largest picture in a Plasma wallpaper package's images folder (named like 3840x2160.png).
@@ -489,7 +489,7 @@ fn best_image(dir: &std::path::Path) -> Option<std::path::PathBuf> {
 pub struct Power {
     pub profile: String,
     pub profiles: Vec<String>,
-    /// The idle timers, in ~/.config/labyrinth/idle.conf (labyrinth-idle acts on them).
+    /// The idle timers, in ~/.config/yggdrasil/idle.conf (labyrinth-idle acts on them).
     pub idle: Idle,
     /// What the hardware allows and what is set for each mode (Developer options only).
     pub limits: Option<PowerLimits>,
@@ -566,7 +566,7 @@ pub fn set_profile(name: &str) -> Result<(), String> {
 
 pub fn power() -> Power {
     let (profiles, active) = profiles_dbus().unwrap_or_else(|| profiles(&run("powerprofilesctl", &["list"]).unwrap_or_default()));
-    let limits = if labyrinth_conf::PanelConf::load().developer { run("labyrinth-powerlimit", &["get"]).and_then(|s| parse_power_limits(&s)) } else { None };
+    let limits = if yggdrasil_conf::PanelConf::load().developer { run("labyrinth-powerlimit", &["get"]).and_then(|s| parse_power_limits(&s)) } else { None };
     Power {
         profile: active,
         profiles,
@@ -598,7 +598,7 @@ impl Default for Idle {
 }
 
 pub fn idle_conf_path() -> std::path::PathBuf {
-    std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".config/labyrinth/idle.conf")
+    yggdrasil_conf::dirs::config().join("idle.conf")
 }
 
 /// The timers from idle.conf (seconds there, minutes here). Without the file the defaults apply: dim after 5 minutes, nothing else.

@@ -10,6 +10,7 @@ name = "labyrinth-idle"
 path = "src/main.rs"
 
 [dependencies]
+yggdrasil-conf = { path = "../yggdrasil-conf" }
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }

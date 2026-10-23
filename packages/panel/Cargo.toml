@@ -26,7 +26,7 @@ xkbcommon = "0.8"
 zbus = "5"
 accesskit = "0.25"
 accesskit_unix = "0.24"
-labyrinth-conf = { path = "../labyrinth-conf" }
+yggdrasil-conf = { path = "../yggdrasil-conf" }
 
 [profile.release]
 opt-level = 2

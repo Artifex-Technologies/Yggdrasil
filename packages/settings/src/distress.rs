@@ -4,7 +4,7 @@
 
 use crate::ui;
 use eframe::egui::{self, vec2, RichText};
-use labyrinth_ui::theme::Palette;
+use yggdrasil_ui::theme::Palette;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::mpsc::{channel, Receiver};

@@ -10,8 +10,9 @@ name = "labyrinth-calculator"
 path = "src/main.rs"
 
 [dependencies]
+yggdrasil-conf = { path = "../yggdrasil-conf" }
 eframe = "0.36.2"
-labyrinth-ui = { path = "../labyrinth-ui" }
+yggdrasil-ui = { path = "../yggdrasil-ui" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 dirs = "7.0.0"

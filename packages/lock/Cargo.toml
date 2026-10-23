@@ -18,6 +18,7 @@ path = "src/greeter.rs"
 test-auth = []
 
 [dependencies]
+yggdrasil-conf = { path = "../yggdrasil-conf" }
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 calloop = "0.14"

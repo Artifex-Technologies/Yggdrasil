@@ -275,8 +275,8 @@ pub fn apply_accessibility(ctx: &egui::Context) {
         return;
     }
     ctx.data_mut(|d| d.insert_temp(id, now));
-    let c = labyrinth_conf::PanelConf::load();
-    let zoom = f32::from(c.text_scale.clamp(labyrinth_conf::TEXT_SCALE_MIN, labyrinth_conf::TEXT_SCALE_MAX)) / 100.0;
+    let c = yggdrasil_conf::PanelConf::load();
+    let zoom = f32::from(c.text_scale.clamp(yggdrasil_conf::TEXT_SCALE_MIN, yggdrasil_conf::TEXT_SCALE_MAX)) / 100.0;
     if (ctx.zoom_factor() - zoom).abs() > 0.001 {
         ctx.set_zoom_factor(zoom);
     }

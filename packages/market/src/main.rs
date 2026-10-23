@@ -13,7 +13,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 
 use catalog::{Catalog, Entry, Installed, Repo, Source};
 use eframe::egui::{self, pos2, vec2, Align, Align2, Color32, CornerRadius, FontId, Layout, Margin, Rect, RichText, Sense, Stroke, UiBuilder};
-use labyrinth_ui::{chrome, sysicon, theme};
+use yggdrasil_ui::{chrome, sysicon, theme};
 use theme::Palette;
 
 const TABS: [&str; 4] = ["Create", "Work", "Play", "Develop"];

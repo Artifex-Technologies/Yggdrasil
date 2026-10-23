@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 
 use eframe::egui::{self, pos2, vec2, Align2, Color32, CornerRadius, FontId, Rect, RichText, Sense, Stroke, UiBuilder};
-use labyrinth_ui::theme::Palette;
+use yggdrasil_ui::theme::Palette;
 
 use crate::appmgr::{self, AppInfo, AppPolicy, Kind, NetMode};
 use crate::icons::{self, Icon};
@@ -203,7 +203,7 @@ impl App {
             self.app_sel = None;
             return;
         };
-        let developer = labyrinth_conf::PanelConf::load().developer;
+        let developer = yggdrasil_conf::PanelConf::load().developer;
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             if icon_button(ui, pal, Icon::Back, "All apps", true, false).clicked() {

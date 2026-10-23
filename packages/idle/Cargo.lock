@@ -48,6 +48,7 @@ dependencies = [
  "wayland-client",
  "wayland-protocols",
  "wayland-protocols-wlr",
+ "yggdrasil-conf",
 ]
 
 [[package]]
@@ -216,3 +217,7 @@ checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
 dependencies = [
  "windows-link",
 ]
+
+[[package]]
+name = "yggdrasil-conf"
+version = "0.1.0"

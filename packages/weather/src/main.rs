@@ -3,13 +3,13 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
-use labyrinth_weather::config::{self, Config};
-use labyrinth_weather::consensus::{self, Hour};
-use labyrinth_weather::observe::{self, Station};
-use labyrinth_weather::openmeteo::{self, Forecast};
-use labyrinth_weather::report::{self, BarInput};
-use labyrinth_weather::timeutil::{format_local, now_epoch, parse_local};
-use labyrinth_weather::verify::{self, Obs, Record};
+use yggdrasil_weather::config::{self, Config};
+use yggdrasil_weather::consensus::{self, Hour};
+use yggdrasil_weather::observe::{self, Station};
+use yggdrasil_weather::openmeteo::{self, Forecast};
+use yggdrasil_weather::report::{self, BarInput};
+use yggdrasil_weather::timeutil::{format_local, now_epoch, parse_local};
+use yggdrasil_weather::verify::{self, Obs, Record};
 
 const UA: &str = "labyrinth-weather/0.1 (Labyrinth OS desktop widget)";
 const MIN_SCORED: usize = 24;

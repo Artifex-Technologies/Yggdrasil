@@ -9,8 +9,8 @@ mod icons;
 
 use eframe::egui::{self, pos2, vec2, Align, Align2, Color32, CornerRadius, FontId, Layout, Rect, RichText, Sense, UiBuilder};
 use icons::Icon;
-use labyrinth_ui::sysicon;
-use labyrinth_ui::{chrome, theme};
+use yggdrasil_ui::sysicon;
+use yggdrasil_ui::{chrome, theme};
 use theme::{palette_for, Palette};
 use egui_extras::{Column, TableBuilder};
 use minos_core::archive::{self, Format};
@@ -257,7 +257,7 @@ impl TabView {
     fn search_from(&mut self, ctx: &egui::Context, hidden: bool, root: PathBuf) {
         self.search = None;
         self.results = None;
-        self.recursive = root == Path::new("/") || labyrinth_conf::PanelConf::load().search_subfolders;
+        self.recursive = root == Path::new("/") || yggdrasil_conf::PanelConf::load().search_subfolders;
         if self.recursive && !self.query.trim().is_empty() {
             let ctx = ctx.clone();
             self.results = Some(vec![]);
@@ -1634,10 +1634,10 @@ impl App {
         let lap = |what: &str| if std::env::var_os("MINOS_TIMING").is_some() { eprintln!("minos: {:>6.0} ms  {}", t0.elapsed().as_secs_f64() * 1000.0, what) };
         let st_path = State::config_path();
         let mut st = st_path.as_deref().map(State::load_from).unwrap_or_default();
-        st.show_hidden = labyrinth_conf::PanelConf::load().show_hidden;
-        st.drive_status = labyrinth_conf::PanelConf::load().drive_status;
+        st.show_hidden = yggdrasil_conf::PanelConf::load().show_hidden;
+        st.drive_status = yggdrasil_conf::PanelConf::load().drive_status;
         {
-            let c = labyrinth_conf::PanelConf::load();
+            let c = yggdrasil_conf::PanelConf::load();
             st.opacity = if c.minos_transparent { c.minos_opacity } else { 100 };
         }
         st.follow_accent = true;
@@ -1647,12 +1647,12 @@ impl App {
         lap("state loaded");
         // Where this window starts, from Settings: the first window, or one opened while another is open.
         {
-            let conf = labyrinth_conf::PanelConf::load();
+            let conf = yggdrasil_conf::PanelConf::load();
             let others = session::others();
             let (mode, here) = if others.is_empty() { (conf.minos_first_window, None) } else { (conf.minos_more_windows, others.first().cloned()) };
             match (mode, here) {
-                (labyrinth_conf::StartIn::Last, _) => {}
-                (labyrinth_conf::StartIn::Here, Some(dir)) if dir.is_dir() || places::is_virtual(&dir) => {
+                (yggdrasil_conf::StartIn::Last, _) => {}
+                (yggdrasil_conf::StartIn::Here, Some(dir)) if dir.is_dir() || places::is_virtual(&dir) => {
                     st.tabs = vec![SavedTab { path: dir, pinned: false }];
                     st.active = 0;
                     st.right_tabs.clear();
@@ -2082,7 +2082,7 @@ impl App {
                     }
                 }
                 Action::NewTab(p) => {
-                    let path = if labyrinth_conf::PanelConf::load().minos_new_tab == labyrinth_conf::StartIn::Home {
+                    let path = if yggdrasil_conf::PanelConf::load().minos_new_tab == yggdrasil_conf::StartIn::Home {
                         dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"))
                     } else {
                         self.panes[p].tabs[self.panes[p].active].dir()
@@ -2648,7 +2648,7 @@ impl eframe::App for App {
         self.st.dark = theme::system_dark();
         if self.conf_checked.elapsed() >= Duration::from_secs(1) {
             self.conf_checked = Instant::now();
-            let conf = labyrinth_conf::PanelConf::load();
+            let conf = yggdrasil_conf::PanelConf::load();
             self.st.drive_status = conf.drive_status;
             self.st.opacity = if conf.minos_transparent { conf.minos_opacity } else { 100 };
             let show = conf.show_hidden;

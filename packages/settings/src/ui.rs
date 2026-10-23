@@ -2,7 +2,7 @@
 //! an optional subtitle and a control on the right, a toggle switch, and a segmented choice.
 
 use eframe::egui::{self, vec2, Color32, CornerRadius, Margin, RichText, Sense, Stroke};
-use labyrinth_ui::theme::Palette;
+use yggdrasil_ui::theme::Palette;
 
 /// A titled group of rows on a raised, rounded card.
 pub fn group(ui: &mut egui::Ui, pal: &Palette, title: Option<&str>, add: impl FnOnce(&mut egui::Ui)) {

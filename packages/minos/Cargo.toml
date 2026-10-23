@@ -16,8 +16,8 @@ path = "src/main.rs"
 [dependencies]
 dirs = "7.0.0"
 eframe = "0.36.2"
-labyrinth-ui = { path = "../labyrinth-ui" }
-labyrinth-conf = { path = "../labyrinth-conf" }
+yggdrasil-ui = { path = "../yggdrasil-ui" }
+yggdrasil-conf = { path = "../yggdrasil-conf" }
 egui_extras = { version = "0.36.2", features = ["file", "image"] }
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
 lofty = "0.25.4"

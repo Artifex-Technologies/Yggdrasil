@@ -1,7 +1,9 @@
-//! ~/.config/labyrinth/panel.conf: how the top bar and the dock look. Labyrinth Settings writes
-//! it and labyrinth-panel re-reads it about once a second, so changes show at once. Plain
+//! ~/.config/yggdrasil/panel.conf: how the top bar and the dock look. Settings writes
+//! it and the panel re-reads it about once a second, so changes show at once. Plain
 //! `key = value` lines; unknown keys are ignored and values are clamped to what makes sense, so a
 //! hand-edited file can never break the panel.
+
+pub mod dirs;
 
 use std::path::PathBuf;
 
@@ -137,7 +139,7 @@ pub struct PanelConf {
     pub notify_pane: bool,
     /// Do not disturb: no pop-ups (critical ones still show); everything is still kept in the list.
     pub notify_dnd: bool,
-    /// Labyrinth draws the wallpaper itself (so plasmashell is not needed for it); the picture's path is in ~/.config/labyrinth/wallpaper.
+    /// Yggdrasil draws the wallpaper itself (so plasmashell is not needed for it); the picture's path is in ~/.config/yggdrasil/wallpaper.
     pub own_wallpaper: bool,
     /// Size of text and controls in Labyrinth's own apps, in percent (100 to 250).
     pub text_scale: u16,
@@ -283,8 +285,7 @@ impl PanelConf {
     }
 
     pub fn path() -> Option<PathBuf> {
-        let base = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
-        Some(base.join("labyrinth").join("panel.conf"))
+        Some(dirs::config().join("panel.conf"))
     }
 
     pub fn load() -> PanelConf {
@@ -343,10 +344,9 @@ mod tests {
     }
 }
 
-/// Where the picture Labyrinth draws as the wallpaper is named (one line: a path).
+/// Where the picture Yggdrasil draws as the wallpaper is named (one line: a path).
 pub fn wallpaper_path_file() -> Option<std::path::PathBuf> {
-    let base = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))?;
-    Some(base.join("labyrinth").join("wallpaper"))
+    Some(dirs::config().join("wallpaper"))
 }
 
 /// The wallpaper picture's path, if one was chosen.

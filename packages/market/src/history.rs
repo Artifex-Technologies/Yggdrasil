@@ -1,5 +1,5 @@
 //! What has been installed through the Marketplace: an entry is added when an install (or reinstall) *finishes*. A cancelled or failed one
-//! is never added. Kept in ~/.local/share/labyrinth/market/history.json, newest first.
+//! is never added. Kept in ~/.local/share/yggdrasil/market/history.json, newest first.
 
 use std::path::PathBuf;
 
@@ -16,7 +16,7 @@ pub struct Item {
 }
 
 fn path() -> PathBuf {
-    std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share"))).unwrap_or_default().join("labyrinth/market/history.json")
+    yggdrasil_conf::dirs::data().join("market/history.json")
 }
 
 pub fn load() -> Vec<Item> {

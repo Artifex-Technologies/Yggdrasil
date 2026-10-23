@@ -181,11 +181,12 @@ pub fn launch(app: &App) {
     let _ = std::process::Command::new("setsid").arg("-f").arg(prog).args(args).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
 }
 
-/// The dock's pinned apps, in order: ~/.config/labyrinth/dock (one desktop id per line), else the
+/// The dock's pinned apps, in order: ~/.config/yggdrasil/dock (one desktop id per line), else the
 /// system default.
 pub fn pinned() -> Vec<String> {
-    let user = std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config/labyrinth/dock"));
-    for p in [user, Some(PathBuf::from("/usr/share/labyrinth/dock"))].into_iter().flatten() {
+    // yours, then the operating system's or administrator's default, then the desktop's own
+    let user = Some(yggdrasil_conf::dirs::config().join("dock"));
+    for p in [user, Some(yggdrasil_conf::dirs::system_config().join("dock")), Some(yggdrasil_conf::dirs::system_data().join("dock"))].into_iter().flatten() {
         if let Ok(t) = std::fs::read_to_string(p) {
             let v: Vec<String> = t.lines().map(|l| l.trim().trim_end_matches(".desktop").replace("finder", "minos")).filter(|l| !l.is_empty() && !l.starts_with('#')).collect();
             if !v.is_empty() {
@@ -196,9 +197,9 @@ pub fn pinned() -> Vec<String> {
     vec![]
 }
 
-/// Write the dock's pinned apps (one id per line) to ~/.config/labyrinth/dock.
+/// Write the dock's pinned apps (one id per line) to ~/.config/yggdrasil/dock.
 pub fn save_pinned(ids: &[String]) {
-    let Some(p) = std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config/labyrinth/dock")) else { return };
+    let p = yggdrasil_conf::dirs::config().join("dock");
     if let Some(d) = p.parent() {
         let _ = std::fs::create_dir_all(d);
     }

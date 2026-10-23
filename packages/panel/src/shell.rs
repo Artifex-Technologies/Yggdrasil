@@ -7,7 +7,7 @@ use wayland_protocols_wlr::foreign_toplevel::v1::client::zwlr_foreign_toplevel_h
 
 use crate::apps::{self, App};
 use crate::paint::{self, Fonts, Icons, Rgba};
-use labyrinth_conf::{ColorMode, DockPos, PanelConf};
+use yggdrasil_conf::{ColorMode, DockPos, PanelConf};
 
 // Plasma window state flags (org_kde_plasma_window_management.state).
 pub const ST_ACTIVE: u32 = 0x1;

@@ -10,9 +10,10 @@ name = "labyrinth-market"
 path = "src/main.rs"
 
 [dependencies]
+yggdrasil-conf = { path = "../yggdrasil-conf" }
 eframe = "0.36.2"
 egui_extras = { version = "0.36.2", features = ["file", "image", "svg"] }
-labyrinth-ui = { path = "../labyrinth-ui" }
+yggdrasil-ui = { path = "../yggdrasil-ui" }
 roxmltree = "0.21.1"
 serde_json = "1.0.151"
 

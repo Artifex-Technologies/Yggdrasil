@@ -76,7 +76,7 @@ use wayland_protocols_wlr::foreign_toplevel::v1::client::{
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::{Layer, ZwlrLayerShellV1};
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::{self, Anchor, KeyboardInteractivity, ZwlrLayerSurfaceV1};
 
-use labyrinth_conf::{DockPos, PanelConf, StartTheme};
+use yggdrasil_conf::{DockPos, PanelConf, StartTheme};
 use shell::{Action, Hit, Model, Win};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -572,7 +572,7 @@ impl State {
         let dock_out = self.dock_output();
         let mut sorted = ready;
         sorted.sort_by(|a, b| a.1.cmp(&b.1));
-        let own_wall = self.model.conf.own_wallpaper && labyrinth_conf::wallpaper().is_some();
+        let own_wall = self.model.conf.own_wallpaper && yggdrasil_conf::wallpaper().is_some();
         for (key, name) in sorted {
             let slim = self.layout.tiling.contains(&name);
             if own_wall {
@@ -594,7 +594,7 @@ impl State {
     }
 
     /// The wallpaper: a layer-shell surface on the background layer that fills the screen, drawn from the picture in
-    /// ~/.config/labyrinth/wallpaper. It takes no input and reserves no room.
+    /// ~/.config/yggdrasil/wallpaper. It takes no input and reserves no room.
     fn add_wallpaper(&mut self, output: u32) {
         let id = self.next_surf;
         self.next_surf += 1;
@@ -1755,7 +1755,7 @@ impl State {
             FAct::Notif(a) => self.notif_act(a),
             FAct::Wall(p) => {
                 if self.model.conf.own_wallpaper {
-                    let _ = labyrinth_conf::set_wallpaper(&p.display().to_string());
+                    let _ = yggdrasil_conf::set_wallpaper(&p.display().to_string());
                     for s in &mut self.surfs {
                         s.stamp = None; // redraw the wallpaper with the new picture
                     }
@@ -2157,7 +2157,7 @@ impl State {
         self.scale_surface(i);
         let s = self.scale_of(&self.surfs[i]);
         let (pw, ph) = ((w as f32 * s).round() as u32, (h as f32 * s).round() as u32);
-        let wall_path = if kind == Kind::Wallpaper { labyrinth_conf::wallpaper() } else { None };
+        let wall_path = if kind == Kind::Wallpaper { yggdrasil_conf::wallpaper() } else { None };
         if kind == Kind::Wallpaper {
             let key = (wall_path.clone().unwrap_or_default(), pw, ph);
             if self.surfs[i].stamp.as_ref() == Some(&key) {
@@ -3621,7 +3621,7 @@ fn main() {
         })
         .expect("layout timer");
 
-    // Settings writes ~/.config/labyrinth/panel.conf; pick changes up within a second.
+    // Settings writes ~/.config/yggdrasil/panel.conf; pick changes up within a second.
     let mut seen = PanelConf::modified();
     event_loop
         .handle()

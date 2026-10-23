@@ -4,7 +4,7 @@
 //!
 //! What it does:
 //!   * Apps send notifications over D-Bus; they are kept (up to `MAX_KEPT`, in
-//!     ~/.local/state/labyrinth/notifications.json) until the user opens or clears them.
+//!     ~/.local/state/yggdrasil/notifications.json) until the user opens or clears them.
 //!   * Heimdall's alerts (warning and critical by default) come in as notifications from "Heimdall".
 //!   * They are shown grouped by app, the groups ordered by their newest notification; a group with several
 //!     opens to show them all. Opening one goes to the app (and asks the app to show what it is about).
@@ -113,8 +113,7 @@ pub struct Store {
 }
 
 pub fn state_path() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_STATE_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))?;
-    Some(base.join("labyrinth").join("notifications.json"))
+    Some(yggdrasil_conf::dirs::state().join("notifications.json"))
 }
 
 impl Store {
@@ -446,7 +445,7 @@ pub fn spawn_heimdall(tx: calloop::channel::Sender<NMsg>) {
         let mut seen: HashSet<String> = HashSet::new();
         let mut first = true;
         loop {
-            let min = labyrinth_conf::PanelConf::load().heimdall_alerts.as_str();
+            let min = yggdrasil_conf::PanelConf::load().heimdall_alerts.as_str();
             if min != "off" {
                 if let Some(body) = http_get("127.0.0.1:8930", "/v1/alerts?n=60") {
                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) {

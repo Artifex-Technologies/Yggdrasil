@@ -1,9 +1,9 @@
 //! labyrinth-idle: how long has the user been away, and what should happen about it.
 //!
 //! It asks the compositor (Wayland `ext-idle-notify-v1`) to tell it when the user has been idle for each of a list of times, and
-//! writes every change to ~/.local/state/labyrinth/idle.log together with what else was going on (is the screen locked, which
+//! writes every change to ~/.local/state/yggdrasil/idle.log together with what else was going on (is the screen locked, which
 //! programs inhibit idling). By default it only OBSERVES: it changes nothing, so it can run beside PowerDevil to find out what
-//! blanks and locks the screen. With `mode = act` in ~/.config/labyrinth/idle.conf it also performs the configured steps
+//! blanks and locks the screen. With `mode = act` in ~/.config/yggdrasil/idle.conf it also performs the configured steps
 //! (lock, display off, suspend; dimming is not built yet), holding back locking and sleeping while something inhibits idling.
 //!
 //!   labyrinth-idle            run in the foreground (autostart it)
@@ -32,13 +32,11 @@ use wayland_protocols::ext::idle_notify::v1::client::{
 };
 
 fn state_dir() -> std::path::PathBuf {
-    let base = std::env::var_os("XDG_STATE_HOME").map(std::path::PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/state"))).unwrap_or_else(|| "/tmp".into());
-    base.join("labyrinth")
+    yggdrasil_conf::dirs::state()
 }
 
 fn config_path() -> std::path::PathBuf {
-    let base = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config"))).unwrap_or_else(|| "/tmp".into());
-    base.join("labyrinth").join("idle.conf")
+    yggdrasil_conf::dirs::config().join("idle.conf")
 }
 
 fn now() -> String {

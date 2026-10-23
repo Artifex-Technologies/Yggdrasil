@@ -30,7 +30,7 @@ pub fn config_path() -> Option<PathBuf> {
             return Some(PathBuf::from(p));
         }
     }
-    dirs::config_dir().map(|d| d.join("labyrinth").join("weather.json"))
+    Some(yggdrasil_conf::dirs::config().join("weather.json"))
 }
 
 /// `LABYRINTH_WEATHER_DATA` overrides the history directory.
@@ -40,7 +40,7 @@ pub fn data_dir() -> Option<PathBuf> {
             return Some(PathBuf::from(p));
         }
     }
-    dirs::data_dir().map(|d| d.join("labyrinth").join("weather"))
+    Some(yggdrasil_conf::dirs::data().join("weather"))
 }
 
 pub fn load(path: &std::path::Path) -> Option<Config> {

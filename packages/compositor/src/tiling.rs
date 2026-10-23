@@ -2,7 +2,7 @@
 //! automatically, Hyprland-style, "dwindle": the first takes the left half, the next the top right, and so on, each splitting the
 //! space that is left). A default profile can be chosen (or "ask each time" a workspace is opened empty) with exceptions per workspace.
 //!
-//! `~/.config/labyrinth/workspaces.conf` (written by Settings > Appearance > Workspaces):
+//! `~/.config/yggdrasil/workspaces.conf` (written by Settings > Appearance > Workspaces):
 //!
 //!     default = standard        # standard, tiling or ask
 //!     2 = tiling                # workspace 2 is always tiling (1 to 4)
@@ -76,8 +76,7 @@ pub fn config_path() -> std::path::PathBuf {
     if let Some(p) = std::env::var_os("LABYRINTH_COMPOSITOR_WORKSPACES") {
         return p.into();
     }
-    let base = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config"))).unwrap_or_default();
-    base.join("labyrinth/workspaces.conf")
+    yggdrasil_conf::dirs::config().join("workspaces.conf")
 }
 
 /// Where `n` tiled windows go inside `zone`, with `gap` pixels between them and around the edge. Dwindle: each window takes half of what is

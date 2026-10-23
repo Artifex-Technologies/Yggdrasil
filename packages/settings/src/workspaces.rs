@@ -1,4 +1,4 @@
-//! Settings > Appearance > Workspaces: which profile windows follow on each workspace. Written to ~/.config/labyrinth/workspaces.conf,
+//! Settings > Appearance > Workspaces: which profile windows follow on each workspace. Written to ~/.config/yggdrasil/workspaces.conf,
 //! which the compositor reads (and reads again when it changes).
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,7 +69,7 @@ pub fn text(c: &Conf) -> String {
 }
 
 pub fn path() -> std::path::PathBuf {
-    std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".config/labyrinth/workspaces.conf")
+    yggdrasil_conf::dirs::config().join("workspaces.conf")
 }
 
 pub fn load() -> Conf {

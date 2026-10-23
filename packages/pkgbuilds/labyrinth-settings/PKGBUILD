@@ -1,5 +1,5 @@
 # Labyrinth Settings: the everyday settings in one app (GNOME-style), on top of Plasma.
-# Built from packages/settings in this repository (and the shared look in packages/labyrinth-ui).
+# Built from packages/settings in this repository (and the shared look in packages/yggdrasil-ui).
 pkgname=labyrinth-settings
 pkgver=0.1.0
 pkgrel=1

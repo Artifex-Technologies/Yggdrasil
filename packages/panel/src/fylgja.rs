@@ -273,8 +273,7 @@ fn out(cmd: &str, args: &[&str]) -> String {
 }
 
 fn cache_dir() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))?;
-    let d = base.join("labyrinth").join("fylgja");
+    let d = yggdrasil_conf::dirs::cache().join("fylgja");
     std::fs::create_dir_all(&d).ok()?;
     Some(d)
 }
@@ -682,7 +681,7 @@ fn run_ask(wav: &PathBuf, conversation: Option<&str>, heard: &calloop::channel::
     use std::io::{BufRead, BufReader};
     let mut cmd = Command::new("labyrinth-sarina-ask");
     cmd.arg(wav);
-    cmd.env("LABYRINTH_TONE", if labyrinth_conf::PanelConf::load().sarina_tone { "1" } else { "0" });
+    cmd.env("LABYRINTH_TONE", if yggdrasil_conf::PanelConf::load().sarina_tone { "1" } else { "0" });
     if let Some(id) = conversation {
         cmd.env("LABYRINTH_CONVERSATION", id); // her session continues across the turns of a conversation
     }

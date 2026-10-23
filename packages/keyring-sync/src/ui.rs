@@ -3,7 +3,7 @@
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 use eframe::egui::{self, Key, RichText, TextEdit};
-use labyrinth_ui::theme;
+use yggdrasil_ui::theme;
 use zeroize::Zeroize;
 
 use crate::{auth, secret};

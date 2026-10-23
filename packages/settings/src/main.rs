@@ -1,5 +1,5 @@
 //! Labyrinth Settings: the everyday settings in one clean app, in the style of GNOME Settings,
-//! with the same look as Minos (labyrinth-ui). It changes Plasma's settings through the tools
+//! with the same look as Minos (yggdrasil-ui). It changes Plasma's settings through the tools
 //! Plasma itself uses (sys.rs). KDE's System Settings is hidden (labyrinth-plasma-setup) and its
 //! command redirects here (/usr/local/bin/systemsettings); the few deep options not covered yet
 //! open one KDE panel on its own (kcmshell6), never the whole KDE app.
@@ -30,7 +30,7 @@ use std::time::Duration;
 
 use eframe::egui::{self, vec2, CornerRadius, Margin, RichText, Sense};
 use icons::Icon;
-use labyrinth_ui::{chrome, theme};
+use yggdrasil_ui::{chrome, theme};
 use theme::Palette;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -513,7 +513,7 @@ impl eframe::App for App {
                 ui.add(egui::TextEdit::singleline(&mut self.search).hint_text("Search settings").desired_width(f32::INFINITY).margin(vec2(8.0, 6.0)));
                 ui.add_space(8.0);
                 let q = self.search.to_lowercase();
-                let developer_on = labyrinth_conf::PanelConf::load().developer;
+                let developer_on = yggdrasil_conf::PanelConf::load().developer;
                 for (p, name, icon) in PAGES {
                     if p == Page::Developer && !developer_on || p == Page::Agents && !agents::available() {
                         continue;
@@ -677,8 +677,8 @@ impl App {
             ("zen", "Zen", "The wallpaper, a small clock and a quiet password field"),
             ("poster", "Poster", "A huge stacked clock, the field tucked in the corner"),
         ];
-        let cache = std::env::var("HOME").map(|h| std::path::PathBuf::from(h).join(".cache/labyrinth/lock-previews")).unwrap_or_default();
-        let conf = std::env::var("HOME").map(|h| std::path::PathBuf::from(h).join(".config/labyrinth/lock.conf")).unwrap_or_default();
+        let cache = yggdrasil_conf::dirs::cache().join("lock-previews");
+        let conf = yggdrasil_conf::dirs::config().join("lock.conf");
         let current = std::fs::read_to_string(&conf).ok().and_then(|t| t.lines().filter_map(|l| l.split_once('=')).find(|(k, _)| k.trim() == "design").map(|(_, v)| v.trim().to_string())).unwrap_or_else(|| "split".into());
         if !self.lock_previews_started {
             self.lock_previews_started = true;
@@ -732,7 +732,7 @@ impl App {
         ui::group(ui, pal, None, |ui| {
             ui::row(ui, pal, true, "Developer options", Some("On: more technical settings show under Power (limits for each power mode) and Apps (which kind of connection an app may use)"), |ui| {
                 if ui::quiet(ui, pal, "Turn off").clicked() {
-                    let mut c = labyrinth_conf::PanelConf::load();
+                    let mut c = yggdrasil_conf::PanelConf::load();
                     c.developer = false;
                     self.page = Page::About;
                     self.change(ctx, move || c.save());
@@ -770,7 +770,7 @@ impl App {
 
     fn page_about(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         let Some(a) = self.data.about.clone() else { return loading(ui) };
-        let developer = labyrinth_conf::PanelConf::load().developer;
+        let developer = yggdrasil_conf::PanelConf::load().developer;
         ui.add_space(12.0);
         ui.vertical_centered(|ui| {
             // Five clicks on the logo while the ` key is held offer Developer options, like tapping the build number on Android.
@@ -801,7 +801,7 @@ impl App {
                 ui.horizontal(|ui| {
                     if ui.button("Turn on").clicked() {
                         self.dev_prompt = false;
-                        let mut c = labyrinth_conf::PanelConf::load();
+                        let mut c = yggdrasil_conf::PanelConf::load();
                         c.developer = true;
                         self.change(ctx, move || c.save());
                     }
@@ -815,7 +815,7 @@ impl App {
             ui::group(ui, pal, None, |ui| {
                 ui::row(ui, pal, true, "Developer options", Some("On: more technical settings show under Power and Apps"), |ui| {
                     if ui::quiet(ui, pal, "Turn off").clicked() {
-                        let mut c = labyrinth_conf::PanelConf::load();
+                        let mut c = yggdrasil_conf::PanelConf::load();
                         c.developer = false;
                         self.change(ctx, move || c.save());
                     }
@@ -1097,9 +1097,9 @@ impl App {
             });
         }
         // Sarina's voice: she can say her answers aloud after a question you spoke (Super+S)
-        let mut conf = labyrinth_conf::PanelConf::load();
-        let voices = labyrinth_conf::sarina_voices();
-        let current = labyrinth_conf::sarina_voice();
+        let mut conf = yggdrasil_conf::PanelConf::load();
+        let voices = yggdrasil_conf::sarina_voices();
+        let current = yggdrasil_conf::sarina_voice();
         let mut conf_changed = false;
         let mut pick: Option<String> = None;
         let mut test = false;
@@ -1149,7 +1149,7 @@ impl App {
             self.change(ctx, move || conf.save());
         }
         if let Some(v) = pick {
-            let _ = labyrinth_conf::set_sarina_voice(&v);
+            let _ = yggdrasil_conf::set_sarina_voice(&v);
             sys::spawn("labyrinth-sarina-speak", &["Hello. I am Sarina, and this is how I sound when I answer you."]);
         }
         if forget_tone {
@@ -1248,7 +1248,7 @@ impl App {
             ui::row(ui, pal, false, "Transparency", Some("How solid the window is. The sample next to it shows the result"), |ui| {
                 ui.add_enabled_ui(conf.minos_transparent, |ui| {
                     let mut v = conf.minos_opacity as f32;
-                    if ui::slider_range(ui, pal, &mut v, labyrinth_conf::MINOS_OPACITY_MIN as f32..=100.0, " %").changed() {
+                    if ui::slider_range(ui, pal, &mut v, yggdrasil_conf::MINOS_OPACITY_MIN as f32..=100.0, " %").changed() {
                         conf.minos_opacity = v as u32;
                         minos_live = true;
                     }
@@ -1332,25 +1332,25 @@ impl App {
         });
         }
         let modes = ["Match theme", "Dark / light"];
-        let mode_index = |m: labyrinth_conf::ColorMode| if m == labyrinth_conf::ColorMode::Theme { 0 } else { 1 };
-        let mode_of = |i: usize| if i == 0 { labyrinth_conf::ColorMode::Theme } else { labyrinth_conf::ColorMode::Neutral };
+        let mode_index = |m: yggdrasil_conf::ColorMode| if m == yggdrasil_conf::ColorMode::Theme { 0 } else { 1 };
+        let mode_of = |i: usize| if i == 0 { yggdrasil_conf::ColorMode::Theme } else { yggdrasil_conf::ColorMode::Neutral };
         if self.app_sub == AppSub::Bar {
         ui::group(ui, pal, Some("Dock"), |ui| {
             let positions = ["Bottom", "Left", "Right"];
             let pos_index = match conf.dock_pos {
-                labyrinth_conf::DockPos::Bottom => 0,
-                labyrinth_conf::DockPos::Left => 1,
-                labyrinth_conf::DockPos::Right => 2,
+                yggdrasil_conf::DockPos::Bottom => 0,
+                yggdrasil_conf::DockPos::Left => 1,
+                yggdrasil_conf::DockPos::Right => 2,
             };
             ui::row(ui, pal, true, "Position", Some("Which edge of the screen; left and right are vertical"), |ui| {
                 if let Some(i) = ui::segmented(ui, pal, &positions, pos_index) {
-                    conf.dock_pos = [labyrinth_conf::DockPos::Bottom, labyrinth_conf::DockPos::Left, labyrinth_conf::DockPos::Right][i];
+                    conf.dock_pos = [yggdrasil_conf::DockPos::Bottom, yggdrasil_conf::DockPos::Left, yggdrasil_conf::DockPos::Right][i];
                     conf_changed = true;
                 }
             });
             let mut gap = conf.dock_gap as f32;
             ui::row(ui, pal, false, "Distance from edge", Some("How far the dock floats off the screen edge; 0 puts it right on the edge"), |ui| {
-                let r = ui::slider_range(ui, pal, &mut gap, 0.0..=labyrinth_conf::DOCK_GAP_MAX as f32, " px");
+                let r = ui::slider_range(ui, pal, &mut gap, 0.0..=yggdrasil_conf::DOCK_GAP_MAX as f32, " px");
                 if r.drag_stopped() || (r.changed() && !r.dragged()) {
                     conf.dock_gap = gap as u32;
                     conf_changed = true;
@@ -1358,7 +1358,7 @@ impl App {
             });
             let mut size = conf.dock_icon as f32;
             ui::row(ui, pal, false, "Size", Some("Icon size"), |ui| {
-                let r = ui::slider_range(ui, pal, &mut size, labyrinth_conf::DOCK_ICON_MIN as f32..=labyrinth_conf::DOCK_ICON_MAX as f32, " px");
+                let r = ui::slider_range(ui, pal, &mut size, yggdrasil_conf::DOCK_ICON_MIN as f32..=yggdrasil_conf::DOCK_ICON_MAX as f32, " px");
                 if r.drag_stopped() || (r.changed() && !r.dragged()) {
                     conf.dock_icon = size as u32;
                     conf_changed = true;
@@ -1401,10 +1401,10 @@ impl App {
         if self.app_sub == AppSub::Bar {
         ui::group(ui, pal, Some("Start menu"), |ui| {
             let themes = ["Windows", "Folders"];
-            let current = if conf.start_theme == labyrinth_conf::StartTheme::Folders { 1 } else { 0 };
+            let current = if conf.start_theme == yggdrasil_conf::StartTheme::Folders { 1 } else { 0 };
             ui::row(ui, pal, true, "Theme", Some("Windows: pinned apps and every app in a list. Folders: narrow, apps in folders by kind, and a power button"), |ui| {
                 if let Some(i) = ui::segmented(ui, pal, &themes, current) {
-                    conf.start_theme = if i == 1 { labyrinth_conf::StartTheme::Folders } else { labyrinth_conf::StartTheme::Windows };
+                    conf.start_theme = if i == 1 { yggdrasil_conf::StartTheme::Folders } else { yggdrasil_conf::StartTheme::Windows };
                     conf_changed = true;
                 }
             });
@@ -1455,14 +1455,14 @@ impl App {
             });
             let levels = ["Off", "Critical", "Warnings", "Everything"];
             let cur = match conf.heimdall_alerts {
-                labyrinth_conf::AlertLevel::Off => 0,
-                labyrinth_conf::AlertLevel::Critical => 1,
-                labyrinth_conf::AlertLevel::Warning => 2,
-                labyrinth_conf::AlertLevel::Info => 3,
+                yggdrasil_conf::AlertLevel::Off => 0,
+                yggdrasil_conf::AlertLevel::Critical => 1,
+                yggdrasil_conf::AlertLevel::Warning => 2,
+                yggdrasil_conf::AlertLevel::Info => 3,
             };
             ui::row(ui, pal, false, "Heimdall alerts", Some("Which of Heimdall's security alerts show up as notifications. Everything includes each new place a program connects to"), |ui| {
                 if let Some(i) = ui::segmented(ui, pal, &levels, cur) {
-                    conf.heimdall_alerts = [labyrinth_conf::AlertLevel::Off, labyrinth_conf::AlertLevel::Critical, labyrinth_conf::AlertLevel::Warning, labyrinth_conf::AlertLevel::Info][i];
+                    conf.heimdall_alerts = [yggdrasil_conf::AlertLevel::Off, yggdrasil_conf::AlertLevel::Critical, yggdrasil_conf::AlertLevel::Warning, yggdrasil_conf::AlertLevel::Info][i];
                     conf_changed = true;
                 }
             });
@@ -1522,9 +1522,9 @@ impl App {
             });
         }
         if let Some(p) = wallpaper {
-            // when Labyrinth draws the wallpaper itself the panel shows the picture named in ~/.config/labyrinth/wallpaper
-            let own = labyrinth_conf::PanelConf::load().own_wallpaper;
-            self.change(ctx, move || if own { labyrinth_conf::set_wallpaper(&p) } else { sys::act("plasma-apply-wallpaperimage", &[&p]) });
+            // when Labyrinth draws the wallpaper itself the panel shows the picture named in ~/.config/yggdrasil/wallpaper
+            let own = yggdrasil_conf::PanelConf::load().own_wallpaper;
+            self.change(ctx, move || if own { yggdrasil_conf::set_wallpaper(&p) } else { sys::act("plasma-apply-wallpaperimage", &[&p]) });
         }
         if brand_build {
             let (shape, style) = (BRAND_SHAPES[self.brand_shape].0, BRAND_STYLES[self.brand_style].0);
@@ -2404,7 +2404,7 @@ impl App {
         let Some(t) = self.data.time.clone() else { return loading(ui) };
         let mut ntp = t.ntp;
         let mut ntp_changed = false;
-        let mut clock = labyrinth_conf::PanelConf::load();
+        let mut clock = yggdrasil_conf::PanelConf::load();
         let mut clock_changed = false;
         let mut zone: Option<String> = None;
         ui::group(ui, pal, None, |ui| {
@@ -2439,10 +2439,10 @@ impl App {
     }
 
     fn page_apps_minos(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
-        let mut minos = labyrinth_conf::PanelConf::load();
+        let mut minos = yggdrasil_conf::PanelConf::load();
         let mut minos_changed = false;
         ui::group(ui, pal, Some("Minos: where it opens"), |ui| {
-            use labyrinth_conf::StartIn;
+            use yggdrasil_conf::StartIn;
             ui::row(ui, pal, true, "First new window", Some("The first Minos window you open: your home folder, or the tabs you had when you last closed it"), |ui| {
                 let cur = (minos.minos_first_window == StartIn::Last) as usize;
                 if let Some(i) = ui::segmented(ui, pal, &["Home", "Where you left off"], cur) {
@@ -2569,7 +2569,7 @@ fn main() -> eframe::Result {
             .with_min_inner_size([560.0, 400.0])
             .with_title("Settings")
             .with_app_id("labyrinth-settings")
-            // Draws its own title bar like Minos (labyrinth-ui chrome).
+            // Draws its own title bar like Minos (yggdrasil-ui chrome).
             .with_decorations(false),
         ..Default::default()
     };

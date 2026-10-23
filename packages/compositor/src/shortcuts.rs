@@ -1,7 +1,7 @@
 //! Keyboard shortcuts handled by the compositor itself (instead of KDE's `kglobalacceld`): the Super key on its own, window switching,
 //! snapping, closing, starting programs and the panel's own actions (over its D-Bus service).
 //!
-//! The built-in table below follows Settings > Keyboard Shortcuts. `~/.config/labyrinth/shortcuts.conf` changes it, one binding per line:
+//! The built-in table below follows Settings > Keyboard Shortcuts. `~/.config/yggdrasil/shortcuts.conf` changes it, one binding per line:
 //!
 //!     Super+E = exec minos          # a program
 //!     Alt+Tab = next-window         # one of the actions below
@@ -210,8 +210,7 @@ pub fn config_path() -> std::path::PathBuf {
     if let Some(p) = std::env::var_os("LABYRINTH_COMPOSITOR_SHORTCUTS") {
         return p.into();
     }
-    let base = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config"))).unwrap_or_default();
-    base.join("labyrinth/shortcuts.conf")
+    yggdrasil_conf::dirs::config().join("shortcuts.conf")
 }
 
 pub fn find(bindings: &[Binding], mods: Mods, sym: u32) -> Option<&Binding> {

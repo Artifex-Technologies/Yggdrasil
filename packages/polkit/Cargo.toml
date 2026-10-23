@@ -17,7 +17,7 @@ zeroize = "1"
 serde_json = "1"
 # already in zbus's tree: runs the password exchange on its own thread so a cancel from polkit is heard meanwhile
 blocking = "1"
-labyrinth-ui = { path = "../labyrinth-ui" }
+yggdrasil-ui = { path = "../yggdrasil-ui" }
 
 [profile.release]
 opt-level = 2

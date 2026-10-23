@@ -1,5 +1,5 @@
 # Maintainer: Labyrinth OS
-# Builds labyrinth-weather from packages/labyrinth-weather/ in this repository. Build from
+# Builds labyrinth-weather from packages/weather/ in this repository. Build from
 # this directory with `makepkg -s`. NOT yet built on Linux (built and tested on Windows).
 pkgname=labyrinth-weather
 pkgver=0.1.0
@@ -12,7 +12,7 @@ depends=('gcc-libs' 'ca-certificates')
 makedepends=('cargo')
 options=('!lto')
 
-_src="$startdir/../../labyrinth-weather"
+_src="$startdir/../../weather"
 
 build() {
   cd "$_src"

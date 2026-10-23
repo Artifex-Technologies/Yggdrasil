@@ -1,5 +1,5 @@
 //! Labyrinth Calculator: a standard calculator with history that turns scientific when the window
-//! is widened. Same look as Minos and Settings (labyrinth-ui).
+//! is widened. Same look as Minos and Settings (yggdrasil-ui).
 //!
 //! Width decides what shows: narrow is the standard pad, wider adds the history beside it, wider
 //! still adds the scientific pad on the left. Long expressions are typed or pasted into the
@@ -11,8 +11,8 @@ use std::path::PathBuf;
 
 use eframe::egui::{self, pos2, vec2, Align, Align2, Color32, CornerRadius, FontId, Layout, Margin, Rect, RichText, Sense, UiBuilder};
 use eval::{eval, format_number, group_thousands, Angle, EvalError};
-use labyrinth_ui::theme::{self, Palette};
-use labyrinth_ui::chrome;
+use yggdrasil_ui::theme::{self, Palette};
+use yggdrasil_ui::chrome;
 use serde::{Deserialize, Serialize};
 
 const HISTORY_LIMIT: usize = 200;
@@ -92,7 +92,7 @@ struct Calc {
 }
 
 fn history_path() -> Option<PathBuf> {
-    dirs::data_dir().map(|d| d.join("labyrinth").join("calculator-history.json"))
+    Some(yggdrasil_conf::dirs::data().join("calculator-history.json"))
 }
 
 fn load_history() -> Vec<Entry> {
@@ -450,7 +450,7 @@ fn main() -> eframe::Result {
             .with_min_inner_size([340.0, 520.0])
             .with_title("Calculator")
             .with_app_id("labyrinth-calculator")
-            // Draws its own title bar like Minos and Settings (labyrinth-ui chrome).
+            // Draws its own title bar like Minos and Settings (yggdrasil-ui chrome).
             .with_decorations(false),
         ..Default::default()
     };

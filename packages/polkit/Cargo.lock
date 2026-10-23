@@ -1697,30 +1697,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "labyrinth-conf"
-version = "0.1.0"
-
-[[package]]
 name = "labyrinth-polkit"
 version = "0.1.0"
 dependencies = [
  "blocking",
  "eframe",
- "labyrinth-ui",
  "libc",
  "serde_json",
+ "yggdrasil-ui",
  "zbus",
  "zeroize",
-]
-
-[[package]]
-name = "labyrinth-ui"
-version = "0.1.0"
-dependencies = [
- "dirs",
- "eframe",
- "labyrinth-conf",
- "resvg",
 ]
 
 [[package]]
@@ -4221,6 +4207,20 @@ name = "xml-rs"
 version = "0.8.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
+
+[[package]]
+name = "yggdrasil-conf"
+version = "0.1.0"
+
+[[package]]
+name = "yggdrasil-ui"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "eframe",
+ "resvg",
+ "yggdrasil-conf",
+]
 
 [[package]]
 name = "yoke"

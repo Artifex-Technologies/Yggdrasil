@@ -4,8 +4,8 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
 use eframe::egui::{self, pos2, vec2, Align, Color32, CornerRadius, Key, Layout, Margin, Rect, RichText, Sense, Stroke, TextEdit};
-use labyrinth_ui::chrome;
-use labyrinth_ui::theme;
+use yggdrasil_ui::chrome;
+use yggdrasil_ui::theme;
 use zeroize::Zeroize;
 
 use crate::agent::UiMsg;
