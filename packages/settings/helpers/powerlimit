@@ -1,0 +1,221 @@
+#!/usr/bin/env python3
+"""powerlimit: processor and graphics-card limits for each power mode (Settings > Power, Developer options).
+
+For each power mode (performance, balanced, power-saver) a limit can be set:
+
+  cpu   the processor may not clock above this percent of its top speed (1-100)
+  gpu   an NVIDIA graphics card may not draw more than this many watts (within what the card allows)
+
+The limits of the mode that is active are applied; when the mode changes, the new mode's limits are applied (a mode
+with no limit restores the full speed and the card's default power). Nothing here overclocks: it only holds things back.
+
+Commands:
+  powerlimit set MODE cpu=PERCENT|default gpu=WATTS|default   change one mode (pkexec: needs root)
+  powerlimit watch                                            as root service (yggdrasil-powerlimit): apply now, and on every mode change
+  powerlimit apply                                            apply the active mode's limits once
+  powerlimit get                                              print what the hardware allows and what is set (JSON)
+
+The limits are kept in /etc/yggdrasil/power-limits.json: {"balanced": {"cpu": 80, "gpu": 200}, ...} (read from the desktop's old
+place, /etc/labyrinth/power-limits.json, until the first change).
+"""
+import glob
+import json
+import os
+import subprocess
+import sys
+import time
+
+STATE = os.environ.get("YGGDRASIL_POWERLIMIT_STATE", "/etc/yggdrasil/power-limits.json")
+OLD_STATE = "/etc/labyrinth/power-limits.json"
+CPUFREQ = os.environ.get("YGGDRASIL_CPUFREQ", "/sys/devices/system/cpu/cpufreq")
+MODES = ("performance", "balanced", "power-saver")
+
+
+def load_state(path=None):
+    if path is None and not os.path.exists(STATE) and "YGGDRASIL_POWERLIMIT_STATE" not in os.environ:
+        path = OLD_STATE
+    try:
+        with open(path or STATE, encoding="utf-8") as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    out = {}
+    for mode, lim in (d.items() if isinstance(d, dict) else []):
+        if mode in MODES and isinstance(lim, dict):
+            clean = {}
+            if isinstance(lim.get("cpu"), int) and 1 <= lim["cpu"] <= 100:
+                clean["cpu"] = lim["cpu"]
+            if isinstance(lim.get("gpu"), int) and 10 <= lim["gpu"] <= 1000:
+                clean["gpu"] = lim["gpu"]
+            if clean:
+                out[mode] = clean
+    return out
+
+
+def save_state(state, path=None):
+    path = path or STATE
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=1, sort_keys=True)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, path)
+
+
+def active_mode():
+    # read straight from power-profiles-daemon over D-Bus: `powerprofilesctl` is a Python program whose interpreter aborts at exit now and
+    # then (Python 3.14 with PyGObject: a fatal error in PyGILState_Ensure while GLib frees its data), which left a core dump every few hours
+    for name, path in (("org.freedesktop.UPower.PowerProfiles", "/org/freedesktop/UPower/PowerProfiles"), ("net.hadess.PowerProfiles", "/net/hadess/PowerProfiles")):
+        try:
+            out = subprocess.run(["busctl", "get-property", name, path, name, "ActiveProfile"], capture_output=True, text=True, timeout=5).stdout.strip()
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if out.startswith("s "):
+            return out[2:].strip().strip('"')
+    return ""
+
+
+def read_int(path):
+    try:
+        with open(path) as f:
+            return int(f.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def cpu_target_khz(percent, min_khz, max_khz):
+    """The clock ceiling for a percent of the top speed, never below what the processor can run at."""
+    return max(min_khz, min(max_khz, round(max_khz * percent / 100)))
+
+
+def apply_cpu(percent, root=None):
+    """Set every core's ceiling (None restores full speed). Returns how many policies were written."""
+    n = 0
+    for pol in sorted(glob.glob(os.path.join(root or CPUFREQ, "policy*"))):
+        lo, hi = read_int(pol + "/cpuinfo_min_freq"), read_int(pol + "/cpuinfo_max_freq")
+        if lo is None or hi is None:
+            continue
+        want = hi if percent is None else cpu_target_khz(percent, lo, hi)
+        try:
+            with open(pol + "/scaling_max_freq", "w") as f:
+                f.write(str(want))
+            n += 1
+        except OSError:
+            pass
+    return n
+
+
+def gpu_info():
+    """(name, current, default, min, max) watts of the first NVIDIA card, or None."""
+    try:
+        p = subprocess.run(["nvidia-smi", "--query-gpu=name,power.limit,power.default_limit,power.min_limit,power.max_limit", "--format=csv,noheader,nounits"],
+                           capture_output=True, text=True, timeout=10)
+        if p.returncode != 0 or not p.stdout.strip():
+            return None
+        name, cur, dflt, lo, hi = [x.strip() for x in p.stdout.splitlines()[0].split(",")]
+        return name, round(float(cur)), round(float(dflt)), round(float(lo)), round(float(hi))
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+
+
+def apply_gpu(watts):
+    """Set the card's power limit within what it allows (None restores the card's default)."""
+    info = gpu_info()
+    if not info:
+        return False
+    _, cur, dflt, lo, hi = info
+    want = dflt if watts is None else max(lo, min(hi, watts))
+    if want == cur:
+        return True
+    return subprocess.run(["nvidia-smi", "-pl", str(want)], capture_output=True).returncode == 0
+
+
+def apply(state=None, mode=None):
+    state = load_state() if state is None else state
+    mode = mode or active_mode()
+    lim = state.get(mode, {})
+    apply_cpu(lim.get("cpu"))
+    apply_gpu(lim.get("gpu"))
+    return mode, lim
+
+
+def cmd_set(mode, *kv):
+    if os.geteuid() != 0:
+        print("powerlimit: set needs root (run it with pkexec)", file=sys.stderr)
+        return 1
+    if mode not in MODES:
+        print("powerlimit: unknown mode", file=sys.stderr)
+        return 2
+    state = load_state()
+    lim = dict(state.get(mode, {}))
+    for item in kv:
+        key, _, val = item.partition("=")
+        if key not in ("cpu", "gpu"):
+            print("powerlimit: unknown limit %r" % key, file=sys.stderr)
+            return 2
+        if val == "default":
+            lim.pop(key, None)
+        elif val.isdigit():
+            lim[key] = int(val)
+        else:
+            print("powerlimit: %s needs a number or 'default'" % key, file=sys.stderr)
+            return 2
+    if lim:
+        state[mode] = lim
+    else:
+        state.pop(mode, None)
+    state = {m: l for m, l in state.items()}
+    save_state(state)
+    state = load_state()
+    if mode == active_mode():
+        apply(state, mode)
+    return 0
+
+
+def cmd_get():
+    top = None
+    for pol in sorted(glob.glob(os.path.join(CPUFREQ, "policy*"))):
+        hi = read_int(pol + "/cpuinfo_max_freq")
+        if hi:
+            top = max(top or 0, hi)
+    g = gpu_info()
+    out = {"cpu_max_khz": top, "gpu": None if not g else {"name": g[0], "watts": g[1], "default": g[2], "min": g[3], "max": g[4]},
+           "active": active_mode(), "limits": load_state()}
+    print(json.dumps(out))
+    return 0
+
+
+def cmd_watch():
+    last = None
+    while True:
+        try:
+            mtime = os.path.getmtime(STATE) if os.path.exists(STATE) else (os.path.getmtime(OLD_STATE) if os.path.exists(OLD_STATE) else 0)
+        except OSError:
+            mtime = 0
+        key = (active_mode(), mtime)
+        if key != last:
+            apply()
+            last = key
+        time.sleep(3)
+
+
+def main(argv):
+    if len(argv) < 2 or argv[1] in ("-h", "--help"):
+        print(__doc__)
+        return 0 if len(argv) >= 2 else 2
+    c = argv[1]
+    if c == "set" and len(argv) >= 4:
+        return cmd_set(argv[2], *argv[3:])
+    if c == "get":
+        return cmd_get()
+    if c == "apply":
+        print(apply())
+        return 0
+    if c == "watch":
+        return cmd_watch()
+    print("powerlimit: unknown command (see --help)", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

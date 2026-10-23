@@ -91,7 +91,7 @@ Audit numbers: 11 packages named `labyrinth-*`; crates `labyrinth_conf`, `labyri
 
 ---
 
-| Desktop pieces living in Labyrinth's repository (found 2026-10-23) | `labyrinth-panelctl`, `labyrinth-notify-activate`, `labyrinth-mediakey`, the start-menu and clipboard launchers, the `systemsettings` wrapper, `labyrinth-panel-mode`, wallpapers and avatars in `/usr/share/labyrinth` | move into Yggdrasil (renamed) or drop; Labyrinth keeps only OS things |
+| Desktop pieces living in Labyrinth's repository (found 2026-10-23; ✅ the account and power-limit helpers moved into Settings' package as `/usr/lib/yggdrasil/{account,powerlimit}`, the Agora helpers as `/usr/lib/agora/{sudo,pkg-root}`, the Proton Drive unit into Minos; the KDE-era ones, `labyrinth-panel-mode`, `labyrinth-tiling` and the KWin screen-keys script, leave with KDE in Part 1) | `labyrinth-panelctl`, `labyrinth-notify-activate`, `labyrinth-mediakey`, the start-menu and clipboard launchers, the `systemsettings` wrapper, `labyrinth-panel-mode`, wallpapers and avatars in `/usr/share/labyrinth` | move into Yggdrasil (renamed) or drop; Labyrinth keeps only OS things |
 
 Done on the owner's machine 2026-10-23: all twelve packages replaced under the new names; the panel, password box, idle watch and
 portal running as `yggdrasil-*`; Super+S on the new panel; the desktop's files moved to `~/.config/yggdrasil` (old loose files are

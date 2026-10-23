@@ -27,11 +27,12 @@ Two pieces that keep the login password and gnome-keyring's login keyring togeth
 
 ## Other accounts (added 2026-10-16)
 
-Settings > Users now lists the other accounts (uid 1000 and up, without the audited `claude-agent` account) and can add one (full name, user name,
+Settings > Users now lists the other accounts (uid 1000 and up, without the accounts the operating system keeps for itself) and can add one (full name, user name,
 standard or administrator, password with strength meter), make one an administrator or standard, and remove one (home folder kept unless
-you tick "also delete their files"). Each change asks for an administrator password (polkit action `org.labyrinth.account.manage`, always
-asks). The work is done by `labyrinth-account` (`/usr/local/bin`, run with pkexec; `tests/test_labyrinth_account.py`): it validates names,
-puts the password on standard input only (never a command line), and refuses the account that asked, `claude-agent`, logged-in accounts,
-system users, and removing or demoting the last administrator. Not tested: a real run through pkexec (it needs your password); install:
-`sudo install -m755 profile/airootfs/usr/local/bin/labyrinth-account /usr/local/bin/ && sudo install -m644 profile/airootfs/usr/share/polkit-1/actions/org.labyrinth.account.policy /usr/share/polkit-1/actions/`.
+you tick "also delete their files"). Each change asks for an administrator password (polkit action `org.yggdrasil.account.manage`, always
+asks). The work is done by `/usr/lib/yggdrasil/account` (`packages/settings/helpers/account`, run with pkexec; `tests/test_settings_account.py`):
+it validates names, puts the password on standard input only (never a command line), and refuses the account that asked, the accounts
+listed in `/etc/yggdrasil/protected-accounts` (one per line, `name*` for a prefix; Labyrinth lists its assistant account there), logged-in accounts,
+system users, and removing or demoting the last administrator. Not tested: a real run through pkexec (it needs your password). It ships
+with the yggdrasil-settings package, with its polkit policy.
 A new account's keyring is created at its first login, with its login password.

@@ -1,0 +1,10 @@
+[Unit]
+Description=Power-mode limits for the processor and graphics card (Settings > Power)
+After=power-profiles-daemon.service
+
+[Service]
+ExecStart=/usr/lib/yggdrasil/powerlimit watch
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

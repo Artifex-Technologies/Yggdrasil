@@ -1,0 +1,216 @@
+#!/usr/bin/env python3
+"""account: add, remove and change accounts for Settings > Users (run with pkexec; `list` needs no root).
+
+  account list                                   JSON: every login account (uid 1000 and up)
+  account add NAME           [--full-name TEXT] [--admin]
+                                                 create NAME with a home folder; the password is read from standard input (one line)
+  account admin NAME on|off                      make an account an administrator (group wheel) or a standard user
+  account remove NAME [--delete-home]            delete the account (its home folder stays unless --delete-home)
+
+Rules it enforces, whatever the caller says: names are lowercase letters, digits, '-' and '_' (at most 31, starting with a letter);
+only accounts from uid 1000 up are touched; never the account that asked (PKEXEC_UID), never an account the operating system keeps
+for itself (/etc/yggdrasil/protected-accounts: one name per line, `name*` for every name starting so; an OS lists its service or
+assistant accounts there), never an account that is logged in, and the last administrator cannot be demoted or removed. A password never appears in a command line: it goes to `chpasswd` on standard input.
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+
+PASSWD = os.environ.get("YGGDRASIL_PASSWD", "/etc/passwd")
+GROUP = os.environ.get("YGGDRASIL_GROUP", "/etc/group")
+PROTECTED_FILE = os.environ.get("YGGDRASIL_PROTECTED_ACCOUNTS", "/etc/yggdrasil/protected-accounts")
+TEST = bool(os.environ.get("YGGDRASIL_ACCOUNT_TEST"))   # tests: no root needed, stubs on PATH
+NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,30}$")
+RESERVED = {"root", "nobody", "daemon", "bin", "sys", "sync", "games", "man", "lp", "mail", "news", "uucp", "proxy", "www-data", "backup",
+            "list", "irc", "gnats", "sddm", "polkitd", "systemd"}
+DESKTOP_GROUPS = ["users", "audio", "video", "network", "storage", "lp"]
+
+
+def fail(msg, code=1):
+    print("account: " + msg, file=sys.stderr)
+    return code
+
+
+def protected_patterns():
+    try:
+        with open(PROTECTED_FILE, encoding="utf-8") as f:
+            return [l.split("#")[0].strip() for l in f if l.split("#")[0].strip()]
+    except OSError:
+        return []
+
+
+def protected(name):
+    """An account the operating system keeps for itself."""
+    for p in protected_patterns():
+        if (p.endswith("*") and name.startswith(p[:-1])) or name == p:
+            return True
+    return False
+
+
+def accounts():
+    out = []
+    try:
+        with open(PASSWD, encoding="utf-8") as f:
+            for line in f:
+                p = line.rstrip("\n").split(":")
+                if len(p) < 7 or not p[2].isdigit():
+                    continue
+                uid = int(p[2])
+                if uid < 1000 or uid >= 60000:
+                    continue
+                out.append({"login": p[0], "uid": uid, "full_name": p[4].split(",")[0], "home": p[5], "shell": p[6]})
+    except OSError:
+        pass
+    admins = group_members("wheel")
+    for a in out:
+        a["admin"] = a["login"] in admins
+    return out
+
+
+def group_members(name):
+    try:
+        with open(GROUP, encoding="utf-8") as f:
+            for line in f:
+                p = line.rstrip("\n").split(":")
+                if p[0] == name and len(p) >= 4:
+                    return set(x for x in p[3].split(",") if x)
+    except OSError:
+        pass
+    return set()
+
+
+def existing_groups(names):
+    have = set()
+    try:
+        with open(GROUP, encoding="utf-8") as f:
+            have = {l.split(":")[0] for l in f}
+    except OSError:
+        pass
+    return [g for g in names if g in have]
+
+
+def run(cmd, stdin=None):
+    return subprocess.run(cmd, input=stdin, capture_output=True, text=True)
+
+
+def caller_uid():
+    v = os.environ.get("PKEXEC_UID") or os.environ.get("SUDO_UID")
+    return int(v) if v and v.isdigit() else None
+
+
+def logged_in(name):
+    r = run(["loginctl", "list-sessions", "--no-legend"])
+    return any(len(l.split()) >= 3 and l.split()[2] == name for l in r.stdout.splitlines())
+
+
+def need_root():
+    if not TEST and os.geteuid() != 0:
+        return fail("this needs root (run it with pkexec)")
+    return 0
+
+
+def valid_name(name):
+    return bool(NAME_RE.match(name)) and name not in RESERVED and not protected(name)
+
+
+def cmd_add(argv):
+    if need_root():
+        return 1
+    if not argv or not valid_name(argv[0]):
+        return fail("the user name must be 1 to 31 lowercase letters, digits, - or _, starting with a letter, and not a system or reserved name", 2)
+    name, full, admin = argv[0], "", "--admin" in argv
+    if "--full-name" in argv:
+        i = argv.index("--full-name")
+        full = argv[i + 1] if i + 1 < len(argv) else ""
+    full = re.sub(r"[:,\n\r\x00-\x1f]", " ", full).strip()[:60]
+    if any(a["login"] == name for a in accounts()) or run(["getent", "passwd", name]).stdout.strip():
+        return fail("an account called %s already exists" % name)
+    pw = sys.stdin.readline().rstrip("\n")
+    if len(pw) < 8:
+        return fail("the password must be at least 8 characters", 2)
+    groups = existing_groups(DESKTOP_GROUPS + (["wheel"] if admin else []))
+    cmd = ["useradd", "-m", "-s", "/bin/bash", "-c", full or name]
+    if groups:
+        cmd += ["-G", ",".join(groups)]
+    cmd.append(name)
+    r = run(cmd)
+    if r.returncode != 0:
+        return fail("could not create the account: " + (r.stderr.strip() or "useradd failed"))
+    r = run(["chpasswd"], stdin="%s:%s\n" % (name, pw))
+    if r.returncode != 0:
+        run(["userdel", "-r", name])
+        return fail("could not set the password (the account was not kept): " + (r.stderr.strip() or "chpasswd failed"))
+    print("created %s" % name)
+    return 0
+
+
+def cmd_admin(argv):
+    if need_root():
+        return 1
+    if len(argv) != 2 or argv[1] not in ("on", "off"):
+        return fail("usage: admin NAME on|off", 2)
+    name, on = argv[0], argv[1] == "on"
+    accts = accounts()
+    target = next((a for a in accts if a["login"] == name), None)
+    if not target or protected(name):
+        return fail("no such account to change")
+    if not on:
+        admins = [a for a in accts if a["admin"] and not protected(a["login"])]
+        if name == (next((a["login"] for a in accts if a["uid"] == caller_uid()), None)):
+            return fail("you cannot remove your own administrator rights")
+        if target["admin"] and len(admins) <= 1:
+            return fail("this is the last administrator; make another one first")
+    r = run(["gpasswd", "-a" if on else "-d", name, "wheel"])
+    if r.returncode != 0 and not (not on and "not a member" in r.stderr):
+        return fail(r.stderr.strip() or "gpasswd failed")
+    print("%s is now %s" % (name, "an administrator" if on else "a standard user"))
+    return 0
+
+
+def cmd_remove(argv):
+    if need_root():
+        return 1
+    if not argv:
+        return fail("usage: remove NAME [--delete-home]", 2)
+    name = argv[0]
+    accts = accounts()
+    target = next((a for a in accts if a["login"] == name), None)
+    if not target:
+        return fail("no such account (only accounts from uid 1000 up can be removed)")
+    if protected(name):
+        return fail("%s is kept by the operating system: Settings does not change it" % name)
+    if target["uid"] == caller_uid():
+        return fail("you cannot remove the account you are using")
+    admins = [a for a in accts if a["admin"] and not protected(a["login"])]
+    if target["admin"] and len(admins) <= 1:
+        return fail("this is the last administrator")
+    if logged_in(name):
+        return fail("%s is logged in: log them out first" % name)
+    r = run(["userdel"] + (["-r"] if "--delete-home" in argv else []) + [name])
+    if r.returncode != 0:
+        return fail(r.stderr.strip() or "userdel failed")
+    print("removed %s%s" % (name, " and their home folder" if "--delete-home" in argv else " (their home folder was kept)"))
+    return 0
+
+
+def main(argv):
+    if len(argv) < 2 or argv[1] in ("-h", "--help"):
+        print(__doc__)
+        return 0 if len(argv) >= 2 else 2
+    c, rest = argv[1], argv[2:]
+    if c == "list":
+        print(json.dumps(accounts()))
+        return 0
+    if c == "add":
+        return cmd_add(rest)
+    if c == "admin":
+        return cmd_admin(rest)
+    if c == "remove":
+        return cmd_remove(rest)
+    return fail("unknown command (see --help)", 2)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

@@ -1,9 +1,10 @@
 # Settings > Apps, Developer options, and the per-app controls
 
 Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known about each app, and changes to it),
-`apps_ui.rs` (the pages), and three helpers in `profile/airootfs/usr/local/bin/`: `labyrinth-launch`, `labyrinth-appnet`,
-`labyrinth-powerlimit`. Tests: `tests/test_labyrinth_launch.py`, `test_labyrinth_appnet.py`, `test_labyrinth_powerlimit.py`
-(`python tests/test_labyrinth_*.py`) and `cargo test` in `packages/settings`.
+`apps_ui.rs` (the pages), the power-limit helper `packages/settings/helpers/powerlimit` (installed as `/usr/lib/yggdrasil/powerlimit`;
+`tests/test_settings_powerlimit.py`), and, for the per-app network rules and sandbox, the operating system's launcher declared in its
+`apps` integration (INTEGRATIONS.md; on Labyrinth `labyrinth-launch` and `labyrinth-appnet`, tested in Labyrinth's repository).
+`cargo test` in `packages/settings`.
 
 ## The pages
 
@@ -37,8 +38,8 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
   Verified with the calculator: its home showed only the shared folder, and only two processes were visible.
   Also started, with the sandbox on and chosen folders empty: Ghostty (GTK) and Vivaldi (Chromium): both came up and Vivaldi
   opened a window (not driven further). Because the app's own folders are shared, Vivaldi used its normal profile.
-- **Power limits** (labyrinth-powerlimit): /etc/labyrinth/power-limits.json; the root service
-  `labyrinth-powerlimit.service` applies the active mode's limits on every mode change (CPU: `scaling_max_freq` as a percent
+- **Power limits** (`/usr/lib/yggdrasil/powerlimit`): /etc/yggdrasil/power-limits.json (read from /etc/labyrinth/ until the first
+  change); the root service `yggdrasil-powerlimit.service` (the operating system switches it on) applies the active mode's limits on every mode change (CPU: `scaling_max_freq` as a percent
   of `cpuinfo_max_freq`; GPU: `nvidia-smi -pl`). Verified on the RTX 2080 Ti and the Intel pstate CPU; restored to defaults.
 
 ## Ask before connecting (built 2026-10-16)

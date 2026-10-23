@@ -252,9 +252,9 @@ pub fn suggest_login(full: &str) -> String {
     if first.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) { String::new() } else { first }
 }
 
-/// Runs `labyrinth-account` with the administrator question (pkexec). `stdin` carries a password, never a command line.
+/// Runs the account helper (/usr/lib/yggdrasil/account) with the administrator question (pkexec). `stdin` carries a password, never a command line.
 pub fn manage(args: &[&str], stdin: Option<&str>) -> Result<String, String> {
-    let mut child = Command::new("pkexec").arg("/usr/local/bin/labyrinth-account").args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| format!("pkexec: {e}"))?;
+    let mut child = Command::new("pkexec").arg("/usr/lib/yggdrasil/account").args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| format!("pkexec: {e}"))?;
     if let Some(mut si) = child.stdin.take() {
         if let Some(s) = stdin {
             let _ = si.write_all(s.as_bytes());
@@ -268,7 +268,7 @@ pub fn manage(args: &[&str], stdin: Option<&str>) -> Result<String, String> {
         Some(0) => Ok(text),
         Some(126) | Some(127) => Err("The administrator question was cancelled or refused.".into()),
         _ => {
-            let msg: String = err.trim_start_matches("labyrinth-account: ").chars().take(300).collect();
+            let msg: String = err.trim_start_matches("account: ").chars().take(300).collect();
             Err(if msg.is_empty() { "That did not work.".to_string() } else { msg })
         }
     }

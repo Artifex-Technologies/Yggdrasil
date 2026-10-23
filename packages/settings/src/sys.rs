@@ -33,6 +33,8 @@ pub fn spawn(cmd: &str, args: &[&str]) {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct About {
     pub os: String,
+    /// The system's logo (LOGO in /etc/os-release, an icon name), as a file; empty when there is none.
+    pub logo: String,
     pub hostname: String,
     pub cpu: String,
     pub memory_gib: f64,
@@ -40,6 +42,20 @@ pub struct About {
     pub kernel: String,
     pub disk_total: u64,
     pub disk_free: u64,
+}
+
+/// The file of the icon named by LOGO in /etc/os-release (the standard icon folders), if there is one.
+pub fn os_logo(os_release: &str) -> String {
+    let Some(name) = os_release.lines().find_map(|l| l.strip_prefix("LOGO=")).map(|v| v.trim().trim_matches('"').to_string()) else { return String::new() };
+    if name.is_empty() || name.contains('/') {
+        return String::new();
+    }
+    ["256x256/apps", "512x512/apps", "128x128/apps", "scalable/apps"]
+        .iter()
+        .flat_map(|d| [format!("/usr/share/icons/hicolor/{d}/{name}.png"), format!("/usr/share/icons/hicolor/{d}/{name}.svg")])
+        .chain([format!("/usr/share/pixmaps/{name}.png"), format!("/usr/share/pixmaps/{name}.svg")])
+        .find(|p| std::path::Path::new(p).is_file())
+        .unwrap_or_default()
 }
 
 pub fn os_name(os_release: &str) -> String {
@@ -106,6 +122,7 @@ pub fn about() -> About {
     let (disk_total, disk_free) = disk(&run("df", &["-B1", "--output=size,avail", "/"]).unwrap_or_default());
     About {
         os: os_name(&read("/etc/os-release")),
+        logo: os_logo(&read("/etc/os-release")),
         hostname: read("/etc/hostname").trim().to_string(),
         cpu: cpu_model(&read("/proc/cpuinfo")),
         memory_gib: mem_gib(&read("/proc/meminfo")),
@@ -510,7 +527,7 @@ pub struct PowerLimits {
     pub modes: std::collections::BTreeMap<String, (Option<i64>, Option<i64>)>,
 }
 
-/// Parse `labyrinth-powerlimit get`.
+/// Parse `powerlimit get` (/usr/lib/yggdrasil/powerlimit).
 pub fn parse_power_limits(json: &str) -> Option<PowerLimits> {
     let v: serde_json::Value = serde_json::from_str(json).ok()?;
     let gpu = v["gpu"].as_object().map(|g| GpuLimits {
@@ -566,7 +583,7 @@ pub fn set_profile(name: &str) -> Result<(), String> {
 
 pub fn power() -> Power {
     let (profiles, active) = profiles_dbus().unwrap_or_else(|| profiles(&run("powerprofilesctl", &["list"]).unwrap_or_default()));
-    let limits = if yggdrasil_conf::PanelConf::load().developer { run("labyrinth-powerlimit", &["get"]).and_then(|s| parse_power_limits(&s)) } else { None };
+    let limits = if yggdrasil_conf::PanelConf::load().developer { run("/usr/lib/yggdrasil/powerlimit", &["get"]).and_then(|s| parse_power_limits(&s)) } else { None };
     Power {
         profile: active,
         profiles,
@@ -709,7 +726,7 @@ pub fn time() -> Time {
     Time { timezone, ntp, zones }
 }
 
-// ---------------------------------------------------------------- Apps (labyrinth-apps)
+// ---------------------------------------------------------------- Apps (the operating system's optional software)
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Component {
@@ -719,8 +736,8 @@ pub struct Component {
     pub installed: bool,
 }
 
-/// Labyrinth's optional software from components.json, marked installed when all its repo
-/// packages are (pacman -Q).
+/// The operating system's optional software (the components file its packages integration names), marked installed when all its
+/// repo packages are (pacman -Q).
 pub fn components(json: &str, installed: &dyn Fn(&str) -> bool) -> Vec<Component> {
     let v: serde_json::Value = serde_json::from_str(json).unwrap_or(serde_json::Value::Null);
     v["components"]
@@ -744,7 +761,11 @@ pub fn components(json: &str, installed: &dyn Fn(&str) -> bool) -> Vec<Component
 }
 
 pub fn apps() -> Vec<Component> {
-    let json = std::fs::read_to_string("/usr/share/labyrinth/components.json").unwrap_or_default();
+    let packages = yggdrasil_conf::integrations::first("packages");
+    if packages.as_ref().and_then(|i| i.command("component")).is_none() {
+        return vec![];
+    }
+    let json = packages.and_then(|i| i.path("components")).and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
     components(&json, &|p| run("pacman", &["-Q", p]).is_some())
 }
 
@@ -754,7 +775,8 @@ mod tests {
 
     #[test]
     fn about_parsers() {
-        assert_eq!(os_name("NAME=\"Labyrinth OS\"\nPRETTY_NAME=\"Labyrinth OS\"\n"), "Labyrinth OS");
+        assert_eq!(os_name("NAME=\"Some OS\"\nPRETTY_NAME=\"Some OS 1\"\n"), "Some OS 1");
+        assert_eq!(os_logo("NAME=x\nLOGO=../../etc/passwd\n"), "", "an icon name, never a path");
         let cpu = "processor\t: 0\nmodel name\t: Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz\nprocessor\t: 1\nmodel name\t: Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz\n";
         assert_eq!(cpu_model(cpu), "Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz × 2");
         assert!((mem_gib("MemTotal:       65775396 kB\n") - 62.73).abs() < 0.01);

@@ -11,7 +11,7 @@ replaces=('labyrinth-settings')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
 license=('MIT')
 depends=('gcc-libs' 'libxkbcommon' 'wayland' 'vulkan-icd-loader' 'libglvnd' 'fontconfig'
-         'networkmanager' 'bluez-utils' 'libpulse' 'libkscreen' 'kconfig' 'power-profiles-daemon' 'pciutils')
+         'networkmanager' 'bluez-utils' 'libpulse' 'libkscreen' 'kconfig' 'power-profiles-daemon' 'pciutils' 'python' 'polkit')
 optdepends=('ufw: firewall page'
             'systemsettings: "More settings" opens KDE System Settings'
             'bluedevil: pairing new Bluetooth devices')
@@ -33,4 +33,11 @@ check() {
 package() {
   install -Dm755 "$srcdir/target/release/yggdrasil-settings" "$pkgdir/usr/bin/yggdrasil-settings"
   install -Dm644 "$_src/yggdrasil-settings.desktop" "$pkgdir/usr/share/applications/yggdrasil-settings.desktop"
+  # the administrator helpers Settings runs with pkexec: accounts (Users) and power-mode limits (Power, Developer options)
+  install -Dm755 "$_src/helpers/account" "$pkgdir/usr/lib/yggdrasil/account"
+  install -Dm755 "$_src/helpers/powerlimit" "$pkgdir/usr/lib/yggdrasil/powerlimit"
+  install -Dm644 "$_src/data/org.yggdrasil.account.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.account.policy"
+  install -Dm644 "$_src/data/org.yggdrasil.powerlimit.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.powerlimit.policy"
+  # applies the limits on every power-mode change; the operating system decides whether it is switched on
+  install -Dm644 "$_src/data/yggdrasil-powerlimit.service" "$pkgdir/usr/lib/systemd/system/yggdrasil-powerlimit.service"
 }

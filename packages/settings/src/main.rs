@@ -1,7 +1,7 @@
 //! Settings: the everyday settings in one clean app, in the style of GNOME Settings,
 //! with the same look as Minos (yggdrasil-ui). It changes Plasma's settings through the tools
-//! Plasma itself uses (sys.rs). KDE's System Settings is hidden (labyrinth-plasma-setup) and its
-//! command redirects here (/usr/local/bin/systemsettings); the few deep options not covered yet
+//! Plasma itself uses (sys.rs). KDE's System Settings is hidden (by the operating system) and its
+//! command redirects here; the few deep options not covered yet
 //! open one KDE panel on its own (kcmshell6), never the whole KDE app.
 //!
 //! Reading the system can be slow (Wi-Fi scans, Bluetooth), so every page loads on a background
@@ -695,7 +695,7 @@ impl App {
         }
         ui::group(ui, pal, None, |ui| {
             ui.add_space(6.0);
-            ui.label(RichText::new("Pick how the lock screen looks. Labyrinth's own lock screen needs a desktop that supports it (the screen is still locked by KDE's until then); your choice is kept and used as soon as it can be.").size(12.5).color(pal.dim));
+            ui.label(RichText::new("Pick how the lock screen looks. Yggdrasil's own lock screen needs a desktop that supports it (the screen is still locked by KDE's until then); your choice is kept and used as soon as it can be.").size(12.5).color(pal.dim));
             ui.add_space(6.0);
         });
         for (id, name, about) in DESIGNS {
@@ -727,7 +727,7 @@ impl App {
         }
     }
 
-    /// Developer Mode: the developer options, and the KDE settings that Labyrinth's Settings hides (each opens in KDE's own panel).
+    /// Developer Mode: the developer options, and the KDE settings this Settings hides (each opens in KDE's own panel).
     fn page_developer(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         ui::group(ui, pal, None, |ui| {
             ui::row(ui, pal, true, "Developer options", Some("On: more technical settings show under Power (limits for each power mode) and Apps (which kind of connection an app may use)"), |ui| {
@@ -745,7 +745,7 @@ impl App {
             });
         });
         let modules = kde_modules();
-        ui::group(ui, pal, Some("KDE settings Labyrinth hides"), |ui| {
+        ui::group(ui, pal, Some("KDE settings hidden here"), |ui| {
             ui.add_space(4.0);
             ui.add(egui::TextEdit::singleline(&mut self.dev_filter).hint_text("Search these settings").desired_width(f32::INFINITY).margin(vec2(8.0, 6.0)));
             ui.add_space(6.0);
@@ -774,7 +774,16 @@ impl App {
         ui.add_space(12.0);
         ui.vertical_centered(|ui| {
             // Five clicks on the logo while the ` key is held offer Developer options, like tapping the build number on Android.
-            let logo = ui.add(egui::Image::new("file:///usr/share/icons/hicolor/256x256/apps/labyrinthos.png").fit_to_exact_size(vec2(96.0, 96.0)).sense(Sense::click()));
+            // the system's logo (LOGO in os-release); without one, a disc with its initial
+            let logo = if a.logo.is_empty() {
+                let (rect, r) = ui.allocate_exact_size(vec2(96.0, 96.0), Sense::click());
+                ui.painter().circle_filled(rect.center(), 46.0, pal.accent);
+                let initial = a.os.chars().next().unwrap_or('L').to_uppercase().to_string();
+                ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, initial, egui::FontId::proportional(44.0), egui::Color32::WHITE);
+                r
+            } else {
+                ui.add(egui::Image::new(format!("file://{}", a.logo)).fit_to_exact_size(vec2(96.0, 96.0)).sense(Sense::click()))
+            };
             if logo.clicked() {
                 if ctx.input(|i| i.key_down(egui::Key::Backtick)) {
                     if self.dev_last.elapsed() > std::time::Duration::from_secs(3) {
@@ -790,7 +799,7 @@ impl App {
                     self.dev_clicks = 0;
                 }
             }
-            ui.label(RichText::new(if a.os.is_empty() { "Labyrinth OS" } else { &a.os }).size(22.0).strong());
+            ui.label(RichText::new(if a.os.is_empty() { "Linux" } else { &a.os }).size(22.0).strong());
             ui.label(RichText::new("Desktop: Yggdrasil").size(13.0).color(pal.dim));
         });
         if self.dev_prompt {
@@ -1262,7 +1271,7 @@ impl App {
         if self.app_sub == AppSub::Bar {
         ui::group(ui, pal, Some("Top bar and dock"), |ui| {
             let mut on = a.panel_on;
-            ui::row(ui, pal, true, "Use the Labyrinth top bar and dock", Some("Replaces Plasma's panels. It has no system tray, quick settings or global menu yet."), |ui| {
+            ui::row(ui, pal, true, "Use the Yggdrasil top bar and dock", Some("Replaces Plasma's panels. It has no system tray, quick settings or global menu yet."), |ui| {
                 if ui::switch(ui, pal, &mut on).changed() {
                     panel_switch = Some(on);
                 }
@@ -1352,13 +1361,13 @@ impl App {
         ui::group(ui, pal, Some("Accessibility"), |ui| {
             let sizes = ["100%", "125%", "150%", "200%"];
             let cur = match conf.text_scale { 0..=112 => 0, 113..=137 => 1, 138..=174 => 2, _ => 3 };
-            ui::row(ui, pal, true, "Text and control size", Some("Makes everything in Labyrinth's own apps (Settings, Minos, the admin password box, Calculator) larger. The top bar, dock and start menu follow the screen scale in Displays for now"), |ui| {
+            ui::row(ui, pal, true, "Text and control size", Some("Makes everything in the desktop's own apps (Settings, Minos, the admin password box, Calculator) larger. The top bar, dock and start menu follow the screen scale in Displays for now"), |ui| {
                 if let Some(i) = ui::segmented(ui, pal, &sizes, cur) {
                     conf.text_scale = [100, 125, 150, 200][i];
                     conf_changed = true;
                 }
             });
-            ui::row(ui, pal, false, "Reduce motion", Some("No fades or slides in Labyrinth's own apps"), |ui| {
+            ui::row(ui, pal, false, "Reduce motion", Some("No fades or slides in the desktop's own apps"), |ui| {
                 if ui::switch(ui, pal, &mut conf.reduce_motion).changed() {
                     conf_changed = true;
                 }
@@ -1462,7 +1471,7 @@ impl App {
             });
         }
         if let Some(p) = wallpaper {
-            // when Labyrinth draws the wallpaper itself the panel shows the picture named in ~/.config/yggdrasil/wallpaper
+            // when the desktop draws the wallpaper itself the panel shows the picture named in ~/.config/yggdrasil/wallpaper
             let own = yggdrasil_conf::PanelConf::load().own_wallpaper;
             self.change(ctx, move || if own { yggdrasil_conf::set_wallpaper(&p) } else { sys::act("plasma-apply-wallpaperimage", &[&p]) });
         }
@@ -1580,7 +1589,7 @@ impl App {
         if let Some((mode, which, v)) = limit {
             self.change(ctx, move || {
                 let arg = format!("{which}={}", v.map(|n| n.to_string()).unwrap_or_else(|| "default".into()));
-                sys::act("pkexec", &["/usr/local/bin/labyrinth-powerlimit", "set", &mode, &arg])
+                sys::act("pkexec", &["/usr/lib/yggdrasil/powerlimit", "set", &mode, &arg])
             });
         }
         if let Some(name) = profile {
@@ -1825,7 +1834,7 @@ impl App {
         let Some(st) = self.data.printers.clone() else { return loading(ui) };
         if !st.ready {
             ui::group(ui, pal, None, |ui| {
-                ui::row(ui, pal, true, "Printing is not running", Some("The print system (CUPS) is not installed or not started. On Labyrinth it is part of the system: run sudo systemctl enable --now cups.socket"), |_| {});
+                ui::row(ui, pal, true, "Printing is not running", Some("The print system (CUPS) is not installed or not started. If it is installed: run sudo systemctl enable --now cups.socket"), |_| {});
             });
             return;
         }
@@ -2420,17 +2429,29 @@ impl App {
 
     fn page_apps_software(&mut self, ui: &mut egui::Ui, pal: &Palette) {
         let Some(apps) = self.data.apps.clone() else { return loading(ui) };
-        ui::group(ui, pal, Some("Labyrinth's optional software"), |ui| {
+        if apps.is_empty() {
+            return;
+        }
+        let Some(cmd) = yggdrasil_conf::integrations::first("packages").and_then(|i| i.command("component")) else { return };
+        let os = yggdrasil_conf::integrations::first("packages").and_then(|i| i.get("name").map(str::to_string)).unwrap_or_else(|| "The system".into());
+        let run = |op: &str, id: &str| {
+            let mut args: Vec<String> = vec!["-e".into()];
+            args.extend(cmd.iter().cloned());
+            args.extend([op.to_string(), id.to_string()]);
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            sys::spawn("ghostty", &args);
+        };
+        ui::group(ui, pal, Some(&format!("{os}'s optional software")), |ui| {
             for (i, c) in apps.iter().enumerate() {
                 let sub: String = c.description.chars().take(110).collect::<String>() + if c.description.chars().count() > 110 { "…" } else { "" };
                 ui::row(ui, pal, i == 0, &c.name, Some(&sub), |ui| {
                     // Installing shows its progress (and asks for the password) in a terminal.
                     if c.installed {
                         if ui::quiet(ui, pal, "Remove").clicked() {
-                            sys::spawn("ghostty", &["-e", "labyrinth-apps", "remove", &c.id]);
+                            run("remove", &c.id);
                         }
                     } else if ui::action(ui, pal, "Install").clicked() {
-                        sys::spawn("ghostty", &["-e", "labyrinth-apps", "install", &c.id]);
+                        run("install", &c.id);
                     }
                 });
             }
