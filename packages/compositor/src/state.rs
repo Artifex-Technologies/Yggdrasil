@@ -402,7 +402,7 @@ impl App {
             Action::None => {}
             Action::ToggleStart => self.panel("ToggleStart", None),
             Action::Clipboard => self.panel("ShowClipboard", None),
-            Action::Sarina => self.panel("AskSarina", None),
+            Action::Assistant => self.panel("Ask", None),
             Action::Calendar => self.panel("ToggleCalendar", None),
             Action::Fylgja(n) => self.panel("ShowFylgja", Some(n)),
             Action::Exec(cmd) => self.spawn(&cmd),
@@ -799,7 +799,7 @@ impl App {
         if let Some((ws, sel)) = self.chooser {
             if self.chooser_art.as_ref().map(|(k, _)| *k != (ws, sel)).unwrap_or(true) {
                 if let Some(f) = &self.fonts {
-                    self.chooser_art = Some(((ws, sel), switcher::make_chooser(f, ws, sel, (124, 84, 214))));
+                    self.chooser_art = Some(((ws, sel), switcher::make_chooser(f, ws, sel, accent())));
                 }
             }
             if let (Some((_, buf)), Some(mode)) = (&self.chooser_art, self.output.current_mode()) {
@@ -814,7 +814,7 @@ impl App {
             let entries: Vec<(String, String)> = list.iter().map(|s| with_states(s, |st| st.data_map.get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>().map(|d| { let d = d.lock().unwrap(); (d.title.clone().unwrap_or_default(), d.app_id.clone().unwrap_or_default()) }).unwrap_or_default())).collect();
             if self.switcher_art.as_ref().map(|(k, _)| k != &(entries.clone(), index)).unwrap_or(true) {
                 if let Some(f) = &self.fonts {
-                    self.switcher_art = Some(((entries.clone(), index), switcher::make(f, &entries, index, (124, 84, 214))));
+                    self.switcher_art = Some(((entries.clone(), index), switcher::make(f, &entries, index, accent())));
                 }
             }
             if let (Some((_, buf)), Some(mode)) = (&self.switcher_art, self.output.current_mode()) {
@@ -1309,4 +1309,10 @@ impl App {
         }
         t.send_pending_configure();
     }
+}
+
+/// The accent for the switcher and chooser: the operating system's default (its branding), else Yggdrasil's.
+fn accent() -> (u8, u8, u8) {
+    let a = yggdrasil_conf::integrations::default_accent();
+    (a[0], a[1], a[2])
 }

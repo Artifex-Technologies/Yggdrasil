@@ -108,7 +108,7 @@ fn base_palette(dark: bool) -> Palette {
             border: Color32::from_rgb(38, 40, 52),
             text: Color32::from_rgb(232, 233, 238),
             dim: Color32::from_rgb(140, 143, 157),
-            accent: Color32::from_rgb(124, 84, 214),
+            accent: { let a = yggdrasil_conf::integrations::default_accent(); Color32::from_rgb(a[0], a[1], a[2]) },
             tab_active: Color32::from_rgb(72, 44, 128),
             hover: Color32::from_rgb(32, 34, 44),
             select: Color32::from_rgb(52, 40, 92),

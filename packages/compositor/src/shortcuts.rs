@@ -7,7 +7,7 @@
 //!     Alt+Tab = next-window         # one of the actions below
 //!     Super+Q = none                # removes a built-in binding
 //!
-//! Actions: start, clipboard, sarina, calendar, fylgja N, close, maximize, restore, fullscreen, minimize, snap-left, snap-right,
+//! Actions: start, clipboard, assistant, calendar, fylgja N, close, maximize, restore, fullscreen, minimize, snap-left, snap-right,
 //! next-window, prev-window, toggle-float, workspace N, move-to-workspace N, next-workspace, prev-workspace, lock, quit, exec COMMAND, none. Modifiers: Super (or Logo, Win), Ctrl, Alt, Shift.
 
 use smithay::input::keyboard::{keysyms, xkb, ModifiersState};
@@ -17,7 +17,7 @@ pub enum Action {
     None,
     ToggleStart,
     Clipboard,
-    Sarina,
+    Assistant,
     Calendar,
     Fylgja(u32),
     Close,
@@ -73,7 +73,7 @@ pub fn parse_action(s: &str) -> Option<Action> {
         "none" => Action::None,
         "start" => Action::ToggleStart,
         "clipboard" => Action::Clipboard,
-        "sarina" => Action::Sarina,
+        "assistant" | "sarina" => Action::Assistant,
         "calendar" => Action::Calendar,
         "fylgja" => Action::Fylgja(rest.parse().ok()?),
         "close" => Action::Close,
@@ -144,7 +144,7 @@ pub fn defaults() -> Vec<Binding> {
         b("Super+Return", Action::Exec("ghostty".into())),
         b("Super+L", Action::Lock),
         b("Super+V", Action::Clipboard),
-        b("Super+S", Action::Sarina),
+        b("Super+S", Action::Assistant),
         b("Super+C", Action::Calendar),
         b("Super+F", Action::Fullscreen),
         b("Super+Q", Action::Close),

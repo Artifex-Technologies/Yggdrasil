@@ -7,7 +7,7 @@
 //! Reading the system can be slow (Wi-Fi scans, Bluetooth), so every page loads on a background
 //! thread and every change runs on one too; the window never freezes.
 
-mod agents;
+mod controls;
 mod printers;
 mod appmgr;
 mod defaults;
@@ -50,7 +50,7 @@ enum Page {
     Printers,
     DefaultApps,
     /// Sarina's agents (only when Sarina is installed).
-    Agents,
+    Assistant,
     Shortcuts,
     About,
     /// Shown under About while Developer options are on.
@@ -93,7 +93,7 @@ const PAGES: [(Page, &str, Icon); 18] = [
     (Page::Printers, "Printers", Icon::Printer),
     (Page::Apps, "Apps", Icon::Apps),
     (Page::DefaultApps, "Default apps", Icon::Apps),
-    (Page::Agents, "Sarina's agents", Icon::Shield),
+    (Page::Assistant, "Assistant", Icon::Sound),
     (Page::Shortcuts, "Keyboard Shortcuts", Icon::Keyboard),
     (Page::About, "About", Icon::Info),
     (Page::Developer, "Developer Mode", Icon::Keyboard),
@@ -120,7 +120,7 @@ enum Msg {
     Apps(Vec<sys::Component>),
     Installed(Vec<appmgr::AppInfo>),
     Defaults(Vec<defaults::Row>),
-    Agents(agents::State),
+    Assistant(Vec<controls::State>),
     Printers(printers::State),
     AppSizes(std::collections::HashMap<String, u64>),
     DirSize(std::path::PathBuf, u64),
@@ -145,7 +145,7 @@ struct Data {
     apps: Option<Vec<sys::Component>>,
     installed: Option<Vec<appmgr::AppInfo>>,
     defaults: Option<Vec<defaults::Row>>,
-    agents: Option<agents::State>,
+    assistant: Option<Vec<controls::State>>,
     printers: Option<printers::State>,
 }
 
@@ -345,7 +345,7 @@ impl App {
                     Msg::Apps(sys::apps())
                 }
                 Page::DefaultApps => Msg::Defaults(defaults::load()),
-                Page::Agents => Msg::Agents(agents::load()),
+                Page::Assistant => Msg::Assistant(controls::load(yggdrasil_conf::integrations::first("assistant").map(|i| i.controls()).unwrap_or_default())),
                 Page::Printers => Msg::Printers(printers::load()),
                 Page::Shortcuts | Page::Developer => return,
             };
@@ -405,7 +405,7 @@ impl App {
                 }
                 Msg::Restore(r) => self.data.restore = Some(r),
                 Msg::Defaults(r) => self.data.defaults = Some(r),
-                Msg::Agents(a) => self.data.agents = Some(a),
+                Msg::Assistant(a) => self.data.assistant = Some(a),
                 Msg::Printers(p) => self.data.printers = Some(p),
                 Msg::Scan(r) => {
                     self.scan_busy = false;
@@ -515,7 +515,9 @@ impl eframe::App for App {
                 let q = self.search.to_lowercase();
                 let developer_on = yggdrasil_conf::PanelConf::load().developer;
                 for (p, name, icon) in PAGES {
-                    if p == Page::Developer && !developer_on || p == Page::Agents && !agents::available() {
+                    let assistant_name = if p == Page::Assistant { yggdrasil_conf::integrations::first("assistant").and_then(|i| i.get("name").map(str::to_string)) } else { None };
+                    let name: &str = assistant_name.as_deref().unwrap_or(name);
+                    if p == Page::Developer && !developer_on || p == Page::Assistant && yggdrasil_conf::integrations::first("assistant").is_none() {
                         continue;
                     }
                     if !q.is_empty() && !name.to_lowercase().contains(&q) {
@@ -581,7 +583,7 @@ impl eframe::App for App {
                         Page::Security => self.page_security(ui, &pal, &ctx),
                         Page::Restore => self.page_restore(ui, &pal, &ctx),
                         Page::DefaultApps => self.page_default_apps(ui, &pal, &ctx),
-                        Page::Agents => self.page_agents(ui, &pal, &ctx),
+                        Page::Assistant => self.page_assistant(ui, &pal, &ctx),
                         Page::Printers => self.page_printers(ui, &pal, &ctx),
                         Page::DateTime => self.page_time(ui, &pal, &ctx),
                         Page::Apps => self.page_apps(ui, &pal, &ctx),
@@ -611,7 +613,7 @@ fn load_installed(tx: &std::sync::mpsc::Sender<Msg>) -> Vec<appmgr::AppInfo> {
 }
 
 const BRAND_SHAPES: [(&str, &str); 5] = [("glyph", "Logo only"), ("squircle", "Squircle"), ("rounded", "Rounded square"), ("circle", "Circle"), ("hexagon", "Hexagon")];
-const BRAND_STYLES: [(&str, &str); 3] = [("brand", "Brand colors"), ("dark", "Dark tile"), ("purple", "Labyrinth purple")];
+const BRAND_STYLES: [(&str, &str); 3] = [("brand", "Brand colors"), ("dark", "Dark tile"), ("purple", "Accent colour")];
 
 fn loading(ui: &mut egui::Ui) {
     ui.add_space(40.0);
@@ -1096,68 +1098,6 @@ impl App {
                 Ok(())
             });
         }
-        // Sarina's voice: she can say her answers aloud after a question you spoke (Super+S)
-        let mut conf = yggdrasil_conf::PanelConf::load();
-        let voices = yggdrasil_conf::sarina_voices();
-        let current = yggdrasil_conf::sarina_voice();
-        let mut conf_changed = false;
-        let mut pick: Option<String> = None;
-        let mut test = false;
-        let mut forget_tone = false;
-        ui.add_space(8.0);
-        ui::group(ui, pal, Some("Sarina's voice"), |ui| {
-            if voices.is_empty() {
-                ui::row(ui, pal, true, "No voice installed", Some("Speaking needs Piper and a voice (see docs/SARINA_VOICE.md)"), |_| {});
-                return;
-            }
-            ui::row(ui, pal, true, "Speak her answers", Some("After you ask by voice, she says the answer aloud. Everything is made on this computer. Starting to speak again, or Esc, stops her"), |ui| {
-                if ui::switch(ui, pal, &mut conf.sarina_speaks).changed() {
-                    conf_changed = true;
-                }
-            });
-            ui::row(ui, pal, false, "Notice how I sound", Some("She notices your pace, loudness, pitch and pauses compared with how you usually sound, and quietly adjusts (briefer when you sound rushed, gentler when you sound tired). It keeps only a few averages, no recordings and no words, on this computer, and she never says it out loud"), |ui| {
-                if ui::switch(ui, pal, &mut conf.sarina_tone).changed() {
-                    conf_changed = true;
-                }
-            });
-            ui::row(ui, pal, false, "Forget how I sound", Some("Deletes those averages; she starts learning again from the next question"), |ui| {
-                if ui::quiet(ui, pal, "Forget").clicked() {
-                    forget_tone = true;
-                }
-            });
-            let waves = ["Copper", "Siri", "Labyrinth"];
-            ui::row(ui, pal, false, "Wave colors", Some("The glowing wave that grows out of the notch while you talk and while she answers"), |ui| {
-                if let Some(i) = ui::segmented(ui, pal, &waves, conf.sarina_wave.min(2) as usize) {
-                    conf.sarina_wave = i as u8;
-                    conf_changed = true;
-                }
-            });
-            ui::row(ui, pal, false, "Voice", Some("Plays a short sentence when you press Hear it"), |ui| {
-                if ui::quiet(ui, pal, "Hear it").clicked() {
-                    test = true;
-                }
-                egui::ComboBox::from_id_salt("sarina-voice").selected_text(&current).width(200.0).show_ui(ui, |ui| {
-                    for v in &voices {
-                        if ui.selectable_label(v == &current, v).clicked() {
-                            pick = Some(v.clone());
-                        }
-                    }
-                });
-            });
-        });
-        if conf_changed {
-            self.change(ctx, move || conf.save());
-        }
-        if let Some(v) = pick {
-            let _ = yggdrasil_conf::set_sarina_voice(&v);
-            sys::spawn("labyrinth-sarina-speak", &["Hello. I am Sarina, and this is how I sound when I answer you."]);
-        }
-        if forget_tone {
-            sys::spawn("sarina-tone", &["--forget"]);
-        }
-        if test {
-            sys::spawn("labyrinth-sarina-speak", &["Hello. I am Sarina, and this is how I sound when I answer you."]);
-        }
     }
 
     fn page_appearance(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
@@ -1203,7 +1143,7 @@ impl App {
                     let (rect, resp) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::click());
                     let c = egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
                     ui.painter().circle_filled(rect.center(), 10.0, c);
-                    if a.accent == Some(*rgb) || (a.accent.is_none() && *name == "Labyrinth purple") {
+                    if a.accent == Some(*rgb) || (a.accent.is_none() && *rgb == yggdrasil_conf::integrations::default_accent()) {
                         ui.painter().circle_stroke(rect.center(), 12.5, egui::Stroke::new(2.0, pal.text));
                     }
                     if resp.on_hover_text(*name).clicked() {
@@ -1985,83 +1925,68 @@ impl App {
         }
     }
 
-    fn page_agents(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
-        let Some(st) = self.data.agents.clone() else { return loading(ui) };
-        let mut remove: Option<String> = None;
-        ui::group(ui, pal, None, |ui| {
-            let sub = if st.on {
-                "On: Sarina may write small programs and run them, only inside Limbo's disposable guests (no network, nothing on this computer)"
-            } else {
-                "Off. To let her build agents, add SARINA_FORGE=on to ~/.config/labyrinth/sarina.env"
-            };
-            ui::row(ui, pal, true, "Agent Forge", Some(sub), |_| {});
-        });
-        ui.add_space(12.0);
-        let mut checkup = st.checkup;
-        let mut checkup_changed = false;
-        ui::group(ui, pal, Some("Daily check-up"), |ui| {
-            ui::row(ui, pal, true, "Look at the computer once a day", Some("Crashes, failed services, full disks, kernel errors; read-only. Fine days get one line in her vault; a problem gets her short explanation and one notification. Skipped while a game uses the graphics card"), |ui| {
-                checkup_changed = ui::switch(ui, pal, &mut checkup).changed();
+    /// The assistant the operating system provides: Yggdrasil's own part (answers read aloud, the wave), then the controls the
+    /// assistant declares in its integration file.
+    fn page_assistant(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
+        let name = yggdrasil_conf::integrations::first("assistant").and_then(|i| i.get("name").map(str::to_string)).unwrap_or_else(|| "The assistant".into());
+        let mut conf = yggdrasil_conf::PanelConf::load();
+        let mut conf_changed = false;
+        ui::group(ui, pal, Some("Speaking"), |ui| {
+            ui::row(ui, pal, true, "Say answers aloud", Some(&format!("After you ask {name} by voice (Super+S), the answer is said aloud. Starting to speak again, or Esc, stops it")), |ui| {
+                if ui::switch(ui, pal, &mut conf.assistant_speaks).changed() {
+                    conf_changed = true;
+                }
+            });
+            let waves = ["Copper", "Siri", "Accent"];
+            ui::row(ui, pal, false, "Wave colors", Some("The glowing wave that grows out of the notch while you talk and while the answer is spoken"), |ui| {
+                if let Some(i) = ui::segmented(ui, pal, &waves, conf.voice_wave.min(2) as usize) {
+                    conf.voice_wave = i as u8;
+                    conf_changed = true;
+                }
             });
         });
-        if checkup_changed {
-            self.change(ctx, move || agents::set_checkup(checkup));
+        if conf_changed {
+            self.change(ctx, move || conf.save());
         }
-        ui.add_space(12.0);
-        let mut learn = st.learn;
-        let mut learn_changed = false;
-        ui::group(ui, pal, Some("What she learns about you"), |ui| {
-            ui::row(ui, pal, true, "Learn from our talks once a day", Some("Reads what you talked about (not about the computer) and keeps what it shows about you in her vault, Entities/About Zlothra, each with your own words as evidence. You can edit that note; what you move under Forgotten she will not add again. Files you drop in her Inbox folder become linked notes under Sources. Local model only; skipped while a game uses the graphics card"), |ui| {
-                learn_changed = ui::switch(ui, pal, &mut learn).changed();
-            });
-        });
-        if learn_changed {
-            self.change(ctx, move || agents::set_learn(learn));
+        let Some(states) = self.data.assistant.clone() else { return loading(ui) };
+        if states.is_empty() {
+            return;
         }
-        ui.add_space(12.0);
-        ui::group(ui, pal, Some("Agents she wrote"), |ui| {
-            if st.agents.is_empty() {
-                ui::row(ui, pal, true, "None yet", None, |_| {});
-            }
-            for (i, a) in st.agents.iter().enumerate() {
-                let sub = if a.problem.is_empty() {
-                    format!("{} · {} file{} · {} · starts with `{}` · version {}{}", a.language, a.files, if a.files == 1 { "" } else { "s" }, a.purpose, a.command, a.hash, if a.approved { " · approved by you" } else { " · not approved" })
-                } else {
-                    format!("Unusable: {}", a.problem)
-                };
-                ui::row(ui, pal, i == 0, &a.name, Some(&sub), |ui| {
-                    if self.agent_confirm.as_deref() == Some(a.name.as_str()) {
-                        if ui::action(ui, pal, "Delete it").clicked() {
-                            remove = Some(a.name.clone());
+        let mut todo: Option<Box<dyn FnOnce() -> Result<(), String> + Send>> = None;
+        ui.add_space(8.0);
+        ui::group(ui, pal, Some(&name), |ui| {
+            for (i, st) in states.iter().enumerate() {
+                let c = st.control.clone();
+                let (label, description) = (c.label.clone(), c.description.clone());
+                let desc = if description.is_empty() { None } else { Some(description.as_str()) };
+                ui::row(ui, pal, i == 0, &label, desc, |ui| match &st.value {
+                    controls::Value::Switch(on) => {
+                        let mut v = *on;
+                        if ui::switch(ui, pal, &mut v).changed() {
+                            todo = Some(Box::new(move || controls::set_switch(&c, v)));
                         }
-                        if ui::quiet(ui, pal, "Keep").clicked() {
-                            self.agent_confirm = None;
-                        }
-                    } else {
-                        if ui::quiet(ui, pal, "Remove…").clicked() {
-                            self.agent_confirm = Some(a.name.clone());
-                        }
-                        if a.problem.is_empty() && ui::quiet(ui, pal, if a.approved { "Review…" } else { "Review and approve…" }).clicked() {
-                            agents::open_review(&a.name);
+                    }
+                    controls::Value::Choice { options, current } => {
+                        egui::ComboBox::from_id_salt(("choice", c.id.clone())).selected_text(current.as_str()).width(220.0).show_ui(ui, |ui| {
+                            for o in options {
+                                if ui.selectable_label(o == current, o).clicked() {
+                                    let (c, o) = (c.clone(), o.clone());
+                                    todo = Some(Box::new(move || controls::set_choice(&c, &o)));
+                                }
+                            }
+                        });
+                    }
+                    controls::Value::Action => {
+                        if ui::quiet(ui, pal, "Run").clicked() {
+                            let c = c.clone();
+                            todo = Some(Box::new(move || controls::act(&c).map(|_| ())));
                         }
                     }
                 });
             }
         });
-        ui.add_space(6.0);
-        ui.label(egui::RichText::new("Approving opens a terminal that shows every file of the agent; you approve by typing yes. Any later change to the agent voids the approval.").size(12.0).color(pal.dim));
-        ui.add_space(12.0);
-        ui::group(ui, pal, Some("Recent activity"), |ui| {
-            if st.activity.is_empty() {
-                ui::row(ui, pal, true, "Nothing yet", None, |_| {});
-            }
-            for (i, l) in st.activity.iter().enumerate() {
-                ui::row(ui, pal, i == 0, l, None, |_| {});
-            }
-        });
-        if let Some(name) = remove {
-            self.agent_confirm = None;
-            self.change(ctx, move || agents::remove(&name));
+        if let Some(f) = todo {
+            self.change(ctx, f);
         }
     }
 

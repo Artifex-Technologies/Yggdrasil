@@ -357,7 +357,7 @@ pub fn current_hour() -> u32 {
     }
 }
 
-/// The desktop's accent color (kdeglobals), else Labyrinth purple.
+/// The desktop's accent color (kdeglobals), else the operating system's default (its branding), else Yggdrasil's.
 pub fn accent() -> (u8, u8, u8, u8) {
     let dir = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")));
     let text = dir.and_then(|d| std::fs::read_to_string(d.join("kdeglobals")).ok()).unwrap_or_default();
@@ -375,5 +375,6 @@ pub fn accent() -> (u8, u8, u8, u8) {
             }
         }
     }
-    (124, 84, 214, 255)
+    let a = yggdrasil_conf::integrations::default_accent();
+    (a[0], a[1], a[2], 255)
 }

@@ -51,6 +51,47 @@ impl Integration {
     }
 }
 
+/// A Settings control an integration declares: `switch.ID`, `choice.ID` or `action.ID = label | description | /path/command`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Control {
+    pub kind: ControlKind,
+    pub id: String,
+    pub label: String,
+    pub description: String,
+    /// The program and its arguments; Settings adds `status`/`on`/`off`, `list`/`get`/`set X`, or nothing.
+    pub command: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ControlKind {
+    Switch,
+    Choice,
+    Action,
+}
+
+impl Integration {
+    /// The Settings controls it declares, in the order of their IDs. One without an absolute command is left out.
+    pub fn controls(&self) -> Vec<Control> {
+        let mut out = vec![];
+        for (k, v) in &self.values {
+            let (kind, id) = match k.split_once('.') {
+                Some(("switch", id)) => (ControlKind::Switch, id),
+                Some(("choice", id)) => (ControlKind::Choice, id),
+                Some(("action", id)) => (ControlKind::Action, id),
+                _ => continue,
+            };
+            let mut parts = v.splitn(3, '|').map(str::trim);
+            let (Some(label), Some(description), Some(cmd)) = (parts.next(), parts.next(), parts.next()) else { continue };
+            let command: Vec<String> = cmd.split_whitespace().map(str::to_string).collect();
+            if label.is_empty() || !command.first().is_some_and(|c| c.starts_with('/')) {
+                continue;
+            }
+            out.push(Control { kind, id: id.to_string(), label: label.to_string(), description: description.to_string(), command });
+        }
+        out
+    }
+}
+
 fn read_dir(dir: &Path, into: &mut BTreeMap<String, Integration>) {
     let Ok(rd) = std::fs::read_dir(dir) else { return };
     for e in rd.flatten() {
@@ -112,5 +153,70 @@ mod tests {
         let only = all_in(&[a]);
         assert_eq!(only.iter().find(|i| i.kind == "assistant").unwrap().command("ask"), Some(vec!["/usr/bin/ask".into(), "--voice".into()]));
         let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+/// The accent Yggdrasil falls back to when neither the user nor the operating system chose one.
+pub const FALLBACK_ACCENT: [u8; 3] = [124, 84, 214];
+
+fn hex(v: &str) -> Option<[u8; 3]> {
+    let v = v.trim().trim_start_matches('#');
+    if v.len() != 6 {
+        return None;
+    }
+    let n = u32::from_str_radix(v, 16).ok()?;
+    Some([(n >> 16) as u8, (n >> 8) as u8, n as u8])
+}
+
+static BRANDING: std::sync::OnceLock<Option<Integration>> = std::sync::OnceLock::new();
+
+fn branding() -> Option<&'static Integration> {
+    BRANDING.get_or_init(|| first("branding")).as_ref()
+}
+
+/// The default accent: the operating system's branding, else Yggdrasil's fallback. Read once per program.
+pub fn default_accent() -> [u8; 3] {
+    branding().and_then(|b| b.get("accent")).and_then(hex).unwrap_or(FALLBACK_ACCENT)
+}
+
+/// The operating system's default wallpaper, if its branding names one that exists.
+pub fn default_wallpaper() -> Option<PathBuf> {
+    branding().and_then(|b| b.path("wallpaper")).filter(|p| p.is_file())
+}
+
+/// Folders with wallpapers to offer: the standard one (operating systems put theirs in a subfolder), Yggdrasil's own, and the
+/// folder of the branding's default.
+pub fn wallpaper_dirs() -> Vec<PathBuf> {
+    let mut v = vec![PathBuf::from("/usr/share/wallpapers"), crate::dirs::system_data().join("wallpapers")];
+    if let Some(d) = default_wallpaper().and_then(|p| p.parent().map(Path::to_path_buf)) {
+        if !v.contains(&d) {
+            v.push(d);
+        }
+    }
+    v
+}
+
+#[cfg(test)]
+mod control_tests {
+    use super::*;
+
+    #[test]
+    fn controls_are_read_in_order_and_need_absolute_commands() {
+        let i = Integration::parse(Path::new("/x/sarina.conf"), "kind = assistant\nswitch.b_learn = Learn | From talks | /usr/bin/learn --x\nchoice.a_voice = Voice | Which voice | /usr/bin/voice\naction.c = Bad | no path | relative\nswitch.d = | empty label | /bin/x\n").unwrap();
+        let c = i.controls();
+        assert_eq!(c.len(), 2);
+        assert_eq!((c[0].kind, c[0].id.as_str(), c[0].label.as_str()), (ControlKind::Choice, "a_voice", "Voice"));
+        assert_eq!(c[1].command, vec!["/usr/bin/learn".to_string(), "--x".to_string()]);
+    }
+}
+
+#[cfg(test)]
+mod branding_tests {
+    #[test]
+    fn hex_colours() {
+        assert_eq!(super::hex("#7c54d6"), Some([124, 84, 214]));
+        assert_eq!(super::hex("7C54D6"), Some([124, 84, 214]));
+        assert_eq!(super::hex("#7c54"), None);
+        assert_eq!(super::hex("purple"), None);
     }
 }

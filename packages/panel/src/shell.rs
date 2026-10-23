@@ -24,7 +24,7 @@ pub struct Look {
     pub hover: Rgba,
 }
 
-/// Dark or light, tinted with the Labyrinth purple ("theme") or plain ("neutral"), at an opacity
+/// Dark or light, tinted with the accent ("theme") or plain ("neutral"), at an opacity
 /// from 0 (nothing but the content) to 100. The default is Minos's near-black over the wallpaper.
 pub fn look(mode: ColorMode, opacity: u32, dark: bool) -> Look {
     let (r, g, b) = match (mode, dark) {
@@ -276,7 +276,7 @@ pub fn app_name_for_bar(m: &Model) -> String {
     }
 }
 
-/// The Labyrinth purple, for the current desktop and the active bits.
+/// The accent, for the current desktop and the active bits.
 
 /// The top bar: no strip of its own, just pills over the wallpaper (their backdrop is the bar's
 /// opacity setting; 0 leaves floating text), a black tab in the middle where the notch will open.
@@ -661,7 +661,7 @@ struct StartPal {
     select: Rgba,
 }
 
-/// The same palette as Minos and Settings: near-black with the Labyrinth purple.
+/// The same palette as Minos and Settings: near-black with the accent.
 fn start_pal(dark: bool) -> StartPal {
     if dark {
         StartPal { bg: (14, 15, 20, 250), border: (38, 39, 53, 255), field: (27, 28, 37, 255), text: (230, 231, 238, 255), dim: (154, 155, 171, 255), hover: (255, 255, 255, 20), select: (58, 42, 107, 255) }

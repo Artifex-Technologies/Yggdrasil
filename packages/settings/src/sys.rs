@@ -410,7 +410,7 @@ pub fn displays() -> Displays {
 // ---------------------------------------------------------------- Appearance
 
 pub const ACCENTS: [(&str, [u8; 3]); 9] = [
-    ("Labyrinth purple", [124, 84, 214]),
+    ("Purple", [124, 84, 214]),
     ("Blue", [61, 132, 245]),
     ("Teal", [38, 162, 158]),
     ("Green", [52, 168, 83]),
@@ -452,7 +452,7 @@ pub fn appearance() -> Appearance {
         .and_then(|s| yggdrasil_ui::theme::parse_kde_accent(&format!("[General]
 AccentColor={}", s.trim())));
     let mut wallpapers = vec![];
-    for dir in ["/usr/share/labyrinth/wallpapers", "/usr/share/wallpapers"] {
+    for dir in yggdrasil_conf::integrations::wallpaper_dirs() {
         if let Ok(rd) = std::fs::read_dir(dir) {
             for e in rd.flatten() {
                 let p = e.path();

@@ -1,7 +1,7 @@
 //! yggdrasil-greeter: the login screen. greetd starts it inside a small compositor (cage, or Labyrinth's own later) and it draws
 //! the same designs as the lock screen; what is typed goes to greetd (greetd.rs), which runs PAM and starts the session.
 //!
-//! Settings: /etc/labyrinth/greeter.conf (`design = split`, `session = startplasma-wayland`, `wallpaper = /path/to/picture`).
+//! Settings: /etc/yggdrasil/greeter.conf (`design = split`, `session = startplasma-wayland`, `wallpaper = /path/to/picture`).
 //! Tab (or Down) and Shift+Tab (or Up) switch user while nothing is typed; Enter signs in; Escape clears what was typed.
 //! Exit status: 0 the session was started (greetd takes over), 2 setup problem.
 
@@ -272,9 +272,9 @@ impl App {
     }
 }
 
-/// `key = value` lines of /etc/labyrinth/greeter.conf (`GREETER_CONF` overrides the path, for tests).
+/// `key = value` lines of /etc/yggdrasil/greeter.conf (`GREETER_CONF` overrides the path, for tests).
 fn conf(key: &str) -> Option<String> {
-    let path = std::env::var("GREETER_CONF").unwrap_or_else(|_| "/etc/labyrinth/greeter.conf".into());
+    let path = std::env::var("GREETER_CONF").unwrap_or_else(|_| "/etc/yggdrasil/greeter.conf".into());
     std::fs::read_to_string(path).ok()?.lines().filter_map(|l| l.split('#').next()?.split_once('=')).find(|(k, _)| k.trim() == key).map(|(_, v)| v.trim().to_string())
 }
 
@@ -295,7 +295,7 @@ fn list_users() -> Vec<String> {
 
 /// The account picture the desktop keeps where every program can read it (AccountsService), else none.
 fn avatar_of(user: &str) -> Option<Pixmap> {
-    ["/var/lib/AccountsService/icons/", "/usr/share/labyrinth/avatars/"].iter().map(|d| std::path::PathBuf::from(d).join(user)).find(|p| p.is_file()).and_then(|p| design::load_picture(&p))
+    ["/var/lib/AccountsService/icons/", "/usr/share/yggdrasil/avatars/"].iter().map(|d| std::path::PathBuf::from(d).join(user)).find(|p| p.is_file()).and_then(|p| design::load_picture(&p))
 }
 
 fn die(msg: &str) -> ! {
@@ -317,7 +317,7 @@ fn main() {
     if users.is_empty() {
         die("no accounts to sign in to");
     }
-    let wallpaper = conf("wallpaper").map(std::path::PathBuf::from).filter(|p| p.is_file()).or_else(|| Some(std::path::PathBuf::from("/usr/share/labyrinth/wallpapers/labyrinth-purple.png"))).and_then(|p| design::load_picture(&p));
+    let wallpaper = conf("wallpaper").map(std::path::PathBuf::from).filter(|p| p.is_file()).or_else(yggdrasil_conf::integrations::default_wallpaper).and_then(|p| design::load_picture(&p));
     let session: Vec<String> = conf("session").unwrap_or_else(|| "startplasma-wayland".into()).split_whitespace().map(String::from).collect();
 
     let surface = compositor.create_surface(&qh, ());

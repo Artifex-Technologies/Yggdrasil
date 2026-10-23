@@ -520,7 +520,7 @@ fn entry_interact(
         // folders on screen this frame, for drops that arrive from other windows
         ctx.data_mut(|d| d.get_temp_mut_or_default::<Vec<(Rect, PathBuf)>>(egui::Id::new("minos-drop-rows")).push((r.interact_rect, e.path.clone())));
         if egui::DragAndDrop::has_payload_of_type::<DragPaths>(ctx) && r.contains_pointer() {
-            ctx.layer_painter(r.layer_id).rect_stroke(r.interact_rect, 6, egui::Stroke::new(2.0, Color32::from_rgb(124, 84, 214)), egui::StrokeKind::Inside);
+            ctx.layer_painter(r.layer_id).rect_stroke(r.interact_rect, 6, egui::Stroke::new(2.0, accent_colour()), egui::StrokeKind::Inside);
         }
         if let Some(p) = r.dnd_release_payload::<DragPaths>() {
             actions.push(Action::Move(p.0.clone(), e.path.clone()));
@@ -1766,7 +1766,7 @@ impl App {
             let pt = pos2(at.0, at.1);
             if let Some((rect, _)) = rows.iter().find(|(r, _)| r.contains(pt)) {
                 ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("minos-ext-hover")))
-                    .rect_stroke(*rect, 6, egui::Stroke::new(2.0, Color32::from_rgb(124, 84, 214)), egui::StrokeKind::Inside);
+                    .rect_stroke(*rect, 6, egui::Stroke::new(2.0, accent_colour()), egui::StrokeKind::Inside);
             }
         }
         let width = ctx.content_rect().width();
@@ -3351,4 +3351,10 @@ mod session {
             let _ = std::fs::remove_file(d.join(std::process::id().to_string()));
         }
     }
+}
+
+/// The accent for drop targets: the operating system's default (its branding), else Yggdrasil's.
+fn accent_colour() -> Color32 {
+    let a = yggdrasil_conf::integrations::default_accent();
+    Color32::from_rgb(a[0], a[1], a[2])
 }

@@ -158,7 +158,8 @@ impl Dnd {
         for y in 0..N {
             for x in 0..N {
                 let edge = x < 2 || y < 2 || x >= N - 2 || y >= N - 2;
-                let c: [u8; 4] = if edge { [255, 255, 255, 230] } else { [124, 84, 214, 200] };
+                let a = yggdrasil_conf::integrations::default_accent();
+                let c: [u8; 4] = if edge { [255, 255, 255, 230] } else { [a[0], a[1], a[2], 200] };
                 px.extend_from_slice(&[c[2], c[1], c[0], c[3]]); // ARGB8888, little-endian
             }
         }

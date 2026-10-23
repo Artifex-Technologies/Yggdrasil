@@ -22,14 +22,15 @@ Each file starts with `kind = ...`.
 ```
 kind = assistant
 name = Sarina                      # shown in the panel, Fylgja and Settings
-ask = /usr/bin/labyrinth-sarina-ask       # hold-to-talk: recording file path is the last argument
-speak = /usr/bin/labyrinth-sarina-speak   # reads text aloud (text on standard input)
-warm = /usr/bin/labyrinth-sarina-warm     # optional: wake the model before it is needed
-settings = /usr/bin/labyrinth-sarina-settings   # optional: opens the assistant's own settings
-shortcut = Super+S                 # the hold-to-talk key Yggdrasil registers
+ask = /usr/local/bin/labyrinth-sarina-ask        # hold-to-talk: the recording's path is added as the last argument; prints the answer
+speak = /usr/local/bin/labyrinth-sarina-speak    # reads text aloud (text on standard input); `--stop` stops it
+warm = /usr/local/bin/labyrinth-sarina-warm      # optional: wake the model while you are still talking
+runtime = labyrinth-sarina         # folder in $XDG_RUNTIME_DIR where it reports speaking.pid and conversations (conv-ID.session)
+shortcut = Super+S                 # the hold-to-talk key Yggdrasil registers (Ctrl+Alt+S is added as a second way in)
 ```
 
-Yggdrasil owns the key, the recording, the listening animation (Fylgja) and the answer card; the assistant owns everything else.
+Yggdrasil owns the key, the recording, Fylgja's listening and speaking animation and the answer card; the assistant owns the rest.
+Its settings are declared with the controls below and appear on Settings' Assistant page.
 
 ### `packages` (how Agora installs software)
 
@@ -84,6 +85,17 @@ open = /usr/local/bin/labyrinth-restore --ui
 ```
 
 A row in Settings' list that opens the OS's own window; Yggdrasil does not draw the OS's pages.
+
+## Settings controls (any kind)
+
+Any integration can add controls to its Settings page (Assistant for `assistant`, Security for `security`, otherwise a page named by
+`name`). Each is one line; the value is `label | description | command`. The command is run with one more argument:
+
+- `switch.ID = label | description | /path/cmd`: `status` prints `on` or `off`; `on` and `off` change it.
+- `choice.ID = label | description | /path/cmd`: `list` prints one option per line; `get` prints the current one; `set OPTION` sets it.
+- `action.ID = label | description | /path/cmd`: run as is when the button is pressed (output, if any, is shown).
+
+Controls appear in the order of their IDs. A command that fails or is missing hides its control; Settings never guesses.
 
 ## What stays out of integrations
 

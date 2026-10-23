@@ -18,6 +18,7 @@ mod osd;
 mod stats;
 mod thumb;
 mod voicekey;
+mod assistant;
 mod voicewave;
 mod shell;
 mod status;
@@ -114,7 +115,7 @@ struct PanelBus(calloop::channel::Sender<BusMsg>);
 enum BusMsg {
     ToggleStart,
     ShowClipboard,
-    AskSarina,
+    Ask,
     ToggleCalendar,
     FylgjaSection(u32),
 }
@@ -131,9 +132,9 @@ impl PanelBus {
         let _ = self.0.send(BusMsg::ShowClipboard);
     }
 
-    /// Start recording a question for Sarina; call again to send it.
-    fn ask_sarina(&self) {
-        let _ = self.0.send(BusMsg::AskSarina);
+    /// Start recording a question for the assistant (if one is installed); call again to send it.
+    fn ask(&self) {
+        let _ = self.0.send(BusMsg::Ask);
     }
 
     /// Open the calendar (with the Notification Center pane when that is on), or close it.
@@ -782,8 +783,11 @@ impl State {
         }
     }
 
-    /// The shortcut for asking Sarina by D-Bus (a fallback when the held shortcut is not available): the first call records, the next sends it.
-    fn ask_sarina_key(&mut self) {
+    /// Asking the assistant by D-Bus (a fallback when the held shortcut is not available): the first call records, the next sends it.
+    fn ask_key(&mut self) {
+        if assistant::get().is_none() {
+            return;
+        }
         match self.model.fylgja.voice {
             fylgja::Voice::Listening(_) => self.send_recording(),
             fylgja::Voice::Thinking(_) => {}
@@ -822,7 +826,7 @@ impl State {
                     convo::Press::StartConversation => {
                         // keep recording: it ends when you stop talking. With her voice off there is no spoken back and forth, so one question only.
                         self.vad_mode = true;
-                        self.conv = self.model.conf.sarina_speaks;
+                        self.conv = self.model.conf.assistant_speaks;
                         self.vad = convo::Vad::new();
                         self.conv_misses = 0;
                         if self.conv && self.conv_id.is_none() {
@@ -840,8 +844,8 @@ impl State {
         self.conv = false;
         self.vad_mode = false;
         self.conv_misses = 0;
-        if let (Some(id), Some(dir)) = (self.conv_id.take(), std::env::var_os("XDG_RUNTIME_DIR")) {
-            let _ = std::fs::remove_file(std::path::Path::new(&dir).join("labyrinth-sarina").join(format!("conv-{id}.session")));
+        if let (Some(id), Some(dir)) = (self.conv_id.take(), assistant::get().and_then(|a| a.runtime_dir())) {
+            let _ = std::fs::remove_file(dir.join(format!("conv-{id}.session")));
         }
         self.cancel_voice();
     }
@@ -875,7 +879,7 @@ impl State {
             fylgja::stop_recording(&mut child);
             self.rec_since = None;
             self.model.fylgja.voice = fylgja::Voice::Thinking(String::new());
-            fylgja::ask_sarina(path, self.conv_id.clone(), self.heard_tx.clone(), self.voice_tx.clone());
+            fylgja::ask_assistant(path, self.conv_id.clone(), self.heard_tx.clone(), self.voice_tx.clone());
             self.dirty = true;
         }
     }
@@ -911,8 +915,9 @@ impl State {
             self.conv = false; // a real failure ends the conversation (she says why below)
             self.vad_mode = false;
         }
-        let _ = Command::new("notify-send").args(["-a", "Sarina", "-i", "audio-input-microphone", "Sarina", why]).stdin(std::process::Stdio::null()).spawn().map(|mut c| std::thread::spawn(move || { let _ = c.wait(); }));
-        if self.model.conf.sarina_speaks {
+        let name = assistant::name();
+        let _ = Command::new("notify-send").args(["-a", name, "-i", "audio-input-microphone", name, why]).stdin(std::process::Stdio::null()).spawn().map(|mut c| std::thread::spawn(move || { let _ = c.wait(); }));
+        if self.model.conf.assistant_speaks {
             self.start_speech(why.split(['.', '!', '?']).next().unwrap_or(why));
         }
     }
@@ -922,10 +927,11 @@ impl State {
         self.model.fylgja.voice = fylgja::Voice::Idle;
         self.conv_misses = 0;
         let text = fylgja::spoken_part(reply);
-        if self.model.conf.sarina_speaks {
+        if self.model.conf.assistant_speaks {
             self.start_speech(&text);
         } else {
-            let _ = Command::new("notify-send").args(["-a", "Sarina", "-i", "dialog-information", "Sarina", &text]).stdin(std::process::Stdio::null()).spawn().map(|mut c| std::thread::spawn(move || { let _ = c.wait(); }));
+            let name = assistant::name();
+            let _ = Command::new("notify-send").args(["-a", name, "-i", "dialog-information", name, &text]).stdin(std::process::Stdio::null()).spawn().map(|mut c| std::thread::spawn(move || { let _ = c.wait(); }));
         }
     }
 
@@ -1049,7 +1055,7 @@ impl State {
     /// speaking script has been seen running and is no longer (or never showed up).
     fn speech_level(&mut self) -> f32 {
         let Some(since) = self.speech_since else { return 0.0 };
-        let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR").map(|d| std::path::PathBuf::from(d).join("labyrinth-sarina")) else { return 0.0 };
+        let Some(dir) = assistant::get().and_then(|a| a.runtime_dir()) else { return 0.0 };
         let alive = std::fs::read_to_string(dir.join("speaking.pid")).ok().and_then(|t| t.trim().parse::<u32>().ok()).map(|p| std::path::Path::new(&format!("/proc/{p}")).exists()).unwrap_or(false);
         if alive {
             self.speech_seen = true;
@@ -2196,7 +2202,7 @@ impl State {
             }
             Kind::Voice => {
                 if let Some(v) = self.viz {
-                    voicewave::paint(&mut pix, s, &v, voicewave::palette(self.model.conf.sarina_wave));
+                    voicewave::paint(&mut pix, s, &v, voicewave::palette(self.model.conf.voice_wave));
                 }
                 vec![]
             }
@@ -3260,7 +3266,7 @@ fn main() {
                 match m {
                     BusMsg::ToggleStart => st.toggle_start(),
                     BusMsg::ShowClipboard => st.show_clipboard(),
-                    BusMsg::AskSarina => st.ask_sarina_key(),
+                    BusMsg::Ask => st.ask_key(),
                     BusMsg::ToggleCalendar => st.toggle_calendar(),
                     BusMsg::FylgjaSection(n) => st.show_fylgja_section(n as usize),
                 }
@@ -3460,7 +3466,7 @@ fn main() {
             if let calloop::channel::Event::Msg(r) = event {
                 match r {
                     Ok(t) if !t.is_empty() => st.voice_answer(&t),
-                    Ok(_) => st.voice_failed("Sarina had nothing to say."),
+                    Ok(_) => st.voice_failed(&format!("{} had nothing to say.", assistant::name())),
                     Err(e) => st.voice_failed(&e),
                 }
                 st.dirty = true;
@@ -3486,7 +3492,7 @@ fn main() {
         .expect("voice key channel");
     std::thread::spawn(move || {
         if let Err(e) = voicekey::run(vkey_tx) {
-            eprintln!("yggdrasil-panel: hold-to-talk is not available ({e}); the AskSarina D-Bus call still works");
+            eprintln!("yggdrasil-panel: hold-to-talk is not available ({e}); the Ask D-Bus call still works");
         }
     });
 

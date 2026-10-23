@@ -2,7 +2,7 @@
 //! small card with what is playing; the wheel opens the full notch and moves through its sections;
 //! moving the pointer away closes it. This file reads what the sections show (what is playing,
 //! volumes, load, what was copied, the wallpapers) with the system's own tools, records a spoken
-//! question for Sarina, and draws all of it. The parsing is separate from the commands so it can be
+//! question for the assistant, and draws all of it. The parsing is separate from the commands so it can be
 //! tested.
 
 use std::collections::HashMap;
@@ -26,7 +26,7 @@ const WALLPAPER: usize = 5;
 const WALL_PAGE: usize = 8;
 const MAX_CLIPS: usize = 25;
 
-/// Where the notch is: peeking (the small music card), open on a section, or showing Sarina's voice card.
+/// Where the notch is: peeking (the small music card), open on a section, or showing the assistant's voice card.
 #[derive(Clone, Debug, Default)]
 pub struct FyState {
     pub section: usize,
@@ -34,7 +34,7 @@ pub struct FyState {
     pub open: bool,
     /// Opened by a shortcut: it stays until Esc or a click outside, instead of closing when the pointer leaves.
     pub pinned: bool,
-    /// Sarina's voice card is showing (a question is being recorded, answered or has failed).
+    /// The assistant's voice card is showing (a question is being recorded, answered or has failed).
     pub voice_ui: bool,
     /// Controls: the list of sound outputs is dropped down from the Audio tile.
     pub picker: bool,
@@ -48,7 +48,7 @@ pub enum Voice {
     Idle,
     /// Recording a question, this many seconds so far.
     Listening(u64),
-    /// The recording is with Sarina; what she heard once the words are known (empty before).
+    /// The recording is with the assistant; what it heard once the words are known (empty before).
     Thinking(String),
     Reply(String),
     Failed(String),
@@ -574,7 +574,7 @@ pub fn wallpaper_list() -> Vec<PathBuf> {
         best.map(|b| b.1)
     }
     let mut list = vec![];
-    for dir in ["/usr/share/labyrinth/wallpapers", "/usr/share/wallpapers"] {
+    for dir in yggdrasil_conf::integrations::wallpaper_dirs() {
         if let Ok(rd) = std::fs::read_dir(dir) {
             for e in rd.flatten() {
                 let p = e.path();
@@ -602,12 +602,12 @@ pub fn spawn_thumbs(list: Vec<PathBuf>, size: (u32, u32), into: Arc<Mutex<HashMa
     });
 }
 
-// ---------------------------------------------------------------- Sarina's voice
+// ---------------------------------------------------------------- the assistant's voice (an `assistant` integration)
 
-/// Where a recorded question is kept until Sarina has heard it: private to this user, and gone after.
+/// Where a recorded question is kept until the assistant has heard it: private to this user, and gone after.
 fn voice_dir() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
-    let d = base.join("labyrinth-sarina");
+    let d = base.join("yggdrasil-voice");
     std::fs::create_dir_all(&d).ok()?;
     #[cfg(unix)]
     {
@@ -617,14 +617,20 @@ fn voice_dir() -> Option<PathBuf> {
     Some(d)
 }
 
+fn quiet(mut c: Command) -> Option<Child> {
+    c.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok()
+}
+
 /// Starts recording the microphone (mono, 16 kHz, what speech tools want) to a new file.
 pub fn start_recording() -> Result<(Child, PathBuf), String> {
     let dir = voice_dir().ok_or("Could not make a private folder for the recording.")?;
     let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let path = dir.join(format!("ask-{stamp}.wav"));
     let child = Command::new("pw-record").args(["--rate", "16000", "--channels", "1", "--format", "s16"]).arg(&path).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|_| "Recording needs PipeWire (pw-record), which is not installed.".to_string())?;
-    // the model loads while the question is being said, so the answer does not wait for it
-    let _ = Command::new("labyrinth-sarina-warm").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
+    // the assistant may wake its model while the question is being said, so the answer does not wait for it
+    if let Some(w) = crate::assistant::get().and_then(|a| a.warm()) {
+        quiet(w);
+    }
     Ok((child, path))
 }
 
@@ -634,7 +640,7 @@ pub fn stop_recording(child: &mut Child) {
     let _ = child.wait();
 }
 
-/// What Sarina says aloud for a reply: the answer without the `Heard: "..."` line the card shows above it.
+/// What is said aloud for a reply: the answer without the `Heard: "..."` line the card shows above it.
 pub fn spoken_part(reply: &str) -> String {
     let mut lines = reply.lines();
     let first = lines.clone().next().unwrap_or("");
@@ -644,15 +650,16 @@ pub fn spoken_part(reply: &str) -> String {
     lines.collect::<Vec<_>>().join("\n").trim().to_string()
 }
 
-/// Says the answer aloud (`labyrinth-sarina-speak`: a local Piper voice), in the background. A missing voice just means silence.
+/// Says the answer aloud with the assistant's voice, in the background. No voice just means silence.
 pub fn speak(text: &str) {
+    let Some(mut c) = crate::assistant::get().and_then(|a| a.speak()) else { return };
     if text.is_empty() {
         return;
     }
     let text = text.to_string();
     std::thread::spawn(move || {
         use std::io::Write;
-        if let Ok(mut c) = Command::new("labyrinth-sarina-speak").stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
+        if let Ok(mut c) = c.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
             if let Some(mut si) = c.stdin.take() {
                 let _ = si.write_all(text.as_bytes());
             }
@@ -661,13 +668,20 @@ pub fn speak(text: &str) {
     });
 }
 
-/// Stops whatever Sarina is saying.
+/// Stops whatever the assistant is saying.
 pub fn stop_speaking() {
-    let _ = Command::new("labyrinth-sarina-speak").arg("--stop").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map(|mut c| std::thread::spawn(move || { let _ = c.wait(); }));
+    if let Some(mut c) = crate::assistant::get().and_then(|a| a.speak()) {
+        c.arg("--stop");
+        if let Some(mut ch) = quiet(c) {
+            std::thread::spawn(move || {
+                let _ = ch.wait();
+            });
+        }
+    }
 }
 
-/// Gives the recording to Sarina (`labyrinth-sarina-ask`) and reports her reply or why there is none.
-pub fn ask_sarina(wav: PathBuf, conversation: Option<String>, heard: calloop::channel::Sender<String>, done: calloop::channel::Sender<Result<String, String>>) {
+/// Gives the recording to the assistant and reports its reply or why there is none.
+pub fn ask_assistant(wav: PathBuf, conversation: Option<String>, heard: calloop::channel::Sender<String>, done: calloop::channel::Sender<Result<String, String>>) {
     std::thread::spawn(move || {
         let r = run_ask(&wav, conversation.as_deref(), &heard);
         let _ = std::fs::remove_file(&wav); // the question is not kept
@@ -675,17 +689,17 @@ pub fn ask_sarina(wav: PathBuf, conversation: Option<String>, heard: calloop::ch
     });
 }
 
-/// Runs `labyrinth-sarina-ask`, passing on its first line (`Heard: "..."`) as soon as it is printed, so the card can show
-/// what was understood while Sarina is still working on the answer.
+/// Runs the assistant's `ask` program, passing on its first line (`Heard: "..."`) as soon as it is printed, so the card can show
+/// what was understood while the answer is still being worked on. A conversation's turns share YGGDRASIL_CONVERSATION.
 fn run_ask(wav: &PathBuf, conversation: Option<&str>, heard: &calloop::channel::Sender<String>) -> Result<String, String> {
     use std::io::{BufRead, BufReader};
-    let mut cmd = Command::new("labyrinth-sarina-ask");
-    cmd.arg(wav);
-    cmd.env("LABYRINTH_TONE", if yggdrasil_conf::PanelConf::load().sarina_tone { "1" } else { "0" });
+    let name = crate::assistant::name();
+    let a = crate::assistant::get().ok_or_else(|| "No assistant is installed.".to_string())?;
+    let mut cmd = a.ask(wav);
     if let Some(id) = conversation {
-        cmd.env("LABYRINTH_CONVERSATION", id); // her session continues across the turns of a conversation
+        cmd.env("YGGDRASIL_CONVERSATION", id);
     }
-    let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|_| "labyrinth-sarina-ask is missing from this system.".to_string())?;
+    let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|_| format!("{name} is not installed properly (its program is missing)."))?;
     let mut text = String::new();
     if let Some(out) = child.stdout.take() {
         for (i, line) in BufReader::new(out).lines().map_while(Result::ok).enumerate() {
@@ -698,7 +712,7 @@ fn run_ask(wav: &PathBuf, conversation: Option<&str>, heard: &calloop::channel::
             text.push('\n');
         }
     }
-    let status = child.wait().map_err(|_| "Sarina could not answer.".to_string())?;
+    let status = child.wait().map_err(|_| format!("{name} could not answer."))?;
     let text = text.trim().to_string();
     if status.success() {
         return Ok(text);
@@ -709,7 +723,7 @@ fn run_ask(wav: &PathBuf, conversation: Option<&str>, heard: &calloop::channel::
         let _ = e.read_to_string(&mut err);
     }
     let msg = if text.is_empty() { err.trim().to_string() } else { text };
-    Err(if msg.is_empty() { "Sarina could not answer.".to_string() } else { msg })
+    Err(if msg.is_empty() { format!("{name} could not answer.") } else { msg })
 }
 
 // ---------------------------------------------------------------- acting
@@ -1109,7 +1123,7 @@ pub fn paint(pix: &mut Pixmap, s: f32, m: &Model, st: &FyState, slide: f32, poin
         paint::draw_text(pix, font, size * s, (cx + cw / 2.0) * s - tw / 2.0, y * s, c, text);
     };
 
-    // ---- Sarina's voice card
+    // ---- the assistant's voice card
     if st.voice_ui && d.voice != Voice::Idle {
         match &d.voice {
             Voice::Listening(secs) => {
@@ -1127,13 +1141,13 @@ pub fn paint(pix: &mut Pixmap, s: f32, m: &Model, st: &FyState, slide: f32, poin
             }
             Voice::Thinking(heard) => {
                 paint::fill_circle(pix, (x0 + 14.0) * s, (cy + 40.0) * s, 7.0 * s, paint::accent(255));
-                paint::draw_text(pix, &fonts.bold, 15.0 * s, (x0 + 42.0) * s, (cy + 40.0) * s, WHITE, "Sarina is thinking…");
+                paint::draw_text(pix, &fonts.bold, 15.0 * s, (x0 + 42.0) * s, (cy + 40.0) * s, WHITE, &format!("{} is thinking…", crate::assistant::name()));
                 if !heard.is_empty() {
                     paint::draw_text(pix, &fonts.regular, 12.5 * s, x0 * s, (cy + 76.0) * s, DIM, &fit(&fonts.regular, 12.5 * s, heard, inner * s));
                 }
             }
             Voice::Reply(text) => {
-                paint::draw_text(pix, &fonts.bold, 13.0 * s, x0 * s, (cy + 26.0) * s, paint::accent(255), "Sarina");
+                paint::draw_text(pix, &fonts.bold, 13.0 * s, x0 * s, (cy + 26.0) * s, paint::accent(255), crate::assistant::name());
                 let lines = wrap(&fonts.regular, 13.0 * s, text, inner * s);
                 let rows = 8;
                 for (i, l) in lines.iter().take(rows).enumerate() {
@@ -1142,7 +1156,7 @@ pub fn paint(pix: &mut Pixmap, s: f32, m: &Model, st: &FyState, slide: f32, poin
                 }
             }
             Voice::Failed(msg) => {
-                paint::draw_text(pix, &fonts.bold, 13.0 * s, x0 * s, (cy + 26.0) * s, RED, "Sarina could not be asked");
+                paint::draw_text(pix, &fonts.bold, 13.0 * s, x0 * s, (cy + 26.0) * s, RED, &format!("{} could not be asked", crate::assistant::name()));
                 for (i, l) in wrap(&fonts.regular, 12.5 * s, msg, inner * s).iter().take(4).enumerate() {
                     paint::draw_text(pix, &fonts.regular, 12.5 * s, x0 * s, (cy + 52.0 + 19.0 * i as f32) * s, DIM, l);
                 }
