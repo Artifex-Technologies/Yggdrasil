@@ -214,6 +214,11 @@ struct App {
     boot_info: Option<(std::time::Instant, serde_json::Value)>,
     boot_pic: String,
     splash_pic: String,
+    /// Bluetooth > Add a device: searching until, what was found (and when it was last asked), the one being paired.
+    bt_scan_until: Option<std::time::Instant>,
+    bt_found: (std::time::Instant, Vec<(String, String)>),
+    bt_pairing: Option<String>,
+    bt_pairing_done: std::sync::Arc<std::sync::atomic::AtomicBool>,
     boot_busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ws_conf: workspaces::Conf,
     app_sort: usize,
@@ -301,6 +306,10 @@ impl App {
             boot_info: None,
             boot_pic: String::new(),
             splash_pic: String::new(),
+            bt_scan_until: None,
+            bt_found: (std::time::Instant::now(), vec![]),
+            bt_pairing: None,
+            bt_pairing_done: Default::default(),
             boot_busy: Default::default(),
             ws_conf: workspaces::load(),
             app_sort: 0,
@@ -1228,10 +1237,64 @@ impl App {
                 self.change(ctx, move || sys::act("bluetoothctl", &[verb, &mac]));
             }
             ui.add_space(8.0);
-            if ui::action(ui, pal, "Add a device…").clicked() {
-                sys::spawn("bluedevil-wizard", &[]);
-            }
+            self.bt_add(ui, pal, ctx);
         }
+    }
+
+    /// Bluetooth > Add a device: looks for devices nearby for 20 seconds and lists them as they turn up; Pair pairs, trusts
+    /// and connects one (a code to compare comes up in Yggdrasil's own box).
+    fn bt_add(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
+        let searching = self.bt_scan_until.map(|t| std::time::Instant::now() < t).unwrap_or(false);
+        if self.bt_scan_until.is_none() {
+            if ui::action(ui, pal, "Add a device…").on_hover_text("Put the device in pairing mode first").clicked() {
+                sys::bt_scan(20);
+                self.bt_scan_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(20));
+                self.bt_found = (std::time::Instant::now(), vec![]);
+            }
+            return;
+        }
+        if self.bt_found.0.elapsed() > std::time::Duration::from_millis(1500) {
+            self.bt_found = (std::time::Instant::now(), sys::bt_nearby());
+        }
+        let mut pair: Option<String> = None;
+        ui::group(ui, pal, Some(if searching { "Looking for devices nearby…" } else { "Devices nearby" }), |ui| {
+            for (i, (mac, name)) in self.bt_found.1.iter().enumerate() {
+                ui::row(ui, pal, i == 0, name, Some(mac), |ui| {
+                    if self.bt_pairing.as_deref() == Some(mac.as_str()) {
+                        ui.label(RichText::new("Pairing…").color(pal.dim));
+                    } else if ui::action(ui, pal, "Pair").clicked() {
+                        pair = Some(mac.clone());
+                    }
+                });
+            }
+            if self.bt_found.1.is_empty() {
+                ui.label(RichText::new(if searching { "Nothing yet. Put the device in pairing mode." } else { "Nothing found. Is the device in pairing mode?" }).color(pal.dim));
+            }
+        });
+        ui.horizontal(|ui| {
+            if !searching && ui::quiet(ui, pal, "Look again").clicked() {
+                sys::bt_scan(20);
+                self.bt_scan_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(20));
+            }
+            if ui::quiet(ui, pal, "Done").clicked() {
+                self.bt_scan_until = None;
+                self.bt_found.1.clear();
+            }
+        });
+        if let Some(mac) = pair {
+            self.bt_pairing = Some(mac.clone());
+            let busy = self.bt_pairing_done.clone();
+            busy.store(false, std::sync::atomic::Ordering::Release);
+            self.change(ctx, move || {
+                let r = sys::bt_pair(&mac);
+                busy.store(true, std::sync::atomic::Ordering::Release);
+                r
+            });
+        }
+        if self.bt_pairing_done.load(std::sync::atomic::Ordering::Acquire) {
+            self.bt_pairing = None;
+        }
+        ctx.request_repaint_after(std::time::Duration::from_millis(700));
     }
 
     fn page_displays(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {

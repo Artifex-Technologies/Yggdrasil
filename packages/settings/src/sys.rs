@@ -355,6 +355,48 @@ pub fn bt_list(text: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Devices found nearby that are not paired yet (bluetoothctl lists both; nameless ones, shown only as their address, are left
+/// out: nothing to recognise them by).
+pub fn bt_nearby() -> Vec<(String, String)> {
+    let paired: Vec<String> = bt_list(&run("bluetoothctl", &["devices", "Paired"]).unwrap_or_default()).into_iter().map(|(m, _)| m).collect();
+    bt_list(&run("bluetoothctl", &["devices"]).unwrap_or_default())
+        .into_iter()
+        .filter(|(m, n)| !paired.contains(m) && !n.is_empty() && n.replace('-', ":") != *m)
+        .collect()
+}
+
+/// Looks for devices nearby for `secs` seconds (in the background; bt_nearby lists what turned up).
+pub fn bt_scan(secs: u32) {
+    if let Ok(mut c) = Command::new("bluetoothctl").args(["--timeout", &secs.to_string(), "scan", "on"]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn() {
+        std::thread::spawn(move || {
+            let _ = c.wait();
+        });
+    }
+}
+
+/// The BlueZ object of a device: /org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF (the first adapter).
+pub fn bt_path(mac: &str) -> Option<String> {
+    let adapter = std::fs::read_dir("/sys/class/bluetooth").ok()?.flatten().map(|e| e.file_name().to_string_lossy().to_string()).filter(|n| n.starts_with("hci") && !n.contains(':')).min()?;
+    (mac.len() == 17 && mac.chars().all(|c| c.is_ascii_hexdigit() || c == ':')).then(|| format!("/org/bluez/{adapter}/dev_{}", mac.replace(':', "_")))
+}
+
+/// Pairs with a device, trusts it (it may connect by itself later) and connects. A code to compare or type is asked by
+/// Yggdrasil's own agent (yggdrasil-polkit is BlueZ's default agent), not here.
+pub fn bt_pair(mac: &str) -> Result<(), String> {
+    let path = bt_path(mac).ok_or("not a device address")?;
+    let ask = |args: &[&str]| -> Result<(), String> {
+        let o = Command::new("busctl").args(["--timeout=90"]).args(args).output().map_err(|e| e.to_string())?;
+        if o.status.success() {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&o.stderr).trim().to_string())
+        }
+    };
+    ask(&["call", "org.bluez", &path, "org.bluez.Device1", "Pair"]).map_err(|e| if e.contains("AlreadyExists") { String::new() } else { format!("Pairing did not work: {e}") }).or_else(|e| if e.is_empty() { Ok(()) } else { Err(e) })?;
+    ask(&["set-property", "org.bluez", &path, "org.bluez.Device1", "Trusted", "b", "true"])?;
+    ask(&["call", "org.bluez", &path, "org.bluez.Device1", "Connect"]).map_err(|e| format!("Paired, but it did not connect yet: {e}"))
+}
+
 /// `bluetoothctl info MAC`: (connected, icon kind, battery %).
 pub fn bt_info(text: &str) -> (bool, String, Option<u8>) {
     let mut connected = false;
@@ -1058,6 +1100,15 @@ mod tests {
         assert_eq!(d.len(), 2);
         assert_eq!(d[0].connection, "Wired connection 1");
         assert_eq!(d[1].kind, "wifi");
+    }
+
+    #[test]
+    fn bluetooth_device_paths() {
+        if std::path::Path::new("/sys/class/bluetooth/hci0").exists() {
+            assert_eq!(bt_path("AA:BB:CC:DD:EE:0F").as_deref(), Some("/org/bluez/hci0/dev_AA_BB_CC_DD_EE_0F"));
+        }
+        assert_eq!(bt_path("not a mac"), None);
+        assert_eq!(bt_path("AA:BB:CC:DD:EE:0F; rm"), None);
     }
 
     #[test]

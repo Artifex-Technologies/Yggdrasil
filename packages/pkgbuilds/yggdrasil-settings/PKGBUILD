@@ -14,7 +14,6 @@ depends=('gcc-libs' 'libxkbcommon' 'wayland' 'vulkan-icd-loader' 'libglvnd' 'fon
          'networkmanager' 'bluez-utils' 'libpulse' 'libkscreen' 'kconfig' 'power-profiles-daemon' 'pciutils' 'python' 'polkit')
 optdepends=('ufw: firewall page'
             'systemsettings: "More settings" opens KDE System Settings'
-            'bluedevil: pairing new Bluetooth devices'
             'plymouth: the boot screen (Appearance > Boot screen)'
             'python-pillow: your own picture as the boot screen')
 makedepends=('cargo')
