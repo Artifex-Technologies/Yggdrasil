@@ -86,6 +86,8 @@ hl.config({
     -- if the lock screen ever crashes, a new one may take over the locked screen (yggdrasil-idle starts it again) instead of
     -- Hyprland's "lock screen died" warning staying up
     allow_session_lock_restore = true,
+    -- XDG_CURRENT_DESKTOP is Yggdrasil on purpose (programs and portals follow it): no warning about it being set from outside
+    disable_xdg_env_checks = true,
   },
 
   cursor = {
