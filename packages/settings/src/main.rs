@@ -695,6 +695,11 @@ impl App {
             self.boot_info = Some((std::time::Instant::now(), v));
         }
         let info = self.boot_info.as_ref().map(|(_, v)| v.clone()).unwrap_or_default();
+        if info.is_null() && busy {
+            ui::group(ui, pal, None, |ui| ui::row(ui, pal, true, "Changing the boot screen", Some("The start-up image is rebuilt, which takes about a minute..."), |_| {}));
+            ctx.request_repaint_after(std::time::Duration::from_millis(500));
+            return;
+        }
         if info.is_null() {
             ui::group(ui, pal, None, |ui| ui::row(ui, pal, true, "The boot screen cannot be changed here", Some("Plymouth is not installed"), |_| {}));
             return;
