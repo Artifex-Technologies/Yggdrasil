@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Yggdrasil
+Comment=Yggdrasil's own desktop (on Hyprland)
+Exec=/usr/bin/yggdrasil-session
+Type=Application
+DesktopNames=Yggdrasil

@@ -8,6 +8,8 @@
 #   fylgja [N]       Fylgja on section N (0 Controls, 1 Today, 2 Stats, 3 Clipboard, 4 Notifications, 5 Wallpaper, 6 Power)
 #   clipboard        Fylgja on the clipboard history      (bind to Super+V)
 #   ask              start or send a spoken question to the assistant   (bind to Super+S)
+#   ask-press        the hold-to-talk key went down   } bind both where the compositor reports press and release:
+#   ask-release      the hold-to-talk key came up     } tap for a conversation, hold for one question
 # Hyprland example (hyprland.conf):  bind = SUPER, S, exec, yggdrasil-panelctl ask
 call() { busctl --user call org.yggdrasil.Panel /Panel org.yggdrasil.Panel "$@" >/dev/null; }
 case "${1:-}" in
@@ -17,5 +19,7 @@ case "${1:-}" in
   fylgja) call ShowFylgja u "${2:-0}" ;;
   clipboard) call ShowClipboard ;;
   ask) call Ask ;;
-  *) sed -n '2,12p' "$0" >&2; exit 2 ;;
+  ask-press) call AskPress ;;
+  ask-release) call AskRelease ;;
+  *) sed -n '2,14p' "$0" >&2; exit 2 ;;
 esac

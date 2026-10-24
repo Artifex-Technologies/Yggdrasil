@@ -4,6 +4,12 @@
 //! hand-edited file can never break the panel.
 
 pub mod appearance;
+
+/// Yggdrasil's own session (on Hyprland, `yggdrasil-session`), rather than another desktop's (Plasma) with Yggdrasil's panel in it:
+/// then nothing else draws the wallpaper, locks the screen or answers the shortcuts.
+pub fn own_session() -> bool {
+    std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|d| d.split(':').any(|x| x == "Yggdrasil"))
+}
 pub mod dirs;
 pub mod integrations;
 

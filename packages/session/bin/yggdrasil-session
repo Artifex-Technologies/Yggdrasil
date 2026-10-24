@@ -1,0 +1,22 @@
+#!/bin/bash
+# yggdrasil-session: Yggdrasil's own desktop session, on Hyprland (the compositor chosen 2026-10-23, docs/COMPOSITOR.md).
+# The login screen starts it (the "Yggdrasil" entry), or a text console: sign in on Ctrl+Alt+F3 and type yggdrasil-session.
+#
+# Hyprland draws the windows; everything you see and use is Yggdrasil's: the panel, dock and Fylgja, the lock screen, the
+# notifications, the password boxes, Settings, Minos. Your own Hyprland additions go in ~/.config/yggdrasil/hyprland.lua.
+set -u
+export XDG_CURRENT_DESKTOP=Yggdrasil XDG_SESSION_DESKTOP=Yggdrasil XDG_SESSION_TYPE=wayland
+# toolkits: Wayland first, X11 (Xwayland) for the rest
+export QT_QPA_PLATFORM="wayland;xcb" GDK_BACKEND="wayland,x11,*" SDL_VIDEODRIVER="wayland,x11" CLUTTER_BACKEND=wayland
+export MOZ_ENABLE_WAYLAND=1 ELECTRON_OZONE_PLATFORM_HINT=auto _JAVA_AWT_WM_NONREPARENTING=1
+export QT_WAYLAND_DISABLE_WINDOWDECORATION=0
+if [[ -e /proc/driver/nvidia/version ]]; then
+  export LIBVA_DRIVER_NAME=nvidia __GLX_VENDOR_LIBRARY_NAME=nvidia NVD_BACKEND=direct
+fi
+conf=/usr/share/yggdrasil/hyprland/yggdrasil.lua
+[[ -n ${YGGDRASIL_HYPRLAND_CONFIG:-} ]] && conf=$YGGDRASIL_HYPRLAND_CONFIG
+# a session bus when there is none yet (a text console); the login screen provides one
+if [[ -z ${DBUS_SESSION_BUS_ADDRESS:-} ]]; then
+  exec dbus-run-session -- Hyprland --config "$conf"
+fi
+exec Hyprland --config "$conf"

@@ -1,0 +1,21 @@
+# Yggdrasil's own desktop session: Hyprland with Yggdrasil's config (built from packages/session in this repository).
+pkgname=yggdrasil-session
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Yggdrasil's own desktop session, on Hyprland"
+arch=('any')
+url="https://github.com/Artifex-Technologies/Yggdrasil"
+license=('MIT')
+depends=('hyprland' 'xdg-desktop-portal-hyprland' 'yggdrasil-panel' 'yggdrasil-idle' 'yggdrasil-lock' 'yggdrasil-polkit' 'yggdrasil-portal'
+         'python' 'grim' 'slurp' 'wl-clipboard' 'libnotify' 'xdg-user-dirs')
+optdepends=('ghostty: the terminal on Super+Return' 'btop: running programs on Ctrl+Shift+Esc')
+
+_src="$startdir/../../session"
+
+package() {
+  install -Dm755 "$_src/bin/yggdrasil-session" "$pkgdir/usr/bin/yggdrasil-session"
+  install -Dm755 "$_src/bin/yggdrasil-snap" "$pkgdir/usr/bin/yggdrasil-snap"
+  install -Dm644 "$_src/hyprland/yggdrasil.lua" "$pkgdir/usr/share/yggdrasil/hyprland/yggdrasil.lua"
+  # the login screen lists it as "Yggdrasil"
+  install -Dm644 "$_src/yggdrasil.desktop" "$pkgdir/usr/share/wayland-sessions/yggdrasil.desktop"
+}

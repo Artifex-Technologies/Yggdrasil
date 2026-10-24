@@ -16,7 +16,9 @@
 
 mod dim;
 mod inhibit;
+mod lock;
 mod policy;
+mod power;
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -82,6 +84,8 @@ fn context() -> String {
 pub struct App {
     conf: Config,
     dimmer: Option<dim::Dimmer>,
+    /// Display power through the compositor (None: it has no output-power protocol, kscreen-doctor is used).
+    power: Option<power::Power>,
     globals: GlobalList,
     qh: QueueHandle<App>,
     /// The largest mark that has fired since the user was last active, and when.
@@ -109,6 +113,9 @@ impl Dispatch<ExtIdleNotificationV1, u32> for App {
                 // every mark reports its own resume; say it once, for the longest one that had fired
                 if let Some(d) = app.dimmer.as_mut() {
                     d.hide();
+                }
+                if let Some(p) = app.power.as_mut().filter(|p| p.off) {
+                    p.set(true);
                 }
                 if let Some((m, _)) = app.longest.take() {
                     log(&format!("active again (had been idle {}s or more)  {}", m, context()));
@@ -140,9 +147,12 @@ impl App {
             Step::Lock => {
                 run("loginctl", &["lock-session"]);
             }
-            Step::DisplayOff => {
-                run("kscreen-doctor", &["--dpms", "off"]);
-            }
+            Step::DisplayOff => match self.power.as_mut() {
+                Some(p) => p.set(false),
+                None => {
+                    run("kscreen-doctor", &["--dpms", "off"]);
+                }
+            },
             Step::Suspend => {
                 run("systemctl", &["suspend"]);
             }
@@ -166,6 +176,8 @@ fn read_conf() -> (Config, Option<std::time::SystemTime>) {
 fn main() {
     // "please don't sleep" requests from programs, as logind locks (waits while KDE's PowerDevil still answers them)
     inhibit::spawn();
+    // in Yggdrasil's own session, the lock requests are ours to answer
+    lock::spawn();
     let (conf, mut conf_time) = read_conf();
     let conn = match Connection::connect_to_env() {
         Ok(c) => c,
@@ -193,7 +205,8 @@ fn main() {
     if dimmer.is_none() {
         log("dimming is not available here (needs layer-shell, wp-viewporter, wl_shm)");
     }
-    let mut app = App { conf, dimmer, globals, qh: qh.clone(), longest: None, done: HashMap::new() };
+    let power = power::Power::new(&globals, &qh);
+    let mut app = App { conf, dimmer, power, globals, qh: qh.clone(), longest: None, done: HashMap::new() };
     let mut last_check = Instant::now();
     loop {
         if queue.dispatch_pending(&mut app).is_err() || conn.flush().is_err() {

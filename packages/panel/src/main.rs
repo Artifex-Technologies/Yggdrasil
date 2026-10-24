@@ -118,6 +118,8 @@ enum BusMsg {
     ToggleStart,
     ShowClipboard,
     Ask,
+    /// Hold-to-talk from a compositor that reports the key going down and up (Hyprland's press and release bindings).
+    AskKey(bool),
     ToggleCalendar,
     FylgjaSection(u32),
 }
@@ -137,6 +139,16 @@ impl PanelBus {
     /// Start recording a question for the assistant (if one is installed); call again to send it.
     fn ask(&self) {
         let _ = self.0.send(BusMsg::Ask);
+    }
+
+    /// The hold-to-talk key went down (for compositors that report press and release: bind both, AskPress then AskRelease).
+    fn ask_press(&self) {
+        let _ = self.0.send(BusMsg::AskKey(true));
+    }
+
+    /// The hold-to-talk key came up.
+    fn ask_release(&self) {
+        let _ = self.0.send(BusMsg::AskKey(false));
     }
 
     /// Open the calendar (with the Notification Center pane when that is on), or close it.
@@ -573,7 +585,7 @@ impl State {
         let dock_out = self.dock_output();
         let mut sorted = ready;
         sorted.sort_by(|a, b| a.1.cmp(&b.1));
-        let own_wall = self.model.conf.own_wallpaper && yggdrasil_conf::wallpaper().is_some();
+        let own_wall = (self.model.conf.own_wallpaper || yggdrasil_conf::own_session()) && yggdrasil_conf::wallpaper().is_some();
         for (key, name) in sorted {
             let slim = self.layout.tiling.contains(&name);
             if own_wall {
@@ -1760,7 +1772,7 @@ impl State {
             }
             FAct::Notif(a) => self.notif_act(a),
             FAct::Wall(p) => {
-                if self.model.conf.own_wallpaper {
+                if self.model.conf.own_wallpaper || yggdrasil_conf::own_session() {
                     let _ = yggdrasil_conf::set_wallpaper(&p.display().to_string());
                     for s in &mut self.surfs {
                         s.stamp = None; // redraw the wallpaper with the new picture
@@ -3267,6 +3279,11 @@ fn main() {
                     BusMsg::ToggleStart => st.toggle_start(),
                     BusMsg::ShowClipboard => st.show_clipboard(),
                     BusMsg::Ask => st.ask_key(),
+                    BusMsg::AskKey(down) => {
+                        if assistant::get().is_some() {
+                            st.voice_key(if down { voicekey::Key::Down } else { voicekey::Key::Up });
+                        }
+                    }
                     BusMsg::ToggleCalendar => st.toggle_calendar(),
                     BusMsg::FylgjaSection(n) => st.show_fylgja_section(n as usize),
                 }

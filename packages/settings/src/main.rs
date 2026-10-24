@@ -695,10 +695,15 @@ impl App {
         }
         ui::group(ui, pal, None, |ui| {
             ui.add_space(6.0);
-            // While KWin draws the screen, its own lock screen is the one shown (KWin lacks the standard session-lock protocol): say so plainly
+            // While KWin draws the screen, its own lock screen is the one shown (KWin lacks the standard session-lock protocol): say so plainly.
+            // In Yggdrasil's own session (on Hyprland) the choice is the lock screen.
+            if yggdrasil_conf::own_session() {
+                ui.label(RichText::new("Pick how the lock screen looks (Super+L locks the screen).").color(pal.dim));
+            } else {
             ui::row(ui, pal, true, "Not in use yet", Some("The screen is still locked by KDE's lock screen: the current window manager (KWin) cannot show another one. Your choice is kept and takes over when Yggdrasil's own compositor replaces KWin"), |ui| {
                 ui.label(RichText::new("waiting").color(pal.amber));
             });
+            }
             ui.add_space(6.0);
         });
         for (id, name, about) in DESIGNS {
@@ -1471,7 +1476,7 @@ impl App {
         }
         if let Some(p) = wallpaper {
             // when the desktop draws the wallpaper itself the panel shows the picture named in ~/.config/yggdrasil/wallpaper
-            let own = yggdrasil_conf::PanelConf::load().own_wallpaper;
+            let own = yggdrasil_conf::PanelConf::load().own_wallpaper || yggdrasil_conf::own_session();
             self.change(ctx, move || if own { yggdrasil_conf::set_wallpaper(&p) } else { sys::act("plasma-apply-wallpaperimage", &[&p]) });
         }
         if brand_build {

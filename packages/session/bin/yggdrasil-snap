@@ -1,0 +1,27 @@
+#!/bin/bash
+# yggdrasil-snap left|right|top|bottom: put the focused window on that half of its screen, leaving room for the panel and dock
+# (their reserved space). Windows float in Yggdrasil's session, so this is how Super+Left/Right work, as on Windows.
+set -u
+side=${1:-}
+case $side in left|right|top|bottom) ;; *) echo "usage: yggdrasil-snap left|right|top|bottom" >&2; exit 2 ;; esac
+read -r x y w h < <(hyprctl -j monitors | python3 -I -c '
+import json, sys
+for m in json.load(sys.stdin):
+    if m.get("focused"):
+        s = m.get("scale") or 1
+        l, t, r, b = (m.get("reserved") or [0, 0, 0, 0])[:4]
+        tr = m.get("transform", 0) % 2
+        W, H = (m["height"], m["width"]) if tr else (m["width"], m["height"])
+        print(int(m["x"] + l), int(m["y"] + t), int(W / s - l - r), int(H / s - t - b))
+        break
+')
+[[ -n ${w:-} ]] || exit 1
+case $side in
+  left) nx=$x ny=$y nw=$((w / 2)) nh=$h ;;
+  right) nx=$((x + w - w / 2)) ny=$y nw=$((w / 2)) nh=$h ;;
+  top) nx=$x ny=$y nw=$w nh=$((h / 2)) ;;
+  bottom) nx=$x ny=$((y + h - h / 2)) nw=$w nh=$((h / 2)) ;;
+esac
+# resizing keeps a window centred, so the size first, then the place
+hyprctl dispatch "hl.dsp.window.resize({ x = $nw, y = $nh })" >/dev/null
+hyprctl dispatch "hl.dsp.window.move({ x = $nx, y = $ny })" >/dev/null
