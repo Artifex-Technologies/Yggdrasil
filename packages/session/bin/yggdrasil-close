@@ -1,0 +1,20 @@
+#!/bin/bash
+# yggdrasil-close: closes the focused window (Super+Q, Alt+F4, Super+W), except for programs that should keep running in the
+# background: their window goes to the hidden "minimized" workspace instead (as Super+Down does), so music keeps playing and
+# Fylgja keeps showing what plays. Click the program in the dock to bring it back; quit it from its own menu.
+#
+# The list: ~/.config/yggdrasil/keep-running, one window class per line (# comments). Without the file: Spotify.
+set -u
+list=${XDG_CONFIG_HOME:-$HOME/.config}/yggdrasil/keep-running
+class=$(hyprctl -j activewindow | python3 -I -c 'import json,sys
+try: print(json.load(sys.stdin).get("class", ""))
+except Exception: print("")')
+keep() {
+  if [[ -f $list ]]; then sed 's/#.*//' "$list" | tr -d ' \t' | grep -v '^$'
+  else echo spotify
+  fi
+}
+if [[ -n $class ]] && keep | grep -qixF -- "$class"; then
+  exec hyprctl dispatch 'hl.dsp.window.move({ workspace = "special:minimized", follow = false })' >/dev/null
+fi
+exec hyprctl dispatch 'hl.dsp.window.close()' >/dev/null
