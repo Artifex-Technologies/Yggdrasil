@@ -414,8 +414,59 @@ fn cached_state(rel: &Path, size: u64) -> Avail {
 /// Folder states worked out in the background: the result and when, or None while it is being worked out.
 static FOLDERS: std::sync::Mutex<Option<std::collections::HashMap<PathBuf, Option<(std::time::Instant, Option<Avail>)>>>> = std::sync::Mutex::new(None);
 
-/// A folder under the Proton Drive mount: failed or syncing at once from the upload queue; otherwise from its files, worked out in the
-/// background (None until then, and for very big folders) and kept for 30 seconds.
+/// Folders downloaded with "Download to this computer" and how many files they had then:
+/// ~/.local/state/yggdrasil/minos-downloaded.json, {"/home/me/ProtonDrive/Photos": 120, ...}.
+fn downloaded_path() -> Option<PathBuf> {
+    Some(dirs::state_dir().or_else(|| dirs::home_dir().map(|h| h.join(".local/state")))?.join("yggdrasil").join("minos-downloaded.json"))
+}
+
+fn downloaded() -> std::collections::BTreeMap<String, usize> {
+    downloaded_path().and_then(|p| crate::compat::read_to_string(&p)).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+}
+
+fn remember_downloaded(dir: &Path, files: usize) {
+    let Some(p) = downloaded_path() else { return };
+    let mut m = downloaded();
+    m.insert(dir.to_string_lossy().into_owned(), files);
+    if let Some(d) = p.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    let _ = std::fs::write(&p, serde_json::to_vec_pretty(&m).unwrap_or_default());
+}
+
+/// How many files under `dir` (inside the cache) rclone holds on this computer: a walk of the local cache only, never of the
+/// cloud (walking the mount fetches every folder from Proton, a minute for a big one, and held up everything else).
+fn cached_files(cache_dir: &Path) -> usize {
+    let mut n = 0;
+    let mut todo = vec![cache_dir.to_path_buf()];
+    while let Some(d) = todo.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        for e in rd.flatten() {
+            match e.file_type() {
+                Ok(t) if t.is_dir() => todo.push(e.path()),
+                Ok(t) if t.is_file() => n += 1,
+                _ => {}
+            }
+        }
+        if n > 100_000 {
+            break;
+        }
+    }
+    n
+}
+
+/// A folder's state from what is on this computer: on it when it was downloaded whole and its files are all still in the
+/// cache, partly when some of it is, else only in the cloud.
+pub fn folder_state(downloaded_files: Option<usize>, cached: usize) -> Avail {
+    match downloaded_files {
+        Some(want) if cached >= want => Avail::Local,
+        _ if cached > 0 => Avail::Partial,
+        _ => Avail::Cloud,
+    }
+}
+
+/// A folder under the Proton Drive mount: failed or syncing at once from the upload queue; otherwise from rclone's cache on this
+/// computer (worked out in the background, None until then) and kept for 10 seconds.
 pub fn folder_availability(drive_root: &Path, dir: &Path) -> Option<Avail> {
     use std::time::Duration;
     let rel = dir.strip_prefix(drive_root).ok()?;
@@ -432,12 +483,12 @@ pub fn folder_availability(drive_root: &Path, dir: &Path) -> Option<Avail> {
     let mut g = FOLDERS.lock().ok()?;
     let map = g.get_or_insert_with(Default::default);
     match map.get(dir) {
-        Some(Some((t, a))) if t.elapsed() < Duration::from_secs(30) => return *a,
+        Some(Some((t, a))) if t.elapsed() < Duration::from_secs(10) => return *a,
         Some(None) => return None, // being worked out
         Some(Some((_, a))) => {
             let a = *a;
             map.insert(dir.to_path_buf(), None);
-            spawn_folder_check(drive_root.to_path_buf(), dir.to_path_buf());
+            spawn_folder_check(rel.to_path_buf(), dir.to_path_buf());
             return a; // the old answer until the new one is there
         }
         None => {}
@@ -447,13 +498,14 @@ pub fn folder_availability(drive_root: &Path, dir: &Path) -> Option<Avail> {
     }
     map.insert(dir.to_path_buf(), None);
     drop(g);
-    spawn_folder_check(drive_root.to_path_buf(), dir.to_path_buf());
+    spawn_folder_check(rel.to_path_buf(), dir.to_path_buf());
     None
 }
 
-fn spawn_folder_check(root: PathBuf, dir: PathBuf) {
+fn spawn_folder_check(rel: PathBuf, dir: PathBuf) {
     std::thread::spawn(move || {
-        let a = files_under(&dir).map(|files| combine(files.iter().filter_map(|(p, size)| Some(cached_state(p.strip_prefix(&root).ok()?, *size)))));
+        let cached = cache_root().map(|c| cached_files(&c.join("vfs").join("proton").join(&rel))).unwrap_or(0);
+        let a = Some(folder_state(downloaded().get(dir.to_string_lossy().as_ref()).copied(), cached));
         if let Ok(mut g) = FOLDERS.lock() {
             g.get_or_insert_with(Default::default).insert(dir, Some((std::time::Instant::now(), a)));
         }
@@ -465,9 +517,12 @@ fn spawn_folder_check(root: PathBuf, dir: PathBuf) {
 pub fn download(paths: &[PathBuf], progress: impl Fn(usize, usize)) -> usize {
     use std::io::Read;
     let mut files: Vec<PathBuf> = vec![];
+    let mut folders: Vec<(PathBuf, usize)> = vec![];
     for p in paths {
         if p.is_dir() {
-            files.extend(files_under(p).unwrap_or_default().into_iter().map(|(f, _)| f));
+            let under: Vec<PathBuf> = files_under(p).unwrap_or_default().into_iter().map(|(f, _)| f).collect();
+            folders.push((p.clone(), under.len()));
+            files.extend(under);
         } else {
             files.push(p.clone());
         }
@@ -485,6 +540,12 @@ pub fn download(paths: &[PathBuf], progress: impl Fn(usize, usize)) -> usize {
         });
         if !matches!(ok, Ok(true)) {
             failed += 1;
+        }
+    }
+    // a folder downloaded whole shows as on this computer from now on (while its files stay in the cache)
+    if failed == 0 {
+        for (dir, n) in &folders {
+            remember_downloaded(dir, *n);
         }
     }
     if let Ok(mut g) = FOLDERS.lock() {
@@ -646,6 +707,14 @@ mod tests {
         // "sub" must not match a sibling named "sub2".
         let r = Report { files_compared: 1, problems: vec![Problem::SizeDiffers("sub/a".into())], ..Default::default() };
         assert_ne!(b("/h/docs/sub2", Some(r)), Some(Badge::Problem));
+    }
+
+    #[test]
+    fn a_folder_is_judged_by_what_is_on_this_computer() {
+        assert_eq!(folder_state(None, 0), Avail::Cloud);
+        assert_eq!(folder_state(None, 3), Avail::Partial, "some files downloaded");
+        assert_eq!(folder_state(Some(10), 10), Avail::Local, "downloaded whole and all still here");
+        assert_eq!(folder_state(Some(10), 7), Avail::Partial, "the cache let some go");
     }
 
     #[test]

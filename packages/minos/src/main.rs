@@ -1512,6 +1512,16 @@ impl PreviewState {
             self.set(ctx, hit);
             return;
         }
+        // a Proton Drive file that is not on this computer would be downloaded just to show it: say so instead
+        if let Some(root) = places::proton_drive_candidates().into_iter().find(|r| path.starts_with(r)) {
+            if let Ok(m) = std::fs::metadata(&path) {
+                if m.is_file() && matches!(cloud::availability(&root, &path, m.len()), Some(cloud::Avail::Cloud | cloud::Avail::Partial)) {
+                    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    self.set(ctx, Arc::new(preview::message(&name, "Only in Proton Drive", "Open it, or right-click > Download to this computer, to see it here")));
+                    return;
+                }
+            }
+        }
         self.loading = true;
         let (tx, c) = (self.tx.clone(), ctx.clone());
         std::thread::spawn(move || {
