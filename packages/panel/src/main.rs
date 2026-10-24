@@ -475,7 +475,32 @@ fn output_enabled(o: &serde_json::Value) -> bool {
     o["enabled"].as_bool().unwrap_or_else(|| o["connected"].as_bool().unwrap_or(false) && o["currentModeId"].as_str().map(|m| !m.is_empty()).unwrap_or(false))
 }
 
+/// The screens from Hyprland (`hyprctl -j monitors`): the main one is the one at the top left of the space (Hyprland has no
+/// "primary"), sizes in logical pixels.
+fn hypr_layout(json: &serde_json::Value) -> Option<Layout> {
+    let mons = json.as_array()?;
+    let mut sizes: Vec<(String, i32, i32, u32, u32)> = mons
+        .iter()
+        .filter(|m| !m["disabled"].as_bool().unwrap_or(false))
+        .filter_map(|m| {
+            let scale = m["scale"].as_f64().unwrap_or(1.0).max(0.5);
+            let (w, h) = (m["width"].as_f64()?, m["height"].as_f64()?);
+            let (w, h) = if m["transform"].as_i64().unwrap_or(0) % 2 == 1 { (h, w) } else { (w, h) };
+            Some((m["name"].as_str()?.to_string(), m["x"].as_i64()? as i32, m["y"].as_i64()? as i32, (w / scale).round() as u32, (h / scale).round() as u32))
+        })
+        .collect();
+    sizes.sort_by_key(|s| (s.1, s.2));
+    let primary = sizes.first().map(|s| s.0.clone()).unwrap_or_default();
+    Some(Layout { primary, tiling: yggdrasil_conf::tiling::outputs(), sizes })
+}
+
 fn read_layout() -> Layout {
+    if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some() {
+        let json: serde_json::Value = serde_json::from_str(&command_output("hyprctl", &["-j", "monitors"])).unwrap_or(serde_json::Value::Null);
+        if let Some(l) = hypr_layout(&json) {
+            return l;
+        }
+    }
     let json: serde_json::Value = serde_json::from_str(&command_output("kscreen-doctor", &["-j"])).unwrap_or(serde_json::Value::Null);
     let primary = json["outputs"]
         .as_array()
@@ -483,12 +508,7 @@ fn read_layout() -> Layout {
         .and_then(|o| o["name"].as_str())
         .unwrap_or("")
         .to_string();
-    let tiling = command_output("kreadconfig6", &["--file", "kwinrc", "--group", "Script-labyrinth-screen-keys", "--key", "tilingOutputs"])
-        .trim()
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
+    let tiling = yggdrasil_conf::tiling::outputs();
     let sizes = json["outputs"]
         .as_array()
         .map(|a| {
@@ -3695,6 +3715,14 @@ fn main() {
 
 #[cfg(test)]
 mod layout_tests {
+    #[test]
+    fn hyprland_screens_become_the_layout() {
+        let j: serde_json::Value = serde_json::from_str(r#"[{"name":"DP-3","width":2560,"height":2880,"x":3440,"y":0,"scale":1.0,"transform":0,"disabled":false},{"name":"DP-1","width":3440,"height":1440,"x":0,"y":0,"scale":1.0,"transform":0,"disabled":false}]"#).unwrap();
+        let l = super::hypr_layout(&j).unwrap();
+        assert_eq!(l.primary, "DP-1", "the screen at the top left");
+        assert_eq!(l.sizes[1], ("DP-3".to_string(), 3440, 0, 2560, 2880));
+    }
+
     #[test]
     fn output_in_use_with_or_without_the_enabled_key() {
         let j = |t: &str| serde_json::from_str::<serde_json::Value>(t).unwrap();

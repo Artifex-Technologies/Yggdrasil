@@ -28,8 +28,17 @@ end
 local dark = setting("appearance.conf", "style") ~= "light"
 local reduce_motion = setting("panel.conf", "reduce_motion") == "yes" or setting("panel.conf", "reduce_motion") == "true"
 
--- Every monitor at its fastest mode until you set your own (see above).
+-- Every monitor at its fastest mode, until Settings > Displays (or you) sets them: ~/.config/yggdrasil/monitors.lua.
 hl.monitor({ output = "", mode = "highrr", position = "auto", scale = 1 })
+do
+  local monitors = config_home .. "/yggdrasil/monitors.lua"
+  local f = io.open(monitors, "r")
+  if f then
+    f:close()
+    local ok, err = pcall(dofile, monitors)
+    if not ok then io.stderr:write(("yggdrasil: monitors.lua has a mistake: %s\n"):format(err)) end
+  end
+end
 
 hl.config({
   input = {
@@ -78,8 +87,38 @@ hl.config({
   },
 })
 
--- Windows float, centred, at the size the program asks for.
+-- Windows float, centred, at the size the program asks for...
 hl.window_rule({ name = "windows-float", match = { class = ".*" }, float = true, center = true })
+
+-- ...except on the screens set to tile (Settings > Displays; ~/.config/yggdrasil/tiling, one screen per line; before that file exists,
+-- the choice made under KDE). There windows sit side by side with gaps, Omarchy-style. Settings reloads this when it changes.
+local function tiling_screens()
+  local list = {}
+  local f = io.open(config_home .. "/yggdrasil/tiling", "r")
+  if f then
+    for line in f:lines() do
+      for name in (line:gsub("#.*", "")):gmatch("[%w%-_%.]+") do table.insert(list, name) end
+    end
+    f:close()
+    return list
+  end
+  local k = io.open(config_home .. "/kwinrc", "r")
+  if k then
+    local in_group = false
+    for line in k:lines() do
+      if line:match("^%[") then in_group = (line == "[Script-labyrinth-screen-keys]")
+      elseif in_group then
+        local v = line:match("^tilingOutputs=(.*)$")
+        if v then for name in v:gmatch("[%w%-_%.]+") do table.insert(list, name) end end
+      end
+    end
+    k:close()
+  end
+  return list
+end
+for _, screen in ipairs(tiling_screens()) do
+  hl.window_rule({ name = "tile-on-" .. screen, match = { class = ".*", workspace = "m[" .. screen .. "]" }, tile = true })
+end
 
 -- Shortcuts (the same table as Yggdrasil's own compositor, compositor/src/shortcuts.rs).
 local function cmd(keys, command, opts) hl.bind(keys, hl.dsp.exec_cmd(command), opts) end
@@ -102,11 +141,13 @@ cmd("CTRL + SHIFT + ESCAPE", "ghostty -e btop", { desc = "Running programs" })
 dsp("ALT + F4", hl.dsp.window.close(), { desc = "Close the window" })
 dsp("SUPER + Q", hl.dsp.window.close(), { desc = "Close the window" })
 dsp("SUPER + F", hl.dsp.window.fullscreen({ mode = "fullscreen" }), { desc = "Full screen" })
-dsp("SUPER + UP", hl.dsp.window.fullscreen({ mode = "maximized" }), { desc = "Maximize (again: restore)" })
-dsp("SUPER + DOWN", hl.dsp.window.move({ workspace = "special:minimized", follow = false }), { desc = "Minimize" })
+cmd("SUPER + UP", "yggdrasil-snap up", { desc = "Maximize (again: restore), or focus up on a tiling screen" })
+cmd("SUPER + DOWN", "yggdrasil-snap down", { desc = "Minimize, or focus down on a tiling screen" })
+dsp("SUPER + W", hl.dsp.window.close(), { desc = "Close the window (Omarchy)" })
 dsp("SUPER + SHIFT + M", hl.dsp.workspace.toggle_special("minimized"), { desc = "Show minimized windows" })
-cmd("SUPER + LEFT", "yggdrasil-snap left", { desc = "Left half" })
-cmd("SUPER + RIGHT", "yggdrasil-snap right", { desc = "Right half" })
+-- Super+Arrows: on a floating screen, snap the window (Windows); on a tiling screen, move the focus (Omarchy)
+cmd("SUPER + LEFT", "yggdrasil-snap left", { desc = "Left half, or focus left on a tiling screen" })
+cmd("SUPER + RIGHT", "yggdrasil-snap right", { desc = "Right half, or focus right on a tiling screen" })
 dsp("SUPER + T", hl.dsp.window.float({ action = "toggle" }), { desc = "Tile or float the window" })
 dsp("ALT + TAB", hl.dsp.window.cycle_next(), { desc = "Next window" })
 dsp("ALT + TAB", hl.dsp.window.bring_to_top())

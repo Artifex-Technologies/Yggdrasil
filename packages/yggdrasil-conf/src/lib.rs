@@ -12,6 +12,7 @@ pub fn own_session() -> bool {
 }
 pub mod dirs;
 pub mod integrations;
+pub mod tiling;
 
 use std::path::PathBuf;
 

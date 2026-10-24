@@ -1003,7 +1003,8 @@ impl App {
     fn page_displays(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         let Some(d) = self.data.displays.clone() else { return loading(ui) };
         let mut cmd: Option<Vec<String>> = None;
-        let mut tiling: Option<String> = None;
+        let mut tiling: Option<(String, bool)> = None;
+        let hypr = sys::hyprland();
         for o in d.outputs.iter().filter(|o| o.enabled) {
             let Some(cur) = o.current_mode().cloned() else { continue };
             let title = if o.primary { format!("{} · Main display", o.name) } else { o.name.clone() };
@@ -1037,7 +1038,7 @@ impl App {
                         }
                     });
                 });
-                if !o.primary {
+                if !o.primary && !hypr {
                     ui::row(ui, pal, false, "Main display", Some("The top bar and dock live here"), |ui| {
                         if ui::quiet(ui, pal, "Make main").clicked() {
                             cmd = Some(vec![format!("output.{}.priority.1", o.name)]);
@@ -1047,7 +1048,7 @@ impl App {
                 let mut is_tiling = d.tiling.split(',').any(|t| t.trim() == o.name);
                 ui::row(ui, pal, false, "Tiling screen", Some("Windows tile automatically, Omarchy-style, with their own workspaces"), |ui| {
                     if ui::switch(ui, pal, &mut is_tiling).changed() {
-                        tiling = Some(if is_tiling { o.name.clone() } else { "off".into() });
+                        tiling = Some((o.name.clone(), is_tiling));
                     }
                 });
             });
@@ -1057,15 +1058,24 @@ impl App {
         }
         if let Some(args) = cmd {
             self.change(ctx, move || {
+                if sys::hyprland() {
+                    // the same choices, as Hyprland settings: "output.NAME.mode.ID" or "output.NAME.scale.S"
+                    let parts: Vec<&str> = args[0].splitn(4, '.').collect();
+                    return match parts.as_slice() {
+                        ["output", name, "mode", id] => sys::hypr_set(name, Some(id), None),
+                        ["output", name, "scale", s] => sys::hypr_set(name, None, s.parse().ok()),
+                        _ => Err("not available here yet".into()),
+                    };
+                }
                 let a: Vec<&str> = args.iter().map(String::as_str).collect();
                 sys::act("kscreen-doctor", &a)
             });
         }
-        if let Some(t) = tiling {
-            self.change(ctx, move || sys::act("labyrinth-tiling", &[&t]));
+        if let Some((name, on)) = tiling {
+            self.change(ctx, move || sys::set_tiling(&name, on));
         }
         ui.add_space(8.0);
-        if ui::quiet(ui, pal, "Arrange displays…").clicked() {
+        if !hypr && ui::quiet(ui, pal, "Arrange displays…").clicked() {
             sys::spawn("kcmshell6", &["kcm_kscreen"]);
         }
     }

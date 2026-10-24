@@ -1,9 +1,28 @@
 #!/bin/bash
 # yggdrasil-snap left|right|top|bottom: put the focused window on that half of its screen, leaving room for the panel and dock
 # (their reserved space). Windows float in Yggdrasil's session, so this is how Super+Left/Right work, as on Windows.
+#
+#   yggdrasil-snap left|right     a half of the screen; on a tiling screen (Settings > Displays), move the focus that way instead
+#   yggdrasil-snap up|down        maximize (again: restore) / minimize; on a tiling screen, move the focus
+#   yggdrasil-snap top|bottom     the top or bottom half
 set -u
 side=${1:-}
-case $side in left|right|top|bottom) ;; *) echo "usage: yggdrasil-snap left|right|top|bottom" >&2; exit 2 ;; esac
+case $side in left|right|up|down|top|bottom) ;; *) echo "usage: yggdrasil-snap left|right|up|down|top|bottom" >&2; exit 2 ;; esac
+
+conf=${XDG_CONFIG_HOME:-$HOME/.config}
+tiling_screens() {
+  if [[ -f $conf/yggdrasil/tiling ]]; then sed 's/#.*//; s/,/\n/g' "$conf/yggdrasil/tiling" | tr -d ' '
+  else sed -n '/^\[Script-labyrinth-screen-keys\]/,/^\[/s/^tilingOutputs=//p' "$conf/kwinrc" 2>/dev/null | tr ',' '\n'
+  fi
+}
+focused=$(hyprctl -j monitors | python3 -I -c 'import json,sys; print(next((m["name"] for m in json.load(sys.stdin) if m.get("focused")), ""))')
+if [[ -n $focused ]] && tiling_screens | grep -qxF "$focused"; then
+  case $side in left|right|up|down) hyprctl dispatch "hl.dsp.focus({ direction = \"${side:0:1}\" })" >/dev/null; exit 0 ;; esac
+fi
+case $side in
+  up) exec hyprctl dispatch 'hl.dsp.window.fullscreen({ mode = "maximized" })' >/dev/null ;;
+  down) exec hyprctl dispatch 'hl.dsp.window.move({ workspace = "special:minimized", follow = false })' >/dev/null ;;
+esac
 read -r x y w h < <(hyprctl -j monitors | python3 -I -c '
 import json, sys
 for m in json.load(sys.stdin):

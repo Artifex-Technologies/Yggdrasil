@@ -415,12 +415,109 @@ pub struct Displays {
 }
 
 pub fn displays() -> Displays {
-    Displays {
-        outputs: outputs(&run("kscreen-doctor", &["-j"]).unwrap_or_default()),
-        tiling: run("kreadconfig6", &["--file", "kwinrc", "--group", "Script-labyrinth-screen-keys", "--key", "tilingOutputs"])
-            .unwrap_or_default()
-            .trim()
-            .to_string(),
+    let tiling = yggdrasil_conf::tiling::outputs().join(",");
+    if hyprland() {
+        return Displays { outputs: hypr_outputs(&run("hyprctl", &["-j", "monitors", "all"]).unwrap_or_default()), tiling };
+    }
+    Displays { outputs: outputs(&run("kscreen-doctor", &["-j"]).unwrap_or_default()), tiling }
+}
+
+/// The session's compositor is Hyprland (Yggdrasil's own session).
+pub fn hyprland() -> bool {
+    std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some()
+}
+
+/// `hyprctl -j monitors all`: the screens. Hyprland has no "main" screen: the one at the top left of the space is it.
+pub fn hypr_outputs(json: &str) -> Vec<Output> {
+    let v: serde_json::Value = serde_json::from_str(json).unwrap_or(serde_json::Value::Null);
+    let mut outs: Vec<Output> = v
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|m| {
+                    let (w, h, r) = (m["width"].as_u64()? as u32, m["height"].as_u64()? as u32, m["refreshRate"].as_f64().unwrap_or(60.0));
+                    let mut modes: Vec<Mode> = m["availableModes"]
+                        .as_array()
+                        .map(|l| l.iter().filter_map(|x| parse_hypr_mode(x.as_str()?)).collect())
+                        .unwrap_or_default();
+                    let current = hypr_mode_id(w, h, r);
+                    if !modes.iter().any(|x| x.id == current) {
+                        modes.push(Mode { id: current.clone(), width: w, height: h, refresh: r });
+                    }
+                    Some(Output {
+                        name: m["name"].as_str()?.to_string(),
+                        enabled: !m["disabled"].as_bool().unwrap_or(false),
+                        primary: false,
+                        scale: m["scale"].as_f64().unwrap_or(1.0),
+                        current,
+                        modes,
+                        x: m["x"].as_i64().unwrap_or(0),
+                        y: m["y"].as_i64().unwrap_or(0),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Some(first) = outs.iter_mut().filter(|o| o.enabled).min_by_key(|o| (o.x, o.y)) {
+        first.primary = true;
+    }
+    outs
+}
+
+fn hypr_mode_id(w: u32, h: u32, r: f64) -> String {
+    format!("{w}x{h}@{r:.2}")
+}
+
+/// "3440x1440@180.00Hz" -> a mode.
+fn parse_hypr_mode(s: &str) -> Option<Mode> {
+    let (size, rate) = s.trim_end_matches("Hz").split_once('@')?;
+    let (w, h) = size.split_once('x')?;
+    let (w, h, r) = (w.parse().ok()?, h.parse().ok()?, rate.parse::<f64>().ok()?);
+    Some(Mode { id: hypr_mode_id(w, h, r), width: w, height: h, refresh: r })
+}
+
+/// The monitor lines of `~/.config/yggdrasil/monitors.lua` for these screens (what Yggdrasil's Hyprland config loads).
+pub fn hypr_monitors_lua(outs: &[Output]) -> String {
+    let mut t = String::from("-- Written by Settings > Displays. Loaded by Yggdrasil's Hyprland config.\n");
+    for o in outs {
+        if !o.enabled {
+            t.push_str(&format!("hl.monitor({{ output = \"{}\", disabled = true }})\n", o.name));
+            continue;
+        }
+        t.push_str(&format!("hl.monitor({{ output = \"{}\", mode = \"{}\", position = \"{}x{}\", scale = {} }})\n", o.name, o.current, o.x, o.y, o.scale));
+    }
+    t
+}
+
+/// Changes one screen's mode or scale in Hyprland: the whole list is written (from what Hyprland reports now, with the change) and
+/// Hyprland reads it again.
+pub fn hypr_set(name: &str, mode: Option<&str>, scale: Option<f64>) -> Result<(), String> {
+    let mut outs = hypr_outputs(&run("hyprctl", &["-j", "monitors", "all"]).ok_or("Hyprland did not answer")?);
+    let o = outs.iter_mut().find(|o| o.name == name).ok_or("that screen is not there")?;
+    if let Some(m) = mode {
+        o.current = m.to_string();
+    }
+    if let Some(s) = scale {
+        o.scale = s;
+    }
+    let p = yggdrasil_conf::dirs::config().join("monitors.lua");
+    std::fs::write(&p, hypr_monitors_lua(&outs)).map_err(|e| e.to_string())?;
+    act("hyprctl", &["reload"])
+}
+
+/// Turns tiling on or off for one screen: the shared list (yggdrasil_conf::tiling) and then whoever draws the windows.
+pub fn set_tiling(name: &str, on: bool) -> Result<(), String> {
+    let mut list = yggdrasil_conf::tiling::outputs();
+    list.retain(|n| n != name);
+    if on {
+        list.push(name.to_string());
+    }
+    yggdrasil_conf::tiling::set_outputs(&list).map_err(|e| e.to_string())?;
+    if hyprland() {
+        act("hyprctl", &["reload"])
+    } else {
+        // KWin's tiling script (one tiling screen at a time there)
+        act("labyrinth-tiling", &[if on { name } else { "off" }])
     }
 }
 
@@ -770,6 +867,20 @@ pub fn apps() -> Vec<Component> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hyprland_screens_and_their_settings_file() {
+        let j = r#"[{"name":"DP-3","width":2560,"height":2880,"refreshRate":59.95,"x":3440,"y":0,"scale":1.25,"disabled":false,"availableModes":["2560x2880@59.95Hz","1920x1080@60.00Hz"]},
+                   {"name":"DP-1","width":3440,"height":1440,"refreshRate":180.0,"x":0,"y":0,"scale":1.0,"disabled":false,"availableModes":["3440x1440@180.00Hz","3440x1440@60.00Hz"]}]"#;
+        let o = hypr_outputs(j);
+        let dp1 = o.iter().find(|x| x.name == "DP-1").unwrap();
+        assert!(dp1.primary, "the screen at the top left is the main one");
+        assert_eq!(dp1.current, "3440x1440@180.00");
+        assert_eq!(dp1.current_mode().unwrap().refresh, 180.0);
+        assert_eq!(dp1.rates(3440, 1440).len(), 2);
+        let lua = hypr_monitors_lua(&o);
+        assert!(lua.contains(r#"hl.monitor({ output = "DP-3", mode = "2560x2880@59.95", position = "3440x0", scale = 1.25 })"#), "{lua}");
+    }
 
     #[test]
     fn about_parsers() {
