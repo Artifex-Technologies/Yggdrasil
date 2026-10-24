@@ -68,3 +68,11 @@ into `~/bakeoff/NAME-vrrX/`. `yggdrasil-bakeoff report` compares average FPS, 1%
 Round 1 is with variable refresh off everywhere; round 2 (`yggdrasil-bakeoff vrr on`) with it on. Still to add: input latency (needs
 a camera or a photodiode, or at least the owner's judgement), and the CAD model in Daedalus. Yggdrasil's own compositor joins once it
 runs on the hardware (today it runs nested only).
+
+## Title bars in the Hyprland session (2026-10-24)
+
+Hyprland offers every program server-side decoration (`xdg-decoration`) but draws no title bar. Programs that draw their own
+anyway are unaffected: Yggdrasil's apps (`with_decorations(false)`), GTK programs, Ghostty, Firefox, Chromium and Electron.
+Qt programs accept the offer and would have no title bar, so `yggdrasil-session` sets
+`QT_WAYLAND_DISABLED_INTERFACES=zxdg_decoration_manager_v1`: Qt does not see the offer and draws its own title bar with minimize,
+maximize and close. Checked in a nested Hyprland with Qt Linguist (title bar present) and VLC before the change (none).

@@ -10,6 +10,9 @@ export XDG_CURRENT_DESKTOP=Yggdrasil XDG_SESSION_DESKTOP=Yggdrasil XDG_SESSION_T
 export QT_QPA_PLATFORM="wayland;xcb" GDK_BACKEND="wayland,x11,*" SDL_VIDEODRIVER="wayland,x11" CLUTTER_BACKEND=wayland
 export MOZ_ENABLE_WAYLAND=1 ELECTRON_OZONE_PLATFORM_HINT=auto _JAVA_AWT_WM_NONREPARENTING=1
 export QT_WAYLAND_DISABLE_WINDOWDECORATION=0
+# Hyprland offers to decorate windows but draws no title bar, so Qt programs that accept (VLC, Qt's tools, KDE programs) would have
+# none: they are told not to see that offer and draw their own (title, minimize, maximize, close)
+export QT_WAYLAND_DISABLED_INTERFACES=${QT_WAYLAND_DISABLED_INTERFACES:-zxdg_decoration_manager_v1}
 if [[ -e /proc/driver/nvidia/version ]]; then
   export LIBVA_DRIVER_NAME=nvidia __GLX_VENDOR_LIBRARY_NAME=nvidia NVD_BACKEND=direct
 fi
