@@ -1,0 +1,11 @@
+# Yggdrasil's own session (yggdrasil-session starts it once Hyprland is up, and stops it when Hyprland ends). Starting it starts the
+# graphical session and the autostart folder: the panel, the idle watch and lock, the password box, the keyring check. Those two
+# targets refuse to be started by hand; a session target like this one is how a desktop pulls them in.
+[Unit]
+Description=Yggdrasil session
+Documentation=https://github.com/Artifex-Technologies/Yggdrasil
+BindsTo=graphical-session.target
+Wants=graphical-session-pre.target xdg-desktop-autostart.target
+After=graphical-session-pre.target
+Before=graphical-session.target xdg-desktop-autostart.target
+StopWhenUnneeded=no

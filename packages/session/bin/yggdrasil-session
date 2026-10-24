@@ -24,6 +24,20 @@ if [[ -S ${XDG_RUNTIME_DIR:-/run/user/$UID}/bus ]]; then
 fi
 log "starting Hyprland ($(Hyprland --version 2>/dev/null | head -n1 | cut -d' ' -f1-2)) with $conf, bus ${DBUS_SESSION_BUS_ADDRESS:-none}"
 
+state=${XDG_STATE_HOME:-$HOME/.local/state}/yggdrasil
+mkdir -p "$state"
+runtime=${XDG_RUNTIME_DIR:-/run/user/$UID}
+# Hyprland keeps its log in the runtime folder, which goes when the session does (or with a restart): a copy is kept up to date in
+# ~/.local/state/yggdrasil/hyprland-last.log while the session runs, so a problem can always be looked at afterwards
+before=$(ls "$runtime/hypr" 2>/dev/null)
+(
+  while sleep 5; do
+    d=$(ls -td "$runtime"/hypr/*/ 2>/dev/null | head -n1)
+    [[ -n $d && -f $d/hyprland.log ]] && ! grep -qxF "$(basename "$d")" <<<"$before" && cp -f "$d/hyprland.log" "$state/hyprland-last.log"
+  done
+) &
+keeper=$!
+
 # start-hyprland is Hyprland's own launcher (it restarts it safely after a crash); without it Hyprland shows a warning
 if command -v start-hyprland >/dev/null; then
   start-hyprland -- --config "$conf"
@@ -31,10 +45,10 @@ else
   Hyprland --config "$conf"
 fi
 code=$?
-# keep Hyprland's log (it lives in the runtime folder, which goes away at logout), for the next look at a problem
-state=${XDG_STATE_HOME:-$HOME/.local/state}/yggdrasil
-mkdir -p "$state"
-last=$(ls -td "${XDG_RUNTIME_DIR:-/run/user/$UID}"/hypr/*/ 2>/dev/null | head -n1)
-[[ -n $last && -f $last/hyprland.log ]] && cp -f "$last/hyprland.log" "$state/hyprland-last.log"
+kill "$keeper" 2>/dev/null
+d=$(ls -td "$runtime"/hypr/*/ 2>/dev/null | head -n1)
+[[ -n $d && -f $d/hyprland.log ]] && cp -f "$d/hyprland.log" "$state/hyprland-last.log"
+# the session's programs (the panel and the rest) end with it
+systemctl --user stop yggdrasil-session.target graphical-session.target 2>/dev/null
 log "Hyprland ended (exit $code); its log is in $state/hyprland-last.log"
 exit $code

@@ -18,4 +18,6 @@ package() {
   install -Dm644 "$_src/hyprland/yggdrasil.lua" "$pkgdir/usr/share/yggdrasil/hyprland/yggdrasil.lua"
   # the login screen lists it as "Yggdrasil"
   install -Dm644 "$_src/yggdrasil.desktop" "$pkgdir/usr/share/wayland-sessions/yggdrasil.desktop"
+  # the session target: starting it starts the autostart folder (the panel and the rest)
+  install -Dm644 "$_src/systemd/yggdrasil-session.target" "$pkgdir/usr/lib/systemd/user/yggdrasil-session.target"
 }
