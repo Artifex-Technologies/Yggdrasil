@@ -24,6 +24,7 @@ use tiny_skia::{Pixmap, PixmapMut, PixmapPaint, Transform};
 use wayland_client::globals::{registry_queue_init, GlobalListContents};
 use wayland_client::protocol::{wl_buffer::{self, WlBuffer}, wl_callback::{self, WlCallback}, wl_compositor::WlCompositor, wl_output::WlOutput, wl_region::WlRegion, wl_registry, wl_shm::{self, WlShm}, wl_shm_pool::WlShmPool, wl_surface::WlSurface};
 use wayland_client::{delegate_noop, Connection, Dispatch, QueueHandle};
+use wayland_protocols::wp::alpha_modifier::v1::client::{wp_alpha_modifier_surface_v1::WpAlphaModifierSurfaceV1, wp_alpha_modifier_v1::WpAlphaModifierV1};
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1::{self, ZwlrLayerShellV1}, zwlr_layer_surface_v1::{self, Anchor, KeyboardInteractivity, ZwlrLayerSurfaceV1}};
 
 const CELL_W: f32 = 18.0;
@@ -31,7 +32,8 @@ const CELL_H: f32 = 24.0;
 const GLYPHS: &str = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ<>=+*:.|ΞΣΛΠΦΨΩ";
 /// Brightness steps a character can be drawn at (0 faint ... LEVELS-1 the bright head).
 const LEVELS: usize = 10;
-const SHORTEST: Duration = Duration::from_millis(900);
+/// It shows at least this long, so it is seen (a fast start has the top bar up within a second).
+const SHORTEST: Duration = Duration::from_millis(2500);
 const LONGEST: Duration = Duration::from_secs(12);
 const FADE: Duration = Duration::from_millis(450);
 /// At most this many frames a second (the compositor's own pace below it): smooth, and light enough on a big screen.
@@ -145,6 +147,50 @@ fn bgra(mut p: Pixmap) -> Pixmap {
     p
 }
 
+/// Draws a premultiplied picture (already in the buffer's byte order) onto the buffer at (x, y). A plain loop: for thousands
+/// of small characters a frame it costs a fraction of a general drawing call each.
+fn blit(dst: &mut [u8], dw: u32, dh: u32, src: &Pixmap, x: i32, y: i32) {
+    let (sw, sh) = (src.width() as i32, src.height() as i32);
+    let (x0, x1, y0, y1) = (x.max(0), (x + sw).min(dw as i32), y.max(0), (y + sh).min(dh as i32));
+    if x0 >= x1 || y0 >= y1 {
+        return;
+    }
+    let data = src.data();
+    for py in y0..y1 {
+        let sy = (py - y) as usize;
+        let s0 = (sy * sw as usize + (x0 - x) as usize) * 4;
+        let d0 = (py as usize * dw as usize + x0 as usize) * 4;
+        let n = (x1 - x0) as usize * 4;
+        for (d, sp) in dst[d0..d0 + n].chunks_exact_mut(4).zip(data[s0..s0 + n].chunks_exact(4)) {
+            let a = sp[3] as u32;
+            if a == 0 {
+                continue;
+            }
+            if a == 255 {
+                d.copy_from_slice(sp);
+                continue;
+            }
+            let inv = 255 - a;
+            for k in 0..4 {
+                d[k] = (sp[k] as u32 + (d[k] as u32 * inv + 127) / 255) as u8;
+            }
+        }
+    }
+}
+
+/// The whole buffer one colour (bytes in the buffer's order), as fast as a memory fill.
+fn clear(dst: &mut [u8], px: [u8; 4]) {
+    // SAFETY: any 4 bytes are a valid u32; align_to_mut only hands out the aligned middle as u32
+    let (pre, mid, post) = unsafe { dst.align_to_mut::<u32>() };
+    if pre.is_empty() && post.is_empty() {
+        mid.fill(u32::from_ne_bytes(px));
+    } else {
+        for c in dst.chunks_exact_mut(4) {
+            c.copy_from_slice(&px);
+        }
+    }
+}
+
 /// A small, fast random source (no crate needed for a screen of falling characters).
 struct Rng(u64);
 impl Rng {
@@ -187,6 +233,8 @@ struct Screen {
     map: Option<MmapMut>,
     pix: Option<Pixmap>,
     cols: Vec<Column>,
+    /// The compositor's own see-through setting for this surface (the fade costs nothing with it); None without the protocol.
+    alpha: Option<WpAlphaModifierSurfaceV1>,
     /// The compositor asked for the next frame (a frame callback came), and when the last one was drawn.
     wants_frame: bool,
     last: Option<Instant>,
@@ -211,6 +259,7 @@ struct App {
     accent: (u8, u8, u8, u8),
     /// YGGDRASIL_SPLASH_STATS=1: the time between frames, printed at the end (for checking the pace).
     stats: Option<Vec<f32>>,
+    draw_ms: Option<Vec<f32>>,
     done: bool,
 }
 
@@ -224,6 +273,8 @@ delegate_noop!(App: ignore WlSurface);
 delegate_noop!(App: ignore WlOutput);
 delegate_noop!(App: WlRegion);
 delegate_noop!(App: ZwlrLayerShellV1);
+delegate_noop!(App: WpAlphaModifierV1);
+delegate_noop!(App: WpAlphaModifierSurfaceV1);
 
 impl Dispatch<WlCallback, usize> for App {
     fn event(app: &mut Self, _: &WlCallback, e: wl_callback::Event, idx: &usize, _: &Connection, qh: &QueueHandle<Self>) {
@@ -307,6 +358,9 @@ impl App {
         if s.last.map(|t| t.elapsed() + Duration::from_millis(3) >= pace).unwrap_or(true) {
             self.draw(i);
         } else {
+            // a refresh with nothing new on this surface may not be drawn by the compositor at all, and then its frame callback
+            // comes a refresh late (a 22 ms frame now and then): one pixel marked as changed keeps it on the screen's rhythm
+            s.surface.damage_buffer(0, 0, 1, 1);
             s.surface.frame(qh, i);
             s.surface.commit();
         }
@@ -321,6 +375,14 @@ impl App {
     }
 
     fn draw(&mut self, i: usize) {
+        let t0 = Instant::now();
+        self.draw_inner(i);
+        if let Some(v) = self.draw_ms.as_mut() {
+            v.push(t0.elapsed().as_secs_f32() * 1000.0);
+        }
+    }
+
+    fn draw_inner(&mut self, i: usize) {
         let shown = self.shown();
         let (glyphs, accent) = (GLYPHS.chars().count(), self.accent);
         let qh = self.qh.clone();
@@ -363,17 +425,21 @@ impl App {
                     d[3] = src[3];
                 }
             }
-            mode => {
+            Mode::Picture(_) => {
                 let Some(mut pix) = PixmapMut::from_bytes(bytes, w, h) else { return };
                 pix.fill(tiny_skia::Color::from_rgba8(10, 3, 5, 255)); // (5, 3, 10) with red and blue swapped
-                if let Mode::Picture(_) = mode {
+                {
                     if let Some(p) = &self.picture {
                         let k = (w as f32 * 0.9 / p.width() as f32).min(h as f32 * 0.9 / p.height() as f32).min(1.0);
                         let (pw, ph) = (p.width() as f32 * k, p.height() as f32 * k);
                         let paint = PixmapPaint { quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
                         pix.draw_pixmap(0, 0, p.as_ref(), &paint, Transform::from_row(k, 0.0, 0.0, k, (w as f32 - pw) / 2.0, (h as f32 - ph) / 2.0), None);
                     }
-                } else if let Some(atlas) = &self.atlas {
+                }
+            }
+            _ => {
+                clear(bytes, [10, 3, 5, 255]); // (5, 3, 10) in the buffer's B, G, R, A order
+                if let Some(atlas) = &self.atlas {
                     for (c, col) in s.cols.iter_mut().enumerate() {
                         // frames come at a steady pace now; one that came late (dt of two frames) moves two steps
                         let steps = (dt / FRAME.as_secs_f32()).round().max(1.0);
@@ -394,22 +460,30 @@ impl App {
                                 continue;
                             }
                             let level = (k * (LEVELS - 1)) / (n - 1).max(1);
-                            pix.draw_pixmap((c as f32 * CELL_W) as i32, y.round() as i32, atlas.cells[g][level].as_ref(), &PixmapPaint::default(), Transform::identity(), None);
+                            blit(bytes, w, h, &atlas.cells[g][level], (c as f32 * CELL_W) as i32, y.round() as i32);
                         }
                     }
                 }
-                if !matches!(mode, Mode::Picture(_)) {
-                    if let Some(l) = &self.logo {
-                        pix.draw_pixmap(((w - l.width().min(w)) / 2) as i32, ((h - l.height().min(h)) / 2) as i32, l.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
-                    }
+                if let Some(l) = &self.logo {
+                    blit(bytes, w, h, l, ((w - l.width().min(w)) / 2) as i32, ((h - l.height().min(h)) / 2) as i32);
                 }
             }
         }
-        // the fade: everything towards transparent, so the desktop shows through
-        if shown < 1.0 {
+        // the fade: everything towards transparent, so the desktop shows through. The compositor does it when it can (one
+        // number per frame); else every pixel here, two channels at a time
+        if let Some(a) = &s.alpha {
+            a.set_multiplier((shown.clamp(0.0, 1.0) as f64 * u32::MAX as f64) as u32);
+        } else if shown < 1.0 {
             let k = (shown * 256.0) as u32;
-            for b in bytes.iter_mut() {
+            // SAFETY: any 4 bytes are a valid u32; only the aligned middle is used as u32
+            let (pre, mid, post) = unsafe { bytes.align_to_mut::<u32>() };
+            for b in pre.iter_mut().chain(post.iter_mut()) {
                 *b = ((*b as u32 * k) >> 8) as u8;
+            }
+            for v in mid.iter_mut() {
+                let rb = ((*v & 0x00ff_00ff) * k >> 8) & 0x00ff_00ff;
+                let ga = (((*v >> 8) & 0x00ff_00ff) * k >> 8) & 0x00ff_00ff;
+                *v = rb | (ga << 8);
             }
         }
         s.bufs[slot].1 = true;
@@ -442,12 +516,21 @@ fn main() {
     if mode == Mode::Off {
         return;
     }
-    let Ok(conn) = Connection::connect_to_env() else { return };
-    let Ok((globals, queue)) = registry_queue_init::<App>(&conn) else { return };
-    let qh = queue.handle();
-    let (Ok(compositor), Ok(shm), Ok(layer_shell)) = (globals.bind::<WlCompositor, _, _>(&qh, 1..=6, ()), globals.bind::<WlShm, _, _>(&qh, 1..=1, ()), globals.bind::<ZwlrLayerShellV1, _, _>(&qh, 1..=4, ())) else {
+    eprintln!("yggdrasil-splash: {mode:?}");
+    let Ok(conn) = Connection::connect_to_env() else {
+        eprintln!("yggdrasil-splash: no Wayland display");
         return;
     };
+    let Ok((globals, queue)) = registry_queue_init::<App>(&conn) else {
+        eprintln!("yggdrasil-splash: the compositor did not answer");
+        return;
+    };
+    let qh = queue.handle();
+    let (Ok(compositor), Ok(shm), Ok(layer_shell)) = (globals.bind::<WlCompositor, _, _>(&qh, 1..=6, ()), globals.bind::<WlShm, _, _>(&qh, 1..=1, ()), globals.bind::<ZwlrLayerShellV1, _, _>(&qh, 1..=4, ())) else {
+        eprintln!("yggdrasil-splash: the compositor has no layer shell");
+        return;
+    };
+    let alpha_mgr: Option<WpAlphaModifierV1> = globals.bind(&qh, 1..=1, ()).ok();
     let accent = design::accent();
     let mut app = App {
         qh: qh.clone(),
@@ -466,6 +549,7 @@ fn main() {
         ready: Default::default(),
         accent,
         stats: std::env::var_os("YGGDRASIL_SPLASH_STATS").map(|_| vec![]),
+        draw_ms: std::env::var_os("YGGDRASIL_SPLASH_STATS").map(|_| vec![]),
         done: false,
     };
     // one covering surface per screen, above everything, taking no clicks
@@ -478,11 +562,12 @@ fn main() {
         layer.set_anchor(Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right);
         layer.set_exclusive_zone(-1);
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+        let alpha = alpha_mgr.as_ref().map(|m| m.get_surface(&surface, &qh, ()));
         let region = app.compositor.create_region(&qh, ());
         surface.set_input_region(Some(&region));
         region.destroy();
         surface.commit();
-        app.screens.push(Screen { output, surface, layer, size: (0, 0), configured: false, bufs: vec![], map: None, pix: None, cols: vec![], wants_frame: true, last: None });
+        app.screens.push(Screen { output, surface, layer, size: (0, 0), configured: false, bufs: vec![], map: None, pix: None, cols: vec![], alpha, wants_frame: true, last: None });
     }
     let Ok(mut event_loop) = EventLoop::<App>::try_new() else { return };
     if WaylandSource::new(conn.clone(), queue).insert(event_loop.handle()).is_err() {
@@ -497,6 +582,7 @@ fn main() {
                 std::thread::sleep(Duration::from_millis(250));
             }
             ready.store(true, std::sync::atomic::Ordering::Release);
+            eprintln!("yggdrasil-splash: the top bar is up");
         });
     }
     // the fade starts once it is (or when it takes too long); frames themselves come from the compositor's frame callbacks
@@ -505,6 +591,10 @@ fn main() {
             app.fading = Some(Instant::now());
         }
         if app.fading.map(|t| t.elapsed() > FADE).unwrap_or(false) {
+            if !app.done {
+                let frames = app.screens.iter().filter(|s| s.last.is_some()).count();
+                eprintln!("yggdrasil-splash: shown on {frames} of {} screens for {} ms", app.screens.len(), app.started.elapsed().as_millis());
+            }
             app.done = true;
         }
         TimeoutAction::ToDuration(Duration::from_millis(20))
@@ -514,6 +604,13 @@ fn main() {
             break;
         }
         let _ = conn.flush();
+    }
+    if let Some(mut v) = app.draw_ms.take() {
+        v.sort_by(|a, b| a.total_cmp(b));
+        if !v.is_empty() {
+            let pct = |p: f32| v[((v.len() - 1) as f32 * p) as usize];
+            eprintln!("drawing a frame takes: median {:.1} ms  95% {:.1}  max {:.1}", pct(0.5), pct(0.95), v[v.len() - 1]);
+        }
     }
     if let Some(mut v) = app.stats.take() {
         v.sort_by(|a, b| a.total_cmp(b));
@@ -543,6 +640,26 @@ mod tests {
         std::fs::write(&f, b"x").unwrap();
         assert_eq!(mode_from(&format!("mode = picture\npicture = {}\n", f.display())), Mode::Picture(f.clone()));
         let _ = std::fs::remove_file(&f);
+    }
+
+    #[test]
+    fn blit_copies_blends_and_clips() {
+        let mut src = Pixmap::new(2, 2).unwrap();
+        let px = |r, g, b, a| tiny_skia::PremultipliedColorU8::from_rgba(r, g, b, a).unwrap();
+        src.pixels_mut().copy_from_slice(&[px(200, 100, 50, 255), px(0, 0, 0, 0), px(100, 50, 0, 128), px(10, 20, 30, 255)]);
+        let mut dst = vec![0u8; 3 * 3 * 4];
+        clear(&mut dst, [40, 40, 40, 255]);
+        blit(&mut dst, 3, 3, &src, 1, 1);
+        let at = |d: &Vec<u8>, x: usize, y: usize| d[(y * 3 + x) * 4..(y * 3 + x) * 4 + 4].to_vec();
+        assert_eq!(at(&dst, 1, 1), vec![200, 100, 50, 255], "opaque: copied");
+        assert_eq!(at(&dst, 2, 1), vec![40, 40, 40, 255], "transparent: untouched");
+        assert_eq!(at(&dst, 1, 2), vec![120, 70, 20, 255], "half: blended over");
+        assert_eq!(at(&dst, 0, 0), vec![40, 40, 40, 255], "outside: untouched");
+        // partly off every edge: no panic, only the part on the buffer drawn
+        blit(&mut dst, 3, 3, &src, -1, -1);
+        blit(&mut dst, 3, 3, &src, 2, 2);
+        assert_eq!(at(&dst, 0, 0), vec![10, 20, 30, 255]);
+        assert_eq!(at(&dst, 2, 2), vec![200, 100, 50, 255]);
     }
 
     #[test]
