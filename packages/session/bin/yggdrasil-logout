@@ -1,7 +1,7 @@
 #!/bin/bash
 # yggdrasil-logout logout|reboot|poweroff: ends Yggdrasil's session the careful way (the panel runs it when its countdown ends).
 # Every window is asked to close first, so programs can save; after up to 10 seconds, if all have closed, the session ends (or
-# the computer restarts or shuts down). If one has not (it may be asking whether to save), nothing ends: the screen locks, so a
+# the computer restarts or shuts down, once Hyprland has ended). If one has not (it may be asking whether to save), nothing ends: the screen locks, so a
 # computer left alone is not left open, and a notification says which program is still there.
 set -u
 what=${1:-logout}
@@ -35,8 +35,8 @@ if [[ -n $left ]]; then
   exit 1
 fi
 systemd-cat -t yggdrasil-session echo "$what: every window closed"
-case $what in
-  logout) hyprctl dispatch 'hl.dsp.exit()' >/dev/null ;;
-  reboot) systemctl reboot ;;
-  poweroff) systemctl poweroff ;;
-esac
+# Hyprland ends first, cleanly; yggdrasil-session then restarts or shuts down (it reads what to do from this file)
+if [[ $what != logout ]]; then
+  printf '%s\n' "$what" >"${XDG_RUNTIME_DIR:-/run/user/$UID}/yggdrasil-after-session"
+fi
+hyprctl dispatch 'hl.dsp.exit()' >/dev/null
