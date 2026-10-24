@@ -695,7 +695,10 @@ impl App {
         }
         ui::group(ui, pal, None, |ui| {
             ui.add_space(6.0);
-            ui.label(RichText::new("Pick how the lock screen looks. Yggdrasil's own lock screen needs a desktop that supports it (the screen is still locked by KDE's until then); your choice is kept and used as soon as it can be.").size(12.5).color(pal.dim));
+            // While KWin draws the screen, its own lock screen is the one shown (KWin lacks the standard session-lock protocol): say so plainly
+            ui::row(ui, pal, true, "Not in use yet", Some("The screen is still locked by KDE's lock screen: the current window manager (KWin) cannot show another one. Your choice is kept and takes over when Yggdrasil's own compositor replaces KWin"), |ui| {
+                ui.label(RichText::new("waiting").color(pal.amber));
+            });
             ui.add_space(6.0);
         });
         for (id, name, about) in DESIGNS {
