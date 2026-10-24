@@ -14,7 +14,9 @@ depends=('gcc-libs' 'libxkbcommon' 'wayland' 'vulkan-icd-loader' 'libglvnd' 'fon
          'networkmanager' 'bluez-utils' 'libpulse' 'libkscreen' 'kconfig' 'power-profiles-daemon' 'pciutils' 'python' 'polkit')
 optdepends=('ufw: firewall page'
             'systemsettings: "More settings" opens KDE System Settings'
-            'bluedevil: pairing new Bluetooth devices')
+            'bluedevil: pairing new Bluetooth devices'
+            'plymouth: the boot screen (Appearance > Boot screen)'
+            'python-pillow: your own picture as the boot screen')
 makedepends=('cargo')
 options=('!lto')
 
@@ -28,6 +30,7 @@ build() {
 check() {
   cd "$_src"
   cargo test --release --locked --target-dir "$srcdir/target"
+  python3 -m unittest discover -s helpers/tests
 }
 
 package() {
@@ -38,6 +41,9 @@ package() {
   install -Dm755 "$_src/helpers/powerlimit" "$pkgdir/usr/lib/yggdrasil/powerlimit"
   install -Dm644 "$_src/data/org.yggdrasil.account.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.account.policy"
   install -Dm644 "$_src/data/org.yggdrasil.powerlimit.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.powerlimit.policy"
+  # the boot screen (Appearance > Boot screen): Plymouth's theme, switched on the first time
+  install -Dm755 "$_src/helpers/bootscreen" "$pkgdir/usr/lib/yggdrasil/bootscreen"
+  install -Dm644 "$_src/data/org.yggdrasil.bootscreen.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.bootscreen.policy"
   # applies the limits on every power-mode change; the operating system decides whether it is switched on
   install -Dm644 "$_src/data/yggdrasil-powerlimit.service" "$pkgdir/usr/lib/systemd/system/yggdrasil-powerlimit.service"
 }

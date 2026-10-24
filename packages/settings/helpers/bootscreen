@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+"""bootscreen: what shows while the computer starts and shuts down (Settings > Appearance > Boot screen), through Plymouth.
+
+  bootscreen get                       what is set (JSON): ready, theme, choice, themes, the boot loader
+  bootscreen set animation             the operating system's own animation (its branding's boot_theme; Labyrinth: purple rain)
+  bootscreen set messages              the start-up messages, as text
+  bootscreen set picture FILE          your own picture, in the middle of a black screen
+  (set needs root: Settings runs it with pkexec)
+
+The first "set" also switches Plymouth on: a mkinitcpio drop-in adds its hook after kms (or udev), and on GRUB "splash" is added
+to the kernel options (the old /etc/default/grub is kept as /etc/default/grub.before-bootscreen). The start-up image is rebuilt
+(mkinitcpio -P), which takes a minute.
+"""
+import glob
+import json
+import os
+import shutil
+import subprocess
+import sys
+
+THEMES = os.environ.get("BOOTSCREEN_THEMES", "/usr/share/plymouth/themes")
+INTEGRATIONS = os.environ.get("BOOTSCREEN_INTEGRATIONS", "/usr/share/yggdrasil/integrations")
+DROPIN = os.environ.get("BOOTSCREEN_DROPIN", "/etc/mkinitcpio.conf.d/yggdrasil-plymouth.conf")
+GRUB_DEFAULT = os.environ.get("BOOTSCREEN_GRUB", "/etc/default/grub")
+PICTURE_THEME = "yggdrasil-picture"
+MESSAGES_THEME = "details"
+
+DROPIN_TEXT = """# Yggdrasil (Settings > Appearance > Boot screen): Plymouth shows the boot screen. Added after "kms" (or "udev").
+if [[ " ${HOOKS[*]} " != *" plymouth "* ]]; then
+  _ygg_hooks=()
+  _ygg_done=0
+  for _h in "${HOOKS[@]}"; do
+    _ygg_hooks+=("$_h")
+    if [[ $_ygg_done == 0 && ( $_h == kms || $_h == sd-vconsole ) ]]; then _ygg_hooks+=(plymouth); _ygg_done=1; fi
+  done
+  if [[ $_ygg_done == 0 ]]; then
+    _ygg_hooks=()
+    for _h in "${HOOKS[@]}"; do
+      _ygg_hooks+=("$_h")
+      if [[ $_ygg_done == 0 && ( $_h == udev || $_h == systemd ) ]]; then _ygg_hooks+=(plymouth); _ygg_done=1; fi
+    done
+  fi
+  HOOKS=("${_ygg_hooks[@]}")
+  unset _ygg_hooks _ygg_done _h
+fi
+"""
+
+PICTURE_SCRIPT = """# Yggdrasil: your own picture in the middle of the screen while the computer starts (Settings > Appearance > Boot screen).
+Window.SetBackgroundTopColor(0, 0, 0);
+Window.SetBackgroundBottomColor(0, 0, 0);
+pic = Image("picture.png");
+W = Window.GetWidth();
+H = Window.GetHeight();
+scale = 1;
+if (pic.GetWidth() > W * 0.9) scale = W * 0.9 / pic.GetWidth();
+if (pic.GetHeight() * scale > H * 0.9) scale = H * 0.9 / pic.GetHeight();
+pic = pic.Scale(Math.Int(pic.GetWidth() * scale), Math.Int(pic.GetHeight() * scale));
+s = Sprite(pic);
+s.SetX(Math.Int((W - pic.GetWidth()) / 2));
+s.SetY(Math.Int((H - pic.GetHeight()) / 2));
+"""
+
+
+def run(argv):
+    return subprocess.run(argv, capture_output=True, text=True)
+
+
+def os_theme():
+    """The operating system's own animation: boot_theme in its branding file, else Plymouth's plain spinner."""
+    for f in sorted(glob.glob(os.path.join(INTEGRATIONS, "*.conf"))):
+        try:
+            text = open(f, encoding="utf-8").read()
+        except OSError:
+            continue
+        if not any(l.split("=", 1)[0].strip() == "kind" and l.split("=", 1)[1].strip() == "branding" for l in text.splitlines() if "=" in l):
+            continue
+        for l in text.splitlines():
+            if "=" in l and l.split("=", 1)[0].strip() == "boot_theme":
+                name = l.split("=", 1)[1].strip()
+                if name and os.path.isdir(os.path.join(THEMES, name)):
+                    return name
+    return "spinner"
+
+
+def with_splash(line):
+    """GRUB_CMDLINE_LINUX_DEFAULT=... with "splash" added (the same line when it is there already)."""
+    key, _, value = line.partition("=")
+    quote = value[:1] if value[:1] in "'\"" else ""
+    inner = value[1:-1] if quote and value.endswith(quote) else value
+    words = inner.split()
+    if "splash" in words:
+        return line
+    words.append("splash")
+    return f"{key}={quote}{' '.join(words)}{quote}"
+
+
+def grub_splash(text):
+    return "\n".join(with_splash(l) if l.startswith("GRUB_CMDLINE_LINUX_DEFAULT=") else l for l in text.split("\n"))
+
+
+def current_theme():
+    return run(["plymouth-set-default-theme"]).stdout.strip()
+
+
+def choice_of(theme):
+    if theme == MESSAGES_THEME:
+        return "messages"
+    if theme == PICTURE_THEME:
+        return "picture"
+    return "animation"
+
+
+def ready():
+    """Plymouth is in the start-up image and the kernel was started with "splash"."""
+    hooked = os.path.exists(DROPIN) or "plymouth" in open("/etc/mkinitcpio.conf", encoding="utf-8").read().split("HOOKS=", 1)[-1].split("\n", 1)[0]
+    splash = "splash" in open("/proc/cmdline").read().split()
+    return hooked and splash
+
+
+def get():
+    theme = current_theme()
+    print(json.dumps({
+        "ready": ready(),
+        "grub": os.path.exists(GRUB_DEFAULT),
+        "theme": theme,
+        "choice": choice_of(theme),
+        "animation": os_theme(),
+        "splash_now": "splash" in open("/proc/cmdline").read().split(),
+    }))
+
+
+def make_picture_theme(src):
+    from PIL import Image  # python-pillow
+    d = os.path.join(THEMES, PICTURE_THEME)
+    os.makedirs(d, exist_ok=True)
+    img = Image.open(src)
+    img.thumbnail((3840, 2160))
+    img.convert("RGBA").save(os.path.join(d, "picture.png"))
+    with open(os.path.join(d, PICTURE_THEME + ".script"), "w") as f:
+        f.write(PICTURE_SCRIPT)
+    with open(os.path.join(d, PICTURE_THEME + ".plymouth"), "w") as f:
+        f.write(f"[Plymouth Theme]\nName=Your picture\nDescription=Your own picture while the computer starts\nModuleName=script\n\n"
+                f"[script]\nImageDir={d}\nScriptFile={d}/{PICTURE_THEME}.script\n")
+
+
+def set_(what, arg=None):
+    if os.geteuid() != 0:
+        sys.exit("bootscreen set needs root (Settings runs it with pkexec)")
+    theme = {"animation": os_theme(), "messages": MESSAGES_THEME, "picture": PICTURE_THEME}.get(what)
+    if theme is None:
+        sys.exit("set animation | messages | picture FILE")
+    if what == "picture":
+        if not arg or not os.path.isfile(arg):
+            sys.exit("the picture was not found")
+        make_picture_theme(arg)
+    # Plymouth in the start-up image
+    if not os.path.exists(DROPIN):
+        os.makedirs(os.path.dirname(DROPIN), exist_ok=True)
+        with open(DROPIN, "w") as f:
+            f.write(DROPIN_TEXT)
+    # "splash" on the kernel's command line (GRUB)
+    if os.path.exists(GRUB_DEFAULT):
+        old = open(GRUB_DEFAULT, encoding="utf-8").read()
+        new = grub_splash(old)
+        if new != old:
+            if not os.path.exists(GRUB_DEFAULT + ".before-bootscreen"):
+                shutil.copy2(GRUB_DEFAULT, GRUB_DEFAULT + ".before-bootscreen")
+            with open(GRUB_DEFAULT, "w", encoding="utf-8") as f:
+                f.write(new)
+            cfg = "/boot/grub/grub.cfg"
+            r = run(["grub-mkconfig", "-o", cfg])
+            if r.returncode != 0:
+                shutil.copy2(GRUB_DEFAULT + ".before-bootscreen", GRUB_DEFAULT)
+                sys.exit("GRUB could not be updated, nothing was changed: " + r.stderr.strip()[-300:])
+    r = run(["plymouth-set-default-theme", theme])
+    if r.returncode != 0:
+        sys.exit("Plymouth did not take the theme: " + (r.stderr or r.stdout).strip()[-300:])
+    r = run(["mkinitcpio", "-P"])
+    if r.returncode != 0:
+        sys.exit("the start-up image could not be rebuilt: " + (r.stderr or r.stdout).strip()[-400:])
+    print(f"boot screen: {what} ({theme}); shows from the next start")
+
+
+def main():
+    a = sys.argv[1:]
+    if a[:1] == ["get"]:
+        get()
+    elif a[:1] == ["set"] and len(a) >= 2:
+        set_(a[1], a[2] if len(a) > 2 else None)
+    else:
+        sys.exit(__doc__)
+
+
+if __name__ == "__main__":
+    main()

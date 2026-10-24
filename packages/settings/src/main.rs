@@ -77,6 +77,7 @@ enum AppSub {
     Minos,
     Lock,
     Workspaces,
+    Boot,
 }
 
 const PAGES: [(Page, &str, Icon); 18] = [
@@ -209,6 +210,10 @@ struct App {
     dev_filter: String,
     /// The lock screen previews are being (or have been) drawn for this visit to the page.
     lock_previews_started: bool,
+    /// Appearance > Boot screen: what `bootscreen get` said (and when), the picture being chosen, and a change under way.
+    boot_info: Option<(std::time::Instant, serde_json::Value)>,
+    boot_pic: String,
+    boot_busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ws_conf: workspaces::Conf,
     app_sort: usize,
     app_sel: Option<String>,
@@ -287,10 +292,14 @@ impl App {
                 "minos" => AppSub::Minos,
                 "lock" => AppSub::Lock,
                 "workspaces" => AppSub::Workspaces,
+                "boot" => AppSub::Boot,
                 _ => AppSub::Main,
             },
             dev_filter: String::new(),
             lock_previews_started: false,
+            boot_info: None,
+            boot_pic: String::new(),
+            boot_busy: Default::default(),
             ws_conf: workspaces::load(),
             app_sort: 0,
             app_sel: None,
@@ -676,6 +685,92 @@ impl App {
     }
 
     /// Appearance > Lock screen: the designs, each drawn by yggdrasil-lock into a picture (nothing is locked), and which one is in use.
+    /// Appearance > Boot screen: the operating system's animation, the start-up messages as text, or your own picture (Plymouth).
+    fn boot_page(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
+        use std::sync::atomic::Ordering;
+        const HELPER: &str = "/usr/lib/yggdrasil/bootscreen";
+        let busy = self.boot_busy.load(Ordering::Acquire);
+        if !busy && self.boot_info.as_ref().map(|(t, _)| t.elapsed() > std::time::Duration::from_secs(5)).unwrap_or(true) {
+            let v: serde_json::Value = sys::run(HELPER, &["get"]).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+            self.boot_info = Some((std::time::Instant::now(), v));
+        }
+        let info = self.boot_info.as_ref().map(|(_, v)| v.clone()).unwrap_or_default();
+        if info.is_null() {
+            ui::group(ui, pal, None, |ui| ui::row(ui, pal, true, "The boot screen cannot be changed here", Some("Plymouth is not installed"), |_| {}));
+            return;
+        }
+        let ready = info["ready"].as_bool().unwrap_or(false);
+        let anim = info["animation"].as_str().unwrap_or("spinner").to_string();
+        let idx = match info["choice"].as_str() {
+            Some("messages") => 1,
+            Some("picture") => 2,
+            _ => 0,
+        };
+        let mut pick: Option<usize> = None;
+        ui::group(ui, pal, None, |ui| {
+            // until Plymouth is switched on nothing is chosen yet: any of the three switches it on
+            let shown = if ready { idx } else { usize::MAX };
+            ui::row(ui, pal, true, "While the computer starts", Some(match shown {
+                1 => "The start-up messages, as text",
+                2 => "Your own picture",
+                0 => "The animation",
+                _ => "Not set up yet: pick one",
+            }), |ui| {
+                if !busy {
+                    pick = ui::segmented(ui, pal, &["Animation", "Messages", "Your picture"], shown);
+                }
+            });
+            let preview = format!("/usr/share/plymouth/themes/{anim}/preview.png");
+            if std::path::Path::new(&preview).is_file() {
+                ui.add_space(6.0);
+                ui.add(egui::Image::new(format!("file://{preview}")).fit_to_exact_size(vec2(320.0, 180.0)).corner_radius(8));
+            }
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui::field(ui, pal, &mut self.boot_pic, "Your picture: /home/you/Pictures/boot.png", 340.0, false);
+                let ok = std::path::Path::new(self.boot_pic.trim()).is_file();
+                if ui.add_enabled(ok && !busy, egui::Button::new("Use this picture")).clicked() {
+                    pick = Some(3);
+                }
+            });
+        });
+        ui.add_space(4.0);
+        let note = if busy {
+            "Changing the boot screen: the start-up image is rebuilt, which takes about a minute..."
+        } else if !ready {
+            "The first change switches the boot screen on (it asks for your password and takes about a minute). It shows from the next start."
+        } else {
+            "A change shows from the next start. Press Escape while it shows to see the messages."
+        };
+        ui.label(RichText::new(note).color(pal.dim));
+        if let Some(k) = pick {
+            let args: Vec<String> = match k {
+                0 => vec!["animation".into()],
+                1 => vec!["messages".into()],
+                2 if !std::path::Path::new(self.boot_pic.trim()).is_file() => {
+                    self.status = "Type the path of a picture first, then Use this picture".into();
+                    vec![]
+                }
+                _ => vec!["picture".into(), self.boot_pic.trim().to_string()],
+            };
+            if !args.is_empty() {
+                let flag = self.boot_busy.clone();
+                flag.store(true, Ordering::Release);
+                self.boot_info = None;
+                self.change(ctx, move || {
+                    let mut a: Vec<&str> = vec![HELPER, "set"];
+                    a.extend(args.iter().map(String::as_str));
+                    let r = sys::act("pkexec", &a);
+                    flag.store(false, Ordering::Release);
+                    r
+                });
+            }
+        }
+        if busy {
+            ctx.request_repaint_after(std::time::Duration::from_millis(500));
+        }
+    }
+
     fn lock_page(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         const DESIGNS: [(&str, &str, &str); 4] = [
             ("split", "Split", "Wallpaper on the left, a frosted sign-in panel on the right"),
@@ -1220,6 +1315,7 @@ impl App {
                 AppSub::Minos => "Minos",
                 AppSub::Lock => "Lock screen",
                 AppSub::Workspaces => "Workspaces",
+                AppSub::Boot => "Boot screen",
                 _ => "Wallpaper",
             };
             ui.horizontal(|ui| {
@@ -1274,6 +1370,10 @@ impl App {
                     self.app_sub = AppSub::Workspaces;
                     self.ws_conf = workspaces::load();
                 }
+                if ui::nav_row(ui, pal, false, "Boot screen", Some("What shows while the computer starts and shuts down"), |_| {}) {
+                    self.app_sub = AppSub::Boot;
+                    self.boot_info = None;
+                }
                 if ui::nav_row(ui, pal, false, "Minos", Some("The file manager: make its window see-through"), |_| {}) {
                         self.app_sub = AppSub::Minos;
                 }
@@ -1313,6 +1413,9 @@ impl App {
         }
         if self.app_sub == AppSub::Workspaces {
             self.workspaces_page(ui, pal, ctx);
+        }
+        if self.app_sub == AppSub::Boot {
+            self.boot_page(ui, pal, ctx);
         }
         if self.app_sub == AppSub::Icons {
         ui::group(ui, pal, Some("Icons"), |ui| {
