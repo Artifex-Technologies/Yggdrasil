@@ -39,4 +39,6 @@ systemd-cat -t yggdrasil-session echo "$what: every window closed"
 if [[ $what != logout ]]; then
   printf '%s\n' "$what" >"${XDG_RUNTIME_DIR:-/run/user/$UID}/yggdrasil-after-session"
 fi
+# the screen-sharing portal crashes when Hyprland goes away under it: it stops first
+systemctl --user stop xdg-desktop-portal-hyprland.service 2>/dev/null
 hyprctl dispatch 'hl.dsp.exit()' >/dev/null
