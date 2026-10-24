@@ -80,6 +80,9 @@ hl.config({
     focus_on_activate = true,
     -- variable refresh for full-screen programs (games), never for the desktop (no flicker)
     vrr = 2,
+    -- no reloading by itself when this file changes: an update replaces it, and a reload caught in between found no file and left
+    -- the session without its settings. Settings reloads after its changes; after editing your own file: hyprctl reload
+    disable_autoreload = true,
   },
 
   cursor = {
