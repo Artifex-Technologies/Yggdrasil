@@ -444,6 +444,67 @@ pub fn spawn_disk_watch(tx: calloop::channel::Sender<NMsg>) {
     });
 }
 
+// ------------------------------------------------------------------------------------------------ the compositor's messages
+
+/// The notification for Hyprland's config errors (`hyprctl configerrors`), if there are any: shown here instead of Hyprland's own
+/// box over the screen (`debug.suppress_errors` in Yggdrasil's config).
+pub fn hypr_errors_note(text: &str, id: u32) -> Option<Notif> {
+    let lines: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    if lines.is_empty() {
+        return None;
+    }
+    let mut body = lines.iter().take(4).copied().collect::<Vec<_>>().join("\n");
+    if lines.len() > 4 {
+        body.push_str(&format!("\n... and {} more", lines.len() - 4));
+    }
+    Some(Notif {
+        id,
+        app: "Desktop".into(),
+        entry: String::new(),
+        icon: "dialog-warning".into(),
+        summary: "The window settings have a mistake".into(),
+        body,
+        urgency: 2,
+        time: now_secs(),
+        actions: vec![],
+        link: String::new(),
+    })
+}
+
+/// In Hyprland: listens to its event socket and, at the start and after every config (re)load, puts its config errors into the
+/// notification center. The same errors are shown once, again only after they changed or went away.
+pub fn spawn_hypr_watch(tx: calloop::channel::Sender<NMsg>) {
+    let (Some(sig), Some(run)) = (std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE"), std::env::var_os("XDG_RUNTIME_DIR")) else { return };
+    let sock = std::path::PathBuf::from(run).join("hypr").join(sig).join(".socket2.sock");
+    std::thread::spawn(move || {
+        use std::io::BufRead;
+        let mut last = String::new();
+        let mut check = |last: &mut String| {
+            let out = std::process::Command::new("hyprctl").arg("configerrors").stdin(std::process::Stdio::null()).output();
+            let text = out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+            if text != *last {
+                if let Some(n) = hypr_errors_note(&text, next_id()) {
+                    let _ = tx.send(NMsg::New(n));
+                }
+                *last = text;
+            }
+        };
+        check(&mut last);
+        loop {
+            if let Ok(stream) = std::os::unix::net::UnixStream::connect(&sock) {
+                for line in std::io::BufReader::new(stream).lines() {
+                    let Ok(line) = line else { break };
+                    if line.starts_with("configreloaded>>") {
+                        check(&mut last);
+                    }
+                }
+            }
+            // Hyprland went away (or is restarting): try again in a while
+            std::thread::sleep(Duration::from_secs(5));
+        }
+    });
+}
+
 // ------------------------------------------------------------------------------------------------ security alerts
 
 fn severity_rank(s: &str) -> u8 {
@@ -941,6 +1002,9 @@ mod tests {
         assert!(space_is_low(20 * G, 1000 * G), "under 3% of a big disk");
         assert!(!space_is_low(100 * G, 500 * G));
         assert!(!space_is_low(0, 0), "no disk, no warning");
+        assert!(hypr_errors_note("  \n", 1).is_none(), "no errors, no notification");
+        let n = hypr_errors_note("a.lua:3: x\nb\nc\nd\ne\nf\n", 1).unwrap();
+        assert_eq!(n.body, "a.lua:3: x\nb\nc\nd\n... and 2 more");
     }
 
     #[test]

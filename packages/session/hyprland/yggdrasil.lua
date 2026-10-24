@@ -89,6 +89,11 @@ hl.config({
     hide_on_key_press = false,
   },
 
+  debug = {
+    -- config mistakes go to the notification center (the panel asks after every load), not into a box over the screen
+    suppress_errors = true,
+  },
+
   render = {
     -- a full-screen game's frames go straight to the monitor, not through the compositor (less input delay); games only
     direct_scanout = 2,

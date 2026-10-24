@@ -3412,6 +3412,7 @@ fn main() {
     notify::spawn_server(note_tx.clone());
     notify::spawn_security_alerts(note_tx.clone());
     notify::spawn_disk_watch(note_tx.clone());
+    notify::spawn_hypr_watch(note_tx.clone());
     devices::spawn(note_tx);
     event_loop
         .handle()
