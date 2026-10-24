@@ -93,10 +93,14 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
             line(p, &f, &[(0.25, 0.45), (0.5, 0.2), (0.75, 0.45)], color);
         }
         Icon::Refresh => {
-            line(p, &f, &arc(0.5, 0.5, 0.3, 30.0, 320.0, 24), color);
-            // arrow head at the start of the arc
-            let tip = (0.5 + 0.3 * 30f32.to_radians().cos(), 0.5 + 0.3 * 30f32.to_radians().sin());
-            line(p, &f, &[(tip.0 + 0.0, tip.1 - 0.2), tip, (tip.0 + 0.2, tip.1 - 0.02)], color);
+            // a clockwise circle (↻) open at the top right, the arrow head at its end pointing on along the circle
+            let end = -50f32;
+            line(p, &f, &arc(0.5, 0.5, 0.3, end - 290.0, end, 24), color);
+            let a = end.to_radians();
+            let tip = (0.5 + 0.3 * a.cos(), 0.5 + 0.3 * a.sin());
+            let (dx, dy) = (-a.sin(), a.cos()); // the way the circle runs at its end
+            let (len, wide) = (0.16, 0.12);
+            line(p, &f, &[(tip.0 - dx * len - dy * wide, tip.1 - dy * len + dx * wide), tip, (tip.0 - dx * len + dy * wide, tip.1 - dy * len - dx * wide)], color);
         }
         Icon::NewFolder => {
             p.rect_stroke(f.rect(0.1, 0.3, 0.9, 0.82), CornerRadius::same(2), s, StrokeKind::Inside);
