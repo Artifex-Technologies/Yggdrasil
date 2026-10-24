@@ -424,6 +424,9 @@ impl App {
                 v.push(dt * 1000.0);
             }
         }
+        if s.last.is_none() {
+            eprintln!("yggdrasil-splash: first frame on screen {i} after {} ms", self.started.elapsed().as_millis());
+        }
         s.last = Some(now);
         let one = (w * h * 4) as usize;
         let Some(map) = s.map.as_mut() else { return };
@@ -539,6 +542,7 @@ fn hypr(request: &str) -> Option<String> {
 }
 
 fn main() {
+    let launched = Instant::now();
     let screensaver = std::env::args().any(|a| a == "--screensaver");
     // the screensaver is always the falling characters (the choice in splash.conf is for after signing in)
     let mode = if screensaver { Mode::Animation } else { mode() };
@@ -567,13 +571,20 @@ fn main() {
         shm,
         layer_shell,
         screens: vec![],
-        atlas: if matches!(mode, Mode::Animation) { Atlas::new((accent.0, accent.1, accent.2)) } else { None },
+        atlas: if matches!(mode, Mode::Animation) {
+            let t = Instant::now();
+            let a = Atlas::new((accent.0, accent.1, accent.2));
+            eprintln!("yggdrasil-splash: characters ready in {} ms", t.elapsed().as_millis());
+            a
+        } else {
+            None
+        },
         logo: logo().map(bgra),
         picture: if let Mode::Picture(p) = &mode { design::load_picture(p).map(bgra) } else { None },
         font: if mode == Mode::Messages { draw::Fonts::load() } else { None },
         mode,
         rng: Rng(Instant::now().elapsed().as_nanos() as u64 ^ (std::process::id() as u64) << 20 | 1),
-        started: Instant::now(),
+        started: launched,
         fading: None,
         screensaver,
         ready: Default::default(),

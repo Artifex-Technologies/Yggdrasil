@@ -76,6 +76,8 @@ hl.config({
 
   misc = {
     disable_hyprland_logo = true,
+    -- before anything is drawn the screen is the same dark purple as the screen after signing in, so it fades in from that
+    background_color = "rgb(05030a)",
     disable_splash_rendering = true,
     focus_on_activate = true,
     -- variable refresh for full-screen programs (games), never for the desktop (no flicker)
