@@ -13,8 +13,49 @@ fn lock_now(running: &Arc<Mutex<Option<Child>>>) {
             return;
         }
     }
-    *r = Command::new("yggdrasil-lock").stdin(std::process::Stdio::null()).spawn().ok();
+    *r = start();
     crate::log(if r.is_some() { "locked the screen" } else { "could not start yggdrasil-lock" });
+    if r.is_some() {
+        let run = running.clone();
+        std::thread::spawn(move || watch(run));
+    }
+}
+
+fn start() -> Option<Child> {
+    Command::new("yggdrasil-lock").stdin(std::process::Stdio::null()).spawn().ok()
+}
+
+/// Waits for the locker. It ends with 0 only after the right password; ending any other way (a crash) would leave Hyprland's
+/// "lock screen died" screen up, so it is started again (Hyprland's misc.allow_session_lock_restore lets the new one take over),
+/// at most a few times a minute so a locker that cannot start does not loop.
+fn watch(running: Arc<Mutex<Option<Child>>>) {
+    let mut restarts: Vec<std::time::Instant> = vec![];
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let mut r = running.lock().unwrap();
+        let Some(c) = r.as_mut() else { return };
+        match c.try_wait() {
+            Ok(None) => continue,
+            Ok(Some(status)) if status.success() => {
+                *r = None;
+                return; // unlocked
+            }
+            _ => {}
+        }
+        restarts.retain(|t| t.elapsed() < std::time::Duration::from_secs(60));
+        if restarts.len() >= 5 {
+            crate::log("the lock screen keeps ending without a password; not starting it again");
+            *r = None;
+            return;
+        }
+        restarts.push(std::time::Instant::now());
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        *r = start();
+        crate::log(if r.is_some() { "the lock screen ended without the password: started it again" } else { "could not start yggdrasil-lock again" });
+        if r.is_none() {
+            return;
+        }
+    }
 }
 
 /// Listens for logind's Lock signal for this session and for the machine going to sleep. Runs on its own thread; returns at once.

@@ -83,6 +83,9 @@ hl.config({
     -- no reloading by itself when this file changes: an update replaces it, and a reload caught in between found no file and left
     -- the session without its settings. Settings reloads after its changes; after editing your own file: hyprctl reload
     disable_autoreload = true,
+    -- if the lock screen ever crashes, a new one may take over the locked screen (yggdrasil-idle starts it again) instead of
+    -- Hyprland's "lock screen died" warning staying up
+    allow_session_lock_restore = true,
   },
 
   cursor = {
