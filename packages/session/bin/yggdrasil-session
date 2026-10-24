@@ -13,6 +13,9 @@ export QT_WAYLAND_DISABLE_WINDOWDECORATION=0
 # Hyprland offers to decorate windows but draws no title bar, so Qt programs that accept (VLC, Qt's tools, KDE programs) would have
 # none: they are told not to see that offer and draw their own (title, minimize, maximize, close)
 export QT_WAYLAND_DISABLED_INTERFACES=${QT_WAYLAND_DISABLED_INTERFACES:-zxdg_decoration_manager_v1}
+# Qt programs follow Yggdrasil's dark or light and accent through the desktop portal (Qt's own, no KDE theme plugin needed);
+# without it they are plain light grey
+export QT_QPA_PLATFORMTHEME=${QT_QPA_PLATFORMTHEME:-xdgdesktopportal}
 if [[ -e /proc/driver/nvidia/version ]]; then
   export LIBVA_DRIVER_NAME=nvidia __GLX_VENDOR_LIBRARY_NAME=nvidia NVD_BACKEND=direct
 fi
