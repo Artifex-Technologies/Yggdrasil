@@ -34,6 +34,12 @@ fn dispatch(lua: &str) {
     let _ = hyprctl(&["dispatch", lua]);
 }
 
+/// The name of the screen that has the focus.
+pub fn focused_monitor() -> Option<String> {
+    let monitors: serde_json::Value = serde_json::from_str(&hyprctl(&["-j", "monitors"])?).ok()?;
+    monitors.as_array()?.iter().find(|m| m["focused"].as_bool() == Some(true))?["name"].as_str().map(str::to_string)
+}
+
 /// Puts the window on the hidden "minimized" workspace. False when it was not found (then the caller asks the usual way).
 pub fn minimize(app_id: &str, title: &str) -> bool {
     let Some((addr, _)) = find(app_id, title) else { return false };

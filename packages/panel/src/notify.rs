@@ -479,7 +479,7 @@ pub fn spawn_hypr_watch(tx: calloop::channel::Sender<NMsg>) {
     std::thread::spawn(move || {
         use std::io::BufRead;
         let mut last = String::new();
-        let mut check = |last: &mut String| {
+        let check = |last: &mut String| {
             let out = std::process::Command::new("hyprctl").arg("configerrors").stdin(std::process::Stdio::null()).output();
             let text = out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
             if text != *last {

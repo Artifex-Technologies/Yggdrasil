@@ -20,6 +20,7 @@ mod thumb;
 mod voicekey;
 mod assistant;
 mod voicewave;
+mod confirm;
 mod hypr;
 mod shell;
 mod status;
@@ -107,6 +108,8 @@ enum Kind {
     Toast,
     /// The voice island: grows out of the notch while the assistant listens, thinks or speaks.
     Voice,
+    /// Log out / restart / shut down, with a countdown (Yggdrasil's own session): a card in the middle of the screen.
+    Confirm,
 }
 
 /// The panel's own D-Bus service, so a key press elsewhere (the Super key, through KWin) can reach it:
@@ -338,6 +341,8 @@ struct State {
     peek_blocked: Option<std::time::Instant>,
     /// The volume or brightness pop-up being shown, and a count that tells its hide timer if it is the latest.
     osd: Option<osd::OsdState>,
+    /// A log-out, restart or shut-down waiting for its countdown.
+    confirm: Option<confirm::Confirm>,
     osd_gen: u64,
     osd_hide_tx: calloop::channel::Sender<u64>,
     /// Notification pop-ups on screen (ids, oldest first), and how their hide timers report.
@@ -663,6 +668,9 @@ impl State {
         }
         if Self::keep_voice_surface() {
             self.ensure_voice_surface();
+        }
+        if self.confirm.is_some() {
+            self.add_confirm_surface();
         }
         self.built_for = Some(self.layout.clone());
     }
@@ -1210,6 +1218,66 @@ impl State {
             self.surfs.push(Surf { id, kind: Kind::Osd, output, wl, layer: Some(layer), dock: None, w: osd::WIDTH, h: osd::HEIGHT, want: (osd::WIDTH, osd::HEIGHT), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
         }
         self.dirty = true;
+    }
+
+    /// Log out, restart or shut down after a countdown (Yggdrasil's own session).
+    fn start_confirm(&mut self, act: shell::PowerAct) {
+        self.confirm = Some(confirm::Confirm::new(act));
+        self.add_confirm_surface();
+        self.dirty = true;
+    }
+
+    /// The screen that has the focus (Hyprland says which); None elsewhere.
+    fn focused_output(&self) -> Option<u32> {
+        if !hypr::running() {
+            return None;
+        }
+        let name = hypr::focused_monitor()?;
+        self.outputs.iter().find(|(_, o)| o.name == name).map(|(k, _)| *k)
+    }
+
+    /// The countdown card: in the middle of the focused screen (the dock's when unknown), above everything, with the keyboard.
+    fn add_confirm_surface(&mut self) {
+        if self.surfs.iter().any(|s| s.kind == Kind::Confirm) {
+            return;
+        }
+        let Some(output) = self.focused_output().or_else(|| self.dock_output()) else { return };
+        let Some(out) = self.outputs.get(&output) else { return };
+        let id = self.next_surf;
+        self.next_surf += 1;
+        let wl = self.compositor.create_surface(&self.qh, ());
+        let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Overlay, "yggdrasil-confirm".into(), &self.qh, id);
+        // no anchor: centred on the screen
+        layer.set_size(confirm::WIDTH, confirm::HEIGHT);
+        layer.set_exclusive_zone(-1);
+        layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+        wl.commit();
+        self.surfs.push(Surf { id, kind: Kind::Confirm, output, wl, layer: Some(layer), dock: None, w: confirm::WIDTH, h: confirm::HEIGHT, want: (confirm::WIDTH, confirm::HEIGHT), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
+    }
+
+    /// The countdown ended: `go` does it (yggdrasil-logout closes the programs first), else nothing happens.
+    fn end_confirm(&mut self, go: bool) {
+        let Some(c) = self.confirm.take() else { return };
+        if let Some(i) = self.surfs.iter().position(|s| s.kind == Kind::Confirm) {
+            let s = self.surfs.remove(i);
+            s.destroy();
+            self.pointer_surface = None;
+        }
+        if go {
+            run(&["yggdrasil-logout", c.verb()]);
+        }
+        self.dirty = true;
+    }
+
+    /// Once a second while the countdown runs: draw the seconds left, or go ahead when they ran out.
+    fn tick_confirm(&mut self) {
+        let Some(c) = self.confirm else { return };
+        if c.expired() {
+            self.end_confirm(true);
+        } else if let Some(i) = self.surfs.iter().position(|s| s.kind == Kind::Confirm) {
+            self.draw(i);
+            let _ = self.conn.flush();
+        }
     }
 
     /// Takes the pop-up away when its timer ran out and nothing newer replaced it.
@@ -1979,6 +2047,8 @@ impl State {
                 PowerAct::Sleep => run(&["systemctl", "suspend"]),
                 PowerAct::Hibernate => run(&["systemctl", "hibernate"]),
                 // Plasma's own logout (it saves the session) when it is there, else end the login session
+                // Yggdrasil's own session asks first, with a countdown (Plasma has its own question)
+                PowerAct::Logout | PowerAct::Restart | PowerAct::Shutdown if yggdrasil_conf::own_session() => self.start_confirm(p),
                 PowerAct::Logout => run(&["sh", "-c", "qdbus6 org.kde.Shutdown /Shutdown org.kde.Shutdown.logout 2>/dev/null || loginctl terminate-session \"${XDG_SESSION_ID:-self}\""]),
                 PowerAct::Restart => run(&["systemctl", "reboot"]),
                 PowerAct::Shutdown => run(&["systemctl", "poweroff"]),
@@ -1989,6 +2059,15 @@ impl State {
 
     /// A key was pressed while a popover has the keyboard.
     fn key_pressed(&mut self, key: u32) {
+        // the countdown card has the keyboard: Escape stops it, Enter goes ahead now
+        if self.confirm.is_some() {
+            match key {
+                1 => self.end_confirm(false),
+                28 | 96 => self.end_confirm(true),
+                _ => {}
+            }
+            return;
+        }
         if key == 1 {
             self.close_popup(); // Escape
             return;
@@ -2277,6 +2356,10 @@ impl State {
                 }
                 vec![]
             }
+            Kind::Confirm => match self.confirm {
+                Some(c) => confirm::paint(&mut pix, s, &c, hover, &self.assets.fonts),
+                None => vec![],
+            },
             Kind::Osd => {
                 if let Some(st) = self.osd {
                     osd::paint(&mut pix, s, &st, &self.assets.fonts, &mut self.assets.icons);
@@ -2412,6 +2495,8 @@ impl State {
 
     fn click(&mut self, action: Action) {
         match action {
+            Action::ConfirmNow => self.end_confirm(true),
+            Action::ConfirmCancel => self.end_confirm(false),
             Action::Logo => self.toggle_start(),
             Action::Clock => self.toggle_calendar(),
             Action::Notch => {
@@ -3256,6 +3341,7 @@ fn main() {
         drag_sent: (std::time::Instant::now(), 101),
         peek_blocked: None,
         osd: None,
+        confirm: None,
         osd_gen: 0,
         osd_hide_tx,
         pane_hits: vec![],
@@ -3738,6 +3824,7 @@ fn main() {
     event_loop
         .handle()
         .insert_source(Timer::from_duration(Duration::from_secs(1)), move |_, _, st| {
+            st.tick_confirm();
             // the accent color is in kdeglobals, not panel.conf: look at it every second
             if paint::refresh_accent() {
                 st.dirty = true;

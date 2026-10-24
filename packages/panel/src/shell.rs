@@ -188,6 +188,9 @@ pub enum Action {
     /// One of Fylgja's section titles in the bar, by index.
     NotchSection(usize),
     Network,
+    /// The log-out / restart / shut-down countdown: do it now, or not at all.
+    ConfirmNow,
+    ConfirmCancel,
     Bluetooth,
     /// A dock icon: the app id of its group.
     Dock(String),

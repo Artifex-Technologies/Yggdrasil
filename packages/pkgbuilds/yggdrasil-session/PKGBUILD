@@ -15,6 +15,8 @@ _src="$startdir/../../session"
 package() {
   install -Dm755 "$_src/bin/yggdrasil-session" "$pkgdir/usr/bin/yggdrasil-session"
   install -Dm755 "$_src/bin/yggdrasil-snap" "$pkgdir/usr/bin/yggdrasil-snap"
+  install -Dm755 "$_src/bin/yggdrasil-close" "$pkgdir/usr/bin/yggdrasil-close"
+  install -Dm755 "$_src/bin/yggdrasil-logout" "$pkgdir/usr/bin/yggdrasil-logout"
   install -Dm644 "$_src/hyprland/yggdrasil.lua" "$pkgdir/usr/share/yggdrasil/hyprland/yggdrasil.lua"
   # the login screen lists it as "Yggdrasil"
   install -Dm644 "$_src/yggdrasil.desktop" "$pkgdir/usr/share/wayland-sessions/yggdrasil.desktop"

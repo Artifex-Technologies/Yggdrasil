@@ -1,0 +1,42 @@
+#!/bin/bash
+# yggdrasil-logout logout|reboot|poweroff: ends Yggdrasil's session the careful way (the panel runs it when its countdown ends).
+# Every window is asked to close first, so programs can save; after up to 10 seconds, if all have closed, the session ends (or
+# the computer restarts or shuts down). If one has not (it may be asking whether to save), nothing ends: the screen locks, so a
+# computer left alone is not left open, and a notification says which program is still there.
+set -u
+what=${1:-logout}
+case $what in logout|reboot|poweroff) ;; *) echo "usage: yggdrasil-logout logout|reboot|poweroff" >&2; exit 2 ;; esac
+
+clients() { hyprctl -j clients 2>/dev/null; }
+addresses() { clients | python3 -I -c 'import json,sys
+try: [print(c["address"]) for c in json.load(sys.stdin)]
+except Exception: pass'; }
+names() { clients | python3 -I -c 'import json,sys
+try:
+    seen = []
+    for c in json.load(sys.stdin):
+        n = c.get("title") or c.get("class") or "a program"
+        if n not in seen: seen.append(n)
+    print(", ".join(seen[:3]) + (" and others" if len(seen) > 3 else ""))
+except Exception: pass'; }
+
+for a in $(addresses); do
+  hyprctl dispatch "hl.dsp.window.close({ window = \"address:$a\" })" >/dev/null 2>&1
+done
+for _ in $(seq 40); do
+  [[ -z $(addresses) ]] && break
+  sleep 0.25
+done
+left=$(names)
+if [[ -n $left ]]; then
+  systemd-cat -t yggdrasil-session echo "$what stopped: still open: $left"
+  notify-send -a Desktop -u critical -i dialog-warning "Still signed in" "$left did not close (it may be asking whether to save). The screen was locked instead; close it, then try again."
+  loginctl lock-session
+  exit 1
+fi
+systemd-cat -t yggdrasil-session echo "$what: every window closed"
+case $what in
+  logout) hyprctl dispatch 'hl.dsp.exit()' >/dev/null ;;
+  reboot) systemctl reboot ;;
+  poweroff) systemctl poweroff ;;
+esac

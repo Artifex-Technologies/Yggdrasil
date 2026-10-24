@@ -37,6 +37,8 @@ pub fn describe(a: &Action, m: &Model) -> Option<(Role, String, String)> {
         Action::Notch => button("Fylgja".into()),
         Action::NotchSection(i) => button(crate::fylgja::SECTIONS.get(*i).map(|s| format!("Fylgja, {s}")).unwrap_or_else(|| "Fylgja section".into())),
         Action::Network => button("Network".into()),
+        Action::ConfirmNow => button("Go ahead now".into()),
+        Action::ConfirmCancel => button("Cancel".into()),
         Action::Bluetooth => button("Bluetooth".into()),
         Action::Dock(id) => {
             let items = shell::dock_items(m);
