@@ -6,6 +6,10 @@
 //!   mode = animation | messages | picture | off      picture = /path/to/picture
 //! "messages" shows what the session is starting (its log), "picture" a picture of your own, "off" nothing at all.
 //! It takes no clicks and no keys: what is under it gets them.
+//!
+//! `yggdrasil-splash --screensaver` is the screensaver (the idle watcher starts it after the time set in Settings > Power and
+//! ends it when you are back): the same falling characters, the logo fading away after a few seconds so nothing stands still
+//! on the screen, and the key or click that wakes it goes to it, not to the program underneath.
 #![allow(dead_code)]
 
 mod design;
@@ -150,6 +154,14 @@ fn bgra(mut p: Pixmap) -> Pixmap {
 /// Draws a premultiplied picture (already in the buffer's byte order) onto the buffer at (x, y). A plain loop: for thousands
 /// of small characters a frame it costs a fraction of a general drawing call each.
 fn blit(dst: &mut [u8], dw: u32, dh: u32, src: &Pixmap, x: i32, y: i32) {
+    blit_faded(dst, dw, dh, src, x, y, 256);
+}
+
+/// The same with the picture made fainter: `k` of 256 (256 = as it is).
+fn blit_faded(dst: &mut [u8], dw: u32, dh: u32, src: &Pixmap, x: i32, y: i32, k: u32) {
+    if k == 0 {
+        return;
+    }
     let (sw, sh) = (src.width() as i32, src.height() as i32);
     let (x0, x1, y0, y1) = (x.max(0), (x + sw).min(dw as i32), y.max(0), (y + sh).min(dh as i32));
     if x0 >= x1 || y0 >= y1 {
@@ -162,6 +174,17 @@ fn blit(dst: &mut [u8], dw: u32, dh: u32, src: &Pixmap, x: i32, y: i32) {
         let d0 = (py as usize * dw as usize + x0 as usize) * 4;
         let n = (x1 - x0) as usize * 4;
         for (d, sp) in dst[d0..d0 + n].chunks_exact_mut(4).zip(data[s0..s0 + n].chunks_exact(4)) {
+            if k < 256 {
+                let a = (sp[3] as u32 * k) >> 8;
+                if a == 0 {
+                    continue;
+                }
+                let inv = 255 - a;
+                for c in 0..4 {
+                    d[c] = (((sp[c] as u32 * k) >> 8) + (d[c] as u32 * inv + 127) / 255) as u8;
+                }
+                continue;
+            }
             let a = sp[3] as u32;
             if a == 0 {
                 continue;
@@ -254,6 +277,8 @@ struct App {
     rng: Rng,
     started: Instant,
     fading: Option<Instant>,
+    /// The screensaver: runs until it is ended, takes the input that wakes it, the logo fades away.
+    screensaver: bool,
     /// Set by a thread of its own once Hyprland lists the top bar (asking it never holds up a frame).
     ready: std::sync::Arc<std::sync::atomic::AtomicBool>,
     accent: (u8, u8, u8, u8),
@@ -465,7 +490,9 @@ impl App {
                     }
                 }
                 if let Some(l) = &self.logo {
-                    blit(bytes, w, h, l, ((w - l.width().min(w)) / 2) as i32, ((h - l.height().min(h)) / 2) as i32);
+                    // as the screensaver the logo fades away between 4 and 6 seconds: nothing stands still to mark the screen
+                    let k = if self.screensaver { (256.0 * (1.0 - ((self.started.elapsed().as_secs_f32() - 4.0) / 2.0).clamp(0.0, 1.0))) as u32 } else { 256 };
+                    blit_faded(bytes, w, h, l, ((w - l.width().min(w)) / 2) as i32, ((h - l.height().min(h)) / 2) as i32, k);
                 }
             }
         }
@@ -512,7 +539,9 @@ fn hypr(request: &str) -> Option<String> {
 }
 
 fn main() {
-    let mode = mode();
+    let screensaver = std::env::args().any(|a| a == "--screensaver");
+    // the screensaver is always the falling characters (the choice in splash.conf is for after signing in)
+    let mode = if screensaver { Mode::Animation } else { mode() };
     if mode == Mode::Off {
         return;
     }
@@ -546,6 +575,7 @@ fn main() {
         rng: Rng(Instant::now().elapsed().as_nanos() as u64 ^ (std::process::id() as u64) << 20 | 1),
         started: Instant::now(),
         fading: None,
+        screensaver,
         ready: Default::default(),
         accent,
         stats: std::env::var_os("YGGDRASIL_SPLASH_STATS").map(|_| vec![]),
@@ -561,11 +591,16 @@ fn main() {
         let layer = app.layer_shell.get_layer_surface(&surface, Some(&output), zwlr_layer_shell_v1::Layer::Overlay, "yggdrasil-splash".into(), &qh, idx);
         layer.set_anchor(Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right);
         layer.set_exclusive_zone(-1);
-        layer.set_keyboard_interactivity(KeyboardInteractivity::None);
         let alpha = alpha_mgr.as_ref().map(|m| m.get_surface(&surface, &qh, ()));
-        let region = app.compositor.create_region(&qh, ());
-        surface.set_input_region(Some(&region));
-        region.destroy();
+        if screensaver {
+            // it takes the keyboard and every click: what wakes it must not reach the program underneath
+            layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
+        } else {
+            layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+            let region = app.compositor.create_region(&qh, ());
+            surface.set_input_region(Some(&region));
+            region.destroy();
+        }
         surface.commit();
         app.screens.push(Screen { output, surface, layer, size: (0, 0), configured: false, bufs: vec![], map: None, pix: None, cols: vec![], alpha, wants_frame: true, last: None });
     }
@@ -573,8 +608,8 @@ fn main() {
     if WaylandSource::new(conn.clone(), queue).insert(event_loop.handle()).is_err() {
         return;
     }
-    // whether the top bar is up, asked in the background four times a second
-    {
+    // whether the top bar is up, asked in the background four times a second (not for the screensaver: it runs until ended)
+    if !screensaver {
         let ready = app.ready.clone();
         std::thread::spawn(move || {
             std::thread::sleep(SHORTEST);
@@ -587,7 +622,7 @@ fn main() {
     }
     // the fade starts once it is (or when it takes too long); frames themselves come from the compositor's frame callbacks
     let _ = event_loop.handle().insert_source(Timer::from_duration(Duration::from_millis(20)), |_, _, app: &mut App| {
-        if app.fading.is_none() && (app.started.elapsed() > LONGEST || app.ready.load(std::sync::atomic::Ordering::Acquire)) {
+        if !app.screensaver && app.fading.is_none() && (app.started.elapsed() > LONGEST || app.ready.load(std::sync::atomic::Ordering::Acquire)) {
             app.fading = Some(Instant::now());
         }
         if app.fading.map(|t| t.elapsed() > FADE).unwrap_or(false) {

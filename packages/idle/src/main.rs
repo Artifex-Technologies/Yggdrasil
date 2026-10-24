@@ -91,6 +91,8 @@ pub struct App {
     /// The largest mark that has fired since the user was last active, and when.
     longest: Option<(u32, Instant)>,
     done: HashMap<Step, bool>,
+    /// The screensaver while it runs (it ends when the user is back).
+    screensaver: Option<std::process::Child>,
 }
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for App {
@@ -113,6 +115,11 @@ impl Dispatch<ExtIdleNotificationV1, u32> for App {
                 // every mark reports its own resume; say it once, for the longest one that had fired
                 if let Some(d) = app.dimmer.as_mut() {
                     d.hide();
+                }
+                // the screensaver ends as soon as the user is back (the key or click that woke it went to it, not to a program)
+                if let Some(mut c) = app.screensaver.take() {
+                    let _ = c.kill();
+                    let _ = c.wait();
                 }
                 if let Some(p) = app.power.as_mut().filter(|p| p.off) {
                     p.set(true);
@@ -144,6 +151,13 @@ impl App {
         }
         log(&format!("doing {}", step.name()));
         match step {
+            Step::Screensaver => {
+                let child = std::process::Command::new("yggdrasil-splash").arg("--screensaver").stdin(std::process::Stdio::null()).spawn();
+                match child {
+                    Ok(c) => self.screensaver = Some(c),
+                    Err(e) => log(&format!("cannot start the screensaver (yggdrasil-splash): {e}")),
+                }
+            }
             Step::Lock => {
                 run("loginctl", &["lock-session"]);
             }
@@ -206,7 +220,7 @@ fn main() {
         log("dimming is not available here (needs layer-shell, wp-viewporter, wl_shm)");
     }
     let power = power::Power::new(&globals, &qh);
-    let mut app = App { conf, dimmer, power, globals, qh: qh.clone(), longest: None, done: HashMap::new() };
+    let mut app = App { conf, dimmer, power, globals, qh: qh.clone(), longest: None, done: HashMap::new(), screensaver: None };
     let mut last_check = Instant::now();
     loop {
         if queue.dispatch_pending(&mut app).is_err() || conn.flush().is_err() {

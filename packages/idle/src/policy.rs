@@ -3,6 +3,8 @@
 /// One step of the away-timeline.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Step {
+    /// The falling characters (yggdrasil-splash --screensaver), until the user is back.
+    Screensaver,
     Dim,
     Lock,
     DisplayOff,
@@ -13,6 +15,7 @@ pub enum Step {
 impl Step {
     pub fn name(self) -> &'static str {
         match self {
+            Step::Screensaver => "screensaver",
             Step::Dim => "dim",
             Step::Lock => "lock",
             Step::DisplayOff => "display-off",
@@ -26,6 +29,7 @@ impl Step {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
     pub act: bool,
+    pub screensaver: u32,
     pub dim: u32,
     pub lock: u32,
     pub display_off: u32,
@@ -37,7 +41,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Config { act: false, dim: 0, lock: 0, display_off: 0, suspend: 0, hibernate: 0, dim_level: 30 }
+        Config { act: false, screensaver: 0, dim: 0, lock: 0, display_off: 0, suspend: 0, hibernate: 0, dim_level: 30 }
     }
 }
 
@@ -52,6 +56,7 @@ impl Config {
             let secs = v.parse::<u32>().ok();
             match k {
                 "mode" => c.act = v == "act",
+                "screensaver" => c.screensaver = secs.unwrap_or(c.screensaver),
                 "dim" => c.dim = secs.unwrap_or(c.dim),
                 "lock" => c.lock = secs.unwrap_or(c.lock),
                 "display_off" => c.display_off = secs.unwrap_or(c.display_off),
@@ -64,9 +69,9 @@ impl Config {
         c
     }
 
-    /// Every step that has a time, in the order it happens (ties keep the order dim, lock, display-off, suspend).
+    /// Every step that has a time, in the order it happens (ties keep the order screensaver, dim, lock, display-off, suspend).
     pub fn steps(&self) -> Vec<(u32, Step)> {
-        let mut v: Vec<(u32, Step)> = [(self.dim, Step::Dim), (self.lock, Step::Lock), (self.display_off, Step::DisplayOff), (self.suspend, Step::Suspend), (self.hibernate, Step::Hibernate)]
+        let mut v: Vec<(u32, Step)> = [(self.screensaver, Step::Screensaver), (self.dim, Step::Dim), (self.lock, Step::Lock), (self.display_off, Step::DisplayOff), (self.suspend, Step::Suspend), (self.hibernate, Step::Hibernate)]
             .into_iter()
             .filter(|(s, _)| *s > 0)
             .collect();
@@ -101,7 +106,7 @@ pub fn blocking_inhibitors(list: Vec<(String, String, String, String, u32, u32)>
 
 pub fn blocked_by_inhibitors(step: Step, what: &[&str]) -> bool {
     match step {
-        Step::Dim | Step::Lock | Step::DisplayOff => what.iter().any(|w| w.contains("idle")),
+        Step::Screensaver | Step::Dim | Step::Lock | Step::DisplayOff => what.iter().any(|w| w.contains("idle")),
         Step::Suspend | Step::Hibernate => what.iter().any(|w| w.contains("idle") || w.contains("sleep")),
     }
 }
@@ -120,7 +125,9 @@ mod tests {
     #[test]
     fn parses_and_ignores_junk() {
         let c = Config::parse("# comment\nmode = act\ndim = 300  # five minutes\nlock = soon\nsuspend=1800\nbogus = 1\n");
-        assert_eq!(c, Config { act: true, dim: 300, lock: 0, display_off: 0, suspend: 1800, hibernate: 0, dim_level: 30 });
+        assert_eq!(c, Config { act: true, screensaver: 0, dim: 300, lock: 0, display_off: 0, suspend: 1800, hibernate: 0, dim_level: 30 });
+        let c = Config::parse("mode = act\nscreensaver = 180\ndim = 300\n");
+        assert_eq!(c.steps(), vec![(180, Step::Screensaver), (300, Step::Dim)], "the screensaver first, then the dim over it");
         assert_eq!(Config::parse("dim_level = 5").dim_level, 10);
         assert_eq!(Config::parse("hibernate = 3600").hibernate, 3600);
         assert_eq!(Config::parse(""), Config::default());

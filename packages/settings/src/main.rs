@@ -1768,7 +1768,8 @@ impl App {
         let mut idle = p.idle.clone();
         let mut idle_changed = false;
         ui::group(ui, pal, Some("When idle"), |ui| {
-            let rows: [(&str, &str, i64, bool); 5] = [
+            let rows: [(&str, &str, i64, bool); 6] = [
+                ("saver", "Screensaver after", p.idle.screensaver, true),
                 ("dim", "Dim the screen after", p.idle.dim, true),
                 ("off", "Turn off the screen after", p.idle.screen_off, true),
                 ("lock", "Lock the screen after", p.idle.lock, true),
@@ -1784,6 +1785,7 @@ impl App {
                             for (m, l) in choices {
                                 if ui.selectable_label(m == cur, l).clicked() {
                                     match key {
+                                        "saver" => idle.screensaver = m,
                                         "dim" => idle.dim = m,
                                         "off" => idle.screen_off = m,
                                         "lock" => idle.lock = m,
