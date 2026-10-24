@@ -312,12 +312,186 @@ fn queue() -> Option<Vec<QueueItem>> {
     q
 }
 
-/// Ask rclone to retry a failed upload now.
-pub fn retry_sync(drive_root: &Path, path: &Path) -> Result<(), String> {
+/// Ask rclone to retry a failed upload now (for a folder: every one inside it). Returns how many were retried.
+pub fn retry_sync(drive_root: &Path, path: &Path) -> Result<usize, String> {
     let rel = path.strip_prefix(drive_root).map_err(|_| "not inside Proton Drive".to_string())?.to_string_lossy().to_string();
     let q = rc_call("vfs/queue", "{}").map(|b| parse_queue(&b)).ok_or("the Proton Drive mount has no control socket: restart it (systemctl --user restart proton-drive)")?;
-    let item = q.iter().find(|i| i.name == rel).ok_or("it is not waiting to upload any more")?;
-    rc_call("vfs/queue-set-expiry", &format!(r#"{{"id":{},"expiry":0}}"#, item.id)).map(|_| ()).ok_or_else(|| "rclone did not accept the retry".to_string())
+    let prefix = format!("{rel}/");
+    let items: Vec<&QueueItem> = q.iter().filter(|i| i.name == rel || i.name.starts_with(&prefix)).filter(|i| queue_state(i) == Avail::Failed).collect();
+    if items.is_empty() {
+        return Err("nothing is waiting to upload there any more".into());
+    }
+    for item in &items {
+        rc_call("vfs/queue-set-expiry", &format!(r#"{{"id":{},"expiry":0}}"#, item.id)).ok_or_else(|| "rclone did not accept the retry".to_string())?;
+        if let Ok(mut r) = RETRYING.lock() {
+            r.get_or_insert_with(Default::default).insert(item.name.clone(), (std::time::Instant::now(), item.tries));
+        }
+    }
+    Ok(items.len())
+}
+
+/// Uploads retried on request: shown as syncing until rclone has made one more attempt (its try count went up) or 30 seconds passed.
+static RETRYING: std::sync::Mutex<Option<std::collections::HashMap<String, (std::time::Instant, u64)>>> = std::sync::Mutex::new(None);
+
+/// A queued upload's state, counting a retry that is still under way as syncing.
+fn queue_state_now(i: &QueueItem) -> Avail {
+    if let Ok(mut g) = RETRYING.lock() {
+        let map = g.get_or_insert_with(Default::default);
+        if let Some((t, tries)) = map.get(&i.name).copied() {
+            if t.elapsed() < std::time::Duration::from_secs(30) && i.tries <= tries {
+                return Avail::Syncing;
+            }
+            map.remove(&i.name);
+        }
+    }
+    queue_state(i)
+}
+
+/// What a folder's files add up to: any failed upload makes it failed, else any upload makes it syncing; otherwise on this computer
+/// when every file is, in the cloud when none is, partly when some are.
+pub fn combine(states: impl IntoIterator<Item = Avail>) -> Avail {
+    let (mut any, mut local, mut all_local, mut syncing, mut failed) = (false, false, true, false, false);
+    for a in states {
+        any = true;
+        match a {
+            Avail::Failed => failed = true,
+            Avail::Syncing => syncing = true,
+            Avail::Local => local = true,
+            Avail::Partial => {
+                local = true;
+                all_local = false;
+            }
+            Avail::Cloud => all_local = false,
+        }
+    }
+    if failed {
+        Avail::Failed
+    } else if syncing {
+        Avail::Syncing
+    } else if !any || all_local {
+        Avail::Local
+    } else if local {
+        Avail::Partial
+    } else {
+        Avail::Cloud
+    }
+}
+
+/// Folders bigger than this get no status (working it out would take too long).
+const FOLDER_LIMIT: usize = 5000;
+
+/// The files under `dir` (through the mount; rclone keeps the listings), with their sizes; None past the limit.
+fn files_under(dir: &Path) -> Option<Vec<(PathBuf, u64)>> {
+    let mut out = vec![];
+    let mut todo = vec![dir.to_path_buf()];
+    while let Some(d) = todo.pop() {
+        for e in std::fs::read_dir(&d).ok()?.flatten() {
+            let Ok(ft) = e.file_type() else { continue };
+            if ft.is_dir() {
+                todo.push(e.path());
+            } else if ft.is_file() {
+                out.push((e.path(), e.metadata().map(|m| m.len()).unwrap_or(0)));
+                if out.len() > FOLDER_LIMIT {
+                    return None;
+                }
+            }
+        }
+    }
+    Some(out)
+}
+
+/// A file's state from rclone's cache alone (no upload queue).
+fn cached_state(rel: &Path, size: u64) -> Avail {
+    let root = cache_root();
+    let meta = root.as_ref().and_then(|c| std::fs::read_to_string(c.join("vfsMeta").join("proton").join(rel)).ok());
+    let on_disk = root.as_ref().and_then(|c| {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::metadata(c.join("vfs").join("proton").join(rel)).ok().filter(|m| m.is_file()).map(|m| m.blocks() * 512)
+    });
+    avail_from_meta(meta.as_deref(), size, on_disk)
+}
+
+/// Folder states worked out in the background: the result and when, or None while it is being worked out.
+static FOLDERS: std::sync::Mutex<Option<std::collections::HashMap<PathBuf, Option<(std::time::Instant, Option<Avail>)>>>> = std::sync::Mutex::new(None);
+
+/// A folder under the Proton Drive mount: failed or syncing at once from the upload queue; otherwise from its files, worked out in the
+/// background (None until then, and for very big folders) and kept for 30 seconds.
+pub fn folder_availability(drive_root: &Path, dir: &Path) -> Option<Avail> {
+    use std::time::Duration;
+    let rel = dir.strip_prefix(drive_root).ok()?;
+    if rel.as_os_str().is_empty() {
+        return None;
+    }
+    let prefix = format!("{}/", rel.to_string_lossy());
+    if let Some(q) = queue() {
+        let mine: Vec<&QueueItem> = q.iter().filter(|i| i.name.starts_with(&prefix)).collect();
+        if !mine.is_empty() {
+            return Some(combine(mine.into_iter().map(queue_state_now)));
+        }
+    }
+    let mut g = FOLDERS.lock().ok()?;
+    let map = g.get_or_insert_with(Default::default);
+    match map.get(dir) {
+        Some(Some((t, a))) if t.elapsed() < Duration::from_secs(30) => return *a,
+        Some(None) => return None, // being worked out
+        Some(Some((_, a))) => {
+            let a = *a;
+            map.insert(dir.to_path_buf(), None);
+            spawn_folder_check(drive_root.to_path_buf(), dir.to_path_buf());
+            return a; // the old answer until the new one is there
+        }
+        None => {}
+    }
+    if map.len() > 2000 {
+        map.clear();
+    }
+    map.insert(dir.to_path_buf(), None);
+    drop(g);
+    spawn_folder_check(drive_root.to_path_buf(), dir.to_path_buf());
+    None
+}
+
+fn spawn_folder_check(root: PathBuf, dir: PathBuf) {
+    std::thread::spawn(move || {
+        let a = files_under(&dir).map(|files| combine(files.iter().filter_map(|(p, size)| Some(cached_state(p.strip_prefix(&root).ok()?, *size)))));
+        if let Ok(mut g) = FOLDERS.lock() {
+            g.get_or_insert_with(Default::default).insert(dir, Some((std::time::Instant::now(), a)));
+        }
+    });
+}
+
+/// Downloads files and folders under the mount to this computer (rclone keeps what was read in its cache): every file is read
+/// once, from start to end. `progress` gets (files done, files in all); returns how many could not be read.
+pub fn download(paths: &[PathBuf], progress: impl Fn(usize, usize)) -> usize {
+    use std::io::Read;
+    let mut files: Vec<PathBuf> = vec![];
+    for p in paths {
+        if p.is_dir() {
+            files.extend(files_under(p).unwrap_or_default().into_iter().map(|(f, _)| f));
+        } else {
+            files.push(p.clone());
+        }
+    }
+    let (total, mut failed) = (files.len(), 0);
+    let mut buf = vec![0u8; 1 << 20];
+    for (i, f) in files.iter().enumerate() {
+        progress(i, total);
+        let ok = std::fs::File::open(f).map(|mut h| loop {
+            match h.read(&mut buf) {
+                Ok(0) => break true,
+                Ok(_) => {}
+                Err(_) => break false,
+            }
+        });
+        if !matches!(ok, Ok(true)) {
+            failed += 1;
+        }
+    }
+    if let Ok(mut g) = FOLDERS.lock() {
+        *g = None; // folder states are worked out again
+    }
+    progress(total, total);
+    failed
 }
 
 /// rclone's cache for one file: `meta` is its `vfsMeta` record, `on_disk` the bytes the cached data file really occupies (None = no cached file).
@@ -372,20 +546,15 @@ pub fn availability(drive_root: &Path, path: &Path, size: u64) -> Option<Avail> 
     }
     let mut guard = CACHE.lock().ok()?;
     let map = guard.get_or_insert_with(HashMap::new);
+    let retrying = RETRYING.lock().ok().and_then(|g| g.as_ref().map(|m| m.contains_key(&*rel.to_string_lossy()))).unwrap_or(false);
     if let Some((t, a)) = map.get(path) {
-        if t.elapsed() < Duration::from_secs(4) {
+        if t.elapsed() < Duration::from_secs(4) && !retrying {
             return Some(*a);
         }
     }
-    let root = cache_root();
-    let meta = root.as_ref().and_then(|c| std::fs::read_to_string(c.join("vfsMeta").join("proton").join(rel)).ok());
-    let on_disk = root.as_ref().and_then(|c| {
-        use std::os::unix::fs::MetadataExt;
-        std::fs::metadata(c.join("vfs").join("proton").join(rel)).ok().filter(|m| m.is_file()).map(|m| m.blocks() * 512)
-    });
-    let mut a = avail_from_meta(meta.as_deref(), size, on_disk);
+    let mut a = cached_state(rel, size);
     if let Some(item) = queue().and_then(|q| q.into_iter().find(|i| Path::new(&i.name) == rel)) {
-        a = queue_state(&item);
+        a = queue_state_now(&item);
     }
     if map.len() > 5000 {
         map.clear();
@@ -477,6 +646,18 @@ mod tests {
         // "sub" must not match a sibling named "sub2".
         let r = Report { files_compared: 1, problems: vec![Problem::SizeDiffers("sub/a".into())], ..Default::default() };
         assert_ne!(b("/h/docs/sub2", Some(r)), Some(Badge::Problem));
+    }
+
+    #[test]
+    fn a_folder_adds_up_its_files() {
+        use Avail::*;
+        assert_eq!(combine([]), Local, "an empty folder has nothing to download");
+        assert_eq!(combine([Local, Local]), Local);
+        assert_eq!(combine([Cloud, Cloud]), Cloud);
+        assert_eq!(combine([Local, Cloud]), Partial);
+        assert_eq!(combine([Partial]), Partial);
+        assert_eq!(combine([Local, Syncing, Cloud]), Syncing);
+        assert_eq!(combine([Syncing, Failed]), Failed);
     }
 
     #[test]

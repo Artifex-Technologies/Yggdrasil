@@ -117,6 +117,8 @@ enum Action {
     SetView(ViewMode),
     ProtonConnect,
     RetrySync(PathBuf),
+    /// Proton Drive: download files and folders to this computer.
+    Download(Vec<PathBuf>),
 }
 
 struct Watch {
@@ -577,9 +579,20 @@ fn entry_interact(
             actions.push(Action::CopyPath(e.path.clone()));
             ui.close();
         }
-        if drive_avail(cx.st, e) == Some(cloud::Avail::Failed) && ui.button("Retry sync").clicked() {
-            actions.push(Action::RetrySync(e.path.clone()));
-            ui.close();
+        match drive_avail(cx.st, e) {
+            Some(cloud::Avail::Failed) => {
+                if ui.button("Retry sync").clicked() {
+                    actions.push(Action::RetrySync(e.path.clone()));
+                    ui.close();
+                }
+            }
+            Some(cloud::Avail::Cloud | cloud::Avail::Partial) => {
+                if ui.button("Download to this computer").on_hover_text("Keep a copy here, so it opens at once and works offline").clicked() {
+                    actions.push(Action::Download(targets.clone()));
+                    ui.close();
+                }
+            }
+            _ => {}
         }
         // Archives (7-Zip): extract from one, or compress the selection into one.
         if e.usage.is_none() && !places::is_this_pc(&e.path) {
@@ -726,6 +739,7 @@ fn sys_entry_icon(p: &egui::Painter, rect: Rect, e: &Entry) -> bool {
 
 /// Sync-status badge, drawn as shapes (no font needed).
 fn paint_badge(p: &egui::Painter, center: egui::Pos2, b: Badge, pal: &Palette) {
+    let center = egui::pos2(p.round_to_pixel_center(center.x), p.round_to_pixel_center(center.y));
     let (fill, kind) = match b {
         Badge::Synced => (pal.green, 0),
         Badge::SizeOnly => (pal.amber, 1),
@@ -755,16 +769,22 @@ fn paint_badge(p: &egui::Painter, center: egui::Pos2, b: Badge, pal: &Palette) {
 
 /// Proton Drive file status: only for files under the mount, and only when Settings has it on.
 fn drive_avail(st: &State, e: &Entry) -> Option<cloud::Avail> {
-    if !st.drive_status || e.is_dir || e.usage.is_some() {
+    if !st.drive_status || e.usage.is_some() {
         return None;
     }
     let root = places::proton_drive_candidates().into_iter().find(|r| e.path.starts_with(r))?;
-    cloud::availability(&root, &e.path, e.size)
+    if e.is_dir {
+        cloud::folder_availability(&root, &e.path)
+    } else {
+        cloud::availability(&root, &e.path, e.size)
+    }
 }
 
 /// The Status column's marks, like Windows: a green ring with a check = on this computer; a blue cloud outline = in Proton Drive
 /// (a partly downloaded file counts as in the cloud until it is whole).
 fn paint_avail(p: &egui::Painter, center: egui::Pos2, a: cloud::Avail, pal: &Palette) {
+    // on a pixel's centre, so the marks inside a circle sit in its middle (a centre between pixels shifted them half a pixel)
+    let center = egui::pos2(p.round_to_pixel_center(center.x), p.round_to_pixel_center(center.y));
     let w = |c: Color32| egui::Stroke::new(1.6, c);
     match a {
         cloud::Avail::Local => {
@@ -809,7 +829,7 @@ fn avail_tip(a: cloud::Avail) -> &'static str {
         cloud::Avail::Partial => "Partly downloaded; the rest comes from Proton Drive when opened",
         cloud::Avail::Cloud => "Only in Proton Drive; opening it downloads it",
         cloud::Avail::Syncing => "Syncing to Proton Drive",
-        cloud::Avail::Failed => "Could not sync to Proton Drive. Right-click it and choose Retry sync",
+        cloud::Avail::Failed => "Could not sync to Proton Drive (for a folder: something inside it). Right-click it and choose Retry sync",
     }
 }
 
@@ -1622,6 +1642,8 @@ struct App {
     reports: BTreeMap<String, Report>,
     verifying: Vec<String>,
     verify_tx: Sender<(String, Result<Report, String>)>,
+    /// What a Proton Drive download running in the background has to say (taken into the status line).
+    download_status: std::sync::Arc<std::sync::Mutex<Option<String>>>,
     verify_rx: Receiver<(String, Result<Report, String>)>,
     /// Proton Drive sign-in form: email, password, mailbox password, 2FA code.
     proton_form: Option<[String; 4]>,
@@ -1719,6 +1741,7 @@ impl App {
             reports,
             verifying: vec![],
             verify_tx,
+            download_status: Default::default(),
             verify_rx,
             proton_form: None,
             proton_busy: false,
@@ -2428,10 +2451,29 @@ impl App {
                 Action::CopyPath(p) => ctx.copy_text(p.to_string_lossy().into_owned()),
                 Action::RetrySync(p) => {
                     if let Some(root) = places::proton_drive_candidates().into_iter().find(|r| p.starts_with(r)) {
-                        if let Err(e) = cloud::retry_sync(&root, &p) {
-                            self.status = format!("Retry sync: {e}");
-                        }
+                        let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                        self.status = match cloud::retry_sync(&root, &p) {
+                            Ok(1) => format!("Uploading {name} to Proton Drive again..."),
+                            Ok(n) => format!("Uploading {n} files in {name} to Proton Drive again..."),
+                            Err(e) => format!("Retry sync: {e}"),
+                        };
                     }
+                }
+                Action::Download(paths) => {
+                    let (shared, c) = (self.download_status.clone(), ctx.clone());
+                    *shared.lock().unwrap_or_else(|e| e.into_inner()) = Some("Downloading from Proton Drive...".into());
+                    std::thread::spawn(move || {
+                        let say = |t: String| {
+                            *shared.lock().unwrap_or_else(|e| e.into_inner()) = Some(t);
+                            c.request_repaint();
+                        };
+                        let failed = cloud::download(&paths, |done, total| {
+                            if done < total {
+                                say(format!("Downloading from Proton Drive: {done} of {total} files..."));
+                            }
+                        });
+                        say(if failed == 0 { "Downloaded: it is on this computer now".into() } else { format!("Downloaded, but {failed} files could not be read (see Proton Drive's connection)") });
+                    });
                 }
                 Action::Verify(name) => {
                     if let Some(link) = self.links.iter().find(|l| l.name == name).cloned() {
@@ -2729,6 +2771,9 @@ impl eframe::App for App {
             // keep looking while the mount comes up
             self.cloud = places::proton_drive();
             ctx.request_repaint_after(Duration::from_secs(2));
+        }
+        if let Some(t) = self.download_status.lock().ok().and_then(|mut g| g.take()) {
+            self.status = t;
         }
         while let Ok((name, res)) = self.verify_rx.try_recv() {
             self.verifying.retain(|n| *n != name);
