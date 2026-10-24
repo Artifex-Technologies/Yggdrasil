@@ -171,6 +171,8 @@ struct App {
     loading: Option<Page>,
     status: String,
     wifi_password: Option<(String, String)>,
+    /// Network > Private addresses: the address being typed for a network (by its profile's id).
+    mac_typed: std::collections::HashMap<String, String>,
     // Security page
     sec_filter: usize,
     sec_sub: SecSub,
@@ -242,6 +244,7 @@ impl App {
             loading: None,
             status: String::new(),
             wifi_password: None,
+            mac_typed: Default::default(),
             sec_filter: 1,
             demo_scroll: if start_sub().starts_with("distress-demo-") { 8 } else { 0 },
             demo_offset: if start_sub() == "distress-demo-warn" { 100_000.0 } else { 430.0 },
@@ -570,7 +573,10 @@ impl eframe::App for App {
                     }
                     match self.page {
                         Page::About => self.page_about(ui, &pal, &ctx),
-                        Page::Network => self.page_network(ui, &pal, &ctx),
+                        Page::Network => {
+                            self.page_network(ui, &pal, &ctx);
+                            self.mac_section(ui, &pal, &ctx);
+                        }
                         Page::Bluetooth => self.page_bluetooth(ui, &pal, &ctx),
                         Page::Displays => self.page_displays(ui, &pal, &ctx),
                         Page::Sound => self.page_sound(ui, &pal, &ctx),
@@ -924,6 +930,68 @@ impl App {
                     Ok(())
                 });
             }
+        }
+    }
+
+    /// Network > Private addresses: per saved network, which hardware (MAC) address it sees, as on phones. Private (a random one
+    /// for that network, the same every time), a new random one each time, the real one, or one typed in.
+    fn mac_section(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
+        let Some(n) = self.data.network.clone() else { return };
+        if n.saved.is_empty() {
+            return;
+        }
+        let mut set: Option<(String, bool, sys::MacMode)> = None;
+        ui.add_space(8.0);
+        ui::group(ui, pal, Some("Private addresses"), |ui| {
+            for (i, s) in n.saved.iter().enumerate() {
+                let (idx, sub) = match &s.mac {
+                    sys::MacMode::Private => (0, "A random address of its own for this network, the same every time".to_string()),
+                    sys::MacMode::Random => (1, "A new random address every time it connects".to_string()),
+                    sys::MacMode::Real => (2, if s.wifi { "This computer's real address (Heimdall keeps it only on networks you trust)".to_string() } else { "This computer's real address".to_string() }),
+                    sys::MacMode::Custom(a) => (3, format!("Uses {a}")),
+                };
+                let title = if s.wifi { s.name.clone() } else { format!("{} (wired)", s.name) };
+                ui::row(ui, pal, i == 0, &title, Some(&sub), |ui| {
+                    if let Some(k) = ui::segmented(ui, pal, &["Private", "New each time", "Real", "Custom"], idx) {
+                        match k {
+                            0 => set = Some((s.uuid.clone(), s.wifi, sys::MacMode::Private)),
+                            1 => set = Some((s.uuid.clone(), s.wifi, sys::MacMode::Random)),
+                            2 => set = Some((s.uuid.clone(), s.wifi, sys::MacMode::Real)),
+                            _ => {
+                                let start = if let sys::MacMode::Custom(a) = &s.mac { a.clone() } else { sys::random_mac() };
+                                self.mac_typed.entry(s.uuid.clone()).or_insert(start);
+                            }
+                        }
+                    }
+                });
+                // typing an address: shown once Custom was picked (or is in use)
+                let typing = self.mac_typed.contains_key(&s.uuid) || matches!(s.mac, sys::MacMode::Custom(_));
+                if typing {
+                    let text = self.mac_typed.entry(s.uuid.clone()).or_insert_with(|| if let sys::MacMode::Custom(a) = &s.mac { a.clone() } else { sys::random_mac() });
+                    ui.horizontal(|ui| {
+                        ui.add_space(12.0);
+                        ui::field(ui, pal, text, "02:1A:2B:3C:4D:5E", 190.0, false);
+                        let ok = sys::valid_mac(text.trim());
+                        if ui::quiet(ui, pal, "Random").on_hover_text("Make up an address, like macchanger -r").clicked() {
+                            *text = sys::random_mac();
+                        }
+                        if ui.add_enabled(ok, egui::Button::new("Use this address")).clicked() {
+                            set = Some((s.uuid.clone(), s.wifi, sys::MacMode::Custom(text.trim().to_uppercase())));
+                        }
+                        if !ok {
+                            ui.label(RichText::new("Six pairs like 02:1A:2B:3C:4D:5E").color(pal.dim));
+                        }
+                    });
+                }
+            }
+            ui.add_space(4.0);
+            ui.label(RichText::new("A change is used from the next time the computer connects to that network.").color(pal.dim));
+        });
+        if let Some((uuid, wifi, mode)) = set {
+            if !matches!(mode, sys::MacMode::Custom(_)) {
+                self.mac_typed.remove(&uuid);
+            }
+            self.change(ctx, move || sys::set_mac(&uuid, wifi, &mode));
         }
     }
 
