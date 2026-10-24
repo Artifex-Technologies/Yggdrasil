@@ -28,5 +28,7 @@ check() {
 package() {
   install -Dm755 "$srcdir/target/release/yggdrasil-lock" "$pkgdir/usr/bin/yggdrasil-lock"
   install -Dm755 "$srcdir/target/release/yggdrasil-greeter" "$pkgdir/usr/bin/yggdrasil-greeter"
+  # the screen between signing in and the desktop (Yggdrasil's session starts it)
+  install -Dm755 "$srcdir/target/release/yggdrasil-splash" "$pkgdir/usr/bin/yggdrasil-splash"
 
 }

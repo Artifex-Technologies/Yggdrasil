@@ -213,6 +213,7 @@ struct App {
     /// Appearance > Boot screen: what `bootscreen get` said (and when), the picture being chosen, and a change under way.
     boot_info: Option<(std::time::Instant, serde_json::Value)>,
     boot_pic: String,
+    splash_pic: String,
     boot_busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ws_conf: workspaces::Conf,
     app_sort: usize,
@@ -299,6 +300,7 @@ impl App {
             lock_previews_started: false,
             boot_info: None,
             boot_pic: String::new(),
+            splash_pic: String::new(),
             boot_busy: Default::default(),
             ws_conf: workspaces::load(),
             app_sort: 0,
@@ -702,6 +704,8 @@ impl App {
         }
         if info.is_null() {
             ui::group(ui, pal, None, |ui| ui::row(ui, pal, true, "The boot screen cannot be changed here", Some("Plymouth is not installed"), |_| {}));
+            // the screen after signing in is Yggdrasil's own: it needs no Plymouth
+            self.splash_section(ui, pal);
             return;
         }
         let ready = info["ready"].as_bool().unwrap_or(false);
@@ -777,6 +781,58 @@ impl App {
         }
         if busy {
             ctx.request_repaint_after(std::time::Duration::from_millis(500));
+        }
+        self.splash_section(ui, pal);
+    }
+
+    /// Appearance > Boot screen > After signing in: what shows until the desktop is ready (yggdrasil-splash reads
+    /// ~/.config/yggdrasil/splash.conf; no password needed, it is yours).
+    fn splash_section(&mut self, ui: &mut egui::Ui, pal: &Palette) {
+        let file = sys::config_dir().join("yggdrasil").join("splash.conf");
+        let text = std::fs::read_to_string(&file).unwrap_or_default();
+        let get = |k: &str| sys::ini_get(&format!("[x]\n{text}"), "x", k).map(|v| v.split('#').next().unwrap_or("").trim().to_string());
+        let idx = match get("mode").as_deref() {
+            Some("messages") => 1,
+            Some("picture") => 2,
+            Some("off") => 3,
+            _ => 0,
+        };
+        if self.splash_pic.is_empty() {
+            self.splash_pic = get("picture").unwrap_or_default();
+        }
+        let mut write: Option<(&str, String)> = None;
+        ui.add_space(10.0);
+        ui::group(ui, pal, Some("After signing in"), |ui| {
+            ui::row(ui, pal, true, "Until the desktop is ready", Some(match idx {
+                1 => "What is starting, as text",
+                2 => "Your own picture",
+                3 => "Nothing: a black screen",
+                _ => "The animation",
+            }), |ui| {
+                if let Some(k) = ui::segmented(ui, pal, &["Animation", "Messages", "Your picture", "Nothing"], idx) {
+                    let mode = ["animation", "messages", "picture", "off"][k];
+                    if k == 2 && !std::path::Path::new(self.splash_pic.trim()).is_file() {
+                        self.status = "Type the path of a picture first, then Use this picture".into();
+                    } else {
+                        write = Some((mode, self.splash_pic.trim().to_string()));
+                    }
+                }
+            });
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui::field(ui, pal, &mut self.splash_pic, "Your picture: /home/you/Pictures/start.png", 340.0, false);
+                let ok = std::path::Path::new(self.splash_pic.trim()).is_file();
+                if ui.add_enabled(ok, egui::Button::new("Use this picture")).clicked() {
+                    write = Some(("picture", self.splash_pic.trim().to_string()));
+                }
+            });
+        });
+        if let Some((mode, pic)) = write {
+            let body = format!("# What shows between signing in and the desktop (Settings > Appearance > Boot screen)\nmode = {mode}\npicture = {pic}\n");
+            self.status = match std::fs::create_dir_all(file.parent().unwrap_or(std::path::Path::new("/"))).and_then(|_| std::fs::write(&file, body)) {
+                Ok(()) => "Shows the next time you sign in".into(),
+                Err(e) => format!("Could not save it: {e}"),
+            };
         }
     }
 
@@ -1379,7 +1435,7 @@ impl App {
                     self.app_sub = AppSub::Workspaces;
                     self.ws_conf = workspaces::load();
                 }
-                if ui::nav_row(ui, pal, false, "Boot screen", Some("What shows while the computer starts and shuts down"), |_| {}) {
+                if ui::nav_row(ui, pal, false, "Boot screen", Some("What shows while the computer starts, and after you sign in"), |_| {}) {
                     self.app_sub = AppSub::Boot;
                     self.boot_info = None;
                 }

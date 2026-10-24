@@ -72,6 +72,8 @@ if [[ -S ${XDG_RUNTIME_DIR:-/run/user/$UID}/bus ]]; then
 fi
 log "starting Hyprland ($(Hyprland --version 2>/dev/null | head -n1 | cut -d' ' -f1-2)) with $conf, bus ${DBUS_SESSION_BUS_ADDRESS:-none}"
 
+# the console this session starts on shows nothing (no text from before, no cursor) until Hyprland draws
+if [[ -t 1 ]]; then printf '\033[2J\033[3J\033[H\033[?25l'; fi
 state=${XDG_STATE_HOME:-$HOME/.local/state}/yggdrasil
 mkdir -p "$state"
 # what Hyprland and its launcher print goes to a file, not onto the screen: started by greetd, the session's output is the
