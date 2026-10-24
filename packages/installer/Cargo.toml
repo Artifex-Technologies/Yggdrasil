@@ -1,0 +1,21 @@
+[package]
+name = "yggdrasil-installer"
+version = "0.1.0"
+edition = "2021"
+description = "Installs the operating system from its live medium: Yggdrasil's window, the OS's own install steps"
+license = "MIT"
+
+[[bin]]
+name = "yggdrasil-installer"
+path = "src/main.rs"
+
+[dependencies]
+yggdrasil-conf = { path = "../yggdrasil-conf" }
+yggdrasil-ui = { path = "../yggdrasil-ui" }
+eframe = "0.36.2"
+serde_json = "1.0.151"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

@@ -1,0 +1,28 @@
+# Yggdrasil's installer window (Rust, egui): installs the operating system from its live medium through the OS's own install
+# program (an integration file of kind "installer"). Built from packages/installer in this repository.
+pkgname=yggdrasil-installer
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Installs the operating system from its live medium: Yggdrasil's window, the OS's own install steps"
+arch=('x86_64')
+url="https://github.com/Artifex-Technologies/Yggdrasil"
+license=('MIT')
+depends=('gcc-libs' 'polkit' 'systemd')
+makedepends=('cargo')
+options=('!lto')
+
+_src="$startdir/../../installer"
+
+build() {
+  cd "$_src"
+  cargo build --release --locked --target-dir "$srcdir/target"
+}
+
+check() {
+  cd "$_src"
+  cargo test --release --locked --target-dir "$srcdir/target"
+}
+
+package() {
+  install -Dm755 "$srcdir/target/release/yggdrasil-installer" "$pkgdir/usr/bin/yggdrasil-installer"
+}
