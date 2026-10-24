@@ -143,7 +143,8 @@ end
 -- autostart folder (the panel, the idle watch, the password box, the keyring check ...). Programs meant for other desktops only
 -- (OnlyShowIn=KDE, ...) are left out by the autostart rules themselves.
 hl.on("hyprland.start", function()
-  hl.exec_cmd("sh -c 'dbus-update-activation-environment --systemd WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE HYPRLAND_INSTANCE_SIGNATURE QT_QPA_PLATFORM GDK_BACKEND MOZ_ENABLE_WAYLAND ELECTRON_OZONE_PLATFORM_HINT LIBVA_DRIVER_NAME __GLX_VENDOR_LIBRARY_NAME NVD_BACKEND && systemctl --user start xdg-desktop-autostart.target'")
+  -- each step on its own (one failing must not stop the next), each written to the system log under "yggdrasil-session"
+  hl.exec_cmd("sh -c 'systemctl --user import-environment WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE HYPRLAND_INSTANCE_SIGNATURE QT_QPA_PLATFORM GDK_BACKEND MOZ_ENABLE_WAYLAND ELECTRON_OZONE_PLATFORM_HINT LIBVA_DRIVER_NAME __GLX_VENDOR_LIBRARY_NAME NVD_BACKEND 2>&1 | systemd-cat -t yggdrasil-session; dbus-update-activation-environment --systemd --all 2>&1 | systemd-cat -t yggdrasil-session; systemctl --user start xdg-desktop-autostart.target 2>&1 | systemd-cat -t yggdrasil-session; echo autostart started for $XDG_CURRENT_DESKTOP on $WAYLAND_DISPLAY | systemd-cat -t yggdrasil-session'")
 end)
 
 -- Yours last.

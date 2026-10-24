@@ -15,8 +15,26 @@ if [[ -e /proc/driver/nvidia/version ]]; then
 fi
 conf=/usr/share/yggdrasil/hyprland/yggdrasil.lua
 [[ -n ${YGGDRASIL_HYPRLAND_CONFIG:-} ]] && conf=$YGGDRASIL_HYPRLAND_CONFIG
-# a session bus when there is none yet (a text console); the login screen provides one
-if [[ -z ${DBUS_SESSION_BUS_ADDRESS:-} ]]; then
-  exec dbus-run-session -- Hyprland --config "$conf"
+log() { systemd-cat -t yggdrasil-session echo "$*" 2>/dev/null || echo "yggdrasil-session: $*" >&2; }
+
+# The user's own session bus (the one systemd runs, which the autostart programs use). A private bus would split the session in two:
+# programs started by Hyprland on one bus, the panel and the rest on the other, and the environment never reaching systemd.
+if [[ -S ${XDG_RUNTIME_DIR:-/run/user/$UID}/bus ]]; then
+  export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR:-/run/user/$UID}/bus"
 fi
-exec Hyprland --config "$conf"
+log "starting Hyprland ($(Hyprland --version 2>/dev/null | head -n1 | cut -d' ' -f1-2)) with $conf, bus ${DBUS_SESSION_BUS_ADDRESS:-none}"
+
+# start-hyprland is Hyprland's own launcher (it restarts it safely after a crash); without it Hyprland shows a warning
+if command -v start-hyprland >/dev/null; then
+  start-hyprland -- --config "$conf"
+else
+  Hyprland --config "$conf"
+fi
+code=$?
+# keep Hyprland's log (it lives in the runtime folder, which goes away at logout), for the next look at a problem
+state=${XDG_STATE_HOME:-$HOME/.local/state}/yggdrasil
+mkdir -p "$state"
+last=$(ls -td "${XDG_RUNTIME_DIR:-/run/user/$UID}"/hypr/*/ 2>/dev/null | head -n1)
+[[ -n $last && -f $last/hyprland.log ]] && cp -f "$last/hyprland.log" "$state/hyprland-last.log"
+log "Hyprland ended (exit $code); its log is in $state/hyprland-last.log"
+exit $code
