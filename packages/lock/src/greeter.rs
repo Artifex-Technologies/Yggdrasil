@@ -521,7 +521,7 @@ fn main() {
 mod session_tests {
     #[test]
     fn sessions_offered_configured_first_without_the_bakeoff() {
-        let d = std::env::temp_dir().join(format!("ygg-sessions-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("ygg-session-list-{}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();
         std::fs::write(d.join("plasma.desktop"), "[Desktop Entry]\nName=Plasma (Wayland)\nExec=startplasma-wayland\nDesktopNames=KDE\n").unwrap();
         std::fs::write(d.join("yggdrasil.desktop"), "[Desktop Entry]\nName=Yggdrasil\nExec=/usr/bin/yggdrasil-session\nDesktopNames=Yggdrasil\n").unwrap();
