@@ -1,0 +1,37 @@
+# Lets X11 programs that draw their own title bar (Steam) be dragged and resized in Yggdrasil's Hyprland session (Rust): built
+# from packages/xmove in this repository.
+pkgname=yggdrasil-xmove
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Lets X11 programs that draw their own title bar (Steam) be dragged and resized in Yggdrasil's Hyprland session"
+arch=('x86_64')
+url="https://github.com/Artifex-Technologies/Yggdrasil"
+license=('MIT')
+depends=('gcc-libs' 'hyprland' 'xorg-xwayland')
+makedepends=('cargo')
+options=('!lto')
+
+_src="$startdir/../../xmove"
+
+build() {
+  cd "$_src"
+  cargo build --release --locked --target-dir "$srcdir/target"
+}
+
+check() {
+  cd "$_src"
+  cargo test --release --locked --target-dir "$srcdir/target"
+}
+
+package() {
+  install -Dm755 "$srcdir/target/release/yggdrasil-xmove" "$pkgdir/usr/bin/yggdrasil-xmove"
+  install -Dm644 /dev/stdin "$pkgdir/etc/xdg/autostart/yggdrasil-xmove.desktop" <<'EOT'
+[Desktop Entry]
+Type=Application
+Name=Yggdrasil X11 window moves
+Comment=Lets X11 programs that draw their own title bar (Steam) be dragged and resized
+Exec=/usr/bin/yggdrasil-xmove
+NoDisplay=true
+OnlyShowIn=Yggdrasil;
+EOT
+}

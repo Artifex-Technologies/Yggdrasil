@@ -6,7 +6,7 @@ pkgdesc="Yggdrasil's own desktop session, on Hyprland"
 arch=('any')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
 license=('MIT')
-depends=('hyprland' 'xdg-desktop-portal-hyprland' 'yggdrasil-panel' 'yggdrasil-idle' 'yggdrasil-lock' 'yggdrasil-polkit' 'yggdrasil-portal'
+depends=('hyprland' 'xdg-desktop-portal-hyprland' 'yggdrasil-panel' 'yggdrasil-idle' 'yggdrasil-lock' 'yggdrasil-polkit' 'yggdrasil-portal' 'yggdrasil-xmove' 'yggdrasil-xmove'
          'python' 'grim' 'slurp' 'wl-clipboard' 'libnotify' 'xdg-user-dirs')
 optdepends=('ghostty: the terminal on Super+Return' 'btop: running programs on Ctrl+Shift+Esc')
 

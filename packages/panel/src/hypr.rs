@@ -41,10 +41,16 @@ pub fn minimize(app_id: &str, title: &str) -> bool {
     true
 }
 
-/// A minimized window comes back to the workspace in front on the focused screen (and the hidden one closes if it was open).
-/// Returns whether it was minimized; the caller focuses it either way.
+/// Brings the window forward: a minimized one comes back to the workspace in front on the focused screen (and the hidden one
+/// closes if it was open), and it is focused and raised above the others (focusing alone leaves a floating window behind).
+/// Returns whether the window was found.
 pub fn restore(app_id: &str, title: &str) -> bool {
-    let Some((addr, true)) = find(app_id, title) else { return false };
+    let Some((addr, minimized)) = find(app_id, title) else { return false };
+    if !minimized {
+        dispatch(&format!(r#"hl.dsp.focus({{ window = "address:{addr}" }})"#));
+        dispatch("hl.dsp.window.bring_to_top()");
+        return true;
+    }
     let monitors: serde_json::Value = hyprctl(&["-j", "monitors"]).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
     let focused = monitors.as_array().and_then(|a| a.iter().find(|m| m["focused"].as_bool() == Some(true)).cloned());
     let ws = focused.as_ref().and_then(|m| m["activeWorkspace"]["id"].as_i64()).unwrap_or(1);
@@ -53,6 +59,7 @@ pub fn restore(app_id: &str, title: &str) -> bool {
     }
     dispatch(&format!(r#"hl.dsp.window.move({{ workspace = "{ws}", follow = false, window = "address:{addr}" }})"#));
     dispatch(&format!(r#"hl.dsp.focus({{ window = "address:{addr}" }})"#));
+    dispatch("hl.dsp.window.bring_to_top()");
     true
 }
 
