@@ -238,7 +238,8 @@ dsp("ALT + SHIFT + TAB", hl.dsp.window.bring_to_top())
 dsp("SUPER + CTRL + LEFT", hl.dsp.focus({ workspace = "r-1" }), { desc = "Previous desktop" })
 dsp("SUPER + CTRL + RIGHT", hl.dsp.focus({ workspace = "r+1" }), { desc = "Next desktop" })
 for n = 1, 4 do
-  local key = "code:" .. tostring(n + 9)
+  -- the number row by name ("code:10" is not understood here and left the shortcut without a key)
+  local key = tostring(n)
   dsp("SUPER + CTRL + " .. key, hl.dsp.focus({ workspace = tostring(n) }), { desc = "Desktop " .. n })
   dsp("SUPER + CTRL + SHIFT + " .. key, hl.dsp.window.move({ workspace = tostring(n) }), { desc = "Move the window to desktop " .. n })
 end

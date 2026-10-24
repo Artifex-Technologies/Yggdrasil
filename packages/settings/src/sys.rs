@@ -578,7 +578,7 @@ pub fn appearance() -> Appearance {
     }
     wallpapers.sort();
     let panel_on = run("labyrinth-panel-mode", &["status"]).map(|s| s.trim() == "yggdrasil-panel").unwrap_or(false);
-    Appearance { icon_packs: icon_packs(), icon_theme: run("kreadconfig6", &["--file", "kdeglobals", "--group", "Icons", "--key", "Theme"]).map(|s| s.trim().to_string()).unwrap_or_default(), dark: look.dark, accent, wallpapers, panel_on, panel: yggdrasil_conf::PanelConf::load() }
+    Appearance { icon_packs: icon_packs(), icon_theme: current_icon_theme(), dark: look.dark, accent, wallpapers, panel_on, panel: yggdrasil_conf::PanelConf::load() }
 }
 
 /// The largest picture in a Plasma wallpaper package's images folder (named like 3840x2160.png).
@@ -769,6 +769,10 @@ pub fn write_idle(i: &Idle) -> Result<(), String> {
         std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
     }
     std::fs::write(&p, idle_text(i)).map_err(|e| e.to_string())?;
+    // only Plasma has KDE's timers (in Yggdrasil's session there is nothing to switch off)
+    if yggdrasil_conf::own_session() {
+        return Ok(());
+    }
     for state in ["AC", "Battery", "LowBattery"] {
         let _ = act("kwriteconfig6", &["--file", "powerdevilrc", "--group", state, "--group", "Display", "--key", "DimDisplayWhenIdle", "false"]);
         let _ = act("kwriteconfig6", &["--file", "powerdevilrc", "--group", state, "--group", "Display", "--key", "TurnOffDisplayWhenIdle", "false"]);
@@ -777,6 +781,27 @@ pub fn write_idle(i: &Idle) -> Result<(), String> {
     let _ = act("kwriteconfig6", &["--file", "kscreenlockerrc", "--group", "Daemon", "--key", "Autolock", "false"]);
     let _ = act("qdbus6", &["org.kde.Solid.PowerManagement", "/org/kde/Solid/PowerManagement", "org.kde.Solid.PowerManagement.reparseConfiguration"]);
     Ok(())
+}
+
+#[cfg(test)]
+mod ini_tests {
+    use super::*;
+
+    #[test]
+    fn reads_and_sets_one_value() {
+        let t = "[General]\nAccentColor=1,2,3\n\n[Icons]\nTheme=breeze\n";
+        assert_eq!(ini_get(t, "Icons", "Theme").as_deref(), Some("breeze"));
+        assert_eq!(ini_get(t, "General", "Theme"), None);
+        let s = ini_set(t, "Icons", "Theme", "Liki");
+        assert_eq!(ini_get(&s, "Icons", "Theme").as_deref(), Some("Liki"));
+        assert_eq!(ini_get(&s, "General", "AccentColor").as_deref(), Some("1,2,3"), "the rest stays");
+        let s = ini_set("[General]\nA=1\n", "Icons", "Theme", "Liki");
+        assert_eq!(s, "[General]\nA=1\n\n[Icons]\nTheme=Liki\n");
+        let s = ini_set("[Icons]\n[Other]\nB=2\n", "Icons", "Theme", "X");
+        assert_eq!(ini_get(&s, "Icons", "Theme").as_deref(), Some("X"));
+        assert_eq!(ini_get(&s, "Other", "B").as_deref(), Some("2"));
+        assert_eq!(ini_set("", "Settings", "gtk-icon-theme-name", "Liki"), "[Settings]\ngtk-icon-theme-name=Liki\n");
+    }
 }
 
 #[cfg(test)]
@@ -1090,12 +1115,97 @@ pub fn icon_packs() -> Vec<IconPack> {
     out
 }
 
-/// Choose an icon pack for the whole desktop (KDE, the panel and Minos follow it).
+/// One value from an INI-style settings file (`[group]`, `key=value`), such as kdeglobals.
+pub fn ini_get(text: &str, group: &str, key: &str) -> Option<String> {
+    let mut inside = false;
+    for line in text.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            inside = t == format!("[{group}]");
+        } else if inside {
+            if let Some((k, v)) = t.split_once('=') {
+                if k.trim() == key {
+                    return Some(v.trim().to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// The same file's text with one value set (the group and the key are added when missing; everything else is kept).
+pub fn ini_set(text: &str, group: &str, key: &str, value: &str) -> String {
+    let mut out: Vec<String> = vec![];
+    let (mut inside, mut done, mut seen_group) = (false, false, false);
+    for line in text.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            if inside && !done {
+                out.push(format!("{key}={value}"));
+                done = true;
+            }
+            inside = t == format!("[{group}]");
+            seen_group |= inside;
+        } else if inside && !done {
+            if let Some((k, _)) = t.split_once('=') {
+                if k.trim() == key {
+                    out.push(format!("{key}={value}"));
+                    done = true;
+                    continue;
+                }
+            }
+        }
+        out.push(line.to_string());
+    }
+    if !done {
+        if !seen_group {
+            if out.last().map(|l| !l.trim().is_empty()).unwrap_or(false) {
+                out.push(String::new());
+            }
+            out.push(format!("[{group}]"));
+        }
+        out.push(format!("{key}={value}"));
+    }
+    out.join("\n") + "\n"
+}
+
+/// ~/.config (or $XDG_CONFIG_HOME).
+pub fn config_dir() -> std::path::PathBuf {
+    std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config"))
+}
+
+/// The icon pack in use (kept in kdeglobals, which the panel, Minos and Plasma all read).
+pub fn current_icon_theme() -> String {
+    std::fs::read_to_string(config_dir().join("kdeglobals")).ok().and_then(|t| ini_get(&t, "Icons", "Theme")).unwrap_or_default()
+}
+
+fn ini_write(path: &std::path::Path, group: &str, key: &str, value: &str) -> Result<(), String> {
+    if let Some(d) = path.parent() {
+        std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
+    }
+    let old = std::fs::read_to_string(path).unwrap_or_default();
+    let tmp = path.with_extension("ygg-tmp");
+    std::fs::write(&tmp, ini_set(&old, group, key, value)).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, path).map_err(|e| e.to_string())
+}
+
+/// Choose an icon pack for the whole desktop (the panel, Minos, GTK and Qt programs follow it). In Plasma, Plasma's own tool
+/// does it (it also tells running KDE programs); in Yggdrasil's session the settings files are written here, no KDE tool needed.
 pub fn set_icon_pack(id: &str) -> Result<(), String> {
     if id.is_empty() || id.contains('/') || id.starts_with('.') {
         return Err("not an icon pack name".into());
     }
-    act("/usr/lib/plasma-changeicons", &[id])
+    if !yggdrasil_conf::own_session() && std::path::Path::new("/usr/lib/plasma-changeicons").exists() {
+        return act("/usr/lib/plasma-changeicons", &[id]);
+    }
+    let cfg = config_dir();
+    ini_write(&cfg.join("kdeglobals"), "Icons", "Theme", id)?;
+    for gtk in ["gtk-3.0", "gtk-4.0"] {
+        ini_write(&cfg.join(gtk).join("settings.ini"), "Settings", "gtk-icon-theme-name", id)?;
+    }
+    // GTK 4 and portal-aware programs read it from GNOME's settings store, when there is one
+    let _ = std::process::Command::new("gsettings").args(["set", "org.gnome.desktop.interface", "icon-theme", id]).stdin(std::process::Stdio::null()).status();
+    Ok(())
 }
 
 fn safe_name(n: &str) -> bool {

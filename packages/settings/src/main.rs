@@ -746,12 +746,18 @@ impl App {
                     self.change(ctx, move || c.save());
                 }
             });
-            ui::row(ui, pal, false, "KDE System Settings", Some("The whole of KDE's own settings window, with every panel Settings does not have"), |ui| {
-                if ui::action(ui, pal, "Open").clicked() {
-                    sys::spawn("/usr/bin/systemsettings", &[]);
-                }
-            });
+            if kde_panels() {
+                ui::row(ui, pal, false, "KDE System Settings", Some("The whole of KDE's own settings window, with every panel Settings does not have"), |ui| {
+                    if ui::action(ui, pal, "Open").clicked() {
+                        sys::spawn("/usr/bin/systemsettings", &[]);
+                    }
+                });
+            }
         });
+        // KDE's panels change Plasma's settings: shown only in Plasma, while it is there
+        if !kde_panels() {
+            return;
+        }
         let modules = kde_modules();
         ui::group(ui, pal, Some("KDE settings hidden here"), |ui| {
             ui.add_space(4.0);
@@ -1286,7 +1292,8 @@ impl App {
             });
         });
         }
-        if self.app_sub == AppSub::Bar {
+        // in Yggdrasil's own session its top bar and dock are always the ones in use
+        if self.app_sub == AppSub::Bar && !yggdrasil_conf::own_session() {
         ui::group(ui, pal, Some("Top bar and dock"), |ui| {
             let mut on = a.panel_on;
             ui::row(ui, pal, true, "Use the Yggdrasil top bar and dock", Some("Replaces Plasma's panels. It has no system tray, quick settings or global menu yet."), |ui| {
@@ -2353,7 +2360,7 @@ impl App {
             self.change(ctx, move || sys::act("pkexec", &["ufw", arg]));
         }
         ui.add_space(8.0);
-        if ui::quiet(ui, pal, "Rules and exceptions…").clicked() {
+        if kde_panels() && ui::quiet(ui, pal, "Rules and exceptions…").clicked() {
             sys::spawn("kcmshell6", &["kcm_firewall"]);
         }
     }
@@ -2496,7 +2503,110 @@ fn kde_modules() -> &'static Vec<(String, String, String)> {
     })
 }
 
+/// KDE's own settings panels (kcmshell6) are offered only in Plasma, and only while KDE is installed.
+fn kde_panels() -> bool {
+    !yggdrasil_conf::own_session() && std::path::Path::new("/usr/bin/kcmshell6").exists()
+}
+
+/// Hyprland's key names as they are written on keys.
+fn key_name(key: &str) -> String {
+    let named = match key {
+        "code:10" => "1", "code:11" => "2", "code:12" => "3", "code:13" => "4", "code:14" => "5",
+        "RETURN" | "Return" => "Return", "ESCAPE" | "Escape" => "Esc", "PRINT" | "Print" => "Print Screen",
+        "UP" => "↑", "DOWN" => "↓", "LEFT" => "←", "RIGHT" => "→", "SUPER_L" => "",
+        "mouse:272" => "left-drag", "mouse:273" => "right-drag",
+        _ => "",
+    };
+    if !named.is_empty() || key == "SUPER_L" {
+        return named.to_string();
+    }
+    if let Some(rest) = key.strip_prefix("XF86") {
+        return rest.to_string();
+    }
+    let mut c = key.chars();
+    c.next().map(|f| f.to_uppercase().collect::<String>() + &c.as_str().to_lowercase()).unwrap_or_default()
+}
+
+/// A bind's keys, as on Windows ("Win + Shift + Q"), from Hyprland's modifier mask and key.
+fn bind_keys(modmask: u64, key: &str) -> String {
+    let mut parts: Vec<String> = vec![];
+    for (bit, name) in [(64, "Win"), (4, "Ctrl"), (8, "Alt"), (1, "Shift")] {
+        if modmask & bit != 0 {
+            parts.push(name.to_string());
+        }
+    }
+    let k = key_name(key);
+    if !k.is_empty() {
+        parts.push(k);
+    }
+    parts.join(" + ")
+}
+
+/// The shortcuts of the running Hyprland session that have a description (Yggdrasil's own and the user's), read every few seconds.
+fn hypr_shortcuts() -> Vec<(String, String)> {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static CACHE: Mutex<Option<(Instant, Vec<(String, String)>)>> = Mutex::new(None);
+    let mut g = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((t, v)) = g.as_ref() {
+        if t.elapsed() < Duration::from_secs(5) {
+            return v.clone();
+        }
+    }
+    let json: serde_json::Value = sys::run("hyprctl", &["-j", "binds"]).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    let mut out: Vec<(String, String)> = vec![];
+    for b in json.as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
+        let what = b["description"].as_str().unwrap_or("").trim();
+        if what.is_empty() || b["release"].as_bool() == Some(true) && what.contains("let go") {
+            continue;
+        }
+        // a key given by its code (the number row: code:10 is 1) has no name, only the code
+        let key = match b["key"].as_str().unwrap_or("") {
+            "" => b["keycode"].as_u64().map(|c| format!("code:{c}")).unwrap_or_default(),
+            k => k.to_string(),
+        };
+        let keys = bind_keys(b["modmask"].as_u64().unwrap_or(0), &key);
+        if !keys.is_empty() && !out.iter().any(|(k, w)| *k == keys && w == what) {
+            out.push((keys, what.to_string()));
+        }
+    }
+    *g = Some((Instant::now(), out.clone()));
+    out
+}
+
+/// Opens the user's own Hyprland additions (made with a short example the first time).
+fn open_own_shortcuts() {
+    let dir = sys::config_dir().join("yggdrasil");
+    let file = dir.join("hyprland.lua");
+    if !file.exists() {
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::write(&file, "-- Your own additions to Yggdrasil's session (read last, so they win). After a change: hyprctl reload\n--\n-- A shortcut that starts a program:\n--   hl.bind(\"SUPER + B\", hl.dsp.exec_cmd(\"vivaldi\"), { desc = \"Browser\" })\n");
+    }
+    sys::spawn("xdg-open", &[file.to_string_lossy().as_ref()]);
+}
+
 fn page_shortcuts(ui: &mut egui::Ui, pal: &Palette) {
+    // Yggdrasil's session: the shortcuts as Hyprland has them right now, with their own descriptions
+    if sys::hyprland() {
+        let list = hypr_shortcuts();
+        ui::group(ui, pal, Some("Shortcuts"), |ui| {
+            for (i, (keys, what)) in list.iter().enumerate() {
+                ui::row(ui, pal, i == 0, what, None, |ui| {
+                    egui::Frame::new().fill(pal.hover).corner_radius(CornerRadius::same(6)).inner_margin(Margin::symmetric(8, 3)).show(ui, |ui| {
+                        ui.label(RichText::new(keys).monospace());
+                    });
+                });
+            }
+            if list.is_empty() {
+                ui.label(RichText::new("Hyprland did not answer").color(pal.dim));
+            }
+        });
+        ui.add_space(8.0);
+        if ui::quiet(ui, pal, "Add your own shortcuts…").on_hover_text("Opens your own settings file for the session (~/.config/yggdrasil/hyprland.lua)").clicked() {
+            open_own_shortcuts();
+        }
+        return;
+    }
     let groups: [(&str, &[(&str, &str)]); 3] = [
         ("Everywhere", &[
             ("Win", "Launcher"), ("Win + E", "Minos"), ("Win + R", "Run"), ("Win + I", "Settings"), ("Win + L", "Lock"),
@@ -2527,7 +2637,7 @@ fn page_shortcuts(ui: &mut egui::Ui, pal: &Palette) {
         });
     }
     ui.add_space(8.0);
-    if ui::quiet(ui, pal, "Change shortcuts…").clicked() {
+    if kde_panels() && ui::quiet(ui, pal, "Change shortcuts…").clicked() {
         sys::spawn("kcmshell6", &["kcm_keys"]);
     }
 }
