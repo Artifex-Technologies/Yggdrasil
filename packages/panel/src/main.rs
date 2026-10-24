@@ -20,6 +20,7 @@ mod thumb;
 mod voicekey;
 mod assistant;
 mod voicewave;
+mod hypr;
 mod shell;
 mod status;
 mod mediakeys;
@@ -1334,7 +1335,7 @@ impl State {
             by_app || (!w.app_id.is_empty() && w.app_id.to_lowercase() == name)
         });
         if let Some(w) = win {
-            w.proxy.activate(self.seat.as_ref());
+            w.activate(self.seat.as_ref());
         } else if let Some(a) = app {
             apps::launch(a);
         }
@@ -1419,7 +1420,7 @@ impl State {
             }
             RowAct::Window(i) => {
                 if let Some(w) = self.model.wins.get(i) {
-                    w.proxy.activate(self.seat.as_ref());
+                    w.activate(self.seat.as_ref());
                 }
                 self.close_popup();
             }
@@ -2442,7 +2443,7 @@ impl State {
             Action::Dock(app_id) => self.click_dock(&app_id),
             Action::DockWin(_, wi) => {
                 if let Some(w) = self.model.wins.get(wi) {
-                    w.proxy.activate(self.seat.as_ref());
+                    w.activate(self.seat.as_ref());
                 }
             }
             Action::ToastOpen(id) => self.open_notification(id),
@@ -2496,13 +2497,13 @@ impl State {
         let active_pos = item.wins.iter().position(|&i| wins[i].active());
         let target = match active_pos {
             Some(p) if item.wins.len() == 1 => {
-                wins[item.wins[p]].proxy.minimize();
+                wins[item.wins[p]].minimize();
                 return;
             }
             Some(p) => item.wins[(p + 1) % item.wins.len()],
             None => item.wins[0],
         };
-        wins[target].proxy.activate(self.seat.as_ref());
+        wins[target].activate(self.seat.as_ref());
     }
 
     fn surf_index(&self, wl: &WlSurface) -> Option<usize> {

@@ -74,13 +74,33 @@ pub fn window_controls(ui: &mut egui::Ui, pal: &Palette) {
         }
         if resp.clicked() {
             match i {
-                0 => ctx.send_viewport_cmd(ViewportCommand::Minimized(true)),
+                0 => minimize(&ctx),
                 1 => ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized(&ctx))),
                 _ => ctx.send_viewport_cmd(ViewportCommand::Close),
             }
         }
     }
     let _ = pal;
+}
+
+/// Minimizes the window. Hyprland has no minimize of its own and ignores a program's request, so there the window goes to the
+/// hidden "minimized" workspace, as Super+Down does in Yggdrasil's session (the click focused it, so it is the active window).
+fn minimize(ctx: &egui::Context) {
+    if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some() {
+        let child = std::process::Command::new("hyprctl")
+            .args(["dispatch", r#"hl.dsp.window.move({ workspace = "special:minimized", follow = false })"#])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        if let Ok(mut c) = child {
+            std::thread::spawn(move || {
+                let _ = c.wait();
+            });
+            return;
+        }
+    }
+    ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
 }
 
 /// The outer EDGE pixels of the window resize it (not while maximized or full screen).

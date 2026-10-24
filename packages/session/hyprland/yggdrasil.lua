@@ -136,6 +136,63 @@ for _, screen in ipairs(tiling_screens()) do
   hl.window_rule({ name = "tile-on-" .. screen, match = { class = ".*", workspace = "m[" .. screen .. "]" }, tile = true })
 end
 
+-- Windows come back where they were: when a program's last window closes, its size and place are kept (one line per program in
+-- ~/.local/state/yggdrasil/window-places), and its next window opens there, if that spot is still on a screen. Dialogs and second
+-- windows of a program that already has one open are left where the program puts them.
+local places_file = (os.getenv("XDG_STATE_HOME") or (home .. "/.local/state")) .. "/yggdrasil/window-places"
+local places = {}
+do
+  local f = io.open(places_file, "r")
+  if f then
+    for line in f:lines() do
+      local class, x, y, w, h = line:match("^(%S+)\t(%-?%d+)\t(%-?%d+)\t(%d+)\t(%d+)$")
+      if class then places[class] = { tonumber(x), tonumber(y), tonumber(w), tonumber(h) } end
+    end
+    f:close()
+  end
+end
+local function xy(v)
+  if type(v) == "table" then return v.x or v[1], v.y or v[2] end
+  return nil, nil
+end
+local function others_of(w)
+  local n = 0
+  for _, o in ipairs(hl.get_windows()) do
+    if o.address ~= w.address and o.class == w.class then n = n + 1 end
+  end
+  return n
+end
+hl.on("window.close", function(w)
+  local ok, err = pcall(function()
+    if not w.floating or (w.fullscreen or 0) ~= 0 or w.class == "" or others_of(w) > 0 then return end
+    local ws = w.workspace
+    if ws and ws.name and ws.name:sub(1, 8) == "special:" then return end
+    local x, y = xy(w.at)
+    local width, height = xy(w.size)
+    if not x or not width or width < 120 or height < 80 then return end
+    places[w.class] = { x, y, width, height }
+    os.execute("mkdir -p '" .. places_file:match("^(.*)/") .. "'")
+    local f = io.open(places_file .. ".tmp", "w")
+    if not f then return end
+    for class, p in pairs(places) do f:write(string.format("%s\t%d\t%d\t%d\t%d\n", class, p[1], p[2], p[3], p[4])) end
+    f:close()
+    os.rename(places_file .. ".tmp", places_file)
+  end)
+  if not ok then io.stderr:write("yggdrasil: keeping a window's place: " .. tostring(err) .. "\n") end
+end)
+hl.on("window.open", function(w)
+  local ok, err = pcall(function()
+    local p = places[w.class]
+    if not p or not w.floating or others_of(w) > 0 then return end
+    if not hl.get_monitor_at(p[1] + p[3] / 2, p[2] + p[4] / 2) then return end
+    local target = "address:" .. w.address
+    -- resizing keeps a window centred, so the size first, then the place
+    hl.dispatch(hl.dsp.window.resize({ x = p[3], y = p[4], window = target }))
+    hl.dispatch(hl.dsp.window.move({ x = p[1], y = p[2], window = target }))
+  end)
+  if not ok then io.stderr:write("yggdrasil: putting a window back: " .. tostring(err) .. "\n") end
+end)
+
 -- Shortcuts (the same table as Yggdrasil's own compositor, compositor/src/shortcuts.rs).
 local function cmd(keys, command, opts) hl.bind(keys, hl.dsp.exec_cmd(command), opts) end
 local function dsp(keys, dispatcher, opts) hl.bind(keys, dispatcher, opts) end
