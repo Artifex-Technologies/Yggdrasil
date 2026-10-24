@@ -74,6 +74,9 @@ log "starting Hyprland ($(Hyprland --version 2>/dev/null | head -n1 | cut -d' ' 
 
 state=${XDG_STATE_HOME:-$HOME/.local/state}/yggdrasil
 mkdir -p "$state"
+# what Hyprland and its launcher print goes to a file, not onto the screen: started by greetd, the session's output is the
+# console itself, and its start-up messages flashed up between the login screen and the desktop (SDDM kept them in a file too)
+exec >"$state/session-output.log" 2>&1
 runtime=${XDG_RUNTIME_DIR:-/run/user/$UID}
 # Hyprland keeps its log in the runtime folder, which goes when the session does (or with a restart): a copy is kept up to date in
 # ~/.local/state/yggdrasil/hyprland-last.log while the session runs, so a problem can always be looked at afterwards
