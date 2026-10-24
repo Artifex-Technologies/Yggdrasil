@@ -16,6 +16,48 @@ export QT_WAYLAND_DISABLED_INTERFACES=${QT_WAYLAND_DISABLED_INTERFACES:-zxdg_dec
 if [[ -e /proc/driver/nvidia/version ]]; then
   export LIBVA_DRIVER_NAME=nvidia __GLX_VENDOR_LIBRARY_NAME=nvidia NVD_BACKEND=direct
 fi
+
+# Game stats (MangoHud, for a game started with MANGOHUD=1): one slim line across the top centre in Yggdrasil's look, the accent
+# from Settings > Appearance and the desktop's font. Drawn by the game itself, so it costs next to nothing and does not stop the
+# game's frames going straight to the monitor. Your own ~/.config/MangoHud/MangoHud.conf wins when there is one.
+mangohud_conf() {
+  local cfg=${XDG_CONFIG_HOME:-$HOME/.config} accent=7c54d6 rgb font out=${XDG_RUNTIME_DIR:-/run/user/$UID}/yggdrasil-mangohud.conf
+  rgb=$(sed -n 's/^[[:space:]]*accent[[:space:]]*=[[:space:]]*\([0-9]\+\)[[:space:]]*,[[:space:]]*\([0-9]\+\)[[:space:]]*,[[:space:]]*\([0-9]\+\).*/\1 \2 \3/p' "$cfg/yggdrasil/appearance.conf" 2>/dev/null | head -n1)
+  [[ -n $rgb ]] && accent=$(printf '%02x%02x%02x' $rgb)
+  font=$(fc-match -f '%{file}' sans-serif 2>/dev/null)
+  cat >"$out" <<CONF
+# Written by yggdrasil-session at sign-in; your own ~/.config/MangoHud/MangoHud.conf is used instead when it exists.
+horizontal
+hud_compact
+position=top-center
+offset_y=6
+round_corners=10
+background_color=0b0c10
+background_alpha=0.8
+text_color=e8e9ee
+text_outline=0
+${font:+font_file=$font}
+font_size=16
+fps
+frametime
+frame_timing=0
+throttling_status=0
+cpu_stats
+cpu_temp
+gpu_stats
+gpu_temp
+cpu_color=$accent
+gpu_color=$accent
+engine_color=$accent
+frametime_color=$accent
+horizontal_separator_color=$accent
+toggle_hud=Shift_R+F12
+CONF
+  echo "$out"
+}
+if [[ ! -e ${XDG_CONFIG_HOME:-$HOME/.config}/MangoHud/MangoHud.conf && -z ${MANGOHUD_CONFIGFILE:-} ]]; then
+  export MANGOHUD_CONFIGFILE=$(mangohud_conf)
+fi
 conf=/usr/share/yggdrasil/hyprland/yggdrasil.lua
 [[ -n ${YGGDRASIL_HYPRLAND_CONFIG:-} ]] && conf=$YGGDRASIL_HYPRLAND_CONFIG
 log() { systemd-cat -t yggdrasil-session echo "$*" 2>/dev/null || echo "yggdrasil-session: $*" >&2; }
