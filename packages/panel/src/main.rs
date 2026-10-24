@@ -302,6 +302,10 @@ struct State {
     layout: Layout,
     built_for: Option<Layout>,
     pointer_surface: Option<usize>,
+    /// Screens where the focused window is full screen: the bar and the dock step aside there (own session only).
+    covered: Vec<u32>,
+    /// The windows changed since `covered` was worked out.
+    covered_stale: bool,
     cursor: Option<WpCursorShapeDeviceV1>,
     cursor_mgr: Option<WpCursorShapeManagerV1>,
     seat: Option<WlSeat>,
@@ -591,6 +595,37 @@ impl State {
             .map(|(k, _)| *k)
     }
 
+    /// In Yggdrasil's own session, the screens whose focused window is full screen (a game, a video). The bar and the dock are
+    /// taken away there while it is: any surface above a full-screen window, even one it hides, makes Hyprland draw every frame
+    /// itself instead of handing the game's frames straight to the monitor (more input delay).
+    fn covered_outputs(&self) -> Vec<u32> {
+        if !yggdrasil_conf::own_session() {
+            return vec![];
+        }
+        let full: Vec<&Win> = self.model.wins.iter().filter(|w| w.flags & shell::ST_ACTIVE != 0 && w.flags & shell::ST_FULLSCREEN != 0 && w.flags & shell::ST_MINIMIZED == 0).collect();
+        let mut keys: Vec<u32> = full.iter().flat_map(|w| w.outputs.iter()).filter_map(|wl| self.outputs.iter().find(|(_, o)| o.wl == *wl).map(|(k, _)| *k)).collect();
+        // Hyprland does not say which screen a window is on (no output_enter): the focused window is on the focused screen
+        if full.iter().any(|w| w.outputs.is_empty()) && std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some() {
+            let json: serde_json::Value = serde_json::from_str(&command_output("hyprctl", &["-j", "monitors"])).unwrap_or(serde_json::Value::Null);
+            if let Some(name) = json.as_array().and_then(|a| a.iter().find(|m| m["focused"].as_bool() == Some(true))).and_then(|m| m["name"].as_str()) {
+                keys.extend(self.outputs.iter().filter(|(_, o)| o.name == name).map(|(k, _)| *k));
+            }
+        }
+        keys.sort_unstable();
+        keys.dedup();
+        keys
+    }
+
+    fn check_covered(&mut self) {
+        let now = self.covered_outputs();
+        if now != self.covered {
+            let names: Vec<&str> = now.iter().filter_map(|k| self.outputs.get(k)).map(|o| o.name.as_str()).collect();
+            eprintln!("yggdrasil-panel: full-screen window focused on {names:?}: the bar and the dock step aside there");
+            self.covered = now;
+            self.built_for = None;
+        }
+    }
+
     /// Make the surfaces match the screens and the layout: a bar on each, the dock on one.
     fn build_surfaces(&mut self) {
         let ready: Vec<(u32, String)> = self.outputs.iter().filter(|(_, o)| o.ready && !o.name.is_empty()).map(|(k, o)| (*k, o.name.clone())).collect();
@@ -611,6 +646,9 @@ impl State {
             if own_wall {
                 self.add_wallpaper(key);
             }
+            if self.covered.contains(&key) {
+                continue;
+            }
             self.add_surface(key, Kind::Bar { slim });
             if Some(key) == dock_out {
                 if self.xdg_wm.is_some() && self.plasma_shell.is_some() {
@@ -622,7 +660,9 @@ impl State {
                 }
             }
         }
-        self.ensure_voice_surface();
+        if Self::keep_voice_surface() {
+            self.ensure_voice_surface();
+        }
         self.built_for = Some(self.layout.clone());
     }
 
@@ -983,8 +1023,14 @@ impl State {
         self.speech_env = None;
     }
 
-    /// The voice island's surface is made once, when the bars are, and stays (empty and see-through) until it is needed: a surface
-    /// made on demand showed up in the wrong place for a moment (below the bar) before KWin put it at the top.
+    /// Under KWin the voice island's surface is made once, when the bars are, and stays (empty and see-through) until it is needed:
+    /// a surface made on demand showed up in the wrong place for a moment (below the bar) before KWin put it at the top. In
+    /// Yggdrasil's own session it exists only while the island shows: an idle surface above a full-screen game makes the compositor
+    /// draw every frame of the game itself instead of handing it straight to the monitor (more input delay).
+    fn keep_voice_surface() -> bool {
+        !yggdrasil_conf::own_session()
+    }
+
     fn ensure_voice_surface(&mut self) {
         if self.surfs.iter().any(|s| s.kind == Kind::Voice) {
             return;
@@ -1069,9 +1115,13 @@ impl State {
         if mode.is_none() && v.shown < 0.03 {
             self.viz = None;
             self.viz_alive.store(false, Ordering::Release);
-            // one last, empty frame: the surface stays, see-through
             if let Some(i) = self.surfs.iter().position(|s| s.kind == Kind::Voice) {
-                self.draw(i);
+                if Self::keep_voice_surface() {
+                    // one last, empty frame: the surface stays, see-through
+                    self.draw(i);
+                } else {
+                    self.surfs.remove(i).destroy();
+                }
                 let _ = self.conn.flush();
             }
             return;
@@ -2983,7 +3033,7 @@ impl Dispatch<OrgKdePlasmaWindowManagement, ()> for State {
             state.next_key += 1;
             let key = state.next_key;
             let proxy = wm.get_window_by_uuid(uuid.clone(), qh, key);
-            state.model.wins.push(Win { key, uuid, title: String::new(), app_id: String::new(), flags: 0, ready: false, menu: None, proxy: shell::WinHandle::Plasma(proxy) });
+            state.model.wins.push(Win { key, uuid, title: String::new(), app_id: String::new(), flags: 0, ready: false, menu: None, proxy: shell::WinHandle::Plasma(proxy), outputs: vec![] });
         }
     }
 }
@@ -2993,7 +3043,7 @@ impl Dispatch<ZwlrForeignToplevelManagerV1, ()> for State {
         if let zwlr_foreign_toplevel_manager_v1::Event::Toplevel { toplevel } = event {
             state.next_key += 1;
             let key = state.next_key;
-            state.model.wins.push(Win { key, uuid: format!("wlr-{key}"), title: String::new(), app_id: String::new(), flags: 0, ready: false, menu: None, proxy: shell::WinHandle::Wlr(toplevel) });
+            state.model.wins.push(Win { key, uuid: format!("wlr-{key}"), title: String::new(), app_id: String::new(), flags: 0, ready: false, menu: None, proxy: shell::WinHandle::Wlr(toplevel), outputs: vec![] });
         }
     }
 
@@ -3016,11 +3066,14 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for State {
                     match u32::from_ne_bytes([c[0], c[1], c[2], c[3]]) {
                         1 => flags |= shell::ST_MINIMIZED,
                         2 => flags |= shell::ST_ACTIVE,
+                        3 => flags |= shell::ST_FULLSCREEN,
                         _ => {}
                     }
                 }
                 state.model.wins[pos].flags = flags;
             }
+            E::OutputEnter { output } => state.model.wins[pos].outputs.push(output),
+            E::OutputLeave { output } => state.model.wins[pos].outputs.retain(|o| *o != output),
             E::Done => state.model.wins[pos].ready = true,
             E::Closed => {
                 let w = state.model.wins.remove(pos);
@@ -3028,6 +3081,12 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for State {
             }
             _ => return,
         }
+        if std::env::var_os("YGGDRASIL_PANEL_DEBUG").is_some() {
+            if let Some(w) = state.model.wins.get(pos) {
+                eprintln!("yggdrasil-panel: window {:?} flags {:#x} on {} screen(s)", w.app_id, w.flags, w.outputs.len());
+            }
+        }
+        state.covered_stale = true;
         state.dirty = true;
     }
 }
@@ -3173,6 +3232,8 @@ fn main() {
         layout: read_layout(),
         built_for: None,
         pointer_surface: None,
+        covered: vec![],
+        covered_stale: false,
         cursor: None,
         cursor_mgr,
         seat: None,
@@ -3703,6 +3764,11 @@ fn main() {
 
     event_loop
         .run(None, &mut state, |st| {
+            // after a window changed, or the screens did (their names may come after the windows)
+            if st.covered_stale || st.built_for.is_none() {
+                st.covered_stale = false;
+                st.check_covered();
+            }
             if st.built_for.is_none() {
                 st.build_surfaces();
             }

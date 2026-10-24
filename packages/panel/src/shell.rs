@@ -1,6 +1,7 @@
 //! What the bar and the dock show and where things are: pure layout and drawing, no Wayland.
 
 use resvg::tiny_skia::Pixmap;
+use wayland_client::protocol::wl_output::WlOutput;
 use wayland_client::protocol::wl_seat::WlSeat;
 use wayland_protocols_plasma::plasma_window_management::client::org_kde_plasma_window::OrgKdePlasmaWindow;
 use wayland_protocols_wlr::foreign_toplevel::v1::client::zwlr_foreign_toplevel_handle_v1::ZwlrForeignToplevelHandleV1;
@@ -12,6 +13,8 @@ use yggdrasil_conf::{ColorMode, DockPos, PanelConf};
 // Plasma window state flags (org_kde_plasma_window_management.state).
 pub const ST_ACTIVE: u32 = 0x1;
 pub const ST_MINIMIZED: u32 = 0x2;
+/// Full screen (KWin's own flag value; from wlr-foreign-toplevel's "fullscreen" state on other compositors).
+pub const ST_FULLSCREEN: u32 = 0x8;
 pub const ST_SKIPTASKBAR: u32 = 0x1000;
 
 /// The colours a bar or the dock is drawn with.
@@ -62,6 +65,8 @@ pub struct Win {
     pub ready: bool,
     pub menu: Option<(String, String)>,
     pub proxy: WinHandle,
+    /// The screens it is on (wlr-foreign-toplevel only).
+    pub outputs: Vec<WlOutput>,
 }
 
 /// A window as the compositor lets the panel handle it: KWin's own protocol, or the standard wlr-foreign-toplevel-management one

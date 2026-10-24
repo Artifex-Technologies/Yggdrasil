@@ -85,10 +85,18 @@ hl.config({
   cursor = {
     hide_on_key_press = false,
   },
+
+  render = {
+    -- a full-screen game's frames go straight to the monitor, not through the compositor (less input delay); games only
+    direct_scanout = 2,
+  },
 })
 
 -- Windows float, centred, at the size the program asks for...
 hl.window_rule({ name = "windows-float", match = { class = ".*" }, float = true, center = true })
+
+-- Steam games are marked as games (for the direct path to the monitor above)
+hl.window_rule({ name = "steam-games", match = { class = "^(steam_app_.*)$" }, content = "game" })
 
 -- ...except on the screens set to tile (Settings > Displays; ~/.config/yggdrasil/tiling, one screen per line; before that file exists,
 -- the choice made under KDE). There windows sit side by side with gaps, Omarchy-style. Settings reloads this when it changes.
