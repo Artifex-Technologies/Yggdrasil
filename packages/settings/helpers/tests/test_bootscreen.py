@@ -48,6 +48,12 @@ class BootScreen(unittest.TestCase):
         self.assertEqual(self.m.choice_of("yggdrasil-picture"), "picture")
         self.assertEqual(self.m.choice_of("labyrinth-rain"), "animation")
 
+    def test_the_nvidia_dropin_adds_its_modules_once(self):
+        for mods, want in [("", "nvidia nvidia_modeset nvidia_uvm nvidia_drm"), ("btrfs nvidia", "btrfs nvidia nvidia_modeset nvidia_uvm nvidia_drm")]:
+            script = f"MODULES=({mods})\n{self.m.NVIDIA_DROPIN_TEXT}\n{self.m.NVIDIA_DROPIN_TEXT}\necho \"${{MODULES[*]}}\"\n"
+            out = subprocess.run(["bash", "-c", script], capture_output=True, text=True).stdout.strip()
+            self.assertEqual(out, want)
+
     def test_the_dropin_puts_plymouth_after_kms(self):
         for hooks, want in [("base udev autodetect microcode kms modconf block filesystems", "base udev autodetect microcode kms plymouth modconf block filesystems"),
                             ("base udev autodetect block filesystems", "base udev plymouth autodetect block filesystems"),

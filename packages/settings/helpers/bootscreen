@@ -21,6 +21,8 @@ import sys
 THEMES = os.environ.get("BOOTSCREEN_THEMES", "/usr/share/plymouth/themes")
 INTEGRATIONS = os.environ.get("BOOTSCREEN_INTEGRATIONS", "/usr/share/yggdrasil/integrations")
 DROPIN = os.environ.get("BOOTSCREEN_DROPIN", "/etc/mkinitcpio.conf.d/yggdrasil-plymouth.conf")
+NVIDIA_DROPIN = os.environ.get("BOOTSCREEN_NVIDIA_DROPIN", "/etc/mkinitcpio.conf.d/yggdrasil-plymouth-nvidia.conf")
+NVIDIA_MODULES = ("nvidia", "nvidia_modeset", "nvidia_uvm", "nvidia_drm")
 GRUB_DEFAULT = os.environ.get("BOOTSCREEN_GRUB", "/etc/default/grub")
 PICTURE_THEME = "yggdrasil-picture"
 MESSAGES_THEME = "details"
@@ -43,6 +45,14 @@ if [[ " ${HOOKS[*]} " != *" plymouth "* ]]; then
   HOOKS=("${_ygg_hooks[@]}")
   unset _ygg_hooks _ygg_done _h
 fi
+"""
+
+NVIDIA_DROPIN_TEXT = """# Yggdrasil (Settings > Appearance > Boot screen): NVIDIA's driver starts inside the start-up image, so the boot screen is drawn
+# through it at the screen's own resolution from the first moment (it loaded later and took the screen over mid-animation).
+for _m in nvidia nvidia_modeset nvidia_uvm nvidia_drm; do
+  [[ " ${MODULES[*]} " == *" $_m "* ]] || MODULES+=("$_m")
+done
+unset _m
 """
 
 PICTURE_SCRIPT = """# Yggdrasil: your own picture in the middle of the screen while the computer starts (Settings > Appearance > Boot screen).
@@ -158,6 +168,11 @@ def set_(what, arg=None):
         if not arg or not os.path.isfile(arg):
             sys.exit("the picture was not found")
         make_picture_theme(arg)
+    # NVIDIA: its driver in the start-up image too (the boot screen is drawn through it from the start)
+    if os.path.isdir("/sys/module/nvidia") and not os.path.exists(NVIDIA_DROPIN):
+        os.makedirs(os.path.dirname(NVIDIA_DROPIN), exist_ok=True)
+        with open(NVIDIA_DROPIN, "w") as f:
+            f.write(NVIDIA_DROPIN_TEXT)
     # Plymouth in the start-up image
     if not os.path.exists(DROPIN):
         os.makedirs(os.path.dirname(DROPIN), exist_ok=True)

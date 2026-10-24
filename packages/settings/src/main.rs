@@ -743,6 +743,10 @@ impl App {
             "A change shows from the next start. Press Escape while it shows to see the messages."
         };
         ui.label(RichText::new(note).color(pal.dim));
+        // the same choice once more: brings a newer Settings' boot set-up into the start-up image (e.g. NVIDIA's early start)
+        if ready && !busy && idx != 2 && ui::quiet(ui, pal, "Apply again").on_hover_text("Rebuild the start-up image with this choice (about a minute)").clicked() {
+            pick = Some(idx);
+        }
         if let Some(k) = pick {
             let args: Vec<String> = match k {
                 0 => vec!["animation".into()],
