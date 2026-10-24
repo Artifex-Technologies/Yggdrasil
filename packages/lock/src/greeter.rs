@@ -62,9 +62,9 @@ struct App {
     design: design::Design,
     wallpaper: Option<Pixmap>,
     walls: std::collections::HashMap<(u32, u32), (Pixmap, Pixmap)>,
-    session: Vec<String>,
-    /// The session's environment for greetd (session type, desktop name), from its description file.
-    session_env: Vec<String>,
+    /// The sessions to choose from (F2), and the chosen one.
+    sessions: Vec<Session>,
+    sess_sel: usize,
     /// A sign-in is being checked: keys are ignored until it answers.
     busy: bool,
     tx: Sender<Result<(), Fail>>,
@@ -157,6 +157,7 @@ impl App {
         match sym {
             0xff09 | 0xff54 => return self.switch_user(1),  // Tab, Down
             0xfe20 | 0xff52 => return self.switch_user(-1), // Shift+Tab, Up
+            0xffbf => return self.switch_session(),         // F2
             _ => {}
         }
         let k = match sym {
@@ -169,6 +170,15 @@ impl App {
             },
         };
         self.apply_key(k);
+    }
+
+    /// F2: the next session (Yggdrasil, Plasma ...).
+    fn switch_session(&mut self) {
+        if self.busy || self.sessions.len() < 2 {
+            return;
+        }
+        self.sess_sel = (self.sess_sel + 1) % self.sessions.len();
+        self.draw();
     }
 
     fn switch_user(&mut self, by: i32) {
@@ -189,7 +199,8 @@ impl App {
             Action::Nothing => {}
             Action::Redraw => self.draw(),
             Action::Submit(mut pw) => {
-                let (user, cmd, env, tx) = (self.users[self.sel].name.clone(), self.session.clone(), self.session_env.clone(), self.tx.clone());
+                let chosen = &self.sessions[self.sess_sel];
+                let (user, cmd, env, tx) = (self.users[self.sel].name.clone(), chosen.cmd.clone(), chosen.env.clone(), self.tx.clone());
                 self.busy = true;
                 self.lock_state.message = "Signing in".into();
                 self.draw();
@@ -235,14 +246,15 @@ impl App {
         }
         let (time, date) = design::clock_text();
         let user = &self.users[self.sel];
-        let hint = if self.users.len() > 1 && self.lock_state.message.is_empty() && self.lock_state.dots() == 0 { "Tab: another user" } else { "" };
-        let message = if hint.is_empty() { self.lock_state.message.as_str() } else { hint };
+        let hint = if self.lock_state.message.is_empty() && self.lock_state.dots() == 0 { hint_text(&self.sessions, self.sess_sel, self.users.len()) } else { String::new() };
+        let message = if hint.is_empty() { self.lock_state.message.as_str() } else { hint.as_str() };
         let scene = design::Scene {
             fonts: &self.fonts,
             user: &user.name,
             dots: self.lock_state.dots(),
             waiting: self.lock_state.waiting(Instant::now()),
             message,
+            hint: !hint.is_empty(),
             time,
             date,
             greeting: design::greeting(design::current_hour()),
@@ -338,6 +350,77 @@ pub fn parse_session(text: &str) -> Option<(Vec<String>, Vec<String>)> {
     Some((cmd, env))
 }
 
+/// A session to sign in to: its name as shown, and what greetd starts.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Session {
+    pub name: String,
+    pub cmd: Vec<String>,
+    pub env: Vec<String>,
+}
+
+/// The line under the password box while nothing is typed: which session, and the keys that change things.
+pub fn hint_text(sessions: &[Session], sel: usize, users: usize) -> String {
+    let mut parts: Vec<String> = vec![];
+    if let Some(s) = sessions.get(sel) {
+        parts.push(if sessions.len() > 1 { format!("{} session \u{b7} F2 to change", s.name) } else { format!("{} session", s.name) });
+    }
+    if users > 1 {
+        parts.push("Tab: another user".into());
+    }
+    parts.join(" \u{b7} ")
+}
+
+/// A session file's shown name (Name=).
+fn session_name(text: &str) -> Option<String> {
+    let mut in_entry = false;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_entry = line == "[Desktop Entry]";
+        } else if in_entry {
+            if let Some(v) = line.strip_prefix("Name=") {
+                return Some(v.trim().to_string());
+            }
+        }
+    }
+    None
+}
+
+/// The sessions to offer: every file in `dir` but the compositor bake-off's and bare Hyprland's (without Yggdrasil it is a black
+/// screen with no way out); the configured one first. A configured command that is not a file is offered as itself.
+pub fn sessions_in(dir: &std::path::Path, chosen: Option<&str>) -> Vec<Session> {
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "desktop")).collect()).unwrap_or_default();
+    files.sort();
+    let mut out: Vec<(String, Session)> = vec![];
+    for p in files {
+        let stem = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        if stem.starts_with("bakeoff-") || stem.starts_with("hyprland") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&p) else { continue };
+        if let Some((cmd, env)) = parse_session(&text) {
+            out.push((stem.clone(), Session { name: session_name(&text).unwrap_or(stem), cmd, env }));
+        }
+    }
+    let chosen = chosen.map(str::trim).filter(|c| !c.is_empty());
+    if let Some(c) = chosen {
+        let name = c.trim_end_matches(".desktop");
+        if let Some(i) = out.iter().position(|(stem, _)| stem == name) {
+            let first = out.remove(i);
+            out.insert(0, first);
+        } else {
+            let (cmd, env) = session_for(Some(c), dir);
+            out.insert(0, (String::new(), Session { name: c.to_string(), cmd, env }));
+        }
+    }
+    let mut list: Vec<Session> = out.into_iter().map(|(_, s)| s).collect();
+    if list.is_empty() {
+        let (cmd, env) = session_for(None, dir);
+        list.push(Session { name: "Plasma".into(), cmd, env });
+    }
+    list
+}
+
 /// The session to start: `chosen` names a file in `dir` (with or without .desktop) or is a command; without it, the first file there.
 pub fn session_for(chosen: Option<&str>, dir: &std::path::Path) -> (Vec<String>, Vec<String>) {
     let from_file = |p: std::path::PathBuf| std::fs::read_to_string(p).ok().and_then(|t| parse_session(&t));
@@ -370,7 +453,7 @@ fn main() {
         die("no accounts to sign in to");
     }
     let wallpaper = conf("wallpaper").map(std::path::PathBuf::from).filter(|p| p.is_file()).or_else(yggdrasil_conf::integrations::default_wallpaper).and_then(|p| design::load_picture(&p));
-    let (session, session_env) = session_for(conf("session").as_deref(), std::path::Path::new(SESSIONS));
+    let sessions = sessions_in(std::path::Path::new(SESSIONS), conf("session").as_deref());
 
     let surface = compositor.create_surface(&qh, ());
     let xs = wm.get_xdg_surface(&surface, &qh, ());
@@ -396,8 +479,8 @@ fn main() {
         design: conf("design").and_then(|d| design::Design::parse(&d)).unwrap_or(design::Design::Split),
         wallpaper,
         walls: Default::default(),
-        session,
-        session_env,
+        sessions,
+        sess_sel: 0,
         busy: false,
         tx,
         done: None,
@@ -436,6 +519,21 @@ fn main() {
 
 #[cfg(test)]
 mod session_tests {
+    #[test]
+    fn sessions_offered_configured_first_without_the_bakeoff() {
+        let d = std::env::temp_dir().join(format!("ygg-sessions-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("plasma.desktop"), "[Desktop Entry]\nName=Plasma (Wayland)\nExec=startplasma-wayland\nDesktopNames=KDE\n").unwrap();
+        std::fs::write(d.join("yggdrasil.desktop"), "[Desktop Entry]\nName=Yggdrasil\nExec=/usr/bin/yggdrasil-session\nDesktopNames=Yggdrasil\n").unwrap();
+        std::fs::write(d.join("bakeoff-kwin.desktop"), "[Desktop Entry]\nName=Bake-off\nExec=x\n").unwrap();
+        std::fs::write(d.join("hyprland.desktop"), "[Desktop Entry]\nName=Hyprland\nExec=Hyprland\n").unwrap();
+        let l = super::sessions_in(&d, Some("yggdrasil"));
+        assert_eq!(l.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), vec!["Yggdrasil", "Plasma (Wayland)"]);
+        assert_eq!(super::hint_text(&l, 0, 1), "Yggdrasil session \u{b7} F2 to change");
+        assert_eq!(super::hint_text(&l, 1, 2), "Plasma (Wayland) session \u{b7} F2 to change \u{b7} Tab: another user");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     use super::*;
 
     #[test]

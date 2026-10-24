@@ -48,6 +48,8 @@ pub struct Scene<'a> {
     pub dots: usize,
     pub waiting: bool,
     pub message: &'a str,
+    /// The message is a hint (which session, which keys), not a problem: drawn quietly, not in red.
+    pub hint: bool,
     pub time: String,
     pub date: String,
     pub greeting: String,
@@ -148,7 +150,8 @@ fn field(pix: &mut Pixmap, s: &Scene, x: f32, y: f32, w: f32, h: f32) {
 
 fn message(pix: &mut Pixmap, s: &Scene, x: f32, y: f32) {
     if !s.message.is_empty() {
-        draw::draw_text(pix, &s.fonts.regular, 16.0, x, y, (240, 110, 110, 255), s.message);
+        let color = if s.hint { (190, 184, 205, 200) } else { (240, 110, 110, 255) };
+        draw::draw_text(pix, &s.fonts.regular, 16.0, x, y, color, s.message);
     }
 }
 

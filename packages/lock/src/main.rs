@@ -247,6 +247,7 @@ impl App {
             dots: self.lock_state.dots(),
             waiting: self.lock_state.waiting(Instant::now()),
             message: &self.lock_state.message,
+            hint: false,
             time,
             date,
             greeting: design::greeting(design::current_hour()),
@@ -286,7 +287,7 @@ fn preview(args: &[String]) -> ! {
     let (time, date) = design::clock_text();
     let user = get("--user").unwrap_or_else(user_name);
     let message = get("--message").unwrap_or_default();
-    let scene = design::Scene { fonts: &fonts, user: &user, dots: get("--typed").and_then(|n| n.parse().ok()).unwrap_or(0), waiting: false, message: &message, time, date, greeting: design::greeting(design::current_hour()), wall: wall.as_ref(), blurred: blurred.as_ref(), avatar: avatar.as_ref(), accent: design::accent() };
+    let scene = design::Scene { fonts: &fonts, user: &user, dots: get("--typed").and_then(|n| n.parse().ok()).unwrap_or(0), waiting: false, message: &message, hint: false, time, date, greeting: design::greeting(design::current_hour()), wall: wall.as_ref(), blurred: blurred.as_ref(), avatar: avatar.as_ref(), accent: design::accent() };
     let mut pix = Pixmap::new(w, h).unwrap_or_else(|| die("bad size"));
     design::paint(d, &mut pix, &scene);
     pix.save_png(&out).unwrap_or_else(|e| die(&format!("cannot write {out}: {e}")));
