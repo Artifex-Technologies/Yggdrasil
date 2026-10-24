@@ -103,6 +103,10 @@ hl.config({
 -- Windows float, centred, at the size the program asks for...
 hl.window_rule({ name = "windows-float", match = { class = ".*" }, float = true, center = true })
 
+-- Steam asks at start to have its window un-maximized, and Hyprland 0.56 maximizes it instead: its maximize requests are
+-- ignored (Super+Up still maximizes it)
+hl.window_rule({ name = "steam-no-self-maximize", match = { class = "^(steam)$" }, suppress_event = "maximize" })
+
 -- Steam games are marked as games (for the direct path to the monitor above)
 hl.window_rule({ name = "steam-games", match = { class = "^(steam_app_.*)$" }, content = "game" })
 

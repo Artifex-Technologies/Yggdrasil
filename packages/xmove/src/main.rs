@@ -1,12 +1,14 @@
 //! yggdrasil-xmove: X11 programs that draw their own title bar (Steam, some games' launchers) move and resize their window by
 //! asking the window manager with `_NET_WM_MOVERESIZE` when you press on their title or edge. Hyprland 0.56 lists that request
 //! as supported but does nothing with it, so those windows could not be dragged. This watches the root window for the request
-//! (any program may listen for it) and starts Hyprland's own drag, the one Super+drag uses; letting go of the button ends it.
-//! It sleeps until such a request comes and needs no other permission.
+//! (any program may listen for it) and moves the window with the pointer itself, through Hyprland's socket, until the button is
+//! let go (Hyprland's own drag cannot be started from outside a Super+mouse shortcut). It sleeps until such a request comes.
 
-use std::process::{Command, Stdio};
+use std::io::{Read, Write};
+use std::os::unix::net::UnixStream;
+use std::time::{Duration, Instant};
 use x11rb::connection::Connection;
-use x11rb::protocol::xproto::{ChangeWindowAttributesAux, ConnectionExt, EventMask};
+use x11rb::protocol::xproto::{ChangeWindowAttributesAux, ConnectionExt, EventMask, KeyButMask, Window};
 use x11rb::protocol::Event;
 
 /// What `_NET_WM_MOVERESIZE` asks for (its third number): 0-7 resize from that edge or corner, 8 move, 9-10 the same from the
@@ -26,10 +28,64 @@ fn ask(direction: u32) -> Ask {
     }
 }
 
-fn dispatch(lua: &str) {
-    let child = Command::new("hyprctl").args(["dispatch", lua]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
-    if let Ok(mut c) = child {
-        let _ = c.wait();
+/// One request to Hyprland's control socket (what hyprctl does, without starting a program 100 times a second).
+fn hypr(request: &str) -> Option<String> {
+    let dir = std::path::PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR")?).join("hypr").join(std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE")?);
+    let mut s = UnixStream::connect(dir.join(".socket.sock")).ok()?;
+    s.set_read_timeout(Some(Duration::from_secs(1))).ok()?;
+    s.write_all(request.as_bytes()).ok()?;
+    let mut out = String::new();
+    s.read_to_string(&mut out).ok()?;
+    Some(out)
+}
+
+/// A number after `"key":` in Hyprland's JSON (enough for the few fields read here).
+fn json_ints(json: &str, key: &str) -> Vec<i64> {
+    let Some(i) = json.find(&format!("\"{key}\":")) else { return vec![] };
+    let rest = &json[i + key.len() + 3..];
+    let rest = rest.trim_start().trim_start_matches('[');
+    rest.split(|c| c == ']' || c == '}' || c == '\n').next().unwrap_or("").split(',').filter_map(|n| n.trim().parse().ok()).collect()
+}
+
+fn json_str(json: &str, key: &str) -> Option<String> {
+    let i = json.find(&format!("\"{key}\":"))?;
+    let rest = json[i + key.len() + 3..].trim_start().strip_prefix('"')?;
+    Some(rest[..rest.find('"')?].to_string())
+}
+
+/// Moves the focused window (the one just pressed on) with the pointer until the button is let go, the program cancels, or
+/// half a minute passed.
+fn follow<C: Connection>(conn: &C, root: Window, button: u32) {
+    let Some(active) = hypr("j/activewindow") else { return };
+    let (Some(addr), at) = (json_str(&active, "address"), json_ints(&active, "at")) else { return };
+    if at.len() < 2 {
+        return;
+    }
+    let Some(start) = hypr("j/cursorpos").map(|c| (json_ints(&c, "x"), json_ints(&c, "y"))) else { return };
+    let (Some(&sx), Some(&sy)) = (start.0.first(), start.1.first()) else { return };
+    let (wx, wy) = (at[0], at[1]);
+    let held = match button {
+        2 => KeyButMask::BUTTON2,
+        3 => KeyButMask::BUTTON3,
+        _ => KeyButMask::BUTTON1,
+    };
+    let began = Instant::now();
+    let mut last = (wx, wy);
+    while began.elapsed() < Duration::from_secs(30) {
+        let Ok(Ok(p)) = conn.query_pointer(root).map(|c| c.reply()) else { return };
+        if !p.mask.contains(held) {
+            return;
+        }
+        if let Some(c) = hypr("j/cursorpos") {
+            if let (Some(&x), Some(&y)) = (json_ints(&c, "x").first(), json_ints(&c, "y").first()) {
+                let to = (wx + x - sx, wy + y - sy);
+                if to != last {
+                    hypr(&format!(r#"dispatch hl.dsp.window.move({{ x = {}, y = {}, window = "address:{addr}" }})"#, to.0, to.1));
+                    last = to;
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(7));
     }
 }
 
@@ -61,10 +117,10 @@ fn watch() -> Result<(), String> {
             if m.type_ != atom || m.format != 32 {
                 continue;
             }
-            match ask(m.data.as_data32()[2]) {
-                Ask::Move => dispatch("hl.dsp.window.drag()"),
-                Ask::Resize => dispatch("hl.dsp.window.resize()"),
-                Ask::Other => {}
+            let d = m.data.as_data32();
+            // resizing from an edge works already (Hyprland's own edge grips); moving is done here
+            if ask(d[2]) == Ask::Move {
+                follow(&conn, root, d[3]);
             }
         }
     }
@@ -81,5 +137,15 @@ mod tests {
         assert_eq!(ask(7), Ask::Resize);
         assert_eq!(ask(9), Ask::Other, "moving from the keyboard is left alone");
         assert_eq!(ask(11), Ask::Other, "cancel");
+    }
+
+    #[test]
+    fn reads_hyprlands_answers() {
+        let w = "{\n    \"address\": \"0x55f99d8c7680\",\n    \"mapped\": true,\n    \"at\": [104, 120],\n    \"size\": [1323, 1082]\n}";
+        assert_eq!(json_str(w, "address").as_deref(), Some("0x55f99d8c7680"));
+        assert_eq!(json_ints(w, "at"), vec![104, 120]);
+        let c = "{\n    \"x\": 1034,\n    \"y\": -3\n}";
+        assert_eq!(json_ints(c, "x"), vec![1034]);
+        assert_eq!(json_ints(c, "y"), vec![-3]);
     }
 }
