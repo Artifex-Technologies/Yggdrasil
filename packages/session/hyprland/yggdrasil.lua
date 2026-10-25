@@ -224,6 +224,53 @@ hl.on("window.open", function(w)
   if not ok then io.stderr:write("yggdrasil: putting a window back: " .. tostring(err) .. "\n") end
 end)
 
+-- Window zones (FancyZones-style; the panel's zones.rs): drag a window to the notch at the top of a screen and a sheet of layouts
+-- opens under it; drop the window on a zone and it fills that part of the screen. Hyprland has no "a window is being dragged"
+-- event, so: pressing the left button (a binding that lets the click through) arms a timer inside the compositor, which runs
+-- only while the button is down; when the window in front has moved and the pointer is at the notch, the panel is told once
+-- (zones-drag); letting go (a release binding) tells it the drop (zones-drop). Super+Shift+Z opens the sheet from the keyboard.
+do
+  local drag = nil
+  local function near_notch(c)
+    local m = hl.get_monitor_at(c.x, c.y)
+    if not m then return false end
+    local top = (m.reserved and (m.reserved.top or m.reserved[2])) or 28
+    local mid = m.x + (m.width / m.scale) / 2
+    return math.abs(c.x - mid) < 180 and c.y < m.y + top + 30
+  end
+  local tick = hl.timer(function()
+    local ok, err = pcall(function()
+      if not drag or drag.told then return end
+      local w = hl.get_active_window()
+      if not w or not w.floating then return end
+      local x, y = xy(w.at)
+      if not x then return end
+      if drag.win ~= w.address then
+        -- the first look: the window the press went to, and where it was
+        drag.win, drag.x, drag.y = w.address, x, y
+        return
+      end
+      local c = hl.get_cursor_pos()
+      if c and (math.abs(x - drag.x) + math.abs(y - drag.y) > 6) and near_notch(c) then
+        drag.told = true
+        hl.exec_cmd("yggdrasil-panelctl zones-drag")
+      end
+    end)
+    if not ok then io.stderr:write("yggdrasil: window zones: " .. tostring(err) .. "\n") end
+  end, { timeout = 40, type = "repeat" })
+  tick:set_enabled(false)
+  local function press() drag = { told = false }; tick:set_enabled(true) end
+  local function release()
+    tick:set_enabled(false)
+    if drag and drag.told then hl.exec_cmd("yggdrasil-panelctl zones-drop") end
+    drag = nil
+  end
+  -- ignore_mods: the same with Super held (Super+drag moves a window too)
+  hl.bind("mouse:272", press, { non_consuming = true, ignore_mods = true })
+  hl.bind("mouse:272", release, { release = true, non_consuming = true, ignore_mods = true })
+  hl.bind("SUPER + SHIFT + Z", hl.dsp.exec_cmd("yggdrasil-panelctl zones"), { desc = "Window zones for the window in front" })
+end
+
 -- Shortcuts (the same table as Yggdrasil's own compositor, compositor/src/shortcuts.rs).
 local function cmd(keys, command, opts) hl.bind(keys, hl.dsp.exec_cmd(command), opts) end
 local function dsp(keys, dispatcher, opts) hl.bind(keys, dispatcher, opts) end
@@ -276,6 +323,17 @@ dsp("SUPER + mouse:273", hl.dsp.window.resize(), { mouse = true, desc = "Resize 
 -- area, click a window, or Enter for the whole screen. To the clipboard and to Pictures/Screenshots.
 cmd("PRINT", "yggdrasil-shot", { desc = "Screenshot (area, window or screen)" })
 cmd("SUPER + SHIFT + S", "yggdrasil-shot", { desc = "Screenshot (area, window or screen)" })
+
+-- Color Picker (PowerToys' key, packages/colorpicker): the screen freezes with a loupe; a click copies the colour in the format chosen
+-- in Settings > Keyboard Shortcuts > Color Picker.
+cmd("SUPER + SHIFT + C", "yggdrasil-colorpicker", { desc = "Color picker" })
+
+-- Keyboard shortcuts and Find my mouse (the panel: yggdrasil-panelctl). Win + / shows every shortcut on a card. Find my mouse: each
+-- Ctrl tapped on its own tells the panel (a release bind on a modifier), which puts a spotlight on the pointer after two taps in a
+-- short time (Settings > Keyboard Shortcuts can switch it off). The binds do not consume the key: Ctrl reaches programs as always.
+cmd("SUPER + SLASH", "yggdrasil-panelctl shortcuts", { desc = "Keyboard shortcuts" })
+cmd("CTRL + CONTROL_L", "yggdrasil-panelctl cursor-tap", { release = true, non_consuming = true, desc = "Find my mouse (press Ctrl twice)" })
+cmd("CTRL + CONTROL_R", "yggdrasil-panelctl cursor-tap", { release = true, non_consuming = true, desc = "Find my mouse (press Ctrl twice)" })
 
 -- The multimedia keys, also on the lock screen.
 for key, what in pairs({

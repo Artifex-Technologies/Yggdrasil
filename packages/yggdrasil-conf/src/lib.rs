@@ -13,7 +13,10 @@ pub fn own_session() -> bool {
 pub mod dirs;
 pub mod integrations;
 pub mod nightlight;
+pub mod shortcuts;
 pub mod tiling;
+pub mod tools;
+pub mod zones;
 
 use std::path::PathBuf;
 

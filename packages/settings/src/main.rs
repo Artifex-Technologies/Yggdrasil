@@ -17,6 +17,7 @@ mod restore;
 mod distress;
 mod security;
 mod workspaces;
+mod zones_ui;
 mod sys;
 mod ui;
 mod users;
@@ -1624,6 +1625,7 @@ impl App {
         }
         if hypr {
             self.night_light(ui, pal);
+            zones_ui::group(ui, pal);
         }
         ui.add_space(8.0);
         if !hypr && ui::quiet(ui, pal, "Arrange displays…").clicked() {
@@ -3333,45 +3335,13 @@ fn kde_panels() -> bool {
     !yggdrasil_conf::own_session() && std::path::Path::new("/usr/bin/kcmshell6").exists()
 }
 
-/// Hyprland's key names as they are written on keys.
-fn key_name(key: &str) -> String {
-    let named = match key {
-        "code:10" => "1", "code:11" => "2", "code:12" => "3", "code:13" => "4", "code:14" => "5",
-        "RETURN" | "Return" => "Return", "ESCAPE" | "Escape" => "Esc", "PRINT" | "Print" => "Print Screen",
-        "UP" => "↑", "DOWN" => "↓", "LEFT" => "←", "RIGHT" => "→", "SUPER_L" => "",
-        "mouse:272" => "left-drag", "mouse:273" => "right-drag",
-        _ => "",
-    };
-    if !named.is_empty() || key == "SUPER_L" {
-        return named.to_string();
-    }
-    if let Some(rest) = key.strip_prefix("XF86") {
-        return rest.to_string();
-    }
-    let mut c = key.chars();
-    c.next().map(|f| f.to_uppercase().collect::<String>() + &c.as_str().to_lowercase()).unwrap_or_default()
-}
-
-/// A bind's keys, as on Windows ("Win + Shift + Q"), from Hyprland's modifier mask and key.
-fn bind_keys(modmask: u64, key: &str) -> String {
-    let mut parts: Vec<String> = vec![];
-    for (bit, name) in [(64, "Win"), (4, "Ctrl"), (8, "Alt"), (1, "Shift")] {
-        if modmask & bit != 0 {
-            parts.push(name.to_string());
-        }
-    }
-    let k = key_name(key);
-    if !k.is_empty() {
-        parts.push(k);
-    }
-    parts.join(" + ")
-}
-
-/// The shortcuts of the running Hyprland session that have a description (Yggdrasil's own and the user's), read every few seconds.
-fn hypr_shortcuts() -> Vec<(String, String)> {
+/// The shortcuts of the running Hyprland session (Yggdrasil's own and the user's), grouped (yggdrasil_conf::shortcuts), read every
+/// few seconds.
+fn hypr_shortcuts() -> Vec<yggdrasil_conf::shortcuts::Shortcut> {
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
-    static CACHE: Mutex<Option<(Instant, Vec<(String, String)>)>> = Mutex::new(None);
+    use yggdrasil_conf::shortcuts::{self, Bind, Shortcut};
+    static CACHE: Mutex<Option<(Instant, Vec<Shortcut>)>> = Mutex::new(None);
     let mut g = CACHE.lock().unwrap_or_else(|e| e.into_inner());
     if let Some((t, v)) = g.as_ref() {
         if t.elapsed() < Duration::from_secs(5) {
@@ -3379,22 +3349,20 @@ fn hypr_shortcuts() -> Vec<(String, String)> {
         }
     }
     let json: serde_json::Value = sys::run("hyprctl", &["-j", "binds"]).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
-    let mut out: Vec<(String, String)> = vec![];
-    for b in json.as_array().map(|a| a.as_slice()).unwrap_or(&[]) {
-        let what = b["description"].as_str().unwrap_or("").trim();
-        if what.is_empty() || b["release"].as_bool() == Some(true) && what.contains("let go") {
-            continue;
-        }
-        // a key given by its code (the number row: code:10 is 1) has no name, only the code
-        let key = match b["key"].as_str().unwrap_or("") {
-            "" => b["keycode"].as_u64().map(|c| format!("code:{c}")).unwrap_or_default(),
-            k => k.to_string(),
-        };
-        let keys = bind_keys(b["modmask"].as_u64().unwrap_or(0), &key);
-        if !keys.is_empty() && !out.iter().any(|(k, w)| *k == keys && w == what) {
-            out.push((keys, what.to_string()));
-        }
-    }
+    let binds: Vec<Bind> = json
+        .as_array()
+        .map(|a| a.as_slice())
+        .unwrap_or(&[])
+        .iter()
+        .map(|b| Bind {
+            modmask: b["modmask"].as_u64().unwrap_or(0) as u32,
+            // a key given by its code (the number row: code:10 is 1) has no name, only the code
+            key: b["key"].as_str().filter(|k| !k.is_empty()).map(str::to_string).unwrap_or_else(|| format!("code:{}", b["keycode"].as_u64().unwrap_or(0))),
+            desc: b["description"].as_str().unwrap_or("").to_string(),
+            release: b["release"].as_bool().unwrap_or(false),
+        })
+        .collect();
+    let out = shortcuts::list(&binds);
     *g = Some((Instant::now(), out.clone()));
     out
 }
@@ -3410,22 +3378,90 @@ fn open_own_shortcuts() {
     sys::spawn("xdg-open", &[file.to_string_lossy().as_ref()]);
 }
 
-fn page_shortcuts(ui: &mut egui::Ui, pal: &Palette) {
-    // Yggdrasil's session: the shortcuts as Hyprland has them right now, with their own descriptions
-    if sys::hyprland() {
-        let list = hypr_shortcuts();
-        ui::group(ui, pal, Some("Shortcuts"), |ui| {
-            for (i, (keys, what)) in list.iter().enumerate() {
-                ui::row(ui, pal, i == 0, what, None, |ui| {
-                    egui::Frame::new().fill(pal.hover).corner_radius(CornerRadius::same(6)).inner_margin(Margin::symmetric(8, 3)).show(ui, |ui| {
-                        ui.label(RichText::new(keys).monospace());
-                    });
-                });
-            }
-            if list.is_empty() {
-                ui.label(RichText::new("Hyprland did not answer").color(pal.dim));
+/// Color Picker (packages/colorpicker, Win + Shift + C): the format a pick is copied in, and the last picks, each copied again by a
+/// click. The format is `color_format` in ~/.config/yggdrasil/tools.conf; the history ~/.local/state/yggdrasil/colors.txt.
+fn color_picker_section(ui: &mut egui::Ui, pal: &Palette) {
+    use colorpicker::Format;
+    let installed = std::path::Path::new("/usr/bin/yggdrasil-colorpicker").exists();
+    let mut format = colorpicker::chosen_format();
+    ui::group(ui, pal, Some("Color Picker"), |ui| {
+        ui::row(ui, pal, true, "Color picker", Some("Win + Shift + C: the screen freezes with a loupe; a click copies the colour"), |ui| {
+            if installed && ui.button("Pick a colour").clicked() {
+                sys::spawn("yggdrasil-colorpicker", &[]);
             }
         });
+        ui::row(ui, pal, false, "Copy as", Some(&format.text((0x7c, 0x54, 0xd6))), |ui| {
+            egui::ComboBox::from_id_salt("color-format").selected_text(format.label()).show_ui(ui, |ui| {
+                for f in Format::ALL {
+                    if ui.selectable_value(&mut format, f, f.label()).changed() {
+                        let _ = colorpicker::save_format(f);
+                    }
+                }
+            });
+        });
+        let history = colorpicker::load_history();
+        ui::row(ui, pal, false, "Recent colours", Some(if history.is_empty() { "None picked yet" } else { "Click one to copy it again" }), |_| {});
+        if !history.is_empty() {
+            ui.horizontal_wrapped(|ui| {
+                for c in history {
+                    let (rect, resp) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::click());
+                    ui.painter().rect_filled(rect, CornerRadius::same(6), egui::Color32::from_rgb(c.0, c.1, c.2));
+                    if resp.hovered() {
+                        ui.painter().rect_stroke(rect, CornerRadius::same(6), egui::Stroke::new(2.0, pal.text), egui::StrokeKind::Outside);
+                    }
+                    let tip = Format::ALL.iter().map(|f| f.text(c)).collect::<Vec<_>>().join("\n");
+                    if resp.on_hover_text(tip).clicked() {
+                        ui.ctx().copy_text(format.text(c));
+                    }
+                }
+            });
+        }
+    });
+}
+
+fn page_shortcuts(ui: &mut egui::Ui, pal: &Palette) {
+    // Find my mouse (the panel; ~/.config/yggdrasil/tools.conf)
+    let mut tools = yggdrasil_conf::tools::ToolsConf::load();
+    ui::group(ui, pal, Some("Tools"), |ui| {
+        ui::row(ui, pal, true, "Find my mouse", Some("Press Ctrl twice: a spotlight shows where the pointer is"), |ui| {
+            if ui::switch(ui, pal, &mut tools.find_mouse).changed() {
+                let _ = tools.save();
+            }
+        });
+    });
+    color_picker_section(ui, pal);
+    // Yggdrasil's session: the shortcuts as Hyprland has them right now, with their own descriptions, grouped, with a search
+    if sys::hyprland() {
+        let list = hypr_shortcuts();
+        let qid = egui::Id::new("shortcut-search");
+        let mut query = ui.data_mut(|d| d.get_temp::<String>(qid)).unwrap_or_default();
+        ui.horizontal(|ui| {
+            ui.add(egui::TextEdit::singleline(&mut query).hint_text("Search shortcuts").desired_width(320.0));
+            ui.label(RichText::new("Win + / shows them all on a card").color(pal.dim));
+        });
+        ui.data_mut(|d| d.insert_temp(qid, query.clone()));
+        let q = query.trim().to_lowercase();
+        let shown: Vec<&yggdrasil_conf::shortcuts::Shortcut> = list.iter().filter(|s| q.is_empty() || s.what.to_lowercase().contains(&q) || s.keys.to_lowercase().contains(&q)).collect();
+        for g in yggdrasil_conf::shortcuts::GROUPS {
+            let rows: Vec<_> = shown.iter().filter(|s| s.group == g).collect();
+            if rows.is_empty() {
+                continue;
+            }
+            ui::group(ui, pal, Some(g), |ui| {
+                for (i, s) in rows.iter().enumerate() {
+                    ui::row(ui, pal, i == 0, &s.what, None, |ui| {
+                        egui::Frame::new().fill(pal.hover).corner_radius(CornerRadius::same(6)).inner_margin(Margin::symmetric(8, 3)).show(ui, |ui| {
+                            ui.label(RichText::new(&s.keys).monospace());
+                        });
+                    });
+                }
+            });
+        }
+        if list.is_empty() {
+            ui.label(RichText::new("Hyprland did not answer").color(pal.dim));
+        } else if shown.is_empty() {
+            ui.label(RichText::new("No shortcut matches").color(pal.dim));
+        }
         ui.add_space(8.0);
         if ui::quiet(ui, pal, "Add your own shortcuts…").on_hover_text("Opens your own settings file for the session (~/.config/yggdrasil/hyprland.lua)").clicked() {
             open_own_shortcuts();

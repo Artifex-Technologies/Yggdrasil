@@ -1,0 +1,28 @@
+# Yggdrasil's Color Picker: pick a colour anywhere on the screen (Win + Shift + C) and copy it: packages/colorpicker.
+pkgname=yggdrasil-colorpicker
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Yggdrasil Color Picker: a frozen screen with a loupe, the colour copied in the chosen format"
+arch=('x86_64')
+url="https://github.com/Artifex-Technologies/Yggdrasil"
+license=('MPL-2.0')
+depends=('gcc-libs' 'wayland' 'grim' 'wl-clipboard' 'libnotify' 'fontconfig')
+makedepends=('cargo')
+options=('!lto')
+
+_src="$startdir/../../colorpicker"
+
+build() {
+  cd "$_src"
+  cargo build --release --locked --target-dir "$srcdir/target"
+}
+
+check() {
+  cd "$_src"
+  cargo test --release --locked --target-dir "$srcdir/target"
+}
+
+package() {
+  install -Dm755 "$srcdir/target/release/yggdrasil-colorpicker" "$pkgdir/usr/bin/yggdrasil-colorpicker"
+  install -Dm644 "$_src/README.md" "$pkgdir/usr/share/doc/yggdrasil-colorpicker/README.md"
+}

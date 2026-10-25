@@ -15,6 +15,8 @@ mod convo;
 mod devices;
 mod fylgja;
 mod notify;
+mod cheatsheet;
+mod finder;
 mod osd;
 mod stats;
 mod thumb;
@@ -29,6 +31,7 @@ mod mediakeys;
 mod snwatcher;
 mod tray;
 mod trayui;
+mod zones;
 
 use std::time::Instant;
 use std::collections::HashMap;
@@ -111,6 +114,10 @@ enum Kind {
     Voice,
     /// Log out / restart / shut down, with a countdown (Yggdrasil's own session): a card in the middle of the screen.
     Confirm,
+    /// Find my mouse: the spotlight on the pointer, over the whole screen; takes no clicks or keys (finder.rs).
+    Finder,
+    /// The keyboard shortcuts card (Win + /), over the whole screen: any key or click closes it (cheatsheet.rs).
+    Cheat,
 }
 
 /// The panel's own D-Bus service, so a key press elsewhere (the Super key, through KWin) can reach it:
@@ -127,6 +134,13 @@ enum BusMsg {
     AskKey(bool),
     ToggleCalendar,
     FylgjaSection(u32),
+    /// Ctrl tapped on its own (Find my mouse), and Win + / (the shortcuts card).
+    CursorTap,
+    ToggleShortcuts,
+    /// Window zones: a dragged window reached the notch, the drag ended, or Super+Shift+Z (zones.rs).
+    ZonesDrag,
+    ZonesDrop,
+    ZonesPick,
 }
 
 #[zbus::interface(name = "org.yggdrasil.Panel")]
@@ -165,6 +179,31 @@ impl PanelBus {
     fn show_fylgja(&self, section: u32) {
         let _ = self.0.send(BusMsg::FylgjaSection(section));
     }
+
+    /// Ctrl was tapped on its own (the compositor's release bind): two taps in a row put a spotlight on the pointer.
+    fn cursor_tap(&self) {
+        let _ = self.0.send(BusMsg::CursorTap);
+    }
+
+    /// Show the keyboard shortcuts card, or close it.
+    fn toggle_shortcuts(&self) {
+        let _ = self.0.send(BusMsg::ToggleShortcuts);
+    }
+
+    /// Window zones: a window being dragged reached the notch (the session's Lua calls this); the sheet opens under it.
+    fn zones_drag(&self) {
+        let _ = self.0.send(BusMsg::ZonesDrag);
+    }
+
+    /// The drag ended: the window goes to the zone under the pointer, if any, and the sheet closes.
+    fn zones_drop(&self) {
+        let _ = self.0.send(BusMsg::ZonesDrop);
+    }
+
+    /// Open the zones sheet for the window in front, or close it (Super+Shift+Z).
+    fn zones_pick(&self) {
+        let _ = self.0.send(BusMsg::ZonesPick);
+    }
 }
 
 /// A popover and what it shows.
@@ -183,6 +222,8 @@ enum PopupKind {
     Fylgja(fylgja::FyState),
     /// A bar add-on's card, by its index in Model::addons.
     Addon(usize),
+    /// Window zones: where to put a window (zones.rs).
+    Zones(zones::Session),
 }
 
 /// The start menu's state: what was typed, how far its lists are scrolled, and (Folders theme) which
@@ -341,6 +382,8 @@ struct State {
     start_max: i32,
     /// What can be clicked in Fylgja (the notch), and what its poller last read.
     fy_hits: Vec<fylgja::FHit>,
+    /// The zones sheet's zones on its surface.
+    zone_hits: Vec<(zones::Rect4, (usize, usize))>,
     fy_active: Arc<AtomicBool>,
     fy_shared: Arc<std::sync::Mutex<fylgja::Snapshot>>,
     /// A volume slider being dragged: which one, its rectangle, and the last level and time sent.
@@ -356,6 +399,12 @@ struct State {
     confirm: Option<confirm::Confirm>,
     osd_gen: u64,
     osd_hide_tx: calloop::channel::Sender<u64>,
+    /// Find my mouse: the Ctrl taps, the spotlight being shown, and the ticks that animate it (only while it shows).
+    finder_taps: finder::Taps,
+    finder: Option<finder::Spot>,
+    finder_tick_tx: calloop::channel::Sender<()>,
+    /// The keyboard shortcuts card, while it is open: what it lists.
+    cheat: Option<Vec<yggdrasil_conf::shortcuts::Shortcut>>,
     /// Notification pop-ups on screen (ids, oldest first), and how their hide timers report.
     /// The Notification Center pane (when on): what can be clicked in its list, and where the list starts.
     pane_hits: Vec<(notify::Rect, notify::NAct)>,
@@ -1196,6 +1245,91 @@ impl State {
         }
     }
 
+    /// Ctrl tapped on its own: the second tap close after the first puts the spotlight on the pointer (Settings can switch it off).
+    fn cursor_tap(&mut self) {
+        if !self.finder_taps.tap(Instant::now()) || !yggdrasil_conf::tools::ToolsConf::load().find_mouse {
+            return;
+        }
+        let Some((name, x, y)) = finder::locate() else { return };
+        let Some(output) = self.outputs.iter().find(|(_, o)| o.name == name).map(|(k, _)| *k) else { return };
+        self.finder = Some(finder::Spot { output: name, x, y, start: Instant::now() });
+        // a new spotlight replaces one still showing (on whichever screen)
+        if let Some(i) = self.surfs.iter().position(|s| s.kind == Kind::Finder) {
+            self.surfs.remove(i).destroy();
+        }
+        self.add_overlay(output, Kind::Finder, "yggdrasil-find-mouse", false);
+        // about sixty frames a second while it shows, then nothing
+        let tx = self.finder_tick_tx.clone();
+        std::thread::spawn(move || {
+            let end = Instant::now() + finder::LENGTH + Duration::from_millis(40);
+            while Instant::now() < end {
+                if tx.send(()).is_err() {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(16));
+            }
+            let _ = tx.send(());
+        });
+    }
+
+    /// A frame of the spotlight, or its end.
+    fn tick_finder(&mut self) {
+        let done = self.finder.as_ref().is_none_or(|f| f.done(Instant::now()));
+        let i = self.surfs.iter().position(|s| s.kind == Kind::Finder);
+        if done {
+            self.finder = None;
+            if let Some(i) = i {
+                self.surfs.remove(i).destroy();
+                self.pointer_surface = None;
+            }
+        } else if let Some(i) = i {
+            self.draw(i);
+        }
+        let _ = self.conn.flush();
+    }
+
+    /// Win + /: the shortcuts card on the focused screen, or close it.
+    fn toggle_shortcuts(&mut self) {
+        if self.cheat.is_some() {
+            self.close_cheat();
+            return;
+        }
+        let Some(output) = self.focused_output().or_else(|| self.dock_output()) else { return };
+        self.cheat = Some(cheatsheet::load());
+        self.add_overlay(output, Kind::Cheat, "yggdrasil-shortcuts", true);
+        self.dirty = true;
+    }
+
+    fn close_cheat(&mut self) {
+        self.cheat = None;
+        if let Some(i) = self.surfs.iter().position(|s| s.kind == Kind::Cheat) {
+            self.surfs.remove(i).destroy();
+            self.pointer_surface = None;
+        }
+        self.dirty = true;
+    }
+
+    /// A surface over the whole of a screen, above everything (the bar too). `input`: it takes the keyboard and clicks (the shortcuts
+    /// card); otherwise clicks and keys go through to whatever is under it (the spotlight).
+    fn add_overlay(&mut self, output: u32, kind: Kind, namespace: &str, input: bool) {
+        let Some(out) = self.outputs.get(&output) else { return };
+        let id = self.next_surf;
+        self.next_surf += 1;
+        let wl = self.compositor.create_surface(&self.qh, ());
+        let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Overlay, namespace.into(), &self.qh, id);
+        layer.set_anchor(Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right);
+        layer.set_size(0, 0);
+        layer.set_exclusive_zone(-1);
+        layer.set_keyboard_interactivity(if input { KeyboardInteractivity::Exclusive } else { KeyboardInteractivity::None });
+        if !input {
+            let region = self.compositor.create_region(&self.qh, ());
+            wl.set_input_region(Some(&region));
+            region.destroy();
+        }
+        wl.commit();
+        self.surfs.push(Surf { id, kind, output, wl, layer: Some(layer), dock: None, w: 0, h: 0, want: (0, 0), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
+    }
+
     /// Shows the volume or brightness pop-up (or updates it) and starts its hide timer.
     fn show_osd(&mut self, st: osd::OsdState) {
         // Fylgja shows the value itself while it is open, and a slider being dragged would flicker it
@@ -1807,7 +1941,7 @@ impl State {
                     st.scroll = (st.scroll + by * 3).clamp(0, max);
                 }
             }
-            Some(PopupKind::Tray(_)) | Some(PopupKind::Addon(_)) | None => return,
+            Some(PopupKind::Tray(_)) | Some(PopupKind::Addon(_)) | Some(PopupKind::Zones(_)) | None => return,
         }
         self.dirty = true;
     }
@@ -2070,6 +2204,60 @@ impl State {
         self.close_popup();
     }
 
+    /// Window zones: open the sheet for the window in front (a drag reached the notch, or Super+Shift+Z), on the screen it is on.
+    fn zones_open(&mut self, mode: zones::Mode) {
+        if let Some(Popup { kind: PopupKind::Zones(_), .. }) = self.popup {
+            if mode == zones::Mode::Pick {
+                self.close_popup();
+            }
+            return;
+        }
+        let Some(sess) = zones::begin(mode) else { return };
+        if self.popup.is_some() {
+            self.close_popup();
+        }
+        self.click_output = self.outputs.iter().find(|(_, o)| o.name == sess.monitor.name).map(|(k, _)| *k);
+        self.toggle_popup(PopupKind::Zones(sess));
+        self.dirty = true;
+    }
+
+    /// While a window is dragged: light the zone under the pointer.
+    fn zones_follow(&mut self) {
+        let Some(Popup { kind: PopupKind::Zones(z), .. }) = &mut self.popup else { return };
+        let Some(g) = zones::cursor() else { return };
+        let p = zones::to_surface(z, g);
+        let hover = zones::hit_at(&self.zone_hits, p);
+        if z.pointer != Some(p) {
+            z.moved = Instant::now();
+        } else if z.moved.elapsed() > zones::STALE {
+            // no drop came (the release went unseen): put the sheet away rather than follow the pointer for ever
+            self.close_popup();
+            return;
+        }
+        if hover != z.hover || z.pointer != Some(p) {
+            z.hover = hover;
+            z.pointer = Some(p);
+            self.dirty = true;
+        }
+    }
+
+    /// The drag ended: the window goes to the zone it was dropped on, if any.
+    fn zones_drop(&mut self) {
+        if let Some(Popup { kind: PopupKind::Zones(z), .. }) = &self.popup {
+            if z.mode == zones::Mode::Drag {
+                let z = z.clone();
+                self.close_popup();
+                // the compositor puts the window down where it was let go first; then it goes to the zone
+                if let Some(hit) = zones::cursor().map(|g| zones::to_surface(&z, g)).and_then(|p| zones::hit_at(&self.zone_hits, p)).or(z.hover) {
+                    std::thread::spawn(move || {
+                        std::thread::sleep(Duration::from_millis(60));
+                        zones::apply(&z, hit);
+                    });
+                }
+            }
+        }
+    }
+
     /// A press on an add-on's card: its `act` runs with the id (only an id its card lists), then it is read again.
     fn addon_press(&mut self, i: usize, id: &str, text: Option<String>, close: bool) {
         let Some(a) = self.model.addons.get(i) else { return };
@@ -2132,6 +2320,11 @@ impl State {
 
     /// A key was pressed while a popover has the keyboard.
     fn key_pressed(&mut self, key: u32) {
+        // the shortcuts card: any key closes it
+        if self.cheat.is_some() {
+            self.close_cheat();
+            return;
+        }
         // the countdown card has the keyboard: Escape stops it, Enter goes ahead now
         if self.confirm.is_some() {
             match key {
@@ -2437,6 +2630,18 @@ impl State {
                 Some(c) => confirm::paint(&mut pix, s, &c, hover, &self.assets.fonts),
                 None => vec![],
             },
+            Kind::Finder => {
+                if let Some(spot) = &self.finder {
+                    finder::paint(&mut pix, s, spot, Instant::now());
+                }
+                vec![]
+            }
+            Kind::Cheat => {
+                if let Some(list) = &self.cheat {
+                    cheatsheet::paint(&mut pix, s, list, self.model.dark, &self.assets.fonts);
+                }
+                vec![]
+            }
             Kind::Osd => {
                 if let Some(st) = self.osd {
                     osd::paint(&mut pix, s, &st, &self.assets.fonts, &mut self.assets.icons);
@@ -2488,6 +2693,11 @@ impl State {
                         let (card, hits) = trayui::paint(&mut pix, s, &pop, &self.model, &self.thumbs, self.pointer_pos, &self.assets.fonts, &mut self.assets.icons);
                         self.popup_card = card;
                         self.tray_hits = hits;
+                    }
+                    Some(Popup { kind: PopupKind::Zones(z), .. }) => {
+                        let (card, hits) = zones::paint(&mut pix, s, z, &self.assets.fonts, self.model.dark);
+                        self.popup_card = card;
+                        self.zone_hits = hits;
                     }
                     Some(Popup { kind: PopupKind::Addon(i), .. }) => {
                         let field = self.addon_field.as_ref().map(|(_, t)| t.as_str());
@@ -3113,6 +3323,11 @@ fn pointer_event(state: &mut State, event: wl_pointer::Event) {
                 }
             }
             wl_pointer::Event::Button { state: WEnum::Value(wl_pointer::ButtonState::Pressed), button, .. } => {
+                // the shortcuts card: a click anywhere closes it
+                if state.pointer_surface.and_then(|i| state.surfs.get(i)).map(|s| s.kind == Kind::Cheat).unwrap_or(false) {
+                    state.close_cheat();
+                    return;
+                }
                 // 272 = BTN_LEFT
                 if button == 272 {
                     // On the popover: the header takes you back to this month; outside the card closes it.
@@ -3147,6 +3362,13 @@ fn pointer_event(state: &mut State, event: wl_pointer::Event) {
                             let hit = state.tray_hits.iter().rev().find(|(r, _)| px >= r.0 && px < r.0 + r.2 && py >= r.1 && py < r.1 + r.3).map(|(_, a)| a.clone());
                             if let Some(a) = hit {
                                 state.tray_row(a);
+                            }
+                        } else if let Some(Popup { kind: PopupKind::Zones(z), .. }) = &state.popup {
+                            // picked from the keyboard (Super+Shift+Z): a click on a zone puts the window there
+                            if let Some(hit) = zones::hit_at(&state.zone_hits, (px, py)) {
+                                let z = z.clone();
+                                state.close_popup();
+                                std::thread::spawn(move || zones::apply(&z, hit));
                             }
                         } else if let Some(Popup { kind: PopupKind::Addon(i), .. }) = state.popup {
                             // the card's controls: a press goes to the add-on, a click in its text field puts typing there
@@ -3408,6 +3630,7 @@ fn main() {
     let (thumb_tx, thumb_rx) = calloop::channel::channel::<(String, Pixmap)>();
     let (anim_tx, anim_rx) = calloop::channel::channel::<()>();
     let (osd_hide_tx, osd_hide_rx) = calloop::channel::channel::<u64>();
+    let (finder_tick_tx, finder_tick_rx) = calloop::channel::channel::<()>();
     let (toast_hide_tx, toast_hide_rx) = calloop::channel::channel::<u32>();
     let (voice_tx, voice_rx) = calloop::channel::channel::<Result<String, String>>();
     let (heard_tx, heard_rx) = calloop::channel::channel::<String>();
@@ -3453,6 +3676,7 @@ fn main() {
         start_hits: vec![],
         start_max: 0,
         fy_hits: vec![],
+        zone_hits: vec![],
         fy_active: Arc::new(AtomicBool::new(false)),
         fy_shared: Arc::new(std::sync::Mutex::new(Default::default())),
         drag: None,
@@ -3463,6 +3687,10 @@ fn main() {
         confirm: None,
         osd_gen: 0,
         osd_hide_tx,
+        finder_taps: Default::default(),
+        finder: None,
+        finder_tick_tx,
+        cheat: None,
         pane_hits: vec![],
         pane_top: 0.0,
         toasts: vec![],
@@ -3573,6 +3801,11 @@ fn main() {
                     }
                     BusMsg::ToggleCalendar => st.toggle_calendar(),
                     BusMsg::FylgjaSection(n) => st.show_fylgja_section(n as usize),
+                    BusMsg::CursorTap => st.cursor_tap(),
+                    BusMsg::ToggleShortcuts => st.toggle_shortcuts(),
+                    BusMsg::ZonesDrag => st.zones_open(zones::Mode::Drag),
+                    BusMsg::ZonesDrop => st.zones_drop(),
+                    BusMsg::ZonesPick => st.zones_open(zones::Mode::Pick),
                 }
             }
         })
@@ -3603,6 +3836,10 @@ fn main() {
             }
         })
         .expect("osd channel");
+    event_loop
+        .handle()
+        .insert_source(finder_tick_rx, |_, _, st| st.tick_finder())
+        .expect("find-my-mouse channel");
     event_loop
         .handle()
         .insert_source(osd_hide_rx, |event, _, st| {
@@ -3694,7 +3931,12 @@ fn main() {
                     st.key_pressed(key);
                 }
             }
-            TimeoutAction::ToDuration(Duration::from_millis(if st.repeat.is_some() { 20 } else { 60 }))
+            // a window is being dragged over the zones sheet: follow the pointer (only then)
+            let dragging = matches!(st.popup, Some(Popup { kind: PopupKind::Zones(ref z), .. }) if z.mode == zones::Mode::Drag);
+            if dragging {
+                st.zones_follow();
+            }
+            TimeoutAction::ToDuration(Duration::from_millis(if st.repeat.is_some() { 20 } else if dragging { 30 } else { 60 }))
         })
         .expect("key repeat timer");
     // YGGDRASIL_PANEL_THUMBTEST=1: a few seconds after start, try a picture of every window and say what came of it

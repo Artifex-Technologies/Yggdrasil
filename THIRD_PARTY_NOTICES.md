@@ -27,3 +27,4 @@ licence, listed here.
   - omarchy-sudoku-plugin ((c) 2026 Morganczech (gruut)): `packages/sudoku`.
 - **omarchy-weather-nowcast** (Hizoul, GPL-3.0): only the idea of the rain view in `packages/weather`; no code is taken from it.
 - **Simple Icons** (CC0-1.0): the brand logos in `packages/liki/share/brand-icons`.
+- **Microsoft PowerToys** (MIT, (c) Microsoft Corporation): `packages/colorpicker` follows its Color Picker (a frozen screen, a loupe, copy formats); no code is taken from it.

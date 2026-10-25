@@ -23,7 +23,7 @@ def run(script, args, busctl_out=""):
 
 class PanelCtl(unittest.TestCase):
     def test_commands_map_to_panel_methods(self):
-        for arg, want in (("start", "ToggleStart"), ("calendar", "ToggleCalendar"), ("ask", "Ask"), ("notifications", "ShowFylgja u 3"), ("fylgja 2", "ShowFylgja u 2")):
+        for arg, want in (("start", "ToggleStart"), ("calendar", "ToggleCalendar"), ("ask", "Ask"), ("notifications", "ShowFylgja u 3"), ("fylgja 2", "ShowFylgja u 2"), ("shortcuts", "ToggleShortcuts"), ("cursor-tap", "CursorTap")):
             rc, calls = run("yggdrasil-panelctl", arg.split())
             self.assertEqual(rc, 0, arg)
             self.assertEqual(len(calls), 1, arg)

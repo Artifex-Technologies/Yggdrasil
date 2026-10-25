@@ -27,6 +27,11 @@ written once on Yggdrasil's own parts. First casualty: the PowerToys-style tools
 Fylgja drop zone, File Locksmith, Grab And Move, Keyboard Manager, Mouse Utilities, Peek, Screen Ruler, Text Extractor, Window
 Hopper), parked on the branch `tools-wip` (config file, Settings page and colour formatting carry over).
 
+**Resumed 2026-10-25** (KDE is gone from the owner's PC; the tools are written natively on Hyprland and Yggdrasil's panel): Find My
+Mouse (Ctrl twice), FancyZones with the Fylgja drop zone (docs/ZONES.md), Color Picker (Super+Shift+C) and a keyboard shortcuts list
+(Settings and Super+/, docs/SHORTCUTS.md). Next, in this order: Text Extractor, Peek, Screen Ruler, Grab And Move, Window Hopper,
+Keyboard Manager, File Locksmith.
+
 ## Still KDE, in the order I would replace them
 
 Each step must work alongside KDE until it has earned the place, and each can be done and shipped alone.

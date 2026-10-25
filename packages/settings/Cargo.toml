@@ -16,5 +16,7 @@ image = { version = "0.25.10", default-features = false, features = ["png", "jpe
 yggdrasil-ui = { path = "../yggdrasil-ui" }
 yggdrasil-conf = { path = "../yggdrasil-conf" }
 yggdrasil-gamepads = { path = "../gamepads" }
+# the Color Picker's formats and history (its library only, no picker)
+yggdrasil-colorpicker = { path = "../colorpicker", default-features = false }
 serde_json = "1.0.151"
 serde = { version = "1", features = ["derive"] }

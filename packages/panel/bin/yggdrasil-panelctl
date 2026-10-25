@@ -10,6 +10,11 @@
 #   ask              start or send a spoken question to the assistant   (bind to Super+S)
 #   ask-press        the hold-to-talk key went down   } bind both where the compositor reports press and release:
 #   ask-release      the hold-to-talk key came up     } tap for a conversation, hold for one question
+#   zones            the window zones sheet for the window in front, or close it   (bind to Super+Shift+Z)
+#   zones-drag       a dragged window reached the notch   } called by the session's Lua while a window is dragged,
+#   zones-drop       the drag ended                        } not by hand
+#   shortcuts        show or hide the keyboard shortcuts card   (bind to Super+/)
+#   cursor-tap       Ctrl was tapped on its own: two taps in a row put a spotlight on the pointer (Find my mouse)
 # Hyprland example (hyprland.conf):  bind = SUPER, S, exec, yggdrasil-panelctl ask
 call() { busctl --user call org.yggdrasil.Panel /Panel org.yggdrasil.Panel "$@" >/dev/null; }
 case "${1:-}" in
@@ -21,5 +26,10 @@ case "${1:-}" in
   ask) call Ask ;;
   ask-press) call AskPress ;;
   ask-release) call AskRelease ;;
-  *) sed -n '2,14p' "$0" >&2; exit 2 ;;
+  zones) call ZonesPick ;;
+  zones-drag) call ZonesDrag ;;
+  zones-drop) call ZonesDrop ;;
+  shortcuts) call ToggleShortcuts ;;
+  cursor-tap) call CursorTap ;;
+  *) sed -n '2,18p' "$0" >&2; exit 2 ;;
 esac
