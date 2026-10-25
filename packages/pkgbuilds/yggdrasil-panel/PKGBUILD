@@ -1,7 +1,7 @@
 # Yggdrasil's top bar and dock (Rust, Wayland layer-shell, CPU-drawn): packages/panel.
 pkgname=yggdrasil-panel
 pkgver=0.1.0
-pkgrel=7
+pkgrel=8
 pkgdesc="Yggdrasil top bar and dock"
 arch=('x86_64')
 provides=('labyrinth-panel')

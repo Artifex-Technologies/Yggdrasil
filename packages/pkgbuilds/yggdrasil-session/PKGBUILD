@@ -1,7 +1,7 @@
 # Yggdrasil's own desktop session: Hyprland with Yggdrasil's config (built from packages/session in this repository).
 pkgname=yggdrasil-session
 pkgver=0.1.0
-pkgrel=2
+pkgrel=3
 pkgdesc="Yggdrasil's own desktop session, on Hyprland"
 arch=('any')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
