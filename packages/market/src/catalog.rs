@@ -90,6 +90,9 @@ pub struct Entry {
     pub preinstalled: bool,
     /// Where the (open) source code is, if it is public: shown as a link on the app's page.
     pub repo: String,
+    /// A logo from Liki's brand set (Simple Icons) for an app with no icon of its own, by its name there ("docker"); only from the
+    /// operating system's catalog.
+    pub logo: String,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -156,6 +159,7 @@ pub fn parse_catalog(text: &str, from: &str, trusted: bool) -> Result<Catalog, S
             preinstalled: trusted && a.get("preinstalled").and_then(|p| p.as_bool()).unwrap_or(false),
             appstream: if trusted { s(a, "appstream") } else { String::new() },
             flathub: if trusted { s(a, "flathub") } else { String::new() },
+            logo: if trusted { s(a, "logo") } else { String::new() },
             id,
             name,
             source,
@@ -218,6 +222,7 @@ pub fn parse_omarchy(text: &str, from: &str) -> Result<Catalog, String> {
                 editions: vec![],
                 preinstalled: false,
                 repo: String::new(),
+                logo: String::new(),
             });
         }
     }

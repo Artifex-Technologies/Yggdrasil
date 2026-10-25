@@ -2,6 +2,7 @@
 //! Updates). Sources: the operating system's own reviewed catalog (its `packages` integration), plus repositories you add (marked as
 //! not reviewed).
 
+mod brand;
 mod catalog;
 mod details;
 mod history;
@@ -344,6 +345,11 @@ impl App {
         // the vendor's own icon first; the pack's only when there is none anywhere
         if let Some(path) = vendor::find(&names, &e.flathub, self.online == Some(true), ui.ctx()) {
             egui::Image::new(format!("file://{}", path.display())).fit_to_exact_size(rect.size()).corner_radius(CornerRadius::same(r as u8)).paint_at(ui, rect);
+        } else if let Some((svg, col, uri)) = brand::find(&[e.logo.as_str(), e.icon.as_str(), e.id.as_str()]) {
+            // no icon of its own (a terminal program): its logo, white on the brand's colour
+            p.rect_filled(rect, CornerRadius::same(r as u8), col);
+            let inner = rect.shrink(rect.width() * 0.2);
+            egui::Image::from_bytes(uri, svg.into_bytes()).fit_to_exact_size(inner.size()).paint_at(ui, inner);
         } else if !sysicon::paint_app(p, rect, &names) {
             p.rect_filled(rect, CornerRadius::same(r as u8), tint(&e.id, 0.55, 0.78));
             p.text(rect.center(), Align2::CENTER_CENTER, e.name.chars().next().unwrap_or('?').to_uppercase().to_string(), FontId::proportional(rect.height() * 0.5), Color32::WHITE);
@@ -437,7 +443,7 @@ impl App {
         if self.is_running("*update*") {
             return;
         }
-        let dummy = Entry { id: "*update*".into(), name: "Updates".into(), subtitle: String::new(), description: String::new(), category: String::new(), subcategory: String::new(), source: Source::Pacman(vec![]), icon: String::new(), reviewed: true, note: String::new(), tags: vec![], from: String::new(), launch: String::new(), appstream: String::new(), flathub: String::new(), editions: vec![], preinstalled: false, repo: String::new() };
+        let dummy = Entry { id: "*update*".into(), name: "Updates".into(), subtitle: String::new(), description: String::new(), category: String::new(), subcategory: String::new(), source: Source::Pacman(vec![]), icon: String::new(), reviewed: true, note: String::new(), tags: vec![], from: String::new(), launch: String::new(), appstream: String::new(), flathub: String::new(), editions: vec![], preinstalled: false, repo: String::new(), logo: String::new() };
         if let Some((prog, args)) = install::command(&dummy, install::Op::UpdateAll) {
             self.start_job(ctx, "*update*", "All updates", install::Op::UpdateAll, prog, args, install::Undo::default());
         }
