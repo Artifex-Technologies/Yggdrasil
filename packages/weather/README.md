@@ -27,7 +27,8 @@ yggdrasil-weather units us                         # or metric (the default)
 - Rain nowcast: Open-Meteo's `minutely_15` precipitation. In North America that is NOAA's HRRR, in much of
   Europe the regional high-resolution models; elsewhere it is filled from the hourly global models, so it is
   coarser there. Radar extrapolation (KNMI for the Netherlands, DWD for Germany, as in
-  [omarchy-weather-nowcast](https://github.com/Hizoul/omarchy-weather-nowcast), which this rain view follows)
+  [omarchy-weather-nowcast](https://github.com/Hizoul/omarchy-weather-nowcast), whose rain view this follows: the idea
+  only, written anew here, no code taken from it, as it is GPL-3.0)
   is not used: it covers only those two countries.
 - Measured temperatures: airport reports (METAR) from aviationweather.gov.
 
