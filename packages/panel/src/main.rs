@@ -3543,7 +3543,7 @@ fn main() {
     // the tray registry first (it waits while KDE's kded still serves it), then the panel's tray as a host of it
     snwatcher::spawn();
     // the bar add-ons installed (integrations of kind bar-item): one thread runs them all
-    addons::spawn(addons::load(), state.addons_shared.clone(), state.addons_now.clone());
+    addons::spawn(state.addons_shared.clone(), state.addons_now.clone());
     tray::spawn(tray_tx.clone());
     state.tray_tx = Some(tray_tx);
     event_loop

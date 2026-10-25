@@ -126,14 +126,25 @@ fn run(cmd: &[String]) -> Option<String> {
     String::from_utf8(reader.join().ok()?).ok()
 }
 
-/// Polls every add-on on one thread; `now` set to true asks for a refresh at once (the card was opened).
-pub fn spawn(addons: Vec<Addon>, shared: Arc<Mutex<Vec<View>>>, now: Arc<AtomicBool>) {
-    if addons.is_empty() {
-        return;
-    }
+/// Polls every add-on on one thread; `now` set to true asks for a refresh at once (the card was opened). The list of add-ons is read
+/// again every 30 seconds, so one installed or removed (from Agora) appears or goes without signing out.
+pub fn spawn(shared: Arc<Mutex<Vec<View>>>, now: Arc<AtomicBool>) {
     std::thread::spawn(move || {
-        let mut due: Vec<Instant> = addons.iter().map(|_| Instant::now()).collect();
+        let mut addons: Vec<Addon> = vec![];
+        let mut due: Vec<Instant> = vec![];
+        let mut listed = Instant::now() - Duration::from_secs(60);
         loop {
+            if listed.elapsed() >= Duration::from_secs(30) {
+                listed = Instant::now();
+                let fresh = load();
+                if fresh != addons {
+                    addons = fresh;
+                    due = addons.iter().map(|_| Instant::now()).collect();
+                    if let Ok(mut v) = shared.lock() {
+                        v.retain(|x| addons.iter().any(|a| a.id == x.id));
+                    }
+                }
+            }
             let forced = now.swap(false, Ordering::Relaxed);
             for (i, a) in addons.iter().enumerate() {
                 if !forced && Instant::now() < due[i] {
