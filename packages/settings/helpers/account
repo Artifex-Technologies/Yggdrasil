@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 """account: add, remove and change accounts for Settings > Users (run with pkexec; `list` needs no root).
 
-  account list                                   JSON: every login account (uid 1000 and up)
+  account list                                   JSON: every login account (uid 1000 and up), with its access
+  account groups                                 JSON: the optional groups this system has, with what each allows
   account add NAME           [--full-name TEXT] [--admin]
                                                  create NAME with a home folder; the password is read from standard input (one line)
   account admin NAME on|off                      make an account an administrator (group wheel) or a standard user
   account remove NAME [--delete-home]            delete the account (its home folder stays unless --delete-home)
+  account name NAME TEXT                         change the full name
+  account password NAME                          set NAME's password (another account's; read from standard input, one line)
+  account login NAME on|off                      allow or stop signing in (off: no login shell and the password locked)
+  account sudo NAME password|nopassword          whether sudo asks an administrator for the password
+  account group NAME GROUP on|off                optional access (OPTIONAL_GROUPS below: virtual machines, serial ports ...)
 
 Rules it enforces, whatever the caller says: names are lowercase letters, digits, '-' and '_' (at most 31, starting with a letter);
 only accounts from uid 1000 up are touched; never the account that asked (PKEXEC_UID), never an account the operating system keeps
@@ -26,6 +32,17 @@ NAME_RE = re.compile(r"^[a-z][a-z0-9_-]{0,30}$")
 RESERVED = {"root", "nobody", "daemon", "bin", "sys", "sync", "games", "man", "lp", "mail", "news", "uucp", "proxy", "www-data", "backup",
             "list", "irc", "gnats", "sddm", "polkitd", "systemd"}
 DESKTOP_GROUPS = ["users", "audio", "video", "network", "storage", "lp"]
+# Groups Settings may switch per account, with what they allow. Only those that exist on the system are offered. Groups that are
+# root in disguise for everyday use (disk, input: read every key typed) are not on the list.
+OPTIONAL_GROUPS = {
+    "libvirt": "Run virtual machines",
+    "docker": "Run Docker containers (this is administrator-level access)",
+    "wireshark": "Capture network traffic (Wireshark)",
+    "uucp": "Use serial ports (Arduino, 3D printers, modems)",
+    "gamemode": "Ask for the games performance mode",
+}
+SUDOERS_D = os.environ.get("YGGDRASIL_SUDOERS_D", "/etc/sudoers.d")
+NOLOGIN = "/usr/bin/nologin"
 
 
 def fail(msg, code=1):
@@ -64,9 +81,24 @@ def accounts():
     except OSError:
         pass
     admins = group_members("wheel")
+    optional = {g: group_members(g) for g in existing_groups(list(OPTIONAL_GROUPS))}
     for a in out:
         a["admin"] = a["login"] in admins
+        a["protected"] = protected(a["login"])
+        a["can_login"] = not a["shell"].endswith(("nologin", "/false"))
+        # the folder can be listed by anyone, the rules in it read only by root: our own file tells
+        a["sudo_nopassword"] = os.path.exists(nopasswd_file(a["login"]))
+        a["groups"] = sorted(g for g, members in optional.items() if a["login"] in members)
     return out
+
+
+def nopasswd_file(name):
+    return os.path.join(SUDOERS_D, "60-yggdrasil-nopasswd-" + name)
+
+
+def optional_groups():
+    """The optional groups this system has, with what each allows."""
+    return {g: OPTIONAL_GROUPS[g] for g in existing_groups(list(OPTIONAL_GROUPS))}
 
 
 def group_members(name):
@@ -165,6 +197,12 @@ def cmd_admin(argv):
     r = run(["gpasswd", "-a" if on else "-d", name, "wheel"])
     if r.returncode != 0 and not (not on and "not a member" in r.stderr):
         return fail(r.stderr.strip() or "gpasswd failed")
+    if not on:
+        # a standard user has no sudo at all: a "no password" rule of theirs goes too
+        try:
+            os.unlink(nopasswd_file(name))
+        except FileNotFoundError:
+            pass
     print("%s is now %s" % (name, "an administrator" if on else "a standard user"))
     return 0
 
@@ -195,6 +233,118 @@ def cmd_remove(argv):
     return 0
 
 
+def changeable(name):
+    """The account, if Settings may change it (uid 1000 up, not kept by the operating system)."""
+    if protected(name):
+        return None
+    return next((a for a in accounts() if a["login"] == name), None)
+
+
+def cmd_name(argv):
+    if need_root():
+        return 1
+    if len(argv) != 2 or not changeable(argv[0]):
+        return fail("usage: name NAME TEXT (an account Settings may change)", 2)
+    full = re.sub(r"[:,\n\r\x00-\x1f]", " ", argv[1]).strip()[:60]
+    r = run(["usermod", "-c", full or argv[0], argv[0]])
+    if r.returncode != 0:
+        return fail(r.stderr.strip() or "usermod failed")
+    print("renamed %s" % argv[0])
+    return 0
+
+
+def cmd_password(argv):
+    if need_root():
+        return 1
+    if len(argv) != 1 or not changeable(argv[0]):
+        return fail("usage: password NAME (an account Settings may change)", 2)
+    target = changeable(argv[0])
+    if target["uid"] == caller_uid():
+        return fail("change your own password with the password form (it keeps your keyring in step)")
+    pw = sys.stdin.readline().rstrip("\n")
+    if len(pw) < 8:
+        return fail("the password must be at least 8 characters", 2)
+    r = run(["chpasswd"], stdin="%s:%s\n" % (argv[0], pw))
+    if r.returncode != 0:
+        return fail(r.stderr.strip() or "chpasswd failed")
+    print("new password set for %s" % argv[0])
+    return 0
+
+
+def cmd_login(argv):
+    if need_root():
+        return 1
+    if len(argv) != 2 or argv[1] not in ("on", "off"):
+        return fail("usage: login NAME on|off", 2)
+    name, on = argv[0], argv[1] == "on"
+    target = changeable(name)
+    if not target:
+        return fail("no such account to change")
+    if not on:
+        if target["uid"] == caller_uid():
+            return fail("you cannot stop your own account from signing in")
+        admins = [a for a in accounts() if a["admin"] and a["can_login"] and not protected(a["login"])]
+        if target["admin"] and len(admins) <= 1:
+            return fail("this is the last administrator who can sign in")
+        if logged_in(name):
+            return fail("%s is logged in: log them out first" % name)
+    r = run(["usermod", "-s", "/bin/bash" if on else NOLOGIN, "-U" if on else "-L", name])
+    if r.returncode != 0:
+        return fail(r.stderr.strip() or "usermod failed")
+    print("%s %s" % (name, "can sign in again" if on else "can no longer sign in"))
+    return 0
+
+
+def cmd_sudo(argv):
+    if need_root():
+        return 1
+    if len(argv) != 2 or argv[1] not in ("password", "nopassword"):
+        return fail("usage: sudo NAME password|nopassword", 2)
+    name, ask = argv[0], argv[1] == "password"
+    target = changeable(name)
+    if not target:
+        return fail("no such account to change")
+    path = nopasswd_file(name)
+    if ask:
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+        print("sudo asks %s for the password" % name)
+        return 0
+    if not target["admin"]:
+        return fail("%s is not an administrator: there is no sudo to change" % name)
+    tmp = path + ".new"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write("# Written by Settings > Users: sudo does not ask %s for the password.\n%s ALL=(ALL:ALL) NOPASSWD: ALL\n" % (name, name))
+    os.chmod(tmp, 0o440)
+    if not TEST:
+        r = run(["visudo", "-cf", tmp])
+        if r.returncode != 0:
+            os.unlink(tmp)
+            return fail("the rule did not pass sudo's check: " + (r.stderr.strip() or r.stdout.strip()))
+    os.rename(tmp, path)
+    print("sudo no longer asks %s for the password" % name)
+    return 0
+
+
+def cmd_group(argv):
+    if need_root():
+        return 1
+    if len(argv) != 3 or argv[2] not in ("on", "off"):
+        return fail("usage: group NAME GROUP on|off", 2)
+    name, group, on = argv[0], argv[1], argv[2] == "on"
+    if group not in optional_groups():
+        return fail("%s is not one of the groups Settings changes" % group, 2)
+    if not changeable(name):
+        return fail("no such account to change")
+    r = run(["gpasswd", "-a" if on else "-d", name, group])
+    if r.returncode != 0 and not (not on and "not a member" in r.stderr):
+        return fail(r.stderr.strip() or "gpasswd failed")
+    print("%s %s %s" % (name, "joined" if on else "left", group))
+    return 0
+
+
 def main(argv):
     if len(argv) < 2 or argv[1] in ("-h", "--help"):
         print(__doc__)
@@ -203,6 +353,11 @@ def main(argv):
     if c == "list":
         print(json.dumps(accounts()))
         return 0
+    if c == "groups":
+        print(json.dumps(optional_groups()))
+        return 0
+    if c in ("name", "password", "login", "sudo", "group"):
+        return {"name": cmd_name, "password": cmd_password, "login": cmd_login, "sudo": cmd_sudo, "group": cmd_group}[c](rest)
     if c == "add":
         return cmd_add(rest)
     if c == "admin":

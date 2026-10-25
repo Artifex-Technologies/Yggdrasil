@@ -14,6 +14,13 @@ pub struct Account {
     pub uid: u32,
     pub admin: bool,
     pub home: String,
+    /// Kept by the operating system (/etc/yggdrasil/protected-accounts): shown, never changed.
+    pub protected: bool,
+    pub can_login: bool,
+    /// sudo does not ask this administrator for the password (a rule Settings wrote).
+    pub sudo_nopassword: bool,
+    /// The optional groups (see `optional_groups`) it is in.
+    pub groups: Vec<String>,
 }
 
 /// One line of /etc/passwd ("login:x:1000:1000:Full Name,room,phone:/home/login:/bin/bash").
@@ -22,7 +29,15 @@ pub fn parse_passwd(line: &str) -> Option<Account> {
     if f.len() < 6 {
         return None;
     }
-    Some(Account { login: f[0].to_string(), full_name: f[4].split(',').next().unwrap_or("").to_string(), uid: f[2].parse().ok()?, admin: false, home: f[5].to_string() })
+    let shell = f.get(6).copied().unwrap_or("");
+    Some(Account {
+        login: f[0].to_string(),
+        full_name: f[4].split(',').next().unwrap_or("").to_string(),
+        uid: f[2].parse().ok()?,
+        home: f[5].to_string(),
+        can_login: !(shell.ends_with("nologin") || shell.ends_with("/false")),
+        ..Default::default()
+    })
 }
 
 /// The signed-in user's account.
@@ -223,12 +238,6 @@ echo "passwd: password updated successfully"
         assert!(e.contains("too weak"), "{e}");
     }
 
-    #[test]
-    fn protected_accounts_are_names_or_prefixes() {
-        let list = "# kept by the OS\nclaude-agent*\nsarina\n";
-        assert!(super::protected("claude-agent", list) && super::protected("claude-agent-2", list) && super::protected("sarina", list));
-        assert!(!super::protected("sarina2", list) && !super::protected("sam", list) && !super::protected("claude", list));
-    }
 }
 
 /// Every login account (uid 1000 up) from the text of /etc/passwd and /etc/group; `admin` is membership of wheel.
@@ -240,20 +249,36 @@ pub fn parse_accounts(passwd: &str, group: &str) -> Vec<Account> {
     }).collect()
 }
 
-/// The other people's accounts, for the Users page. Accounts the operating system keeps for itself (/etc/yggdrasil/protected-accounts,
-/// the same list the account helper refuses to touch) are left out.
-pub fn others(me: &str) -> Vec<Account> {
-    let p = std::fs::read_to_string("/etc/passwd").unwrap_or_default();
-    let g = std::fs::read_to_string("/etc/group").unwrap_or_default();
-    let kept = std::fs::read_to_string(yggdrasil_conf::dirs::system_config().join("protected-accounts")).unwrap_or_default();
-    parse_accounts(&p, &g).into_iter().filter(|a| a.login != me && !protected(&a.login, &kept)).collect()
+/// Every account and the optional groups this system has (name, what it allows), from the account helper's `list` and `groups`
+/// (they need no administrator). Without the helper: the accounts from /etc/passwd, with no access details.
+pub fn all() -> (Vec<Account>, Vec<(String, String)>) {
+    let helper = "/usr/lib/yggdrasil/account";
+    let list = crate::sys::run(helper, &["list"]).and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
+    let accounts = match list.as_ref().and_then(|v| v.as_array()) {
+        Some(a) => a.iter().filter_map(account_from_json).collect(),
+        None => {
+            let p = std::fs::read_to_string("/etc/passwd").unwrap_or_default();
+            let g = std::fs::read_to_string("/etc/group").unwrap_or_default();
+            parse_accounts(&p, &g)
+        }
+    };
+    let groups = crate::sys::run(helper, &["groups"]).and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
+    let mut groups: Vec<(String, String)> = groups.as_ref().and_then(|v| v.as_object()).map(|o| o.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect()).unwrap_or_default();
+    groups.sort();
+    (accounts, groups)
 }
 
-/// Whether `login` is in a protected-accounts list (one name per line, `name*` for a prefix, `#` comments).
-fn protected(login: &str, list: &str) -> bool {
-    list.lines().map(|l| l.split('#').next().unwrap_or("").trim()).filter(|l| !l.is_empty()).any(|p| match p.strip_suffix('*') {
-        Some(prefix) => login.starts_with(prefix),
-        None => login == p,
+fn account_from_json(v: &serde_json::Value) -> Option<Account> {
+    Some(Account {
+        login: v["login"].as_str()?.to_string(),
+        full_name: v["full_name"].as_str().unwrap_or("").to_string(),
+        uid: v["uid"].as_u64()? as u32,
+        admin: v["admin"].as_bool().unwrap_or(false),
+        home: v["home"].as_str().unwrap_or("").to_string(),
+        protected: v["protected"].as_bool().unwrap_or(false),
+        can_login: v["can_login"].as_bool().unwrap_or(true),
+        sudo_nopassword: v["sudo_nopassword"].as_bool().unwrap_or(false),
+        groups: v["groups"].as_array().map(|a| a.iter().filter_map(|g| g.as_str().map(str::to_string)).collect()).unwrap_or_default(),
     })
 }
 

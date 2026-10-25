@@ -110,7 +110,7 @@ enum Msg {
     Appearance(sys::Appearance),
     Power(sys::Power),
     Firewall(bool),
-    Account(users::Account, String, Vec<users::Account>),
+    Account(users::Account, String, Vec<users::Account>, Vec<(String, String)>),
     AccountDone(Result<String, String>),
     Security(security::Overview),
     Restore(restore::State),
@@ -131,7 +131,9 @@ enum Msg {
 
 #[derive(Default)]
 struct Data {
-    others: Option<Vec<users::Account>>,
+    accounts: Option<Vec<users::Account>>,
+    /// The optional groups this system has: (name, what it allows).
+    opt_groups: Vec<(String, String)>,
     restore: Option<restore::State>,
     security: Option<security::Overview>,
     account: Option<(users::Account, String)>,
@@ -199,6 +201,12 @@ struct App {
     acct_msg: Option<(String, bool)>,
     /// The account asked to be removed (waiting for the confirmation) and whether its home folder goes too.
     acct_remove: Option<(String, bool)>,
+    /// The account shown in detail on the Users page (None: your own).
+    acct_sel: Option<String>,
+    /// Setting another account's password: open, the new one twice.
+    other_pw: (bool, String, String),
+    /// The full name being edited: (account, text).
+    name_edit: Option<(String, String)>,
     zone_filter: String,
     /// What the icon-pack install box holds: a folder, an archive or a link.
     icon_src: String,
@@ -287,6 +295,9 @@ impl App {
             acct_busy: false,
             acct_msg: None,
             acct_remove: None,
+            acct_sel: None,
+            other_pw: (false, String::new(), String::new()),
+            name_edit: None,
             zone_filter: String::new(),
             icon_src: String::new(),
             app_tab: 0,
@@ -355,8 +366,8 @@ impl App {
                 Page::Firewall => Msg::Firewall(sys::firewall_on()),
                 Page::Users => {
                     let me = users::account();
-                    let others = users::others(&me.login);
-                    Msg::Account(me, users::keyring_state(), others)
+                    let (all, groups) = users::all();
+                    Msg::Account(me, users::keyring_state(), all, groups)
                 }
                 Page::Security => Msg::Security(security::overview()),
                 Page::Restore => Msg::Restore(restore::load()),
@@ -398,9 +409,10 @@ impl App {
                 Msg::Appearance(v) => self.data.appearance = Some(v),
                 Msg::Power(v) => self.data.power = Some(v),
                 Msg::Firewall(v) => self.data.firewall = Some(v),
-                Msg::Account(a, k, o) => {
+                Msg::Account(a, k, all, groups) => {
                     self.data.account = Some((a, k));
-                    self.data.others = Some(o);
+                    self.data.accounts = Some(all);
+                    self.data.opt_groups = groups;
                 }
                 Msg::AccountDone(r) => {
                     self.acct_busy = false;
@@ -409,6 +421,7 @@ impl App {
                             self.acct_msg = Some((m, true));
                             self.acct_form = AddForm::default();
                             self.acct_remove = None;
+                            self.name_edit = None;
                             self.load(Page::Users, ctx);
                         }
                         Err(e) => self.acct_msg = Some((e, false)),
@@ -2396,28 +2409,33 @@ impl App {
         }
     }
 
-    /// Other accounts on this computer: list, add, make administrator or standard, remove. Every change asks for an administrator password.
-    fn accounts_section(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
-        let others = self.data.others.clone().unwrap_or_default();
-        let mut toggle_admin: Option<(String, bool)> = None;
-        let mut ask_remove: Option<String> = None;
+    /// Runs one change through the account helper (with the administrator question), then reloads the page.
+    fn acct_action(&mut self, ctx: &egui::Context, args: Vec<String>, stdin: Option<String>, ok: String) {
+        self.acct_busy = true;
+        self.acct_msg = None;
+        let (tx, ctx2) = (self.tx.clone(), ctx.clone());
+        std::thread::spawn(move || {
+            let a: Vec<&str> = args.iter().map(String::as_str).collect();
+            let r = users::manage(&a, stdin.as_deref()).map(|_| ok);
+            let _ = tx.send(Msg::AccountDone(r));
+            ctx2.request_repaint();
+        });
+    }
+
+    /// Every account on this computer, to choose one; then adding one.
+    fn accounts_section(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context, me: &str, all: &[users::Account], selected: &str) {
+        let mut pick: Option<String> = None;
         let mut open_form = false;
-        ui::group(ui, pal, Some("Other accounts"), |ui| {
-            if others.is_empty() {
-                ui::row(ui, pal, true, "No other accounts", Some("Add one for someone else who uses this computer"), |_| {});
+        ui::group(ui, pal, Some("Accounts"), |ui| {
+            // yours first, then the others in the order the system has them
+            let mut order: Vec<&users::Account> = all.iter().filter(|a| a.login == me).collect();
+            order.extend(all.iter().filter(|a| a.login != me));
+            for (i, a) in order.iter().enumerate() {
+                if account_row(ui, pal, i == 0, a, a.login == me, a.login == selected) {
+                    pick = Some(a.login.clone());
+                }
             }
-            for (i, a) in others.iter().enumerate() {
-                let title = if a.full_name.is_empty() { a.login.clone() } else { a.full_name.clone() };
-                ui::row(ui, pal, i == 0, &title, Some(&format!("{} · {}", a.login, if a.admin { "Administrator" } else { "Standard user" })), |ui| {
-                    if ui::quiet(ui, pal, "Remove…").clicked() {
-                        ask_remove = Some(a.login.clone());
-                    }
-                    if ui::quiet(ui, pal, if a.admin { "Make standard" } else { "Make administrator" }).clicked() {
-                        toggle_admin = Some((a.login.clone(), !a.admin));
-                    }
-                });
-            }
-            ui::row(ui, pal, others.is_empty(), "Add an account", Some("Standard users cannot change the system; administrators can"), |ui| {
+            ui::row(ui, pal, order.is_empty(), "Add an account", Some("Standard users cannot change the system; administrators can"), |ui| {
                 if ui.button(if self.acct_form.open { "Cancel" } else { "Add account…" }).clicked() {
                     open_form = true;
                 }
@@ -2435,7 +2453,7 @@ impl App {
                     self.acct_form.login_touched = true;
                 }
                 let bad_login = !self.acct_form.login.is_empty() && !users::valid_login(&self.acct_form.login);
-                let taken = others.iter().any(|a| a.login == self.acct_form.login) || self.data.account.as_ref().map(|(a, _)| a.login == self.acct_form.login).unwrap_or(false);
+                let taken = all.iter().any(|a| a.login == self.acct_form.login);
                 if bad_login {
                     ui.label(RichText::new("Use lowercase letters, digits, - and _, starting with a letter.").small().color(pal.red));
                 } else if taken {
@@ -2489,77 +2507,71 @@ impl App {
                 }
                 ui.add_space(6.0);
             }
-            if let Some((m, ok)) = &self.acct_msg {
-                ui.label(RichText::new(m.as_str()).color(if *ok { pal.green } else { pal.red }));
-                ui.add_space(6.0);
-            }
         });
         if open_form {
             self.acct_form.open = !self.acct_form.open;
             self.acct_msg = None;
         }
-        if let Some(login) = ask_remove {
-            self.acct_remove = Some((login, false));
+        if let Some(login) = pick {
+            self.acct_sel = Some(login);
+            self.name_edit = None;
+            self.other_pw = (false, String::new(), String::new());
+            self.acct_msg = None;
         }
-        if let Some((login, on)) = toggle_admin {
-            self.acct_busy = true;
-            let (tx, ctx2) = (self.tx.clone(), ctx.clone());
-            std::thread::spawn(move || {
-                let r = users::manage(&["admin", &login, if on { "on" } else { "off" }], None).map(|_| format!("{login} is now {}.", if on { "an administrator" } else { "a standard user" }));
-                let _ = tx.send(Msg::AccountDone(r));
-                ctx2.request_repaint();
-            });
-        }
-        if let Some((login, delete_home)) = self.acct_remove.clone() {
-            let mut keep = true;
-            let mut go = false;
-            let mut home = delete_home;
-            egui::Window::new(format!("Remove {login}?")).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0)).show(ctx, |ui| {
-                ui.set_max_width(380.0);
-                ui.label("They will no longer be able to log in. This cannot be undone.");
-                ui.add_space(6.0);
-                ui.checkbox(&mut home, "Also delete their files (home folder)");
-                ui.label(RichText::new(if home { "Their documents, pictures and settings will be erased." } else { "Their files stay on the disk, in /home, until you delete them." }).small().color(pal.dim));
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Cancel").clicked() {
-                        keep = false;
-                    }
-                    if ui.button(if home { "Remove and delete files" } else { "Remove account" }).clicked() {
-                        go = true;
-                    }
-                });
-            });
-            self.acct_remove = if keep && !go { Some((login.clone(), home)) } else { None };
-            if go {
-                self.acct_busy = true;
-                let (tx, ctx2) = (self.tx.clone(), ctx.clone());
-                std::thread::spawn(move || {
-                    let mut args = vec!["remove", login.as_str()];
-                    if home {
-                        args.push("--delete-home");
-                    }
-                    let r = users::manage(&args, None).map(|_| format!("{login} was removed."));
-                    let _ = tx.send(Msg::AccountDone(r));
-                    ctx2.request_repaint();
-                });
-            }
-        }
+        let _ = ctx;
     }
 
     fn page_users(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
-        let Some((acct, keyring)) = self.data.account.clone() else { return loading(ui) };
-        let name = if acct.full_name.is_empty() { acct.login.clone() } else { acct.full_name.clone() };
-        ui::group(ui, pal, Some("Your account"), |ui| {
-            ui::row(ui, pal, true, &name, Some(&format!("{} · {}", acct.login, if acct.admin { "Administrator" } else { "Standard user" })), |ui| {
-                let (rect, _) = ui.allocate_exact_size(vec2(40.0, 40.0), Sense::hover());
-                ui.painter().circle_filled(rect.center(), 20.0, pal.accent);
-                let initial = name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
-                ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, initial, egui::FontId::proportional(18.0), egui::Color32::WHITE);
-            });
-            ui::row(ui, pal, false, "Home folder", Some(&acct.home), |_| {});
-        });
+        let Some((me, keyring)) = self.data.account.clone() else { return loading(ui) };
+        let all = self.data.accounts.clone().unwrap_or_default();
+        let sel_login = self.acct_sel.clone().filter(|l| all.iter().any(|a| &a.login == l)).unwrap_or_else(|| me.login.clone());
+        self.accounts_section(ui, pal, ctx, &me.login, &all, &sel_login);
+        let sel = all.iter().find(|a| a.login == sel_login).cloned().unwrap_or_else(|| me.clone());
+        let mine = sel.login == me.login;
+        let title = if sel.full_name.is_empty() { sel.login.clone() } else { sel.full_name.clone() };
+        let busy = self.acct_busy;
+        let mut actions: Vec<(Vec<String>, Option<String>, String)> = vec![];
+
+        // the account itself
         ui.add_space(8.0);
+        let mut edit_name: Option<Option<(String, String)>> = None;
+        ui::group(ui, pal, Some(&title), |ui| {
+            if let Some((m, ok)) = &self.acct_msg {
+                ui.label(RichText::new(m.as_str()).color(if *ok { pal.green } else { pal.red }));
+                ui.add_space(4.0);
+            }
+            if sel.protected {
+                ui::row(ui, pal, true, "Kept by the operating system", Some("Settings shows this account but does not change it"), |_| {});
+            }
+            let editing = self.name_edit.as_ref().filter(|(l, _)| *l == sel.login).map(|(_, t)| t.clone());
+            ui::row(ui, pal, !sel.protected, "Full name", Some(if sel.full_name.is_empty() { "None" } else { &sel.full_name }), |ui| {
+                match editing.clone() {
+                    Some(mut text) => {
+                        if ui.add_enabled(!busy && !text.trim().is_empty(), egui::Button::new("Save")).clicked() {
+                            actions.push((vec!["name".into(), sel.login.clone(), text.trim().to_string()], None, format!("{} renamed.", sel.login)));
+                        }
+                        if ui.button("Cancel").clicked() {
+                            edit_name = Some(None);
+                        }
+                        if ui.add(egui::TextEdit::singleline(&mut text).desired_width(200.0)).changed() {
+                            edit_name = Some(Some((sel.login.clone(), text)));
+                        }
+                    }
+                    None => {
+                        if !sel.protected && ui.button("Change…").clicked() {
+                            edit_name = Some(Some((sel.login.clone(), sel.full_name.clone())));
+                        }
+                    }
+                }
+            });
+            ui::row(ui, pal, false, "Account name", Some(&sel.login), |_| {});
+            ui::row(ui, pal, false, "Home folder", Some(&sel.home), |_| {});
+        });
+        if let Some(e) = edit_name {
+            self.name_edit = e;
+        }
+
+        if mine {
         let mut start = false;
         ui::group(ui, pal, Some("Password"), |ui| {
             ui::row(ui, pal, true, "Login password", Some("Also the password of your keyring (saved passwords and keys for your apps): they change together"), |ui| {
@@ -2633,8 +2645,140 @@ impl App {
                 }
             });
         });
-        ui.add_space(8.0);
-        self.accounts_section(ui, pal, ctx);
+        } else if !sel.protected {
+            // someone else's password: set a new one (an administrator may; their keyring keeps the old one)
+            let mut set_pw: Option<String> = None;
+            ui.add_space(8.0);
+            ui::group(ui, pal, Some("Password"), |ui| {
+                ui::row(ui, pal, true, "Set a new password", Some("For when they forgot theirs. Their keyring keeps the old password: it asks for it once at their next sign-in"), |ui| {
+                    if ui.button(if self.other_pw.0 { "Cancel" } else { "Set…" }).clicked() {
+                        self.other_pw = (!self.other_pw.0, String::new(), String::new());
+                    }
+                });
+                if self.other_pw.0 {
+                    ui.add_space(6.0);
+                    ui.label(RichText::new("New password").color(pal.dim));
+                    ui.add(egui::TextEdit::singleline(&mut self.other_pw.1).password(true).desired_width(f32::INFINITY));
+                    ui.add_space(4.0);
+                    ui.label(RichText::new("New password again").color(pal.dim));
+                    ui.add(egui::TextEdit::singleline(&mut self.other_pw.2).password(true).desired_width(f32::INFINITY));
+                    if !self.other_pw.2.is_empty() && self.other_pw.1 != self.other_pw.2 {
+                        ui.label(RichText::new("The two passwords do not match.").small().color(pal.red));
+                    }
+                    ui.add_space(6.0);
+                    let ready = !busy && self.other_pw.1.chars().count() >= 8 && self.other_pw.1 == self.other_pw.2;
+                    if ui.add_enabled(ready, egui::Button::new("Set password")).clicked() {
+                        set_pw = Some(self.other_pw.1.clone());
+                    }
+                    ui.add_space(6.0);
+                }
+            });
+            if let Some(pw) = set_pw {
+                self.other_pw = (false, String::new(), String::new());
+                actions.push((vec!["password".into(), sel.login.clone()], Some(pw), format!("New password set for {}.", sel.login)));
+            }
+        }
+
+        // what the account may do
+        if !sel.protected {
+            ui.add_space(8.0);
+            let groups = self.data.opt_groups.clone();
+            ui::group(ui, pal, Some("Access"), |ui| {
+                let mut admin = sel.admin;
+                let sub = if mine && sel.admin { "You cannot remove your own administrator rights (another administrator can)" } else { "Can install software and change the system (with sudo)" };
+                ui::row(ui, pal, true, "Administrator", Some(sub), |ui| {
+                    ui.add_enabled_ui(!busy && !(mine && sel.admin), |ui| {
+                        if ui::switch(ui, pal, &mut admin).changed() {
+                            actions.push((vec!["admin".into(), sel.login.clone(), if admin { "on" } else { "off" }.into()], None, format!("{} is now {}.", sel.login, if admin { "an administrator" } else { "a standard user" })));
+                        }
+                    });
+                });
+                if sel.admin {
+                    let mut asks = !sel.sudo_nopassword;
+                    let sub = if asks {
+                        "Recommended: nothing run as this account can change the system without the password"
+                    } else {
+                        "Off: anything run as this account can change the system without asking. Only for a computer nobody else uses"
+                    };
+                    ui::row(ui, pal, false, "Sudo asks for the password", Some(sub), |ui| {
+                        ui.add_enabled_ui(!busy, |ui| {
+                            if ui::switch(ui, pal, &mut asks).changed() {
+                                actions.push((vec!["sudo".into(), sel.login.clone(), if asks { "password" } else { "nopassword" }.into()], None, format!("sudo {} {} for the password.", if asks { "asks" } else { "no longer asks" }, sel.login)));
+                            }
+                        });
+                    });
+                }
+                if !mine {
+                    let mut can = sel.can_login;
+                    ui::row(ui, pal, false, "Can sign in", Some(if can { "The account can sign in" } else { "Signing in is switched off; the account and its files stay" }), |ui| {
+                        ui.add_enabled_ui(!busy, |ui| {
+                            if ui::switch(ui, pal, &mut can).changed() {
+                                actions.push((vec!["login".into(), sel.login.clone(), if can { "on" } else { "off" }.into()], None, format!("{} {}.", sel.login, if can { "can sign in again" } else { "can no longer sign in" })));
+                            }
+                        });
+                    });
+                }
+                for (g, what) in &groups {
+                    let mut on = sel.groups.contains(g);
+                    ui::row(ui, pal, false, what, Some(&format!("Group {g}; takes effect at the next sign-in")), |ui| {
+                        ui.add_enabled_ui(!busy, |ui| {
+                            if ui::switch(ui, pal, &mut on).changed() {
+                                actions.push((vec!["group".into(), sel.login.clone(), g.clone(), if on { "on" } else { "off" }.into()], None, format!("{} {} {g}.", sel.login, if on { "joined" } else { "left" })));
+                            }
+                        });
+                    });
+                }
+            });
+        }
+
+        if !mine && !sel.protected {
+            ui.add_space(8.0);
+            ui::group(ui, pal, None, |ui| {
+                ui::row(ui, pal, true, "Remove this account", Some("They will no longer be able to sign in; you choose whether their files go too"), |ui| {
+                    if ui.add_enabled(!busy, egui::Button::new("Remove…")).clicked() {
+                        self.acct_remove = Some((sel.login.clone(), false));
+                    }
+                });
+            });
+        }
+        for (args, stdin, ok) in actions {
+            self.acct_action(ctx, args, stdin, ok);
+        }
+        if let Some((login, delete_home)) = self.acct_remove.clone() {
+            let mut keep = true;
+            let mut go = false;
+            let mut home = delete_home;
+            egui::Window::new(format!("Remove {login}?")).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0)).show(ctx, |ui| {
+                ui.set_max_width(380.0);
+                ui.label("They will no longer be able to log in. This cannot be undone.");
+                ui.add_space(6.0);
+                ui.checkbox(&mut home, "Also delete their files (home folder)");
+                ui.label(RichText::new(if home { "Their documents, pictures and settings will be erased." } else { "Their files stay on the disk, in /home, until you delete them." }).small().color(pal.dim));
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Cancel").clicked() {
+                        keep = false;
+                    }
+                    if ui.button(if home { "Remove and delete files" } else { "Remove account" }).clicked() {
+                        go = true;
+                    }
+                });
+            });
+            self.acct_remove = if keep && !go { Some((login.clone(), home)) } else { None };
+            if go {
+                self.acct_busy = true;
+                let (tx, ctx2) = (self.tx.clone(), ctx.clone());
+                std::thread::spawn(move || {
+                    let mut args = vec!["remove", login.as_str()];
+                    if home {
+                        args.push("--delete-home");
+                    }
+                    let r = users::manage(&args, None).map(|_| format!("{login} was removed."));
+                    let _ = tx.send(Msg::AccountDone(r));
+                    ctx2.request_repaint();
+                });
+            }
+        }
     }
 
     fn page_firewall(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
@@ -2792,6 +2936,37 @@ fn kde_modules() -> &'static Vec<(String, String, String)> {
         v.sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()));
         v
     })
+}
+
+/// One account in the Users list: a round initial, the name, and what kind of account it is. True when clicked.
+fn account_row(ui: &mut egui::Ui, pal: &Palette, first: bool, a: &users::Account, me: bool, selected: bool) -> bool {
+    if !first {
+        let r = ui.available_rect_before_wrap();
+        ui.painter().hline(r.left()..=r.right(), r.top(), egui::Stroke::new(1.0, pal.border));
+    }
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 52.0), Sense::click());
+    let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let p = ui.painter();
+    if selected {
+        p.rect_filled(rect.shrink2(vec2(0.0, 3.0)), 8.0, pal.select);
+    } else if resp.hovered() {
+        p.rect_filled(rect.shrink2(vec2(0.0, 3.0)), 8.0, pal.hover);
+    }
+    let name = if a.full_name.is_empty() { a.login.clone() } else { a.full_name.clone() };
+    let c = egui::pos2(rect.left() + 26.0, rect.center().y);
+    p.circle_filled(c, 17.0, if a.protected { pal.dim } else { pal.accent });
+    let initial = name.chars().next().map(|ch| ch.to_uppercase().to_string()).unwrap_or_default();
+    p.text(c, egui::Align2::CENTER_CENTER, initial, egui::FontId::proportional(15.0), egui::Color32::WHITE);
+    let x = rect.left() + 54.0;
+    p.text(egui::pos2(x, rect.center().y - 9.0), egui::Align2::LEFT_CENTER, if me { format!("{name}  (you)") } else { name }, egui::FontId::proportional(14.0), pal.text);
+    let mut kind = vec![a.login.clone(), if a.admin { "Administrator".into() } else { "Standard user".into() }];
+    if a.protected {
+        kind.push("kept by the system".into());
+    } else if !a.can_login {
+        kind.push("cannot sign in".into());
+    }
+    p.text(egui::pos2(x, rect.center().y + 10.0), egui::Align2::LEFT_CENTER, kind.join(" · "), egui::FontId::proportional(12.0), pal.dim);
+    resp.clicked()
 }
 
 /// KDE's own settings panels (kcmshell6) are offered only in Plasma, and only while KDE is installed.
