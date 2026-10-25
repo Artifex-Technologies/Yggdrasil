@@ -91,7 +91,7 @@ icon = timer-symbolic                  # an icon theme name, drawn before the te
 open = /usr/bin/yggdrasil-timer        # a click runs this (the add-on's own window) instead of opening the card
 ```
 
-The JSON may carry `"until": UNIX-SECONDS`; `{countdown}` in its text is then drawn as the time left (m:ss or h:mm:ss) and
+The JSON may name an `"icon"` (an icon name, replacing the conf's while it does) and carry `"until": UNIX-SECONDS`; `{countdown}` in its text is then drawn as the time left (m:ss or h:mm:ss) and
 redrawn by the panel every second, so a countdown needs no program running every second.
 
 ### `apps` (an app launcher with per-app rules)

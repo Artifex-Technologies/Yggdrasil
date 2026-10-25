@@ -26,7 +26,7 @@
 //!   icon = timer-symbolic        # an icon before the text (an icon theme name, tinted like the bar's icons)
 //!   open = /usr/bin/yggdrasil-timer --toggle   # a click runs this (a window of the add-on's own) instead of opening the card
 //!
-//! The JSON may carry `"until": UNIX-SECONDS`: "{countdown}" in its text is then drawn as the time left (m:ss, or h:mm:ss), redrawn
+//! The JSON may also name an `"icon"` (replacing the conf's while it does), and carry `"until": UNIX-SECONDS`: "{countdown}" in its text is then drawn as the time left (m:ss, or h:mm:ss), redrawn
 //! every second by the panel itself, so a countdown needs no program running every second.
 
 use std::io::Read;
@@ -152,7 +152,12 @@ pub fn parse(id: &str, name: &str, out: &str) -> View {
                 .collect()
         })
         .unwrap_or_default();
-    View { id: id.into(), name: name.into(), text, level, lines, help: clip(v["help"].as_str().unwrap_or(""), 240), until: v["until"].as_i64(), off: v["state"].as_str() == Some("off"), ..Default::default() }
+    View { id: id.into(), name: name.into(), text, level, lines, help: clip(v["help"].as_str().unwrap_or(""), 240), until: v["until"].as_i64(), off: v["state"].as_str() == Some("off"), icon: icon_name(v["icon"].as_str().unwrap_or("")), ..Default::default() }
+}
+
+/// An icon theme name the add-on asked for (letters, digits, - and _ only: a name, never a path).
+fn icon_name(s: &str) -> String {
+    if s.len() <= 64 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') { s.to_string() } else { String::new() }
 }
 
 fn file_stamp(p: &std::path::Path) -> Option<(std::time::SystemTime, u64)> {
@@ -175,7 +180,10 @@ fn read(a: &Addon) -> View {
         Feed::Text(t) => View { id: a.id.clone(), name: a.name.clone(), text: t.clone(), ..Default::default() },
     };
     view.open = a.open.clone();
-    view.icon = a.icon.clone();
+    // the add-on's own JSON may change the icon (the weather's follows the sky); the conf's is the default
+    if view.icon.is_empty() {
+        view.icon = a.icon.clone();
+    }
     view
 }
 
@@ -299,6 +307,10 @@ mod tests {
         std::fs::write(&f, r#"{"text":"Tea {countdown}","until":99}"#).unwrap();
         let v = read(&a);
         assert_eq!((v.text.as_str(), v.until, v.icon.as_str(), v.open.is_some()), ("Tea {countdown}", Some(99), "timer-symbolic", true));
+        std::fs::write(&f, r#"{"text":"12°","icon":"weather-showers-symbolic"}"#).unwrap();
+        assert_eq!(read(&a).icon, "weather-showers-symbolic");
+        std::fs::write(&f, r#"{"text":"x","icon":"../../etc/passwd"}"#).unwrap();
+        assert_eq!(read(&a).icon, "timer-symbolic", "a path is not an icon name");
         let s = Addon { feed: Feed::Text("2FA".into()), ..a };
         assert_eq!(read(&s).text, "2FA");
         std::fs::remove_dir_all(&dir).ok();
