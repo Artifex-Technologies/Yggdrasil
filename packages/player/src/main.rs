@@ -1,13 +1,11 @@
 //! VLC, in Yggdrasil's look (yggdrasil-player): Yggdrasil's video player. VLC (libVLC 3) plays the file; the window around the picture is Yggdrasil's own (the same
-//! look as Minos and Settings). It remembers where each video was left and offers to go on from there or start over, as a
-//! streaming service does; the start screen lists what you were watching.
+//! look as Minos and Settings).
 //!
 //!   yggdrasil-player [FILE]
 //!
 //! Keys: Space or K play/pause, Left/Right (J/L) ten seconds back/on, Up/Down volume, M mute, F or a double-click full screen,
 //! Esc leaves full screen, O opens a file. A file can also be dropped on the window.
 
-mod resume;
 mod vlc;
 
 use std::path::{Path, PathBuf};
@@ -15,7 +13,6 @@ use std::sync::mpsc::{channel, Receiver};
 use std::time::{Duration, Instant};
 
 use eframe::egui::{self, pos2, vec2, Align2, Color32, CornerRadius, CursorIcon, FontId, Rect, RichText, Sense, Stroke, StrokeKind, TextureHandle, TextureOptions};
-use resume::{clock, Spot, Store};
 use yggdrasil_ui::chrome;
 use yggdrasil_ui::theme::{self, Palette};
 
@@ -30,19 +27,12 @@ struct Playing {
     path: PathBuf,
     vlc: vlc::Player,
     tex: Option<TextureHandle>,
-    /// Asking "continue or start over?" (nothing plays until it is answered).
-    ask: Option<Spot>,
-    /// A jump to make once VLC is playing (it ignores one before).
-    pending_seek: Option<i64>,
-    started: bool,
-    last_save: Instant,
     /// logind's "don't dim, don't lock" while it plays; dropping it lets the screen dim again.
     inhibit: Option<zbus::zvariant::OwnedFd>,
 }
 
 struct App {
     now: Option<Playing>,
-    store: Store,
     error: Option<String>,
     picking: Option<Receiver<Option<PathBuf>>>,
     last_motion: Instant,
@@ -52,6 +42,17 @@ struct App {
     muted: bool,
     /// Where the seek bar is being dragged to (the jump happens on letting go).
     scrub: Option<f32>,
+}
+
+/// 1:02:03, or 2:03 under an hour.
+fn clock(ms: i64) -> String {
+    let s = ms.max(0) / 1000;
+    let (h, m, s) = (s / 3600, s / 60 % 60, s % 60);
+    if h > 0 {
+        format!("{h}:{m:02}:{s:02}")
+    } else {
+        format!("{m}:{s:02}")
+    }
 }
 
 fn is_video(p: &Path) -> bool {
@@ -116,7 +117,7 @@ fn pick_video() -> Option<PathBuf> {
 
 impl App {
     fn new(file: Option<PathBuf>, ctx: &egui::Context) -> App {
-        let mut app = App { now: None, store: Store::load(), error: None, picking: None, last_motion: Instant::now(), last_pointer: None, fullscreen: false, volume: 100, muted: false, scrub: None };
+        let mut app = App { now: None, error: None, picking: None, last_motion: Instant::now(), last_pointer: None, fullscreen: false, volume: 100, muted: false, scrub: None };
         if let Some(f) = file {
             app.open(f, ctx);
         }
@@ -128,13 +129,9 @@ impl App {
         let c = ctx.clone();
         match vlc::Player::open(&path, Box::new(move || c.request_repaint())) {
             Ok(p) => {
-                let ask = self.store.spot(&path).cloned();
-                let mut now = Playing { path, vlc: p, tex: None, ask, pending_seek: None, started: false, last_save: Instant::now(), inhibit: None };
-                if now.ask.is_none() {
-                    now.vlc.play();
-                    now.started = true;
-                    now.inhibit = inhibit_idle();
-                }
+                let mut now = Playing { path, vlc: p, tex: None, inhibit: None };
+                now.vlc.play();
+                now.inhibit = inhibit_idle();
                 now.vlc.set_volume(if self.muted { 0 } else { self.volume });
                 ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!("{} — VLC", title_of(&now.path))));
                 self.now = Some(now);
@@ -144,34 +141,12 @@ impl App {
         }
     }
 
-    /// Remembers where it was and lets the file go.
     fn close(&mut self) {
-        if let Some(n) = self.now.take() {
-            if n.started {
-                self.store.note(&n.path, n.vlc.time(), n.vlc.length());
-                self.store.save();
-            }
-        }
-    }
-
-    fn answer(&mut self, go_on: bool) {
-        if let Some(n) = self.now.as_mut() {
-            if let Some(spot) = n.ask.take() {
-                if go_on {
-                    n.pending_seek = Some(spot.at_ms);
-                }
-                n.vlc.play();
-                n.started = true;
-                n.inhibit = inhibit_idle();
-            }
-        }
+        self.now = None;
     }
 
     fn toggle_pause(&mut self) {
         if let Some(n) = self.now.as_mut() {
-            if n.ask.is_some() {
-                return;
-            }
             match n.vlc.state() {
                 vlc::State::Playing => {
                     n.vlc.set_pause(true);
@@ -191,7 +166,7 @@ impl App {
     }
 
     fn step(&mut self, ms: i64) {
-        if let Some(n) = self.now.as_ref().filter(|n| n.started) {
+        if let Some(n) = self.now.as_ref() {
             let len = n.vlc.length();
             let t = n.vlc.time() + ms;
             n.vlc.set_time(if len > 0 { t.min(len - 1000) } else { t }.max(0));
@@ -259,9 +234,6 @@ impl App {
         if pressed(Key::O) {
             self.start_pick();
         }
-        if pressed(Key::Enter) && self.now.as_ref().map(|n| n.ask.is_some()).unwrap_or(false) {
-            self.answer(true);
-        }
     }
 
     /// Takes VLC's newest picture into the texture, keeps the saved spot fresh, makes a jump that was waiting.
@@ -281,23 +253,8 @@ impl App {
             }
         }
         let state = n.vlc.state();
-        if let Some(at) = n.pending_seek {
-            if state == vlc::State::Playing && n.vlc.length() > 0 {
-                n.vlc.set_time(at);
-                n.pending_seek = None;
-            }
-        }
-        if n.started && n.last_save.elapsed() > Duration::from_secs(5) && state == vlc::State::Playing {
-            n.last_save = Instant::now();
-            self.store.note(&n.path, n.vlc.time(), n.vlc.length());
-            self.store.save();
-        }
         if state == vlc::State::Ended {
-            if n.inhibit.take().is_some() {
-                // watched to the end: next time it starts from the beginning
-                self.store.note(&n.path, n.vlc.length(), n.vlc.length());
-                self.store.save();
-            }
+            n.inhibit = None;
         }
         if state == vlc::State::Error {
             self.error = Some(format!("VLC could not play {}", n.path.display()));
@@ -305,7 +262,7 @@ impl App {
     }
 
     fn bars_shown(&self, ctx: &egui::Context) -> bool {
-        let playing = self.now.as_ref().map(|n| n.ask.is_none() && n.vlc.state() == vlc::State::Playing).unwrap_or(false);
+        let playing = self.now.as_ref().map(|n| n.vlc.state() == vlc::State::Playing).unwrap_or(false);
         let over_bars = ctx.input(|i| i.pointer.hover_pos()).map(|p| {
             let r = ctx.content_rect();
             p.y < r.top() + TOP_H || p.y > r.bottom() - BOTTOM_H
@@ -495,40 +452,9 @@ impl eframe::App for App {
                 if open.clicked() {
                     actions.push(Box::new(|a, _| a.start_pick()));
                 }
-                let recent = self.store.recent(6);
-                if !recent.is_empty() {
-                    c.add_space(22.0);
-                    c.label(RichText::new("Continue watching").color(pal.dim).size(13.0));
-                    c.add_space(4.0);
-                    for (path, spot) in recent {
-                        let label = format!("{}   {} of {}", title_of(&path), clock(spot.at_ms), clock(spot.length_ms));
-                        let b = c.add(egui::Button::new(RichText::new(label).color(pal.text)).fill(pal.field).corner_radius(CornerRadius::same(6)).min_size(vec2(card.width() - 40.0, 30.0)));
-                        if b.clicked() {
-                            actions.push(Box::new(move |a, c| a.open(path, c)));
-                        }
-                    }
-                }
                 if let Some(e) = &self.error {
                     c.add_space(12.0);
                     c.label(RichText::new(e).color(pal.red));
-                }
-            }
-
-            // "continue or start over?"
-            if let Some(spot) = self.now.as_ref().and_then(|n| n.ask.clone()) {
-                let card = Rect::from_center_size(full.center(), vec2(340.0, 150.0));
-                ui.painter().rect_filled(card, 12.0, pal.bg.gamma_multiply(0.96));
-                ui.painter().rect_stroke(card, 12.0, Stroke::new(1.0, pal.border), StrokeKind::Inside);
-                let mut c = ui.new_child(egui::UiBuilder::new().max_rect(card.shrink(18.0)).layout(egui::Layout::top_down(egui::Align::Center)));
-                c.label(RichText::new(title_of(&self.now.as_ref().unwrap().path)).strong().color(pal.text));
-                c.add_space(12.0);
-                let go = c.add(egui::Button::new(RichText::new(format!("Continue from {}", clock(spot.at_ms))).color(pal.on_accent())).fill(pal.accent).corner_radius(CornerRadius::same(8)).min_size(vec2(240.0, 34.0)));
-                c.add_space(6.0);
-                let over = c.add(egui::Button::new(RichText::new("Start over").color(pal.text)).fill(pal.field).corner_radius(CornerRadius::same(8)).min_size(vec2(240.0, 34.0)));
-                if go.clicked() {
-                    actions.push(Box::new(|a, _| a.answer(true)));
-                } else if over.clicked() {
-                    actions.push(Box::new(|a, _| a.answer(false)));
                 }
             }
 
@@ -548,7 +474,7 @@ impl eframe::App for App {
             }
 
             // the bottom bar: seek bar, then play, jumps, time, volume, tracks, full screen
-            if show_bars && playing_something && self.now.as_ref().map(|n| n.ask.is_none()).unwrap_or(false) {
+            if show_bars && playing_something {
                 let n = self.now.as_ref().unwrap();
                 let bottom = Rect::from_min_max(pos2(full.left(), full.bottom() - BOTTOM_H), full.max);
                 ui.painter().rect_filled(bottom, 0.0, Color32::from_black_alpha(160));
@@ -671,6 +597,13 @@ mod tests {
         assert_eq!(path_from_uri("file:///home/a/My%20Film%20(2004).mkv"), Some(PathBuf::from("/home/a/My Film (2004).mkv")));
         assert_eq!(path_from_uri("file:///x/%C3%A9t%C3%A9.mp4"), Some(PathBuf::from("/x/été.mp4")));
         assert_eq!(path_from_uri("https://x"), None);
+    }
+
+    #[test]
+    fn times_read_like_a_clock() {
+        assert_eq!(clock(3_723_000), "1:02:03");
+        assert_eq!(clock(123_000), "2:03");
+        assert_eq!(clock(-5), "0:00");
     }
 
     #[test]

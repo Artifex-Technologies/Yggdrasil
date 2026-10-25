@@ -1,8 +1,8 @@
-# Player: Yggdrasil's video player, VLC (libVLC 3) underneath, with continue-where-you-left-off (packages/player).
+# VLC in Yggdrasil's look: libVLC 3 plays, Yggdrasil's window around the picture (packages/player).
 pkgname=yggdrasil-player
 pkgver=0.1.0
 pkgrel=1
-pkgdesc="Yggdrasil's video player: VLC plays, Yggdrasil's window, continue where you left off"
+pkgdesc="VLC in Yggdrasil's look: libVLC plays, Yggdrasil's window"
 arch=('x86_64')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
 license=('MIT')

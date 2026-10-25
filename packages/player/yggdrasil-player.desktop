@@ -2,7 +2,7 @@
 Type=Application
 Name=VLC
 GenericName=Video Player
-Comment=Watch videos in Yggdrasil's look, and go on where you left off
+Comment=Watch videos, in Yggdrasil's look
 Exec=yggdrasil-player %f
 Icon=vlc
 Terminal=false

@@ -19,14 +19,13 @@ A living-room mode of Yggdrasil: run from the couch with a game controller or a 
 
 ## Built so far: the player
 
-`yggdrasil-player` (packages/player; shown as "VLC": it is VLC in Yggdrasil's look, and the default for videos) is the desktop player the HTPC will reuse:
+`yggdrasil-player` (packages/player; shown as "VLC": VLC in Yggdrasil's look, the default for videos) is the desktop player the
+HTPC will build on: libVLC 3 plays (all VLC-specific code in `src/vlc.rs`), the window around the picture is Yggdrasil's own,
+and the screen does not dim or lock while a video plays. On the desktop it simply plays from the start.
 
-- VLC plays (libVLC 3, the stable series; all VLC-specific code in `src/vlc.rs`, so a move to libVLC 4 later touches one file),
-  and the window around the picture is Yggdrasil's own.
-- **Continue where you left off:** `src/resume.rs` keeps each video's place (~/.local/state/yggdrasil/player.json), skips the
-  first minute and the credits, and forgets a film watched to the end. Opening a film with a saved place asks "Continue from
-  … / Start over"; the start screen lists what you were watching. The HTPC library uses the same store.
-- While a video plays, the screen does not dim or lock (a logind idle lock).
+Continue / start over belongs to the HTPC only (owner, 2026-10-24). A first version of it (a per-video place store that skips
+the first minute and the credits) was in the desktop player briefly and is in its git history (`packages/player/src/resume.rs`,
+removed in the commit after 3de2553) to be reused for the HTPC library.
 
 ## Still to decide
 
