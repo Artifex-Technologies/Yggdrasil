@@ -15,5 +15,6 @@ egui_extras = { version = "0.36.2", features = ["file", "image", "svg"] }
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
 yggdrasil-ui = { path = "../yggdrasil-ui" }
 yggdrasil-conf = { path = "../yggdrasil-conf" }
+yggdrasil-gamepads = { path = "../gamepads" }
 serde_json = "1.0.151"
 serde = { version = "1", features = ["derive"] }

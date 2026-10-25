@@ -4495,6 +4495,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "yggdrasil-gamepads"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+ "yggdrasil-conf",
+]
+
+[[package]]
 name = "yggdrasil-settings"
 version = "0.1.0"
 dependencies = [
@@ -4504,6 +4514,7 @@ dependencies = [
  "serde",
  "serde_json",
  "yggdrasil-conf",
+ "yggdrasil-gamepads",
  "yggdrasil-ui",
 ]
 

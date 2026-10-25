@@ -423,20 +423,26 @@ pub fn bt_powered(show: &str) -> Option<bool> {
 pub struct Bluetooth {
     pub present: bool,
     pub powered: bool,
+    /// Paired devices other than game controllers.
     pub devices: Vec<BtDevice>,
+    /// Game controllers: the ones connected now (USB or Bluetooth, from the kernel), the paired Bluetooth ones (connected or
+    /// not), and the lights chosen for them (shared with the Controllers plugin, which puts them back on every connection).
+    pub pads: Vec<gamepads::Pad>,
+    pub paired_pads: Vec<BtDevice>,
+    pub pad_settings: gamepads::Settings,
 }
 
 pub fn bluetooth() -> Bluetooth {
     let show = run("bluetoothctl", &["show"]).unwrap_or_default();
     let powered = bt_powered(&show);
-    let devices = bt_list(&run("bluetoothctl", &["devices", "Paired"]).unwrap_or_default())
+    let (paired_pads, devices): (Vec<BtDevice>, Vec<BtDevice>) = bt_list(&run("bluetoothctl", &["devices", "Paired"]).unwrap_or_default())
         .into_iter()
         .map(|(mac, name)| {
             let (connected, kind, battery) = bt_info(&run("bluetoothctl", &["info", &mac]).unwrap_or_default());
             BtDevice { mac, name, connected, kind, battery }
         })
-        .collect();
-    Bluetooth { present: powered.is_some(), powered: powered.unwrap_or(false), devices }
+        .partition(|d| d.kind == "input-gaming");
+    Bluetooth { present: powered.is_some(), powered: powered.unwrap_or(false), devices, pads: gamepads::list(), paired_pads, pad_settings: gamepads::Settings::load() }
 }
 
 // ---------------------------------------------------------------- Sound (pactl, PipeWire)

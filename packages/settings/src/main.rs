@@ -228,6 +228,10 @@ struct App {
     bt_found: (std::time::Instant, Vec<(String, String)>),
     bt_pairing: Option<String>,
     bt_pairing_done: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// Bluetooth > Controllers: the controller whose options are open (its address or serial), and Add a controller: None when
+    /// not adding, Some(None) while picking the kind, Some(Some(model)) while looking for it.
+    pad_sel: Option<String>,
+    pad_add: Option<Option<gamepads::Model>>,
     boot_busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ws_conf: workspaces::Conf,
     app_sort: usize,
@@ -324,6 +328,8 @@ impl App {
             bt_found: (std::time::Instant::now(), vec![]),
             bt_pairing: None,
             bt_pairing_done: Default::default(),
+            pad_sel: None,
+            pad_add: None,
             boot_busy: Default::default(),
             ws_conf: workspaces::load(),
             app_sort: 0,
@@ -519,6 +525,17 @@ impl eframe::App for App {
                 self.load(page, &ctx);
             }
             ctx.request_repaint_after(std::time::Duration::from_secs(4));
+        } else if self.page == Page::Bluetooth
+            && self.bt_scan_until.is_none()
+            && self.data.bluetooth.as_ref().is_some_and(|b| !b.pads.is_empty() || !b.paired_pads.is_empty())
+        {
+            // controllers listed: their battery (and whether they are connected) stays current
+            let idle = self.loading.is_none() && !ctx.input(|i| i.pointer.any_down()) && ctx.input(|i| i.viewport().focused != Some(false));
+            if idle && self.refreshed.elapsed() >= std::time::Duration::from_secs(5) {
+                let page = self.page;
+                self.load(page, &ctx);
+            }
+            ctx.request_repaint_after(std::time::Duration::from_secs(5));
         } else if self.page == Page::Apps && self.app_tab == 0 && self.app_confirm.is_none() {
             // the app list: running or not, new launches, and changes made from the command line
             let idle = self.loading.is_none() && !ctx.input(|i| i.pointer.any_down()) && ctx.memory(|m| m.focused().is_none()) && ctx.input(|i| i.viewport().focused != Some(false));
@@ -1229,7 +1246,9 @@ impl App {
             let mut act: Option<(String, &'static str)> = None;
             ui::group(ui, pal, Some("Devices"), |ui| {
                 if b.devices.is_empty() {
-                    ui::row(ui, pal, true, "No devices yet", Some("Use “Add a device” to pair one"), |_| {});
+                    // game controllers have their own list below
+                    let none = if b.paired_pads.is_empty() { "No devices yet" } else { "No other devices" };
+                    ui::row(ui, pal, true, none, Some("Use “Add a device” to pair one"), |_| {});
                 }
                 for (i, d) in b.devices.iter().enumerate() {
                     let mut sub = if d.connected { "Connected".to_string() } else { "Not connected".to_string() };
@@ -1254,7 +1273,204 @@ impl App {
                 self.change(ctx, move || sys::act("bluetoothctl", &[verb, &mac]));
             }
             ui.add_space(8.0);
-            self.bt_add(ui, pal, ctx);
+            if self.pad_add.is_none() {
+                self.bt_add(ui, pal, ctx);
+            }
+            ui.add_space(8.0);
+            self.bt_controllers(ui, pal, ctx, &b);
+        }
+    }
+
+    /// Bluetooth > Controllers: game controllers (connected over USB or Bluetooth, or paired and off) with their battery; one's
+    /// options open below it: light bar colour, player light, a rumble test, disconnect and forget. The lights chosen are kept in
+    /// ~/.config/yggdrasil/controllers.json, which the Controllers plugin reads to put them back on every connection.
+    fn bt_controllers(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context, b: &sys::Bluetooth) {
+        const COLOURS: [(&str, [u8; 3]); 6] = [("Purple", [124, 84, 214]), ("Blue", [40, 110, 255]), ("Red", [255, 40, 40]), ("Green", [34, 197, 94]), ("White", [255, 255, 255]), ("Off", [0, 0, 0])];
+        enum Do {
+            Select(String),
+            Light(gamepads::Pad, [u8; 3]),
+            Player(gamepads::Pad, u8),
+            Rumble(gamepads::Pad),
+            Bt(String, &'static str),
+        }
+        let mut todo: Option<Do> = None;
+        // the paired Bluetooth controllers that are off (the connected ones are listed from the kernel, with their battery)
+        let off: Vec<&sys::BtDevice> = b.paired_pads.iter().filter(|d| !b.pads.iter().any(|p| p.mac() == Some(d.mac.to_lowercase().as_str()))).collect();
+        ui::group(ui, pal, Some("Controllers"), |ui| {
+            if b.pads.is_empty() && off.is_empty() {
+                ui::row(ui, pal, true, "No controllers yet", Some("Use “Add a controller” to pair one, or plug one in with a cable"), |_| {});
+            }
+            for (i, p) in b.pads.iter().enumerate() {
+                let key = p.uniq.clone();
+                let open = self.pad_sel.as_deref() == Some(key.as_str());
+                let mut sub = p.connection.label().to_string();
+                if let Some(bat) = &p.battery {
+                    sub.push_str(&format!(" · {}", bat.describe()));
+                }
+                ui::row(ui, pal, i == 0, &p.title(), Some(&sub), |ui| {
+                    if ui::quiet(ui, pal, if open { "Close" } else { "Options" }).clicked() {
+                        todo = Some(Do::Select(if open { String::new() } else { key.clone() }));
+                    }
+                    if let Some(pct) = p.battery.as_ref().and_then(|bat| bat.estimate()) {
+                        let charging = p.battery.as_ref().is_some_and(|bat| bat.charging());
+                        let (r, _) = ui.allocate_exact_size(egui::vec2(90.0, 8.0), egui::Sense::hover());
+                        ui.painter().rect_filled(r, 4.0, pal.field);
+                        let col = if charging || pct > 40 { pal.green } else if pct > 20 { pal.amber } else { pal.red };
+                        let mut fill = r;
+                        fill.set_width((r.width() * pct as f32 / 100.0).max(8.0));
+                        ui.painter().rect_filled(fill, 4.0, col);
+                    }
+                });
+                if !open {
+                    continue;
+                }
+                if p.leds.has_lightbar() {
+                    let current = b.pad_settings.lightbar_for(p);
+                    ui::row(ui, pal, false, "Light bar", if p.leds.writable { None } else { Some("Install Controller support from Agora to change the lights") }, |ui| {
+                        ui.add_enabled_ui(p.leds.writable, |ui| {
+                            for (name, rgb) in COLOURS.iter().rev() {
+                                let (r, resp) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::click());
+                                let c = if *rgb == [0, 0, 0] { pal.field } else { egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]) };
+                                ui.painter().circle_filled(r.center(), 10.0, c);
+                                if current == Some(*rgb) || resp.hovered() {
+                                    ui.painter().circle_stroke(r.center(), 11.5, egui::Stroke::new(2.0, pal.text));
+                                }
+                                if resp.on_hover_text(*name).clicked() {
+                                    todo = Some(Do::Light(p.clone(), *rgb));
+                                }
+                            }
+                        });
+                    });
+                }
+                if !p.leds.players.is_empty() {
+                    let now = b.pad_settings.player_for(p).unwrap_or(0) as usize;
+                    ui::row(ui, pal, false, "Player light", None, |ui| {
+                        ui.add_enabled_ui(p.leds.writable, |ui| {
+                            if let Some(n) = ui::segmented(ui, pal, &["Off", "1", "2", "3", "4", "5"], now) {
+                                todo = Some(Do::Player(p.clone(), n as u8));
+                            }
+                        });
+                    });
+                }
+                ui::row(ui, pal, false, "Rumble", Some("A short buzz, to check it works"), |ui| {
+                    ui.add_enabled_ui(p.event.is_some(), |ui| {
+                        if ui::quiet(ui, pal, "Test").clicked() {
+                            todo = Some(Do::Rumble(p.clone()));
+                        }
+                    });
+                });
+                if let Some(mac) = p.mac() {
+                    let mac = mac.to_uppercase();
+                    ui::row(ui, pal, false, &mac, Some("Bluetooth address"), |ui| {
+                        if ui::quiet(ui, pal, "Forget").clicked() {
+                            todo = Some(Do::Bt(mac.clone(), "remove"));
+                        }
+                        if ui::quiet(ui, pal, "Disconnect").clicked() {
+                            todo = Some(Do::Bt(mac.clone(), "disconnect"));
+                        }
+                    });
+                }
+            }
+            for (i, d) in off.iter().enumerate() {
+                ui::row(ui, pal, i == 0 && b.pads.is_empty(), &d.name, Some("Not connected · press its PS, Xbox or Home button"), |ui| {
+                    if ui::quiet(ui, pal, "Forget").clicked() {
+                        todo = Some(Do::Bt(d.mac.clone(), "remove"));
+                    }
+                    if ui::action(ui, pal, "Connect").clicked() {
+                        todo = Some(Do::Bt(d.mac.clone(), "connect"));
+                    }
+                });
+            }
+            if !std::path::Path::new("/usr/bin/yggdrasil-controllers").exists() {
+                ui::row(ui, pal, false, "Controller support", Some("Battery in the top bar, and your lights kept between connections"), |ui| {
+                    if ui::quiet(ui, pal, "Get it in Agora").clicked() {
+                        sys::spawn("agora", &[]);
+                    }
+                });
+            }
+        });
+        match todo {
+            Some(Do::Select(k)) => self.pad_sel = (!k.is_empty()).then_some(k),
+            Some(Do::Light(p, rgb)) => {
+                let mut st = b.pad_settings.clone();
+                st.per_pad.entry(p.uniq.clone()).or_default().lightbar = Some(gamepads::color_hex(rgb));
+                self.change(ctx, move || {
+                    st.save().map_err(|e| e.to_string())?;
+                    gamepads::set_lightbar(&p, rgb)
+                });
+            }
+            Some(Do::Player(p, n)) => {
+                let mut st = b.pad_settings.clone();
+                st.per_pad.entry(p.uniq.clone()).or_default().player = Some(n);
+                self.change(ctx, move || {
+                    st.save().map_err(|e| e.to_string())?;
+                    gamepads::set_player(&p, n)
+                });
+            }
+            Some(Do::Rumble(p)) => {
+                // it blocks for the length of the buzz: on a thread, not reloading the page
+                std::thread::spawn(move || {
+                    let _ = gamepads::rumble(&p, 400);
+                });
+            }
+            Some(Do::Bt(mac, verb)) => {
+                if verb == "remove" {
+                    self.pad_sel = None;
+                }
+                self.change(ctx, move || sys::act("bluetoothctl", &[verb, &mac]));
+            }
+            None => {}
+        }
+        ui.add_space(8.0);
+        self.pad_add_flow(ui, pal, ctx);
+    }
+
+    /// Bluetooth > Controllers > Add a controller: which kind, how to put it in pairing mode, then the same search and pairing as
+    /// Add a device.
+    fn pad_add_flow(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
+        use gamepads::Model;
+        const KINDS: [(&str, Model); 5] = [("PlayStation 4", Model::DualShock4), ("PlayStation 5", Model::DualSense), ("Xbox", Model::Xbox), ("Switch Pro", Model::SwitchPro), ("Other", Model::Other)];
+        match self.pad_add {
+            None => {
+                if ui::action(ui, pal, "Add a controller…").clicked() {
+                    self.pad_add = Some(None);
+                }
+            }
+            Some(None) => {
+                let mut pick = None;
+                ui::group(ui, pal, Some("Which controller?"), |ui| {
+                    for (i, (name, m)) in KINDS.iter().enumerate() {
+                        ui::row(ui, pal, i == 0, name, None, |ui| {
+                            if ui::action(ui, pal, "Choose").clicked() {
+                                pick = Some(*m);
+                            }
+                        });
+                    }
+                });
+                if ui::quiet(ui, pal, "Cancel").clicked() {
+                    self.pad_add = None;
+                }
+                if let Some(m) = pick {
+                    self.pad_add = Some(Some(m));
+                    sys::bt_scan(30);
+                    self.bt_scan_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(30));
+                    self.bt_found = (std::time::Instant::now(), vec![]);
+                }
+            }
+            Some(Some(m)) => {
+                ui::group(ui, pal, Some("Pairing mode"), |ui| {
+                    ui::row(ui, pal, true, m.pairing_hint(), Some("Then pick it below when it turns up"), |_| {});
+                    if m == Model::Xbox {
+                        ui::row(ui, pal, false, "Xbox controllers work best with Xbox controller support from Agora (xpadneo)", None, |_| {});
+                    }
+                });
+                ui.add_space(6.0);
+                self.bt_add(ui, pal, ctx);
+                if self.bt_scan_until.is_none() {
+                    // Done in the list: the flow is over
+                    self.pad_add = None;
+                }
+            }
         }
     }
 
