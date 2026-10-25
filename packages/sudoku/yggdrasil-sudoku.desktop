@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Sudoku
+GenericName=Logic puzzle
+Comment=Classic Sudoku and a survival challenge, with notes, undo and hints
+Exec=yggdrasil-sudoku
+Icon=yggdrasil-sudoku
+Terminal=false
+Categories=Game;LogicGame;
+Keywords=sudoku;puzzle;numbers;logic;
+StartupWMClass=yggdrasil-sudoku

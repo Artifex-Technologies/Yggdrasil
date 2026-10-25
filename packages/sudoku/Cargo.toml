@@ -1,0 +1,17 @@
+[package]
+name = "yggdrasil-sudoku"
+version = "0.1.0"
+edition = "2021"
+description = "Sudoku: classic and survival, with notes, undo and hints"
+license = "MIT"
+
+[[bin]]
+name = "yggdrasil-sudoku"
+path = "src/main.rs"
+
+[dependencies]
+eframe = "0.36.2"
+yggdrasil-ui = { path = "../yggdrasil-ui" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+dirs = "7.0.0"

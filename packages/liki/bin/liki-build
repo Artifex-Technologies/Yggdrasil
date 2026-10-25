@@ -87,11 +87,13 @@ NATIVE = {
     "browser-warm": [("apps", "yggdrasil-browser-warm")],
     "clipboard": [("apps", "yggdrasil-clipboard")],
     "weather": [("apps", "yggdrasil-weather")],
+    "2048": [("apps", "yggdrasil-2048")],
     "trash": [("places", n) for n in ("user-trash", "trash-empty", "trashcan_empty")],
     "trash-full": [("places", n) for n in ("user-trash-full", "trash-full", "trashcan_full")],
     "folder": [("places", n) for n in ("folder", "folder-open", "folder-documents", "folder-download", "folder-music", "folder-pictures", "folder-videos", "folder-public", "folder-templates", "folder-desktop", "user-desktop", "folder-remote")] + [("mimetypes", "inode-directory")],
     "home": [("places", n) for n in ("user-home", "folder-home")],
     "drive": [("devices", n) for n in ("drive-harddisk", "drive-harddisk-solidstate", "drive-removable-media", "drive-multidisk")],
+    "sudoku": [("apps", "yggdrasil-sudoku")],
     # what an app gets when no pack has an icon for it
     "default-app": [("apps", n) for n in ("application-default-icon", "application-x-executable", "applications-other", "unknown")],
 }

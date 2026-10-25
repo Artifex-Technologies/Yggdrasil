@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=2048
+GenericName=Puzzle game
+Comment=Slide the tiles and merge them to reach 2048
+Exec=yggdrasil-2048
+Icon=yggdrasil-2048
+Terminal=false
+Categories=Game;LogicGame;
+Keywords=2048;puzzle;tiles;game;
+StartupWMClass=yggdrasil-2048
