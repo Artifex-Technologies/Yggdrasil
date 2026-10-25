@@ -28,6 +28,24 @@ end
 local dark = setting("appearance.conf", "style") ~= "light"
 local reduce_motion = setting("panel.conf", "reduce_motion") == "yes" or setting("panel.conf", "reduce_motion") == "true"
 
+-- The keyboard layout the system was set up with (the installer, or `localectl set-x11-keymap`), from the file both write:
+-- /etc/X11/xorg.conf.d/00-keyboard.conf. US when there is none.
+local function system_keyboard()
+  local layout, variant, options = "us", "", ""
+  local f = io.open("/etc/X11/xorg.conf.d/00-keyboard.conf", "r")
+  if f then
+    for line in f:lines() do
+      local k, v = line:match('^%s*Option%s+"(Xkb%a+)"%s+"([^"]*)"')
+      if k == "XkbLayout" and v ~= "" then layout = v
+      elseif k == "XkbVariant" then variant = v
+      elseif k == "XkbOptions" then options = v end
+    end
+    f:close()
+  end
+  return layout, variant, options
+end
+local kb_layout, kb_variant, kb_options = system_keyboard()
+
 -- Every monitor at its fastest mode, until Settings > Displays (or you) sets them: ~/.config/yggdrasil/monitors.lua.
 hl.monitor({ output = "", mode = "highrr", position = "auto", scale = 1 })
 do
@@ -42,7 +60,9 @@ end
 
 hl.config({
   input = {
-    kb_layout = "us",
+    kb_layout = kb_layout,
+    kb_variant = kb_variant,
+    kb_options = kb_options,
     -- click to focus, as on Windows and macOS (moving the pointer alone does not change the focused window)
     follow_mouse = 2,
   },
