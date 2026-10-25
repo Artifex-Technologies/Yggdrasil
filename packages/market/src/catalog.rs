@@ -93,6 +93,9 @@ pub struct Entry {
     /// A logo from Liki's brand set (Simple Icons) for an app with no icon of its own, by its name there ("docker"); only from the
     /// operating system's catalog.
     pub logo: String,
+    /// Other entries (by id) worth having with this one, shown on its page as "Recommended with ..." (Steam: controller support);
+    /// only from the operating system's catalog.
+    pub recommends: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -160,6 +163,7 @@ pub fn parse_catalog(text: &str, from: &str, trusted: bool) -> Result<Catalog, S
             appstream: if trusted { s(a, "appstream") } else { String::new() },
             flathub: if trusted { s(a, "flathub") } else { String::new() },
             logo: if trusted { s(a, "logo") } else { String::new() },
+            recommends: if trusted { strings(&a["recommends"]) } else { vec![] },
             id,
             name,
             source,
@@ -223,6 +227,7 @@ pub fn parse_omarchy(text: &str, from: &str) -> Result<Catalog, String> {
                 preinstalled: false,
                 repo: String::new(),
                 logo: String::new(),
+                recommends: vec![],
             });
         }
     }

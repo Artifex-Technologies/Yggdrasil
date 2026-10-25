@@ -443,7 +443,7 @@ impl App {
         if self.is_running("*update*") {
             return;
         }
-        let dummy = Entry { id: "*update*".into(), name: "Updates".into(), subtitle: String::new(), description: String::new(), category: String::new(), subcategory: String::new(), source: Source::Pacman(vec![]), icon: String::new(), reviewed: true, note: String::new(), tags: vec![], from: String::new(), launch: String::new(), appstream: String::new(), flathub: String::new(), editions: vec![], preinstalled: false, repo: String::new(), logo: String::new() };
+        let dummy = Entry { id: "*update*".into(), name: "Updates".into(), subtitle: String::new(), description: String::new(), category: String::new(), subcategory: String::new(), source: Source::Pacman(vec![]), icon: String::new(), reviewed: true, note: String::new(), tags: vec![], from: String::new(), launch: String::new(), appstream: String::new(), flathub: String::new(), editions: vec![], preinstalled: false, repo: String::new(), logo: String::new(), recommends: vec![] };
         if let Some((prog, args)) = install::command(&dummy, install::Op::UpdateAll) {
             self.start_job(ctx, "*update*", "All updates", install::Op::UpdateAll, prog, args, install::Undo::default());
         }
@@ -1031,6 +1031,15 @@ impl App {
             }
             None => {
                 ui.label(&e.description);
+            }
+        }
+        // what goes well with it (Steam: controller support), each with its own Get
+        let recommended: Vec<usize> = e.recommends.iter().filter_map(|r| self.apps.iter().position(|a| &a.id == r)).collect();
+        if !recommended.is_empty() {
+            self.section(ui, &format!("Recommended with {}", e.name), None);
+            let w = ui.available_width().min(560.0);
+            for i in recommended {
+                self.row(ui, ctx, i, w);
             }
         }
         self.section(ui, "Information", None);
