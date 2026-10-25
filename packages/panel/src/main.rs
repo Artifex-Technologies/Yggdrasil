@@ -2514,7 +2514,8 @@ impl State {
             Action::Addon(i) => {
                 // an add-on with a window of its own opens it; the others show their card (and run again, so it is fresh)
                 if let Some(cmd) = self.model.addons.get(i).and_then(|a| a.open.clone()) {
-                    let _ = std::process::Command::new(&cmd[0]).args(&cmd[1..]).stdin(std::process::Stdio::null()).spawn();
+                    // opened from its pill: the window drops down under it (yggdrasil_ui::dropdown)
+                    let _ = std::process::Command::new(&cmd[0]).args(&cmd[1..]).env("YGGDRASIL_DROPDOWN", "1").stdin(std::process::Stdio::null()).spawn();
                 } else {
                     self.addons_now.store(true, Ordering::Relaxed);
                     self.toggle_popup(PopupKind::Addon(i));

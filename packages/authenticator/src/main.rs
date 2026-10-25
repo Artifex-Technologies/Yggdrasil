@@ -61,7 +61,7 @@ fn parse_codes(line: &str) -> Result<Vec<Entry>, String> {
 /// What an error code means for the person at the window, and what to do.
 fn explain(code: &str) -> &'static str {
     match code {
-        "VAULT_NOT_FOUND" => "Proton Authenticator is not set up on this account. Install it (Agora > Plugins), sign in and let it sync once; this window reads its codes.",
+        "VAULT_NOT_FOUND" => "Proton Authenticator is not signed in on this account yet. Open it, sign in with your Proton account and let it sync once; this window then shows its codes.",
         "KEYRING_LOCKED" => "The keyring is locked. Unlock it when asked (Try again asks for it).",
         "KEYRING_UNAVAILABLE" => "No keyring answers (gnome-keyring). Sign out and in again, or start it.",
         "KEY_NOT_FOUND" => "Proton Authenticator's key is not in the keyring. Open Proton Authenticator once so it stores it.",
@@ -106,7 +106,15 @@ fn search<'a>(entries: &'a [Entry], q: &str) -> Vec<&'a Entry> {
 enum State {
     Loading,
     Ready,
-    Failed(String),
+    /// Why, and whether opening the official app fixes it (not signed in yet, no key stored, locked).
+    Failed(String, bool),
+}
+
+/// The official app, when it is installed.
+const PROTON_APP: &str = "/usr/bin/proton-authenticator";
+
+fn needs_the_app(code: &str) -> bool {
+    matches!(code, "VAULT_NOT_FOUND" | "KEY_NOT_FOUND" | "APP_LOCKED") && std::path::Path::new(PROTON_APP).exists()
 }
 
 struct App {
@@ -119,11 +127,14 @@ struct App {
     rx: Option<Receiver<(bool, String)>>,
     copied: Option<(Instant, String)>,
     note: String,
+    /// Opened from the bar's key: a dropdown card under it, closed by a click elsewhere.
+    drop: bool,
+    blur: yggdrasil_ui::dropdown::Blur,
 }
 
 impl App {
-    fn new() -> App {
-        let mut a = App { demo: std::env::args().any(|x| x == "--demo"), state: State::Loading, entries: vec![], fetched: Instant::now(), query: String::new(), sel: 0, rx: None, copied: None, note: String::new() };
+    fn new(drop: bool) -> App {
+        let mut a = App { demo: std::env::args().any(|x| x == "--demo"), state: State::Loading, entries: vec![], fetched: Instant::now(), query: String::new(), sel: 0, rx: None, copied: None, note: String::new(), drop, blur: Default::default() };
         a.fetch(false);
         a
     }
@@ -173,8 +184,8 @@ impl App {
                     self.state = State::Ready;
                 }
                 Err(code) if code == "KEYRING_LOCKED" && matches!(self.state, State::Loading) => self.fetch(true),
-                Err(code) if code == "HELPER_MISSING" => self.state = State::Failed("The helper (pa-helper) is not installed; reinstall the plugin from Agora.".into()),
-                Err(code) => self.state = State::Failed(explain(&code).into()),
+                Err(code) if code == "HELPER_MISSING" => self.state = State::Failed("The helper (pa-helper) is not installed; reinstall the plugin from Agora.".into(), false),
+                Err(code) => self.state = State::Failed(explain(&code).into(), needs_the_app(&code)),
             }
         }
     }
@@ -209,10 +220,20 @@ fn row(ui: &mut egui::Ui, pal: &Palette, e: &Entry, left: u64, selected: bool) -
 }
 
 impl eframe::App for App {
+    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
+        // a dropdown is a card on a see-through window (its corners show what is behind)
+        if self.drop { [0.0; 4] } else { visuals.panel_fill.to_normalized_gamma_f32() }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         theme::apply_accessibility(ui.ctx());
         let ctx = ui.ctx().clone();
-        chrome::resize_edges(&ctx);
+        if !self.drop {
+            chrome::resize_edges(&ctx);
+        } else if !matches!(self.state, State::Loading) {
+            // not while the codes are being read: the keyring's password prompt takes the focus then
+            self.blur.check(&ctx);
+        }
         let accent = theme::system_accent();
         theme::apply(&ctx, true, accent);
         let pal = theme::palette_for(true, accent);
@@ -234,11 +255,14 @@ impl eframe::App for App {
             self.fetch(false);
         }
 
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(pal.bg).inner_margin(Margin { left: 12, right: 10, top: 6, bottom: 12 })).show(ui, |ui| {
+        let frame = if self.drop { yggdrasil_ui::dropdown::frame(true) } else { egui::Frame::new().fill(pal.bg).inner_margin(Margin { left: 12, right: 10, top: 6, bottom: 12 }) };
+        egui::CentralPanel::default().frame(frame).show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(RichText::new(if self.demo { "Authenticator (demo)" } else { "Authenticator" }).strong().color(pal.text));
-                chrome::drag_area(ui, ui.available_width() - chrome::controls_width());
-                chrome::window_controls(ui, &pal);
+                if !self.drop {
+                    chrome::drag_area(ui, ui.available_width() - chrome::controls_width());
+                    chrome::window_controls(ui, &pal);
+                }
             });
             ui.add_space(6.0);
             match &self.state {
@@ -246,14 +270,20 @@ impl eframe::App for App {
                     ui.add_space(30.0);
                     ui.vertical_centered(|ui| ui.label(RichText::new("Reading your codes…").color(pal.dim)));
                 }
-                State::Failed(why) => {
+                State::Failed(why, open_app) => {
+                    let open_app = *open_app;
                     ui.add_space(20.0);
                     ui.label(RichText::new(why.as_str()).color(pal.text));
                     ui.add_space(10.0);
-                    if ui.button("Try again").clicked() {
-                        self.state = State::Loading;
-                        self.fetch(true);
-                    }
+                    ui.horizontal(|ui| {
+                        if open_app && ui.button("Open Proton Authenticator").clicked() {
+                            let _ = std::process::Command::new(PROTON_APP).stdin(std::process::Stdio::null()).spawn();
+                        }
+                        if ui.button("Try again").clicked() {
+                            self.state = State::Loading;
+                            self.fetch(true);
+                        }
+                    });
                 }
                 State::Ready => {
                     let resp = ui.add(egui::TextEdit::singleline(&mut self.query).hint_text("Search accounts").desired_width(f32::INFINITY).margin(vec2(10.0, 8.0)));
@@ -302,7 +332,9 @@ impl eframe::App for App {
                 }
             }
         });
-        chrome::outline(&ctx, &pal);
+        if !self.drop {
+            chrome::outline(&ctx, &pal);
+        }
     }
 }
 
@@ -311,16 +343,19 @@ fn main() -> eframe::Result {
     if yggdrasil_ui::single::toggle("yggdrasil-authenticator") {
         return Ok(());
     }
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([420.0, 520.0])
-            .with_min_inner_size([340.0, 320.0])
-            .with_title("Authenticator")
-            .with_app_id("yggdrasil-authenticator")
-            .with_decorations(false),
-        ..Default::default()
-    };
-    eframe::run_native("Authenticator", options, Box::new(|_| Ok(Box::new(App::new()))))
+    let drop = yggdrasil_ui::dropdown::request("yggdrasil-authenticator");
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size(if drop { [360.0, 440.0] } else { [420.0, 520.0] })
+        .with_min_inner_size([340.0, 320.0])
+        .with_title("Authenticator")
+        .with_app_id("yggdrasil-authenticator")
+        .with_decorations(false);
+    if drop {
+        // a card with rounded corners: the window around it is see-through, and it stays the size it opens at
+        viewport = viewport.with_transparent(true).with_resizable(false);
+    }
+    let options = eframe::NativeOptions { viewport, ..Default::default() };
+    eframe::run_native("Authenticator", options, Box::new(move |_| Ok(Box::new(App::new(drop)))))
 }
 
 #[cfg(test)]

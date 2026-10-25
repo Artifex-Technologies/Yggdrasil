@@ -147,14 +147,6 @@ pub fn describe(secs: i64) -> String {
     out.join(" ")
 }
 
-pub fn name(t: &Timer) -> String {
-    if t.label.trim().is_empty() {
-        describe(t.duration)
-    } else {
-        t.label.trim().to_string()
-    }
-}
-
 fn short(s: &str, n: usize) -> String {
     if s.chars().count() <= n {
         s.to_string()
@@ -163,8 +155,8 @@ fn short(s: &str, n: usize) -> String {
     }
 }
 
-/// The pill: a finished timer first (red, until dismissed), else the one that ends soonest, else a paused one, else "Timer"
-/// (so the pill is always there to click).
+/// The pill: a finished timer first (red, until dismissed), else the one that ends soonest, else a paused one, else no text: the
+/// panel then shows the timer's icon alone, still there to click.
 pub fn bar_json(st: &State, now: i64) -> serde_json::Value {
     let label = |t: &Timer| if t.label.trim().is_empty() { String::new() } else { format!("{} ", short(t.label.trim(), 14)) };
     let done: Vec<&Timer> = st.timers.iter().filter(|t| t.done).collect();
@@ -181,7 +173,28 @@ pub fn bar_json(st: &State, now: i64) -> serde_json::Value {
     if let Some(t) = paused.first() {
         return json!({"text": format!("{}Paused {}{}", label(t), clock(t.remaining(now)), more(paused.len())), "state": "warn"});
     }
-    json!({"text": "Timer", "state": "ok"})
+    json!({"text": "", "state": "ok"})
+}
+
+/// The timer the window shows (one at a time): a finished one, else the running one, else a paused one.
+pub fn current(st: &State) -> Option<&Timer> {
+    st.timers.iter().find(|t| t.done).or_else(|| st.timers.iter().filter(|t| t.running()).min_by_key(|t| t.until)).or_else(|| st.timers.iter().find(|t| t.paused()))
+}
+
+/// "25m", "1h30m", "1m30s": a length as the window's custom field shows it (parse_duration reads it back).
+pub fn compact(secs: i64) -> String {
+    let (h, m, s) = (secs / 3600, secs / 60 % 60, secs % 60);
+    let mut out = String::new();
+    if h > 0 {
+        out.push_str(&format!("{h}h"));
+    }
+    if m > 0 || (h == 0 && s == 0) {
+        out.push_str(&format!("{m}m"));
+    }
+    if s > 0 {
+        out.push_str(&format!("{s}s"));
+    }
+    out
 }
 
 // ---------------------------------------------------------------- files
@@ -332,10 +345,14 @@ const SOUNDS: [&str; 3] = [
     "/usr/share/sounds/freedesktop/stereo/bell.oga",
 ];
 
+/// The timer's own icon (installed with it), else the theme's alarm.
+pub const ICON: &str = "/usr/share/yggdrasil/icons/timer-symbolic.svg";
+
 /// The alert: a notification, and a sound when the system has one.
 pub fn alert(t: &Timer) {
     let body = if t.label.trim().is_empty() { format!("{} is up.", describe(t.duration)) } else { format!("{} ({}) is up.", t.label.trim(), describe(t.duration)) };
-    quiet(Command::new("notify-send").args(["-a", "Timer", "-i", "alarm-symbolic", "-u", "critical", "Time's up", &body]));
+    let icon = if Path::new(ICON).is_file() { ICON } else { "alarm-symbolic" };
+    quiet(Command::new("notify-send").args(["-a", "Timer", "-i", icon, "-u", "critical", "Time's up", &body]));
     if quiet(Command::new("canberra-gtk-play").args(["-i", "alarm-clock-elapsed", "-d", "Timer"])) {
         return;
     }
@@ -374,6 +391,14 @@ mod tests {
     }
 
     #[test]
+    fn compact_lengths_read_back() {
+        for (secs, text) in [(1500, "25m"), (5400, "1h30m"), (90, "1m30s"), (3600, "1h"), (45, "45s")] {
+            assert_eq!(compact(secs), text);
+            assert_eq!(parse_duration(text), Some(secs), "{text}");
+        }
+    }
+
+    #[test]
     fn clocks_and_names() {
         assert_eq!(clock(125), "2:05");
         assert_eq!(clock(3725), "1:02:05");
@@ -384,7 +409,8 @@ mod tests {
     #[test]
     fn the_pill_follows_the_timers() {
         let mut st = State::default();
-        assert_eq!(bar_json(&st, 0), json!({"text": "Timer", "state": "ok"}));
+        assert_eq!(bar_json(&st, 0), json!({"text": "", "state": "ok"}), "idle: the icon alone");
+        assert!(current(&st).is_none());
         let tea = start(&mut st, 300, "Tea", 1000);
         let eggs = start(&mut st, 120, "", 1000);
         assert_ne!(tea.id, eggs.id);
@@ -402,6 +428,7 @@ mod tests {
         assert!(expire(&mut st, 2119).is_empty());
         assert_eq!(expire(&mut st, 2120).len(), 1);
         assert_eq!(bar_json(&st, 2120), json!({"text": "Done", "state": "alert"}));
+        assert_eq!(current(&st).map(|t| t.id), Some(eggs.id), "a finished timer is the one shown");
         let t = restart(&mut st, eggs.id, 3000).unwrap();
         assert_eq!((t.until, t.done), (Some(3120), false));
     }

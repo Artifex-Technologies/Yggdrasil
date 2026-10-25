@@ -2,7 +2,7 @@
 name = "yggdrasil-timer"
 version = "0.1.0"
 edition = "2021"
-description = "Countdown timers in Yggdrasil's top bar: presets, several at once, an alarm that rings with the window closed"
+description = "A countdown timer in Yggdrasil's top bar: presets or a length of your own, an alarm that rings with the card closed"
 license = "MIT"
 
 [dependencies]
