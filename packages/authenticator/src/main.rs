@@ -307,6 +307,10 @@ impl eframe::App for App {
 }
 
 fn main() -> eframe::Result {
+    // the bar's key opens the window; a second click closes it
+    if yggdrasil_ui::single::toggle("yggdrasil-authenticator") {
+        return Ok(());
+    }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([420.0, 520.0])

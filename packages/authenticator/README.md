@@ -12,3 +12,6 @@ Needs the official Proton Authenticator app (AUR `proton-authenticator-bin`), si
 
     yggdrasil-authenticator          your codes
     yggdrasil-authenticator --demo   the helper's demo accounts (public RFC test seeds)
+
+In the top bar: `authenticator.conf` (installed to `/usr/share/yggdrasil/integrations/`) puts a key icon there; a click opens the
+window.
