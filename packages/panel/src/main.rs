@@ -971,7 +971,9 @@ impl State {
                 }
             }
             voicekey::Key::Up => {
-                let held = self.key_down_at.take().map(|t| t.elapsed().as_millis()).unwrap_or(0);
+                // the release binding also fires for an S let go after Super (or while typing): only an up that ends a press counts
+                let Some(down) = self.key_down_at.take() else { return };
+                let held = down.elapsed().as_millis();
                 if !matches!(self.model.fylgja.voice, fylgja::Voice::Listening(_)) {
                     return;
                 }
@@ -1012,6 +1014,11 @@ impl State {
     /// Starts recording a question. No card opens: the notch grows into the voice island and its wave follows the microphone.
     fn begin_listening(&mut self) {
         self.stop_speech();
+        // a recording still running (its key-up was never heard) is stopped and dropped first: it must never go on recording unseen
+        if let Some((mut child, path)) = self.rec.take() {
+            fylgja::stop_recording(&mut child);
+            let _ = std::fs::remove_file(path);
+        }
         match fylgja::start_recording() {
             Ok((child, path)) => {
                 self.rec = Some((child, path));
@@ -4327,6 +4334,9 @@ fn main() {
                     }
                     st.rec_since = None;
                     st.voice_failed("No microphone could be recorded. Check that one is plugged in and not muted, and that this app may use it.");
+                } else if !st.vad_mode && since.elapsed().as_secs() >= 90 {
+                    // a held question no longer than 90 s: past that the key-up was missed, so what was said is sent rather than recorded for ever
+                    st.send_recording();
                 } else {
                     st.model.fylgja.voice = fylgja::Voice::Listening(since.elapsed().as_secs());
                 }
