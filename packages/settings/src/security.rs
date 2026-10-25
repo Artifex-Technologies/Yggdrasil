@@ -36,6 +36,25 @@ pub struct Overview {
     pub has_scan: bool,
     /// The settings it declares (switches, choices, buttons).
     pub controls: Vec<crate::controls::State>,
+    /// It has contained the AI assistant: why (its `contained` file exists).
+    pub contained: Option<String>,
+    /// It declares a release command (run with pkexec).
+    pub has_release: bool,
+}
+
+/// The `contained` file: JSON with an optional "reason" (and "level": "emergency" after the last resort); any content counts.
+pub fn parse_contained(text: &str) -> String {
+    let v: Value = serde_json::from_str(text).unwrap_or(Value::Null);
+    let reason = v["reason"].as_str().unwrap_or("no reason given").to_string();
+    if v["level"].as_str() == Some("emergency") { format!("{reason} (the emergency step ran)") } else { reason }
+}
+
+/// Puts the approved files back and lifts the lock: the `release` command, through pkexec (it asks for the password).
+pub fn release() -> Result<(), String> {
+    let i = security().ok_or("there is no security monitor")?;
+    let cmd = i.command("release").ok_or("the security monitor has no release command")?;
+    let args: Vec<&str> = cmd.iter().map(String::as_str).collect();
+    crate::sys::act("pkexec", &args)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -146,7 +165,8 @@ pub fn overview() -> Overview {
     let has_quarantine = i.command("quarantine").is_some();
     let quarantine = run_cmd(i, "quarantine", &["list", "--json"]).map(|b| parse_quarantine(&b)).unwrap_or_default();
     let controls = crate::controls::load(i.controls());
-    Overview { name: monitor_name(i), running, alerts, signatures, clamav, has_quarantine, quarantine, has_scan: i.command("scan").is_some(), controls }
+    let contained = i.get("contained").and_then(|p| std::fs::read_to_string(p).ok()).map(|t| parse_contained(&t));
+    Overview { name: monitor_name(i), running, alerts, signatures, clamav, has_quarantine, quarantine, has_scan: i.command("scan").is_some(), controls, contained, has_release: i.command("release").is_some() }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -177,6 +197,13 @@ pub fn scan_folder(folder: &str) -> ScanReport {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn contained_reason() {
+        assert_eq!(parse_contained(r#"{"reason":"planted skill","level":"contained"}"#), "planted skill");
+        assert_eq!(parse_contained(r#"{"reason":"x","level":"emergency"}"#), "x (the emergency step ran)");
+        assert_eq!(parse_contained("garbage"), "no reason given");
+    }
+
     #[test]
     fn quarantine_list() {
         let q = parse_quarantine(r#"[{"id":"abc123def456","original":"/home/u/Downloads/a.exe","signature":"Win.Trojan.X","when":"2026-10-16 10:00:00"}]"#);

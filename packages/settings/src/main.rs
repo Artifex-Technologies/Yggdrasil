@@ -1938,6 +1938,21 @@ impl App {
                 ui.painter().circle_filled(rect.center(), 6.0, if !o.running { pal.red } else if count("critical") > 0 { pal.red } else if count("warning") > 0 { pal.amber } else { pal.green });
             });
         });
+        let mut release = false;
+        if let Some(why) = &o.contained {
+            ui.add_space(8.0);
+            ui::group(ui, pal, Some("The assistant is contained"), |ui| {
+                ui::row(ui, pal, true, "Stopped and locked out", Some(&format!("{why}. It stays stopped, also after a restart, until you release it")), |ui| {
+                    if o.has_release && ui::quiet(ui, pal, "Restore and release…").clicked() {
+                        release = true;
+                    }
+                });
+            });
+            ui.label(RichText::new("Releasing first puts back the approved versions of its files, then lets it start again. It asks for your password.").size(11.5).color(pal.dim));
+        }
+        if release {
+            self.change(ctx, security::release);
+        }
         ui.add_space(8.0);
         ui::group(ui, pal, Some("Recent alerts"), |ui| {
             let levels = ["Everything", "Warnings and worse", "Critical only"];
