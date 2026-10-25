@@ -7,50 +7,35 @@ windows and picks which layouts the sheet shows (`~/.config/yggdrasil/zones.conf
 
 ## How a drag is noticed (Hyprland 0.56)
 
-What Hyprland offers, and what was ruled out:
+Only a **Super+drag** opens the sheet. Learned on the owner's machine on 2026-10-25:
 
-- **No drag event.** The Lua API's events (`/usr/share/hypr/stubs/hl.meta.lua`, `HL.EventName`) cover windows opening, closing,
-  focus, titles, workspaces, monitors and keys; none fires when a window starts or stops moving. socket2 has none either
-  (`movewindow` is a move to another workspace).
-- **The panel cannot see the pointer during a drag.** The compositor holds the pointer while a window moves (an app's own title
-  bar drag and Super+drag alike), so the panel's layer surfaces get no enter or motion events.
-- **Window rules added at run time** (`hyprctl eval 'hl.window_rule(...)'`) did not apply to new windows in tests on 2026-10-25, so
-  nothing here relies on them.
+- **No drag or mouse-button event.** The Lua API's events cover windows, workspaces, monitors and keys; none fires when a window
+  starts or stops moving, and `hl.is_key_down(272)` answers false while the left button is held (it tracks keyboard keys only).
+- **No binding on the mouse button.** A binding on `mouse:272` (press or release, even `non_consuming`, with or without
+  `binds.pass_mouse_when_bound`) kept the release from ending Hyprland's window move: the window went on following the pointer
+  after the drop until the next click.
+- **Title-bar drags cannot be zoned.** Dragging by the title bar is the app's own move (xdg_toplevel.move). Once the window is
+  placed away from the pointer the app never hears the button come up, and picks the window up again as soon as the pointer moves
+  (Vivaldi, VS Code, Minos, Agora, Obsidian and Ghostty all did). Super+drag is Hyprland's own move and ends cleanly, so it is the
+  one the sheet answers to.
+- **The panel cannot see the pointer during a drag** (the compositor holds it), so it asks Hyprland's socket.
 
-What is used:
+So the panel does it all (`zones::Spotter`, `zones::Buttons`):
 
-1. **The press:** a binding on `mouse:272` with `non_consuming` (the click still reaches the window) and `ignore_mods` (Super+drag
-   too) arms a timer inside the compositor (`hl.timer`, 40 ms). The timer runs only while the left button is down; a plain click
-   costs one or two ticks of Lua and no process.
-2. **The drag:** on its first tick the timer notes the window in front and where it is. When that window (floating) has moved
-   more than 6 pixels and the pointer is near the notch (within 180 px of the screen's centre, no lower than 30 px under the bar),
-   it runs `yggdrasil-panelctl zones-drag` once.
-3. **While the sheet is open:** the panel asks Hyprland where the pointer is through its socket (`j/cursorpos`, no process per
-   question) every 30 ms, and lights the zone under it, both in the sheet and at its real size on the screen. Nothing polls when
-   no window is being dragged to the notch.
-4. **The drop.** Hyprland's `release` binding on `mouse:272` does **not** fire at the end of a window move (the owner's test,
-   2026-10-25: the sheet opened, letting go over a zone did nothing). So the end of the drag is read from three signs; whichever
-   comes first places the window, once (`DropWatch` in `panel/src/zones.rs`; later signs are ignored):
-   - **The window stops following the pointer** (the panel, every 30 ms while the sheet is open, and the session's Lua timer, every
-     40 ms): while the button is held the window moves whenever the pointer does (a frame behind at most, which on a fast drag at
-     180 Hz is more than a few pixels, so the window's offset from the pointer is no test). Let go and the window stays put while
-     the pointer moves on: the pointer moving more than 6 px since the window last moved is the drop. The window goes to the zone
-     it was **held** over last, not where the pointer went after.
-   - **The pointer comes back to the sheet**: once the compositor lets go of the pointer, it sends the sheet's surface an enter
-     (taken only 250 ms after the sheet opened: before that it can be the sheet appearing under the pointer), motion, or a click.
-   - **The button state**, if `hl.is_key_down(272)` reports mouse buttons (it answers, false when up; whether it tracks a held
-     mouse button is not known): seen down, then up, is the drop. The release binding stays too, for versions where it fires.
-   The Lua timer also stops when a click moves no window (the pointer moves on, nothing follows), so it never keeps running.
-5. **Snap Assist.** After a window goes into a zone (dropped, or picked with Super+Shift+Z), if the layout has other zones and
-   other windows are open on that screen's desktop (not hidden, not full screen, not on a special workspace), a full-screen overlay
-   offers them: the first empty zone shows them as tiles (app icon and title, most recently used first, scroll for more); a click
-   or Enter (arrows and Tab move) puts that window there and the next empty zone takes its turn, until every zone is filled or no
-   window is left. A click anywhere else, or Escape, stops; what was placed stays. One `hyprctl clients` when it opens
-   (`panel/src/assist.rs`).
-6. **A drop that never comes:** if no sign is seen, a drag sheet whose pointer has not moved for 8 seconds closes itself.
+1. **The button:** each tick (60 ms) it asks the kernel whether the left button is held (`EVIOCGKEY` on the mice and touchpads the
+   person at the screen may read; the session package's udev rule `71-yggdrasil-pointer.rules` grants that, never keyboards). One
+   ioctl per mouse: nothing else runs while no button is held.
+2. **The drag:** while the button is held it asks Hyprland for the window in front and the pointer. Once that window (floating) has
+   moved more than 6 px and the pointer is within 180 px of the middle of its screen and 30 px under the bar, it asks once whether
+   Super is held (`hl.is_key_down('Super_L'/'Super_R')` through `hyprctl eval`); if so, the sheet opens.
+3. **The drop:** the button coming up (the kernel again) places the window on the zone under the pointer. The sheet takes no pointer
+   input during a drag, and Snap Assist opens 350 ms after the drop.
+4. **A drop that never comes:** a drag sheet whose pointer has not moved for 8 seconds closes itself.
 
-The keyboard path (Super+Shift+Z, `yggdrasil-panelctl zones`) opens the sheet for the window in front on its own screen; the
-panel then gets ordinary pointer events, and a click on a zone places the window.
+`~/.local/state/yggdrasil/zones.log` keeps a short trail of what was seen (cut at 200 KB), for when a drop goes wrong.
+
+The keyboard path (Super+Shift+Z, `yggdrasil-panelctl zones`) opens the sheet for the window in front on its own screen; a click on
+a zone places it.
 
 ## Where things are
 
@@ -76,10 +61,9 @@ can be added later as more entries in `zones.conf`.
 - Hyprland's socket answers `j/cursorpos` with `{"x": .., "y": ..}`.
 - Geometry tests: gaps at edges and between zones, the bar and dock strips, a second screen at scale 1.5, a rotated screen.
 
-## Not verified
+## Verified on the owner's machine (2026-10-25)
 
-- The owner's first real drag (2026-10-25) confirmed the sheet opens and that the release binding does not fire; the drop signs
-  above replaced it and are tested in code (`DropWatch`), but not yet by a real drag.
-- Checked on the live session: Snap Assist's window list from `hyprctl -j clients` and placing a window into a zone through it (a
-  foot window of the test's own, `cargo test -- --ignored live` in packages/panel: it landed exactly on the middle third).
-- The session file is not installed or reloaded; it takes effect with the next yggdrasil-session package and a reload.
+- Super+drag to the notch and a drop on a zone: the window is placed and stays (title-bar drags, before they were left out, were
+  placed but then followed the pointer again).
+- Snap Assist's window list and placing a window through it (a foot window of the test's own, `cargo test -- --ignored live`).
+- Not yet seen: whether `hl.is_key_down('Super_L')` reports a held Super (the panel logs what it answered in zones.log).

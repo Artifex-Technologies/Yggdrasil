@@ -19,7 +19,7 @@ pub fn group(ui: &mut egui::Ui, pal: &Palette) {
     let before = c.clone();
     ui.add_space(8.0);
     ui::group(ui, pal, Some("Window zones"), |ui| {
-        ui::row(ui, pal, true, "Window zones", Some("Drag a window to the notch at the top of the screen, or press Super+Shift+Z, and pick where it goes"), |ui| {
+        ui::row(ui, pal, true, "Window zones", Some("Hold Super and drag a window to the notch at the top of the screen, or press Super+Shift+Z, and pick where it goes"), |ui| {
             ui::switch(ui, pal, &mut c.enabled);
         });
         if c.enabled {

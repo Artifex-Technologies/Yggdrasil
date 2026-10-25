@@ -217,8 +217,13 @@ impl Spotter {
                 let Some(c) = cursor() else { return false };
                 let monitors = ask("j/monitors").map(|j| parse_monitors(&j)).unwrap_or_default();
                 if near_notch(&monitors, c) {
+                    // once per drag: only a Super+drag opens the sheet. A title-bar drag is the app's own move, and such an app
+                    // never hears the button come up once its window is placed away from the pointer: it picks the window up
+                    // again on the next move (every app tried, 2026-10-25). Super+drag is Hyprland's move and ends cleanly.
                     self.told = true;
-                    return true;
+                    let held = super_held();
+                    note(&format!("drag at the notch; Super held: {held:?}"));
+                    return held == Some(true);
                 }
                 false
             }
@@ -229,6 +234,25 @@ impl Spotter {
                 false
             }
         }
+    }
+}
+
+/// Whether a Super key is held now, as Hyprland sees it (asked through its Lua, which answers into a file in the runtime folder).
+fn super_held() -> Option<bool> {
+    let run = std::env::var("XDG_RUNTIME_DIR").ok()?;
+    let out = format!("{run}/yggdrasil-zones-super");
+    let _ = std::fs::remove_file(&out);
+    let lua = format!(
+        "local f = io.open('{out}', 'w') if f then f:write(tostring(hl.is_key_down('Super_L') or hl.is_key_down('Super_R'))) f:close() end"
+    );
+    let ok = Command::new("hyprctl").args(["eval", &lua]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().ok()?.success();
+    if !ok {
+        return None;
+    }
+    match std::fs::read_to_string(&out).ok()?.trim() {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
     }
 }
 
