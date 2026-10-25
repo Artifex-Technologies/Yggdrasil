@@ -401,14 +401,17 @@ def apply(dark, accent):
     updates["Icons"] = {"Theme": "Liki"}
     ini_update(kdeglobals, updates)
     ini_set(os.path.join(config(), "kcminputrc"), "Mouse", "cursorTheme", "Yggdrasil")
-    # GTK 3 and 4: the theme name, the dark flag, the pointer and the icons; the colours in each user stylesheet
+    # GTK 3 and 4: the theme name, the dark flag, the pointer and the icons; the colours in each user stylesheet. Dark mode is a theme
+    # of its own (Yggdrasil-dark), not only the dark flag: Chromium-based browsers (Vivaldi, Chrome) load a theme by its name and
+    # ignore the flag, so with "Yggdrasil" their menus were light in dark mode
+    theme = "Yggdrasil-dark" if dark else "Yggdrasil"
     for ver in ("gtk-3.0", "gtk-4.0"):
         d = os.path.join(config(), ver)
         os.makedirs(d, exist_ok=True)
         ini = os.path.join(d, "settings.ini")
         for k, v in (("gtk-application-prefer-dark-theme", "true" if dark else "false"), ("gtk-cursor-theme-name", "Yggdrasil"), ("gtk-icon-theme-name", "Liki")):
             ini_set(ini, "Settings", k, v)
-        ini_set(ini, "Settings", "gtk-theme-name", "Yggdrasil")
+        ini_set(ini, "Settings", "gtk-theme-name", theme)
         # libadwaita and GTK 4 read only the user's stylesheet: put the colours there (kept apart from anything the user adds below the marker)
         css_path = os.path.join(d, "gtk.css")
         try:
@@ -426,7 +429,7 @@ def apply(dark, accent):
     # X11 (and XWayland) programs read their theme from xsettingsd, which KDE keeps in step; say the same there
     xs = os.path.join(config(), "xsettingsd", "xsettingsd.conf")
     if os.path.isfile(xs):
-        want = {"Net/ThemeName": "Yggdrasil", "Net/IconThemeName": "Liki", "Gtk/CursorThemeName": "Yggdrasil"}
+        want = {"Net/ThemeName": theme, "Net/IconThemeName": "Liki", "Gtk/CursorThemeName": "Yggdrasil"}
         with open(xs, encoding="utf-8") as f:
             lines = f.read().split("\n")
         for i, line in enumerate(lines):
@@ -451,7 +454,7 @@ def apply(dark, accent):
         run("plasma-apply-cursortheme", "Yggdrasil")
     if shutil.which("gsettings"):
         run("gsettings", "set", "org.gnome.desktop.interface", "color-scheme", "prefer-dark" if dark else "default")
-        run("gsettings", "set", "org.gnome.desktop.interface", "gtk-theme", "Yggdrasil")
+        run("gsettings", "set", "org.gnome.desktop.interface", "gtk-theme", theme)
         run("gsettings", "set", "org.gnome.desktop.interface", "icon-theme", "Liki")
         run("gsettings", "set", "org.gnome.desktop.interface", "cursor-theme", "Yggdrasil")
 

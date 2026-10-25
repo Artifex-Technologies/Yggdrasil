@@ -38,6 +38,13 @@ package() {
   install -d "$pkgdir/usr/share/themes/Yggdrasil/gtk-4.0"
   "$_src/bin/ygg-theme" gtk4-theme light > "$pkgdir/usr/share/themes/Yggdrasil/gtk-4.0/gtk.css"
   "$_src/bin/ygg-theme" gtk4-theme dark  > "$pkgdir/usr/share/themes/Yggdrasil/gtk-4.0/gtk-dark.css"
+  # the same dark, as a theme of its own: programs that load a theme by name and ignore the dark flag (Chromium's menus) get dark
+  for v in 3 4; do
+    install -d "$pkgdir/usr/share/themes/Yggdrasil-dark/gtk-$v.0"
+    cp "$pkgdir/usr/share/themes/Yggdrasil/gtk-$v.0/gtk-dark.css" "$pkgdir/usr/share/themes/Yggdrasil-dark/gtk-$v.0/gtk.css"
+    cp "$pkgdir/usr/share/themes/Yggdrasil/gtk-$v.0/gtk-dark.css" "$pkgdir/usr/share/themes/Yggdrasil-dark/gtk-$v.0/gtk-dark.css"
+  done
+  printf '[Desktop Entry]\nType=X-GNOME-Metatheme\nName=Yggdrasil dark\nComment=Yggdrasil colours on GTK'"'"'s Adwaita, dark\n\n[X-GNOME-Metatheme]\nGtkTheme=Yggdrasil-dark\nIconTheme=Liki\nCursorTheme=Yggdrasil\n' > "$pkgdir/usr/share/themes/Yggdrasil-dark/index.theme"
   printf '[Desktop Entry]\nType=X-GNOME-Metatheme\nName=Yggdrasil\nComment=Yggdrasil colours on GTK'"'"'s Adwaita\n\n[X-GNOME-Metatheme]\nGtkTheme=Yggdrasil\nIconTheme=Liki\nCursorTheme=Yggdrasil\n' > "$pkgdir/usr/share/themes/Yggdrasil/index.theme"
   # the pointer for programs started at login
   install -Dm644 /dev/stdin "$pkgdir/usr/lib/environment.d/50-yggdrasil-cursor.conf" <<<$'XCURSOR_THEME=Yggdrasil\nXCURSOR_SIZE=24'
