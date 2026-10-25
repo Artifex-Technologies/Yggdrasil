@@ -1,0 +1,18 @@
+[package]
+name = "yggdrasil-clipboard"
+version = "0.1.0"
+edition = "2021"
+description = "Clipboard history and snippets in a Yggdrasil window (Super+V); the history is kept in memory by a small daemon"
+license = "MIT"
+
+[dependencies]
+eframe = "0.36.2"
+yggdrasil-ui = { path = "../yggdrasil-ui" }
+yggdrasil-conf = { path = "../yggdrasil-conf" }
+serde_json = "1.0.151"
+libc = "0.2"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

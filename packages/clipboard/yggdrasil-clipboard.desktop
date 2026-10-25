@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Clipboard
+Comment=What you copied, and your snippets
+Exec=yggdrasil-clipboard
+Icon=yggdrasil-clipboard
+Categories=Utility;
+Keywords=clipboard;paste;snippets;history;
+StartupWMClass=yggdrasil-clipboard

@@ -1,0 +1,18 @@
+[Unit]
+Description=Yggdrasil clipboard history (in memory only; follows Settings' clipboard history switch)
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/yggdrasil-clipboard daemon
+Restart=on-failure
+RestartSec=3
+# what it keeps is in memory: nothing to write anywhere but its socket in the runtime folder
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%t
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=graphical-session.target

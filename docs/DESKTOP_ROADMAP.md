@@ -16,7 +16,7 @@ See also [KDE_INVENTORY.md](KDE_INVENTORY.md): everything KDE still does on the 
 ## Already ours
 
 Top bar and dock, start menu (Folders theme, keyboard use: Tab, arrows, Super), Fylgja (the notch: controls,
-clipboard, stats, wallpaper, power, now playing), Settings, Minos (file explorer, with drag and drop to other
+stats, wallpaper, power, now playing), the clipboard window (history and snippets, Super+V), Settings, Minos (file explorer, with drag and drop to other
 windows and a copy window with merge, progress and Replace / Skip / Keep both), calculator, weather, tile
 borders, the dock's strut handling. Plus Sarina, Heimdall and Limbo as optional components.
 

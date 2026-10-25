@@ -233,7 +233,7 @@ cmd("SUPER + S", "yggdrasil-panelctl ask-press", { desc = "Talk to the assistant
 cmd("SUPER + S", "yggdrasil-panelctl ask-release", { release = true, desc = "Talk to the assistant (let go)" })
 cmd("CTRL + ALT + S", "yggdrasil-panelctl ask-press", { desc = "Talk to the assistant (hold)" })
 cmd("CTRL + ALT + S", "yggdrasil-panelctl ask-release", { release = true, desc = "Talk to the assistant (let go)" })
-cmd("SUPER + V", "yggdrasil-panelctl clipboard", { desc = "Clipboard history" })
+cmd("SUPER + V", "yggdrasil-clipboard", { desc = "Clipboard history and snippets" })
 cmd("SUPER + C", "yggdrasil-panelctl calendar", { desc = "Calendar" })
 cmd("SUPER + N", "yggdrasil-panelctl notifications", { desc = "Notifications" })
 cmd("SUPER + E", "minos", { desc = "Files (Minos)" })

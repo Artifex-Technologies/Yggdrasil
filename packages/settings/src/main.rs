@@ -1769,8 +1769,8 @@ impl App {
         });
         }
         if self.app_sub == AppSub::Bar {
-        ui::group(ui, pal, Some("Notch (Fylgja)"), |ui| {
-            ui::row(ui, pal, true, "Clipboard history", Some("Keeps what you copy (text) in memory only, to paste again from the notch or with Super+V. It is forgotten when you log out, and password managers are skipped"), |ui| {
+        ui::group(ui, pal, Some("Clipboard"), |ui| {
+            ui::row(ui, pal, true, "Clipboard history", Some("Keeps what you copy (texts, and a few pictures) in memory only, to copy again from the Clipboard window (Super+V). It is forgotten when you log out or turn this off, and password managers are skipped. Snippets in that window are kept either way"), |ui| {
                 if ui::switch(ui, pal, &mut conf.clipboard_history).changed() {
                     conf_changed = true;
                 }

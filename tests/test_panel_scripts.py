@@ -11,7 +11,7 @@ BIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "packages",
 def run(script, args, busctl_out=""):
     d = tempfile.mkdtemp()
     log = os.path.join(d, "calls.log")
-    for name, body in (("busctl", 'echo "busctl $*" >> %s; printf "%%s" "%s"' % (log, busctl_out)), ("wpctl", 'echo "wpctl $*" >> %s' % log)):
+    for name, body in (("busctl", 'echo "busctl $*" >> %s; printf "%%s" "%s"' % (log, busctl_out)), ("wpctl", 'echo "wpctl $*" >> %s' % log), ("yggdrasil-clipboard", 'echo "yggdrasil-clipboard $*" >> %s' % log)):
         p = os.path.join(d, name)
         with open(p, "w") as f:
             f.write("#!/bin/sh\n" + body + "\n")
@@ -23,11 +23,15 @@ def run(script, args, busctl_out=""):
 
 class PanelCtl(unittest.TestCase):
     def test_commands_map_to_panel_methods(self):
-        for arg, want in (("start", "ToggleStart"), ("calendar", "ToggleCalendar"), ("clipboard", "ShowClipboard"), ("ask", "Ask"), ("notifications", "ShowFylgja u 4"), ("fylgja 2", "ShowFylgja u 2")):
+        for arg, want in (("start", "ToggleStart"), ("calendar", "ToggleCalendar"), ("ask", "Ask"), ("notifications", "ShowFylgja u 3"), ("fylgja 2", "ShowFylgja u 2")):
             rc, calls = run("yggdrasil-panelctl", arg.split())
             self.assertEqual(rc, 0, arg)
             self.assertEqual(len(calls), 1, arg)
             self.assertIn("org.yggdrasil.Panel /Panel org.yggdrasil.Panel " + want, calls[0])
+
+    def test_clipboard_runs_the_window(self):
+        rc, calls = run("yggdrasil-panelctl", ["clipboard"])
+        self.assertEqual((rc, calls), (0, ["yggdrasil-clipboard "]))
 
     def test_unknown_command_is_an_error(self):
         rc, calls = run("yggdrasil-panelctl", ["nope"])

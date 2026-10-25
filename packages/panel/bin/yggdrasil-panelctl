@@ -5,8 +5,8 @@
 #   start            open or close the start menu         (bind to Super)
 #   calendar         open or close the calendar (and the notification pane when it is on)
 #   notifications    Fylgja on its Notifications section
-#   fylgja [N]       Fylgja on section N (0 Controls, 1 Today, 2 Stats, 3 Clipboard, 4 Notifications, 5 Wallpaper, 6 Power)
-#   clipboard        Fylgja on the clipboard history      (bind to Super+V)
+#   fylgja [N]       Fylgja on section N (0 Controls, 1 Today, 2 Stats, 3 Notifications, 4 Wallpaper, 5 Power)
+#   clipboard        open or close the clipboard window (yggdrasil-clipboard)   (bind to Super+V)
 #   ask              start or send a spoken question to the assistant   (bind to Super+S)
 #   ask-press        the hold-to-talk key went down   } bind both where the compositor reports press and release:
 #   ask-release      the hold-to-talk key came up     } tap for a conversation, hold for one question
@@ -15,9 +15,9 @@ call() { busctl --user call org.yggdrasil.Panel /Panel org.yggdrasil.Panel "$@" 
 case "${1:-}" in
   start) call ToggleStart ;;
   calendar) call ToggleCalendar ;;
-  notifications) call ShowFylgja u 4 ;;
+  notifications) call ShowFylgja u 3 ;;
   fylgja) call ShowFylgja u "${2:-0}" ;;
-  clipboard) call ShowClipboard ;;
+  clipboard) exec yggdrasil-clipboard ;;
   ask) call Ask ;;
   ask-press) call AskPress ;;
   ask-release) call AskRelease ;;

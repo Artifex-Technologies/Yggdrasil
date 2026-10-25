@@ -17,14 +17,14 @@ pointer away to close. Code: `packages/panel/src/fylgja.rs`.
 
 ## Sections
 
-Controls, Today, Stats, Clipboard, Notifications, Wallpaper, Power (in that order).
+Controls, Today, Stats, Notifications, Wallpaper, Power (in that order). The clipboard history, once a section here, is a window
+of its own since 2026-10-25: `yggdrasil-clipboard` (Super+V), see [packages/clipboard/README.md](../packages/clipboard/README.md).
 
 | Section | State |
 | --- | --- |
 | Controls | Built: tiles for Wi-Fi (tap = radio on/off, chevron = Settings), Bluetooth (same), Audio (tap = mute, chevron = a drop-down list of outputs over the card, shown only when there is an output), Night Light (tap = on/off, chevron = a drop-down under the tile with the temperature, 1,500-5,500 K, on a slider painted in the colours it gives, and a Night Light settings button that opens Settings > Displays, where the schedule and the gradual fade are; the icon is the one omarchy-nightlight shows, Material Design Icons' theme-light-dark; see below) and Dark mode; the master volume bar (click a point or drag to set the level; the app sliders drag too) with a caret, shown only while an app is playing sound, that drops down a mixer (every app playing sound, each with its own slider); and a now-playing card (left out, so the card gets shorter, when nothing is playing) with the cover (the browser's video thumbnail when the browser gives one), title, artist, buttons and progress |
 | Today | Built: time with seconds, full date, number of open windows |
 | Stats | Built: ring gauges for CPU (name, clock, process count), GPU (name, load, clock, VRAM used / total) and RAM (used / total, free); under them the disk (name, used / total), network speed now (down, up) and uptime; on the right the top apps by CPU or RAM (a switch), and an internet speed test. Read once a second only while Stats is showing. The speed test runs only when its button is pressed: it downloads about 40 MB and uploads about 15 MB against Cloudflare's speed servers (`speed.cloudflare.com`) with `curl` |
-| Clipboard | Built: the last 25 texts, click to copy again, Clear. In memory only; skips password managers (`x-kde-passwordManagerHint`); off in Settings > Appearance > Notch. Text only for now |
 | Notifications | Built: grouped by app, newest group first; open a group to list them, click one to go to the app, Clear all (see NOTIFICATIONS.md). Replaced the old Apps section |
 | Wallpaper | Built: thumbnails of the pictures Settings offers, click to apply (`plasma-apply-wallpaperimage`), pages |
 | Power | Built: Lock, Sleep, Hibernate (when the machine can), Restart, Shut down |
@@ -50,7 +50,6 @@ stops (checked every 30 seconds).
 
 ## Still to do
 
-- Clipboard: images, pinning an entry, search.
 - Wallpaper: a "current" marker, adding a folder of your own, slideshow.
 - Keyboard use inside the notch (arrows between sections).
 - Sarina speaking her answer; Sarina's ask-box for typing.

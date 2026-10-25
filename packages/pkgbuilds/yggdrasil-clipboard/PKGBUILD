@@ -1,0 +1,34 @@
+# Yggdrasil's clipboard: history (in memory only) and saved snippets in a window, Super+V: packages/clipboard.
+pkgname=yggdrasil-clipboard
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Yggdrasil clipboard history and snippets window"
+arch=('x86_64')
+url="https://github.com/Artifex-Technologies/Yggdrasil"
+license=('MIT')
+depends=('gcc-libs' 'wayland' 'libxkbcommon' 'wl-clipboard')
+optdepends=('hyprland: Shift+Enter pastes as well as copies')
+makedepends=('cargo')
+options=('!lto')
+
+_src="$startdir/../../clipboard"
+
+build() {
+  cd "$_src"
+  cargo build --release --locked --target-dir "$srcdir/target"
+}
+
+check() {
+  cd "$_src"
+  cargo test --release --locked --target-dir "$srcdir/target"
+}
+
+package() {
+  install -Dm755 "$srcdir/target/release/yggdrasil-clipboard" "$pkgdir/usr/bin/yggdrasil-clipboard"
+  install -Dm644 "$_src/yggdrasil-clipboard.service" "$pkgdir/usr/lib/systemd/user/yggdrasil-clipboard.service"
+  # on for every user: the history Super+V shows (it follows Settings' clipboard history switch)
+  install -dm755 "$pkgdir/usr/lib/systemd/user/graphical-session.target.wants"
+  ln -s ../yggdrasil-clipboard.service "$pkgdir/usr/lib/systemd/user/graphical-session.target.wants/yggdrasil-clipboard.service"
+  install -Dm644 "$_src/yggdrasil-clipboard.desktop" "$pkgdir/usr/share/applications/yggdrasil-clipboard.desktop"
+  install -Dm644 "$_src/README.md" "$pkgdir/usr/share/doc/yggdrasil-clipboard/README.md"
+}

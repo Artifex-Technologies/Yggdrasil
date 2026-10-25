@@ -136,7 +136,7 @@ impl PanelBus {
         let _ = self.0.send(BusMsg::ToggleStart);
     }
 
-    /// Open Fylgja (the notch) on the clipboard history, or close it.
+    /// Open the clipboard window (yggdrasil-clipboard), or close it. Kept for compositors and scripts that still call it.
     fn show_clipboard(&self) {
         let _ = self.0.send(BusMsg::ShowClipboard);
     }
@@ -161,7 +161,7 @@ impl PanelBus {
         let _ = self.0.send(BusMsg::ToggleCalendar);
     }
 
-    /// Open Fylgja on a section (0 Controls, 1 Today, 2 Stats, 3 Clipboard, 4 Notifications, 5 Wallpaper, 6 Power), or close it.
+    /// Open Fylgja on a section (0 Controls, 1 Today, 2 Stats, 3 Notifications, 4 Wallpaper, 5 Power), or close it.
     fn show_fylgja(&self, section: u32) {
         let _ = self.0.send(BusMsg::FylgjaSection(section));
     }
@@ -412,9 +412,6 @@ struct State {
     voice_tx: calloop::channel::Sender<Result<String, String>>,
     /// What the assistant understood of the question, sent as soon as it is known (before her answer).
     heard_tx: calloop::channel::Sender<String>,
-    /// What was copied (in memory only) and the process that watches the clipboard.
-    clips: Arc<std::sync::Mutex<Vec<String>>>,
-    clip_child: Option<std::process::Child>,
     thumbs_started: bool,
     art_for: Option<String>,
     /// When the app folders last changed: the apps are read again when this does (an install or removal).
@@ -857,12 +854,11 @@ impl State {
         true
     }
 
-    /// Open Fylgja on the clipboard history (Super+V), or close it if it is open.
+    /// The clipboard history is a window of its own now (Super+V): running it again closes it.
     fn show_clipboard(&mut self) {
-        let was_open = self.popup.is_some();
         self.close_popup();
-        if !was_open {
-            self.toggle_popup(PopupKind::Fylgja(fylgja::FyState { section: 3, open: true, pinned: true, voice_ui: false, picker: false, mixer: false, night: false }));
+        if let Ok(mut c) = std::process::Command::new("yggdrasil-clipboard").stdin(std::process::Stdio::null()).spawn() {
+            std::thread::spawn(move || c.wait());
         }
     }
 
@@ -1556,25 +1552,6 @@ impl State {
         self.dirty = true;
     }
 
-    /// Starts or stops watching the clipboard to follow the setting.
-    fn sync_clip(&mut self) {
-        let on = self.model.conf.clipboard_history;
-        self.model.fylgja.history_on = on;
-        if on && self.clip_child.is_none() {
-            self.clip_child = fylgja::start_clip_watch(self.clips.clone());
-        }
-        if !on {
-            if let Some(mut c) = self.clip_child.take() {
-                let _ = c.kill();
-                let _ = c.wait();
-            }
-            if let Ok(mut g) = self.clips.lock() {
-                g.clear();
-            }
-            self.model.fylgja.clips.clear();
-        }
-    }
-
     /// Starts Fylgja sliding down (`opening`) or back up, redrawing for as long as it takes.
     fn start_anim(&mut self, opening: bool) {
         self.fy_anim = Some((std::time::Instant::now(), opening));
@@ -1918,19 +1895,6 @@ impl State {
             FAct::Slide(who) => {
                 let percent = (((x - hit.rect.0) / hit.rect.2) * 100.0).round().clamp(0.0, 100.0) as u32;
                 self.slide_to(&who, percent);
-                self.dirty = true;
-            }
-            FAct::Clip(i) => {
-                if let Some(t) = self.model.fylgja.clips.get(i).cloned() {
-                    fylgja::copy_text(&t);
-                    self.close_popup();
-                }
-            }
-            FAct::ClipClear => {
-                if let Ok(mut g) = self.clips.lock() {
-                    g.clear();
-                }
-                self.model.fylgja.clips.clear();
                 self.dirty = true;
             }
             FAct::Notif(a) => self.notif_act(a),
@@ -3443,8 +3407,6 @@ fn main() {
         last_tick: None,
         voice_tx,
         heard_tx,
-        clips: Arc::new(std::sync::Mutex::new(Vec::new())),
-        clip_child: None,
         thumbs_started: false,
         art_for: None,
         apps_stamp: apps::stamp(),
@@ -3458,7 +3420,6 @@ fn main() {
         axis_acc: 0.0,
     };
     bind_outputs(&globals, &mut state, &qh);
-    state.sync_clip();
 
     let mut event_loop: EventLoop<State> = EventLoop::try_new().expect("event loop");
     // Learn the outputs' names before drawing anything.
@@ -3833,13 +3794,6 @@ fn main() {
                     }
                     st.dirty = true; // the speed test's progress shows on the next draw
                 }
-                if st.model.fylgja.history_on {
-                    let clips = st.clips.lock().map(|g| g.clone()).unwrap_or_default();
-                    if clips != st.model.fylgja.clips {
-                        st.model.fylgja.clips = clips;
-                        st.dirty = true;
-                    }
-                }
                 // the cover of what is playing, loaded when the song changes
                 let want = st.model.fylgja.snap.media.as_ref().and_then(|m| m.art.clone());
                 if want != st.art_for {
@@ -3921,7 +3875,6 @@ fn main() {
                     st.built_for = None; // the wallpaper surface comes or goes
                 }
                 st.model.notifs.dnd = st.model.conf.notify_dnd;
-                st.sync_clip();
                 st.model.clock = clock_text(st.model.conf.clock_24h);
                 st.model.clock_secs = secs_text(st.model.conf.clock_24h);
                 if st.model.conf.dock_pos != old {

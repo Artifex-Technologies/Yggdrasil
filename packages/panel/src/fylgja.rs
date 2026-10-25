@@ -6,7 +6,6 @@
 //! tested.
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -20,12 +19,11 @@ use crate::paint::{self, Fonts, Icons, Rgba};
 use crate::shell::{Model, PowerAct, StartAct};
 use yggdrasil_conf::nightlight;
 
-pub const SECTIONS: [&str; 7] = ["Controls", "Today", "Stats", "Clipboard", "Notifications", "Wallpaper", "Power"];
-const CLIPBOARD: usize = 3;
-pub const NOTIFS: usize = 4;
-const WALLPAPER: usize = 5;
+pub const SECTIONS: [&str; 6] = ["Controls", "Today", "Stats", "Notifications", "Wallpaper", "Power"];
+pub const NOTIFS: usize = 3;
+const WALLPAPER: usize = 4;
+const POWER: usize = 5;
 const WALL_PAGE: usize = 8;
-const MAX_CLIPS: usize = 25;
 
 /// Where the notch is: peeking (the small music card), open on a section, or showing the assistant's voice card.
 #[derive(Clone, Debug, Default)]
@@ -110,8 +108,6 @@ pub struct Snapshot {
 #[derive(Default)]
 pub struct FyData {
     pub snap: Snapshot,
-    pub clips: Vec<String>,
-    pub history_on: bool,
     pub voice: Voice,
     /// The cover of what is playing, ready to draw.
     pub art: Option<Pixmap>,
@@ -208,42 +204,6 @@ pub fn parse_meminfo(m: &str) -> Option<(u64, u64)> {
     let kb = |k: &str| m.lines().find(|l| l.starts_with(k))?.split_whitespace().nth(1)?.parse::<u64>().ok();
     let total = kb("MemTotal:")?;
     Some(((total - kb("MemAvailable:")?) / 1024, total / 1024))
-}
-
-/// Standard base64 (what `base64` prints) back to bytes; None on anything else.
-pub fn b64_decode(s: &str) -> Option<Vec<u8>> {
-    let mut out = Vec::with_capacity(s.len() * 3 / 4);
-    let (mut acc, mut bits) = (0u32, 0u32);
-    for c in s.trim().bytes() {
-        let v = match c {
-            b'A'..=b'Z' => c - b'A',
-            b'a'..=b'z' => c - b'a' + 26,
-            b'0'..=b'9' => c - b'0' + 52,
-            b'+' => 62,
-            b'/' => 63,
-            b'=' => break,
-            _ => return None,
-        } as u32;
-        acc = (acc << 6) | v;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push((acc >> bits) as u8);
-            acc &= (1 << bits) - 1;
-        }
-    }
-    Some(out)
-}
-
-/// Puts a copied text first in the history: no repeats, no blanks, only the newest few.
-pub fn push_clip(list: &mut Vec<String>, text: String) {
-    let t = text.trim_end_matches(['\n', '\r']).to_string();
-    if t.trim().is_empty() {
-        return;
-    }
-    list.retain(|x| *x != t);
-    list.insert(0, t);
-    list.truncate(MAX_CLIPS);
 }
 
 /// The text cut to one line that fits `max` pixels.
@@ -437,41 +397,6 @@ pub fn spawn_poller(active: Arc<AtomicBool>, shared: Arc<Mutex<Snapshot>>) {
             std::thread::sleep(Duration::from_secs(1));
         }
     });
-}
-
-// ---------------------------------------------------------------- the clipboard
-
-/// Run by `wl-paste --watch` with the new clipboard on stdin: one base64 line per copied text, and
-/// nothing at all when the copy came from a password manager.
-const CLIP_SCRIPT: &str = "wl-paste --list-types 2>/dev/null | grep -q x-kde-passwordManagerHint && exit 0; head -c 65536 | base64 -w0; echo";
-
-/// Starts watching the clipboard for text; what is copied goes into `clips`, in memory only.
-pub fn start_clip_watch(clips: Arc<Mutex<Vec<String>>>) -> Option<Child> {
-    // a watcher left by an earlier run of the panel
-    let _ = Command::new("pkill").args(["-u", &unsafe { libc::getuid() }.to_string(), "-f", "wl-paste --type text --watch"]).status();
-    let mut child = Command::new("wl-paste").args(["--type", "text", "--watch", "sh", "-c", CLIP_SCRIPT]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
-    let stdout = child.stdout.take()?;
-    std::thread::spawn(move || {
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-            if let Some(text) = b64_decode(&line).and_then(|b| String::from_utf8(b).ok()) {
-                if let Ok(mut g) = clips.lock() {
-                    push_clip(&mut g, text);
-                }
-            }
-        }
-    });
-    Some(child)
-}
-
-/// Puts `text` on the clipboard again.
-pub fn copy_text(text: &str) {
-    if let Ok(mut c) = Command::new("wl-copy").stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
-        if let Some(mut i) = c.stdin.take() {
-            let _ = i.write_all(text.as_bytes());
-        }
-        // wl-copy stays running to serve the clipboard; the system reaps it when something else is copied
-        std::mem::forget(c);
-    }
 }
 
 // ---------------------------------------------------------------- pictures
@@ -750,9 +675,6 @@ pub enum FAct {
     /// A volume slider: the click's place along `rect` gives the level.
     Slide(Slider),
     Start(StartAct),
-    /// Copy this item of the clipboard history again.
-    Clip(usize),
-    ClipClear,
     /// Something in the notification list (shared with the right-hand pane).
     Notif(crate::notify::NAct),
     Wall(PathBuf),
@@ -1274,26 +1196,6 @@ pub fn paint(pix: &mut Pixmap, s: f32, m: &Model, st: &FyState, slide: f32, poin
             centred(pix, &fonts.regular, 12.5, top + 108.0, DIM, &format!("{open} window{} open", if open == 1 { "" } else { "s" }));
         }
         2 => crate::stats::paint(pix, s, m, card, pointer, fonts, icons, &mut hits),
-        CLIPBOARD => {
-            if !d.history_on {
-                note(pix, "Clipboard history is off. Turn it on in Settings > Appearance.");
-            } else if d.clips.is_empty() {
-                note(pix, "Nothing copied yet");
-            } else {
-                for (i, c) in d.clips.iter().take(5).enumerate() {
-                    let rect = (x0, top + 34.0 * i as f32 - 6.0, inner, 30.0);
-                    if over(pointer, rect) {
-                        paint::fill_rounded(pix, rect.0 * s, rect.1 * s, rect.2 * s, rect.3 * s, 8.0 * s, (255, 255, 255, 26));
-                    }
-                    paint::draw_text(pix, &fonts.regular, 12.5 * s, (rect.0 + 10.0) * s, (rect.1 + 15.0) * s, WHITE, &one_line(&fonts.regular, 12.5 * s, c, (inner - 20.0) * s));
-                    hits.push(FHit { rect, act: FAct::Clip(i) });
-                }
-                let b = (cx + cw - pad - 44.0, cy + ch - 32.0, 44.0, 24.0);
-                let lw = paint::text_width(&fonts.regular, 11.5 * s, "Clear");
-                paint::draw_text(pix, &fonts.regular, 11.5 * s, (b.0 + b.2 / 2.0) * s - lw / 2.0, (b.1 + b.3 / 2.0) * s, if over(pointer, b) { WHITE } else { DIM }, "Clear");
-                hits.push(FHit { rect: b, act: FAct::ClipClear });
-            }
-        }
         NOTIFS => {
             let area = (x0, cy + 14.0, inner, ch - 22.0);
             for (rect, act) in crate::notify::paint_list(pix, s, area, &m.notifs, pointer, crate::notify::now_secs(), fonts, icons) {
@@ -1330,7 +1232,7 @@ pub fn paint(pix: &mut Pixmap, s: f32, m: &Model, st: &FyState, slide: f32, poin
                 }
             }
         }
-        6 => {
+        POWER => {
             let mut acts = vec![("system-lock-screen-symbolic", "Lock", PowerAct::Lock), ("system-suspend-symbolic", "Sleep", PowerAct::Sleep)];
             if m.hibernate {
                 acts.push(("system-hibernate-symbolic", "Hibernate", PowerAct::Hibernate));
@@ -1421,53 +1323,5 @@ mod tests {
         assert_eq!(image_ext(b"\x89PNG\r\n\x1a\n"), Some("png"));
         assert_eq!(image_ext(b"RIFF\x00\x00\x00\x00WEBPVP8 "), Some("webp"));
         assert_eq!(image_ext(b"<html>not a picture"), None);
-    }
-
-    #[test]
-    fn base64_and_history() {
-        assert_eq!(b64_decode("aGVsbG8gd29ybGQ=").unwrap(), b"hello world");
-        assert_eq!(b64_decode("aGk=\n").unwrap(), b"hi");
-        assert_eq!(b64_decode("").unwrap(), b"");
-        assert!(b64_decode("a*b").is_none());
-        let mut l = vec![];
-        push_clip(&mut l, "one\n".into());
-        push_clip(&mut l, "two".into());
-        push_clip(&mut l, "   ".into());
-        push_clip(&mut l, "one".into());
-        assert_eq!(l, vec!["one".to_string(), "two".to_string()]);
-        for i in 0..40 {
-            push_clip(&mut l, format!("item {i}"));
-        }
-        assert_eq!(l.len(), MAX_CLIPS);
-        assert_eq!(l[0], "item 39");
-    }
-}
-
-#[cfg(test)]
-mod render {
-    use super::*;
-    use crate::shell::Model;
-
-    /// Writes the Controls with Night Light's drop-down open to $FYLGJA_PNG_DIR (run by hand to see them).
-    #[test]
-    fn draws_night_light_settings() {
-        let Some(fonts) = Fonts::load() else { return };
-        let mut icons = Icons::new();
-        let mut m = Model { apps: vec![], pinned: vec![], wins: vec![], clock: String::new(), clock_secs: String::new(), date: String::new(), today: (2026, 10, 25), user: String::new(), notch_open: true, fylgja: Default::default(), notch_w: 0.0, notch_tab: None, notifs: Default::default(), tray: vec![], addons: vec![], now_secs: 0, hibernate: false, conf: Default::default(), dark: true, status: Default::default(), trash_full: false };
-        m.fylgja.snap = Snapshot { ready: true, slow_ready: true, master: Some((45, false)), night: true, ..Default::default() };
-        m.fylgja.night = nightlight::Settings { temp: 2100, schedule: true, on: 19 * 60, off: 7 * 60, fade: true, minutes: 60, light: false };
-        let st = FyState { section: 0, open: true, pinned: false, voice_ui: false, picker: false, mixer: false, night: true };
-        let size = card_size(&m, &st);
-        let mut pix = Pixmap::new((size.0 * 2.0) as u32 + 40, (size.1 * 2.0) as u32 + 40).unwrap();
-        let (_, hits) = paint(&mut pix, 2.0, &m, &st, 1.0, (0.0, 0.0), &fonts, &mut icons);
-        if let Some(dir) = std::env::var_os("FYLGJA_PNG_DIR") {
-            pix.save_png(std::path::Path::new(&dir).join("night.png")).unwrap();
-        }
-        for act in [FAct::Night, FAct::NightMore, FAct::NightClose, FAct::NightSettings, FAct::Slide(Slider::Night)] {
-            assert!(hits.iter().any(|h| h.act == act), "{act:?} can be clicked");
-        }
-        // every control sits inside the card (it hangs from the top of the surface, centred)
-        let card = card_rect(pix.width() as f32 / 2.0, size, 1.0);
-        assert!(hits.iter().all(|h| h.rect.0 >= card.0 && h.rect.0 + h.rect.2 <= card.0 + card.2 && h.rect.1 + h.rect.3 <= card.1 + card.3), "{card:?}");
     }
 }

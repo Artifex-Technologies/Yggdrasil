@@ -401,7 +401,7 @@ impl App {
         match action {
             Action::None => {}
             Action::ToggleStart => self.panel("ToggleStart", None),
-            Action::Clipboard => self.panel("ShowClipboard", None),
+            Action::Clipboard => self.spawn("yggdrasil-clipboard"),
             Action::Assistant => self.panel("Ask", None),
             Action::Calendar => self.panel("ToggleCalendar", None),
             Action::Fylgja(n) => self.panel("ShowFylgja", Some(n)),
