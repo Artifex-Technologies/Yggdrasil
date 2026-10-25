@@ -2,11 +2,15 @@
 //! and it fills that part of the screen. Super+Shift+Z opens the same sheet for the window in front (then click a zone).
 //!
 //! Hyprland gives no event while a window is dragged, and the panel gets no pointer events then (the compositor holds the
-//! pointer). So the session's Lua watches the left button (a non-consuming press binding arms a timer inside the compositor, a
-//! release binding disarms it), calls `yggdrasil-panelctl zones-drag` when a dragged window's pointer reaches the notch and
-//! `zones-drop` when the button comes up. Between the two, and only then, the panel asks Hyprland where the pointer is (its
-//! socket, no process per question) to light the zone under it. Layouts and the gap come from `zones.conf`
-//! (yggdrasil_conf::zones).
+//! pointer). So the session's Lua watches the left button (a non-consuming press binding arms a timer inside the compositor) and
+//! calls `yggdrasil-panelctl zones-drag` when a dragged window's pointer reaches the notch. Between then and the drop, and only
+//! then, the panel asks Hyprland where the pointer and the window are (its socket, no process per question) to light the zone
+//! under it. Layouts and the gap come from `zones.conf` (yggdrasil_conf::zones).
+//!
+//! The drop: Hyprland's release binding does not fire at the end of a window move (tried 2026-10-25), so the end of the drag is
+//! read from several signs, whichever comes first, and acted on once (`DropWatch`): the window stops following the pointer (the
+//! grip, the pointer's offset from the window's corner, changes), the pointer comes back to the sheet (an enter after the sheet
+//! settled, or a click), or the session's Lua sees the same and calls `zones-drop`.
 
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
@@ -40,6 +44,82 @@ pub struct Session {
     pub pointer: Option<(f32, f32)>,
     /// When the pointer last moved: a drag sheet that hears no drop (the release went unseen) closes after a while.
     pub moved: std::time::Instant,
+    /// Watches for the end of the drag.
+    pub watch: DropWatch,
+}
+
+/// How the end of a drag shows. Every sign ends it once; later ones are ignored.
+///
+/// While the button is held the window follows the pointer, moving whenever it does (a frame behind at most, which on a fast drag
+/// is more than a few pixels, so the window's offset from the pointer is no test). Let go, and the window stays where it is while the
+/// pointer moves on: the drop is the pointer moving more than `SLACK` since the window last moved.
+#[derive(Clone, Debug)]
+pub struct DropWatch {
+    /// The pointer's offset from the dragged window's top-left corner when the sheet opened (the window was being dragged).
+    pub grip: Option<(f64, f64)>,
+    /// Where the window was last seen, and where the pointer was when it last moved.
+    pub last_at: Option<(f64, f64)>,
+    pub anchor: Option<(f64, f64)>,
+    pub opened: std::time::Instant,
+    /// The zone under the pointer the last time the window was seen following it (where it was let go).
+    pub held: Option<(usize, usize)>,
+    pub done: bool,
+}
+
+/// How far (logical pixels) the pointer may move away from its grip before the window is taken as let go.
+pub const SLACK: f64 = 6.0;
+/// Pointer focus coming back to the sheet means the compositor let go of the pointer; right after the sheet opens it can be the
+/// sheet appearing under the pointer instead, so not before this.
+pub const SETTLE: std::time::Duration = std::time::Duration::from_millis(250);
+
+impl DropWatch {
+    pub fn new(grip: Option<(f64, f64)>) -> DropWatch {
+        DropWatch { grip, last_at: None, anchor: None, opened: std::time::Instant::now(), held: None, done: false }
+    }
+
+    /// The pointer and the window, read while following: Some(zone or none) once the window no longer follows the pointer (the
+    /// drop, at the zone held last); otherwise remembers `hover` as where it is held.
+    pub fn follow(&mut self, cursor: (f64, f64), window_at: Option<(f64, f64)>, hover: Option<(usize, usize)>) -> Option<Option<(usize, usize)>> {
+        if self.done {
+            return None;
+        }
+        let Some(at) = window_at.filter(|_| self.grip.is_some()) else {
+            // the window cannot be judged: just remember where the pointer is
+            self.held = hover;
+            return None;
+        };
+        if self.last_at != Some(at) {
+            // the window moved with the pointer: still held, over this zone
+            self.last_at = Some(at);
+            self.anchor = Some(cursor);
+            self.held = hover;
+            return None;
+        }
+        let (ax, ay) = self.anchor.unwrap_or(cursor);
+        if (cursor.0 - ax).abs() + (cursor.1 - ay).abs() > SLACK {
+            self.done = true;
+            return Some(self.held);
+        }
+        None
+    }
+
+    /// The pointer entered the sheet (or clicked it) at a zone or not: the drop, unless the sheet has only just appeared.
+    pub fn pointer_back(&mut self, clicked: bool, at: Option<(usize, usize)>) -> Option<Option<(usize, usize)>> {
+        if self.done || (!clicked && self.opened.elapsed() < SETTLE) {
+            return None;
+        }
+        self.done = true;
+        Some(at.or(self.held))
+    }
+
+    /// The session said the drag ended.
+    pub fn told(&mut self) -> Option<Option<(usize, usize)>> {
+        if self.done {
+            return None;
+        }
+        self.done = true;
+        Some(self.held)
+    }
 }
 
 /// How long a drag sheet waits, with the pointer still, for a drop it may never hear.
@@ -75,14 +155,30 @@ pub fn parse_monitors(json: &str) -> Vec<Monitor> {
 /// Where the pointer is in the global space, from Hyprland's socket (cheap enough to ask every few tens of milliseconds while a
 /// window is dragged; nothing asks otherwise).
 pub fn cursor() -> Option<(f64, f64)> {
+    parse_cursor(&ask("j/cursorpos")?)
+}
+
+/// The window in front: its address and top-left corner (global logical pixels).
+pub fn front_window() -> Option<(String, (f64, f64))> {
+    parse_window(&ask("j/activewindow")?)
+}
+
+/// One question to Hyprland's socket.
+fn ask(q: &str) -> Option<String> {
     let sig = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok()?;
     let run = std::env::var("XDG_RUNTIME_DIR").ok()?;
     let mut s = UnixStream::connect(format!("{run}/hypr/{sig}/.socket.sock")).ok()?;
     s.set_read_timeout(Some(std::time::Duration::from_millis(200))).ok()?;
-    s.write_all(b"j/cursorpos").ok()?;
+    s.write_all(q.as_bytes()).ok()?;
     let mut out = String::new();
     s.read_to_string(&mut out).ok()?;
-    parse_cursor(&out)
+    Some(out)
+}
+
+fn parse_window(json: &str) -> Option<(String, (f64, f64))> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    let at = v["at"].as_array()?;
+    Some((v["address"].as_str()?.to_string(), (at.first()?.as_f64()?, at.get(1)?.as_f64()?)))
 }
 
 fn parse_cursor(json: &str) -> Option<(f64, f64)> {
@@ -111,7 +207,13 @@ pub fn begin(mode: Mode) -> Option<Session> {
         }),
     }
     .or_else(|| monitors.first().cloned())?;
-    Some(Session { mode, address, floating: win["floating"].as_bool().unwrap_or(true), monitor, layouts: conf.shown(), gap: conf.gap, hover: None, pointer: None, moved: std::time::Instant::now() })
+    // where the pointer holds the window: while it does, the window follows the pointer
+    let at = win["at"].as_array().and_then(|a| Some((a.first()?.as_f64()?, a.get(1)?.as_f64()?)));
+    let grip = match (mode, cursor(), at) {
+        (Mode::Drag, Some((cx, cy)), Some((wx, wy))) => Some((cx - wx, cy - wy)),
+        _ => None,
+    };
+    Some(Session { mode, address, floating: win["floating"].as_bool().unwrap_or(true), monitor, layouts: conf.shown(), gap: conf.gap, hover: None, pointer: None, moved: std::time::Instant::now(), watch: DropWatch::new(grip) })
 }
 
 /// Where the zone goes on the screen, in global logical pixels.
@@ -123,10 +225,15 @@ pub fn target(s: &Session, (li, zi): (usize, usize)) -> Option<Rect> {
 /// Puts the window there: floating first (a tiled window cannot be placed), then its size, then its place (a resize keeps a
 /// window centred, so the other order would undo the move).
 pub fn apply(s: &Session, hit: (usize, usize)) {
-    let Some((x, y, w, h)) = target(s, hit) else { return };
-    let win = format!("address:{}", s.address);
+    let Some(r) = target(s, hit) else { return };
+    place(&s.address, s.floating, r);
+}
+
+/// Puts a window (Hyprland's address) at a rectangle (global logical pixels).
+pub fn place(address: &str, floating: bool, (x, y, w, h): Rect) {
+    let win = format!("address:{address}");
     let mut cmds = vec![];
-    if !s.floating {
+    if !floating {
         cmds.push(format!(r#"hl.dsp.window.float({{ action = "enable", window = "{win}" }})"#));
     }
     cmds.push(format!(r#"hl.dsp.window.resize({{ x = {w}, y = {h}, window = "{win}" }})"#));
@@ -209,7 +316,47 @@ mod tests {
 
     fn session() -> Session {
         let monitor = Monitor { name: "DP-1".into(), x: 0, y: 0, width: 3440, height: 1440, scale: 1.0, transform: 0, reserved: [0, 28, 0, 70] };
-        Session { mode: Mode::Drag, address: "0xabc".into(), floating: true, monitor, layouts: zones::builtin(), gap: 8, hover: None, pointer: None, moved: std::time::Instant::now() }
+        Session { mode: Mode::Drag, address: "0xabc".into(), floating: true, monitor, layouts: zones::builtin(), gap: 8, hover: None, pointer: None, moved: std::time::Instant::now(), watch: DropWatch::new(Some((40.0, 10.0))) }
+    }
+
+    #[test]
+    fn the_drop_is_seen_once_whichever_sign_comes_first() {
+        // the window follows the pointer: no drop, and the zone under it is remembered
+        let mut w = DropWatch::new(Some((40.0, 10.0)));
+        assert_eq!(w.follow((140.0, 30.0), Some((100.0, 20.0)), Some((0, 1))), None);
+        assert_eq!(w.follow((300.0, 31.0), Some((260.0, 21.0)), Some((0, 0))), None);
+        // a fast drag: the window a frame behind the pointer by far more than the slack, but it moved: still held
+        assert_eq!(w.follow((360.0, 31.0), Some((290.0, 21.0)), Some((0, 0))), None);
+        // the pointer still for a moment, the window caught up: still held
+        assert_eq!(w.follow((360.0, 31.0), Some((320.0, 21.0)), Some((0, 0))), None);
+        assert_eq!(w.follow((362.0, 31.0), Some((320.0, 21.0)), Some((0, 0))), None, "within the slack");
+        // let go: the pointer moves on, the window stays; the drop is at the zone it was held over, not where the pointer went
+        assert_eq!(w.follow((390.0, 40.0), Some((320.0, 21.0)), Some((1, 0))), Some(Some((0, 0))));
+        // every later sign is ignored
+        assert_eq!(w.follow((400.0, 40.0), Some((260.0, 21.0)), None), None);
+        assert_eq!(w.pointer_back(true, Some((2, 0))), None);
+        assert_eq!(w.told(), None);
+
+        // the pointer coming back: an enter right as the sheet opens is the sheet appearing, not a drop; a click always is
+        let mut w = DropWatch::new(Some((40.0, 10.0)));
+        assert_eq!(w.pointer_back(false, Some((1, 1))), None);
+        assert_eq!(w.pointer_back(true, Some((1, 1))), Some(Some((1, 1))));
+        let mut w = DropWatch::new(None);
+        w.opened -= SETTLE;
+        assert_eq!(w.follow((10.0, 10.0), None, Some((3, 0))), None, "without a grip the window is not judged");
+        assert_eq!(w.pointer_back(false, None), Some(Some((3, 0))), "an enter later is the drop, at the zone held last");
+
+        // the session's word
+        let mut w = DropWatch::new(None);
+        w.held = Some((0, 2));
+        assert_eq!(w.told(), Some(Some((0, 2))));
+        assert_eq!(w.told(), None);
+    }
+
+    #[test]
+    fn the_window_in_front_is_read() {
+        assert_eq!(parse_window(r#"{"address":"0x55","at":[120,48],"size":[800,600]}"#), Some(("0x55".into(), (120.0, 48.0))));
+        assert_eq!(parse_window("{}"), None);
     }
 
     #[test]

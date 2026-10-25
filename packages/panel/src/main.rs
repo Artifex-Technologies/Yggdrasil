@@ -32,6 +32,7 @@ mod snwatcher;
 mod tray;
 mod trayui;
 mod zones;
+mod assist;
 
 use std::time::Instant;
 use std::collections::HashMap;
@@ -224,6 +225,8 @@ enum PopupKind {
     Addon(usize),
     /// Window zones: where to put a window (zones.rs).
     Zones(zones::Session),
+    /// Snap Assist: the layout's other zones offered to the other windows (assist.rs).
+    Assist(assist::Assist),
 }
 
 /// The start menu's state: what was typed, how far its lists are scrolled, and (Folders theme) which
@@ -384,6 +387,9 @@ struct State {
     fy_hits: Vec<fylgja::FHit>,
     /// The zones sheet's zones on its surface.
     zone_hits: Vec<(zones::Rect4, (usize, usize))>,
+    /// Snap Assist's window tiles on its surface, and the zone they are in.
+    assist_hits: Vec<(zones::Rect4, usize)>,
+    assist_area: zones::Rect4,
     fy_active: Arc<AtomicBool>,
     fy_shared: Arc<std::sync::Mutex<fylgja::Snapshot>>,
     /// A volume slider being dragged: which one, its rectangle, and the last level and time sent.
@@ -866,7 +872,7 @@ impl State {
         // the protocol, and with -1 it sat over the bar, where the notch's card hid Fylgja's section titles.
         layer.set_exclusive_zone(0);
         // The start menu takes the keyboard at once, so you can type as soon as it opens.
-        layer.set_keyboard_interactivity(if matches!(&kind, PopupKind::Start(_)) || matches!(&kind, PopupKind::Fylgja(f) if f.pinned) { KeyboardInteractivity::Exclusive } else { KeyboardInteractivity::OnDemand });
+        layer.set_keyboard_interactivity(if matches!(&kind, PopupKind::Start(_) | PopupKind::Assist(_)) || matches!(&kind, PopupKind::Fylgja(f) if f.pinned) { KeyboardInteractivity::Exclusive } else { KeyboardInteractivity::OnDemand });
         wl.commit();
         self.surfs.push(Surf { id, kind: Kind::Popup, output, wl, layer: Some(layer), dock: None, w: 0, h: 0, want: (0, 0), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
         if matches!(kind, PopupKind::Fylgja(_)) {
@@ -1941,6 +1947,7 @@ impl State {
                     st.scroll = (st.scroll + by * 3).clamp(0, max);
                 }
             }
+            Some(PopupKind::Assist(a)) => assist::scroll(a, by, self.assist_area),
             Some(PopupKind::Tray(_)) | Some(PopupKind::Addon(_)) | Some(PopupKind::Zones(_)) | None => return,
         }
         self.dirty = true;
@@ -2221,12 +2228,18 @@ impl State {
         self.dirty = true;
     }
 
-    /// While a window is dragged: light the zone under the pointer.
+    /// While a window is dragged: light the zone under the pointer, and see whether the window still follows it (once it does
+    /// not, the button was let go: the drop).
     fn zones_follow(&mut self) {
         let Some(Popup { kind: PopupKind::Zones(z), .. }) = &mut self.popup else { return };
         let Some(g) = zones::cursor() else { return };
         let p = zones::to_surface(z, g);
         let hover = zones::hit_at(&self.zone_hits, p);
+        let at = zones::front_window().filter(|(a, _)| *a == z.address).map(|(_, at)| at);
+        if let Some(drop) = z.watch.follow(g, at, hover) {
+            self.zones_dropped(drop);
+            return;
+        }
         if z.pointer != Some(p) {
             z.moved = Instant::now();
         } else if z.moved.elapsed() > zones::STALE {
@@ -2241,21 +2254,93 @@ impl State {
         }
     }
 
-    /// The drag ended: the window goes to the zone it was dropped on, if any.
+    /// The session says the drag ended (its Lua saw the window stop following the pointer, or the button come up).
     fn zones_drop(&mut self) {
-        if let Some(Popup { kind: PopupKind::Zones(z), .. }) = &self.popup {
+        if let Some(Popup { kind: PopupKind::Zones(z), .. }) = &mut self.popup {
             if z.mode == zones::Mode::Drag {
-                let z = z.clone();
-                self.close_popup();
-                // the compositor puts the window down where it was let go first; then it goes to the zone
-                if let Some(hit) = zones::cursor().map(|g| zones::to_surface(&z, g)).and_then(|p| zones::hit_at(&self.zone_hits, p)).or(z.hover) {
-                    std::thread::spawn(move || {
-                        std::thread::sleep(Duration::from_millis(60));
-                        zones::apply(&z, hit);
-                    });
+                if let Some(drop) = z.watch.told() {
+                    self.zones_dropped(drop);
                 }
             }
         }
+    }
+
+    /// The pointer came back to the zones sheet (an enter after it settled, or a click) while a window was being dragged: the drop.
+    fn zones_pointer_back(&mut self, clicked: bool) {
+        let at = zones::hit_at(&self.zone_hits, self.pointer_pos);
+        if let Some(Popup { kind: PopupKind::Zones(z), .. }) = &mut self.popup {
+            if z.mode == zones::Mode::Drag {
+                if let Some(drop) = z.watch.pointer_back(clicked, at) {
+                    self.zones_dropped(drop);
+                }
+            }
+        }
+    }
+
+    /// The drag ended (once, however it was seen): the window goes to the zone it was let go over, if any, then Snap Assist.
+    fn zones_dropped(&mut self, hit: Option<(usize, usize)>) {
+        let Some(Popup { kind: PopupKind::Zones(z), .. }) = &self.popup else { return };
+        let z = z.clone();
+        self.close_popup();
+        if let Some(hit) = hit {
+            self.zones_placed(z, hit, Duration::from_millis(60));
+        }
+    }
+
+    /// A window went into a zone: it is put there (after `wait`: a dropped window is first put down where it was let go), and the
+    /// layout's other zones are offered to the other windows on that screen (Snap Assist).
+    fn zones_placed(&mut self, z: zones::Session, hit: (usize, usize), wait: Duration) {
+        let zz = z.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(wait);
+            zones::apply(&zz, hit);
+        });
+        if let Some(a) = assist::begin(&z, hit) {
+            if self.popup.is_some() {
+                self.close_popup();
+            }
+            self.click_output = self.outputs.iter().find(|(_, o)| o.name == a.monitor.name).map(|(k, _)| *k);
+            self.toggle_popup(PopupKind::Assist(a));
+            self.dirty = true;
+        }
+    }
+
+    /// Snap Assist: window `w` goes into the zone whose turn it is; the overlay closes when nothing is left to offer.
+    fn assist_take(&mut self, w: usize) {
+        let Some(Popup { kind: PopupKind::Assist(a), .. }) = &mut self.popup else { return };
+        let Some(((address, floating, rect), more)) = a.take(w) else { return };
+        std::thread::spawn(move || zones::place(&address, floating, rect));
+        if !more {
+            self.close_popup();
+        }
+        self.dirty = true;
+    }
+
+    /// Snap Assist's keys: arrows and Tab move between tiles, Enter places, Escape stops (handled before this).
+    fn assist_key(&mut self, key: u32) {
+        let cols = self.assist_hits.first().map(|(r0, _)| self.assist_hits.iter().filter(|(r, _)| r.1 == r0.1).count()).unwrap_or(1).max(1) as i32;
+        let Some(Popup { kind: PopupKind::Assist(a), .. }) = &mut self.popup else { return };
+        match key {
+            28 | 96 => {
+                let sel = a.sel;
+                self.assist_take(sel);
+                return;
+            }
+            15 | 106 => a.step(1),
+            105 => a.step(-1),
+            108 => a.step(cols),
+            103 => a.step(-cols),
+            _ => return,
+        }
+        // keep the chosen tile in view
+        let (sel, shown) = (a.sel as i32, self.assist_hits.len() as i32);
+        let first = a.scroll as i32 * cols;
+        if sel < first {
+            a.scroll = (sel / cols) as usize;
+        } else if shown > 0 && sel >= first + shown {
+            a.scroll = ((sel - shown) / cols + 1) as usize;
+        }
+        self.dirty = true;
     }
 
     /// A press on an add-on's card: its `act` runs with the id (only an id its card lists), then it is read again.
@@ -2340,6 +2425,10 @@ impl State {
         }
         if let Some(Popup { kind: PopupKind::Addon(i), .. }) = self.popup {
             self.addon_key(i, key);
+            return;
+        }
+        if matches!(self.popup, Some(Popup { kind: PopupKind::Assist(_), .. })) {
+            self.assist_key(key);
             return;
         }
         let typed = self.xkb.as_ref().map(|x| x.key_get_utf8(xkb::Keycode::new(key + 8))).unwrap_or_default();
@@ -2698,6 +2787,16 @@ impl State {
                         let (card, hits) = zones::paint(&mut pix, s, z, &self.assets.fonts, self.model.dark);
                         self.popup_card = card;
                         self.zone_hits = hits;
+                    }
+                    Some(Popup { kind: PopupKind::Assist(a), .. }) => {
+                        // the surface starts under the bar at the screen's left edge
+                        let (mx, my, _, _) = a.monitor.logical();
+                        let origin = (mx as f32, (my + a.monitor.reserved[1]) as f32);
+                        let pointer = Some(self.pointer_pos);
+                        self.assist_area = a.empty.first().and_then(|z| a.zone_rect(*z)).map(|r| (r.0 as f32 - origin.0, r.1 as f32 - origin.1, r.2 as f32, r.3 as f32)).unwrap_or_default();
+                        self.assist_hits = assist::paint(&mut pix, s, a, origin, &self.model.apps, pointer, &self.assets.fonts, &mut self.assets.icons);
+                        // the whole surface: a click anywhere that is not a tile stops
+                        self.popup_card = (0.0, 0.0, pix.width() as f32 / s, pix.height() as f32 / s);
                     }
                     Some(Popup { kind: PopupKind::Addon(i), .. }) => {
                         let field = self.addon_field.as_ref().map(|(_, t)| t.as_str());
@@ -3247,6 +3346,10 @@ fn pointer_event(state: &mut State, event: wl_pointer::Event) {
                 state.pointer_surface = state.surf_index(&surface);
                 state.pointer_pos = (surface_x as f32, surface_y as f32);
                 state.set_cursor(serial);
+                // the pointer is back on the zones sheet while a window was dragged: the compositor let go of it
+                if state.pointer_surface.and_then(|i| state.surfs.get(i)).map(|s| s.kind == Kind::Popup).unwrap_or(false) {
+                    state.zones_pointer_back(false);
+                }
                 if state.fylgja_pointer_moved() || state.preview_pointer_moved() {
                     return;
                 }
@@ -3286,6 +3389,13 @@ fn pointer_event(state: &mut State, event: wl_pointer::Event) {
                 }
                 if !state.addon_hits.is_empty() && matches!(state.popup, Some(Popup { kind: PopupKind::Addon(_), .. })) {
                     state.dirty = true; // the card's buttons light up
+                }
+                if matches!(state.popup, Some(Popup { kind: PopupKind::Assist(_), .. })) {
+                    state.dirty = true; // the tile under the pointer lights up
+                }
+                // motion on the zones sheet while a window was dragged: the compositor no longer holds the pointer
+                if state.pointer_surface.and_then(|i| state.surfs.get(i)).map(|s| s.kind == Kind::Popup).unwrap_or(false) {
+                    state.zones_pointer_back(false);
                 }
                 state.hover_at(surface_x as f32, surface_y as f32)
             }
@@ -3364,11 +3474,20 @@ fn pointer_event(state: &mut State, event: wl_pointer::Event) {
                                 state.tray_row(a);
                             }
                         } else if let Some(Popup { kind: PopupKind::Zones(z), .. }) = &state.popup {
-                            // picked from the keyboard (Super+Shift+Z): a click on a zone puts the window there
-                            if let Some(hit) = zones::hit_at(&state.zone_hits, (px, py)) {
+                            if z.mode == zones::Mode::Drag {
+                                // a click on the sheet while dragging: the button is up, so the drag ended
+                                state.zones_pointer_back(true);
+                            } else if let Some(hit) = zones::hit_at(&state.zone_hits, (px, py)) {
+                                // picked from the keyboard (Super+Shift+Z): a click on a zone puts the window there
                                 let z = z.clone();
                                 state.close_popup();
-                                std::thread::spawn(move || zones::apply(&z, hit));
+                                state.zones_placed(z, hit, Duration::ZERO);
+                            }
+                        } else if matches!(state.popup, Some(Popup { kind: PopupKind::Assist(_), .. })) {
+                            // Snap Assist: a tile fills the zone; anywhere else stops
+                            match state.assist_hits.iter().find(|(r, _)| px >= r.0 && px < r.0 + r.2 && py >= r.1 && py < r.1 + r.3).map(|(_, w)| *w) {
+                                Some(w) => state.assist_take(w),
+                                None => state.close_popup(),
                             }
                         } else if let Some(Popup { kind: PopupKind::Addon(i), .. }) = state.popup {
                             // the card's controls: a press goes to the add-on, a click in its text field puts typing there
@@ -3677,6 +3796,8 @@ fn main() {
         start_max: 0,
         fy_hits: vec![],
         zone_hits: vec![],
+        assist_hits: vec![],
+        assist_area: (0.0, 0.0, 0.0, 0.0),
         fy_active: Arc::new(AtomicBool::new(false)),
         fy_shared: Arc::new(std::sync::Mutex::new(Default::default())),
         drag: None,
