@@ -131,7 +131,7 @@ mod tests {
         let l = from_json(&v);
         assert!(l.iter().any(|s| s.keys == "Win + /" && s.group == "System"));
         assert!(l.iter().any(|s| s.keys == "Win + Ctrl + 1" && s.group == "Desktops"));
-        assert!(l.iter().any(|s| s.keys == "Ctrl" && s.group == "Mouse"));
+        assert!(l.iter().any(|s| s.keys == "Ctrl twice" && s.group == "Mouse"));
     }
 
     #[test]
