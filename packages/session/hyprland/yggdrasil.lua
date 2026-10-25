@@ -272,8 +272,10 @@ end
 dsp("SUPER + mouse:272", hl.dsp.window.drag(), { mouse = true, desc = "Move the window" })
 dsp("SUPER + mouse:273", hl.dsp.window.resize(), { mouse = true, desc = "Resize the window" })
 
--- Screenshots: a region to the clipboard and to Pictures/Screenshots.
-cmd("PRINT", "sh -c 'd=\"$(xdg-user-dir PICTURES)/Screenshots\"; mkdir -p \"$d\"; f=\"$d/Screenshot $(date +%F\\ %H-%M-%S).png\"; grim -g \"$(slurp)\" \"$f\" && wl-copy < \"$f\" && notify-send -i \"$f\" Screenshot \"Saved and copied\"'", { desc = "Screenshot of a region" })
+-- Screenshots (yggdrasil-shot): the screens are captured at once, open menus included, and you choose on that frozen picture: drag an
+-- area, click a window, or Enter for the whole screen. To the clipboard and to Pictures/Screenshots.
+cmd("PRINT", "yggdrasil-shot", { desc = "Screenshot (area, window or screen)" })
+cmd("SUPER + SHIFT + S", "yggdrasil-shot", { desc = "Screenshot (area, window or screen)" })
 
 -- The multimedia keys, also on the lock screen.
 for key, what in pairs({

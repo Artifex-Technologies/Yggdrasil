@@ -17,6 +17,10 @@ path = "src/greeter.rs"
 name = "yggdrasil-splash"
 path = "src/splash.rs"
 
+[[bin]]
+name = "yggdrasil-shot"
+path = "src/shot.rs"
+
 [features]
 # A stand-in password check for tests inside a throw-away compositor. NEVER enabled in a release build.
 test-auth = []
@@ -24,7 +28,7 @@ test-auth = []
 [dependencies]
 yggdrasil-conf = { path = "../yggdrasil-conf" }
 wayland-client = "0.31"
-wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 calloop = "0.14"
 calloop-wayland-source = "0.4"

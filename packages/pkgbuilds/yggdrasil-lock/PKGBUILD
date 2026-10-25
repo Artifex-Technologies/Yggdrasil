@@ -9,7 +9,7 @@ conflicts=('labyrinth-lock')
 replaces=('labyrinth-lock')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
 license=('MIT')
-depends=('gcc-libs' 'wayland' 'fontconfig' 'libxkbcommon' 'pam')
+depends=('gcc-libs' 'wayland' 'fontconfig' 'libxkbcommon' 'pam' 'grim' 'wl-clipboard' 'libnotify' 'xdg-user-dirs')
 makedepends=('cargo')
 options=('!lto')
 
@@ -30,5 +30,7 @@ package() {
   install -Dm755 "$srcdir/target/release/yggdrasil-greeter" "$pkgdir/usr/bin/yggdrasil-greeter"
   # the screen between signing in and the desktop (Yggdrasil's session starts it)
   install -Dm755 "$srcdir/target/release/yggdrasil-splash" "$pkgdir/usr/bin/yggdrasil-splash"
+  # screenshots of anything on the screen (it captures first, then you choose on the frozen picture)
+  install -Dm755 "$srcdir/target/release/yggdrasil-shot" "$pkgdir/usr/bin/yggdrasil-shot"
 
 }
