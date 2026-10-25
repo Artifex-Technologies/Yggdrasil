@@ -295,10 +295,10 @@ do
   end, { timeout = 40, type = "repeat" })
   tick:set_enabled(false)
   local function press() drag = { told = false }; tick:set_enabled(true) end
-  -- ignore_mods: the same with Super held (Super+drag moves a window too); the release binding stays for compositors or versions
-  -- where it does fire
+  -- ignore_mods: the same with Super held (Super+drag moves a window too). No release binding: on Hyprland 0.56 a release binding on
+  -- the left button keeps the release from ending the compositor's own window move (the window went on following the pointer after
+  -- the drop until the next click, 2026-10-25); the panel reads the button from the kernel instead.
   hl.bind("mouse:272", press, { non_consuming = true, ignore_mods = true })
-  hl.bind("mouse:272", function() if drag then finish("release binding") end end, { release = true, non_consuming = true, ignore_mods = true })
   hl.bind("SUPER + SHIFT + Z", hl.dsp.exec_cmd("yggdrasil-panelctl zones"), { desc = "Window zones for the window in front" })
 end
 
