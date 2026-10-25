@@ -322,6 +322,8 @@ struct State {
     popup: Option<Popup>,
     /// The popover card's rectangle in logical pixels.
     popup_card: (f32, f32, f32, f32),
+    /// The open add-on card's Settings button, if it has one.
+    addon_button: Option<(f32, f32, f32, f32)>,
     /// The dock app the pointer rests on, since when, where (screen x of its icon) and on which output; opens the window list after a second.
     dock_hover: Option<(String, Instant, f32, u32)>,
     /// The key being held (for the start menu) and when it repeats next; Wayland leaves repeating to the client.
@@ -2420,7 +2422,7 @@ impl State {
                         self.tray_hits = hits;
                     }
                     Some(Popup { kind: PopupKind::Addon(i), .. }) => {
-                        self.popup_card = shell::paint_addon(&mut pix, s, &self.model, *i, &self.assets.fonts);
+                        (self.popup_card, self.addon_button) = shell::paint_addon(&mut pix, s, &self.model, *i, &self.assets.fonts, Some(self.pointer_pos));
                     }
                     Some(Popup { kind: PopupKind::Calendar { offset }, .. }) => {
                         let pane = self.model.conf.notify_pane;
@@ -3001,6 +3003,9 @@ fn pointer_event(state: &mut State, event: wl_pointer::Event) {
                     state.dirty = true; // the row under the pointer lights up
                     state.start_hover();
                 }
+                if state.addon_button.is_some() && matches!(state.popup, Some(Popup { kind: PopupKind::Addon(_), .. })) {
+                    state.dirty = true; // the card's Settings button lights up
+                }
                 state.hover_at(surface_x as f32, surface_y as f32)
             }
             wl_pointer::Event::AxisSource { axis_source } => state.axis_wheel = matches!(axis_source, WEnum::Value(wl_pointer::AxisSource::Wheel)),
@@ -3072,8 +3077,13 @@ fn pointer_event(state: &mut State, event: wl_pointer::Event) {
                             if let Some(a) = hit {
                                 state.tray_row(a);
                             }
-                        } else if matches!(state.popup, Some(Popup { kind: PopupKind::Addon(_), .. })) {
-                            // the add-on's card only shows things
+                        } else if let Some(Popup { kind: PopupKind::Addon(i), .. }) = state.popup {
+                            // the card only shows things; its one button opens the add-on's own settings window
+                            let on_button = state.addon_button.is_some_and(|(bx, by, bw, bh)| px >= bx && px < bx + bw && py >= by && py < by + bh);
+                            if let (true, Some(cmd)) = (on_button, state.model.addons.get(i).and_then(|a| a.settings.clone())) {
+                                let _ = std::process::Command::new(&cmd[0]).args(&cmd[1..]).stdin(std::process::Stdio::null()).spawn();
+                                state.close_popup();
+                            }
                         } else if state.model.conf.notify_pane && py >= state.pane_top {
                             let hit = state.pane_hits.iter().rev().find(|(r, _)| px >= r.0 && px < r.0 + r.2 && py >= r.1 && py < r.1 + r.3).map(|(_, a)| a.clone());
                             if let Some(a) = hit {
@@ -3348,6 +3358,7 @@ fn main() {
         dirty: false,
         popup: None,
         popup_card: (0.0, 0.0, 0.0, 0.0),
+        addon_button: None,
         dock_hover: None,
         repeat: None,
         repeat_rate: 25,

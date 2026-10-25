@@ -89,6 +89,7 @@ each change; no file yet means just the icon, if any) or a fixed `text = 2FA` (o
 ```
 icon = timer-symbolic                  # an icon theme name, drawn before the text in the text's colour
 open = /usr/bin/yggdrasil-timer        # a click runs this (the add-on's own window) instead of opening the card
+settings = /usr/bin/yggdrasil-weather-settings   # the card gets a Settings button that runs this
 ```
 
 The JSON may name an `"icon"` (an icon name, replacing the conf's while it does) and carry `"until": UNIX-SECONDS`; `{countdown}` in its text is then drawn as the time left (m:ss or h:mm:ss) and

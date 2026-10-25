@@ -555,15 +555,17 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
 
 /// A bar add-on's card, at the top right under the bar: its name, then each line (title, value, a meter when it has a percent,
 /// a note), then its help sentence. Returns the card's rectangle in logical pixels.
-pub fn paint_addon(pix: &mut Pixmap, s: f32, m: &Model, idx: usize, fonts: &Fonts) -> (f32, f32, f32, f32) {
+/// Returns the card's rectangle and, when the add-on has settings, its Settings button's.
+pub fn paint_addon(pix: &mut Pixmap, s: f32, m: &Model, idx: usize, fonts: &Fonts, pointer: Option<(f32, f32)>) -> ((f32, f32, f32, f32), Option<(f32, f32, f32, f32)>) {
     let w = pix.width() as f32 / s;
     pix.fill(paint::color((0, 0, 0, 0)));
-    let Some(a) = m.addons.get(idx) else { return (0.0, 0.0, 0.0, 0.0) };
+    let Some(a) = m.addons.get(idx) else { return ((0.0, 0.0, 0.0, 0.0), None) };
     let cw = 340.0;
     let pad = 16.0;
     let line_h = |l: &crate::addons::Line| 22.0 + if l.percent.is_some() { 12.0 } else { 0.0 } + if l.note.is_empty() { 0.0 } else { 16.0 } + 8.0;
     let help_lines = if a.help.is_empty() { 0 } else { (a.help.chars().count() as f32 / 46.0).ceil() as usize };
-    let ch = pad + 26.0 + a.lines.iter().map(line_h).sum::<f32>() + help_lines as f32 * 16.0 + pad;
+    let button_h = if a.settings.is_some() { 42.0 } else { 0.0 };
+    let ch = pad + 26.0 + a.lines.iter().map(line_h).sum::<f32>() + help_lines as f32 * 16.0 + button_h + pad;
     let (cx, cy) = (w - cw - 8.0, 8.0);
     let dark = m.dark;
     let (bg, text, dim) = if dark { ((24, 24, 30, 245), (240, 240, 245, 255), (150, 150, 165, 255)) } else { ((250, 250, 252, 245), (20, 20, 28, 255), (100, 100, 115, 255)) };
@@ -611,7 +613,18 @@ pub fn paint_addon(pix: &mut Pixmap, s: f32, m: &Model, idx: usize, fonts: &Font
             paint::draw_text(pix, &fonts.regular, 11.0 * s, (cx + pad) * s, y * s, dim, &line);
         }
     }
-    (cx, cy, cw, ch)
+    let button = a.settings.as_ref().map(|_| {
+        let (bw, bh) = (cw - 2.0 * pad, 32.0);
+        let (bx, by) = (cx + pad, cy + ch - pad - bh);
+        let hover = pointer.is_some_and(|(px, py)| px >= bx && px < bx + bw && py >= by && py < by + bh);
+        let fill = if hover { paint::accent(255) } else if dark { (255, 255, 255, 26) } else { (0, 0, 0, 18) };
+        paint::fill_rounded(pix, bx * s, by * s, bw * s, bh * s, 8.0 * s, fill);
+        let label = "Settings";
+        let tw = paint::text_width(&fonts.bold, 12.5 * s, label);
+        paint::draw_text(pix, &fonts.bold, 12.5 * s, (bx + bw / 2.0) * s - tw / 2.0, (by + bh / 2.0) * s, if hover { (255, 255, 255, 255) } else { text }, label);
+        (bx, by, bw, bh)
+    });
+    ((cx, cy, cw, ch), button)
 }
 
 /// The date popover: today's date and the time, then a month you can scroll through. `offset` is

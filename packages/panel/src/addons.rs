@@ -25,6 +25,7 @@
 //!
 //!   icon = timer-symbolic        # an icon before the text (an icon theme name, tinted like the bar's icons)
 //!   open = /usr/bin/yggdrasil-timer --toggle   # a click runs this (a window of the add-on's own) instead of opening the card
+//!   settings = /usr/bin/yggdrasil-weather-settings   # the card gets a Settings button that runs this
 //!
 //! The JSON may also name an `"icon"` (replacing the conf's while it does), and carry `"until": UNIX-SECONDS`: "{countdown}" in its text is then drawn as the time left (m:ss, or h:mm:ss), redrawn
 //! every second by the panel itself, so a countdown needs no program running every second.
@@ -49,6 +50,7 @@ pub struct Addon {
     pub feed: Feed,
     pub open: Option<Vec<String>>,
     pub icon: String,
+    pub settings: Option<Vec<String>>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -84,6 +86,8 @@ pub struct View {
     pub icon: String,
     /// The add-on said "off": no pill, not even its icon.
     pub off: bool,
+    /// A Settings button on the card runs this (the add-on's settings window).
+    pub settings: Option<Vec<String>>,
 }
 
 impl View {
@@ -119,7 +123,7 @@ pub fn load() -> Vec<Addon> {
                 // a fixed label, or just the icon (a button that opens the add-on's window)
                 Feed::Text(clip(i.get("text").or(i.get("icon").map(|_| ""))?, 40))
             };
-            Some(Addon { id: i.id(), name, feed, open: i.command("open"), icon: i.get("icon").unwrap_or("").to_string() })
+            Some(Addon { id: i.id(), name, feed, open: i.command("open"), icon: i.get("icon").unwrap_or("").to_string(), settings: i.command("settings") })
         })
         .collect()
 }
@@ -180,6 +184,7 @@ fn read(a: &Addon) -> View {
         Feed::Text(t) => View { id: a.id.clone(), name: a.name.clone(), text: t.clone(), ..Default::default() },
     };
     view.open = a.open.clone();
+    view.settings = a.settings.clone();
     // the add-on's own JSON may change the icon (the weather's follows the sky); the conf's is the default
     if view.icon.is_empty() {
         view.icon = a.icon.clone();
@@ -300,7 +305,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("addon-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let f = dir.join("bar.json");
-        let a = Addon { id: "timer".into(), name: "Timer".into(), feed: Feed::File(f.clone()), open: Some(vec!["true".into()]), icon: "timer-symbolic".into() };
+        let a = Addon { id: "timer".into(), name: "Timer".into(), feed: Feed::File(f.clone()), open: Some(vec!["true".into()]), icon: "timer-symbolic".into(), settings: None };
         assert_eq!((read(&a).text.as_str(), read(&a).off), ("", false), "no file yet: no text, the icon still shows");
         std::fs::write(&f, r#"{"state":"off","text":"x"}"#).unwrap();
         assert!(read(&a).off);
