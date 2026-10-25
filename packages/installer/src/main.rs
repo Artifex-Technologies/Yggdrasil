@@ -26,12 +26,13 @@ enum Page {
     Disk,
     Account,
     Browsers,
+    Extras,
     Summary,
     Installing,
     Done,
 }
 
-const PAGES: [Page; 7] = [Page::Welcome, Page::Keyboard, Page::TimeZone, Page::Disk, Page::Account, Page::Browsers, Page::Summary];
+const PAGES: [Page; 8] = [Page::Welcome, Page::Keyboard, Page::TimeZone, Page::Disk, Page::Account, Page::Browsers, Page::Extras, Page::Summary];
 
 /// A browser the operating system offers to install (its installer integration's `browsers` file).
 #[derive(Clone, Debug, PartialEq)]
@@ -41,6 +42,36 @@ struct Browser {
     note: String,
     /// Chosen to start with.
     chosen: bool,
+}
+
+/// An optional part the operating system offers on one page (its installer integration's `extras` file): Labyrinth's AI and
+/// security page (Sarina, Heimdall).
+#[derive(Clone, Debug, PartialEq)]
+struct Extra {
+    id: String,
+    name: String,
+    note: String,
+    /// Chosen to start with (`chosen`, or `chosen_if_exists`: a file on the live system, i.e. this medium carries it).
+    chosen: bool,
+}
+
+/// The OS's optional parts: `{"title", "intro", "extras": [{"id", "name", "note", "chosen" | "chosen_if_exists"}, ...]}`; what
+/// else each entry says is the OS's business. `exists` answers for `chosen_if_exists` (the file system, outside tests).
+fn parse_extras(text: &str, exists: &dyn Fn(&str) -> bool) -> (String, String, Vec<Extra>) {
+    let v: serde_json::Value = serde_json::from_str(text).unwrap_or(serde_json::Value::Null);
+    let list = v["extras"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|e| {
+                    let id = e["id"].as_str()?.to_string();
+                    let chosen = e["chosen"].as_bool().unwrap_or(false) || e["chosen_if_exists"].as_str().is_some_and(|p| p.starts_with('/') && exists(p));
+                    Some(Extra { name: e["name"].as_str().unwrap_or(&id).to_string(), note: e["note"].as_str().unwrap_or("").to_string(), chosen, id })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    (v["title"].as_str().unwrap_or("More").to_string(), v["intro"].as_str().unwrap_or("").to_string(), list)
 }
 
 /// The browsers in the OS's list: `{"browsers": [{"id", "name", "note", "chosen"}, ...]}` (what else each entry says is the OS's
@@ -339,6 +370,11 @@ struct App {
     browsers: Vec<Browser>,
     chosen_browsers: Vec<String>,
     default_browser: String,
+    /// The OS's optional parts (empty: no such page), the page's title and line under it, and those chosen.
+    extras: Vec<Extra>,
+    extras_title: String,
+    extras_intro: String,
+    chosen_extras: Vec<String>,
     reports: Option<Receiver<Report>>,
     step: (usize, usize, String),
     log: Vec<Report>,
@@ -402,11 +438,15 @@ impl App {
             self.manual = partitions::Manual::demo(&d.parts, end, free);
             self.manual_mode = true;
         }
+        if self.extras.is_empty() {
+            self.set_extras(parse_extras(r#"{"title":"AI and security","intro":"Optional. Both can be added or removed later in Agora.","extras":[{"id":"sarina","name":"Sarina","note":"Your local AI assistant","chosen":true},{"id":"heimdall","name":"Heimdall","note":"Watches this computer for attacks"}]}"#, &|_| false));
+        }
         if self.browsers.is_empty() {
             self.set_browsers(parse_browsers(r#"{"browsers":[{"id":"vivaldi","name":"Vivaldi","note":"Chromium-based, very customisable","chosen":true},{"id":"firefox","name":"Firefox","note":"Mozilla's browser"},{"id":"librewolf","name":"LibreWolf","note":"Firefox, hardened for privacy"}]}"#));
         }
         self.page = match what {
             "browsers" => Page::Browsers,
+            "extras" => Page::Extras,
             "keyboard" => Page::Keyboard,
             "timezone" => Page::TimeZone,
             "disk" | "disk-manual" => Page::Disk,
@@ -451,6 +491,10 @@ impl App {
             browsers: vec![],
             chosen_browsers: vec![],
             default_browser: String::new(),
+            extras: vec![],
+            extras_title: String::new(),
+            extras_intro: String::new(),
+            chosen_extras: vec![],
             reports: None,
             step: (0, 0, String::new()),
             log: vec![],
@@ -459,6 +503,10 @@ impl App {
         };
         let list = yggdrasil_conf::integrations::first("installer").and_then(|i| i.get("browsers").map(str::to_string));
         app.set_browsers(list.and_then(|f| std::fs::read_to_string(f).ok()).map(|t| parse_browsers(&t)).unwrap_or_default());
+        let extras = yggdrasil_conf::integrations::first("installer").and_then(|i| i.get("extras").map(str::to_string));
+        if let Some(t) = extras.and_then(|f| std::fs::read_to_string(f).ok()) {
+            app.set_extras(parse_extras(&t, &|p| std::path::Path::new(p).exists()));
+        }
         let args: Vec<String> = std::env::args().collect();
         if let Some(i) = args.iter().position(|a| a == "--demo") {
             app.command = None;
@@ -469,9 +517,26 @@ impl App {
         app
     }
 
-    /// The pages shown: the Browsers page only when the OS offers browsers.
+    /// The pages shown: the Browsers page only when the OS offers browsers, the optional parts' page only when it offers some.
     fn pages(&self) -> Vec<Page> {
-        PAGES.iter().copied().filter(|p| *p != Page::Browsers || !self.browsers.is_empty()).collect()
+        PAGES.iter().copied().filter(|p| (*p != Page::Browsers || !self.browsers.is_empty()) && (*p != Page::Extras || !self.extras.is_empty())).collect()
+    }
+
+    fn set_extras(&mut self, (title, intro, list): (String, String, Vec<Extra>)) {
+        self.chosen_extras = list.iter().filter(|e| e.chosen).map(|e| e.id.clone()).collect();
+        self.extras_title = title;
+        self.extras_intro = intro;
+        self.extras = list;
+    }
+
+    fn toggle_extra(&mut self, id: &str) {
+        if self.chosen_extras.iter().any(|c| c == id) {
+            self.chosen_extras.retain(|c| c != id);
+        } else {
+            self.chosen_extras.push(id.to_string());
+            let order: Vec<&String> = self.extras.iter().map(|e| &e.id).collect();
+            self.chosen_extras.sort_by_key(|c| order.iter().position(|o| *o == c));
+        }
     }
 
     fn set_browsers(&mut self, list: Vec<Browser>) {
@@ -598,6 +663,11 @@ impl App {
             if let Some(obj) = plan.as_object_mut() {
                 obj.insert("browsers".into(), serde_json::json!(self.chosen_browsers));
                 obj.insert("default_browser".into(), serde_json::json!(self.default_browser));
+            }
+        }
+        if !self.extras.is_empty() {
+            if let Some(obj) = plan.as_object_mut() {
+                obj.insert("extras".into(), serde_json::json!(self.chosen_extras));
             }
         }
         if self.manual_mode {
@@ -909,6 +979,24 @@ impl eframe::App for App {
                             ui.label(RichText::new("Browsers that are not on the installer need the internet while installing; one that cannot be fetched is left for Agora.").color(pal.dim));
                         }
                     }
+                    Page::Extras => {
+                        heading(ui, &pal, &self.extras_title.clone(), &self.extras_intro.clone());
+                        let mut toggle = None;
+                        for e in &self.extras {
+                            let on = self.chosen_extras.contains(&e.id);
+                            ui.horizontal(|ui| {
+                                let label = RichText::new(format!("{}  {}", if on { "✔" } else { "  " }, e.name)).color(if on { pal.on_accent() } else { pal.text });
+                                if ui.add(egui::Button::new(label).fill(if on { pal.accent } else { pal.field }).min_size(vec2(170.0, 32.0))).clicked() {
+                                    toggle = Some(e.id.clone());
+                                }
+                                ui.add(egui::Label::new(RichText::new(&e.note).color(pal.dim)).wrap());
+                            });
+                            ui.add_space(8.0);
+                        }
+                        if let Some(id) = toggle {
+                            self.toggle_extra(&id);
+                        }
+                    }
                     Page::Summary => {
                         heading(ui, &pal, "Ready to install", "Check the choices. Nothing has been changed yet.");
                         let disk = self.chosen_disk();
@@ -928,6 +1016,15 @@ impl eframe::App for App {
                                 self.chosen_browsers.iter().map(|c| if *c == self.default_browser && self.chosen_browsers.len() > 1 { format!("{} (default)", self.browser_name(c)) } else { self.browser_name(c) }).collect::<Vec<_>>().join(", ")
                             }),
                         ];
+                        let extras_row = if self.extras.is_empty() {
+                            String::new()
+                        } else if self.chosen_extras.is_empty() {
+                            "none".to_string()
+                        } else {
+                            self.extras.iter().filter(|e| self.chosen_extras.contains(&e.id)).map(|e| e.name.clone()).collect::<Vec<_>>().join(", ")
+                        };
+                        let extras_title = self.extras_title.clone();
+                        let rows: Vec<(&str, String)> = rows.into_iter().chain(std::iter::once((extras_title.as_str(), extras_row))).collect();
                         egui::Grid::new("summary").num_columns(2).spacing(vec2(24.0, 8.0)).show(ui, |ui| {
                             for (k, v) in rows.into_iter().filter(|(_, v)| !v.is_empty()) {
                                 ui.label(RichText::new(k).color(pal.dim));
@@ -1101,6 +1198,25 @@ mod tests {
         app.set_browsers(vec![]);
         assert!(!app.pages().contains(&Page::Browsers), "no list from the OS: no page");
         assert!(app.plan().get("browsers").is_none(), "and the plan says nothing about browsers");
+    }
+
+    #[test]
+    fn optional_parts_come_from_the_os_and_start_chosen_when_the_medium_has_them() {
+        let text = r#"{"title":"AI and security","intro":"Optional.","extras":[{"id":"sarina","name":"Sarina","note":"n","chosen_if_exists":"/usr/bin/sarina","components":["sarina"]},{"id":"heimdall","name":"Heimdall","chosen_if_exists":"/usr/bin/heimdalld"},{"name":"no id"},{"id":"x","chosen_if_exists":"relative/path"}]}"#;
+        let (title, intro, list) = parse_extras(text, &|p| p == "/usr/bin/heimdalld" || p == "relative/path");
+        assert_eq!((title.as_str(), intro.as_str()), ("AI and security", "Optional."));
+        assert_eq!(list.iter().map(|e| (e.id.as_str(), e.chosen)).collect::<Vec<_>>(), [("sarina", false), ("heimdall", true), ("x", false)], "only an absolute path counts");
+        let mut app = App::new();
+        app.set_extras((title, intro, list));
+        assert_eq!(app.chosen_extras, ["heimdall"]);
+        app.toggle_extra("sarina");
+        assert_eq!(app.chosen_extras, ["sarina", "heimdall"], "kept in the list's order");
+        app.toggle_extra("heimdall");
+        assert_eq!(app.plan()["extras"], serde_json::json!(["sarina"]));
+        assert!(app.pages().contains(&Page::Extras));
+        app.set_extras((String::new(), String::new(), vec![]));
+        assert!(!app.pages().contains(&Page::Extras), "nothing offered: no page");
+        assert!(app.plan().get("extras").is_none());
     }
 
     #[test]

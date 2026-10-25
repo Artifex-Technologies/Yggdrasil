@@ -179,6 +179,8 @@ struct App {
     mac_typed: std::collections::HashMap<String, String>,
     // Security page
     sec_filter: usize,
+    /// The alert whose explanation is open (its time and detector).
+    sec_open: Option<(i64, String)>,
     sec_sub: SecSub,
     demo_scroll: u32,
     demo_offset: f32,
@@ -272,6 +274,7 @@ impl App {
             wifi_password: None,
             mac_typed: Default::default(),
             sec_filter: 1,
+            sec_open: None,
             demo_scroll: if start_sub().starts_with("distress-demo-") { 8 } else { 0 },
             demo_offset: if start_sub() == "distress-demo-warn" { 100_000.0 } else { 430.0 },
             sec_sub: match start_sub().as_str() {
@@ -2299,10 +2302,29 @@ impl App {
                     _ => pal.dim,
                 };
                 let text: String = a.summary.chars().take(160).collect();
+                let key = (a.time, a.detector.clone());
+                let open = self.sec_open.as_ref() == Some(&key);
+                let mut toggle = false;
                 ui::row(ui, pal, false, &text, Some(&format!("{} · {}", a.detector, security::ago(a.time, now))), |ui| {
                     let (rect, _) = ui.allocate_exact_size(vec2(12.0, 12.0), Sense::hover());
                     ui.painter().circle_filled(rect.center(), 5.0, color);
+                    // the monitor's own explanation, in plain words (no AI needed)
+                    if a.explain.is_some() && ui.button(if open { "Hide" } else { "Explain" }).clicked() {
+                        toggle = true;
+                    }
                 });
+                if toggle {
+                    self.sec_open = if open { None } else { Some(key) };
+                }
+                if let (true, Some([what, serious, done, todo])) = (open, a.explain.as_ref()) {
+                    egui::Frame::new().inner_margin(egui::Margin { left: 14, right: 14, top: 2, bottom: 10 }).show(ui, |ui| {
+                        for (label, body) in [("What happened", what), ("How serious", serious), ("What was done", done), ("What to do", todo)] {
+                            ui.label(egui::RichText::new(label).strong().size(12.5).color(pal.text));
+                            ui.add(egui::Label::new(egui::RichText::new(body).size(12.5).color(pal.dim)).wrap());
+                            ui.add_space(4.0);
+                        }
+                    });
+                }
             }
         });
         ui.add_space(8.0);

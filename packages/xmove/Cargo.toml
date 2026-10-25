@@ -3,7 +3,7 @@ name = "yggdrasil-xmove"
 version = "0.1.0"
 edition = "2021"
 description = "Lets X11 programs that draw their own title bar (Steam) be dragged and resized in Hyprland"
-license = "MIT"
+license = "MPL-2.0"
 
 [dependencies]
 x11rb = "0.13.2"

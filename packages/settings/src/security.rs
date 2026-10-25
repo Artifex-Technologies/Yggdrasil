@@ -17,6 +17,8 @@ pub struct Alert {
     /// For connection alerts: the program and the address.
     pub process: String,
     pub remote: String,
+    /// The monitor's own plain-language explanation (what happened, how serious, what it did, what to do), when it gives one.
+    pub explain: Option<[String; 4]>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -187,6 +189,10 @@ pub fn parse_alerts(body: &str) -> Vec<Alert> {
                 summary: a.get("summary").and_then(|s| s.as_str()).unwrap_or("").to_string(),
                 process: field("process"),
                 remote: if field("remote_addr").is_empty() { String::new() } else { format!("{}:{}", field("remote_addr"), field("remote_port")) },
+                explain: a.get("explain").and_then(|x| {
+                    let part = |k: &str| x.get(k).and_then(|v| v.as_str()).map(|v| v.chars().filter(|c| !c.is_control()).take(400).collect::<String>());
+                    Some([part("what")?, part("serious")?, part("done")?, part("do")?])
+                }),
             })
         })
         .collect();
@@ -279,6 +285,16 @@ mod tests {
         assert_eq!(ago(0, 300), "5 min ago");
         assert_eq!(ago(0, 7200), "2 h ago");
         assert_eq!(ago(0, 3 * 86400), "3 d ago");
+    }
+
+    #[test]
+    fn an_alert_carries_its_explanation() {
+        let body = r#"[{"time":"2026-10-25T10:00:00Z","detector_id":"inbound","severity":"warning","summary":"x","explain":{"what":"Something tried\nto reach","serious":"Worth a look","done":"Blocked","do":"Nothing"}},
+                      {"time":"2026-10-25T09:00:00Z","detector_id":"inbound","severity":"info","summary":"older, no explanation"}]"#;
+        let a = parse_alerts(body);
+        assert_eq!(a[0].explain.as_ref().map(|e| e[0].as_str()), Some("Something triedto reach"), "control characters dropped");
+        assert_eq!(a[0].explain.as_ref().map(|e| e[3].as_str()), Some("Nothing"));
+        assert!(a[1].explain.is_none());
     }
 
     #[test]

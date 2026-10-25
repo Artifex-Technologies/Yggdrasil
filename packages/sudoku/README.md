@@ -24,4 +24,4 @@ Sudoku as a Yggdrasil window (Rust, egui, yggdrasil-ui).
 | P or Space | pause |
 
 Rewritten in Rust from the ideas of [Morganczech/omarchy-sudoku-plugin](https://github.com/Morganczech/omarchy-sudoku-plugin) (MIT):
-its modes, survival rules, clue ranges and controls. No code was copied. MIT.
+its modes, survival rules, clue ranges and controls. No code was copied. This crate is MPL-2.0, like the rest of Yggdrasil.

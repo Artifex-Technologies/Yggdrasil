@@ -3,7 +3,7 @@ name = "yggdrasil-gamepads"
 version = "0.1.0"
 edition = "2021"
 description = "Game controllers for Yggdrasil: which are connected (from sysfs), their battery, lightbar and player lights, a rumble test, and the saved controller settings"
-license = "MIT"
+license = "MPL-2.0"
 
 [lib]
 name = "gamepads"

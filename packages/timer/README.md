@@ -33,4 +33,4 @@ yggdrasil-timer reconcile          see above
 | `timer-symbolic.svg` | `/usr/share/yggdrasil/icons/timer-symbolic.svg` |
 | `yggdrasil-timer-reconcile.desktop` | `/etc/xdg/autostart/yggdrasil-timer-reconcile.desktop` |
 
-Needs `systemd` (user manager) and `libnotify`; `libcanberra` or PipeWire for the sound. MIT, like upstream.
+Needs `systemd` (user manager) and `libnotify`; `libcanberra` or PipeWire for the sound. MPL-2.0, like the rest of Yggdrasil (upstream is MIT).

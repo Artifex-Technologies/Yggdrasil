@@ -3,7 +3,7 @@ name = "yggdrasil-authenticator"
 version = "0.1.0"
 edition = "2021"
 description = "Proton Authenticator codes in Yggdrasil: search, copy with Enter (a front end to devSviat's pa-helper)"
-license = "MIT"
+license = "MPL-2.0"
 
 [dependencies]
 eframe = "0.36.2"

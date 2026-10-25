@@ -3,7 +3,7 @@ name = "yggdrasil-sudoku"
 version = "0.1.0"
 edition = "2021"
 description = "Sudoku: classic and survival, with notes, undo and hints"
-license = "MIT"
+license = "MPL-2.0"
 
 [[bin]]
 name = "yggdrasil-sudoku"

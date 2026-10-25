@@ -5,7 +5,7 @@ pkgrel=1
 pkgdesc="VLC in Yggdrasil's look: libVLC plays, Yggdrasil's window"
 arch=('x86_64')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
-license=('MIT')
+license=('MPL-2.0')
 # libvlc and its decoders (ffmpeg: H.264, H.265 and most others; dav1d: AV1), subtitles drawn (freetype, ass), sound (pulse, which PipeWire serves)
 depends=('gcc-libs' 'libxkbcommon' 'wayland' 'vulkan-icd-loader' 'libglvnd' 'fontconfig' 'libvlc' 'vlc-plugins-base'
          'vlc-plugin-ffmpeg' 'vlc-plugin-dav1d' 'vlc-plugin-freetype' 'vlc-plugin-ass' 'vlc-plugin-matroska' 'vlc-plugin-pulse')

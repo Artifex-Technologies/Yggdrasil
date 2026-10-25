@@ -3,7 +3,7 @@ name = "agora"
 version = "0.1.0"
 edition = "2021"
 description = "Agora: one place for apps, from the operating system's catalog and from repositories you add"
-license = "MIT"
+license = "MPL-2.0"
 
 [[bin]]
 name = "agora"

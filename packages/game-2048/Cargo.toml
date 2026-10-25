@@ -3,7 +3,7 @@ name = "yggdrasil-2048"
 version = "0.1.0"
 edition = "2021"
 description = "2048: slide and merge tiles; Classic, Fibonacci, Evil and Daily, boards from 3x3 to 6x6"
-license = "MIT"
+license = "MPL-2.0"
 
 [[bin]]
 name = "yggdrasil-2048"

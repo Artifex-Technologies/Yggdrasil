@@ -3,7 +3,7 @@ name = "yggdrasil-settings"
 version = "0.1.0"
 edition = "2021"
 description = "Settings: the everyday settings in one clean app (GNOME-style), on top of Plasma"
-license = "MIT"
+license = "MPL-2.0"
 
 [[bin]]
 name = "yggdrasil-settings"

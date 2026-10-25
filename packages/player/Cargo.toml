@@ -3,7 +3,7 @@ name = "yggdrasil-player"
 version = "0.1.0"
 edition = "2021"
 description = "VLC in Yggdrasil's look: libVLC plays, Yggdrasil's window"
-license = "MIT"
+license = "MPL-2.0"
 
 [[bin]]
 name = "yggdrasil-player"

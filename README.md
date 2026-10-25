@@ -66,4 +66,4 @@ Every program is its own Cargo project (`cd packages/<name> && cargo build --rel
 Some pages appear only when the operating system provides what they need (for example Settings > Security > Distress password needs
 Labyrinth's `labyrinth-distress`, and the security monitor's pages need a `security` integration such as Heimdall's).
 
-Licence: see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for what is built on.
+Licence: Mozilla Public License 2.0 ([LICENSE](LICENSE)). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for what is built on, under its own licences.

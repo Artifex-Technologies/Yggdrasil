@@ -525,6 +525,12 @@ pub fn from_alert(v: &serde_json::Value, min: &str, id: u32) -> Option<Notif> {
     }
     let detector = v.get("detector_id").and_then(|x| x.as_str()).unwrap_or("alert");
     let summary = clean(v.get("summary").and_then(|x| x.as_str()).unwrap_or(""));
+    // the monitor's own plain-language next step, when it gives one, under the summary
+    let todo = v.get("explain").and_then(|x| x.get("do")).and_then(|x| x.as_str()).map(clean).filter(|t| !t.is_empty());
+    let body = match todo {
+        Some(t) => format!("{summary}\nWhat to do: {t}"),
+        None => summary,
+    };
     // a blocked app that connected has a page of its own in Settings
     let link = v
         .get("event")
@@ -540,7 +546,7 @@ pub fn from_alert(v: &serde_json::Value, min: &str, id: u32) -> Option<Notif> {
         entry: String::new(),
         icon: "security-high".into(),
         summary: format!("{} · {}", if sev == "critical" { "Critical" } else { "Warning" }, detector),
-        body: summary,
+        body,
         urgency: if sev == "critical" { 2 } else { 1 },
         time: now_secs(),
         actions: vec![],
@@ -1018,6 +1024,8 @@ mod tests {
         assert!(note.summary.starts_with("Critical"));
         let info = serde_json::json!({"detector_id": "connection-watch", "severity": "info", "summary": "s"});
         assert!(from_alert(&info, "warning", 1).is_none());
+        let explained = serde_json::json!({"severity":"warning","detector_id":"inbound","summary":"blocked","explain":{"what":"w","serious":"s","done":"d","do":"Nothing to do"}});
+        assert_eq!(from_alert(&explained, "warning", 2).unwrap().body, "blocked\nWhat to do: Nothing to do", "the monitor's next step comes under the summary");
         assert_eq!(from_alert(&info, "info", 1).unwrap().link, "security:monitor", "other alerts open the monitor's page");
     }
 }

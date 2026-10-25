@@ -9,7 +9,7 @@ provides=('labyrinth-settings')
 conflicts=('labyrinth-settings')
 replaces=('labyrinth-settings')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
-license=('MIT')
+license=('MPL-2.0')
 depends=('gcc-libs' 'libxkbcommon' 'wayland' 'vulkan-icd-loader' 'libglvnd' 'fontconfig'
          'networkmanager' 'bluez-utils' 'libpulse' 'libkscreen' 'kconfig' 'power-profiles-daemon' 'pciutils' 'python' 'polkit')
 optdepends=('ufw: firewall page'

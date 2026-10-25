@@ -3,7 +3,7 @@ name = "minos"
 version = "0.1.0"
 edition = "2021"
 description = "GUI-independent core of minos, a Linux file explorer modelled on EdenExplorer"
-license = "MIT"
+license = "MPL-2.0"
 
 [lib]
 name = "minos_core"

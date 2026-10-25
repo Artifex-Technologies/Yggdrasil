@@ -3,7 +3,7 @@ name = "yggdrasil-idle"
 version = "0.1.0"
 edition = "2021"
 description = "Yggdrasil's idle manager: watches how long the user has been away (Wayland ext-idle-notify) and, when told to, dims, locks, turns the display off or sleeps. Starts in observe-only mode."
-license = "MIT"
+license = "MPL-2.0"
 
 [[bin]]
 name = "yggdrasil-idle"

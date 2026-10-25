@@ -3,7 +3,7 @@ name = "yggdrasil-health"
 version = "0.1.0"
 edition = "2021"
 description = "Break reminders for Yggdrasil: eyes, movement, water, breathing, meals and wind-down, with a top bar pill whose card holds the settings"
-license = "MIT"
+license = "MPL-2.0"
 
 [lib]
 name = "yggdrasil_health"

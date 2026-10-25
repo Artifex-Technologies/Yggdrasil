@@ -3,7 +3,7 @@ name = "yggdrasil-conf"
 version = "0.1.0"
 edition = "2021"
 description = "Settings files and folders shared by Yggdrasil's programs"
-license = "MIT"
+license = "MPL-2.0"
 
 [lib]
 name = "yggdrasil_conf"

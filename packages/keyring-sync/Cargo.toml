@@ -3,7 +3,7 @@ name = "yggdrasil-keyring-sync"
 version = "0.1.0"
 edition = "2021"
 description = "Keeps gnome-keyring's login keyring and the login password together: one clear question when they have drifted apart"
-license = "MIT"
+license = "MPL-2.0"
 
 [[bin]]
 name = "yggdrasil-keyring-sync"

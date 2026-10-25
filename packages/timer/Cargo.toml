@@ -3,7 +3,7 @@ name = "yggdrasil-timer"
 version = "0.1.0"
 edition = "2021"
 description = "A countdown timer in Yggdrasil's top bar: presets or a length of your own, an alarm that rings with the card closed"
-license = "MIT"
+license = "MPL-2.0"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

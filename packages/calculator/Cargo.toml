@@ -3,7 +3,7 @@ name = "yggdrasil-calculator"
 version = "0.1.0"
 edition = "2021"
 description = "Calculator: standard with history, scientific when widened"
-license = "MIT"
+license = "MPL-2.0"
 
 [[bin]]
 name = "yggdrasil-calculator"

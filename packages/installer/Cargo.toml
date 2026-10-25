@@ -3,7 +3,7 @@ name = "yggdrasil-installer"
 version = "0.1.0"
 edition = "2021"
 description = "Installs the operating system from its live medium: Yggdrasil's window, the OS's own install steps"
-license = "MIT"
+license = "MPL-2.0"
 
 [[bin]]
 name = "yggdrasil-installer"

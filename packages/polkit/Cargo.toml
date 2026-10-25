@@ -3,7 +3,7 @@ name = "yggdrasil-polkit"
 version = "0.1.0"
 edition = "2021"
 description = "Yggdrasil's polkit authentication agent: the password box that appears when something asks for administrator rights (pkexec, Settings)"
-license = "MIT"
+license = "MPL-2.0"
 
 [[bin]]
 name = "yggdrasil-polkit"

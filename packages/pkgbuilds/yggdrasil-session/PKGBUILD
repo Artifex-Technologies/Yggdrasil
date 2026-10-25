@@ -5,7 +5,7 @@ pkgrel=1
 pkgdesc="Yggdrasil's own desktop session, on Hyprland"
 arch=('any')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
-license=('MIT')
+license=('MPL-2.0')
 depends=('hyprland' 'xdg-desktop-portal-hyprland' 'yggdrasil-panel' 'yggdrasil-idle' 'yggdrasil-lock' 'yggdrasil-polkit' 'yggdrasil-portal' 'yggdrasil-xmove'
          'python' 'grim' 'slurp' 'wl-clipboard' 'libnotify' 'xdg-user-dirs'
          'gcc' 'pkgconf')  # the Hyprland plugin is built for the installed Hyprland at login (yggdrasil-hypr-plugin)
