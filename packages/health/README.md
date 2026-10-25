@@ -1,7 +1,9 @@
 # Health
 
 Break reminders for Yggdrasil: rest your eyes, move, drink water, breathe, eat and wind down. A pill in the top bar counts down
-to the next one; clicking it opens the settings window (clicking again closes it).
+to the next one; clicking it drops down its card, drawn by the panel like the other bar cards: the next reminder with a progress
+bar, switches for reminders, quiet hours and sound, the list of reminders (a click turns one on or off), steppers for their
+intervals and times and for quiet hours, and pause (15 min, 1 h, until tomorrow) or resume. There is no window.
 
 A Rust rewrite of [omarchy-health-mode](https://github.com/musgandapur645-sudo/omarchy-health-mode) (MIT, see
 `data/UPSTREAM-LICENSE`): the same reminders, default cadences and messages, plus quiet hours and pausing.
@@ -31,8 +33,8 @@ The eye-exercise reminder only reminds. It does not prescribe or teach an exerci
 ## Commands
 
 ```
-yggdrasil-health                       the settings window (run again: closes it)
 yggdrasil-health daemon                the service (yggdrasil-health.service, a user unit)
+yggdrasil-health press ID              a control on the card (the panel runs it: toggle:eye, int:move:+, at:meal:-, pause:15, ...)
 yggdrasil-health summary               settings and the next reminder, as JSON
 yggdrasil-health fire water            send one reminder now
 yggdrasil-health pause 30|tomorrow     pause for minutes, or until midnight
@@ -43,10 +45,10 @@ The service wakes when the next reminder is due, and at least once a minute to p
 
 ## Files
 
-- `~/.config/yggdrasil/health.json`: the settings (written by the window and `pause`/`resume`).
+- `~/.config/yggdrasil/health.json`: the settings (written by `press`, `pause` and `resume`).
 - `~/.local/state/yggdrasil/health/state.json`: when each reminder last went out (written by the service).
-- `~/.local/state/yggdrasil/health/bar.json`: what the top bar shows (Yggdrasil's `bar-item` JSON with `until` and
-  `{countdown}`; see `docs/INTEGRATIONS.md`).
+- `~/.local/state/yggdrasil/health/bar.json`: what the top bar shows (Yggdrasil's `bar-item` JSON with `until`,
+  `{countdown}` and the `card`; see `docs/INTEGRATIONS.md`). `press` rewrites it at once, so the card follows each click.
 
 ## Installed files
 
@@ -56,7 +58,6 @@ The service wakes when the next reminder is due, and at least once a minute to p
 | `data/yggdrasil-health.service` | `/usr/lib/systemd/user/yggdrasil-health.service`        |
 | `data/health.conf`            | `/usr/share/yggdrasil/integrations/health.conf`           |
 | `data/health-symbolic.svg`    | `/usr/share/yggdrasil/icons/health-symbolic.svg`          |
-| `data/yggdrasil-health.desktop` | `/usr/share/applications/yggdrasil-health.desktop`      |
 | `data/UPSTREAM-LICENSE`       | `/usr/share/licenses/yggdrasil-health/UPSTREAM-LICENSE`   |
 
 Turn the reminders on with `systemctl --user enable --now yggdrasil-health.service`.

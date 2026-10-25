@@ -6,8 +6,6 @@ description = "A countdown timer in Yggdrasil's top bar: presets or a length of 
 license = "MIT"
 
 [dependencies]
-eframe = "0.36.2"
-yggdrasil-ui = { path = "../yggdrasil-ui" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.151"
 

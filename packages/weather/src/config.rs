@@ -18,6 +18,16 @@ pub struct Config {
     /// For "auto": when the place was last found (seconds since 1970).
     #[serde(default)]
     pub detected_at: i64,
+    /// The last place picked from a search, kept while another mode is used, so "Chosen place" can go back to it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chosen: Option<Chosen>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Chosen {
+    pub name: String,
+    pub lat: f64,
+    pub lon: f64,
 }
 
 fn manual() -> String {
@@ -89,10 +99,10 @@ mod tests {
     fn round_trip_and_validation() {
         let d = std::env::temp_dir().join(format!("lw-config-{}", std::process::id()));
         let f = d.join("w.json");
-        let c = Config { name: "Test".into(), lat: 40.7, lon: -74.0, units: "us".into(), mode: "auto".into(), detected_at: 5 };
+        let c = Config { name: "Test".into(), lat: 40.7, lon: -74.0, units: "us".into(), mode: "auto".into(), detected_at: 5, chosen: Some(Chosen { name: "Home".into(), lat: 1.0, lon: 2.0 }) };
         save(&f, &c).unwrap();
         assert_eq!(load(&f), Some(c));
-        assert!(save(&f, &Config { name: "x".into(), lat: 91.0, lon: 0.0, units: "metric".into(), mode: "manual".into(), detected_at: 0 }).is_err());
+        assert!(save(&f, &Config { name: "x".into(), lat: 91.0, lon: 0.0, units: "metric".into(), mode: "manual".into(), detected_at: 0, chosen: None }).is_err());
         std::fs::write(&f, r#"{"name":"x","lat":1.0,"lon":2.0}"#).unwrap();
         assert_eq!((load(&f).unwrap().units.as_str(), load(&f).unwrap().mode.as_str()), ("metric", "manual"));
         std::fs::write(&f, r#"{"name":"x","lat":200.0,"lon":2.0}"#).unwrap();

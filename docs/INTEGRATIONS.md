@@ -95,6 +95,36 @@ settings = /usr/bin/yggdrasil-weather-settings   # the card gets a Settings butt
 The JSON may name an `"icon"` (an icon name, replacing the conf's while it does) and carry `"until": UNIX-SECONDS`; `{countdown}` in its text is then drawn as the time left (m:ss or h:mm:ss) and
 redrawn by the panel every second, so a countdown needs no program running every second.
 
+#### Cards you can use (`card` and `act`)
+
+An add-on whose card has controls lists them in `"card"`, an array of blocks drawn in order (after `lines`, before `help`), and names
+the program that handles a press in its conf:
+
+```
+act = /usr/bin/yggdrasil-timer press      # run as: act ID   (a field: act ID TEXT)
+```
+
+Blocks (every `id` is letters, digits and `._:+-`, at most 64; text is cut short):
+
+| block | drawn as |
+|---|---|
+| `{"big": "{countdown}", "caption": "25 min timer", "progress": [FROM, TO]}` | a large clock-style line in a dark inner panel, a dim caption, a thin bar. `progress` is either two Unix times (the bar fills as time passes, redrawn every second) or one number 0-100 |
+| `{"section": "PRESETS"}` | a small dim heading, with a thin rule above it unless it is the first block |
+| `{"buttons": [{"id", "label", "icon", "accent", "close"}], "columns": 3}` | a grid of equal buttons (`columns` defaults to the number of buttons); `icon` is an icon name or path drawn before the label; `accent` fills it in the accent colour |
+| `{"stepper": {"label": "Duration", "value": "25m", "minus": "ID", "plus": "ID"}}` | label, then − value + on the right |
+| `{"field": {"id": "search", "hint": "Search accounts", "value": "", "submit": "ID"}}` | a text box. While the card is open, typing goes to it; each change runs `act ID TEXT` (the add-on answers with a new card), Enter presses `submit` |
+| `{"list": [{"id", "title", "note", "value", "on", "close"}]}` | clickable rows: title and note on the left, value (bold) on the right; `on` marks the chosen row (a check) |
+| `{"text": "...", "dim": true}` | a wrapped paragraph |
+
+`"close": true` on a button or row closes the card after the press (copying a code, say). After every press the panel reads the
+add-on again at once (a `file` add-on writes its file; a `command` add-on is run again), so the card shows the new state. The panel
+only ever runs `act` with an id that the card listed: what the add-on prints can choose among its own actions, never name a program.
+
+`"refresh_at": UNIX-SECONDS` (top level) has the panel read the add-on again at that moment while its card is open (codes that roll
+over, say). A `command` add-on with `interval = 0` runs only when its card opens and after presses, never in the background.
+
+An add-on with a `card` opens its card from the pill; `open` is for an add-on that has no card.
+
 ### `apps` (an app launcher with per-app rules)
 
 ```

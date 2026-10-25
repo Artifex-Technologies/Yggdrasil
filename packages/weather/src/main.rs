@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Duration;
 
+use yggdrasil_weather::card;
 use yggdrasil_weather::config::{self, Config};
 use yggdrasil_weather::consensus::{self, Hour};
 use yggdrasil_weather::locate;
@@ -23,6 +24,37 @@ fn http_get(url: &str) -> Result<String, String> {
     resp.body_mut().read_to_string().map_err(|e| e.to_string())
 }
 
+/// `url`'s answer, from the cache when it is younger than `max_age` seconds (0: always asked again). Every answer is cached; when
+/// the service cannot be reached, an answer up to six hours old is used instead. The card asks again after each press, so it reads
+/// from here and stays quick.
+fn get_cached(url: &str, max_age: u64) -> Result<String, String> {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    url.hash(&mut h);
+    let path = yggdrasil_conf::dirs::cache().join("weather").join(format!("{:016x}.txt", h.finish()));
+    let age = std::fs::metadata(&path).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).map(|d| d.as_secs());
+    if max_age > 0 && age.is_some_and(|a| a < max_age) {
+        if let Ok(t) = std::fs::read_to_string(&path) {
+            return Ok(t);
+        }
+    }
+    match http_get(url) {
+        Ok(t) => {
+            let _ = std::fs::create_dir_all(path.parent().unwrap());
+            let tmp = path.with_extension("tmp");
+            if std::fs::write(&tmp, &t).is_ok() {
+                let _ = std::fs::rename(&tmp, &path);
+            }
+            Ok(t)
+        }
+        Err(e) if age.is_some_and(|a| a < 6 * 3600) => std::fs::read_to_string(&path).map_err(|_| e),
+        Err(e) => Err(e),
+    }
+}
+
+/// How long the card and the bar reuse an answer.
+const PANEL_CACHE_S: u64 = 600;
+
 type Ensemble = (Vec<String>, Vec<Vec<Option<f64>>>);
 
 struct Fetched {
@@ -31,11 +63,11 @@ struct Fetched {
     station: Option<(Station, f64)>,
 }
 
-fn fetch(cfg: &Config) -> Result<Fetched, String> {
-    let forecast = openmeteo::parse_multi(&http_get(&openmeteo::forecast_url(cfg.lat, cfg.lon, openmeteo::DEFAULT_MODELS, 3))?)?;
+fn fetch(cfg: &Config, max_age: u64) -> Result<Fetched, String> {
+    let forecast = openmeteo::parse_multi(&get_cached(&openmeteo::forecast_url(cfg.lat, cfg.lon, openmeteo::DEFAULT_MODELS, 3), max_age)?)?;
     // The ensemble and the measured station are extras: their failure must not break the bar.
-    let ensemble = http_get(&openmeteo::ensemble_url(cfg.lat, cfg.lon, 3)).ok().and_then(|t| openmeteo::parse_ensemble(&t).ok());
-    let station = http_get(&observe::metar_url(cfg.lat, cfg.lon))
+    let ensemble = get_cached(&openmeteo::ensemble_url(cfg.lat, cfg.lon, 3), max_age).ok().and_then(|t| openmeteo::parse_ensemble(&t).ok());
+    let station = get_cached(&observe::metar_url(cfg.lat, cfg.lon), max_age)
         .ok()
         .and_then(|t| observe::parse_metar(&t).ok())
         .and_then(|s| observe::nearest(&s, cfg.lat, cfg.lon, MAX_STATION_KM));
@@ -61,24 +93,25 @@ fn load_config() -> Result<Config, String> {
     if let Some(c) = saved.as_ref().filter(|c| c.mode != "timezone") {
         return Ok(c.clone());
     }
-    let units = saved.map(|c| c.units).unwrap_or_else(|| "metric".into());
     let f = locate::from_timezone().map_err(|e| format!("no place: {e}; choose one in Weather's settings"))?;
-    Ok(Config { name: f.name, lat: f.lat, lon: f.lon, units, mode: "timezone".into(), detected_at: 0 })
+    // the time zone's place, with what else was saved (units, the last chosen place)
+    let base = saved.unwrap_or(Config { name: String::new(), lat: 0.0, lon: 0.0, units: "metric".into(), mode: "timezone".into(), detected_at: 0, chosen: None });
+    Ok(Config { name: f.name, lat: f.lat, lon: f.lon, mode: "timezone".into(), detected_at: 0, ..base })
 }
 
-/// Finds the place from nearby Wi-Fi (beaconDB) and saves it as the automatic place.
-fn detect_and_save(units: &str) -> Result<Config, String> {
+/// Finds the place from nearby Wi-Fi (beaconDB) and saves it as the automatic place, keeping the rest of `base`.
+fn detect_and_save(base: Config) -> Result<Config, String> {
     let path = config::config_path().ok_or("no config directory")?;
     let f = locate::from_wifi()?;
-    let c = Config { name: f.name, lat: f.lat, lon: f.lon, units: units.into(), mode: "auto".into(), detected_at: now_epoch() };
+    let c = Config { name: f.name, lat: f.lat, lon: f.lon, mode: "auto".into(), detected_at: now_epoch(), ..base };
     config::save(&path, &c).map_err(|e| e.to_string())?;
     Ok(c)
 }
 
 /// `yggdrasil-weather locate`: switch to the automatic place and find it now.
 fn cmd_locate() -> ExitCode {
-    let units = load_config().map(|c| c.units).unwrap_or_else(|_| "metric".into());
-    match detect_and_save(&units) {
+    let base = load_config().unwrap_or(Config { name: String::new(), lat: 0.0, lon: 0.0, units: "metric".into(), mode: "auto".into(), detected_at: 0, chosen: None });
+    match detect_and_save(base) {
         Ok(c) => {
             println!("found {} ({:.2}, {:.2})", c.name, c.lat, c.lon);
             ExitCode::SUCCESS
@@ -102,7 +135,7 @@ fn cmd_bar() -> ExitCode {
         Ok(c) => c,
         Err(e) => return fail(&e),
     };
-    let fetched = match fetch(&cfg) {
+    let fetched = match fetch(&cfg, PANEL_CACHE_S) {
         Ok(f) => f,
         Err(e) => return fail(&format!("weather unavailable: {e}")),
     };
@@ -122,22 +155,23 @@ fn cmd_bar() -> ExitCode {
 }
 
 /// The rain outlook from now, or None when the nowcast could not be fetched.
-fn fetch_nowcast(cfg: &Config) -> Option<nowcast::Outlook> {
-    let steps = nowcast::parse(&http_get(&nowcast::url(cfg.lat, cfg.lon)).ok()?).ok()?;
+fn fetch_nowcast(cfg: &Config, max_age: u64) -> Option<nowcast::Outlook> {
+    let steps = nowcast::parse(&get_cached(&nowcast::url(cfg.lat, cfg.lon), max_age).ok()?).ok()?;
     nowcast::outlook(&steps, now_epoch())
 }
 
-/// The Yggdrasil panel's bar add-on: always one JSON object.
+/// The Yggdrasil panel's bar add-on: always one JSON object, with its card (the weather, or the place and units).
 fn cmd_panel() -> ExitCode {
+    let st = card::load_state(now_epoch());
     let cfg = match load_config() {
         Ok(c) => c,
         Err(_) => {
             println!("{}", serde_json::json!({"text": "Set weather place", "state": "warn", "icon": "weather-few-clouds-symbolic",
-                "help": "Choose your place in Settings (the button below): found automatically, or a city you pick."}));
+                "help": "Choose your place with Settings below: found automatically, or a city you pick.", "card": card::blocks(None, &st)}));
             return ExitCode::SUCCESS;
         }
     };
-    let fetched = fetch(&cfg).ok();
+    let fetched = fetch(&cfg, PANEL_CACHE_S).ok();
     let weights = learned_weights();
     let hours = fetched.as_ref().map(|f| hours_for(f, &weights)).unwrap_or_default();
     let input = fetched.as_ref().map(|f| BarInput {
@@ -149,8 +183,35 @@ fn cmd_panel() -> ExitCode {
         observed: f.station.as_ref().map(|(s, d)| (s, *d)),
         weighted: !weights.is_empty(),
     });
-    let outlook = fetch_nowcast(&cfg);
-    println!("{}", report::panel_json(input.as_ref(), outlook.as_ref(), now_epoch()));
+    let outlook = fetch_nowcast(&cfg, PANEL_CACHE_S);
+    let mut v = report::panel_json(input.as_ref(), outlook.as_ref(), now_epoch());
+    if st.view == "settings" {
+        // the settings take the card's room: the weather stays in the pill
+        v["lines"] = serde_json::json!([]);
+        v.as_object_mut().map(|o| o.remove("help"));
+    }
+    v["card"] = card::blocks(Some(&cfg), &st);
+    println!("{v}");
+    ExitCode::SUCCESS
+}
+
+/// `yggdrasil-weather press ID [TEXT]`: a press on the card (the panel runs it, then `panel` again).
+fn cmd_press(args: &[String]) -> ExitCode {
+    let Some(id) = args.first().filter(|i| i.len() <= 64 && i.chars().all(|c| c.is_ascii_alphanumeric() || "._:-".contains(c))) else {
+        return die("usage: press ID [TEXT]");
+    };
+    let now = now_epoch();
+    let mut st = card::load_state(now);
+    let current = load_config().ok();
+    let changed = card::press(id, args.get(1).map(String::as_str), &mut st, current, now, locate::from_timezone, locate::from_wifi, locate::search_places);
+    if let Some(c) = changed {
+        match config::config_path().map(|p| config::save(&p, &c)) {
+            Some(Ok(())) => {}
+            Some(Err(e)) => st.status = format!("Could not save: {e}"),
+            None => st.status = "No config folder on this system.".into(),
+        }
+    }
+    card::save_state(&st);
     ExitCode::SUCCESS
 }
 
@@ -162,12 +223,12 @@ fn cmd_watch() -> ExitCode {
     };
     // the automatic place is found again every few hours (a laptop travels); if that fails the last place stays
     if cfg.mode == "auto" && now_epoch() - cfg.detected_at > 3 * 3600 {
-        match detect_and_save(&cfg.units) {
+        match detect_and_save(cfg.clone()) {
             Ok(c) => cfg = c,
             Err(e) => eprintln!("yggdrasil-weather: keeping {}: {e}", cfg.name),
         }
     }
-    let Some(o) = fetch_nowcast(&cfg) else { return die("no nowcast (offline, or Open-Meteo did not answer)") };
+    let Some(o) = fetch_nowcast(&cfg, 300) else { return die("no nowcast (offline, or Open-Meteo did not answer)") };
     let Some(path) = config::data_dir().map(|d| d.join("nowcast-state.json")) else { return die("no data directory") };
     let mut st: WatchState = std::fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
     let before = st.clone();
@@ -198,7 +259,7 @@ fn cmd_forecast(n_hours: usize) -> ExitCode {
         Ok(c) => c,
         Err(e) => return die(&e),
     };
-    let f = match fetch(&cfg) {
+    let f = match fetch(&cfg, PANEL_CACHE_S) {
         Ok(f) => f,
         Err(e) => return die(&e),
     };
@@ -231,13 +292,13 @@ fn cmd_forecast(n_hours: usize) -> ExitCode {
 
 fn cmd_set_location(args: &[String]) -> ExitCode {
     let Some(path) = config::config_path() else { return die("no config directory") };
-    let units = load_config().map(|c| c.units).unwrap_or_else(|_| "metric".into());
+    let base = load_config().unwrap_or(Config { name: String::new(), lat: 0.0, lon: 0.0, units: "metric".into(), mode: "manual".into(), detected_at: 0, chosen: None });
     let cfg = if args.first().map(String::as_str) == Some("--coords") {
         let (Some(lat), Some(lon)) = (args.get(1).and_then(|s| s.parse().ok()), args.get(2).and_then(|s| s.parse().ok())) else {
             return die("usage: set-location --coords LAT LON [NAME]");
         };
         let name = if args.len() > 3 { args[3..].join(" ") } else { format!("{lat:.2}, {lon:.2}") };
-        Config { name, lat, lon, units, mode: "manual".into(), detected_at: 0 }
+        Config { name: name.clone(), lat, lon, mode: "manual".into(), detected_at: 0, chosen: Some(config::Chosen { name, lat, lon }), ..base }
     } else {
         let query = args.join(" ");
         if query.trim().is_empty() {
@@ -251,7 +312,7 @@ fn cmd_set_location(args: &[String]) -> ExitCode {
         for (i, other) in places.iter().enumerate().skip(1) {
             eprintln!("(other match {i}: {} at {:.3},{:.3}; use --coords to pick it)", other.label(), other.latitude, other.longitude);
         }
-        Config { name: p.label(), lat: p.latitude, lon: p.longitude, units, mode: "manual".into(), detected_at: 0 }
+        Config { name: p.label(), lat: p.latitude, lon: p.longitude, mode: "manual".into(), detected_at: 0, chosen: Some(config::Chosen { name: p.label(), lat: p.latitude, lon: p.longitude }), ..base }
     };
     match config::save(&path, &cfg) {
         Ok(()) => {
@@ -282,7 +343,7 @@ fn cmd_record() -> ExitCode {
         Err(e) => return die(&e),
     };
     let Some((rp, op)) = history_paths() else { return die("no data directory") };
-    let f = match fetch(&cfg) {
+    let f = match fetch(&cfg, 0) {
         Ok(f) => f,
         Err(e) => return die(&e),
     };
@@ -356,6 +417,7 @@ fn main() -> ExitCode {
     match args.first().map(String::as_str) {
         Some("bar") => cmd_bar(),
         Some("panel") => cmd_panel(),
+        Some("press") => cmd_press(&args[1..]),
         Some("watch") => cmd_watch(),
         Some("forecast") => cmd_forecast(args.get(1).and_then(|s| s.parse().ok()).unwrap_or(24)),
         Some("set-location") => cmd_set_location(&args[1..]),
@@ -364,7 +426,7 @@ fn main() -> ExitCode {
         Some("locate") => cmd_locate(),
         Some("score") => cmd_score(),
         _ => {
-            eprintln!("usage: yggdrasil-weather bar | panel | watch | forecast [HOURS] | set-location CITY | set-location --coords LAT LON [NAME] | units metric|us | locate | record | score");
+            eprintln!("usage: yggdrasil-weather bar | panel | press ID [TEXT] | watch | forecast [HOURS] | set-location CITY | set-location --coords LAT LON [NAME] | units metric|us | locate | record | score");
             ExitCode::from(2)
         }
     }

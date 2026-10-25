@@ -27,6 +27,10 @@
 //!   open = /usr/bin/yggdrasil-timer --toggle   # a click runs this (a window of the add-on's own) instead of opening the card
 //!   settings = /usr/bin/yggdrasil-weather-settings   # the card gets a Settings button that runs this
 //!
+//! A card with controls (buttons, a stepper, a text field, rows to pick) lists them in `"card"`, and `act` names the program that
+//! handles a press (run as `act ID`, a field as `act ID TEXT`; docs/INTEGRATIONS.md, "Cards you can use"). The panel only ever runs
+//! `act` with an id the card listed. `interval = 0` runs a command add-on only when its card opens and after presses.
+//!
 //! The JSON may also name an `"icon"` (replacing the conf's while it does), and carry `"until": UNIX-SECONDS`: "{countdown}" in its text is then drawn as the time left (m:ss, or h:mm:ss), redrawn
 //! every second by the panel itself, so a countdown needs no program running every second.
 
@@ -51,6 +55,7 @@ pub struct Addon {
     pub open: Option<Vec<String>>,
     pub icon: String,
     pub settings: Option<Vec<String>>,
+    pub act: Option<Vec<String>>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -68,6 +73,38 @@ pub struct Line {
     pub percent: Option<f32>,
     pub note: String,
     pub alert: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Button {
+    pub id: String,
+    pub label: String,
+    pub icon: String,
+    pub accent: bool,
+    pub close: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Row {
+    pub id: String,
+    pub title: String,
+    pub note: String,
+    pub value: String,
+    pub on: bool,
+    pub close: bool,
+}
+
+/// One block of a card with controls.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Block {
+    /// A large clock-style line (may hold "{countdown}"), a caption, and a bar: from/to Unix times, or a fixed 0-100.
+    Big { text: String, caption: String, progress: Option<(f64, Option<f64>)> },
+    Section(String),
+    Buttons { items: Vec<Button>, columns: usize },
+    Stepper { label: String, value: String, minus: String, plus: String },
+    Field { id: String, hint: String, value: String, submit: String },
+    List(Vec<Row>),
+    Text { text: String, dim: bool },
 }
 
 /// What one add-on last printed.
@@ -88,19 +125,40 @@ pub struct View {
     pub off: bool,
     /// A Settings button on the card runs this (the add-on's settings window).
     pub settings: Option<Vec<String>>,
+    /// The card's controls, and the program that handles a press.
+    pub card: Vec<Block>,
+    pub act: Option<Vec<String>>,
+    /// Read the add-on again at this moment while its card is open.
+    pub refresh_at: Option<i64>,
 }
 
 impl View {
     /// The pill's text at `now`: "{countdown}" becomes the time left until `until`.
     pub fn display(&self, now: i64) -> String {
+        self.fill(&self.text, now)
+    }
+
+    /// `text` with "{countdown}" as the time left until `until`.
+    pub fn fill(&self, text: &str, now: i64) -> String {
         match self.until {
-            Some(u) if self.text.contains("{countdown}") => {
+            Some(u) if text.contains("{countdown}") => {
                 let d = (u - now).max(0);
                 let t = if d >= 3600 { format!("{}:{:02}:{:02}", d / 3600, d / 60 % 60, d % 60) } else { format!("{}:{:02}", d / 60, d % 60) };
-                self.text.replace("{countdown}", &t)
+                text.replace("{countdown}", &t)
             }
-            _ => self.text.clone(),
+            _ => text.to_string(),
         }
+    }
+
+    /// Whether the card lists this id (only those are ever passed to `act`).
+    pub fn lists(&self, id: &str) -> bool {
+        self.card.iter().any(|b| match b {
+            Block::Buttons { items, .. } => items.iter().any(|x| x.id == id),
+            Block::Stepper { minus, plus, .. } => minus == id || plus == id,
+            Block::Field { id: f, submit, .. } => f == id || submit == id,
+            Block::List(rows) => rows.iter().any(|r| r.id == id),
+            _ => false,
+        })
     }
 }
 
@@ -116,14 +174,16 @@ pub fn load() -> Vec<Addon> {
         .filter_map(|i| {
             let name = i.get("name").unwrap_or("Add-on").to_string();
             let feed = if let Some(cmd) = i.command("command") {
-                Feed::Command { cmd, interval: i.get("interval").and_then(|v| v.parse().ok()).unwrap_or(300u64).max(60) }
+                // 0: only when the card opens (and after presses)
+                let interval = i.get("interval").and_then(|v| v.parse().ok()).unwrap_or(300u64);
+                Feed::Command { cmd, interval: if interval == 0 { 0 } else { interval.max(60) } }
             } else if let Some(f) = i.get("file") {
                 Feed::File(expand(f))
             } else {
                 // a fixed label, or just the icon (a button that opens the add-on's window)
                 Feed::Text(clip(i.get("text").or(i.get("icon").map(|_| ""))?, 40))
             };
-            Some(Addon { id: i.id(), name, feed, open: i.command("open"), icon: i.get("icon").unwrap_or("").to_string(), settings: i.command("settings") })
+            Some(Addon { id: i.id(), name, feed, open: i.command("open"), icon: i.get("icon").unwrap_or("").to_string(), settings: i.command("settings"), act: i.command("act") })
         })
         .collect()
 }
@@ -156,7 +216,78 @@ pub fn parse(id: &str, name: &str, out: &str) -> View {
                 .collect()
         })
         .unwrap_or_default();
-    View { id: id.into(), name: name.into(), text, level, lines, help: clip(v["help"].as_str().unwrap_or(""), 240), until: v["until"].as_i64(), off: v["state"].as_str() == Some("off"), icon: icon_name(v["icon"].as_str().unwrap_or("")), ..Default::default() }
+    let card = v["card"].as_array().map(|a| a.iter().take(24).filter_map(block).collect()).unwrap_or_default();
+    View { id: id.into(), name: name.into(), text, level, lines, help: clip(v["help"].as_str().unwrap_or(""), 240), until: v["until"].as_i64(), off: v["state"].as_str() == Some("off"), icon: icon_name(v["icon"].as_str().unwrap_or("")), card, refresh_at: v["refresh_at"].as_i64(), ..Default::default() }
+}
+
+/// An id the card may give `act`: letters, digits and ._:+- only.
+fn act_id(v: &serde_json::Value) -> String {
+    let s = v.as_str().unwrap_or("");
+    if !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_alphanumeric() || "._:+-".contains(c)) { s.to_string() } else { String::new() }
+}
+
+/// An icon for a card: a theme name, or a file the system installed (under /usr/share).
+fn card_icon(s: &str) -> String {
+    if s.starts_with("/usr/share/") && !s.contains("..") && s.len() <= 200 { s.to_string() } else { icon_name(s) }
+}
+
+fn str_of(v: &serde_json::Value, n: usize) -> String {
+    clip(v.as_str().unwrap_or(""), n)
+}
+
+fn block(b: &serde_json::Value) -> Option<Block> {
+    if let Some(t) = b.get("big") {
+        let progress = match &b["progress"] {
+            serde_json::Value::Array(a) if a.len() == 2 => Some((a[0].as_f64()?, Some(a[1].as_f64()?))),
+            serde_json::Value::Number(n) => Some((n.as_f64()?.clamp(0.0, 100.0), None)),
+            _ => None,
+        };
+        return Some(Block::Big { text: str_of(t, 24), caption: str_of(&b["caption"], 60), progress });
+    }
+    if let Some(t) = b.get("section") {
+        return Some(Block::Section(str_of(t, 40)));
+    }
+    if let Some(a) = b["buttons"].as_array() {
+        let items: Vec<Button> = a
+            .iter()
+            .take(12)
+            .map(|x| Button { id: act_id(&x["id"]), label: str_of(&x["label"], 32), icon: card_icon(x["icon"].as_str().unwrap_or("")), accent: x["accent"].as_bool().unwrap_or(false), close: x["close"].as_bool().unwrap_or(false) })
+            .collect();
+        let columns = b["columns"].as_u64().map(|c| c as usize).unwrap_or(items.len()).clamp(1, 4);
+        return (!items.is_empty()).then_some(Block::Buttons { items, columns });
+    }
+    if let Some(st) = b.get("stepper") {
+        return Some(Block::Stepper { label: str_of(&st["label"], 32), value: str_of(&st["value"], 16), minus: act_id(&st["minus"]), plus: act_id(&st["plus"]) });
+    }
+    if let Some(f) = b.get("field") {
+        return Some(Block::Field { id: act_id(&f["id"]), hint: str_of(&f["hint"], 40), value: str_of(&f["value"], 80), submit: act_id(&f["submit"]) });
+    }
+    if let Some(a) = b["list"].as_array() {
+        let rows = a
+            .iter()
+            .take(10)
+            .map(|r| Row { id: act_id(&r["id"]), title: str_of(&r["title"], 40), note: str_of(&r["note"], 60), value: str_of(&r["value"], 20), on: r["on"].as_bool().unwrap_or(false), close: r["close"].as_bool().unwrap_or(false) })
+            .collect();
+        return Some(Block::List(rows));
+    }
+    if let Some(t) = b.get("text") {
+        return Some(Block::Text { text: str_of(t, 300), dim: b["dim"].as_bool().unwrap_or(false) });
+    }
+    None
+}
+
+/// Runs the add-on's `act` for a press on its card (`id`, plus a field's text) on a thread of its own, then asks for the add-on to
+/// be read again at once. Only ids the card listed get here.
+pub fn press(act: Vec<String>, id: String, text: Option<String>, now: Arc<AtomicBool>) {
+    std::thread::spawn(move || {
+        let mut cmd = act;
+        cmd.push(id);
+        if let Some(t) = text {
+            cmd.push(clip(&t, 200));
+        }
+        let _ = run(&cmd);
+        now.store(true, Ordering::Relaxed);
+    });
 }
 
 /// An icon theme name the add-on asked for (letters, digits, - and _ only: a name, never a path).
@@ -185,6 +316,7 @@ fn read(a: &Addon) -> View {
     };
     view.open = a.open.clone();
     view.settings = a.settings.clone();
+    view.act = a.act.clone();
     // the add-on's own JSON may change the icon (the weather's follows the sky); the conf's is the default
     if view.icon.is_empty() {
         view.icon = a.icon.clone();
@@ -241,15 +373,16 @@ pub fn spawn(shared: Arc<Mutex<Vec<View>>>, now: Arc<AtomicBool>) {
             for (i, a) in addons.iter().enumerate() {
                 match &a.feed {
                     Feed::Command { interval, .. } => {
-                        if !forced && Instant::now() < due[i] {
+                        // interval 0: only when asked (the card opened, a press), once at the start for the pill
+                        if !forced && (Instant::now() < due[i] || (*interval == 0 && shared.lock().map(|v| v.iter().any(|x| x.id == a.id)).unwrap_or(false))) {
                             continue;
                         }
-                        due[i] = Instant::now() + Duration::from_secs(*interval);
+                        due[i] = Instant::now() + Duration::from_secs((*interval).max(60));
                     }
-                    // a file: read again when it changed (a stat each second)
+                    // a file: read again when it changed (a stat each second), or at once when asked
                     Feed::File(p) => {
                         let st = file_stamp(p);
-                        if st == stamps[i] && Instant::now() < due[i] {
+                        if !forced && st == stamps[i] && Instant::now() < due[i] {
                             continue;
                         }
                         stamps[i] = st;
@@ -305,7 +438,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("addon-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let f = dir.join("bar.json");
-        let a = Addon { id: "timer".into(), name: "Timer".into(), feed: Feed::File(f.clone()), open: Some(vec!["true".into()]), icon: "timer-symbolic".into(), settings: None };
+        let a = Addon { id: "timer".into(), name: "Timer".into(), feed: Feed::File(f.clone()), open: Some(vec!["true".into()]), icon: "timer-symbolic".into(), settings: None, act: None };
         assert_eq!((read(&a).text.as_str(), read(&a).off), ("", false), "no file yet: no text, the icon still shows");
         std::fs::write(&f, r#"{"state":"off","text":"x"}"#).unwrap();
         assert!(read(&a).off);
@@ -318,6 +451,54 @@ mod tests {
         assert_eq!(read(&a).icon, "timer-symbolic", "a path is not an icon name");
         let s = Addon { feed: Feed::Text("2FA".into()), ..a };
         assert_eq!(read(&s).text, "2FA");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_card_is_read_and_its_ids_checked() {
+        let v = parse(
+            "timer",
+            "Timer",
+            r#"{"text":"","until":100,"refresh_at":50,"card":[
+                {"big":"{countdown}","caption":"25 min timer","progress":[0,100]},
+                {"section":"PRESETS"},
+                {"buttons":[{"id":"preset:5","label":"5 min","icon":"/usr/share/yggdrasil/icons/timer-symbolic.svg"},{"id":"rm -rf /","label":"bad"},{"id":"x","label":"y","icon":"/etc/../x"}],"columns":2},
+                {"stepper":{"label":"Duration","value":"25m","minus":"custom:-","plus":"custom:+"}},
+                {"field":{"id":"search","hint":"Search","submit":"copy-first"}},
+                {"list":[{"id":"copy:a1","title":"GitHub","value":"123 456","close":true}]},
+                {"text":"hello","dim":true},
+                {"unknown":1}]}"#,
+        );
+        assert_eq!(v.card.len(), 7, "an unknown block is skipped");
+        assert_eq!(v.refresh_at, Some(50));
+        let Block::Buttons { items, columns } = &v.card[2] else { panic!() };
+        assert_eq!(*columns, 2);
+        assert_eq!(items[0].icon, "/usr/share/yggdrasil/icons/timer-symbolic.svg");
+        assert_eq!(items[1].id, "", "an id that is not a plain word is dropped");
+        assert_eq!(items[2].icon, "", "a path outside /usr/share is not an icon");
+        for id in ["preset:5", "custom:+", "search", "copy-first", "copy:a1"] {
+            assert!(v.lists(id), "{id} {:?}", v.card);
+        }
+        assert!(!v.lists("rm -rf /") && !v.lists("nothing"));
+        assert_eq!(v.fill("{countdown}", 40), "1:00");
+    }
+
+    #[test]
+    fn a_press_runs_act_with_the_id_and_asks_for_a_refresh() {
+        let dir = std::env::temp_dir().join(format!("addon-press-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("pressed");
+        let now = Arc::new(AtomicBool::new(false));
+        let act = vec!["sh".into(), "-c".into(), format!("echo \"$1 $2\" > {}", out.display()), "sh".into()];
+        press(act, "search".into(), Some("git hub".into()), now.clone());
+        for _ in 0..50 {
+            if now.load(Ordering::Relaxed) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(now.load(Ordering::Relaxed));
+        assert_eq!(std::fs::read_to_string(&out).unwrap().trim(), "search git hub");
         std::fs::remove_dir_all(&dir).ok();
     }
 

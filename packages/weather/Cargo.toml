@@ -13,14 +13,7 @@ path = "src/lib.rs"
 name = "yggdrasil-weather"
 path = "src/main.rs"
 
-# the settings window (place and units); the command-line program does not use the toolkit
-[[bin]]
-name = "yggdrasil-weather-settings"
-path = "src/settings.rs"
-
 [dependencies]
-eframe = "0.36.2"
-yggdrasil-ui = { path = "../yggdrasil-ui" }
 yggdrasil-conf = { path = "../yggdrasil-conf" }
 dirs = "7"
 serde = { version = "1", features = ["derive"] }

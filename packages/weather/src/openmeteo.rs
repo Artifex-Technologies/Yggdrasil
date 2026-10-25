@@ -101,7 +101,7 @@ pub fn parse_ensemble(text: &str) -> Result<(Vec<String>, Vec<Vec<Option<f64>>>)
     Ok((times, members))
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
 pub struct Place {
     pub name: String,
     pub latitude: f64,

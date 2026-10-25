@@ -134,14 +134,15 @@ pub fn panel_json(i: Option<&BarInput>, o: Option<&Outlook>, now: i64) -> serde_
         lines.push(json!({"title": "Place", "value": i.place, "note": i.how}));
     }
     if parts.is_empty() {
-        return json!({"text": "", "state": "off", "help": "No weather data right now (offline, or the services did not answer)."});
+        // just the icon, so the card (and its settings) can still be opened
+        return json!({"text": "", "state": "ok", "icon": icon_name, "help": "No weather data right now (offline, or the services did not answer)."});
     }
     json!({
         "text": parts.join(" \u{00B7} "),
         "state": state,
         "icon": icon_name,
         "lines": lines,
-        "help": "Temperature: GFS, ECMWF and ICON combined (Open-Meteo). Rain: Open-Meteo 15-minute precipitation for the next two hours. Change the place or units in Settings.",
+        "help": "Temperature: GFS, ECMWF and ICON combined (Open-Meteo). Rain: Open-Meteo 15-minute precipitation for the next two hours. Change the place or units with Settings below.",
     })
 }
 
@@ -225,7 +226,8 @@ mod tests {
         assert!(lines.iter().any(|l| l["title"] == "15:00" && l["value"] == "6.0 mm/h" && l["percent"] == 60.0));
         assert_eq!(lines.last().unwrap()["value"], "New York");
         // nothing at all: no pill
-        assert_eq!(panel_json(None, None, now)["state"], "off");
+        let none = panel_json(None, None, now);
+        assert_eq!((none["text"].as_str(), none["state"].as_str(), none["icon"].is_string()), (Some(""), Some("ok"), true), "no data: the icon alone, so the card still opens");
         // only the temperature (the nowcast failed)
         assert_eq!(panel_json(Some(&input), None, now)["text"], "12\u{00B0}");
     }

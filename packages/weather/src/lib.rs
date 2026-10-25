@@ -9,6 +9,7 @@
 //! paid keys, and nothing in their free offerings would add information the open
 //! models do not already carry. A `Provider` trait would be the place to add them.
 
+pub mod card;
 pub mod config;
 pub mod consensus;
 pub mod locate;

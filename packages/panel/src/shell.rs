@@ -553,78 +553,261 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
     hits
 }
 
-/// A bar add-on's card, at the top right under the bar: its name, then each line (title, value, a meter when it has a percent,
-/// a note), then its help sentence. Returns the card's rectangle in logical pixels.
-/// Returns the card's rectangle and, when the add-on has settings, its Settings button's.
-pub fn paint_addon(pix: &mut Pixmap, s: f32, m: &Model, idx: usize, fonts: &Fonts, pointer: Option<(f32, f32)>) -> ((f32, f32, f32, f32), Option<(f32, f32, f32, f32)>) {
+/// What a click on an add-on's card does.
+#[derive(Clone, Debug, PartialEq)]
+pub enum CardHit {
+    /// Run the add-on's `act` with this id (then close the card when `close`).
+    Press { id: String, close: bool },
+    /// Typing goes to this field.
+    Field(String),
+    /// The old-style Settings button (`settings =`).
+    Settings,
+}
+
+pub type Rect = (f32, f32, f32, f32);
+
+fn wrap(text: &str, chars: usize) -> Vec<String> {
+    let mut out = vec![];
+    let mut line = String::new();
+    for word in text.split_whitespace() {
+        if line.chars().count() + word.chars().count() + 1 > chars && !line.is_empty() {
+            out.push(std::mem::take(&mut line));
+        }
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(word);
+    }
+    if !line.is_empty() {
+        out.push(line);
+    }
+    out
+}
+
+/// Each block's height in the card (logical pixels), and whether a rule is drawn above it.
+fn block_height(b: &crate::addons::Block, first: bool) -> f32 {
+    use crate::addons::Block;
+    match b {
+        Block::Big { .. } => 108.0,
+        Block::Section(_) => if first { 24.0 } else { 40.0 },
+        Block::Buttons { items, columns } => {
+            let rows = items.len().div_ceil(*columns);
+            rows as f32 * 34.0 + (rows.saturating_sub(1)) as f32 * 8.0 + 10.0
+        }
+        Block::Stepper { .. } | Block::Field { .. } => 44.0,
+        Block::List(rows) => rows.iter().map(|r| if r.note.is_empty() { 36.0 } else { 46.0 }).sum::<f32>() + 6.0,
+        Block::Text { text, .. } => wrap(text, 46).len() as f32 * 16.0 + 8.0,
+    }
+}
+
+/// A countdown in fixed-width cells, so the digits do not shift as they change. Returns its width.
+fn draw_clock(pix: &mut Pixmap, font: &ab_glyph::FontVec, size: f32, cx: f32, cy: f32, c: Rgba, text: &str, s: f32) {
+    let cell = "0123456789".chars().map(|d| paint::text_width(font, size * s, &d.to_string())).fold(0.0, f32::max);
+    let colon = paint::text_width(font, size * s, ":");
+    let total: f32 = text.chars().map(|ch| if ch.is_ascii_digit() { cell } else if ch == ':' { colon } else { paint::text_width(font, size * s, &ch.to_string()) }).sum();
+    let mut x = cx * s - total / 2.0;
+    for ch in text.chars() {
+        let w = if ch.is_ascii_digit() { cell } else if ch == ':' { colon } else { paint::text_width(font, size * s, &ch.to_string()) };
+        let gw = paint::text_width(font, size * s, &ch.to_string());
+        paint::draw_text(pix, font, size * s, x + (w - gw) / 2.0, cy * s, c, &ch.to_string());
+        x += w;
+    }
+}
+
+/// A bar add-on's card, at the top right under the bar: its name (left out when the card opens with a big clock), each line (title,
+/// value, a meter when it has a percent, a note), the card's controls, then its help sentence. Returns the card's rectangle in
+/// logical pixels and what each control does.
+#[allow(clippy::too_many_arguments)]
+pub fn paint_addon(pix: &mut Pixmap, s: f32, m: &Model, idx: usize, fonts: &Fonts, icons: &mut Icons, pointer: Option<(f32, f32)>, field: Option<&str>) -> (Rect, Vec<(Rect, CardHit)>) {
+    use crate::addons::Block;
     let w = pix.width() as f32 / s;
     pix.fill(paint::color((0, 0, 0, 0)));
-    let Some(a) = m.addons.get(idx) else { return ((0.0, 0.0, 0.0, 0.0), None) };
+    let mut hits: Vec<(Rect, CardHit)> = vec![];
+    let Some(a) = m.addons.get(idx) else { return ((0.0, 0.0, 0.0, 0.0), hits) };
     let cw = 340.0;
     let pad = 16.0;
+    let titled = !matches!(a.card.first(), Some(Block::Big { .. })) || !a.lines.is_empty();
     let line_h = |l: &crate::addons::Line| 22.0 + if l.percent.is_some() { 12.0 } else { 0.0 } + if l.note.is_empty() { 0.0 } else { 16.0 } + 8.0;
-    let help_lines = if a.help.is_empty() { 0 } else { (a.help.chars().count() as f32 / 46.0).ceil() as usize };
+    let help = wrap(&a.help, 46);
     let button_h = if a.settings.is_some() { 42.0 } else { 0.0 };
-    let ch = pad + 26.0 + a.lines.iter().map(line_h).sum::<f32>() + help_lines as f32 * 16.0 + button_h + pad;
+    let blocks_h: f32 = a.card.iter().enumerate().map(|(i, b)| block_height(b, i == 0 && a.lines.is_empty())).sum();
+    let ch = pad + if titled { 26.0 } else { 0.0 } + a.lines.iter().map(line_h).sum::<f32>() + blocks_h + help.len() as f32 * 16.0 + button_h + pad;
     let (cx, cy) = (w - cw - 8.0, 8.0);
     let dark = m.dark;
     let (bg, text, dim) = if dark { ((24, 24, 30, 245), (240, 240, 245, 255), (150, 150, 165, 255)) } else { ((250, 250, 252, 245), (20, 20, 28, 255), (100, 100, 115, 255)) };
+    let (soft, edge, hover_fill) = if dark { ((255, 255, 255, 12), (255, 255, 255, 34), (255, 255, 255, 34)) } else { ((0, 0, 0, 10), (0, 0, 0, 30), (0, 0, 0, 22)) };
+    let over = |r: Rect| pointer.is_some_and(|(px, py)| px >= r.0 && px < r.0 + r.2 && py >= r.1 && py < r.1 + r.3);
     paint::fill_rounded(pix, cx * s, cy * s, cw * s, ch * s, 14.0 * s, bg);
-    let mut y = cy + pad + 8.0;
-    paint::draw_text(pix, &fonts.bold, 13.5 * s, (cx + pad) * s, y * s, text, &a.name);
-    y += 26.0;
+    let (x0, iw) = (cx + pad, cw - 2.0 * pad);
+    let mut y = cy + pad;
+    if titled {
+        paint::draw_text(pix, &fonts.bold, 13.5 * s, x0 * s, (y + 8.0) * s, text, &a.name);
+        y += 26.0;
+    }
     for l in &a.lines {
         let col = if l.alert { (240, 96, 96, 255) } else { text };
-        paint::draw_text(pix, &fonts.regular, 12.5 * s, (cx + pad) * s, y * s, text, &l.title);
+        paint::draw_text(pix, &fonts.regular, 12.5 * s, x0 * s, (y + 6.0) * s, text, &l.title);
         let vw = paint::text_width(&fonts.bold, 12.5 * s, &l.value);
-        paint::draw_text(pix, &fonts.bold, 12.5 * s, (cx + cw - pad) * s - vw, y * s, col, &l.value);
+        paint::draw_text(pix, &fonts.bold, 12.5 * s, (cx + cw - pad) * s - vw, (y + 6.0) * s, col, &l.value);
         y += 14.0;
         if let Some(p) = l.percent {
-            let bw = cw - 2.0 * pad;
-            paint::fill_rounded(pix, (cx + pad) * s, y * s, bw * s, 6.0 * s, 3.0 * s, if dark { (255, 255, 255, 30) } else { (0, 0, 0, 25) });
+            paint::fill_rounded(pix, x0 * s, (y + 6.0) * s, iw * s, 6.0 * s, 3.0 * s, if dark { (255, 255, 255, 30) } else { (0, 0, 0, 25) });
             let fill = if l.alert { (240, 96, 96, 255) } else { paint::accent(255) };
             if p > 0.0 {
-                paint::fill_rounded(pix, (cx + pad) * s, y * s, (bw * p / 100.0).max(6.0) * s, 6.0 * s, 3.0 * s, fill);
+                paint::fill_rounded(pix, x0 * s, (y + 6.0) * s, (iw * p / 100.0).max(6.0) * s, 6.0 * s, 3.0 * s, fill);
             }
             y += 12.0;
         }
         if !l.note.is_empty() {
             y += 4.0;
-            paint::draw_text(pix, &fonts.regular, 11.0 * s, (cx + pad) * s, y * s, dim, &l.note);
+            paint::draw_text(pix, &fonts.regular, 11.0 * s, x0 * s, (y + 6.0) * s, dim, &l.note);
             y += 12.0;
         }
         y += 16.0;
     }
-    if !a.help.is_empty() {
-        // wrapped by words at about 46 characters
-        let mut line = String::new();
-        for word in a.help.split_whitespace() {
-            if line.chars().count() + word.chars().count() + 1 > 46 && !line.is_empty() {
-                paint::draw_text(pix, &fonts.regular, 11.0 * s, (cx + pad) * s, y * s, dim, &line);
-                y += 16.0;
-                line.clear();
-            }
-            if !line.is_empty() {
-                line.push(' ');
-            }
-            line.push_str(word);
+    // a button: rounded, a faint edge, lighter under the pointer; accent ones filled
+    let button = |pix: &mut Pixmap, icons: &mut Icons, r: Rect, label: &str, icon: &str, accent: bool| {
+        let hov = over(r);
+        let fill = if accent { paint::accent(if hov { 255 } else { 220 }) } else if hov { hover_fill } else { soft };
+        paint::fill_rounded(pix, r.0 * s, r.1 * s, r.2 * s, r.3 * s, 8.0 * s, fill);
+        if !accent {
+            paint::stroke_rounded(pix, r.0 * s, r.1 * s, r.2 * s, r.3 * s, 8.0 * s, 1.0 * s, edge);
         }
-        if !line.is_empty() {
-            paint::draw_text(pix, &fonts.regular, 11.0 * s, (cx + pad) * s, y * s, dim, &line);
+        let fg = if accent { paint::on_accent() } else { text };
+        let isz = (14.0 * s) as u32;
+        let iw_ = if icon.is_empty() { 0.0 } else { 14.0 + 6.0 };
+        let tw = paint::text_width(&fonts.regular, 12.5 * s, label) / s;
+        let start = r.0 + (r.2 - tw - iw_) / 2.0;
+        if !icon.is_empty() {
+            if let Some(ic) = icons.get_tinted(icon, isz, fg) {
+                paint::draw_pixmap(pix, ic, (start * s) as i32, ((r.1 + r.3 / 2.0) * s - isz as f32 / 2.0).round() as i32);
+            }
         }
+        paint::draw_text(pix, &fonts.regular, 12.5 * s, (start + iw_) * s, (r.1 + r.3 / 2.0) * s, fg, label);
+    };
+    for (bi, b) in a.card.iter().enumerate() {
+        let first = bi == 0 && a.lines.is_empty();
+        match b {
+            Block::Big { text: t, caption, progress } => {
+                let r = (x0, y, iw, 98.0);
+                paint::fill_rounded(pix, r.0 * s, r.1 * s, r.2 * s, r.3 * s, 10.0 * s, soft);
+                draw_clock(pix, &fonts.bold, 40.0, cx + cw / 2.0, y + 38.0, text, &a.fill(t, m.now_secs), s);
+                let cap_w = paint::text_width(&fonts.regular, 11.5 * s, caption);
+                paint::draw_text(pix, &fonts.regular, 11.5 * s, (cx + cw / 2.0) * s - cap_w / 2.0, (y + 70.0) * s, dim, caption);
+                if let Some((from, to)) = progress {
+                    let frac = match to {
+                        Some(to) if to > from => ((m.now_secs as f64 - from) / (to - from)).clamp(0.0, 1.0) as f32,
+                        Some(_) => 1.0,
+                        None => (*from as f32 / 100.0).clamp(0.0, 1.0),
+                    };
+                    let (bx, bw) = (x0 + 14.0, iw - 28.0);
+                    paint::fill_rounded(pix, bx * s, (y + 84.0) * s, bw * s, 4.0 * s, 2.0 * s, if dark { (255, 255, 255, 30) } else { (0, 0, 0, 25) });
+                    if frac > 0.0 {
+                        paint::fill_rounded(pix, bx * s, (y + 84.0) * s, (bw * frac).max(4.0) * s, 4.0 * s, 2.0 * s, paint::accent(255));
+                    }
+                }
+            }
+            Block::Section(label) => {
+                let mut ly = y + 8.0;
+                if !first {
+                    paint::fill_rounded(pix, x0 * s, (y + 8.0) * s, iw * s, 1.0 * s, 0.0, edge);
+                    ly = y + 24.0;
+                }
+                paint::draw_text(pix, &fonts.bold, 10.5 * s, x0 * s, ly * s, dim, &label.to_uppercase());
+            }
+            Block::Buttons { items, columns } => {
+                let gap = 8.0;
+                let bw = (iw - gap * (*columns as f32 - 1.0)) / *columns as f32;
+                for (i, it) in items.iter().enumerate() {
+                    let (col, row) = (i % columns, i / columns);
+                    let r = (x0 + col as f32 * (bw + gap), y + row as f32 * (34.0 + gap), bw, 34.0);
+                    button(pix, icons, r, &it.label, &it.icon, it.accent);
+                    if !it.id.is_empty() {
+                        hits.push((r, CardHit::Press { id: it.id.clone(), close: it.close }));
+                    }
+                }
+            }
+            Block::Stepper { label, value, minus, plus } => {
+                paint::draw_text(pix, &fonts.regular, 12.5 * s, x0 * s, (y + 17.0) * s, text, label);
+                let bsz = 28.0;
+                let rp = (cx + cw - pad - bsz, y + 3.0, bsz, bsz);
+                let vw = paint::text_width(&fonts.bold, 12.5 * s, value) / s;
+                let vbox = vw.max(36.0) + 8.0;
+                let rm = (rp.0 - vbox - bsz, y + 3.0, bsz, bsz);
+                button(pix, icons, rm, "−", "", false);
+                button(pix, icons, rp, "+", "", false);
+                paint::draw_text(pix, &fonts.bold, 12.5 * s, (rm.0 + bsz + (vbox - vw) / 2.0) * s, (y + 17.0) * s, text, value);
+                if !minus.is_empty() {
+                    hits.push((rm, CardHit::Press { id: minus.clone(), close: false }));
+                }
+                if !plus.is_empty() {
+                    hits.push((rp, CardHit::Press { id: plus.clone(), close: false }));
+                }
+            }
+            Block::Field { id, hint, value, .. } => {
+                let r = (x0, y, iw, 34.0);
+                let typed = field.unwrap_or(value);
+                paint::fill_rounded(pix, r.0 * s, r.1 * s, r.2 * s, r.3 * s, 8.0 * s, soft);
+                paint::stroke_rounded(pix, r.0 * s, r.1 * s, r.2 * s, r.3 * s, 8.0 * s, 1.0 * s, if field.is_some() { paint::accent(255) } else { edge });
+                let tx = (x0 + 10.0) * s;
+                let end = if typed.is_empty() {
+                    paint::draw_text(pix, &fonts.regular, 12.5 * s, tx, (y + 17.0) * s, dim, hint);
+                    tx
+                } else {
+                    paint::draw_text(pix, &fonts.regular, 12.5 * s, tx, (y + 17.0) * s, text, typed)
+                };
+                if field.is_some() {
+                    paint::fill_rounded(pix, end + 1.0 * s, (y + 9.0) * s, 1.5 * s, 16.0 * s, 0.0, text);
+                }
+                if !id.is_empty() {
+                    hits.push((r, CardHit::Field(id.clone())));
+                }
+            }
+            Block::List(rows) => {
+                let mut ry = y;
+                for row in rows {
+                    let h = if row.note.is_empty() { 32.0 } else { 42.0 };
+                    let r = (x0 - 6.0, ry, iw + 12.0, h);
+                    if over(r) && !row.id.is_empty() {
+                        paint::fill_rounded(pix, r.0 * s, r.1 * s, r.2 * s, r.3 * s, 8.0 * s, soft);
+                    }
+                    let mut tx = x0;
+                    if row.on {
+                        paint::fill_circle(pix, (x0 + 5.0) * s, (ry + 16.0) * s, 4.0 * s, paint::accent(255));
+                        tx += 16.0;
+                    }
+                    paint::draw_text(pix, &fonts.regular, 12.5 * s, tx * s, (ry + 16.0) * s, text, &row.title);
+                    if !row.note.is_empty() {
+                        paint::draw_text(pix, &fonts.regular, 11.0 * s, tx * s, (ry + 31.0) * s, dim, &row.note);
+                    }
+                    if !row.value.is_empty() {
+                        let vw = paint::text_width(&fonts.bold, 14.0 * s, &row.value);
+                        paint::draw_text(pix, &fonts.bold, 14.0 * s, (x0 + iw) * s - vw, (ry + h / 2.0) * s, text, &row.value);
+                    }
+                    if !row.id.is_empty() {
+                        hits.push((r, CardHit::Press { id: row.id.clone(), close: row.close }));
+                    }
+                    ry += h + 4.0;
+                }
+            }
+            Block::Text { text: t, dim: d } => {
+                for (i, l) in wrap(t, 46).iter().enumerate() {
+                    paint::draw_text(pix, &fonts.regular, 12.0 * s, x0 * s, (y + 8.0 + i as f32 * 16.0) * s, if *d { dim } else { text }, l);
+                }
+            }
+        }
+        y += block_height(b, first);
     }
-    let button = a.settings.as_ref().map(|_| {
-        let (bw, bh) = (cw - 2.0 * pad, 32.0);
-        let (bx, by) = (cx + pad, cy + ch - pad - bh);
-        let hover = pointer.is_some_and(|(px, py)| px >= bx && px < bx + bw && py >= by && py < by + bh);
-        let fill = if hover { paint::accent(255) } else if dark { (255, 255, 255, 26) } else { (0, 0, 0, 18) };
-        paint::fill_rounded(pix, bx * s, by * s, bw * s, bh * s, 8.0 * s, fill);
-        let label = "Settings";
-        let tw = paint::text_width(&fonts.bold, 12.5 * s, label);
-        paint::draw_text(pix, &fonts.bold, 12.5 * s, (bx + bw / 2.0) * s - tw / 2.0, (by + bh / 2.0) * s, if hover { (255, 255, 255, 255) } else { text }, label);
-        (bx, by, bw, bh)
-    });
-    ((cx, cy, cw, ch), button)
+    for l in &help {
+        paint::draw_text(pix, &fonts.regular, 11.0 * s, x0 * s, (y + 6.0) * s, dim, l);
+        y += 16.0;
+    }
+    if a.settings.is_some() {
+        let r = (x0, cy + ch - pad - 32.0, iw, 32.0);
+        button(pix, icons, r, "Settings", "", false);
+        hits.push((r, CardHit::Settings));
+    }
+    ((cx, cy, cw, ch), hits)
 }
 
 /// The date popover: today's date and the time, then a month you can scroll through. `offset` is

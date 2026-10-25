@@ -317,23 +317,179 @@ pub fn next_due(cfg: &Config, st: &State, clock: &Clock) -> Option<(String, i64)
     best
 }
 
-/// What the top bar pill shows (Yggdrasil's bar-item JSON).
+/// "every 20 min", "every 3 h", "every 1 h 30 min", or "at 14:00".
+pub fn cadence(s: &Stream) -> String {
+    if let Some(at) = &s.at {
+        return format!("at {at}");
+    }
+    format!("every {}", span(s.every.unwrap_or(0) as i64))
+}
+
+/// Minutes as "20 min", "3 h", "1 h 30 min".
+pub fn span(min: i64) -> String {
+    match (min / 60, min % 60) {
+        (0, m) => format!("{m} min"),
+        (h, 0) => format!("{h} h"),
+        (h, m) => format!("{h} h {m} min"),
+    }
+}
+
+fn hm(min: i64) -> String {
+    let m = min.rem_euclid(1440);
+    format!("{:02}:{:02}", m / 60, m % 60)
+}
+
+/// The step an interval moves by: 5 minutes up to an hour, 15 above.
+fn interval_step(every: i64, up: bool) -> i64 {
+    let e = if up { every } else { every - 1 };
+    if e < 60 { 5 } else { 15 }
+}
+
+/// What the top bar pill shows, with its card (Yggdrasil's bar-item JSON; the card's controls run `yggdrasil-health press ID`).
 pub fn bar(cfg: &Config, st: &State, clock: &Clock) -> serde_json::Value {
     use serde_json::json;
-    if !cfg.reminders {
-        return json!({"text": "Off", "help": "Break reminders are off."});
-    }
-    if let Some(u) = cfg.paused_until.filter(|_| cfg.paused(clock.epoch)) {
-        return if u - clock.epoch <= 12 * 3600 {
+    let mut v = if !cfg.reminders {
+        json!({"text": "Off", "help": "Break reminders are off."})
+    } else if let Some(u) = cfg.paused_until.filter(|_| cfg.paused(clock.epoch)) {
+        if u - clock.epoch <= 12 * 3600 {
             json!({"text": "Paused {countdown}", "until": u, "state": "warn", "help": "Reminders are paused."})
         } else {
             json!({"text": "Paused", "state": "warn", "help": "Reminders are paused until tomorrow."})
-        };
+        }
+    } else {
+        match next_due(cfg, st, clock) {
+            Some((name, t)) => json!({"text": "{countdown}", "until": t, "help": format!("Next: {}", label(&name))}),
+            None => json!({"text": "On", "help": "No reminder is turned on."}),
+        }
+    };
+    v["card"] = serde_json::Value::Array(card(cfg, st, clock));
+    v
+}
+
+/// The card's blocks (docs/INTEGRATIONS.md, "Cards you can use").
+pub fn card(cfg: &Config, st: &State, clock: &Clock) -> Vec<serde_json::Value> {
+    use serde_json::json;
+    let mut c = vec![];
+    // what comes next, or why nothing does
+    if !cfg.reminders {
+        c.push(json!({"big": "Off", "caption": "Reminders are off"}));
+    } else if let Some(u) = cfg.paused_until.filter(|_| cfg.paused(clock.epoch)) {
+        if u - clock.epoch <= 12 * 3600 {
+            c.push(json!({"big": "{countdown}", "caption": "Paused"}));
+        } else {
+            c.push(json!({"big": "Paused", "caption": "until tomorrow"}));
+        }
+    } else if let Some((name, due)) = next_due(cfg, st, clock) {
+        let mut big = json!({"big": "{countdown}", "caption": format!("{}: {}", label(&name), about(&name))});
+        if let Some(every) = cfg.stream(&name).every.filter(|e| *e > 0) {
+            big["progress"] = json!([due - every as i64 * 60, due]);
+        }
+        c.push(big);
+    } else {
+        c.push(json!({"big": "On", "caption": "No reminder is turned on"}));
     }
-    match next_due(cfg, st, clock) {
-        Some((name, t)) => json!({"text": "{countdown}", "until": t, "help": format!("Next: {}", label(&name))}),
-        None => json!({"text": "On", "help": "No reminder is turned on."}),
+    c.push(json!({"buttons": [
+        {"id": "reminders", "label": if cfg.reminders { "Reminders on" } else { "Reminders off" }, "accent": cfg.reminders},
+        {"id": "quiet", "label": if cfg.quiet.enabled { "Quiet hours on" } else { "Quiet hours off" }, "accent": cfg.quiet.enabled},
+        {"id": "sound", "label": if cfg.sound { "Sound on" } else { "Sound off" }, "accent": cfg.sound},
+    ], "columns": 3}));
+
+    c.push(json!({"section": "REMINDERS"}));
+    let rows: Vec<_> = STREAMS
+        .iter()
+        .map(|n| {
+            let s = cfg.stream(n);
+            json!({"id": format!("toggle:{n}"), "title": label(n), "note": cadence(&s), "value": if s.enabled { "On" } else { "Off" }, "on": s.enabled})
+        })
+        .collect();
+    c.push(json!({"list": rows}));
+
+    let on_intervals: Vec<_> = STREAMS.iter().filter(|n| cfg.stream(n).enabled && cfg.stream(n).every.is_some()).collect();
+    if !on_intervals.is_empty() {
+        c.push(json!({"section": "INTERVALS"}));
+        for n in on_intervals {
+            let every = cfg.stream(n).every.unwrap_or(0) as i64;
+            c.push(json!({"stepper": {"label": label(n), "value": span(every), "minus": format!("int:{n}:-"), "plus": format!("int:{n}:+")}}));
+        }
     }
+    let on_clock: Vec<_> = STREAMS.iter().filter(|n| cfg.stream(n).enabled && cfg.stream(n).at.is_some()).collect();
+    if !on_clock.is_empty() || cfg.quiet.enabled {
+        c.push(json!({"section": "TIMES"}));
+        for n in on_clock {
+            let at = cfg.stream(n).at.unwrap_or_default();
+            c.push(json!({"stepper": {"label": label(n), "value": at, "minus": format!("at:{n}:-"), "plus": format!("at:{n}:+")}}));
+        }
+        if cfg.quiet.enabled {
+            c.push(json!({"stepper": {"label": "Quiet from", "value": cfg.quiet.from, "minus": "quiet:from:-", "plus": "quiet:from:+"}}));
+            c.push(json!({"stepper": {"label": "Quiet until", "value": cfg.quiet.to, "minus": "quiet:to:-", "plus": "quiet:to:+"}}));
+        }
+    }
+
+    if cfg.reminders {
+        c.push(json!({"section": "PAUSE"}));
+        if cfg.paused(clock.epoch) {
+            c.push(json!({"buttons": [{"id": "resume", "label": "Resume", "accent": true}], "columns": 1}));
+        } else {
+            c.push(json!({"buttons": [
+                {"id": "pause:15", "label": "15 min"},
+                {"id": "pause:60", "label": "1 h"},
+                {"id": "pause:tomorrow", "label": "Until tomorrow"},
+            ], "columns": 3}));
+        }
+    }
+    c
+}
+
+/// Pauses for minutes ("15") or until midnight ("tomorrow").
+pub fn pause(cfg: &mut Config, how: &str, clock: &Clock) -> bool {
+    cfg.paused_until = match how {
+        "tomorrow" => Some(clock.tomorrow()),
+        m => match m.parse::<i64>() {
+            Ok(m) if m > 0 => Some(clock.epoch + m * 60),
+            _ => return false,
+        },
+    };
+    true
+}
+
+/// A press on the card's control `id`: changes the settings. False for an id the card never offers.
+pub fn press(cfg: &mut Config, id: &str, clock: &Clock) -> bool {
+    let parts: Vec<&str> = id.split(':').collect();
+    let stream = |n: &str| STREAMS.contains(&n);
+    match parts.as_slice() {
+        ["reminders"] => cfg.reminders = !cfg.reminders,
+        ["sound"] => cfg.sound = !cfg.sound,
+        ["quiet"] => cfg.quiet.enabled = !cfg.quiet.enabled,
+        ["resume"] => cfg.paused_until = None,
+        ["pause", how] => return pause(cfg, how, clock),
+        ["toggle", n] if stream(n) => {
+            let mut s = cfg.stream(n);
+            s.enabled = !s.enabled;
+            cfg.streams.insert(n.to_string(), s);
+        }
+        ["int", n, d @ ("-" | "+")] if stream(n) && cfg.stream(n).every.is_some() => {
+            let mut s = cfg.stream(n);
+            let every = s.every.unwrap_or(60) as i64;
+            let up = *d == "+";
+            let step = interval_step(every, up);
+            let next = if up { every + step } else { every - step };
+            s.every = Some(next.clamp(5, 600) as u32);
+            cfg.streams.insert(n.to_string(), s);
+        }
+        ["at", n, d @ ("-" | "+")] if stream(n) && cfg.stream(n).at.is_some() => {
+            let mut s = cfg.stream(n);
+            let m = s.at_min().unwrap_or(720) + if *d == "+" { 15 } else { -15 };
+            s.at = Some(hm(m));
+            cfg.streams.insert(n.to_string(), s);
+        }
+        ["quiet", which @ ("from" | "to"), d @ ("-" | "+")] => {
+            let t = if *which == "from" { &mut cfg.quiet.from } else { &mut cfg.quiet.to };
+            let m = parse_hm(t).unwrap_or(0) + if *d == "+" { 30 } else { -30 };
+            *t = hm(m);
+        }
+        _ => return false,
+    }
+    true
 }
 
 pub fn config_path() -> PathBuf {
@@ -495,6 +651,74 @@ mod tests {
         assert_eq!((b["text"].as_str(), b["until"].as_i64()), (Some("{countdown}"), Some(due)));
         let off = Config { reminders: false, ..cfg };
         assert_eq!(bar(&off, &st, &t)["text"], "Off");
+    }
+
+    #[test]
+    fn the_card_lists_every_reminder_and_its_controls_change_the_settings() {
+        let mut cfg = Config::default().filled();
+        let st = State::default();
+        let t = at("10:00");
+        let card = bar(&cfg, &st, &t)["card"].clone();
+        let blocks = card.as_array().unwrap();
+        assert_eq!(blocks[0]["big"], "{countdown}");
+        assert!(blocks[0]["caption"].as_str().unwrap().starts_with("Eyes"));
+        assert_eq!(blocks[0]["progress"][1].as_i64(), Some(t.epoch + 1200));
+        let rows = blocks.iter().find_map(|b| b["list"].as_array()).unwrap();
+        assert_eq!(rows.len(), 7);
+        assert_eq!(rows[0]["id"], "toggle:eye");
+        assert_eq!(rows[0]["note"], "every 20 min");
+        assert_eq!(rows[1]["on"], false, "eye exercise is off by default");
+        // every id the card offers is one press understands
+        let mut ids = vec![];
+        for b in blocks {
+            for k in ["buttons", "list"] {
+                for i in b[k].as_array().into_iter().flatten() {
+                    ids.push(i["id"].as_str().unwrap().to_string());
+                }
+            }
+            if let Some(st) = b.get("stepper") {
+                ids.push(st["minus"].as_str().unwrap().to_string());
+                ids.push(st["plus"].as_str().unwrap().to_string());
+            }
+        }
+        for id in &ids {
+            let mut c = cfg.clone();
+            assert!(press(&mut c, id, &t), "{id}");
+        }
+
+        assert!(press(&mut cfg, "toggle:eye", &t) && !cfg.stream("eye").enabled);
+        assert!(press(&mut cfg, "int:move:+", &t));
+        assert_eq!(cfg.stream("move").every, Some(50));
+        assert!(press(&mut cfg, "int:water:-", &t));
+        assert_eq!(cfg.stream("water").every, Some(75));
+        assert!(press(&mut cfg, "int:move:-", &t) && press(&mut cfg, "int:move:-", &t));
+        assert_eq!(cfg.stream("move").every, Some(40));
+        assert!(press(&mut cfg, "at:winddown:+", &t) && press(&mut cfg, "at:winddown:+", &t));
+        assert_eq!(cfg.stream("winddown").at.as_deref(), Some("00:00"), "wraps past midnight");
+        assert!(press(&mut cfg, "quiet", &t) && cfg.quiet.enabled);
+        assert!(press(&mut cfg, "quiet:from:-", &t));
+        assert_eq!(cfg.quiet.from, "21:30");
+        assert!(press(&mut cfg, "pause:15", &t));
+        assert_eq!(cfg.paused_until, Some(t.epoch + 900));
+        let paused = bar(&cfg, &st, &t);
+        assert_eq!(paused["card"][0]["caption"], "Paused");
+        assert!(paused["card"].as_array().unwrap().iter().any(|b| b["buttons"][0]["id"] == "resume"));
+        assert!(press(&mut cfg, "resume", &t) && cfg.paused_until.is_none());
+        assert!(press(&mut cfg, "sound", &t) && !cfg.sound);
+        assert!(press(&mut cfg, "reminders", &t) && !cfg.reminders);
+        assert_eq!(bar(&cfg, &st, &t)["card"][0]["big"], "Off");
+        // what the card never offers is refused
+        for bad in ["", "toggle:nope", "int:meal:+", "at:eye:+", "pause:-5", "quiet:at:+", "rm -rf"] {
+            assert!(!press(&mut cfg, bad, &t), "{bad}");
+        }
+    }
+
+    #[test]
+    fn spans_read_naturally() {
+        assert_eq!(span(20), "20 min");
+        assert_eq!(span(180), "3 h");
+        assert_eq!(span(90), "1 h 30 min");
+        assert_eq!(cadence(&Stream::default_for("meal")), "at 14:00");
     }
 
     #[test]

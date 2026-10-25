@@ -323,7 +323,11 @@ struct State {
     /// The popover card's rectangle in logical pixels.
     popup_card: (f32, f32, f32, f32),
     /// The open add-on card's Settings button, if it has one.
-    addon_button: Option<(f32, f32, f32, f32)>,
+    addon_hits: Vec<(shell::Rect, shell::CardHit)>,
+    /// The open card's text field: its id and what was typed.
+    addon_field: Option<(String, String)>,
+    /// The `refresh_at` already asked for (so it is asked once).
+    addon_refreshed: Option<i64>,
     /// The dock app the pointer rests on, since when, where (screen x of its icon) and on which output; opens the window list after a second.
     dock_hover: Option<(String, Instant, f32, u32)>,
     /// The key being held (for the start menu) and when it repeats next; Wayland leaves repeating to the client.
@@ -2066,6 +2070,66 @@ impl State {
         self.close_popup();
     }
 
+    /// A press on an add-on's card: its `act` runs with the id (only an id its card lists), then it is read again.
+    fn addon_press(&mut self, i: usize, id: &str, text: Option<String>, close: bool) {
+        let Some(a) = self.model.addons.get(i) else { return };
+        if let (true, Some(act)) = (a.lists(id), a.act.clone()) {
+            addons::press(act, id.to_string(), text, self.addons_now.clone());
+        }
+        if close {
+            self.close_popup();
+        }
+        self.dirty = true;
+    }
+
+    /// What the card's field `id` holds now (as the add-on last printed it).
+    fn addon_field_value(&self, i: usize, id: &str) -> String {
+        self.model.addons.get(i).and_then(|a| a.card.iter().find_map(|b| match b {
+            addons::Block::Field { id: f, value, .. } if f == id => Some(value.clone()),
+            _ => None,
+        })).unwrap_or_default()
+    }
+
+    /// Typing while an add-on's card is open goes to its text field (the first one, if none was clicked); each change is passed
+    /// to the add-on, Enter presses the field's `submit`.
+    fn addon_key(&mut self, i: usize, key: u32) {
+        let Some(first) = self.model.addons.get(i).and_then(|a| a.card.iter().find_map(|b| match b {
+            addons::Block::Field { id, .. } => Some(id.clone()),
+            _ => None,
+        })) else { return };
+        if self.addon_field.is_none() {
+            let value = self.addon_field_value(i, &first);
+            self.addon_field = Some((first, value));
+        }
+        let typed = self.xkb.as_ref().map(|x| x.key_get_utf8(xkb::Keycode::new(key + 8))).unwrap_or_default();
+        let Some((id, mut text)) = self.addon_field.clone() else { return };
+        match key {
+            28 | 96 => {
+                let submit = self.model.addons.get(i).and_then(|a| a.card.iter().find_map(|b| match b {
+                    addons::Block::Field { id: f, submit, .. } if *f == id && !submit.is_empty() => Some(submit.clone()),
+                    _ => None,
+                }));
+                if let Some(sub) = submit {
+                    let close = self.model.addons.get(i).map(|a| a.card.iter().any(|b| matches!(b, addons::Block::List(rows) if rows.iter().any(|r| r.close)))).unwrap_or(false);
+                    self.addon_press(i, &sub, None, close);
+                }
+                return;
+            }
+            14 => {
+                text.pop();
+            }
+            _ => {
+                let chars: String = typed.chars().filter(|c| !c.is_control()).collect();
+                if chars.is_empty() || text.chars().count() >= 80 {
+                    return;
+                }
+                text.push_str(&chars);
+            }
+        }
+        self.addon_field = Some((id.clone(), text.clone()));
+        self.addon_press(i, &id, Some(text), false);
+    }
+
     /// A key was pressed while a popover has the keyboard.
     fn key_pressed(&mut self, key: u32) {
         // the countdown card has the keyboard: Escape stops it, Enter goes ahead now
@@ -2079,6 +2143,10 @@ impl State {
         }
         if key == 1 {
             self.close_popup(); // Escape
+            return;
+        }
+        if let Some(Popup { kind: PopupKind::Addon(i), .. }) = self.popup {
+            self.addon_key(i, key);
             return;
         }
         let typed = self.xkb.as_ref().map(|x| x.key_get_utf8(xkb::Keycode::new(key + 8))).unwrap_or_default();
@@ -2422,7 +2490,8 @@ impl State {
                         self.tray_hits = hits;
                     }
                     Some(Popup { kind: PopupKind::Addon(i), .. }) => {
-                        (self.popup_card, self.addon_button) = shell::paint_addon(&mut pix, s, &self.model, *i, &self.assets.fonts, Some(self.pointer_pos));
+                        let field = self.addon_field.as_ref().map(|(_, t)| t.as_str());
+                        (self.popup_card, self.addon_hits) = shell::paint_addon(&mut pix, s, &self.model, *i, &self.assets.fonts, &mut self.assets.icons, Some(self.pointer_pos), field);
                     }
                     Some(Popup { kind: PopupKind::Calendar { offset }, .. }) => {
                         let pane = self.model.conf.notify_pane;
@@ -2512,12 +2581,13 @@ impl State {
             Action::Logo => self.toggle_start(),
             Action::Clock => self.toggle_calendar(),
             Action::Addon(i) => {
-                // an add-on with a window of its own opens it; the others show their card (and run again, so it is fresh)
-                if let Some(cmd) = self.model.addons.get(i).and_then(|a| a.open.clone()) {
-                    // opened from its pill: the window drops down under it (yggdrasil_ui::dropdown)
-                    let _ = std::process::Command::new(&cmd[0]).args(&cmd[1..]).env("YGGDRASIL_DROPDOWN", "1").stdin(std::process::Stdio::null()).spawn();
+                // an add-on with no card but a window of its own opens it; the others show their card (read again, so it is fresh)
+                if let Some(cmd) = self.model.addons.get(i).filter(|a| a.card.is_empty()).and_then(|a| a.open.clone()) {
+                    let _ = std::process::Command::new(&cmd[0]).args(&cmd[1..]).stdin(std::process::Stdio::null()).spawn();
                 } else {
                     self.addons_now.store(true, Ordering::Relaxed);
+                    self.addon_field = None;
+                    self.addon_refreshed = None;
                     self.toggle_popup(PopupKind::Addon(i));
                 }
             }
@@ -3004,8 +3074,8 @@ fn pointer_event(state: &mut State, event: wl_pointer::Event) {
                     state.dirty = true; // the row under the pointer lights up
                     state.start_hover();
                 }
-                if state.addon_button.is_some() && matches!(state.popup, Some(Popup { kind: PopupKind::Addon(_), .. })) {
-                    state.dirty = true; // the card's Settings button lights up
+                if !state.addon_hits.is_empty() && matches!(state.popup, Some(Popup { kind: PopupKind::Addon(_), .. })) {
+                    state.dirty = true; // the card's buttons light up
                 }
                 state.hover_at(surface_x as f32, surface_y as f32)
             }
@@ -3079,11 +3149,24 @@ fn pointer_event(state: &mut State, event: wl_pointer::Event) {
                                 state.tray_row(a);
                             }
                         } else if let Some(Popup { kind: PopupKind::Addon(i), .. }) = state.popup {
-                            // the card only shows things; its one button opens the add-on's own settings window
-                            let on_button = state.addon_button.is_some_and(|(bx, by, bw, bh)| px >= bx && px < bx + bw && py >= by && py < by + bh);
-                            if let (true, Some(cmd)) = (on_button, state.model.addons.get(i).and_then(|a| a.settings.clone())) {
-                                let _ = std::process::Command::new(&cmd[0]).args(&cmd[1..]).stdin(std::process::Stdio::null()).spawn();
-                                state.close_popup();
+                            // the card's controls: a press goes to the add-on, a click in its text field puts typing there
+                            let hit = state.addon_hits.iter().rev().find(|(r, _)| px >= r.0 && px < r.0 + r.2 && py >= r.1 && py < r.1 + r.3).map(|(_, h)| h.clone());
+                            match hit {
+                                Some(shell::CardHit::Press { id, close }) => state.addon_press(i, &id, None, close),
+                                Some(shell::CardHit::Field(id)) => {
+                                    if state.addon_field.as_ref().map(|(f, _)| f != &id).unwrap_or(true) {
+                                        let value = state.addon_field_value(i, &id);
+                                        state.addon_field = Some((id, value));
+                                    }
+                                    state.dirty = true;
+                                }
+                                Some(shell::CardHit::Settings) => {
+                                    if let Some(cmd) = state.model.addons.get(i).and_then(|a| a.settings.clone()) {
+                                        let _ = std::process::Command::new(&cmd[0]).args(&cmd[1..]).stdin(std::process::Stdio::null()).spawn();
+                                    }
+                                    state.close_popup();
+                                }
+                                None => {}
                             }
                         } else if state.model.conf.notify_pane && py >= state.pane_top {
                             let hit = state.pane_hits.iter().rev().find(|(r, _)| px >= r.0 && px < r.0 + r.2 && py >= r.1 && py < r.1 + r.3).map(|(_, a)| a.clone());
@@ -3359,7 +3442,9 @@ fn main() {
         dirty: false,
         popup: None,
         popup_card: (0.0, 0.0, 0.0, 0.0),
-        addon_button: None,
+        addon_hits: vec![],
+        addon_field: None,
+        addon_refreshed: None,
         dock_hover: None,
         repeat: None,
         repeat_rate: 25,
@@ -3756,6 +3841,15 @@ fn main() {
             st.model.now_secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
             if st.model.addons.iter().any(|a| a.until.is_some() && a.text.contains("{countdown}")) {
                 st.dirty = true;
+            }
+            // an open card is redrawn each second (its clock, its bar) and read again when it asked to be (codes rolling over)
+            if let Some(Popup { kind: PopupKind::Addon(i), .. }) = st.popup {
+                st.dirty = true;
+                let at = st.model.addons.get(i).and_then(|a| a.refresh_at);
+                if let Some(at) = at.filter(|at| *at <= st.model.now_secs && st.addon_refreshed != Some(*at)) {
+                    st.addon_refreshed = Some(at);
+                    st.addons_now.store(true, Ordering::Relaxed);
+                }
             }
             let h24 = st.model.conf.clock_24h;
             let now = clock_text(h24);

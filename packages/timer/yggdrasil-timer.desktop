@@ -1,8 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Timer
-Comment=Countdown timers with an alarm
-Exec=yggdrasil-timer
-Icon=yggdrasil-timer
-Categories=Utility;Clock;
-Keywords=countdown;alarm;pomodoro;
