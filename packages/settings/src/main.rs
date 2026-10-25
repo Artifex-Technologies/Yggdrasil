@@ -1352,6 +1352,21 @@ impl App {
                         });
                     });
                 }
+                if let Some(mode) = p.mode() {
+                    // an 8BitDo: the mode it was switched into decides which driver takes it
+                    let note = match mode {
+                        "Xbox mode" => "Recommended. Over Bluetooth it works best with Xbox controller support from Agora",
+                        "Switch mode" => "Driven like a Switch Pro Controller",
+                        _ => "Basic buttons only; Xbox mode (Start + X when pairing) works best",
+                    };
+                    ui::row(ui, pal, false, &format!("Mode: {mode}"), Some(note), |_| {});
+                    let fw_note = if p.model == gamepads::Model::XboxCompatible { "If it is an 8BitDo: use a Chromium-based browser such as Vivaldi; connect the controller by USB" } else { "Use a Chromium-based browser such as Vivaldi; connect the controller by USB" };
+                    ui::row(ui, pal, false, "Firmware updates", Some(fw_note), |ui| {
+                        if ui::quiet(ui, pal, "Open 8BitDo's updater").clicked() {
+                            let _ = std::process::Command::new("xdg-open").arg("https://web.8bitdo.com").stdin(std::process::Stdio::null()).spawn();
+                        }
+                    });
+                }
                 ui::row(ui, pal, false, "Rumble", Some("A short buzz, to check it works"), |ui| {
                     ui.add_enabled_ui(p.event.is_some(), |ui| {
                         if ui::quiet(ui, pal, "Test").clicked() {
@@ -1429,7 +1444,7 @@ impl App {
     /// Add a device.
     fn pad_add_flow(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         use gamepads::Model;
-        const KINDS: [(&str, Model); 5] = [("PlayStation 4", Model::DualShock4), ("PlayStation 5", Model::DualSense), ("Xbox", Model::Xbox), ("Switch Pro", Model::SwitchPro), ("Other", Model::Other)];
+        const KINDS: [(&str, Model); 6] = [("PlayStation 4", Model::DualShock4), ("PlayStation 5", Model::DualSense), ("Xbox", Model::Xbox), ("Switch Pro", Model::SwitchPro), ("8BitDo", Model::EightBitDo), ("Other", Model::Other)];
         match self.pad_add {
             None => {
                 if ui::action(ui, pal, "Add a controller…").clicked() {
@@ -1460,8 +1475,8 @@ impl App {
             Some(Some(m)) => {
                 ui::group(ui, pal, Some("Pairing mode"), |ui| {
                     ui::row(ui, pal, true, m.pairing_hint(), Some("Then pick it below when it turns up"), |_| {});
-                    if m == Model::Xbox {
-                        ui::row(ui, pal, false, "Xbox controllers work best with Xbox controller support from Agora (xpadneo)", None, |_| {});
+                    if m == Model::Xbox || m == Model::EightBitDo {
+                        ui::row(ui, pal, false, "Xbox controllers (and 8BitDo in Xbox mode) work best with Xbox controller support from Agora (xpadneo)", None, |_| {});
                     }
                 });
                 ui.add_space(6.0);

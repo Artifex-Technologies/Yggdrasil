@@ -62,6 +62,11 @@ fn bar(pads: &[Pad], s: &Settings) -> Value {
                     }
                     l["alert"] = json!(!b.charging() && b.estimate().is_some_and(|e| e <= s.low_at));
                 }
+                // xpad (USB, Xbox mode) never reports a battery: say so rather than suggest something is wrong
+                None if p.driver == "xpad" && p.connection == gamepads::Connection::Usb => {
+                    l["value"] = json!("No battery");
+                    l["note"] = json!(format!("No battery over USB in Xbox mode · {}", p.name));
+                }
                 None => l["value"] = json!("No battery reported"),
             }
             l
@@ -268,5 +273,16 @@ mod tests {
         assert_eq!(card[3]["buttons"][0]["accent"], true, "the colour in use is marked");
         assert_eq!(card.last().unwrap()["buttons"][0]["id"], "settings");
         assert_eq!(v["lines"][1]["value"], "No battery reported");
+    }
+
+    #[test]
+    fn a_third_party_pad_in_xbox_mode_shows_just_the_icon() {
+        // the owner's 8BitDo by USB in Xbox mode: xpad, no battery
+        let p = Pad { name: "Microsoft X-Box 360 pad".into(), model: Model::XboxCompatible, vendor: 0x045e, product: 0x028e, driver: "xpad".into(), leds: Leds::default(), ..pad(None, "", false) };
+        let v = bar(&[p], &Settings::default());
+        assert_eq!((v["text"].as_str(), v["state"].as_str()), (Some(""), Some("ok")), "icon only: nothing to report");
+        assert_eq!(v["lines"][0]["title"], "Xbox-compatible controller (third-party, e.g. 8BitDo)");
+        assert_eq!(v["lines"][0]["value"], "No battery");
+        assert_eq!(v["lines"][0]["note"], "No battery over USB in Xbox mode · Microsoft X-Box 360 pad");
     }
 }

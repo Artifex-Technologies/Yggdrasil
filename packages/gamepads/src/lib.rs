@@ -19,10 +19,23 @@ pub enum Model {
     DualSenseEdge,
     Xbox,
     SwitchPro,
+    /// 8BitDo: any model, in any of its modes (Xbox, Switch or direct); see `Pad::mode`.
+    EightBitDo,
+    /// A third-party controller in Xbox mode (8BitDo and others): Microsoft's ids, but its USB maker is not Microsoft.
+    XboxCompatible,
     Other,
 }
 
 impl Model {
+    /// The model from the ids and the name the driver gives. 8BitDo controllers in Xbox or Switch mode use Microsoft's or
+    /// Nintendo's ids, so they are known by 8BitDo's own vendor id or by their name first.
+    pub fn detect(vendor: u16, product: u16, name: &str) -> Model {
+        if vendor == 0x2dc8 || name.to_lowercase().contains("8bitdo") {
+            return Model::EightBitDo;
+        }
+        Model::from_ids(vendor, product)
+    }
+
     pub fn from_ids(vendor: u16, product: u16) -> Model {
         match (vendor, product) {
             (0x054c, 0x05c4 | 0x09cc | 0x0ba0) => Model::DualShock4,
@@ -42,6 +55,8 @@ impl Model {
             Model::DualSenseEdge => "DualSense Edge (PS5)",
             Model::Xbox => "Xbox controller",
             Model::SwitchPro => "Switch Pro Controller",
+            Model::EightBitDo => "8BitDo",
+            Model::XboxCompatible => "Xbox-compatible controller",
             Model::Other => "Controller",
         }
     }
@@ -53,6 +68,8 @@ impl Model {
             Model::DualSense | Model::DualSenseEdge => "Hold Create and the PS button until the light around the touchpad flashes.",
             Model::Xbox => "Turn it on, then hold the pairing button on top until the Xbox button flashes quickly.",
             Model::SwitchPro => "Hold the small sync button on top until the player lights run back and forth.",
+            Model::XboxCompatible => "Put it in Xbox mode (on 8BitDo: hold Start + X), then hold its pair button for 3 seconds until the LED blinks fast.",
+            Model::EightBitDo => "On most 8BitDo controllers, choose a mode first: hold Start + X for Xbox mode (recommended; best with Xbox controller support from Agora), Start + Y for Switch mode. Then hold the pair button for 3 seconds until the LED blinks fast.",
             Model::Other => "Put the controller in pairing mode (see its manual).",
         }
     }
@@ -160,9 +177,29 @@ impl Pad {
     pub fn mac(&self) -> Option<&str> {
         (self.connection == Connection::Bluetooth && self.uniq.len() == 17).then_some(self.uniq.as_str())
     }
-    /// What to call it: its model for the known ones ("DualShock 4 (PS4)"), else the name the driver gives.
+    /// Which mode an 8BitDo controller is in, from the driver that took it: "Xbox mode", "Switch mode" or "Direct mode".
+    pub fn mode(&self) -> Option<&'static str> {
+        if self.model == Model::XboxCompatible {
+            return Some("Xbox mode");
+        }
+        if self.model != Model::EightBitDo {
+            return None;
+        }
+        Some(match self.driver.as_str() {
+            "xpad" | "xpadneo" | "microsoft" | "hid-microsoft" => "Xbox mode",
+            "nintendo" | "hid-nintendo" => "Switch mode",
+            _ => "Direct mode",
+        })
+    }
+
+    /// What to call it: its model for the known ones ("DualShock 4 (PS4)", "8BitDo (Xbox mode)"), else the name the driver gives.
     pub fn title(&self) -> String {
-        if self.model == Model::Other { self.name.clone() } else { self.model.label().to_string() }
+        match (self.model, self.mode()) {
+            (Model::Other, _) => self.name.clone(),
+            (Model::EightBitDo, Some(mode)) => format!("8BitDo ({mode})"),
+            (Model::XboxCompatible, _) => "Xbox-compatible controller (third-party, e.g. 8BitDo)".into(),
+            (m, _) => m.label().to_string(),
+        }
     }
 }
 
@@ -231,7 +268,16 @@ pub fn list_at(root: &Path) -> Vec<Pad> {
         let event = children(&input).into_iter().find(|c| name_of(c).starts_with("event")).map(|e| PathBuf::from("/dev/input").join(name_of(&e)));
         let battery = hid.as_ref().and_then(|h| battery_in(&h.join("power_supply")));
         let leds = hid.as_ref().map(|h| leds_in(&h.join("leds"))).unwrap_or_default();
-        let pad = Pad { name, model: Model::from_ids(vendor, product), connection, uniq, vendor, product, driver, event, battery, leds };
+        let mut model = Model::detect(vendor, product, &name);
+        // a third-party pad in Xbox mode copies Microsoft's ids and name; its USB maker says otherwise
+        if model == Model::Xbox && connection == Connection::Usb {
+            if let Some(maker) = hid.as_deref().and_then(usb_manufacturer) {
+                if !maker.to_lowercase().contains("microsoft") {
+                    model = Model::XboxCompatible;
+                }
+            }
+        }
+        let pad = Pad { name, model, connection, uniq, vendor, product, driver, event, battery, leds };
         // one controller can show more than one joystick device; keep the first
         if !pads.iter().any(|p| !p.uniq.is_empty() && p.uniq == pad.uniq && p.vendor == pad.vendor) {
             pads.push(pad);
@@ -243,6 +289,19 @@ pub fn list_at(root: &Path) -> Vec<Pad> {
 /// The connected controllers.
 pub fn list() -> Vec<Pad> {
     list_at(Path::new("/"))
+}
+
+/// The USB device's maker string, read from the nearest ancestor of `dev` (an interface, or a HID device on USB) that has one.
+fn usb_manufacturer(dev: &Path) -> Option<String> {
+    let mut d = dev.to_path_buf();
+    for _ in 0..4 {
+        let m = d.join("manufacturer");
+        if m.is_file() {
+            return Some(read(&m));
+        }
+        d = d.parent()?.to_path_buf();
+    }
+    None
 }
 
 fn battery_in(dir: &Path) -> Option<Battery> {
@@ -490,6 +549,30 @@ mod tests {
         std::fs::write(p, s).unwrap();
     }
 
+    #[test]
+    fn an_8bitdo_is_known_in_every_mode() {
+        assert_eq!(Model::detect(0x045e, 0x02e0, "8BitDo Pro 2"), Model::EightBitDo, "Xbox mode uses Microsoft's ids");
+        assert_eq!(Model::detect(0x057e, 0x2009, "8BitDo Ultimate"), Model::EightBitDo, "Switch mode uses Nintendo's");
+        assert_eq!(Model::detect(0x2dc8, 0x6012, "Gamepad"), Model::EightBitDo);
+        assert_eq!(Model::detect(0x045e, 0x02e0, "Xbox Wireless Controller"), Model::Xbox);
+        let pad = |driver: &str| Pad {
+            name: "8BitDo Pro 2".into(),
+            model: Model::EightBitDo,
+            connection: Connection::Bluetooth,
+            uniq: String::new(),
+            vendor: 0x045e,
+            product: 0x02e0,
+            driver: driver.into(),
+            event: None,
+            battery: None,
+            leds: Leds::default(),
+        };
+        assert_eq!(pad("xpadneo").title(), "8BitDo (Xbox mode)");
+        assert_eq!(pad("nintendo").title(), "8BitDo (Switch mode)");
+        assert_eq!(pad("hid-generic").title(), "8BitDo (Direct mode)");
+        assert!(Model::EightBitDo.pairing_hint().contains("Start + X"));
+    }
+
     /// A made-up sysfs with a DualShock 4 over Bluetooth (hid-playstation: battery, lightbar), its motion sensors, a keyboard,
     /// and an Xbox controller over USB (xpad: no battery, joystick known from udev only).
     fn tree() -> PathBuf {
@@ -533,6 +616,22 @@ mod tests {
         put(&root.join("run/udev/data/c13:73"), "E:ID_INPUT=1\nE:ID_INPUT_JOYSTICK=1\n");
         symlink(&usb, x.join("device")).unwrap();
         symlink(&x, classes.join("input30")).unwrap();
+        put(&root.join("sys/devices/pci0000:00/usb1/1-2/manufacturer"), "\u{a9}Microsoft Corporation\n");
+        // the owner's 8BitDo by USB in Xbox mode (real sysfs shape): Microsoft's 045e:028e, the name "Microsoft X-Box 360 pad",
+        // driver xpad, no battery, but the USB maker is "Controller"
+        let usb2 = root.join("sys/devices/pci0000:00/0000:00:14.0/usb1/1-4/1-4:1.0");
+        let e = usb2.join("input/input31");
+        put(&e.join("name"), "Microsoft X-Box 360 pad");
+        put(&e.join("id/vendor"), "045e");
+        put(&e.join("id/product"), "028e");
+        put(&e.join("id/bustype"), "0003");
+        std::fs::create_dir_all(e.join("js0")).unwrap();
+        std::fs::create_dir_all(e.join("event10")).unwrap();
+        put(&root.join("sys/devices/pci0000:00/0000:00:14.0/usb1/1-4/manufacturer"), "Controller\n");
+        std::fs::create_dir_all(root.join("sys/bus/usb/drivers/xpad")).unwrap();
+        symlink(root.join("sys/bus/usb/drivers/xpad"), usb2.join("driver")).unwrap();
+        symlink(&usb2, e.join("device")).unwrap();
+        symlink(&e, classes.join("input31")).unwrap();
         root
     }
 
@@ -540,7 +639,7 @@ mod tests {
     fn controllers_are_found_with_battery_and_lights() {
         let root = tree();
         let pads = list_at(&root);
-        assert_eq!(pads.len(), 2, "{pads:#?}");
+        assert_eq!(pads.len(), 3, "{pads:#?}");
         let ds4 = &pads[0];
         assert_eq!(ds4.model, Model::DualShock4);
         assert_eq!(ds4.connection, Connection::Bluetooth);
@@ -552,7 +651,11 @@ mod tests {
         assert!(ds4.leds.has_lightbar());
         assert!(ds4.leds.writable, "the test's own files are writable");
         let xbox = &pads[1];
-        assert_eq!((xbox.model, xbox.connection, xbox.battery.is_none(), xbox.mac()), (Model::Xbox, Connection::Usb, true, None));
+        assert_eq!((xbox.model, xbox.connection, xbox.battery.is_none(), xbox.mac()), (Model::Xbox, Connection::Usb, true, None), "a genuine Microsoft pad");
+        let third = &pads[2];
+        assert_eq!((third.model, third.driver.as_str(), third.battery.is_none()), (Model::XboxCompatible, "xpad", true), "{third:#?}");
+        assert_eq!(third.title(), "Xbox-compatible controller (third-party, e.g. 8BitDo)");
+        assert_eq!(third.mode(), Some("Xbox mode"));
         std::fs::remove_dir_all(&root).ok();
     }
 
