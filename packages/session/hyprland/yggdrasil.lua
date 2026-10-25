@@ -236,17 +236,10 @@ local function cmd(keys, command, opts) hl.bind(keys, hl.dsp.exec_cmd(command), 
 local function dsp(keys, dispatcher, opts) hl.bind(keys, dispatcher, opts) end
 
 cmd("SUPER + SUPER_L", "yggdrasil-panelctl start", { release = true, desc = "Start menu" })
--- Hold to talk (the panel records while the key is down). The let-go must be heard however the keys come up: a release binding
--- seen only with Super still held missed "Super let go first" and left a recording running (2026-10-25). So the press arms a flag and
--- a release binding that ignores modifiers sends the let-go only while armed: typing an "s" otherwise costs nothing.
-do
-  local armed = false
-  local function down() armed = true; hl.exec_cmd("yggdrasil-panelctl ask-press") end
-  local function up() if armed then armed = false; hl.exec_cmd("yggdrasil-panelctl ask-release") end end
-  hl.bind("SUPER + S", down, { desc = "Talk to the assistant (hold)" })
-  hl.bind("CTRL + ALT + S", down, { desc = "Talk to the assistant (hold)" })
-  hl.bind("S", up, { release = true, ignore_mods = true, non_consuming = true, desc = "Talk to the assistant (let go)" })
-end
+cmd("SUPER + S", "yggdrasil-panelctl ask-press", { desc = "Talk to the assistant (hold)" })
+cmd("SUPER + S", "yggdrasil-panelctl ask-release", { release = true, desc = "Talk to the assistant (let go)" })
+cmd("CTRL + ALT + S", "yggdrasil-panelctl ask-press", { desc = "Talk to the assistant (hold)" })
+cmd("CTRL + ALT + S", "yggdrasil-panelctl ask-release", { release = true, desc = "Talk to the assistant (let go)" })
 cmd("SUPER + V", "yggdrasil-clipboard", { desc = "Clipboard history and snippets" })
 cmd("SUPER + C", "yggdrasil-panelctl calendar", { desc = "Calendar" })
 cmd("SUPER + N", "yggdrasil-panelctl notifications", { desc = "Notifications" })
