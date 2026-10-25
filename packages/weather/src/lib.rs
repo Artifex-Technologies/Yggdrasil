@@ -11,6 +11,7 @@
 
 pub mod config;
 pub mod consensus;
+pub mod locate;
 pub mod nowcast;
 pub mod observe;
 pub mod openmeteo;

@@ -36,6 +36,8 @@ pub struct BarInput<'a> {
     pub utc_offset_s: i64,
     pub units: &'a str,
     pub place: &'a str,
+    /// How the place was found ("chosen", "from your time zone (rough)", "from Wi-Fi nearby").
+    pub how: &'a str,
     pub observed: Option<(&'a Station, f64)>,
     pub weighted: bool,
 }
@@ -129,7 +131,7 @@ pub fn panel_json(i: Option<&BarInput>, o: Option<&Outlook>, now: i64) -> serde_
         }
     }
     if let Some(i) = i {
-        lines.push(json!({"title": "Place", "value": i.place}));
+        lines.push(json!({"title": "Place", "value": i.place, "note": i.how}));
     }
     if parts.is_empty() {
         return json!({"text": "", "state": "off", "help": "No weather data right now (offline, or the services did not answer)."});
@@ -139,7 +141,7 @@ pub fn panel_json(i: Option<&BarInput>, o: Option<&Outlook>, now: i64) -> serde_
         "state": state,
         "icon": icon_name,
         "lines": lines,
-        "help": "Temperature: GFS, ECMWF and ICON combined (Open-Meteo). Rain: Open-Meteo 15-minute precipitation for the next two hours. Change the place with: yggdrasil-weather set-location CITY",
+        "help": "Temperature: GFS, ECMWF and ICON combined (Open-Meteo). Rain: Open-Meteo 15-minute precipitation for the next two hours. Change the place or units in Settings.",
     })
 }
 
@@ -190,7 +192,7 @@ mod tests {
         let key = format_local(now, 0);
         let hs = vec![hour(&format!("{}:00", &key[..13]), 18.4), hour(&format!("{}:00", &key[..13]), 19.0)];
         let s = Station { id: "KXYZ".into(), name: "x".into(), lat: 0.0, lon: 0.0, obs_epoch: 0, temp_c: 17.8 };
-        let input = BarInput { hours: &hs, utc_offset_s: 0, units: "metric", place: "Test, Place", observed: Some((&s, 12.3)), weighted: false };
+        let input = BarInput { hours: &hs, utc_offset_s: 0, units: "metric", place: "Test, Place", how: "chosen", observed: Some((&s, 12.3)), weighted: false };
         let v: serde_json::Value = serde_json::from_str(&bar_json(&input)).unwrap();
         assert!(v["text"].as_str().unwrap().contains("18\u{00B0}"));
         let tip = v["tooltip"].as_str().unwrap();
@@ -203,7 +205,7 @@ mod tests {
 
     #[test]
     fn no_data_gives_empty_bar_text() {
-        let input = BarInput { hours: &[], utc_offset_s: 0, units: "metric", place: "x", observed: None, weighted: false };
+        let input = BarInput { hours: &[], utc_offset_s: 0, units: "metric", place: "x", how: "chosen", observed: None, weighted: false };
         let v: serde_json::Value = serde_json::from_str(&bar_json(&input)).unwrap();
         assert_eq!(v["text"], "");
     }
@@ -215,7 +217,7 @@ mod tests {
         let now = parse_local("2026-10-25T14:05", -4 * 3600).unwrap();
         let o = crate::nowcast::outlook(&steps, now).unwrap();
         let hs = vec![hour("2026-10-25T14:00", 12.2)];
-        let input = BarInput { hours: &hs, utc_offset_s: -4 * 3600, units: "metric", place: "New York", observed: None, weighted: false };
+        let input = BarInput { hours: &hs, utc_offset_s: -4 * 3600, units: "metric", place: "New York", how: "chosen", observed: None, weighted: false };
         let v = panel_json(Some(&input), Some(&o), now);
         assert_eq!(v["text"], "12\u{00B0} \u{00B7} rain in 25 min");
         assert_eq!(v["state"], "warn");

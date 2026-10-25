@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use yggdrasil_weather::config::{self, Config};
 use yggdrasil_weather::consensus::{self, Hour};
+use yggdrasil_weather::locate;
 use yggdrasil_weather::nowcast::{self, WatchState};
 use yggdrasil_weather::observe::{self, Station};
 use yggdrasil_weather::openmeteo::{self, Forecast};
@@ -52,9 +53,38 @@ fn learned_weights() -> HashMap<String, f64> {
     verify::weights(&verify::score(&records, &obs, 1800), MIN_SCORED)
 }
 
+/// The place to use: the saved one, or the time zone's main city (when nothing is saved, or that mode is chosen). The time
+/// zone place is worked out each time, offline, and never written.
 fn load_config() -> Result<Config, String> {
     let path = config::config_path().ok_or("no config directory on this system")?;
-    config::load(&path).ok_or_else(|| "no location set; run: yggdrasil-weather set-location \"City name\"".to_string())
+    let saved = config::load(&path);
+    if let Some(c) = saved.as_ref().filter(|c| c.mode != "timezone") {
+        return Ok(c.clone());
+    }
+    let units = saved.map(|c| c.units).unwrap_or_else(|| "metric".into());
+    let f = locate::from_timezone().map_err(|e| format!("no place: {e}; choose one in Weather's settings"))?;
+    Ok(Config { name: f.name, lat: f.lat, lon: f.lon, units, mode: "timezone".into(), detected_at: 0 })
+}
+
+/// Finds the place from nearby Wi-Fi (beaconDB) and saves it as the automatic place.
+fn detect_and_save(units: &str) -> Result<Config, String> {
+    let path = config::config_path().ok_or("no config directory")?;
+    let f = locate::from_wifi()?;
+    let c = Config { name: f.name, lat: f.lat, lon: f.lon, units: units.into(), mode: "auto".into(), detected_at: now_epoch() };
+    config::save(&path, &c).map_err(|e| e.to_string())?;
+    Ok(c)
+}
+
+/// `yggdrasil-weather locate`: switch to the automatic place and find it now.
+fn cmd_locate() -> ExitCode {
+    let units = load_config().map(|c| c.units).unwrap_or_else(|_| "metric".into());
+    match detect_and_save(&units) {
+        Ok(c) => {
+            println!("found {} ({:.2}, {:.2})", c.name, c.lat, c.lon);
+            ExitCode::SUCCESS
+        }
+        Err(e) => die(&e),
+    }
 }
 
 fn hours_for(f: &Fetched, weights: &HashMap<String, f64>) -> Vec<Hour> {
@@ -83,6 +113,7 @@ fn cmd_bar() -> ExitCode {
         utc_offset_s: fetched.forecast.utc_offset_s,
         units: &cfg.units,
         place: &cfg.name,
+        how: cfg.how(),
         observed: fetched.station.as_ref().map(|(s, d)| (s, *d)),
         weighted: !weights.is_empty(),
     };
@@ -102,7 +133,7 @@ fn cmd_panel() -> ExitCode {
         Ok(c) => c,
         Err(_) => {
             println!("{}", serde_json::json!({"text": "Set weather place", "state": "warn", "icon": "weather-few-clouds-symbolic",
-                "help": "Set your place once in a terminal: yggdrasil-weather set-location \"Your city\" (or --coords LAT LON)."}));
+                "help": "Choose your place in Settings (the button below): found automatically, or a city you pick."}));
             return ExitCode::SUCCESS;
         }
     };
@@ -114,6 +145,7 @@ fn cmd_panel() -> ExitCode {
         utc_offset_s: f.forecast.utc_offset_s,
         units: &cfg.units,
         place: &cfg.name,
+        how: cfg.how(),
         observed: f.station.as_ref().map(|(s, d)| (s, *d)),
         weighted: !weights.is_empty(),
     });
@@ -124,10 +156,17 @@ fn cmd_panel() -> ExitCode {
 
 /// Run every 10 minutes (a systemd user timer): one notification when rain is about to start.
 fn cmd_watch() -> ExitCode {
-    let cfg = match load_config() {
+    let mut cfg = match load_config() {
         Ok(c) => c,
         Err(e) => return die(&e),
     };
+    // the automatic place is found again every few hours (a laptop travels); if that fails the last place stays
+    if cfg.mode == "auto" && now_epoch() - cfg.detected_at > 3 * 3600 {
+        match detect_and_save(&cfg.units) {
+            Ok(c) => cfg = c,
+            Err(e) => eprintln!("yggdrasil-weather: keeping {}: {e}", cfg.name),
+        }
+    }
     let Some(o) = fetch_nowcast(&cfg) else { return die("no nowcast (offline, or Open-Meteo did not answer)") };
     let Some(path) = config::data_dir().map(|d| d.join("nowcast-state.json")) else { return die("no data directory") };
     let mut st: WatchState = std::fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
@@ -198,7 +237,7 @@ fn cmd_set_location(args: &[String]) -> ExitCode {
             return die("usage: set-location --coords LAT LON [NAME]");
         };
         let name = if args.len() > 3 { args[3..].join(" ") } else { format!("{lat:.2}, {lon:.2}") };
-        Config { name, lat, lon, units }
+        Config { name, lat, lon, units, mode: "manual".into(), detected_at: 0 }
     } else {
         let query = args.join(" ");
         if query.trim().is_empty() {
@@ -212,7 +251,7 @@ fn cmd_set_location(args: &[String]) -> ExitCode {
         for (i, other) in places.iter().enumerate().skip(1) {
             eprintln!("(other match {i}: {} at {:.3},{:.3}; use --coords to pick it)", other.label(), other.latitude, other.longitude);
         }
-        Config { name: p.label(), lat: p.latitude, lon: p.longitude, units }
+        Config { name: p.label(), lat: p.latitude, lon: p.longitude, units, mode: "manual".into(), detected_at: 0 }
     };
     match config::save(&path, &cfg) {
         Ok(()) => {
@@ -322,9 +361,10 @@ fn main() -> ExitCode {
         Some("set-location") => cmd_set_location(&args[1..]),
         Some("units") if args.len() == 2 => cmd_units(&args[1]),
         Some("record") => cmd_record(),
+        Some("locate") => cmd_locate(),
         Some("score") => cmd_score(),
         _ => {
-            eprintln!("usage: yggdrasil-weather bar | panel | watch | forecast [HOURS] | set-location CITY | set-location --coords LAT LON [NAME] | units metric|us | record | score");
+            eprintln!("usage: yggdrasil-weather bar | panel | watch | forecast [HOURS] | set-location CITY | set-location --coords LAT LON [NAME] | units metric|us | locate | record | score");
             ExitCode::from(2)
         }
     }

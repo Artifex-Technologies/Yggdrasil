@@ -3,7 +3,7 @@
 # this directory with `makepkg -s`.
 pkgname=yggdrasil-weather
 pkgver=0.1.0
-pkgrel=2
+pkgrel=3
 pkgdesc="Multi-model weather consensus for the Yggdrasil bar, scored against measured temperatures"
 arch=('x86_64')
 provides=('labyrinth-weather')
@@ -11,7 +11,8 @@ conflicts=('labyrinth-weather')
 replaces=('labyrinth-weather')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
 license=('MIT')
-depends=('gcc-libs' 'ca-certificates' 'libnotify')
+depends=('gcc-libs' 'ca-certificates' 'libnotify' 'wayland' 'libxkbcommon')
+optdepends=('networkmanager: Wi-Fi networks for the automatic place (without it, beaconDB places the IP address)')
 makedepends=('cargo')
 options=('!lto')
 
@@ -35,5 +36,7 @@ package() {
   # the 10-minute rain check (one notification before a shower) and the top bar pill
   install -Dm644 "$_src/systemd/yggdrasil-weather-nowcast.service" "$pkgdir/usr/lib/systemd/user/yggdrasil-weather-nowcast.service"
   install -Dm644 "$_src/systemd/yggdrasil-weather-nowcast.timer" "$pkgdir/usr/lib/systemd/user/yggdrasil-weather-nowcast.timer"
+  install -Dm755 "$srcdir/target/release/yggdrasil-weather-settings" "$pkgdir/usr/bin/yggdrasil-weather-settings"
+  install -Dm644 "$_src/yggdrasil-weather-settings.desktop" "$pkgdir/usr/share/applications/yggdrasil-weather-settings.desktop"
   install -Dm644 "$_src/weather.conf" "$pkgdir/usr/share/yggdrasil/integrations/weather.conf"
 }

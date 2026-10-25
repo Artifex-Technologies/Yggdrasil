@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Weather
+Comment=Weather place and units
+Exec=yggdrasil-weather-settings
+Icon=yggdrasil-weather
+Terminal=false
+Categories=Settings;Utility;
+Keywords=weather;location;place;units;forecast;

@@ -1,4 +1,5 @@
-//! Where you are. Never guessed from your IP: you set a place (or coordinates) once.
+//! Where you are: a place you chose ("manual"), the time zone's main city ("timezone": offline, rough, the default when
+//! nothing is set), or nearby Wi-Fi through beaconDB ("auto"), only when you pick it.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -11,6 +12,16 @@ pub struct Config {
     /// "metric" (deg C) or "us" (deg F).
     #[serde(default = "metric")]
     pub units: String,
+    /// "manual", "timezone" or "auto". Configs from before modes were chosen places.
+    #[serde(default = "manual")]
+    pub mode: String,
+    /// For "auto": when the place was last found (seconds since 1970).
+    #[serde(default)]
+    pub detected_at: i64,
+}
+
+fn manual() -> String {
+    "manual".into()
 }
 
 fn metric() -> String {
@@ -19,7 +30,19 @@ fn metric() -> String {
 
 impl Config {
     pub fn valid(&self) -> bool {
-        (-90.0..=90.0).contains(&self.lat) && (-180.0..=180.0).contains(&self.lon) && (self.units == "metric" || self.units == "us")
+        (-90.0..=90.0).contains(&self.lat)
+            && (-180.0..=180.0).contains(&self.lon)
+            && (self.units == "metric" || self.units == "us")
+            && ["manual", "timezone", "auto"].contains(&self.mode.as_str())
+    }
+
+    /// How the place was found, for the card and the settings window.
+    pub fn how(&self) -> &'static str {
+        match self.mode.as_str() {
+            "auto" => "from Wi-Fi nearby",
+            "timezone" => "from your time zone (rough)",
+            _ => "chosen",
+        }
     }
 }
 
@@ -66,12 +89,12 @@ mod tests {
     fn round_trip_and_validation() {
         let d = std::env::temp_dir().join(format!("lw-config-{}", std::process::id()));
         let f = d.join("w.json");
-        let c = Config { name: "Test".into(), lat: 40.7, lon: -74.0, units: "us".into() };
+        let c = Config { name: "Test".into(), lat: 40.7, lon: -74.0, units: "us".into(), mode: "auto".into(), detected_at: 5 };
         save(&f, &c).unwrap();
         assert_eq!(load(&f), Some(c));
-        assert!(save(&f, &Config { name: "x".into(), lat: 91.0, lon: 0.0, units: "metric".into() }).is_err());
+        assert!(save(&f, &Config { name: "x".into(), lat: 91.0, lon: 0.0, units: "metric".into(), mode: "manual".into(), detected_at: 0 }).is_err());
         std::fs::write(&f, r#"{"name":"x","lat":1.0,"lon":2.0}"#).unwrap();
-        assert_eq!(load(&f).unwrap().units, "metric");
+        assert_eq!((load(&f).unwrap().units.as_str(), load(&f).unwrap().mode.as_str()), ("metric", "manual"));
         std::fs::write(&f, r#"{"name":"x","lat":200.0,"lon":2.0}"#).unwrap();
         assert!(load(&f).is_none());
         std::fs::write(&f, "garbage").unwrap();
