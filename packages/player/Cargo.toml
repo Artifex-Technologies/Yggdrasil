@@ -1,0 +1,23 @@
+[package]
+name = "yggdrasil-player"
+version = "0.1.0"
+edition = "2021"
+description = "Player: Yggdrasil's video player (VLC plays, Yggdrasil's window), with continue-where-you-left-off"
+license = "MIT"
+
+[[bin]]
+name = "yggdrasil-player"
+path = "src/main.rs"
+
+[dependencies]
+yggdrasil-conf = { path = "../yggdrasil-conf" }
+yggdrasil-ui = { path = "../yggdrasil-ui" }
+eframe = "0.36.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+zbus = "5"
+
+[profile.release]
+opt-level = 2
+lto = "thin"
+strip = true

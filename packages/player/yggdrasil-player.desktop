@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Player
+GenericName=Video Player
+Comment=Watch videos, and go on where you left off
+Exec=yggdrasil-player %f
+Icon=multimedia-video-player
+Terminal=false
+Categories=AudioVideo;Video;Player;
+Keywords=video;movie;film;player;vlc;
+MimeType=video/x-matroska;video/mp4;video/x-m4v;video/x-msvideo;video/quicktime;video/webm;video/x-ms-wmv;video/x-flv;video/mpeg;video/mp2t;video/ogg;video/3gpp;
+StartupWMClass=yggdrasil-player

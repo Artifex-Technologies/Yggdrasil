@@ -1,0 +1,30 @@
+# Player: Yggdrasil's video player, VLC (libVLC 3) underneath, with continue-where-you-left-off (packages/player).
+pkgname=yggdrasil-player
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Yggdrasil's video player: VLC plays, Yggdrasil's window, continue where you left off"
+arch=('x86_64')
+url="https://github.com/Artifex-Technologies/Yggdrasil"
+license=('MIT')
+# libvlc and its decoders (ffmpeg: H.264, H.265 and most others; dav1d: AV1), subtitles drawn (freetype, ass), sound (pulse, which PipeWire serves)
+depends=('gcc-libs' 'libxkbcommon' 'wayland' 'vulkan-icd-loader' 'libglvnd' 'fontconfig' 'libvlc' 'vlc-plugins-base'
+         'vlc-plugin-ffmpeg' 'vlc-plugin-dav1d' 'vlc-plugin-freetype' 'vlc-plugin-ass' 'vlc-plugin-matroska' 'vlc-plugin-pulse')
+makedepends=('cargo')
+options=('!lto')
+
+_src="$startdir/../../player"
+
+build() {
+  cd "$_src"
+  cargo build --release --locked --target-dir "$srcdir/target"
+}
+
+check() {
+  cd "$_src"
+  cargo test --release --locked --target-dir "$srcdir/target"
+}
+
+package() {
+  install -Dm755 "$srcdir/target/release/yggdrasil-player" "$pkgdir/usr/bin/yggdrasil-player"
+  install -Dm644 "$_src/yggdrasil-player.desktop" "$pkgdir/usr/share/applications/yggdrasil-player.desktop"
+}
