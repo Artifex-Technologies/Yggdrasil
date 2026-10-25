@@ -1,0 +1,15 @@
+[Unit]
+Description=Keep the default browser started in the background (faster windows)
+Documentation=file:///usr/share/doc/yggdrasil-browser-warm/README.md
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/yggdrasil-browser-warm run
+# Stopping this service lets the background browser go too, unless it has windows open (it then ends with them, or at logout).
+ExecStopPost=/usr/bin/yggdrasil-browser-warm release
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=graphical-session.target
