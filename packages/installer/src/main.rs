@@ -25,12 +25,40 @@ enum Page {
     TimeZone,
     Disk,
     Account,
+    Browsers,
     Summary,
     Installing,
     Done,
 }
 
-const PAGES: [Page; 6] = [Page::Welcome, Page::Keyboard, Page::TimeZone, Page::Disk, Page::Account, Page::Summary];
+const PAGES: [Page; 7] = [Page::Welcome, Page::Keyboard, Page::TimeZone, Page::Disk, Page::Account, Page::Browsers, Page::Summary];
+
+/// A browser the operating system offers to install (its installer integration's `browsers` file).
+#[derive(Clone, Debug, PartialEq)]
+struct Browser {
+    id: String,
+    name: String,
+    note: String,
+    /// Chosen to start with.
+    chosen: bool,
+}
+
+/// The browsers in the OS's list: `{"browsers": [{"id", "name", "note", "chosen"}, ...]}` (what else each entry says is the OS's
+/// business: how to install it).
+fn parse_browsers(text: &str) -> Vec<Browser> {
+    let v: serde_json::Value = serde_json::from_str(text).unwrap_or(serde_json::Value::Null);
+    v["browsers"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|b| {
+                    let id = b["id"].as_str()?.to_string();
+                    Some(Browser { name: b["name"].as_str().unwrap_or(&id).to_string(), note: b["note"].as_str().unwrap_or("").to_string(), chosen: b["chosen"].as_bool().unwrap_or(false), id })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
 
 #[derive(Clone, Debug, PartialEq)]
 struct Disk {
@@ -307,6 +335,10 @@ struct App {
     pw: String,
     pw2: String,
     agree: bool,
+    /// The browsers offered (empty: no Browsers page), those chosen (in the list's order) and the default one.
+    browsers: Vec<Browser>,
+    chosen_browsers: Vec<String>,
+    default_browser: String,
     reports: Option<Receiver<Report>>,
     step: (usize, usize, String),
     log: Vec<Report>,
@@ -349,7 +381,7 @@ fn demo_disks() -> Vec<Disk> {
 }
 
 impl App {
-    /// `--demo welcome|keyboard|timezone|disk|disk-manual|account|summary`: a page filled with sample choices, for screenshots.
+    /// `--demo welcome|keyboard|timezone|disk|disk-manual|account|browsers|summary`: a page filled with sample choices, for screenshots.
     fn demo(&mut self, what: &str) {
         self.demo = true;
         self.disks = demo_disks();
@@ -370,7 +402,11 @@ impl App {
             self.manual = partitions::Manual::demo(&d.parts, end, free);
             self.manual_mode = true;
         }
+        if self.browsers.is_empty() {
+            self.set_browsers(parse_browsers(r#"{"browsers":[{"id":"vivaldi","name":"Vivaldi","note":"Chromium-based, very customisable","chosen":true},{"id":"firefox","name":"Firefox","note":"Mozilla's browser"},{"id":"librewolf","name":"LibreWolf","note":"Firefox, hardened for privacy"}]}"#));
+        }
         self.page = match what {
+            "browsers" => Page::Browsers,
             "keyboard" => Page::Keyboard,
             "timezone" => Page::TimeZone,
             "disk" | "disk-manual" => Page::Disk,
@@ -412,12 +448,17 @@ impl App {
             pw: String::new(),
             pw2: String::new(),
             agree: false,
+            browsers: vec![],
+            chosen_browsers: vec![],
+            default_browser: String::new(),
             reports: None,
             step: (0, 0, String::new()),
             log: vec![],
             failed: None,
             demo: false,
         };
+        let list = yggdrasil_conf::integrations::first("installer").and_then(|i| i.get("browsers").map(str::to_string));
+        app.set_browsers(list.and_then(|f| std::fs::read_to_string(f).ok()).map(|t| parse_browsers(&t)).unwrap_or_default());
         let args: Vec<String> = std::env::args().collect();
         if let Some(i) = args.iter().position(|a| a == "--demo") {
             app.command = None;
@@ -426,6 +467,35 @@ impl App {
         }
         app.load_disks();
         app
+    }
+
+    /// The pages shown: the Browsers page only when the OS offers browsers.
+    fn pages(&self) -> Vec<Page> {
+        PAGES.iter().copied().filter(|p| *p != Page::Browsers || !self.browsers.is_empty()).collect()
+    }
+
+    fn set_browsers(&mut self, list: Vec<Browser>) {
+        self.chosen_browsers = list.iter().filter(|b| b.chosen).map(|b| b.id.clone()).collect();
+        self.default_browser = self.chosen_browsers.first().cloned().unwrap_or_default();
+        self.browsers = list;
+    }
+
+    /// Choose or un-choose a browser; the default stays one of those chosen.
+    fn toggle_browser(&mut self, id: &str) {
+        if self.chosen_browsers.iter().any(|c| c == id) {
+            self.chosen_browsers.retain(|c| c != id);
+        } else {
+            self.chosen_browsers.push(id.to_string());
+            let order: Vec<&String> = self.browsers.iter().map(|b| &b.id).collect();
+            self.chosen_browsers.sort_by_key(|c| order.iter().position(|o| *o == c));
+        }
+        if !self.chosen_browsers.contains(&self.default_browser) {
+            self.default_browser = self.chosen_browsers.first().cloned().unwrap_or_default();
+        }
+    }
+
+    fn browser_name(&self, id: &str) -> String {
+        self.browsers.iter().find(|b| b.id == id).map(|b| b.name.clone()).unwrap_or_else(|| id.to_string())
     }
 
     fn load_disks(&mut self) {
@@ -524,6 +594,12 @@ impl App {
             "keymap": self.keymap,
             "keymap_variant": self.keymap_variant,
         });
+        if !self.browsers.is_empty() {
+            if let Some(obj) = plan.as_object_mut() {
+                obj.insert("browsers".into(), serde_json::json!(self.chosen_browsers));
+                obj.insert("default_browser".into(), serde_json::json!(self.default_browser));
+            }
+        }
         if self.manual_mode {
             if let (Some(d), Some(obj)) = (self.chosen_disk(), plan.as_object_mut()) {
                 if let Some(m) = self.manual.plan(&d.parts).as_object() {
@@ -659,10 +735,11 @@ impl eframe::App for App {
                 }
             });
             // where in the steps we are
-            if let Some(i) = PAGES.iter().position(|p| *p == self.page) {
+            let pages = self.pages();
+            if let Some(i) = pages.iter().position(|p| *p == self.page) {
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
-                    for (k, _) in PAGES.iter().enumerate() {
+                    for (k, _) in pages.iter().enumerate() {
                         let c = if k <= i { pal.accent } else { pal.border };
                         let (r, _) = ui.allocate_exact_size(vec2(44.0, 4.0), egui::Sense::hover());
                         ui.painter().rect_filled(r, CornerRadius::same(2), c);
@@ -796,6 +873,42 @@ impl eframe::App for App {
                         field(ui, &mut self.pw, "Password", true);
                         field(ui, &mut self.pw2, "The same again", true);
                     }
+                    Page::Browsers => {
+                        heading(ui, &pal, "Browsers", "Choose one or more. The default one opens your links; the others you can get from Agora at any time.");
+                        let mut toggle = None;
+                        let mut make_default = None;
+                        for b in &self.browsers {
+                            let on = self.chosen_browsers.contains(&b.id);
+                            ui.horizontal(|ui| {
+                                let label = RichText::new(format!("{}  {}", if on { "✔" } else { "  " }, b.name)).color(if on { pal.on_accent() } else { pal.text });
+                                if ui.add(egui::Button::new(label).fill(if on { pal.accent } else { pal.field }).min_size(vec2(170.0, 32.0))).clicked() {
+                                    toggle = Some(b.id.clone());
+                                }
+                                ui.label(RichText::new(&b.note).color(pal.dim));
+                            });
+                            if on && self.chosen_browsers.len() > 1 {
+                                ui.horizontal(|ui| {
+                                    ui.add_space(18.0);
+                                    if ui.radio(self.default_browser == b.id, "Default browser").clicked() {
+                                        make_default = Some(b.id.clone());
+                                    }
+                                });
+                            }
+                            ui.add_space(4.0);
+                        }
+                        if let Some(id) = toggle {
+                            self.toggle_browser(&id);
+                        }
+                        if let Some(id) = make_default {
+                            self.default_browser = id;
+                        }
+                        ui.add_space(8.0);
+                        if self.chosen_browsers.is_empty() {
+                            ui.label(RichText::new("No browser: you can get one from Agora later.").color(pal.amber));
+                        } else {
+                            ui.label(RichText::new("Browsers that are not on the installer need the internet while installing; one that cannot be fetched is left for Agora.").color(pal.dim));
+                        }
+                    }
                     Page::Summary => {
                         heading(ui, &pal, "Ready to install", "Check the choices. Nothing has been changed yet.");
                         let disk = self.chosen_disk();
@@ -807,9 +920,16 @@ impl eframe::App for App {
                             ("Encryption", if self.encrypt { "on".to_string() } else { "off".to_string() }),
                             ("Account", format!("{} ({})", self.name.trim(), self.login)),
                             ("Computer's name", self.hostname.clone()),
+                            ("Browsers", if self.browsers.is_empty() {
+                                String::new()
+                            } else if self.chosen_browsers.is_empty() {
+                                "none".to_string()
+                            } else {
+                                self.chosen_browsers.iter().map(|c| if *c == self.default_browser && self.chosen_browsers.len() > 1 { format!("{} (default)", self.browser_name(c)) } else { self.browser_name(c) }).collect::<Vec<_>>().join(", ")
+                            }),
                         ];
                         egui::Grid::new("summary").num_columns(2).spacing(vec2(24.0, 8.0)).show(ui, |ui| {
-                            for (k, v) in rows {
+                            for (k, v) in rows.into_iter().filter(|(_, v)| !v.is_empty()) {
                                 ui.label(RichText::new(k).color(pal.dim));
                                 ui.label(v);
                                 ui.end_row();
@@ -879,7 +999,8 @@ impl eframe::App for App {
                         }
                     }
                     page => {
-                        let i = PAGES.iter().position(|p| *p == page).unwrap_or(0);
+                        let pages = self.pages();
+                        let i = pages.iter().position(|p| *p == page).unwrap_or(0);
                         let last = page == Page::Summary;
                         let missing = self.missing(page);
                         let next = egui::Button::new(RichText::new(if last { "Install" } else { "Next" }).color(pal.on_accent())).fill(if last { pal.red } else { pal.accent }).min_size(vec2(110.0, 34.0));
@@ -890,11 +1011,11 @@ impl eframe::App for App {
                             if last {
                                 install = true;
                             } else {
-                                go = Some(PAGES[i + 1]);
+                                go = Some(pages[i + 1]);
                             }
                         }
                         if i > 0 && ui.add(egui::Button::new("Back").min_size(vec2(90.0, 34.0))).clicked() {
-                            go = Some(PAGES[i - 1]);
+                            go = Some(pages[i - 1]);
                         }
                         if let Some(m) = missing {
                             ui.label(RichText::new(m).color(pal.dim));
@@ -958,6 +1079,29 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn browsers_come_from_the_os_and_the_default_stays_chosen() {
+        let list = parse_browsers(r#"{"browsers":[{"id":"vivaldi","name":"Vivaldi","note":"n","chosen":true,"packages":["vivaldi"]},{"id":"firefox","name":"Firefox"},{"name":"no id"},{"id":"opera","name":"Opera","flatpak":"com.opera.Opera"}]}"#);
+        assert_eq!(list.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), ["vivaldi", "firefox", "opera"]);
+        assert!(parse_browsers("not json").is_empty());
+        let mut app = App::new();
+        app.set_browsers(list);
+        assert_eq!((app.chosen_browsers.clone(), app.default_browser.as_str()), (vec!["vivaldi".to_string()], "vivaldi"));
+        app.toggle_browser("opera");
+        app.toggle_browser("firefox");
+        assert_eq!(app.chosen_browsers, ["vivaldi", "firefox", "opera"], "kept in the list's order");
+        app.default_browser = "opera".into();
+        app.toggle_browser("opera");
+        assert_eq!(app.default_browser, "vivaldi", "un-choosing the default picks another chosen one");
+        let plan = app.plan();
+        assert_eq!(plan["browsers"], serde_json::json!(["vivaldi", "firefox"]));
+        assert_eq!(plan["default_browser"], "vivaldi");
+        assert!(app.pages().contains(&Page::Browsers));
+        app.set_browsers(vec![]);
+        assert!(!app.pages().contains(&Page::Browsers), "no list from the OS: no page");
+        assert!(app.plan().get("browsers").is_none(), "and the plan says nothing about browsers");
+    }
 
     #[test]
     fn the_demo_never_installs_and_its_manual_plan_is_valid() {

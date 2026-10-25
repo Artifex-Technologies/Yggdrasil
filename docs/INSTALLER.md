@@ -19,7 +19,8 @@ layouts of that kind by name, Dvorak and Colemak being variants; the live sessio
 page tries it) → Time zone (searchable by place, without the old aliases; the live system's zone first, no location service
 asked) → Disk (the disk, then how: erase all of it, or choose partitions by hand; encryption on by default, with its password
 twice) → Your account (name,
-account name made from it, computer's name, password twice) → Summary (and a box to tick: the disk is erased) → Installing
+account name made from it, computer's name, password twice) → Browsers (only when the OS offers a list: choose one or more,
+and which is the default; none is allowed, with a note that Agora has them) → Summary (and a box to tick: the disk is erased) → Installing
 (progress, notes, errors) → Done (Restart now). Next stays greyed out with the reason beside it until a page is complete.
 
 ## The contract with the OS's program
@@ -53,6 +54,10 @@ account name made from it, computer's name, password twice) → Summary (and a b
 - It reports one line each, and the window shows them: `STEP n N text` (step n of N started), `INFO text`, `WARN text` (shown
   as a note, the install goes on), `ERROR text` (it stopped), `DONE`.
 - `COMMAND --check` (with the plan on stdin) checks the plan without changing anything.
+- Browsers: the installer integration may name a list, `browsers = /usr/share/OS/installer-browsers.json`, holding
+  `{"browsers": [{"id", "name", "note", "chosen"}, ...]}` (anything else in an entry, how to install it, is the OS's business).
+  With a list, the plan also carries `"browsers": [ids chosen]` and `"default_browser": id`; without one there is no Browsers page
+  and the plan says nothing about browsers.
 
 Modes: `erase` (the whole disk) and `manual` (partitions chosen by hand, Calamares-style). Still to come: shrinking a partition
 to make room automatically ("install alongside"), and partitions on more than one disk in one install.
