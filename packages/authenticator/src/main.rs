@@ -65,7 +65,7 @@ fn parse_codes(line: &str) -> Result<Vec<Entry>, String> {
 /// What an error code means for the person at the window, and what to do.
 fn explain(code: &str) -> &'static str {
     match code {
-        "VAULT_NOT_FOUND" => "Proton Authenticator is not signed in on this account yet. Open it, sign in with your Proton account and let it sync once; its codes then show here.",
+        "VAULT_NOT_FOUND" => "Proton Authenticator has no codes on this computer yet. Open it and skip the import screen (that is for moving codes from another app). To bring the codes you already have in Proton, turn on sync in its settings and sign in with your Proton account; codes you add on this computer show up here too.",
         "KEYRING_LOCKED" => "The keyring is locked. Unlock it when asked (Try again asks for it).",
         "KEYRING_UNAVAILABLE" => "No keyring answers (gnome-keyring). Sign out and in again, or start it.",
         "KEY_NOT_FOUND" => "Proton Authenticator's key is not in the keyring. Open Proton Authenticator once so it stores it.",
