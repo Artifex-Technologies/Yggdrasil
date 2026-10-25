@@ -1,6 +1,8 @@
 //! Yggdrasil weather: several independent forecasts combined into one answer with an
 //! honest uncertainty, scored against measured temperatures over time.
 //!
+//! Rain nowcast: Open-Meteo's 15-minute precipitation for the next two hours (`nowcast`).
+//!
 //! Sources: Open-Meteo (free for non-commercial use, no key): GFS, ECMWF and ICON
 //! models plus a 30-member ensemble; aviationweather.gov airport reports for measured
 //! truth. No AccuWeather / Weather Company / Weather Channel: they need accounts or
@@ -9,6 +11,7 @@
 
 pub mod config;
 pub mod consensus;
+pub mod nowcast;
 pub mod observe;
 pub mod openmeteo;
 pub mod report;

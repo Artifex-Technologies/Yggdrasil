@@ -1,0 +1,8 @@
+[Unit]
+Description=Tell when rain is about to start (weather nowcast)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/yggdrasil-weather watch
+# Exit 1 means no place is set or the service did not answer; not worth a failed-unit warning.
+SuccessExitStatus=1

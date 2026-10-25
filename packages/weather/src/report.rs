@@ -2,6 +2,7 @@
 
 use crate::consensus::Hour;
 use crate::observe::Station;
+use crate::nowcast::Outlook;
 use crate::timeutil::{format_local, now_epoch};
 use serde_json::json;
 
@@ -78,6 +79,74 @@ pub fn bar_json(i: &BarInput) -> String {
     json!({"text": text, "tooltip": tip.join("\n")}).to_string()
 }
 
+/// The Yggdrasil panel's bar add-on JSON (`yggdrasil-weather panel`): the temperature now and,
+/// from the nowcast, rain in the next two hours. Either half may be missing.
+pub fn panel_json(i: Option<&BarInput>, o: Option<&Outlook>, now: i64) -> serde_json::Value {
+    use crate::nowcast::{intensity, minutes, WARN_MIN, WET_MM_H};
+    let mut parts = vec![];
+    let mut lines = vec![];
+    let mut state = "ok";
+    let mut icon_name = "weather-few-clouds-symbolic";
+    if let Some(i) = i {
+        if let Some(idx) = current_index(i.hours, i.utc_offset_s, now) {
+            let h = &i.hours[idx];
+            parts.push(deg(h.mean, i.units));
+            lines.push(json!({"title": "Now", "value": deg(h.mean, i.units), "note": format!("models {} to {}; agreement {}", deg(h.low, i.units), deg(h.high, i.units), h.confidence.label())}));
+            if let Some(p) = h.precip_prob {
+                lines.push(json!({"title": "Rain chance this hour", "value": format!("{p:.0}%"), "percent": p}));
+            }
+            if let Some((s, km)) = i.observed {
+                lines.push(json!({"title": "Measured", "value": deg(s.temp_c, i.units), "note": format!("{} ({:.0} km away)", s.id, km)}));
+            }
+            let hod: u32 = h.time.get(11..13).and_then(|s| s.parse().ok()).unwrap_or(12);
+            if !(6..20).contains(&hod) {
+                icon_name = "weather-clear-night-symbolic";
+            }
+        }
+    }
+    if let Some(o) = o {
+        if o.raining_now {
+            parts.push(format!("{} mm/h", short(o.now_mm_h)));
+            icon_name = if o.now_mm_h >= 7.6 { "weather-storm-symbolic" } else { "weather-showers-symbolic" };
+            let until = o.stops_in.map(|m| format!("dry in about {}", minutes(m))).unwrap_or_else(|| "for the next two hours".into());
+            lines.push(json!({"title": "Rain", "value": intensity(o.now_mm_h), "note": until}));
+        } else if let Some(m) = o.starts_in {
+            parts.push(format!("rain in {}", minutes(m)));
+            icon_name = "weather-showers-scattered-symbolic";
+            if m <= WARN_MIN {
+                state = "warn";
+            }
+            lines.push(json!({"title": "Rain", "value": format!("in about {}", minutes(m)), "note": format!("{}, up to {:.1} mm/h", intensity(o.peak_mm_h), o.peak_mm_h)}));
+        } else {
+            lines.push(json!({"title": "Rain", "value": "none in the next two hours"}));
+        }
+        if o.peak_mm_h >= WET_MM_H {
+            let off = i.map(|i| i.utc_offset_s).unwrap_or(0);
+            for s in &o.steps {
+                // the meter is full at 10 mm/h (heavy rain)
+                lines.push(json!({"title": format_local(s.start, off)[11..].to_string(), "value": format!("{} mm/h", short(s.mm_h)), "percent": (s.mm_h * 10.0).min(100.0), "note": intensity(s.mm_h)}));
+            }
+        }
+    }
+    if let Some(i) = i {
+        lines.push(json!({"title": "Place", "value": i.place}));
+    }
+    if parts.is_empty() {
+        return json!({"text": "", "state": "off", "help": "No weather data right now (offline, or the services did not answer)."});
+    }
+    json!({
+        "text": parts.join(" \u{00B7} "),
+        "state": state,
+        "icon": icon_name,
+        "lines": lines,
+        "help": "Temperature: GFS, ECMWF and ICON combined (Open-Meteo). Rain: Open-Meteo 15-minute precipitation for the next two hours. Change the place with: yggdrasil-weather set-location CITY",
+    })
+}
+
+fn short(mm_h: f64) -> String {
+    if mm_h < 1.0 { format!("{mm_h:.2}") } else { format!("{mm_h:.1}") }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,5 +206,25 @@ mod tests {
         let input = BarInput { hours: &[], utc_offset_s: 0, units: "metric", place: "x", observed: None, weighted: false };
         let v: serde_json::Value = serde_json::from_str(&bar_json(&input)).unwrap();
         assert_eq!(v["text"], "");
+    }
+
+    #[test]
+    fn panel_json_shows_temperature_and_rain() {
+        let text = include_str!("../tests/fixtures/minutely15.json");
+        let steps = crate::nowcast::parse(text).unwrap();
+        let now = parse_local("2026-10-25T14:05", -4 * 3600).unwrap();
+        let o = crate::nowcast::outlook(&steps, now).unwrap();
+        let hs = vec![hour("2026-10-25T14:00", 12.2)];
+        let input = BarInput { hours: &hs, utc_offset_s: -4 * 3600, units: "metric", place: "New York", observed: None, weighted: false };
+        let v = panel_json(Some(&input), Some(&o), now);
+        assert_eq!(v["text"], "12\u{00B0} \u{00B7} rain in 25 min");
+        assert_eq!(v["state"], "warn");
+        let lines = v["lines"].as_array().unwrap();
+        assert!(lines.iter().any(|l| l["title"] == "15:00" && l["value"] == "6.0 mm/h" && l["percent"] == 60.0));
+        assert_eq!(lines.last().unwrap()["value"], "New York");
+        // nothing at all: no pill
+        assert_eq!(panel_json(None, None, now)["state"], "off");
+        // only the temperature (the nowcast failed)
+        assert_eq!(panel_json(Some(&input), None, now)["text"], "12\u{00B0}");
     }
 }

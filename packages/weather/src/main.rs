@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use yggdrasil_weather::config::{self, Config};
 use yggdrasil_weather::consensus::{self, Hour};
+use yggdrasil_weather::nowcast::{self, WatchState};
 use yggdrasil_weather::observe::{self, Station};
 use yggdrasil_weather::openmeteo::{self, Forecast};
 use yggdrasil_weather::report::{self, BarInput};
@@ -86,6 +87,70 @@ fn cmd_bar() -> ExitCode {
         weighted: !weights.is_empty(),
     };
     println!("{}", report::bar_json(&input));
+    ExitCode::SUCCESS
+}
+
+/// The rain outlook from now, or None when the nowcast could not be fetched.
+fn fetch_nowcast(cfg: &Config) -> Option<nowcast::Outlook> {
+    let steps = nowcast::parse(&http_get(&nowcast::url(cfg.lat, cfg.lon)).ok()?).ok()?;
+    nowcast::outlook(&steps, now_epoch())
+}
+
+/// The Yggdrasil panel's bar add-on: always one JSON object.
+fn cmd_panel() -> ExitCode {
+    let cfg = match load_config() {
+        Ok(c) => c,
+        Err(_) => {
+            println!("{}", serde_json::json!({"text": "Set weather place", "state": "warn", "icon": "weather-few-clouds-symbolic",
+                "help": "Set your place once in a terminal: yggdrasil-weather set-location \"Your city\" (or --coords LAT LON)."}));
+            return ExitCode::SUCCESS;
+        }
+    };
+    let fetched = fetch(&cfg).ok();
+    let weights = learned_weights();
+    let hours = fetched.as_ref().map(|f| hours_for(f, &weights)).unwrap_or_default();
+    let input = fetched.as_ref().map(|f| BarInput {
+        hours: &hours,
+        utc_offset_s: f.forecast.utc_offset_s,
+        units: &cfg.units,
+        place: &cfg.name,
+        observed: f.station.as_ref().map(|(s, d)| (s, *d)),
+        weighted: !weights.is_empty(),
+    });
+    let outlook = fetch_nowcast(&cfg);
+    println!("{}", report::panel_json(input.as_ref(), outlook.as_ref(), now_epoch()));
+    ExitCode::SUCCESS
+}
+
+/// Run every 10 minutes (a systemd user timer): one notification when rain is about to start.
+fn cmd_watch() -> ExitCode {
+    let cfg = match load_config() {
+        Ok(c) => c,
+        Err(e) => return die(&e),
+    };
+    let Some(o) = fetch_nowcast(&cfg) else { return die("no nowcast (offline, or Open-Meteo did not answer)") };
+    let Some(path) = config::data_dir().map(|d| d.join("nowcast-state.json")) else { return die("no data directory") };
+    let mut st: WatchState = std::fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    let before = st.clone();
+    if let Some((title, body)) = nowcast::decide(&o, now_epoch(), &mut st) {
+        // no -A: notify-send waits for an answer when it offers actions
+        let sent = std::process::Command::new("notify-send")
+            .args(["-a", "Weather", "-i", "weather-showers-symbolic", &title, &body])
+            .stdin(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !sent {
+            return die("notify-send failed");
+        }
+        println!("{title}: {body}");
+    }
+    if st != before {
+        let _ = std::fs::create_dir_all(path.parent().unwrap());
+        if let Err(e) = std::fs::write(&path, serde_json::to_string(&st).unwrap()) {
+            return die(&e.to_string());
+        }
+    }
     ExitCode::SUCCESS
 }
 
@@ -251,13 +316,15 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("bar") => cmd_bar(),
+        Some("panel") => cmd_panel(),
+        Some("watch") => cmd_watch(),
         Some("forecast") => cmd_forecast(args.get(1).and_then(|s| s.parse().ok()).unwrap_or(24)),
         Some("set-location") => cmd_set_location(&args[1..]),
         Some("units") if args.len() == 2 => cmd_units(&args[1]),
         Some("record") => cmd_record(),
         Some("score") => cmd_score(),
         _ => {
-            eprintln!("usage: yggdrasil-weather bar | forecast [HOURS] | set-location CITY | set-location --coords LAT LON [NAME] | units metric|us | record | score");
+            eprintln!("usage: yggdrasil-weather bar | panel | watch | forecast [HOURS] | set-location CITY | set-location --coords LAT LON [NAME] | units metric|us | record | score");
             ExitCode::from(2)
         }
     }
