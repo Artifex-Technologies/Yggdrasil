@@ -184,7 +184,8 @@ fn cmd_panel() -> ExitCode {
         weighted: !weights.is_empty(),
     });
     let outlook = fetch_nowcast(&cfg, PANEL_CACHE_S);
-    let mut v = report::panel_json(input.as_ref(), outlook.as_ref(), now_epoch());
+    let sky = get_cached(&openmeteo::current_url(cfg.lat, cfg.lon), PANEL_CACHE_S).ok().and_then(|t| openmeteo::parse_current(&t));
+    let mut v = report::panel_json(input.as_ref(), outlook.as_ref(), sky, now_epoch());
     if st.view == "settings" {
         // the settings take the card's room: the weather stays in the pill
         v["lines"] = serde_json::json!([]);

@@ -141,6 +141,18 @@ pub fn forecast_url(lat: f64, lon: f64, models: &[&str], days: u32) -> String {
     )
 }
 
+/// The weather right now (WMO weather code and day or night), for the bar's icon: one small request, no model list.
+pub fn current_url(lat: f64, lon: f64) -> String {
+    format!("{FORECAST_URL}?latitude={lat:.4}&longitude={lon:.4}&current=weather_code,is_day&timezone=auto")
+}
+
+/// (WMO weather code, daytime) from a `current_url` answer.
+pub fn parse_current(text: &str) -> Option<(i64, bool)> {
+    let v: serde_json::Value = serde_json::from_str(text).ok()?;
+    let c = &v["current"];
+    Some((c["weather_code"].as_i64()?, c["is_day"].as_i64().unwrap_or(1) == 1))
+}
+
 pub fn ensemble_url(lat: f64, lon: f64, days: u32) -> String {
     format!("{ENSEMBLE_URL}?latitude={lat:.4}&longitude={lon:.4}&hourly=temperature_2m&models=gfs025&forecast_days={days}&timezone=auto")
 }

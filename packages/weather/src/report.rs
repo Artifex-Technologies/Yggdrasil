@@ -83,7 +83,23 @@ pub fn bar_json(i: &BarInput) -> String {
 
 /// The Yggdrasil panel's bar add-on JSON (`yggdrasil-weather panel`): the temperature now and,
 /// from the nowcast, rain in the next two hours. Either half may be missing.
-pub fn panel_json(i: Option<&BarInput>, o: Option<&Outlook>, now: i64) -> serde_json::Value {
+/// The bar's icon for a WMO weather code (Open-Meteo's `weather_code`), by day or night.
+pub fn sky_icon(code: i64, day: bool) -> &'static str {
+    match code {
+        0 => if day { "weather-clear-symbolic" } else { "weather-clear-night-symbolic" },
+        1 | 2 => if day { "weather-few-clouds-symbolic" } else { "weather-few-clouds-night-symbolic" },
+        3 => "weather-overcast-symbolic",
+        45 | 48 => "weather-fog-symbolic",
+        51..=57 => "weather-showers-scattered-symbolic",
+        61..=67 | 80..=82 => "weather-showers-symbolic",
+        71..=77 | 85 | 86 => "weather-snow-symbolic",
+        95..=99 => "weather-storm-symbolic",
+        _ => if day { "weather-few-clouds-symbolic" } else { "weather-few-clouds-night-symbolic" },
+    }
+}
+
+/// `sky`: the weather right now (WMO code, daytime), when known; it sets the icon, and rain from the nowcast overrides it.
+pub fn panel_json(i: Option<&BarInput>, o: Option<&Outlook>, sky: Option<(i64, bool)>, now: i64) -> serde_json::Value {
     use crate::nowcast::{intensity, minutes, WARN_MIN, WET_MM_H};
     let mut parts = vec![];
     let mut lines = vec![];
@@ -102,9 +118,12 @@ pub fn panel_json(i: Option<&BarInput>, o: Option<&Outlook>, now: i64) -> serde_
             }
             let hod: u32 = h.time.get(11..13).and_then(|s| s.parse().ok()).unwrap_or(12);
             if !(6..20).contains(&hod) {
-                icon_name = "weather-clear-night-symbolic";
+                icon_name = "weather-few-clouds-night-symbolic";
             }
         }
+    }
+    if let Some((code, day)) = sky {
+        icon_name = sky_icon(code, day);
     }
     if let Some(o) = o {
         if o.raining_now {
@@ -219,16 +238,31 @@ mod tests {
         let o = crate::nowcast::outlook(&steps, now).unwrap();
         let hs = vec![hour("2026-10-25T14:00", 12.2)];
         let input = BarInput { hours: &hs, utc_offset_s: -4 * 3600, units: "metric", place: "New York", how: "chosen", observed: None, weighted: false };
-        let v = panel_json(Some(&input), Some(&o), now);
+        let v = panel_json(Some(&input), Some(&o), None, now);
         assert_eq!(v["text"], "12\u{00B0} \u{00B7} rain in 25 min");
         assert_eq!(v["state"], "warn");
         let lines = v["lines"].as_array().unwrap();
         assert!(lines.iter().any(|l| l["title"] == "15:00" && l["value"] == "6.0 mm/h" && l["percent"] == 60.0));
         assert_eq!(lines.last().unwrap()["value"], "New York");
         // nothing at all: no pill
-        let none = panel_json(None, None, now);
+        let none = panel_json(None, None, None, now);
         assert_eq!((none["text"].as_str(), none["state"].as_str(), none["icon"].is_string()), (Some(""), Some("ok"), true), "no data: the icon alone, so the card still opens");
         // only the temperature (the nowcast failed)
-        assert_eq!(panel_json(Some(&input), None, now)["text"], "12\u{00B0}");
+        assert_eq!(panel_json(Some(&input), None, None, now)["text"], "12\u{00B0}");
+    }
+
+    #[test]
+    fn the_sky_sets_the_icon_and_rain_overrides_it() {
+        assert_eq!(sky_icon(0, true), "weather-clear-symbolic");
+        assert_eq!(sky_icon(0, false), "weather-clear-night-symbolic");
+        assert_eq!(sky_icon(2, false), "weather-few-clouds-night-symbolic");
+        assert_eq!(sky_icon(3, true), "weather-overcast-symbolic");
+        assert_eq!(sky_icon(45, true), "weather-fog-symbolic");
+        assert_eq!(sky_icon(53, true), "weather-showers-scattered-symbolic");
+        assert_eq!(sky_icon(63, true), "weather-showers-symbolic");
+        assert_eq!(sky_icon(75, true), "weather-snow-symbolic");
+        assert_eq!(sky_icon(95, false), "weather-storm-symbolic");
+        assert_eq!(panel_json(None, None, Some((3, true)), 0)["icon"], "weather-overcast-symbolic");
+        assert_eq!(crate::openmeteo::parse_current(r#"{"current":{"time":"2026-10-25T14:00","weather_code":61,"is_day":0}}"#), Some((61, false)));
     }
 }
