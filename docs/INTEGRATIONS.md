@@ -68,6 +68,21 @@ An alert is `{"time": RFC 3339, "detector_id", "severity": "info" | "warning" | 
 (Settings > Notifications chooses how many); Settings > Security gets a page named `name` with the state, alerts, new connections,
 the quarantine, the scan, the declared controls and, while the assistant is contained, a "Restore and release" button, and what the monitor holds in its own quarantine with Release and It's malware. Each part appears only when its key is there.
 
+### `bar-item` (a bar add-on)
+
+```
+kind = bar-item
+name = Agent usage
+command = /usr/bin/yggdrasil-agent-usage --bar   # prints one JSON object (below)
+interval = 300                                    # seconds between runs, at least 60; it also runs when its card is opened
+```
+
+The panel runs the command on a thread of its own (30-second limit, 64 KiB of output) and shows a pill in the top bar; a click opens
+its card. The command prints `{"text": "...", "state": "ok" | "warn" | "alert" | "off", "lines": [{"title", "value", "percent"
+(0-100, draws a meter), "note", "alert"}], "help": "..."}`. "off" or no text hides the pill; warn is amber, alert red. Text is
+drawn as given (cut short, control characters removed): an add-on can show things, never run anything through the panel. Add-ons
+are installed as packages (Agora lists them under Plugins), so removing the package removes the pill.
+
 ### `apps` (an app launcher with per-app rules)
 
 ```

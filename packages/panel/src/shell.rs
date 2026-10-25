@@ -174,6 +174,8 @@ pub struct Model {
     pub notifs: crate::notify::Store,
     /// Apps' notification-area icons (the tray), as the StatusNotifierWatcher lists them.
     pub tray: Vec<crate::tray::TrayItem>,
+    /// What the bar add-ons last printed (an add-on with no text has no pill).
+    pub addons: Vec<crate::addons::View>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -207,6 +209,8 @@ pub enum Action {
     Tray(String),
     /// The chevron beside the tray icons: the ones that are hidden.
     TrayMore,
+    /// A bar add-on's pill: its card, by index into Model::addons.
+    Addon(usize),
 }
 
 #[derive(Clone, Debug)]
@@ -484,6 +488,27 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
         }
     }
 
+    // Bar add-ons (installed from Agora, for instance): their text in a pill; red when they say something needs attention.
+    for (i, a) in m.addons.iter().enumerate().rev() {
+        if a.text.is_empty() {
+            continue;
+        }
+        let aw = paint::text_width(&fonts.regular, 12.0 * s, &a.text) + 20.0 * s;
+        rx -= aw;
+        pill(pix, rx, aw);
+        if hover == Some(hits.len()) {
+            paint::fill_rounded(pix, rx, py, aw, ph, r, lk.hover);
+        }
+        let col = match a.level {
+            crate::addons::Level::Alert => (240, 96, 96, 255),
+            crate::addons::Level::Warn => (232, 176, 72, 255),
+            crate::addons::Level::Ok => lk.text,
+        };
+        paint::draw_text(pix, &fonts.regular, 12.0 * s, rx + 10.0 * s, cy, col, &a.text);
+        hits.push(Hit { rect: (rx, 0.0, aw, h), action: Action::Addon(i) });
+        rx -= 6.0 * s;
+    }
+
     let iw = 28.0 * s;
     let isz = (14.0 * s) as u32;
     let icon_pill = |pix: &mut Pixmap, icons: &mut Icons, hits: &mut Vec<Hit>, rx: &mut f32, name: &str, action: Action| {
@@ -516,6 +541,67 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
     };
     icon_pill(pix, icons, &mut hits, &mut rx, net, Action::Network);
     hits
+}
+
+/// A bar add-on's card, at the top right under the bar: its name, then each line (title, value, a meter when it has a percent,
+/// a note), then its help sentence. Returns the card's rectangle in logical pixels.
+pub fn paint_addon(pix: &mut Pixmap, s: f32, m: &Model, idx: usize, fonts: &Fonts) -> (f32, f32, f32, f32) {
+    let w = pix.width() as f32 / s;
+    pix.fill(paint::color((0, 0, 0, 0)));
+    let Some(a) = m.addons.get(idx) else { return (0.0, 0.0, 0.0, 0.0) };
+    let cw = 340.0;
+    let pad = 16.0;
+    let line_h = |l: &crate::addons::Line| 22.0 + if l.percent.is_some() { 12.0 } else { 0.0 } + if l.note.is_empty() { 0.0 } else { 16.0 } + 8.0;
+    let help_lines = if a.help.is_empty() { 0 } else { (a.help.chars().count() as f32 / 46.0).ceil() as usize };
+    let ch = pad + 26.0 + a.lines.iter().map(line_h).sum::<f32>() + help_lines as f32 * 16.0 + pad;
+    let (cx, cy) = (w - cw - 8.0, 8.0);
+    let dark = m.dark;
+    let (bg, text, dim) = if dark { ((24, 24, 30, 245), (240, 240, 245, 255), (150, 150, 165, 255)) } else { ((250, 250, 252, 245), (20, 20, 28, 255), (100, 100, 115, 255)) };
+    paint::fill_rounded(pix, cx * s, cy * s, cw * s, ch * s, 14.0 * s, bg);
+    let mut y = cy + pad + 8.0;
+    paint::draw_text(pix, &fonts.bold, 13.5 * s, (cx + pad) * s, y * s, text, &a.name);
+    y += 26.0;
+    for l in &a.lines {
+        let col = if l.alert { (240, 96, 96, 255) } else { text };
+        paint::draw_text(pix, &fonts.regular, 12.5 * s, (cx + pad) * s, y * s, text, &l.title);
+        let vw = paint::text_width(&fonts.bold, 12.5 * s, &l.value);
+        paint::draw_text(pix, &fonts.bold, 12.5 * s, (cx + cw - pad) * s - vw, y * s, col, &l.value);
+        y += 14.0;
+        if let Some(p) = l.percent {
+            let bw = cw - 2.0 * pad;
+            paint::fill_rounded(pix, (cx + pad) * s, y * s, bw * s, 6.0 * s, 3.0 * s, if dark { (255, 255, 255, 30) } else { (0, 0, 0, 25) });
+            let fill = if l.alert { (240, 96, 96, 255) } else { paint::accent(255) };
+            if p > 0.0 {
+                paint::fill_rounded(pix, (cx + pad) * s, y * s, (bw * p / 100.0).max(6.0) * s, 6.0 * s, 3.0 * s, fill);
+            }
+            y += 12.0;
+        }
+        if !l.note.is_empty() {
+            y += 4.0;
+            paint::draw_text(pix, &fonts.regular, 11.0 * s, (cx + pad) * s, y * s, dim, &l.note);
+            y += 12.0;
+        }
+        y += 16.0;
+    }
+    if !a.help.is_empty() {
+        // wrapped by words at about 46 characters
+        let mut line = String::new();
+        for word in a.help.split_whitespace() {
+            if line.chars().count() + word.chars().count() + 1 > 46 && !line.is_empty() {
+                paint::draw_text(pix, &fonts.regular, 11.0 * s, (cx + pad) * s, y * s, dim, &line);
+                y += 16.0;
+                line.clear();
+            }
+            if !line.is_empty() {
+                line.push(' ');
+            }
+            line.push_str(word);
+        }
+        if !line.is_empty() {
+            paint::draw_text(pix, &fonts.regular, 11.0 * s, (cx + pad) * s, y * s, dim, &line);
+        }
+    }
+    (cx, cy, cw, ch)
 }
 
 /// The date popover: today's date and the time, then a month you can scroll through. `offset` is
@@ -1242,7 +1328,7 @@ mod tests {
     fn pane_draws() {
         let Some(fonts) = Fonts::load() else { return };
         let mut icons = Icons::new();
-        let mut m = Model { apps: vec![], pinned: vec![], wins: vec![], clock: String::new(), clock_secs: "05:03:11".into(), date: String::new(), today: (2026, 10, 16), user: String::new(), notch_open: false, fylgja: Default::default(), notch_w: 0.0, notch_tab: None, notifs: Default::default(), tray: vec![], hibernate: false, conf: PanelConf::default(), dark: true, status: Default::default(), trash_full: false };
+        let mut m = Model { apps: vec![], pinned: vec![], wins: vec![], clock: String::new(), clock_secs: "05:03:11".into(), date: String::new(), today: (2026, 10, 16), user: String::new(), notch_open: false, fylgja: Default::default(), notch_w: 0.0, notch_tab: None, notifs: Default::default(), tray: vec![], addons: vec![], hibernate: false, conf: PanelConf::default(), dark: true, status: Default::default(), trash_full: false };
         m.conf.notify_pane = true;
         let now = crate::notify::now_secs();
         for (id, app, sum, age) in [(1, "Mail", "Alice", 600), (2, "Mail", "Bob", 120), (3, "Heimdall", "Critical", 30)] {
@@ -1264,7 +1350,7 @@ mod tests {
 
     #[test]
     fn pinned_apps_come_first_and_missing_ones_are_skipped() {
-        let m = Model { apps: vec![app("minos", "Minos"), app("vivaldi-stable", "Vivaldi")], pinned: vec!["vivaldi-stable".into(), "ghost".into(), "minos".into()], wins: vec![], clock: String::new(), clock_secs: String::new(), date: String::new(), today: (2026, 1, 1), user: String::new(), notch_open: false, fylgja: Default::default(), notch_w: 0.0, notch_tab: None, notifs: Default::default(), tray: vec![], hibernate: false, conf: PanelConf::default(), dark: true, status: Default::default(), trash_full: false };
+        let m = Model { apps: vec![app("minos", "Minos"), app("vivaldi-stable", "Vivaldi")], pinned: vec!["vivaldi-stable".into(), "ghost".into(), "minos".into()], wins: vec![], clock: String::new(), clock_secs: String::new(), date: String::new(), today: (2026, 1, 1), user: String::new(), notch_open: false, fylgja: Default::default(), notch_w: 0.0, notch_tab: None, notifs: Default::default(), tray: vec![], addons: vec![], hibernate: false, conf: PanelConf::default(), dark: true, status: Default::default(), trash_full: false };
         let items = dock_items(&m);
         assert_eq!(items.iter().map(|i| i.app_id.as_str()).collect::<Vec<_>>(), vec!["vivaldi-stable", "minos", TRASH_ID]); // the trash is always last
         assert!(items.iter().all(|i| i.pinned && i.wins.is_empty()));

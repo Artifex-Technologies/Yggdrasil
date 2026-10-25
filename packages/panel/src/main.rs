@@ -7,6 +7,7 @@
 //! it is re-read every few seconds, so changing it in Settings takes effect live.
 
 mod a11y;
+mod addons;
 mod apps;
 mod paint;
 mod calendar;
@@ -180,6 +181,8 @@ enum PopupKind {
     Tray(trayui::TrayPop),
     /// Fylgja, the notch, on this section.
     Fylgja(fylgja::FyState),
+    /// A bar add-on's card, by its index in Model::addons.
+    Addon(usize),
 }
 
 /// The start menu's state: what was typed, how far its lists are scrolled, and (Folders theme) which
@@ -363,6 +366,9 @@ struct State {
     /// The pointer is on the notch's tab (kept even when the small card was put away).
     tab_hover: bool,
     stats_shared: Arc<std::sync::Mutex<stats::StatsSnap>>,
+    /// What the bar add-ons last printed (their thread writes it), and the flag that asks them to run now.
+    addons_shared: Arc<std::sync::Mutex<Vec<addons::View>>>,
+    addons_now: Arc<AtomicBool>,
     stats_wanted: Arc<AtomicBool>,
     /// Resting the pointer on the notch's tab opens Fylgja after a short delay: the count of the
     /// latest rest, whether the pointer is still on the tab, and its screen.
@@ -1814,7 +1820,7 @@ impl State {
                     st.scroll = (st.scroll + by * 3).clamp(0, max);
                 }
             }
-            Some(PopupKind::Tray(_)) | None => return,
+            Some(PopupKind::Tray(_)) | Some(PopupKind::Addon(_)) | None => return,
         }
         self.dirty = true;
     }
@@ -2414,6 +2420,9 @@ impl State {
                         self.popup_card = card;
                         self.tray_hits = hits;
                     }
+                    Some(Popup { kind: PopupKind::Addon(i), .. }) => {
+                        self.popup_card = shell::paint_addon(&mut pix, s, &self.model, *i, &self.assets.fonts);
+                    }
                     Some(Popup { kind: PopupKind::Calendar { offset }, .. }) => {
                         let pane = self.model.conf.notify_pane;
                         let card = shell::paint_calendar(&mut pix, s, &self.model, *offset, &self.assets.fonts, pane);
@@ -2501,6 +2510,11 @@ impl State {
             Action::ConfirmCancel => self.end_confirm(false),
             Action::Logo => self.toggle_start(),
             Action::Clock => self.toggle_calendar(),
+            Action::Addon(i) => {
+                // opening the card runs the add-on again, so what it shows is fresh
+                self.addons_now.store(true, Ordering::Relaxed);
+                self.toggle_popup(PopupKind::Addon(i));
+            }
             Action::Notch => {
                 self.open_full_from_tab();
             }
@@ -3055,6 +3069,8 @@ fn pointer_event(state: &mut State, event: wl_pointer::Event) {
                             if let Some(a) = hit {
                                 state.tray_row(a);
                             }
+                        } else if matches!(state.popup, Some(Popup { kind: PopupKind::Addon(_), .. })) {
+                            // the add-on's card only shows things
                         } else if state.model.conf.notify_pane && py >= state.pane_top {
                             let hit = state.pane_hits.iter().rev().find(|(r, _)| px >= r.0 && px < r.0 + r.2 && py >= r.1 && py < r.1 + r.3).map(|(_, a)| a.clone());
                             if let Some(a) = hit {
@@ -3311,7 +3327,7 @@ fn main() {
         viewporter,
         plasma_shell,
         shm,
-        model: Model { apps: apps::load_all(), pinned: apps::pinned(), wins: vec![], clock: clock_text(PanelConf::load().clock_24h), clock_secs: secs_text(PanelConf::load().clock_24h), date: date_text(), today: today_ymd(), user: user_name(), hibernate: shell::can_hibernate(), conf: PanelConf::load(), dark: system_dark(), status: Default::default(), trash_full: shell::trash_has_files(), notch_open: false, fylgja: Default::default(), notch_w: 0.0, notch_tab: None, notifs: notify::Store::load(notify::state_path()), tray: vec![] },
+        model: Model { apps: apps::load_all(), pinned: apps::pinned(), wins: vec![], clock: clock_text(PanelConf::load().clock_24h), clock_secs: secs_text(PanelConf::load().clock_24h), date: date_text(), today: today_ymd(), user: user_name(), hibernate: shell::can_hibernate(), conf: PanelConf::load(), dark: system_dark(), status: Default::default(), trash_full: shell::trash_has_files(), notch_open: false, fylgja: Default::default(), notch_w: 0.0, notch_tab: None, notifs: notify::Store::load(notify::state_path()), tray: vec![], addons: vec![] },
         a11y: None,
         assets: Assets { fonts, icons: paint::Icons::new() },
         surfs: vec![],
@@ -3357,6 +3373,8 @@ fn main() {
         icon_pack: paint::selected_icon_theme(),
         tab_hover: false,
         stats_shared: Arc::new(std::sync::Mutex::new(Default::default())),
+        addons_shared: Arc::new(std::sync::Mutex::new(Vec::new())),
+        addons_now: Arc::new(AtomicBool::new(false)),
         stats_wanted: Arc::new(AtomicBool::new(false)),
         tab_tx,
         thumbs: HashMap::new(),
@@ -3524,6 +3542,8 @@ fn main() {
     let (tray_tx, tray_rx) = calloop::channel::channel::<tray::TrayMsg>();
     // the tray registry first (it waits while KDE's kded still serves it), then the panel's tray as a host of it
     snwatcher::spawn();
+    // the bar add-ons installed (integrations of kind bar-item): one thread runs them all
+    addons::spawn(addons::load(), state.addons_shared.clone(), state.addons_now.clone());
     tray::spawn(tray_tx.clone());
     state.tray_tx = Some(tray_tx);
     event_loop
@@ -3709,6 +3729,12 @@ fn main() {
             if let Ok(cur) = shared.lock() {
                 if *cur != st.model.status {
                     st.model.status = cur.clone();
+                    st.dirty = true;
+                }
+            }
+            if let Ok(cur) = st.addons_shared.lock() {
+                if *cur != st.model.addons {
+                    st.model.addons = cur.clone();
                     st.dirty = true;
                 }
             }

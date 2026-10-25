@@ -40,6 +40,10 @@ pub fn describe(a: &Action, m: &Model) -> Option<(Role, String, String)> {
         Action::ConfirmNow => button("Go ahead now".into()),
         Action::ConfirmCancel => button("Cancel".into()),
         Action::Bluetooth => button("Bluetooth".into()),
+        Action::Addon(i) => {
+            let a = m.addons.get(*i)?;
+            Some((Role::Button, format!("{}, {}", a.name, a.text), "Opens its details".into()))
+        }
         Action::Dock(id) => {
             let items = shell::dock_items(m);
             let it = items.iter().find(|i| &i.app_id == id)?;
