@@ -1,0 +1,45 @@
+#!/bin/sh
+# yggdrasil-idle runs this with "lights-off" when the screen dims, goes off or shows the screensaver, and with "lights-on" when
+# you are back (Settings > Power: "Keyboard lights off while the screen is dimmed"). It turns off, and then back to how they were:
+#   * Razer keyboards, through openrazer's daemon (if it runs)
+#   * a laptop's keyboard backlight (/sys/class/leds/*kbd_backlight*), through logind, which lets the signed-in user set it
+# What was on is remembered in $XDG_RUNTIME_DIR until "lights-on"; nothing is changed that was already off.
+state=${XDG_RUNTIME_DIR:-/tmp}/yggdrasil-keyboard-lights
+quoted() { sed -n 's/^[a-z]* [0-9]* *//p' | tr ' ' '\n' | tr -d '"'; }
+num() { sed -n 's/^[a-z] //p'; }
+
+case ${1:-} in
+lights-off)
+  [ -e "$state" ] && exit 0
+  : >"$state"
+  if busctl --user status org.razer >/dev/null 2>&1; then
+    for s in $(busctl --user call org.razer /org/razer razer.devices getDevices 2>/dev/null | quoted); do
+      case $s in *[!A-Za-z0-9_-]*|'') continue ;; esac
+      [ "$(busctl --user call org.razer "/org/razer/device/$s" razer.device.misc getDeviceType 2>/dev/null)" = 's "keyboard"' ] || continue
+      b=$(busctl --user call org.razer "/org/razer/device/$s" razer.device.lighting.brightness getBrightness 2>/dev/null | num)
+      [ -n "$b" ] && [ "${b%.*}" != 0 ] || continue
+      echo "razer $s $b" >>"$state"
+      busctl --user call org.razer "/org/razer/device/$s" razer.device.lighting.brightness setBrightness d 0 >/dev/null 2>&1
+    done
+  fi
+  for d in /sys/class/leds/*kbd_backlight*; do
+    [ -r "$d/brightness" ] || continue
+    b=$(cat "$d/brightness")
+    [ "$b" -gt 0 ] 2>/dev/null || continue
+    n=${d##*/}
+    echo "leds $n $b" >>"$state"
+    busctl call org.freedesktop.login1 /org/freedesktop/login1/session/auto org.freedesktop.login1.Session SetBrightness ssu leds "$n" 0 >/dev/null 2>&1
+  done
+  ;;
+lights-on)
+  [ -e "$state" ] || exit 0
+  while read -r kind id b; do
+    case $kind in
+      razer) busctl --user call org.razer "/org/razer/device/$id" razer.device.lighting.brightness setBrightness d "$b" >/dev/null 2>&1 ;;
+      leds) busctl call org.freedesktop.login1 /org/freedesktop/login1/session/auto org.freedesktop.login1.Session SetBrightness ssu leds "$id" "$b" >/dev/null 2>&1 ;;
+    esac
+  done <"$state"
+  rm -f "$state"
+  ;;
+esac
+exit 0

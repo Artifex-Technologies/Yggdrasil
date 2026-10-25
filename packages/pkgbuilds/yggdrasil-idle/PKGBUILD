@@ -10,6 +10,7 @@ replaces=('labyrinth-idle')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
 license=('MIT')
 depends=('gcc-libs' 'wayland' 'systemd' 'libnotify')
+optdepends=('openrazer-daemon: Razer keyboard lights go off while the screen is dimmed')
 makedepends=('cargo')
 options=('!lto')
 
@@ -27,6 +28,9 @@ check() {
 
 package() {
   install -Dm755 "$srcdir/target/release/yggdrasil-idle" "$pkgdir/usr/bin/yggdrasil-idle"
+  # lights hooks: run with lights-off / lights-on as the screen dims and you come back (keyboard-lights: Razer through openrazer,
+  # laptop keyboard backlights through logind)
+  install -Dm755 "$_src/idle.d/keyboard-lights" "$pkgdir/usr/lib/yggdrasil/idle.d/keyboard-lights"
   install -Dm644 /dev/stdin "$pkgdir/etc/xdg/autostart/yggdrasil-idle.desktop" <<'EOT'
 [Desktop Entry]
 Type=Application

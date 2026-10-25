@@ -93,6 +93,31 @@ pub struct App {
     done: HashMap<Step, bool>,
     /// The screensaver while it runs (it ends when the user is back).
     screensaver: Option<std::process::Child>,
+    /// The lights hooks were told "lights-off" and not yet "lights-on".
+    lights_out: bool,
+}
+
+/// Runs every lights hook with `arg` ("lights-off" or "lights-on"), without waiting: the system's (/usr/lib/yggdrasil/idle.d, e.g.
+/// keyboard-lights, from this package) and the user's own (~/.config/yggdrasil/idle.d), each an executable file.
+fn lights(arg: &str) {
+    let mut hooks: Vec<std::path::PathBuf> = vec![];
+    for dir in [std::path::PathBuf::from("/usr/lib/yggdrasil/idle.d"), yggdrasil_conf::dirs::config().join("idle.d")] {
+        if let Ok(rd) = std::fs::read_dir(dir) {
+            let mut v: Vec<_> = rd.flatten().map(|e| e.path()).filter(|p| p.is_file()).collect();
+            v.sort();
+            hooks.extend(v);
+        }
+    }
+    for h in hooks {
+        match Command::new(&h).arg(arg).stdin(std::process::Stdio::null()).spawn() {
+            Ok(mut c) => {
+                std::thread::spawn(move || {
+                    let _ = c.wait();
+                });
+            }
+            Err(e) => log(&format!("lights hook {} failed: {e}", h.display())),
+        }
+    }
 }
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for App {
@@ -124,6 +149,10 @@ impl Dispatch<ExtIdleNotificationV1, u32> for App {
                 if let Some(p) = app.power.as_mut().filter(|p| p.off) {
                     p.set(true);
                 }
+                if app.lights_out {
+                    app.lights_out = false;
+                    lights("lights-on");
+                }
                 if let Some((m, _)) = app.longest.take() {
                     log(&format!("active again (had been idle {}s or more)  {}", m, context()));
                     app.done.clear();
@@ -150,6 +179,10 @@ impl App {
             return;
         }
         log(&format!("doing {}", step.name()));
+        if self.conf.lights_off && policy::darkens(step) && !self.lights_out {
+            self.lights_out = true;
+            lights("lights-off");
+        }
         match step {
             Step::Screensaver => {
                 let child = std::process::Command::new("yggdrasil-splash").arg("--screensaver").stdin(std::process::Stdio::null()).spawn();
@@ -220,7 +253,7 @@ fn main() {
         log("dimming is not available here (needs layer-shell, wp-viewporter, wl_shm)");
     }
     let power = power::Power::new(&globals, &qh);
-    let mut app = App { conf, dimmer, power, globals, qh: qh.clone(), longest: None, done: HashMap::new(), screensaver: None };
+    let mut app = App { conf, dimmer, power, globals, qh: qh.clone(), longest: None, done: HashMap::new(), screensaver: None, lights_out: false };
     let mut last_check = Instant::now();
     loop {
         if queue.dispatch_pending(&mut app).is_err() || conn.flush().is_err() {

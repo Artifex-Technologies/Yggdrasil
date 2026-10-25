@@ -37,11 +37,13 @@ pub struct Config {
     pub hibernate: u32,
     /// How bright the screen is while dimmed, in percent of normal (10 to 90).
     pub dim_level: u32,
+    /// Keyboard (and other device) lights go off while the screen is dimmed, off or showing the screensaver.
+    pub lights_off: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { act: false, screensaver: 0, dim: 0, lock: 0, display_off: 0, suspend: 0, hibernate: 0, dim_level: 30 }
+        Config { act: false, screensaver: 0, dim: 0, lock: 0, display_off: 0, suspend: 0, hibernate: 0, dim_level: 30, lights_off: true }
     }
 }
 
@@ -63,6 +65,7 @@ impl Config {
                 "suspend" => c.suspend = secs.unwrap_or(c.suspend),
                 "hibernate" => c.hibernate = secs.unwrap_or(c.hibernate),
                 "dim_level" => c.dim_level = secs.unwrap_or(c.dim_level).clamp(10, 90),
+                "lights_off" => c.lights_off = !matches!(v, "0" | "no" | "false"),
                 _ => {}
             }
         }
@@ -78,6 +81,11 @@ impl Config {
         v.sort_by_key(|(s, _)| *s);
         v
     }
+}
+
+/// Steps that also put the keyboard lights out (the screen is dimmed, off or covered).
+pub fn darkens(step: Step) -> bool {
+    matches!(step, Step::Screensaver | Step::Dim | Step::DisplayOff)
 }
 
 /// The inactivity marks the observer reports on, whatever the settings (seconds).
@@ -125,13 +133,15 @@ mod tests {
     #[test]
     fn parses_and_ignores_junk() {
         let c = Config::parse("# comment\nmode = act\ndim = 300  # five minutes\nlock = soon\nsuspend=1800\nbogus = 1\n");
-        assert_eq!(c, Config { act: true, screensaver: 0, dim: 300, lock: 0, display_off: 0, suspend: 1800, hibernate: 0, dim_level: 30 });
+        assert_eq!(c, Config { act: true, screensaver: 0, dim: 300, lock: 0, display_off: 0, suspend: 1800, hibernate: 0, dim_level: 30, lights_off: true });
         let c = Config::parse("mode = act\nscreensaver = 180\ndim = 300\n");
         assert_eq!(c.steps(), vec![(180, Step::Screensaver), (300, Step::Dim)], "the screensaver first, then the dim over it");
         assert_eq!(Config::parse("dim_level = 5").dim_level, 10);
         assert_eq!(Config::parse("hibernate = 3600").hibernate, 3600);
         assert_eq!(Config::parse(""), Config::default());
         assert!(!Config::parse("mode = observe").act);
+        assert!(!Config::parse("lights_off = 0").lights_off);
+        assert!(Config::parse("lights_off = 1").lights_off);
     }
 
     #[test]

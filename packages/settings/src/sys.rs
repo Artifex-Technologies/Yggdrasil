@@ -849,6 +849,8 @@ pub struct Idle {
     pub dim: i64,
     /// How bright the screen is while dimmed, in percent.
     pub dim_level: i64,
+    /// Keyboard lights go off while the screen is dimmed, off or showing the screensaver.
+    pub lights_off: bool,
     pub screen_off: i64,
     pub lock: i64,
     pub sleep: i64,
@@ -861,7 +863,7 @@ pub struct Idle {
 
 impl Default for Idle {
     fn default() -> Self {
-        Idle { screensaver: 0, dim: 5, dim_level: 30, screen_off: 0, lock: 0, sleep: 0, hibernate: 0, can_sleep: true, can_hibernate: true, sleep_note: String::new() }
+        Idle { screensaver: 0, dim: 5, dim_level: 30, lights_off: true, screen_off: 0, lock: 0, sleep: 0, hibernate: 0, can_sleep: true, can_hibernate: true, sleep_note: String::new() }
     }
 }
 
@@ -875,6 +877,10 @@ pub fn parse_idle(text: &str) -> Idle {
     for line in text.lines() {
         let line = line.split('#').next().unwrap_or("").trim();
         let Some((k, v)) = line.split_once('=') else { continue };
+        if k.trim() == "lights_off" {
+            i.lights_off = !matches!(v.trim(), "0" | "no" | "false");
+            continue;
+        }
         let Ok(n) = v.trim().parse::<i64>() else { continue };
         match k.trim() {
             "screensaver" => i.screensaver = n / 60,
@@ -892,8 +898,8 @@ pub fn parse_idle(text: &str) -> Idle {
 
 pub fn idle_text(i: &Idle) -> String {
     format!(
-        "# Written by Settings > Power. yggdrasil-idle acts on these (seconds of inactivity, 0 = never).\nmode = act\nscreensaver = {}\ndim = {}\ndim_level = {}\ndisplay_off = {}\nlock = {}\nsuspend = {}\nhibernate = {}\n",
-        i.screensaver * 60, i.dim * 60, i.dim_level, i.screen_off * 60, i.lock * 60, i.sleep * 60, i.hibernate * 60
+        "# Written by Settings > Power. yggdrasil-idle acts on these (seconds of inactivity, 0 = never).\nmode = act\nscreensaver = {}\ndim = {}\ndim_level = {}\nlights_off = {}\ndisplay_off = {}\nlock = {}\nsuspend = {}\nhibernate = {}\n",
+        i.screensaver * 60, i.dim * 60, i.dim_level, i.lights_off as u8, i.screen_off * 60, i.lock * 60, i.sleep * 60, i.hibernate * 60
     )
 }
 
@@ -967,14 +973,14 @@ mod idle_tests {
 
     #[test]
     fn round_trip() {
-        let i = Idle { screensaver: 3, dim: 7, dim_level: 40, screen_off: 15, lock: 10, sleep: 0, hibernate: 120, can_sleep: true, can_hibernate: true, sleep_note: String::new() };
+        let i = Idle { screensaver: 3, dim: 7, dim_level: 40, lights_off: false, screen_off: 15, lock: 10, sleep: 0, hibernate: 120, can_sleep: true, can_hibernate: true, sleep_note: String::new() };
         assert_eq!(parse_idle(&idle_text(&i)), i);
     }
 
     #[test]
     fn defaults_without_a_file() {
         let i = parse_idle("");
-        assert_eq!((i.dim, i.dim_level, i.lock, i.sleep), (5, 30, 0, 0));
+        assert_eq!((i.dim, i.dim_level, i.lock, i.sleep, i.lights_off), (5, 30, 0, 0, true));
     }
 }
 
