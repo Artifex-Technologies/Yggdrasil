@@ -1,0 +1,11 @@
+# Yggdrasil: the person at the screen may read their pointing devices (mice, touchpads, trackballs), so the panel can tell when the
+# left button comes up at the end of a window drag (FancyZones: Hyprland reports no mouse buttons). Keyboards are left alone, and so
+# is a mouse's own keyboard part (its macro keys show up as a separate keyboard device). A mouse with extra buttons is still a
+# mouse. uaccess grants it to the active seat only.
+ACTION=="remove", GOTO="yggdrasil_pointer_end"
+SUBSYSTEM!="input", GOTO="yggdrasil_pointer_end"
+KERNEL!="event*", GOTO="yggdrasil_pointer_end"
+ENV{ID_INPUT_KEYBOARD}=="1", GOTO="yggdrasil_pointer_end"
+ENV{ID_INPUT_MOUSE}=="1", TAG+="uaccess"
+ENV{ID_INPUT_TOUCHPAD}=="1", TAG+="uaccess"
+LABEL="yggdrasil_pointer_end"

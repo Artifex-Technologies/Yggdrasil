@@ -21,6 +21,8 @@ package() {
   install -Dm755 "$_src/bin/yggdrasil-hypr-plugin" "$pkgdir/usr/bin/yggdrasil-hypr-plugin"
   install -Dm644 "$_src/hyprland/plugin/minimize.cpp" "$pkgdir/usr/share/yggdrasil/hyprland/plugin/minimize.cpp"
   install -Dm644 "$_src/hyprland/yggdrasil.lua" "$pkgdir/usr/share/yggdrasil/hyprland/yggdrasil.lua"
+  # the person at the screen may read their mice and touchpads (the end of a window drag, for window zones); never keyboards
+  install -Dm644 "$_src/udev/71-yggdrasil-pointer.rules" "$pkgdir/usr/lib/udev/rules.d/71-yggdrasil-pointer.rules"
   # the login screen lists it as "Yggdrasil"
   install -Dm644 "$_src/yggdrasil.desktop" "$pkgdir/usr/share/wayland-sessions/yggdrasil.desktop"
   # the session target: starting it starts the autostart folder (the panel and the rest)

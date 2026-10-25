@@ -387,6 +387,9 @@ struct State {
     fy_hits: Vec<fylgja::FHit>,
     /// The zones sheet's zones on its surface.
     zone_hits: Vec<(zones::Rect4, (usize, usize))>,
+    /// While a window is dragged to a zone: the mouse's left button as the kernel sees it (the drop is its release), and whether
+    /// it has been seen held.
+    zone_buttons: Option<(zones::Buttons, bool)>,
     /// Snap Assist's window tiles on its surface, and the zone they are in.
     assist_hits: Vec<(zones::Rect4, usize)>,
     assist_area: zones::Rect4,
@@ -1896,6 +1899,7 @@ impl State {
 
     fn close_popup(&mut self) {
         self.thumbs.clear(); // pictures of windows are not kept
+        self.zone_buttons = None;
         self.fy_anim = None;
         if matches!(self.popup, Some(Popup { kind: PopupKind::Fylgja(_), .. })) {
             self.cancel_voice();
@@ -2224,6 +2228,10 @@ impl State {
             return;
         };
         zones::note(&format!("sheet open ({mode:?}) for {} on {}", sess.address, sess.monitor.name));
+        self.zone_buttons = (mode == zones::Mode::Drag).then(|| (zones::Buttons::open(), false));
+        if let Some((b, _)) = &self.zone_buttons {
+            zones::note(&format!("left button readable: {:?}", b.left_down()));
+        }
         if self.popup.is_some() {
             self.close_popup();
         }
@@ -2239,6 +2247,19 @@ impl State {
         let Some(g) = zones::cursor() else { return };
         let p = zones::to_surface(z, g);
         let hover = zones::hit_at(&self.zone_hits, p);
+        // the surest sign: the kernel says the left button came up
+        if let Some((b, seen)) = &mut self.zone_buttons {
+            match b.left_down() {
+                Some(true) => *seen = true,
+                Some(false) if *seen => {
+                    zones::note(&format!("drop seen by the panel: the left button came up over {hover:?}"));
+                    self.zone_buttons = None;
+                    self.zones_dropped(hover);
+                    return;
+                }
+                _ => {}
+            }
+        }
         let at = zones::front_window().filter(|(a, _)| *a == z.address).map(|(_, at)| at);
         if let Some(drop) = z.watch.follow(g, at, hover) {
             zones::note(&format!("drop seen by the panel: the window stopped following (pointer {g:?}, window at {at:?})"));
@@ -3805,6 +3826,7 @@ fn main() {
         start_max: 0,
         fy_hits: vec![],
         zone_hits: vec![],
+        zone_buttons: None,
         assist_hits: vec![],
         assist_area: (0.0, 0.0, 0.0, 0.0),
         fy_active: Arc::new(AtomicBool::new(false)),

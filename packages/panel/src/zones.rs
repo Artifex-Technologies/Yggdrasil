@@ -125,6 +125,59 @@ impl DropWatch {
 /// How long a drag sheet waits, with the pointer still, for a drop it may never hear.
 pub const STALE: std::time::Duration = std::time::Duration::from_secs(8);
 
+/// The left mouse button as the kernel sees it, from the pointer devices this user may read (Hyprland reports no mouse buttons, and
+/// no button event reaches the panel while the compositor moves a window). Only the button state is asked for; no events are read.
+pub struct Buttons {
+    devices: Vec<std::fs::File>,
+}
+
+const BTN_LEFT: usize = 0x110;
+const KEY_A: usize = 30;
+
+fn ioc_read(nr: u64, len: usize) -> u64 {
+    (2u64 << 30) | ((len as u64) << 16) | ((b'E' as u64) << 8) | nr
+}
+
+fn bit(buf: &[u8], n: usize) -> bool {
+    buf.get(n / 8).is_some_and(|b| b & (1 << (n % 8)) != 0)
+}
+
+impl Buttons {
+    /// The readable devices that have a left button and are not keyboards (a mouse's macro-key half shows up as a keyboard).
+    pub fn open() -> Buttons {
+        use std::os::fd::AsRawFd;
+        let mut devices = vec![];
+        let Ok(rd) = std::fs::read_dir("/dev/input") else { return Buttons { devices } };
+        for e in rd.flatten() {
+            if !e.file_name().to_string_lossy().starts_with("event") {
+                continue;
+            }
+            let Ok(f) = std::fs::File::open(e.path()) else { continue };
+            let mut caps = [0u8; 96];
+            // EVIOCGBIT(EV_KEY): which keys and buttons the device has
+            let n = unsafe { libc::ioctl(f.as_raw_fd(), ioc_read(0x20 + 1, caps.len()) as _, caps.as_mut_ptr()) };
+            if n > 0 && bit(&caps, BTN_LEFT) && !bit(&caps, KEY_A) {
+                devices.push(f);
+            }
+        }
+        Buttons { devices }
+    }
+
+    /// Whether the left button is down on any of them; None when no pointer device can be read.
+    pub fn left_down(&self) -> Option<bool> {
+        use std::os::fd::AsRawFd;
+        if self.devices.is_empty() {
+            return None;
+        }
+        Some(self.devices.iter().any(|f| {
+            let mut state = [0u8; 96];
+            // EVIOCGKEY: which keys and buttons are held now
+            let n = unsafe { libc::ioctl(f.as_raw_fd(), ioc_read(0x18, state.len()) as _, state.as_mut_ptr()) };
+            n >= 0 && bit(&state, BTN_LEFT)
+        }))
+    }
+}
+
 /// A line in the drag trail (~/.local/state/yggdrasil/zones.log, shared with the session's Lua), to find why a drop is missed.
 pub fn note(msg: &str) {
     use std::io::Write;
@@ -401,5 +454,20 @@ mod tests {
         let hits = vec![((10.0, 10.0, 20.0, 20.0), (1, 2))];
         assert_eq!(hit_at(&hits, (15.0, 15.0)), Some((1, 2)));
         assert_eq!(hit_at(&hits, (35.0, 15.0)), None);
+    }
+}
+
+#[cfg(test)]
+mod button_tests {
+    use super::*;
+
+    #[test]
+    fn ioctl_numbers_and_bits() {
+        // EVIOCGKEY(96) and EVIOCGBIT(EV_KEY, 96) as the kernel headers spell them
+        assert_eq!(ioc_read(0x18, 96), 0x80604518);
+        assert_eq!(ioc_read(0x21, 96), 0x80604521);
+        let mut b = [0u8; 96];
+        b[BTN_LEFT / 8] = 1 << (BTN_LEFT % 8);
+        assert!(bit(&b, BTN_LEFT) && !bit(&b, KEY_A));
     }
 }
