@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Health
+GenericName=Break reminders
+Comment=Reminders to rest your eyes, move, drink water, breathe, eat and wind down
+Exec=yggdrasil-health
+Icon=/usr/share/yggdrasil/icons/health-symbolic.svg
+Categories=Utility;
+Keywords=break;reminder;eyes;water;posture;
+StartupWMClass=yggdrasil-health

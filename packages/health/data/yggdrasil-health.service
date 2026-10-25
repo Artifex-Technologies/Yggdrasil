@@ -1,0 +1,12 @@
+[Unit]
+Description=Health break reminders (Yggdrasil)
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/yggdrasil-health daemon
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=graphical-session.target

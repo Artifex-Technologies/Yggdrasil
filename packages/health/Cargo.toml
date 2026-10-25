@@ -1,0 +1,27 @@
+[package]
+name = "yggdrasil-health"
+version = "0.1.0"
+edition = "2021"
+description = "Break reminders for Yggdrasil: eyes, movement, water, breathing, meals and wind-down, with a settings window and a top bar pill"
+license = "MIT"
+
+[lib]
+name = "yggdrasil_health"
+path = "src/lib.rs"
+
+[[bin]]
+name = "yggdrasil-health"
+path = "src/main.rs"
+
+[dependencies]
+eframe = "0.36.2"
+yggdrasil-ui = { path = "../yggdrasil-ui" }
+yggdrasil-conf = { path = "../yggdrasil-conf" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.151"
+libc = "0.2"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
