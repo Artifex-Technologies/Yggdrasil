@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Loads Yggdrasil's Hyprland plugin (minimize buttons work: see /usr/share/yggdrasil/hyprland/plugin/minimize.cpp).
+# Hyprland only loads a plugin built against its own version, so it is built here, once per Hyprland version (about two
+# seconds), into ~/.cache/yggdrasil/hyprland-plugin/<Hyprland's commit>/, and loaded from there. Run at the session's start.
+set -u
+src=/usr/share/yggdrasil/hyprland/plugin/minimize.cpp
+log() { printf 'yggdrasil-hypr-plugin: %s\n' "$*" >&2; }
+
+commit=$(hyprctl -j version 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["commit"])' 2>/dev/null)
+[[ $commit =~ ^[0-9a-f]{7,64}$ ]] || { log "Hyprland is not answering"; exit 1; }
+hyprctl plugin list 2>/dev/null | grep -q '^Plugin yggdrasil-minimize ' && exit 0
+dir=${XDG_CACHE_HOME:-$HOME/.cache}/yggdrasil/hyprland-plugin
+so=$dir/$commit/yggdrasil-minimize.so
+
+if [[ ! -s $so || $so -ot $src ]]; then
+  command -v g++ >/dev/null || { log "no C++ compiler (g++), so the plugin cannot be built"; exit 1; }
+  flags=$(pkg-config --cflags hyprland pixman-1 libdrm 2>/dev/null) || { log "Hyprland's headers are not installed"; exit 1; }
+  mkdir -p "$dir/$commit"
+  # shellcheck disable=SC2086
+  if ! g++ -shared -fPIC -std=c++26 -O2 $flags "$src" -o "$so.tmp" 2>"$dir/$commit/build.log"; then
+    log "the plugin did not build for Hyprland $commit (see $dir/$commit/build.log)"
+    rm -f "$so.tmp"
+    exit 1
+  fi
+  mv "$so.tmp" "$so"
+  # builds for older Hyprland versions are of no use any more
+  find "$dir" -mindepth 1 -maxdepth 1 -type d ! -name "$commit" -exec rm -rf {} + 2>/dev/null
+  log "built for Hyprland $commit"
+fi
+
+out=$(hyprctl plugin load "$so" 2>&1)
+[[ $out == ok* ]] || { log "loading failed: $out"; exit 1; }
+log "loaded"

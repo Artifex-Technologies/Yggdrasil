@@ -83,23 +83,8 @@ pub fn window_controls(ui: &mut egui::Ui, pal: &Palette) {
     let _ = pal;
 }
 
-/// Minimizes the window. Hyprland has no minimize of its own and ignores a program's request, so there the window goes to the
-/// hidden "minimized" workspace, as Super+Down does in Yggdrasil's session (the click focused it, so it is the active window).
+/// Minimizes the window: the standard request to the compositor (under Hyprland, Yggdrasil's session plugin acts on it).
 fn minimize(ctx: &egui::Context) {
-    if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some() {
-        let child = std::process::Command::new("hyprctl")
-            .args(["dispatch", r#"hl.dsp.window.move({ workspace = "special:minimized", follow = false })"#])
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn();
-        if let Ok(mut c) = child {
-            std::thread::spawn(move || {
-                let _ = c.wait();
-            });
-            return;
-        }
-    }
     ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
 }
 

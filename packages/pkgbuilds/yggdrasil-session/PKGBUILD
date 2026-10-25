@@ -7,7 +7,8 @@ arch=('any')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
 license=('MIT')
 depends=('hyprland' 'xdg-desktop-portal-hyprland' 'yggdrasil-panel' 'yggdrasil-idle' 'yggdrasil-lock' 'yggdrasil-polkit' 'yggdrasil-portal' 'yggdrasil-xmove'
-         'python' 'grim' 'slurp' 'wl-clipboard' 'libnotify' 'xdg-user-dirs')
+         'python' 'grim' 'slurp' 'wl-clipboard' 'libnotify' 'xdg-user-dirs'
+         'gcc' 'pkgconf')  # the Hyprland plugin is built for the installed Hyprland at login (yggdrasil-hypr-plugin)
 optdepends=('ghostty: the terminal on Super+Return' 'btop: running programs on Ctrl+Shift+Esc')
 
 _src="$startdir/../../session"
@@ -17,6 +18,8 @@ package() {
   install -Dm755 "$_src/bin/yggdrasil-snap" "$pkgdir/usr/bin/yggdrasil-snap"
   install -Dm755 "$_src/bin/yggdrasil-close" "$pkgdir/usr/bin/yggdrasil-close"
   install -Dm755 "$_src/bin/yggdrasil-logout" "$pkgdir/usr/bin/yggdrasil-logout"
+  install -Dm755 "$_src/bin/yggdrasil-hypr-plugin" "$pkgdir/usr/bin/yggdrasil-hypr-plugin"
+  install -Dm644 "$_src/hyprland/plugin/minimize.cpp" "$pkgdir/usr/share/yggdrasil/hyprland/plugin/minimize.cpp"
   install -Dm644 "$_src/hyprland/yggdrasil.lua" "$pkgdir/usr/share/yggdrasil/hyprland/yggdrasil.lua"
   # the login screen lists it as "Yggdrasil"
   install -Dm644 "$_src/yggdrasil.desktop" "$pkgdir/usr/share/wayland-sessions/yggdrasil.desktop"
