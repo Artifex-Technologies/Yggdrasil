@@ -132,8 +132,49 @@ fn keymaps() -> Vec<String> {
     v
 }
 
+/// The names of the keyboard layouts ("us" -> "English (US)"), from the system's XKB list.
+fn layout_names() -> std::collections::HashMap<String, String> {
+    let text = std::fs::read_to_string("/usr/share/X11/xkb/rules/base.lst").unwrap_or_default();
+    parse_layout_names(&text)
+}
+
+fn parse_layout_names(text: &str) -> std::collections::HashMap<String, String> {
+    let mut out = std::collections::HashMap::new();
+    let mut inside = false;
+    for line in text.lines() {
+        if line.starts_with('!') {
+            inside = line.trim() == "! layout";
+            continue;
+        }
+        if inside {
+            let line = line.trim();
+            if let Some((code, name)) = line.split_once(char::is_whitespace) {
+                out.insert(code.to_string(), name.trim().to_string());
+            }
+        }
+    }
+    out
+}
+
+/// The time zones a person would pick: Region/City ones and UTC (not the old aliases such as "W-SU", "Zulu" or "US/Pacific").
 fn timezones() -> Vec<String> {
-    run_lines("timedatectl", &["list-timezones"])
+    let mut v: Vec<String> = run_lines("timedatectl", &["list-timezones"]).into_iter().filter(|z| real_zone(z)).collect();
+    v.sort_by_key(|z| zone_label(z).to_lowercase());
+    v
+}
+
+fn real_zone(z: &str) -> bool {
+    const AREAS: [&str; 10] = ["Africa", "America", "Antarctica", "Arctic", "Asia", "Atlantic", "Australia", "Europe", "Indian", "Pacific"];
+    z == "UTC" || z.split_once('/').map(|(area, rest)| AREAS.contains(&area) && !rest.is_empty()).unwrap_or(false)
+}
+
+/// "America/Argentina/Buenos_Aires" -> "Buenos Aires (America, Argentina)"
+fn zone_label(z: &str) -> String {
+    let parts: Vec<&str> = z.split('/').collect();
+    if parts.len() < 2 {
+        return z.replace('_', " ");
+    }
+    format!("{} ({})", parts[parts.len() - 1].replace('_', " "), parts[..parts.len() - 1].join(", ").replace('_', " "))
 }
 
 /// The live system's own time zone (what the medium was set to), as the first guess. No location service is asked.
@@ -157,6 +198,7 @@ struct App {
     locale: String,
     keymaps: Vec<String>,
     keymap: String,
+    keymap_names: std::collections::HashMap<String, String>,
     test_text: String,
     zones: Vec<String>,
     zone: String,
@@ -191,8 +233,14 @@ impl App {
             os,
             locales: locales(),
             locale: "en_US.UTF-8".into(),
-            keymaps: keymaps(),
+            keymaps: {
+                let names = layout_names();
+                let mut k = keymaps();
+                k.sort_by_key(|c| names.get(c).cloned().unwrap_or_else(|| c.clone()).to_lowercase());
+                k
+            },
             keymap: "us".into(),
+            keymap_names: layout_names(),
             test_text: String::new(),
             zones: timezones(),
             zone: current_timezone(),
@@ -359,6 +407,14 @@ fn field(ui: &mut egui::Ui, text: &mut String, hint: &str, secret: bool) -> egui
 }
 
 /// A list to pick one line from (shown through `label`), the chosen one highlighted and scrolled into view when the list opens.
+/// "English (US)   us": the name, with the short code people may know it by.
+fn keymap_label(names: &std::collections::HashMap<String, String>, code: &str) -> String {
+    match names.get(code) {
+        Some(n) => format!("{n}   ({code})"),
+        None => code.to_string(),
+    }
+}
+
 fn pick_list(ui: &mut egui::Ui, pal: &Palette, id: &str, items: &[String], chosen: &mut String, height: f32, label: impl Fn(&str) -> String) {
     let seen = egui::Id::new(("pick-list-shown", id));
     let first = !ui.ctx().data(|d| d.get_temp::<bool>(seen).unwrap_or(false));
@@ -427,7 +483,8 @@ impl eframe::App for App {
                     Page::Keyboard => {
                         heading(ui, &pal, "Keyboard", "The layout of your keyboard. Type in the box to try it.");
                         let mut km = self.keymap.clone();
-                        pick_list(ui, &pal, "keymaps", &self.keymaps, &mut km, (body_h - 150.0).max(120.0), |k| k.to_string());
+                        let names = &self.keymap_names;
+                        pick_list(ui, &pal, "keymaps", &self.keymaps, &mut km, (body_h - 150.0).max(120.0), |k| keymap_label(names, k));
                         self.keymap = km;
                         ui.add_space(8.0);
                         field(ui, &mut self.test_text, "Try your keyboard here", false);
@@ -436,10 +493,10 @@ impl eframe::App for App {
                         heading(ui, &pal, "Time zone", "Where the clock should be set for. Type a city to find it.");
                         field(ui, &mut self.zone_filter, "Search, e.g. Denver or Berlin", false);
                         ui.add_space(6.0);
-                        let q = self.zone_filter.to_lowercase().replace(' ', "_");
-                        let shown: Vec<String> = self.zones.iter().filter(|z| q.is_empty() || z.to_lowercase().contains(&q)).cloned().collect();
+                        let q = self.zone_filter.to_lowercase();
+                        let shown: Vec<String> = self.zones.iter().filter(|z| q.is_empty() || zone_label(z).to_lowercase().contains(&q)).cloned().collect();
                         let mut z = self.zone.clone();
-                        pick_list(ui, &pal, "zones", &shown, &mut z, (body_h - 150.0).max(120.0), |z| z.replace('_', " "));
+                        pick_list(ui, &pal, "zones", &shown, &mut z, (body_h - 150.0).max(120.0), zone_label);
                         self.zone = z;
                     }
                     Page::Disk => {
@@ -490,8 +547,8 @@ impl eframe::App for App {
                         let disk = self.disks.iter().find(|d| Some(&d.path) == self.disk.as_ref());
                         let rows = [
                             ("Language", locale_label(&self.locale)),
-                            ("Keyboard", self.keymap.clone()),
-                            ("Time zone", self.zone.clone()),
+                            ("Keyboard", keymap_label(&self.keymap_names, &self.keymap)),
+                            ("Time zone", zone_label(&self.zone)),
                             ("Disk", disk.map(|d| format!("{} ({}, {}), erased", if d.model.is_empty() { "Disk" } else { &d.model }, size_text(d.size), d.path)).unwrap_or_default()),
                             ("Encryption", if self.encrypt { "on".to_string() } else { "off".to_string() }),
                             ("Account", format!("{} ({})", self.name.trim(), self.login)),
@@ -606,6 +663,27 @@ fn main() -> eframe::Result {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn keyboard_layouts_get_their_names() {
+        let lst = "! model\n  pc105  Generic 105-key PC\n\n! layout\n  us              English (US)\n  de              German\n\n! variant\n  intl            us: English (US, intl.)\n";
+        let n = super::parse_layout_names(lst);
+        assert_eq!(n.get("us").map(String::as_str), Some("English (US)"));
+        assert_eq!(n.get("pc105"), None, "models are not layouts");
+        assert_eq!(n.get("intl"), None, "variants are not layouts");
+        assert_eq!(super::keymap_label(&n, "de"), "German   (de)");
+        assert_eq!(super::keymap_label(&n, "xx"), "xx");
+    }
+
+    #[test]
+    fn only_region_city_zones_are_offered_and_read_as_places() {
+        assert!(super::real_zone("America/Denver") && super::real_zone("UTC"));
+        assert!(!super::real_zone("W-SU") && !super::real_zone("Zulu") && !super::real_zone("US/Pacific") && !super::real_zone("Etc/GMT+5"));
+        assert_eq!(super::zone_label("America/Argentina/Buenos_Aires"), "Buenos Aires (America, Argentina)");
+        assert_eq!(super::zone_label("Europe/Berlin"), "Berlin (Europe)");
+        assert_eq!(super::zone_label("UTC"), "UTC");
+    }
+
     use super::*;
 
     #[test]
