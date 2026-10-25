@@ -9,6 +9,8 @@
 mod a11y;
 mod addons;
 mod apps;
+mod capture;
+mod previews;
 mod paint;
 mod calendar;
 mod convo;
@@ -390,6 +392,8 @@ struct State {
     /// While a window is dragged to a zone: the mouse's left button as the kernel sees it (the drop is its release), and whether
     /// it has been seen held.
     zone_buttons: Option<(zones::Buttons, bool)>,
+    /// Snap Assist waiting to open after a drop (the dragged app first gets the pointer back, so it hears its drag ended).
+    assist_after: Option<(zones::Session, (usize, usize), Instant)>,
     /// Snap Assist's window tiles on its surface, and the zone they are in.
     assist_hits: Vec<(zones::Rect4, usize)>,
     assist_area: zones::Rect4,
@@ -1843,9 +1847,10 @@ impl State {
         if item.wins.is_empty() {
             return;
         }
-        // ask KWin for a picture of each window (in the background; the cards show a placeholder until it arrives)
+        // a picture of each window, in the background (the cards show the app's icon until it arrives): KWin's screenshot service,
+        // or the standard capture protocols (Hyprland and others), refreshed while the card is open
         let scale = self.outputs.get(&output).map(|o| o.scale).unwrap_or(1).max(1) as f32;
-        let (bw, bh) = trayui::thumb_box();
+        let (bw, bh) = previews::thumb_box();
         let (bw, bh) = ((bw * scale.max(1.0)) as u32, (bh * scale.max(1.0)) as u32);
         for &i in &item.wins {
             let (uuid, tx) = (self.model.wins[i].uuid.clone(), self.thumb_tx.clone());
@@ -1863,8 +1868,13 @@ impl State {
                 }
             });
         }
+        let wants: Vec<capture::Want> = item.wins.iter().filter_map(|&i| self.model.wins.get(i)).filter(|w| w.uuid.starts_with("wlr-")).map(|w| capture::Want { key: w.uuid.clone(), app_id: w.app_id.clone(), title: w.title.clone() }).collect();
+        let tx = self.thumb_tx.clone();
         self.click_output = Some(output);
         self.toggle_popup(PopupKind::Tray(trayui::TrayPop { anchor_x: x, mode: trayui::TrayMode::Windows { app_id: app_id.to_string() } }));
+        previews::spawn_pictures(wants, bw, bh, move |k, p| {
+            let _ = tx.send((k, p));
+        });
         self.dirty = true;
     }
 
@@ -1899,6 +1909,7 @@ impl State {
 
     fn close_popup(&mut self) {
         self.thumbs.clear(); // pictures of windows are not kept
+        previews::end_round();
         self.zone_buttons = None;
         self.fy_anim = None;
         if matches!(self.popup, Some(Popup { kind: PopupKind::Fylgja(_), .. })) {
@@ -2325,7 +2336,18 @@ impl State {
             std::thread::sleep(wait);
             zones::apply(&zz, hit);
         });
-        if let Some(a) = assist::begin(&z, hit) {
+        if !wait.is_zero() {
+            // a drop: Snap Assist covers the screen, so it waits until the pointer has been back on the dragged app for a moment
+            // (an app that drags itself, like VS Code, otherwise never hears the drag ended and picks the window up again)
+            self.assist_after = Some((z, hit, Instant::now() + Duration::from_millis(350)));
+            return;
+        }
+        self.assist_open(&z, hit);
+    }
+
+    /// Snap Assist for the zones left in `z`'s layout after `hit`, if there are windows to offer.
+    fn assist_open(&mut self, z: &zones::Session, hit: (usize, usize)) {
+        if let Some(a) = assist::begin(z, hit) {
             if self.popup.is_some() {
                 self.close_popup();
             }
@@ -2817,6 +2839,15 @@ impl State {
                         let (card, hits) = zones::paint(&mut pix, s, z, &self.assets.fonts, self.model.dark);
                         self.popup_card = card;
                         self.zone_hits = hits;
+                        // during a drag the sheet takes no pointer input: when the button comes up the pointer must land on the
+                        // dragged app itself, or an app that drags itself (VS Code and other Electron apps) never hears the drag
+                        // ended and picks the window up again on the next move. The panel follows the pointer through Hyprland.
+                        let region = self.compositor.create_region(&self.qh, ());
+                        if z.mode != zones::Mode::Drag {
+                            region.add(0, 0, i32::MAX / 2, i32::MAX / 2);
+                        }
+                        self.surfs[i].wl.set_input_region(Some(&region));
+                        region.destroy();
                     }
                     Some(Popup { kind: PopupKind::Assist(a), .. }) => {
                         // the surface starts under the bar at the screen's left edge
@@ -3468,6 +3499,15 @@ fn pointer_event(state: &mut State, event: wl_pointer::Event) {
                     state.close_cheat();
                     return;
                 }
+                // 274 = BTN_MIDDLE: a middle click on a window's tile in the dock's window list closes that window (as on Windows)
+                if button == 274 && state.windows_popup_open() {
+                    let (px, py) = state.pointer_pos;
+                    let hit = state.tray_hits.iter().rev().find(|(r, _)| px >= r.0 && px < r.0 + r.2 && py >= r.1 && py < r.1 + r.3).map(|(_, a)| a.clone());
+                    if let Some(trayui::RowAct::Window(i)) = hit {
+                        state.tray_row(trayui::RowAct::CloseWin(i));
+                    }
+                    return;
+                }
                 // 272 = BTN_LEFT
                 if button == 272 {
                     // On the popover: the header takes you back to this month; outside the card closes it.
@@ -3827,6 +3867,7 @@ fn main() {
         fy_hits: vec![],
         zone_hits: vec![],
         zone_buttons: None,
+        assist_after: None,
         assist_hits: vec![],
         assist_area: (0.0, 0.0, 0.0, 0.0),
         fy_active: Arc::new(AtomicBool::new(false)),
@@ -4083,6 +4124,14 @@ fn main() {
                     st.key_pressed(key);
                 }
             }
+            // Snap Assist waiting for a drop to settle
+            if st.assist_after.as_ref().is_some_and(|(_, _, at)| Instant::now() >= *at) {
+                if let Some((z, hit, _)) = st.assist_after.take() {
+                    if st.popup.is_none() {
+                        st.assist_open(&z, hit);
+                    }
+                }
+            }
             // a window is being dragged over the zones sheet: follow the pointer (only then)
             let dragging = matches!(st.popup, Some(Popup { kind: PopupKind::Zones(ref z), .. }) if z.mode == zones::Mode::Drag);
             if dragging {
@@ -4117,13 +4166,13 @@ fn main() {
             }
         })
         .expect("window picture channel");
-    // resting on a dock app for a second lists its windows; the list goes when the pointer has left it
+    // resting on a dock app (400 ms, as Windows does) lists its windows; the list goes when the pointer has left it
     event_loop
         .handle()
         .insert_source(Timer::from_duration(Duration::from_millis(120)), |_, _, st| {
             if st.popup.is_none() {
                 if let Some((id, at, x, out)) = st.dock_hover.clone() {
-                    if at.elapsed() >= Duration::from_millis(1000) {
+                    if at.elapsed() >= Duration::from_millis(400) {
                         st.dock_hover = None;
                         st.open_windows_popup(&id, x, out);
                     }

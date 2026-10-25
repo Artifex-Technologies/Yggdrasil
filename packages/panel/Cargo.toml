@@ -17,7 +17,7 @@ wayland-protocols-plasma = { version = "0.3", features = ["client"] }
 calloop = "0.14"
 calloop-wayland-source = "0.4"
 memmap2 = "0.9"
-rustix = { version = "1", features = ["fs", "shm"] }
+rustix = { version = "1", features = ["fs", "shm", "event"] }
 resvg = { version = "0.48", default-features = false, features = ["raster-images"] }
 ab_glyph = "0.2"
 libc = "0.2"
