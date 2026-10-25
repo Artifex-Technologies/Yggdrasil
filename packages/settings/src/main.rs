@@ -32,6 +32,7 @@ use eframe::egui::{self, vec2, CornerRadius, Margin, RichText, Sense};
 use icons::Icon;
 use yggdrasil_ui::{chrome, theme};
 use theme::Palette;
+use yggdrasil_conf::nightlight;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Page {
@@ -249,6 +250,8 @@ struct App {
     brand_style: usize,
     /// When the open page was last read, so it can be read again now and then and follow changes made elsewhere.
     refreshed: std::time::Instant,
+    /// Displays > Night Light: its settings, whether it is on now, and the thread that runs hyprsunset (read when first shown).
+    night: Option<(nightlight::Settings, bool, Sender<nightlight::Cmd>)>,
 }
 
 impl App {
@@ -339,6 +342,7 @@ impl App {
             brand_shape: 0,
             brand_style: 0,
             refreshed: std::time::Instant::now(),
+            night: None,
         };
         // `yggdrasil-settings apps:ID` opens that app's own page (links from the dock or the notch)
         if let Some(id) = std::env::args().nth(1).and_then(|a| a.strip_prefix("apps:").map(String::from)).filter(|s| !s.is_empty()) {
@@ -1384,9 +1388,74 @@ impl App {
         if let Some((name, on)) = tiling {
             self.change(ctx, move || sys::set_tiling(&name, on));
         }
+        if hypr {
+            self.night_light(ui, pal);
+        }
         ui.add_space(8.0);
         if !hypr && ui::quiet(ui, pal, "Arrange displays…").clicked() {
             sys::spawn("kcmshell6", &["kcm_kscreen"]);
+        }
+    }
+
+    /// Displays > Night Light: the same settings as the notch's drop-down; yggdrasil_conf::nightlight writes them and runs hyprsunset.
+    fn night_light(&mut self, ui: &mut egui::Ui, pal: &Palette) {
+        use nightlight::{fmt_time, MAX_FADE, MAX_TEMP, MIN_FADE, MIN_TEMP};
+        let (n, on, tx) = self.night.get_or_insert_with(|| (nightlight::load(), nightlight::is_on(), nightlight::spawn()));
+        let before = n.clone();
+        let mut toggled = None;
+        ui::group(ui, pal, Some("Night Light"), |ui| {
+            ui::row(ui, pal, true, "Night Light", Some("Warmer colours, easier on the eyes in the evening"), |ui| {
+                if ui::switch(ui, pal, on).changed() {
+                    toggled = Some(*on);
+                }
+            });
+            let sub = if n.schedule { format!("On from {} to {}", fmt_time(n.on), fmt_time(n.off)) } else { "Off: it stays as you switch it".to_string() };
+            ui::row(ui, pal, false, "Schedule", Some(&sub), |ui| {
+                ui::switch(ui, pal, &mut n.schedule);
+            });
+            ui.add_enabled_ui(n.schedule, |ui| {
+                ui::row(ui, pal, false, "Turns on", None, |ui| time_field(ui, &mut n.on));
+                ui::row(ui, pal, false, "Turns off", None, |ui| time_field(ui, &mut n.off));
+            });
+            ui::row(ui, pal, false, "Temperature", Some("Lower is warmer"), |ui| {
+                let mut t = n.temp as f32;
+                if ui::slider_range(ui, pal, &mut t, MIN_TEMP as f32..=MAX_TEMP as f32, " K").changed() {
+                    n.temp = ((t / 100.0).round() * 100.0) as u32;
+                }
+            });
+            ui.add_enabled_ui(n.schedule, |ui| {
+                ui::row(ui, pal, false, "Gradual fade", Some("Eases in from the turn-on time and back out from the turn-off time"), |ui| {
+                    ui::switch(ui, pal, &mut n.fade);
+                });
+                ui.add_enabled_ui(n.fade, |ui| {
+                    ui::row(ui, pal, false, "Over", None, |ui| {
+                        let mut m = n.minutes as f32;
+                        if ui::slider_range(ui, pal, &mut m, MIN_FADE as f32..=MAX_FADE as f32, " min").changed() {
+                            n.minutes = ((m / 5.0).round() * 5.0) as u32;
+                        }
+                    });
+                });
+            });
+            // the two ramps, painted in the colours the screen goes through
+            if let Some(ramps) = nightlight::ramps(n) {
+                for (i, (from_t, to_t, from_k, to_k)) in ramps.into_iter().enumerate() {
+                    let title = if i == 0 { "Fading in" } else { "Fading out" };
+                    ui::row(ui, pal, false, title, Some(&format!("{} to {}", fmt_time(from_t), fmt_time(to_t))), |ui| ramp_bar(ui, pal, from_k, to_k));
+                }
+            }
+        });
+        if let Some(on) = toggled {
+            let _ = tx.send(nightlight::Cmd::Toggle(on));
+            if !n.schedule {
+                n.light = on;
+            }
+        }
+        if *n != before {
+            if n.schedule != before.schedule {
+                // without a schedule the light stays as it is now
+                n.light = *on;
+            }
+            let _ = tx.send(nightlight::Cmd::Set(n.clone()));
         }
     }
 
@@ -3164,4 +3233,32 @@ fn main() -> eframe::Result {
             Ok(Box::new(App::new(&cc.egui_ctx)))
         }),
     )
+}
+
+/// A time of day (minutes into it) shown as HH:MM: typed, or dragged in steps of 15 minutes.
+fn time_field(ui: &mut egui::Ui, t: &mut u32) {
+    let mut v = *t as f64;
+    let r = ui.add(
+        egui::DragValue::new(&mut v)
+            .range(0.0..=1439.0)
+            .speed(0.5)
+            .custom_formatter(|v, _| nightlight::fmt_time(v as u32))
+            .custom_parser(|s| nightlight::parse_time(s.trim()).map(f64::from)),
+    );
+    if r.changed() {
+        *t = if r.dragged() { ((v / 15.0).round() * 15.0).min(1425.0) as u32 } else { v as u32 };
+    }
+}
+
+/// A bar painted from `from` K to `to` K, as a fade goes.
+fn ramp_bar(ui: &mut egui::Ui, pal: &Palette, from: u32, to: u32) {
+    let (rect, _) = ui.allocate_exact_size(vec2(200.0, 10.0), Sense::hover());
+    let slices = 64;
+    let w = rect.width() / slices as f32;
+    for k in 0..slices {
+        let (r, g, b) = nightlight::kelvin_rgb(nightlight::kelvin_between(from, to, k as f32 / (slices - 1) as f32));
+        let x = rect.left() + w * k as f32;
+        ui.painter().rect_filled(egui::Rect::from_min_max(egui::pos2(x, rect.top()), egui::pos2(x + w + 0.5, rect.bottom())), 0.0, egui::Color32::from_rgb(r, g, b));
+    }
+    ui.painter().rect_stroke(rect, CornerRadius::same(2), egui::Stroke::new(1.0, pal.border), egui::StrokeKind::Outside);
 }
