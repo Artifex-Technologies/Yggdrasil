@@ -18,6 +18,7 @@ use serde_json::Value;
 
 use crate::paint::{self, Fonts, Icons, Rgba};
 use crate::shell::{Model, PowerAct, StartAct};
+use yggdrasil_conf::nightlight;
 
 pub const SECTIONS: [&str; 7] = ["Controls", "Today", "Stats", "Clipboard", "Notifications", "Wallpaper", "Power"];
 const CLIPBOARD: usize = 3;
@@ -40,6 +41,8 @@ pub struct FyState {
     pub picker: bool,
     /// Controls: the volume's mixer (every app playing sound) is dropped down under the volume bar.
     pub mixer: bool,
+    /// Controls: Night Light's quick setting (the temperature) is dropped down from its tile.
+    pub night: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -119,6 +122,8 @@ pub struct FyData {
     pub stats: crate::stats::StatsSnap,
     pub top_ram: bool,
     pub speed: Arc<Mutex<crate::stats::Speed>>,
+    /// Night Light's settings, as the Controls show them (yggdrasil_conf::nightlight keeps them in hyprsunset.conf).
+    pub night: nightlight::Settings,
 }
 
 // ---------------------------------------------------------------- parsing
@@ -420,7 +425,7 @@ pub fn spawn_poller(active: Arc<AtomicBool>, shared: Arc<Mutex<Snapshot>>) {
                         _ => Some((true, parse_connected_name(&out("timeout", &["2", "bluetoothctl", "devices", "Connected"])))),
                     }
                 };
-                snap.night = out("kreadconfig6", &["--file", "kwinrc", "--group", "NightColor", "--key", "Active"]).trim() == "true";
+                snap.night = nightlight::is_on();
                 snap.sinks = parse_sinks(&out("pactl", &["-f", "json", "list", "sinks"]));
                 snap.default_sink = out("pactl", &["get-default-sink"]).trim().to_string();
                 snap.slow_ready = true;
@@ -732,6 +737,8 @@ fn run_ask(wav: &PathBuf, conversation: Option<&str>, heard: &calloop::channel::
 pub enum Slider {
     Master,
     App(u32),
+    /// Night Light's temperature.
+    Night,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -764,6 +771,12 @@ pub enum FAct {
     /// Show or hide the list of outputs and app volumes.
     Picker,
     Night,
+    /// Opens or closes Night Light's settings.
+    NightMore,
+    /// A click on the card away from the open drop-down closes it.
+    NightClose,
+    /// Opens Settings > Displays, where the rest of Night Light's settings are.
+    NightSettings,
     Dark,
     Sink(String),
     /// Opens or closes the volume's mixer.
@@ -789,21 +802,6 @@ pub fn media_control(bus: &str, method: &str) {
     run("busctl", &["--user", "call", bus, "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", method]);
 }
 
-/// Warm tint for the screen (Night Light): constant at 4000 K when on, since a schedule needs a location.
-pub fn set_night(on: bool) {
-    std::thread::spawn(move || {
-        let w = |k: &str, v: &str| {
-            let _ = Command::new("kwriteconfig6").args(["--file", "kwinrc", "--group", "NightColor", "--key", k, v]).status();
-        };
-        w("Active", if on { "true" } else { "false" });
-        if on {
-            w("Mode", "Constant");
-            w("NightTemperature", "4000");
-        }
-        let _ = Command::new("busctl").args(["--user", "call", "org.kde.KWin", "/KWin", "org.kde.KWin", "reconfigure"]).status();
-    });
-}
-
 /// Dark or light, the way Settings > Appearance does it (Yggdrasil's colour scheme and GTK colours, by ygg-theme, in the accent already chosen).
 pub fn set_dark(dark: bool) {
     std::thread::spawn(move || {
@@ -817,6 +815,7 @@ pub fn set_volume(target: &Slider, percent: u32) {
     match target {
         Slider::Master => run("wpctl", &["set-volume", "@DEFAULT_AUDIO_SINK@", &format!("{:.2}", p as f32 / 100.0)]),
         Slider::App(id) => run("pactl", &["set-sink-input-volume", &id.to_string(), &format!("{p}%")]),
+        Slider::Night => {}
     }
 }
 
@@ -958,7 +957,58 @@ pub fn controls_height(m: &Model, st: &FyState) -> f32 {
     let snap = &m.fylgja.snap;
     let mixer = if st.mixer && !snap.apps.is_empty() { snap.apps.len().min(4) as f32 * 26.0 + 8.0 } else { 0.0 };
     let media = if snap.media.is_some() { 116.0 } else { 0.0 };
-    174.0 + media + mixer
+    let base: f32 = 174.0 + media + mixer;
+    // Night Light's drop-down hangs from its tile over what is below; the card grows if it would reach past the bottom
+    if st.night { base.max(NIGHT_TOP + NIGHT_H + 14.0) } else { base }
+}
+
+/// Night Light's drop-down: its top below the card's top, and its height.
+const NIGHT_TOP: f32 = 128.0;
+const NIGHT_H: f32 = 108.0;
+
+fn rgb((r, g, b): (u8, u8, u8)) -> Rgba {
+    (r, g, b, 255)
+}
+
+/// 2100 as "2,100".
+fn thousands(n: u32) -> String {
+    if n >= 1000 { format!("{},{:03}", n / 1000, n % 1000) } else { n.to_string() }
+}
+
+/// Night Light's drop-down under its tile: the temperature, on a slider painted in the colours it gives (warm at the left), and
+/// a button to the rest of its settings in Settings > Displays.
+#[allow(clippy::too_many_arguments)]
+fn paint_night(pix: &mut Pixmap, s: f32, m: &Model, (x, y, w): (f32, f32, f32), pointer: (f32, f32), fonts: &Fonts, hits: &mut Vec<FHit>) {
+    use nightlight::{MAX_TEMP, MIN_TEMP};
+    let n = &m.fylgja.night;
+    paint::fill_rounded(pix, x * s, y * s, w * s, NIGHT_H * s, 14.0 * s, (38, 38, 48, 255));
+    paint::stroke_rounded(pix, (x + 0.5) * s, (y + 0.5) * s, (w - 1.0) * s, (NIGHT_H - 1.0) * s, 14.0 * s, s, (255, 255, 255, 36));
+    let (lx, iw) = (x + 14.0, w - 28.0);
+
+    let cy = y + 22.0;
+    paint::draw_text(pix, &fonts.bold, 12.0 * s, lx * s, cy * s, WHITE, "Temperature");
+    let k = format!("{} K", thousands(n.temp));
+    let kw = paint::text_width(&fonts.bold, 12.0 * s, &k);
+    paint::draw_text(pix, &fonts.bold, 12.0 * s, (lx + iw) * s - kw, cy * s, WHITE, &k);
+
+    let sy = y + 50.0;
+    let slices = 48;
+    for i in 0..slices {
+        let sw = iw / slices as f32;
+        let t = MIN_TEMP + (MAX_TEMP - MIN_TEMP) * i / (slices - 1);
+        paint::fill_rounded(pix, (lx + sw * i as f32) * s, (sy - 4.0) * s, (sw + 0.5) * s, 8.0 * s, 0.0, rgb(nightlight::kelvin_rgb(t)));
+    }
+    let f = (n.temp.clamp(MIN_TEMP, MAX_TEMP) - MIN_TEMP) as f32 / (MAX_TEMP - MIN_TEMP) as f32;
+    paint::fill_circle(pix, (lx + iw * f) * s, sy * s, 9.0 * s, WHITE);
+    paint::fill_circle(pix, (lx + iw * f) * s, sy * s, 6.0 * s, rgb(nightlight::kelvin_rgb(n.temp)));
+    hits.push(FHit { rect: (lx, sy - 12.0, iw, 24.0), act: FAct::Slide(Slider::Night) });
+
+    let b = (lx, y + 70.0, iw, 26.0);
+    paint::fill_rounded(pix, b.0 * s, b.1 * s, b.2 * s, b.3 * s, 9.0 * s, if over(pointer, b) { (255, 255, 255, 34) } else { (255, 255, 255, 16) });
+    let label = "Night Light settings…";
+    let lw = paint::text_width(&fonts.regular, 11.5 * s, label);
+    paint::draw_text(pix, &fonts.regular, 11.5 * s, (b.0 + b.2 / 2.0) * s - lw / 2.0, (b.1 + b.3 / 2.0) * s, WHITE, label);
+    hits.push(FHit { rect: b, act: FAct::NightSettings });
 }
 
 fn clock(us: u64) -> String {
@@ -996,7 +1046,14 @@ fn paint_controls(pix: &mut Pixmap, s: f32, m: &Model, st: &FyState, card: (f32,
 
     // row 2: Night Light, dark mode
     let hw = (inner - 8.0) / 2.0;
-    tile(pix, s, fonts, icons, hits, pointer, (x0, y0 + 54.0, hw, 46.0), snap.night, "night-light-symbolic", "Night Light", if wait { "…" } else if snap.night { "On" } else { "Off" }, FAct::Night, None);
+    let n = &m.fylgja.night;
+    let night_sub = match (wait, snap.night, n.schedule) {
+        (true, ..) => "…".to_string(),
+        (_, true, true) => format!("On until {}", nightlight::fmt_time(n.off)),
+        (_, false, true) => format!("Off until {}", nightlight::fmt_time(n.on)),
+        (_, on, false) => (if on { "On" } else { "Off" }).to_string(),
+    };
+    tile(pix, s, fonts, icons, hits, pointer, (x0, y0 + 54.0, hw, 46.0), snap.night, "night-light-symbolic", "Night Light", &night_sub, FAct::Night, Some(FAct::NightMore));
     tile(pix, s, fonts, icons, hits, pointer, (x0 + hw + 8.0, y0 + 54.0, hw, 46.0), m.dark, "weather-clear-night-symbolic", "Dark mode", if m.dark { "On" } else { "Off" }, FAct::Dark, None);
 
     // the master volume, with a caret that drops down the mixer (only when an app is playing sound)
@@ -1099,6 +1156,12 @@ fn paint_controls(pix: &mut Pixmap, s: f32, m: &Model, st: &FyState, card: (f32,
             paint::draw_text(pix, &fonts.regular, 11.5 * s, (rect.0 + 10.0) * s, (rect.1 + 14.0) * s, WHITE, &fit(&fonts.regular, 11.5 * s, desc, (rect.2 - 20.0) * s));
             hits.push(FHit { rect, act: FAct::Sink(name.clone()) });
         }
+    }
+
+    // Night Light's settings drop down from its tile over whatever is below it
+    if st.night {
+        hits.push(FHit { rect: card, act: FAct::NightClose });
+        paint_night(pix, s, m, (x0, cy + NIGHT_TOP, (inner - 8.0) / 2.0), pointer, fonts, hits);
     }
 }
 
@@ -1377,5 +1440,34 @@ mod tests {
         }
         assert_eq!(l.len(), MAX_CLIPS);
         assert_eq!(l[0], "item 39");
+    }
+}
+
+#[cfg(test)]
+mod render {
+    use super::*;
+    use crate::shell::Model;
+
+    /// Writes the Controls with Night Light's drop-down open to $FYLGJA_PNG_DIR (run by hand to see them).
+    #[test]
+    fn draws_night_light_settings() {
+        let Some(fonts) = Fonts::load() else { return };
+        let mut icons = Icons::new();
+        let mut m = Model { apps: vec![], pinned: vec![], wins: vec![], clock: String::new(), clock_secs: String::new(), date: String::new(), today: (2026, 10, 25), user: String::new(), notch_open: true, fylgja: Default::default(), notch_w: 0.0, notch_tab: None, notifs: Default::default(), tray: vec![], addons: vec![], hibernate: false, conf: Default::default(), dark: true, status: Default::default(), trash_full: false };
+        m.fylgja.snap = Snapshot { ready: true, slow_ready: true, master: Some((45, false)), night: true, ..Default::default() };
+        m.fylgja.night = nightlight::Settings { temp: 2100, schedule: true, on: 19 * 60, off: 7 * 60, fade: true, minutes: 60, light: false };
+        let st = FyState { section: 0, open: true, pinned: false, voice_ui: false, picker: false, mixer: false, night: true };
+        let size = card_size(&m, &st);
+        let mut pix = Pixmap::new((size.0 * 2.0) as u32 + 40, (size.1 * 2.0) as u32 + 40).unwrap();
+        let (_, hits) = paint(&mut pix, 2.0, &m, &st, 1.0, (0.0, 0.0), &fonts, &mut icons);
+        if let Some(dir) = std::env::var_os("FYLGJA_PNG_DIR") {
+            pix.save_png(std::path::Path::new(&dir).join("night.png")).unwrap();
+        }
+        for act in [FAct::Night, FAct::NightMore, FAct::NightClose, FAct::NightSettings, FAct::Slide(Slider::Night)] {
+            assert!(hits.iter().any(|h| h.act == act), "{act:?} can be clicked");
+        }
+        // every control sits inside the card (it hangs from the top of the surface, centred)
+        let card = card_rect(pix.width() as f32 / 2.0, size, 1.0);
+        assert!(hits.iter().all(|h| h.rect.0 >= card.0 && h.rect.0 + h.rect.2 <= card.0 + card.2 && h.rect.1 + h.rect.3 <= card.1 + card.3), "{card:?}");
     }
 }

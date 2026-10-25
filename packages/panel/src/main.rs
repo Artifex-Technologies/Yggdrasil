@@ -82,7 +82,7 @@ use wayland_protocols_wlr::foreign_toplevel::v1::client::{
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::{Layer, ZwlrLayerShellV1};
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::{self, Anchor, KeyboardInteractivity, ZwlrLayerSurfaceV1};
 
-use yggdrasil_conf::{DockPos, PanelConf, StartTheme};
+use yggdrasil_conf::{nightlight, DockPos, PanelConf, StartTheme};
 use shell::{Action, Hit, Model, Win};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -340,6 +340,8 @@ struct State {
     /// A volume slider being dragged: which one, its rectangle, and the last level and time sent.
     drag: Option<(fylgja::Slider, (f32, f32, f32, f32))>,
     drag_sent: (std::time::Instant, u32),
+    /// The thread that runs hyprsunset (Night Light).
+    night_tx: std::sync::mpsc::Sender<nightlight::Cmd>,
     /// Nothing was playing when the small card was last asked for: do not ask again for a few seconds.
     peek_blocked: Option<std::time::Instant>,
     /// The volume or brightness pop-up being shown, and a count that tells its hide timer if it is the latest.
@@ -808,7 +810,9 @@ impl State {
         let h = if full_h > 0 { full_h.saturating_sub(shell::BAR_H + strut) } else { 0 };
         layer.set_anchor(Anchor::Top | Anchor::Left | Anchor::Right);
         layer.set_size(0, h);
-        layer.set_exclusive_zone(-1);
+        // 0, not -1: the surface keeps out of the bar's reserved strip. KWin put it under the bar either way; Hyprland follows
+        // the protocol, and with -1 it sat over the bar, where the notch's card hid Fylgja's section titles.
+        layer.set_exclusive_zone(0);
         // The start menu takes the keyboard at once, so you can type as soon as it opens.
         layer.set_keyboard_interactivity(if matches!(&kind, PopupKind::Start(_)) || matches!(&kind, PopupKind::Fylgja(f) if f.pinned) { KeyboardInteractivity::Exclusive } else { KeyboardInteractivity::OnDemand });
         wl.commit();
@@ -849,7 +853,7 @@ impl State {
             return false;
         }
         self.click_output = Some(self.tab_output);
-        self.toggle_popup(PopupKind::Fylgja(fylgja::FyState { section: 0, open: true, pinned: false, voice_ui: false, picker: false, mixer: false }));
+        self.toggle_popup(PopupKind::Fylgja(fylgja::FyState { section: 0, open: true, pinned: false, voice_ui: false, picker: false, mixer: false, night: false }));
         true
     }
 
@@ -858,7 +862,7 @@ impl State {
         let was_open = self.popup.is_some();
         self.close_popup();
         if !was_open {
-            self.toggle_popup(PopupKind::Fylgja(fylgja::FyState { section: 3, open: true, pinned: true, voice_ui: false, picker: false, mixer: false }));
+            self.toggle_popup(PopupKind::Fylgja(fylgja::FyState { section: 3, open: true, pinned: true, voice_ui: false, picker: false, mixer: false, night: false }));
         }
     }
 
@@ -868,7 +872,7 @@ impl State {
         self.close_popup();
         if !was_open {
             let section = section.min(fylgja::SECTIONS.len() - 1);
-            self.toggle_popup(PopupKind::Fylgja(fylgja::FyState { section, open: true, pinned: true, voice_ui: false, picker: false, mixer: false }));
+            self.toggle_popup(PopupKind::Fylgja(fylgja::FyState { section, open: true, pinned: true, voice_ui: false, picker: false, mixer: false, night: false }));
         }
     }
 
@@ -1853,10 +1857,32 @@ impl State {
         if percent == self.drag_sent.1 || (!force && self.drag_sent.0.elapsed() < Duration::from_millis(30)) {
             return;
         }
-        fylgja::set_volume(&who, percent);
         self.drag_sent = (std::time::Instant::now(), percent);
+        self.slide_to(&who, percent);
+        self.dirty = true;
+    }
+
+    /// Night Light's settings were changed in the notch: hand them to its thread, which writes them a moment later.
+    fn night_changed(&mut self) {
+        let _ = self.night_tx.send(nightlight::Cmd::Set(self.model.fylgja.night.clone()));
+        self.dirty = true;
+    }
+
+    /// A slider was set to `percent`: a volume, or Night Light's temperature. Shown at once; the next reading confirms it.
+    fn slide_to(&mut self, who: &fylgja::Slider, percent: u32) {
+        if *who == fylgja::Slider::Night {
+            let span = nightlight::MAX_TEMP - nightlight::MIN_TEMP;
+            let temp = (nightlight::MIN_TEMP + (span * percent / 100 + 50) / 100 * 100).min(nightlight::MAX_TEMP);
+            if temp != self.model.fylgja.night.temp {
+                self.model.fylgja.night.temp = temp;
+                self.night_changed();
+            }
+            return;
+        }
+        fylgja::set_volume(who, percent);
         let snap = &mut self.model.fylgja.snap;
-        match who {
+        match *who {
+            fylgja::Slider::Night => {}
             fylgja::Slider::Master => snap.master = snap.master.map(|(_, m)| (percent, m)),
             fylgja::Slider::App(id) => {
                 if let Some(a) = snap.apps.iter_mut().find(|a| a.id == id) {
@@ -1891,17 +1917,7 @@ impl State {
             }
             FAct::Slide(who) => {
                 let percent = (((x - hit.rect.0) / hit.rect.2) * 100.0).round().clamp(0.0, 100.0) as u32;
-                fylgja::set_volume(&who, percent);
-                // show it at once; the next reading confirms it
-                let snap = &mut self.model.fylgja.snap;
-                match who {
-                    fylgja::Slider::Master => snap.master = snap.master.map(|(_, m)| (percent, m)),
-                    fylgja::Slider::App(id) => {
-                        if let Some(a) = snap.apps.iter_mut().find(|a| a.id == id) {
-                            a.percent = percent;
-                        }
-                    }
-                }
+                self.slide_to(&who, percent);
                 self.dirty = true;
             }
             FAct::Clip(i) => {
@@ -1972,14 +1988,33 @@ impl State {
             FAct::Picker => {
                 if let Some(Popup { kind: PopupKind::Fylgja(st), .. }) = &mut self.popup {
                     st.picker = !st.picker;
+                    st.night = false;
                     self.dirty = true;
                 }
             }
             FAct::Night => {
                 let on = !self.model.fylgja.snap.night;
-                fylgja::set_night(on);
+                let _ = self.night_tx.send(nightlight::Cmd::Toggle(on));
                 self.model.fylgja.snap.night = on;
+                if !self.model.fylgja.night.schedule {
+                    self.model.fylgja.night.light = on;
+                }
                 self.dirty = true;
+            }
+            FAct::NightMore | FAct::NightClose => {
+                if let Some(Popup { kind: PopupKind::Fylgja(st), .. }) = &mut self.popup {
+                    st.night = hit.act == FAct::NightMore && !st.night;
+                    st.picker = false;
+                    self.dirty = true;
+                }
+                // Settings may have changed them
+                if hit.act == FAct::NightMore {
+                    self.model.fylgja.night = nightlight::load();
+                }
+            }
+            FAct::NightSettings => {
+                run(&["setsid", "-f", "yggdrasil-settings", "displays"]);
+                self.close_popup();
             }
             FAct::Dark => {
                 let dark = !self.model.dark;
@@ -3357,6 +3392,7 @@ fn main() {
         fy_shared: Arc::new(std::sync::Mutex::new(Default::default())),
         drag: None,
         drag_sent: (std::time::Instant::now(), 101),
+        night_tx: nightlight::spawn(),
         peek_blocked: None,
         osd: None,
         confirm: None,
@@ -3544,6 +3580,7 @@ fn main() {
     snwatcher::spawn();
     // the bar add-ons installed (integrations of kind bar-item): one thread runs them all
     addons::spawn(state.addons_shared.clone(), state.addons_now.clone());
+    state.model.fylgja.night = nightlight::load();
     tray::spawn(tray_tx.clone());
     state.tray_tx = Some(tray_tx);
     event_loop
