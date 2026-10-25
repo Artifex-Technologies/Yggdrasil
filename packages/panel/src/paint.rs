@@ -363,6 +363,7 @@ impl Icons {
 
     /// A symbolic (single-colour) icon painted in `color`: these have no colour of their own and
     /// would be black on a dark bar.
+    /// An icon drawn in one colour (`color`, like the text beside it), whatever colours its file names.
     pub fn get_tinted(&mut self, name: &str, size: u32, color: Rgba) -> Option<&Pixmap> {
         let key = (format!("{name}#{:02x}{:02x}{:02x}", color.0, color.1, color.2), size);
         if !self.cache.contains_key(&key) {
@@ -370,7 +371,7 @@ impl Icons {
                 let svg = std::fs::read_to_string(&path).ok()?;
                 let hex = format!("#{:02x}{:02x}{:02x}", color.0, color.1, color.2);
                 // line icons draw in currentColor; solid ones take the colour as their fill
-                let tinted = if svg.contains("currentColor") { svg.replace("currentColor", &hex) } else { svg.replacen("<svg ", &format!("<svg fill='{hex}' "), 1) };
+                let tinted = recolor(&svg, &hex);
                 let tree = resvg::usvg::Tree::from_data(tinted.as_bytes(), &resvg::usvg::Options::default()).ok()?;
                 let sz = tree.size();
                 let mut pm = Pixmap::new(size, size)?;
@@ -495,5 +496,42 @@ mod resize_tests {
         flat.fill(tiny_skia::Color::from_rgba8(200, 100, 50, 255));
         let f = area_resize(&flat, 7, 7).unwrap();
         assert_eq!(&f.data()[..4], &[200, 100, 50, 255]);
+    }
+}
+
+/// A one-colour icon in `hex`: line icons draw in currentColor, others name their colours (Adwaita's symbolic ones fill in #222,
+/// which vanished on a dark bar); every fill and stroke colour becomes `hex`, and a file that names none gets it as its fill.
+fn recolor(svg: &str, hex: &str) -> String {
+    let mut out = svg.replace("currentColor", hex);
+    for (pre, end) in [("fill=\"", '"'), ("stroke=\"", '"'), ("fill='", '\''), ("stroke='", '\''), ("fill:", ';'), ("stroke:", ';')] {
+        let mut res = String::with_capacity(out.len());
+        let mut rest = out.as_str();
+        while let Some(i) = rest.find(pre) {
+            let (head, tail) = rest.split_at(i + pre.len());
+            res.push_str(head);
+            let stop = tail.find(|c: char| c == end || c == '"' || c == '\'' || c == '}').unwrap_or(tail.len());
+            let value = &tail[..stop];
+            res.push_str(if value.trim_start().starts_with('#') || value.trim_start().starts_with("rgb") { hex } else { value });
+            rest = &tail[stop..];
+        }
+        res.push_str(rest);
+        out = res;
+    }
+    if !out.contains(hex) {
+        out = out.replacen("<svg ", &format!("<svg fill='{hex}' "), 1);
+    }
+    out
+}
+
+#[cfg(test)]
+mod recolor_tests {
+    use super::recolor;
+
+    #[test]
+    fn every_colour_becomes_the_tint() {
+        assert_eq!(recolor(r##"<svg x="1"><g fill="#222"><path/></g></svg>"##, "#ffffff"), r##"<svg x="1"><g fill="#ffffff"><path/></g></svg>"##);
+        assert_eq!(recolor(r#"<svg><path stroke="currentColor" fill="none"/></svg>"#, "#fff"), r##"<svg><path stroke="#fff" fill="none"/></svg>"##);
+        assert_eq!(recolor(r##"<svg><path style="fill:#2e3436;opacity:.5"/></svg>"##, "#fff"), r##"<svg><path style="fill:#fff;opacity:.5"/></svg>"##);
+        assert_eq!(recolor("<svg ><path/></svg>", "#fff"), "<svg fill='#fff' ><path/></svg>");
     }
 }

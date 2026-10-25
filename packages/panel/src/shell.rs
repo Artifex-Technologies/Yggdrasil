@@ -510,7 +510,7 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
             crate::addons::Level::Ok => lk.text,
         };
         if !a.icon.is_empty() {
-            if let Some(ic) = icons.get_tinted(&a.icon, isz, col) {
+            if let Some(ic) = icons.get_tinted(&a.icon, isz, lk.text) {
                 paint::draw_pixmap(pix, ic, (rx + 10.0 * s) as i32, (cy - isz as f32 / 2.0).round() as i32);
             }
         }
