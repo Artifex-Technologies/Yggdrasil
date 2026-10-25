@@ -178,6 +178,69 @@ impl Buttons {
     }
 }
 
+/// Notices a window being dragged to the notch, with no binding on the mouse button (a binding on the left button kept Hyprland
+/// 0.56 from ending its own window move when the button came up). Each tick asks the kernel whether the left button is held (one
+/// ioctl per mouse); only while it is held does it ask Hyprland where the window in front is and where the pointer is.
+pub struct Spotter {
+    buttons: Buttons,
+    opened: std::time::Instant,
+    start: Option<(String, (f64, f64))>,
+    told: bool,
+}
+
+impl Default for Spotter {
+    fn default() -> Self {
+        Spotter { buttons: Buttons::open(), opened: std::time::Instant::now(), start: None, told: false }
+    }
+}
+
+impl Spotter {
+    /// Call every tick. True once per drag, when a floating window being dragged has reached the notch of its screen.
+    pub fn tick(&mut self) -> bool {
+        // mice come and go: look again now and then while no button is held
+        if self.start.is_none() && self.opened.elapsed() > std::time::Duration::from_secs(10) {
+            *self = Spotter::default();
+        }
+        if self.buttons.left_down() != Some(true) {
+            self.start = None;
+            self.told = false;
+            return false;
+        }
+        let Some(raw) = ask("j/activewindow") else { return false };
+        let Some((address, at)) = parse_window(&raw) else { return false };
+        let floating = serde_json::from_str::<serde_json::Value>(&raw).ok().and_then(|v| v["floating"].as_bool()).unwrap_or(false);
+        match &self.start {
+            Some((a, from)) if *a == address => {
+                if self.told || !floating || (at.0 - from.0).abs() + (at.1 - from.1).abs() <= 6.0 {
+                    return false;
+                }
+                let Some(c) = cursor() else { return false };
+                let monitors = ask("j/monitors").map(|j| parse_monitors(&j)).unwrap_or_default();
+                if near_notch(&monitors, c) {
+                    self.told = true;
+                    return true;
+                }
+                false
+            }
+            _ => {
+                // the press: the window it went to, and where it was
+                self.start = Some((address, at));
+                self.told = false;
+                false
+            }
+        }
+    }
+}
+
+/// The pointer is at the notch: within 180 px of the middle of its screen, no lower than 30 px under the bar.
+fn near_notch(monitors: &[Monitor], (cx, cy): (f64, f64)) -> bool {
+    monitors.iter().any(|m| {
+        let (x, y, w, h) = m.logical();
+        let inside = cx >= x as f64 && cx < (x + w) as f64 && cy >= y as f64 && cy < (y + h) as f64;
+        inside && (cx - (x as f64 + w as f64 / 2.0)).abs() < 180.0 && cy < (y + m.reserved[1]) as f64 + 30.0
+    })
+}
+
 /// A line in the drag trail (~/.local/state/yggdrasil/zones.log, shared with the session's Lua), to find why a drop is missed.
 pub fn note(msg: &str) {
     use std::io::Write;

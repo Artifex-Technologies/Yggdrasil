@@ -394,6 +394,8 @@ struct State {
     zone_buttons: Option<(zones::Buttons, bool)>,
     /// Snap Assist waiting to open after a drop (the dragged app first gets the pointer back, so it hears its drag ended).
     assist_after: Option<(zones::Session, (usize, usize), Instant)>,
+    /// Notices a window dragged to the notch (no binding on the mouse button: see zones::Spotter).
+    zone_spotter: zones::Spotter,
     /// Snap Assist's window tiles on its surface, and the zone they are in.
     assist_hits: Vec<(zones::Rect4, usize)>,
     assist_area: zones::Rect4,
@@ -3868,6 +3870,7 @@ fn main() {
         zone_hits: vec![],
         zone_buttons: None,
         assist_after: None,
+        zone_spotter: zones::Spotter::default(),
         assist_hits: vec![],
         assist_area: (0.0, 0.0, 0.0, 0.0),
         fy_active: Arc::new(AtomicBool::new(false)),
@@ -4131,6 +4134,11 @@ fn main() {
                         st.assist_open(&z, hit);
                     }
                 }
+            }
+            // a window dragged to the notch opens the zones sheet
+            if st.popup.is_none() && st.zone_spotter.tick() {
+                zones::note("drag reached the notch (seen by the panel)");
+                st.zones_open(zones::Mode::Drag);
             }
             // a window is being dragged over the zones sheet: follow the pointer (only then)
             let dragging = matches!(st.popup, Some(Popup { kind: PopupKind::Zones(ref z), .. }) if z.mode == zones::Mode::Drag);

@@ -225,82 +225,11 @@ hl.on("window.open", function(w)
 end)
 
 -- Window zones (FancyZones-style; the panel's zones.rs): drag a window to the notch at the top of a screen and a sheet of layouts
--- opens under it; drop the window on a zone and it fills that part of the screen. Hyprland has no "a window is being dragged"
--- event, and its release binding does not fire at the end of a window move (tried 2026-10-25), so: pressing the left button (a
--- binding that lets the click through) arms a timer inside the compositor; while the window in front follows the pointer it is
--- being dragged, and when it is at the notch the panel is told once (zones-drag). The drag has ended when the window stops
--- following the pointer (the pointer moves more than 6 px while the window stays put; while held, the window moves whenever the
--- pointer does, a frame behind at most) or, if Hyprland reports mouse buttons, when the left one comes up:
--- then the panel is told the drop (zones-drop) and the timer stops. A click that moves no window stops it the same way. The panel
--- watches for the drop itself too and acts on it once. Super+Shift+Z opens the sheet from the keyboard.
-do
-  local drag = nil
-  -- a short trail of what the drag detection saw (~/.local/state/yggdrasil/zones.log, cut at 200 KB), to find why a drop is missed
-  local trail = (os.getenv("XDG_STATE_HOME") or (os.getenv("HOME") .. "/.local/state")) .. "/yggdrasil/zones.log"
-  local function note(msg)
-    local f = io.open(trail, "a")
-    if not f then return end
-    if f:seek("end") > 200000 then f:close(); f = io.open(trail, "w"); if not f then return end end
-    f:write(os.date("%H:%M:%S "), "lua: ", msg, "\n")
-    f:close()
-  end
-  local function near_notch(c)
-    local m = hl.get_monitor_at(c.x, c.y)
-    if not m then return false end
-    local top = (m.reserved and (m.reserved.top or m.reserved[2])) or 28
-    local mid = m.x + (m.width / m.scale) / 2
-    return math.abs(c.x - mid) < 180 and c.y < m.y + top + 30
-  end
-  local tick
-  local function finish(why)
-    if drag and drag.told then note("drop (" .. tostring(why) .. ")") end
-    tick:set_enabled(false)
-    if drag and drag.told then hl.exec_cmd("yggdrasil-panelctl zones-drop") end
-    drag = nil
-  end
-  tick = hl.timer(function()
-    local ok, err = pcall(function()
-      if not drag then return finish() end
-      -- the button, where Hyprland reports it: seen down, then up, is the drop
-      local known, down = pcall(hl.is_key_down, 272)
-      if known and down then drag.down = true end
-      if known and drag.down and not down then return finish("button up") end
-      local w, c = hl.get_active_window(), hl.get_cursor_pos()
-      if not w or not c then return end
-      local x, y = xy(w.at)
-      if not x then return end
-      if drag.win ~= w.address then
-        -- the first look: the window the press went to, where it was, and where the pointer was
-        drag.win, drag.x, drag.y, drag.lx, drag.ly, drag.cx, drag.cy = w.address, x, y, x, y, c.x, c.y
-        return
-      end
-      if x ~= drag.lx or y ~= drag.ly then
-        -- the window moved with the pointer: still held
-        drag.lx, drag.ly, drag.cx, drag.cy = x, y, c.x, c.y
-      elseif math.abs(c.x - drag.cx) + math.abs(c.y - drag.cy) > 6 then
-        -- the pointer moved on and the window stayed: let go (or a click that moved nothing)
-        return finish("window stopped following")
-      end
-      if not drag.told and w.floating and (math.abs(x - drag.x) + math.abs(y - drag.y) > 6) and near_notch(c) then
-        drag.told = true
-        note(string.format("drag reached the notch (%s, button known %s down %s)", tostring(w.address), tostring(known), tostring(down)))
-        hl.exec_cmd("yggdrasil-panelctl zones-drag")
-      end
-    end)
-    if not ok then
-      io.stderr:write("yggdrasil: window zones: " .. tostring(err) .. "\n")
-      tick:set_enabled(false)
-      drag = nil
-    end
-  end, { timeout = 40, type = "repeat" })
-  tick:set_enabled(false)
-  local function press() drag = { told = false }; tick:set_enabled(true) end
-  -- ignore_mods: the same with Super held (Super+drag moves a window too). No release binding: on Hyprland 0.56 a release binding on
-  -- the left button keeps the release from ending the compositor's own window move (the window went on following the pointer after
-  -- the drop until the next click, 2026-10-25); the panel reads the button from the kernel instead.
-  hl.bind("mouse:272", press, { non_consuming = true, ignore_mods = true })
-  hl.bind("SUPER + SHIFT + Z", hl.dsp.exec_cmd("yggdrasil-panelctl zones"), { desc = "Window zones for the window in front" })
-end
+-- opens under it; let go on a zone and the window fills that part of the screen. The panel notices the drag and the drop by
+-- itself (the mouse's left button from the kernel, the window and pointer from Hyprland): no binding on the mouse button here,
+-- because on Hyprland 0.56 one kept the release from ending the compositor's own window move (tried 2026-10-25: the window went on
+-- following the pointer after the drop). Super+Shift+Z opens the sheet for the window in front.
+hl.bind("SUPER + SHIFT + Z", hl.dsp.exec_cmd("yggdrasil-panelctl zones"), { desc = "Window zones for the window in front" })
 
 -- Shortcuts (the same table as Yggdrasil's own compositor, compositor/src/shortcuts.rs).
 local function cmd(keys, command, opts) hl.bind(keys, hl.dsp.exec_cmd(command), opts) end
