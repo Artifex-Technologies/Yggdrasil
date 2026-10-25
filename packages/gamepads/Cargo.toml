@@ -1,0 +1,16 @@
+[package]
+name = "yggdrasil-gamepads"
+version = "0.1.0"
+edition = "2021"
+description = "Game controllers for Yggdrasil: which are connected (from sysfs), their battery, lightbar and player lights, a rumble test, and the saved controller settings"
+license = "MIT"
+
+[lib]
+name = "gamepads"
+path = "src/lib.rs"
+
+[dependencies]
+yggdrasil-conf = { path = "../yggdrasil-conf" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.151"
+libc = "0.2"

@@ -1,0 +1,6 @@
+# Game controllers' lights (light bar, player lights) may be set by the people using the computer: Settings > Bluetooth >
+# Controllers and the Controllers bar plugin change their colour. Only LEDs of controllers on the PlayStation drivers
+# (hid-playstation, hid-sony), and only their brightness and colour files. The kernel resets them on every connection, so this
+# runs then too.
+ACTION=="add", SUBSYSTEM=="leds", KERNEL=="*:rgb:indicator|*:white:player-[1-5]|*:red|*:green|*:blue", DRIVERS=="playstation|sony", \
+  RUN+="/bin/sh -c 'chmod 0666 /sys%p/brightness; [ -e /sys%p/multi_intensity ] && chmod 0666 /sys%p/multi_intensity || true'"

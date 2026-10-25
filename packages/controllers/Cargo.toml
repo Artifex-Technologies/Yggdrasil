@@ -1,0 +1,20 @@
+[package]
+name = "yggdrasil-controllers"
+version = "0.1.0"
+edition = "2021"
+description = "Game controllers in Yggdrasil's top bar: battery, a card with rumble test, light bar colour and disconnect, and notifications when one connects, runs low or is charged"
+license = "MIT"
+
+[[bin]]
+name = "yggdrasil-controllers"
+path = "src/main.rs"
+
+[dependencies]
+yggdrasil-gamepads = { path = "../gamepads" }
+yggdrasil-conf = { path = "../yggdrasil-conf" }
+serde_json = "1.0.151"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
