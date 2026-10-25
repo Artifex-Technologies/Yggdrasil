@@ -254,7 +254,7 @@ cmd("SUPER + Q", "yggdrasil-close", { desc = "Close the window (programs that ke
 dsp("SUPER + F", hl.dsp.window.fullscreen({ mode = "fullscreen" }), { desc = "Full screen" })
 cmd("SUPER + UP", "yggdrasil-snap up", { desc = "Maximize (again: restore), or focus up on a tiling screen" })
 cmd("SUPER + DOWN", "yggdrasil-snap down", { desc = "Minimize, or focus down on a tiling screen" })
-cmd("SUPER + W", "yggdrasil-close", { desc = "Close the window (Omarchy)" })
+cmd("SUPER + W", "yggdrasil-close", { desc = "Close the window (as in Omarchy)" })
 dsp("SUPER + SHIFT + M", hl.dsp.workspace.toggle_special("minimized"), { desc = "Show minimized windows" })
 -- Super+Arrows: on a floating screen, snap the window (Windows); on a tiling screen, move the focus (Omarchy)
 cmd("SUPER + LEFT", "yggdrasil-snap left", { desc = "Left half, or focus left on a tiling screen" })

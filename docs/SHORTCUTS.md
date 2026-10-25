@@ -8,12 +8,13 @@ of date). Settings > Keyboard Shortcuts and the cheat sheet (Win + /) show the l
 
 | Keys | What it does |
 | --- | --- |
+| Win + Shift + Z | Window zones for the window in front |
 | Alt + F4 | Close the window (programs that keep running: hide it) |
 | Win + Q | Close the window (programs that keep running: hide it) |
 | Win + F | Full screen |
 | Win + ↑ | Maximize (again: restore), or focus up on a tiling screen |
 | Win + ↓ | Minimize, or focus down on a tiling screen |
-| Win + W | Close the window (Omarchy) |
+| Win + W | Close the window (as in Omarchy) |
 | Win + Shift + M | Show minimized windows |
 | Win + ← | Left half, or focus left on a tiling screen |
 | Win + → | Right half, or focus right on a tiling screen |
@@ -59,7 +60,7 @@ of date). Settings > Keyboard Shortcuts and the cheat sheet (Win + /) show the l
 | --- | --- |
 | Win + Left drag | Move the window |
 | Win + Right drag | Resize the window |
-| Ctrl | Find my mouse (press Ctrl twice) |
+| Ctrl twice | Find my mouse |
 
 ## Screenshots
 

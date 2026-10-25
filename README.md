@@ -20,7 +20,7 @@ version that runs in a window ([docs/COMPOSITOR.md](docs/COMPOSITOR.md)). The ch
 | `packages/session` | `yggdrasil-session` | the session on Hyprland: its configuration (Lua), window rules, keys, and a small Hyprland plugin so programs' own minimize buttons work |
 | `packages/panel` | `yggdrasil-panel` | top bar, dock, tray, start menu, calendar, notifications, wallpaper, and Fylgja (the notch) ([docs/FYLGJA.md](docs/FYLGJA.md), [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md)) |
 | `packages/settings` | `yggdrasil-settings` | Settings: network, displays, sound, appearance, power and idle, users and their rights, security, restore points, apps and more |
-| `packages/minos` | `minos` | the file manager, and (through `packages/portal`) the open and save dialog of every program ([docs/MINOS_KEYS.md](docs/MINOS_KEYS.md)) |
+| `packages/minos` | `minos` | the file manager, and (through `packages/portal`) the open and save dialog of every program ([keys](docs/keys/minos.md)) |
 | `packages/market` | `agora` | Agora, the app store: the catalog, the Arch repositories, the AUR and Flathub in one place ([docs/MARKETPLACE.md](docs/MARKETPLACE.md)) |
 | `packages/lock` | `yggdrasil-lock`, `yggdrasil-greeter`, `yggdrasil-shot` | the lock screen and the login screen with selectable designs ([docs/LOCKSCREEN.md](docs/LOCKSCREEN.md), [docs/LOGIN_SCREEN.md](docs/LOGIN_SCREEN.md)), the boot splash, and the screenshot tool (Print: freezes the screen first, so open menus can be captured) |
 | `packages/installer` | `yggdrasil-installer` | the installer's window: language, keyboard (by type: QWERTY, QWERTZ, AZERTY, Dvorak, Colemak), time zone, disk (erase, or choose partitions beside Windows), account; the OS supplies the install steps ([docs/INSTALLER.md](docs/INSTALLER.md)) |
@@ -36,6 +36,111 @@ version that runs in a window ([docs/COMPOSITOR.md](docs/COMPOSITOR.md)). The ch
 | `packages/liki` | `liki-build` and others | **Liki**, the icon pack ([docs/LIKI.md](docs/LIKI.md)) |
 | `packages/theme` | `ygg-theme`, `ygg-cursors` | the look of GTK and Qt programs (dark mode included) and the mouse pointer ([docs/THEME.md](docs/THEME.md)) |
 | `packages/pkgbuilds` | | an Arch package recipe for each program, built from this repository |
+
+<!-- shortcuts:start -->
+## Keyboard shortcuts
+
+The desktop's own (Win is the Super key). Settings > Keyboard Shortcuts and Win + / show the live list, your own
+additions included; [docs/SHORTCUTS.md](docs/SHORTCUTS.md) is the same list. This part is made from
+`packages/session/hyprland/yggdrasil.lua` (`YGGDRASIL_WRITE_DOCS=1 cargo test` in `packages/yggdrasil-conf`).
+
+### Windows
+
+| Keys | What it does |
+| --- | --- |
+| Win + Shift + Z | Window zones for the window in front |
+| Alt + F4 | Close the window (programs that keep running: hide it) |
+| Win + Q | Close the window (programs that keep running: hide it) |
+| Win + F | Full screen |
+| Win + ↑ | Maximize (again: restore), or focus up on a tiling screen |
+| Win + ↓ | Minimize, or focus down on a tiling screen |
+| Win + W | Close the window (as in Omarchy) |
+| Win + Shift + M | Show minimized windows |
+| Win + ← | Left half, or focus left on a tiling screen |
+| Win + → | Right half, or focus right on a tiling screen |
+| Win + T | Tile or float the window |
+| Alt + Tab | Next window |
+| Alt + Shift + Tab | Previous window |
+
+### Desktops
+
+| Keys | What it does |
+| --- | --- |
+| Win + Ctrl + ← | Previous desktop |
+| Win + Ctrl + → | Next desktop |
+| Win + Ctrl + 1-4 | Desktop 1-4 |
+| Win + Ctrl + Shift + 1-4 | Move the window to desktop 1-4 |
+
+### Apps
+
+| Keys | What it does |
+| --- | --- |
+| Win + S | Talk to the assistant (hold) |
+| Ctrl + Alt + S | Talk to the assistant (hold) |
+| Win + V | Clipboard history and snippets |
+| Win + E | Files (Minos) |
+| Win + Return | Terminal |
+| Win + Shift + C | Color picker |
+
+### System
+
+| Keys | What it does |
+| --- | --- |
+| Win | Start menu |
+| Win + C | Calendar |
+| Win + N | Notifications |
+| Win + I | Settings |
+| Win + L | Lock the screen |
+| Ctrl + Shift + Esc | Running programs |
+| Win + / | Keyboard shortcuts |
+
+### Mouse
+
+| Keys | What it does |
+| --- | --- |
+| Win + Left drag | Move the window |
+| Win + Right drag | Resize the window |
+| Ctrl twice | Find my mouse |
+
+### Screenshots
+
+| Keys | What it does |
+| --- | --- |
+| Print Screen | Screenshot (area, window or screen) |
+| Win + Shift + S | Screenshot (area, window or screen) |
+
+### Media keys
+
+| Keys | What it does |
+| --- | --- |
+| Volume up | Volume up |
+| Volume down | Volume down |
+| Mute | Mute |
+| Microphone mute | Microphone mute |
+| Play | Play |
+| Pause | Pause |
+| Next track | Next track |
+| Previous track | Previous track |
+| Stop | Stop |
+| Brightness up | Brightness up |
+| Brightness down | Brightness down |
+<!-- shortcuts:end -->
+
+### In the apps
+
+| App | Main keys | All of them |
+| --- | --- | --- |
+| Top bar, dock, start menu | Esc closes any popup; in the start menu type to search, Enter opens; Win + / any key closes the shortcuts card | [docs/keys/panel.md](docs/keys/panel.md) |
+| Minos (files) | Ctrl + T / W new / close tab, Alt + ← / → back / forward, Ctrl + F search, Ctrl + L address, F2 rename, Delete to the bin, F3 preview | [docs/keys/minos.md](docs/keys/minos.md) |
+| Clipboard (Win + V) | ↑ ↓ move, Enter copies, Shift + Enter pastes, Tab history / snippets, Ctrl + P pin, Ctrl + N new snippet | [docs/keys/clipboard.md](docs/keys/clipboard.md) |
+| Color Picker (Win + Shift + C) | arrows move one pixel, wheel zooms, Enter or click picks, Esc cancels | [docs/keys/colorpicker.md](docs/keys/colorpicker.md) |
+| Screenshot, lock and login screens | screenshot: drag an area, click a window, Enter whole screen; lock: Enter unlocks, Esc clears; login: Tab another user, F2 session | [docs/keys/lock-and-login.md](docs/keys/lock-and-login.md) |
+| Authenticator | type to search, ↑ ↓ move, Enter copies the code | [docs/keys/authenticator.md](docs/keys/authenticator.md) |
+| Calculator | type the sum, Enter works it out, Esc clears | [docs/keys/calculator.md](docs/keys/calculator.md) |
+| Video player | Space or K play / pause, ← → or J / L step, ↑ ↓ volume, M mute, F full screen, O open | [docs/keys/player.md](docs/keys/player.md) |
+| 2048 | arrows, WASD or HJKL slide, U undo, N new game | [docs/keys/2048.md](docs/keys/2048.md) |
+| Sudoku | arrows or HJKL move, 1-9 place, N notes, U undo, Shift + H hint, P pause | [docs/keys/sudoku.md](docs/keys/sudoku.md) |
+| Settings, Agora, installer | no shortcuts of their own (Tab, Enter and typing as usual) | [docs/keys/settings-agora-installer.md](docs/keys/settings-agora-installer.md) |
 
 ## Screenshots
 
