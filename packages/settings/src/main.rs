@@ -1953,6 +1953,28 @@ impl App {
         if release {
             self.change(ctx, security::release);
         }
+        let mut held_act: Option<(bool, String)> = None;
+        if o.has_held && !o.held.is_empty() {
+            ui.add_space(8.0);
+            ui::group(ui, pal, Some(&format!("Held by {}", o.name)), |ui| {
+                for h in &o.held {
+                    let name = h.original.rsplit('/').next().unwrap_or(&h.original).to_string();
+                    let before = if h.seen_before { "it was on this computer before" } else { "never seen before it was held" };
+                    ui::row(ui, pal, false, &name, Some(&format!("{} · {} · {} · {}", h.reason, before, security::ago(h.held_at, now), h.original)), |ui| {
+                        if ui::quiet(ui, pal, "It's malware").clicked() {
+                            held_act = Some((true, h.id.clone()));
+                        }
+                        if ui::quiet(ui, pal, "Release").clicked() {
+                            held_act = Some((false, h.id.clone()));
+                        }
+                    });
+                }
+            });
+            ui.label(RichText::new("Release puts the file back exactly as it was. It's malware keeps it held and teaches it to the scans, so every copy is caught. Both ask for your password; Sarina's daily review says what she thinks of each file.").size(11.5).color(pal.dim));
+        }
+        if let Some((confirm, id)) = held_act {
+            self.change(ctx, move || security::held_act(confirm, &id));
+        }
         ui.add_space(8.0);
         ui::group(ui, pal, Some("Recent alerts"), |ui| {
             let levels = ["Everything", "Warnings and worse", "Critical only"];

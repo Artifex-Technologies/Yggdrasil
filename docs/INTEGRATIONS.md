@@ -58,13 +58,15 @@ distress = /usr/bin/labyrinth-distress     # optional: the distress password's r
 distress_set = /etc/labyrinth/distress.json   # when this exists, a wrong password at the lock screen is shown to the helper
 contained = /etc/heimdall/contained        # optional: when this file exists the assistant is contained (JSON "reason", "level")
 release = /usr/bin/heimdalld contain release   # run with pkexec: put back the approved files and lift the lock
+held_release = /usr/bin/heimdalld immunity release   # optional: its own quarantine (GET /v1/quarantine on the api); run with pkexec + ID
+held_confirm = /usr/bin/heimdalld immunity confirm   # with held_release: "It's malware" for a held file (pkexec + ID)
 switch.a_auto_quarantine = Move certain malware to quarantine automatically | ... | /usr/local/bin/labyrinth-security-setting auto-quarantine
 ```
 
 An alert is `{"time": RFC 3339, "detector_id", "severity": "info" | "warning" | "critical", "summary", "event": {"Fields": {...}}}`
 (`process`, `remote_addr`, `remote_port` and `app` are used when present). The panel turns them into notifications under `name`
 (Settings > Notifications chooses how many); Settings > Security gets a page named `name` with the state, alerts, new connections,
-the quarantine, the scan, the declared controls and, while the assistant is contained, a "Restore and release" button. Each part appears only when its key is there.
+the quarantine, the scan, the declared controls and, while the assistant is contained, a "Restore and release" button, and what the monitor holds in its own quarantine with Release and It's malware. Each part appears only when its key is there.
 
 ### `apps` (an app launcher with per-app rules)
 

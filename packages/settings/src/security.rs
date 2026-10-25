@@ -40,6 +40,49 @@ pub struct Overview {
     pub contained: Option<String>,
     /// It declares a release command (run with pkexec).
     pub has_release: bool,
+    /// What the monitor holds in its own quarantine, waiting for the owner (its API's /v1/quarantine), when it declares `held_release`.
+    pub held: Vec<Held>,
+    pub has_held: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Held {
+    pub id: String,
+    pub original: String,
+    pub kind: String,
+    pub reason: String,
+    /// Seconds since 1970.
+    pub held_at: i64,
+    /// The monitor saw exactly this file there before it was held (its inventory).
+    pub seen_before: bool,
+}
+
+/// The JSON of /v1/quarantine: entries with "status" "held" are waiting.
+pub fn parse_held(json: &str) -> Vec<Held> {
+    let v: Value = serde_json::from_str(json).unwrap_or(Value::Null);
+    let Some(a) = v.as_array() else { return vec![] };
+    a.iter()
+        .filter(|e| e["status"].as_str() == Some("held"))
+        .filter_map(|e| {
+            Some(Held {
+                id: e["sha256"].as_str()?.to_string(),
+                original: e["original"].as_str()?.to_string(),
+                kind: e["kind"].as_str().unwrap_or("").to_string(),
+                reason: e["reason"].as_str().unwrap_or("").to_string(),
+                held_at: e["held_at"].as_str().and_then(parse_time).unwrap_or(0),
+                seen_before: e["seen_since"].as_str().is_some_and(|t| !t.starts_with("0001")),
+            })
+        })
+        .collect()
+}
+
+/// "release" (it is good) or "confirm" (it is malware) a held file: the monitor's command through pkexec, which asks for the password.
+pub fn held_act(confirm: bool, id: &str) -> Result<(), String> {
+    let i = security().ok_or("there is no security monitor")?;
+    let cmd = i.command(if confirm { "held_confirm" } else { "held_release" }).ok_or("the security monitor cannot do that")?;
+    let mut args: Vec<&str> = cmd.iter().map(String::as_str).collect();
+    args.push(id);
+    crate::sys::act("pkexec", &args)
 }
 
 /// The `contained` file: JSON with an optional "reason" (and "level": "emergency" after the last resort); any content counts.
@@ -165,8 +208,10 @@ pub fn overview() -> Overview {
     let has_quarantine = i.command("quarantine").is_some();
     let quarantine = run_cmd(i, "quarantine", &["list", "--json"]).map(|b| parse_quarantine(&b)).unwrap_or_default();
     let controls = crate::controls::load(i.controls());
+    let has_held = i.command("held_release").is_some();
+    let held = if running && has_held { get("/v1/quarantine", "5").map(|b| parse_held(&b)).unwrap_or_default() } else { vec![] };
     let contained = i.get("contained").and_then(|p| std::fs::read_to_string(p).ok()).map(|t| parse_contained(&t));
-    Overview { name: monitor_name(i), running, alerts, signatures, clamav, has_quarantine, quarantine, has_scan: i.command("scan").is_some(), controls, contained, has_release: i.command("release").is_some() }
+    Overview { name: monitor_name(i), running, alerts, signatures, clamav, has_quarantine, quarantine, has_scan: i.command("scan").is_some(), controls, contained, has_release: i.command("release").is_some(), held, has_held }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -197,6 +242,17 @@ pub fn scan_folder(folder: &str) -> ScanReport {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn held_files() {
+        let j = r#"[{"sha256":"ab12","original":"/home/u/.local/bin/tool","kind":"Elf","reason":"found during a containment","status":"held","held_at":"2026-10-25T05:00:00Z","seen_since":"2026-10-01T00:00:00Z"},
+                   {"sha256":"cd34","original":"/x","status":"released","held_at":"2026-10-25T05:00:00Z"},
+                   {"sha256":"ef56","original":"/y","status":"held","held_at":"2026-10-25T05:00:00Z","seen_since":"0001-01-01T00:00:00Z"}]"#;
+        let h = parse_held(j);
+        assert_eq!(h.len(), 2);
+        assert_eq!(h[0].original, "/home/u/.local/bin/tool");
+        assert!(h[0].seen_before && !h[1].seen_before);
+    }
+
     #[test]
     fn contained_reason() {
         assert_eq!(parse_contained(r#"{"reason":"planted skill","level":"contained"}"#), "planted skill");
