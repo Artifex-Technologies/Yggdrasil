@@ -235,6 +235,15 @@ end)
 -- watches for the drop itself too and acts on it once. Super+Shift+Z opens the sheet from the keyboard.
 do
   local drag = nil
+  -- a short trail of what the drag detection saw (~/.local/state/yggdrasil/zones.log, cut at 200 KB), to find why a drop is missed
+  local trail = (os.getenv("XDG_STATE_HOME") or (os.getenv("HOME") .. "/.local/state")) .. "/yggdrasil/zones.log"
+  local function note(msg)
+    local f = io.open(trail, "a")
+    if not f then return end
+    if f:seek("end") > 200000 then f:close(); f = io.open(trail, "w"); if not f then return end end
+    f:write(os.date("%H:%M:%S "), "lua: ", msg, "\n")
+    f:close()
+  end
   local function near_notch(c)
     local m = hl.get_monitor_at(c.x, c.y)
     if not m then return false end
@@ -243,7 +252,8 @@ do
     return math.abs(c.x - mid) < 180 and c.y < m.y + top + 30
   end
   local tick
-  local function finish()
+  local function finish(why)
+    if drag and drag.told then note("drop (" .. tostring(why) .. ")") end
     tick:set_enabled(false)
     if drag and drag.told then hl.exec_cmd("yggdrasil-panelctl zones-drop") end
     drag = nil
@@ -254,7 +264,7 @@ do
       -- the button, where Hyprland reports it: seen down, then up, is the drop
       local known, down = pcall(hl.is_key_down, 272)
       if known and down then drag.down = true end
-      if known and drag.down and not down then return finish() end
+      if known and drag.down and not down then return finish("button up") end
       local w, c = hl.get_active_window(), hl.get_cursor_pos()
       if not w or not c then return end
       local x, y = xy(w.at)
@@ -269,10 +279,11 @@ do
         drag.lx, drag.ly, drag.cx, drag.cy = x, y, c.x, c.y
       elseif math.abs(c.x - drag.cx) + math.abs(c.y - drag.cy) > 6 then
         -- the pointer moved on and the window stayed: let go (or a click that moved nothing)
-        return finish()
+        return finish("window stopped following")
       end
       if not drag.told and w.floating and (math.abs(x - drag.x) + math.abs(y - drag.y) > 6) and near_notch(c) then
         drag.told = true
+        note(string.format("drag reached the notch (%s, button known %s down %s)", tostring(w.address), tostring(known), tostring(down)))
         hl.exec_cmd("yggdrasil-panelctl zones-drag")
       end
     end)
@@ -287,7 +298,7 @@ do
   -- ignore_mods: the same with Super held (Super+drag moves a window too); the release binding stays for compositors or versions
   -- where it does fire
   hl.bind("mouse:272", press, { non_consuming = true, ignore_mods = true })
-  hl.bind("mouse:272", function() if drag then finish() end end, { release = true, non_consuming = true, ignore_mods = true })
+  hl.bind("mouse:272", function() if drag then finish("release binding") end end, { release = true, non_consuming = true, ignore_mods = true })
   hl.bind("SUPER + SHIFT + Z", hl.dsp.exec_cmd("yggdrasil-panelctl zones"), { desc = "Window zones for the window in front" })
 end
 

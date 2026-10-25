@@ -125,6 +125,19 @@ impl DropWatch {
 /// How long a drag sheet waits, with the pointer still, for a drop it may never hear.
 pub const STALE: std::time::Duration = std::time::Duration::from_secs(8);
 
+/// A line in the drag trail (~/.local/state/yggdrasil/zones.log, shared with the session's Lua), to find why a drop is missed.
+pub fn note(msg: &str) {
+    use std::io::Write;
+    let Some(dir) = std::env::var_os("XDG_STATE_HOME").map(std::path::PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/state"))) else { return };
+    let path = dir.join("yggdrasil/zones.log");
+    let big = std::fs::metadata(&path).map(|m| m.len() > 200_000).unwrap_or(false);
+    let f = if big { std::fs::File::create(&path) } else { std::fs::OpenOptions::new().create(true).append(true).open(&path) };
+    if let Ok(mut f) = f {
+        let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+        let _ = writeln!(f, "{} panel: {msg}", t % 100_000_000);
+    }
+}
+
 fn hyprctl(args: &[&str]) -> Option<String> {
     let out = Command::new("hyprctl").args(args).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
     out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
@@ -239,7 +252,8 @@ pub fn place(address: &str, floating: bool, (x, y, w, h): Rect) {
     cmds.push(format!(r#"hl.dsp.window.resize({{ x = {w}, y = {h}, window = "{win}" }})"#));
     cmds.push(format!(r#"hl.dsp.window.move({{ x = {x}, y = {y}, window = "{win}" }})"#));
     for c in cmds {
-        let _ = hyprctl(&["dispatch", &c]);
+        let answer = hyprctl(&["dispatch", &c]);
+        note(&format!("{c} -> {answer:?}"));
     }
 }
 

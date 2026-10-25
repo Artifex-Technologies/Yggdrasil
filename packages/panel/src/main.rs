@@ -2219,7 +2219,11 @@ impl State {
             }
             return;
         }
-        let Some(sess) = zones::begin(mode) else { return };
+        let Some(sess) = zones::begin(mode) else {
+            zones::note("no window in front to place");
+            return;
+        };
+        zones::note(&format!("sheet open ({mode:?}) for {} on {}", sess.address, sess.monitor.name));
         if self.popup.is_some() {
             self.close_popup();
         }
@@ -2237,6 +2241,7 @@ impl State {
         let hover = zones::hit_at(&self.zone_hits, p);
         let at = zones::front_window().filter(|(a, _)| *a == z.address).map(|(_, at)| at);
         if let Some(drop) = z.watch.follow(g, at, hover) {
+            zones::note(&format!("drop seen by the panel: the window stopped following (pointer {g:?}, window at {at:?})"));
             self.zones_dropped(drop);
             return;
         }
@@ -2244,6 +2249,7 @@ impl State {
             z.moved = Instant::now();
         } else if z.moved.elapsed() > zones::STALE {
             // no drop came (the release went unseen): put the sheet away rather than follow the pointer for ever
+            zones::note("no drop seen for 8 s: sheet put away");
             self.close_popup();
             return;
         }
@@ -2256,6 +2262,7 @@ impl State {
 
     /// The session says the drag ended (its Lua saw the window stop following the pointer, or the button come up).
     fn zones_drop(&mut self) {
+        zones::note(&format!("the session says dropped (sheet open: {})", matches!(self.popup, Some(Popup { kind: PopupKind::Zones(_), .. }))));
         if let Some(Popup { kind: PopupKind::Zones(z), .. }) = &mut self.popup {
             if z.mode == zones::Mode::Drag {
                 if let Some(drop) = z.watch.told() {
@@ -2271,6 +2278,7 @@ impl State {
         if let Some(Popup { kind: PopupKind::Zones(z), .. }) = &mut self.popup {
             if z.mode == zones::Mode::Drag {
                 if let Some(drop) = z.watch.pointer_back(clicked, at) {
+                    zones::note(&format!("drop seen by the panel: the pointer came back (clicked {clicked})"));
                     self.zones_dropped(drop);
                 }
             }
@@ -2279,6 +2287,7 @@ impl State {
 
     /// The drag ended (once, however it was seen): the window goes to the zone it was let go over, if any, then Snap Assist.
     fn zones_dropped(&mut self, hit: Option<(usize, usize)>) {
+        zones::note(&format!("dropped on {hit:?}"));
         let Some(Popup { kind: PopupKind::Zones(z), .. }) = &self.popup else { return };
         let z = z.clone();
         self.close_popup();
