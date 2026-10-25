@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Timer alarms
+Comment=Sets the alarms of running timers again after a restart (they are not kept across a reboot)
+Exec=/usr/bin/yggdrasil-timer reconcile
+NoDisplay=true
+X-GNOME-Autostart-Phase=Applications
