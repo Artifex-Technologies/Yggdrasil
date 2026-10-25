@@ -675,12 +675,7 @@ pub fn set_tiling(name: &str, on: bool) -> Result<(), String> {
         list.push(name.to_string());
     }
     yggdrasil_conf::tiling::set_outputs(&list).map_err(|e| e.to_string())?;
-    if hyprland() {
-        act("hyprctl", &["reload"])
-    } else {
-        // KWin's tiling script (one tiling screen at a time there)
-        act("labyrinth-tiling", &[if on { name } else { "off" }])
-    }
+    act("hyprctl", &["reload"])
 }
 
 // ---------------------------------------------------------------- Appearance
@@ -717,8 +712,6 @@ pub struct Appearance {
     pub dark: bool,
     pub accent: Option<[u8; 3]>,
     pub wallpapers: Vec<std::path::PathBuf>,
-    /// Yggdrasil's own top bar and dock are in use (labyrinth-panel-mode, while Plasma is still there).
-    pub panel_on: bool,
     pub panel: yggdrasil_conf::PanelConf,
 }
 
@@ -739,8 +732,7 @@ pub fn appearance() -> Appearance {
         }
     }
     wallpapers.sort();
-    let panel_on = run("labyrinth-panel-mode", &["status"]).map(|s| s.trim() == "yggdrasil-panel").unwrap_or(false);
-    Appearance { icon_packs: icon_packs(), icon_theme: current_icon_theme(), dark: look.dark, accent, wallpapers, panel_on, panel: yggdrasil_conf::PanelConf::load() }
+    Appearance { icon_packs: icon_packs(), icon_theme: current_icon_theme(), dark: look.dark, accent, wallpapers, panel: yggdrasil_conf::PanelConf::load() }
 }
 
 /// The largest picture in a Plasma wallpaper package's images folder (named like 3840x2160.png).

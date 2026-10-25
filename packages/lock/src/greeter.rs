@@ -172,7 +172,7 @@ impl App {
         self.apply_key(k);
     }
 
-    /// F2: the next session (Yggdrasil, Plasma ...).
+    /// F2: the next session, when more than one is installed.
     fn switch_session(&mut self) {
         if self.busy || self.sessions.len() < 2 {
             return;
@@ -416,7 +416,7 @@ pub fn sessions_in(dir: &std::path::Path, chosen: Option<&str>) -> Vec<Session> 
     let mut list: Vec<Session> = out.into_iter().map(|(_, s)| s).collect();
     if list.is_empty() {
         let (cmd, env) = session_for(None, dir);
-        list.push(Session { name: "Plasma".into(), cmd, env });
+        list.push(Session { name: "Yggdrasil".into(), cmd, env });
     }
     list
 }
@@ -435,7 +435,10 @@ pub fn session_for(chosen: Option<&str>, dir: &std::path::Path) -> (Vec<String>,
     }
     let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "desktop")).collect()).unwrap_or_default();
     files.sort();
-    files.into_iter().find_map(from_file).unwrap_or_else(|| (vec!["startplasma-wayland".to_string()], vec!["XDG_SESSION_TYPE=wayland".to_string()]))
+    // no session files at all: Yggdrasil's own session
+    files.into_iter().find_map(from_file).unwrap_or_else(|| {
+        (vec!["yggdrasil-session".to_string()], vec!["XDG_SESSION_TYPE=wayland".to_string(), "XDG_CURRENT_DESKTOP=Yggdrasil".to_string(), "XDG_SESSION_DESKTOP=Yggdrasil".to_string()])
+    })
 }
 
 fn main() {

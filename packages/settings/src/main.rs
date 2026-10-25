@@ -1431,7 +1431,6 @@ impl App {
         let mut icon_remove: Option<String> = None;
         let mut icon_install: Option<String> = None;
         let mut brand_build = false;
-        let mut panel_switch: Option<bool> = None;
         let mut minos_live = false;
         let mut conf = a.panel;
         let mut conf_changed = false;
@@ -1588,17 +1587,6 @@ impl App {
                     icon_install = Some(self.icon_src.trim().to_string());
                 }
                 ui.add(egui::TextEdit::singleline(&mut self.icon_src).hint_text("~/Downloads/pack.tar.gz, pack.apk or https://...").desired_width((ui.available_width() - 10.0).clamp(160.0, 340.0)));
-            });
-        });
-        }
-        // in Yggdrasil's own session its top bar and dock are always the ones in use
-        if self.app_sub == AppSub::Bar && !yggdrasil_conf::own_session() {
-        ui::group(ui, pal, Some("Top bar and dock"), |ui| {
-            let mut on = a.panel_on;
-            ui::row(ui, pal, true, "Use the Yggdrasil top bar and dock", Some("Replaces Plasma's panels. It has no system tray, quick settings or global menu yet."), |ui| {
-                if ui::switch(ui, pal, &mut on).changed() {
-                    panel_switch = Some(on);
-                }
             });
         });
         }
@@ -1766,9 +1754,6 @@ impl App {
         }
         if conf_changed {
             self.change(ctx, move || conf.save());
-        }
-        if let Some(on) = panel_switch {
-            self.change(ctx, move || sys::act("labyrinth-panel-mode", &[if on { "on" } else { "off" }]));
         }
         if let Some(dark) = style {
             self.change(ctx, move || {
