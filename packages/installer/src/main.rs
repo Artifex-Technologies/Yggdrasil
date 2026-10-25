@@ -8,6 +8,8 @@
 //! line), answers `--disks` with the disks it could install onto, and reports with one line each: `STEP n N text`, `INFO`,
 //! `WARN`, `ERROR text`, `DONE`. See docs/INSTALLER.md.
 
+mod partitions;
+
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{channel, Receiver};
@@ -37,6 +39,9 @@ struct Disk {
     model: String,
     removable: bool,
     big_enough: bool,
+    /// gpt, dos, or "" (no partition table)
+    table: String,
+    parts: Vec<partitions::Part>,
 }
 
 /// What the install program said, line by line.
@@ -132,28 +137,110 @@ fn keymaps() -> Vec<String> {
     v
 }
 
-/// The names of the keyboard layouts ("us" -> "English (US)"), from the system's XKB list.
-fn layout_names() -> std::collections::HashMap<String, String> {
-    let text = std::fs::read_to_string("/usr/share/X11/xkb/rules/base.lst").unwrap_or_default();
-    parse_layout_names(&text)
+/// How the letters are arranged: what people know a keyboard by.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum KbType {
+    Qwerty,
+    Qwertz,
+    Azerty,
+    Dvorak,
+    Colemak,
+    Other,
 }
 
-fn parse_layout_names(text: &str) -> std::collections::HashMap<String, String> {
-    let mut out = std::collections::HashMap::new();
-    let mut inside = false;
-    for line in text.lines() {
-        if line.starts_with('!') {
-            inside = line.trim() == "! layout";
+const KB_TYPES: [(KbType, &str, &str); 6] = [
+    (KbType::Qwerty, "QWERTY", "Most keyboards"),
+    (KbType::Qwertz, "QWERTZ", "German, Swiss, Czech, Hungarian…"),
+    (KbType::Azerty, "AZERTY", "French, Belgian"),
+    (KbType::Dvorak, "Dvorak", "Letters arranged for less finger travel"),
+    (KbType::Colemak, "Colemak", "QWERTY with the most-used letters moved home"),
+    (KbType::Other, "Other alphabets", "Cyrillic, Greek, Arabic, Hebrew, Indic, Thai…"),
+];
+
+/// One keyboard to choose: an XKB layout, maybe with a variant (Dvorak and Colemak are variants of a layout).
+#[derive(Clone, Debug, PartialEq)]
+struct KbChoice {
+    layout: String,
+    variant: String,
+    name: String,
+    kind: KbType,
+}
+
+impl KbChoice {
+    fn key(&self) -> String {
+        format!("{}|{}", self.layout, self.variant)
+    }
+    fn label(&self) -> String {
+        if self.variant.is_empty() { format!("{}   ({})", self.name, self.layout) } else { format!("{}   ({}, {})", self.name, self.layout, self.variant) }
+    }
+}
+
+/// The arrangement a layout's letters follow (its default variant).
+fn layout_kind(code: &str) -> KbType {
+    const AZERTY: [&str; 2] = ["fr", "be"];
+    const QWERTZ: [&str; 11] = ["de", "at", "ch", "cz", "sk", "hu", "si", "hr", "ba", "li", "lu"];
+    const OTHER_SCRIPTS: [&str; 37] = ["ru", "ua", "by", "bg", "mk", "rs", "mn", "kz", "kg", "tj", "uz", "gr", "il", "ara", "eg", "iq", "sy", "ir", "af", "pk", "in", "bd",
+        "np", "lk", "th", "la", "kh", "mm", "bt", "ge", "am", "et", "er", "mv", "ma", "jo", "tm"];
+    if AZERTY.contains(&code) {
+        KbType::Azerty
+    } else if QWERTZ.contains(&code) {
+        KbType::Qwertz
+    } else if OTHER_SCRIPTS.contains(&code) {
+        KbType::Other
+    } else {
+        KbType::Qwerty
+    }
+}
+
+/// Everything there is to choose, from the XKB list (base.lst): each layout, plus its Dvorak and Colemak variants and the two
+/// international US ones many people type with. `available` (localectl's layouts) limits it when not empty.
+fn keyboard_choices(lst: &str, available: &[String]) -> Vec<KbChoice> {
+    let mut section = "";
+    let mut names = std::collections::HashMap::new();
+    let mut out = vec![];
+    let ok = |l: &str| available.is_empty() || available.iter().any(|a| a == l);
+    for line in lst.lines() {
+        if let Some(h) = line.strip_prefix("! ") {
+            section = if h.trim() == "layout" { "layout" } else if h.trim() == "variant" { "variant" } else { "" };
             continue;
         }
-        if inside {
-            let line = line.trim();
-            if let Some((code, name)) = line.split_once(char::is_whitespace) {
-                out.insert(code.to_string(), name.trim().to_string());
+        let Some((code, rest)) = line.trim().split_once(char::is_whitespace) else { continue };
+        let rest = rest.trim();
+        match section {
+            "layout" if ok(code) => {
+                names.insert(code.to_string(), rest.to_string());
+                out.push(KbChoice { layout: code.into(), variant: String::new(), name: rest.into(), kind: layout_kind(code) });
             }
+            "variant" => {
+                let Some((layout, name)) = rest.split_once(": ") else { continue };
+                if !ok(layout) {
+                    continue;
+                }
+                let kind = if name.contains("Dvorak") {
+                    KbType::Dvorak
+                } else if name.contains("Colemak") {
+                    KbType::Colemak
+                } else if layout == "us" && (code == "intl" || code == "altgr-intl") {
+                    KbType::Qwerty
+                } else {
+                    continue;
+                };
+                out.push(KbChoice { layout: layout.into(), variant: code.into(), name: name.into(), kind });
+            }
+            _ => {}
         }
     }
+    out.sort_by_key(|c| c.name.to_lowercase());
     out
+}
+
+/// The live session types with this keyboard from now on (Hyprland), so the box on the page tries the layout chosen.
+fn try_keyboard(c: &KbChoice) {
+    if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_none() {
+        return;
+    }
+    let lua = format!("hl.config({{ input = {{ kb_layout = {:?}, kb_variant = {:?} }} }})", c.layout, c.variant);
+    let _ = std::process::Command::new("hyprctl").args(["eval", &lua]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
 }
 
 /// The time zones a person would pick: Region/City ones and UTC (not the old aliases such as "W-SU", "Zulu" or "US/Pacific").
@@ -196,15 +283,19 @@ struct App {
     os: String,
     locales: Vec<String>,
     locale: String,
-    keymaps: Vec<String>,
+    kb_choices: Vec<KbChoice>,
+    kb_type: KbType,
     keymap: String,
-    keymap_names: std::collections::HashMap<String, String>,
+    keymap_variant: String,
     test_text: String,
     zones: Vec<String>,
     zone: String,
     zone_filter: String,
     disks: Vec<Disk>,
     disk: Option<String>,
+    /// Partitions chosen by hand instead of erasing the whole disk.
+    manual_mode: bool,
+    manual: partitions::Manual,
     disk_error: Option<String>,
     encrypt: bool,
     crypt_pw: String,
@@ -233,20 +324,18 @@ impl App {
             os,
             locales: locales(),
             locale: "en_US.UTF-8".into(),
-            keymaps: {
-                let names = layout_names();
-                let mut k = keymaps();
-                k.sort_by_key(|c| names.get(c).cloned().unwrap_or_else(|| c.clone()).to_lowercase());
-                k
-            },
+            kb_choices: keyboard_choices(&std::fs::read_to_string("/usr/share/X11/xkb/rules/base.lst").unwrap_or_default(), &keymaps()),
+            kb_type: KbType::Qwerty,
             keymap: "us".into(),
-            keymap_names: layout_names(),
+            keymap_variant: String::new(),
             test_text: String::new(),
             zones: timezones(),
             zone: current_timezone(),
             zone_filter: String::new(),
             disks: vec![],
             disk: None,
+            manual_mode: false,
+            manual: partitions::Manual::default(),
             disk_error: None,
             encrypt: true,
             crypt_pw: String::new(),
@@ -281,6 +370,24 @@ impl App {
                                 model: d["model"].as_str().unwrap_or("").to_string(),
                                 removable: d["removable"].as_bool().unwrap_or(false),
                                 big_enough: d["big_enough"].as_bool().unwrap_or(false),
+                                table: d["table"].as_str().unwrap_or("").to_string(),
+                                parts: d["partitions"]
+                                    .as_array()
+                                    .map(|a| {
+                                        a.iter()
+                                            .map(|p| partitions::Part {
+                                                path: p["path"].as_str().unwrap_or("").to_string(),
+                                                number: p["number"].as_u64().unwrap_or(0) as u32,
+                                                start: p["start"].as_u64().unwrap_or(0),
+                                                size: p["size"].as_u64().unwrap_or(0),
+                                                fstype: p["fstype"].as_str().unwrap_or("").to_string(),
+                                                label: p["label"].as_str().unwrap_or("").to_string(),
+                                                efi: p["efi"].as_bool().unwrap_or(false),
+                                                mounted: p["mounted"].as_bool().unwrap_or(false),
+                                            })
+                                            .collect()
+                                    })
+                                    .unwrap_or_default(),
                             })
                             .collect()
                     })
@@ -292,41 +399,47 @@ impl App {
     }
 
     /// What is still missing on a page before Next (None: it can go on).
-    fn missing(&self, page: Page) -> Option<&'static str> {
+    fn chosen_disk(&self) -> Option<&Disk> {
+        self.disks.iter().find(|d| Some(&d.path) == self.disk.as_ref())
+    }
+
+    fn missing(&self, page: Page) -> Option<String> {
         match page {
             Page::Disk => {
                 if self.disk.is_none() {
-                    Some("Choose a disk")
+                    Some("Choose a disk".into())
+                } else if let Some(p) = self.chosen_disk().filter(|_| self.manual_mode).and_then(|d| self.manual.problem(d.size, &d.parts, &d.table)) {
+                    Some(p)
                 } else if self.encrypt && self.crypt_pw.chars().count() < 8 {
-                    Some("The encryption password needs at least 8 characters")
+                    Some("The encryption password needs at least 8 characters".into())
                 } else if self.encrypt && self.crypt_pw != self.crypt_pw2 {
-                    Some("The two encryption passwords are not the same")
+                    Some("The two encryption passwords are not the same".into())
                 } else {
                     None
                 }
             }
             Page::Account => {
                 if self.name.trim().is_empty() {
-                    Some("Type your name")
+                    Some("Type your name".into())
                 } else if !login_ok(&self.login) {
-                    Some("The account name must start with a small letter (letters, digits, - and _)")
+                    Some("The account name must start with a small letter (letters, digits, - and _)".into())
                 } else if !hostname_ok(&self.hostname) {
-                    Some("The computer's name may use letters, digits and -")
+                    Some("The computer's name may use letters, digits and -".into())
                 } else if self.pw.is_empty() {
-                    Some("Choose a password")
+                    Some("Choose a password".into())
                 } else if self.pw != self.pw2 {
-                    Some("The two passwords are not the same")
+                    Some("The two passwords are not the same".into())
                 } else {
                     None
                 }
             }
-            Page::Summary if !self.agree => Some("Tick the box to confirm that the disk may be erased"),
+            Page::Summary if !self.agree => Some("Tick the box to confirm the changes to the disk".into()),
             _ => None,
         }
     }
 
     fn plan(&self) -> serde_json::Value {
-        serde_json::json!({
+        let mut plan = serde_json::json!({
             "disk": self.disk.clone().unwrap_or_default(),
             "mode": "erase",
             "encrypt": self.encrypt,
@@ -336,7 +449,18 @@ impl App {
             "timezone": self.zone,
             "locale": self.locale,
             "keymap": self.keymap,
-        })
+            "keymap_variant": self.keymap_variant,
+        });
+        if self.manual_mode {
+            if let (Some(d), Some(obj)) = (self.chosen_disk(), plan.as_object_mut()) {
+                if let Some(m) = self.manual.plan(&d.parts).as_object() {
+                    for (k, v) in m {
+                        obj.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+        }
+        plan
     }
 
     fn start_install(&mut self, ctx: &egui::Context) {
@@ -407,11 +531,16 @@ fn field(ui: &mut egui::Ui, text: &mut String, hint: &str, secret: bool) -> egui
 }
 
 /// A list to pick one line from (shown through `label`), the chosen one highlighted and scrolled into view when the list opens.
-/// "English (US)   us": the name, with the short code people may know it by.
-fn keymap_label(names: &std::collections::HashMap<String, String>, code: &str) -> String {
-    match names.get(code) {
-        Some(n) => format!("{n}   ({code})"),
-        None => code.to_string(),
+impl App {
+    /// The keyboard chosen now.
+    fn kb_chosen(&self) -> Option<&KbChoice> {
+        self.kb_choices.iter().find(|c| c.layout == self.keymap && c.variant == self.keymap_variant)
+    }
+
+    fn choose_keyboard(&mut self, c: KbChoice) {
+        try_keyboard(&c);
+        self.keymap = c.layout;
+        self.keymap_variant = c.variant;
     }
 }
 
@@ -469,6 +598,8 @@ impl eframe::App for App {
             let body_h = ui.available_height() - footer;
             ui.allocate_ui(vec2(ui.available_width() - 16.0, body_h), |ui| {
                 ui.set_min_height(body_h);
+                // a long page (manual partitions, the summary of them) scrolls; the buttons below stay where they are
+                egui::ScrollArea::vertical().id_salt(("page", self.page as u8)).max_height(body_h).auto_shrink([false, false]).show(ui, |ui| {
                 match self.page {
                     Page::Welcome => {
                         heading(ui, &pal, &format!("Welcome to {}", self.os), "This puts it on this computer's disk. It takes a few minutes; nothing is sent anywhere.");
@@ -482,10 +613,38 @@ impl eframe::App for App {
                     }
                     Page::Keyboard => {
                         heading(ui, &pal, "Keyboard", "The layout of your keyboard. Type in the box to try it.");
-                        let mut km = self.keymap.clone();
-                        let names = &self.keymap_names;
-                        pick_list(ui, &pal, "keymaps", &self.keymaps, &mut km, (body_h - 150.0).max(120.0), |k| keymap_label(names, k));
-                        self.keymap = km;
+                        // the arrangement first, then the keyboards of that kind
+                        let mut new_type = None;
+                        ui.horizontal_wrapped(|ui| {
+                            for (t, name, what) in KB_TYPES {
+                                let on = self.kb_type == t;
+                                let b = egui::Button::new(RichText::new(name).color(if on { pal.on_accent() } else { pal.text })).fill(if on { pal.accent } else { pal.field }).min_size(vec2(84.0, 30.0));
+                                if ui.add(b).on_hover_text(what).clicked() {
+                                    new_type = Some(t);
+                                }
+                            }
+                        });
+                        if let Some(t) = new_type {
+                            self.kb_type = t;
+                            if self.kb_chosen().map(|c| c.kind != t).unwrap_or(true) {
+                                // the usual one of that kind, so something of it is chosen at once
+                                let usual = match t { KbType::Qwerty => ("us", ""), KbType::Qwertz => ("de", ""), KbType::Azerty => ("fr", ""), KbType::Dvorak => ("us", "dvorak"), KbType::Colemak => ("us", "colemak"), KbType::Other => ("", "") };
+                                let pick = self.kb_choices.iter().find(|c| c.kind == t && c.layout == usual.0 && c.variant == usual.1).or_else(|| self.kb_choices.iter().find(|c| c.kind == t)).cloned();
+                                if let Some(c) = pick {
+                                    self.choose_keyboard(c);
+                                }
+                            }
+                        }
+                        ui.add_space(6.0);
+                        let shown: Vec<KbChoice> = self.kb_choices.iter().filter(|c| c.kind == self.kb_type).cloned().collect();
+                        let keys: Vec<String> = shown.iter().map(KbChoice::key).collect();
+                        let mut km = format!("{}|{}", self.keymap, self.keymap_variant);
+                        pick_list(ui, &pal, "keymaps", &keys, &mut km, (body_h - 190.0).max(120.0), |k| shown.iter().find(|c| c.key() == k).map(KbChoice::label).unwrap_or_else(|| k.to_string()));
+                        if km != format!("{}|{}", self.keymap, self.keymap_variant) {
+                            if let Some(c) = shown.iter().find(|c| c.key() == km).cloned() {
+                                self.choose_keyboard(c);
+                            }
+                        }
                         ui.add_space(8.0);
                         field(ui, &mut self.test_text, "Try your keyboard here", false);
                     }
@@ -500,12 +659,15 @@ impl eframe::App for App {
                         self.zone = z;
                     }
                     Page::Disk => {
-                        heading(ui, &pal, "Where to install", "The whole disk you choose is used: everything on it is erased.");
+                        heading(ui, &pal, "Where to install", "Choose the disk, then how: erase all of it, or choose partitions yourself (beside Windows, for one).");
                         for d in self.disks.clone() {
                             let on = self.disk.as_deref() == Some(d.path.as_str());
                             let label = format!("{}   {}   {}{}", if d.model.is_empty() { "Disk" } else { &d.model }, size_text(d.size), d.path, if d.removable { "   (removable)" } else { "" });
                             let b = egui::Button::new(RichText::new(label).color(if on { pal.on_accent() } else { pal.text })).fill(if on { pal.accent } else { pal.field }).min_size(vec2(460.0, 34.0));
                             if ui.add_enabled(d.big_enough, b).on_disabled_hover_text("Too small: at least 30 GB are needed").clicked() {
+                                if self.disk.as_deref() != Some(d.path.as_str()) {
+                                    self.manual = partitions::Manual::default();
+                                }
                                 self.disk = Some(d.path.clone());
                             }
                             ui.add_space(4.0);
@@ -516,8 +678,24 @@ impl eframe::App for App {
                         if ui.button("Look again").clicked() {
                             self.load_disks();
                         }
+                        if let Some(d) = self.chosen_disk().cloned() {
+                            ui.add_space(12.0);
+                            ui.horizontal(|ui| {
+                                for (manual, name, what) in [(false, "Erase the disk", "Labyrinth gets the whole disk: everything on it is erased"), (true, "Choose partitions", "Make, delete and pick partitions yourself")] {
+                                    let on = self.manual_mode == manual;
+                                    let b = egui::Button::new(RichText::new(name).color(if on { pal.on_accent() } else { pal.text })).fill(if on { pal.accent } else { pal.field }).min_size(vec2(160.0, 32.0));
+                                    if ui.add(b).on_hover_text(what).clicked() {
+                                        self.manual_mode = manual;
+                                    }
+                                }
+                            });
+                            if self.manual_mode {
+                                ui.add_space(8.0);
+                                partitions::ui(ui, &pal, &mut self.manual, d.size, &d.parts, &d.table);
+                            }
+                        }
                         ui.add_space(16.0);
-                        ui.checkbox(&mut self.encrypt, "Encrypt the disk (recommended)");
+                        ui.checkbox(&mut self.encrypt, if self.manual_mode { "Encrypt the system partition (/, recommended)" } else { "Encrypt the disk (recommended)" });
                         ui.label(RichText::new("Without this password nobody can read the disk, even with the computer in hand. It is asked each time the computer starts. If you forget it, the data cannot be recovered.").color(pal.dim));
                         if self.encrypt {
                             ui.add_space(6.0);
@@ -544,12 +722,12 @@ impl eframe::App for App {
                     }
                     Page::Summary => {
                         heading(ui, &pal, "Ready to install", "Check the choices. Nothing has been changed yet.");
-                        let disk = self.disks.iter().find(|d| Some(&d.path) == self.disk.as_ref());
+                        let disk = self.chosen_disk();
                         let rows = [
                             ("Language", locale_label(&self.locale)),
-                            ("Keyboard", keymap_label(&self.keymap_names, &self.keymap)),
+                            ("Keyboard", self.kb_chosen().map(KbChoice::label).unwrap_or_else(|| self.keymap.clone())),
                             ("Time zone", zone_label(&self.zone)),
-                            ("Disk", disk.map(|d| format!("{} ({}, {}), erased", if d.model.is_empty() { "Disk" } else { &d.model }, size_text(d.size), d.path)).unwrap_or_default()),
+                            ("Disk", disk.map(|d| format!("{} ({}, {}), {}", if d.model.is_empty() { "Disk" } else { &d.model }, size_text(d.size), d.path, if self.manual_mode { "partitions chosen below" } else { "erased" })).unwrap_or_default()),
                             ("Encryption", if self.encrypt { "on".to_string() } else { "off".to_string() }),
                             ("Account", format!("{} ({})", self.name.trim(), self.login)),
                             ("Computer's name", self.hostname.clone()),
@@ -561,8 +739,18 @@ impl eframe::App for App {
                                 ui.end_row();
                             }
                         });
+                        if self.manual_mode {
+                            if let Some(d) = disk {
+                                ui.add_space(10.0);
+                                ui.label(RichText::new("Changes to the disk").color(pal.dim));
+                                for line in self.manual.describe(d.size, &d.parts) {
+                                    ui.label(format!("•  {line}"));
+                                }
+                            }
+                        }
                         ui.add_space(16.0);
-                        ui.checkbox(&mut self.agree, RichText::new("I understand that everything on this disk will be erased").color(pal.amber));
+                        let agree = if self.manual_mode { "I understand that the changes listed above are made to the disk (deleted and formatted partitions lose what is on them)" } else { "I understand that everything on this disk will be erased" };
+                        ui.checkbox(&mut self.agree, RichText::new(agree).color(pal.amber));
                     }
                     Page::Installing => {
                         heading(ui, &pal, "Installing", "This takes a few minutes. Please keep the computer on.");
@@ -594,6 +782,7 @@ impl eframe::App for App {
                         }
                     }
                 }
+                });
             });
             // Back and Next
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -619,7 +808,7 @@ impl eframe::App for App {
                         let missing = self.missing(page);
                         let next = egui::Button::new(RichText::new(if last { "Install" } else { "Next" }).color(pal.on_accent())).fill(if last { pal.red } else { pal.accent }).min_size(vec2(110.0, 34.0));
                         let r = ui.add_enabled(missing.is_none() && self.command.is_some(), next);
-                        if let Some(m) = missing {
+                        if let Some(m) = missing.clone() {
                             r.on_disabled_hover_text(m);
                         } else if r.clicked() {
                             if last {
@@ -665,14 +854,22 @@ fn main() -> eframe::Result {
 mod tests {
 
     #[test]
-    fn keyboard_layouts_get_their_names() {
-        let lst = "! model\n  pc105  Generic 105-key PC\n\n! layout\n  us              English (US)\n  de              German\n\n! variant\n  intl            us: English (US, intl.)\n";
-        let n = super::parse_layout_names(lst);
-        assert_eq!(n.get("us").map(String::as_str), Some("English (US)"));
-        assert_eq!(n.get("pc105"), None, "models are not layouts");
-        assert_eq!(n.get("intl"), None, "variants are not layouts");
-        assert_eq!(super::keymap_label(&n, "de"), "German   (de)");
-        assert_eq!(super::keymap_label(&n, "xx"), "xx");
+    fn keyboards_are_offered_by_how_the_letters_are_arranged() {
+        let lst = "! model\n  pc105  Generic 105-key PC\n\n! layout\n  us              English (US)\n  de              German\n  fr              French\n  ru              Russian\n\n! variant\n  dvorak          us: English (Dvorak)\n  colemak         us: English (Colemak)\n  intl            us: English (US, intl., with dead keys)\n  nodeadkeys      de: German (no dead keys)\n";
+        let all = super::keyboard_choices(lst, &[]);
+        let kind = |l: &str, v: &str| all.iter().find(|c| c.layout == l && c.variant == v).map(|c| c.kind);
+        assert_eq!(kind("us", ""), Some(super::KbType::Qwerty));
+        assert_eq!(kind("de", ""), Some(super::KbType::Qwertz));
+        assert_eq!(kind("fr", ""), Some(super::KbType::Azerty));
+        assert_eq!(kind("ru", ""), Some(super::KbType::Other));
+        assert_eq!(kind("us", "dvorak"), Some(super::KbType::Dvorak));
+        assert_eq!(kind("us", "colemak"), Some(super::KbType::Colemak));
+        assert_eq!(kind("us", "intl"), Some(super::KbType::Qwerty));
+        assert_eq!(kind("de", "nodeadkeys"), None, "other variants are not listed");
+        assert_eq!(kind("pc105", ""), None, "models are not keyboards");
+        // only what the system has, when it says
+        assert!(super::keyboard_choices(lst, &["us".to_string()]).iter().all(|c| c.layout == "us"));
+        assert_eq!(all.iter().find(|c| c.variant == "dvorak").unwrap().label(), "English (Dvorak)   (us, dvorak)");
     }
 
     #[test]
