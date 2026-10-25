@@ -16,8 +16,23 @@ pub struct App {
     pub path: PathBuf,
 }
 
+/// The desktop's names as programs see them (XDG_CURRENT_DESKTOP, e.g. "Yggdrasil"), lowercase, for OnlyShowIn/NotShowIn.
+fn current_desktops() -> Vec<String> {
+    let v = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default().to_lowercase();
+    let mut out: Vec<String> = v.split(':').filter(|s| !s.is_empty()).map(str::to_string).collect();
+    if out.is_empty() {
+        out.push("yggdrasil".into());
+    }
+    out
+}
+
 /// Parse the `[Desktop Entry]` group of a desktop file.
 pub fn parse_entry(id: &str, text: &str, path: &Path) -> Option<App> {
+    parse_entry_for(id, text, path, &current_desktops())
+}
+
+/// `parse_entry` for a given desktop (the names in `desktops`, lowercase).
+pub fn parse_entry_for(id: &str, text: &str, path: &Path, desktops: &[String]) -> Option<App> {
     let mut app = App { id: id.to_string(), path: path.to_path_buf(), ..Default::default() };
     let mut in_main = false;
     let mut kind_ok = false;
@@ -47,19 +62,35 @@ pub fn parse_entry(id: &str, text: &str, path: &Path) -> Option<App> {
             _ => {}
         }
     }
-    // Apps that are for other desktops (GNOME-only tools, Avahi browsers) are not listed, as in KDE's menu.
-    let has = |list: &str| list.split(';').any(|d| d == "kde");
+    // Apps that are for other desktops (GNOME-only tools, KDE-only settings) are not listed.
+    let has = |list: &str| list.split(';').any(|d| desktops.iter().any(|x| x == d));
     if (!only_in.is_empty() && !has(&only_in)) || has(&not_in) {
         app.no_display = true;
     }
     (kind_ok && !app.name.is_empty()).then_some(app)
 }
 
-pub fn load_all() -> Vec<App> {
-    let mut dirs = vec![PathBuf::from("/usr/share/applications"), PathBuf::from("/usr/local/share/applications")];
-    if let Some(h) = std::env::var_os("HOME") {
-        dirs.push(PathBuf::from(h).join(".local/share/applications"));
+/// The folders apps are listed in, least important first (an app in a later one wins): every XDG_DATA_DIRS entry (Flatpak's
+/// exports among them) from the last to the first, then the user's own (XDG_DATA_HOME).
+pub fn app_dirs() -> Vec<PathBuf> {
+    let data_dirs = std::env::var("XDG_DATA_DIRS").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/usr/local/share:/usr/share".into());
+    let mut dirs: Vec<PathBuf> = data_dirs.split(':').filter(|s| !s.is_empty()).rev().map(|d| PathBuf::from(d).join("applications")).collect();
+    let home = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
+    if let Some(h) = home {
+        dirs.push(h.join("applications"));
     }
+    dirs.dedup();
+    dirs
+}
+
+/// When the app folders last changed (a file added, removed or replaced changes its folder's time): compared to know when to
+/// read the apps again.
+pub fn stamp() -> Vec<Option<std::time::SystemTime>> {
+    app_dirs().iter().map(|d| std::fs::metadata(d).and_then(|m| m.modified()).ok()).collect()
+}
+
+pub fn load_all() -> Vec<App> {
+    let dirs = app_dirs();
     let mut apps: Vec<App> = vec![];
     for d in dirs {
         let Ok(rd) = std::fs::read_dir(&d) else { continue };
@@ -250,9 +281,14 @@ Type=Application
 Name=B
 OnlyShowIn=KDE;GNOME;
 ";
-        assert!(parse_entry("g", gnome, Path::new("/g")).unwrap().no_display);
-        assert!(parse_entry("n", not_kde, Path::new("/n")).unwrap().no_display);
-        assert!(!parse_entry("b", both, Path::new("/b")).unwrap().no_display);
+        let kde = ["kde".to_string()];
+        assert!(parse_entry_for("g", gnome, Path::new("/g"), &kde).unwrap().no_display);
+        assert!(parse_entry_for("n", not_kde, Path::new("/n"), &kde).unwrap().no_display);
+        assert!(!parse_entry_for("b", both, Path::new("/b"), &kde).unwrap().no_display);
+        // in Yggdrasil's own session a KDE-only or GNOME-only entry is not listed
+        let ygg = ["yggdrasil".to_string()];
+        assert!(parse_entry_for("b", both, Path::new("/b"), &ygg).unwrap().no_display);
+        assert!(!parse_entry_for("n", not_kde, Path::new("/n"), &ygg).unwrap().no_display);
         assert!(parse_entry("h", "[Desktop Entry]\nType=Application\nName=H\nHidden=true\n", Path::new("/h")).is_none());
         assert!(parse_entry("l", "[Desktop Entry]\nType=Link\nName=L\n", Path::new("/l")).is_none());
     }

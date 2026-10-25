@@ -409,6 +409,8 @@ struct State {
     clip_child: Option<std::process::Child>,
     thumbs_started: bool,
     art_for: Option<String>,
+    /// When the app folders last changed: the apps are read again when this does (an install or removal).
+    apps_stamp: Vec<Option<std::time::SystemTime>>,
     /// Fylgja sliding down (opening) or up (closing): when it began, and ticks that redraw it.
     fy_anim: Option<(std::time::Instant, bool)>,
     anim_tx: calloop::channel::Sender<()>,
@@ -3387,6 +3389,7 @@ fn main() {
         clip_child: None,
         thumbs_started: false,
         art_for: None,
+        apps_stamp: apps::stamp(),
         fy_anim: None,
         anim_tx,
         xkb: None,
@@ -3790,6 +3793,13 @@ fn main() {
             if l != st.layout {
                 st.layout = l;
                 st.built_for = None;
+            }
+            // an app installed or removed since: read the apps again (the start menu, search and the dock's icons follow)
+            let stamp = apps::stamp();
+            if stamp != st.apps_stamp {
+                st.apps_stamp = stamp;
+                st.model.apps = apps::load_all();
+                st.dirty = true;
             }
             let dark = system_dark();
             if dark != st.model.dark {
