@@ -20,7 +20,8 @@ page tries it) → Time zone (searchable by place, without the old aliases; the 
 asked) → Disk (the disk, then how: erase all of it, or choose partitions by hand; encryption on by default, with its password
 twice) → Your account (name,
 account name made from it, computer's name, password twice) → Browsers (only when the OS offers a list: choose one or more,
-and which is the default; none is allowed, with a note that Agora has them) → Summary (and a box to tick: the disk is erased) → Installing
+and which is the default; none is allowed, with a note that Agora has them) → the optional parts (only when the OS offers some,
+e.g. Labyrinth's AI and security: Sarina, Heimdall) → Summary (and a box to tick: the disk is erased) → Installing
 (progress, notes, errors) → Done (Restart now). Next stays greyed out with the reason beside it until a page is complete.
 
 ## The contract with the OS's program
@@ -58,6 +59,10 @@ and which is the default; none is allowed, with a note that Agora has them) → 
   `{"browsers": [{"id", "name", "note", "chosen"}, ...]}` (anything else in an entry, how to install it, is the OS's business).
   With a list, the plan also carries `"browsers": [ids chosen]` and `"default_browser": id`; without one there is no Browsers page
   and the plan says nothing about browsers.
+- Optional parts (Labyrinth: "AI and security", Sarina and Heimdall): the integration may name `extras = /usr/share/OS/installer-extras.json`,
+  holding `{"title", "intro", "extras": [{"id", "name", "note", "chosen" | "chosen_if_exists": "/absolute/path"}, ...]}`. One page,
+  titled by the file, shows each with a switch; an entry starts switched on when `chosen` is true or its `chosen_if_exists` file is on
+  the live system (the medium carries it). The plan carries `"extras": [ids chosen]`; with no file there is no page and no key.
 
 Modes: `erase` (the whole disk) and `manual` (partitions chosen by hand, Calamares-style). Still to come: shrinking a partition
 to make room automatically ("install alongside"), and partitions on more than one disk in one install.
