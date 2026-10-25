@@ -19,7 +19,7 @@ A living-room mode of Yggdrasil: run from the couch with a game controller or a 
 
 ## Built so far: the player
 
-`yggdrasil-player` (packages/player) is the desktop player the HTPC will reuse:
+`yggdrasil-player` (packages/player; shown as "VLC": it is VLC in Yggdrasil's look, and the default for videos) is the desktop player the HTPC will reuse:
 
 - VLC plays (libVLC 3, the stable series; all VLC-specific code in `src/vlc.rs`, so a move to libVLC 4 later touches one file),
   and the window around the picture is Yggdrasil's own.
@@ -30,7 +30,9 @@ A living-room mode of Yggdrasil: run from the couch with a game controller or a 
 
 ## Still to decide
 
-- Where the films live (one folder, several drives, a network share) and how posters and titles are found (local files
-  only, or an online film database, which would be the first online lookup and needs a privacy decision).
+- The library has its own folder with a fixed layout (decided 2026-10-24): movies, and shows with a folder per season and the
+  episodes in it, roughly `Movies/<Title (Year)>/…` and `Shows/<Show>/Season NN/<episode files>` (exact names to settle when the
+  HTPC work starts). Still open: whether that folder may span several drives or a network share, and how posters and titles are
+  found (local files only, or an online film database, which would be the first online lookup and needs a privacy decision).
 - The HTPC as a separate session on the login screen ("Yggdrasil TV") or as a full-screen mode of the normal desktop.
 - Remote: controller only, or also a TV remote over HDMI-CEC or an IR receiver.

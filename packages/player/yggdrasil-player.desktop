@@ -1,10 +1,10 @@
 [Desktop Entry]
 Type=Application
-Name=Player
+Name=VLC
 GenericName=Video Player
-Comment=Watch videos, and go on where you left off
+Comment=Watch videos in Yggdrasil's look, and go on where you left off
 Exec=yggdrasil-player %f
-Icon=multimedia-video-player
+Icon=vlc
 Terminal=false
 Categories=AudioVideo;Video;Player;
 Keywords=video;movie;film;player;vlc;

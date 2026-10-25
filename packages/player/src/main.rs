@@ -1,4 +1,4 @@
-//! Player: Yggdrasil's video player. VLC (libVLC 3) plays the file; the window around the picture is Yggdrasil's own (the same
+//! VLC, in Yggdrasil's look (yggdrasil-player): Yggdrasil's video player. VLC (libVLC 3) plays the file; the window around the picture is Yggdrasil's own (the same
 //! look as Minos and Settings). It remembers where each video was left and offers to go on from there or start over, as a
 //! streaming service does; the start screen lists what you were watching.
 //!
@@ -66,7 +66,7 @@ fn title_of(p: &Path) -> String {
 fn inhibit_idle() -> Option<zbus::zvariant::OwnedFd> {
     let sys = zbus::blocking::Connection::system().ok()?;
     let login = zbus::blocking::Proxy::new(&sys, "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager").ok()?;
-    login.call("Inhibit", &("idle", "Player", "A video is playing", "block")).ok()
+    login.call("Inhibit", &("idle", "VLC", "A video is playing", "block")).ok()
 }
 
 /// file:///home/x/My%20Film.mkv -> /home/x/My Film.mkv
@@ -136,7 +136,7 @@ impl App {
                     now.inhibit = inhibit_idle();
                 }
                 now.vlc.set_volume(if self.muted { 0 } else { self.volume });
-                ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!("{} — Player", title_of(&now.path))));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!("{} — VLC", title_of(&now.path))));
                 self.now = Some(now);
                 self.error = None;
             }
@@ -488,7 +488,7 @@ impl eframe::App for App {
                 let card = Rect::from_center_size(full.center(), vec2(full.width().min(520.0) - 32.0, full.height().min(420.0) - 60.0));
                 let mut c = ui.new_child(egui::UiBuilder::new().max_rect(card).layout(egui::Layout::top_down(egui::Align::Center)));
                 c.add_space(8.0);
-                c.label(RichText::new("Player").size(26.0).strong().color(pal.text));
+                c.label(RichText::new("VLC").size(26.0).strong().color(pal.text));
                 c.label(RichText::new("Open a video, or drop one on this window").color(pal.dim));
                 c.add_space(14.0);
                 let open = c.add(egui::Button::new(RichText::new("Open a video…").size(15.0).color(pal.on_accent())).fill(pal.accent).corner_radius(CornerRadius::same(8)).min_size(vec2(180.0, 36.0)));
@@ -653,13 +653,13 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1100.0, 660.0])
             .with_min_inner_size([480.0, 300.0])
-            .with_title("Player")
+            .with_title("VLC")
             .with_app_id("yggdrasil-player")
             .with_drag_and_drop(true)
             .with_decorations(false),
         ..Default::default()
     };
-    eframe::run_native("Player", options, Box::new(move |cc| Ok(Box::new(App::new(file, &cc.egui_ctx)))))
+    eframe::run_native("VLC", options, Box::new(move |cc| Ok(Box::new(App::new(file, &cc.egui_ctx)))))
 }
 
 #[cfg(test)]
