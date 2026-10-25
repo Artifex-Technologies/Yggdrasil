@@ -2546,9 +2546,13 @@ impl State {
             Action::Logo => self.toggle_start(),
             Action::Clock => self.toggle_calendar(),
             Action::Addon(i) => {
-                // opening the card runs the add-on again, so what it shows is fresh
-                self.addons_now.store(true, Ordering::Relaxed);
-                self.toggle_popup(PopupKind::Addon(i));
+                // an add-on with a window of its own opens it; the others show their card (and run again, so it is fresh)
+                if let Some(cmd) = self.model.addons.get(i).and_then(|a| a.open.clone()) {
+                    let _ = std::process::Command::new(&cmd[0]).args(&cmd[1..]).stdin(std::process::Stdio::null()).spawn();
+                } else {
+                    self.addons_now.store(true, Ordering::Relaxed);
+                    self.toggle_popup(PopupKind::Addon(i));
+                }
             }
             Action::Notch => {
                 self.open_full_from_tab();
@@ -3362,7 +3366,7 @@ fn main() {
         viewporter,
         plasma_shell,
         shm,
-        model: Model { apps: apps::load_all(), pinned: apps::pinned(), wins: vec![], clock: clock_text(PanelConf::load().clock_24h), clock_secs: secs_text(PanelConf::load().clock_24h), date: date_text(), today: today_ymd(), user: user_name(), hibernate: shell::can_hibernate(), conf: PanelConf::load(), dark: system_dark(), status: Default::default(), trash_full: shell::trash_has_files(), notch_open: false, fylgja: Default::default(), notch_w: 0.0, notch_tab: None, notifs: notify::Store::load(notify::state_path()), tray: vec![], addons: vec![] },
+        model: Model { apps: apps::load_all(), pinned: apps::pinned(), wins: vec![], clock: clock_text(PanelConf::load().clock_24h), clock_secs: secs_text(PanelConf::load().clock_24h), date: date_text(), today: today_ymd(), user: user_name(), hibernate: shell::can_hibernate(), conf: PanelConf::load(), dark: system_dark(), status: Default::default(), trash_full: shell::trash_has_files(), notch_open: false, fylgja: Default::default(), notch_w: 0.0, notch_tab: None, notifs: notify::Store::load(notify::state_path()), tray: vec![], addons: vec![], now_secs: 0 },
         a11y: None,
         assets: Assets { fonts, icons: paint::Icons::new() },
         surfs: vec![],
@@ -3774,6 +3778,11 @@ fn main() {
                     st.model.addons = cur.clone();
                     st.dirty = true;
                 }
+            }
+            // add-on countdowns tick by themselves
+            st.model.now_secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+            if st.model.addons.iter().any(|a| a.until.is_some() && a.text.contains("{countdown}")) {
+                st.dirty = true;
             }
             let h24 = st.model.conf.clock_24h;
             let now = clock_text(h24);

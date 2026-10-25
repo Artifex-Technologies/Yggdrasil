@@ -1453,7 +1453,7 @@ mod render {
     fn draws_night_light_settings() {
         let Some(fonts) = Fonts::load() else { return };
         let mut icons = Icons::new();
-        let mut m = Model { apps: vec![], pinned: vec![], wins: vec![], clock: String::new(), clock_secs: String::new(), date: String::new(), today: (2026, 10, 25), user: String::new(), notch_open: true, fylgja: Default::default(), notch_w: 0.0, notch_tab: None, notifs: Default::default(), tray: vec![], addons: vec![], hibernate: false, conf: Default::default(), dark: true, status: Default::default(), trash_full: false };
+        let mut m = Model { apps: vec![], pinned: vec![], wins: vec![], clock: String::new(), clock_secs: String::new(), date: String::new(), today: (2026, 10, 25), user: String::new(), notch_open: true, fylgja: Default::default(), notch_w: 0.0, notch_tab: None, notifs: Default::default(), tray: vec![], addons: vec![], now_secs: 0, hibernate: false, conf: Default::default(), dark: true, status: Default::default(), trash_full: false };
         m.fylgja.snap = Snapshot { ready: true, slow_ready: true, master: Some((45, false)), night: true, ..Default::default() };
         m.fylgja.night = nightlight::Settings { temp: 2100, schedule: true, on: 19 * 60, off: 7 * 60, fade: true, minutes: 60, light: false };
         let st = FyState { section: 0, open: true, pinned: false, voice_ui: false, picker: false, mixer: false, night: true };

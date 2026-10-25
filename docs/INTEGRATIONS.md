@@ -83,6 +83,17 @@ its card. The command prints `{"text": "...", "state": "ok" | "warn" | "alert" |
 drawn as given (cut short, control characters removed): an add-on can show things, never run anything through the panel. Add-ons
 are installed as packages (Agora lists them under Plugins), so removing the package removes the pill.
 
+Instead of `command`, an add-on can name `file = %h/.local/state/NAME/bar.json` (the same JSON, read again within a second of
+each change; no file means no pill) or a fixed `text = 2FA`. Any of them can add:
+
+```
+icon = timer-symbolic                  # an icon theme name, drawn before the text in the text's colour
+open = /usr/bin/yggdrasil-timer        # a click runs this (the add-on's own window) instead of opening the card
+```
+
+The JSON may carry `"until": UNIX-SECONDS`; `{countdown}` in its text is then drawn as the time left (m:ss or h:mm:ss) and
+redrawn by the panel every second, so a countdown needs no program running every second.
+
 ### `apps` (an app launcher with per-app rules)
 
 ```

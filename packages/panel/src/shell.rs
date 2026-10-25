@@ -176,6 +176,8 @@ pub struct Model {
     pub tray: Vec<crate::tray::TrayItem>,
     /// What the bar add-ons last printed (an add-on with no text has no pill).
     pub addons: Vec<crate::addons::View>,
+    /// Seconds since 1970, for add-on countdowns (updated each second).
+    pub now_secs: i64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -493,7 +495,10 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
         if a.text.is_empty() {
             continue;
         }
-        let aw = paint::text_width(&fonts.regular, 12.0 * s, &a.text) + 20.0 * s;
+        let text = a.display(m.now_secs);
+        let isz = (14.0 * s) as u32;
+        let icon_w = if a.icon.is_empty() { 0.0 } else { isz as f32 + 6.0 * s };
+        let aw = paint::text_width(&fonts.regular, 12.0 * s, &text) + 20.0 * s + icon_w;
         rx -= aw;
         pill(pix, rx, aw);
         if hover == Some(hits.len()) {
@@ -504,7 +509,12 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
             crate::addons::Level::Warn => (232, 176, 72, 255),
             crate::addons::Level::Ok => lk.text,
         };
-        paint::draw_text(pix, &fonts.regular, 12.0 * s, rx + 10.0 * s, cy, col, &a.text);
+        if !a.icon.is_empty() {
+            if let Some(ic) = icons.get_tinted(&a.icon, isz, col) {
+                paint::draw_pixmap(pix, ic, (rx + 10.0 * s) as i32, (cy - isz as f32 / 2.0).round() as i32);
+            }
+        }
+        paint::draw_text(pix, &fonts.regular, 12.0 * s, rx + 10.0 * s + icon_w, cy, col, &text);
         hits.push(Hit { rect: (rx, 0.0, aw, h), action: Action::Addon(i) });
         rx -= 6.0 * s;
     }
@@ -1328,7 +1338,7 @@ mod tests {
     fn pane_draws() {
         let Some(fonts) = Fonts::load() else { return };
         let mut icons = Icons::new();
-        let mut m = Model { apps: vec![], pinned: vec![], wins: vec![], clock: String::new(), clock_secs: "05:03:11".into(), date: String::new(), today: (2026, 10, 16), user: String::new(), notch_open: false, fylgja: Default::default(), notch_w: 0.0, notch_tab: None, notifs: Default::default(), tray: vec![], addons: vec![], hibernate: false, conf: PanelConf::default(), dark: true, status: Default::default(), trash_full: false };
+        let mut m = Model { apps: vec![], pinned: vec![], wins: vec![], clock: String::new(), clock_secs: "05:03:11".into(), date: String::new(), today: (2026, 10, 16), user: String::new(), notch_open: false, fylgja: Default::default(), notch_w: 0.0, notch_tab: None, notifs: Default::default(), tray: vec![], addons: vec![], now_secs: 0, hibernate: false, conf: PanelConf::default(), dark: true, status: Default::default(), trash_full: false };
         m.conf.notify_pane = true;
         let now = crate::notify::now_secs();
         for (id, app, sum, age) in [(1, "Mail", "Alice", 600), (2, "Mail", "Bob", 120), (3, "Heimdall", "Critical", 30)] {
@@ -1350,7 +1360,7 @@ mod tests {
 
     #[test]
     fn pinned_apps_come_first_and_missing_ones_are_skipped() {
-        let m = Model { apps: vec![app("minos", "Minos"), app("vivaldi-stable", "Vivaldi")], pinned: vec!["vivaldi-stable".into(), "ghost".into(), "minos".into()], wins: vec![], clock: String::new(), clock_secs: String::new(), date: String::new(), today: (2026, 1, 1), user: String::new(), notch_open: false, fylgja: Default::default(), notch_w: 0.0, notch_tab: None, notifs: Default::default(), tray: vec![], addons: vec![], hibernate: false, conf: PanelConf::default(), dark: true, status: Default::default(), trash_full: false };
+        let m = Model { apps: vec![app("minos", "Minos"), app("vivaldi-stable", "Vivaldi")], pinned: vec!["vivaldi-stable".into(), "ghost".into(), "minos".into()], wins: vec![], clock: String::new(), clock_secs: String::new(), date: String::new(), today: (2026, 1, 1), user: String::new(), notch_open: false, fylgja: Default::default(), notch_w: 0.0, notch_tab: None, notifs: Default::default(), tray: vec![], addons: vec![], now_secs: 0, hibernate: false, conf: PanelConf::default(), dark: true, status: Default::default(), trash_full: false };
         let items = dock_items(&m);
         assert_eq!(items.iter().map(|i| i.app_id.as_str()).collect::<Vec<_>>(), vec!["vivaldi-stable", "minos", TRASH_ID]); // the trash is always last
         assert!(items.iter().all(|i| i.pinned && i.wins.is_empty()));
