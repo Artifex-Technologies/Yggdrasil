@@ -193,33 +193,8 @@ local function others_of(w)
   end
   return n
 end
--- Dropdowns: a bar add-on's window opened from its pill (the panel starts it with YGGDRASIL_DROPDOWN=1; the app leaves its class
--- in the runtime folder) opens under the pointer, just below the bar, and is never given a remembered place.
-local dropdown_dir = (os.getenv("XDG_RUNTIME_DIR") or "/tmp") .. "/yggdrasil-dropdown/"
-local dropdowns = {}
-local function take_dropdown(w)
-  if w.class == "" or w.class:find("[^%w%.%-_]") then return false end
-  local marker = dropdown_dir .. w.class
-  local f = io.open(marker, "r")
-  if not f then return false end
-  f:close()
-  os.remove(marker)
-  dropdowns[w.class] = true
-  return true
-end
-local function place_dropdown(w)
-  local c = hl.get_cursor_pos()
-  local m = hl.get_monitor_at_cursor()
-  local width = select(1, xy(w.size)) or 360
-  if not c or not m then return end
-  local top = (m.reserved and (m.reserved.top or m.reserved[3])) or 28
-  local x = math.floor(math.max(m.x + 8, math.min(c.x - width / 2, m.x + m.width / m.scale - width - 8)))
-  hl.dispatch(hl.dsp.window.move({ x = x, y = math.floor(m.y + top + 6), window = "address:" .. w.address }))
-end
-
 hl.on("window.close", function(w)
   local ok, err = pcall(function()
-    if dropdowns[w.class] then return end
     if not w.floating or (w.fullscreen or 0) ~= 0 or w.class == "" or others_of(w) > 0 then return end
     local ws = w.workspace
     if ws and ws.name and ws.name:sub(1, 8) == "special:" then return end
@@ -238,8 +213,6 @@ hl.on("window.close", function(w)
 end)
 hl.on("window.open", function(w)
   local ok, err = pcall(function()
-    if take_dropdown(w) then return place_dropdown(w) end
-    dropdowns[w.class] = nil
     local p = places[w.class]
     if not p or not w.floating or others_of(w) > 0 then return end
     if not hl.get_monitor_at(p[1] + p[3] / 2, p[2] + p[4] / 2) then return end

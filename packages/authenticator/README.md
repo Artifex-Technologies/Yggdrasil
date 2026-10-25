@@ -13,5 +13,10 @@ Needs the official Proton Authenticator app (AUR `proton-authenticator-bin`), si
     yggdrasil-authenticator          your codes
     yggdrasil-authenticator --demo   the helper's demo accounts (public RFC test seeds)
 
-In the top bar: `authenticator.conf` (installed to `/usr/share/yggdrasil/integrations/`) puts a key icon there; a click opens the
-window.
+In the top bar: `authenticator.conf` (installed to `/usr/share/yggdrasil/integrations/`) puts a key there. Its card is drawn by the
+panel (docs/INTEGRATIONS.md, "Cards you can use"): a search box, up to eight matching accounts with their codes, and a click copies
+one. The panel runs `yggdrasil-authenticator --bar` only while the card is open (and again at each code rollover), and
+`yggdrasil-authenticator press ID [TEXT]` for its controls; what is typed stays in the runtime folder (memory, gone at logout).
+
+    yggdrasil-authenticator --bar --demo           the card with the demo accounts
+    yggdrasil-authenticator press --demo search git

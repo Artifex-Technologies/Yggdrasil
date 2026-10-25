@@ -3,7 +3,6 @@
 //! (`chrome`), and one window per app that its own command toggles (`single`).
 
 pub mod chrome;
-pub mod dropdown;
 pub mod single;
 pub mod sysicon;
 pub mod theme;
