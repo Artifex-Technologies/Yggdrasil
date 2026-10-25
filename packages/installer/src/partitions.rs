@@ -228,6 +228,21 @@ fn gap(out: &mut Vec<Seg>, from: u64, to: u64) {
     }
 }
 
+impl Manual {
+    /// The screenshot demo (`yggdrasil-installer --demo disk-manual`): beside Windows, the free space as the new system, the EFI
+    /// partition kept and used.
+    pub fn demo(parts: &[Part], free_start: u64, free_size: u64) -> Manual {
+        let mut m = Manual { next_id: 1, ..Manual::default() };
+        m.create.push(NewPart { id: "1".into(), start: free_start, size: free_size });
+        if let Some(efi) = parts.iter().find(|p| p.efi) {
+            m.uses.push((efi.path.clone(), Use { mount: "/boot/efi".into(), format: None }));
+        }
+        m.uses.push(("new:1".into(), Use { mount: "/".into(), format: Some("btrfs".into()) }));
+        m.selected = Some("new:1".into());
+        m
+    }
+}
+
 pub fn size_text(b: u64) -> String {
     if b >= 1000 * GB {
         format!("{:.1} TB", b as f64 / (1024.0 * GB as f64))

@@ -311,9 +311,75 @@ struct App {
     step: (usize, usize, String),
     log: Vec<Report>,
     failed: Option<String>,
+    /// Screenshots only (`--demo PAGE`): sample disks and names, and nothing can be installed.
+    demo: bool,
+}
+
+/// The sample computer of `--demo`: a 1 TB disk with Windows on it and an empty 512 GB one.
+fn demo_disks() -> Vec<Disk> {
+    const MIB: u64 = 1 << 20;
+    const GIB: u64 = 1 << 30;
+    let part = |n: u32, start: u64, size: u64, fs: &str, label: &str, efi: bool| partitions::Part {
+        path: format!("/dev/nvme0n1p{n}"),
+        number: n,
+        start,
+        size,
+        fstype: fs.into(),
+        label: label.into(),
+        efi,
+        mounted: false,
+    };
+    vec![
+        Disk {
+            path: "/dev/nvme0n1".into(),
+            size: 1_000_204_886_016,
+            model: "Sample NVMe 1TB".into(),
+            removable: false,
+            big_enough: true,
+            table: "gpt".into(),
+            parts: vec![
+                part(1, MIB, 300 * MIB, "vfat", "SYSTEM", true),
+                part(2, 301 * MIB, 16 * MIB, "", "", false),
+                part(3, 317 * MIB, 400 * GIB, "ntfs", "Windows", false),
+                part(4, 317 * MIB + 400 * GIB, 750 * MIB, "ntfs", "Recovery", false),
+            ],
+        },
+        Disk { path: "/dev/sda".into(), size: 512_110_190_592, model: "Sample SSD 512GB".into(), removable: false, big_enough: true, table: String::new(), parts: vec![] },
+    ]
 }
 
 impl App {
+    /// `--demo welcome|keyboard|timezone|disk|disk-manual|account|summary`: a page filled with sample choices, for screenshots.
+    fn demo(&mut self, what: &str) {
+        self.demo = true;
+        self.disks = demo_disks();
+        self.disk = Some("/dev/nvme0n1".into());
+        self.crypt_pw = "sample-passphrase".into();
+        self.crypt_pw2 = self.crypt_pw.clone();
+        self.name = "Ada Lovelace".into();
+        self.login = "ada".into();
+        self.login_touched = true;
+        self.hostname = "ada-desktop".into();
+        self.pw = "sample-password".into();
+        self.pw2 = self.pw.clone();
+        self.zone = "America/Denver".into();
+        if what == "disk-manual" || what == "summary" {
+            let d = &self.disks[0];
+            let end = d.parts.iter().map(|p| p.start + p.size).max().unwrap_or(0);
+            let free = (d.size - end - (1 << 20)) / (1 << 20) * (1 << 20);
+            self.manual = partitions::Manual::demo(&d.parts, end, free);
+            self.manual_mode = true;
+        }
+        self.page = match what {
+            "keyboard" => Page::Keyboard,
+            "timezone" => Page::TimeZone,
+            "disk" | "disk-manual" => Page::Disk,
+            "account" => Page::Account,
+            "summary" => Page::Summary,
+            _ => Page::Welcome,
+        };
+    }
+
     fn new() -> App {
         let command = yggdrasil_conf::integrations::first("installer").and_then(|i| i.command("command"));
         let os = os_name();
@@ -350,7 +416,14 @@ impl App {
             step: (0, 0, String::new()),
             log: vec![],
             failed: None,
+            demo: false,
         };
+        let args: Vec<String> = std::env::args().collect();
+        if let Some(i) = args.iter().position(|a| a == "--demo") {
+            app.command = None;
+            app.demo(args.get(i + 1).map(String::as_str).unwrap_or("welcome"));
+            return app;
+        }
         app.load_disks();
         app
     }
@@ -464,6 +537,9 @@ impl App {
     }
 
     fn start_install(&mut self, ctx: &egui::Context) {
+        if self.demo {
+            return;
+        }
         let Some(cmd) = self.command.clone() else { return };
         let plan = self.plan().to_string();
         let (tx, rx) = channel();
@@ -603,7 +679,7 @@ impl eframe::App for App {
                 match self.page {
                     Page::Welcome => {
                         heading(ui, &pal, &format!("Welcome to {}", self.os), "This puts it on this computer's disk. It takes a few minutes; nothing is sent anywhere.");
-                        if self.command.is_none() {
+                        if self.command.is_none() && !self.demo {
                             ui.label(RichText::new("This system has no installer (no integration of kind \"installer\").").color(pal.red));
                         }
                         ui.label("Language");
@@ -807,7 +883,7 @@ impl eframe::App for App {
                         let last = page == Page::Summary;
                         let missing = self.missing(page);
                         let next = egui::Button::new(RichText::new(if last { "Install" } else { "Next" }).color(pal.on_accent())).fill(if last { pal.red } else { pal.accent }).min_size(vec2(110.0, 34.0));
-                        let r = ui.add_enabled(missing.is_none() && self.command.is_some(), next);
+                        let r = ui.add_enabled(missing.is_none() && (self.command.is_some() || self.demo), next);
                         if let Some(m) = missing.clone() {
                             r.on_disabled_hover_text(m);
                         } else if r.clicked() {
@@ -882,6 +958,16 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn the_demo_never_installs_and_its_manual_plan_is_valid() {
+        let mut app = App::new();
+        app.demo("disk-manual");
+        assert!(app.demo && app.command.is_none() && app.page == Page::Disk && app.manual_mode);
+        let d = app.chosen_disk().unwrap().clone();
+        assert_eq!(app.manual.problem(d.size, &d.parts, &d.table), None, "{:?}", app.manual.problem(d.size, &d.parts, &d.table));
+        assert_eq!(app.missing(Page::Disk), None);
+    }
 
     #[test]
     fn reports_are_read() {
