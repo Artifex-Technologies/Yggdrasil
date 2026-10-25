@@ -81,6 +81,12 @@ NATIVE = {
     "minos": [("apps", "minos")],
     "settings": [("apps", n) for n in ("yggdrasil-settings", "preferences-system", "systemsettings", "org.kde.systemsettings")],
     "calculator": [("apps", n) for n in ("yggdrasil-calculator", "accessories-calculator", "org.kde.kcalc", "calculator")],
+    # Yggdrasil's plugins (Agora, Plugins)
+    "timer": [("apps", "yggdrasil-timer")],
+    "health": [("apps", "yggdrasil-health")],
+    "browser-warm": [("apps", "yggdrasil-browser-warm")],
+    "clipboard": [("apps", "yggdrasil-clipboard")],
+    "weather": [("apps", "yggdrasil-weather")],
     "trash": [("places", n) for n in ("user-trash", "trash-empty", "trashcan_empty")],
     "trash-full": [("places", n) for n in ("user-trash-full", "trash-full", "trashcan_full")],
     "folder": [("places", n) for n in ("folder", "folder-open", "folder-documents", "folder-download", "folder-music", "folder-pictures", "folder-videos", "folder-public", "folder-templates", "folder-desktop", "user-desktop", "folder-remote")] + [("mimetypes", "inode-directory")],
