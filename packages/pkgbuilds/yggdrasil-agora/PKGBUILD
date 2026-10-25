@@ -1,7 +1,7 @@
 # Agora: apps in one place (built from packages/market in this repository).
 pkgname=yggdrasil-agora
 pkgver=0.1.0
-pkgrel=1
+pkgrel=2
 pkgdesc="Agora: browse and install apps from Yggdrasil's catalog and repositories you add"
 arch=('x86_64')
 provides=('labyrinth-market')
