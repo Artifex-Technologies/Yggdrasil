@@ -63,7 +63,10 @@ pub struct Bridge {
 impl Bridge {
     /// Opens a box (a process of its own) and records its pid in `slot`, so a cancel can close it.
     pub fn open(slot: &std::sync::Arc<std::sync::Mutex<Option<u32>>>) -> std::io::Result<Bridge> {
-        let exe = std::env::current_exe()?;
+        // the running program itself (/proc/self/exe), not its path: after a package update the path is a newer program (or, while
+        // pacman replaces it, nothing), and a box opened from it must still speak this agent's protocol. It opened from the path
+        // before, and an update left every administrator request failing without a password box.
+        let exe = if std::path::Path::new("/proc/self/exe").exists() { std::path::PathBuf::from("/proc/self/exe") } else { std::env::current_exe()? };
         let mut child = std::process::Command::new(exe).arg("--dialog").stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).spawn()?;
         *slot.lock().unwrap() = Some(child.id());
         let stdin = child.stdin.take().ok_or_else(|| std::io::Error::other("no stdin"))?;
@@ -134,7 +137,10 @@ fn authenticate(self_uid: u32, child_slot: std::sync::Arc<std::sync::Mutex<Optio
             return Err(zbus::fdo::Error::Failed("no user to authenticate as".into()));
         };
         let user = user_name(uid).ok_or_else(|| zbus::fdo::Error::Failed("unknown user".into()))?;
-        let mut ui = Bridge::open(&child_slot).map_err(|e| zbus::fdo::Error::Failed(format!("cannot open the password box: {e}")))?;
+        let mut ui = Bridge::open(&child_slot).map_err(|e| {
+            eprintln!("yggdrasil-polkit: cannot open the password box for {action_id}: {e}");
+            zbus::fdo::Error::Failed(format!("cannot open the password box: {e}"))
+        })?;
         ui.send(serde_json::json!({"t": "begin", "kind": "admin", "message": message, "action_id": action_id, "user": user}));
         // a wrong password gets three tries, each a new session with the helper (as the standard agents do)
         let mut result = Outcome::Failed;
@@ -142,6 +148,7 @@ fn authenticate(self_uid: u32, child_slot: std::sync::Arc<std::sync::Mutex<Optio
             result = match helper::authenticate(&user, &cookie, &mut ui) {
                 Ok(r) => r,
                 Err(e) => {
+                    eprintln!("yggdrasil-polkit: the password check for {action_id} failed: {e}");
                     ui.close(&child_slot);
                     return Err(zbus::fdo::Error::Failed(e.to_string()));
                 }
