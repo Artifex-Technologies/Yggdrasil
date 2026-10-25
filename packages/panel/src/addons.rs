@@ -19,7 +19,7 @@
 //! Other ways to feed the pill, instead of `command`:
 //!
 //!   file = %h/.local/state/yggdrasil/timer/bar.json   # the same JSON in a file, read again within a second of each change
-//!   text = 2FA                                        # a fixed label
+//!   text = 2FA                                        # a fixed label (leave it out for an icon alone)
 //!
 //! and, for any of them:
 //!
@@ -82,6 +82,8 @@ pub struct View {
     /// A click runs this instead of opening the card.
     pub open: Option<Vec<String>>,
     pub icon: String,
+    /// The add-on said "off": no pill, not even its icon.
+    pub off: bool,
 }
 
 impl View {
@@ -114,7 +116,8 @@ pub fn load() -> Vec<Addon> {
             } else if let Some(f) = i.get("file") {
                 Feed::File(expand(f))
             } else {
-                Feed::Text(clip(i.get("text")?, 40))
+                // a fixed label, or just the icon (a button that opens the add-on's window)
+                Feed::Text(clip(i.get("text").or(i.get("icon").map(|_| ""))?, 40))
             };
             Some(Addon { id: i.id(), name, feed, open: i.command("open"), icon: i.get("icon").unwrap_or("").to_string() })
         })
@@ -149,7 +152,7 @@ pub fn parse(id: &str, name: &str, out: &str) -> View {
                 .collect()
         })
         .unwrap_or_default();
-    View { id: id.into(), name: name.into(), text, level, lines, help: clip(v["help"].as_str().unwrap_or(""), 240), until: v["until"].as_i64(), ..Default::default() }
+    View { id: id.into(), name: name.into(), text, level, lines, help: clip(v["help"].as_str().unwrap_or(""), 240), until: v["until"].as_i64(), off: v["state"].as_str() == Some("off"), ..Default::default() }
 }
 
 fn file_stamp(p: &std::path::Path) -> Option<(std::time::SystemTime, u64)> {
@@ -166,8 +169,8 @@ fn read(a: &Addon) -> View {
                 let mut s = String::new();
                 f.take(64 << 10).read_to_string(&mut s).ok().map(|_| s)
             });
-            // no file yet: a quiet pill (the add-on writes it when it has something to say), unless it has a window to open
-            parse(&a.id, &a.name, text.as_deref().unwrap_or(r#"{"state":"off"}"#))
+            // no file yet: just the icon, if there is one (the add-on writes the file when it has something to say)
+            parse(&a.id, &a.name, text.as_deref().unwrap_or("{}"))
         }
         Feed::Text(t) => View { id: a.id.clone(), name: a.name.clone(), text: t.clone(), ..Default::default() },
     };
@@ -290,7 +293,9 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let f = dir.join("bar.json");
         let a = Addon { id: "timer".into(), name: "Timer".into(), feed: Feed::File(f.clone()), open: Some(vec!["true".into()]), icon: "timer-symbolic".into() };
-        assert_eq!(read(&a).text, "", "no file yet: no text");
+        assert_eq!((read(&a).text.as_str(), read(&a).off), ("", false), "no file yet: no text, the icon still shows");
+        std::fs::write(&f, r#"{"state":"off","text":"x"}"#).unwrap();
+        assert!(read(&a).off);
         std::fs::write(&f, r#"{"text":"Tea {countdown}","until":99}"#).unwrap();
         let v = read(&a);
         assert_eq!((v.text.as_str(), v.until, v.icon.as_str(), v.open.is_some()), ("Tea {countdown}", Some(99), "timer-symbolic", true));

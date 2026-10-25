@@ -84,7 +84,7 @@ drawn as given (cut short, control characters removed): an add-on can show thing
 are installed as packages (Agora lists them under Plugins), so removing the package removes the pill.
 
 Instead of `command`, an add-on can name `file = %h/.local/state/NAME/bar.json` (the same JSON, read again within a second of
-each change; no file means no pill) or a fixed `text = 2FA`. Any of them can add:
+each change; no file yet means just the icon, if any) or a fixed `text = 2FA` (or no text at all: the icon alone, a button for the add-on's window). Any of them can add:
 
 ```
 icon = timer-symbolic                  # an icon theme name, drawn before the text in the text's colour

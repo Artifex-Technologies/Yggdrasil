@@ -492,12 +492,12 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
 
     // Bar add-ons (installed from Agora, for instance): their text in a pill; red when they say something needs attention.
     for (i, a) in m.addons.iter().enumerate().rev() {
-        if a.text.is_empty() {
+        if a.off || (a.text.is_empty() && a.icon.is_empty()) {
             continue;
         }
         let text = a.display(m.now_secs);
         let isz = (14.0 * s) as u32;
-        let icon_w = if a.icon.is_empty() { 0.0 } else { isz as f32 + 6.0 * s };
+        let icon_w = if a.icon.is_empty() { 0.0 } else if text.is_empty() { isz as f32 } else { isz as f32 + 6.0 * s };
         let aw = paint::text_width(&fonts.regular, 12.0 * s, &text) + 20.0 * s + icon_w;
         rx -= aw;
         pill(pix, rx, aw);
