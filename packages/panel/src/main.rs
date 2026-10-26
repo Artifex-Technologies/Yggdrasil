@@ -1,9 +1,9 @@
 //! yggdrasil-panel: Yggdrasil's top bar and dock, written for Wayland (wlr-layer-shell) and drawn
-//! on the CPU. Windows come from KWin through the plasma-window-management protocol, which KWin
-//! only gives to programs whose desktop file asks for it (yggdrasil-panel.desktop).
+//! on the CPU. Windows come from the compositor through the standard wlr-foreign-toplevel-management
+//! protocol (Hyprland, Yggdrasil's session).
 //!
 //! One full bar on every screen except the tiling screen (which gets a slim one), and the dock on
-//! the main screen. Which screen is which comes from KDE (kscreen priority, the tiling setting);
+//! the main screen. Which screen is which comes from Hyprland's monitors and the tiling setting;
 //! it is re-read every few seconds, so changing it in Settings takes effect live.
 
 mod a11y;
@@ -21,15 +21,12 @@ mod cheatsheet;
 mod finder;
 mod osd;
 mod stats;
-mod thumb;
-mod voicekey;
 mod assistant;
 mod voicewave;
 mod confirm;
 mod hypr;
 mod shell;
 mod status;
-mod mediakeys;
 mod snwatcher;
 mod tray;
 mod trayui;
@@ -70,13 +67,6 @@ use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_man
 use wayland_protocols::wp::fractional_scale::v1::client::wp_fractional_scale_v1::{self, WpFractionalScaleV1};
 use wayland_protocols::wp::viewporter::client::wp_viewport::WpViewport;
 use wayland_protocols::wp::viewporter::client::wp_viewporter::WpViewporter;
-use wayland_protocols::xdg::shell::client::xdg_surface::{self, XdgSurface};
-use wayland_protocols::xdg::shell::client::xdg_toplevel::{self, XdgToplevel};
-use wayland_protocols::xdg::shell::client::xdg_wm_base::{self, XdgWmBase};
-use wayland_protocols_plasma::plasma_shell::client::org_kde_plasma_shell::OrgKdePlasmaShell;
-use wayland_protocols_plasma::plasma_shell::client::org_kde_plasma_surface::{self, OrgKdePlasmaSurface, Role};
-use wayland_protocols_plasma::plasma_window_management::client::org_kde_plasma_window::{self, OrgKdePlasmaWindow};
-use wayland_protocols_plasma::plasma_window_management::client::org_kde_plasma_window_management::{self, OrgKdePlasmaWindowManagement};
 use wayland_protocols::xdg::xdg_output::zv1::client::{
     zxdg_output_manager_v1::ZxdgOutputManagerV1,
     zxdg_output_v1::{self, ZxdgOutputV1},
@@ -95,15 +85,9 @@ use shell::{Action, Hit, Model, Win};
 enum Kind {
     Bar { slim: bool },
     /// A strip along the dock's screen edge, as wide as the screen (or as tall): the dock is drawn in it
-    /// and only the dock itself takes clicks. Like the bar, a surface that spans its edge sits flush
-    /// against it, which a small centred surface with its own exclusive zone does not under KWin.
-    /// A strip along the dock's screen edge, as wide as the screen (or as tall): the dock is drawn in it
-    /// and only the dock itself takes clicks. Like the bar (and Plasma's own panels) the strip spans its
-    /// edge and reserves its thickness, so windows keep clear of the dock.
+    /// and only the dock itself takes clicks. Like the bar the strip spans its edge and reserves its
+    /// thickness, so windows keep clear of the dock.
     Dock,
-    /// An invisible layer-shell strip along the dock's screen edge. It only reserves the dock's room so
-    /// windows keep clear of it (KWin takes that from layer surfaces, not from panel windows).
-    Strut,
     /// A popover (the calendar): a transparent surface over the whole screen, so a click anywhere
     /// outside the card closes it. The card is drawn at the top right.
     Popup,
@@ -123,7 +107,7 @@ enum Kind {
     Cheat,
 }
 
-/// The panel's own D-Bus service, so a key press elsewhere (the Super key, through KWin) can reach it:
+/// The panel's own D-Bus service, so a key press elsewhere (the Super key, through yggdrasil-panelctl) can reach it:
 /// `busctl --user call org.yggdrasil.Panel /Panel org.yggdrasil.Panel ToggleStart`.
 struct PanelBus(calloop::channel::Sender<BusMsg>);
 
@@ -210,6 +194,13 @@ impl PanelBus {
 }
 
 /// A popover and what it shows.
+/// Hold-to-talk's key, as `yggdrasil-panelctl ask-press` / `ask-release` report it (Hyprland binds Super+S and Ctrl+Alt+S to them).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VoiceKey {
+    Down,
+    Up,
+}
+
 struct Popup {
     output: u32,
     kind: PopupKind,
@@ -257,13 +248,6 @@ struct Buffer {
     busy: Arc<AtomicBool>,
 }
 
-/// The wayland objects of the dock window.
-struct DockWin {
-    xs: XdgSurface,
-    tl: XdgToplevel,
-    ps: OrgKdePlasmaSurface,
-}
-
 struct Surf {
     id: usize,
     kind: Kind,
@@ -271,8 +255,6 @@ struct Surf {
     output: u32,
     wl: WlSurface,
     layer: Option<ZwlrLayerSurfaceV1>,
-    /// The dock is a Plasma panel window (xdg toplevel with the panel role), not a layer surface.
-    dock: Option<DockWin>,
     /// Logical size the compositor gave us, and the size we asked for.
     w: u32,
     h: u32,
@@ -300,11 +282,6 @@ impl Surf {
         if let Some(l) = &self.layer {
             l.destroy();
         }
-        if let Some(d) = &self.dock {
-            d.ps.destroy();
-            d.tl.destroy();
-            d.xs.destroy();
-        }
         self.wl.destroy();
     }
 }
@@ -324,7 +301,7 @@ struct Assets {
     icons: paint::Icons,
 }
 
-/// Which screen does what, as KDE has it configured.
+/// Which screen does what (Hyprland's monitors, the tiling setting).
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Layout {
     primary: String,
@@ -339,11 +316,9 @@ struct State {
     conn: Connection,
     compositor: WlCompositor,
     layer_shell: ZwlrLayerShellV1,
-    xdg_wm: Option<XdgWmBase>,
     xdg_output_mgr: Option<ZxdgOutputManagerV1>,
     frac_mgr: Option<WpFractionalScaleManagerV1>,
     viewporter: Option<WpViewporter>,
-    plasma_shell: Option<OrgKdePlasmaShell>,
     shm: WlShm,
     model: Model,
     /// The panel for screen readers (AT-SPI); None when switched off with YGGDRASIL_A11Y=off.
@@ -433,7 +408,7 @@ struct State {
     toast_hide_tx: calloop::channel::Sender<u32>,
     /// When Minos's generated icon file last changed (it follows the accent colour).
     icon_stamp: Option<std::time::SystemTime>,
-    /// The icon pack chosen in KDE, to notice a change.
+    /// The icon pack chosen in Settings, to notice a change.
     icon_pack: Option<String>,
     /// The pointer is on the notch's tab (kept even when the small card was put away).
     tab_hover: bool,
@@ -563,13 +538,6 @@ fn command_output(cmd: &str, args: &[&str]) -> String {
     std::process::Command::new(cmd).args(args).output().map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default()
 }
 
-/// The main screen (kscreen priority 1) and the tiling screens, from KDE.
-/// Whether kscreen reports an output as in use. Plasma 6.8's `kscreen-doctor -j` no longer has an `enabled` key (it was
-/// there before): a connected output with a current mode is the same thing.
-fn output_enabled(o: &serde_json::Value) -> bool {
-    o["enabled"].as_bool().unwrap_or_else(|| o["connected"].as_bool().unwrap_or(false) && o["currentModeId"].as_str().map(|m| !m.is_empty()).unwrap_or(false))
-}
-
 /// The screens from Hyprland (`hyprctl -j monitors`): the main one is the one at the top left of the space (Hyprland has no
 /// "primary"), sizes in logical pixels.
 fn hypr_layout(json: &serde_json::Value) -> Option<Layout> {
@@ -590,38 +558,8 @@ fn hypr_layout(json: &serde_json::Value) -> Option<Layout> {
 }
 
 fn read_layout() -> Layout {
-    if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some() {
-        let json: serde_json::Value = serde_json::from_str(&command_output("hyprctl", &["-j", "monitors"])).unwrap_or(serde_json::Value::Null);
-        if let Some(l) = hypr_layout(&json) {
-            return l;
-        }
-    }
-    let json: serde_json::Value = serde_json::from_str(&command_output("kscreen-doctor", &["-j"])).unwrap_or(serde_json::Value::Null);
-    let primary = json["outputs"]
-        .as_array()
-        .and_then(|a| a.iter().find(|o| o["priority"].as_i64() == Some(1) && output_enabled(o)))
-        .and_then(|o| o["name"].as_str())
-        .unwrap_or("")
-        .to_string();
-    let tiling = yggdrasil_conf::tiling::outputs();
-    let sizes = json["outputs"]
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .filter(|o| output_enabled(o))
-                .filter_map(|o| {
-                    let name = o["name"].as_str()?.to_string();
-                    // The current mode is in device pixels; 2 and 8 are the sideways rotations.
-                    let (w, h) = (o["size"]["width"].as_f64()?, o["size"]["height"].as_f64()?);
-                    let scale = o["scale"].as_f64().unwrap_or(1.0).max(0.5);
-                    let (w, h) = if matches!(o["rotation"].as_i64(), Some(2) | Some(8)) { (h, w) } else { (w, h) };
-                    let (x, y) = (o["pos"]["x"].as_i64().unwrap_or(0) as i32, o["pos"]["y"].as_i64().unwrap_or(0) as i32);
-                    Some((name, x, y, (w / scale).round() as u32, (h / scale).round() as u32))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    Layout { primary, tiling, sizes }
+    let json: serde_json::Value = serde_json::from_str(&command_output("hyprctl", &["-j", "monitors"])).unwrap_or(serde_json::Value::Null);
+    hypr_layout(&json).unwrap_or_else(|| Layout { tiling: yggdrasil_conf::tiling::outputs(), ..Default::default() })
 }
 
 /// Whether the desktop style is dark (Settings > Appearance; one small file read, no program started).
@@ -670,7 +608,7 @@ impl State {
 
     /// Which output the dock goes on: the main screen unless it is the tiling one.
     /// An output's place in the global space (x, y, width, height in logical pixels): from the compositor (xdg-output) when it says,
-    /// else from kscreen-doctor's reading.
+    /// else from Hyprland's list of monitors.
     fn area_of(&self, output: u32) -> Option<(i32, i32, u32, u32)> {
         let o = self.outputs.get(&output)?;
         o.logical.filter(|(_, _, w, h)| *w > 0 && *h > 0).or_else(|| self.layout.sizes.iter().find(|(n, ..)| *n == o.name).map(|(_, x, y, w, h)| (*x, *y, *w, *h)))
@@ -742,13 +680,8 @@ impl State {
             }
             self.add_surface(key, Kind::Bar { slim });
             if Some(key) == dock_out {
-                if self.xdg_wm.is_some() && self.plasma_shell.is_some() {
-                    self.add_dock(key);
-                    self.add_strut(key);
-                } else {
-                    // no KWin: a layer-shell surface on the edge that reserves its own room
-                    self.add_layer_dock(key);
-                }
+                // a layer-shell surface on the edge that reserves its own room
+                self.add_layer_dock(key);
             }
         }
         if Self::keep_voice_surface() {
@@ -776,7 +709,7 @@ impl State {
         wl.set_input_region(Some(&region));
         region.destroy();
         wl.commit();
-        self.surfs.push(Surf { id, kind: Kind::Wallpaper, output, wl, layer: Some(layer), dock: None, w: 0, h: 0, want: (0, 0), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
+        self.surfs.push(Surf { id, kind: Kind::Wallpaper, output, wl, layer: Some(layer), w: 0, h: 0, want: (0, 0), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
     }
 
     fn add_surface(&mut self, output: u32, kind: Kind) {
@@ -791,10 +724,10 @@ impl State {
         layer.set_exclusive_zone(shell::BAR_H as i32);
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
         wl.commit();
-        self.surfs.push(Surf { id, kind, output, wl, layer: Some(layer), dock: None, w: size.0, h: size.1, want: size, gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
+        self.surfs.push(Surf { id, kind, output, wl, layer: Some(layer), w: size.0, h: size.1, want: size, gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
     }
 
-    /// The dock for compositors without KDE's panel role: a layer-shell surface anchored to the dock's edge (centred along it)
+    /// The dock: a layer-shell surface anchored to the dock's edge (centred along it)
     /// that reserves its own room.
     fn add_layer_dock(&mut self, output: u32) {
         let id = self.next_surf;
@@ -805,7 +738,7 @@ impl State {
         let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Top, "yggdrasil-dock".into(), &self.qh, id);
         self.configure_layer_dock(&layer, want);
         wl.commit();
-        self.surfs.push(Surf { id, kind: Kind::Dock, output, wl, layer: Some(layer), dock: None, w: want.0, h: want.1, want, gap: self.model.conf.dock_gap as i32, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
+        self.surfs.push(Surf { id, kind: Kind::Dock, output, wl, layer: Some(layer), w: want.0, h: want.1, want, gap: self.model.conf.dock_gap as i32, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
     }
 
     /// The edge, size, reserved room and distance from the edge of a layer-shell dock.
@@ -821,40 +754,6 @@ impl State {
         layer.set_exclusive_zone(zone);
         layer.set_margin(margin.0, margin.1, margin.2, margin.3);
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
-    }
-
-    /// The dock: a Plasma panel window, the way Plasma's own panels are. KWin puts it exactly where it
-    /// is told, so it can sit right on the screen edge, and keeps windows clear of it. (A layer-shell
-    /// surface with an exclusive zone is placed above that zone by KWin, so it floated.)
-    fn add_dock(&mut self, output: u32) {
-        let (Some(wm), Some(shell_g)) = (self.xdg_wm.clone(), self.plasma_shell.clone()) else {
-            eprintln!("yggdrasil-panel: no xdg-shell or plasma-shell from the compositor; there will be no dock");
-            return;
-        };
-        let id = self.next_surf;
-        self.next_surf += 1;
-        let Some(out) = self.outputs.get(&output) else { return };
-        let want = shell::dock_size(&shell::dock_items(&self.model), self.model.conf.dock_icon, self.model.conf.dock_pos);
-        let wl = self.compositor.create_surface(&self.qh, ());
-        let xs = wm.get_xdg_surface(&wl, &self.qh, id);
-        let tl = xs.get_toplevel(&self.qh, id);
-        tl.set_title("Dock".into());
-        tl.set_app_id("yggdrasil-dock".into());
-        tl.set_min_size(want.0 as i32, want.1 as i32);
-        tl.set_max_size(want.0 as i32, want.1 as i32);
-        let ps = shell_g.get_surface(&wl, &self.qh, id);
-        ps.set_role(Role::Panel as u32);
-        ps.set_output(&out.wl);
-        let (x, y) = self.dock_origin(output, want);
-        ps.set_position(x, y);
-        ps.set_skip_taskbar(1);
-        ps.set_skip_switcher(1);
-        ps.set_panel_takes_focus(0);
-        wl.commit();
-        if std::env::var_os("YGGDRASIL_PANEL_DEBUG").is_some() {
-            eprintln!("dock {id}: {}x{} at {x},{y}", want.0, want.1);
-        }
-        self.surfs.push(Surf { id, kind: Kind::Dock, output, wl, layer: None, dock: Some(DockWin { xs, tl, ps }), w: want.0, h: want.1, want, gap: self.model.conf.dock_gap as i32, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
     }
 
     fn toggle_calendar(&mut self) {
@@ -891,7 +790,7 @@ impl State {
         // The start menu takes the keyboard at once, so you can type as soon as it opens.
         layer.set_keyboard_interactivity(if matches!(&kind, PopupKind::Start(_) | PopupKind::Assist(_)) || matches!(&kind, PopupKind::Fylgja(f) if f.pinned) { KeyboardInteractivity::Exclusive } else { KeyboardInteractivity::OnDemand });
         wl.commit();
-        self.surfs.push(Surf { id, kind: Kind::Popup, output, wl, layer: Some(layer), dock: None, w: 0, h: 0, want: (0, 0), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
+        self.surfs.push(Surf { id, kind: Kind::Popup, output, wl, layer: Some(layer), w: 0, h: 0, want: (0, 0), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
         if matches!(kind, PopupKind::Fylgja(_)) {
             self.fy_active.store(true, Ordering::Relaxed);
             fylgja::spawn_poller(self.fy_active.clone(), self.fy_shared.clone());
@@ -964,9 +863,9 @@ impl State {
 
     /// The shortcut went down or up. A tap starts a conversation (it listens until you stop talking, she answers, then it listens again; a tap stops
     /// it); holding the key is one question, sent when you let go. Pressing while she talks stops her and listens.
-    fn voice_key(&mut self, k: voicekey::Key) {
+    fn voice_key(&mut self, k: VoiceKey) {
         match k {
-            voicekey::Key::Down => {
+            VoiceKey::Down => {
                 self.key_down_at = Some(std::time::Instant::now());
                 self.down_in_conv = self.conv && self.vad_mode && matches!(self.model.fylgja.voice, fylgja::Voice::Listening(_));
                 if self.down_in_conv || matches!(self.model.fylgja.voice, fylgja::Voice::Thinking(_)) {
@@ -978,7 +877,7 @@ impl State {
                     self.vad_mode = false; // decided when the key comes up
                 }
             }
-            voicekey::Key::Up => {
+            VoiceKey::Up => {
                 // the release binding also fires for an S let go after Super (or while typing): only an up that ends a press counts
                 let Some(down) = self.key_down_at.take() else { return };
                 let held = down.elapsed().as_millis();
@@ -1195,7 +1094,7 @@ impl State {
         wl.set_input_region(Some(&region));
         region.destroy();
         wl.commit();
-        self.surfs.push(Surf { id, kind: Kind::Voice, output, wl, layer: Some(layer), dock: None, w: voicewave::WIDTH, h: voicewave::HEIGHT, want: (voicewave::WIDTH, voicewave::HEIGHT), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
+        self.surfs.push(Surf { id, kind: Kind::Voice, output, wl, layer: Some(layer), w: voicewave::WIDTH, h: voicewave::HEIGHT, want: (voicewave::WIDTH, voicewave::HEIGHT), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
     }
 
     /// Makes the island appear (if it is not) and starts its animation ticker.
@@ -1404,7 +1303,7 @@ impl State {
             region.destroy();
         }
         wl.commit();
-        self.surfs.push(Surf { id, kind, output, wl, layer: Some(layer), dock: None, w: 0, h: 0, want: (0, 0), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
+        self.surfs.push(Surf { id, kind, output, wl, layer: Some(layer), w: 0, h: 0, want: (0, 0), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
     }
 
     /// Shows the volume or brightness pop-up (or updates it) and starts its hide timer.
@@ -1440,7 +1339,7 @@ impl State {
             wl.set_input_region(Some(&region));
             region.destroy();
             wl.commit();
-            self.surfs.push(Surf { id, kind: Kind::Osd, output, wl, layer: Some(layer), dock: None, w: osd::WIDTH, h: osd::HEIGHT, want: (osd::WIDTH, osd::HEIGHT), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
+            self.surfs.push(Surf { id, kind: Kind::Osd, output, wl, layer: Some(layer), w: osd::WIDTH, h: osd::HEIGHT, want: (osd::WIDTH, osd::HEIGHT), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
         }
         self.dirty = true;
     }
@@ -1477,7 +1376,7 @@ impl State {
         layer.set_exclusive_zone(-1);
         layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
         wl.commit();
-        self.surfs.push(Surf { id, kind: Kind::Confirm, output, wl, layer: Some(layer), dock: None, w: confirm::WIDTH, h: confirm::HEIGHT, want: (confirm::WIDTH, confirm::HEIGHT), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
+        self.surfs.push(Surf { id, kind: Kind::Confirm, output, wl, layer: Some(layer), w: confirm::WIDTH, h: confirm::HEIGHT, want: (confirm::WIDTH, confirm::HEIGHT), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
     }
 
     /// The countdown ended: `go` does it (yggdrasil-logout closes the programs first), else nothing happens.
@@ -1598,7 +1497,7 @@ impl State {
             layer.set_margin(0, 16, 16, 0);
             layer.set_keyboard_interactivity(KeyboardInteractivity::None);
             wl.commit();
-            self.surfs.push(Surf { id, kind: Kind::Toast, output, wl, layer: Some(layer), dock: None, w, h, want: (w, h), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
+            self.surfs.push(Surf { id, kind: Kind::Toast, output, wl, layer: Some(layer), w, h, want: (w, h), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
         }
     }
 
@@ -1911,27 +1810,11 @@ impl State {
         if item.wins.is_empty() {
             return;
         }
-        // a picture of each window, in the background (the cards show the app's icon until it arrives): KWin's screenshot service,
-        // or the standard capture protocols (Hyprland and others), refreshed while the card is open
+        // a picture of each window, in the background (the cards show the app's icon until it arrives): the standard capture
+        // protocols, refreshed while the card is open
         let scale = self.outputs.get(&output).map(|o| o.scale).unwrap_or(1).max(1) as f32;
         let (bw, bh) = previews::thumb_box();
         let (bw, bh) = ((bw * scale.max(1.0)) as u32, (bh * scale.max(1.0)) as u32);
-        for &i in &item.wins {
-            let (uuid, tx) = (self.model.wins[i].uuid.clone(), self.thumb_tx.clone());
-            if uuid.starts_with("wlr-") {
-                continue;
-            }
-            std::thread::spawn(move || match thumb::capture(&uuid, bw, bh) {
-                Ok(p) => {
-                    let _ = tx.send((uuid, p));
-                }
-                Err(e) => {
-                    if std::env::var_os("YGGDRASIL_PANEL_DEBUG").is_some() {
-                        eprintln!("window picture {uuid}: {e}");
-                    }
-                }
-            });
-        }
         let wants: Vec<capture::Want> = item.wins.iter().filter_map(|&i| self.model.wins.get(i)).filter(|w| w.uuid.starts_with("wlr-")).map(|w| capture::Want { key: w.uuid.clone(), app_id: w.app_id.clone(), title: w.title.clone() }).collect();
         let tx = self.thumb_tx.clone();
         self.click_output = Some(output);
@@ -2125,15 +2008,11 @@ impl State {
             }
             FAct::Notif(a) => self.notif_act(a),
             FAct::Wall(p) => {
-                if self.model.conf.own_wallpaper || yggdrasil_conf::own_session() {
-                    let _ = yggdrasil_conf::set_wallpaper(&p.display().to_string());
-                    for s in &mut self.surfs {
-                        s.stamp = None; // redraw the wallpaper with the new picture
-                    }
-                    self.dirty = true;
-                } else {
-                    run(&["plasma-apply-wallpaperimage", &p.display().to_string()]);
+                let _ = yggdrasil_conf::set_wallpaper(&p.display().to_string());
+                for s in &mut self.surfs {
+                    s.stamp = None; // redraw the wallpaper with the new picture
                 }
+                self.dirty = true;
             }
             FAct::WallPage(by) => {
                 let pages = self.model.fylgja.walls.len().div_ceil(8).max(1) as i32;
@@ -2279,12 +2158,8 @@ impl State {
                 PowerAct::Lock => run(&["loginctl", "lock-session"]),
                 PowerAct::Sleep => run(&["systemctl", "suspend"]),
                 PowerAct::Hibernate => run(&["systemctl", "hibernate"]),
-                // Plasma's own logout (it saves the session) when it is there, else end the login session
-                // Yggdrasil's own session asks first, with a countdown (Plasma has its own question)
-                PowerAct::Logout | PowerAct::Restart | PowerAct::Shutdown if yggdrasil_conf::own_session() => self.start_confirm(p),
-                PowerAct::Logout => run(&["sh", "-c", "qdbus6 org.kde.Shutdown /Shutdown org.kde.Shutdown.logout 2>/dev/null || loginctl terminate-session \"${XDG_SESSION_ID:-self}\""]),
-                PowerAct::Restart => run(&["systemctl", "reboot"]),
-                PowerAct::Shutdown => run(&["systemctl", "poweroff"]),
+                // asks first, with a countdown
+                PowerAct::Logout | PowerAct::Restart | PowerAct::Shutdown => self.start_confirm(p),
             },
         }
         self.close_popup();
@@ -2692,32 +2567,6 @@ impl State {
         self.dirty = true;
     }
 
-    fn add_strut(&mut self, output: u32) {
-        let id = self.next_surf;
-        self.next_surf += 1;
-        let Some(out) = self.outputs.get(&output) else { return };
-        let dock = shell::dock_size(&shell::dock_items(&self.model), self.model.conf.dock_icon, self.model.conf.dock_pos);
-        let (anchor, size, zone) = self.strut_geometry(dock);
-        let wl = self.compositor.create_surface(&self.qh, ());
-        let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Background, "yggdrasil-dock-room".into(), &self.qh, id);
-        layer.set_anchor(anchor);
-        layer.set_size(size.0, size.1);
-        layer.set_exclusive_zone(zone);
-        layer.set_keyboard_interactivity(KeyboardInteractivity::None);
-        wl.commit();
-        self.surfs.push(Surf { id, kind: Kind::Strut, output, wl, layer: Some(layer), dock: None, w: size.0, h: size.1, want: (zone as u32, zone as u32), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
-    }
-
-    /// The strip's anchor, requested size and zone (the dock's thickness plus the gap it floats at).
-    fn strut_geometry(&self, dock: (u32, u32)) -> (Anchor, (u32, u32), i32) {
-        let gap = self.model.conf.dock_gap;
-        match self.model.conf.dock_pos {
-            DockPos::Bottom => (Anchor::Bottom | Anchor::Left | Anchor::Right, (0, 1), (dock.1 + gap) as i32),
-            DockPos::Left => (Anchor::Left | Anchor::Top | Anchor::Bottom, (1, 0), (dock.0 + gap) as i32),
-            DockPos::Right => (Anchor::Right | Anchor::Top | Anchor::Bottom, (1, 0), (dock.0 + gap) as i32),
-        }
-    }
-
     /// Where the dock's top left corner goes in the global space: against the edge it is on (the gap
     /// away from it), centred along it.
     fn dock_origin(&self, output: u32, dock: (u32, u32)) -> (i32, i32) {
@@ -2737,41 +2586,21 @@ impl State {
         let pos = self.model.conf.dock_pos;
         let want = shell::dock_size(&shell::dock_items(&self.model), self.model.conf.dock_icon, pos);
         let gap = self.model.conf.dock_gap as i32;
-        let (_, _, zone) = self.strut_geometry(want);
         let mut layer_updates: Vec<(usize, ZwlrLayerSurfaceV1)> = vec![];
         for i in 0..self.surfs.len() {
-            if self.surfs[i].kind == Kind::Strut {
-                if self.surfs[i].want.0 != zone as u32 {
-                    let s = &mut self.surfs[i];
-                    s.want = (zone as u32, zone as u32);
-                    if let Some(l) = &s.layer {
-                        l.set_exclusive_zone(zone);
-                    }
-                    s.wl.commit();
-                }
-                continue;
-            }
             if self.surfs[i].kind != Kind::Dock || (self.surfs[i].want == want && self.surfs[i].gap == gap) {
                 continue;
             }
-            let (x, y) = self.dock_origin(self.surfs[i].output, want);
             let s = &mut self.surfs[i];
             s.want = want;
             s.gap = gap;
             s.w = want.0;
             s.h = want.1;
-            if let Some(d) = &s.dock {
-                d.tl.set_min_size(want.0 as i32, want.1 as i32);
-                d.tl.set_max_size(want.0 as i32, want.1 as i32);
-                d.ps.set_position(x, y);
-            }
-            if s.dock.is_none() {
-                if let Some(l) = s.layer.clone() {
-                    layer_updates.push((i, l));
-                }
+            if let Some(l) = s.layer.clone() {
+                layer_updates.push((i, l));
             }
         }
-        // a layer-shell dock (no KWin): ask for the new size and room
+        // ask for the new size and room
         for (i, l) in layer_updates {
             self.configure_layer_dock(&l, want);
             self.surfs[i].wl.commit();
@@ -2811,7 +2640,6 @@ impl State {
         let Some(mut pix) = Pixmap::new(pw, ph) else { return };
         let mut start_scroll: Option<(i32, i32)> = None;
         let hits = match kind {
-            Kind::Strut => vec![],
             Kind::Wallpaper => {
                 let path = wall_path.unwrap_or_default();
                 let cached = self.wall_cache.iter().position(|(k, _)| k.0 == path && k.1 == pw && k.2 == ph);
@@ -3292,41 +3120,6 @@ impl Dispatch<WlRegion, ()> for State {
     fn event(_: &mut Self, _: &WlRegion, _: <WlRegion as wayland_client::Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
 }
 
-impl Dispatch<XdgWmBase, ()> for State {
-    fn event(_: &mut Self, wm: &XdgWmBase, event: xdg_wm_base::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
-        if let xdg_wm_base::Event::Ping { serial } = event {
-            wm.pong(serial);
-        }
-    }
-}
-
-impl Dispatch<XdgSurface, usize> for State {
-    fn event(state: &mut Self, xs: &XdgSurface, event: xdg_surface::Event, id: &usize, _: &Connection, _: &QueueHandle<Self>) {
-        if let xdg_surface::Event::Configure { serial } = event {
-            xs.ack_configure(serial);
-            let Some(i) = state.surfs.iter().position(|s| s.id == *id) else { return };
-            let want = state.surfs[i].want;
-            state.surfs[i].w = want.0;
-            state.surfs[i].h = want.1;
-            state.surfs[i].configured = true;
-            state.draw(i);
-            let _ = state.conn.flush();
-        }
-    }
-}
-
-impl Dispatch<XdgToplevel, usize> for State {
-    fn event(_: &mut Self, _: &XdgToplevel, _: xdg_toplevel::Event, _: &usize, _: &Connection, _: &QueueHandle<Self>) {}
-}
-
-impl Dispatch<OrgKdePlasmaShell, ()> for State {
-    fn event(_: &mut Self, _: &OrgKdePlasmaShell, _: <OrgKdePlasmaShell as Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
-}
-
-impl Dispatch<OrgKdePlasmaSurface, usize> for State {
-    fn event(_: &mut Self, _: &OrgKdePlasmaSurface, _: org_kde_plasma_surface::Event, _: &usize, _: &Connection, _: &QueueHandle<Self>) {}
-}
-
 impl Dispatch<WlSurface, ()> for State {
     fn event(_: &mut Self, _: &WlSurface, _: wl_surface::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
 }
@@ -3703,17 +3496,6 @@ fn pointer_event(state: &mut State, event: wl_pointer::Event) {
     }
 }
 
-impl Dispatch<OrgKdePlasmaWindowManagement, ()> for State {
-    fn event(state: &mut Self, wm: &OrgKdePlasmaWindowManagement, event: org_kde_plasma_window_management::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>) {
-        if let org_kde_plasma_window_management::Event::WindowWithUuid { uuid, .. } = event {
-            state.next_key += 1;
-            let key = state.next_key;
-            let proxy = wm.get_window_by_uuid(uuid.clone(), qh, key);
-            state.model.wins.push(Win { key, uuid, title: String::new(), app_id: String::new(), flags: 0, ready: false, menu: None, proxy: shell::WinHandle::Plasma(proxy), outputs: vec![] });
-        }
-    }
-}
-
 impl Dispatch<ZwlrForeignToplevelManagerV1, ()> for State {
     fn event(state: &mut Self, _: &ZwlrForeignToplevelManagerV1, event: zwlr_foreign_toplevel_manager_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
         if let zwlr_foreign_toplevel_manager_v1::Event::Toplevel { toplevel } = event {
@@ -3767,26 +3549,6 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for State {
     }
 }
 
-impl Dispatch<OrgKdePlasmaWindow, u32> for State {
-    fn event(state: &mut Self, _: &OrgKdePlasmaWindow, event: org_kde_plasma_window::Event, key: &u32, _: &Connection, _: &QueueHandle<Self>) {
-        use org_kde_plasma_window::Event as E;
-        let Some(pos) = state.model.wins.iter().position(|w| w.key == *key) else { return };
-        match event {
-            E::TitleChanged { title } => state.model.wins[pos].title = title,
-            E::AppIdChanged { app_id } => state.model.wins[pos].app_id = app_id,
-            E::StateChanged { flags } => state.model.wins[pos].flags = flags,
-            E::ApplicationMenu { service_name, object_path } => state.model.wins[pos].menu = Some((service_name, object_path)),
-            E::InitialState => state.model.wins[pos].ready = true,
-            E::Unmapped => {
-                let w = state.model.wins.remove(pos);
-                w.proxy.destroy();
-            }
-            _ => return,
-        }
-        state.dirty = true;
-    }
-}
-
 impl Dispatch<WpFractionalScaleV1, usize> for State {
     fn event(state: &mut Self, _: &WpFractionalScaleV1, event: wp_fractional_scale_v1::Event, id: &usize, _: &Connection, _: &QueueHandle<Self>) {
         if let wp_fractional_scale_v1::Event::PreferredScale { scale } = event {
@@ -3813,20 +3575,6 @@ delegate_noop!(State: ignore WlShmPool);
 delegate_noop!(State: ZwlrLayerShellV1);
 
 // ------------------------------------------------------------------ main
-
-/// Makes kglobalacceld announce a tap of the Super key (the "activate application launcher" action of the component
-/// "plasmashell") even when plasmashell is not running.
-fn register_launcher_shortcut(conn: &zbus::blocking::Connection) {
-    let Ok(ga) = zbus::blocking::Proxy::new(conn, "org.kde.kglobalaccel", "/kglobalaccel", "org.kde.KGlobalAccel") else { return };
-    let action: Vec<String> = vec!["plasmashell".into(), "activate application launcher".into(), "Plasma".into(), "Activate Application Launcher".into()];
-    if ga.call_method("doRegister", &(&action,)).is_err() {
-        return;
-    }
-    let have: Vec<i32> = ga.call("shortcut", &(&action,)).unwrap_or_default();
-    // Qt::Key_Meta alone, and Alt+F1 (Plasma's own default pair); 2 = SetPresent
-    let keys = if have.is_empty() { vec![0x0100_0022, 0x0800_0000 | 0x0100_0030] } else { have };
-    let _: Result<Vec<i32>, _> = ga.call("setShortcut", &(&action, keys, 2u32));
-}
 
 fn bind_outputs(globals: &GlobalList, state: &mut State, qh: &QueueHandle<State>) {
     let existing: Vec<(u32, u32)> = globals.contents().clone_list().iter().filter(|g| g.interface == "wl_output").map(|g| (g.name, g.version)).collect();
@@ -3859,24 +3607,19 @@ fn main() {
 
     let compositor: WlCompositor = globals.bind(&qh, 4..=6, ()).expect("wl_compositor");
     let shm: WlShm = globals.bind(&qh, 1..=1, ()).expect("wl_shm");
-    let xdg_wm: Option<XdgWmBase> = globals.bind(&qh, 1..=6, ()).ok();
     let xdg_output_mgr: Option<ZxdgOutputManagerV1> = globals.bind(&qh, 1..=3, ()).ok();
     let frac_mgr: Option<WpFractionalScaleManagerV1> = globals.bind(&qh, 1..=1, ()).ok();
     let viewporter: Option<WpViewporter> = globals.bind(&qh, 1..=1, ()).ok();
-    let plasma_shell: Option<OrgKdePlasmaShell> = globals.bind(&qh, 1..=8, ()).ok();
     let layer_shell: ZwlrLayerShellV1 = globals.bind(&qh, 1..=4, ()).unwrap_or_else(|_| {
         eprintln!("yggdrasil-panel: the compositor has no wlr-layer-shell");
         std::process::exit(1);
     });
     let _seat: Option<WlSeat> = globals.bind(&qh, 1..=7, ()).ok();
     let cursor_mgr: Option<WpCursorShapeManagerV1> = globals.bind(&qh, 1..=1, ()).ok();
-    let wm: Option<OrgKdePlasmaWindowManagement> = globals.bind(&qh, 1..=18, ()).ok();
-    // Without KWin's protocol the standard one (Hyprland, Sway, labwc ...) gives the window list
-    let wlr_wm: Option<ZwlrForeignToplevelManagerV1> = if wm.is_none() { globals.bind(&qh, 1..=3, ()).ok() } else { None };
-    if wm.is_none() && wlr_wm.is_none() {
-        eprintln!("yggdrasil-panel: the compositor offers no window management (KWin needs yggdrasil-panel.desktop installed with X-KDE-Wayland-Interfaces); the dock will only launch apps");
-    } else if wlr_wm.is_some() {
-        eprintln!("yggdrasil-panel: window list through wlr-foreign-toplevel-management");
+    // the window list: the standard protocol (Hyprland, Sway, labwc ...)
+    let wlr_wm: Option<ZwlrForeignToplevelManagerV1> = globals.bind(&qh, 1..=3, ()).ok();
+    if wlr_wm.is_none() {
+        eprintln!("yggdrasil-panel: the compositor offers no window list (wlr-foreign-toplevel-management); the dock will only launch apps");
     }
 
     let (tab_tx, tab_rx) = calloop::channel::channel::<u64>();
@@ -3889,17 +3632,14 @@ fn main() {
     let (heard_tx, heard_rx) = calloop::channel::channel::<String>();
     let (say_tx, say_rx) = calloop::channel::channel::<String>();
     let (viz_tx, viz_rx) = calloop::channel::channel::<()>();
-    let (vkey_tx, vkey_rx) = calloop::channel::channel::<voicekey::Key>();
     let mut state = State {
         qh: qh.clone(),
         conn: conn.clone(),
         compositor,
         layer_shell,
-        xdg_wm,
         xdg_output_mgr,
         frac_mgr,
         viewporter,
-        plasma_shell,
         shm,
         model: Model { apps: apps::load_all(), pinned: apps::pinned(), wins: vec![], clock: clock_text(PanelConf::load().clock_24h), clock_secs: secs_text(PanelConf::load().clock_24h), date: date_text(), today: today_ymd(), user: user_name(), hibernate: shell::can_hibernate(), conf: PanelConf::load(), dark: system_dark(), status: Default::default(), trash_full: shell::trash_has_files(), notch_open: false, fylgja: Default::default(), notch_w: 0.0, notch_tab: None, notifs: notify::Store::load(notify::state_path()), tray: vec![], addons: vec![], now_secs: 0 },
         a11y: None,
@@ -4017,30 +3757,12 @@ fn main() {
 
     // The D-Bus service runs on its own thread and hands requests to the event loop through a channel.
     let (bus_tx, bus_rx) = calloop::channel::channel::<BusMsg>();
-    let key_tx = bus_tx.clone();
     std::thread::spawn(move || {
         let conn = zbus::blocking::connection::Builder::session().and_then(|b| b.name("org.yggdrasil.Panel")).and_then(|b| b.serve_at("/Panel", PanelBus(bus_tx))).and_then(|b| b.build());
         match conn {
-            Ok(c) => {
-                // The Super key on its own: KWin 6.7 hands a bare modifier tap to Plasma's global shortcut
-                // "activate application launcher" (kwinrc's ModifierOnlyShortcuts is no longer read), and
-                // kglobalacceld announces every press on the bus, so the menu opens when that one fires.
-                // Plasma's shell is what registers that shortcut, so with plasmashell off nobody does and the tap goes nowhere:
-                // register it here (same component and action, so KWin and kglobalacceld treat it the same).
-                register_launcher_shortcut(&c);
-                let rule = zbus::MatchRule::builder().msg_type(zbus::message::Type::Signal).interface("org.kde.kglobalaccel.Component").and_then(|b| b.member("globalShortcutPressed")).map(|b| b.build());
-                match rule.and_then(|r| zbus::blocking::MessageIterator::for_match_rule(r, &c, None)) {
-                    Ok(iter) => {
-                        for msg in iter.flatten() {
-                            if let Ok((component, action, _t)) = msg.body().deserialize::<(String, String, i64)>() {
-                                if component == "plasmashell" && action == "activate application launcher" {
-                                    let _ = key_tx.send(BusMsg::ToggleStart);
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => eprintln!("yggdrasil-panel: cannot listen for the Super key ({e})"),
-                }
+            Ok(_conn) => {
+                // the connection serves org.yggdrasil.Panel for as long as the panel runs (the Super key reaches it as
+                // `yggdrasil-panelctl start`, bound by Hyprland)
                 loop {
                     std::thread::park();
                 }
@@ -4059,7 +3781,7 @@ fn main() {
                     BusMsg::Ask => st.ask_key(),
                     BusMsg::AskKey(down) => {
                         if assistant::get().is_some() {
-                            st.voice_key(if down { voicekey::Key::Down } else { voicekey::Key::Up });
+                            st.voice_key(if down { VoiceKey::Down } else { VoiceKey::Up });
                         }
                     }
                     BusMsg::ToggleCalendar => st.toggle_calendar(),
@@ -4088,8 +3810,6 @@ fn main() {
         .expect("tab channel");
     // the volume or brightness changed: show the pop-up; its timer ran out: put it away
     let (osd_tx, osd_rx) = calloop::channel::channel::<osd::OsdState>();
-    // the multimedia keys, once KDE's kded and PowerDevil no longer handle them
-    mediakeys::spawn(osd_tx.clone());
     osd::spawn_watchers(osd_tx);
     event_loop
         .handle()
@@ -4138,7 +3858,7 @@ fn main() {
         .expect("toast hide channel");
     // the system tray: apps' icons come and go
     let (tray_tx, tray_rx) = calloop::channel::channel::<tray::TrayMsg>();
-    // the tray registry first (it waits while KDE's kded still serves it), then the panel's tray as a host of it
+    // the tray registry first (it waits while another program still serves it), then the panel's tray as a host of it
     snwatcher::spawn();
     // the bar add-ons installed (integrations of kind bar-item): one thread runs them all
     addons::spawn(state.addons_shared.clone(), state.addons_now.clone());
@@ -4220,22 +3940,6 @@ fn main() {
             TimeoutAction::ToDuration(Duration::from_millis(if st.repeat.is_some() { 20 } else if dragging { 30 } else { 60 }))
         })
         .expect("key repeat timer");
-    // YGGDRASIL_PANEL_THUMBTEST=1: a few seconds after start, try a picture of every window and say what came of it
-    if std::env::var_os("YGGDRASIL_PANEL_THUMBTEST").is_some() {
-        event_loop
-            .handle()
-            .insert_source(Timer::from_duration(Duration::from_secs(6)), |_, _, st| {
-                for w in &st.model.wins {
-                    let (uuid, title) = (w.uuid.clone(), w.title.clone());
-                    std::thread::spawn(move || match thumb::capture(&uuid, 416, 260) {
-                        Ok(p) => eprintln!("window picture ok: {uuid} {title:?} -> {}x{}", p.width(), p.height()),
-                        Err(e) => eprintln!("window picture failed: {uuid} {title:?}: {e}"),
-                    });
-                }
-                TimeoutAction::Drop
-            })
-            .expect("thumb test timer");
-    }
     // a finished window picture: keep it and redraw the list
     event_loop
         .handle()
@@ -4328,19 +4032,6 @@ fn main() {
             }
         })
         .expect("voice island channel");
-    event_loop
-        .handle()
-                .insert_source(vkey_rx, |event, _, st| {
-            if let calloop::channel::Event::Msg(k) = event {
-                st.voice_key(k);
-            }
-        })
-        .expect("voice key channel");
-    std::thread::spawn(move || {
-        if let Err(e) = voicekey::run(vkey_tx) {
-            eprintln!("yggdrasil-panel: hold-to-talk is not available ({e}); the Ask D-Bus call still works");
-        }
-    });
 
     // Desktops, network and Bluetooth are read on a worker thread; the 1 s timer picks up the result.
     let shared = Arc::new(std::sync::Mutex::new(status::Status::default()));
@@ -4452,7 +4143,7 @@ fn main() {
             TimeoutAction::ToDuration(Duration::from_secs(1))
         })
         .expect("clock timer");
-    // KDE's screen settings can change under us (Settings, kscreen-doctor, a plugged-in monitor).
+    // The screens can change under us (Settings > Displays, a plugged-in monitor).
     event_loop
         .handle()
         .insert_source(Timer::from_duration(Duration::from_secs(4)), |_, _, st| {
@@ -4554,14 +4245,5 @@ mod layout_tests {
         assert_eq!(l.sizes[1], ("DP-3".to_string(), 3440, 0, 2560, 2880));
     }
 
-    #[test]
-    fn output_in_use_with_or_without_the_enabled_key() {
-        let j = |t: &str| serde_json::from_str::<serde_json::Value>(t).unwrap();
-        let old = j(r#"{"enabled":true,"connected":true}"#);
-        let new_68 = j(r#"{"connected":true,"currentModeId":"6"}"#);
-        let off = j(r#"{"connected":true,"enabled":false,"currentModeId":"6"}"#);
-        let unplugged = j(r#"{"connected":false}"#);
-        assert!(super::output_enabled(&old) && super::output_enabled(&new_68));
-        assert!(!super::output_enabled(&off) && !super::output_enabled(&unplugged));
-    }
+
 }

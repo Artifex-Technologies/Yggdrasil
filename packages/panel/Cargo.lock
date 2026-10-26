@@ -1354,19 +1354,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wayland-protocols-plasma"
-version = "0.3.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b6d8cf1eb2c1c31ed1f5643c88a6e53538129d4af80030c8cabd1f9fa884d91"
-dependencies = [
- "bitflags",
- "wayland-backend",
- "wayland-client",
- "wayland-protocols",
- "wayland-scanner",
-]
-
-[[package]]
 name = "wayland-protocols-wlr"
 version = "0.3.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1469,7 +1456,6 @@ dependencies = [
  "serde_json",
  "wayland-client",
  "wayland-protocols",
- "wayland-protocols-plasma",
  "wayland-protocols-wlr",
  "xkbcommon",
  "yggdrasil-conf",

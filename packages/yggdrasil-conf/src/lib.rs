@@ -5,7 +5,7 @@
 
 pub mod appearance;
 
-/// Yggdrasil's own session (on Hyprland, `yggdrasil-session`), rather than another desktop's (Plasma) with Yggdrasil's panel in it:
+/// Yggdrasil's own session (on Hyprland, `yggdrasil-session`), rather than another desktop's with Yggdrasil's panel in it:
 /// then nothing else draws the wallpaper, locks the screen or answers the shortcuts.
 pub fn own_session() -> bool {
     std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|d| d.split(':').any(|x| x == "Yggdrasil"))
@@ -152,7 +152,7 @@ pub struct PanelConf {
     pub notify_pane: bool,
     /// Do not disturb: no pop-ups (critical ones still show); everything is still kept in the list.
     pub notify_dnd: bool,
-    /// Yggdrasil draws the wallpaper itself (so plasmashell is not needed for it); the picture's path is in ~/.config/yggdrasil/wallpaper.
+    /// Yggdrasil draws the wallpaper itself; the picture's path is in ~/.config/yggdrasil/wallpaper.
     pub own_wallpaper: bool,
     /// Size of text and controls in the desktop's own apps, in percent (100 to 250).
     pub text_scale: u16,

@@ -359,7 +359,7 @@ impl Server {
     }
 }
 
-/// Serves the notification interface. If another program (mako, Plasma) holds the name it tries again every
+/// Serves the notification interface. If another program (mako, say) holds the name it tries again every
 /// ten seconds, so stopping that program is all it takes to switch over.
 pub fn spawn_server(tx: calloop::channel::Sender<NMsg>) {
     std::thread::spawn(move || {

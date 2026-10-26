@@ -16,7 +16,7 @@ The logos are a selection from Simple Icons (/usr/share/liki/brand-icons, CC0); 
 Calculator and the trash are Labyrinth's own glyphs in the same form. For each installed app (its desktop file's Icon=)
 that has a logo here the pack gets an icon of that name. Apps without one fall back to whatever the
 panel's other icon sources give. The pack is written to ~/.local/share/icons/<NAME> (default
-"Liki"); choose it in KDE's icon settings to use it.
+"Liki"); choose it in Settings > Appearance to use it.
 """
 import argparse
 import glob

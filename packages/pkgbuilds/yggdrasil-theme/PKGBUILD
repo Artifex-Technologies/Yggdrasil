@@ -3,15 +3,14 @@
 # and cursors drawn by ygg-cursors. Nothing is downloaded and no other theme package is needed.
 pkgname=yggdrasil-theme
 pkgver=0.1.0
-pkgrel=1
+pkgrel=2
 pkgdesc="Yggdrasil's colour scheme, GTK colours and mouse cursors (replaces the WhiteSur themes)"
 arch=('any')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
 license=('MPL-2.0')
 depends=('python')
 makedepends=('python-pillow' 'python-gobject' 'gtk4')
-optdepends=('gtk3: GTK 3 programs use the Yggdrasil GTK theme'
-            'plasma-integration: Qt programs read the colour scheme through it until Yggdrasil has its own session')
+optdepends=('gtk3: GTK 3 programs use the Yggdrasil GTK theme')
 provides=('labyrinth-cursors')
 options=('!strip')
 

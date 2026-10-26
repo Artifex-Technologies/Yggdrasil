@@ -1,8 +1,6 @@
 //! Settings: the everyday settings in one clean app, in the style of GNOME Settings,
-//! with the same look as Minos (yggdrasil-ui). It changes Plasma's settings through the tools
-//! Plasma itself uses (sys.rs). KDE's System Settings is hidden (by the operating system) and its
-//! command redirects here; the few deep options not covered yet
-//! open one KDE panel on its own (kcmshell6), never the whole KDE app.
+//! with the same look as Minos (yggdrasil-ui). It changes the system through the usual command-line
+//! tools and Yggdrasil's own settings files (sys.rs).
 //!
 //! Reading the system can be slow (Wi-Fi scans, Bluetooth), so every page loads on a background
 //! thread and every change runs on one too; the window never freezes.
@@ -218,8 +216,6 @@ struct App {
     app_tab: usize,
     /// Which part of Appearance is open.
     app_sub: AppSub,
-    /// Developer page: the filter on the list of KDE settings.
-    dev_filter: String,
     /// The lock screen previews are being (or have been) drawn for this visit to the page.
     lock_previews_started: bool,
     /// Appearance > Boot screen: what `bootscreen get` said (and when), the picture being chosen, and a change under way.
@@ -323,7 +319,6 @@ impl App {
                 "boot" => AppSub::Boot,
                 _ => AppSub::Main,
             },
-            dev_filter: String::new(),
             lock_previews_started: false,
             boot_info: None,
             boot_pic: String::new(),
@@ -547,7 +542,7 @@ impl eframe::App for App {
                 self.refreshed = std::time::Instant::now();
                 let (tx, c) = (self.tx.clone(), ctx.clone());
                 std::thread::spawn(move || {
-                    let theme = sys::run("kreadconfig6", &["--file", "kdeglobals", "--group", "Icons", "--key", "Theme"]).map(|s| s.trim().to_string()).unwrap_or_default();
+                    let theme = sys::current_icon_theme();
                     let _ = tx.send(Msg::Installed(appmgr::list_apps(&theme)));
                     c.request_repaint();
                 });
@@ -664,7 +659,7 @@ impl eframe::App for App {
 
 /// The installed apps, and (in the background) how much space each takes.
 fn load_installed(tx: &std::sync::mpsc::Sender<Msg>) -> Vec<appmgr::AppInfo> {
-    let theme = sys::run("kreadconfig6", &["--file", "kdeglobals", "--group", "Icons", "--key", "Theme"]).map(|s| s.trim().to_string()).unwrap_or_default();
+    let theme = sys::current_icon_theme();
     let apps = appmgr::list_apps(&theme);
     let (tx, list) = (tx.clone(), apps.clone());
     std::thread::spawn(move || {
@@ -908,15 +903,7 @@ impl App {
         }
         ui::group(ui, pal, None, |ui| {
             ui.add_space(6.0);
-            // While KWin draws the screen, its own lock screen is the one shown (KWin lacks the standard session-lock protocol): say so plainly.
-            // In Yggdrasil's own session (on Hyprland) the choice is the lock screen.
-            if yggdrasil_conf::own_session() {
-                ui.label(RichText::new("Pick how the lock screen looks (Super+L locks the screen).").color(pal.dim));
-            } else {
-            ui::row(ui, pal, true, "Not in use yet", Some("The screen is still locked by KDE's lock screen: the current window manager (KWin) cannot show another one. Your choice is kept and takes over when Yggdrasil's own compositor replaces KWin"), |ui| {
-                ui.label(RichText::new("waiting").color(pal.amber));
-            });
-            }
+            ui.label(RichText::new("Pick how the lock screen looks (Super+L locks the screen).").color(pal.dim));
             ui.add_space(6.0);
         });
         for (id, name, about) in DESIGNS {
@@ -948,7 +935,7 @@ impl App {
         }
     }
 
-    /// Developer Mode: the developer options, and the KDE settings this Settings hides (each opens in KDE's own panel).
+    /// Developer Mode: the developer options.
     fn page_developer(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         ui::group(ui, pal, None, |ui| {
             ui::row(ui, pal, true, "Developer options", Some("On: more technical settings show under Power (limits for each power mode) and Apps (which kind of connection an app may use)"), |ui| {
@@ -959,39 +946,6 @@ impl App {
                     self.change(ctx, move || c.save());
                 }
             });
-            if kde_panels() {
-                ui::row(ui, pal, false, "KDE System Settings", Some("The whole of KDE's own settings window, with every panel Settings does not have"), |ui| {
-                    if ui::action(ui, pal, "Open").clicked() {
-                        sys::spawn("/usr/bin/systemsettings", &[]);
-                    }
-                });
-            }
-        });
-        // KDE's panels change Plasma's settings: shown only in Plasma, while it is there
-        if !kde_panels() {
-            return;
-        }
-        let modules = kde_modules();
-        ui::group(ui, pal, Some("KDE settings hidden here"), |ui| {
-            ui.add_space(4.0);
-            ui.add(egui::TextEdit::singleline(&mut self.dev_filter).hint_text("Search these settings").desired_width(f32::INFINITY).margin(vec2(8.0, 6.0)));
-            ui.add_space(6.0);
-            let q = self.dev_filter.to_lowercase();
-            let mut first = true;
-            for (id, name, comment) in modules.iter() {
-                if !q.is_empty() && !name.to_lowercase().contains(&q) && !comment.to_lowercase().contains(&q) && !id.contains(&q) {
-                    continue;
-                }
-                ui::row(ui, pal, first, name, if comment.is_empty() { None } else { Some(comment.as_str()) }, |ui| {
-                    if ui::quiet(ui, pal, "Open").clicked() {
-                        sys::spawn("kcmshell6", &[id.as_str()]);
-                    }
-                });
-                first = false;
-            }
-            if first {
-                ui.label(RichText::new("Nothing matches").color(pal.dim));
-            }
         });
     }
 
@@ -1607,17 +1561,13 @@ impl App {
         }
         if let Some(args) = cmd {
             self.change(ctx, move || {
-                if sys::hyprland() {
-                    // the same choices, as Hyprland settings: "output.NAME.mode.ID" or "output.NAME.scale.S"
-                    let parts: Vec<&str> = args[0].splitn(4, '.').collect();
-                    return match parts.as_slice() {
-                        ["output", name, "mode", id] => sys::hypr_set(name, Some(id), None),
-                        ["output", name, "scale", s] => sys::hypr_set(name, None, s.parse().ok()),
-                        _ => Err("not available here yet".into()),
-                    };
+                // the choices as Hyprland settings: "output.NAME.mode.ID" or "output.NAME.scale.S"
+                let parts: Vec<&str> = args[0].splitn(4, '.').collect();
+                match parts.as_slice() {
+                    ["output", name, "mode", id] => sys::hypr_set(name, Some(id), None),
+                    ["output", name, "scale", s] => sys::hypr_set(name, None, s.parse().ok()),
+                    _ => Err("not available here yet".into()),
                 }
-                let a: Vec<&str> = args.iter().map(String::as_str).collect();
-                sys::act("kscreen-doctor", &a)
             });
         }
         if let Some((name, on)) = tiling {
@@ -1626,10 +1576,6 @@ impl App {
         if hypr {
             self.night_light(ui, pal);
             zones_ui::group(ui, pal);
-        }
-        ui.add_space(8.0);
-        if !hypr && ui::quiet(ui, pal, "Arrange displays…").clicked() {
-            sys::spawn("kcmshell6", &["kcm_kscreen"]);
         }
     }
 
@@ -2094,9 +2040,8 @@ impl App {
             });
         }
         if let Some(p) = wallpaper {
-            // when the desktop draws the wallpaper itself the panel shows the picture named in ~/.config/yggdrasil/wallpaper
-            let own = yggdrasil_conf::PanelConf::load().own_wallpaper || yggdrasil_conf::own_session();
-            self.change(ctx, move || if own { yggdrasil_conf::set_wallpaper(&p) } else { sys::act("plasma-apply-wallpaperimage", &[&p]) });
+            // the panel draws the wallpaper: the picture named in ~/.config/yggdrasil/wallpaper
+            self.change(ctx, move || yggdrasil_conf::set_wallpaper(&p));
         }
         if brand_build {
             let (shape, style) = (BRAND_SHAPES[self.brand_shape].0, BRAND_STYLES[self.brand_style].0);
@@ -3155,10 +3100,6 @@ impl App {
             let arg = if v { "enable" } else { "disable" };
             self.change(ctx, move || sys::act("pkexec", &["ufw", arg]));
         }
-        ui.add_space(8.0);
-        if kde_panels() && ui::quiet(ui, pal, "Rules and exceptions…").clicked() {
-            sys::spawn("kcmshell6", &["kcm_firewall"]);
-        }
     }
 
     fn page_time(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
@@ -3276,29 +3217,6 @@ impl App {
     }
 }
 
-/// KDE's single-setting panels (kcm_*.desktop): (module, name, description), by name. Read once.
-fn kde_modules() -> &'static Vec<(String, String, String)> {
-    static MODULES: std::sync::OnceLock<Vec<(String, String, String)>> = std::sync::OnceLock::new();
-    MODULES.get_or_init(|| {
-        let mut v = vec![];
-        if let Ok(rd) = std::fs::read_dir("/usr/share/applications") {
-            for e in rd.flatten() {
-                let file = e.file_name().to_string_lossy().into_owned();
-                let Some(id) = file.strip_suffix(".desktop").filter(|f| f.starts_with("kcm_")) else { continue };
-                let text = std::fs::read_to_string(e.path()).unwrap_or_default();
-                // the first (unlocalised) Name= and Comment= of the file
-                let field = |key: &str| text.lines().find_map(|l| l.strip_prefix(key).map(|v| v.trim().to_string())).unwrap_or_default();
-                let name = field("Name=");
-                if !name.is_empty() {
-                    v.push((id.to_string(), name, field("Comment=")));
-                }
-            }
-        }
-        v.sort_by(|a, b| a.1.to_lowercase().cmp(&b.1.to_lowercase()));
-        v
-    })
-}
-
 /// One account in the Users list: a round initial, the name, and what kind of account it is. True when clicked.
 fn account_row(ui: &mut egui::Ui, pal: &Palette, first: bool, a: &users::Account, me: bool, selected: bool) -> bool {
     if !first {
@@ -3328,11 +3246,6 @@ fn account_row(ui: &mut egui::Ui, pal: &Palette, first: bool, a: &users::Account
     }
     p.text(egui::pos2(x, rect.center().y + 10.0), egui::Align2::LEFT_CENTER, kind.join(" · "), egui::FontId::proportional(12.0), pal.dim);
     resp.clicked()
-}
-
-/// KDE's own settings panels (kcmshell6) are offered only in Plasma, and only while KDE is installed.
-fn kde_panels() -> bool {
-    !yggdrasil_conf::own_session() && std::path::Path::new("/usr/bin/kcmshell6").exists()
 }
 
 /// The shortcuts of the running Hyprland session (Yggdrasil's own and the user's), grouped (yggdrasil_conf::shortcuts), read every
@@ -3496,10 +3409,6 @@ fn page_shortcuts(ui: &mut egui::Ui, pal: &Palette) {
                 });
             }
         });
-    }
-    ui.add_space(8.0);
-    if kde_panels() && ui::quiet(ui, pal, "Change shortcuts…").clicked() {
-        sys::spawn("kcmshell6", &["kcm_keys"]);
     }
 }
 

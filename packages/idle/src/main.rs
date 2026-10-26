@@ -2,8 +2,7 @@
 //!
 //! It asks the compositor (Wayland `ext-idle-notify-v1`) to tell it when the user has been idle for each of a list of times, and
 //! writes every change to ~/.local/state/yggdrasil/idle.log together with what else was going on (is the screen locked, which
-//! programs inhibit idling). By default it only OBSERVES: it changes nothing, so it can run beside PowerDevil to find out what
-//! blanks and locks the screen. With `mode = act` in ~/.config/yggdrasil/idle.conf it also performs the configured steps
+//! programs inhibit idling). By default it only OBSERVES: it changes nothing, which shows what would blank and lock the screen. With `mode = act` in ~/.config/yggdrasil/idle.conf it also performs the configured steps
 //! (lock, display off, suspend; dimming is not built yet), holding back locking and sleeping while something inhibits idling.
 //!
 //!   yggdrasil-idle            run in the foreground (autostart it)
@@ -84,7 +83,7 @@ fn context() -> String {
 pub struct App {
     conf: Config,
     dimmer: Option<dim::Dimmer>,
-    /// Display power through the compositor (None: it has no output-power protocol, kscreen-doctor is used).
+    /// Display power through the compositor (None: it has no output-power protocol).
     power: Option<power::Power>,
     globals: GlobalList,
     qh: QueueHandle<App>,
@@ -196,9 +195,7 @@ impl App {
             }
             Step::DisplayOff => match self.power.as_mut() {
                 Some(p) => p.set(false),
-                None => {
-                    run("kscreen-doctor", &["--dpms", "off"]);
-                }
+                None => log("cannot turn the displays off: the compositor lacks output-power management"),
             },
             Step::Suspend => {
                 run("systemctl", &["suspend"]);
@@ -221,7 +218,7 @@ fn read_conf() -> (Config, Option<std::time::SystemTime>) {
 }
 
 fn main() {
-    // "please don't sleep" requests from programs, as logind locks (waits while KDE's PowerDevil still answers them)
+    // "please don't sleep" requests from programs, as logind locks (waits while another program still answers them)
     inhibit::spawn();
     // in Yggdrasil's own session, the lock requests are ours to answer
     lock::spawn();

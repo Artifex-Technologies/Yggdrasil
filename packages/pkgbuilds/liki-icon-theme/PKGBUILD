@@ -1,7 +1,7 @@
 # Liki: Yggdrasil's icon pack (used by every system that installs Yggdrasil) and the tools that build and manage it (packages/liki).
 pkgname=liki-icon-theme
 pkgver=0.1.0
-pkgrel=1
+pkgrel=2
 pkgdesc="Liki, Yggdrasil's icon pack: the system's own icons, the default app icon, and liki-build for app logos"
 arch=('any')
 url="https://github.com/Artifex-Technologies/Yggdrasil"

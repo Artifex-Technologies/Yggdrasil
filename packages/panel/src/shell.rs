@@ -3,17 +3,16 @@
 use resvg::tiny_skia::Pixmap;
 use wayland_client::protocol::wl_output::WlOutput;
 use wayland_client::protocol::wl_seat::WlSeat;
-use wayland_protocols_plasma::plasma_window_management::client::org_kde_plasma_window::OrgKdePlasmaWindow;
 use wayland_protocols_wlr::foreign_toplevel::v1::client::zwlr_foreign_toplevel_handle_v1::ZwlrForeignToplevelHandleV1;
 
 use crate::apps::{self, App};
 use crate::paint::{self, Fonts, Icons, Rgba};
 use yggdrasil_conf::{ColorMode, DockPos, PanelConf};
 
-// Plasma window state flags (org_kde_plasma_window_management.state).
+// Window state flags (as the panel keeps them; set from wlr-foreign-toplevel's states).
 pub const ST_ACTIVE: u32 = 0x1;
 pub const ST_MINIMIZED: u32 = 0x2;
-/// Full screen (KWin's own flag value; from wlr-foreign-toplevel's "fullscreen" state on other compositors).
+/// Full screen (from wlr-foreign-toplevel's "fullscreen" state).
 pub const ST_FULLSCREEN: u32 = 0x8;
 pub const ST_SKIPTASKBAR: u32 = 0x1000;
 
@@ -69,10 +68,9 @@ pub struct Win {
     pub outputs: Vec<WlOutput>,
 }
 
-/// A window as the compositor lets the panel handle it: KWin's own protocol, or the standard wlr-foreign-toplevel-management one
+/// A window as the compositor lets the panel handle it, through the standard wlr-foreign-toplevel-management protocol
 /// (Hyprland, Sway, labwc ...). Everything the panel does to a window goes through these methods.
 pub enum WinHandle {
-    Plasma(OrgKdePlasmaWindow),
     Wlr(ZwlrForeignToplevelHandleV1),
 }
 
@@ -80,7 +78,6 @@ impl WinHandle {
     /// Bring the window forward (and out of the minimized state).
     pub fn activate(&self, seat: Option<&WlSeat>) {
         match self {
-            WinHandle::Plasma(p) => p.set_state(ST_ACTIVE | ST_MINIMIZED, ST_ACTIVE),
             WinHandle::Wlr(h) => {
                 h.unset_minimized();
                 if let Some(seat) = seat {
@@ -92,7 +89,6 @@ impl WinHandle {
 
     pub fn minimize(&self) {
         match self {
-            WinHandle::Plasma(p) => p.set_state(ST_MINIMIZED, ST_MINIMIZED),
             WinHandle::Wlr(h) => h.set_minimized(),
         }
     }
@@ -100,14 +96,12 @@ impl WinHandle {
     /// Ask the window to close (the app may still ask to save first).
     pub fn close(&self) {
         match self {
-            WinHandle::Plasma(p) => p.close(),
             WinHandle::Wlr(h) => h.close(),
         }
     }
 
     pub fn destroy(&self) {
         match self {
-            WinHandle::Plasma(p) => p.destroy(),
             WinHandle::Wlr(h) => h.destroy(),
         }
     }

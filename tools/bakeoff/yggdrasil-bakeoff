@@ -3,16 +3,17 @@
 #
 #   yggdrasil-bakeoff install            add one login entry per compositor (needs root: run with sudo)
 #   yggdrasil-bakeoff uninstall          remove them again (sudo)
-#   yggdrasil-bakeoff session NAME       what a login entry runs (kwin, hyprland, cosmic, gamescope, plasma)
+#   yggdrasil-bakeoff session NAME       what a login entry runs (hyprland, cosmic, gamescope)
 #   yggdrasil-bakeoff vrr on|off         the next sessions use variable refresh or not (default: off)
 #   yggdrasil-bakeoff report             compare every run so far
 #
-# Each session starts one compositor and Steam in it, nothing else (no panel, no desktop), except "plasma", which is today's full
-# desktop as the baseline. Every Vulkan game started there (Proton games are) is measured by MangoHud: 20 seconds after the game
-# starts, 90 seconds of frame times are written to ~/bakeoff/NAME-vrrX/. Nothing is shown on screen, so the measuring costs nothing
-# that would differ between compositors.
+# Each session starts one compositor and Steam in it, nothing else (no panel, no desktop). Round 1 (2026) also had KWin alone and
+# Plasma as the baseline; Hyprland won, KDE is gone, and their results stay in ~/bakeoff for the report.
+# Every Vulkan game started there (Proton games are) is measured by MangoHud: 20 seconds after the game starts, 90 seconds of
+# frame times are written to ~/bakeoff/NAME-vrrX/. Nothing is shown on screen, so the measuring costs nothing that would differ
+# between compositors.
 set -u
-NAMES="kwin hyprland cosmic gamescope plasma"
+NAMES="hyprland cosmic gamescope"
 out_root=${BAKEOFF_DIR:-$HOME/bakeoff}
 vrr_file=${XDG_CONFIG_HOME:-$HOME/.config}/yggdrasil/bakeoff-vrr
 
@@ -53,9 +54,6 @@ session() {
   measure_env "$name"
   nvidia_env
   case $name in
-    kwin)
-      export XDG_CURRENT_DESKTOP=KDE
-      exec dbus-run-session -- kwin_wayland --xwayland --exit-with-session=/usr/bin/steam ;;
     hyprland)
       export XDG_CURRENT_DESKTOP=Hyprland
       exec dbus-run-session -- Hyprland --config "$(hypr_conf)" ;;
@@ -78,9 +76,6 @@ session() {
       # Valve's: Steam's own big-screen mode, as on the Steam Deck
       local adaptive=(); [[ $(vrr) == 1 ]] && adaptive=(--adaptive-sync)
       exec dbus-run-session -- gamescope -e -f "${adaptive[@]}" -- steam -gamepadui ;;
-    plasma)
-      export XDG_CURRENT_DESKTOP=KDE XDG_SESSION_DESKTOP=KDE
-      exec /usr/lib/plasma-dbus-run-session-if-needed /usr/bin/startplasma-wayland ;;
     *) echo "unknown session: $name (one of: $NAMES)" >&2; exit 2 ;;
   esac
 }
@@ -92,14 +87,14 @@ install_sessions() {
   install -Dm755 "$(dirname "$self")/bakeoff-report" /usr/local/bin/yggdrasil-bakeoff-report
   for n in $NAMES; do
     local label=$n
-    case $n in kwin) label="KWin alone";; hyprland) label=Hyprland;; cosmic) label="COSMIC compositor";; gamescope) label="gamescope (Steam big screen)";; plasma) label="Plasma (today's desktop)";; esac
+    case $n in hyprland) label=Hyprland;; cosmic) label="COSMIC compositor";; gamescope) label="gamescope (Steam big screen)";; esac
     cat >/usr/share/wayland-sessions/bakeoff-$n.desktop <<EOF
 [Desktop Entry]
 Name=Bake-off: $label
 Comment=Yggdrasil's compositor bake-off: one compositor and Steam, games measured by MangoHud
 Exec=/usr/local/bin/yggdrasil-bakeoff session $n
 Type=Application
-DesktopNames=$( [[ $n == plasma || $n == kwin ]] && echo KDE || echo Bakeoff )
+DesktopNames=Bakeoff
 EOF
   done
   echo "Added: $(for n in $NAMES; do printf 'Bake-off: %s  ' $n; done)"

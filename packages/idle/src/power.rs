@@ -1,5 +1,5 @@
 //! Turning the displays off and on again through the compositor's output-power protocol (`zwlr_output_power_manager_v1`, which
-//! Hyprland and other wlroots-style compositors offer). Where it is missing (KWin), `kscreen-doctor` is asked instead.
+//! Hyprland and other wlroots-style compositors offer).
 
 use wayland_client::globals::GlobalList;
 use wayland_client::protocol::wl_output;

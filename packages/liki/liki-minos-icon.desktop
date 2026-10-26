@@ -3,6 +3,5 @@ Type=Application
 Name=Minos icon
 Comment=Gives Minos the right icon for the icon pack in use
 Exec=liki-minos-icon
-OnlyShowIn=KDE;
+OnlyShowIn=Yggdrasil;
 NoDisplay=true
-X-KDE-autostart-phase=2

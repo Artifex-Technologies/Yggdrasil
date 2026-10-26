@@ -3,7 +3,7 @@
 //! block mode, held by this program in the requester's name), so every part of the system sees it, idle.rs's own checks included.
 //! The lock goes when the program says so (UnInhibit) or when it quits.
 //!
-//! While another program holds the name (KDE's PowerDevil), this waits and takes over the moment it is free.
+//! While another program holds the name, this waits and takes over the moment it is free.
 
 use std::collections::HashMap;
 use std::os::fd::OwnedFd;
@@ -98,7 +98,7 @@ impl Inhibit {
     }
 }
 
-/// Serves the interface from its own thread (waiting while PowerDevil holds the name). Returns at once.
+/// Serves the interface from its own thread (waiting while another program holds the name). Returns at once.
 pub fn spawn() {
     std::thread::spawn(|| loop {
         let i = Inhibit::default();

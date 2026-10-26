@@ -1,6 +1,5 @@
 //! Pictures of windows for the dock's window list, through the standard Wayland capture protocols (ext-foreign-toplevel-list,
-//! ext-image-capture-source, ext-image-copy-capture): Hyprland has them, and other compositors are adding them. KWin's own
-//! screenshot service is `thumb.rs`.
+//! ext-image-capture-source, ext-image-copy-capture): Hyprland has them, and other compositors are adding them.
 //!
 //! Each round opens a connection of its own on the calling thread (the panel's event loop is never held up), finds the windows by
 //! app id and title, copies each into shared memory once, and shrinks it to a thumbnail. A window the compositor does not draw

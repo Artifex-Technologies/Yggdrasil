@@ -1,4 +1,4 @@
-//! yggdrasil-compositor: Yggdrasil's own Wayland compositor, on Smithay. It is the piece that will replace KWin.
+//! yggdrasil-compositor: Yggdrasil's own Wayland compositor, on Smithay, in development (the session runs on Hyprland meanwhile).
 //!
 //! Today it runs nested in a window (winit backend) while it is being built, so it cannot touch the real session:
 //!

@@ -1,7 +1,7 @@
 # Yggdrasil idle manager: watches how long you are away (observe-only unless configured) (Rust): built from packages/idle in this repository.
 pkgname=yggdrasil-idle
 pkgver=0.1.0
-pkgrel=1
+pkgrel=2
 pkgdesc="Yggdrasil idle manager: watches how long you are away (observe-only unless configured)"
 arch=('x86_64')
 provides=('labyrinth-idle')

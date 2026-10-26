@@ -27,17 +27,21 @@ mode=${2:-}
 shape=${3:-}
 [[ $accent == - ]] && accent=
 
+CONF=${XDG_CONFIG_HOME:-$HOME/.config}
+# KEY from the desktop's own appearance file ("key = value" lines, written by Settings and ygg-theme)
+appearance() { sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$CONF/yggdrasil/appearance.conf" 2>/dev/null | head -n1; }
+# KEY in [GROUP] of an INI file
+ini() { awk -F= -v g="[$2]" -v k="$3" '/^\[/{in_g=($0==g)} in_g && $1==k {sub(/^[^=]*=/,""); print; exit}' "$1" 2>/dev/null; }
 if [[ -z $accent ]]; then
-  accent=$(kreadconfig6 --file kdeglobals --group General --key AccentColor 2>/dev/null || true)
+  accent=$(appearance accent)
   [[ $accent =~ ^[0-9]+,[0-9]+,[0-9]+$ ]] || accent=124,84,214
 fi
 if [[ -z $mode ]]; then
-  scheme=$(kreadconfig6 --file kdeglobals --group General --key ColorScheme 2>/dev/null || true)
-  case ${scheme,,} in *dark*|"") mode=dark ;; *) mode=light ;; esac
+  case $(appearance style) in light) mode=light ;; *) mode=dark ;; esac
 fi
 [[ -n $shape ]] || shape=$(cat "${XDG_CONFIG_HOME:-$HOME/.config}/labyrinth/minos-icon-shape" 2>/dev/null || echo tile)
 [[ $shape == plain ]] || shape=tile
-pack=$(kreadconfig6 --file kdeglobals --group Icons --key Theme 2>/dev/null || true)
+pack=$(ini "$CONF/kdeglobals" Icons Theme)
 [[ -n $pack ]] || pack=Liki
 
 IFS=, read -r r g b <<<"$accent"

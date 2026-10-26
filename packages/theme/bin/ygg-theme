@@ -394,7 +394,7 @@ def apply(dark, accent):
     os.makedirs(sdir, exist_ok=True)
     with open(os.path.join(sdir, name + ".colors"), "w", encoding="utf-8") as f:
         f.write(scheme(dark, accent))
-    # KDE and Qt programs read the colours from kdeglobals itself (not from the scheme file), so they go in there, as plasma-apply-colorscheme does
+    # Qt programs (KDE's ones too) read the colours from kdeglobals itself (not from the scheme file), so they go in there
     updates = scheme_sections(scheme(dark, accent))
     updates.setdefault("General", {}).update({"AccentColor": rgb(accent), "ColorScheme": name})
     updates["KDE"] = dict(updates.get("KDE", {}), widgetStyle="Fusion")
@@ -426,7 +426,7 @@ def apply(dark, accent):
             mine = "\n" + re.sub(r"^@import\s+['\"]colors\.css['\"];\s*$", "", old, flags=re.M)
         with open(css_path, "w", encoding="utf-8") as f:
             f.write(gtk_colors(dark, accent) + marker + (mine if mine else "\n"))
-    # X11 (and XWayland) programs read their theme from xsettingsd, which KDE keeps in step; say the same there
+    # X11 (and XWayland) programs read their theme from xsettingsd; say the same there
     xs = os.path.join(config(), "xsettingsd", "xsettingsd.conf")
     if os.path.isfile(xs):
         want = {"Net/ThemeName": theme, "Net/IconThemeName": "Liki", "Gtk/CursorThemeName": "Yggdrasil"}
@@ -446,12 +446,6 @@ def apply(dark, accent):
     with open(os.path.join(env, "50-yggdrasil-cursor.conf"), "w", encoding="utf-8") as f:
         f.write("XCURSOR_THEME=Yggdrasil\nXCURSOR_SIZE=24\n")
     # tell what is running
-    if shutil.which("plasma-apply-colorscheme"):
-        run("plasma-apply-colorscheme", name)
-        # the scheme file does not carry the accent into kdeglobals' own keys
-        ini_set(kdeglobals, "General", "AccentColor", rgb(accent))
-    if shutil.which("plasma-apply-cursortheme"):
-        run("plasma-apply-cursortheme", "Yggdrasil")
     if shutil.which("gsettings"):
         run("gsettings", "set", "org.gnome.desktop.interface", "color-scheme", "prefer-dark" if dark else "default")
         run("gsettings", "set", "org.gnome.desktop.interface", "gtk-theme", theme)

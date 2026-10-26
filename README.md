@@ -6,8 +6,8 @@ operating system: what an OS adds (an assistant, a security monitor, an installe
 ([docs/INTEGRATIONS.md](docs/INTEGRATIONS.md)), and Yggdrasil shows the matching features.
 
 Status: Yggdrasil runs as its own session on [Hyprland](https://hyprland.org) (`yggdrasil-session`), with Yggdrasil's own top bar,
-dock, Settings, file manager, app store, lock and login screens, password box and installer. KDE is gone from the session; two
-KDE libraries are still linked by the panel (`libkscreen`, `kconfig`) and are next to go. Yggdrasil's own compositor is a first
+dock, Settings, file manager, app store, lock and login screens, password box and installer. KDE is gone: nothing of it is
+started, called or linked. Yggdrasil's own compositor is a first
 version that runs in a window ([docs/COMPOSITOR.md](docs/COMPOSITOR.md)). The checklist for a desktop of its own:
 [docs/INDEPENDENCE.md](docs/INDEPENDENCE.md).
 

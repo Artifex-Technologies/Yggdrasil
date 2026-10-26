@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Default)]
 pub struct App {
-    /// The desktop file name without ".desktop" (also what KWin reports as a window's app id).
+    /// The desktop file name without ".desktop" (also the app id a window usually reports).
     pub id: String,
     pub name: String,
     pub icon: String,

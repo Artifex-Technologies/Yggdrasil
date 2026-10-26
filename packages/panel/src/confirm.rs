@@ -1,4 +1,4 @@
-//! Log out, restart and shut down in Yggdrasil's own session ask first, with a countdown, as on Windows and in Plasma: a card in
+//! Log out, restart and shut down in Yggdrasil's own session ask first, with a countdown, as on Windows: a card in
 //! the middle of the screen. When the time runs out (30 seconds) it goes ahead by itself, so walking away still ends the session;
 //! Cancel or Escape stops it, "now" or Enter does it at once. Going ahead is yggdrasil-logout's job: it asks every window to
 //! close first, so programs can save, and locks the screen instead if one does not close.

@@ -133,7 +133,7 @@ pub fn spawn(tx: calloop::channel::Sender<TrayMsg>) {
                 let _ = tx.send(TrayMsg::Set(it));
             }
         }
-        // the registry changed owner (KDE's kded stopped and the panel's own took over): start again with the new one
+        // the registry changed owner (another program stopped and the panel's own took over): start again with the new one
         {
             let (c3, tx3, host3) = (conn.clone(), tx.clone(), host.clone());
             std::thread::spawn(move || {

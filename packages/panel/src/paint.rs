@@ -259,7 +259,7 @@ impl Icons {
         false
     }
 
-    /// The lookup order: the icon pack chosen in KDE first (if it is not one of ours already), then
+    /// The lookup order: the icon pack chosen in Settings first (if it is not one of ours already), then
     /// Liki, the desktop's own pack, which fills in whatever the chosen pack has no icon for.
     fn chain(chosen: Option<&str>) -> Vec<String> {
         const BASE: [&str; 2] = ["Liki", "hicolor"];
@@ -276,7 +276,7 @@ impl Icons {
         v
     }
 
-    /// The icon pack was changed in KDE: use it from now on.
+    /// The icon pack was changed in Settings: use it from now on.
     pub fn set_pack(&mut self, chosen: Option<&str>) {
         self.themes = Self::chain(chosen);
         self.cache.clear();

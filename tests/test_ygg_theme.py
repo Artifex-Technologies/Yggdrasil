@@ -106,7 +106,7 @@ class Settings(unittest.TestCase):
         self.assertEqual(k["[Icons]"]["Theme"], "Liki")
         self.assertTrue(os.path.isfile(os.path.join(d, ".local/share/color-schemes/YggdrasilDark.colors")))
         g3 = parse_ini(open(os.path.join(d, ".config/gtk-3.0/settings.ini")).read())["[Settings]"]
-        self.assertEqual((g3["gtk-theme-name"], g3["gtk-icon-theme-name"], g3["gtk-cursor-theme-name"]), ("Yggdrasil", "Liki", "Yggdrasil"))
+        self.assertEqual((g3["gtk-theme-name"], g3["gtk-icon-theme-name"], g3["gtk-cursor-theme-name"]), ("Yggdrasil-dark", "Liki", "Yggdrasil"), "dark mode is a GTK theme of its own")
         css = open(os.path.join(d, ".config/gtk-4.0/gtk.css")).read()
         self.assertIn("rgb(12,34,56)", css)
         self.assertIn("border-radius: 3px", css)

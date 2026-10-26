@@ -1,6 +1,6 @@
 //! Locking the screen in Yggdrasil's own session: logind asks the session to lock (Super+L, `loginctl lock-session`, the idle timer)
 //! or the machine is about to sleep, and this starts `yggdrasil-lock` (once; it exits when the right password is typed). In another
-//! desktop's session (Plasma) that desktop's own lock screen answers those requests, so this stays out of it.
+//! desktop's session that desktop's own lock screen answers those requests, so this stays out of it.
 
 use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};

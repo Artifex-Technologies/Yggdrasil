@@ -1,6 +1,5 @@
 #!/bin/sh
-# yggdrasil-panelctl COMMAND: ask the running panel to do something. For compositor key bindings (Hyprland, Sway, labwc ...) and scripts;
-# under KDE the same things are wired through KDE's own shortcuts.
+# yggdrasil-panelctl COMMAND: ask the running panel to do something. For compositor key bindings (Hyprland, Sway, labwc ...) and scripts.
 #
 #   start            open or close the start menu         (bind to Super)
 #   calendar         open or close the calendar (and the notification pane when it is on)

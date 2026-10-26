@@ -1,4 +1,4 @@
-//! Reading and changing the system, through the same command-line tools Plasma uses. Every
+//! Reading and changing the system, through the usual command-line tools (nmcli, bluetoothctl, hyprctl ...). Every
 //! parser is a pure function of the tool's output so it can be tested without the tool.
 
 use std::collections::BTreeMap;
@@ -499,7 +499,7 @@ pub fn sound() -> Sound {
     }
 }
 
-// ---------------------------------------------------------------- Displays (kscreen-doctor)
+// ---------------------------------------------------------------- Displays (Hyprland)
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Mode {
@@ -540,42 +540,6 @@ impl Output {
     }
 }
 
-/// `kscreen-doctor -j`: connected outputs.
-pub fn outputs(json: &str) -> Vec<Output> {
-    let v: serde_json::Value = serde_json::from_str(json).unwrap_or(serde_json::Value::Null);
-    v["outputs"]
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .filter(|o| o["connected"].as_bool().unwrap_or(false))
-                .map(|o| Output {
-                    name: o["name"].as_str().unwrap_or("").to_string(),
-                    // Plasma 6.8 dropped the `enabled` key: a connected output with a current mode is in use
-                    enabled: o["enabled"].as_bool().unwrap_or_else(|| o["currentModeId"].as_str().map(|m| !m.is_empty()).unwrap_or(false)),
-                    primary: o["priority"].as_i64() == Some(1),
-                    scale: o["scale"].as_f64().unwrap_or(1.0),
-                    current: o["currentModeId"].as_str().map(str::to_string).unwrap_or_else(|| o["currentModeId"].to_string()),
-                    modes: o["modes"]
-                        .as_array()
-                        .map(|m| {
-                            m.iter()
-                                .map(|m| Mode {
-                                    id: m["id"].as_str().map(str::to_string).unwrap_or_else(|| m["id"].to_string()),
-                                    width: m["size"]["width"].as_u64().unwrap_or(0) as u32,
-                                    height: m["size"]["height"].as_u64().unwrap_or(0) as u32,
-                                    refresh: m["refreshRate"].as_f64().unwrap_or(0.0),
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                    x: o["pos"]["x"].as_i64().unwrap_or(0),
-                    y: o["pos"]["y"].as_i64().unwrap_or(0),
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct Displays {
     pub outputs: Vec<Output>,
@@ -584,10 +548,7 @@ pub struct Displays {
 
 pub fn displays() -> Displays {
     let tiling = yggdrasil_conf::tiling::outputs().join(",");
-    if hyprland() {
-        return Displays { outputs: hypr_outputs(&run("hyprctl", &["-j", "monitors", "all"]).unwrap_or_default()), tiling };
-    }
-    Displays { outputs: outputs(&run("kscreen-doctor", &["-j"]).unwrap_or_default()), tiling }
+    Displays { outputs: hypr_outputs(&run("hyprctl", &["-j", "monitors", "all"]).unwrap_or_default()), tiling }
 }
 
 /// The session's compositor is Hyprland (Yggdrasil's own session).
@@ -701,7 +662,7 @@ pub const ACCENTS: [(&str, [u8; 3]); 9] = [
 /// An icon pack (a freedesktop icon theme) that can be chosen.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct IconPack {
-    /// The folder name, which is what KDE's settings store.
+    /// The folder name, which is what the settings store.
     pub id: String,
     pub name: String,
     /// Installed by the user (in ~/.local/share/icons), so it can be removed from here.
@@ -931,24 +892,13 @@ pub fn read_idle() -> Idle {
     i
 }
 
-/// Saves the timers and switches KDE's own dimming, screen-off, sleep and lock timers off, so the two never both act.
+/// Saves the timers (yggdrasil-idle reads them).
 pub fn write_idle(i: &Idle) -> Result<(), String> {
     let p = idle_conf_path();
     if let Some(d) = p.parent() {
         std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
     }
     std::fs::write(&p, idle_text(i)).map_err(|e| e.to_string())?;
-    // only Plasma has KDE's timers (in Yggdrasil's session there is nothing to switch off)
-    if yggdrasil_conf::own_session() {
-        return Ok(());
-    }
-    for state in ["AC", "Battery", "LowBattery"] {
-        let _ = act("kwriteconfig6", &["--file", "powerdevilrc", "--group", state, "--group", "Display", "--key", "DimDisplayWhenIdle", "false"]);
-        let _ = act("kwriteconfig6", &["--file", "powerdevilrc", "--group", state, "--group", "Display", "--key", "TurnOffDisplayWhenIdle", "false"]);
-        let _ = act("kwriteconfig6", &["--file", "powerdevilrc", "--group", state, "--group", "SuspendAndShutdown", "--key", "AutoSuspendAction", "0"]);
-    }
-    let _ = act("kwriteconfig6", &["--file", "kscreenlockerrc", "--group", "Daemon", "--key", "Autolock", "false"]);
-    let _ = act("qdbus6", &["org.kde.Solid.PowerManagement", "/org/kde/Solid/PowerManagement", "org.kde.Solid.PowerManagement.reparseConfiguration"]);
     Ok(())
 }
 
@@ -1134,19 +1084,6 @@ mod tests {
         assert_eq!(d.len(), 1);
         assert_eq!(d[0].volume, 50);
         assert_eq!(d[0].description, "Speakers");
-    }
-
-    #[test]
-    fn displays_parser() {
-        let j = r#"{"outputs":[{"name":"DP-1","connected":true,"enabled":true,"priority":1,"scale":1,"currentModeId":"2","pos":{"x":0,"y":0},
-            "modes":[{"id":"1","size":{"width":3440,"height":1440},"refreshRate":59.97},{"id":"2","size":{"width":3440,"height":1440},"refreshRate":143.97},{"id":"3","size":{"width":2560,"height":1440},"refreshRate":143.97}]},
-            {"name":"HDMI-A-2","connected":false,"enabled":false,"modes":[]}]}"#;
-        let o = outputs(j);
-        assert_eq!(o.len(), 1);
-        assert!(o[0].primary);
-        assert_eq!(o[0].current_mode().unwrap().refresh, 143.97);
-        assert_eq!(o[0].resolutions(), vec![(3440, 1440), (2560, 1440)]);
-        assert_eq!(o[0].rates(3440, 1440)[0].id, "2");
     }
 
     #[test]
@@ -1352,7 +1289,7 @@ pub fn config_dir() -> std::path::PathBuf {
     std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config"))
 }
 
-/// The icon pack in use (kept in kdeglobals, which the panel, Minos and Plasma all read).
+/// The icon pack in use (kept in kdeglobals, the file Qt programs read it from; the panel and Minos read it too).
 pub fn current_icon_theme() -> String {
     std::fs::read_to_string(config_dir().join("kdeglobals")).ok().and_then(|t| ini_get(&t, "Icons", "Theme")).unwrap_or_default()
 }
@@ -1367,14 +1304,11 @@ fn ini_write(path: &std::path::Path, group: &str, key: &str, value: &str) -> Res
     std::fs::rename(&tmp, path).map_err(|e| e.to_string())
 }
 
-/// Choose an icon pack for the whole desktop (the panel, Minos, GTK and Qt programs follow it). In Plasma, Plasma's own tool
-/// does it (it also tells running KDE programs); in Yggdrasil's session the settings files are written here, no KDE tool needed.
+/// Choose an icon pack for the whole desktop (the panel, Minos, GTK and Qt programs follow it): the settings files are written
+/// here (kdeglobals is the file Qt programs read it from).
 pub fn set_icon_pack(id: &str) -> Result<(), String> {
     if id.is_empty() || id.contains('/') || id.starts_with('.') {
         return Err("not an icon pack name".into());
-    }
-    if !yggdrasil_conf::own_session() && std::path::Path::new("/usr/lib/plasma-changeicons").exists() {
-        return act("/usr/lib/plasma-changeicons", &[id]);
     }
     let cfg = config_dir();
     ini_write(&cfg.join("kdeglobals"), "Icons", "Theme", id)?;

@@ -1,5 +1,5 @@
 #!/bin/sh
-# yggdrasil-mediakey KEY: what the multimedia keys do, for compositor bindings (under KDE, KDE's own service handles them).
+# yggdrasil-mediakey KEY: what the multimedia keys do, for the session's key bindings.
 #
 #   volume-up | volume-down | mute            the sound output (PipeWire, wpctl); the panel shows its own volume pop-up
 #   mic-mute                                   the microphone

@@ -1,7 +1,7 @@
 //! yggdrasil-greeter: the login screen. greetd starts it inside a small compositor (cage, or Yggdrasil's own later) and it draws
 //! the same designs as the lock screen; what is typed goes to greetd (greetd.rs), which runs PAM and starts the session.
 //!
-//! Settings: /etc/yggdrasil/greeter.conf (`design = split`, `session = plasma`, `wallpaper = /path/to/picture`). The session is the
+//! Settings: /etc/yggdrasil/greeter.conf (`design = split`, `session = yggdrasil`, `wallpaper = /path/to/picture`). The session is the
 //! name of a file in /usr/share/wayland-sessions (as other login screens list them), or a command; without one, the first session there.
 //! Tab (or Down) and Shift+Tab (or Up) switch user while nothing is typed; Enter signs in; Escape clears what was typed.
 //! Exit status: 0 the session was started (greetd takes over), 2 setup problem.
