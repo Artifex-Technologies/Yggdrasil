@@ -45,26 +45,24 @@ fn out(cmd: &str, args: &[&str]) -> String {
     std::process::Command::new(cmd).args(args).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).output().map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default()
 }
 
-/// The desktops from `busctl --json=short get-property ... desktops` (type a(uss): position, id, name).
-pub fn parse_desktops(json: &str) -> Vec<Desktop> {
-    let v: Value = serde_json::from_str(json).unwrap_or(Value::Null);
-    let list = match &v["data"] {
-        Value::Array(a) if a.len() == 1 && a[0].is_array() => a[0].as_array().cloned().unwrap_or_default(),
-        Value::Array(a) => a.clone(),
-        _ => vec![],
-    };
-    list.iter()
-        .filter_map(|e| {
-            let e = e.as_array()?;
-            Some(Desktop { id: e.get(1)?.as_str()?.to_string(), name: e.get(2)?.as_str()?.to_string() })
-        })
-        .collect()
-}
-
-/// The id of the current desktop from `busctl --json=short get-property ... current` (type s).
-pub fn parse_current(json: &str) -> Option<String> {
-    let v: Value = serde_json::from_str(json).ok()?;
-    v["data"].as_str().or_else(|| v["data"][0].as_str()).map(str::to_string)
+/// The desktops from Hyprland's `hyprctl -j workspaces` and `-j activeworkspace`: the numbered workspaces that exist (they do while
+/// they hold a window or are shown) and the one in front, in order, and the position of the one in front. The hidden ones
+/// ("special:minimized") are not desktops.
+pub fn parse_desktops(workspaces: &str, active: &str) -> (Vec<Desktop>, usize) {
+    let mut ids: Vec<i64> = serde_json::from_str::<Value>(workspaces)
+        .ok()
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|w| w["id"].as_i64())
+        .filter(|&id| id >= 1)
+        .collect();
+    let current = serde_json::from_str::<Value>(active).ok().and_then(|v| v["id"].as_i64()).filter(|&id| id >= 1);
+    ids.extend(current);
+    ids.sort_unstable();
+    ids.dedup();
+    let at = current.and_then(|c| ids.iter().position(|&id| id == c)).unwrap_or(0);
+    (ids.iter().map(|id| Desktop { id: id.to_string(), name: format!("Desktop {id}") }).collect(), at)
 }
 
 /// `nmcli -t -f TYPE,STATE device` and `nmcli -t -f IN-USE,SIGNAL dev wifi`.
@@ -94,9 +92,7 @@ pub fn parse_bt(show: &str, connected: &str) -> Bt {
 }
 
 pub fn poll() -> Status {
-    let desktops = parse_desktops(&out("busctl", &["--user", "--json=short", "get-property", "org.kde.KWin", "/VirtualDesktopManager", "org.kde.KWin.VirtualDesktopManager", "desktops"]));
-    let current_id = parse_current(&out("busctl", &["--user", "--json=short", "get-property", "org.kde.KWin", "/VirtualDesktopManager", "org.kde.KWin.VirtualDesktopManager", "current"]));
-    let current = current_id.and_then(|id| desktops.iter().position(|d| d.id == id)).unwrap_or(0);
+    let (desktops, current) = parse_desktops(&out("hyprctl", &["-j", "workspaces"]), &out("hyprctl", &["-j", "activeworkspace"]));
     let net = parse_net(&out("nmcli", &["-t", "-f", "TYPE,STATE", "device"]), &out("nmcli", &["-t", "-f", "IN-USE,SIGNAL", "dev", "wifi"]));
     let bt = parse_bt(&out("timeout", &["2", "bluetoothctl", "show"]), &out("timeout", &["2", "bluetoothctl", "devices", "Connected"]));
     Status { desktops, current, net, bt }
@@ -108,11 +104,11 @@ mod tests {
 
     #[test]
     fn desktops_and_the_current_one_are_read() {
-        let d = parse_desktops(r#"{"type":"a(uss)","data":[[[0,"aaa","Desktop 1"],[1,"bbb","Desktop 2"]]]}"#);
-        assert_eq!(d.iter().map(|x| x.id.as_str()).collect::<Vec<_>>(), ["aaa", "bbb"]);
-        assert_eq!(d[1].name, "Desktop 2");
-        assert_eq!(parse_current(r#"{"type":"s","data":"bbb"}"#).as_deref(), Some("bbb"));
-        assert!(parse_desktops("nonsense").is_empty());
+        let ws = r#"[{"id":3,"name":"3","windows":1},{"id":1,"name":"1","windows":3},{"id":-98,"name":"special:minimized","windows":1}]"#;
+        let (d, at) = parse_desktops(ws, r#"{"id":2,"name":"2"}"#);
+        assert_eq!(d.iter().map(|x| x.id.as_str()).collect::<Vec<_>>(), ["1", "2", "3"], "the shown one is a desktop even while empty; hidden ones are not");
+        assert_eq!((d[1].name.as_str(), at), ("Desktop 2", 1));
+        assert_eq!(parse_desktops("nonsense", "").0.len(), 0);
     }
 
     #[test]

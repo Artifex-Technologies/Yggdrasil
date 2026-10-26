@@ -1675,9 +1675,9 @@ impl State {
                 self.close_popup();
                 if let Some(d) = key["ws:".len()..].parse::<usize>().ok().and_then(|i| self.model.status.desktops.get(i)).cloned() {
                     match id {
-                        1 => run(&["busctl", "--user", "set-property", "org.kde.KWin", "/VirtualDesktopManager", "org.kde.KWin.VirtualDesktopManager", "current", "s", &d.id]),
+                        1 => hypr::show_desktop(&d.id),
                         // its windows move to the desktop before it
-                        2 => run(&["busctl", "--user", "call", "org.kde.KWin", "/VirtualDesktopManager", "org.kde.KWin.VirtualDesktopManager", "removeDesktop", "s", &d.id]),
+                        2 => hypr::remove_desktop(&d.id, &self.model.status.desktops),
                         _ => {}
                     }
                 }
@@ -3036,17 +3036,17 @@ impl State {
             }
             Action::Workspace(i) => {
                 if let Some(d) = self.model.status.desktops.get(i) {
-                    run(&["busctl", "--user", "set-property", "org.kde.KWin", "/VirtualDesktopManager", "org.kde.KWin.VirtualDesktopManager", "current", "s", &d.id]);
+                    hypr::show_desktop(&d.id);
                     self.model.status.current = i;
                     self.dirty = true;
                 }
             }
             Action::NewWorkspace => {
-                // count the desktops now (not from the last refresh), so the new one always goes at the end
-                let json = Command::new("busctl").args(["--user", "--json=short", "get-property", "org.kde.KWin", "/VirtualDesktopManager", "org.kde.KWin.VirtualDesktopManager", "desktops"]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
-                let n = status::parse_desktops(&json).len();
-                if n > 0 && n < status::MAX_DESKTOPS {
-                    run(&["busctl", "--user", "call", "org.kde.KWin", "/VirtualDesktopManager", "org.kde.KWin.VirtualDesktopManager", "createDesktop", "us", &n.to_string(), &format!("Desktop {}", n + 1)]);
+                // count the desktops now (not from the last refresh), so the new one always goes after the last
+                let (desktops, _) = status::parse_desktops(&command_output("hyprctl", &["-j", "workspaces"]), &command_output("hyprctl", &["-j", "activeworkspace"]));
+                let last = desktops.iter().filter_map(|d| d.id.parse::<usize>().ok()).max().unwrap_or(0);
+                if last < status::MAX_DESKTOPS {
+                    hypr::show_desktop(&(last + 1).to_string());
                 }
             }
             Action::Network => run(&["yggdrasil-settings", "network"]),

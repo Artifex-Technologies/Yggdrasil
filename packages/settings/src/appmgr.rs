@@ -509,8 +509,8 @@ pub fn owner(app: &AppInfo) -> Option<(String, bool)> {
     Some((String::from_utf8_lossy(&out.stdout).trim().to_string(), false)).filter(|(p, _)| !p.is_empty())
 }
 
-/// Packages the desktop is made of: removing them would break the system, so Settings does not offer to.
-/// Packages Settings will not uninstall: the desktop's own, the system's core, and what the operating system lists in
+/// Packages Settings will not uninstall, because removing them would break the system: the desktop's own (Yggdrasil, its icons, the
+/// Hyprland compositor under it, the greetd login, the portals and sound it runs on), the system's core, and what the operating system lists in
 /// /etc/yggdrasil/protected-packages (one name per line; `name*` covers every package starting with `name`).
 pub fn protected(pkg: &str) -> bool {
     let os_list = std::fs::read_to_string(yggdrasil_conf::dirs::system_config().join("protected-packages")).unwrap_or_default();
@@ -525,11 +525,10 @@ fn protected_with(pkg: &str, os_list: &str) -> bool {
     listed
         || pkg.starts_with("yggdrasil-")
         || pkg.starts_with("liki-")
-        || pkg.starts_with("plasma-")
-        || pkg.starts_with("kde")
-        || pkg.starts_with("kwin")
-        || pkg.starts_with("systemsettings")
-        || matches!(pkg, "minos" | "sddm" | "pacman" | "systemd" | "networkmanager" | "xdg-desktop-portal" | "polkit" | "bash")
+        || pkg.starts_with("hypr")
+        || pkg.starts_with("greetd")
+        || pkg.starts_with("xdg-desktop-portal")
+        || matches!(pkg, "aquamarine" | "pipewire" | "wireplumber" | "pacman" | "systemd" | "networkmanager" | "polkit" | "bash")
 }
 
 #[cfg(test)]
@@ -634,7 +633,9 @@ mod tests {
 
     #[test]
     fn desktop_packages_are_protected() {
-        assert!(protected("yggdrasil-minos") && protected("liki-icon-theme") && protected("plasma-desktop") && protected("kwin") && !protected("firefox"));
+        assert!(protected("yggdrasil-minos") && protected("liki-icon-theme") && protected("hyprland") && protected("greetd") && !protected("firefox"));
+        assert!(super::protected_with("xdg-desktop-portal-hyprland", "") && super::protected_with("pipewire", ""));
+        assert!(!super::protected_with("plasma-desktop", "") && !super::protected_with("kwin", ""), "KDE is gone: its packages are ordinary ones");
         let os = "# the operating system's own\nlabyrinth-*\nsarina-git\n";
         assert!(super::protected_with("labyrinth-ollama-tuning", os) && super::protected_with("sarina-git", os) && !super::protected_with("sarina", os));
         assert!(!super::protected_with("labyrinth-ollama-tuning", ""));

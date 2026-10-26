@@ -69,8 +69,38 @@ pub fn restore(app_id: &str, title: &str) -> bool {
     true
 }
 
+/// Shows desktop `id` (Hyprland makes a numbered workspace when it is first shown).
+pub fn show_desktop(id: &str) {
+    if id.parse::<u32>().is_ok() {
+        dispatch(&format!(r#"hl.dsp.focus({{ workspace = "{id}" }})"#));
+    }
+}
+
+/// Removes desktop `id` the way the bar always did: its windows move to the desktop before it (the one after, for the first),
+/// and the emptied workspace goes away by itself once it is not shown.
+pub fn remove_desktop(id: &str, desktops: &[crate::status::Desktop]) {
+    let Some(i) = desktops.iter().position(|d| d.id == id) else { return };
+    let to = if i > 0 { desktops[i - 1].id.clone() } else if desktops.len() > 1 { desktops[1].id.clone() } else { return };
+    let clients: serde_json::Value = hyprctl(&["-j", "clients"]).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    for addr in windows_on(&clients, id) {
+        dispatch(&format!(r#"hl.dsp.window.move({{ workspace = "{to}", follow = false, window = "address:{addr}" }})"#));
+    }
+    show_desktop(&to);
+}
+
+fn windows_on(clients: &serde_json::Value, id: &str) -> Vec<String> {
+    let id: i64 = id.parse().unwrap_or(0);
+    clients.as_array().into_iter().flatten().filter(|c| c["workspace"]["id"].as_i64() == Some(id)).filter_map(|c| c["address"].as_str().map(str::to_string)).collect()
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_windows_of_a_desktop_are_found() {
+        let c: serde_json::Value = serde_json::from_str(r#"[{"address":"0xa","workspace":{"id":2}},{"address":"0xb","workspace":{"id":1}},{"address":"0xc","workspace":{"id":2}}]"#).unwrap();
+        assert_eq!(super::windows_on(&c, "2"), ["0xa", "0xc"]);
+    }
+
     #[test]
     fn a_window_on_the_hidden_workspace_is_minimized() {
         let c: serde_json::Value = serde_json::from_str(r#"{"workspace":{"id":-98,"name":"special:minimized"}}"#).unwrap();

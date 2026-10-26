@@ -1,8 +1,6 @@
-//! The volume and brightness pop-up: a small black pill a little above the dock. It is drawn here, by
-//! the panel, because KWin puts Plasma's own on-screen displays at two thirds of the screen's height
-//! and nothing a theme does changes that. Plasma's own pop-up for these two is hidden (see
-//! the operating system's Plasma OSD); this one follows the real changes: the output's volume (read
-//! from PipeWire when it changes) and the screen's brightness (from the power service).
+//! The volume and brightness pop-up: a small black pill a little above the dock, drawn by the panel. It follows the real
+//! changes: the output's volume (read from PipeWire when it changes) and the screen's brightness (the backlight's own file,
+//! whoever changed it: the brightness keys through brightnessctl, Settings, another program).
 
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
@@ -89,25 +87,52 @@ pub fn spawn_watchers(tx: calloop::channel::Sender<OsdState>) {
         }
     });
     std::thread::spawn(move || {
-        const DEST: &str = "org.kde.Solid.PowerManagement";
-        const PATH: &str = "/org/kde/Solid/PowerManagement/Actions/BrightnessControl";
-        const IFACE: &str = "org.kde.Solid.PowerManagement.Actions.BrightnessControl";
-        let Ok(conn) = zbus::blocking::Connection::session() else { return };
-        let Ok(proxy) = zbus::blocking::Proxy::new(&conn, DEST, PATH, IFACE) else { return };
-        let Ok(signals) = proxy.receive_signal("brightnessChanged") else { return };
-        for sig in signals {
-            let Ok(now) = sig.body().deserialize::<i32>() else { continue };
-            let max: i32 = proxy.call("brightnessMax", &()).unwrap_or(100);
-            if max > 0 {
-                let _ = tx.send(OsdState { kind: OsdKind::Brightness, percent: ((now.max(0) as f32 / max as f32) * 100.0).round() as u32, muted: false });
+        // sysfs announces no change of a backlight's level, so it is read four times a second; only where there is a backlight
+        // (a laptop or a monitor with one): a desktop PC has none and this thread ends at once
+        let Some(dir) = backlight() else { return };
+        let read = |f: &str| std::fs::read_to_string(dir.join(f)).ok().and_then(|t| t.trim().parse::<u32>().ok());
+        let Some(max) = read("max_brightness").filter(|&m| m > 0) else { return };
+        let mut last = read("brightness");
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            let now = read("brightness");
+            if now != last {
+                last = now;
+                if let Some(n) = now {
+                    if tx.send(OsdState { kind: OsdKind::Brightness, percent: brightness_percent(n, max), muted: false }).is_err() {
+                        return;
+                    }
+                }
             }
         }
     });
 }
 
+/// The screen's backlight: the graphics driver's own ("raw", intel_backlight say, the one brightnessctl changes) before the
+/// firmware's and a vendor's.
+fn backlight() -> Option<std::path::PathBuf> {
+    let mut all: Vec<std::path::PathBuf> = std::fs::read_dir("/sys/class/backlight").ok()?.flatten().map(|e| e.path()).collect();
+    all.sort_by_key(|p| match std::fs::read_to_string(p.join("type")).unwrap_or_default().trim() {
+        "raw" => 0,
+        "firmware" => 1,
+        _ => 2,
+    });
+    all.into_iter().next()
+}
+
+fn brightness_percent(now: u32, max: u32) -> u32 {
+    ((now.min(max) as f32 / max.max(1) as f32) * 100.0).round() as u32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn brightness_is_a_percentage_of_the_backlights_range() {
+        assert_eq!((brightness_percent(0, 255), brightness_percent(128, 255), brightness_percent(300, 255)), (0, 50, 100));
+        assert_eq!(brightness_percent(5, 0), 0, "no range: nothing to show");
+    }
 
     #[test]
     fn icons_follow_the_level() {
