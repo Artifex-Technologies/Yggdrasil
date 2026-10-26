@@ -7,7 +7,7 @@ pub const HOLD_MS: u128 = 500;
 /// Quiet after speech that ends an utterance.
 pub const END_SILENCE_MS: u32 = 1000;
 /// Without any speech for this long, listening gives up (the conversation ends).
-pub const NO_SPEECH_MS: u32 = 12_000;
+pub const NO_SPEECH_MS: u32 = 20_000;
 /// The longest utterance.
 pub const MAX_UTTERANCE_MS: u32 = 60_000;
 const WARMUP_MS: u32 = 450;
@@ -156,7 +156,7 @@ mod tests {
 
     #[test]
     fn a_click_is_not_speech() {
-        let ev = run(&[(0.1, 14), (0.7, 2), (0.1, 400)]);
+        let ev = run(&[(0.1, 14), (0.7, 2), (0.1, 650)]);
         assert!(!ev.contains(&Event::SpeechStarted), "{ev:?}");
         assert_eq!(ev.last(), Some(&Event::GaveUp));
     }
@@ -171,8 +171,9 @@ mod tests {
     }
 
     #[test]
-    fn silence_gives_up_after_twelve_seconds() {
-        assert_eq!(run(&[(0.05, 400)]), vec![Event::GaveUp]);
+    fn silence_gives_up_after_twenty_seconds() {
+        assert_eq!(run(&[(0.05, 400)]), vec![], "thirteen seconds of quiet: still listening (a pause to think is not the end)");
+        assert_eq!(run(&[(0.05, 650)]), vec![Event::GaveUp]);
     }
 
     #[test]

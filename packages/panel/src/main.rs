@@ -463,6 +463,12 @@ struct State {
     viz_tx: calloop::channel::Sender<()>,
     /// The assistant has been asked to speak (when); its loudness comes from the envelope file the speaking script writes.
     speech_since: Option<std::time::Instant>,
+    /// Her voice saying an answer sentence by sentence while the rest is still being written.
+    speaker: Option<fylgja::Speaker>,
+    /// This answer was (or is being) said sentence by sentence: the whole of it is not said again when it is complete.
+    streamed: bool,
+    /// In a conversation: listen again at this moment (a breath after she has finished, so the end of her voice is not heard as the owner).
+    listen_at: Option<std::time::Instant>,
     speech_env: Option<(Vec<u8>, i64)>,
     speech_env_mtime: Option<std::time::SystemTime>,
     /// The speaking script was seen running (so its end means she is done).
@@ -482,6 +488,8 @@ struct State {
     voice_tx: calloop::channel::Sender<Result<String, String>>,
     /// What the assistant understood of the question, sent as soon as it is known (before her answer).
     heard_tx: calloop::channel::Sender<String>,
+    /// Each sentence of her answer as it is written.
+    say_tx: calloop::channel::Sender<String>,
     thumbs_started: bool,
     art_for: Option<String>,
     /// When the app folders last changed: the apps are read again when this does (an install or removal).
@@ -1045,7 +1053,7 @@ impl State {
             fylgja::stop_recording(&mut child);
             self.rec_since = None;
             self.model.fylgja.voice = fylgja::Voice::Thinking(String::new());
-            fylgja::ask_assistant(path, self.conv_id.clone(), self.heard_tx.clone(), self.voice_tx.clone());
+            fylgja::ask_assistant(path, self.conv_id.clone(), self.heard_tx.clone(), self.say_tx.clone(), self.voice_tx.clone());
             self.dirty = true;
         }
     }
@@ -1066,11 +1074,12 @@ impl State {
     /// No answer to show: a notification says why (and she says it, when she speaks).
     fn voice_failed(&mut self, why: &str) {
         self.model.fylgja.voice = fylgja::Voice::Idle;
+        self.streamed = false;
         if self.conv && why.starts_with("I did not catch") {
             // nothing to hear in a conversation: listen once more quietly, and end it after two in a row
             self.conv_misses += 1;
             if self.conv_misses >= 2 {
-                self.end_conversation();
+                self.conversation_faded("I stopped listening: I could not make out what was said.");
             } else {
                 self.vad_mode = true;
                 self.begin_listening();
@@ -1093,7 +1102,12 @@ impl State {
         self.model.fylgja.voice = fylgja::Voice::Idle;
         self.conv_misses = 0;
         let text = fylgja::spoken_part(reply);
-        if self.model.conf.assistant_speaks {
+        let streamed = std::mem::take(&mut self.streamed);
+        if let Some(sp) = self.speaker.take() {
+            sp.end(); // already being said, sentence by sentence: the voice finishes what it has
+        } else if streamed {
+            // said while it was written, and stopped by the owner meanwhile: not said again
+        } else if self.model.conf.assistant_speaks {
             self.start_speech(&text);
         } else {
             let name = assistant::name();
@@ -1111,10 +1125,45 @@ impl State {
     }
 
     fn stop_speech(&mut self) {
+        if let Some(sp) = self.speaker.take() {
+            sp.end();
+        }
+        self.listen_at = None;
         if self.speech_since.take().is_some() {
             fylgja::stop_speaking();
         }
         self.speech_env = None;
+    }
+
+    /// A sentence of her answer, as soon as it is written: said at once (the rest follows as it comes), with the island speaking.
+    fn voice_sentence(&mut self, line: &str) {
+        if !self.model.conf.assistant_speaks || !matches!(self.model.fylgja.voice, fylgja::Voice::Thinking(_)) && self.speaker.is_none() {
+            return;
+        }
+        if self.speaker.is_none() {
+            let Some(sp) = fylgja::Speaker::start() else { return };
+            self.speaker = Some(sp);
+            self.streamed = true;
+            self.model.fylgja.voice = fylgja::Voice::Idle;
+            self.speech_since = Some(std::time::Instant::now());
+            self.speech_env = None;
+            self.speech_env_mtime = None;
+            self.speech_seen = false;
+            self.start_viz();
+        }
+        if let Some(sp) = self.speaker.as_mut() {
+            sp.say(line);
+        }
+        self.dirty = true;
+    }
+
+    /// The conversation ended on its own (quiet for a while, or nothing understood twice): said in a notification, so it does not look
+    /// like she stopped for no reason.
+    fn conversation_faded(&mut self, why: &str) {
+        self.end_conversation();
+        let name = assistant::name();
+        let body = format!("{why} Tap {} to pick up again.", crate::assistant::get().map(|a| a.shortcut()).unwrap_or_else(|| "Super+S".into()));
+        let _ = Command::new("notify-send").args(["-a", name, "-i", "audio-input-microphone", name, &body]).stdin(std::process::Stdio::null()).spawn().map(|mut c| std::thread::spawn(move || { let _ = c.wait(); }));
     }
 
     /// Under KWin the voice island's surface is made once, when the bars are, and stays (empty and see-through) until it is needed:
@@ -1189,7 +1238,7 @@ impl State {
         if mode == Some(voicewave::Mode::Listening) && self.vad_mode {
             match self.vad.feed(raw, dt) {
                 convo::Event::EndOfSpeech => self.send_recording(),
-                convo::Event::GaveUp => self.end_conversation(),
+                convo::Event::GaveUp => self.conversation_faded("I stopped listening: it was quiet for a while."),
                 _ => {}
             }
         }
@@ -1239,7 +1288,13 @@ impl State {
             self.speech_since = None; // she has finished (or the voice never started: no voice installed)
             self.speech_env = None;
             self.speech_seen = false;
-            self.after_speech();
+            if let Some(sp) = self.speaker.take() {
+                sp.end();
+            }
+            // a breath before listening again: the tail of her voice through the speakers must not be heard as the owner
+            if self.conv {
+                self.listen_at = Some(std::time::Instant::now() + Duration::from_millis(400));
+            }
             return 0.0;
         }
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0);
@@ -3832,6 +3887,7 @@ fn main() {
     let (toast_hide_tx, toast_hide_rx) = calloop::channel::channel::<u32>();
     let (voice_tx, voice_rx) = calloop::channel::channel::<Result<String, String>>();
     let (heard_tx, heard_rx) = calloop::channel::channel::<String>();
+    let (say_tx, say_rx) = calloop::channel::channel::<String>();
     let (viz_tx, viz_rx) = calloop::channel::channel::<()>();
     let (vkey_tx, vkey_rx) = calloop::channel::channel::<voicekey::Key>();
     let mut state = State {
@@ -3922,6 +3978,9 @@ fn main() {
         viz_alive: Arc::new(AtomicBool::new(false)),
         viz_tx,
         speech_since: None,
+        speaker: None,
+        streamed: false,
+        listen_at: None,
         speech_env: None,
         speech_env_mtime: None,
         speech_seen: false,
@@ -3935,6 +3994,7 @@ fn main() {
         last_tick: None,
         voice_tx,
         heard_tx,
+        say_tx,
         thumbs_started: false,
         art_for: None,
         apps_stamp: apps::stamp(),
@@ -4142,6 +4202,11 @@ fn main() {
                     }
                 }
             }
+            // a conversation listens again a breath after she has finished speaking
+            if st.listen_at.is_some_and(|t| Instant::now() >= t) {
+                st.listen_at = None;
+                st.after_speech();
+            }
             // a window dragged to the notch opens the zones sheet
             if st.popup.is_none() && st.zone_spotter.tick() {
                 zones::note("drag reached the notch (seen by the panel)");
@@ -4231,6 +4296,15 @@ fn main() {
             }
         })
         .expect("heard channel");
+    // each sentence of her answer as it is written: said at once
+    event_loop
+        .handle()
+        .insert_source(say_rx, |event, _, st| {
+            if let calloop::channel::Event::Msg(line) = event {
+                st.voice_sentence(&line);
+            }
+        })
+        .expect("say channel");
     // the assistant's answer (or why there is none): said aloud or shown as a notification, never a card
     event_loop
         .handle()

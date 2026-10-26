@@ -610,10 +610,44 @@ pub fn stop_speaking() {
     }
 }
 
-/// Gives the recording to the assistant and reports its reply or why there is none.
-pub fn ask_assistant(wav: PathBuf, conversation: Option<String>, heard: calloop::channel::Sender<String>, done: calloop::channel::Sender<Result<String, String>>) {
+/// Her voice saying an answer sentence by sentence as it is written: `labyrinth-sarina-speak --lines` reads each line as it arrives
+/// and says it; closing its input ends the answer (it finishes what it has). `--stop` from stop_speaking() ends it at once.
+pub struct Speaker {
+    child: std::process::Child,
+    stdin: Option<std::process::ChildStdin>,
+}
+
+impl Speaker {
+    pub fn start() -> Option<Speaker> {
+        let mut c = crate::assistant::get().and_then(|a| a.speak())?;
+        c.arg("--lines");
+        let mut child = c.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok()?;
+        let stdin = child.stdin.take();
+        Some(Speaker { child, stdin })
+    }
+
+    /// One sentence to say next.
+    pub fn say(&mut self, line: &str) {
+        use std::io::Write;
+        if let Some(si) = self.stdin.as_mut() {
+            let _ = si.write_all(line.trim().as_bytes()).and_then(|_| si.write_all(b"\n")).and_then(|_| si.flush());
+        }
+    }
+
+    /// The answer is complete: the voice finishes what it has and ends.
+    pub fn end(mut self) {
+        drop(self.stdin.take());
+        std::thread::spawn(move || {
+            let _ = self.child.wait();
+        });
+    }
+}
+
+/// Gives the recording to the assistant and reports its reply or why there is none. Each sentence of the answer is passed on as it
+/// arrives (`say`), so it can be spoken while the rest is still being written.
+pub fn ask_assistant(wav: PathBuf, conversation: Option<String>, heard: calloop::channel::Sender<String>, say: calloop::channel::Sender<String>, done: calloop::channel::Sender<Result<String, String>>) {
     std::thread::spawn(move || {
-        let r = run_ask(&wav, conversation.as_deref(), &heard);
+        let r = run_ask(&wav, conversation.as_deref(), &heard, &say);
         let _ = std::fs::remove_file(&wav); // the question is not kept
         let _ = done.send(r);
     });
@@ -621,7 +655,7 @@ pub fn ask_assistant(wav: PathBuf, conversation: Option<String>, heard: calloop:
 
 /// Runs the assistant's `ask` program, passing on its first line (`Heard: "..."`) as soon as it is printed, so the card can show
 /// what was understood while the answer is still being worked on. A conversation's turns share YGGDRASIL_CONVERSATION.
-fn run_ask(wav: &PathBuf, conversation: Option<&str>, heard: &calloop::channel::Sender<String>) -> Result<String, String> {
+fn run_ask(wav: &PathBuf, conversation: Option<&str>, heard: &calloop::channel::Sender<String>, say: &calloop::channel::Sender<String>) -> Result<String, String> {
     use std::io::{BufRead, BufReader};
     let name = crate::assistant::name();
     let a = crate::assistant::get().ok_or_else(|| "No assistant is installed.".to_string())?;
@@ -637,6 +671,8 @@ fn run_ask(wav: &PathBuf, conversation: Option<&str>, heard: &calloop::channel::
                 if let Some(h) = line.strip_prefix("Heard: ") {
                     let _ = heard.send(h.to_string());
                 }
+            } else if !line.trim().is_empty() {
+                let _ = say.send(line.trim().to_string());
             }
             text.push_str(&line);
             text.push('\n');

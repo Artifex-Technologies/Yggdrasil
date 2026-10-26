@@ -12,6 +12,8 @@ pub struct Assistant {
     speak: Option<Vec<String>>,
     warm: Option<Vec<String>>,
     runtime: Option<String>,
+    /// The keys that talk to it ("Super+S"), as the integration names them, for messages.
+    shortcut: String,
 }
 
 static ASSISTANT: OnceLock<Option<Assistant>> = OnceLock::new();
@@ -27,6 +29,7 @@ pub fn get() -> Option<&'static Assistant> {
                 speak: i.command("speak"),
                 warm: i.command("warm"),
                 runtime: i.get("runtime").filter(|r| !r.contains('/') && !r.contains("..")).map(str::to_string),
+                shortcut: i.get("shortcut").unwrap_or("Super+S").to_string(),
             })
         })
         .as_ref()
@@ -53,6 +56,10 @@ impl Assistant {
     pub fn speak(&self) -> Option<Command> {
         self.speak.as_deref().map(command)
     }
+    pub fn shortcut(&self) -> String {
+        self.shortcut.clone()
+    }
+
     pub fn warm(&self) -> Option<Command> {
         self.warm.as_deref().map(command)
     }
