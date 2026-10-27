@@ -3950,6 +3950,18 @@ fn main() {
             }
         })
         .expect("window picture channel");
+    // Hold-to-talk's key-up, whichever key is let go first: Hyprland reports the release binding only while Super is still held, so
+    // letting go of Super before S lost it (the recording ran on and Super+S did not stop it). While the key is down, ask Hyprland
+    // whether S is still held; when it is not and no release came, act on the release as if it had.
+    event_loop
+        .handle()
+        .insert_source(Timer::from_duration(Duration::from_millis(100)), |_, _, st| {
+            if st.key_down_at.is_some_and(|t| t.elapsed() >= Duration::from_millis(150)) && zones::keys_down(&["s", "S"], "yggdrasil-voice-key") == Some(false) {
+                st.voice_key(VoiceKey::Up);
+            }
+            TimeoutAction::ToDuration(Duration::from_millis(100))
+        })
+        .expect("hold-to-talk key timer");
     // resting on a dock app (400 ms, as Windows does) lists its windows; the list goes when the pointer has left it
     event_loop
         .handle()

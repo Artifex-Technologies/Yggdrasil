@@ -237,14 +237,19 @@ impl Spotter {
     }
 }
 
-/// Whether a Super key is held now, as Hyprland sees it (asked through its Lua, which answers into a file in the runtime folder).
+/// Whether a Super key is held now, as Hyprland sees it.
 fn super_held() -> Option<bool> {
+    keys_down(&["Super_L", "Super_R"], "yggdrasil-zones-super")
+}
+
+/// Whether any of these keys (xkb names) is held now, as Hyprland sees it: asked through its Lua, which answers into a file in the
+/// runtime folder (`tag` names the file, so two askers do not read each other's answer).
+pub fn keys_down(keys: &[&str], tag: &str) -> Option<bool> {
     let run = std::env::var("XDG_RUNTIME_DIR").ok()?;
-    let out = format!("{run}/yggdrasil-zones-super");
+    let out = format!("{run}/{tag}");
     let _ = std::fs::remove_file(&out);
-    let lua = format!(
-        "local f = io.open('{out}', 'w') if f then f:write(tostring(hl.is_key_down('Super_L') or hl.is_key_down('Super_R'))) f:close() end"
-    );
+    let test = keys.iter().map(|k| format!("hl.is_key_down('{k}')")).collect::<Vec<_>>().join(" or ");
+    let lua = format!("local f = io.open('{out}', 'w') if f then f:write(tostring({test})) f:close() end");
     let ok = Command::new("hyprctl").args(["eval", &lua]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().ok()?.success();
     if !ok {
         return None;

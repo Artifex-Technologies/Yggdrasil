@@ -69,21 +69,32 @@ fn read_volume() -> Option<(u32, bool)> {
 pub fn spawn_watchers(tx: calloop::channel::Sender<OsdState>) {
     let vtx = tx.clone();
     std::thread::spawn(move || {
-        let Ok(mut child) = Command::new("pactl").arg("subscribe").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() else { return };
-        let Some(out) = child.stdout.take() else { return };
+        // pactl ends when the sound server restarts (a new device, the voice warming up): it is started again, or the pop-up was
+        // gone for good until the panel restarted (seen 2026-10-26: no pactl child, no volume pop-up)
         let mut last = read_volume();
-        for line in BufReader::new(out).lines().map_while(Result::ok) {
-            // "Event 'change' on sink #53" (not a sink-input: that is one app's volume)
-            if !(line.contains("'change' on sink #") || line.contains("'change' on server")) {
+        loop {
+            let Ok(mut child) = Command::new("pactl").arg("subscribe").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() else {
+                std::thread::sleep(std::time::Duration::from_secs(5));
                 continue;
-            }
-            let now = read_volume();
-            if now != last {
-                last = now;
-                if let Some((percent, muted)) = now {
-                    let _ = vtx.send(OsdState { kind: OsdKind::Volume, percent, muted });
+            };
+            let Some(out) = child.stdout.take() else { return };
+            for line in BufReader::new(out).lines().map_while(Result::ok) {
+                // "Event 'change' on sink #53" (not a sink-input: that is one app's volume)
+                if !(line.contains("'change' on sink #") || line.contains("'change' on server")) {
+                    continue;
+                }
+                let now = read_volume();
+                if now != last {
+                    last = now;
+                    if let Some((percent, muted)) = now {
+                        if vtx.send(OsdState { kind: OsdKind::Volume, percent, muted }).is_err() {
+                            return;
+                        }
+                    }
                 }
             }
+            let _ = child.wait();
+            std::thread::sleep(std::time::Duration::from_secs(2));
         }
     });
     std::thread::spawn(move || {

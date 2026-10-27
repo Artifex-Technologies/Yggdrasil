@@ -768,13 +768,39 @@ pub fn set_dark(dark: bool) {
     });
 }
 
+/// Sets a volume from a slider. A drag moves the slider many times a second: one worker applies the newest position, one command at a
+/// time, so the commands do not pile up and race each other (the slider felt sluggish while dozens of wpctl ran at once).
 pub fn set_volume(target: &Slider, percent: u32) {
-    let p = percent.min(100);
-    match target {
-        Slider::Master => run("wpctl", &["set-volume", "@DEFAULT_AUDIO_SINK@", &format!("{:.2}", p as f32 / 100.0)]),
-        Slider::App(id) => run("pactl", &["set-sink-input-volume", &id.to_string(), &format!("{p}%")]),
-        Slider::Night => {}
-    }
+    static WORKER: std::sync::OnceLock<std::sync::mpsc::Sender<(Slider, u32)>> = std::sync::OnceLock::new();
+    let tx = WORKER.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::channel::<(Slider, u32)>();
+        std::thread::spawn(move || {
+            while let Ok(mut job) = rx.recv() {
+                // only the newest position of each slider matters
+                let mut latest: Vec<(Slider, u32)> = vec![];
+                loop {
+                    match latest.iter_mut().find(|(s, _)| *s == job.0) {
+                        Some(slot) => slot.1 = job.1,
+                        None => latest.push(job),
+                    }
+                    match rx.try_recv() {
+                        Ok(next) => job = next,
+                        Err(_) => break,
+                    }
+                }
+                for (target, p) in latest {
+                    let p = p.min(100);
+                    let _ = match target {
+                        Slider::Master => Command::new("wpctl").args(["set-volume", "@DEFAULT_AUDIO_SINK@", &format!("{:.2}", p as f32 / 100.0)]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status(),
+                        Slider::App(id) => Command::new("pactl").args(["set-sink-input-volume", &id.to_string(), &format!("{p}%")]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status(),
+                        Slider::Night => continue,
+                    };
+                }
+            }
+        });
+        tx
+    });
+    let _ = tx.send((target.clone(), percent));
 }
 
 // ---------------------------------------------------------------- drawing
