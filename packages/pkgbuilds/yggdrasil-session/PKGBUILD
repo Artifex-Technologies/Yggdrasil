@@ -1,14 +1,14 @@
 # Yggdrasil's own desktop session: Hyprland with Yggdrasil's config (built from packages/session in this repository).
 pkgname=yggdrasil-session
 pkgver=0.1.0
-pkgrel=7
+pkgrel=8
 pkgdesc="Yggdrasil's own desktop session, on Hyprland"
 arch=('any')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
 license=('MPL-2.0')
 depends=('hyprland' 'xdg-desktop-portal-hyprland' 'yggdrasil-panel' 'yggdrasil-idle' 'yggdrasil-lock' 'yggdrasil-polkit' 'yggdrasil-portal' 'yggdrasil-xmove'
          'python' 'grim' 'slurp' 'wl-clipboard' 'libnotify' 'xdg-user-dirs'
-         'gcc' 'pkgconf')  # the Hyprland plugin is built for the installed Hyprland at login (yggdrasil-hypr-plugin)
+         'gcc' 'pkgconf')  # the Hyprland plugin is built as root for the installed Hyprland by a pacman hook (yggdrasil-hypr-plugin)
 optdepends=('ghostty: the terminal on Super+Return' 'btop: running programs on Ctrl+Shift+Esc')
 
 _src="$startdir/../../session"
@@ -20,6 +20,7 @@ package() {
   install -Dm755 "$_src/bin/yggdrasil-logout" "$pkgdir/usr/bin/yggdrasil-logout"
   install -Dm755 "$_src/bin/yggdrasil-hypr-plugin" "$pkgdir/usr/bin/yggdrasil-hypr-plugin"
   install -Dm644 "$_src/hyprland/plugin/minimize.cpp" "$pkgdir/usr/share/yggdrasil/hyprland/plugin/minimize.cpp"
+  install -Dm644 "$_src/libalpm/yggdrasil-hypr-plugin.hook" "$pkgdir/usr/share/libalpm/hooks/yggdrasil-hypr-plugin.hook"
   install -Dm644 "$_src/hyprland/yggdrasil.lua" "$pkgdir/usr/share/yggdrasil/hyprland/yggdrasil.lua"
   # the person at the screen may read their mice and touchpads (the end of a window drag, for window zones); never keyboards
   install -Dm644 "$_src/udev/71-yggdrasil-pointer.rules" "$pkgdir/usr/lib/udev/rules.d/71-yggdrasil-pointer.rules"

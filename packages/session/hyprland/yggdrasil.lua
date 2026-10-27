@@ -116,6 +116,12 @@ hl.config({
     hide_on_key_press = false,
   },
 
+  -- Hyprland's permission system: a program may capture the screen, and a plugin (code inside the compositor, which sees
+  -- every key typed, passwords included) may be loaded, only if a rule below allows it; anything else asks first.
+  ecosystem = {
+    enforce_permissions = true,
+  },
+
   debug = {
     -- config mistakes go to the notification center (the panel asks after every load), not into a box over the screen
     suppress_errors = true,
@@ -128,6 +134,17 @@ hl.config({
 })
 
 -- Windows float, centred, at the size the program asks for...
+-- who may capture the screen without asking: screen sharing (the portal), the lock screen's blurred background, the panel's
+-- window previews, the colour picker and screenshots (yggdrasil-shot runs grim)
+for _, bin in ipairs({
+  "/usr/lib/xdg-desktop-portal-hyprland", "/usr/bin/yggdrasil-lock", "/usr/bin/yggdrasil-panel",
+  "/usr/bin/yggdrasil-colorpicker", "/usr/bin/grim",
+}) do
+  hl.permission({ binary = "^" .. (bin:gsub("%.", "\\.")) .. "$", type = "screencopy", mode = "allow" })
+end
+-- plugins only from the root-owned folder the pacman hook builds into (yggdrasil-hypr-plugin); any other plugin asks
+hl.permission({ binary = "^/usr/lib/yggdrasil/hyprland-plugin/[0-9a-f]+/[A-Za-z0-9_-]+\\.so$", type = "plugin", mode = "allow" })
+
 hl.window_rule({ name = "windows-float", match = { class = ".*" }, float = true, center = true })
 
 -- Steam asks at start to have its window un-maximized, and Hyprland 0.56 maximizes it instead: its maximize requests are

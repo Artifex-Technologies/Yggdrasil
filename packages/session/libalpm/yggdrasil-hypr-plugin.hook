@@ -1,0 +1,14 @@
+# Builds Yggdrasil's Hyprland plugin for the installed Hyprland, into a root-owned folder (see yggdrasil-hypr-plugin).
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = hyprland
+Target = yggdrasil-session
+
+[Action]
+Description = Building Yggdrasil's Hyprland plugin for the installed Hyprland...
+When = PostTransaction
+Exec = /usr/bin/yggdrasil-hypr-plugin --build-system
+Depends = gcc
+Depends = pkgconf
