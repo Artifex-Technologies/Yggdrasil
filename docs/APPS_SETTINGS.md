@@ -41,6 +41,18 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
 - **Power limits** (`/usr/lib/yggdrasil/powerlimit`): /etc/yggdrasil/power-limits.json (read from /etc/labyrinth/ until the first
   change); the root service `yggdrasil-powerlimit.service` (the operating system switches it on) applies the active mode's limits on every mode change (CPU: `scaling_max_freq` as a percent
   of `cpuinfo_max_freq`; GPU: `nvidia-smi -pl`). Verified on the RTX 2080 Ti and the Intel pstate CPU; restored to defaults.
+  On the Power page the graphics card's three mode limits are one group ("Graphics card · NAME"), the processor's another.
+  While the graphics card unlock is armed or measured, `/var/lib/yggdrasil/gpu-unlock/power-hold` exists and no mode goes above
+  the card's default watts (the modes' own limits stay saved and come back when the hold ends); `powerlimit get` reports it as
+  `gpu.hold` and the slider stops there.
+- **Graphics card unlock** (`/usr/lib/yggdrasil/gpuunlock`, built 2026-10-27 as Phase 0 of Labyrinth OS's
+  [GPU_UNLOCK.md](https://github.com/Artifex-Technologies/Labyrinth_OS/blob/main/docs/GPU_UNLOCK.md)): a "Tensor-rate unlock"
+  row in that group, only with Developer options on and only for a card listed exactly (device, board, VBIOS, driver series)
+  in `/usr/share/yggdrasil/gpu-unlock/supported.json`; any other card gets no row at all, and `gpuunlock status --json` keeps
+  the reason. Arming asks for the password every time (polkit `auth_admin`), takes a snapshot, adds a one-try GRUB entry
+  (`/etc/grub.d/41_gpu_unlock`, which prints nothing otherwise) and holds the power; `yggdrasil-gpu-unlock-boot.service` and
+  `-verify.service` follow the attempt. Tests: `helpers/tests/test_gpuunlock.py`. A debug build reads the status from
+  `$YGGDRASIL_GPUUNLOCK_FIXTURE` (for screenshots of the other states).
 
 ## Ask before connecting (built 2026-10-16)
 

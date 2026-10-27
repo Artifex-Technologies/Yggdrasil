@@ -726,6 +726,8 @@ pub struct Power {
     pub idle: Idle,
     /// What the hardware allows and what is set for each mode (Developer options only).
     pub limits: Option<PowerLimits>,
+    /// The graphics card unlock (Developer options, an NVIDIA card only).
+    pub unlock: Option<GpuUnlock>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -734,6 +736,8 @@ pub struct GpuLimits {
     pub default: i64,
     pub min: i64,
     pub max: i64,
+    /// While the unlock is tried and measured, no mode may go above this (the card's default, or lower after a hot start).
+    pub hold: Option<i64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -751,9 +755,54 @@ pub fn parse_power_limits(json: &str) -> Option<PowerLimits> {
         default: g.get("default").and_then(|x| x.as_i64()).unwrap_or(0),
         min: g.get("min").and_then(|x| x.as_i64()).unwrap_or(0),
         max: g.get("max").and_then(|x| x.as_i64()).unwrap_or(0),
+        hold: g.get("hold").and_then(|x| x.as_i64()),
     });
     let modes = v["limits"].as_object().map(|m| m.iter().map(|(k, l)| (k.clone(), (l["cpu"].as_i64(), l["gpu"].as_i64()))).collect()).unwrap_or_default();
     Some(PowerLimits { gpu, modes })
+}
+
+/// What `gpuunlock status --json` says (/usr/lib/yggdrasil/gpuunlock; the plan is Labyrinth OS docs/GPU_UNLOCK.md).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GpuUnlock {
+    /// unsupported, supported, armed, unlocked, failed, throttled, secure-boot or no-nvidia
+    pub state: String,
+    pub reason: String,
+    /// Why arming cannot start yet on a supported card (its boot program is not built, the boot menu cannot do one try here).
+    pub blocker: Option<String>,
+    pub since: Option<String>,
+    pub ratio: Option<f64>,
+    pub hold: bool,
+}
+
+impl GpuUnlock {
+    /// Whether there is an unlock row at all: never for a card that is not in the support table (the reason stays in the
+    /// helper's answer and its log).
+    pub fn offered(&self) -> bool {
+        !matches!(self.state.as_str(), "unsupported" | "no-nvidia" | "")
+    }
+}
+
+pub fn parse_gpu_unlock(json: &str) -> Option<GpuUnlock> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    let s = |k: &str| v[k].as_str().map(String::from);
+    Some(GpuUnlock { state: s("state")?, reason: s("reason").unwrap_or_default(), blocker: s("arm_blocker"), since: s("since"), ratio: v["ratio"].as_f64(), hold: v["power_hold"].as_bool().unwrap_or(false) })
+}
+
+/// The helper's answer. A debug build reads it from $YGGDRASIL_GPUUNLOCK_FIXTURE instead, for tests and screenshots; release
+/// builds ignore that, and arming checks everything again as root.
+pub fn gpu_unlock() -> Option<GpuUnlock> {
+    if cfg!(debug_assertions) {
+        if let Ok(path) = std::env::var("YGGDRASIL_GPUUNLOCK_FIXTURE") {
+            return std::fs::read_to_string(path).ok().and_then(|s| parse_gpu_unlock(&s));
+        }
+    }
+    run("/usr/lib/yggdrasil/gpuunlock", &["status", "--json"]).and_then(|s| parse_gpu_unlock(&s))
+}
+
+/// The newest backup of Sarina on Proton Drive (its folder's name, a date), shown before arming the unlock as a reminder.
+pub fn sarina_backup() -> Option<String> {
+    let dir = std::path::Path::new(&std::env::var("HOME").ok()?).join("ProtonDrive/Documents/Github/Sarina/backups");
+    std::fs::read_dir(dir).ok()?.flatten().filter(|e| e.path().is_dir()).filter_map(|e| e.file_name().into_string().ok()).max()
 }
 
 /// `powerprofilesctl list`: profile names ("* performance:" marks the active one).
@@ -800,10 +849,12 @@ pub fn set_profile(name: &str) -> Result<(), String> {
 pub fn power() -> Power {
     let (profiles, active) = profiles_dbus().unwrap_or_else(|| profiles(&run("powerprofilesctl", &["list"]).unwrap_or_default()));
     let limits = if yggdrasil_conf::PanelConf::load().developer { run("/usr/lib/yggdrasil/powerlimit", &["get"]).and_then(|s| parse_power_limits(&s)) } else { None };
+    let unlock = if limits.as_ref().is_some_and(|l| l.gpu.is_some()) { gpu_unlock() } else { None };
     Power {
         profile: active,
         profiles,
         limits,
+        unlock,
         idle: read_idle(),
     }
 }
@@ -1443,6 +1494,28 @@ mod limit_tests {
         assert_eq!(l.modes["power-saver"], (Some(50), None));
         assert!(parse_power_limits(r#"{"gpu":null,"limits":{}}"#).unwrap().gpu.is_none());
         assert!(parse_power_limits("nope").is_none());
+        assert_eq!(l.gpu.as_ref().unwrap().hold, None);
+        let held = parse_power_limits(r#"{"gpu":{"name":"RTX","watts":260,"default":260,"min":130,"max":290,"hold":260},"limits":{"performance":{"gpu":290}}}"#).unwrap();
+        assert_eq!(held.gpu.unwrap().hold, Some(260), "the slider stops at the held watts");
+    }
+
+    #[test]
+    fn gpu_unlock_parse_and_when_a_row_is_shown() {
+        // this computer: an MSI card that is not in the support table, so no row; the reason is kept for the log
+        let matt = parse_gpu_unlock(r#"{"gpu":{"name":"NVIDIA GeForce RTX 2080 Ti","device":"10de:1e07","subsystem":"1462:3711","vbios":"90.02.17.00.3E"},"secure_boot":false,"state":"unsupported","reason":"No tested entry for MSI 1462:3711 with VBIOS 90.02.17.00.3E (tested: ASUS 1043:866a, VBIOS 90.02.17.00.47)","arm_blocker":null,"last_attempt":null,"since":null,"ratio":null,"power_hold":false,"log":"/var/lib/yggdrasil/gpu-unlock/log"}"#).unwrap();
+        assert!(!matt.offered());
+        assert!(matt.reason.contains("1462:3711") && matt.reason.contains("90.02.17.00.3E"));
+        let state = |s: &str| parse_gpu_unlock(&format!(r#"{{"state":"{s}","reason":"r","arm_blocker":null,"since":"2026-10-27T09:12:00","ratio":2.0,"power_hold":true}}"#)).unwrap();
+        assert!(!state("no-nvidia").offered());
+        for s in ["supported", "armed", "unlocked", "failed", "throttled", "secure-boot"] {
+            assert!(state(s).offered(), "{s}");
+        }
+        let u = state("unlocked");
+        assert_eq!((u.ratio, u.hold, u.since.as_deref()), (Some(2.0), true, Some("2026-10-27T09:12:00")));
+        let blocked = parse_gpu_unlock(r#"{"state":"supported","reason":"r","arm_blocker":"not built"}"#).unwrap();
+        assert_eq!(blocked.blocker.as_deref(), Some("not built"));
+        assert!(parse_gpu_unlock(r#"{"reason":"no state"}"#).is_none());
+        assert!(parse_gpu_unlock("nope").is_none());
     }
 }
 

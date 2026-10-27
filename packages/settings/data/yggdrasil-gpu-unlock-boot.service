@@ -1,0 +1,17 @@
+[Unit]
+Description=Graphics card unlock: note an attempt that never reached the desktop (Settings > Power)
+Documentation=https://github.com/Artifex-Technologies/Labyrinth_OS/blob/main/docs/GPU_UNLOCK.md
+DefaultDependencies=no
+After=local-fs.target
+Before=sysinit.target shutdown.target
+Conflicts=shutdown.target
+# starts only while an attempt is pending, so a normal start runs nothing
+ConditionPathExists=|/var/lib/yggdrasil/gpu-unlock/armed
+ConditionPathExists=|/var/lib/yggdrasil/gpu-unlock/trying
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/yggdrasil/gpuunlock boot
+
+[Install]
+WantedBy=sysinit.target

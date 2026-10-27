@@ -1,0 +1,17 @@
+{
+ "about": "Graphics cards the tensor-rate unlock is offered on (gpuunlock, Settings > Power > Graphics card). Exact matches only: device, board (subsystem), VBIOS and driver series. No wildcards; a new entry needs a link to a run on that exact board and starts as experimental. Plan: Labyrinth OS docs/GPU_UNLOCK.md.",
+ "entries": [
+  {
+   "method": "turing-unlock-efi",
+   "device": "10de:1e07",
+   "subsystem": "1043:866a",
+   "vbios": "90.02.17.00.47",
+   "driver_series": "open",
+   "validated_on": "2026-10-22",
+   "evidence": "https://github.com/haohervchb/Turing-unlock (one run; README results/2080ti-v4-comparison.json)",
+   "status": "experimental",
+   "loader": "tu102_experiment_v4.efi",
+   "notes": "The author's ASUS card. The firmware inputs are not redistributed: the loader must be built locally from the owner's own ROM."
+  }
+ ]
+}

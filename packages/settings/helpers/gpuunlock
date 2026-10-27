@@ -1,0 +1,617 @@
+#!/usr/bin/env python3
+"""gpuunlock: the tensor-rate unlock for a tested GeForce card (Settings > Power > Graphics card, Developer options).
+
+The plan, its safety rules and its phases are in Labyrinth OS, docs/GPU_UNLOCK.md. In short: only a card whose identity matches
+an entry of the support table exactly is offered the unlock. It runs once, from a boot program before Linux starts, chosen for
+the next restart only; Linux never writes to the card. Nothing here raises the card's power: while an attempt is armed and until
+its measurements are done, every power mode is held at the card's default watts (powerlimit reads the hold).
+
+Commands:
+  gpuunlock status [--json]   the card, the state and why (no root needed)
+  gpuunlock arm               try the unlock at the next restart, once (root: pkexec asks for the password every time)
+  gpuunlock disarm            cancel that (root)
+  gpuunlock reenable          allow arming again after a failed attempt (root)
+  gpuunlock release           end the power hold (root): after the measurements, or when giving up
+  gpuunlock boot              early at every start while an attempt is pending (yggdrasil-gpu-unlock-boot.service)
+  gpuunlock verify            once the desktop is up after an attempt (yggdrasil-gpu-unlock-verify.service)
+  gpuunlock bench             the tensor benchmark (Phase 2; not built yet)
+
+How an attempt is followed: `arm` writes `armed` with this start's boot id. At the next start, before anything else, `boot`
+turns it into `trying` with that start's id. Once the desktop is up, `verify` checks the card and removes `trying`. If the
+computer never gets that far (a hang, the power button), the start after it still finds `trying` from an earlier start: that
+attempt failed, the unlock is switched off, and arming stays off until `reenable`.
+
+State: /var/lib/yggdrasil/gpu-unlock/ (state.json, armed, trying, loader.conf, loaders/, power-hold, log).
+"""
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+import urllib.request
+
+STATE_DIR = "/var/lib/yggdrasil/gpu-unlock"
+TABLE = "/usr/share/yggdrasil/gpu-unlock/supported.json"
+ROOT = ""  # tests: a folder standing in for / when reading /sys, /proc and /boot
+ESP = "/boot/efi"
+ESP_DIR = "EFI/yggdrasil"
+GRUB_CFG = "/boot/grub/grub.cfg"
+GRUBENV = "/boot/grub/grubenv"
+ENTRY_ID = "yggdrasil-gpu-unlock"
+SECURE_BOOT_VAR = "/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c"
+OLLAMA_PS = "http://127.0.0.1:11434/api/ps"
+GRUB_WRITABLE = ("ext2", "ext3", "ext4", "vfat")
+UNITS = ("yggdrasil-gpu-unlock-boot.service", "yggdrasil-gpu-unlock-verify.service")
+
+STATES = ("unsupported", "supported", "armed", "unlocked", "failed", "throttled", "secure-boot", "no-nvidia")
+SERIES = ("open", "proprietary")
+ID_RX = re.compile(r"^[0-9a-f]{4}:[0-9a-f]{4}$")
+VBIOS_RX = re.compile(r"^[0-9A-F]{2}(\.[0-9A-F]{2}){4}$")
+LOADER_RX = re.compile(r"^[A-Za-z0-9_.-]+\.efi$")
+BOARD_MAKERS = {"1043": "ASUS", "1458": "Gigabyte", "1462": "MSI", "10de": "NVIDIA", "3842": "EVGA", "19da": "Zotac", "196e": "PNY",
+                "1569": "Palit", "10b0": "Gainward", "1b4c": "KFA2/Galax", "1acc": "Point of View", "7377": "Colorful", "1da2": "Sapphire"}
+HOT_C = 85
+HOT_CAP_W = 200
+
+
+def at(path):
+    return ROOT + path if ROOT else path
+
+
+def read(path):
+    try:
+        with open(at(path), encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def read_text(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def read_json(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def write_json(path, d, mode=0o644):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(d, f, indent=1, sort_keys=True)
+    os.chmod(tmp, mode)
+    os.replace(tmp, path)
+
+
+def remove(path):
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+
+
+def sp(name):
+    return os.path.join(STATE_DIR, name)
+
+
+def run(argv, timeout=60):
+    """(exit code, output) of a program; 127 when it is missing."""
+    try:
+        p = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, (p.stdout + p.stderr).strip()
+    except FileNotFoundError:
+        return 127, f"{argv[0]}: not installed"
+    except subprocess.TimeoutExpired:
+        return 124, f"{argv[0]}: timed out"
+
+
+def boot_id():
+    return (read("/proc/sys/kernel/random/boot_id") or "").strip()
+
+
+def now():
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z")
+
+
+def log(event):
+    """One line per event in the state folder's log, and the journal (where Heimdall can read it)."""
+    line = f"{now()} boot={boot_id()[:8]} {event}"
+    try:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        with open(sp("log"), "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
+    run(["logger", "-t", "yggdrasil-gpu-unlock", "-p", "user.notice", "--", event], timeout=5)
+
+
+# ---------------------------------------------------------------- the card
+
+
+def hexid(path):
+    v = (read(path) or "").strip().lower()
+    return v[2:] if v.startswith("0x") else v
+
+
+def nvidia_card():
+    """The first NVIDIA display card, read from sysfs and the driver's /proc files (no program is run), or None."""
+    base = "/sys/bus/pci/devices"
+    try:
+        names = sorted(os.listdir(at(base)))
+    except OSError:
+        return None
+    for bdf in names:
+        d = f"{base}/{bdf}"
+        if hexid(d + "/vendor") != "10de" or not hexid(d + "/class").startswith("03"):
+            continue
+        res = (read(d + "/resource") or "").split()
+        try:
+            bar0 = "0x%08x" % int(res[0], 16)
+        except (IndexError, ValueError):
+            bar0 = None
+        info = read(f"/proc/driver/nvidia/gpus/{bdf}/information") or ""
+        field = lambda k: next((l.split(":", 1)[1].strip() for l in info.splitlines() if l.startswith(k + ":")), None)
+        vbios = field("Video BIOS")
+        ver = (read("/proc/driver/nvidia/version") or "").splitlines()
+        first = ver[0] if ver else ""
+        m = re.search(r"\s(\d+\.\d+(?:\.\d+)?)\s", first)
+        return {
+            "name": field("Model") or "NVIDIA graphics card",
+            "device": f"10de:{hexid(d + '/device')}",
+            "subsystem": f"{hexid(d + '/subsystem_vendor')}:{hexid(d + '/subsystem_device')}",
+            "vbios": vbios.upper() if vbios else None,
+            "bdf": bdf,
+            "bar0": bar0,
+            "driver": m.group(1) if m else None,
+            "driver_series": None if not first else ("open" if "Open Kernel Module" in first else "proprietary"),
+        }
+    return None
+
+
+def secure_boot():
+    """True when the firmware says Secure Boot is on (the variable's fifth byte is 1)."""
+    try:
+        with open(at(SECURE_BOOT_VAR), "rb") as f:
+            b = f.read()
+        return len(b) >= 5 and b[4] == 1
+    except OSError:
+        return False
+
+
+def maker(subsystem):
+    return BOARD_MAKERS.get((subsystem or "").split(":")[0], "an unknown maker")
+
+
+# ---------------------------------------------------------------- the support table
+
+
+def load_table(path=None):
+    """The table's entries. ValueError when any entry is not an exact identity: no wildcards, no patterns, no missing field, and
+    every entry links the evidence that it ran on that exact board."""
+    try:
+        with open(path or TABLE, encoding="utf-8") as f:
+            d = json.load(f)
+    except OSError as e:
+        raise ValueError(f"cannot read it ({e.strerror})")
+    except ValueError:
+        raise ValueError("it is not valid JSON")
+    entries = d.get("entries") if isinstance(d, dict) else None
+    if not isinstance(entries, list):
+        raise ValueError("it has no list of entries")
+    for i, e in enumerate(entries, 1):
+        if not isinstance(e, dict):
+            raise ValueError(f"entry {i} is not an object")
+        for k in ("device", "subsystem"):
+            if not ID_RX.match(str(e.get(k, ""))):
+                raise ValueError(f"entry {i}: {k} must be one exact id like 10de:1e07")
+        if not VBIOS_RX.match(str(e.get("vbios", ""))):
+            raise ValueError(f"entry {i}: vbios must be one exact version like 90.02.17.00.47")
+        if e.get("driver_series") not in SERIES:
+            raise ValueError(f"entry {i}: driver_series must be open or proprietary")
+        if not LOADER_RX.match(str(e.get("loader", ""))):
+            raise ValueError(f"entry {i}: loader must be a plain .efi file name")
+        if not str(e.get("evidence", "")).startswith("https://"):
+            raise ValueError(f"entry {i}: needs an evidence link")
+    return entries
+
+
+def match(card, entries):
+    """The entry for exactly this card, firmware and driver series (only entries still marked experimental are offered)."""
+    for e in entries:
+        if (e["device"], e["subsystem"], e["vbios"], e["driver_series"]) == (card["device"], card["subsystem"], card["vbios"], card["driver_series"]) \
+                and e.get("status") == "experimental":
+            return e
+    return None
+
+
+def unsupported_reason(card, entries):
+    mine = f"{maker(card['subsystem'])} {card['subsystem']} with VBIOS {card['vbios']}"
+    same = [e for e in entries if (e["device"], e["subsystem"], e["vbios"]) == (card["device"], card["subsystem"], card["vbios"])]
+    if same and all(e["driver_series"] != card["driver_series"] for e in same):
+        return f"The tested entry for {mine} is for another NVIDIA driver series (this one: {card['driver_series']})"
+    if same:
+        return f"The entry for {mine} is marked {same[0].get('status', 'not experimental')}, so the unlock is not offered"
+    tested = [f"{maker(e['subsystem'])} {e['subsystem']}, VBIOS {e['vbios']}" for e in entries if e["device"] == card["device"]]
+    return f"No tested entry for {mine}" + (f" (tested: {'; '.join(tested)})" if tested else " (no board of this model has been tested)")
+
+
+# ---------------------------------------------------------------- what may stop an attempt
+
+
+def fstype_of(path):
+    code, out = run(["findmnt", "-no", "FSTYPE", "-T", path], timeout=10)
+    return out.strip() if code == 0 else ""
+
+
+def one_shot_problem():
+    """Why GRUB's once-only choice (grub-reboot) is not safe here, or None. GRUB clears the choice by writing its environment
+    block as it starts, and it can write only to a few plain filesystems: on any other (btrfs, ZFS, ...) without an env_block
+    (a reserved area GRUB can write) the choice would stay set and the attempt would repeat at every start."""
+    fs = fstype_of(os.path.dirname(GRUBENV))
+    if fs in GRUB_WRITABLE:
+        return None
+    if re.search(r"^env_block=\S", read_text(GRUBENV) or "", re.M):
+        return None
+    return f"GRUB cannot clear a once-only boot choice on this disk ({fs or 'unknown filesystem'} without an env_block), so the attempt would repeat at every restart"
+
+
+def loader_file(entry):
+    return os.path.join(STATE_DIR, "loaders", entry["loader"])
+
+
+def arm_blocker(entry):
+    """Why arming cannot start on a supported card right now, or None."""
+    if not os.path.isfile(loader_file(entry)):
+        return f"The unlock's boot program ({entry['loader']}) has not been built on this computer"
+    return one_shot_problem()
+
+
+def hold_on():
+    return os.path.exists(sp("power-hold"))
+
+
+def evaluate():
+    """(state, reason, card, entry): what the Settings tile shows. Computed fresh every time; nothing is cached."""
+    card = nvidia_card()
+    if not card:
+        return "no-nvidia", "No NVIDIA graphics card", None, None
+    if not card["vbios"] or not card["driver_series"]:
+        return "unsupported", "The NVIDIA driver is not loaded, so the card's firmware version cannot be read", card, None
+    try:
+        entries = load_table()
+    except ValueError as e:
+        return "unsupported", f"The support table is not valid ({e}); nothing is offered", card, None
+    entry = match(card, entries)
+    if not entry:
+        return "unsupported", unsupported_reason(card, entries), card, None
+    st = read_json(sp("state.json")) or {}
+    if st.get("state") == "failed":
+        return "failed", st.get("why") or "The last attempt failed", card, entry
+    if os.path.exists(sp("armed")):
+        return "armed", "The next restart tries the unlock once", card, entry
+    if os.path.exists(sp("trying")):
+        return "armed", "This start is the attempt; it is checked once the desktop is up", card, entry
+    if secure_boot():
+        return "secure-boot", "Needs Secure Boot off: the unlock runs a boot program that is not signed", card, entry
+    if st.get("state") in ("unlocked", "throttled") and st.get("boot_id") == boot_id():
+        return st["state"], st.get("why") or "", card, entry
+    return "supported", "This card matches a tested one", card, entry
+
+
+def status():
+    state, reason, card, entry = evaluate()
+    st = read_json(sp("state.json")) or {}
+    live = state in ("unlocked", "throttled")
+    return {
+        "gpu": card,
+        "secure_boot": secure_boot(),
+        "state": state,
+        "reason": reason,
+        "arm_blocker": arm_blocker(entry) if state == "supported" else None,
+        "last_attempt": st.get("last_attempt"),
+        "since": st.get("since") if live else None,
+        "ratio": st.get("ratio") if live else None,
+        "power_hold": hold_on(),
+        "log": sp("log"),
+    }
+
+
+# ---------------------------------------------------------------- GRUB
+
+
+def first_entry_id(cfg_text):
+    """The id of the menu's first entry (what starts by default), or None."""
+    for line in (cfg_text or "").splitlines():
+        if line.startswith("menuentry ") or line.startswith("submenu "):
+            m = re.search(r"\$menuentry_id_option '([^']+)'", line)
+            return m.group(1) if m else line
+    return None
+
+
+def has_entry(cfg_text, ident):
+    return f"--id {ident}" in (cfg_text or "") or f"$menuentry_id_option '{ident}'" in (cfg_text or "")
+
+
+def grub_mkconfig():
+    return run(["grub-mkconfig", "-o", GRUB_CFG], timeout=300)
+
+
+def loader_conf_text(card, entry, esp_uuid):
+    return f"ESP_UUID={esp_uuid}\nLOADER={entry['loader']}\nBDF={card['bdf']}\nBAR0={card['bar0']}\n"
+
+
+def remove_entry():
+    """Takes the one-try entry out of the menu (and its boot program off the EFI partition), if it is there."""
+    had = os.path.exists(sp("loader.conf"))
+    conf = dict(l.split("=", 1) for l in (read_text(sp("loader.conf")) or "").splitlines() if "=" in l)
+    remove(sp("loader.conf"))
+    if LOADER_RX.match(conf.get("LOADER", "")):
+        remove(os.path.join(ESP, ESP_DIR, conf["LOADER"]))
+    if had:
+        code, out = grub_mkconfig()
+        if code != 0:
+            log(f"grub-mkconfig after removing the entry failed: {out[-200:]}")
+    run(["grub-editenv", GRUBENV, "unset", "next_entry"], timeout=30)
+
+
+# ---------------------------------------------------------------- the card in use
+
+
+def card_busy():
+    """What is using the card for compute (a language model, a benchmark), or None. The first attempt is made on an idle card."""
+    code, out = run(["nvidia-smi", "--query-compute-apps=pid,process_name", "--format=csv,noheader"], timeout=15)
+    if code == 0 and out.strip():
+        return "programs are computing on the card: " + ", ".join(l.split(",")[-1].strip() for l in out.splitlines() if l.strip())
+    try:
+        with urllib.request.urlopen(OLLAMA_PS, timeout=2) as r:
+            models = json.load(r).get("models") or []
+        if models:
+            return "a language model is loaded: " + ", ".join(m.get("name", "?") for m in models)
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+# ---------------------------------------------------------------- commands
+
+
+def is_root():
+    return os.geteuid() == 0
+
+
+def need_root(what):
+    if not is_root():
+        print(f"gpuunlock: {what} needs root (Settings runs it with pkexec)", file=sys.stderr)
+        return False
+    return True
+
+
+def refuse(msg, code=2):
+    print(f"gpuunlock: {msg}", file=sys.stderr)
+    return code
+
+
+def cmd_status(as_json):
+    s = status()
+    if as_json:
+        print(json.dumps(s))
+    else:
+        g = s["gpu"]
+        print(f"{g['name']} ({g['device']}, {maker(g['subsystem'])} {g['subsystem']}, VBIOS {g['vbios']}, {g['bdf']})" if g else "No NVIDIA card")
+        print(f"State: {s['state']}. {s['reason']}")
+        if s["arm_blocker"]:
+            print(f"Cannot arm: {s['arm_blocker']}")
+        if s["power_hold"]:
+            print("Power held at the card's default watts in every mode")
+    return 0
+
+
+def cmd_arm():
+    if not need_root("arm"):
+        return 1
+    state, reason, card, entry = evaluate()
+    if state == "secure-boot":
+        return refuse(reason)
+    if state != "supported":
+        return refuse(f"not armed: the state is {state} ({reason})")
+    blocker = arm_blocker(entry)
+    if blocker:
+        return refuse(f"not armed: {blocker}")
+    busy = card_busy()
+    if busy:
+        return refuse(f"not armed: {busy}. Stop Sarina first (systemctl --user stop labyrinth-voiced; sudo systemctl stop ollama)")
+    code, uuid = run(["findmnt", "-no", "UUID", ESP], timeout=10)
+    if code != 0 or not re.match(r"^[0-9A-Fa-f-]{4,36}$", uuid.strip()):
+        return refuse("not armed: the EFI partition is not mounted at /boot/efi")
+    code, snap = run(["snapper", "-c", "root", "create", "--type", "single", "--cleanup-algorithm", "", "--print-number", "--description", "before GPU unlock"], timeout=120)
+    if code != 0:
+        return refuse(f"not armed: the snapshot failed ({snap[-200:]})", 1)
+    def put_back(why):
+        remove(sp("armed"))
+        remove(sp("power-hold"))
+        remove_entry()
+        log(f"arm stopped: {why}; put back")
+        return refuse(f"not armed: {why}; everything was put back", 1)
+
+    try:
+        before = read_text(GRUB_CFG)
+        os.makedirs(os.path.join(ESP, ESP_DIR), exist_ok=True)
+        shutil.copyfile(loader_file(entry), os.path.join(ESP, ESP_DIR, entry["loader"]))
+        with open(sp("loader.conf"), "w", encoding="utf-8") as f:
+            f.write(loader_conf_text(card, entry, uuid.strip()))
+        code, out = grub_mkconfig()
+        after = read_text(GRUB_CFG)
+        if code != 0 or first_entry_id(after) != first_entry_id(before) or not has_entry(after, ENTRY_ID):
+            return put_back("the boot menu did not come out as expected (" + (out[-200:] if code != 0 else "its first entry changed or the new entry is missing") + ")")
+        write_json(sp("power-hold"), {"watts": None, "since": now(), "why": "graphics-card unlock armed"})
+        for unit in UNITS:
+            code, out = run(["systemctl", "enable", unit], timeout=30)
+            if code != 0:
+                return put_back(f"{unit} could not be enabled ({out[-200:]})")
+        write_json(sp("armed"), {"time": now(), "entry": ENTRY_ID, "boot_id": boot_id(), "snapshot": snap.strip()}, 0o600)
+        code, out = run(["grub-reboot", ENTRY_ID], timeout=30)
+        if code != 0:
+            return put_back(f"grub-reboot failed ({out[-200:]})")
+    except OSError as e:
+        return put_back(f"{e.filename or 'a file'}: {e.strerror}")
+    log(f"armed for the next restart (snapshot {snap.strip()}, {card['bdf']} {card['bar0']}, loader {entry['loader']})")
+    print(f"Armed. The next restart tries the unlock once, then starts normally. Snapshot {snap.strip()} was taken first.")
+    return 0
+
+
+def cmd_disarm():
+    if not need_root("disarm"):
+        return 1
+    if not os.path.exists(sp("armed")):
+        return refuse("nothing is armed", 0)
+    remove(sp("armed"))
+    remove_entry()
+    remove(sp("power-hold"))
+    log("disarmed by the owner")
+    print("Cancelled: the next restart is a normal one.")
+    return 0
+
+
+def cmd_reenable():
+    if not need_root("reenable"):
+        return 1
+    st = read_json(sp("state.json")) or {}
+    if st.get("state") != "failed":
+        return refuse("the unlock is not switched off by a failure", 0)
+    st["state"] = "idle"
+    st.pop("why", None)
+    write_json(sp("state.json"), st)
+    log("re-enabled by the owner after a failed attempt")
+    return 0
+
+
+def cmd_release():
+    if not need_root("release"):
+        return 1
+    if os.path.exists(sp("armed")) or os.path.exists(sp("trying")):
+        return refuse("an attempt is pending: the power hold stays until it is checked")
+    if not hold_on():
+        return refuse("no power hold is set", 0)
+    remove(sp("power-hold"))
+    log("power hold ended by the owner: each mode's own limit applies again")
+    return 0
+
+
+def fail(why, last):
+    st = read_json(sp("state.json")) or {}
+    st.update({"state": "failed", "why": why, "last_attempt": last})
+    write_json(sp("state.json"), st)
+    log(f"attempt failed: {why}")
+
+
+def cmd_boot():
+    """Early at every start while an attempt is pending: a `trying` left by an earlier start means that start never reached the
+    desktop; an `armed` from an earlier start means this is the attempt."""
+    if not need_root("boot"):
+        return 1
+    me = boot_id()
+    t = read_json(sp("trying"))
+    if t is not None and t.get("boot_id") != me:
+        remove(sp("trying"))
+        fail(f"The last attempt ({t.get('time', '?')}) did not reach the desktop. The unlock is off.", {"time": t.get("time"), "result": "failed", "why": "did not reach the desktop"})
+    a = read_json(sp("armed"))
+    if a is not None and a.get("boot_id") != me:
+        remove(sp("armed"))
+        write_json(sp("trying"), {"time": now(), "boot_id": me, "armed": a.get("time")})
+        log("this start is the attempt")
+    return 0
+
+
+def check_unlock():
+    """(ok, ratio, why) for the card as it is now: the correctness check against the processor and the tensor benchmark against
+    the locked baseline. Both are built in Phase 2 (Turing-unlock's tools/tensor_baseline.cu, guarded to this card)."""
+    return False, None, "The correctness check and benchmark are not built yet (Phase 2), so the attempt cannot be confirmed"
+
+
+def thermal_verdict(samples):
+    """samples: (degrees C, hardware slowdown active) pairs. True when the card ran too hot, so the session is held lower."""
+    return any(t is not None and t > HOT_C or slow for t, slow in samples)
+
+
+def thermal_sample():
+    code, out = run(["nvidia-smi", "--query-gpu=temperature.gpu,clocks_throttle_reasons.hw_slowdown", "--format=csv,noheader,nounits"], timeout=15)
+    if code != 0 or "," not in out:
+        return None, False
+    t, slow = [x.strip() for x in out.splitlines()[0].split(",", 1)]
+    return (int(t) if t.isdigit() else None), slow.lower() == "active"
+
+
+def thermal_watch(minutes=15, every=10):
+    """The first minutes after an unlock: above HOT_C, or the card slowing itself down, holds the rest of it at HOT_CAP_W."""
+    end = time.time() + minutes * 60
+    while time.time() < end:
+        t, slow = thermal_sample()
+        if thermal_verdict([(t, slow)]):
+            write_json(sp("power-hold"), {"watts": HOT_CAP_W, "since": now(), "why": f"the card ran hot after the unlock ({t} C{', slowing itself down' if slow else ''})"})
+            st = read_json(sp("state.json")) or {}
+            st.update({"state": "throttled", "why": f"Unlocked, but the card ran hot ({t} C): held at {HOT_CAP_W} W"})
+            write_json(sp("state.json"), st)
+            log(f"heat watch: {t} C, slowdown {slow}; power held at {HOT_CAP_W} W")
+            return True
+        time.sleep(every)
+    return False
+
+
+def cmd_verify():
+    """Once the desktop is up after an attempt: confirm it or switch the unlock off; then take the entry out of the menu."""
+    if not need_root("verify"):
+        return 1
+    if os.path.exists(sp("armed")):
+        return 0  # the attempt is the next start
+    t = read_json(sp("trying"))
+    if t is not None and t.get("boot_id") == boot_id():
+        ok, ratio, why = check_unlock()
+        if ok:
+            st = read_json(sp("state.json")) or {}
+            st.update({"state": "unlocked", "boot_id": boot_id(), "since": now(), "ratio": ratio, "why": f"Tensor rate {ratio:.1f}x of locked (checked)",
+                       "last_attempt": {"time": t.get("time"), "result": "unlocked", "ratio": ratio}})
+            write_json(sp("state.json"), st)
+            log(f"unlocked: ratio {ratio:.2f}, results correct")
+        else:
+            fail(why, {"time": t.get("time"), "result": "failed", "why": why})
+        remove(sp("trying"))
+        remove_entry()
+        if ok:
+            thermal_watch()
+    elif os.path.exists(sp("loader.conf")):
+        remove_entry()
+    return 0
+
+
+def cmd_bench():
+    print("gpuunlock: the benchmark is built in Phase 2 (docs/GPU_UNLOCK.md); nothing was run", file=sys.stderr)
+    return 3
+
+
+def main(argv):
+    if len(argv) < 2 or argv[1] in ("-h", "--help"):
+        print(__doc__)
+        return 0 if len(argv) >= 2 else 2
+    c = argv[1]
+    if c == "status":
+        return cmd_status("--json" in argv[2:])
+    cmds = {"arm": cmd_arm, "disarm": cmd_disarm, "reenable": cmd_reenable, "release": cmd_release, "boot": cmd_boot, "verify": cmd_verify, "bench": cmd_bench}
+    if c in cmds and len(argv) == 2:
+        return cmds[c]()
+    print("gpuunlock: unknown command (see --help)", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

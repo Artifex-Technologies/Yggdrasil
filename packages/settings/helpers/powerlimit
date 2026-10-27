@@ -17,6 +17,9 @@ Commands:
 
 The limits are kept in /etc/yggdrasil/power-limits.json: {"balanced": {"cpu": 80, "gpu": 200}, ...} (read from the desktop's old
 place, /etc/labyrinth/power-limits.json, until the first change).
+
+While the graphics-card unlock (gpuunlock) is armed or being measured, it leaves a power hold: no mode then lets the card draw more
+than its default watts (or the lower cap the hold names). The modes' own limits stay saved and apply again when the hold ends.
 """
 import glob
 import json
@@ -29,6 +32,7 @@ STATE = os.environ.get("YGGDRASIL_POWERLIMIT_STATE", "/etc/yggdrasil/power-limit
 OLD_STATE = "/etc/labyrinth/power-limits.json"
 CPUFREQ = os.environ.get("YGGDRASIL_CPUFREQ", "/sys/devices/system/cpu/cpufreq")
 MODES = ("performance", "balanced", "power-saver")
+HOLD = os.environ.get("YGGDRASIL_POWERLIMIT_HOLD", "/var/lib/yggdrasil/gpu-unlock/power-hold")
 
 
 def load_state(path=None):
@@ -118,13 +122,33 @@ def gpu_info():
         return None
 
 
+def hold_cap(default, path=None):
+    """The most watts the power hold allows (the card's default, or the lower cap it names), or None when there is no hold. A hold
+    file that cannot be read still holds at the default."""
+    try:
+        with open(path or HOLD, encoding="utf-8") as f:
+            d = json.load(f)
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        return default
+    w = d.get("watts") if isinstance(d, dict) else None
+    return min(default, w) if isinstance(w, int) and w > 0 else default
+
+
+def gpu_target(watts, dflt, lo, hi, cap=None):
+    """The limit to set: the mode's (None: the card's default) within what the card allows, and never above a hold's cap."""
+    want = dflt if watts is None else max(lo, min(hi, watts))
+    return want if cap is None else max(lo, min(want, cap))
+
+
 def apply_gpu(watts):
-    """Set the card's power limit within what it allows (None restores the card's default)."""
+    """Set the card's power limit within what it allows (None restores the card's default), never above a power hold."""
     info = gpu_info()
     if not info:
         return False
     _, cur, dflt, lo, hi = info
-    want = dflt if watts is None else max(lo, min(hi, watts))
+    want = gpu_target(watts, dflt, lo, hi, hold_cap(dflt))
     if want == cur:
         return True
     return subprocess.run(["nvidia-smi", "-pl", str(want)], capture_output=True).returncode == 0
@@ -179,7 +203,7 @@ def cmd_get():
         if hi:
             top = max(top or 0, hi)
     g = gpu_info()
-    out = {"cpu_max_khz": top, "gpu": None if not g else {"name": g[0], "watts": g[1], "default": g[2], "min": g[3], "max": g[4]},
+    out = {"cpu_max_khz": top, "gpu": None if not g else {"name": g[0], "watts": g[1], "default": g[2], "min": g[3], "max": g[4], "hold": hold_cap(g[2])},
            "active": active_mode(), "limits": load_state()}
     print(json.dumps(out))
     return 0
@@ -192,7 +216,11 @@ def cmd_watch():
             mtime = os.path.getmtime(STATE) if os.path.exists(STATE) else (os.path.getmtime(OLD_STATE) if os.path.exists(OLD_STATE) else 0)
         except OSError:
             mtime = 0
-        key = (active_mode(), mtime)
+        try:
+            held = os.path.getmtime(HOLD)
+        except OSError:
+            held = None
+        key = (active_mode(), mtime, held)
         if key != last:
             apply()
             last = key

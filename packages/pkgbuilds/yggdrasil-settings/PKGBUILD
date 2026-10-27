@@ -2,7 +2,7 @@
 # Built from packages/settings in this repository (and the shared look in packages/yggdrasil-ui).
 pkgname=yggdrasil-settings
 pkgver=0.1.0
-pkgrel=7
+pkgrel=8
 pkgdesc="Settings: Wi-Fi, Bluetooth, displays, sound, appearance, power and more"
 arch=('x86_64')
 provides=('labyrinth-settings')
@@ -14,7 +14,8 @@ depends=('gcc-libs' 'libxkbcommon' 'wayland' 'vulkan-icd-loader' 'libglvnd' 'fon
          'networkmanager' 'bluez-utils' 'libpulse' 'power-profiles-daemon' 'pciutils' 'python' 'polkit')
 optdepends=('ufw: firewall page'
             'plymouth: the boot screen (Appearance > Boot screen)'
-            'python-pillow: your own picture as the boot screen')
+            'python-pillow: your own picture as the boot screen'
+            'grub: the graphics card unlock picks its boot entry for one start (Power, Developer options)')
 makedepends=('cargo')
 options=('!lto')
 
@@ -44,4 +45,13 @@ package() {
   install -Dm644 "$_src/data/org.yggdrasil.bootscreen.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.bootscreen.policy"
   # applies the limits on every power-mode change; the operating system decides whether it is switched on
   install -Dm644 "$_src/data/yggdrasil-powerlimit.service" "$pkgdir/usr/lib/systemd/system/yggdrasil-powerlimit.service"
+  # the graphics card unlock (Power, Developer options; offered only on a card in the support table): the helper, its table,
+  # its password rule, the boot menu fragment (prints nothing unless an attempt is armed) and the two services that follow an
+  # attempt (they start only while one is pending; arming enables them). Plan: Labyrinth OS docs/GPU_UNLOCK.md
+  install -Dm755 "$_src/helpers/gpuunlock" "$pkgdir/usr/lib/yggdrasil/gpuunlock"
+  install -Dm644 "$_src/data/gpu-unlock-supported.json" "$pkgdir/usr/share/yggdrasil/gpu-unlock/supported.json"
+  install -Dm644 "$_src/data/org.yggdrasil.gpuunlock.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.gpuunlock.policy"
+  install -Dm755 "$_src/data/41_gpu_unlock" "$pkgdir/etc/grub.d/41_gpu_unlock"
+  install -Dm644 "$_src/data/yggdrasil-gpu-unlock-boot.service" "$pkgdir/usr/lib/systemd/system/yggdrasil-gpu-unlock-boot.service"
+  install -Dm644 "$_src/data/yggdrasil-gpu-unlock-verify.service" "$pkgdir/usr/lib/systemd/system/yggdrasil-gpu-unlock-verify.service"
 }

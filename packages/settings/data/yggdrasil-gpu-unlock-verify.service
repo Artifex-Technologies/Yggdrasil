@@ -1,0 +1,15 @@
+[Unit]
+Description=Graphics card unlock: check an attempt once the desktop is up (Settings > Power)
+Documentation=https://github.com/Artifex-Technologies/Labyrinth_OS/blob/main/docs/GPU_UNLOCK.md
+After=graphical.target nvidia-persistenced.service
+ConditionPathExists=|/var/lib/yggdrasil/gpu-unlock/trying
+ConditionPathExists=|/var/lib/yggdrasil/gpu-unlock/loader.conf
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/yggdrasil/gpuunlock verify
+# the heat watch after an unlock runs for 15 minutes
+TimeoutStartSec=25min
+
+[Install]
+WantedBy=graphical.target
