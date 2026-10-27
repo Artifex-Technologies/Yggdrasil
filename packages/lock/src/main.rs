@@ -98,6 +98,11 @@ impl Dispatch<ExtSessionLockV1, ()> for App {
         match e {
             ext_session_lock_v1::Event::Locked => {
                 app.locked = true;
+                // the compositor now shows nothing but the lock: say so to whoever started us (yggdrasil-idle lets the
+                // machine go to sleep only after this line)
+                use std::io::Write;
+                let _ = writeln!(std::io::stdout(), "locked");
+                let _ = std::io::stdout().flush();
             }
             ext_session_lock_v1::Event::Finished => {
                 // refused (another locker is running) or ended by the compositor

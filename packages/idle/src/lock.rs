@@ -2,8 +2,14 @@
 //! or the machine is about to sleep, and this starts `yggdrasil-lock` (once; it exits when the right password is typed). In another
 //! desktop's session that desktop's own lock screen answers those requests, so this stays out of it.
 
-use std::process::{Child, Command};
+use std::io::BufRead;
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+/// True once the running locker has reported that the compositor shows only the lock (its "locked" line).
+static LOCKED: AtomicBool = AtomicBool::new(false);
 
 fn lock_now(running: &Arc<Mutex<Option<Child>>>) {
     let mut r = running.lock().unwrap();
@@ -22,7 +28,36 @@ fn lock_now(running: &Arc<Mutex<Option<Child>>>) {
 }
 
 fn start() -> Option<Child> {
-    Command::new("yggdrasil-lock").stdin(std::process::Stdio::null()).spawn().ok()
+    LOCKED.store(false, Ordering::SeqCst);
+    let mut c = Command::new("yggdrasil-lock").stdin(Stdio::null()).stdout(Stdio::piped()).spawn().ok()?;
+    if let Some(out) = c.stdout.take() {
+        std::thread::spawn(move || {
+            for line in std::io::BufReader::new(out).lines().map_while(Result::ok) {
+                if line.trim() == "locked" {
+                    LOCKED.store(true, Ordering::SeqCst);
+                }
+            }
+        });
+    }
+    Some(c)
+}
+
+/// Asks logind to hold sleep back until we let go (a "delay" lock: logind waits at most InhibitDelayMaxSec, 5 s by default).
+fn inhibit_sleep(mgr: &zbus::blocking::Proxy) -> Option<zbus::zvariant::OwnedFd> {
+    mgr.call("Inhibit", &("sleep", "Yggdrasil", "Lock the screen before sleeping", "delay")).ok()
+}
+
+/// Locks, then waits (at most 3 s, inside logind's limit) until the locker reports the screen is locked, so the machine never
+/// sleeps, and wakes, with the desktop showing.
+fn lock_before_sleep(running: &Arc<Mutex<Option<Child>>>) {
+    lock_now(running);
+    let until = Instant::now() + Duration::from_secs(3);
+    while !LOCKED.load(Ordering::SeqCst) && Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    if !LOCKED.load(Ordering::SeqCst) {
+        crate::log("the lock screen did not confirm in time; letting the machine sleep anyway");
+    }
 }
 
 /// Waits for the locker. It ends with 0 only after the right password; ending any other way (a crash) would leave Hyprland's
@@ -75,11 +110,19 @@ pub fn spawn() {
             std::thread::spawn(move || {
                 let Ok(m) = zbus::blocking::Proxy::new(&sys2, "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager") else { return };
                 let Ok(sigs) = m.receive_signal("PrepareForSleep") else { return };
+                let mut hold = inhibit_sleep(&m);
+                if hold.is_none() {
+                    crate::log("lock: logind would not hold sleep back; the screen may lock only after sleep starts");
+                }
                 for s in sigs {
                     if s.body().deserialize::<bool>().unwrap_or(false) {
-                        lock_now(&run2);
+                        lock_before_sleep(&run2);
+                        hold = None; // let go: now it may sleep
+                    } else if hold.is_none() {
+                        hold = inhibit_sleep(&m); // woke up: hold the next sleep back too
                     }
                 }
+                drop(hold);
             });
         }
         let Some(path) = session else {
