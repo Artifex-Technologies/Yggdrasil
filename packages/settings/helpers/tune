@@ -265,7 +265,12 @@ def conf():
     d = read_json(CONF, {}) or {}
     out = {"cpu": None, "gpu": None, "power": {"pl1": None, "pl2": None}, "turbo": None}
     if isinstance(d.get("cpu"), dict) and isinstance(d["cpu"].get("ratios"), list):
-        out["cpu"] = {"ratios": d["cpu"]["ratios"]}
+        # the same range check `tune try` makes: the root service writes these to the processor at every start, so a value
+        # put into the file by other means must not get there unchecked
+        try:
+            out["cpu"] = {"ratios": check_ratios(d["cpu"]["ratios"], (stock() or {}).get("ratios") or [50])}
+        except (ValueError, TypeError) as e:
+            log(f"kept multipliers ignored: {e}")
     try:
         out["gpu"] = None if d.get("gpu") is None else check_gpu(d["gpu"])
     except ValueError:

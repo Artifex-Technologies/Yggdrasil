@@ -59,6 +59,13 @@ class Multipliers(Base):
                 self.m.check_ratios(bad, STOCK)
         self.assertEqual(self.m.check_ratios([53] * 8, STOCK), [53] * 8, "up to 3 above the processor's own top")
 
+    def test_kept_values_get_the_same_range_check_at_start(self):
+        # the root service applies conf() at every start: an out-of-range value written into the file by other means is dropped
+        self.m.write_json(self.m.CONF, {"cpu": {"ratios": [70] * 8}})
+        self.assertIsNone(self.m.conf()["cpu"])
+        self.m.write_json(self.m.CONF, {"cpu": {"ratios": [52] * 8}})
+        self.assertEqual(self.m.conf()["cpu"], {"ratios": [52] * 8})
+
     def test_try_applies_now_and_keep_makes_it_start_with_the_computer(self):
         self.assertEqual(self.m.cmd_try("cpu", ["ratios=51,51,50,50,49,49,49,49"]), 0)
         self.assertEqual(self.ratios(), [51, 51, 50, 50, 49, 49, 49, 49])
