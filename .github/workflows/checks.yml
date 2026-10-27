@@ -3,6 +3,9 @@ name: checks
 on:
   push:
   pull_request:
+# the token can read the repository and nothing else
+permissions:
+  contents: read
 jobs:
   rust:
     runs-on: ubuntu-latest
@@ -10,22 +13,29 @@ jobs:
     steps:
       - name: Tools
         run: pacman -Syu --noconfirm --needed git rust base-devel pkgconf wayland libxkbcommon fontconfig pam dbus libxcrypt libinput mesa
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0, pinned by commit
+        with:
+          persist-credentials: false
       - name: Test and audit every crate
         run: |
           cargo install cargo-audit --locked
+          # every crate is tested and audited; the job fails at the end, naming each one that did not pass
+          failed=""
           for d in packages/*/; do
             [ -f "$d/Cargo.toml" ] || continue
-            (cd "$d" && cargo test --quiet) || exit 1
-            (cd "$d" && ~/.cargo/bin/cargo-audit audit -D warnings --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2026-0192 --ignore RUSTSEC-2026-0370 --ignore RUSTSEC-2026-0371 --ignore RUSTSEC-2026-0372) || exit 1
+            (cd "$d" && cargo test --quiet) || failed="$failed $d(tests)"
+            (cd "$d" && ~/.cargo/bin/cargo-audit audit -D warnings --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2026-0192 --ignore RUSTSEC-2026-0370 --ignore RUSTSEC-2026-0371 --ignore RUSTSEC-2026-0372) || failed="$failed $d(audit)"
           done
+          [ -z "$failed" ] || { echo "failed:$failed"; exit 1; }
   recipes:
     runs-on: ubuntu-latest
     container: archlinux:latest
     steps:
       - name: Tools
         run: pacman -Syu --noconfirm --needed git base-devel
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0, pinned by commit
+        with:
+          persist-credentials: false
       - name: Package recipes parse
         run: |
           useradd -m ci && chown -R ci "$GITHUB_WORKSPACE"
