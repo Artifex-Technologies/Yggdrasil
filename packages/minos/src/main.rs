@@ -2160,6 +2160,7 @@ impl App {
                 ui.label(RichText::new(format!("Will be named: {shown}")).small());
             }
             ui.add_space(6.0);
+            ui.label(RichText::new(format!("The whole drive is erased and made one {} partition again, its full size, even if an ISO or other partitions were put on it.", listing::human_size(d.size))).small());
             ui.checkbox(&mut f.sure, format!("Erase everything on {}", d.display_name()));
             ui.horizontal(|ui| {
                 if ui.add_enabled(f.sure, egui::Button::new("Format")).clicked() {
