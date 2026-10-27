@@ -425,9 +425,9 @@ mod log_tests {
 
     #[test]
     fn sudo_lines() {
-        let j = "1792281112.048605 Orthanc sudo[3504705]: claude-agent : PWD=/x ; USER=root ; TSID=00005E ; COMMAND=/usr/bin/install -m755 a b\n\
-                 1792165618.051855 Orthanc sudo[1339003]:  zlothra : 1 incorrect password attempt ; PWD=/x ; USER=root ; COMMAND=/usr/bin/ls\n\
-                 1792281112.9 Orthanc sudo[3]: pam_unix(sudo:session): session closed for user root\n";
+        let j = "1792281112.048605 host sudo[3504705]: claude-agent : PWD=/x ; USER=root ; TSID=00005E ; COMMAND=/usr/bin/install -m755 a b\n\
+                 1792165618.051855 host sudo[1339003]:  zlothra : 1 incorrect password attempt ; PWD=/x ; USER=root ; COMMAND=/usr/bin/ls\n\
+                 1792281112.9 host sudo[3]: pam_unix(sudo:session): session closed for user root\n";
         let e = parse_sudo(j);
         assert_eq!(e.len(), 2);
         assert!(e[1].title.contains("install"));
@@ -437,8 +437,8 @@ mod log_tests {
 
     #[test]
     fn failed_logins_skip_sudo() {
-        let j = "1792170078.37 Orthanc yggdrasil-lock[1]: pam_unix(login:auth): authentication failure; logname=z uid=1000 user=zlothra\n\
-                 1792170079.0 Orthanc sudo[2]: pam_unix(sudo:auth): authentication failure; user=zlothra\n";
+        let j = "1792170078.37 host yggdrasil-lock[1]: pam_unix(login:auth): authentication failure; logname=z uid=1000 user=zlothra\n\
+                 1792170079.0 host sudo[2]: pam_unix(sudo:auth): authentication failure; user=zlothra\n";
         let e = parse_failed_logins(j);
         assert_eq!(e.len(), 1);
         assert!(e[0].title.contains("Lock screen"));

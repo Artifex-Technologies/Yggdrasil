@@ -10,7 +10,7 @@
    "added": "2026-10-27",
    "evidence": "https://github.com/nlzy/turing-unlock/issues (TU102 2080 Ti reports #1, #2, PR #8 incl. VBIOS 90.02.17.00.7C and .64; #5 on driver 615.78.08, kernel 7.3, as the boot display)",
    "status": "experimental",
-   "notes": "MSI RTX 2080 Ti (Orthanc). No MSI board in the reports yet: Phase 3 on this card is the first."
+   "notes": "MSI RTX 2080 Ti (the owner's card). No MSI board in the reports yet: Phase 3 on this card is the first."
   }
  ]
 }
