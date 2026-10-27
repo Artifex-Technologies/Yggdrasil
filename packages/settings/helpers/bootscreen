@@ -148,7 +148,10 @@ def make_picture_theme(src):
     from PIL import Image  # python-pillow
     d = os.path.join(THEMES, PICTURE_THEME)
     os.makedirs(d, exist_ok=True)
-    img = Image.open(src)
+    # This runs as root on a file the user chose: only the plain picture formats are decoded (never EPS, which Pillow hands to
+    # Ghostscript, or the other rarely used decoders), and a picture too large to be a screen is refused before it is decoded.
+    Image.MAX_IMAGE_PIXELS = 64_000_000
+    img = Image.open(src, formats=["PNG", "JPEG", "WEBP"])
     img.thumbnail((3840, 2160))
     img.convert("RGBA").save(os.path.join(d, "picture.png"))
     with open(os.path.join(d, PICTURE_THEME + ".script"), "w") as f:

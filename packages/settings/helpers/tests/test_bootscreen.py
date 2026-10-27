@@ -63,5 +63,22 @@ class BootScreen(unittest.TestCase):
             self.assertEqual(out, want)
 
 
+    def test_a_picture_is_decoded_only_from_plain_formats(self):
+        try:
+            from PIL import Image, UnidentifiedImageError
+        except ImportError:
+            self.skipTest("no python-pillow")
+        d = tempfile.mkdtemp()
+        self.m.THEMES = os.path.join(d, "themes")
+        eps = os.path.join(d, "trap.png")  # an EPS named .png: Pillow would hand it to Ghostscript, as root
+        with open(eps, "w") as f:
+            f.write("%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 10 10\nshowpage\n")
+        with self.assertRaises(UnidentifiedImageError):
+            self.m.make_picture_theme(eps)
+        png = os.path.join(d, "ok.png")
+        Image.new("RGB", (8, 8)).save(png)
+        self.m.make_picture_theme(png)
+        self.assertTrue(os.path.exists(os.path.join(self.m.THEMES, self.m.PICTURE_THEME, "picture.png")))
+
 if __name__ == "__main__":
     unittest.main()
