@@ -105,7 +105,7 @@ fn dialog() -> eframe::Result {
             let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
             let text = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
             let msg = match v.get("t").and_then(|t| t.as_str()).unwrap_or("") {
-                "begin" => agent::UiMsg::Begin { kind: text("kind"), title: text("title"), message: text("message"), action_id: text("action_id"), user: text("user") },
+                "begin" => agent::UiMsg::Begin { kind: text("kind"), title: text("title"), message: text("message"), action_id: text("action_id"), user: text("user"), program: text("program"), command_line: text("command_line") },
                 "confirm" => {
                     let (rtx, rrx) = channel::<bool>();
                     std::thread::spawn(move || {

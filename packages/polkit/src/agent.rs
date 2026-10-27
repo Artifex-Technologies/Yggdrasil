@@ -14,7 +14,7 @@ pub const OBJECT_PATH: &str = "/org/yggdrasil/PolicyKit1/AuthenticationAgent";
 pub enum UiMsg {
     /// Start (or continue) a dialog for this request. `kind` is "admin" (polkit), "network" or "bluetooth"; `title` replaces the
     /// administrator heading for the other kinds.
-    Begin { kind: String, title: String, message: String, action_id: String, user: String },
+    Begin { kind: String, title: String, message: String, action_id: String, user: String, program: String, command_line: String },
     Prompt { text: String, echo: bool, reply: Sender<Option<String>> },
     /// A yes-or-no question (Bluetooth pairing): `button` says yes, Cancel says no.
     Confirm { button: String, reply: Sender<bool> },
@@ -118,9 +118,12 @@ impl Ui for Bridge {
 impl Agent {
     /// Runs on a thread of its own (the exchange with the password box blocks), so CancelAuthentication can be handled while it waits.
     #[allow(clippy::too_many_arguments)]
-    async fn begin_authentication(&self, action_id: String, message: String, _icon_name: String, _details: HashMap<String, String>, cookie: String, identities: Vec<(String, HashMap<String, OwnedValue>)>) -> zbus::fdo::Result<()> {
+    async fn begin_authentication(&self, action_id: String, message: String, _icon_name: String, details: HashMap<String, String>, cookie: String, identities: Vec<(String, HashMap<String, OwnedValue>)>) -> zbus::fdo::Result<()> {
         let (me, slot) = (self.uid, self.child.clone());
-        blocking::unblock(move || authenticate(me, slot, action_id, message, cookie, identities)).await
+        // for pkexec, polkit's details name the program that will run (resolved by pkexec itself) and its command line
+        let program = details.get("program").cloned().unwrap_or_default();
+        let command_line = details.get("command_line").cloned().unwrap_or_default();
+        blocking::unblock(move || authenticate(me, slot, action_id, message, program, command_line, cookie, identities)).await
     }
 
     /// polkit gave up on the request (the program asking ended): close the box.
@@ -131,7 +134,8 @@ impl Agent {
     }
 }
 
-fn authenticate(self_uid: u32, child_slot: std::sync::Arc<std::sync::Mutex<Option<u32>>>, action_id: String, message: String, cookie: String, identities: Vec<(String, HashMap<String, OwnedValue>)>) -> zbus::fdo::Result<()> {
+#[allow(clippy::too_many_arguments)]
+fn authenticate(self_uid: u32, child_slot: std::sync::Arc<std::sync::Mutex<Option<u32>>>, action_id: String, message: String, program: String, command_line: String, cookie: String, identities: Vec<(String, HashMap<String, OwnedValue>)>) -> zbus::fdo::Result<()> {
     {
         let Some(uid) = choose_identity(&identities, self_uid) else {
             return Err(zbus::fdo::Error::Failed("no user to authenticate as".into()));
@@ -141,7 +145,7 @@ fn authenticate(self_uid: u32, child_slot: std::sync::Arc<std::sync::Mutex<Optio
             eprintln!("yggdrasil-polkit: cannot open the password box for {action_id}: {e}");
             zbus::fdo::Error::Failed(format!("cannot open the password box: {e}"))
         })?;
-        ui.send(serde_json::json!({"t": "begin", "kind": "admin", "message": message, "action_id": action_id, "user": user}));
+        ui.send(serde_json::json!({"t": "begin", "kind": "admin", "message": message, "action_id": action_id, "user": user, "program": program, "command_line": command_line}));
         // a wrong password gets three tries, each a new session with the helper (as the standard agents do)
         let mut result = Outcome::Failed;
         for attempt in 0..3 {

