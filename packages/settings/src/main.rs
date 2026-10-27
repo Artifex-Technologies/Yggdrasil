@@ -2067,9 +2067,14 @@ impl App {
     fn page_power(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         let Some(p) = self.data.power.clone() else { return loading(ui) };
         let mut profile: Option<String> = None;
+        // Developer options add the selected mode's limits under the mode itself: the processor's clock, then the graphics
+        // card's power (and, on a card in the unlock's support table, the unlock). Choosing another mode shows that mode's.
+        let mut limit: Option<(String, &'static str, Option<i64>)> = None;
+        let mut unlock: Option<&'static str> = None;
         if !p.profiles.is_empty() {
             ui::group(ui, pal, Some("Power mode"), |ui| {
-                let labels: Vec<String> = p.profiles.iter().map(|x| match x.as_str() { "performance" => "Performance".into(), "balanced" => "Balanced".into(), "power-saver" => "Power saver".into(), o => o.to_string() }).collect();
+                let name = |x: &str| match x { "performance" => "Performance".to_string(), "balanced" => "Balanced".into(), "power-saver" => "Power saver".into(), o => o.to_string() };
+                let labels: Vec<String> = p.profiles.iter().map(|x| name(x)).collect();
                 let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
                 let sel = p.profiles.iter().position(|x| *x == p.profile).unwrap_or(0);
                 ui::row(ui, pal, true, "Mode", Some("Performance for games and builds; Power saver for quiet"), |ui| {
@@ -2077,7 +2082,69 @@ impl App {
                         profile = Some(p.profiles[i].clone());
                     }
                 });
+                let Some(l) = &p.limits else { return };
+                let mode = p.profile.clone();
+                let in_mode = format!("in {} mode", name(&mode));
+                let (cpu, gpu) = l.modes.get(&mode).copied().unwrap_or((None, None));
+                let mut c = cpu.unwrap_or(100) as f32;
+                ui::row(ui, pal, false, "Processor", Some(&format!("The most it may clock {in_mode}, as a share of its top speed")), |ui| {
+                    if cpu.is_some() && ui::quiet(ui, pal, "Reset").clicked() {
+                        limit = Some((mode.clone(), "cpu", None));
+                    }
+                    let r = ui::slider_range(ui, pal, &mut c, 20.0..=100.0, " %");
+                    if r.drag_stopped() || (r.changed() && !r.dragged()) {
+                        limit = Some((mode.clone(), "cpu", if c as i64 >= 100 { None } else { Some(c as i64) }));
+                    }
+                });
+                let Some(g) = &l.gpu else { return };
+                let top = g.hold.unwrap_or(g.max).max(g.min);
+                let mut w = gpu.unwrap_or(g.default).min(top) as f32;
+                let sub = match (g.hold, gpu) {
+                    (Some(h), Some(mine)) if mine > h => format!("{}: held at {h} W while the unlock is tried; your {mine} W comes back after", g.name),
+                    (Some(h), _) => format!("{}: at most {h} W while the unlock is tried", g.name),
+                    _ => format!("{}: the most power it may draw {in_mode} ({}-{} W, default {} W)", g.name, g.min, g.max, g.default),
+                };
+                ui::row(ui, pal, false, "Graphics card", Some(&sub), |ui| {
+                    if gpu.is_some() && ui::quiet(ui, pal, "Reset").clicked() {
+                        limit = Some((mode.clone(), "gpu", None));
+                    }
+                    let r = ui::slider_range(ui, pal, &mut w, g.min as f32..=top as f32, " W");
+                    if r.drag_stopped() || (r.changed() && !r.dragged()) {
+                        limit = Some((mode.clone(), "gpu", if w as i64 == g.default { None } else { Some(w as i64) }));
+                    }
+                });
+                if let Some(u) = p.unlock.as_ref().filter(|u| u.offered()) {
+                    let since = u.since.as_deref().and_then(|t| t.get(11..16)).unwrap_or("this start");
+                    let (sub, button): (String, Option<(&str, &'static str)>) = match u.state.as_str() {
+                        "supported" => match &u.blocker {
+                            None => ("This card matches a tested one, but the unlock has not been run on this computer. Experimental.".into(), Some(("Arm for next restart…", "confirm"))),
+                            Some(b) => (format!("This card matches a tested one. Not available yet: {b}."), None),
+                        },
+                        "secure-boot" => ("Needs Secure Boot off: the unlock runs a boot program that is not signed.".into(), None),
+                        "armed" => ("The next restart will try the unlock once, then boot normally. If the screen stays black for more than a minute, hold the power button and start again: the computer boots normally and this switch turns itself off.".into(), Some(("Cancel", "disarm"))),
+                        "unlocked" => (format!("Unlocked since {since}. {}. A restart or sleep locks it again.", u.reason), None),
+                        "throttled" => (format!("{}. A restart or sleep locks it again.", u.reason), None),
+                        _ => (u.reason.clone(), Some(("Allow another try…", "reenable"))),
+                    };
+                    ui::row(ui, pal, false, "Tensor-rate unlock", Some(&sub), |ui| {
+                        if let Some((label, what)) = button {
+                            if ui::quiet(ui, pal, label).clicked() {
+                                unlock = Some(what);
+                            }
+                        }
+                    });
+                }
+                if g.hold.is_some() && !p.unlock.as_ref().is_some_and(|u| u.state == "armed") {
+                    ui::row(ui, pal, false, "Power hold", Some(&format!("Every mode stays at or below {} W since the unlock was tried. End it when the measurements are done.", g.hold.unwrap_or(g.default))), |ui| {
+                        if ui::quiet(ui, pal, "End the hold…").clicked() {
+                            unlock = Some("release");
+                        }
+                    });
+                }
             });
+            if p.limits.is_some() {
+                ui.label(RichText::new("These limits only hold things back; nothing here overclocks. Changing one asks for your password.").size(11.5).color(pal.dim));
+            }
         }
         let choices: [(i64, &str); 10] = [(0, "Never"), (1, "1 minute"), (2, "2 minutes"), (5, "5 minutes"), (10, "10 minutes"), (15, "15 minutes"), (30, "30 minutes"), (60, "1 hour"), (120, "2 hours"), (240, "4 hours")];
         let label = |m: i64| choices.iter().find(|c| c.0 == m).map(|c| c.1.to_string()).unwrap_or(format!("{m} minutes"));
@@ -2132,79 +2199,6 @@ impl App {
         });
         if idle_changed {
             self.change(ctx, move || sys::write_idle(&idle));
-        }
-        // Developer options: the graphics card (its power in each mode, and the unlock on a tested card), then the processor
-        let mut limit: Option<(String, &'static str, Option<i64>)> = None;
-        let mut unlock: Option<&'static str> = None;
-        let mode_label = |m: &str| match m { "performance" => "Performance mode".to_string(), "balanced" => "Balanced mode".into(), "power-saver" => "Power saver mode".into(), o => o.to_string() };
-        if let Some(l) = p.limits.clone() {
-            if let Some(g) = &l.gpu {
-                ui::group(ui, pal, Some(&format!("Graphics card · {}", g.name)), |ui| {
-                    let top = g.hold.unwrap_or(g.max).max(g.min);
-                    for (n, mode) in p.profiles.iter().enumerate() {
-                        let gpu = l.modes.get(mode).and_then(|m| m.1);
-                        let mut w = gpu.unwrap_or(g.default).min(top) as f32;
-                        let sub = match (g.hold, gpu) {
-                            (Some(h), Some(mine)) if mine > h => format!("Held at {h} W while the unlock is tried; your {mine} W comes back after"),
-                            (Some(h), _) => format!("At most {h} W while the unlock is tried"),
-                            _ => format!("The most power it may draw ({}-{} W, default {} W)", g.min, g.max, g.default),
-                        };
-                        ui::row(ui, pal, n == 0, &mode_label(mode), Some(&sub), |ui| {
-                            if gpu.is_some() && ui::quiet(ui, pal, "Reset").clicked() {
-                                limit = Some((mode.clone(), "gpu", None));
-                            }
-                            let r = ui::slider_range(ui, pal, &mut w, g.min as f32..=top as f32, " W");
-                            if r.drag_stopped() || (r.changed() && !r.dragged()) {
-                                limit = Some((mode.clone(), "gpu", if w as i64 == g.default { None } else { Some(w as i64) }));
-                            }
-                        });
-                    }
-                    if let Some(u) = p.unlock.as_ref().filter(|u| u.offered()) {
-                        let since = u.since.as_deref().and_then(|t| t.get(11..16)).unwrap_or("this start");
-                        let (sub, button): (String, Option<(&str, &'static str)>) = match u.state.as_str() {
-                            "supported" => match &u.blocker {
-                                None => ("This card matches a tested one, but the unlock has not been run on this computer. Experimental.".into(), Some(("Arm for next restart…", "confirm"))),
-                                Some(b) => (format!("This card matches a tested one. Not available yet: {b}."), None),
-                            },
-                            "secure-boot" => ("Needs Secure Boot off: the unlock runs a boot program that is not signed.".into(), None),
-                            "armed" => ("The next restart will try the unlock once, then boot normally. If the screen stays black for more than a minute, hold the power button and start again: the computer boots normally and this switch turns itself off.".into(), Some(("Cancel", "disarm"))),
-                            "unlocked" => (format!("Unlocked since {since}. {}. A restart or sleep locks it again.", u.reason), None),
-                            "throttled" => (format!("{}. A restart or sleep locks it again.", u.reason), None),
-                            _ => (u.reason.clone(), Some(("Allow another try…", "reenable"))),
-                        };
-                        ui::row(ui, pal, false, "Tensor-rate unlock", Some(&sub), |ui| {
-                            if let Some((label, what)) = button {
-                                if ui::quiet(ui, pal, label).clicked() {
-                                    unlock = Some(what);
-                                }
-                            }
-                        });
-                    }
-                    if g.hold.is_some() && !p.unlock.as_ref().is_some_and(|u| u.state == "armed") {
-                        ui::row(ui, pal, false, "Power hold", Some(&format!("Every mode stays at or below {} W since the unlock was tried. End it when the measurements are done.", g.hold.unwrap_or(g.default))), |ui| {
-                            if ui::quiet(ui, pal, "End the hold…").clicked() {
-                                unlock = Some("release");
-                            }
-                        });
-                    }
-                });
-            }
-            ui::group(ui, pal, Some("Processor"), |ui| {
-                for (n, mode) in p.profiles.iter().enumerate() {
-                    let cpu = l.modes.get(mode).and_then(|m| m.0);
-                    let mut c = cpu.unwrap_or(100) as f32;
-                    ui::row(ui, pal, n == 0, &mode_label(mode), Some("The most it may clock, as a share of its top speed"), |ui| {
-                        if cpu.is_some() && ui::quiet(ui, pal, "Reset").clicked() {
-                            limit = Some((mode.clone(), "cpu", None));
-                        }
-                        let r = ui::slider_range(ui, pal, &mut c, 20.0..=100.0, " %");
-                        if r.drag_stopped() || (r.changed() && !r.dragged()) {
-                            limit = Some((mode.clone(), "cpu", if c as i64 >= 100 { None } else { Some(c as i64) }));
-                        }
-                    });
-                }
-            });
-            ui.label(RichText::new("These limits only hold things back; nothing here overclocks. Changing one asks for your password.").size(11.5).color(pal.dim));
         }
         if let Some((mode, which, v)) = limit {
             self.change(ctx, move || {
