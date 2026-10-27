@@ -18,6 +18,7 @@ use minos_core::cloud::{self, Badge, Link, Report};
 use minos_core::listing::{self, Entry, Sort, SortKey};
 use minos_core::places::{self, CloudPlace, CloudState};
 use minos_core::preview::{self, Body, PreviewData};
+use minos_core::devices;
 use minos_core::run;
 use minos_core::search::{display_relative, Search};
 use minos_core::state::{SavedTab, State, ViewMode, GALLERY_SIZES};
@@ -119,6 +120,32 @@ enum Action {
     RetrySync(PathBuf),
     /// Proton Drive: download files and folders to this computer.
     Download(Vec<PathBuf>),
+    /// A drive's partition that is not mounted: mount it and open it in the pane.
+    Mount(usize, String),
+    /// Unmount and power off a removable drive (its device name).
+    Eject(String),
+    /// Ask how to format a removable drive.
+    FormatAsk(String),
+    /// Start a tool for a drive (program, package); a missing one is offered for install.
+    Launch(String, String),
+    /// Install a package in a terminal (it asks for the password there).
+    Install(String),
+}
+
+/// What the drive watcher and drive jobs report back.
+enum DevEvent {
+    /// A drive came, went, or was mounted or unmounted.
+    Changed,
+    /// A job finished: what to say, and a folder to open.
+    Done(String, Option<(usize, PathBuf)>),
+}
+
+/// The Format dialog: the drive, the chosen file system, the label, and whether the erase was confirmed.
+struct FormatForm {
+    disk: String,
+    fs: usize,
+    label: String,
+    sure: bool,
 }
 
 struct Watch {
@@ -1658,6 +1685,15 @@ struct App {
     /// Proton Drive sign-in form: email, password, mailbox password, 2FA code.
     proton_form: Option<[String; 4]>,
     proton_busy: bool,
+    dev_tx: Sender<DevEvent>,
+    dev_rx: Receiver<DevEvent>,
+    /// The watcher's way to wake the window, set on the first frame.
+    dev_ctx: Arc<std::sync::Mutex<Option<egui::Context>>>,
+    /// Removable drives already seen (opened once when they first appear, never again after an eject).
+    seen_disks: BTreeSet<String>,
+    format_form: Option<FormatForm>,
+    /// A drive job is running (what it is), so another is not started on top of it.
+    dev_busy: Option<String>,
     proton_tx: Sender<Result<(), String>>,
     proton_rx: Receiver<Result<(), String>>,
     applied_theme: Option<(bool, Option<[u8; 3]>, u32)>,
@@ -1726,6 +1762,28 @@ impl App {
         lap("drives (background)");
         let disks = places::disks();
         lap("disks (lsblk)");
+        // Drives plugged in or pulled out while Minos is open: the block devices and mounts are looked at every two seconds.
+        let (dev_tx, dev_rx) = channel();
+        let dev_ctx: Arc<std::sync::Mutex<Option<egui::Context>>> = Default::default();
+        {
+            let (tx, c) = (dev_tx.clone(), dev_ctx.clone());
+            std::thread::spawn(move || {
+                let mut last = devices::signature();
+                loop {
+                    std::thread::sleep(Duration::from_secs(2));
+                    let now = devices::signature();
+                    if now != last {
+                        last = now;
+                        if tx.send(DevEvent::Changed).is_err() {
+                            return;
+                        }
+                        if let Some(c) = c.lock().ok().and_then(|g| g.clone()) {
+                            c.request_repaint();
+                        }
+                    }
+                }
+            });
+        }
         let cloud_place = places::proton_drive();
         lap("proton drive place");
         Self {
@@ -1755,6 +1813,12 @@ impl App {
             verify_rx,
             proton_form: None,
             proton_busy: false,
+            dev_tx,
+            dev_rx,
+            dev_ctx,
+            seen_disks: BTreeSet::new(),
+            format_form: None,
+            dev_busy: None,
             proton_tx,
             proton_rx,
             applied_theme: None,
@@ -2017,6 +2081,108 @@ impl App {
         }
     }
 
+    /// Tabs showing This PC or a disk list drives: shown again when drives change. A tab in a folder of a drive that is gone goes
+    /// to This PC.
+    fn reload_virtual(&mut self) {
+        let hidden = self.st.show_hidden;
+        for p in &mut self.panes {
+            let sort = p.sort;
+            for t in &mut p.tabs {
+                let dir = t.dir();
+                if places::is_virtual(&dir) {
+                    t.reload(sort, hidden);
+                } else if dir.starts_with("/run/media") && !dir.exists() {
+                    t.navigate(places::this_pc(), sort, hidden);
+                }
+            }
+        }
+    }
+
+    /// A removable drive seen for the first time is opened (mounted), as Windows does; one ejected and plugged in again is new
+    /// again, since it was gone in between.
+    fn open_new_drives(&mut self, ctx: &egui::Context) {
+        let present: BTreeSet<String> = self.disks.iter().map(|d| d.name.clone()).collect();
+        self.seen_disks.retain(|n| present.contains(n));
+        for d in self.disks.iter().filter(|d| d.removable && !d.holds_system()) {
+            if !self.seen_disks.insert(d.name.clone()) {
+                continue;
+            }
+            let parts = devices::unmounted_parts(d);
+            if parts.is_empty() {
+                continue;
+            }
+            let (tx, c, name) = (self.dev_tx.clone(), ctx.clone(), d.display_name());
+            std::thread::spawn(move || {
+                let errs: Vec<String> = parts.iter().filter_map(|p| devices::mount(p).err()).collect();
+                let msg = if errs.is_empty() { format!("{name} is ready") } else { format!("{name} could not be opened: {}", errs[0]) };
+                let _ = tx.send(DevEvent::Done(msg, None));
+                c.request_repaint();
+            });
+        }
+    }
+
+    /// Runs a drive job in the background; its result comes back as a status line (and maybe a folder to open).
+    fn dev_job(&mut self, ctx: &egui::Context, what: String, job: impl FnOnce() -> DevEvent + Send + 'static) {
+        if let Some(b) = &self.dev_busy {
+            self.status = format!("Still busy: {b}");
+            return;
+        }
+        self.status = format!("{what}...");
+        self.dev_busy = Some(what);
+        let (tx, c) = (self.dev_tx.clone(), ctx.clone());
+        std::thread::spawn(move || {
+            let _ = tx.send(job());
+            c.request_repaint();
+        });
+    }
+
+    /// The Format dialog: file system, name, and a confirmation that everything on the drive is erased.
+    fn format_dialog(&mut self, ctx: &egui::Context) {
+        let Some(f) = &mut self.format_form else { return };
+        let Some(d) = self.disks.iter().find(|d| d.name == f.disk).cloned() else {
+            self.format_form = None;
+            return;
+        };
+        let (mut go, mut cancel) = (false, false);
+        egui::Window::new(format!("Format {}", d.display_name())).id(egui::Id::new("minos-format")).collapsible(false).resizable(false).anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0)).show(ctx, |ui| {
+            ui.label(format!("{}{} ({})", if d.model.is_empty() { String::new() } else { format!("{} ", d.model) }, listing::human_size(d.size), d.name));
+            ui.add_space(6.0);
+            ui.label("File system");
+            for (i, (name, _, _, _, about)) in devices::FORMATS.iter().enumerate() {
+                ui.radio_value(&mut f.fs, i, *name).on_hover_text(*about);
+            }
+            ui.label(RichText::new(devices::FORMATS[f.fs].4).small());
+            ui.add_space(6.0);
+            ui.label("Name");
+            ui.text_edit_singleline(&mut f.label);
+            let shown = devices::clean_label(f.fs, &f.label);
+            if shown != f.label {
+                ui.label(RichText::new(format!("Will be named: {shown}")).small());
+            }
+            ui.add_space(6.0);
+            ui.checkbox(&mut f.sure, format!("Erase everything on {}", d.display_name()));
+            ui.horizontal(|ui| {
+                if ui.add_enabled(f.sure, egui::Button::new("Format")).clicked() {
+                    go = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+            });
+        });
+        if cancel {
+            self.format_form = None;
+        }
+        if go {
+            let f = self.format_form.take().unwrap();
+            let fsname = devices::FORMATS[f.fs].0;
+            self.dev_job(ctx, format!("Formatting {} as {fsname}", d.display_name()), move || match devices::format(&d, f.fs, &f.label) {
+                Ok(()) => DevEvent::Done(format!("Formatted as {fsname}"), None),
+                Err(e) => DevEvent::Done(format!("Could not format: {e}"), None),
+            });
+        }
+    }
+
     fn reload_all(&mut self) {
         self.drives = places::drives();
         self.disks = places::disks();
@@ -2104,8 +2270,8 @@ impl App {
                     let t = self.panes[p].cur();
                     if path.is_dir() || places::is_virtual(&path) || archive::split(&path).is_some() {
                         t.navigate(path, sort, hidden);
-                    } else if path.to_string_lossy().starts_with(places::PART_PREFIX) {
-                        t.error = Some("This partition is not mounted".into());
+                    } else if let Some(part) = path.to_string_lossy().strip_prefix(places::PART_PREFIX) {
+                        queue.push_back(Action::Mount(p, part.to_string()));
                     } else {
                         t.error = Some(format!("{}: not a folder", path.display()));
                     }
@@ -2267,6 +2433,46 @@ impl App {
                 }
                 Action::PinTab(p, i) => self.panes[p].tabs[i].tab.pinned ^= true,
                 Action::Reload => self.reload_all(),
+                Action::Mount(p, part) => self.dev_job(ctx, format!("Opening {part}"), move || match devices::mount(&part) {
+                    Ok(at) => DevEvent::Done(format!("Opened at {}", at.display()), Some((p, at))),
+                    Err(e) => DevEvent::Done(format!("Could not open {part}: {e}"), None),
+                }),
+                Action::Eject(name) => {
+                    if let Some(d) = self.disks.iter().find(|d| d.name == name).cloned() {
+                        let shown = d.display_name();
+                        // step out of the drive first, or its own tab keeps it busy
+                        let sort_hidden = self.st.show_hidden;
+                        for pane in &mut self.panes {
+                            let sort = pane.sort;
+                            for t in &mut pane.tabs {
+                                if d.parts.iter().flat_map(|p| &p.mounts).any(|m| t.dir().starts_with(m)) {
+                                    t.navigate(places::this_pc(), sort, sort_hidden);
+                                }
+                            }
+                        }
+                        self.dev_job(ctx, format!("Ejecting {shown}"), move || match devices::eject(&d) {
+                            Ok(()) => DevEvent::Done(format!("{shown} can be removed safely"), None),
+                            Err(e) => DevEvent::Done(format!("Could not eject {shown}: {e}"), None),
+                        });
+                    }
+                }
+                Action::FormatAsk(name) => {
+                    let label = self.disks.iter().find(|d| d.name == name).map(|d| d.display_name()).filter(|l| l != "USB Drive").unwrap_or_else(|| "USB".into());
+                    self.format_form = Some(FormatForm { disk: name, fs: 0, label, sure: false });
+                }
+                Action::Launch(program, package) => match devices::launch(&program, &package) {
+                    Ok(()) => self.status = format!("Started {program}"),
+                    Err(pkg) if pkg == package => {
+                        self.status = format!("{program} is not installed: opening a terminal to install {package}");
+                        queue.push_back(Action::Install(package));
+                    }
+                    Err(e) => self.status = e,
+                },
+                Action::Install(pkg) => {
+                    if let Err(e) = run::install_in_terminal(&pkg) {
+                        self.status = format!("Could not install {pkg}: {e}");
+                    }
+                }
                 Action::OpenFile(p) if self.picker.is_some() => {
                     let pk = self.picker.as_mut().unwrap();
                     if pk.save {
@@ -2606,6 +2812,107 @@ impl App {
         }
     }
 
+    /// A drive under Storage, as Windows shows it: its name, a bar of how full it is, and "7.9 GB free of 106 GB". A removable
+    /// drive has an eject button at the right and a right-click menu (open, eject, format, partition, make bootable).
+    fn storage_row(&self, ui: &mut egui::Ui, pal: &Palette, d: &places::Disk, actions: &mut Vec<Action>) {
+        let target = d.open_path();
+        let selected = {
+            let p = &self.panes[self.focus];
+            let dir = p.tabs[p.active].dir();
+            dir == target || dir == places::disk_path(&d.name)
+        };
+        let (rect, r) = ui.allocate_exact_size(vec2(ui.available_width(), 50.0), Sense::click());
+        let busy = self.dev_busy.is_some();
+        let eject_rect = Rect::from_center_size(pos2(rect.right() - 16.0, rect.top() + 14.0), vec2(24.0, 22.0));
+        let over_eject = d.removable && r.hover_pos().is_some_and(|p| eject_rect.contains(p));
+        if selected {
+            ui.painter().rect_filled(rect, CornerRadius::same(8), pal.select);
+        } else if r.hovered() {
+            ui.painter().rect_filled(rect, CornerRadius::same(8), pal.hover);
+        }
+        icons::paint(ui.painter(), Rect::from_min_size(rect.min + vec2(8.0, 5.0), vec2(18.0, 18.0)), Icon::Drive, pal.drive);
+        let name_clip = Rect::from_min_max(rect.min, pos2(rect.right() - if d.removable { 32.0 } else { 6.0 }, rect.bottom()));
+        ui.painter().with_clip_rect(name_clip).text(pos2(rect.left() + 34.0, rect.top() + 14.0), Align2::LEFT_CENTER, d.display_name(), FontId::proportional(13.5), pal.text);
+        let usage = d.mounted_usage();
+        let frac = usage.map(|(t, f)| listing::used_fraction(t, f)).unwrap_or(0.0);
+        let track = Rect::from_min_size(pos2(rect.left() + 8.0, rect.top() + 28.0), vec2(rect.width() - 16.0, 6.0));
+        ui.painter().rect_filled(track, CornerRadius::same(3), pal.border.gamma_multiply(0.7));
+        let mut fill = track;
+        fill.set_width(track.width() * frac);
+        ui.painter().rect_filled(fill, CornerRadius::same(3), theme::usage_color(pal, frac));
+        let line = match usage {
+            Some((t, f)) => format!("{} free of {}", listing::human_size(f), listing::human_size(t)),
+            None if d.removable => format!("{}, click to open", listing::human_size(d.size)),
+            None => listing::human_size(d.size),
+        };
+        ui.painter().with_clip_rect(rect).text(pos2(rect.left() + 8.0, rect.top() + 43.0), Align2::LEFT_CENTER, line, FontId::proportional(11.5), pal.dim);
+        if d.removable {
+            if over_eject {
+                ui.painter().rect_filled(eject_rect, CornerRadius::same(6), pal.hover.gamma_multiply(2.0));
+            }
+            // the eject symbol: a triangle over a bar
+            let c = eject_rect.center();
+            let col = if over_eject { pal.text } else { pal.dim };
+            ui.painter().add(egui::Shape::convex_polygon(vec![c + vec2(0.0, -7.0), c + vec2(6.0, 0.5), c + vec2(-6.0, 0.5)], col, egui::Stroke::NONE));
+            ui.painter().rect_filled(Rect::from_min_max(c + vec2(-6.0, 3.0), c + vec2(6.0, 5.5)), CornerRadius::same(1), col);
+        }
+        let r = r.on_hover_text(format!("{}\n{}", if d.model.is_empty() { d.name.clone() } else { format!("{} ({})", d.model, d.name) }, if d.removable { "Right-click for eject, format, partition and bootable drive" } else { "" }).trim().to_string());
+        if r.clicked() {
+            if over_eject {
+                actions.push(Action::Eject(d.name.clone()));
+            } else if d.removable && usage.is_none() {
+                if let Some(part) = devices::unmounted_parts(d).into_iter().next() {
+                    actions.push(Action::Mount(self.focus, part));
+                } else {
+                    actions.push(Action::Go(self.focus, places::disk_path(&d.name)));
+                }
+            } else {
+                actions.push(Action::Go(self.focus, target.clone()));
+            }
+        }
+        if r.middle_clicked() {
+            actions.push(Action::OpenTab(self.focus, target.clone()));
+        }
+        if !d.removable {
+            return;
+        }
+        r.context_menu(|ui| {
+            if ui.button("Open").clicked() {
+                if usage.is_none() {
+                    if let Some(part) = devices::unmounted_parts(d).into_iter().next() {
+                        actions.push(Action::Mount(self.focus, part));
+                    }
+                } else {
+                    actions.push(Action::Go(self.focus, target.clone()));
+                }
+                ui.close();
+            }
+            if ui.add_enabled(!busy, egui::Button::new("Eject")).clicked() {
+                actions.push(Action::Eject(d.name.clone()));
+                ui.close();
+            }
+            ui.separator();
+            if ui.add_enabled(!busy, egui::Button::new("Format...")).clicked() {
+                actions.push(Action::FormatAsk(d.name.clone()));
+                ui.close();
+            }
+            let (prog, pkg) = devices::PARTITIONER;
+            if ui.button(if devices::installed(prog) { "Partition... (GParted)".to_string() } else { "Partition... (installs GParted)".to_string() }).clicked() {
+                actions.push(Action::Launch(prog.into(), pkg.into()));
+                ui.close();
+            }
+            ui.menu_button("Make bootable", |ui| {
+                for (title, prog, pkg, about) in devices::BOOTABLE {
+                    let shown = if devices::installed(prog) { title.to_string() } else { format!("{title} (installs it)") };
+                    if ui.button(shown).on_hover_text(about).clicked() {
+                        actions.push(Action::Launch(prog.into(), pkg.into()));
+                        ui.close();
+                    }
+                }
+            });
+        });
+    }
+
     fn sidebar(&self, ui: &mut egui::Ui, pal: &Palette, actions: &mut Vec<Action>) {
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             section_heading(ui, pal, "Places");
@@ -2630,10 +2937,14 @@ impl App {
                     self.nav_row(ui, pal, Icon::Drive, pal.drive, &d.label, &d.path, Some((frac, theme::usage_color(pal, frac))), false, actions);
                 }
             }
-            for d in &self.disks {
-                let (total, free) = d.usage();
-                let frac = listing::used_fraction(total, free);
-                self.nav_row(ui, pal, Icon::Drive, pal.drive, &d.label, &places::disk_path(&d.name), Some((frac, theme::usage_color(pal, frac))), false, actions);
+            for d in self.disks.iter().filter(|d| !d.removable) {
+                self.storage_row(ui, pal, d, actions);
+            }
+            if self.disks.iter().any(|d| d.removable) {
+                section_heading(ui, pal, "Removable");
+                for d in self.disks.iter().filter(|d| d.removable) {
+                    self.storage_row(ui, pal, d, actions);
+                }
             }
 
             if self.cloud.is_some() || !self.links.is_empty() {
@@ -2754,6 +3065,31 @@ impl eframe::App for App {
         }
         while let Ok(d) = self.drives_rx.try_recv() {
             self.drives = d;
+        }
+        let first = self.dev_ctx.lock().map(|mut g| g.replace(ctx.clone()).is_none()).unwrap_or(false);
+        if first {
+            self.open_new_drives(&ctx);
+        }
+        let mut changed = false;
+        while let Ok(ev) = self.dev_rx.try_recv() {
+            match ev {
+                DevEvent::Changed => changed = true,
+                DevEvent::Done(msg, go) => {
+                    self.dev_busy = None;
+                    self.status = msg;
+                    changed = true;
+                    if let Some((p, path)) = go {
+                        let sort = self.panes[p].sort;
+                        self.panes[p].cur().navigate(path, sort, self.st.show_hidden);
+                    }
+                }
+            }
+        }
+        if changed {
+            self.disks = places::disks();
+            self.drives = places::drives();
+            self.reload_virtual();
+            self.open_new_drives(&ctx);
         }
         if self.drives.is_empty() {
             ctx.request_repaint_after(std::time::Duration::from_millis(250));
@@ -3150,6 +3486,8 @@ impl eframe::App for App {
                 self.reload_all();
             }
         }
+
+        self.format_dialog(&ctx);
 
         let mut proton_go = false;
         let mut proton_cancel = false;

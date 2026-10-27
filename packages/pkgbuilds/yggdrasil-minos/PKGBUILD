@@ -5,7 +5,7 @@
 # the code is only built and tested on Windows so far.
 pkgname=yggdrasil-minos
 pkgver=0.1.0
-pkgrel=1
+pkgrel=2
 pkgdesc="Minos, Yggdrasil's file explorer (egui), and the Proton Drive link verifier"
 replaces=('labyrinth-minos' 'labyrinth-finder')
 conflicts=('labyrinth-minos' 'labyrinth-finder')
@@ -13,12 +13,16 @@ provides=('labyrinth-minos' 'labyrinth-finder')
 arch=('x86_64')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
 license=('MPL-2.0')
-depends=('adwaita-icon-theme' 'gcc-libs' 'libxkbcommon' 'wayland' 'vulkan-icd-loader' 'libglvnd' 'fontconfig' 'xdg-utils' '7zip')
+depends=('adwaita-icon-theme' 'gcc-libs' 'libxkbcommon' 'wayland' 'vulkan-icd-loader' 'libglvnd' 'fontconfig' 'xdg-utils' '7zip' 'udisks2' 'polkit' 'dosfstools' 'exfatprogs')
 makedepends=('cargo')
 optdepends=('rclone: Proton Drive links and verification (minos-cloud)'
             'poppler: PDF page previews (pdftoppm)'
             'ffmpegthumbnailer: video previews'
-            'unrar: opening RAR archives with 7z')
+            'unrar: opening RAR archives with 7z'
+            'ntfs-3g: formatting a drive as NTFS'
+            'gparted: Partition... on a removable drive'
+            'impression: Make bootable > Write an ISO'
+            'ventoy-bin: Make bootable > Multi-ISO boot drive')
 options=('!lto')
 
 _src="$startdir/../../minos"

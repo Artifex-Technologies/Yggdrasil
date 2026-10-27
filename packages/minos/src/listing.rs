@@ -120,13 +120,13 @@ pub fn disk_entries(disks: &[crate::places::Disk]) -> Vec<Entry> {
     disks
         .iter()
         .map(|d| Entry {
-            name: d.label.clone(),
-            path: crate::places::disk_path(&d.name),
+            name: d.display_name(),
+            path: d.open_path(),
             is_dir: true,
             size: d.size,
             modified: None,
             hidden: false,
-            usage: Some(d.usage()),
+            usage: Some(d.mounted_usage().unwrap_or((d.size, d.size))),
         })
         .collect()
 }

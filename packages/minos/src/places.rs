@@ -222,6 +222,8 @@ pub fn is_virtual(p: &Path) -> bool {
 pub struct Partition {
     pub name: String,
     pub label: String,
+    /// The filesystem's own name (its volume label), "" when it has none.
+    pub volume: String,
     pub fs: String,
     /// Size of the partition in bytes.
     pub size: u64,
@@ -237,9 +239,47 @@ pub struct Disk {
     pub label: String,
     pub size: u64,
     pub parts: Vec<Partition>,
+    /// A USB stick, card or other drive that can be unplugged.
+    pub removable: bool,
+    pub model: String,
 }
 
 impl Disk {
+    /// The name shown for the drive, as Windows does: the volume label, else "USB Drive" or "Local Disk".
+    pub fn display_name(&self) -> String {
+        // the label of a partition with files on it (not swap), the mounted one first
+        let named = |p: &&Partition| !p.volume.is_empty() && p.fs != "swap";
+        if let Some(p) = self.parts.iter().filter(named).find(|p| !p.mounts.is_empty()).or_else(|| self.parts.iter().find(named)) {
+            return p.volume.clone();
+        }
+        if self.removable {
+            "USB Drive".into()
+        } else {
+            "Local Disk".into()
+        }
+    }
+
+    /// (total, free) of what is mounted on it, or None when nothing is.
+    pub fn mounted_usage(&self) -> Option<(u64, u64)> {
+        let u: Vec<(u64, u64)> = self.parts.iter().filter_map(|p| p.usage).collect();
+        (!u.is_empty()).then(|| u.iter().fold((0, 0), |(t, f), (a, b)| (t + a, f + b)))
+    }
+
+    /// The system lives on it (/, /boot or /home): never formatted or ejected from here.
+    pub fn holds_system(&self) -> bool {
+        self.parts.iter().flat_map(|p| &p.mounts).any(|m| m == Path::new("/") || m.starts_with("/boot") || m == Path::new("/home") || m.starts_with("/usr"))
+    }
+
+    /// Where to go when it is clicked: the mount point of its one mounted partition, else the disk's own view.
+    pub fn open_path(&self) -> PathBuf {
+        let mounted: Vec<&PathBuf> = self.parts.iter().filter_map(|p| p.mounts.first()).collect();
+        if self.removable && mounted.len() == 1 {
+            mounted[0].clone()
+        } else {
+            disk_path(&self.name)
+        }
+    }
+
     /// (total, free) for the whole disk: its size, and what the mounted partitions leave free.
     pub fn usage(&self) -> (u64, u64) {
         let used: u64 = self.parts.iter().filter_map(|p| p.usage).map(|(t, f)| t.saturating_sub(f)).sum();
@@ -294,16 +334,17 @@ pub fn parse_lsblk(json: &str, usage: &dyn Fn(&Path) -> Option<(u64, u64)>) -> V
             mounts.dedup();
             let usage = mounts.iter().find_map(|m| usage(m));
             let plabel = [str_of(&c["label"]), str_of(&c["partlabel"])].into_iter().find(|s| !s.is_empty()).unwrap_or_else(|| "Partition".to_string());
-            parts.push(Partition { name: pname.clone(), label: format!("{plabel} ({pname})"), fs: str_of(&c["fstype"]), size: num_of(&c["size"]), mounts, usage });
+            parts.push(Partition { name: pname.clone(), label: format!("{plabel} ({pname})"), volume: str_of(&c["label"]), fs: str_of(&c["fstype"]), size: num_of(&c["size"]), mounts, usage });
         }
-        disks.push(Disk { name, label, size, parts });
+        let removable = d["rm"].as_bool().unwrap_or(false) || d["hotplug"].as_bool().unwrap_or(false) || str_of(&d["tran"]) == "usb" || num_of(&d["rm"]) == 1;
+        disks.push(Disk { name, label, size, parts, removable, model });
     }
     disks
 }
 
 /// The disks in this computer, with their partitions and how full the mounted ones are.
 pub fn disks() -> Vec<Disk> {
-    let out = std::process::Command::new("lsblk").args(["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,FSTYPE,LABEL,PARTLABEL,MOUNTPOINTS"]).output();
+    let out = std::process::Command::new("lsblk").args(["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,FSTYPE,LABEL,PARTLABEL,MOUNTPOINTS,RM,HOTPLUG,TRAN"]).output();
     let Ok(out) = out else { return vec![] };
     let sys = sysinfo::Disks::new_with_refreshed_list();
     let usage = |m: &Path| sys.list().iter().find(|d| d.mount_point() == m).map(|d| (d.total_space(), d.available_space()));

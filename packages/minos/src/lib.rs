@@ -5,6 +5,7 @@
 pub mod archive;
 pub mod cloud;
 pub mod compat;
+pub mod devices;
 pub mod fileops;
 pub mod fmt;
 pub mod listing;

@@ -55,6 +55,17 @@ pub fn run_in_terminal(file: &Path) -> Result<(), String> {
     std::process::Command::new(&cmd[0]).args(&cmd[1..]).current_dir(dir).spawn().map(|_| ()).map_err(|e| format!("could not start {}: {e}", cmd[0]))
 }
 
+/// Installs a package from the distribution's repositories in a terminal, where pacman asks for the password and shows what it
+/// does. The name is an argument to sh, never script text.
+pub fn install_in_terminal(package: &str) -> Result<(), String> {
+    if package.is_empty() || !package.chars().all(|c| c.is_ascii_alphanumeric() || "-_.+".contains(c)) {
+        return Err("not a package name".into());
+    }
+    let (term, before) = TERMINALS.iter().find(|(name, _)| on_path(name)).ok_or("no terminal program is installed")?;
+    let script = "echo \"Installing $1\"; sudo pacman -S --needed \"$1\"; code=$?; echo; echo \"Finished (exit code $code). Press Enter to close.\"; read -r _";
+    std::process::Command::new(term).args(*before).args(["sh", "-c", script, "sh", package]).spawn().map(|_| ()).map_err(|e| format!("could not start {term}: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
