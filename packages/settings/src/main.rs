@@ -10,8 +10,11 @@ mod printers;
 mod appmgr;
 mod defaults;
 mod apps_ui;
+mod cpu;
 mod gpu;
 mod icons;
+mod readout;
+mod tune;
 mod restore;
 mod distress;
 mod security;
@@ -246,6 +249,9 @@ struct App {
     /// readout, when the page is left).
     power_gpu: bool,
     gpu_panel: Option<gpu::Panel>,
+    /// Power > Processor: the same for the processor (`power:cpu`).
+    power_cpu: bool,
+    cpu_panel: Option<cpu::Panel>,
     /// Power > Graphics card: the unlock's confirmation while open (with the date of Sarina's last backup), and its checkbox.
     unlock_confirm: Option<Option<String>>,
     unlock_read: bool,
@@ -347,6 +353,8 @@ impl App {
             dev_prompt: false,
             power_gpu: start_sub() == "gpu",
             gpu_panel: None,
+            power_cpu: start_sub() == "cpu",
+            cpu_panel: None,
             unlock_confirm: None,
             unlock_read: false,
             app_filter: String::new(),
@@ -529,9 +537,13 @@ impl eframe::App for App {
         // for pages that are slow to read (Wi-Fi scans, Bluetooth discovery, the package list), and not when
         // the window is in the background.
         let refreshable = matches!(self.page, Page::About | Page::Displays | Page::Sound | Page::Appearance | Page::Firewall | Page::DateTime | Page::Security)
-            || self.page == Page::Power && !self.power_gpu;
+            || self.page == Page::Power && !self.power_gpu && !self.power_cpu;
+        // a sub-page's panel (and its once-a-second reader) lives only while it is shown
         if !(self.page == Page::Power && self.power_gpu) {
             self.gpu_panel = None;
+        }
+        if !(self.page == Page::Power && self.power_cpu) {
+            self.cpu_panel = None;
         }
         if refreshable {
             let idle = self.loading.is_none() && !ctx.input(|i| i.pointer.any_down()) && ctx.memory(|m| m.focused().is_none()) && ctx.input(|i| i.viewport().focused != Some(false));
@@ -614,6 +626,7 @@ impl eframe::App for App {
                     }
                     if resp.clicked() && p == Page::Power {
                         self.power_gpu = false;
+                        self.power_cpu = false;
                     }
                     if resp.clicked() && !sel {
                         self.page = p;
@@ -2079,18 +2092,23 @@ impl App {
     }
 
     fn page_power(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
-        if self.power_gpu {
+        if self.power_gpu || self.power_cpu {
+            let kind = if self.power_gpu { readout::Kind::Gpu } else { readout::Kind::Cpu };
             ui.horizontal(|ui| {
                 if ui::quiet(ui, pal, "\u{2039}  Power").clicked() {
                     self.power_gpu = false;
+                    self.power_cpu = false;
                 }
-                ui.label(RichText::new("Graphics card").size(18.0).strong());
+                ui.label(RichText::new(if kind == readout::Kind::Gpu { "Graphics card" } else { "Processor" }).size(18.0).strong());
                 if ui::icon_button(ui, pal, Icon::PopOut, "Open in its own window (it stays open after Settings is closed)", true, false).clicked() {
-                    gpu::pop_out();
+                    readout::pop_out(kind);
                 }
             });
             ui.add_space(6.0);
-            self.gpu_panel.get_or_insert_with(|| gpu::Panel::new(ctx)).show(ui, pal, ctx);
+            match kind {
+                readout::Kind::Gpu => self.gpu_panel.get_or_insert_with(|| gpu::Panel::new(ctx)).show(ui, pal, ctx),
+                readout::Kind::Cpu => self.cpu_panel.get_or_insert_with(|| cpu::Panel::new(ctx)).show(ui, pal, ctx),
+            }
             return;
         }
         let Some(p) = self.data.power.clone() else { return loading(ui) };
@@ -2100,6 +2118,7 @@ impl App {
         let mut limit: Option<(String, &'static str, Option<i64>)> = None;
         let mut unlock: Option<&'static str> = None;
         let mut open_gpu = false;
+        let mut open_cpu = false;
         if !p.profiles.is_empty() {
             ui::group(ui, pal, Some("Power mode"), |ui| {
                 let name = |x: &str| match x { "performance" => "Performance".to_string(), "balanced" => "Balanced".into(), "power-saver" => "Power saver".into(), o => o.to_string() };
@@ -2117,7 +2136,8 @@ impl App {
                 let (cpu, gpu) = l.modes.get(&mode).copied().unwrap_or((None, None));
                 let mut c = cpu.unwrap_or(100) as f32;
                 // the row fills from the right: the slider first, so both sliders line up and the reset button sits to their left
-                ui::row(ui, pal, false, "Processor", Some(&format!("The most it may clock {in_mode}, as a share of its top speed")), |ui| {
+                // the titles open the Processor and Graphics card pages (readout, limits, tuning; and their pop-out windows)
+                open_cpu = ui::link_row(ui, pal, false, "Processor", Some(&format!("The most it may clock {in_mode}, as a share of its top speed")), |ui| {
                     let r = ui::slider_range(ui, pal, &mut c, 20.0..=100.0, " %");
                     if r.drag_stopped() || (r.changed() && !r.dragged()) {
                         limit = Some((mode.clone(), "cpu", if c as i64 >= 100 { None } else { Some(c as i64) }));
@@ -2239,6 +2259,9 @@ impl App {
         }
         if open_gpu {
             self.power_gpu = true;
+        }
+        if open_cpu {
+            self.power_cpu = true;
         }
         match unlock {
             Some("confirm") => {
@@ -3529,8 +3552,8 @@ fn page_shortcuts(ui: &mut egui::Ui, pal: &Palette) {
 
 fn main() -> eframe::Result {
     // Power > Graphics card's pop-out: the same panel in a window (and process) of its own
-    if std::env::args().any(|a| a == "--gpu-window") {
-        return gpu::window_main();
+    if let Some(kind) = readout::Kind::from_args() {
+        return readout::window_main(kind);
     }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()

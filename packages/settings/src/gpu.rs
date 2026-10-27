@@ -1,8 +1,8 @@
 //! Settings > Power > Graphics card: an Afterburner-style page for an NVIDIA card. A live readout (temperature, power,
 //! clocks, load, video memory, fans) with the last two minutes as small graphs, the selected power mode's power limit
-//! (powerlimit), and the fans: the card's own control, one speed, or a curve (gpufan). The same panel fills the pop-out
-//! window (`yggdrasil-settings --gpu-window`), a process of its own that stays open after Settings is closed. Nothing here
-//! overclocks.
+//! (powerlimit), the fans: the card's own control, one speed, or a curve (gpufan), and, under Developer options' crash
+//! guard, the clocks (tune). The same panel fills the pop-out window (`yggdrasil-settings --gpu-window`, readout.rs), a
+//! process of its own that stays open after Settings is closed.
 //!
 //! The readout is one `nvidia-smi -lms 1000` running only while the panel is on screen (it ends with the panel).
 
@@ -12,15 +12,14 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, Instant};
 
-use eframe::egui::{self, pos2, vec2, Margin, Rect, RichText, Sense, Shape, Stroke};
-use yggdrasil_ui::theme::{self, Palette};
-use yggdrasil_ui::chrome;
+use eframe::egui::{self, pos2, vec2, Rect, RichText, Sense, Shape, Stroke};
+use yggdrasil_ui::theme::Palette;
 
+use crate::tune::{self, Act, GpuClocks, Tune};
 use crate::{sys, ui};
 
 const FIELDS: &str = "temperature.gpu,power.draw,power.limit,clocks.gr,clocks.mem,clocks.max.gr,clocks.max.mem,utilization.gpu,memory.used,memory.total,fan.speed,clocks_event_reasons.active";
-/// Two minutes of readings, one a second.
-const KEEP: usize = 120;
+use crate::readout::{self, KEEP};
 /// The fan curve's temperature axis, in degrees C.
 const T_LO: f32 = 20.0;
 const T_HI: f32 = 100.0;
@@ -132,6 +131,7 @@ enum Msg {
     Sample(Sample),
     Limits(Option<sys::PowerLimits>, String),
     Fans(Option<Fans>),
+    Tune(Option<Tune>),
     Done(Result<(), String>),
 }
 
@@ -181,6 +181,9 @@ pub struct Panel {
     curve: Vec<[i64; 2]>,
     curve_edited: bool,
     drag: Option<usize>,
+    /// The tuning service's answer, and the clocks as they are being set before Try.
+    tune: Option<Tune>,
+    clk_edit: Option<GpuClocks>,
     status: String,
     busy: bool,
     loaded: Option<Instant>,
@@ -190,7 +193,7 @@ impl Panel {
     pub fn new(ctx: &egui::Context) -> Panel {
         let (tx, rx) = channel();
         let reader = Reader::start(tx.clone(), ctx.clone());
-        let mut p = Panel { tx, rx, reader, history: VecDeque::new(), limits: None, active: String::new(), fans: None, curve: vec![], curve_edited: false, drag: None, status: String::new(), busy: false, loaded: None };
+        let mut p = Panel { tx, rx, reader, history: VecDeque::new(), limits: None, active: String::new(), fans: None, curve: vec![], curve_edited: false, drag: None, tune: None, clk_edit: None, status: String::new(), busy: false, loaded: None };
         p.load(ctx);
         p
     }
@@ -207,6 +210,7 @@ impl Panel {
             let fixture = if cfg!(debug_assertions) { std::env::var("YGGDRASIL_GPUFAN_FIXTURE").ok().and_then(|f| std::fs::read_to_string(f).ok()) } else { None };
             let fans = fixture.or_else(|| sys::run("/usr/lib/yggdrasil/gpufan", &["get"]));
             let _ = tx.send(Msg::Fans(fans.and_then(|s| parse_fans(&s))));
+            let _ = tx.send(Msg::Tune(tune::get()));
             ctx.request_repaint();
         });
     }
@@ -243,8 +247,10 @@ impl Panel {
                     }
                     self.fans = f;
                 }
+                Msg::Tune(t) => self.tune = t,
                 Msg::Done(r) => {
                     self.busy = false;
+                    self.clk_edit = None;
                     self.status = match r {
                         Ok(()) => String::new(),
                         Err(e) if e.is_empty() => "That did not work.".into(),
@@ -272,6 +278,7 @@ impl Panel {
         }
         self.readout(ui, pal);
         self.power(ui, pal, ctx);
+        self.clocks_ui(ui, pal, ctx);
         self.fans_ui(ui, pal, ctx);
     }
 
@@ -285,13 +292,13 @@ impl Panel {
         let h: Vec<Sample> = self.history.iter().copied().collect();
         let gib = |mib: f32| mib / 1024.0;
         ui::group(ui, pal, Some("Now"), |ui| {
-            metric(ui, pal, true, "Temperature", &format!("{:.0} °C", now.temp), &h, |s| s.temp, 20.0, 100.0, " °C");
-            metric(ui, pal, false, "Power", &format!("{:.0} W of {:.0} W", now.power, now.limit), &h, |s| s.power, 0.0, now.limit.max(1.0), " W");
-            metric(ui, pal, false, "Core clock", &format!("{:.0} MHz", now.core), &h, |s| s.core, 0.0, now.core_max.max(1.0), " MHz");
-            metric(ui, pal, false, "Memory clock", &format!("{:.0} MHz", now.mem), &h, |s| s.mem, 0.0, now.mem_max.max(1.0), " MHz");
-            metric(ui, pal, false, "Load", &format!("{:.0} %", now.load), &h, |s| s.load, 0.0, 100.0, " %");
-            metric(ui, pal, false, "Video memory", &format!("{:.1} of {:.0} GiB", gib(now.vram), gib(now.vram_total)), &h, |s| s.vram / 1024.0, 0.0, gib(now.vram_total).max(1.0), " GiB");
-            metric(ui, pal, false, "Fans", &format!("{:.0} %", now.fan), &h, |s| s.fan, 0.0, 100.0, " %");
+            readout::metric(ui, pal, true, "Temperature", &format!("{:.0} °C", now.temp), &h, |s| s.temp, 20.0, 100.0, " °C");
+            readout::metric(ui, pal, false, "Power", &format!("{:.0} W of {:.0} W", now.power, now.limit), &h, |s| s.power, 0.0, now.limit.max(1.0), " W");
+            readout::metric(ui, pal, false, "Core clock", &format!("{:.0} MHz", now.core), &h, |s| s.core, 0.0, now.core_max.max(1.0), " MHz");
+            readout::metric(ui, pal, false, "Memory clock", &format!("{:.0} MHz", now.mem), &h, |s| s.mem, 0.0, now.mem_max.max(1.0), " MHz");
+            readout::metric(ui, pal, false, "Load", &format!("{:.0} %", now.load), &h, |s| s.load, 0.0, 100.0, " %");
+            readout::metric(ui, pal, false, "Video memory", &format!("{:.1} of {:.0} GiB", gib(now.vram), gib(now.vram_total)), &h, |s| s.vram / 1024.0, 0.0, gib(now.vram_total).max(1.0), " GiB");
+            readout::metric(ui, pal, false, "Fans", &format!("{:.0} %", now.fan), &h, |s| s.fan, 0.0, 100.0, " %");
             let why = reasons(now.reasons);
             let (text, hot) = match now.reasons {
                 0 => ("Nothing is holding the clocks back".to_string(), false),
@@ -320,7 +327,7 @@ impl Panel {
             None => format!("The most power the card may draw in this mode ({}-{} W, default {} W)", g.min, g.max, g.default),
         };
         ui::group(ui, pal, Some("Power limit"), |ui| {
-            slider_row(ui, pal, true, &format!("{name} mode"), &sub, |ui| {
+            readout::slider_row(ui, pal, true, &format!("{name} mode"), &sub, |ui| {
                 let r = ui::slider_range(ui, pal, &mut w, g.min as f32..=top as f32, " W");
                 if !self.busy && (r.drag_stopped() || (r.changed() && !r.dragged())) {
                     set = Some(if w as i64 == g.default { None } else { Some(w as i64) });
@@ -333,6 +340,56 @@ impl Panel {
         if let (Some(v), false) = (set, mode.is_empty()) {
             let arg = format!("gpu={}", v.map(|n| n.to_string()).unwrap_or_else(|| "default".into()));
             self.act(ctx, "/usr/lib/yggdrasil/powerlimit", vec!["set".into(), mode, arg]);
+        }
+    }
+
+    /// Afterburner's Core and Mem offsets, and a highest core clock (with an offset: undervolting), under the crash guard.
+    fn clocks_ui(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
+        let Some(t) = self.tune.clone() else { return };
+        let Some(read) = t.gpu.filter(|_| t.service) else { return };
+        let in_use = t.trial_gpu.or(if t.gpu_off.is_some() { None } else { t.kept_gpu }).unwrap_or_default();
+        let edit = self.clk_edit.get_or_insert(in_use);
+        let max_core = t.max_core.unwrap_or(2100);
+        let mut act = None;
+        let busy = self.busy;
+        ui::group(ui, pal, Some("Clocks"), |ui| {
+            let mut core = edit.core as f32;
+            readout::slider_row(ui, pal, true, "Core", "Added to every step of the core clock (Afterburner's Core MHz)", |ui| {
+                if ui::slider_range(ui, pal, &mut core, t.core_range.0 as f32..=t.core_range.1 as f32, " MHz").changed() {
+                    edit.core = core as i64;
+                }
+            });
+            let mut mem = edit.mem as f32;
+            readout::slider_row(ui, pal, false, "Memory", "Added to the memory clock (Afterburner's Mem MHz)", |ui| {
+                if ui::slider_range(ui, pal, &mut mem, t.mem_range.0 as f32..=t.mem_range.1 as f32, " MHz").changed() {
+                    edit.mem = mem as i64;
+                }
+            });
+            let mut capped = edit.cap.is_some();
+            ui::row(ui, pal, false, "Clock cap", Some("A highest core clock: with a core offset the card reaches it at a lower voltage, so it runs cooler and quieter, often as fast (undervolting)"), |ui| {
+                if ui::switch(ui, pal, &mut capped).changed() {
+                    edit.cap = capped.then_some(1900.min(max_core));
+                }
+            });
+            if let Some(c) = edit.cap {
+                let mut v = c as f32;
+                readout::slider_row(ui, pal, false, "Highest core clock", &format!("The card's own top is {max_core} MHz"), |ui| {
+                    if ui::slider_range(ui, pal, &mut v, 1200.0..=max_core as f32, " MHz").changed() {
+                        edit.cap = Some(v as i64);
+                    }
+                });
+            }
+            let kept = t.kept_gpu.is_some_and(|k| k != GpuClocks::default());
+            act = tune::guard_rows(ui, pal, t.gpu_off.as_deref(), t.trial_gpu.is_some(), *edit != in_use, kept, busy);
+        });
+        ui.label(RichText::new(format!("On the card now: core {:+} MHz, memory {:+} MHz. A crash in a game puts the clocks back at once (the driver's error is caught); a freeze too, at the next start. NVIDIA does not let Linux set the voltage itself.", read.core, read.mem)).size(11.5).color(pal.dim));
+        if let Some(a) = act {
+            let mut args = a.args("gpu");
+            if a == Act::Try {
+                let e = self.clk_edit.unwrap_or_default();
+                args.extend([format!("core={}", e.core), format!("mem={}", e.mem), format!("cap={}", e.cap.map(|c| c.to_string()).unwrap_or_else(|| "none".into()))]);
+            }
+            self.act(ctx, "/usr/lib/yggdrasil/tune", args);
         }
     }
 
@@ -362,7 +419,7 @@ impl Panel {
             });
             if f.mode == "fixed" {
                 let mut v = f.fixed.max(f.min) as f32;
-                slider_row(ui, pal, false, "Speed", &format!("From {} % (the card's lowest) to 100 %", f.min), |ui| {
+                readout::slider_row(ui, pal, false, "Speed", &format!("From {} % (the card's lowest) to 100 %", f.min), |ui| {
                     let r = ui::slider_range(ui, pal, &mut v, f.min as f32..=100.0, " %");
                     if !self.busy && (r.drag_stopped() || (r.changed() && !r.dragged())) && v as i64 != f.fixed {
                         change = Some(format!("fixed={}", v as i64));
@@ -461,124 +518,6 @@ impl Panel {
             painter.text(pts[i] + vec2(10.0, -10.0), egui::Align2::LEFT_BOTTOM, format!("{} °C → {} %", c[0], c[1].max(f.min)), egui::FontId::proportional(12.0), pal.text);
         }
     }
-}
-
-/// A row with a slider: on the right as usual, or on a line of its own under the text when the panel is narrow (the pop-out
-/// window), so the title never wraps letter by letter.
-fn slider_row(ui: &mut egui::Ui, pal: &Palette, first: bool, title: &str, sub: &str, control: impl FnOnce(&mut egui::Ui)) {
-    if ui.available_width() >= 600.0 {
-        return ui::row(ui, pal, first, title, Some(sub), control);
-    }
-    ui::row(ui, pal, first, title, Some(sub), |_| {});
-    ui.allocate_ui_with_layout(vec2(ui.available_width(), 34.0), egui::Layout::right_to_left(egui::Align::Center), control);
-    ui.add_space(4.0);
-}
-
-/// One reading: its name and value on the left, its last two minutes as a small graph on the right. Each graph has its own
-/// fixed scale (shown on hover), never a second axis.
-#[allow(clippy::too_many_arguments)]
-fn metric(ui: &mut egui::Ui, pal: &Palette, first: bool, name: &str, value: &str, h: &[Sample], get: impl Fn(&Sample) -> f32, lo: f32, hi: f32, unit: &str) {
-    if !first {
-        let r = ui.available_rect_before_wrap();
-        ui.painter().hline(r.left()..=r.right(), r.top(), Stroke::new(1.0, pal.border));
-    }
-    ui.allocate_ui_with_layout(vec2(ui.available_width(), 46.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-        ui.set_min_height(46.0);
-        ui.allocate_ui_with_layout(vec2(150.0, 40.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-            ui.set_width(150.0);
-            ui.label(RichText::new(name).size(12.0).color(pal.dim));
-            ui.label(RichText::new(value).size(15.0).color(pal.text));
-        });
-        let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::hover());
-        let painter = ui.painter_at(rect.expand(2.0));
-        painter.hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, pal.border));
-        if h.len() < 2 {
-            return;
-        }
-        let step = rect.width() / (KEEP - 1) as f32;
-        let start = KEEP - h.len();
-        let at = |i: usize, s: &Sample| pos2(rect.left() + (start + i) as f32 * step, rect.bottom() - ((get(s) - lo) / (hi - lo)).clamp(0.0, 1.0) * rect.height());
-        let line: Vec<egui::Pos2> = h.iter().enumerate().map(|(i, s)| at(i, s)).collect();
-        // a light fill under the line (drawn as thin columns: the area is not convex)
-        let fill = pal.accent.gamma_multiply(0.18);
-        for w in line.windows(2) {
-            painter.add(Shape::convex_polygon(vec![w[0], w[1], pos2(w[1].x, rect.bottom()), pos2(w[0].x, rect.bottom())], fill, Stroke::NONE));
-        }
-        painter.add(Shape::line(line.clone(), Stroke::new(2.0, pal.accent)));
-        if let Some(p) = resp.hover_pos() {
-            let i = (((p.x - rect.left()) / step).round() as usize).clamp(start, KEEP - 1) - start;
-            let q = line[i];
-            painter.vline(q.x, rect.y_range(), Stroke::new(1.0, pal.dim));
-            painter.circle(q, 4.0, pal.accent, Stroke::new(2.0, pal.field));
-            let ago = h.len() - 1 - i;
-            let v = get(&h[i]);
-            let when = if ago == 0 { "now".to_string() } else { format!("{ago} s ago") };
-            resp.on_hover_text_at_pointer(format!("{when}: {}{unit}   (scale {lo:.0}-{hi:.0}{unit})", if v >= 100.0 || unit.trim() != "GiB" { format!("{v:.0}") } else { format!("{v:.1}") }));
-        }
-    });
-}
-
-/// Opens the pop-out window: Settings started again as its own process (`--gpu-window`), in a process group of its own, so it
-/// stays open when Settings is closed.
-pub fn pop_out() {
-    use std::os::unix::process::CommandExt;
-    let exe = std::env::current_exe().ok().filter(|p| p.exists()).map(|p| p.into_os_string()).unwrap_or_else(|| "yggdrasil-settings".into());
-    if let Ok(mut child) = Command::new(exe).arg("--gpu-window").process_group(0).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
-        std::thread::spawn(move || {
-            let _ = child.wait();
-        });
-    }
-}
-
-struct Window {
-    panel: Panel,
-}
-
-impl eframe::App for Window {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        theme::apply_accessibility(ui.ctx());
-        let ctx = ui.ctx().clone();
-        chrome::resize_edges(&ctx);
-        let accent = theme::system_accent();
-        let dark = theme::system_dark();
-        theme::apply(&ctx, dark, accent);
-        let pal = theme::palette_for(dark, accent);
-        egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(pal.bg).inner_margin(Margin { left: 16, right: 8, top: 6, bottom: 12 }))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Graphics card").size(16.0).strong());
-                    chrome::drag_area(ui, ui.available_width() - chrome::controls_width());
-                    chrome::window_controls(ui, &pal);
-                });
-                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                    ui.set_max_width((ui.available_width() - 14.0).max(0.0));
-                    self.panel.show(ui, &pal, &ctx);
-                });
-            });
-        chrome::outline(&ctx, &pal);
-    }
-}
-
-/// `yggdrasil-settings --gpu-window`: the pop-out. Only one at a time: a second start brings the first to the front and ends.
-pub fn window_main() -> eframe::Result {
-    let dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into());
-    let lock = std::fs::File::create(format!("{dir}/yggdrasil-gpu-window.lock")).ok();
-    if lock.as_ref().is_some_and(|f| f.try_lock().is_err()) {
-        let _ = sys::act("hyprctl", &["dispatch", r#"hl.dsp.focus({ window = "class:yggdrasil-gpu" })"#]);
-        return Ok(());
-    }
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([460.0, 760.0])
-            .with_min_inner_size([380.0, 420.0])
-            .with_title("Graphics card")
-            .with_app_id("yggdrasil-gpu")
-            .with_decorations(false),
-        ..Default::default()
-    };
-    eframe::run_native("Graphics card", options, Box::new(|cc| Ok(Box::new(Window { panel: Panel::new(&cc.egui_ctx) }))))
-    // the lock is held until here
 }
 
 #[cfg(test)]

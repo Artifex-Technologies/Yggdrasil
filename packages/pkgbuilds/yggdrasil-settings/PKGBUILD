@@ -2,7 +2,7 @@
 # Built from packages/settings in this repository (and the shared look in packages/yggdrasil-ui).
 pkgname=yggdrasil-settings
 pkgver=0.1.0
-pkgrel=12
+pkgrel=14
 pkgdesc="Settings: Wi-Fi, Bluetooth, displays, sound, appearance, power and more"
 arch=('x86_64')
 provides=('labyrinth-settings')
@@ -38,6 +38,7 @@ package() {
   install -Dm644 "$_src/yggdrasil-settings.desktop" "$pkgdir/usr/share/applications/yggdrasil-settings.desktop"
   # Power > Graphics card in its own window (yggdrasil-settings --gpu-window): named, with an icon, for the dock
   install -Dm644 "$_src/yggdrasil-gpu.desktop" "$pkgdir/usr/share/applications/yggdrasil-gpu.desktop"
+  install -Dm644 "$_src/yggdrasil-cpu.desktop" "$pkgdir/usr/share/applications/yggdrasil-cpu.desktop"
   # the administrator helpers Settings runs with pkexec: accounts (Users) and power-mode limits (Power, Developer options)
   install -Dm755 "$_src/helpers/account" "$pkgdir/usr/lib/yggdrasil/account"
   install -Dm755 "$_src/helpers/powerlimit" "$pkgdir/usr/lib/yggdrasil/powerlimit"
@@ -62,4 +63,9 @@ package() {
   install -Dm755 "$_src/helpers/gpufan" "$pkgdir/usr/lib/yggdrasil/gpufan"
   install -Dm644 "$_src/data/org.yggdrasil.gpufan.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.gpufan.policy"
   install -Dm644 "$_src/data/yggdrasil-gpufan.service" "$pkgdir/usr/lib/systemd/system/yggdrasil-gpufan.service"
+  # tuning (Power > Processor and Graphics card, Developer options): the processor's multipliers, power limits and turbo, the
+  # graphics card's clocks, with the crash guard; its root service applies kept values at start and measures package power
+  install -Dm755 "$_src/helpers/tune" "$pkgdir/usr/lib/yggdrasil/tune"
+  install -Dm644 "$_src/data/org.yggdrasil.tune.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.tune.policy"
+  install -Dm644 "$_src/data/yggdrasil-tune.service" "$pkgdir/usr/lib/systemd/system/yggdrasil-tune.service"
 }

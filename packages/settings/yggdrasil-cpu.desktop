@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Processor
+Comment=The processor's temperature, clocks, load and power, its limits and multipliers (Settings > Power > Processor, in its own window)
+Exec=yggdrasil-settings --cpu-window
+Icon=preferences-system
+Terminal=false
+NoDisplay=true
+StartupWMClass=yggdrasil-cpu

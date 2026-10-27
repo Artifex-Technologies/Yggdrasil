@@ -1,0 +1,13 @@
+[Unit]
+Description=Processor multipliers and power limits, graphics card clocks (Settings > Power), with the crash guard
+After=nvidia-persistenced.service systemd-modules-load.service
+
+[Service]
+# applies the kept values at start (unless the last start ended without a clean shutdown while tuned), puts the graphics
+# card's clocks back on a driver error, and measures the processor's power for Settings
+ExecStart=/usr/lib/yggdrasil/tune watch
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

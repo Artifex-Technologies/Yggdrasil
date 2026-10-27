@@ -1,0 +1,664 @@
+#!/usr/bin/env python3
+"""tune: the processor's turbo multipliers, power limits and turbo, and the graphics card's clock offsets (Settings > Power >
+Processor / Graphics card, Developer options), with a crash guard.
+
+Overclocking can freeze the computer, so changes go in two steps: `try` applies values now, for this session only; `keep` makes
+them start with the computer. The guard: whenever values other than the defaults are in use, a marker with this start's boot id
+is kept in /var/lib/yggdrasil/tune/tuned, and only a clean shutdown removes it. If a start finds the marker from an earlier start,
+that one froze, was reset or lost power while tuned: nothing is applied (the defaults stay) and Settings says why, until
+`reenable`. A driver error from the graphics card (an NVIDIA "Xid") while its clocks are tuned puts them back at once.
+Power limits and turbo cannot freeze anything (lower holds back; the processor protects itself from heat) and are not guarded.
+
+Commands (root ones through pkexec, a password):
+  tune get                                     everything, as JSON (no root)
+  tune try cpu ratios=R1,R2,...,R8             turbo multiplier with 1..8 cores busy (each no higher than the one before)
+  tune try gpu core=MHZ mem=MHZ cap=MHZ|none   clock offsets, and a highest core clock (none: no cap)
+  tune keep cpu|gpu                            the values being tried start with the computer from now on
+  tune undo cpu|gpu                            back to the kept values (or the defaults) now
+  tune reset cpu|gpu                           back to the defaults, now and at every start
+  tune reenable                                after the guard switched tuning off: use the kept values again
+  tune set power pl1=W|default pl2=W|default   the processor's long- and short-term power limits
+  tune set turbo on|off
+  tune watch                                   the root service yggdrasil-tune: applies at start, guards, measures package power
+
+Files: /etc/yggdrasil/tuning.json (kept values), /var/lib/yggdrasil/tune/ (tuned, status.json, stock.json),
+/run/yggdrasil/tune.json (what the service sees now, for Settings: multipliers, offsets, package power).
+"""
+import ctypes
+import glob
+import json
+import os
+import select
+import signal
+import struct
+import subprocess
+import sys
+import time
+
+CONF = "/etc/yggdrasil/tuning.json"
+STATE = "/var/lib/yggdrasil/tune"
+RUN = "/run/yggdrasil/tune.json"
+RAPL = "/sys/class/powercap/intel-rapl:0"
+PSTATE = "/sys/devices/system/cpu/intel_pstate"
+MSR_PLATFORM_INFO = 0xCE
+MSR_TURBO_RATIO_LIMIT = 0x1AD
+RATIO_HEADROOM = 3          # multipliers may go this far above the processor's own highest turbo
+RATIO_FLOOR = 8
+GPU_CORE = (-300, 300)      # offsets offered, in MHz: well inside what the driver accepts, wide enough for a real overclock
+GPU_MEM = (-1000, 2000)
+POWER_W = (35, 250)
+EVERY_S = 2
+
+
+# ---------------------------------------------------------------- small helpers
+
+
+def boot_id():
+    try:
+        with open("/proc/sys/kernel/random/boot_id") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def now():
+    return time.strftime("%Y-%m-%d %H:%M")
+
+
+def read_json(path, default=None):
+    try:
+        with open(path, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else default
+    except (OSError, ValueError):
+        return default
+
+
+def write_json(path, d, mode=0o644):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(d, f, indent=1)
+    os.chmod(tmp, mode)
+    os.replace(tmp, path)
+
+
+def remove(path):
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+
+
+def read_int(path):
+    try:
+        with open(path) as f:
+            return int(f.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def write_text(path, text):
+    with open(path, "w") as f:
+        f.write(text)
+
+
+def log(event):
+    subprocess.run(["logger", "-t", "yggdrasil-tune", "-p", "user.notice", "--", event], capture_output=True)
+
+
+# ---------------------------------------------------------------- the processor (MSRs, RAPL, intel_pstate)
+
+
+def cpus():
+    return sorted(int(p.rsplit("/", 1)[1]) for p in glob.glob("/dev/cpu/[0-9]*") if p.rsplit("/", 1)[1].isdigit())
+
+
+def rdmsr(reg, cpu=0):
+    fd = os.open(f"/dev/cpu/{cpu}/msr", os.O_RDONLY)
+    try:
+        return struct.unpack("<Q", os.pread(fd, 8, reg))[0]
+    finally:
+        os.close(fd)
+
+
+def wrmsr(reg, value):
+    for c in cpus():
+        fd = os.open(f"/dev/cpu/{c}/msr", os.O_WRONLY)
+        try:
+            os.pwrite(fd, struct.pack("<Q", value), reg)
+        finally:
+            os.close(fd)
+
+
+def ratios_of(value):
+    """MSR_TURBO_RATIO_LIMIT: byte i is the highest multiplier with i+1 cores busy."""
+    return [(value >> (8 * i)) & 0xFF for i in range(8)]
+
+
+def value_of(ratios):
+    return sum((r & 0xFF) << (8 * i) for i, r in enumerate(ratios))
+
+
+def platform():
+    """(base multiplier, whether the turbo multipliers may be changed) from MSR_PLATFORM_INFO."""
+    v = rdmsr(MSR_PLATFORM_INFO)
+    return (v >> 8) & 0xFF, bool(v & (1 << 28))
+
+
+def check_ratios(ratios, stock):
+    """The multipliers asked for, as 8 numbers; ValueError when they are not usable."""
+    if not isinstance(ratios, list) or len(ratios) != 8 or not all(isinstance(r, int) and not isinstance(r, bool) for r in ratios):
+        raise ValueError("eight multipliers, for 1 to 8 busy cores")
+    top = min(max(stock) + RATIO_HEADROOM, 60)
+    for r in ratios:
+        if not RATIO_FLOOR <= r <= top:
+            raise ValueError(f"multipliers go from {RATIO_FLOOR} to {top} on this processor")
+    for a, b in zip(ratios, ratios[1:]):
+        if b > a:
+            raise ValueError("a multiplier for more busy cores may not be higher than the one for fewer")
+    return ratios
+
+
+def rapl_limits():
+    """(long-term W, short-term W) now, from the powercap files (readable without root)."""
+    pl = [read_int(f"{RAPL}/constraint_{i}_power_limit_uw") for i in (0, 1)]
+    return tuple(None if v is None else round(v / 1e6) for v in pl)
+
+
+def set_rapl(pl1, pl2):
+    for i, w in ((0, pl1), (1, pl2)):
+        if w is not None:
+            write_text(f"{RAPL}/constraint_{i}_power_limit_uw", str(int(w) * 1000000))
+
+
+def turbo_on():
+    v = read_int(f"{PSTATE}/no_turbo")
+    return None if v is None else v == 0
+
+
+def set_turbo(on):
+    write_text(f"{PSTATE}/no_turbo", "0" if on else "1")
+
+
+# ---------------------------------------------------------------- the graphics card (NVML)
+
+
+class ClockOffset(ctypes.Structure):
+    _fields_ = [("version", ctypes.c_uint), ("type", ctypes.c_uint), ("pstate", ctypes.c_uint),
+                ("clockOffsetMHz", ctypes.c_int), ("minClockOffsetMHz", ctypes.c_int), ("maxClockOffsetMHz", ctypes.c_int)]
+
+
+class Gpu:
+    GRAPHICS, MEMORY = 0, 2
+
+    def __init__(self):
+        self.lib = ctypes.CDLL("libnvidia-ml.so.1")
+        self.ok(self.lib.nvmlInit_v2(), "init")
+        self.h = ctypes.c_void_p()
+        self.ok(self.lib.nvmlDeviceGetHandleByIndex_v2(ctypes.c_uint(0), ctypes.byref(self.h)), "the card")
+
+    @staticmethod
+    def ok(code, what):
+        if code != 0:
+            raise OSError(f"NVML: {what} failed (error {code})")
+
+    def offset(self, kind):
+        o = ClockOffset(version=ctypes.sizeof(ClockOffset) | (1 << 24), type=kind, pstate=0)
+        self.ok(self.lib.nvmlDeviceGetClockOffsets(self.h, ctypes.byref(o)), "reading a clock offset")
+        return o.clockOffsetMHz
+
+    def set_offset(self, kind, mhz):
+        o = ClockOffset(version=ctypes.sizeof(ClockOffset) | (1 << 24), type=kind, pstate=0, clockOffsetMHz=int(mhz))
+        self.ok(self.lib.nvmlDeviceSetClockOffsets(self.h, ctypes.byref(o)), "setting a clock offset")
+
+    def set_cap(self, mhz):
+        if mhz is None:
+            self.ok(self.lib.nvmlDeviceResetGpuLockedClocks(self.h), "removing the clock cap")
+        else:
+            self.ok(self.lib.nvmlDeviceSetGpuLockedClocks(self.h, ctypes.c_uint(0), ctypes.c_uint(int(mhz))), "setting the clock cap")
+
+    def max_core(self):
+        v = ctypes.c_uint()
+        self.ok(self.lib.nvmlDeviceGetMaxClockInfo(self.h, ctypes.c_uint(0), ctypes.byref(v)), "reading the highest clock")
+        return v.value
+
+    def close(self):
+        self.lib.nvmlShutdown()
+
+
+GPU_DEFAULT = {"core": 0, "mem": 0, "cap": None}
+
+
+def check_gpu(v):
+    if not isinstance(v, dict):
+        raise ValueError("core, mem and cap")
+    core, mem, cap = v.get("core", 0), v.get("mem", 0), v.get("cap")
+    if not isinstance(core, int) or not GPU_CORE[0] <= core <= GPU_CORE[1]:
+        raise ValueError(f"the core offset goes from {GPU_CORE[0]} to {GPU_CORE[1]} MHz")
+    if not isinstance(mem, int) or not GPU_MEM[0] <= mem <= GPU_MEM[1]:
+        raise ValueError(f"the memory offset goes from {GPU_MEM[0]} to {GPU_MEM[1]} MHz")
+    if cap is not None and (not isinstance(cap, int) or not 300 <= cap <= 3000):
+        raise ValueError("the clock cap is 300-3000 MHz, or none")
+    return {"core": core, "mem": mem, "cap": cap}
+
+
+def apply_gpu(v):
+    g = Gpu()
+    try:
+        g.set_offset(Gpu.GRAPHICS, v["core"])
+        g.set_offset(Gpu.MEMORY, v["mem"])
+        g.set_cap(v["cap"])
+    finally:
+        g.close()
+
+
+def is_default_gpu(v):
+    return not v or (v.get("core", 0), v.get("mem", 0), v.get("cap")) == (0, 0, None)
+
+
+# ---------------------------------------------------------------- what is kept, tried and guarded
+
+
+def conf():
+    """The kept values: {"cpu": {"ratios": [...]} or null, "gpu": {...} or null, "power": {"pl1", "pl2"}, "turbo": bool}."""
+    d = read_json(CONF, {}) or {}
+    out = {"cpu": None, "gpu": None, "power": {"pl1": None, "pl2": None}, "turbo": None}
+    if isinstance(d.get("cpu"), dict) and isinstance(d["cpu"].get("ratios"), list):
+        out["cpu"] = {"ratios": d["cpu"]["ratios"]}
+    try:
+        out["gpu"] = None if d.get("gpu") is None else check_gpu(d["gpu"])
+    except ValueError:
+        pass
+    p = d.get("power") if isinstance(d.get("power"), dict) else {}
+    for k in ("pl1", "pl2"):
+        if isinstance(p.get(k), int) and POWER_W[0] <= p[k] <= POWER_W[1]:
+            out["power"][k] = p[k]
+    if isinstance(d.get("turbo"), bool):
+        out["turbo"] = d["turbo"]
+    return out
+
+
+def status():
+    return read_json(os.path.join(STATE, "status.json"), {}) or {}
+
+
+def set_status(**kv):
+    s = status()
+    s.update(kv)
+    write_json(os.path.join(STATE, "status.json"), s)
+
+
+def stock():
+    return read_json(os.path.join(STATE, "stock.json"), {}) or {}
+
+
+def mark_tuned():
+    write_json(os.path.join(STATE, "tuned"), {"boot_id": boot_id(), "since": now()})
+
+
+def refresh_mark():
+    """After a change: the guard's marker exists exactly while something other than the defaults is in use, so a crash with
+    nothing tuned never switches tuning off."""
+    st = status()
+    if tuned_now(conf(), st, st.get("trial")):
+        mark_tuned()
+    else:
+        remove(os.path.join(STATE, "tuned"))
+
+
+def guard_check(me):
+    """At start: True when the last start ended without a clean shutdown while tuned (then the marker is cleared and tuning is
+    switched off until reenable)."""
+    t = read_json(os.path.join(STATE, "tuned"))
+    if t is None or t.get("boot_id") == me:
+        return False
+    remove(os.path.join(STATE, "tuned"))
+    why = f"The computer did not shut down cleanly while tuned (from {t.get('since', '?')}), so this start uses the defaults"
+    set_status(cpu_off=why, gpu_off=why, trial=None)
+    log(why)
+    return True
+
+
+def tuned_now(c, st, trial):
+    """Whether any value other than the defaults is in use."""
+    cpu = (trial or {}).get("cpu") or (None if st.get("cpu_off") else c["cpu"])
+    gpu = (trial or {}).get("gpu") or (None if st.get("gpu_off") else c["gpu"])
+    return bool(cpu and cpu.get("ratios") != stock().get("ratios")) or not is_default_gpu(gpu)
+
+
+def publish(power_w=None, gpu=None):
+    """What Settings shows: read back from the hardware (root), into /run/yggdrasil/tune.json. `gpu`: an open Gpu to reuse."""
+    out = {"cpu": None, "gpu": None, "power_w": power_w, "time": time.time()}
+    try:
+        base, programmable = platform()
+        out["cpu"] = {"ratios": ratios_of(rdmsr(MSR_TURBO_RATIO_LIMIT)), "base": base, "programmable": programmable}
+    except OSError as e:
+        out["cpu_error"] = str(e)
+    try:
+        g = gpu or Gpu()
+        try:
+            out["gpu"] = {"core": g.offset(Gpu.GRAPHICS), "mem": g.offset(Gpu.MEMORY), "max_core": g.max_core()}
+        finally:
+            if gpu is None:
+                g.close()
+    except OSError as e:
+        out["gpu_error"] = str(e)
+    write_json(RUN, out)
+    return out
+
+
+def on_kernel_line(line):
+    """A graphics driver error (Xid) while the card's clocks are tuned puts them back at the defaults at once."""
+    if "NVRM: Xid" not in line:
+        return False
+    st = status()
+    gpu = (st.get("trial") or {}).get("gpu") or (None if st.get("gpu_off") else conf()["gpu"])
+    if is_default_gpu(gpu):
+        return False
+    why = f"The graphics driver reported an error while the card's clocks were tuned ({line.strip()[:120]}); they are back at the defaults"
+    try:
+        apply_gpu(GPU_DEFAULT)
+    except OSError:
+        pass
+    set_status(gpu_off=why, trial={k: v for k, v in (st.get("trial") or {}).items() if k != "gpu"} or None)
+    log(why)
+    return True
+
+
+# ---------------------------------------------------------------- commands
+
+
+def is_root():
+    return os.geteuid() == 0
+
+
+def need_root(what):
+    if not is_root():
+        print(f"tune: {what} needs root (Settings runs it with pkexec)", file=sys.stderr)
+        return False
+    return True
+
+
+def fail(msg, code=2):
+    print(f"tune: {msg}", file=sys.stderr)
+    return code
+
+
+def cmd_get():
+    c, st, run = conf(), status(), read_json(RUN, {}) or {}
+    pl1, pl2 = rapl_limits()
+    s = stock()
+    print(json.dumps({"kept": c, "status": st, "now": run, "stock": s, "rapl": {"pl1": pl1, "pl2": pl2},
+                      "turbo": turbo_on(), "ranges": {"gpu_core": GPU_CORE, "gpu_mem": GPU_MEM, "power": POWER_W,
+                                                       "ratio": [RATIO_FLOOR, min(max(s.get("ratios") or [50]) + RATIO_HEADROOM, 60)]},
+                      "service": subprocess.run(["systemctl", "is-active", "--quiet", "yggdrasil-tune"]).returncode == 0}))
+    return 0
+
+
+def parse_kv(args):
+    out = {}
+    for a in args:
+        k, sep, v = a.partition("=")
+        if not sep:
+            raise ValueError(f"{a!r} is not KEY=VALUE")
+        out[k] = v
+    return out
+
+
+def cmd_try(what, args):
+    if not need_root("try"):
+        return 1
+    try:
+        kv = parse_kv(args)
+        if what == "cpu":
+            ratios = check_ratios([int(x) for x in kv.get("ratios", "").split(",") if x.strip().lstrip("-").isdigit()], stock().get("ratios") or [50])
+            base, programmable = platform()
+            if not programmable:
+                return fail("this processor's turbo multipliers cannot be changed (a locked processor, or the BIOS)")
+            value = {"ratios": ratios}
+        elif what == "gpu":
+            cap = kv.get("cap", "none")
+            value = check_gpu({"core": int(kv.get("core", "0")), "mem": int(kv.get("mem", "0")), "cap": None if cap == "none" else int(cap)})
+        else:
+            return fail("try cpu ... or try gpu ...")
+    except ValueError as e:
+        return fail(str(e))
+    st = status()
+    trial = dict(st.get("trial") or {})
+    trial[what] = value
+    mark_tuned()   # first: if this freezes the computer, the next start uses the defaults
+    set_status(trial=trial, **{f"{what}_off": None})
+    try:
+        if what == "cpu":
+            wrmsr(MSR_TURBO_RATIO_LIMIT, value_of(value["ratios"]))
+        else:
+            apply_gpu(value)
+    except OSError as e:
+        cmd_undo(what)
+        return fail(f"could not apply it ({e}); put back", 1)
+    log(f"trying {what}: {value}")
+    publish()
+    return 0
+
+
+def apply_kept(what, c=None):
+    """The kept values for one part, or the defaults when nothing is kept."""
+    c = c or conf()
+    if what == "cpu":
+        ratios = (c["cpu"] or {}).get("ratios") or stock().get("ratios")
+        if ratios:
+            wrmsr(MSR_TURBO_RATIO_LIMIT, value_of(ratios))
+    else:
+        apply_gpu(c["gpu"] or GPU_DEFAULT)
+
+
+def cmd_keep(what):
+    if not need_root("keep"):
+        return 1
+    st = status()
+    trial = dict(st.get("trial") or {})
+    if what not in trial:
+        return fail(f"nothing is being tried for {what}", 0)
+    d = read_json(CONF, {}) or {}
+    d[what] = trial.pop(what)
+    write_json(CONF, d)
+    set_status(trial=trial or None)
+    log(f"kept {what}: {d[what]}")
+    return 0
+
+
+def cmd_undo(what):
+    if not need_root("undo"):
+        return 1
+    st = status()
+    trial = dict(st.get("trial") or {})
+    trial.pop(what, None)
+    set_status(trial=trial or None)
+    try:
+        apply_kept(what)
+    except OSError as e:
+        return fail(f"could not put it back ({e})", 1)
+    refresh_mark()
+    log(f"undid the {what} trial")
+    publish()
+    return 0
+
+
+def cmd_reset(what):
+    if not need_root("reset"):
+        return 1
+    d = read_json(CONF, {}) or {}
+    d[what] = None
+    write_json(CONF, d)
+    st = status()
+    trial = dict(st.get("trial") or {})
+    trial.pop(what, None)
+    set_status(trial=trial or None, **{f"{what}_off": None})
+    try:
+        apply_kept(what)
+    except OSError as e:
+        return fail(f"could not put the defaults back ({e})", 1)
+    refresh_mark()
+    log(f"{what} back to the defaults")
+    publish()
+    return 0
+
+
+def cmd_reenable():
+    if not need_root("reenable"):
+        return 1
+    set_status(cpu_off=None, gpu_off=None)
+    c = conf()
+    refresh_mark()
+    for what in ("cpu", "gpu"):
+        try:
+            apply_kept(what, c)
+        except OSError as e:
+            return fail(f"could not apply the kept {what} values ({e})", 1)
+    log("tuning switched on again by the owner")
+    publish()
+    return 0
+
+
+def cmd_set(what, args):
+    if not need_root("set"):
+        return 1
+    d = read_json(CONF, {}) or {}
+    try:
+        if what == "power":
+            kv = parse_kv(args)
+            p = dict(d.get("power") or {})
+            for k in ("pl1", "pl2"):
+                if k in kv:
+                    if kv[k] == "default":
+                        p[k] = None
+                    elif kv[k].isdigit() and POWER_W[0] <= int(kv[k]) <= POWER_W[1]:
+                        p[k] = int(kv[k])
+                    else:
+                        raise ValueError(f"{k} is {POWER_W[0]}-{POWER_W[1]} W or default")
+            s = stock()
+            pl1, pl2 = p.get("pl1") or s.get("pl1"), p.get("pl2") or s.get("pl2")
+            if pl1 and pl2 and pl2 < pl1:
+                raise ValueError("the short-term limit may not be below the long-term one")
+            d["power"] = p
+            write_json(CONF, d)
+            set_rapl(pl1, pl2)
+        elif what == "turbo" and len(args) == 1 and args[0] in ("on", "off"):
+            d["turbo"] = args[0] == "on"
+            write_json(CONF, d)
+            set_turbo(d["turbo"])
+        else:
+            return fail("set power pl1=W pl2=W, or set turbo on|off")
+    except ValueError as e:
+        return fail(str(e))
+    except OSError as e:
+        return fail(f"the processor refused it ({e}): the BIOS may lock it", 1)
+    log(f"set {what}: {args}")
+    return 0
+
+
+def watch_stock():
+    """The processor's own values, read once per start of the computer, before anything is applied: a restart of the computer
+    puts them back, a restart of the service alone does not (its second start keeps what the first one read)."""
+    s = stock()
+    me = boot_id()
+    if s.get("boot_id") == me and s.get("ratios"):
+        return s
+    s["boot_id"] = me
+    try:
+        s["ratios"] = ratios_of(rdmsr(MSR_TURBO_RATIO_LIMIT))
+        s["base"], s["programmable"] = platform()
+    except OSError as e:
+        log(f"cannot read the processor's multipliers: {e}")
+    s["pl1"], s["pl2"] = rapl_limits()
+    write_json(os.path.join(STATE, "stock.json"), s)
+    return s
+
+
+def cmd_watch():
+    if not need_root("watch"):
+        return 1
+    me = boot_id()
+    stopping = []
+    signal.signal(signal.SIGTERM, lambda *_: stopping.append(1))
+    watch_stock()
+    guarded = guard_check(me)
+    c = conf()
+    st = status()
+    set_status(trial=None)  # a trial never outlives its session
+    try:
+        set_rapl(c["power"]["pl1"], c["power"]["pl2"])
+        if c["turbo"] is not None:
+            set_turbo(c["turbo"])
+    except OSError as e:
+        log(f"power limits or turbo: {e}")
+    if not guarded:
+        refresh_mark()
+        for what in ("cpu", "gpu"):
+            if not st.get(f"{what}_off"):
+                try:
+                    apply_kept(what, c)
+                except OSError as e:
+                    log(f"applying the kept {what} values: {e}")
+    # the kernel's messages, for the graphics driver's errors (Xid) while its clocks are tuned; and the package's power
+    jr = subprocess.Popen(["journalctl", "-k", "-f", "-n", "0", "-o", "cat"], stdout=subprocess.PIPE, text=True)
+    try:
+        gpu = Gpu()
+    except OSError:
+        gpu = None
+    span = read_int(f"{RAPL}/max_energy_range_uj") or 2 ** 32
+    last_e, last_t, power = read_int(f"{RAPL}/energy_uj"), time.monotonic(), None
+    next_at = last_t + EVERY_S
+    try:
+        while not stopping:
+            wait = max(0.0, next_at - time.monotonic())
+            if jr and select.select([jr.stdout], [], [], wait)[0]:
+                line = jr.stdout.readline()
+                if line:
+                    on_kernel_line(line)
+                else:
+                    jr = None   # journalctl ended: keep measuring without it
+                continue
+            if not jr:
+                time.sleep(wait)
+            e, t = read_int(f"{RAPL}/energy_uj"), time.monotonic()
+            if e is not None and last_e is not None and t > last_t:
+                power = round(((e - last_e) % span) / 1e6 / (t - last_t), 1)
+            last_e, last_t, next_at = e, t, t + EVERY_S
+            publish(power, gpu)
+    finally:
+        if jr:
+            jr.terminate()
+        if gpu:
+            gpu.close()
+        # a clean shutdown ends the guard; a stop of the service alone (an update) keeps it
+        state = subprocess.run(["systemctl", "is-system-running"], capture_output=True, text=True).stdout.strip()
+        if state == "stopping":
+            remove(os.path.join(STATE, "tuned"))
+    return 0
+
+
+def main(argv):
+    if len(argv) < 2 or argv[1] in ("-h", "--help"):
+        print(__doc__)
+        return 0 if len(argv) >= 2 else 2
+    c, rest = argv[1], argv[2:]
+    if c == "get" and not rest:
+        return cmd_get()
+    if c == "try" and rest and rest[0] in ("cpu", "gpu"):
+        return cmd_try(rest[0], rest[1:])
+    if c in ("keep", "undo", "reset") and len(rest) == 1 and rest[0] in ("cpu", "gpu"):
+        return {"keep": cmd_keep, "undo": cmd_undo, "reset": cmd_reset}[c](rest[0])
+    if c == "reenable" and not rest:
+        return cmd_reenable()
+    if c == "set" and rest:
+        return cmd_set(rest[0], rest[1:])
+    if c == "watch" and not rest:
+        return cmd_watch()
+    print("tune: unknown command (see --help)", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

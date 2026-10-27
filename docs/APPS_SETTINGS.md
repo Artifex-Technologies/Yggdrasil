@@ -61,6 +61,27 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
     read, the fans go back to the card. Stopping the service, or a crash (`ExecStopPost`), gives the fans back to the card;
     checked on the RTX 2080 Ti with a kill -9. Tests: `helpers/tests/test_gpufan.py`.
   - **Fixtures:** debug builds read `$YGGDRASIL_GPUFAN_FIXTURE` for screenshots of each mode.
+- **Processor page** (built 2026-10-27, Matt's design; `src/cpu.rs`): the Processor row's title opens it, like the Graphics
+  card's, with its own pop-out window (`--cpu-window`, app id `yggdrasil-cpu`).
+  - **Readout:** package temperature and the hottest core, clocks (average and fastest), load and package power, with the
+    same two-minute graphs. Read from sysfs and /proc once a second while the panel is shown; the power comes from the
+    tuning service, because the energy counter is root-only.
+  - **Limits:** the selected mode's speed cap (powerlimit), turbo, and the long- and short-term power limits (PL1/PL2,
+    35-250 W, with the BIOS's values as the reset).
+  - **Multipliers** (a K processor): all cores at once, or by how many cores are busy; never higher with more cores busy,
+    up to 3 above the processor's own top.
+- **Tuning and its crash guard** (`/usr/lib/yggdrasil/tune`, root service `yggdrasil-tune`; `src/tune.rs`): the processor's
+  multipliers (MSR 0x1AD) and the graphics card's clocks (NVML offsets: Afterburner's Core and Mem, and a clock cap that,
+  with an offset, undervolts). NVIDIA gives Linux no way to set the card's voltage.
+  - **Try, Keep, Undo:** `try` applies values for this session; `keep` makes them start with the computer; Undo and
+    Defaults go back.
+  - **The guard:** a marker with the boot id exists exactly while something is tuned, and only a clean shutdown removes it.
+    A start that finds it from an earlier start (a freeze, a reset, a power cut while tuned) applies nothing and says why,
+    until "Turn back on". An NVIDIA Xid in the kernel log while the card's clocks are tuned puts them back at once.
+  - **What is guarded:** power limits and turbo are kept in /etc/yggdrasil/tuning.json and applied at every start
+    unguarded, since they cannot freeze anything. The processor's own values are read once per start of the computer.
+  - **Checked on the i9-9900K and the 2080 Ti** with lower values only (multipliers down one, core -50 MHz) and back.
+    Tests: `helpers/tests/test_tune.py`.
 - **Graphics card unlock** (`/usr/lib/yggdrasil/gpuunlock`, built 2026-10-27 as Phase 0 of Labyrinth OS's
   [GPU_UNLOCK.md](https://github.com/Artifex-Technologies/Labyrinth_OS/blob/main/docs/GPU_UNLOCK.md)): a "Tensor-rate unlock"
   row under the Graphics card row, only with Developer options on and only for a card listed exactly (device, board, VBIOS, driver series)
