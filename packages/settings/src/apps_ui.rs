@@ -7,7 +7,8 @@ use eframe::egui::{self, pos2, vec2, Align2, Color32, CornerRadius, FontId, Rect
 use yggdrasil_ui::theme::Palette;
 
 use crate::appmgr::{self, AppInfo, AppPolicy, Kind, NetMode};
-use crate::icons::{self, Icon};
+use crate::icons::Icon;
+use crate::ui::icon_button;
 use crate::{ui, App};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -53,17 +54,6 @@ fn ago(last: u64) -> String {
         5400..=129_599 => format!("{} h ago", s / 3600),
         _ => format!("{} days ago", s / 86_400),
     }
-}
-
-/// An icon-only button in a row: a hover plate, the shape, and a tooltip.
-fn icon_button(ui: &mut egui::Ui, pal: &Palette, icon: Icon, tip: &str, enabled: bool, danger: bool) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(vec2(30.0, 30.0), if enabled { Sense::click() } else { Sense::hover() });
-    if enabled && resp.hovered() {
-        ui.painter().rect_filled(rect, CornerRadius::same(8), if danger { Color32::from_rgba_unmultiplied(220, 60, 70, 40) } else { pal.hover });
-    }
-    let c = if !enabled { pal.dim.gamma_multiply(0.4) } else if danger && resp.hovered() { Color32::from_rgb(235, 90, 100) } else { pal.text };
-    icons::paint(ui.painter(), rect.shrink(6.0), icon, c);
-    resp.on_hover_text(tip)
 }
 
 /// The app's icon: its picture, or a coloured tile with its first letter when the pack has none.

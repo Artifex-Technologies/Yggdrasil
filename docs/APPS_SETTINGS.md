@@ -42,7 +42,7 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
   change); the root service `yggdrasil-powerlimit.service` (the operating system switches it on) applies the active mode's limits on every mode change (CPU: `scaling_max_freq` as a percent
   of `cpuinfo_max_freq`; GPU: `nvidia-smi -pl`). Verified on the RTX 2080 Ti and the Intel pstate CPU; restored to defaults.
   On the Power page they sit in the Power mode group, under the mode selector, for the mode that is selected: Processor, then
-  Graphics card (each with Reset); choosing another mode shows and changes that mode's limits (Matt's layout, 2026-10-27).
+  Graphics card (each with a reset icon left of its slider); choosing another mode shows and changes that mode's limits (Matt's layout, 2026-10-27).
   While the graphics card unlock is armed or measured, `/var/lib/yggdrasil/gpu-unlock/power-hold` exists and no mode goes above
   the card's default watts (the modes' own limits stay saved and come back when the hold ends); `powerlimit get` reports it as
   `gpu.hold` and the slider stops there.

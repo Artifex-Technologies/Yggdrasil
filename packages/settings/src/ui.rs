@@ -107,6 +107,17 @@ pub fn action(ui: &mut egui::Ui, pal: &Palette, label: &str) -> egui::Response {
     ui.add(egui::Button::new(RichText::new(label).color(pal.on_accent())).fill(pal.accent).corner_radius(CornerRadius::same(8)).min_size(vec2(80.0, 28.0)))
 }
 
+/// An icon-only button in a row: a hover plate, the shape, and a tooltip.
+pub fn icon_button(ui: &mut egui::Ui, pal: &Palette, icon: crate::icons::Icon, tip: &str, enabled: bool, danger: bool) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(30.0, 30.0), if enabled { Sense::click() } else { Sense::hover() });
+    if enabled && resp.hovered() {
+        ui.painter().rect_filled(rect, CornerRadius::same(8), if danger { Color32::from_rgba_unmultiplied(220, 60, 70, 40) } else { pal.hover });
+    }
+    let c = if !enabled { pal.dim.gamma_multiply(0.4) } else if danger && resp.hovered() { Color32::from_rgb(235, 90, 100) } else { pal.text };
+    crate::icons::paint(ui.painter(), rect.shrink(6.0), icon, c);
+    resp.on_hover_text(tip)
+}
+
 /// A quiet button for secondary actions.
 pub fn quiet(ui: &mut egui::Ui, pal: &Palette, label: &str) -> egui::Response {
     ui.add(egui::Button::new(RichText::new(label)).fill(pal.hover).corner_radius(CornerRadius::same(8)).min_size(vec2(80.0, 28.0)))

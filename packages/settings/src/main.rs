@@ -2087,13 +2087,14 @@ impl App {
                 let in_mode = format!("in {} mode", name(&mode));
                 let (cpu, gpu) = l.modes.get(&mode).copied().unwrap_or((None, None));
                 let mut c = cpu.unwrap_or(100) as f32;
+                // the row fills from the right: the slider first, so both sliders line up and the reset button sits to their left
                 ui::row(ui, pal, false, "Processor", Some(&format!("The most it may clock {in_mode}, as a share of its top speed")), |ui| {
-                    if cpu.is_some() && ui::quiet(ui, pal, "Reset").clicked() {
-                        limit = Some((mode.clone(), "cpu", None));
-                    }
                     let r = ui::slider_range(ui, pal, &mut c, 20.0..=100.0, " %");
                     if r.drag_stopped() || (r.changed() && !r.dragged()) {
                         limit = Some((mode.clone(), "cpu", if c as i64 >= 100 { None } else { Some(c as i64) }));
+                    }
+                    if cpu.is_some() && ui::icon_button(ui, pal, Icon::Restart, "Back to the default", true, false).clicked() {
+                        limit = Some((mode.clone(), "cpu", None));
                     }
                 });
                 let Some(g) = &l.gpu else { return };
@@ -2105,12 +2106,12 @@ impl App {
                     _ => format!("{}: the most power it may draw {in_mode} ({}-{} W, default {} W)", g.name, g.min, g.max, g.default),
                 };
                 ui::row(ui, pal, false, "Graphics card", Some(&sub), |ui| {
-                    if gpu.is_some() && ui::quiet(ui, pal, "Reset").clicked() {
-                        limit = Some((mode.clone(), "gpu", None));
-                    }
                     let r = ui::slider_range(ui, pal, &mut w, g.min as f32..=top as f32, " W");
                     if r.drag_stopped() || (r.changed() && !r.dragged()) {
                         limit = Some((mode.clone(), "gpu", if w as i64 == g.default { None } else { Some(w as i64) }));
+                    }
+                    if gpu.is_some() && ui::icon_button(ui, pal, Icon::Restart, "Back to the default", true, false).clicked() {
+                        limit = Some((mode.clone(), "gpu", None));
                     }
                 });
                 if let Some(u) = p.unlock.as_ref().filter(|u| u.offered()) {
