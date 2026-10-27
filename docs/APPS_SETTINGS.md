@@ -46,6 +46,21 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
   While the graphics card unlock is armed or measured, `/var/lib/yggdrasil/gpu-unlock/power-hold` exists and no mode goes above
   the card's default watts (the modes' own limits stay saved and come back when the hold ends); `powerlimit get` reports it as
   `gpu.hold` and the slider stops there.
+- **Graphics card page** (built 2026-10-27, Matt's design; `src/gpu.rs`): the Graphics card row's title opens it. An
+  Afterburner-style panel for an NVIDIA card: a live readout (temperature, power against the limit, core and memory clocks,
+  load, video memory, fans, and what is holding the clocks back) with the last two minutes as small graphs, each on its own
+  fixed scale, the value at a moment on hover; the selected power mode's power limit; and the fans (`/usr/lib/yggdrasil/gpufan`):
+  the card's own control, one speed, or a curve edited by dragging its points. The readout is one `nvidia-smi -lms 1000` that
+  runs only while the panel is on screen. Nothing on the page overclocks.
+  - **Pop-out:** the icon next to the page's title opens the same panel in its own window, `yggdrasil-settings --gpu-window`
+    (app id `yggdrasil-gpu`), started as a process of its own, so it stays open after Settings is closed. Only one at a time:
+    a second start brings the first forward.
+  - **Fans:** `gpufan set` (pkexec, `auth_admin_keep`) saves /etc/yggdrasil/gpu-fan.json and starts or stops the root
+    service `yggdrasil-gpufan`, which drives the fans through NVML (no X server needed). Never below the card's lowest
+    speed; at 85 °C or more, full speed. A speed comes down only once the card is 3 °C cooler. If the temperature cannot be
+    read, the fans go back to the card. Stopping the service, or a crash (`ExecStopPost`), gives the fans back to the card;
+    checked on the RTX 2080 Ti with a kill -9. Tests: `helpers/tests/test_gpufan.py`.
+  - **Fixtures:** debug builds read `$YGGDRASIL_GPUFAN_FIXTURE` for screenshots of each mode.
 - **Graphics card unlock** (`/usr/lib/yggdrasil/gpuunlock`, built 2026-10-27 as Phase 0 of Labyrinth OS's
   [GPU_UNLOCK.md](https://github.com/Artifex-Technologies/Labyrinth_OS/blob/main/docs/GPU_UNLOCK.md)): a "Tensor-rate unlock"
   row under the Graphics card row, only with Developer options on and only for a card listed exactly (device, board, VBIOS, driver series)

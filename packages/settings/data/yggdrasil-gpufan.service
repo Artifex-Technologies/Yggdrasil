@@ -1,0 +1,16 @@
+[Unit]
+Description=Graphics card fans on the speed or curve chosen in Settings (Power > Graphics card)
+After=nvidia-persistenced.service
+# no NVIDIA card or driver: give up after a few tries instead of trying forever
+StartLimitIntervalSec=120
+StartLimitBurst=10
+
+[Service]
+ExecStart=/usr/lib/yggdrasil/gpufan run
+# whatever way it stopped, the fans go back to the card's own control
+ExecStopPost=/usr/lib/yggdrasil/gpufan reset
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

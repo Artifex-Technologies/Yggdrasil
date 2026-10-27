@@ -1,0 +1,344 @@
+#!/usr/bin/env python3
+"""gpufan: the NVIDIA graphics card's fans (Settings > Power > Graphics card).
+
+Modes:
+  auto     the card's own control (the default; nothing of ours runs)
+  fixed    one speed, in percent
+  curve    a speed for each temperature: points (degrees C, percent) joined by straight lines
+
+Commands:
+  gpufan get                                         the fans now and the setting, as JSON (no root needed)
+  gpufan set auto | fixed=PCT | curve=T:P,T:P,...    save the setting and start or stop the service (root: pkexec)
+  gpufan run                                         as the root service yggdrasil-gpufan: keep the fans on the setting
+  gpufan reset                                       give the fans back to the card (root; the service does it when it stops)
+
+Safety: never below the card's own minimum; at HOT_C or more the fans run at 100 % whatever the setting; if the temperature
+cannot be read the fans go back to the card and the service ends with an error (systemd starts it again); whenever the service
+stops, also after a crash (ExecStopPost), the fans go back to the card. Nothing here touches clocks or power.
+
+The setting is /etc/yggdrasil/gpu-fan.json: {"mode": "curve", "fixed": 60, "curve": [[40, 30], [60, 45], [75, 75], [85, 100]]}.
+Fans are driven through NVML (libnvidia-ml), which needs no X server and works on Wayland.
+"""
+import ctypes
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+
+CONF = "/etc/yggdrasil/gpu-fan.json"
+SERVICE = "yggdrasil-gpufan.service"
+HOT_C = 85
+SETTLE_C = 3        # a lower speed waits until the card is this much cooler than when the speed was last raised
+EVERY_S = 2
+REAPPLY_S = 30      # the speed is set again now and then (after a suspend the card may have taken its fans back)
+DEFAULT_CURVE = [[40, 30], [60, 45], [75, 75], [85, 100]]
+MODES = ("auto", "fixed", "curve")
+
+
+class NvmlError(Exception):
+    pass
+
+
+class Nvml:
+    """The first NVIDIA card, through libnvidia-ml."""
+
+    def __init__(self):
+        try:
+            self.lib = ctypes.CDLL("libnvidia-ml.so.1")
+        except OSError as e:
+            raise NvmlError(f"libnvidia-ml is not available ({e})")
+        self.call("nvmlInit_v2")
+        self.h = ctypes.c_void_p()
+        self.call("nvmlDeviceGetHandleByIndex_v2", ctypes.c_uint(0), ctypes.byref(self.h))
+
+    def call(self, name, *args):
+        code = getattr(self.lib, name)(*args)
+        if code != 0:
+            raise NvmlError(f"{name} failed (NVML error {code})")
+
+    def uint(self, name, *args):
+        v = ctypes.c_uint()
+        self.call(name, self.h, *args, ctypes.byref(v))
+        return v.value
+
+    def temp(self):
+        return self.uint("nvmlDeviceGetTemperature", ctypes.c_uint(0))
+
+    def fans(self):
+        return self.uint("nvmlDeviceGetNumFans")
+
+    def speed(self, i):
+        return self.uint("nvmlDeviceGetFanSpeed_v2", ctypes.c_uint(i))
+
+    def minmax(self):
+        lo, hi = ctypes.c_uint(), ctypes.c_uint()
+        self.call("nvmlDeviceGetMinMaxFanSpeed", self.h, ctypes.byref(lo), ctypes.byref(hi))
+        return lo.value, hi.value
+
+    def set_speed(self, i, pct):
+        self.call("nvmlDeviceSetFanSpeed_v2", self.h, ctypes.c_uint(i), ctypes.c_uint(pct))
+
+    def set_default(self, i):
+        self.call("nvmlDeviceSetDefaultFanSpeed_v2", self.h, ctypes.c_uint(i))
+
+    def close(self):
+        self.lib.nvmlShutdown()
+
+
+# ---------------------------------------------------------------- the setting (pure, tested)
+
+
+def parse_curve(text):
+    """'40:30,60:45' -> [[40, 30], [60, 45]]; ValueError when it is not a usable curve."""
+    pts = []
+    for part in text.split(","):
+        t, sep, p = part.strip().partition(":")
+        if not sep or not t.strip().isdigit() or not p.strip().isdigit():
+            raise ValueError(f"{part!r} is not TEMPERATURE:PERCENT")
+        pts.append([int(t), int(p)])
+    return check_curve(pts)
+
+
+def check_curve(pts):
+    if not isinstance(pts, list) or not 2 <= len(pts) <= 8:
+        raise ValueError("a curve has 2 to 8 points")
+    out = []
+    for pt in pts:
+        if not (isinstance(pt, (list, tuple)) and len(pt) == 2 and all(isinstance(v, int) and not isinstance(v, bool) for v in pt)):
+            raise ValueError("each point is [degrees, percent]")
+        t, p = pt
+        if not 20 <= t <= 100 or not 0 <= p <= 100:
+            raise ValueError("temperatures are 20-100 C and speeds 0-100 %")
+        out.append([t, p])
+    for a, b in zip(out, out[1:]):
+        if b[0] <= a[0]:
+            raise ValueError("the temperatures must rise from point to point")
+        if b[1] < a[1]:
+            raise ValueError("the speed may not drop as the temperature rises")
+    return out
+
+
+def clean(d):
+    """The saved setting with anything unusable replaced by the default."""
+    d = d if isinstance(d, dict) else {}
+    out = {"mode": d.get("mode") if d.get("mode") in MODES else "auto", "fixed": 60, "curve": [list(p) for p in DEFAULT_CURVE]}
+    if isinstance(d.get("fixed"), int) and 0 <= d["fixed"] <= 100:
+        out["fixed"] = d["fixed"]
+    try:
+        out["curve"] = check_curve(d.get("curve"))
+    except ValueError:
+        pass
+    return out
+
+
+def load(path=None):
+    try:
+        with open(path or CONF, encoding="utf-8") as f:
+            return clean(json.load(f))
+    except (OSError, ValueError):
+        return clean({})
+
+
+def save(cfg, path=None):
+    path = path or CONF
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(clean(cfg), f, indent=1)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, path)
+
+
+def curve_at(pts, t):
+    """The curve's speed at t degrees: the first point's below it, the last point's above it, straight lines between."""
+    if t <= pts[0][0]:
+        return pts[0][1]
+    for (t0, p0), (t1, p1) in zip(pts, pts[1:]):
+        if t <= t1:
+            return round(p0 + (p1 - p0) * (t - t0) / (t1 - t0))
+    return pts[-1][1]
+
+
+def target(cfg, t, lo):
+    """The speed the setting asks for at t degrees, never below the card's minimum, always 100 % when hot."""
+    if t >= HOT_C:
+        return 100
+    want = cfg["fixed"] if cfg["mode"] == "fixed" else curve_at(cfg["curve"], t)
+    return max(lo, min(100, want))
+
+
+def settle(last, want, t):
+    """last = (speed, temperature when it was set). Up at once; down only once the card is SETTLE_C cooler, so the fans do not
+    hunt up and down around a point of the curve."""
+    if last is None or want >= last[0] or t <= last[1] - SETTLE_C:
+        return want
+    return last[0]
+
+
+# ---------------------------------------------------------------- commands
+
+
+def is_root():
+    return os.geteuid() == 0
+
+
+def systemctl(*args):
+    return subprocess.run(["systemctl", *args], capture_output=True, text=True).returncode
+
+
+def give_back(nv):
+    """Every fan back to the card's own control (errors ignored: this is the way out)."""
+    try:
+        for i in range(nv.fans()):
+            try:
+                nv.set_default(i)
+            except NvmlError:
+                pass
+    except NvmlError:
+        pass
+
+
+def cmd_get():
+    cfg = load()
+    out = dict(cfg, fans=None, min=None, max=None, temp=None, running=systemctl("is-active", "--quiet", SERVICE) == 0, hot=HOT_C)
+    try:
+        nv = Nvml()
+        try:
+            out["fans"] = [nv.speed(i) for i in range(nv.fans())]
+            out["min"], out["max"] = nv.minmax()
+            out["temp"] = nv.temp()
+        finally:
+            nv.close()
+    except NvmlError as e:
+        out["error"] = str(e)
+    print(json.dumps(out))
+    return 0
+
+
+def cmd_set(arg):
+    if not is_root():
+        print("gpufan: set needs root (Settings runs it with pkexec)", file=sys.stderr)
+        return 1
+    cfg = load()
+    try:
+        if arg == "auto":
+            cfg["mode"] = "auto"
+        elif arg.startswith("fixed="):
+            v = arg.split("=", 1)[1]
+            if not v.isdigit() or not 0 <= int(v) <= 100:
+                raise ValueError("fixed needs a percent, 0-100")
+            cfg.update(mode="fixed", fixed=int(v))
+        elif arg.startswith("curve="):
+            cfg.update(mode="curve", curve=parse_curve(arg.split("=", 1)[1]))
+        else:
+            raise ValueError("use auto, fixed=PCT or curve=T:P,T:P,...")
+    except ValueError as e:
+        print(f"gpufan: {e}", file=sys.stderr)
+        return 2
+    save(cfg)
+    if cfg["mode"] == "auto":
+        systemctl("disable", "--now", SERVICE)   # stopping it gives the fans back (ExecStopPost)
+        return cmd_reset()
+    systemctl("enable", SERVICE)
+    return 0 if systemctl("restart", SERVICE) == 0 else 1
+
+
+def cmd_reset():
+    if not is_root():
+        print("gpufan: reset needs root", file=sys.stderr)
+        return 1
+    try:
+        nv = Nvml()
+    except NvmlError:
+        return 0
+    give_back(nv)
+    nv.close()
+    return 0
+
+
+def run(nv, read_cfg, sleep, should_stop, clock=time.monotonic):
+    """The service's loop, with everything from outside passed in (tests drive it). Returns the exit code; the fans are given
+    back to the card on every way out."""
+    try:
+        n, (lo, _) = nv.fans(), nv.minmax()
+        last, applied = None, 0.0
+        cfg = read_cfg() or load()
+        while not should_stop():
+            new = read_cfg()   # None while unchanged; a new setting applies at once, in either direction
+            if new:
+                cfg, last = new, None
+            if cfg["mode"] == "auto":
+                return 0
+            t = nv.temp()
+            want = settle(last, target(cfg, t, lo), t)
+            if last is None or want != last[0] or clock() - applied >= REAPPLY_S:
+                for i in range(n):
+                    nv.set_speed(i, want)
+                if last is None or want != last[0]:
+                    last = (want, t)
+                applied = clock()
+            sleep(EVERY_S)
+        return 0
+    except NvmlError as e:
+        print(f"gpufan: {e}; the fans are back on the card's own control", file=sys.stderr)
+        return 1
+    finally:
+        give_back(nv)
+
+
+def cmd_run():
+    if not is_root():
+        print("gpufan: run is the root service (yggdrasil-gpufan)", file=sys.stderr)
+        return 1
+    stop = []
+    signal.signal(signal.SIGTERM, lambda *_: stop.append(1))
+    signal.signal(signal.SIGINT, lambda *_: stop.append(1))
+    seen = [None]
+
+    def read_cfg():
+        try:
+            m = os.path.getmtime(CONF)
+        except OSError:
+            m = 0
+        if m == seen[0]:
+            return None
+        seen[0] = m
+        return load()
+
+    def sleep(s):
+        end = time.monotonic() + s
+        while not stop and time.monotonic() < end:
+            time.sleep(0.2)
+
+    try:
+        nv = Nvml()
+    except NvmlError as e:
+        print(f"gpufan: {e}", file=sys.stderr)
+        return 1
+    try:
+        return run(nv, read_cfg, sleep, lambda: bool(stop))
+    finally:
+        nv.close()
+
+
+def main(argv):
+    if len(argv) < 2 or argv[1] in ("-h", "--help"):
+        print(__doc__)
+        return 0 if len(argv) >= 2 else 2
+    c = argv[1]
+    if c == "get" and len(argv) == 2:
+        return cmd_get()
+    if c == "set" and len(argv) == 3:
+        return cmd_set(argv[2])
+    if c == "run" and len(argv) == 2:
+        return cmd_run()
+    if c == "reset" and len(argv) == 2:
+        return cmd_reset()
+    print("gpufan: unknown command (see --help)", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

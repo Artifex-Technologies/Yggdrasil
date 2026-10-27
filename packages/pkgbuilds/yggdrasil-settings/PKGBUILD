@@ -2,7 +2,7 @@
 # Built from packages/settings in this repository (and the shared look in packages/yggdrasil-ui).
 pkgname=yggdrasil-settings
 pkgver=0.1.0
-pkgrel=10
+pkgrel=12
 pkgdesc="Settings: Wi-Fi, Bluetooth, displays, sound, appearance, power and more"
 arch=('x86_64')
 provides=('labyrinth-settings')
@@ -15,7 +15,8 @@ depends=('gcc-libs' 'libxkbcommon' 'wayland' 'vulkan-icd-loader' 'libglvnd' 'fon
 optdepends=('ufw: firewall page'
             'plymouth: the boot screen (Appearance > Boot screen)'
             'python-pillow: your own picture as the boot screen'
-            'grub: the graphics card unlock picks its boot entry for one start (Power, Developer options)')
+            'grub: the graphics card unlock picks its boot entry for one start (Power, Developer options)'
+            'nvidia-utils: the Graphics card page (Power, Developer options): readout and fan control')
 makedepends=('cargo')
 options=('!lto')
 
@@ -35,6 +36,8 @@ check() {
 package() {
   install -Dm755 "$srcdir/target/release/yggdrasil-settings" "$pkgdir/usr/bin/yggdrasil-settings"
   install -Dm644 "$_src/yggdrasil-settings.desktop" "$pkgdir/usr/share/applications/yggdrasil-settings.desktop"
+  # Power > Graphics card in its own window (yggdrasil-settings --gpu-window): named, with an icon, for the dock
+  install -Dm644 "$_src/yggdrasil-gpu.desktop" "$pkgdir/usr/share/applications/yggdrasil-gpu.desktop"
   # the administrator helpers Settings runs with pkexec: accounts (Users) and power-mode limits (Power, Developer options)
   install -Dm755 "$_src/helpers/account" "$pkgdir/usr/lib/yggdrasil/account"
   install -Dm755 "$_src/helpers/powerlimit" "$pkgdir/usr/lib/yggdrasil/powerlimit"
@@ -54,4 +57,9 @@ package() {
   install -Dm755 "$_src/data/41_gpu_unlock" "$pkgdir/etc/grub.d/41_gpu_unlock"
   install -Dm644 "$_src/data/yggdrasil-gpu-unlock-boot.service" "$pkgdir/usr/lib/systemd/system/yggdrasil-gpu-unlock-boot.service"
   install -Dm644 "$_src/data/yggdrasil-gpu-unlock-verify.service" "$pkgdir/usr/lib/systemd/system/yggdrasil-gpu-unlock-verify.service"
+  # the graphics card's fans (Power > Graphics card): the helper, its password rule, and the root service that keeps them on a
+  # chosen speed or curve (started and stopped by the helper; stopping it gives the fans back to the card)
+  install -Dm755 "$_src/helpers/gpufan" "$pkgdir/usr/lib/yggdrasil/gpufan"
+  install -Dm644 "$_src/data/org.yggdrasil.gpufan.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.gpufan.policy"
+  install -Dm644 "$_src/data/yggdrasil-gpufan.service" "$pkgdir/usr/lib/systemd/system/yggdrasil-gpufan.service"
 }

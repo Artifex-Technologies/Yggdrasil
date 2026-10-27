@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Graphics card
+Comment=The graphics card's temperature, power, clocks and fans (Settings > Power > Graphics card, in its own window)
+Exec=yggdrasil-settings --gpu-window
+Icon=preferences-system
+Terminal=false
+NoDisplay=true
+StartupWMClass=yggdrasil-gpu

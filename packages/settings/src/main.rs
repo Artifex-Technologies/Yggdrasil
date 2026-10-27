@@ -10,6 +10,7 @@ mod printers;
 mod appmgr;
 mod defaults;
 mod apps_ui;
+mod gpu;
 mod icons;
 mod restore;
 mod distress;
@@ -241,6 +242,10 @@ struct App {
     dev_clicks: u8,
     dev_last: std::time::Instant,
     dev_prompt: bool,
+    /// Power > Graphics card: its own page while open (`power:gpu` opens on it), and the panel it shows (dropped, with its
+    /// readout, when the page is left).
+    power_gpu: bool,
+    gpu_panel: Option<gpu::Panel>,
     /// Power > Graphics card: the unlock's confirmation while open (with the date of Sarina's last backup), and its checkbox.
     unlock_confirm: Option<Option<String>>,
     unlock_read: bool,
@@ -340,6 +345,8 @@ impl App {
             dev_clicks: 0,
             dev_last: std::time::Instant::now(),
             dev_prompt: false,
+            power_gpu: start_sub() == "gpu",
+            gpu_panel: None,
             unlock_confirm: None,
             unlock_read: false,
             app_filter: String::new(),
@@ -521,7 +528,11 @@ impl eframe::App for App {
         // panel, a command) shows up without closing Settings. Not while something is being dragged or typed, not
         // for pages that are slow to read (Wi-Fi scans, Bluetooth discovery, the package list), and not when
         // the window is in the background.
-        let refreshable = matches!(self.page, Page::About | Page::Displays | Page::Sound | Page::Appearance | Page::Power | Page::Firewall | Page::DateTime | Page::Security);
+        let refreshable = matches!(self.page, Page::About | Page::Displays | Page::Sound | Page::Appearance | Page::Firewall | Page::DateTime | Page::Security)
+            || self.page == Page::Power && !self.power_gpu;
+        if !(self.page == Page::Power && self.power_gpu) {
+            self.gpu_panel = None;
+        }
         if refreshable {
             let idle = self.loading.is_none() && !ctx.input(|i| i.pointer.any_down()) && ctx.memory(|m| m.focused().is_none()) && ctx.input(|i| i.viewport().focused != Some(false));
             if idle && self.refreshed.elapsed() >= std::time::Duration::from_secs(4) {
@@ -600,6 +611,9 @@ impl eframe::App for App {
                     }
                     if resp.clicked() && p == Page::Security {
                         self.sec_sub = SecSub::Main;
+                    }
+                    if resp.clicked() && p == Page::Power {
+                        self.power_gpu = false;
                     }
                     if resp.clicked() && !sel {
                         self.page = p;
@@ -2065,12 +2079,27 @@ impl App {
     }
 
     fn page_power(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
+        if self.power_gpu {
+            ui.horizontal(|ui| {
+                if ui::quiet(ui, pal, "\u{2039}  Power").clicked() {
+                    self.power_gpu = false;
+                }
+                ui.label(RichText::new("Graphics card").size(18.0).strong());
+                if ui::icon_button(ui, pal, Icon::PopOut, "Open in its own window (it stays open after Settings is closed)", true, false).clicked() {
+                    gpu::pop_out();
+                }
+            });
+            ui.add_space(6.0);
+            self.gpu_panel.get_or_insert_with(|| gpu::Panel::new(ctx)).show(ui, pal, ctx);
+            return;
+        }
         let Some(p) = self.data.power.clone() else { return loading(ui) };
         let mut profile: Option<String> = None;
         // Developer options add the selected mode's limits under the mode itself: the processor's clock, then the graphics
         // card's power (and, on a card in the unlock's support table, the unlock). Choosing another mode shows that mode's.
         let mut limit: Option<(String, &'static str, Option<i64>)> = None;
         let mut unlock: Option<&'static str> = None;
+        let mut open_gpu = false;
         if !p.profiles.is_empty() {
             ui::group(ui, pal, Some("Power mode"), |ui| {
                 let name = |x: &str| match x { "performance" => "Performance".to_string(), "balanced" => "Balanced".into(), "power-saver" => "Power saver".into(), o => o.to_string() };
@@ -2105,7 +2134,8 @@ impl App {
                     (Some(h), _) => format!("{}: at most {h} W while the unlock is tried", g.name),
                     _ => format!("{}: the most power it may draw {in_mode} ({}-{} W, default {} W)", g.name, g.min, g.max, g.default),
                 };
-                ui::row(ui, pal, false, "Graphics card", Some(&sub), |ui| {
+                // the title opens the Graphics card page (readout, power, fans; and its pop-out window)
+                open_gpu = ui::link_row(ui, pal, false, "Graphics card", Some(&sub), |ui| {
                     let r = ui::slider_range(ui, pal, &mut w, g.min as f32..=top as f32, " W");
                     if r.drag_stopped() || (r.changed() && !r.dragged()) {
                         limit = Some((mode.clone(), "gpu", if w as i64 == g.default { None } else { Some(w as i64) }));
@@ -2206,6 +2236,9 @@ impl App {
                 let arg = format!("{which}={}", v.map(|n| n.to_string()).unwrap_or_else(|| "default".into()));
                 sys::act("pkexec", &["/usr/lib/yggdrasil/powerlimit", "set", &mode, &arg])
             });
+        }
+        if open_gpu {
+            self.power_gpu = true;
         }
         match unlock {
             Some("confirm") => {
@@ -3495,6 +3528,10 @@ fn page_shortcuts(ui: &mut egui::Ui, pal: &Palette) {
 }
 
 fn main() -> eframe::Result {
+    // Power > Graphics card's pop-out: the same panel in a window (and process) of its own
+    if std::env::args().any(|a| a == "--gpu-window") {
+        return gpu::window_main();
+    }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1060.0, 720.0])

@@ -29,6 +29,27 @@ pub fn group(ui: &mut egui::Ui, pal: &Palette, title: Option<&str>, add: impl Fn
 /// first and the text wraps in the space left, so narrow windows never overlap the two. Rows
 /// after the first in a group get a hairline above them.
 pub fn row(ui: &mut egui::Ui, pal: &Palette, first: bool, title: &str, subtitle: Option<&str>, control: impl FnOnce(&mut egui::Ui)) {
+    row_with(ui, pal, first, |ui| {
+        ui.add(egui::Label::new(RichText::new(title).size(14.0)).wrap());
+    }, subtitle, control);
+}
+
+/// A row whose title opens a page of its own (a › after it; underlined, with a hand, on hover); the control on the right works
+/// as in `row`. True when the title was clicked.
+pub fn link_row(ui: &mut egui::Ui, pal: &Palette, first: bool, title: &str, subtitle: Option<&str>, control: impl FnOnce(&mut egui::Ui)) -> bool {
+    let mut clicked = false;
+    row_with(ui, pal, first, |ui| {
+        let r = ui.add(egui::Label::new(RichText::new(format!("{title}  \u{203a}")).size(14.0)).sense(Sense::click()));
+        if r.hovered() {
+            ui.painter().hline(r.rect.x_range(), r.rect.bottom(), Stroke::new(1.0, pal.text));
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        clicked = r.clicked();
+    }, subtitle, control);
+    clicked
+}
+
+fn row_with(ui: &mut egui::Ui, pal: &Palette, first: bool, title: impl FnOnce(&mut egui::Ui), subtitle: Option<&str>, control: impl FnOnce(&mut egui::Ui)) {
     if !first {
         let r = ui.available_rect_before_wrap();
         ui.painter().hline(r.left()..=r.right(), r.top(), Stroke::new(1.0, pal.border));
@@ -40,7 +61,7 @@ pub fn row(ui: &mut egui::Ui, pal: &Palette, first: bool, title: &str, subtitle:
         ui.add_space(12.0);
         ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
             ui.add_space(if subtitle.is_some() { 6.0 } else { 10.0 });
-            ui.add(egui::Label::new(RichText::new(title).size(14.0)).wrap());
+            title(ui);
             if let Some(s) = subtitle {
                 ui.add(egui::Label::new(RichText::new(s).size(12.0).color(pal.dim)).wrap());
             }
