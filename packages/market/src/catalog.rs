@@ -394,6 +394,67 @@ pub fn local_builds() -> Vec<String> {
     v
 }
 
+/// What a full update must not take from the AUR: every package installed from outside the repositories (the operating system's
+/// own builds among them, and anything else installed by hand) that is not known to come from the AUR. yay treats every such
+/// package as an AUR one, so an AUR package with the same name and a higher version (anyone can publish one) would replace it.
+pub fn aur_ignore(foreign: &[String], aur_allowed: &[String], local: &[String]) -> Vec<String> {
+    let mut v: Vec<String> = foreign.iter().filter(|p| !aur_allowed.contains(p)).cloned().collect();
+    v.extend(local.iter().cloned());
+    v.sort();
+    v.dedup();
+    v
+}
+
+/// The packages installed from outside the repositories (pacman -Qmq).
+pub fn foreign_packages() -> Vec<String> {
+    std::process::Command::new("pacman").arg("-Qmq").output().ok().filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).split_whitespace().map(str::to_string).collect()).unwrap_or_default()
+}
+
+/// Packages whose updates may come from the AUR: the operating system catalog's AUR apps and its `aur_updates_ok`, and what
+/// Agora itself installed from the AUR.
+pub fn aur_allowed() -> Vec<String> {
+    let mut v = remembered_aur();
+    if let Some(text) = os_catalog() {
+        if let Ok(c) = parse_catalog(&text, "os", true) {
+            for a in c.apps {
+                if let Source::Aur(p) = a.source {
+                    v.extend(p);
+                }
+            }
+        }
+        if let Ok(j) = serde_json::from_str::<Value>(&text) {
+            v.extend(strings(&j["aur_updates_ok"]));
+        }
+    }
+    v.sort();
+    v.dedup();
+    v
+}
+
+fn aur_record() -> Option<std::path::PathBuf> {
+    let base = std::env::var_os("XDG_STATE_HOME").map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/state")))?;
+    Some(base.join("agora/aur-installed"))
+}
+
+fn remembered_aur() -> Vec<String> {
+    aur_record().and_then(|p| std::fs::read_to_string(p).ok()).map(|t| t.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect()).unwrap_or_default()
+}
+
+/// Remembers packages installed from the AUR through Agora, so a full update may take their updates from the AUR.
+pub fn remember_aur(pkgs: &[String]) {
+    let Some(p) = aur_record() else { return };
+    let mut v = remembered_aur();
+    v.extend(pkgs.iter().cloned());
+    v.sort();
+    v.dedup();
+    if let Some(dir) = p.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(p, v.join("\n") + "\n");
+}
+
 /// A catalog's `local_builds`, without its `aur_updates_ok` (the same programs as upstream: their updates do come from the AUR).
 fn local_builds_in(catalog: &str) -> Vec<String> {
     let Ok(c) = serde_json::from_str::<Value>(catalog) else { return vec![] };
@@ -517,4 +578,14 @@ mod tests {
         let a = c.apps.iter().find(|a| a.id == "pdfcraft").unwrap();
         assert_eq!(install_script(a).unwrap(), "yay -S --needed pdfcraft-bin");
     }
+
+    #[test]
+    fn a_full_update_takes_only_known_aur_packages_from_the_aur() {
+        let v = |x: &[&str]| x.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let foreign = v(&["yggdrasil-settings", "heimdall-git", "yay", "spotify", "my-hand-built-thing"]);
+        let allowed = v(&["yay", "spotify"]);
+        let local = v(&["labyrinth-branding"]);
+        assert_eq!(aur_ignore(&foreign, &allowed, &local), v(&["heimdall-git", "labyrinth-branding", "my-hand-built-thing", "yggdrasil-settings"]));
+    }
 }
+

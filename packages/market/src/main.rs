@@ -419,6 +419,10 @@ impl App {
                 // what to remove again if it is cancelled: an AUR build's folders, a Flatpak that was not there before
                 let mut undo = install::Undo::default();
                 if op == install::Op::Install || op == install::Op::Reinstall {
+                    // installed from the AUR on purpose: its updates may come from there (a full update ignores the rest)
+                    if let Source::Aur(p) = &e.source {
+                        crate::catalog::remember_aur(p);
+                    }
                     if let (Source::Aur(p), Some(h)) = (&e.source, std::env::var_os("HOME")) {
                         undo.dirs = p.iter().map(|x| std::path::PathBuf::from(&h).join(".cache/yay").join(x)).collect();
                     }

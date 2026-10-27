@@ -108,8 +108,9 @@ pub fn command(e: &Entry, op: Op) -> Option<(String, Vec<String>)> {
         (_, Op::UpdateAll) => {
             // One yay run does it all: the repositories (its refresh becomes a full upgrade in the helper), then the AUR. Every root
             // step then comes from the same process, so the password box asks once (polkit keeps it a few minutes for the helper only).
-            // The operating system's own builds are never taken from the AUR.
-            let skip = crate::catalog::local_builds().join(",");
+            // Nothing from outside the repositories is taken from the AUR unless it is known to come from there: the operating
+            // system's own builds and anything installed by hand keep what they are.
+            let skip = crate::catalog::aur_ignore(&crate::catalog::foreign_packages(), &crate::catalog::aur_allowed(), &crate::catalog::local_builds()).join(",");
             let mut a = s(&["-Syu", "--noconfirm", "--sudo", SUDO_WRAPPER]);
             if !skip.is_empty() {
                 a.extend(s(&["--ignore", &skip]));
