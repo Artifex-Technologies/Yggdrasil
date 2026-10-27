@@ -2822,21 +2822,21 @@ impl App {
             let dir = p.tabs[p.active].dir();
             dir == target || dir == places::disk_path(&d.name)
         };
-        let (rect, r) = ui.allocate_exact_size(vec2(ui.available_width(), 50.0), Sense::click());
+        let (rect, r) = ui.allocate_exact_size(vec2(ui.available_width(), 58.0), Sense::click());
         let busy = self.dev_busy.is_some();
-        let eject_rect = Rect::from_center_size(pos2(rect.right() - 16.0, rect.top() + 14.0), vec2(24.0, 22.0));
+        let eject_rect = Rect::from_center_size(pos2(rect.right() - 16.0, rect.top() + 16.0), vec2(24.0, 22.0));
         let over_eject = d.removable && r.hover_pos().is_some_and(|p| eject_rect.contains(p));
         if selected {
             ui.painter().rect_filled(rect, CornerRadius::same(8), pal.select);
         } else if r.hovered() {
             ui.painter().rect_filled(rect, CornerRadius::same(8), pal.hover);
         }
-        icons::paint(ui.painter(), Rect::from_min_size(rect.min + vec2(8.0, 5.0), vec2(18.0, 18.0)), Icon::Drive, pal.drive);
+        icons::paint(ui.painter(), Rect::from_min_size(rect.min + vec2(8.0, 7.0), vec2(18.0, 18.0)), Icon::Drive, pal.drive);
         let name_clip = Rect::from_min_max(rect.min, pos2(rect.right() - if d.removable { 32.0 } else { 6.0 }, rect.bottom()));
-        ui.painter().with_clip_rect(name_clip).text(pos2(rect.left() + 34.0, rect.top() + 14.0), Align2::LEFT_CENTER, d.display_name(), FontId::proportional(13.5), pal.text);
+        ui.painter().with_clip_rect(name_clip).text(pos2(rect.left() + 34.0, rect.top() + 16.0), Align2::LEFT_CENTER, d.display_name(), FontId::proportional(13.5), pal.text);
         let usage = d.mounted_usage();
         let frac = usage.map(|(t, f)| listing::used_fraction(t, f)).unwrap_or(0.0);
-        let track = Rect::from_min_size(pos2(rect.left() + 8.0, rect.top() + 28.0), vec2(rect.width() - 16.0, 6.0));
+        let track = Rect::from_min_size(pos2(rect.left() + 8.0, rect.top() + 30.0), vec2(rect.width() - 16.0, 6.0));
         ui.painter().rect_filled(track, CornerRadius::same(3), pal.border.gamma_multiply(0.7));
         let mut fill = track;
         fill.set_width(track.width() * frac);
@@ -2846,7 +2846,7 @@ impl App {
             None if d.removable => format!("{}, click to open", listing::human_size(d.size)),
             None => listing::human_size(d.size),
         };
-        ui.painter().with_clip_rect(rect).text(pos2(rect.left() + 8.0, rect.top() + 43.0), Align2::LEFT_CENTER, line, FontId::proportional(11.5), pal.dim);
+        ui.painter().with_clip_rect(rect).text(pos2(rect.left() + 8.0, rect.top() + 45.0), Align2::LEFT_CENTER, line, FontId::proportional(11.5), pal.dim);
         if d.removable {
             if over_eject {
                 ui.painter().rect_filled(eject_rect, CornerRadius::same(6), pal.hover.gamma_multiply(2.0));
