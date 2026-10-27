@@ -1,17 +1,16 @@
 {
- "about": "Graphics cards the tensor-rate unlock is offered on (gpuunlock, Settings > Power > Graphics card). Exact matches only: device, board (subsystem), VBIOS and driver series. No wildcards; a new entry needs a link to a run on that exact board and starts as experimental. Plan: Labyrinth OS docs/GPU_UNLOCK.md.",
+ "about": "Graphics cards the tensor-rate unlock is offered on (gpuunlock, Settings > Power > Graphics card). Exact matches only: device, board (subsystem), VBIOS and driver series. No wildcards. The method is nlzy/turing-unlock's kernel module (Labyrinth OS docs/GPU_UNLOCK.md, section 12): an entry needs runs on the same chip and VBIOS family, starts as experimental, and nothing is kept before the owner's own supervised run.",
  "entries": [
   {
-   "method": "turing-unlock-efi",
+   "method": "turing-unlock-module",
    "device": "10de:1e07",
-   "subsystem": "1043:866a",
-   "vbios": "90.02.17.00.47",
+   "subsystem": "1462:3711",
+   "vbios": "90.02.17.00.3E",
    "driver_series": "open",
-   "validated_on": "2026-10-22",
-   "evidence": "https://github.com/haohervchb/Turing-unlock (one run; README results/2080ti-v4-comparison.json)",
+   "added": "2026-10-27",
+   "evidence": "https://github.com/nlzy/turing-unlock/issues (TU102 2080 Ti reports #1, #2, PR #8 incl. VBIOS 90.02.17.00.7C and .64; #5 on driver 615.78.08, kernel 7.3, as the boot display)",
    "status": "experimental",
-   "loader": "tu102_experiment_v4.efi",
-   "notes": "The author's ASUS card. The firmware inputs are not redistributed: the loader must be built locally from the owner's own ROM."
+   "notes": "MSI RTX 2080 Ti (Orthanc). No MSI board in the reports yet: Phase 3 on this card is the first."
   }
  ]
 }

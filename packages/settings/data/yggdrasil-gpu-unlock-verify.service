@@ -3,7 +3,7 @@ Description=Graphics card unlock: check an attempt once the desktop is up (Setti
 Documentation=https://github.com/Artifex-Technologies/Labyrinth_OS/blob/main/docs/GPU_UNLOCK.md
 After=graphical.target nvidia-persistenced.service
 ConditionPathExists=|/var/lib/yggdrasil/gpu-unlock/trying
-ConditionPathExists=|/var/lib/yggdrasil/gpu-unlock/loader.conf
+ConditionPathExists=|/var/lib/yggdrasil/gpu-unlock/entry.cfg
 
 [Service]
 Type=oneshot

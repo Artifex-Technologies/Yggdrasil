@@ -2168,11 +2168,11 @@ impl App {
                     let since = u.since.as_deref().and_then(|t| t.get(11..16)).unwrap_or("this start");
                     let (sub, button): (String, Option<(&str, &'static str)>) = match u.state.as_str() {
                         "supported" => match &u.blocker {
-                            None => ("This card matches a tested one, but the unlock has not been run on this computer. Experimental.".into(), Some(("Arm for next restart…", "confirm"))),
+                            None => ("This card matches tested ones, but the unlock has not been run on this computer. Experimental.".into(), Some(("Add to the boot menu…", "confirm"))),
                             Some(b) => (format!("This card matches a tested one. Not available yet: {b}."), None),
                         },
-                        "secure-boot" => ("Needs Secure Boot off: the unlock runs a boot program that is not signed.".into(), None),
-                        "armed" => ("The next restart will try the unlock once, then boot normally. If the screen stays black for more than a minute, hold the power button and start again: the computer boots normally and this switch turns itself off.".into(), Some(("Cancel", "disarm"))),
+                        "secure-boot" => ("Needs Secure Boot off: the unlock module is not signed.".into(), None),
+                        "armed" => ("At the next restart, pick \"Labyrinth Linux, graphics card unlock (one try)\" in the boot menu; any other choice starts normally. If the screen stays black for more than a minute, hold the power button and start again: the computer starts normally and the unlock switches itself off.".into(), Some(("Cancel", "disarm"))),
                         "unlocked" => (format!("Unlocked since {since}. {}. A restart or sleep locks it again.", u.reason), None),
                         "throttled" => (format!("{}. A restart or sleep locks it again.", u.reason), None),
                         _ => (u.reason.clone(), Some(("Allow another try…", "reenable"))),
@@ -2274,12 +2274,13 @@ impl App {
         if let Some(backup) = self.unlock_confirm.clone() {
             let hold = p.limits.as_ref().and_then(|l| l.gpu.as_ref()).map(|g| g.default).unwrap_or(0);
             let mut arm = false;
-            egui::Window::new("Arm the graphics card unlock?").collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0)).show(ctx, |ui| {
+            egui::Window::new("Add the graphics card unlock to the boot menu?").collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0)).show(ctx, |ui| {
                 ui.set_max_width(460.0);
-                ui.label("At the next restart, before Linux starts, a boot program changes one setting inside the graphics card, once. Then the computer starts as usual. Linux never writes to the card.");
+                ui.label("A one-try entry is added to the boot menu. Pick it at a restart: early in that start, before the graphics driver, a small module (turing-unlock) changes one setting inside the graphics card. Any other choice in the menu starts normally, and the entry goes away after its one try.");
                 ui.add_space(6.0);
                 for line in [
-                    "Experimental: it has been run on very few cards.".to_string(),
+                    "Experimental: it has run on other RTX 2080 Ti boards, never yet on an MSI one.".to_string(),
+                    "The boot menu shows for 2 seconds: press an arrow key to stop it, then pick the entry.".into(),
                     "The screen may stay black. After a minute, hold the power button and start again: the computer starts normally and the unlock switches itself off.".into(),
                     "A snapshot of the system (\"before GPU unlock\") is taken first.".into(),
                     format!("Every power mode is held at {hold} W until the measurements are done."),
@@ -2292,7 +2293,7 @@ impl App {
                 ui.checkbox(&mut self.unlock_read, "I have read this and I am at the computer");
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
-                    if ui.add_enabled(self.unlock_read, egui::Button::new("Arm")).clicked() {
+                    if ui.add_enabled(self.unlock_read, egui::Button::new("Add to the boot menu")).clicked() {
                         arm = true;
                     }
                     if ui.button("Cancel").clicked() {

@@ -86,9 +86,16 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
   [GPU_UNLOCK.md](https://github.com/Artifex-Technologies/Labyrinth_OS/blob/main/docs/GPU_UNLOCK.md)): a "Tensor-rate unlock"
   row under the Graphics card row, only with Developer options on and only for a card listed exactly (device, board, VBIOS, driver series)
   in `/usr/share/yggdrasil/gpu-unlock/supported.json`; any other card gets no row at all, and `gpuunlock status --json` keeps
-  the reason. Arming asks for the password every time (polkit `auth_admin`), takes a snapshot, adds a one-try GRUB entry
-  (`/etc/grub.d/41_gpu_unlock`, which prints nothing otherwise) and holds the power; `yggdrasil-gpu-unlock-boot.service` and
-  `-verify.service` follow the attempt. Tests: `helpers/tests/test_gpuunlock.py`. A debug build reads the status from
+  the reason.
+  - **Method:** since 2026-10-27, nlzy/turing-unlock's kernel module, which loads before the NVIDIA driver and acts only with
+    `turing_unlock.targets=` on the command line.
+  - **Arming:** asks for the password every time (polkit `auth_admin`), needs the module, its firmware and its mkinitcpio
+    hook installed and a visible boot menu, takes a snapshot, and holds the power.
+  - **The one-try entry:** arming adds "Labyrinth Linux, graphics card unlock (one try)" to the boot menu. It is a copy of
+    the first entry with the option, printed by `/etc/grub.d/41_gpu_unlock` only while armed. The owner picks it by hand at
+    a restart; it is never the default.
+  - **Following an attempt:** `yggdrasil-gpu-unlock-boot.service` and `-verify.service` follow it. The attempt is known by
+    the option in /proc/cmdline, the result by the module's kernel log, and the entry goes away after its one try. Tests: `helpers/tests/test_gpuunlock.py`. A debug build reads the status from
   `$YGGDRASIL_GPUUNLOCK_FIXTURE` (for screenshots of the other states).
 
 ## Ask before connecting (built 2026-10-16)

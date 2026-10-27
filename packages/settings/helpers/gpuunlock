@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """gpuunlock: the tensor-rate unlock for a tested GeForce card (Settings > Power > Graphics card, Developer options).
 
-The plan, its safety rules and its phases are in Labyrinth OS, docs/GPU_UNLOCK.md. In short: only a card whose identity matches
-an entry of the support table exactly is offered the unlock. It runs once, from a boot program before Linux starts, chosen for
-the next restart only; Linux never writes to the card. Nothing here raises the card's power: while an attempt is armed and until
-its measurements are done, every power mode is held at the card's default watts (powerlimit reads the hold).
+The plan, its safety rules and its phases are in Labyrinth OS, docs/GPU_UNLOCK.md (section 12: the method since 2026-10-27). In
+short: only a card whose identity matches an entry of the support table exactly is offered the unlock. The unlock itself is
+nlzy/turing-unlock's kernel module, which loads from the start-up image before the graphics driver and does nothing unless
+`turing_unlock.targets=` is on the kernel command line. Arming adds one boot-menu entry with that option, which Matt picks by hand
+at a restart: a start through any other entry is a normal one, and nothing writes to the card once its driver has it. Nothing here
+raises the card's power: while an attempt is armed and until its measurements are done, every power mode is held at the card's
+default watts (powerlimit reads the hold).
 
 Commands:
   gpuunlock status [--json]   the card, the state and why (no root needed)
-  gpuunlock arm               try the unlock at the next restart, once (root: pkexec asks for the password every time)
+  gpuunlock arm               add the one-try entry to the boot menu (root: pkexec asks for the password every time)
   gpuunlock disarm            cancel that (root)
   gpuunlock reenable          allow arming again after a failed attempt (root)
   gpuunlock release           end the power hold (root): after the measurements, or when giving up
@@ -16,17 +19,18 @@ Commands:
   gpuunlock verify            once the desktop is up after an attempt (yggdrasil-gpu-unlock-verify.service)
   gpuunlock bench             the tensor benchmark (Phase 2; not built yet)
 
-How an attempt is followed: `arm` writes `armed` with this start's boot id. At the next start, before anything else, `boot`
-turns it into `trying` with that start's id. Once the desktop is up, `verify` checks the card and removes `trying`. If the
-computer never gets that far (a hang, the power button), the start after it still finds `trying` from an earlier start: that
-attempt failed, the unlock is switched off, and arming stays off until `reenable`.
+How an attempt is followed: `arm` writes `armed`. A start through the one-try entry has the module's option in /proc/cmdline:
+early in that start `boot` turns `armed` into `trying` with this start's boot id. Once the desktop is up, `verify` reads the
+module's own result from the kernel log, checks the card, removes `trying` and takes the entry out of the menu. If the computer
+never gets that far (a hang, the power button), the start after it still finds `trying` from an earlier start: that attempt
+failed, the unlock is switched off, and arming stays off until `reenable`. A start through the normal entry while armed simply
+did not try; the entry stays until it is picked or cancelled.
 
-State: /var/lib/yggdrasil/gpu-unlock/ (state.json, armed, trying, loader.conf, loaders/, power-hold, log).
+State: /var/lib/yggdrasil/gpu-unlock/ (state.json, armed, trying, entry.cfg, power-hold, log).
 """
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import time
@@ -35,21 +39,23 @@ import urllib.request
 STATE_DIR = "/var/lib/yggdrasil/gpu-unlock"
 TABLE = "/usr/share/yggdrasil/gpu-unlock/supported.json"
 ROOT = ""  # tests: a folder standing in for / when reading /sys, /proc and /boot
-ESP = "/boot/efi"
-ESP_DIR = "EFI/yggdrasil"
 GRUB_CFG = "/boot/grub/grub.cfg"
-GRUBENV = "/boot/grub/grubenv"
+GRUB_DEFAULT = "/etc/default/grub"
 ENTRY_ID = "yggdrasil-gpu-unlock"
+ENTRY_TITLE = "Labyrinth Linux, graphics card unlock (one try)"
+PARAM = "turing_unlock.targets="
+MODULE_FIRMWARE = "/usr/lib/firmware/turing-unlock/610.43.03"
+MODULE_DROPIN = "/etc/mkinitcpio.conf.d/zz-turing-unlock.conf"
+METHODS = ("turing-unlock-module",)
 SECURE_BOOT_VAR = "/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c"
 OLLAMA_PS = "http://127.0.0.1:11434/api/ps"
-GRUB_WRITABLE = ("ext2", "ext3", "ext4", "vfat")
 UNITS = ("yggdrasil-gpu-unlock-boot.service", "yggdrasil-gpu-unlock-verify.service")
 
 STATES = ("unsupported", "supported", "armed", "unlocked", "failed", "throttled", "secure-boot", "no-nvidia")
 SERIES = ("open", "proprietary")
 ID_RX = re.compile(r"^[0-9a-f]{4}:[0-9a-f]{4}$")
 VBIOS_RX = re.compile(r"^[0-9A-F]{2}(\.[0-9A-F]{2}){4}$")
-LOADER_RX = re.compile(r"^[A-Za-z0-9_.-]+\.efi$")
+BDF_RX = re.compile(r"^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$")
 BOARD_MAKERS = {"1043": "ASUS", "1458": "Gigabyte", "1462": "MSI", "10de": "NVIDIA", "3842": "EVGA", "19da": "Zotac", "196e": "PNY",
                 "1569": "Palit", "10b0": "Gainward", "1b4c": "KFA2/Galax", "1acc": "Point of View", "7377": "Colorful", "1da2": "Sapphire"}
 HOT_C = 85
@@ -219,8 +225,8 @@ def load_table(path=None):
             raise ValueError(f"entry {i}: vbios must be one exact version like 90.02.17.00.47")
         if e.get("driver_series") not in SERIES:
             raise ValueError(f"entry {i}: driver_series must be open or proprietary")
-        if not LOADER_RX.match(str(e.get("loader", ""))):
-            raise ValueError(f"entry {i}: loader must be a plain .efi file name")
+        if e.get("method") not in METHODS:
+            raise ValueError(f"entry {i}: method must be one of {', '.join(METHODS)}")
         if not str(e.get("evidence", "")).startswith("https://"):
             raise ValueError(f"entry {i}: needs an evidence link")
     return entries
@@ -249,32 +255,36 @@ def unsupported_reason(card, entries):
 # ---------------------------------------------------------------- what may stop an attempt
 
 
-def fstype_of(path):
-    code, out = run(["findmnt", "-no", "FSTYPE", "-T", path], timeout=10)
-    return out.strip() if code == 0 else ""
+def module_problem():
+    """Why turing_unlock cannot take part in the next start, or None: it must be installed for this kernel, with its firmware,
+    and the start-up image must load it before the graphics driver."""
+    code, out = run(["modinfo", "-F", "filename", "turing_unlock"], timeout=10)
+    if code != 0 or not out.strip():
+        return "The turing_unlock module is not installed (Phase 2 installs it)"
+    if not os.path.isdir(at(MODULE_FIRMWARE)):
+        return "The turing_unlock firmware is not installed"
+    if not os.path.isfile(at(MODULE_DROPIN)):
+        return "The start-up image is not set to load turing_unlock before the graphics driver"
+    return None
 
 
-def one_shot_problem():
-    """Why GRUB's once-only choice (grub-reboot) is not safe here, or None. GRUB clears the choice by writing its environment
-    block as it starts, and it can write only to a few plain filesystems: on any other (btrfs, ZFS, ...) without an env_block
-    (a reserved area GRUB can write) the choice would stay set and the attempt would repeat at every start."""
-    fs = fstype_of(os.path.dirname(GRUBENV))
-    if fs in GRUB_WRITABLE:
-        return None
-    if re.search(r"^env_block=\S", read_text(GRUBENV) or "", re.M):
-        return None
-    return f"GRUB cannot clear a once-only boot choice on this disk ({fs or 'unknown filesystem'} without an env_block), so the attempt would repeat at every restart"
+def menu_problem():
+    """Why the boot menu would not let the one-try entry be picked, or None."""
+    text = read(GRUB_DEFAULT) or ""
 
+    def value(key):
+        m = re.search(rf"^{key}=['\"]?([^'\"\n]*)", text, re.M)
+        return m.group(1).strip() if m else None
 
-def loader_file(entry):
-    return os.path.join(STATE_DIR, "loaders", entry["loader"])
+    timeout, style = value("GRUB_TIMEOUT"), value("GRUB_TIMEOUT_STYLE")
+    if style == "hidden" or (timeout or "").isdigit() and int(timeout) == 0:
+        return "The boot menu is hidden, so the one-try entry could not be picked at the restart"
+    return None
 
 
 def arm_blocker(entry):
     """Why arming cannot start on a supported card right now, or None."""
-    if not os.path.isfile(loader_file(entry)):
-        return f"The unlock's boot program ({entry['loader']}) has not been built on this computer"
-    return one_shot_problem()
+    return module_problem() or menu_problem()
 
 
 def hold_on():
@@ -299,11 +309,11 @@ def evaluate():
     if st.get("state") == "failed":
         return "failed", st.get("why") or "The last attempt failed", card, entry
     if os.path.exists(sp("armed")):
-        return "armed", "The next restart tries the unlock once", card, entry
+        return "armed", f"Pick \"{ENTRY_TITLE}\" in the boot menu at the next restart", card, entry
     if os.path.exists(sp("trying")):
         return "armed", "This start is the attempt; it is checked once the desktop is up", card, entry
     if secure_boot():
-        return "secure-boot", "Needs Secure Boot off: the unlock runs a boot program that is not signed", card, entry
+        return "secure-boot", "Needs Secure Boot off: the unlock module is not signed", card, entry
     if st.get("state") in ("unlocked", "throttled") and st.get("boot_id") == boot_id():
         return st["state"], st.get("why") or "", card, entry
     return "supported", "This card matches a tested one", card, entry
@@ -347,22 +357,41 @@ def grub_mkconfig():
     return run(["grub-mkconfig", "-o", GRUB_CFG], timeout=300)
 
 
-def loader_conf_text(card, entry, esp_uuid):
-    return f"ESP_UUID={esp_uuid}\nLOADER={entry['loader']}\nBDF={card['bdf']}\nBAR0={card['bar0']}\n"
+def one_try_entry(cfg_text, bdf):
+    """The menu's first entry (the normal start) as a one-try copy: its own title and id, and the module's option for this card
+    added to the kernel line. None when the first entry is not one plain Linux entry, or already has the option."""
+    if not BDF_RX.match(bdf or ""):
+        return None
+    lines = (cfg_text or "").splitlines()
+    start = next((i for i, l in enumerate(lines) if l.startswith("menuentry ")), None)
+    if start is None:
+        return None
+    end = next((i for i in range(start + 1, len(lines)) if lines[i] == "}"), None)
+    if end is None:
+        return None
+    body = lines[start + 1:end]
+    kernel = [i for i, l in enumerate(body) if l.lstrip().startswith("linux")]
+    if len(kernel) != 1 or PARAM in "\n".join(body) or any(l.lstrip().startswith(("menuentry", "submenu", "}")) for l in body):
+        return None
+    body[kernel[0]] = f"{body[kernel[0]].rstrip()} {PARAM}{bdf}"
+    return "\n".join([f"menuentry '{ENTRY_TITLE}' --class gnu-linux --class os --id {ENTRY_ID} {{", *body, "}"]) + "\n"
+
+
+def unlock_requested(cmdline=None):
+    """The card named by turing_unlock.targets= on this start's kernel command line, or None."""
+    text = read("/proc/cmdline") if cmdline is None else cmdline
+    m = re.search(r"(?:^|\s)turing_unlock\.targets=(\S+)", text or "")
+    return m.group(1) if m else None
 
 
 def remove_entry():
-    """Takes the one-try entry out of the menu (and its boot program off the EFI partition), if it is there."""
-    had = os.path.exists(sp("loader.conf"))
-    conf = dict(l.split("=", 1) for l in (read_text(sp("loader.conf")) or "").splitlines() if "=" in l)
-    remove(sp("loader.conf"))
-    if LOADER_RX.match(conf.get("LOADER", "")):
-        remove(os.path.join(ESP, ESP_DIR, conf["LOADER"]))
-    if had:
-        code, out = grub_mkconfig()
-        if code != 0:
-            log(f"grub-mkconfig after removing the entry failed: {out[-200:]}")
-    run(["grub-editenv", GRUBENV, "unset", "next_entry"], timeout=30)
+    """Takes the one-try entry out of the menu, if it is there."""
+    if not os.path.exists(sp("entry.cfg")):
+        return
+    remove(sp("entry.cfg"))
+    code, out = grub_mkconfig()
+    if code != 0:
+        log(f"grub-mkconfig after removing the entry failed: {out[-200:]}")
 
 
 # ---------------------------------------------------------------- the card in use
@@ -431,12 +460,13 @@ def cmd_arm():
     busy = card_busy()
     if busy:
         return refuse(f"not armed: {busy}. Stop Sarina first (systemctl --user stop labyrinth-voiced; sudo systemctl stop ollama)")
-    code, uuid = run(["findmnt", "-no", "UUID", ESP], timeout=10)
-    if code != 0 or not re.match(r"^[0-9A-Fa-f-]{4,36}$", uuid.strip()):
-        return refuse("not armed: the EFI partition is not mounted at /boot/efi")
+    entry_text = one_try_entry(read_text(GRUB_CFG), card["bdf"])
+    if not entry_text:
+        return refuse("not armed: the boot menu's first entry is not one plain Linux entry to copy")
     code, snap = run(["snapper", "-c", "root", "create", "--type", "single", "--cleanup-algorithm", "", "--print-number", "--description", "before GPU unlock"], timeout=120)
     if code != 0:
         return refuse(f"not armed: the snapshot failed ({snap[-200:]})", 1)
+
     def put_back(why):
         remove(sp("armed"))
         remove(sp("power-hold"))
@@ -446,10 +476,9 @@ def cmd_arm():
 
     try:
         before = read_text(GRUB_CFG)
-        os.makedirs(os.path.join(ESP, ESP_DIR), exist_ok=True)
-        shutil.copyfile(loader_file(entry), os.path.join(ESP, ESP_DIR, entry["loader"]))
-        with open(sp("loader.conf"), "w", encoding="utf-8") as f:
-            f.write(loader_conf_text(card, entry, uuid.strip()))
+        os.makedirs(STATE_DIR, exist_ok=True)
+        with open(sp("entry.cfg"), "w", encoding="utf-8") as f:
+            f.write(entry_text)
         code, out = grub_mkconfig()
         after = read_text(GRUB_CFG)
         if code != 0 or first_entry_id(after) != first_entry_id(before) or not has_entry(after, ENTRY_ID):
@@ -459,14 +488,11 @@ def cmd_arm():
             code, out = run(["systemctl", "enable", unit], timeout=30)
             if code != 0:
                 return put_back(f"{unit} could not be enabled ({out[-200:]})")
-        write_json(sp("armed"), {"time": now(), "entry": ENTRY_ID, "boot_id": boot_id(), "snapshot": snap.strip()}, 0o600)
-        code, out = run(["grub-reboot", ENTRY_ID], timeout=30)
-        if code != 0:
-            return put_back(f"grub-reboot failed ({out[-200:]})")
+        write_json(sp("armed"), {"time": now(), "entry": ENTRY_ID, "boot_id": boot_id(), "snapshot": snap.strip(), "bdf": card["bdf"]}, 0o600)
     except OSError as e:
         return put_back(f"{e.filename or 'a file'}: {e.strerror}")
-    log(f"armed for the next restart (snapshot {snap.strip()}, {card['bdf']} {card['bar0']}, loader {entry['loader']})")
-    print(f"Armed. The next restart tries the unlock once, then starts normally. Snapshot {snap.strip()} was taken first.")
+    log(f"armed: the one-try entry is in the boot menu (snapshot {snap.strip()}, {card['bdf']})")
+    print(f"Armed. At the next restart pick \"{ENTRY_TITLE}\" in the boot menu; any other choice starts normally. Snapshot {snap.strip()} was taken first.")
     return 0
 
 
@@ -517,7 +543,7 @@ def fail(why, last):
 
 def cmd_boot():
     """Early at every start while an attempt is pending: a `trying` left by an earlier start means that start never reached the
-    desktop; an `armed` from an earlier start means this is the attempt."""
+    desktop; the module's option on this start's command line means this start is the attempt."""
     if not need_root("boot"):
         return 1
     me = boot_id()
@@ -525,18 +551,37 @@ def cmd_boot():
     if t is not None and t.get("boot_id") != me:
         remove(sp("trying"))
         fail(f"The last attempt ({t.get('time', '?')}) did not reach the desktop. The unlock is off.", {"time": t.get("time"), "result": "failed", "why": "did not reach the desktop"})
-    a = read_json(sp("armed"))
-    if a is not None and a.get("boot_id") != me:
+        t = None
+    if unlock_requested() and t is None:
+        a = read_json(sp("armed"))
         remove(sp("armed"))
-        write_json(sp("trying"), {"time": now(), "boot_id": me, "armed": a.get("time")})
-        log("this start is the attempt")
+        write_json(sp("trying"), {"time": now(), "boot_id": me, "armed": (a or {}).get("time")})
+        log("this start is the attempt" if a else "the unlock option is on the command line without arming in Settings; followed as an attempt")
     return 0
 
 
+def module_result(kernel_log=None):
+    """(ok, message): what turing_unlock said about the card at this start, from the kernel log."""
+    if kernel_log is None:
+        _, kernel_log = run(["journalctl", "-k", "-b", "-o", "cat", "--no-pager"], timeout=60)
+    lines = [l.strip() for l in (kernel_log or "").splitlines() if "turing_unlock" in l]
+    if any("FEAT UNLOCKED" in l for l in lines):
+        return True, "The module reports the card unlocked"
+    bad = [l for l in lines if any(w in l for w in ("unlock failed", "failure ", "no supported card", "did not stop"))]
+    if bad:
+        return False, f"The module reported: {bad[0][:160]}"
+    if not lines:
+        return False, "The module did not run at this start (it must be in the start-up image)"
+    return False, f"The module gave no result ({lines[-1][:120]})"
+
+
 def check_unlock():
-    """(ok, ratio, why) for the card as it is now: the correctness check against the processor and the tensor benchmark against
-    the locked baseline. Both are built in Phase 2 (Turing-unlock's tools/tensor_baseline.cu, guarded to this card)."""
-    return False, None, "The correctness check and benchmark are not built yet (Phase 2), so the attempt cannot be confirmed"
+    """(ok, ratio, why) for the card as it is now: the module's own result, then the correctness check against the processor
+    and the tensor benchmark against the locked baseline (built in Phase 2)."""
+    ok, why = module_result()
+    if not ok:
+        return False, None, why
+    return False, None, "The module reports the unlock, but the correctness check and benchmark are not built yet (Phase 2), so it is not confirmed"
 
 
 def thermal_verdict(samples):
@@ -573,7 +618,7 @@ def cmd_verify():
     if not need_root("verify"):
         return 1
     if os.path.exists(sp("armed")):
-        return 0  # the attempt is the next start
+        return 0  # a normal start while armed: the entry stays until it is picked or cancelled
     t = read_json(sp("trying"))
     if t is not None and t.get("boot_id") == boot_id():
         ok, ratio, why = check_unlock()
@@ -589,7 +634,7 @@ def cmd_verify():
         remove_entry()
         if ok:
             thermal_watch()
-    elif os.path.exists(sp("loader.conf")):
+    elif os.path.exists(sp("entry.cfg")):
         remove_entry()
     return 0
 
