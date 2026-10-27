@@ -1,7 +1,7 @@
 # Yggdrasil screen locker (Wayland ext-session-lock + PAM): needs a compositor that offers the protocol (Rust): built from packages/lock in this repository.
 pkgname=yggdrasil-lock
 pkgver=0.1.0
-pkgrel=1
+pkgrel=2
 pkgdesc="Yggdrasil screen locker (Wayland ext-session-lock + PAM): needs a compositor that offers the protocol"
 arch=('x86_64')
 provides=('labyrinth-lock')
