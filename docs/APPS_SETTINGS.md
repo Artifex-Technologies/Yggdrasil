@@ -64,7 +64,7 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
 - **Processor page** (built 2026-10-27, Matt's design; `src/cpu.rs`): the Processor row's title opens it, like the Graphics
   card's, with its own pop-out window (`--cpu-window`, app id `yggdrasil-cpu`).
   - **Readout:** package temperature and the hottest core, clocks (average and fastest), load and package power, with the
-    same two-minute graphs. Read from sysfs and /proc once a second while the panel is shown; the power comes from the
+    same graphs (they fill their box from the first seconds, then cover the last two minutes). Read from sysfs and /proc once a second while the panel is shown; the power comes from the
     tuning service, because the energy counter is root-only.
   - **Limits:** the selected mode's speed cap (powerlimit), turbo, and the long- and short-term power limits (PL1/PL2,
     35-250 W, with the BIOS's values as the reset).

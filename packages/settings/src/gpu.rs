@@ -292,13 +292,13 @@ impl Panel {
         let h: Vec<Sample> = self.history.iter().copied().collect();
         let gib = |mib: f32| mib / 1024.0;
         ui::group(ui, pal, Some("Now"), |ui| {
-            readout::metric(ui, pal, true, "Temperature", &format!("{:.0} °C", now.temp), &h, |s| s.temp, 20.0, 100.0, " °C");
-            readout::metric(ui, pal, false, "Power", &format!("{:.0} W of {:.0} W", now.power, now.limit), &h, |s| s.power, 0.0, now.limit.max(1.0), " W");
-            readout::metric(ui, pal, false, "Core clock", &format!("{:.0} MHz", now.core), &h, |s| s.core, 0.0, now.core_max.max(1.0), " MHz");
-            readout::metric(ui, pal, false, "Memory clock", &format!("{:.0} MHz", now.mem), &h, |s| s.mem, 0.0, now.mem_max.max(1.0), " MHz");
-            readout::metric(ui, pal, false, "Load", &format!("{:.0} %", now.load), &h, |s| s.load, 0.0, 100.0, " %");
-            readout::metric(ui, pal, false, "Video memory", &format!("{:.1} of {:.0} GiB", gib(now.vram), gib(now.vram_total)), &h, |s| s.vram / 1024.0, 0.0, gib(now.vram_total).max(1.0), " GiB");
-            readout::metric(ui, pal, false, "Fans", &format!("{:.0} %", now.fan), &h, |s| s.fan, 0.0, 100.0, " %");
+            readout::metric(ui, pal, true, "Temperature", &format!("{:.0} °C", now.temp), "", &h, |s| s.temp, 20.0, 100.0, " °C");
+            readout::metric(ui, pal, false, "Power", &format!("{:.0} W", now.power), &format!("of {:.0}", now.limit), &h, |s| s.power, 0.0, now.limit.max(1.0), " W");
+            readout::metric(ui, pal, false, "Core clock", &format!("{:.0} MHz", now.core), "", &h, |s| s.core, 0.0, now.core_max.max(1.0), " MHz");
+            readout::metric(ui, pal, false, "Memory clock", &format!("{:.0} MHz", now.mem), "", &h, |s| s.mem, 0.0, now.mem_max.max(1.0), " MHz");
+            readout::metric(ui, pal, false, "Load", &format!("{:.0} %", now.load), "", &h, |s| s.load, 0.0, 100.0, " %");
+            readout::metric(ui, pal, false, "Video memory", &format!("{:.1} GiB", gib(now.vram)), &format!("of {:.0}", gib(now.vram_total)), &h, |s| s.vram / 1024.0, 0.0, gib(now.vram_total).max(1.0), " GiB");
+            readout::metric(ui, pal, false, "Fans", &format!("{:.0} %", now.fan), "", &h, |s| s.fan, 0.0, 100.0, " %");
             let why = reasons(now.reasons);
             let (text, hot) = match now.reasons {
                 0 => ("Nothing is holding the clocks back".to_string(), false),

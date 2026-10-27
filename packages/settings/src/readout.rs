@@ -24,33 +24,37 @@ pub fn slider_row(ui: &mut egui::Ui, pal: &Palette, first: bool, title: &str, su
     ui.add_space(4.0);
 }
 
-/// One reading: its name and value on the left, its last two minutes as a small graph on the right. Each graph has its own
-/// fixed scale (shown on hover), never a second axis.
+/// One reading: its name, its value (and a short detail after it) on the left, its last two minutes as a small graph on the
+/// right. The graph always fills its box: until two minutes of readings are in, the time across it is shorter (hover says
+/// how long ago a point was). Each graph has its own fixed scale (shown on hover), never a second axis.
 #[allow(clippy::too_many_arguments)]
-pub fn metric<T>(ui: &mut egui::Ui, pal: &Palette, first: bool, name: &str, value: &str, h: &[T], get: impl Fn(&T) -> f32, lo: f32, hi: f32, unit: &str) {
+pub fn metric<T>(ui: &mut egui::Ui, pal: &Palette, first: bool, name: &str, value: &str, detail: &str, h: &[T], get: impl Fn(&T) -> f32, lo: f32, hi: f32, unit: &str) {
     if !first {
         let r = ui.available_rect_before_wrap();
         ui.painter().hline(r.left()..=r.right(), r.top(), Stroke::new(1.0, pal.border));
     }
     ui.allocate_ui_with_layout(vec2(ui.available_width(), 46.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
         ui.set_min_height(46.0);
-        // the name column takes a third of the row where there is room (a wide page), 150 points in a narrow window
-        let col = (ui.available_width() * 0.32).clamp(150.0, 240.0);
-        ui.allocate_ui_with_layout(vec2(col, 40.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-            ui.set_width(col);
-            ui.add(egui::Label::new(RichText::new(name).size(12.0).color(pal.dim)).truncate());
-            ui.label(RichText::new(value).size(15.0).color(pal.text));
+        ui.allocate_ui_with_layout(vec2(150.0, 40.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+            ui.set_width(150.0);
+            ui.label(RichText::new(name).size(12.0).color(pal.dim));
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 5.0;
+                ui.label(RichText::new(value).size(15.0).color(pal.text));
+                if !detail.is_empty() {
+                    ui.add(egui::Label::new(RichText::new(detail).size(11.0).color(pal.dim)).truncate());
+                }
+            });
         });
         let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::hover());
         let painter = ui.painter_at(rect.expand(2.0));
         painter.hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, pal.border));
+        let h = &h[h.len().saturating_sub(KEEP)..];
         if h.len() < 2 {
             return;
         }
-        let step = rect.width() / (KEEP - 1) as f32;
-        let start = KEEP - h.len().min(KEEP);
-        let h = &h[h.len().saturating_sub(KEEP)..];
-        let at = |i: usize, s: &T| pos2(rect.left() + (start + i) as f32 * step, rect.bottom() - ((get(s) - lo) / (hi - lo)).clamp(0.0, 1.0) * rect.height());
+        let step = rect.width() / (h.len() - 1) as f32;
+        let at = |i: usize, s: &T| pos2(rect.left() + i as f32 * step, rect.bottom() - ((get(s) - lo) / (hi - lo)).clamp(0.0, 1.0) * rect.height());
         let line: Vec<egui::Pos2> = h.iter().enumerate().map(|(i, s)| at(i, s)).collect();
         // a light fill under the line (drawn as thin columns: the area is not convex)
         let fill = pal.accent.gamma_multiply(0.18);
@@ -59,7 +63,7 @@ pub fn metric<T>(ui: &mut egui::Ui, pal: &Palette, first: bool, name: &str, valu
         }
         painter.add(Shape::line(line.clone(), Stroke::new(2.0, pal.accent)));
         if let Some(p) = resp.hover_pos() {
-            let i = (((p.x - rect.left()) / step).round() as usize).clamp(start, KEEP - 1) - start;
+            let i = (((p.x - rect.left()) / step).round().max(0.0) as usize).min(h.len() - 1);
             let q = line[i];
             painter.vline(q.x, rect.y_range(), Stroke::new(1.0, pal.dim));
             painter.circle(q, 4.0, pal.accent, Stroke::new(2.0, pal.field));

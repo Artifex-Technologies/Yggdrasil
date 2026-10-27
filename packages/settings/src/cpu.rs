@@ -249,12 +249,11 @@ impl Panel {
         let top = self.tune.as_ref().map(|t| t.ratio_range.1 as f32 * 100.0).unwrap_or(5000.0).max(now.max_mhz);
         let pmax = self.tune.as_ref().and_then(|t| t.pl.1).unwrap_or(150) as f32;
         ui::group(ui, pal, Some("Now"), |ui| {
-            // the detail goes beside the name, so the value stays one short line in its column
-            readout::metric(ui, pal, true, &format!("Temperature · hottest core {:.0} °C", now.hottest), &format!("{:.0} °C", now.temp), &h, |s| s.temp, 20.0, 100.0, " °C");
-            readout::metric(ui, pal, false, &format!("Clock, average · fastest {:.1} GHz", now.max_mhz / 1000.0), &format!("{:.1} GHz", now.avg_mhz / 1000.0), &h, |s| s.avg_mhz, 0.0, top, " MHz");
-            readout::metric(ui, pal, false, "Load", &format!("{:.0} %", now.load), &h, |s| s.load, 0.0, 100.0, " %");
+            readout::metric(ui, pal, true, "Temperature", &format!("{:.0} °C", now.temp), &format!("hottest core {:.0}", now.hottest), &h, |s| s.temp, 20.0, 100.0, " °C");
+            readout::metric(ui, pal, false, "Clock (average)", &format!("{:.1} GHz", now.avg_mhz / 1000.0), &format!("fastest {:.1}", now.max_mhz / 1000.0), &h, |s| s.avg_mhz, 0.0, top, " MHz");
+            readout::metric(ui, pal, false, "Load", &format!("{:.0} %", now.load), "", &h, |s| s.load, 0.0, 100.0, " %");
             if let Some(w) = now.power {
-                readout::metric(ui, pal, false, "Power", &format!("{w:.0} W"), &h, |s| s.power.unwrap_or(0.0), 0.0, pmax.max(w), " W");
+                readout::metric(ui, pal, false, "Power", &format!("{w:.0} W"), "", &h, |s| s.power.unwrap_or(0.0), 0.0, pmax.max(w), " W");
             }
         });
     }
