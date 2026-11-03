@@ -1,7 +1,7 @@
 # Yggdrasil polkit authentication agent (the password box for administrator actions): prototype (Rust): built from packages/polkit in this repository.
 pkgname=yggdrasil-polkit
 pkgver=0.1.0
-pkgrel=1
+pkgrel=2
 pkgdesc="Yggdrasil polkit authentication agent (the password box for administrator actions): prototype"
 arch=('x86_64')
 provides=('labyrinth-polkit')
