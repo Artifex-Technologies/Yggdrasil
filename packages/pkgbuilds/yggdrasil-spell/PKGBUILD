@@ -1,13 +1,14 @@
 # Yggdrasil's spelling library and the user service that keeps every app's word list in step: packages/spell.
 pkgname=yggdrasil-spell
 pkgver=0.1.0
-pkgrel=1
+pkgrel=6
 pkgdesc="Yggdrasil spelling: Hunspell dictionaries through a Rust engine, your languages, one word list shared by your apps"
 arch=('x86_64')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
 license=('MPL-2.0')
 depends=('gcc-libs' 'glibc')  # glibc's iconv converts old dictionaries
 optdepends=('hunspell-en_us: US English (other languages: Settings > Keyboard > Spelling and languages)'
+            'yggdrasil-spell-packs: word packs (software and tech, companies, gaming, names)'
             'enchant: GTK apps check spelling through it, with your word list'
             'hunspell: enchant'"'"'s Hunspell provider, which reads the same dictionaries')
 makedepends=('cargo')

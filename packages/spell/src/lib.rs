@@ -11,6 +11,7 @@
 pub mod apps;
 pub mod conf;
 pub mod dicts;
+pub mod packs;
 pub mod words;
 
 use std::collections::HashSet;
@@ -29,6 +30,7 @@ impl Speller {
         let conf = conf::SpellConf::load();
         let mut words: HashSet<String> = words::WordList::load().words().map(str::to_string).collect();
         words.extend(words::global());
+        words.extend(packs::words_for(&conf.active_packs()).on);
         Speller::with(&conf.active(), words)
     }
 

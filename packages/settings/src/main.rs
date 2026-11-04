@@ -79,6 +79,8 @@ enum KeySub {
     Main,
     Shortcuts,
     Spelling,
+    /// Spelling and languages > Download more languages
+    SpellDownload,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -3526,17 +3528,23 @@ impl App {
     /// Keyboard: a short page that leads to the shortcut list (its own page) and holds the tools that live on a key.
     fn page_keyboard(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         if self.key_sub != KeySub::Main {
+            // the way back: Download more languages goes back to Spelling and languages, the others to Keyboard
+            let (back, up, title) = match self.key_sub {
+                KeySub::Shortcuts => ("Keyboard", KeySub::Main, "Shortcuts"),
+                KeySub::SpellDownload => ("Spelling and languages", KeySub::Spelling, "Download more languages"),
+                _ => ("Keyboard", KeySub::Main, "Spelling and languages"),
+            };
             ui.horizontal(|ui| {
-                if ui::quiet(ui, pal, "\u{2039}  Keyboard").clicked() {
-                    self.key_sub = KeySub::Main;
+                if ui::quiet(ui, pal, &format!("\u{2039}  {back}")).clicked() {
+                    self.key_sub = up;
                 }
-                ui.label(RichText::new(if self.key_sub == KeySub::Shortcuts { "Shortcuts" } else { "Spelling and languages" }).size(18.0).strong());
+                ui.label(RichText::new(title).size(18.0).strong());
             });
             ui.add_space(6.0);
-            if self.key_sub == KeySub::Shortcuts {
-                page_shortcuts(ui, pal);
-            } else {
-                self.page_spelling(ui, pal, ctx);
+            match self.key_sub {
+                KeySub::Shortcuts => page_shortcuts(ui, pal),
+                KeySub::SpellDownload => self.page_spell_download(ui, pal, ctx),
+                _ => self.page_spelling(ui, pal, ctx),
             }
             return;
         }

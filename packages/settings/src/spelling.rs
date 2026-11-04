@@ -14,6 +14,7 @@ pub struct State {
     installed: Vec<dicts::Installed>,
     packages: Vec<(&'static str, &'static str, bool)>,
     words: Option<WordList>,
+    packs: Vec<yggdrasil_spell::packs::Pack>,
     filter: String,
     new_word: String,
     /// the package being downloaded or removed
@@ -27,6 +28,7 @@ impl State {
         self.installed = dicts::installed();
         self.packages = dicts::PACKAGES.iter().map(|p| (p.package, p.name, dicts::package_installed(p.package))).collect();
         self.words = Some(WordList::load());
+        self.packs = yggdrasil_spell::packs::installed();
     }
 }
 
@@ -37,6 +39,7 @@ fn package_job(tx: std::sync::mpsc::Sender<Msg>, ctx: egui::Context, package: &'
         let run = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from).unwrap_or_else(|| "/tmp".into()).join("agora");
         let _ = std::fs::create_dir_all(&run);
         let cancel = run.join(format!("spell-{}.cancel", std::process::id()));
+        let before: Vec<String> = dicts::installed().into_iter().map(|d| d.code).collect();
         let mut args = vec![cancel.to_string_lossy().to_string(), "pacman".into()];
         args.extend(if install { ["-S", "--needed", "--noconfirm"] } else { ["-R", "--noconfirm", "--"] }.iter().map(|s| s.to_string()));
         args.push(package.to_string());
@@ -47,6 +50,19 @@ fn package_job(tx: std::sync::mpsc::Sender<Msg>, ctx: egui::Context, package: &'
             Ok(o) => Err(String::from_utf8_lossy(&o.stderr).lines().last().unwrap_or("pacman did not finish").to_string()),
             Err(_) => Err("pkexec is not available".to_string()),
         };
+        // like a phone: a downloaded language is switched on (its main dictionary, not the "more words" variants)
+        if install && r.is_ok() {
+            let mut conf = SpellConf::load();
+            if conf.languages.is_empty() {
+                conf.languages = conf.active();
+            }
+            for d in dicts::installed() {
+                if !before.contains(&d.code) && !d.code.contains('-') && !conf.languages.contains(&d.code) {
+                    conf.languages.push(d.code);
+                }
+            }
+            let _ = conf.save();
+        }
         // new languages get the user's words in their GTK list
         let _ = apps::sync_all();
         let _ = tx.send(Msg::Spell(r));
@@ -74,9 +90,10 @@ impl App {
         });
 
         ui.add_space(8.0);
+        let mut more = false;
         ui::group(ui, pal, Some("Languages"), |ui| {
             if self.spell.installed.is_empty() {
-                ui::row(ui, pal, true, "No language is installed", Some("Download one below"), |_| {});
+                ui::row(ui, pal, true, "No language is installed", Some("Download one: \"Download more languages\" below"), |_| {});
             }
             for (i, d) in self.spell.installed.iter().enumerate() {
                 let mut on = active.contains(&d.code);
@@ -98,8 +115,39 @@ impl App {
                     });
                 });
             }
+            more = ui::nav_row(ui, pal, false, "Download more languages…", Some("Add or remove languages"), |_| {});
         });
         ui.label(RichText::new("Several languages can be on at once: a word that is right in any of them is not marked.").color(pal.dim));
+        if more {
+            self.key_sub = crate::KeySub::SpellDownload;
+        }
+
+        // word packs: words the language dictionaries do not have (yggdrasil-spell-packs)
+        if !self.spell.packs.is_empty() {
+            ui.add_space(8.0);
+            let on_now = conf.active_packs();
+            ui::group(ui, pal, Some("Word packs"), |ui| {
+                for (i, p) in self.spell.packs.iter().enumerate() {
+                    let mut on = on_now.contains(&p.id);
+                    let sub = format!("{} · {} words", p.description, p.count);
+                    ui::row(ui, pal, i == 0, &p.name, Some(&sub), |ui| {
+                        ui.add_enabled_ui(conf.enabled, |ui| {
+                            if ui::switch(ui, pal, &mut on).changed() {
+                                let mut list = on_now.clone();
+                                list.retain(|x| x != &p.id);
+                                if on {
+                                    list.push(p.id.clone());
+                                }
+                                conf.packs = Some(list);
+                                conf_changed = true;
+                                resync = true;
+                            }
+                        });
+                    });
+                }
+            });
+            ui.label(RichText::new("Pack words are known everywhere while the pack is on, and leave the apps' lists again when it is switched off. They are not added to your words.").color(pal.dim));
+        }
 
         ui.add_space(8.0);
         let mut add: Option<String> = None;
@@ -107,8 +155,10 @@ impl App {
         let words = self.spell.words.clone().unwrap_or_default();
         ui::group(ui, pal, Some(&format!("Your words ({})", words.len())), |ui| {
             ui::row(ui, pal, true, "Add a word", Some("Known to every app from then on"), |ui| {
+                // the row lays its controls out from the right: the button first, so it ends up right of the box
+                let clicked = ui::action(ui, pal, "Add").clicked();
                 let enter = ui.add(egui::TextEdit::singleline(&mut self.spell.new_word).hint_text("Word").desired_width(180.0)).lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                if (ui::action(ui, pal, "Add").clicked() || enter) && !self.spell.new_word.trim().is_empty() {
+                if (clicked || enter) && !self.spell.new_word.trim().is_empty() {
                     add = Some(self.spell.new_word.trim().to_string());
                 }
             });
@@ -146,30 +196,6 @@ impl App {
             self.spell.words = Some(WordList::load());
         }
 
-        ui.add_space(8.0);
-        let busy = self.spell.busy.clone();
-        let mut job: Option<(&'static str, bool)> = None;
-        ui::group(ui, pal, Some("Download or remove languages"), |ui| {
-            for (i, (pkg, name, installed)) in self.spell.packages.iter().enumerate() {
-                ui::row(ui, pal, i == 0, name, None, |ui| {
-                    if busy.as_deref() == Some(*pkg) {
-                        ui.spinner();
-                    } else if *installed {
-                        if ui.add_enabled(busy.is_none(), egui::Button::new("Remove")).clicked() {
-                            job = Some((pkg, false));
-                        }
-                    } else if ui.add_enabled(busy.is_none(), egui::Button::new("Download")).clicked() {
-                        job = Some((pkg, true));
-                    }
-                });
-            }
-        });
-        ui.label(RichText::new("Each language is a signed package from the system's repositories; downloading or removing one asks for your password.").color(pal.dim));
-        if let Some((pkg, install)) = job {
-            self.spell.busy = Some(pkg.to_string());
-            self.spell.note.clear();
-            package_job(self.tx.clone(), ctx.clone(), pkg, install);
-        }
         if !self.spell.note.is_empty() {
             ui.label(RichText::new(&self.spell.note).color(pal.dim));
         }
@@ -182,6 +208,43 @@ impl App {
             std::thread::spawn(|| {
                 let _ = apps::sync_all();
             });
+        }
+    }
+
+    /// Keyboard > Spelling and languages > Download more languages: the installed language packages (Remove) and the others
+    /// (Download), like a phone's keyboard languages.
+    pub(crate) fn page_spell_download(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
+        if self.spell.conf.is_none() {
+            self.spell.reload();
+        }
+        let busy = self.spell.busy.clone();
+        let mut job: Option<(&'static str, bool)> = None;
+        for (title, installed) in [("Installed", true), ("Available to download", false)] {
+            let rows: Vec<_> = self.spell.packages.iter().filter(|p| p.2 == installed).collect();
+            if rows.is_empty() {
+                continue;
+            }
+            ui::group(ui, pal, Some(title), |ui| {
+                for (i, (pkg, name, _)) in rows.into_iter().enumerate() {
+                    ui::row(ui, pal, i == 0, name, None, |ui| {
+                        if busy.as_deref() == Some(*pkg) {
+                            ui.spinner();
+                        } else if ui.add_enabled(busy.is_none(), egui::Button::new(if installed { "Remove" } else { "Download" })).clicked() {
+                            job = Some((pkg, !installed));
+                        }
+                    });
+                }
+            });
+            ui.add_space(8.0);
+        }
+        ui.label(RichText::new("Each language is a signed package from the system's repositories; downloading or removing one asks for your password. A downloaded language is switched on in Spelling and languages.").color(pal.dim));
+        if let Some((pkg, install)) = job {
+            self.spell.busy = Some(pkg.to_string());
+            self.spell.note.clear();
+            package_job(self.tx.clone(), ctx.clone(), pkg, install);
+        }
+        if !self.spell.note.is_empty() {
+            ui.label(RichText::new(&self.spell.note).color(pal.dim));
         }
     }
 }

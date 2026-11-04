@@ -1,0 +1,138 @@
+# Word packs for Yggdrasil's spelling (yggdrasil-spell): words the language dictionaries do not have. Built from cspell-dicts
+# (https://github.com/streetsidesoftware/cspell-dicts), pinned to one commit; each dictionary used is MIT-licensed (the collection's
+# top-level GPL-3.0 does not apply to them; each has its own LICENSE, installed below). cspell's list of common English misspellings
+# (CC BY-SA 4.0) is used only while building, to keep known typos out of the packs; it is not installed.
+pkgname=yggdrasil-spell-packs
+pkgver=2026.11.03
+pkgrel=1
+_commit=0964f5242efaf11541eaed8a6abffa1c4d8aa277
+pkgdesc="Word packs for Yggdrasil's spell checking: software and tech terms, companies and products, gaming, people's names"
+arch=('any')
+url="https://github.com/streetsidesoftware/cspell-dicts"
+license=('MIT')
+depends=('yggdrasil-spell')
+makedepends=('yggdrasil-spell')
+source=(
+  "cspell-software-terms-software-terms.txt::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/software-terms/src/software-terms.txt"
+  "cspell-software-terms-coding-terms.txt::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/software-terms/src/coding-terms.txt"
+  "cspell-software-terms-coding-compound-terms.txt::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/software-terms/src/coding-compound-terms.txt"
+  "cspell-software-terms-computing-acronyms.txt::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/software-terms/src/computing-acronyms.txt"
+  "cspell-software-terms-cybersecurity-terms.txt::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/software-terms/src/cybersecurity-terms.txt"
+  "cspell-software-terms-network-os.txt::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/software-terms/src/network-os.txt"
+  "cspell-software-terms-network-protocols.txt::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/software-terms/src/network-protocols.txt"
+  "cspell-software-terms-software-services.txt::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/software-terms/src/software-services.txt"
+  "cspell-software-terms-software-tools.txt::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/software-terms/src/software-tools.txt"
+  "cspell-fullstack-fullstack.txt::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/fullstack/src/fullstack.txt"
+  "cspell-fullstack-tools-and-services.txt::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/fullstack/src/tools-and-services.txt"
+  "cspell-filetypes-filetypes.txt::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/filetypes/src/filetypes.txt"
+  "cspell-data-science-data-science-terms.txt::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/data-science/src/data-science-terms.txt"
+  "cspell-data-science-data-science-tools.txt::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/data-science/src/data-science-tools.txt"
+  "cspell-data-science-data-science-models.txt::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/data-science/src/data-science-models.txt"
+  "cspell-k8s-k8s.txt::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/k8s/src/k8s.txt"
+  "cspell-docker-docker-words.txt::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/docker/src/docker-words.txt"
+  "cspell-git-terms.txt::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/git/src/terms.txt"
+  "cspell-git-additional_words.txt::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/git/src/additional_words.txt"
+  "cspell-aws-aws.txt::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/aws/src/aws.txt"
+  "cspell-fonts-fonts.txt::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/fonts/src/fonts.txt"
+  "cspell-public-licenses-additional-licenses.txt::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/public-licenses/src/additional-licenses.txt"
+  "cspell-companies-companies.txt::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/companies/src/companies.txt"
+  "cspell-cryptocurrencies-cryptocurrencies.txt::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/cryptocurrencies/src/cryptocurrencies.txt"
+  "cspell-cryptocurrencies-crypto-terms.txt::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/cryptocurrencies/src/crypto-terms.txt"
+  "cspell-gaming-terms-gaming-terms.txt::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/gaming-terms/src/gaming-terms.txt"
+  "cspell-gaming-terms-game-development.txt::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/gaming-terms/src/game-development.txt"
+  "cspell-people-names-names.txt::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/people-names/src/names.txt"
+  "cspell-people-names-us-census.txt::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/people-names/src/us-census.txt"
+  "cspell-en-common-misspellings-dict-en.json::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/en-common-misspellings/dict/dict-en.json"
+  "cspell-aws-LICENSE::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/aws/LICENSE"
+  "cspell-companies-LICENSE::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/companies/LICENSE"
+  "cspell-cryptocurrencies-LICENSE::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/cryptocurrencies/LICENSE"
+  "cspell-data-science-LICENSE::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/data-science/LICENSE"
+  "cspell-docker-LICENSE::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/docker/LICENSE"
+  "cspell-filetypes-LICENSE::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/filetypes/LICENSE"
+  "cspell-fonts-LICENSE::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/fonts/LICENSE"
+  "cspell-fullstack-LICENSE::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/fullstack/LICENSE"
+  "cspell-gaming-terms-LICENSE::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/gaming-terms/LICENSE"
+  "cspell-git-LICENSE::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/git/LICENSE"
+  "cspell-k8s-LICENSE::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/k8s/LICENSE"
+  "cspell-people-names-LICENSE::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/people-names/LICENSE"
+  "cspell-public-licenses-LICENSE::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/public-licenses/LICENSE"
+  "cspell-software-terms-LICENSE::https://raw.githubusercontent.com/streetsidesoftware/cspell-dicts/${_commit}/dictionaries/software-terms/LICENSE"
+)
+sha256sums=(
+  'b48e669314a91f6ef4ad3f8797bc51aa0292dd41300bc2082a49316c8cdfa251'
+  '5f9f1a401e83006543d7ea4470591f1bb003d41ed8e43155115f3dc0c3b71598'
+  'a3c2d70c9684592ce7fa45ffc838e0abc8be9bbe45d5a039c2c4cc9ef2f8602e'
+  '5ad1c671d8f9212b6f5c1c169f19f21e480c98b34a763f9f6ed0995ad6d63ff3'
+  '1c00c6015c5d7970e763756ecc7cfafc1a50eb98f44f544309bdd3c234cb0b45'
+  '75749b9e90aea3ffaaa51535ad4f3d9b96610f68577cc5ef612a388687ceb9c9'
+  'b2b8f0f0cb21dce4b6c26ed8b044dc99b1ebae5e95e85bfff520265e8874f0eb'
+  '4125c5bd54e9435111dcb3d9c4f00b2998f391ea6421aac057287e5d23c6ff1f'
+  'dc9036b00cf72b0881274207e3a9802c4b840c4560c14d43994b919cfaf47aa3'
+  'ec10f0ae2513b9e749e42929dfdade6e13bd2f66fb784dbd83c7798e329cba2e'
+  '126a6cb7e906e9d4a0551079a36802b907aca873c9d1e591da1c102847c1c004'
+  '9714cb1357d0ff02d5e3f571bc9a3381cbfbee98ef24494cf27d533dec27e2ea'
+  'f7a4ffc2a5d20524efa987123b52cdf3c647b276d332ca4a93dde0a55f3da1c3'
+  'd2d53ffbb2d9ec6a0eea0b7f8f371447802cfd7564337f73aac555ae6203578f'
+  '7945d134c60a190c896ea018a372eed4a4d36f690126c9a5ab5349c07a18e615'
+  'ff1b1ffeee0131bd608f1cf4ef8310e9e1755a984b76c4eedd4d826f378c5f4f'
+  '99b9b6c56fb58d221b6df6a14e3ffd7cc440ad5dee7c16161751cf9dc7888371'
+  'abaaf9a6fb284345a4d8e2b2c93b55aac3cdabbd84a3657684e4465182b22439'
+  '54b83ca3aadb472b8263fe354c0e422ee998d8b82ec7f534d09296c4fb5d376c'
+  '57328affb56e5a9bd556534d915ef93e482eb5439dbdcdec551eaa8de13a0ba3'
+  'd8f727442b8242a4e573186ee3ff7aaa0dd017989406f48443c835ea16665971'
+  'ee41b91a233b1c88403909a939704b0c03bd6f0b8f38804f8b000bbfb63efc5b'
+  '37fc1e822e837e45c3e79e93089e1e40dd7e19073423e95abaad036f879ccd79'
+  '1e7a15a46d5fd799c4bc97fadc52665aa0b32fdc6ac3cc447bfbe8fd1caf1d23'
+  '26a16470f5b51f835105ebb6bf01b0ce943fc83fb188368ba308ce40503f5fde'
+  '671df1abd29b3073233c875f9f7f7969864ddb61df0a263110478f35de332b8d'
+  '6603b4deeb25890eff891298cfe2e13b9456ea81dddd5c9afd91c1322de24ab1'
+  '533f6ac8c2ea4518c3a7ef9ee2d261ca3953d2b58ca13cf5e7fe21b3dd849216'
+  '72b25d7006ee9f730b9bb37ae38936bb4bafcbdba641e078e95cc70c0c19274c'
+  'f50a6effa4eaf272eadf6c4b36487a9ba6d2eca2881bcdfd0a982da6be86d567'
+  'ab676dfe56066a93fc9b199ac92ee748e5cff49757696db536ca49b84f9e9242'
+  '6245ecd81789d113a600fa0e4f5f503e6d1b4f425860f6047dc945560dfcf13c'
+  'e95e4b0999e1a92bd4e533759548959c60bb8284310b9206bca931ce7e622925'
+  'd18417f134ceef7cb812ce51315476312217745d6cfc116dc00659480b638553'
+  '3acd0dea71b25dd71ce4e579244d319840170c16431f6aa42d58dc9dd1d706f4'
+  '6245ecd81789d113a600fa0e4f5f503e6d1b4f425860f6047dc945560dfcf13c'
+  '6245ecd81789d113a600fa0e4f5f503e6d1b4f425860f6047dc945560dfcf13c'
+  '6245ecd81789d113a600fa0e4f5f503e6d1b4f425860f6047dc945560dfcf13c'
+  'd18417f134ceef7cb812ce51315476312217745d6cfc116dc00659480b638553'
+  '6245ecd81789d113a600fa0e4f5f503e6d1b4f425860f6047dc945560dfcf13c'
+  '6141926636fffc3738114951076af40d18ae7122e6a5400531f3287377f950d1'
+  '3e5d4e1b47ac761990d7d930cdb0cd156606244621e2f3dbcf8d35b60ad4977a'
+  '6245ecd81789d113a600fa0e4f5f503e6d1b4f425860f6047dc945560dfcf13c'
+  '6245ecd81789d113a600fa0e4f5f503e6d1b4f425860f6047dc945560dfcf13c'
+)
+
+build() {
+  cd "$srcdir"
+  mkdir -p packs
+  yggdrasil-spell build-pack "packs/tech.txt" "Software and tech" "Programming, networking, cloud, security and data science terms" MIT "cspell-dicts ${_commit:0:7} (aws, data-science, docker, filetypes, fonts, fullstack, git, k8s, public-licenses, software-terms)" yes \
+    --deny "cspell-en-common-misspellings-dict-en.json" "cspell-software-terms-software-terms.txt" "cspell-software-terms-coding-terms.txt" "cspell-software-terms-coding-compound-terms.txt" "cspell-software-terms-computing-acronyms.txt" "cspell-software-terms-cybersecurity-terms.txt" "cspell-software-terms-network-os.txt" "cspell-software-terms-network-protocols.txt" "cspell-software-terms-software-services.txt" "cspell-software-terms-software-tools.txt" "cspell-fullstack-fullstack.txt" "cspell-fullstack-tools-and-services.txt" "cspell-filetypes-filetypes.txt" "cspell-data-science-data-science-terms.txt" "cspell-data-science-data-science-tools.txt" "cspell-data-science-data-science-models.txt" "cspell-k8s-k8s.txt" "cspell-docker-docker-words.txt" "cspell-git-terms.txt" "cspell-git-additional_words.txt" "cspell-aws-aws.txt" "cspell-fonts-fonts.txt" "cspell-public-licenses-additional-licenses.txt"
+  yggdrasil-spell build-pack "packs/companies.txt" "Companies and products" "Company, product, brand and cryptocurrency names" MIT "cspell-dicts ${_commit:0:7} (companies, cryptocurrencies)" yes \
+    --deny "cspell-en-common-misspellings-dict-en.json" "cspell-companies-companies.txt" "cspell-cryptocurrencies-cryptocurrencies.txt" "cspell-cryptocurrencies-crypto-terms.txt"
+  yggdrasil-spell build-pack "packs/gaming.txt" "Gaming" "Gaming and game development terms" MIT "cspell-dicts ${_commit:0:7} (gaming-terms)" yes \
+    --deny "cspell-en-common-misspellings-dict-en.json" "cspell-gaming-terms-gaming-terms.txt" "cspell-gaming-terms-game-development.txt"
+  yggdrasil-spell build-pack "packs/names.txt" "People's names" "First names and surnames (off by default: so many names can hide real typos)" MIT "cspell-dicts ${_commit:0:7} (people-names)" no \
+    --deny "cspell-en-common-misspellings-dict-en.json" "cspell-people-names-names.txt" "cspell-people-names-us-census.txt"
+}
+
+package() {
+  cd "$srcdir"
+  install -Dm644 -t "$pkgdir/usr/share/yggdrasil/spell/packs" packs/*.txt
+  install -Dm644 "cspell-aws-LICENSE" "$pkgdir/usr/share/licenses/$pkgname/aws.LICENSE"
+  install -Dm644 "cspell-companies-LICENSE" "$pkgdir/usr/share/licenses/$pkgname/companies.LICENSE"
+  install -Dm644 "cspell-cryptocurrencies-LICENSE" "$pkgdir/usr/share/licenses/$pkgname/cryptocurrencies.LICENSE"
+  install -Dm644 "cspell-data-science-LICENSE" "$pkgdir/usr/share/licenses/$pkgname/data-science.LICENSE"
+  install -Dm644 "cspell-docker-LICENSE" "$pkgdir/usr/share/licenses/$pkgname/docker.LICENSE"
+  install -Dm644 "cspell-filetypes-LICENSE" "$pkgdir/usr/share/licenses/$pkgname/filetypes.LICENSE"
+  install -Dm644 "cspell-fonts-LICENSE" "$pkgdir/usr/share/licenses/$pkgname/fonts.LICENSE"
+  install -Dm644 "cspell-fullstack-LICENSE" "$pkgdir/usr/share/licenses/$pkgname/fullstack.LICENSE"
+  install -Dm644 "cspell-gaming-terms-LICENSE" "$pkgdir/usr/share/licenses/$pkgname/gaming-terms.LICENSE"
+  install -Dm644 "cspell-git-LICENSE" "$pkgdir/usr/share/licenses/$pkgname/git.LICENSE"
+  install -Dm644 "cspell-k8s-LICENSE" "$pkgdir/usr/share/licenses/$pkgname/k8s.LICENSE"
+  install -Dm644 "cspell-people-names-LICENSE" "$pkgdir/usr/share/licenses/$pkgname/people-names.LICENSE"
+  install -Dm644 "cspell-public-licenses-LICENSE" "$pkgdir/usr/share/licenses/$pkgname/public-licenses.LICENSE"
+  install -Dm644 "cspell-software-terms-LICENSE" "$pkgdir/usr/share/licenses/$pkgname/software-terms.LICENSE"
+}

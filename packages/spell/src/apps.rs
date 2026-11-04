@@ -14,6 +14,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use crate::packs::PackWords;
 use crate::words::{valid, WordList};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -149,16 +150,17 @@ pub struct Report {
     pub errors: Vec<String>,
 }
 
-/// Merges every app list into the user's word list, then writes the user's words (and only those removed in Yggdrasil taken out)
-/// back to every app list.
-pub fn sync(list: &mut WordList, bridges: &[Bridge]) -> Report {
+/// Merges every app list into the user's word list, then writes the user's words and the words of the packs that are on back to
+/// every app list (taking out only what the user removed in Yggdrasil and what a switched-off pack had put there).
+pub fn sync(list: &mut WordList, bridges: &[Bridge], packs: &PackWords) -> Report {
     let mut r = Report::default();
     let mut seen: Vec<(usize, BTreeSet<String>)> = vec![];
     for (i, b) in bridges.iter().enumerate() {
         let words = b.read();
         for w in &words {
-            let new = !list.contains(w);
-            if list.add(w, &b.app) && new {
+            // an app is where a word came from only when the list did not have it yet (otherwise it is our own word, written there),
+            // and a pack's word in an app's list was put there by a sync
+            if !list.contains(w) && !packs.all.contains(w) && list.add(w, &b.app) {
                 r.added.push((w.clone(), b.app.clone()));
             }
         }
@@ -167,8 +169,13 @@ pub fn sync(list: &mut WordList, bridges: &[Bridge]) -> Report {
     let all: BTreeSet<String> = list.words().map(str::to_string).collect();
     for (i, words) in seen {
         let b = &bridges[i];
-        // keep what the app has (unless removed in Yggdrasil), add everything the user has
-        let want: BTreeSet<String> = words.into_iter().filter(|w| !list.is_removed(w)).chain(all.iter().cloned()).collect();
+        // keep what the app has (unless removed in Yggdrasil, or a pack's word while that pack is off), add everything the user
+        // has and every word of the packs that are on
+        let want: BTreeSet<String> = words.into_iter()
+            .filter(|w| !list.is_removed(w) && (!packs.all.contains(w) || packs.on.contains(w) || all.contains(w)))
+            .chain(all.iter().cloned())
+            .chain(packs.on.iter().cloned())
+            .collect();
         // no empty files where an app had none
         if !b.path.exists() && want.is_empty() {
             continue;
@@ -214,8 +221,9 @@ pub fn lock() -> Result<Lock, String> {
 
 fn sync_locked() -> Result<(Report, usize, usize), String> {
     let mut list = WordList::load();
-    let bridges = bridges(&crate::conf::SpellConf::load().active());
-    let r = sync(&mut list, &bridges);
+    let conf = crate::conf::SpellConf::load();
+    let bridges = bridges(&conf.active());
+    let r = sync(&mut list, &bridges, &crate::packs::words_for(&conf.active_packs()));
     list.save().map_err(|e| e.to_string())?;
     Ok((r, list.len(), bridges.len()))
 }
@@ -315,14 +323,30 @@ mod tests {
         std::fs::write(&viv.path, render(Format::Chromium, &["Fylgja".to_string()].into_iter().collect())).unwrap();
         let bridges = vec![gtk.clone(), viv.clone()];
         let mut list = WordList::default();
-        let r = sync(&mut list, &bridges);
+        let r = sync(&mut list, &bridges, &PackWords::default());
         assert_eq!(r.added, [("Fylgja".to_string(), "Vivaldi".to_string())]);
         assert!(gtk.read().contains("Fylgja"), "Vivaldi's word reached the GTK apps");
-        assert!(sync(&mut list, &bridges).written.is_empty(), "a second sync changes nothing (no loop with the watcher)");
+        assert!(sync(&mut list, &bridges, &PackWords::default()).written.is_empty(), "a second sync changes nothing (no loop with the watcher)");
         list.remove("Fylgja");
-        sync(&mut list, &bridges);
+        sync(&mut list, &bridges, &PackWords::default());
         assert!(!gtk.read().contains("Fylgja") && !viv.read().contains("Fylgja"), "removed everywhere");
         assert!(!list.contains("Fylgja"), "and the app did not bring it back");
+        // a word of the user's own, written to the apps by a sync, does not get the apps as its source
+        list.add("Sarina", "");
+        sync(&mut list, &bridges, &PackWords::default());
+        sync(&mut list, &bridges, &PackWords::default());
+        assert_eq!(list.entries().find(|(w, _)| *w == "Sarina").map(|(_, f)| f.len()), Some(0));
+        // a pack that is on reaches the apps without joining the user's list; switched off, it leaves them again
+        let mut packs = PackWords::default();
+        packs.all.extend(["Kubernetes".to_string(), "Sarina".to_string()]);
+        packs.on = packs.all.clone();
+        sync(&mut list, &bridges, &packs);
+        assert!(gtk.read().contains("Kubernetes") && viv.read().contains("Kubernetes"));
+        assert!(!list.contains("Kubernetes"), "pack words are not the user's words");
+        packs.on.clear();
+        sync(&mut list, &bridges, &packs);
+        assert!(!gtk.read().contains("Kubernetes"), "a switched-off pack's words leave the apps");
+        assert!(gtk.read().contains("Sarina"), "unless the user has the word too");
         let _ = std::fs::remove_dir_all(&d);
     }
 }
