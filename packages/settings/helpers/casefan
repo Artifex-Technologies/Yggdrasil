@@ -1,0 +1,382 @@
+#!/usr/bin/env python3
+"""casefan: the case fans and the pump on a Corsair Commander Pro (Settings > Power, next to the graphics card's fans).
+
+Each connected port of the Commander Pro has a role:
+  pump   one speed, never below PUMP_MIN_PCT (the graphics card's liquid cooler on the owner's PC)
+  fan    a speed for each temperature, from two curves: one for the processor, one for the graphics card; the fan runs at
+         whichever of the two asks for more, so it follows the part that is working hardest
+
+Commands:
+  casefan get                     the ports, temperatures and setting, as JSON (no root needed)
+  casefan set FILE                save the setting from a JSON file and restart the service (root: pkexec)
+  casefan run                     as the root service yggdrasil-casefan: keep the ports on the setting
+  casefan reset [failed]          ports to their stop speed (root; the service does it when it stops): fans STOP_FAN_PCT and the
+                                  pump 100 % after a clean stop, everything 100 % after a failure
+
+Safety: the pump never runs below PUMP_MIN_PCT; at CPU_HOT_C or GPU_HOT_C every port runs at 100 %; if a temperature cannot be
+read, every port goes to 100 % and the service ends with an error (systemd starts it again); after a crash (ExecStopPost with a
+failed result) every port runs at 100 %. Speeds come down only once the part is SETTLE_C cooler, so fans do not hunt.
+
+The Commander Pro keeps the last speed it was given until it loses power; it does not go back to its own stored curves by
+itself, which is why a stop always sets a speed instead of leaving the ports as they were.
+
+The setting is /etc/yggdrasil/case-fans.json:
+  {"ports": {"1": {"name": "Graphics card pump", "role": "pump", "fixed": 100},
+             "6": {"name": "Top exhaust", "role": "fan", "cpu": [[50, 25], ...], "gpu": [[45, 25], ...]}}}
+Ports not in the setting are left alone.
+"""
+import ctypes
+import glob
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+
+CONF = "/etc/yggdrasil/case-fans.json"
+SERVICE = "yggdrasil-casefan.service"
+CPU_HOT_C = 92
+GPU_HOT_C = 83
+SETTLE_C = 3
+EVERY_S = 2
+REAPPLY_S = 30
+PUMP_MIN_PCT = 60
+FAN_MIN_PCT = 20
+STOP_FAN_PCT = 60
+# Quiet when idle, firm under load: the 3000 RPM exhaust fan is about 750 RPM at 25 %.
+DEFAULT_CPU = [[50, 25], [65, 35], [75, 55], [85, 80], [90, 100]]
+DEFAULT_GPU = [[45, 25], [55, 35], [65, 55], [72, 80], [78, 100]]
+
+
+class SensorError(Exception):
+    pass
+
+
+# ---------------------------------------------------------------- hardware
+
+
+def find_cpro(root="/sys/class/hwmon"):
+    """The Commander Pro's hwmon folder, or None."""
+    for d in sorted(glob.glob(os.path.join(root, "hwmon*"))):
+        try:
+            with open(os.path.join(d, "name")) as f:
+                if f.read().strip() == "corsaircpro":
+                    return d
+        except OSError:
+            continue
+    return None
+
+
+def ports(cpro):
+    """The connected ports: {"1": {"label": "fan1 4pin", "rpm": 3846}, ...} (the driver lists only connected ones)."""
+    out = {}
+    for lab in sorted(glob.glob(os.path.join(cpro, "fan*_label"))):
+        n = os.path.basename(lab)[3:-len("_label")]
+        try:
+            with open(lab) as f:
+                label = f.read().strip()
+            with open(os.path.join(cpro, f"fan{n}_input")) as f:
+                rpm = int(f.read().strip())
+        except (OSError, ValueError):
+            continue
+        out[n] = {"label": label, "rpm": rpm}
+    return out
+
+
+def set_pct(cpro, n, pct):
+    with open(os.path.join(cpro, f"pwm{n}"), "w") as f:
+        f.write(str(round(max(0, min(100, pct)) * 255 / 100)))
+
+
+def cpu_temp(root="/sys/class/hwmon"):
+    """The processor's package temperature (coretemp "Package id 0", or k10temp Tctl), in degrees C."""
+    for d in sorted(glob.glob(os.path.join(root, "hwmon*"))):
+        try:
+            with open(os.path.join(d, "name")) as f:
+                name = f.read().strip()
+        except OSError:
+            continue
+        if name not in ("coretemp", "k10temp", "zenpower"):
+            continue
+        for lab in sorted(glob.glob(os.path.join(d, "temp*_label"))):
+            try:
+                with open(lab) as f:
+                    label = f.read().strip()
+                if label.startswith("Package id") or label in ("Tctl", "Tdie"):
+                    with open(lab.replace("_label", "_input")) as f:
+                        return int(f.read().strip()) // 1000
+            except (OSError, ValueError):
+                continue
+    raise SensorError("the processor's temperature cannot be read")
+
+
+class Gpu:
+    """The first NVIDIA card's temperature, through libnvidia-ml (no X server needed)."""
+
+    def __init__(self):
+        try:
+            self.lib = ctypes.CDLL("libnvidia-ml.so.1")
+        except OSError as e:
+            raise SensorError(f"libnvidia-ml is not available ({e})")
+        self.h = ctypes.c_void_p()
+        if self.lib.nvmlInit_v2() != 0 or self.lib.nvmlDeviceGetHandleByIndex_v2(ctypes.c_uint(0), ctypes.byref(self.h)) != 0:
+            raise SensorError("the graphics card cannot be reached through NVML")
+
+    def temp(self):
+        v = ctypes.c_uint()
+        if self.lib.nvmlDeviceGetTemperature(self.h, ctypes.c_uint(0), ctypes.byref(v)) != 0:
+            raise SensorError("the graphics card's temperature cannot be read")
+        return v.value
+
+    def close(self):
+        self.lib.nvmlShutdown()
+
+
+# ---------------------------------------------------------------- the setting (pure, tested)
+
+
+def check_curve(pts):
+    if not isinstance(pts, list) or not 2 <= len(pts) <= 8:
+        raise ValueError("a curve has 2 to 8 points")
+    out = []
+    for pt in pts:
+        if not (isinstance(pt, (list, tuple)) and len(pt) == 2 and all(isinstance(v, int) and not isinstance(v, bool) for v in pt)):
+            raise ValueError("each point is [degrees, percent]")
+        t, p = pt
+        if not 20 <= t <= 100 or not 0 <= p <= 100:
+            raise ValueError("temperatures are 20-100 C and speeds 0-100 %")
+        out.append([t, p])
+    for a, b in zip(out, out[1:]):
+        if b[0] <= a[0]:
+            raise ValueError("the temperatures must rise from point to point")
+        if b[1] < a[1]:
+            raise ValueError("the speed may not drop as the temperature rises")
+    return out
+
+
+def clean(d):
+    """The saved setting with anything unusable replaced by a safe default; a port with a bad entry keeps its role's default."""
+    d = d if isinstance(d, dict) else {}
+    out = {"ports": {}}
+    for n, p in (d.get("ports") or {}).items():
+        if not (isinstance(n, str) and n.isdigit() and 1 <= int(n) <= 6 and isinstance(p, dict)):
+            continue
+        name = p.get("name") if isinstance(p.get("name"), str) else f"Port {n}"
+        if p.get("role") == "pump":
+            fixed = p.get("fixed") if isinstance(p.get("fixed"), int) and not isinstance(p.get("fixed"), bool) else 100
+            out["ports"][n] = {"name": name[:40], "role": "pump", "fixed": max(PUMP_MIN_PCT, min(100, fixed))}
+        else:
+            port = {"name": name[:40], "role": "fan", "cpu": [list(x) for x in DEFAULT_CPU], "gpu": [list(x) for x in DEFAULT_GPU]}
+            for k in ("cpu", "gpu"):
+                try:
+                    port[k] = check_curve(p.get(k))
+                except ValueError:
+                    pass
+            out["ports"][n] = port
+    return out
+
+
+def load(path=None):
+    try:
+        with open(path or CONF, encoding="utf-8") as f:
+            return clean(json.load(f))
+    except (OSError, ValueError):
+        return clean({})
+
+
+def save(cfg, path=None):
+    path = path or CONF
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(clean(cfg), f, indent=1)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, path)
+
+
+def curve_at(pts, t):
+    if t <= pts[0][0]:
+        return pts[0][1]
+    for (t0, p0), (t1, p1) in zip(pts, pts[1:]):
+        if t <= t1:
+            return round(p0 + (p1 - p0) * (t - t0) / (t1 - t0))
+    return pts[-1][1]
+
+
+def target(port, cpu, gpu):
+    """The speed a port should run at, with the processor at cpu and the card at gpu degrees."""
+    if cpu >= CPU_HOT_C or gpu >= GPU_HOT_C:
+        return 100
+    if port["role"] == "pump":
+        return max(PUMP_MIN_PCT, port["fixed"])
+    return max(FAN_MIN_PCT, min(100, max(curve_at(port["cpu"], cpu), curve_at(port["gpu"], gpu))))
+
+
+def settle(last, want, heat):
+    """last = (speed, heat when it was set), heat = the hotter part's margin. Up at once; down only SETTLE_C later."""
+    if last is None or want >= last[0] or heat <= last[1] - SETTLE_C:
+        return want
+    return last[0]
+
+
+def stop_speed(port, failed):
+    if failed or port["role"] == "pump":
+        return 100
+    return STOP_FAN_PCT
+
+
+# ---------------------------------------------------------------- commands
+
+
+def is_root():
+    return os.geteuid() == 0
+
+
+def systemctl(*args):
+    return subprocess.run(["systemctl", *args], capture_output=True, text=True).returncode
+
+
+def cmd_get():
+    cfg = load()
+    cpro = find_cpro()
+    out = dict(cfg, connected=ports(cpro) if cpro else None, cpu=None, gpu=None,
+               running=systemctl("is-active", "--quiet", SERVICE) == 0, hot={"cpu": CPU_HOT_C, "gpu": GPU_HOT_C})
+    try:
+        out["cpu"] = cpu_temp()
+    except SensorError as e:
+        out["error"] = str(e)
+    try:
+        g = Gpu()
+        out["gpu"] = g.temp()
+        g.close()
+    except SensorError as e:
+        out["error"] = str(e)
+    print(json.dumps(out))
+    return 0
+
+
+def cmd_set(path):
+    if not is_root():
+        print("casefan: set needs root (Settings runs it with pkexec)", file=sys.stderr)
+        return 1
+    try:
+        with open(path, encoding="utf-8") as f:
+            cfg = clean(json.load(f))
+    except (OSError, ValueError) as e:
+        print(f"casefan: {e}", file=sys.stderr)
+        return 2
+    save(cfg)
+    systemctl("enable", SERVICE)
+    return 0 if systemctl("restart", SERVICE) == 0 else 1
+
+
+def cmd_reset(failed):
+    if not is_root():
+        print("casefan: reset needs root", file=sys.stderr)
+        return 1
+    cpro = find_cpro()
+    if not cpro:
+        return 0
+    cfg = load()
+    for n in ports(cpro):
+        port = cfg["ports"].get(n, {"role": "fan"})
+        try:
+            set_pct(cpro, n, stop_speed(port, failed))
+        except OSError:
+            pass
+    return 0
+
+
+def run(cpro, read_cfg, read_cpu, read_gpu, write, sleep, should_stop, clock=time.monotonic):
+    """The service's loop, with everything from outside passed in (tests drive it). Returns the exit code; on a sensor or
+    write failure every configured port is set to 100 % before it returns."""
+    cfg = read_cfg() or load()
+    last, applied = {}, 0.0
+    try:
+        while not should_stop():
+            new = read_cfg()
+            if new:
+                cfg, last = new, {}
+            cpu, gpu = read_cpu(), read_gpu()
+            heat = max(cpu - CPU_HOT_C, gpu - GPU_HOT_C)   # how close the hotter part is to its limit
+            again = clock() - applied >= REAPPLY_S
+            for n, port in cfg["ports"].items():
+                want = settle(last.get(n), target(port, cpu, gpu), heat)
+                if n not in last or want != last[n][0] or again:
+                    write(n, want)
+                    if n not in last or want != last[n][0]:
+                        last[n] = (want, heat)
+            if again:
+                applied = clock()
+            sleep(EVERY_S)
+        return 0
+    except (SensorError, OSError) as e:
+        print(f"casefan: {e}; every port is at full speed", file=sys.stderr)
+        for n in cfg["ports"]:
+            try:
+                write(n, 100)
+            except OSError:
+                pass
+        return 1
+
+
+def cmd_run():
+    if not is_root():
+        print("casefan: run is the root service (yggdrasil-casefan)", file=sys.stderr)
+        return 1
+    cpro = find_cpro()
+    if not cpro:
+        print("casefan: no Corsair Commander Pro (corsair_cpro driver) found", file=sys.stderr)
+        return 1
+    stop = []
+    signal.signal(signal.SIGTERM, lambda *_: stop.append(1))
+    signal.signal(signal.SIGINT, lambda *_: stop.append(1))
+    seen = [None]
+
+    def read_cfg():
+        try:
+            m = os.path.getmtime(CONF)
+        except OSError:
+            m = 0
+        if m == seen[0]:
+            return None
+        seen[0] = m
+        return load()
+
+    def sleep(s):
+        end = time.monotonic() + s
+        while not stop and time.monotonic() < end:
+            time.sleep(0.2)
+
+    try:
+        gpu = Gpu()
+    except SensorError as e:
+        print(f"casefan: {e}", file=sys.stderr)
+        return 1
+    try:
+        return run(cpro, read_cfg, cpu_temp, gpu.temp, lambda n, p: set_pct(cpro, n, p), sleep, lambda: bool(stop))
+    finally:
+        gpu.close()
+
+
+def main(argv):
+    if len(argv) < 2 or argv[1] in ("-h", "--help"):
+        print(__doc__)
+        return 0 if len(argv) >= 2 else 2
+    c = argv[1]
+    if c == "get" and len(argv) == 2:
+        return cmd_get()
+    if c == "set" and len(argv) == 3:
+        return cmd_set(argv[2])
+    if c == "run" and len(argv) == 2:
+        return cmd_run()
+    if c == "reset" and len(argv) in (2, 3):
+        failed = len(argv) == 3 and argv[2] == "failed" or os.environ.get("SERVICE_RESULT", "success") != "success"
+        return cmd_reset(failed)
+    print("casefan: unknown command (see --help)", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

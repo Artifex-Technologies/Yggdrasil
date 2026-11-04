@@ -61,6 +61,18 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
     read, the fans go back to the card. Stopping the service, or a crash (`ExecStopPost`), gives the fans back to the card;
     checked on the RTX 2080 Ti with a kill -9. Tests: `helpers/tests/test_gpufan.py`.
   - **Fixtures:** debug builds read `$YGGDRASIL_GPUFAN_FIXTURE` for screenshots of each mode.
+- **Case fans** (2026-11-04, helper and service only; the Settings page is still to come): `casefan` drives a Corsair Commander
+  Pro (kernel driver `corsair_cpro`) as the root service `yggdrasil-casefan`.
+  - Each connected port has a role: a pump keeps one speed, never below 60 %; a fan follows two curves, one for the processor's
+    package temperature and one for the graphics card's, and runs at whichever asks for more.
+  - At 92 °C on the processor or 83 °C on the card every port runs at 100 %. A temperature it cannot read puts every port at
+    100 % and ends the service, which systemd starts again.
+  - After a clean stop, fans go to 60 % and the pump to 100 %; after a crash (`SERVICE_RESULT` not success), everything goes to
+    100 %. The Commander Pro keeps the last speed it was given until it loses power; it does not go back to its own stored
+    curves by itself.
+  - Setting: `/etc/yggdrasil/case-fans.json`. Tests: `helpers/tests/test_casefan.py`.
+  - On the owner's PC: port 1 is the graphics card's pump (about 3,830 RPM whatever it is set to), port 6 the 3,000 RPM Noctua
+    exhaust, and port 5 is connected but reports no speed (kept at 100 % until checked).
 - **Processor page** (built 2026-10-27, Matt's design; `src/cpu.rs`): the Processor row's title opens it, like the Graphics
   card's, with its own pop-out window (`--cpu-window`, app id `yggdrasil-cpu`).
   - **Readout:** package temperature and the hottest core, clocks (average and fastest), load and package power, with the
