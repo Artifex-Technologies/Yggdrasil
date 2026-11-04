@@ -178,23 +178,30 @@ pub fn parse_details(v: &Value) -> Details {
     let first = v.get("requested_formats").and_then(Value::as_array).and_then(|a| a.first()).unwrap_or(v);
     streams.user_agent = header(first, "User-Agent");
     streams.referer = header(first, "Referer");
+    streams.page = Some(s(v, "webpage_url")).filter(|p| p.starts_with("https://"));
+    let id = |f: &Value| Some(s(f, "format_id")).filter(|x| !x.is_empty());
+    let size = |f: &Value| u(f, "filesize").filter(|n| *n > 0);
     if let Some(parts) = v.get("requested_formats").and_then(Value::as_array) {
         for f in parts {
             let url = s(f, "url");
             if s(f, "vcodec") != "none" && !s(f, "vcodec").is_empty() {
                 streams.video = Some(url);
                 streams.height = u(f, "height").map(|h| h as u32);
+                (streams.video_format, streams.video_size) = (id(f), size(f));
             } else {
                 streams.audio = Some(url);
+                (streams.audio_format, streams.audio_size) = (id(f), size(f));
             }
         }
     } else if !s(v, "url").is_empty() {
         // one file with both, or sound only
         if s(v, "vcodec") == "none" {
             streams.audio = Some(s(v, "url"));
+            (streams.audio_format, streams.audio_size) = (id(v), size(v));
         } else {
             streams.video = Some(s(v, "url"));
             streams.height = u(v, "height").map(|h| h as u32);
+            (streams.video_format, streams.video_size) = (id(v), size(v));
         }
     }
     let chapters = v.get("chapters").and_then(Value::as_array).map(|c| {
@@ -228,7 +235,9 @@ mod tests {
             "requested_formats":[{"format_id":"137","vcodec":"avc1.640028","acodec":"none","height":1080,"url":"https://v","http_headers":{"User-Agent":"Mozilla/5.0 (TV)","Accept":"*/*"}},
                                  {"format_id":"140","vcodec":"none","acodec":"mp4a.40.2","url":"https://a"}]}"#).unwrap();
         let d = parse_details(&v);
-        assert_eq!(d.streams, Streams { video: Some("https://v".into()), audio: Some("https://a".into()), height: Some(1080), user_agent: Some("Mozilla/5.0 (TV)".into()), referer: None });
+        assert_eq!((d.streams.video.as_deref(), d.streams.audio.as_deref(), d.streams.height), (Some("https://v"), Some("https://a"), Some(1080)));
+        assert_eq!((d.streams.user_agent.as_deref(), d.streams.referer.as_deref()), (Some("Mozilla/5.0 (TV)"), None));
+        assert_eq!((d.streams.video_format.as_deref(), d.streams.audio_format.as_deref()), (Some("137"), Some("140")));
         assert_eq!(d.chapters[1].title, "Part two");
         assert_eq!(d.video.published.as_deref(), Some("20260514"));
     }

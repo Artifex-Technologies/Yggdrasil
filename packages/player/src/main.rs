@@ -2,7 +2,7 @@
 //! look as Minos and Settings).
 //!
 //!   yggdrasil-player [FILE]
-//!   yggdrasil-player [--title TEXT] [--audio URL] [--start SECONDS] [--mute] [--user-agent UA] [--referrer URL] URL     a stream (https:// only), as Huginn plays videos: the
+//!   yggdrasil-player [--title TEXT] [--audio URL] [--start SECONDS] [--mute] [--user-agent UA] [--referrer URL] URL     a stream (https://, or a ytdlp: source yt-dlp fetches), as Huginn plays videos: the
 //!                                                                          picture's address, the sound's when it comes apart
 //!
 //! Keys: Space or K play/pause, Left/Right (J/L) ten seconds back/on, Up/Down volume, M mute, F or a double-click full screen,
@@ -148,8 +148,9 @@ fn parse_args(args: Vec<std::ffi::OsString>) -> Option<Start> {
     }
     let first = rest.into_iter().next()?;
     let text = first.to_string_lossy().to_string();
-    if text.starts_with("https://") {
-        let audio = audio.filter(|a: &String| a.starts_with("https://"));
+    let fine = |u: &str| u.starts_with("https://") || yggdrasil_player::relay::ytdlp_parts(u).is_some();
+    if fine(&text) {
+        let audio = audio.filter(|a: &String| fine(a));
         let title: String = title.unwrap_or_else(|| "Stream".into()).chars().filter(|c| !c.is_control()).take(200).collect();
         return Some(Start::Stream { url: text, audio, title, start, muted, user_agent, referer });
     }

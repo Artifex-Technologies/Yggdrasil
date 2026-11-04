@@ -116,7 +116,8 @@ impl Now {
     /// Starts playing (the picture and its sound, or the sound only) from `start` seconds.
     pub fn start(details: Details, audio_only: bool, start: Option<f64>, volume: i32, muted: bool, ctx: &egui::Context) -> Result<Now, String> {
         let s = &details.streams;
-        let (main, extra) = if audio_only { (s.audio.clone().or_else(|| s.video.clone()), None) } else { (s.video.clone().or_else(|| s.audio.clone()), s.audio.clone().filter(|_| s.video.is_some())) };
+        let (v, a) = crate::jobs::sources(s);
+        let (main, extra) = if audio_only { (a.clone().or_else(|| v.clone()), None) } else { (v.clone().or_else(|| a.clone()), a.clone().filter(|_| v.is_some())) };
         let main = main.ok_or("no stream to play")?;
         let c = ctx.clone();
         let vlc = Player::open_stream_with(&main, extra.as_deref(), start, s.user_agent.as_deref(), s.referer.as_deref(), Box::new(move || c.request_repaint()))?;

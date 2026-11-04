@@ -1,20 +1,38 @@
-//! A small relay on 127.0.0.1 for video servers that hand out a stream in pieces named in its address (YouTube's googlevideo
-//! servers: `...&range=START-END`, the way YouTube's own players ask; a plain HTTP `Range: bytes=N-` for the whole rest of the file is
-//! refused with 403). VLC asks the relay as it would any server ("from byte N"); the relay fetches the stream in pieces of 10 MB with
-//! curl and passes them on. A jump in the video is a new "from byte N". The relay listens on 127.0.0.1 only, and each stream has an
-//! address with 128 random bits in it, so another program cannot guess one.
+//! A small relay on 127.0.0.1 that VLC plays YouTube's streams from.
+//!
+//! YouTube refuses stream requests that do not come from the kind of client the stream was issued to (403). yt-dlp fetches them
+//! correctly, so for a `ytdlp:` source (see [`ytdlp_source`]) the relay has yt-dlp download the stream into a file in the cache,
+//! and serves VLC from that file while it fills ("from byte N" waits until byte N is there). A jump within what is already there is
+//! instant; a jump further on waits for the download (which runs much faster than the video plays). The file is deleted when the
+//! player stops ([`forget`]). No headers are made up: yt-dlp does its own requests.
+//!
+//! For a plain googlevideo address the relay still asks in pieces named in the address (`&range=START-END`, as YouTube's players
+//! do); that works only while YouTube accepts the address without a proof-of-origin token.
+//!
+//! The relay listens on 127.0.0.1 only, and each stream has an address with 128 random bits in it, so another program cannot guess one.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 /// How much one request upstream asks for.
 pub const PIECE: u64 = 10 * 1024 * 1024;
 
 #[derive(Clone)]
+enum Source {
+    /// Asked for upstream in pieces with curl.
+    Url(String),
+    /// A file yt-dlp is downloading into; `done` once yt-dlp has stopped (finished or failed).
+    File { path: PathBuf, done: Arc<AtomicBool>, pid: u32 },
+}
+
+#[derive(Clone)]
 struct Stream {
-    url: String,
+    source: Source,
     length: u64,
     mime: String,
 }
@@ -38,22 +56,131 @@ pub fn param<'a>(url: &'a str, key: &str) -> Option<&'a str> {
 }
 
 /// A stream through the relay: the local address to give VLC, or the address itself when the relay is not for it (or cannot start).
+/// For a `ytdlp:` source, the `(token, address)` pair: forget the token when done with the stream.
 pub fn local(url: &str) -> String {
-    if !wanted(url) {
-        return url.to_string();
-    }
-    let Some(r) = RELAY.get_or_init(start).as_ref() else { return url.to_string() };
-    let length = param(url, "clen").and_then(|c| c.parse::<u64>().ok()).unwrap_or(0);
-    let mime = param(url, "mime").map(|m| m.replace("%2F", "/")).filter(|m| m.chars().all(|c| c.is_ascii_alphanumeric() || "/-+.".contains(c))).unwrap_or_else(|| "application/octet-stream".into());
+    local_token(url).map(|(_, a)| a).unwrap_or_else(|| url.to_string())
+}
+
+fn clean_mime(m: &str) -> Option<String> {
+    let m = m.replace("%2F", "/");
+    (!m.is_empty() && m.chars().all(|c| c.is_ascii_alphanumeric() || "/-+.".contains(c))).then_some(m)
+}
+
+/// A stream for yt-dlp to fetch: format `format` of the video page `page`, `length` bytes long, of type `mime`.
+/// Returns `None` for a page that is not https or a format name that is not a plain one.
+pub fn ytdlp_source(format: &str, length: u64, mime: &str, page: &str) -> Option<String> {
+    let fine = format.starts_with(|c: char| c.is_ascii_alphanumeric()) && format.len() <= 32 && format.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    let mime = clean_mime(mime).unwrap_or_else(|| "application/octet-stream".into());
+    (fine && length > 0 && page.starts_with("https://") && !page.contains(char::is_whitespace)).then(|| format!("ytdlp:{format}:{length}:{mime}:{page}"))
+}
+
+/// The parts of a `ytdlp:` source: format, length, type, page.
+pub fn ytdlp_parts(src: &str) -> Option<(&str, u64, &str, &str)> {
+    let rest = src.strip_prefix("ytdlp:")?;
+    let mut it = rest.splitn(4, ':');
+    let (f, l, m, p) = (it.next()?, it.next()?.parse().ok()?, it.next()?, it.next()?);
+    ytdlp_source(f, l, m, p).filter(|s| s == src).map(|_| (f, l, m, p))
+}
+
+/// Whether an address is one the relay plays (a `ytdlp:` source or a googlevideo address).
+pub fn handles(url: &str) -> bool {
+    ytdlp_parts(url).is_some() || wanted(url)
+}
+
+/// The relay's token and local address for a stream it handles.
+pub fn local_token(url: &str) -> Option<(String, String)> {
+    let r = RELAY.get_or_init(start).as_ref()?;
+    let (source, length, mime) = if let Some((format, length, mime, page)) = ytdlp_parts(url) {
+        (fetch(format, page)?, length, mime.to_string())
+    } else if wanted(url) {
+        let length = param(url, "clen").and_then(|c| c.parse::<u64>().ok()).unwrap_or(0);
+        (Source::Url(url.to_string()), length, param(url, "mime").and_then(clean_mime).unwrap_or_else(|| "application/octet-stream".into()))
+    } else {
+        return None;
+    };
     let token = token();
     if let Ok(mut s) = r.streams.lock() {
-        // keep the table small: a session plays a few videos
+        // keep the table small: a session plays a few videos (forgetting stops their downloads)
         if s.len() > 64 {
-            s.clear();
+            for (_, st) in s.drain() {
+                drop_source(&st.source);
+            }
         }
-        s.insert(token.clone(), Stream { url: url.to_string(), length, mime });
+        s.insert(token.clone(), Stream { source, length, mime });
     }
-    format!("http://127.0.0.1:{}/s/{token}", r.port)
+    Some((token.clone(), format!("http://127.0.0.1:{}/s/{token}", r.port)))
+}
+
+/// Done with a stream: its download stops and its file is deleted.
+pub fn forget(token: &str) {
+    let gone = RELAY.get().and_then(|r| r.as_ref()).and_then(|r| r.streams.lock().ok()?.remove(token));
+    if let Some(st) = gone {
+        drop_source(&st.source);
+    }
+}
+
+fn drop_source(s: &Source) {
+    if let Source::File { path, done, pid } = s {
+        if !done.load(Ordering::SeqCst) {
+            // our own child (spawned below), still running: SIGTERM makes yt-dlp stop
+            let _ = std::process::Command::new("kill").arg(pid.to_string()).status();
+        }
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// Where downloads for playing go: a folder per player process, so a second player does not delete the first one's files.
+fn folder() -> PathBuf {
+    let cache = std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from).filter(|p| p.is_absolute()).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache"))).unwrap_or_else(std::env::temp_dir);
+    cache.join("yggdrasil-player").join("streams")
+}
+
+/// Folders left by players that are gone (a crash, a power cut) are removed.
+fn tidy(root: &std::path::Path) {
+    let Ok(rd) = std::fs::read_dir(root) else { return };
+    for e in rd.flatten() {
+        let alive = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()).map(|pid| std::path::Path::new(&format!("/proc/{pid}")).exists());
+        if alive == Some(false) {
+            let _ = std::fs::remove_dir_all(e.path());
+        }
+    }
+}
+
+fn fetch(format: &str, page: &str) -> Option<Source> {
+    let root = folder();
+    tidy(&root);
+    let dir = root.join(std::process::id().to_string());
+    std::fs::create_dir_all(&dir).ok()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    }
+    let path = dir.join(format!("{}.stream", token()));
+    // yt-dlp stops when the player does, even when the player is killed (setpriv's parent-death signal, from util-linux)
+    let setpriv = std::path::Path::new("/usr/bin/setpriv").exists();
+    let mut cmd = if setpriv { std::process::Command::new("/usr/bin/setpriv") } else { std::process::Command::new("yt-dlp") };
+    if setpriv {
+        cmd.args(["--pdeathsig", "TERM", "--", "yt-dlp"]);
+    }
+    let mut child = cmd
+        .args(["--ignore-config", "--no-warnings", "--quiet", "--no-progress", "--no-part", "--no-continue", "--no-playlist", "--no-cache-dir", "-f", format, "-o"])
+        .arg(&path)
+        .arg("--")
+        .arg(page)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    let pid = child.id();
+    let done = Arc::new(AtomicBool::new(false));
+    let d = done.clone();
+    std::thread::spawn(move || {
+        let _ = child.wait();
+        d.store(true, Ordering::SeqCst);
+    });
+    Some(Source::File { path, done, pid })
 }
 
 fn token() -> String {
@@ -127,12 +254,58 @@ fn serve(mut conn: TcpStream, table: &Mutex<HashMap<String, Stream>>) -> std::io
     if method == "HEAD" {
         return Ok(());
     }
+    match &s.source {
+        Source::Url(url) => from_url(&mut conn, url, start, end),
+        Source::File { path, done, .. } => from_file(&mut conn, path, done, start, end),
+    }
+}
+
+/// Serves bytes `start..=end` of a file that is still being written: waits for bytes not there yet, gives up when the download
+/// has stopped or nothing new came for a minute.
+fn from_file(conn: &mut TcpStream, path: &std::path::Path, done: &AtomicBool, start: u64, end: u64) -> std::io::Result<()> {
+    use std::io::Seek;
+    let mut waited = Instant::now();
+    let mut f = loop {
+        match std::fs::File::open(path) {
+            Ok(f) => break f,
+            Err(_) if !done.load(Ordering::SeqCst) && waited.elapsed() < Duration::from_secs(60) => std::thread::sleep(Duration::from_millis(50)),
+            Err(e) => return Err(e),
+        }
+    };
+    let mut at = start;
+    let mut buf = vec![0u8; 256 * 1024];
+    while at <= end {
+        let have = f.metadata()?.len();
+        if have <= at {
+            if done.load(Ordering::SeqCst) || waited.elapsed() > Duration::from_secs(60) {
+                return Ok(()); // the download stopped short (or stalled)
+            }
+            std::thread::sleep(Duration::from_millis(50));
+            continue;
+        }
+        f.seek(std::io::SeekFrom::Start(at))?;
+        let want = (have.min(end + 1) - at).min(buf.len() as u64) as usize;
+        let n = f.read(&mut buf[..want])?;
+        if n == 0 {
+            std::thread::sleep(Duration::from_millis(50));
+            continue;
+        }
+        if conn.write_all(&buf[..n]).is_err() {
+            return Ok(()); // VLC went elsewhere
+        }
+        at += n as u64;
+        waited = Instant::now();
+    }
+    Ok(())
+}
+
+fn from_url(conn: &mut TcpStream, url: &str, start: u64, end: u64) -> std::io::Result<()> {
     let mut at = start;
     while at <= end {
         let to = (at + PIECE - 1).min(end);
         let mut child = std::process::Command::new("curl")
             .args(["-sfL", "--proto", "=https", "--proto-redir", "=https", "--max-time", "120"])
-            .arg(format!("{}&range={at}-{to}", s.url))
+            .arg(format!("{url}&range={at}-{to}"))
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
@@ -206,5 +379,49 @@ mod tests {
         let mut answer = String::new();
         let _ = c.read_to_string(&mut answer);
         assert!(answer.starts_with("HTTP/1.1 206") && answer.contains("Content-Range: bytes 100-999/1000") && answer.contains("Content-Type: video/mp4"));
+    }
+
+    #[test]
+    fn ytdlp_sources() {
+        let src = ytdlp_source("137", 1000, "video%2Fmp4", "https://www.youtube.com/watch?v=abcdefghijk").unwrap();
+        assert_eq!(src, "ytdlp:137:1000:video/mp4:https://www.youtube.com/watch?v=abcdefghijk");
+        assert_eq!(ytdlp_parts(&src), Some(("137", 1000, "video/mp4", "https://www.youtube.com/watch?v=abcdefghijk")));
+        assert!(handles(&src));
+        assert_eq!(ytdlp_source("137", 1000, "video/mp4", "http://plain/x"), None, "https pages only");
+        assert_eq!(ytdlp_source("--exec", 1000, "video/mp4", "https://x/y"), None, "no options as a format");
+        assert_eq!(ytdlp_source("137", 0, "video/mp4", "https://x/y"), None, "needs a length");
+        assert_eq!(ytdlp_parts("ytdlp:137:10:video/mp4:https://x/a b"), None);
+    }
+
+    #[test]
+    fn a_growing_file_is_served_as_it_fills() {
+        let dir = std::env::temp_dir().join(format!("relay-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("s");
+        let done = Arc::new(AtomicBool::new(false));
+        let (p, d) = (path.clone(), done.clone());
+        let writer = std::thread::spawn(move || {
+            let mut f = std::fs::File::create(&p).unwrap();
+            for i in 0..10u8 {
+                f.write_all(&[i; 100]).unwrap();
+                f.flush().unwrap();
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            d.store(true, Ordering::SeqCst);
+        });
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let (pa, dn) = (path.clone(), done.clone());
+        std::thread::spawn(move || {
+            let (mut c, _) = l.accept().unwrap();
+            from_file(&mut c, &pa, &dn, 550, 999).unwrap();
+        });
+        let mut c = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let mut got = vec![];
+        c.read_to_end(&mut got).unwrap();
+        writer.join().unwrap();
+        assert_eq!(got.len(), 450);
+        assert!(got[..50].iter().all(|b| *b == 5) && got[50..150].iter().all(|b| *b == 6) && got[350..].iter().all(|b| *b == 9));
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

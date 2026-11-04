@@ -46,6 +46,18 @@ pub struct Streams {
     pub user_agent: Option<String>,
     #[serde(default)]
     pub referer: Option<String>,
+    /// yt-dlp's format names and sizes for the two streams, and the video's page: the player has yt-dlp fetch them (YouTube refuses
+    /// other clients' requests for these addresses).
+    #[serde(default)]
+    pub video_format: Option<String>,
+    #[serde(default)]
+    pub audio_format: Option<String>,
+    #[serde(default)]
+    pub video_size: Option<u64>,
+    #[serde(default)]
+    pub audio_size: Option<u64>,
+    #[serde(default)]
+    pub page: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

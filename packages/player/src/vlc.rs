@@ -143,6 +143,8 @@ pub struct Player {
     inst: *mut libvlc_instance_t,
     mp: *mut libvlc_media_player_t,
     pics: *mut Pictures,
+    /// The relay's streams this player plays from (forgotten when it stops: their downloads end, their files go).
+    relayed: Vec<String>,
 }
 
 // libVLC's player functions may be called from any thread
@@ -163,10 +165,19 @@ impl Player {
 
     /// The same, asking with the User-Agent and Referer the site issued the streams for (yt-dlp reports them).
     pub fn open_stream_with(url: &str, audio: Option<&str>, start: Option<f64>, user_agent: Option<&str>, referer: Option<&str>, wake: Box<dyn Fn() + Send + Sync>) -> Result<Player, String> {
-        // YouTube's streams go through the relay, which asks for them in pieces as YouTube's players do (see relay.rs)
-        let url = crate::relay::local(url);
-        let audio = audio.map(crate::relay::local);
+        // YouTube's streams go through the relay (yt-dlp fetches `ytdlp:` sources; see relay.rs)
+        let mut relayed = vec![];
+        let mut through = |u: &str| match crate::relay::local_token(u) {
+            Some((t, a)) => {
+                relayed.push(t);
+                a
+            }
+            None => u.to_string(),
+        };
+        let url = through(url);
+        let audio = audio.map(&mut through);
         let audio = audio.as_deref();
+        let forget = |r: &[String]| r.iter().for_each(|t| crate::relay::forget(t));
         let curl = CString::new(url).map_err(|_| "the address has a zero byte".to_string())?;
         let mut opts = vec![];
         for (k, v) in [("http-user-agent", user_agent), ("http-referrer", referer)] {
@@ -174,7 +185,7 @@ impl Player {
                 opts.push(CString::new(format!(":{k}={v}")).map_err(|_| "a header has a zero byte".to_string())?);
             }
         }
-        Self::with_media(wake, |inst| unsafe {
+        let made = Self::with_media(wake, |inst| unsafe {
             let m = libvlc_media_new_location(inst, curl.as_ptr());
             if !m.is_null() {
                 for o in &opts {
@@ -182,7 +193,17 @@ impl Player {
                 }
             }
             m
-        }, audio, start)
+        }, audio, start);
+        match made {
+            Ok(mut p) => {
+                p.relayed = relayed;
+                Ok(p)
+            }
+            Err(e) => {
+                forget(&relayed);
+                Err(e)
+            }
+        }
     }
 
     fn with_media(wake: Box<dyn Fn() + Send + Sync>, media: impl FnOnce(*mut libvlc_instance_t) -> *mut libvlc_media_t, audio: Option<&str>, start: Option<f64>) -> Result<Player, String> {
@@ -221,7 +242,7 @@ impl Player {
             let pics = Box::into_raw(Box::new(Pictures { back: vec![], w: 0, h: 0, shown: Mutex::new(Frame { w: 0, h: 0, rgba: vec![], fresh: false }), wake }));
             libvlc_video_set_format_callbacks(mp, format_cb, None);
             libvlc_video_set_callbacks(mp, lock_cb, None, Some(display_cb), pics as *mut c_void);
-            Ok(Player { inst, mp, pics })
+            Ok(Player { inst, mp, pics, relayed: vec![] })
         }
     }
 
@@ -312,6 +333,9 @@ impl Drop for Player {
             libvlc_media_player_release(self.mp);
             libvlc_release(self.inst);
             drop(Box::from_raw(self.pics));
+        }
+        for t in &self.relayed {
+            crate::relay::forget(t);
         }
     }
 }

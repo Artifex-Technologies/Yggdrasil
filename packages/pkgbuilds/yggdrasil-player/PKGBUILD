@@ -1,7 +1,7 @@
 # VLC in Yggdrasil's look: libVLC 3 plays, Yggdrasil's window around the picture (packages/player).
 pkgname=yggdrasil-player
 pkgver=0.1.0
-pkgrel=2
+pkgrel=3
 pkgdesc="VLC in Yggdrasil's look: libVLC plays, Yggdrasil's window"
 arch=('x86_64')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
@@ -9,6 +9,8 @@ license=('MPL-2.0')
 # libvlc and its decoders (ffmpeg: H.264, H.265 and most others; dav1d: AV1), subtitles drawn (freetype, ass), sound (pulse, which PipeWire serves)
 depends=('gcc-libs' 'libxkbcommon' 'wayland' 'vulkan-icd-loader' 'libglvnd' 'fontconfig' 'libvlc' 'vlc-plugins-base'
          'vlc-plugin-ffmpeg' 'vlc-plugin-dav1d' 'vlc-plugin-freetype' 'vlc-plugin-ass' 'vlc-plugin-matroska' 'vlc-plugin-pulse')
+# yt-dlp fetches YouTube streams for Huginn (ytdlp: sources); setpriv (util-linux) stops it with the player
+optdepends=('yt-dlp: YouTube streams from Huginn')
 makedepends=('cargo')
 options=('!lto')
 

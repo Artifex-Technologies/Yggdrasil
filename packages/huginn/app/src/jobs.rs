@@ -119,11 +119,25 @@ pub fn spawn(tx: &Sender<Msg>, ctx: &egui::Context, f: impl FnOnce() -> Msg + Se
 }
 
 /// Starts yggdrasil-player on the video's streams (from `start` seconds).
+/// What the player is given for the picture and the sound: `ytdlp:` sources (yt-dlp fetches them; see yggdrasil-player's relay),
+/// or the addresses themselves when yt-dlp's format names or sizes are missing.
+pub fn sources(s: &huginn_core::model::Streams) -> (Option<String>, Option<String>) {
+    use yggdrasil_player::relay;
+    let one = |url: &Option<String>, format: &Option<String>, size: Option<u64>| {
+        let url = url.as_ref()?;
+        let length = size.or_else(|| relay::param(url, "clen").and_then(|c| c.parse().ok())).unwrap_or(0);
+        let mime = relay::param(url, "mime").unwrap_or("");
+        Some(format.as_deref().zip(s.page.as_deref()).and_then(|(f, p)| relay::ytdlp_source(f, length, mime, p)).unwrap_or_else(|| url.clone()))
+    };
+    (one(&s.video, &s.video_format, s.video_size), one(&s.audio, &s.audio_format, s.audio_size))
+}
+
 pub fn play(d: &Details, start: Option<f64>) -> Result<String, String> {
-    let video = d.streams.video.clone().or_else(|| d.streams.audio.clone()).ok_or("no stream to play")?;
+    let (v, a) = sources(&d.streams);
+    let video = v.clone().or_else(|| a.clone()).ok_or("no stream to play")?;
     let mut cmd = std::process::Command::new("yggdrasil-player");
     cmd.arg("--title").arg(&d.video.title);
-    if let (Some(a), true) = (&d.streams.audio, d.streams.video.is_some()) {
+    if let (Some(a), true) = (&a, v.is_some()) {
         cmd.arg("--audio").arg(a);
     }
     if let Some(s) = start.filter(|s| *s > 0.0) {

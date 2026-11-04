@@ -185,7 +185,10 @@ impl App {
             app.muted = true;
             args.retain(|a| a != "--mute");
         }
-        match args.first().map(String::as_str) {
+        // the link may come before or after --play / --mini
+        let link = args.iter().find(|a| !a.starts_with("--")).cloned();
+        let first = if args.first().is_some_and(|a| a == "--search") { Some("--search") } else { link.as_deref() };
+        match first {
             Some("--search") if args.len() > 1 => {
                 app.search = args[1..].join(" ");
                 app.do_search(ctx);
