@@ -7,7 +7,7 @@ Two pieces that keep the login password and gnome-keyring's login keyring togeth
 - **Change password**: current, new, new again, a strength bar, the usual checks (8 or more characters, different from the current one, both new ones equal).
   It changes the password through the system's own `passwd`, run in a terminal of its own (`script -qefc passwd /dev/null`) and answered question by question.
   That is the point: `passwd` goes through PAM with the old and the new password, so `pam_gnome_keyring` (the `-password optional` line in
-  `/etc/pam.d/passwd`) changes the keyring's password with it. KDE's Users page uses AccountsService, which has no old password and would leave the keyring behind.
+  `/etc/pam.d/passwd`) changes the keyring's password with it. KDE's Users page (gone with KDE) used AccountsService, which has no old password and would leave the keyring behind.
   Failures are put in plain words ("The current password is not right.", "The new password is too weak: ...", "do not match").
 - Tested with a stand-in `passwd` (right answers, wrong current password, weak new password); the real `passwd` was never run by the tests.
 - **Not built:** adding and removing other accounts, changing the full name or the account type (they need administrator actions through polkit).

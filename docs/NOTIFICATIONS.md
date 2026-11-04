@@ -1,11 +1,11 @@
 # Notifications
 
-Labyrinth's own notification service lives in the panel (`packages/panel/src/notify.rs`). It replaces mako/Plasma's.
+Yggdrasil's own notification service lives in the panel (`packages/panel/src/notify.rs`). It replaced Plasma's (KDE is gone since 2026-10-24) and mako's.
 
 ## What it does
 - Serves `org.freedesktop.Notifications` (Notify, CloseNotification, GetCapabilities, GetServerInformation, and the
   NotificationClosed / ActionInvoked signals). Any app that uses `notify-send` or libnotify just works.
-- Keeps up to 200 notifications in `~/.local/state/labyrinth/notifications.json` until you open or clear them (they survive a
+- Keeps up to 200 notifications in `~/.local/state/yggdrasil/notifications.json` until you open or clear them (they survive a
   panel restart or a reboot).
 - Shows them **grouped by app, the groups ordered by their newest notification**. A group with more than one has a count badge;
   clicking it opens it out to list them all (newest first); clicking again folds it. Clicking one notification (or a group of one)
@@ -24,17 +24,18 @@ Labyrinth's own notification service lives in the panel (`packages/panel/src/not
 - Or, with "Notification Center pane" on, a **pane down the right edge** that opens with the calendar (click the date): the
   calendar on top, the list below, flush with the screen edge.
 - Settings: Pop-ups on/off; the pane on/off; Heimdall alerts: Off / Critical / Warnings / Everything (`notify_toasts`,
-  `notify_pane`, `heimdall_alerts` in `~/.config/labyrinth/panel.conf`).
+  `notify_pane`, `heimdall_alerts` in `~/.config/yggdrasil/panel.conf`).
 
-## Taking over from Plasma and mako (fresh installs)
+## Taking over from mako (and, before 2026-10-24, Plasma)
 Only one program can own the name `org.freedesktop.Notifications`. What decides it:
-- **Plasma's server only exists while its panels do** (it lives in the notifications applet in Plasma's system tray).
-  `labyrinth-panel-mode on` removes those panels, so Plasma lets go of the name.
-- **mako** (kept for the Hyprland session) and Plasma each ship a D-Bus *activation* file for the name, so whichever one an early
-  notification wakes would hold it. `labyrinth-panel-mode on` therefore writes a per-user file that comes first,
-  `~/.local/share/dbus-1/services/org.freedesktop.Notifications.service`, which runs `labyrinth-notify-activate`: it starts
-  the panel if it is not running and waits until the panel owns the name. `panel-mode off` removes the file (Plasma's applies again).
-  It asks the bus to reload its service files, so it works on the first login without a restart.
+- **Plasma** is gone, so it no longer competes. (Under KDE its server lived in the notifications applet of Plasma's system tray,
+  and `labyrinth-panel-mode on` removed those panels so Plasma let go of the name; that script no longer exists.)
+- **mako** is still installed and ships a D-Bus *activation* file for the name in `/usr/share/dbus-1/services`, so an early
+  notification could wake it. Labyrinth OS therefore ships a file that comes first,
+  `/usr/local/share/dbus-1/services/org.freedesktop.Notifications.service`, which runs `labyrinth-notify-activate`: it starts
+  the panel if it is not running and waits until the panel owns the name. (A per-user copy in
+  `~/.local/share/dbus-1/services/`, written by the old `labyrinth-panel-mode`, may still be there on machines that had KDE; it
+  does the same.)
 - The panel also asks to replace an owner that allows it and retries every 10 s.
 - Tested on this machine: with the panel killed, `notify-send` started the panel through D-Bus and the notification landed. Not yet
   tested: a full fresh install from the ISO.

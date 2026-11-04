@@ -1,4 +1,7 @@
-# Login screen (replaces SDDM)
+# Login screen (replaced SDDM)
+
+**Status 2026-11-04:** this is the login screen on the owner's PC: greetd is enabled and starts `yggdrasil-greeter` in cage, the
+session it starts is `yggdrasil` (the Yggdrasil session on Hyprland), and SDDM is not installed (KDE is gone since 2026-10-24).
 
 `yggdrasil-greeter` (built from `packages/lock`, next to the lock screen) draws the login screen with the same designs as the lock
 screen (Split by default). It talks to **greetd**, which runs PAM and starts the session; the greeter only passes along what was typed.
@@ -7,7 +10,7 @@ screen (Split by default). It talks to **greetd**, which runs PAM and starts the
 - Keys: type the password and press Enter; **Tab / Down** and **Shift+Tab / Up** switch account (only while nothing is typed); Escape clears.
 - After a wrong password nothing is revealed beyond "Wrong password"; from the fourth in a row the screen makes you wait (2 s doubling to 60 s).
 - Settings: `/etc/yggdrasil/greeter.conf` (`design`, `session`, `wallpaper`). `session` names a file in `/usr/share/wayland-sessions`
-  (e.g. `plasma`); the greeter starts its `Exec` and gives greetd the session's environment (`XDG_SESSION_TYPE=wayland`,
+  (e.g. `yggdrasil`); F2 on the login screen picks another when more are installed. The greeter starts its `Exec` and gives greetd the session's environment (`XDG_SESSION_TYPE=wayland`,
   `XDG_CURRENT_DESKTOP` and `XDG_SESSION_DESKTOP` from `DesktopNames`), as SDDM does.
 - Accounts listed: user ids 1000 and up with a real shell.
 - A second question from PAM (a changed-password prompt, a second factor) is refused with a message; use a terminal for those.
@@ -16,16 +19,17 @@ screen (Split by default). It talks to **greetd**, which runs PAM and starts the
 - **Run with the real greetd** on this machine (a test instance on VT 8, greetd 0.10.3, cage 0.3.1): greetd opened the greeter's PAM
   session for the `greeter` account, cage and the greeter started and stayed up. Note: greetd switches to its terminal by itself
   (`switch = true` is its default), so a test instance takes the screen. Signing in through it, and the switch itself, are a step
-  in the owner's to-do script (with `back-to-sddm.sh` as the way back).
+  in the owner's to-do script (with `back-to-sddm.sh` as the way back). It was done: greetd is the login manager now and SDDM has been
+  removed with KDE, so that way back no longer applies.
 
 ## Status (2026-10-18)
 - Built and **tested in a nested Hyprland window with a stand-in greetd** (a Python server speaking the same protocol): a wrong password
   shows "Wrong password" and cancels the session; the right password sends `start_session` with the configured command and the greeter
   exits 0. The protocol part (`greetd.rs`) has unit tests (right password, wrong password, info messages, a second question, a dead connection).
-- **Not tested with the real greetd**, and not enabled here: SDDM is still the login manager on this machine. The files are ready:
+- **Not tested with the real greetd**, and not enabled here: SDDM was still the login manager on this machine then. The files are ready:
   `/etc/greetd/config.toml` (starts `cage -s -- yggdrasil-greeter` as the `greeter` user), `/etc/pam.d/greetd` (the keyring unlocks at
-  sign-in like with SDDM) and `/etc/labyrinth/greeter.conf`.
+  sign-in like with SDDM) and `/etc/labyrinth/greeter.conf` (now `/etc/yggdrasil/greeter.conf`).
 - To try it in a virtual machine (Limbo): `pacman -S greetd cage`, `systemctl disable sddm`, `systemctl enable greetd`, restart.
   A way back: `systemctl disable greetd; systemctl enable sddm` from a text console (Ctrl+Alt+F3).
-- Not done: the session list (Labyrinth's own session once it exists), power buttons, an on-screen keyboard, the accessibility settings of
+- Not done: power buttons, an on-screen keyboard, the accessibility settings of
   [ACCESSIBILITY.md](ACCESSIBILITY.md), several screens, and a picture for accounts that have none in AccountsService.

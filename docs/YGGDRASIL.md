@@ -1,12 +1,13 @@
 # Yggdrasil: the desktop environment
 
-Named by the owner on 2026-10-18. **Yggdrasil** is the desktop environment that replaces KDE; **Labyrinth OS** is the distribution that ships it. Chymaera OS
+Named by the owner on 2026-10-18. **Yggdrasil** is the desktop environment that replaced KDE (KDE is gone since 2026-10-24); **Labyrinth OS** is the distribution that ships it. Chymaera OS
 will use Yggdrasil as well, so Yggdrasil must never depend on anything that only Labyrinth has (the games stack, the Artifex store entries, Labyrinth's branding).
 
 ## What belongs to Yggdrasil
 
 | Piece | Today's program (package) | Notes |
 | --- | --- | --- |
+| Session (on Hyprland 0.57: configuration, window rules, keys) | `yggdrasil-session` | the desktop's login entry "Yggdrasil" |
 | Panel: top bar, dock, tray, Fylgja, notifications, start menu, wallpaper | `yggdrasil-panel` | |
 | Settings | `yggdrasil-settings` | Labyrinth-only pages (games, Artifex apps) are separable |
 | File manager and file chooser | `minos`, `yggdrasil-portal` | |
@@ -14,14 +15,14 @@ will use Yggdrasil as well, so Yggdrasil must never depend on anything that only
 | Lock screen, login screen | `yggdrasil-lock`, `yggdrasil-greeter` (package `yggdrasil-lock`) | designs shared |
 | Idle manager (dim, lock, screen off, sleep) | `yggdrasil-idle` | |
 | Polkit agent, keyring sync, distress password | `yggdrasil-polkit`, `yggdrasil-keyring-sync`, `labyrinth-distress` (+ PAM module) | |
-| Compositor | `yggdrasil-compositor` | first version, nested only (COMPOSITOR.md) |
+| Compositor | `yggdrasil-compositor` | first version, nested only (COMPOSITOR.md); Hyprland is the compositor today |
 | Calculator, weather | `yggdrasil-calculator`, `yggdrasil-weather` | small apps |
-| Look for other programs (colour scheme, GTK colours, cursors) | `ygg-theme`, `ygg-cursors` (package `yggdrasil-theme`; [THEME.md](THEME.md)) | replaces WhiteSur |
+| Look for other programs (colour scheme, GTK colours, cursors) | `ygg-theme`, `ygg-cursors` (package `yggdrasil-theme`; [THEME.md](THEME.md)) | replaced WhiteSur |
 | Icons | `liki-build` and the others (package `liki-icon-theme`; [LIKI.md](LIKI.md)) | the pack is Liki |
-| Shared library and settings file | `labyrinth-ui`, `labyrinth-conf`; `~/.config/labyrinth/` | |
+| Shared library and settings file | `yggdrasil-ui`, `yggdrasil-conf`; `~/.config/yggdrasil/` | renamed from `labyrinth-ui`, `labyrinth-conf` and `~/.config/labyrinth/` on 2026-10-23 |
 
 ## What stays Labyrinth's (not Yggdrasil)
-The installer and first boot (`labyrinth-install*`, `labyrinth-plasma-setup`), the boot menu theme, `labyrinth-gaming` and the Proton Games parts, the brand icon
+The installer and first boot (`labyrinth-install*`; the KDE first-login script `labyrinth-plasma-setup` went with KDE), the boot menu theme, `labyrinth-gaming` and the Proton Games parts, the brand icon
 pack and the Labyrinth app tiles (`labyrinth-brand-pack`, `labyrinth-app-icons`), the Sarina and REA setup scripts, and the Artifex store entries. Chymaera has its own.
 
 ## Naming plan
@@ -32,11 +33,12 @@ pack and the Labyrinth app tiles (`labyrinth-brand-pack`, `labyrinth-app-icons`)
    running machine. Every place that names them has to change together: PKGBUILDs, autostart files, `.desktop` files, polkit policies, D-Bus names
    (`org.labyrinth.*` stay until a release says otherwise), Heimdall's rules, the tests and the docs.
 3. **Chymaera:** the Chymaera repository does not mention Labyrinth at all today. It takes the `yggdrasil-*` packages from the Yggdrasil repository when they exist; until then it
-   keeps KDE.
+   keeps KDE (its package list still has Plasma and SDDM, checked 2026-11-04).
 
 Decided (owner, 2026-10-18):
 - The operating system is still called **Labyrinth**; Yggdrasil is only the desktop environment.
-- Step 2 (the rename) **waits until the compositor can replace KWin**, so the whole desktop is renamed once, when it is whole.
+- Step 2 (the rename) **waits until the compositor can replace KWin**, so the whole desktop is renamed once, when it is whole. (In the end it was done on
+  2026-10-23, when Hyprland was chosen as the compositor instead; Yggdrasil's own compositor is still in progress.)
 - Yggdrasil gets **its own repository**, but not yet: it is still being fine-tuned. No rush.
 - Chymaera is on hold: the owner wants Labyrinth in a better state first and does not have Chymaera's target device yet. When it starts, Chymaera uses **Labyrinth as a
   template** (installer, boot theme and the like, with Chymaera's own branding) and Yggdrasil as its desktop. Until then, keep Labyrinth's installer and boot theme easy to

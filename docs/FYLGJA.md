@@ -26,7 +26,7 @@ of its own since 2026-10-25: `yggdrasil-clipboard` (Super+V), see [packages/clip
 | Today | Built: time with seconds, full date, number of open windows |
 | Stats | Built: ring gauges for CPU (name, clock, process count), GPU (name, load, clock, VRAM used / total) and RAM (used / total, free); under them the disk (name, used / total), network speed now (down, up) and uptime; on the right the top apps by CPU or RAM (a switch), and an internet speed test. Read once a second only while Stats is showing. The speed test runs only when its button is pressed: it downloads about 40 MB and uploads about 15 MB against Cloudflare's speed servers (`speed.cloudflare.com`) with `curl` |
 | Notifications | Built: grouped by app, newest group first; open a group to list them, click one to go to the app, Clear all (see NOTIFICATIONS.md). Replaced the old Apps section |
-| Wallpaper | Built: thumbnails of the pictures Settings offers, click to apply (`plasma-apply-wallpaperimage`), pages |
+| Wallpaper | Built: thumbnails of the pictures Settings offers, click to apply (the panel draws the wallpaper itself and keeps the chosen picture's path in `~/.config/yggdrasil/wallpaper`; no KDE tool), pages |
 | Power | Built: Lock, Sleep, Hibernate (when the machine can), Restart, Shut down |
 
 ## Night Light
@@ -63,10 +63,10 @@ stops (checked every 30 seconds).
 - Per-app volume rows.
 - Stats on real hardware: the NVIDIA readings (`nvidia-smi`; only the parsing is tested against a sample line), AMD (read from `/sys`, untested), Intel graphics (not read at all), the disk's model name on an NVMe drive, the CPU clock on a real machine. The VM showed CPU, RAM, disk, uptime, top apps and the speed test working (179 Mbps down, 33 up).
 - The speed test is approximate (a few streams of a few MB); a gigabit line will read low.
-- Super+V and Super+S pressed on a real keyboard (the shortcuts are written into
-  `kglobalshortcutsrc`; the same D-Bus calls were verified with `busctl`). Super+V may also reach
-  Plasma's own clipboard popup; the config turns that one off.
+- Super+V and Super+S pressed on a real keyboard. Under KDE they were written into `kglobalshortcutsrc`;
+  in the Yggdrasil session Hyprland binds them (`packages/session/hyprland/yggdrasil.lua`: Super+V opens
+  `yggdrasil-clipboard`, Super+S holds to talk to the assistant through `yggdrasil-panelctl`).
 - Hibernate in the Power section on real hardware.
 - Cover pictures from the web (Spotify) are fetched once with `curl` and cached in
-  `~/.cache/labyrinth/fylgja/`.
+  `~/.cache/yggdrasil/fylgja/`.
 - Seen once: the card sat 28 px too high after clicking a dot and I could not make it happen again.

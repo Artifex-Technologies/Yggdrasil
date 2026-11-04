@@ -1,6 +1,12 @@
 # Accessibility audit (2026-10-16)
 
-Why now: `docs/KDE_INVENTORY.md` says `kaccess` and the screen reader hook must not be dropped without a plan. Labyrinth's own desktop
+**Status 2026-11-04:** KDE is gone (removed from the owner's PC on 2026-10-24), and with it everything this audit said was still
+KDE's: `kaccess` (sticky, slow and bounce keys, mouse keys), KWin's zoom and high-contrast effects, KDE's Orca hook and
+`qt6-virtualkeyboard` are not installed now. The Yggdrasil session runs on Hyprland 0.57, and **nothing replaces them yet**: there
+are no sticky, slow or bounce keys, no mouse keys, no screen magnifier, no high-contrast mode and no on-screen keyboard. Details in
+the table and in items 7 and 8 below.
+
+Why now (2026-10-16): `docs/KDE_INVENTORY.md` says `kaccess` and the screen reader hook must not be dropped without a plan. Labyrinth's own desktop
 pieces (panel, lock screen, polkit box, Settings, Minos) are replacing KDE's, so each one has to keep, or provide, what KDE gave.
 This is a read-only audit of the code and the machine, plus a plan. Nothing was tested with a real screen reader or by a person who relies
 on one: those results are listed as "unverified".
@@ -14,10 +20,11 @@ on one: those results are listed as "unverified".
 | Lock screen | custom (`yggdrasil-lock`) | **No** | Password typing and Enter only | a screen-reader user cannot tell that it is locked or whether a password failed |
 | Calculator | egui | as above | as above | |
 | Boot menu / installer | GRUB / Calamares (Qt) | Calamares: Qt exposes AT-SPI; GRUB: none | | the live ISO has no speech boot entry |
-| Compositor features (zoom, high contrast colours, sticky keys) | KWin, kaccess | Still KDE's | | stay until a replacement exists |
+| Compositor features (zoom, high contrast colours, sticky keys) | were KWin and kaccess; today Hyprland | **Missing since KDE left (2026-10-24)** | | Hyprland 0.57 has a zoom around the pointer (`cursor:zoom_factor`) that Yggdrasil does not switch on or offer anywhere, and no sticky, slow or bounce keys setting; no high-contrast mode |
 
-On this machine: the AT-SPI bus is running; **Orca and Speech Dispatcher are not installed**; `~/.config/kaccessrc` has `[ScreenReader] SystemdManaged=true`
-(KDE's own hook that starts Orca when asked).
+On this machine (rechecked 2026-11-04): the AT-SPI bus is running (`at-spi2-core` is installed); **Orca and Speech Dispatcher are not
+installed**; eSpeak NG is. `kaccess` is not installed; the file `~/.config/kaccessrc` (KDE's hook that started Orca when asked) is
+left over, and nothing reads it.
 
 ## Found while building the panel's support: the egui apps are probably silent on this system
 
@@ -42,11 +49,15 @@ with Orca before trusting the table below**, and again when eframe is upgraded.
    motion" switch (animations in the panel are short, but there are some), and cursor size in Settings.
 6. **Not shipped:** Orca, Speech Dispatcher, eSpeak NG, braille. Added now as the optional component `accessibility` (and in the
    "everything" preset). Still to do: install it on every machine by default, a boot-menu entry that starts the live ISO with speech
-   (archiso's `accessibility=on` / espeakup), and a Super+Alt+S binding (KDE's shortcut disappears with KDE).
-7. **Sticky/slow/bounce keys, mouse keys, the magnifier** come from KDE (kaccess and KWin effects). Keep `kaccess` and the KWin zoom while
-   KWin is our compositor; when it is replaced, the new compositor must offer them (libinput supports sticky/bounce keys only partly).
-8. **On-screen keyboard:** `qt6-virtualkeyboard` is installed (a Plasma dependency); our own lock screen and password box have no on-screen
-   keyboard. Needed for tablets and for some motor impairments.
+   (archiso's `accessibility=on` / espeakup), and a Super+Alt+S binding (KDE's shortcut went with KDE; nothing in the Yggdrasil session starts a screen reader from the keyboard yet).
+7. **Sticky/slow/bounce keys, mouse keys, the magnifier: missing now.** They came from KDE (kaccess and KWin effects), which is gone.
+   Hyprland 0.57 has no setting for sticky, slow or bounce keys or mouse keys (checked in its option list, `hyprctl descriptions`).
+   It does have a zoom around the pointer (`cursor:zoom_factor`, 1 to 10), but Yggdrasil binds no key to it and Settings has no
+   switch for it, so for a user there is no magnifier today. To do: a magnifier switch and keys on that zoom, and sticky keys in
+   Yggdrasil itself or in the compositor (libinput supports sticky/bounce keys only partly). Yggdrasil's own compositor must offer
+   them too when it runs the real session.
+8. **On-screen keyboard: missing now.** `qt6-virtualkeyboard` went with Plasma and no other on-screen keyboard is installed; our own
+   lock screen and password box have none either. Needed for tablets and for some motor impairments.
 
 ## Already fine
 
@@ -54,10 +65,10 @@ with Orca before trusting the table below**, and again when eframe is upgraded.
 - The start menu is fully keyboard operable and opens with the Super key.
 - Notifications that need a decision stay on screen until answered (critical ones ignore Do Not Disturb).
 
-## Do not remove until replaced
+## Do not remove until replaced (2026-10-16; overtaken)
 
-`kaccess`, `orca`'s KDE hook, KWin zoom/high-contrast effects, `qt6-virtualkeyboard` (it is also a Plasma dependency). The KDE inventory
-row stays "drop later, with a plan"; this document is the plan.
+The list was: `kaccess`, `orca`'s KDE hook, KWin zoom/high-contrast effects, `qt6-virtualkeyboard` (it is also a Plasma dependency).
+They were removed with KDE on 2026-10-24 before replacements existed, so the items above are now gaps to fill, not things to keep.
 
 ## How to verify (needs a person, about 30 minutes)
 
