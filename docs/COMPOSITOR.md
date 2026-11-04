@@ -30,13 +30,42 @@ What works (each checked by hand in the nested window):
 - **Workspace profiles** (`tiling.rs`): each workspace is **standard** (windows float) or **tiling** (Hyprland-style "dwindle": the first window takes the left half, the next the top right, and so on, with gaps). `~/.config/labyrinth/workspaces.conf` sets a default (standard, tiling, or **ask** each time an empty workspace is opened) and an exception per workspace; Settings > Appearance > Workspaces writes it and the compositor reads it again when it changes. Super+T floats or tiles one window. Checked in the nested window: with "ask" the question appeared on the empty workspace, Right and Enter chose Tiling, and the three windows that opened afterwards were laid out side by side.
 - Pointer and keyboard (from the host window), wheel, wl_output with xdg-output, clipboard (data device), viewporter, shm.
 
+**X11 programs (XWayland), built 2026-11-04, not yet tried by hand** (`src/xwayland.rs`; for Steam's client, games through Proton
+or Wine, and older programs). XWayland starts with the compositor and its display is printed as `DISPLAY=:n`; programs given with
+`--run` wait the fraction of a second until it has answered, then get that DISPLAY (never the host's), and so do programs started by
+shortcuts. `YGGDRASIL_COMPOSITOR_XWAYLAND=0` leaves it out. What is written:
+- An X11 window is placed, tiled, listed for the panel (dock, top bar), shown in Alt+Tab and given the keyboard like a Wayland
+  window; the keyboard also sets the X input focus, without which XWayland passes keys to none of its windows. It gets the window
+  controls unless it says it draws its own (Motif hints: Steam and most games do). Activate, minimize, maximize, full screen,
+  snap, close, the window controls, Super+drag and the program's own move and resize requests use the same code as for Wayland
+  windows. Hiding or destroying it is the same clean-up as a closed Wayland window.
+- Menus and tooltips (override-redirect windows), and menus, tooltips, notifications and splash screens that go through the window
+  manager, are drawn where they ask, on top, never get the keyboard and are not listed; a click on one goes to it.
+- A window the compositor placed (tiled, maximized, full screen, snapped) keeps its place when it asks for another; others may change
+  their size but not move themselves. A window as big as the screen is taken as a game going full screen (a game may ask for full
+  screen before its window is shown, which Smithay's window manager does not read).
+- Clipboard and middle-click selection both ways between X11 and Wayland programs; an X11 program can read them only while one of
+  its windows has the keyboard. The program with the keyboard is now the one offered the clipboard (this was missing for Wayland
+  programs too: Smithay offers it only to the focused program).
+- Full screen X11 windows are drawn opaque (a shader that ignores the alpha channel), so a game that leaves junk in it no longer
+  shows the desktop through in patches. X11 windows without an alpha visual were already opaque (XWayland hands them over as XRGB).
+
+Still missing for X11: a windowed game with an alpha visual is drawn with its alpha (it cannot be told from a program that means
+to be see-through); the top panels are drawn over full screen windows, Wayland and X11 alike (fine for a desktop, wrong for a
+game); XWayland always runs (about 20 to 40 MB) instead of starting on the first X11 program; no HiDPI scaling for X11 programs;
+drag and drop between X11 and Wayland programs; X11 window icons for the dock; and the X11 cursor theme and XSETTINGS.
+
+To try it: `yggdrasil-compositor --run xterm` (typing, its menus on Ctrl+click, moving, the window controls), then Steam
+(`--run steam`: its menus, the clipboard both ways with a Wayland program, minimize and restore from the dock), then a Proton
+game full screen (no see-through patches, keys and mouse reach it). `YGGDRASIL_COMPOSITOR_DEBUG=1` also shows XWayland's own messages.
+
 Not built yet (in the order I would do them):
-1. Trying resize, maximize, full screen and minimize by hand.
+1. Trying resize, maximize, full screen and minimize by hand, and X11 programs (above): xterm, Steam, a Proton game.
 2. The panel's workspace buttons following the compositor's workspaces (the protocol `ext-workspace`), and key repeat for the volume keys.
 4. Tiling, and more workspaces than four.
 5. GPU clients (linux-dmabuf), idle inhibit (videos), primary selection, cursor shapes, fractional scale, xdg-activation, xdg-decoration.
 6. **The hardware backend**: DRM/KMS output, libinput, a seat (logind or seatd), several monitors, scaling, VRR, NVIDIA. This is what would let it run the real session instead of Hyprland; it should be developed in a virtual machine (Limbo), never on the live session.
-7. Screen recording and screenshots (the portal), output management for Settings > Displays, an X11 layer (XWayland) for Steam and games.
+7. Screen recording and screenshots (the portal), output management for Settings > Displays.
 
 Why not before: the roadmap puts the compositor last, once the pieces around it are stable; they now are (panel, lock, idle, greeter,
 portal, polkit), and each of them can be developed and tested on this compositor in a window.
