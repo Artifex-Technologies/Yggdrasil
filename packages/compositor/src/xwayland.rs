@@ -41,6 +41,10 @@ pub fn start(app: &mut App, handle: LoopHandle<'static, App>, then: Box<dyn FnOn
                     Ok(mut wm) => {
                         // games ask for the primary monitor to know where to go full screen
                         let _ = wm.set_randr_primary_output(Some(&app.output));
+                        // Smithay 0.7 marks that request's number to be ignored, and every X11 event carries the number of the
+                        // window manager's last request: until it makes another, every event (a program's MapRequest too) was
+                        // dropped and no X11 window ever showed. Any request with an answer moves the number on.
+                        let _ = wm.get_randr_primary_output();
                         app.xwm = Some(wm);
                         app.x11_display = Some(display_number);
                         println!("DISPLAY=:{display_number}");

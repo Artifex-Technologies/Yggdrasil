@@ -217,6 +217,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => {}
     })?;
 
-    event_loop.run(None, &mut app, |_| {})?;
+    // Replies go out after every pass of the loop, not only after a frame: while nothing is drawn (the idle case) a program
+    // waiting on a round trip would otherwise wait for the next 2-second config check (vkcube never got its window up).
+    event_loop.run(None, &mut app, |app| {
+        let _ = app.display_handle.flush_clients();
+    })?;
     Ok(())
 }
