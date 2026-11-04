@@ -33,6 +33,10 @@ extern "C" {
     fn libvlc_new(argc: c_int, argv: *const *const c_char) -> *mut libvlc_instance_t;
     fn libvlc_release(i: *mut libvlc_instance_t);
     fn libvlc_media_new_path(i: *mut libvlc_instance_t, path: *const c_char) -> *mut libvlc_media_t;
+    fn libvlc_media_new_location(i: *mut libvlc_instance_t, mrl: *const c_char) -> *mut libvlc_media_t;
+    /// libVLC 3: a second input played with the first (type 1: audio)
+    fn libvlc_media_slaves_add(m: *mut libvlc_media_t, kind: c_int, priority: c_uint, uri: *const c_char) -> c_int;
+    fn libvlc_media_add_option(m: *mut libvlc_media_t, option: *const c_char);
     fn libvlc_media_release(m: *mut libvlc_media_t);
     fn libvlc_media_player_new_from_media(m: *mut libvlc_media_t) -> *mut libvlc_media_player_t;
     fn libvlc_media_player_release(p: *mut libvlc_media_player_t);
@@ -147,20 +151,43 @@ unsafe impl Send for Player {}
 impl Player {
     /// Opens `path` (not playing yet). `wake` is called from VLC's thread after each new picture.
     pub fn open(path: &std::path::Path, wake: Box<dyn Fn() + Send + Sync>) -> Result<Player, String> {
+        let cpath = CString::new(path.as_os_str().as_encoded_bytes()).map_err(|_| "the file name has a zero byte".to_string())?;
+        Self::with_media(wake, |inst| unsafe { libvlc_media_new_path(inst, cpath.as_ptr()) }, None, None)
+    }
+
+    /// Opens a stream (an https:// address), with its sound as a separate stream when the site sends them apart (YouTube above
+    /// 720p), from `start` seconds. Used by Huginn.
+    pub fn open_stream(url: &str, audio: Option<&str>, start: Option<f64>, wake: Box<dyn Fn() + Send + Sync>) -> Result<Player, String> {
+        let curl = CString::new(url).map_err(|_| "the address has a zero byte".to_string())?;
+        Self::with_media(wake, |inst| unsafe { libvlc_media_new_location(inst, curl.as_ptr()) }, audio, start)
+    }
+
+    fn with_media(wake: Box<dyn Fn() + Send + Sync>, media: impl FnOnce(*mut libvlc_instance_t) -> *mut libvlc_media_t, audio: Option<&str>, start: Option<f64>) -> Result<Player, String> {
         // YGGDRASIL_PLAYER_DEBUG=1: VLC says what it does (on standard error)
         let talk = if std::env::var_os("YGGDRASIL_PLAYER_DEBUG").is_some() { "--verbose=2" } else { "--quiet" };
         let args: Vec<CString> = ["--no-video-title-show", "--no-osd", "--no-snapshot-preview", talk, "--no-stats"].iter().map(|a| CString::new(*a).unwrap()).collect();
         let argv: Vec<*const c_char> = args.iter().map(|a| a.as_ptr()).collect();
-        let cpath = CString::new(path.as_os_str().as_encoded_bytes()).map_err(|_| "the file name has a zero byte".to_string())?;
+        let caudio = match audio {
+            Some(a) => Some(CString::new(a).map_err(|_| "the address has a zero byte".to_string())?),
+            None => None,
+        };
         unsafe {
             let inst = libvlc_new(argv.len() as c_int, argv.as_ptr());
             if inst.is_null() {
                 return Err("VLC could not start (is libvlc installed?)".into());
             }
-            let m = libvlc_media_new_path(inst, cpath.as_ptr());
+            let m = media(inst);
             if m.is_null() {
                 libvlc_release(inst);
-                return Err("VLC could not open the file".into());
+                return Err("VLC could not open it".into());
+            }
+            if let Some(a) = &caudio {
+                libvlc_media_slaves_add(m, 1, 4, a.as_ptr());
+            }
+            if let Some(t) = start.filter(|t| t.is_finite() && *t > 0.0) {
+                if let Ok(o) = CString::new(format!(":start-time={t:.1}")) {
+                    libvlc_media_add_option(m, o.as_ptr());
+                }
             }
             let mp = libvlc_media_player_new_from_media(m);
             libvlc_media_release(m);

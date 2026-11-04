@@ -2,6 +2,8 @@
 //! look as Minos and Settings).
 //!
 //!   yggdrasil-player [FILE]
+//!   yggdrasil-player [--title TEXT] [--audio URL] [--start SECONDS] [--mute] URL     a stream (https:// only), as Huginn plays videos: the
+//!                                                                          picture's address, the sound's when it comes apart
 //!
 //! Keys: Space or K play/pause, Left/Right (J/L) ten seconds back/on, Up/Down volume, M mute, F or a double-click full screen,
 //! Esc leaves full screen, O opens a file. A file can also be dropped on the window.
@@ -24,7 +26,8 @@ const STEP_MS: i64 = 10_000;
 const VIDEO_TYPES: [&str; 14] = ["mkv", "mp4", "m4v", "avi", "mov", "webm", "wmv", "flv", "mpg", "mpeg", "ts", "m2ts", "ogv", "3gp"];
 
 struct Playing {
-    path: PathBuf,
+    /// The window's title: the file's name, or the title Huginn passed for a stream.
+    title: String,
     vlc: vlc::Player,
     tex: Option<TextureHandle>,
     /// logind's "don't dim, don't lock" while it plays; dropping it lets the screen dim again.
@@ -115,13 +118,70 @@ fn pick_video() -> Option<PathBuf> {
     uris.first().and_then(|u| path_from_uri(u))
 }
 
+/// What to play when the window opens: a file, or a stream.
+enum Start {
+    File(PathBuf),
+    Stream { url: String, audio: Option<String>, title: String, start: Option<f64>, muted: bool },
+}
+
+/// The command line: `[--title T] [--audio URL] [--start S] URL` for a stream, otherwise a file (or a file:// URI).
+fn parse_args(args: Vec<std::ffi::OsString>) -> Option<Start> {
+    let mut audio = None;
+    let mut title = None;
+    let mut start = None;
+    let mut muted = false;
+    let mut rest = vec![];
+    let mut it = args.into_iter();
+    while let Some(a) = it.next() {
+        match a.to_str() {
+            Some("--audio") => audio = it.next().and_then(|x| x.into_string().ok()),
+            Some("--title") => title = it.next().and_then(|x| x.into_string().ok()),
+            Some("--start") => start = it.next().and_then(|x| x.into_string().ok()).and_then(|x| x.parse::<f64>().ok()),
+            Some("--mute") => muted = true,
+            Some("--") => rest.extend(it.by_ref()),
+            _ => rest.push(a),
+        }
+    }
+    let first = rest.into_iter().next()?;
+    let text = first.to_string_lossy().to_string();
+    if text.starts_with("https://") {
+        let audio = audio.filter(|a: &String| a.starts_with("https://"));
+        let title: String = title.unwrap_or_else(|| "Stream".into()).chars().filter(|c| !c.is_control()).take(200).collect();
+        return Some(Start::Stream { url: text, audio, title, start, muted });
+    }
+    let p = PathBuf::from(first);
+    Some(Start::File(if text.starts_with("file://") { path_from_uri(&text).unwrap_or(p) } else { p }))
+}
+
 impl App {
-    fn new(file: Option<PathBuf>, ctx: &egui::Context) -> App {
+    fn new(start: Option<Start>, ctx: &egui::Context) -> App {
         let mut app = App { now: None, error: None, picking: None, last_motion: Instant::now(), last_pointer: None, fullscreen: false, volume: 100, muted: false, scrub: None };
-        if let Some(f) = file {
-            app.open(f, ctx);
+        match start {
+            Some(Start::File(f)) => app.open(f, ctx),
+            Some(Start::Stream { url, audio, title, start, muted }) => {
+                app.muted = muted;
+                app.open_stream(&url, audio.as_deref(), title, start, ctx)
+            }
+            None => {}
         }
         app
+    }
+
+    fn open_stream(&mut self, url: &str, audio: Option<&str>, title: String, start: Option<f64>, ctx: &egui::Context) {
+        self.close();
+        let c = ctx.clone();
+        match vlc::Player::open_stream(url, audio, start, Box::new(move || c.request_repaint())) {
+            Ok(p) => {
+                let mut now = Playing { title, vlc: p, tex: None, inhibit: None };
+                now.vlc.play();
+                now.inhibit = inhibit_idle();
+                now.vlc.set_volume(if self.muted { 0 } else { self.volume });
+                ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!("{} — VLC", now.title)));
+                self.now = Some(now);
+                self.error = None;
+            }
+            Err(e) => self.error = Some(format!("{title}: {e}")),
+        }
     }
 
     fn open(&mut self, path: PathBuf, ctx: &egui::Context) {
@@ -129,11 +189,11 @@ impl App {
         let c = ctx.clone();
         match vlc::Player::open(&path, Box::new(move || c.request_repaint())) {
             Ok(p) => {
-                let mut now = Playing { path, vlc: p, tex: None, inhibit: None };
+                let mut now = Playing { title: title_of(&path), vlc: p, tex: None, inhibit: None };
                 now.vlc.play();
                 now.inhibit = inhibit_idle();
                 now.vlc.set_volume(if self.muted { 0 } else { self.volume });
-                ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!("{} — VLC", title_of(&now.path))));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!("{} — VLC", now.title)));
                 self.now = Some(now);
                 self.error = None;
             }
@@ -257,7 +317,7 @@ impl App {
             n.inhibit = None;
         }
         if state == vlc::State::Error {
-            self.error = Some(format!("VLC could not play {}", n.path.display()));
+            self.error = Some(format!("VLC could not play {}", n.title));
         }
     }
 
@@ -466,7 +526,7 @@ impl eframe::App for App {
                 if icon_button(&mut c, &pal, Icon::Open, 28.0, "Open a video (O)").clicked() {
                     actions.push(Box::new(|a, _| a.start_pick()));
                 }
-                let name = self.now.as_ref().map(|n| title_of(&n.path)).unwrap_or_default();
+                let name = self.now.as_ref().map(|n| n.title.clone()).unwrap_or_default();
                 c.label(RichText::new(name).color(Color32::from_gray(230)));
                 let w = c.available_width() - chrome::controls_width();
                 chrome::drag_area(&mut c, w);
@@ -574,7 +634,7 @@ impl eframe::App for App {
 }
 
 fn main() -> eframe::Result {
-    let file = std::env::args_os().nth(1).map(PathBuf::from).map(|p| if p.to_string_lossy().starts_with("file://") { path_from_uri(&p.to_string_lossy()).unwrap_or(p) } else { p });
+    let start = parse_args(std::env::args_os().skip(1).collect());
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1100.0, 660.0])
@@ -585,12 +645,27 @@ fn main() -> eframe::Result {
             .with_decorations(false),
         ..Default::default()
     };
-    eframe::run_native("VLC", options, Box::new(move |cc| Ok(Box::new(App::new(file, &cc.egui_ctx)))))
+    eframe::run_native("VLC", options, Box::new(move |cc| Ok(Box::new(App::new(start, &cc.egui_ctx)))))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_command_line() {
+        let a = |v: &[&str]| parse_args(v.iter().map(std::ffi::OsString::from).collect());
+        match a(&["--title", "A film\u{7}", "--audio", "https://a", "--start", "61.5", "https://v"]) {
+            Some(Start::Stream { url, audio, title, start, .. }) => {
+                assert_eq!((url.as_str(), audio.as_deref(), title.as_str(), start), ("https://v", Some("https://a"), "A film", Some(61.5)));
+            }
+            _ => panic!("a stream"),
+        }
+        assert!(matches!(a(&["--audio", "http://plain", "https://v"]), Some(Start::Stream { audio: None, .. })), "plain http is not taken");
+        assert!(matches!(a(&["/home/a/x.mkv"]), Some(Start::File(_))));
+        assert!(matches!(a(&["file:///home/a/My%20Film.mkv"]), Some(Start::File(p)) if p == PathBuf::from("/home/a/My Film.mkv")));
+        assert!(a(&[]).is_none());
+    }
 
     #[test]
     fn uris_become_paths() {
