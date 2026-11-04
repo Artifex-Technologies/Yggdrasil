@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 yggdrasil-conf = { path = "../yggdrasil-conf" }
-smithay = { version = "0.7", default-features = false, features = ["backend_winit", "backend_egl", "renderer_gl", "desktop", "wayland_frontend", "use_system_lib"] }
+smithay = { version = "0.7", default-features = false, features = ["backend_winit", "backend_egl", "backend_drm", "renderer_gl", "desktop", "wayland_frontend", "use_system_lib"] }
 tracing = "0.1"
 tiny-skia = "0.11"
 ab_glyph = "0.2"

@@ -60,6 +60,10 @@ use smithay::wayland::viewporter::ViewporterState;
 use smithay::{delegate_compositor, delegate_data_device, delegate_idle_notify, delegate_layer_shell, delegate_output, delegate_seat, delegate_session_lock, delegate_shm, delegate_viewporter, delegate_xdg_shell};
 
 pub struct App {
+    /// GPU pictures from programs (linux-dmabuf): the protocol's state, and how the renderer takes one in (set by the backend;
+    /// None until then, when every import fails and programs fall back to shared memory).
+    pub dmabuf_state: smithay::wayland::dmabuf::DmabufState,
+    pub dmabuf_import: Option<Box<dyn FnMut(&smithay::backend::allocator::dmabuf::Dmabuf) -> bool>>,
     /// Wakes the drawing: the screen is drawn only when something changed (a program committed a picture, input, a setting).
     ping: smithay::reexports::calloop::ping::Ping,
     pub display_handle: DisplayHandle,
@@ -160,6 +164,8 @@ impl App {
             xdg_shell_state: XdgShellState::new::<Self>(dh),
             layer_shell_state: WlrLayerShellState::new::<Self>(dh),
             shm_state: ShmState::new::<Self>(dh, vec![]),
+            dmabuf_state: smithay::wayland::dmabuf::DmabufState::new(),
+            dmabuf_import: None,
             seat_state,
             data_device_state: DataDeviceState::new::<Self>(dh),
             output_manager_state: OutputManagerState::new_with_xdg_output::<Self>(dh),
@@ -1071,6 +1077,23 @@ impl ShmHandler for App {
     }
 }
 delegate_shm!(App);
+
+// GPU pictures (linux-dmabuf): a program renders with the GPU (Vulkan, OpenGL) into a buffer and hands it over without a copy.
+// The import is checked against the renderer at once, so a buffer the GPU cannot read is refused when it is made, not when drawn.
+impl smithay::wayland::dmabuf::DmabufHandler for App {
+    fn dmabuf_state(&mut self) -> &mut smithay::wayland::dmabuf::DmabufState {
+        &mut self.dmabuf_state
+    }
+    fn dmabuf_imported(&mut self, _global: &smithay::wayland::dmabuf::DmabufGlobal, dmabuf: smithay::backend::allocator::dmabuf::Dmabuf, notifier: smithay::wayland::dmabuf::ImportNotifier) {
+        let ok = self.dmabuf_import.as_mut().is_some_and(|f| f(&dmabuf));
+        if ok {
+            let _ = notifier.successful::<App>();
+        } else {
+            notifier.failed();
+        }
+    }
+}
+smithay::delegate_dmabuf!(App);
 
 impl SeatHandler for App {
     type KeyboardFocus = WlSurface;

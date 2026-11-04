@@ -31,6 +31,39 @@ use smithay::wayland::socket::ListeningSocketSource;
 
 use state::{App, ClientState};
 
+/// linux-dmabuf: programs that draw with the GPU (games, browsers, anything on Vulkan or OpenGL) hand their pictures over as GPU
+/// buffers. The formats offered are the ones this renderer can read; with the GPU's render node known, programs are also told which
+/// GPU to render on (default feedback), which they need to pick the right one on a machine with two.
+fn gpu_buffers(app: &mut App, dh: &smithay::reexports::wayland_server::DisplayHandle, backend: &std::rc::Rc<std::cell::RefCell<winit::WinitGraphicsBackend<GlesRenderer>>>) {
+    use smithay::backend::egl::EGLDevice;
+    use smithay::backend::renderer::{ImportDma, ImportEgl};
+    use smithay::wayland::dmabuf::DmabufFeedbackBuilder;
+    let mut b = backend.borrow_mut();
+    let formats: Vec<_> = b.renderer().dmabuf_formats().into_iter().collect();
+    if formats.is_empty() {
+        eprintln!("yggdrasil-compositor: the renderer reads no GPU buffer formats; programs will use shared memory");
+        return;
+    }
+    let node = EGLDevice::device_for_display(b.renderer().egl_context().display()).ok().and_then(|d| d.try_get_render_node().ok().flatten());
+    let feedback = node.and_then(|n| DmabufFeedbackBuilder::new(n.dev_id(), formats.iter().copied()).build().ok());
+    match &feedback {
+        Some(f) => {
+            app.dmabuf_state.create_global_with_default_feedback::<App>(dh, f);
+        }
+        None => {
+            app.dmabuf_state.create_global::<App>(dh, formats.iter().copied());
+        }
+    }
+    // older Mesa programs still look for wl_drm (EGL's own way); harmless when the driver has no use for it
+    let _ = b.renderer().bind_wl_display(dh);
+    if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
+        eprintln!("dmabuf: {} formats, render node {:?}", formats.len(), node.map(|n| n.dev_path()));
+    }
+    drop(b);
+    let r = backend.clone();
+    app.dmabuf_import = Some(Box::new(move |d| r.borrow_mut().renderer().import_dmabuf(d, None).is_ok()));
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Ok(f) = tracing_subscriber::EnvFilter::try_from_default_env() {
         tracing_subscriber::fmt().with_env_filter(f).init();
@@ -71,6 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     output.set_preferred(mode);
 
     let mut app = App::new(&dh, output.clone(), event_loop.handle(), event_loop.get_signal(), ping.clone());
+    gpu_buffers(&mut app, &dh, &backend);
     // a wake-up asks the window for a new frame; nothing is drawn while nothing changes
     let for_ping = backend.clone();
     event_loop.handle().insert_source(ping_source, move |_, _, _| for_ping.borrow().window().request_redraw())?;
