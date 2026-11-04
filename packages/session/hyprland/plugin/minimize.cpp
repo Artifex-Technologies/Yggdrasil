@@ -4,12 +4,14 @@
 // session; the dock brings it back from there.
 //
 // Built per Hyprland version by yggdrasil-hypr-plugin (Hyprland only loads plugins built against its own headers).
+//
+// Written for Hyprland 0.57, where each window has a backend (Wayland or X11) whose stateRequest event carries the client's
+// minimize request for both kinds. Hyprland 0.57's own `window.minimize` Lua event does not fire for that request (checked
+// 2026-11-03 with a GTK window calling set_minimized), so the plugin is still needed. 0.56 had separate XDG and XWayland paths.
 
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #include <hyprland/src/event/EventBus.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
-#include <hyprland/src/protocols/XDGShell.hpp>
-#include <hyprland/src/xwayland/XSurface.hpp>
+#include <hyprland/src/desktop/view/window/Window.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include <hyprland/src/desktop/state/ViewState.hpp>
 
@@ -38,19 +40,10 @@ static void minimize(PHLWINDOWREF ref) {
 
 static void watch(PHLWINDOW w) {
     PHLWINDOWREF ref = w;
-    if (const auto xdg = w->m_xdgSurface.lock(); xdg && xdg->m_toplevel) {
-        const auto top = xdg->m_toplevel;
-        requestListeners[w.get()] = top->m_events.stateChanged.listen([ref, top] {
-            if (const auto t = top.lock(); t && t->m_state.requestsMinimize.value_or(false))
-                minimize(ref);
-        });
-    } else if (const auto x = w->m_xwaylandSurface.lock(); x) {
-        const auto xs = w->m_xwaylandSurface;
-        requestListeners[w.get()] = x->m_events.stateChanged.listen([ref, xs] {
-            if (const auto s = xs.lock(); s && s->m_state.requestsMinimize.value_or(false))
-                minimize(ref);
-        });
-    }
+    requestListeners[w.get()] = w->backend().m_events.stateRequest.listen([ref](const Desktop::View::SBackendStateRequest& request) {
+        if (request.minimized.value_or(false))
+            minimize(ref);
+    });
 }
 
 APICALL EXPORT std::string PLUGIN_API_VERSION() {
@@ -66,7 +59,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     closeListener = Event::bus()->m_events.window.close.listen([](PHLWINDOW w) { requestListeners.erase(w.get()); });
     // windows that were already open when the plugin was loaded
     for (const auto& w : Desktop::viewState()->windows())
-        if (w->m_isMapped)
+        if (w->mapped())
             watch(w);
     return {"yggdrasil-minimize", "A program's minimize button puts its window on the hidden \"minimized\" workspace", "Yggdrasil", "1"};
 }
