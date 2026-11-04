@@ -1,0 +1,14 @@
+[package]
+name = "huginn"
+version = "0.1.0"
+edition = "2021"
+description = "Huginn: videos without an account, in Yggdrasil's look (search, subscriptions, playback in yggdrasil-player, downloads)"
+license = "MPL-2.0"
+
+[dependencies]
+huginn-core = { path = "../core" }
+yggdrasil-conf = { path = "../../yggdrasil-conf" }
+yggdrasil-ui = { path = "../../yggdrasil-ui" }
+eframe = "0.36.2"
+egui_extras = { version = "0.36.2", features = ["file", "image"] }
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }

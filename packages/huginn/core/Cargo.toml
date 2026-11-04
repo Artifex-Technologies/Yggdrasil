@@ -1,0 +1,10 @@
+[package]
+name = "huginn-core"
+version = "0.1.0"
+edition = "2021"
+description = "Huginn's core: videos, channels, the library (subscriptions, history, playlists) and the extractors, without any UI"
+license = "MPL-2.0"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.151"

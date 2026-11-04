@@ -1,0 +1,2 @@
+# makepkg downloads the word files here (pinned by sha256 in the PKGBUILD); they are not part of the repository
+cspell-*
