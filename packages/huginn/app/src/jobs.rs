@@ -129,6 +129,12 @@ pub fn play(d: &Details, start: Option<f64>) -> Result<String, String> {
     if let Some(s) = start.filter(|s| *s > 0.0) {
         cmd.arg("--start").arg(format!("{s:.1}"));
     }
+    if let Some(ua) = &d.streams.user_agent {
+        cmd.arg("--user-agent").arg(ua);
+    }
+    if let Some(r) = &d.streams.referer {
+        cmd.arg("--referrer").arg(r);
+    }
     cmd.arg("--").arg(video).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
     cmd.spawn().map(|_| d.video.title.clone()).map_err(|_| "yggdrasil-player is not installed".to_string())
 }

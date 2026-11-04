@@ -7,6 +7,8 @@ license = "MPL-2.0"
 
 [dependencies]
 huginn-core = { path = "../core" }
+# the libVLC layer of yggdrasil-player: Huginn plays inside its window with the same code
+yggdrasil-player = { path = "../../player", default-features = false }
 yggdrasil-conf = { path = "../../yggdrasil-conf" }
 yggdrasil-ui = { path = "../../yggdrasil-ui" }
 eframe = "0.36.2"

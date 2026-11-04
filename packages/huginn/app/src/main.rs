@@ -5,6 +5,7 @@
 //! Named after Odin's raven that flies out over the world each day and brings back what it saw.
 
 mod jobs;
+mod watch;
 mod widgets;
 
 use std::collections::HashMap;
@@ -18,7 +19,7 @@ use huginn_core::model::{count_text, Channel, Details, Video};
 use huginn_core::ytdlp::YtDlp;
 use huginn_core::{import, Extractor};
 use jobs::{DlState, Download, Msg, Pictures};
-use widgets::{columns, texture, video_card, Tex};
+use widgets::{columns, texture, video_card, CardClick, Tex};
 use yggdrasil_ui::{chrome, theme};
 use theme::Palette;
 
@@ -115,6 +116,14 @@ struct App {
     /// a video asked to play before its streams arrived: (id, sound only, start)
     pending_play: Option<(String, bool, Option<f64>)>,
     ytdlp_ok: bool,
+    /// what plays inside the window (on the video's page, or small in the corner while browsing)
+    now: Option<watch::Now>,
+    /// the playing video fills the screen
+    full: bool,
+    volume: i32,
+    muted: bool,
+    /// `--mini`: once it plays, go back to Home with the small player
+    start_mini: bool,
 }
 
 /// The video id in a YouTube link (`watch?v=`, `youtu.be/`, `/shorts/`, `/live/`), or None.
@@ -163,9 +172,19 @@ impl App {
             import_path: String::new(),
             pending_play: None,
             ytdlp_ok,
+            now: None,
+            full: false,
+            volume: 100,
+            muted: false,
+            start_mini: false,
         };
         // `huginn --search WORDS` or `huginn LINK` (a YouTube video or channel link) opens on it
-        let args: Vec<String> = std::env::args().skip(1).collect();
+        let mut args: Vec<String> = std::env::args().skip(1).collect();
+        // `--mute`: start with the sound off
+        if args.iter().any(|a| a == "--mute") {
+            app.muted = true;
+            args.retain(|a| a != "--mute");
+        }
         match args.first().map(String::as_str) {
             Some("--search") if args.len() > 1 => {
                 app.search = args[1..].join(" ");
@@ -174,8 +193,14 @@ impl App {
             }
             Some(link) => {
                 if let Some(id) = video_id_in(link) {
-                    app.open_video(&Video { id, ..Default::default() }, ctx);
+                    let v = Video { id, ..Default::default() };
+                    app.open_video(&v, ctx);
                     app.back = vec![Page::Home];
+                    // `--play`: start it at once (a browser's "open in Huginn"); `--mini`: in the small player, on Home
+                    if args.iter().any(|a| a == "--play" || a == "--mini") {
+                        app.play(&v, false, None, ctx);
+                    }
+                    app.start_mini = args.iter().any(|a| a == "--mini");
                 } else if let Some(id) = import::channel_id_in(link).filter(|_| link.contains("/channel/")) {
                     app.open_channel(&id, ctx);
                     app.back = vec![Page::Home];
@@ -226,7 +251,7 @@ impl App {
                     if let Some((pid, audio, start)) = self.pending_play.clone().filter(|(p, _, _)| *p == id) {
                         self.pending_play = None;
                         match &r {
-                            Ok(d) => self.started(d, audio, start),
+                            Ok(d) => self.started(d, audio, start, ctx),
                             Err(e) => self.note = format!("Could not play: {e}"),
                         }
                         // a sound-only answer is not the video page's
@@ -355,12 +380,13 @@ impl App {
         self.go(Page::Search);
     }
 
-    /// Plays a video (or its sound): with the streams already here at once, else as soon as they arrive.
+    /// Plays a video (or its sound) inside the window: at once when its streams are here, else as soon as they arrive.
     fn play(&mut self, v: &Video, audio: bool, start: Option<f64>, ctx: &egui::Context) {
-        if !audio {
-            if let Some(Loading::Ready(d)) = self.details.get(&v.id) {
+        if let Some(Loading::Ready(d)) = self.details.get(&v.id) {
+            // the page's answer has the sound stream too when YouTube sends it apart, which is all Listen needs
+            if !audio || d.streams.audio.is_some() {
                 let d = d.clone();
-                self.started(&d, false, start);
+                self.started(&d, audio, start, ctx);
                 return;
             }
         }
@@ -375,13 +401,106 @@ impl App {
         }
     }
 
-    fn started(&mut self, d: &Details, _audio: bool, start: Option<f64>) {
-        let r = jobs::play(d, start);
-        if r.is_ok() {
-            self.lib.watched(d.video.clone(), start.map(|s| s as u64));
+    /// Starts playing inside the window (and goes to the video's page for a picture); a video watched before goes on where it stopped.
+    fn started(&mut self, d: &Details, audio: bool, start: Option<f64>, ctx: &egui::Context) {
+        self.stop_now();
+        let start = start.or_else(|| self.resume_point(&d.video));
+        match watch::Now::start(d.clone(), audio, start, self.volume, self.muted, ctx) {
+            Ok(n) => {
+                self.lib.watched(d.video.clone(), start.map(|s| s as u64));
+                let _ = self.lib.save();
+                self.now = Some(n);
+                self.note = if start.is_some_and(|s| s > 0.0) { "Going on where you stopped".into() } else { String::new() };
+                if !audio {
+                    self.details.insert(d.video.id.clone(), Loading::Ready(d.clone()));
+                    self.go(Page::Video(d.video.id.clone()));
+                }
+                if std::mem::take(&mut self.start_mini) {
+                    self.page = Page::Home;
+                }
+            }
+            Err(e) => self.note = format!("Could not play: {e}"),
+        }
+    }
+
+    /// Where to go on from: a video stopped part-way (more than ten seconds in, more than half a minute from the end).
+    fn resume_point(&self, v: &Video) -> Option<f64> {
+        let w = self.lib.history.iter().find(|w| w.video.id == v.id)?;
+        let p = w.position? as f64;
+        let len = v.duration.or(w.video.duration).map(|d| d as f64).unwrap_or(f64::MAX);
+        (p > 10.0 && p < len - 30.0).then_some(p)
+    }
+
+    /// Stops what plays inside the window and remembers where (nothing to remember when it ended).
+    fn stop_now(&mut self) {
+        if let Some(n) = self.now.take() {
+            let pos = if n.ended() { None } else { Some(n.position() as u64) };
+            self.volume = n.volume;
+            self.muted = n.muted;
+            self.lib.watched(n.details.video.clone(), pos);
             let _ = self.lib.save();
         }
-        let _ = self.tx.send(Msg::Played(r));
+        if self.full {
+            self.full = false;
+        }
+    }
+
+    /// What the player's controls asked for.
+    fn handle(&mut self, ask: watch::Ask, ctx: &egui::Context) {
+        match ask {
+            watch::Ask::Nothing => {}
+            watch::Ask::Minimize => {
+                // back to where you were, with the small player in the corner
+                let back = self.back.pop().filter(|p| !matches!(p, Page::Video(_))).unwrap_or(Page::Home);
+                self.page = back;
+            }
+            watch::Ask::PopOut => {
+                if let Some(n) = &self.now {
+                    let (d, pos) = (n.details.clone(), n.position());
+                    self.stop_now();
+                    let r = jobs::play(&d, Some(pos));
+                    let _ = self.tx.send(Msg::Played(r));
+                }
+            }
+            watch::Ask::FullScreen => {
+                self.full = !self.full;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.full));
+            }
+            watch::Ask::Close => self.stop_now(),
+            watch::Ask::Expand => {
+                if let Some(n) = &self.now {
+                    let d = n.details.clone();
+                    self.details.insert(d.video.id.clone(), Loading::Ready(d.clone()));
+                    self.go(Page::Video(d.video.id.clone()));
+                }
+            }
+        }
+    }
+
+    /// YouTube's keys while something plays: Space, Left/Right (ten seconds), M, F, Esc.
+    fn keys(&mut self, ctx: &egui::Context) {
+        if self.now.is_none() || ctx.egui_wants_keyboard_input() {
+            return;
+        }
+        let on_page = self.full || matches!(&self.page, Page::Video(id) if self.now.as_ref().is_some_and(|n| n.id() == id));
+        let (space, left, right, m, f, esc) = ctx.input(|i| (i.key_pressed(egui::Key::Space), i.key_pressed(egui::Key::ArrowLeft), i.key_pressed(egui::Key::ArrowRight), i.key_pressed(egui::Key::M), i.key_pressed(egui::Key::F), i.key_pressed(egui::Key::Escape)));
+        let Some(n) = self.now.as_mut() else { return };
+        if space {
+            n.toggle();
+        }
+        if on_page && left {
+            n.seek_by(-10);
+        }
+        if on_page && right {
+            n.seek_by(10);
+        }
+        if m {
+            let muted = !n.muted;
+            n.set_muted(muted);
+        }
+        if on_page && f || esc && self.full {
+            self.handle(watch::Ask::FullScreen, ctx);
+        }
     }
 
     fn subscribe(&mut self, c: Channel, ctx: &egui::Context) {
@@ -446,13 +565,16 @@ impl App {
     fn grid(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, videos: &[Video], with_channel: bool) {
         let (n, w) = columns(ui.available_width(), 250.0);
         let mut open: Option<Video> = None;
+        let mut channel: Option<String> = None;
         for row in videos.chunks(n) {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 18.0;
                 for v in row {
                     let tex = self.tex(ui, v.thumbnail.as_deref());
-                    if video_card(ui, &self.pal, v, tex.as_ref(), w, with_channel).clicked() {
-                        open = Some(v.clone());
+                    match video_card(ui, &self.pal, v, tex.as_ref(), w, with_channel) {
+                        CardClick::Video => open = Some(v.clone()),
+                        CardClick::Channel => channel = Some(v.channel_id.clone()),
+                        CardClick::None => {}
                     }
                 }
             });
@@ -460,6 +582,9 @@ impl App {
         }
         if let Some(v) = open {
             self.open_video(&v, ctx);
+        }
+        if let Some(id) = channel {
+            self.open_channel(&id, ctx);
         }
     }
 
@@ -688,10 +813,20 @@ impl App {
             }
         };
         let v = d.video.clone();
-        // the picture, with the play button on it
+        // the player when this video plays; otherwise its picture with the play button on it
         let w = ui.available_width().min(960.0);
-        let (rect, resp) = ui.allocate_exact_size(vec2(w, w * 9.0 / 16.0), Sense::click());
         let tex = self.tex(ui, v.thumbnail.as_deref());
+        if self.now.as_ref().is_some_and(|n| n.id() == v.id) {
+            let (rect, _) = ui.allocate_exact_size(vec2(w, w * 9.0 / 16.0), Sense::hover());
+            let pal = self.pal.clone();
+            let ask = self.now.as_mut().map(|n| n.big(ui, rect, tex.as_ref(), &pal, false)).unwrap_or(watch::Ask::Nothing);
+            self.handle(ask, ctx);
+            if self.now.as_ref().is_some_and(|n| n.id() == v.id) {
+                self.video_info(ui, ctx, &d);
+                return;
+            }
+        }
+        let (rect, resp) = ui.allocate_exact_size(vec2(w, w * 9.0 / 16.0), Sense::click());
         widgets::picture(ui, rect, 16, tex.as_ref(), &self.pal);
         ui.painter().rect_filled(rect, CornerRadius::same(16), Color32::from_black_alpha(if resp.hovered() { 40 } else { 70 }));
         ui.painter().circle_filled(rect.center(), 38.0, Color32::from_white_alpha(if resp.hovered() { 250 } else { 225 }));
@@ -702,6 +837,12 @@ impl App {
         if resp.clicked() {
             self.play(&v, false, None, ctx);
         }
+        self.video_info(ui, ctx, &d);
+    }
+
+    /// Under the picture: the title, the channel, the numbers, the actions, chapters and the description.
+    fn video_info(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, d: &Details) {
+        let v = d.video.clone();
         ui.add_space(12.0);
         ui.label(RichText::new(&v.title).size(22.0).strong());
         ui.add_space(4.0);
@@ -762,7 +903,10 @@ impl App {
                 }
             }
             if let Some(s) = jump {
-                self.play(&v, false, Some(s), ctx);
+                match self.now.as_ref().filter(|n| n.id() == v.id) {
+                    Some(n) => n.seek_to(s),
+                    None => self.play(&v, false, Some(s), ctx),
+                }
             }
         }
         if !d.description.trim().is_empty() {
@@ -903,6 +1047,23 @@ impl eframe::App for App {
         theme::apply(&ctx, dark, accent);
         self.pal = theme::palette_for(dark, accent);
         let pal = self.pal.clone();
+        if self.now.as_ref().is_some_and(|n| n.ended()) {
+            self.stop_now();
+            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+        }
+        self.keys(&ctx);
+
+        // full screen: only the picture and its controls
+        if self.full && self.now.is_some() {
+            let thumb = self.now.as_ref().and_then(|n| n.details.video.thumbnail.clone());
+            egui::CentralPanel::default().frame(egui::Frame::new().fill(Color32::BLACK)).show(ui, |ui| {
+                let tex = self.tex(ui, thumb.as_deref());
+                let rect = ui.max_rect();
+                let ask = self.now.as_mut().map(|n| n.big(ui, rect, tex.as_ref(), &pal, true)).unwrap_or(watch::Ask::Nothing);
+                self.handle(ask, &ctx);
+            });
+            return;
+        }
 
         egui::Panel::left("sections")
             .default_size(220.0)
@@ -1006,7 +1167,21 @@ impl eframe::App for App {
                 }
             });
         });
+        // the small player in the corner while browsing elsewhere
+        if let Some(id) = self.now.as_ref().map(|n| n.id().to_string()) {
+            if self.page != Page::Video(id) {
+                let thumb_url = self.now.as_ref().and_then(|n| n.details.video.thumbnail.clone());
+                let tex = self.tex(ui, thumb_url.as_deref());
+                let ask = self.now.as_mut().map(|n| n.mini(&ctx, &pal, tex.as_ref())).unwrap_or(watch::Ask::Nothing);
+                self.handle(ask, &ctx);
+            }
+        }
         chrome::outline(&ctx, &pal);
+    }
+
+    fn on_exit(&mut self) {
+        // remember where it stopped
+        self.stop_now();
     }
 }
 

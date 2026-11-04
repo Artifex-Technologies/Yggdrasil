@@ -5,15 +5,25 @@ edition = "2021"
 description = "VLC in Yggdrasil's look: libVLC plays, Yggdrasil's window"
 license = "MPL-2.0"
 
+[lib]
+name = "yggdrasil_player"
+path = "src/lib.rs"
+
 [[bin]]
 name = "yggdrasil-player"
 path = "src/main.rs"
+required-features = ["app"]
+
+# the window needs these; the library (src/vlc.rs, for Huginn) needs none of them
+[features]
+default = ["app"]
+app = ["dep:yggdrasil-conf", "dep:yggdrasil-ui", "dep:eframe", "dep:zbus"]
 
 [dependencies]
-yggdrasil-conf = { path = "../yggdrasil-conf" }
-yggdrasil-ui = { path = "../yggdrasil-ui" }
-eframe = "0.36.2"
-zbus = "5"
+yggdrasil-conf = { path = "../yggdrasil-conf", optional = true }
+yggdrasil-ui = { path = "../yggdrasil-ui", optional = true }
+eframe = { version = "0.36.2", optional = true }
+zbus = { version = "5", optional = true }
 
 [profile.release]
 opt-level = 2

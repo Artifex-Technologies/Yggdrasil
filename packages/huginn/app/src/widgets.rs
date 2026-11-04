@@ -103,9 +103,17 @@ pub fn byline(v: &Video, with_channel: bool) -> String {
     parts.join(" · ")
 }
 
-/// A video card `width` wide: the picture (16:9), the length on it, two lines of title, the byline. Returns the response (click =
-/// open the video).
-pub fn video_card(ui: &mut egui::Ui, pal: &Palette, v: &Video, tex: Option<&Tex>, width: f32, with_channel: bool) -> egui::Response {
+/// What a click on a card meant: the video, or its channel's name (which leads to the channel).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CardClick {
+    None,
+    Video,
+    Channel,
+}
+
+/// A video card `width` wide: the picture (16:9), the length on it, two lines of title, the byline. The channel's name in the byline
+/// is a link of its own.
+pub fn video_card(ui: &mut egui::Ui, pal: &Palette, v: &Video, tex: Option<&Tex>, width: f32, with_channel: bool) -> CardClick {
     let pic_h = (width * 9.0 / 16.0).round();
     let (rect, resp) = ui.allocate_exact_size(vec2(width, pic_h + 66.0), Sense::click());
     let pic = Rect::from_min_size(rect.min, vec2(width, pic_h));
@@ -124,9 +132,35 @@ pub fn video_card(ui: &mut egui::Ui, pal: &Palette, v: &Video, tex: Option<&Tex>
     }
     let title = wrapped(ui, &v.title, 14.5, width - 4.0, 2, pal.text, true);
     ui.painter().galley(pic.left_bottom() + vec2(2.0, 8.0), title.clone(), pal.text);
-    let by = wrapped(ui, &byline(v, with_channel), 12.0, width - 4.0, 1, pal.dim, false);
-    ui.painter().galley(pic.left_bottom() + vec2(2.0, 12.0 + title.size().y), by, pal.dim);
-    resp
+    let at = pic.left_bottom() + vec2(2.0, 12.0 + title.size().y);
+    // the channel's name first, as a link (when the card shows it and the channel is known)
+    let mut channel_rect = None;
+    let mut x = at.x;
+    if with_channel && !v.channel.is_empty() && !v.channel_id.is_empty() {
+        let hover = ui.input(|i| i.pointer.hover_pos());
+        let name = wrapped(ui, &v.channel, 12.0, (width - 4.0) * 0.6, 1, pal.dim, false);
+        let r = Rect::from_min_size(at, name.size());
+        let over = hover.is_some_and(|h| r.expand(2.0).contains(h)) && resp.hovered();
+        let ink = if over { pal.accent } else { pal.dim };
+        let name = wrapped(ui, &v.channel, 12.0, (width - 4.0) * 0.6, 1, ink, false);
+        ui.painter().galley(at, name, ink);
+        if over {
+            ui.painter().hline(r.left()..=r.right(), r.bottom(), Stroke::new(1.0, pal.accent));
+        }
+        channel_rect = Some(r);
+        x = r.right();
+    }
+    let rest = byline(v, false);
+    let rest = if channel_rect.is_some() && !rest.is_empty() { format!(" · {rest}") } else if channel_rect.is_some() { String::new() } else { byline(v, with_channel) };
+    if !rest.is_empty() {
+        let by = wrapped(ui, &rest, 12.0, (width - 4.0 - (x - at.x)).max(20.0), 1, pal.dim, false);
+        ui.painter().galley(pos2(x, at.y), by, pal.dim);
+    }
+    if resp.clicked() {
+        let on_name = channel_rect.zip(resp.interact_pointer_pos()).is_some_and(|(r, p)| r.expand(2.0).contains(p));
+        return if on_name { CardClick::Channel } else { CardClick::Video };
+    }
+    CardClick::None
 }
 
 /// A rounded pill button: filled with the accent colour for the main action, quiet for the others.

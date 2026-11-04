@@ -40,6 +40,12 @@ pub struct Streams {
     pub video: Option<String>,
     pub audio: Option<String>,
     pub height: Option<u32>,
+    /// The User-Agent and Referer yt-dlp reports for these streams: YouTube issued them for that client, and a player that asks with
+    /// other headers can be refused (403). Every yt-dlp front end passes them on (mpv does).
+    #[serde(default)]
+    pub user_agent: Option<String>,
+    #[serde(default)]
+    pub referer: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

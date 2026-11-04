@@ -1474,6 +1474,7 @@ dependencies = [
  "huginn-core",
  "image",
  "yggdrasil-conf",
+ "yggdrasil-player",
  "yggdrasil-ui",
 ]
 
@@ -4351,6 +4352,10 @@ version = "0.1.0"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "yggdrasil-player"
+version = "0.1.0"
 
 [[package]]
 name = "yggdrasil-ui"

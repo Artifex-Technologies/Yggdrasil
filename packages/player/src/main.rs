@@ -2,13 +2,13 @@
 //! look as Minos and Settings).
 //!
 //!   yggdrasil-player [FILE]
-//!   yggdrasil-player [--title TEXT] [--audio URL] [--start SECONDS] [--mute] URL     a stream (https:// only), as Huginn plays videos: the
+//!   yggdrasil-player [--title TEXT] [--audio URL] [--start SECONDS] [--mute] [--user-agent UA] [--referrer URL] URL     a stream (https:// only), as Huginn plays videos: the
 //!                                                                          picture's address, the sound's when it comes apart
 //!
 //! Keys: Space or K play/pause, Left/Right (J/L) ten seconds back/on, Up/Down volume, M mute, F or a double-click full screen,
 //! Esc leaves full screen, O opens a file. A file can also be dropped on the window.
 
-mod vlc;
+use yggdrasil_player::vlc;
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
@@ -121,7 +121,7 @@ fn pick_video() -> Option<PathBuf> {
 /// What to play when the window opens: a file, or a stream.
 enum Start {
     File(PathBuf),
-    Stream { url: String, audio: Option<String>, title: String, start: Option<f64>, muted: bool },
+    Stream { url: String, audio: Option<String>, title: String, start: Option<f64>, muted: bool, user_agent: Option<String>, referer: Option<String> },
 }
 
 /// The command line: `[--title T] [--audio URL] [--start S] URL` for a stream, otherwise a file (or a file:// URI).
@@ -130,6 +130,8 @@ fn parse_args(args: Vec<std::ffi::OsString>) -> Option<Start> {
     let mut title = None;
     let mut start = None;
     let mut muted = false;
+    let mut user_agent = None;
+    let mut referer = None;
     let mut rest = vec![];
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
@@ -138,6 +140,8 @@ fn parse_args(args: Vec<std::ffi::OsString>) -> Option<Start> {
             Some("--title") => title = it.next().and_then(|x| x.into_string().ok()),
             Some("--start") => start = it.next().and_then(|x| x.into_string().ok()).and_then(|x| x.parse::<f64>().ok()),
             Some("--mute") => muted = true,
+            Some("--user-agent") => user_agent = it.next().and_then(|x| x.into_string().ok()),
+            Some("--referrer") => referer = it.next().and_then(|x| x.into_string().ok()),
             Some("--") => rest.extend(it.by_ref()),
             _ => rest.push(a),
         }
@@ -147,7 +151,7 @@ fn parse_args(args: Vec<std::ffi::OsString>) -> Option<Start> {
     if text.starts_with("https://") {
         let audio = audio.filter(|a: &String| a.starts_with("https://"));
         let title: String = title.unwrap_or_else(|| "Stream".into()).chars().filter(|c| !c.is_control()).take(200).collect();
-        return Some(Start::Stream { url: text, audio, title, start, muted });
+        return Some(Start::Stream { url: text, audio, title, start, muted, user_agent, referer });
     }
     let p = PathBuf::from(first);
     Some(Start::File(if text.starts_with("file://") { path_from_uri(&text).unwrap_or(p) } else { p }))
@@ -158,19 +162,19 @@ impl App {
         let mut app = App { now: None, error: None, picking: None, last_motion: Instant::now(), last_pointer: None, fullscreen: false, volume: 100, muted: false, scrub: None };
         match start {
             Some(Start::File(f)) => app.open(f, ctx),
-            Some(Start::Stream { url, audio, title, start, muted }) => {
+            Some(Start::Stream { url, audio, title, start, muted, user_agent, referer }) => {
                 app.muted = muted;
-                app.open_stream(&url, audio.as_deref(), title, start, ctx)
+                app.open_stream(&url, audio.as_deref(), title, start, user_agent.as_deref(), referer.as_deref(), ctx)
             }
             None => {}
         }
         app
     }
 
-    fn open_stream(&mut self, url: &str, audio: Option<&str>, title: String, start: Option<f64>, ctx: &egui::Context) {
+    fn open_stream(&mut self, url: &str, audio: Option<&str>, title: String, start: Option<f64>, user_agent: Option<&str>, referer: Option<&str>, ctx: &egui::Context) {
         self.close();
         let c = ctx.clone();
-        match vlc::Player::open_stream(url, audio, start, Box::new(move || c.request_repaint())) {
+        match vlc::Player::open_stream_with(url, audio, start, user_agent, referer, Box::new(move || c.request_repaint())) {
             Ok(p) => {
                 let mut now = Playing { title, vlc: p, tex: None, inhibit: None };
                 now.vlc.play();

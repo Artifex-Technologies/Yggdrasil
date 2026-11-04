@@ -158,8 +158,31 @@ impl Player {
     /// Opens a stream (an https:// address), with its sound as a separate stream when the site sends them apart (YouTube above
     /// 720p), from `start` seconds. Used by Huginn.
     pub fn open_stream(url: &str, audio: Option<&str>, start: Option<f64>, wake: Box<dyn Fn() + Send + Sync>) -> Result<Player, String> {
+        Self::open_stream_with(url, audio, start, None, None, wake)
+    }
+
+    /// The same, asking with the User-Agent and Referer the site issued the streams for (yt-dlp reports them).
+    pub fn open_stream_with(url: &str, audio: Option<&str>, start: Option<f64>, user_agent: Option<&str>, referer: Option<&str>, wake: Box<dyn Fn() + Send + Sync>) -> Result<Player, String> {
+        // YouTube's streams go through the relay, which asks for them in pieces as YouTube's players do (see relay.rs)
+        let url = crate::relay::local(url);
+        let audio = audio.map(crate::relay::local);
+        let audio = audio.as_deref();
         let curl = CString::new(url).map_err(|_| "the address has a zero byte".to_string())?;
-        Self::with_media(wake, |inst| unsafe { libvlc_media_new_location(inst, curl.as_ptr()) }, audio, start)
+        let mut opts = vec![];
+        for (k, v) in [("http-user-agent", user_agent), ("http-referrer", referer)] {
+            if let Some(v) = v.filter(|v| !v.contains(['\n', '\r', '\0'])) {
+                opts.push(CString::new(format!(":{k}={v}")).map_err(|_| "a header has a zero byte".to_string())?);
+            }
+        }
+        Self::with_media(wake, |inst| unsafe {
+            let m = libvlc_media_new_location(inst, curl.as_ptr());
+            if !m.is_null() {
+                for o in &opts {
+                    libvlc_media_add_option(m, o.as_ptr());
+                }
+            }
+            m
+        }, audio, start)
     }
 
     fn with_media(wake: Box<dyn Fn() + Send + Sync>, media: impl FnOnce(*mut libvlc_instance_t) -> *mut libvlc_media_t, audio: Option<&str>, start: Option<f64>) -> Result<Player, String> {

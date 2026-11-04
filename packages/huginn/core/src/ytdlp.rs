@@ -173,6 +173,11 @@ pub fn parse_channel(v: &Value, id: &str) -> (Channel, Vec<Video>) {
 pub fn parse_details(v: &Value) -> Details {
     let video = parse_video(v).unwrap_or_default();
     let mut streams = Streams::default();
+    // the headers the streams were issued with (the same for the picture and the sound)
+    let header = |f: &Value, k: &str| f.get("http_headers").and_then(|h| h.get(k)).and_then(Value::as_str).filter(|x| !x.is_empty() && !x.contains(['\n', '\r'])).map(str::to_string);
+    let first = v.get("requested_formats").and_then(Value::as_array).and_then(|a| a.first()).unwrap_or(v);
+    streams.user_agent = header(first, "User-Agent");
+    streams.referer = header(first, "Referer");
     if let Some(parts) = v.get("requested_formats").and_then(Value::as_array) {
         for f in parts {
             let url = s(f, "url");
@@ -220,10 +225,10 @@ mod tests {
         let v: Value = serde_json::from_str(r#"{"id":"3lJ5oT_JviI","title":"T","channel":"C","channel_id":"UC0vBXGSyV14uvJ4hECDOl0Q",
             "description":"About","like_count":25193,"upload_date":"20260514",
             "chapters":[{"start_time":0.0,"title":"Intro"},{"start_time":61.5,"title":"Part two"}],
-            "requested_formats":[{"format_id":"137","vcodec":"avc1.640028","acodec":"none","height":1080,"url":"https://v"},
+            "requested_formats":[{"format_id":"137","vcodec":"avc1.640028","acodec":"none","height":1080,"url":"https://v","http_headers":{"User-Agent":"Mozilla/5.0 (TV)","Accept":"*/*"}},
                                  {"format_id":"140","vcodec":"none","acodec":"mp4a.40.2","url":"https://a"}]}"#).unwrap();
         let d = parse_details(&v);
-        assert_eq!(d.streams, Streams { video: Some("https://v".into()), audio: Some("https://a".into()), height: Some(1080) });
+        assert_eq!(d.streams, Streams { video: Some("https://v".into()), audio: Some("https://a".into()), height: Some(1080), user_agent: Some("Mozilla/5.0 (TV)".into()), referer: None });
         assert_eq!(d.chapters[1].title, "Part two");
         assert_eq!(d.video.published.as_deref(), Some("20260514"));
     }
