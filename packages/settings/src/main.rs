@@ -72,6 +72,13 @@ enum SecSub {
     Distress,
 }
 
+/// The pages inside Keyboard.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum KeySub {
+    Main,
+    Shortcuts,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AppSub {
     Main,
@@ -223,6 +230,7 @@ struct App {
     app_tab: usize,
     /// Which part of Appearance is open.
     app_sub: AppSub,
+    key_sub: KeySub,
     /// The lock screen previews are being (or have been) drawn for this visit to the page.
     lock_previews_started: bool,
     /// Appearance > Boot screen: what `bootscreen get` said (and when), the picture being chosen, and a change under way.
@@ -336,6 +344,8 @@ impl App {
                 "boot" => AppSub::Boot,
                 _ => AppSub::Main,
             },
+            // `yggdrasil-settings keyboard:shortcuts`, and the old `yggdrasil-settings shortcuts`, open the list itself
+            key_sub: if start_sub() == "shortcuts" || std::env::args().nth(1).is_some_and(|a| a.eq_ignore_ascii_case("shortcuts")) { KeySub::Shortcuts } else { KeySub::Main },
             lock_previews_started: false,
             boot_info: None,
             boot_pic: String::new(),
@@ -634,6 +644,9 @@ impl eframe::App for App {
                         if resp.clicked() && p == Page::Appearance {
                             self.app_sub = AppSub::Main;
                         }
+                        if resp.clicked() && p == Page::Keyboard {
+                            self.key_sub = KeySub::Main;
+                        }
                         if resp.clicked() {
                             self.distress.close();
                         }
@@ -693,7 +706,7 @@ impl eframe::App for App {
                         Page::Printers => self.page_printers(ui, &pal, &ctx),
                         Page::DateTime => self.page_time(ui, &pal, &ctx),
                         Page::Apps => self.page_apps(ui, &pal, &ctx),
-                        Page::Keyboard => page_shortcuts(ui, &pal),
+                        Page::Keyboard => self.page_keyboard(ui, &pal),
                         Page::Developer => self.page_developer(ui, &pal, &ctx),
                     }
                 });
@@ -3488,7 +3501,30 @@ fn color_picker_section(ui: &mut egui::Ui, pal: &Palette) {
     });
 }
 
-/// The tools that live on a shortcut key: under the shortcuts list, not above it.
+impl App {
+    /// Keyboard: a short page that leads to the shortcut list (its own page) and holds the tools that live on a key.
+    fn page_keyboard(&mut self, ui: &mut egui::Ui, pal: &Palette) {
+        if self.key_sub == KeySub::Shortcuts {
+            ui.horizontal(|ui| {
+                if ui::quiet(ui, pal, "\u{2039}  Keyboard").clicked() {
+                    self.key_sub = KeySub::Main;
+                }
+                ui.label(RichText::new("Shortcuts").size(18.0).strong());
+            });
+            ui.add_space(6.0);
+            page_shortcuts(ui, pal);
+            return;
+        }
+        ui::group(ui, pal, None, |ui| {
+            if ui::nav_row(ui, pal, true, "Shortcuts", Some("Every key combination, grouped, with a search (Win + / shows them on a card)"), |_| {}) {
+                self.key_sub = KeySub::Shortcuts;
+            }
+        });
+        shortcut_tools(ui, pal);
+    }
+}
+
+/// The tools that live on a shortcut key (on the Keyboard page, not in the shortcut list).
 fn shortcut_tools(ui: &mut egui::Ui, pal: &Palette) {
     ui.add_space(8.0);
     // Find my mouse (the panel; ~/.config/yggdrasil/tools.conf)
@@ -3540,7 +3576,6 @@ fn page_shortcuts(ui: &mut egui::Ui, pal: &Palette) {
         if ui::quiet(ui, pal, "Add your own shortcuts…").on_hover_text("Opens your own settings file for the session (~/.config/yggdrasil/hyprland.lua)").clicked() {
             open_own_shortcuts();
         }
-        shortcut_tools(ui, pal);
         return;
     }
     let groups: [(&str, &[(&str, &str)]); 3] = [
@@ -3572,7 +3607,6 @@ fn page_shortcuts(ui: &mut egui::Ui, pal: &Palette) {
             }
         });
     }
-    shortcut_tools(ui, pal);
 }
 
 fn main() -> eframe::Result {
