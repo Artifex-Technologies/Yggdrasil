@@ -1,0 +1,35 @@
+# Yggdrasil's spelling library and the user service that keeps every app's word list in step: packages/spell.
+pkgname=yggdrasil-spell
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Yggdrasil spelling: Hunspell dictionaries through a Rust engine, your languages, one word list shared by your apps"
+arch=('x86_64')
+url="https://github.com/Artifex-Technologies/Yggdrasil"
+license=('MPL-2.0')
+depends=('gcc-libs' 'glibc')  # glibc's iconv converts old dictionaries
+optdepends=('hunspell-en_us: US English (other languages: Settings > Keyboard > Spelling and languages)'
+            'enchant: GTK apps check spelling through it, with your word list'
+            'hunspell: enchant'"'"'s Hunspell provider, which reads the same dictionaries')
+makedepends=('cargo')
+options=('!lto')
+
+_src="$startdir/../../spell"
+
+build() {
+  cd "$_src"
+  cargo build --release --locked --target-dir "$srcdir/target"
+}
+
+check() {
+  cd "$_src"
+  cargo test --release --locked --target-dir "$srcdir/target"
+}
+
+package() {
+  install -Dm755 "$srcdir/target/release/yggdrasil-spell" "$pkgdir/usr/bin/yggdrasil-spell"
+  install -Dm644 "$_src/yggdrasil-spell.service" "$pkgdir/usr/lib/systemd/user/yggdrasil-spell.service"
+  # on for every user (it only merges word lists; spell checking itself is switched in Settings)
+  install -dm755 "$pkgdir/usr/lib/systemd/user/default.target.wants"
+  ln -s ../yggdrasil-spell.service "$pkgdir/usr/lib/systemd/user/default.target.wants/yggdrasil-spell.service"
+  install -Dm644 "$_src/README.md" "$pkgdir/usr/share/doc/yggdrasil-spell/README.md"
+}

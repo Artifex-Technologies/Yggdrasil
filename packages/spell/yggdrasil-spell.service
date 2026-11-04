@@ -1,0 +1,21 @@
+[Unit]
+Description=Yggdrasil spelling: keeps every app's word list in step with yours (Settings > Keyboard > Spelling and languages)
+Documentation=file:///usr/share/doc/yggdrasil-spell/README.md
+
+[Service]
+ExecStart=/usr/bin/yggdrasil-spell watch
+Restart=on-failure
+RestartSec=10
+# it reads the dictionaries and writes only word lists: the apps' (under ~/.config and ~/.mozilla) and its own
+ProtectSystem=strict
+ReadWritePaths=%h/.config -%h/.mozilla %h/.local/share/yggdrasil
+PrivateTmp=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+NoNewPrivileges=yes
+LockPersonality=yes
+MemoryMax=64M
+Nice=10
+
+[Install]
+WantedBy=default.target

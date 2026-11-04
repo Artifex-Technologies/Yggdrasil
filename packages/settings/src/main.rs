@@ -16,6 +16,7 @@ mod icons;
 mod readout;
 mod tune;
 mod restore;
+mod spelling;
 mod distress;
 mod security;
 mod workspaces;
@@ -77,6 +78,7 @@ enum SecSub {
 enum KeySub {
     Main,
     Shortcuts,
+    Spelling,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -99,7 +101,7 @@ const PAGES: [(Page, &str, Icon, &str, &str); 18] = [
     (Page::Bluetooth, "Bluetooth", Icon::Bluetooth, "Connections", "headphones controller pair"),
     (Page::Displays, "Displays", Icon::Display, "Devices", "monitor screen resolution refresh night light scale"),
     (Page::Sound, "Sound", Icon::Sound, "Devices", "audio volume speaker microphone output input"),
-    (Page::Keyboard, "Keyboard", Icon::Keyboard, "Devices", "shortcuts keys hotkeys typing find my mouse color picker"),
+    (Page::Keyboard, "Keyboard", Icon::Keyboard, "Devices", "shortcuts keys hotkeys typing spelling spell check languages dictionary words find my mouse color picker"),
     (Page::Printers, "Printers", Icon::Printer, "Devices", "print scanner"),
     (Page::Power, "Power", Icon::Power, "Devices", "battery sleep suspend graphics card gpu processor cpu fans"),
     (Page::Appearance, "Appearance", Icon::Appearance, "Personal", "theme dark light accent wallpaper icons top bar notifications lock screen workspaces boot"),
@@ -140,6 +142,8 @@ enum Msg {
     Printers(printers::State),
     AppSizes(std::collections::HashMap<String, u64>),
     DirSize(std::path::PathBuf, u64),
+    /// A language was downloaded or removed (Keyboard > Spelling and languages), or why not.
+    Spell(Result<String, String>),
     Done(Page, Result<(), String>),
 }
 
@@ -231,6 +235,7 @@ struct App {
     /// Which part of Appearance is open.
     app_sub: AppSub,
     key_sub: KeySub,
+    spell: spelling::State,
     /// The lock screen previews are being (or have been) drawn for this visit to the page.
     lock_previews_started: bool,
     /// Appearance > Boot screen: what `bootscreen get` said (and when), the picture being chosen, and a change under way.
@@ -345,7 +350,14 @@ impl App {
                 _ => AppSub::Main,
             },
             // `yggdrasil-settings keyboard:shortcuts`, and the old `yggdrasil-settings shortcuts`, open the list itself
-            key_sub: if start_sub() == "shortcuts" || std::env::args().nth(1).is_some_and(|a| a.eq_ignore_ascii_case("shortcuts")) { KeySub::Shortcuts } else { KeySub::Main },
+            key_sub: if start_sub() == "shortcuts" || std::env::args().nth(1).is_some_and(|a| a.eq_ignore_ascii_case("shortcuts")) {
+                KeySub::Shortcuts
+            } else if start_sub() == "spelling" {
+                KeySub::Spelling
+            } else {
+                KeySub::Main
+            },
+            spell: Default::default(),
             lock_previews_started: false,
             boot_info: None,
             boot_pic: String::new(),
@@ -509,6 +521,15 @@ impl App {
                 }
                 Msg::DirSize(p, n) => {
                     self.dir_sizes.insert(p, n);
+                    continue;
+                }
+                Msg::Spell(r) => {
+                    self.spell.busy = None;
+                    self.spell.note = match r {
+                        Ok(s) => s,
+                        Err(e) => e,
+                    };
+                    self.spell.reload();
                     continue;
                 }
                 Msg::Done(page, r) => {
@@ -706,7 +727,7 @@ impl eframe::App for App {
                         Page::Printers => self.page_printers(ui, &pal, &ctx),
                         Page::DateTime => self.page_time(ui, &pal, &ctx),
                         Page::Apps => self.page_apps(ui, &pal, &ctx),
-                        Page::Keyboard => self.page_keyboard(ui, &pal),
+                        Page::Keyboard => self.page_keyboard(ui, &pal, &ctx),
                         Page::Developer => self.page_developer(ui, &pal, &ctx),
                     }
                 });
@@ -3503,21 +3524,29 @@ fn color_picker_section(ui: &mut egui::Ui, pal: &Palette) {
 
 impl App {
     /// Keyboard: a short page that leads to the shortcut list (its own page) and holds the tools that live on a key.
-    fn page_keyboard(&mut self, ui: &mut egui::Ui, pal: &Palette) {
-        if self.key_sub == KeySub::Shortcuts {
+    fn page_keyboard(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
+        if self.key_sub != KeySub::Main {
             ui.horizontal(|ui| {
                 if ui::quiet(ui, pal, "\u{2039}  Keyboard").clicked() {
                     self.key_sub = KeySub::Main;
                 }
-                ui.label(RichText::new("Shortcuts").size(18.0).strong());
+                ui.label(RichText::new(if self.key_sub == KeySub::Shortcuts { "Shortcuts" } else { "Spelling and languages" }).size(18.0).strong());
             });
             ui.add_space(6.0);
-            page_shortcuts(ui, pal);
+            if self.key_sub == KeySub::Shortcuts {
+                page_shortcuts(ui, pal);
+            } else {
+                self.page_spelling(ui, pal, ctx);
+            }
             return;
         }
         ui::group(ui, pal, None, |ui| {
             if ui::nav_row(ui, pal, true, "Shortcuts", Some("Every key combination, grouped, with a search (Win + / shows them on a card)"), |_| {}) {
                 self.key_sub = KeySub::Shortcuts;
+            }
+            if ui::nav_row(ui, pal, false, "Spelling and languages", Some("The languages you type in, downloading more, and your own words shared by every app"), |_| {}) {
+                self.key_sub = KeySub::Spelling;
+                self.spell.reload();
             }
         });
         shortcut_tools(ui, pal);
