@@ -64,6 +64,16 @@ pub struct App {
     /// None until then, when every import fails and programs fall back to shared memory).
     pub dmabuf_state: smithay::wayland::dmabuf::DmabufState,
     pub dmabuf_import: Option<Box<dyn FnMut(&smithay::backend::allocator::dmabuf::Dmabuf) -> bool>>,
+    /// Surfaces that keep the screen awake (idle-inhibit: a video, a game): while any is alive, idle does not start.
+    pub inhibitors: Vec<WlSurface>,
+    pub idle_inhibit_state: smithay::wayland::idle_inhibit::IdleInhibitManagerState,
+    pub primary_selection_state: smithay::wayland::selection::primary_selection::PrimarySelectionState,
+    pub fractional_scale_state: smithay::wayland::fractional_scale::FractionalScaleManagerState,
+    pub activation_state: smithay::wayland::xdg_activation::XdgActivationState,
+    pub cursor_shape_state: smithay::wayland::cursor_shape::CursorShapeManagerState,
+    pub tablet_state: smithay::wayland::tablet_manager::TabletManagerState,
+    /// What the pointer should look like, for the backend to show (nested: the host window's cursor).
+    pub cursor_hook: Option<Box<dyn FnMut(&CursorImageStatus)>>,
     /// Wakes the drawing: the screen is drawn only when something changed (a program committed a picture, input, a setting).
     ping: smithay::reexports::calloop::ping::Ping,
     pub display_handle: DisplayHandle,
@@ -166,6 +176,14 @@ impl App {
             shm_state: ShmState::new::<Self>(dh, vec![]),
             dmabuf_state: smithay::wayland::dmabuf::DmabufState::new(),
             dmabuf_import: None,
+            inhibitors: vec![],
+            idle_inhibit_state: smithay::wayland::idle_inhibit::IdleInhibitManagerState::new::<Self>(dh),
+            primary_selection_state: smithay::wayland::selection::primary_selection::PrimarySelectionState::new::<Self>(dh),
+            fractional_scale_state: smithay::wayland::fractional_scale::FractionalScaleManagerState::new::<Self>(dh),
+            activation_state: smithay::wayland::xdg_activation::XdgActivationState::new::<Self>(dh),
+            cursor_shape_state: smithay::wayland::cursor_shape::CursorShapeManagerState::new::<Self>(dh),
+            tablet_state: smithay::wayland::tablet_manager::TabletManagerState::new::<Self>(dh),
+            cursor_hook: None,
             seat_state,
             data_device_state: DataDeviceState::new::<Self>(dh),
             output_manager_state: OutputManagerState::new_with_xdg_output::<Self>(dh),
@@ -1095,6 +1113,62 @@ impl smithay::wayland::dmabuf::DmabufHandler for App {
 }
 smithay::delegate_dmabuf!(App);
 
+// Keeping the screen awake (idle-inhibit): a video player or game asks while its surface shows; the idle timer stops while any asks.
+impl smithay::wayland::idle_inhibit::IdleInhibitHandler for App {
+    fn inhibit(&mut self, surface: WlSurface) {
+        if !self.inhibitors.contains(&surface) {
+            self.inhibitors.push(surface);
+        }
+        self.idle_state.set_is_inhibited(true);
+    }
+    fn uninhibit(&mut self, surface: WlSurface) {
+        self.inhibitors.retain(|s| s != &surface);
+        self.inhibitors.retain(|s| s.is_alive());
+        self.idle_state.set_is_inhibited(!self.inhibitors.is_empty());
+    }
+}
+smithay::delegate_idle_inhibit!(App);
+
+// Middle-click paste (primary selection), beside the ordinary clipboard.
+impl smithay::wayland::selection::primary_selection::PrimarySelectionHandler for App {
+    fn primary_selection_state(&self) -> &smithay::wayland::selection::primary_selection::PrimarySelectionState {
+        &self.primary_selection_state
+    }
+}
+smithay::delegate_primary_selection!(App);
+
+// Fractional scaling: programs are told the output's scale so they draw sharp at 125 % or 150 % (1.0 until outputs get a scale).
+impl smithay::wayland::fractional_scale::FractionalScaleHandler for App {
+    fn new_fractional_scale(&mut self, surface: WlSurface) {
+        let scale = self.space.outputs().next().map(|o| o.current_scale().fractional_scale()).unwrap_or(1.0);
+        smithay::wayland::compositor::with_states(&surface, |states| {
+            smithay::wayland::fractional_scale::with_fractional_scale(states, |fs| fs.set_preferred_scale(scale));
+        });
+    }
+}
+smithay::delegate_fractional_scale!(App);
+
+// Focus requests between programs (xdg-activation): a program may bring a window forward only with a token made in answer to
+// the person's own input in the last 10 seconds (a click on a link, a launcher), so nothing can steal the keyboard on its own.
+impl smithay::wayland::xdg_activation::XdgActivationHandler for App {
+    fn activation_state(&mut self) -> &mut smithay::wayland::xdg_activation::XdgActivationState {
+        &mut self.activation_state
+    }
+    fn request_activation(&mut self, token: smithay::wayland::xdg_activation::XdgActivationToken, data: smithay::wayland::xdg_activation::XdgActivationTokenData, surface: WlSurface) {
+        let fresh = data.timestamp.elapsed() < std::time::Duration::from_secs(10);
+        if fresh && data.serial.is_some() {
+            self.activate_surface(&surface);
+        }
+        self.activation_state.remove_token(&token);
+    }
+}
+smithay::delegate_xdg_activation!(App);
+
+// Cursor shapes by name (cursor-shape-v1; it needs the tablet protocol's seat part, which costs nothing without a tablet).
+impl smithay::wayland::tablet_manager::TabletSeatHandler for App {}
+smithay::delegate_cursor_shape!(App);
+smithay::delegate_tablet_manager!(App);
+
 impl SeatHandler for App {
     type KeyboardFocus = WlSurface;
     type PointerFocus = WlSurface;
@@ -1103,7 +1177,11 @@ impl SeatHandler for App {
         &mut self.seat_state
     }
     fn focus_changed(&mut self, _: &Seat<Self>, _: Option<&WlSurface>) {}
-    fn cursor_image(&mut self, _: &Seat<Self>, _: CursorImageStatus) {}
+    fn cursor_image(&mut self, _: &Seat<Self>, image: CursorImageStatus) {
+        if let Some(f) = self.cursor_hook.as_mut() {
+            f(&image);
+        }
+    }
 }
 delegate_seat!(App);
 

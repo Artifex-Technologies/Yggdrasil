@@ -105,6 +105,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut app = App::new(&dh, output.clone(), event_loop.handle(), event_loop.get_signal(), ping.clone());
     gpu_buffers(&mut app, &dh, &backend);
+    // the pointer's look follows what the program under it asks for (nested: the host window's cursor)
+    let for_cursor = backend.clone();
+    app.cursor_hook = Some(Box::new(move |image| {
+        use smithay::input::pointer::CursorImageStatus;
+        let b = for_cursor.borrow();
+        match image {
+            CursorImageStatus::Hidden => b.window().set_cursor_visible(false),
+            CursorImageStatus::Named(icon) => {
+                b.window().set_cursor_visible(true);
+                b.window().set_cursor(*icon);
+            }
+            // a picture of the program's own: shown as the default arrow until the compositor draws pointers itself
+            CursorImageStatus::Surface(_) => {
+                b.window().set_cursor_visible(true);
+                b.window().set_cursor(smithay::input::pointer::CursorIcon::Default);
+            }
+        }
+    }));
     // a wake-up asks the window for a new frame; nothing is drawn while nothing changes
     let for_ping = backend.clone();
     event_loop.handle().insert_source(ping_source, move |_, _, _| for_ping.borrow().window().request_redraw())?;
