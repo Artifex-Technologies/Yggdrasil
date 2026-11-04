@@ -42,7 +42,9 @@ use crate::draw::Fonts;
 use smithay::backend::renderer::element::memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement};
 use smithay::backend::renderer::{ImportAll, ImportMem};
 use smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode as DecoMode;
-use smithay::utils::Scale;
+use smithay::utils::{IsAlive, Scale};
+use smithay::wayland::seat::WaylandFocus;
+use smithay::xwayland::X11Surface;
 use smithay::wayland::shell::xdg::decoration::{XdgDecorationHandler, XdgDecorationState};
 use smithay::delegate_xdg_decoration;
 use std::collections::HashMap;
@@ -143,6 +145,8 @@ pub struct App {
     conf_times: (Option<std::time::SystemTime>, Option<std::time::SystemTime>),
     /// Windows on other workspaces: where they were, and which workspace they are on.
     parked: Vec<(Window, usize, Point<i32, Logical>)>,
+    /// X11 windows snapped to a half of the screen (a Wayland window keeps that in its xdg state; X11 has no such state).
+    x11_snapped: Vec<WlSurface>,
 }
 
 /// How many workspaces there are.
@@ -155,6 +159,115 @@ pub struct ClientState {
 impl ClientData for ClientState {
     fn initialized(&self, _: ClientId) {}
     fn disconnected(&self, _: ClientId, _: DisconnectReason) {}
+}
+
+/// Who has the keyboard: a Wayland surface (a window, a panel, the locker), or an X11 window. An X11 window needs more than its
+/// surface: the X server must also be told which of its windows has the focus, or XWayland passes the keys to none of them
+/// (Smithay's X11Surface does that, then hands the keys to its surface).
+#[derive(Debug, Clone, PartialEq)]
+pub enum KbFocus {
+    Wl(WlSurface),
+    X11(X11Surface),
+}
+
+impl KbFocus {
+    /// The surface that receives the keys (an X11 window's own surface).
+    pub fn surface(&self) -> Option<WlSurface> {
+        match self {
+            KbFocus::Wl(s) => Some(s.clone()),
+            KbFocus::X11(x) => x.wl_surface(),
+        }
+    }
+}
+
+impl IsAlive for KbFocus {
+    fn alive(&self) -> bool {
+        match self {
+            KbFocus::Wl(s) => s.alive(),
+            KbFocus::X11(x) => x.alive(),
+        }
+    }
+}
+
+impl WaylandFocus for KbFocus {
+    fn wl_surface(&self) -> Option<std::borrow::Cow<'_, WlSurface>> {
+        match self {
+            KbFocus::Wl(s) => Some(std::borrow::Cow::Borrowed(s)),
+            KbFocus::X11(x) => WaylandFocus::wl_surface(x),
+        }
+    }
+}
+
+impl smithay::input::keyboard::KeyboardTarget<App> for KbFocus {
+    fn enter(&self, seat: &Seat<App>, data: &mut App, keys: Vec<smithay::input::keyboard::KeysymHandle<'_>>, serial: Serial) {
+        match self {
+            KbFocus::Wl(s) => smithay::input::keyboard::KeyboardTarget::enter(s, seat, data, keys, serial),
+            KbFocus::X11(x) => smithay::input::keyboard::KeyboardTarget::enter(x, seat, data, keys, serial),
+        }
+    }
+    fn leave(&self, seat: &Seat<App>, data: &mut App, serial: Serial) {
+        match self {
+            KbFocus::Wl(s) => smithay::input::keyboard::KeyboardTarget::leave(s, seat, data, serial),
+            KbFocus::X11(x) => smithay::input::keyboard::KeyboardTarget::leave(x, seat, data, serial),
+        }
+    }
+    fn key(&self, seat: &Seat<App>, data: &mut App, key: smithay::input::keyboard::KeysymHandle<'_>, state: KeyState, serial: Serial, time: u32) {
+        match self {
+            KbFocus::Wl(s) => smithay::input::keyboard::KeyboardTarget::key(s, seat, data, key, state, serial, time),
+            KbFocus::X11(x) => smithay::input::keyboard::KeyboardTarget::key(x, seat, data, key, state, serial, time),
+        }
+    }
+    fn modifiers(&self, seat: &Seat<App>, data: &mut App, modifiers: ModifiersState, serial: Serial) {
+        match self {
+            KbFocus::Wl(s) => smithay::input::keyboard::KeyboardTarget::modifiers(s, seat, data, modifiers, serial),
+            KbFocus::X11(x) => smithay::input::keyboard::KeyboardTarget::modifiers(x, seat, data, modifiers, serial),
+        }
+    }
+}
+
+// Windows are either Wayland (xdg toplevel) or X11 ones (through XWayland). These few helpers answer the questions the rest of
+// the compositor asks about a window whichever kind it is, so both get the same treatment.
+
+/// The program's surface of a window. An X11 window has none until XWayland has made it (shortly after it is mapped).
+pub fn surface_of(w: &Window) -> Option<WlSurface> {
+    w.wl_surface().map(|s| s.into_owned())
+}
+
+/// Is this the window of that surface?
+pub fn is_window_of(w: &Window, s: &WlSurface) -> bool {
+    w.wl_surface().is_some_and(|x| *x == *s)
+}
+
+/// Whether a window is maximized or full screen: a Wayland window's xdg state, an X11 window's _NET_WM_STATE.
+pub fn win_has(w: &Window, st: xdg_toplevel::State) -> bool {
+    if let Some(t) = w.toplevel() {
+        return t.current_state().states.contains(st);
+    }
+    match (w.x11_surface(), st) {
+        (Some(x), xdg_toplevel::State::Maximized) => x.is_maximized(),
+        (Some(x), xdg_toplevel::State::Fullscreen) => x.is_fullscreen(),
+        _ => false,
+    }
+}
+
+/// A window's title and app id (for an X11 window: its WM_CLASS class, which is what desktop files match).
+pub fn title_app(w: &Window) -> (String, String) {
+    match (w.x11_surface(), w.toplevel()) {
+        (Some(x), _) => (x.title(), x.class()),
+        (_, Some(t)) => xdg_title_app(t.wl_surface()),
+        _ => Default::default(),
+    }
+}
+
+fn xdg_title_app(s: &WlSurface) -> (String, String) {
+    with_states(s, |st| st.data_map.get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>().map(|d| { let d = d.lock().unwrap(); (d.title.clone().unwrap_or_default(), d.app_id.clone().unwrap_or_default()) }).unwrap_or_default())
+}
+
+/// Tell an X11 window where it is and how big (X11 programs place their menus from it). Wayland windows are left alone.
+pub fn x11_place(w: &Window, loc: Point<i32, Logical>, size: smithay::utils::Size<i32, Logical>) {
+    if let Some(x) = w.x11_surface() {
+        let _ = x.configure(Rectangle::new(loc, size));
+    }
 }
 
 impl App {
@@ -233,6 +346,7 @@ impl App {
             asked_at_start: false,
             conf_times: (None, None),
             parked: vec![],
+            x11_snapped: vec![],
         }
     }
 
@@ -240,103 +354,241 @@ impl App {
         self.space.elements().find(|w| w.toplevel().map(|t| t == surface).unwrap_or(false)).cloned()
     }
 
-    /// Put a window on `area` (maximized or full screen), remembering where it was.
-    pub fn fit_window(&mut self, surface: &ToplevelSurface, area: Rectangle<i32, Logical>, state: xdg_toplevel::State) {
-        let Some(window) = self.window_of(surface) else { return };
-        if !self.saved.iter().any(|(s, _)| s == surface.wl_surface()) {
-            let loc = self.space.element_location(&window).unwrap_or_default();
-            self.saved.push((surface.wl_surface().clone(), Rectangle::new(loc, window.geometry().size)));
+    /// Put a window on `area` (maximized, full screen or snapped to a half), remembering where it was.
+    pub fn fit_window(&mut self, window: &Window, area: Rectangle<i32, Logical>, state: xdg_toplevel::State) {
+        if !self.space.elements().any(|w| w == window) {
+            return;
         }
-        surface.with_pending_state(|s| {
-            s.states.set(state);
-            s.size = Some(area.size);
-        });
-        surface.send_configure();
-        self.space.map_element(window, area.loc, true);
+        let surface = surface_of(window);
+        // (an X11 window that asks before XWayland has made its surface has no place worth remembering yet)
+        if let Some(s) = &surface {
+            if !self.saved.iter().any(|(x, _)| x == s) {
+                let loc = self.space.element_location(window).unwrap_or_default();
+                self.saved.push((s.clone(), Rectangle::new(loc, window.geometry().size)));
+            }
+        }
+        if let Some(t) = window.toplevel() {
+            t.with_pending_state(|s| {
+                s.states.set(state);
+                s.size = Some(area.size);
+            });
+            t.send_configure();
+        } else if let Some(x) = window.x11_surface() {
+            match state {
+                xdg_toplevel::State::Maximized => {
+                    let _ = x.set_maximized(true);
+                }
+                xdg_toplevel::State::Fullscreen => {
+                    let _ = x.set_fullscreen(true);
+                }
+                _ => {
+                    if let Some(s) = &surface {
+                        if !self.x11_snapped.contains(s) {
+                            self.x11_snapped.push(s.clone());
+                        }
+                    }
+                }
+            }
+            let _ = x.configure(area);
+        }
+        self.space.map_element(window.clone(), area.loc, true);
     }
 
-    pub fn restore_window(&mut self, surface: &ToplevelSurface) {
-        let Some(window) = self.window_of(surface) else { return };
-        let back = self.saved.iter().position(|(s, _)| s == surface.wl_surface()).map(|i| self.saved.remove(i).1);
-        surface.with_pending_state(|s| {
-            for st in [xdg_toplevel::State::Maximized, xdg_toplevel::State::Fullscreen, xdg_toplevel::State::TiledLeft, xdg_toplevel::State::TiledRight] {
-                s.states.unset(st);
+    pub fn restore_window(&mut self, window: &Window) {
+        if !self.space.elements().any(|w| w == window) {
+            return;
+        }
+        let surface = surface_of(window);
+        let back = surface.as_ref().and_then(|surface| self.saved.iter().position(|(s, _)| s == surface)).map(|i| self.saved.remove(i).1);
+        if let Some(t) = window.toplevel() {
+            t.with_pending_state(|s| {
+                for st in [xdg_toplevel::State::Maximized, xdg_toplevel::State::Fullscreen, xdg_toplevel::State::TiledLeft, xdg_toplevel::State::TiledRight] {
+                    s.states.unset(st);
+                }
+                s.size = back.map(|r| r.size);
+            });
+            t.send_configure();
+        } else if let Some(x) = window.x11_surface() {
+            let _ = x.set_maximized(false);
+            let _ = x.set_fullscreen(false);
+            self.x11_snapped.retain(|s| Some(s) != surface.as_ref());
+            if let Some(r) = back {
+                let _ = x.configure(r);
             }
-            s.size = back.map(|r| r.size);
-        });
-        surface.send_configure();
+        }
         if let Some(r) = back {
-            self.space.map_element(window, r.loc, false);
+            self.space.map_element(window.clone(), r.loc, false);
         }
         self.retile();
     }
 
-    pub fn toplevel_of(&self, surface: &WlSurface) -> Option<ToplevelSurface> {
-        self.space.elements().chain(self.minimized.iter()).chain(self.parked.iter().map(|(w, _, _)| w)).find_map(|w| w.toplevel().filter(|t| t.wl_surface() == surface).cloned())
+    /// Maximize a window to the space the panels leave free.
+    pub fn maximize(&mut self, window: &Window) {
+        let zone = layer_map_for_output(&self.output).non_exclusive_zone();
+        self.fit_window(window, zone, xdg_toplevel::State::Maximized);
+    }
+
+    /// Make a window full screen (the whole output, over the panels).
+    pub fn fullscreen(&mut self, window: &Window) {
+        let size = self.output.current_mode().map(|m| m.size.to_logical(1)).unwrap_or_default();
+        self.fit_window(window, Rectangle::new((0, 0).into(), size), xdg_toplevel::State::Fullscreen);
+    }
+
+    /// A window has opened (an X11 one: XWayland has made its surface): list it for the panel, lay the workspace out again and
+    /// give it the keyboard.
+    pub fn adopt(&mut self, window: &Window, surface: &WlSurface, decorate: bool) {
+        if decorate {
+            self.decorated.push(surface.clone());
+        }
+        self.opened_at.push(surface.clone());
+        self.foreign_added(window);
+        self.retile();
+        self.give_keyboard(Some(surface.clone()), SERIAL_COUNTER.next_serial());
+        self.touch_focus(surface);
+    }
+
+    /// A window has closed (an X11 one: unmapped or destroyed): forget it everywhere, and the keyboard goes to the window now on top.
+    /// `is` picks the window out; `surface` is None for an X11 window that went before XWayland made its surface.
+    pub fn window_gone(&mut self, surface: Option<&WlSurface>, is: impl Fn(&Window) -> bool) {
+        self.wake();
+        if let Some(s) = surface {
+            self.foreign_removed(s);
+            self.decorated.retain(|x| x != s);
+            self.focus_order.retain(|x| x != s);
+            self.opened_at.retain(|x| x != s);
+            if let Some((list, i)) = &mut self.switcher {
+                list.retain(|x| x != s);
+                *i = (*i).min(list.len().saturating_sub(1));
+            }
+            self.bars.remove(s);
+            self.saved.retain(|(x, _)| x != s);
+            self.x11_snapped.retain(|x| x != s);
+            self.floating.retain(|x| x != s);
+        }
+        self.parked.retain(|(w, _, _)| !is(w));
+        self.minimized.retain(|w| !is(w));
+        let gone = self.space.elements().find(|w| is(w)).cloned();
+        if let Some(w) = gone {
+            self.space.unmap_elem(&w);
+        }
+        let next = self.space.elements().rev().find_map(surface_of);
+        self.give_keyboard(next, SERIAL_COUNTER.next_serial());
+        self.retile();
+    }
+
+    /// The window of a surface, wherever it is (shown, minimized or on another workspace).
+    pub fn window_for(&self, surface: &WlSurface) -> Option<Window> {
+        self.space.elements().chain(self.minimized.iter()).chain(self.parked.iter().map(|(w, _, _)| w)).find(|w| is_window_of(w, surface)).cloned()
+    }
+
+    /// The window of a surface on the workspace now showing.
+    fn shown_window(&self, surface: &WlSurface) -> Option<Window> {
+        self.space.elements().find(|w| is_window_of(w, surface)).cloned()
+    }
+
+    /// Whether the window of a surface is in a state (maximized, full screen, snapped left or right).
+    fn has_state(&self, surface: &WlSurface, st: xdg_toplevel::State) -> bool {
+        let Some(w) = self.window_for(surface) else { return false };
+        if w.x11_surface().is_some() && matches!(st, xdg_toplevel::State::TiledLeft | xdg_toplevel::State::TiledRight) {
+            return self.x11_snapped.contains(surface);
+        }
+        win_has(&w, st)
+    }
+
+    /// Give the keyboard to a surface (None: to nobody). The surface of an X11 window gets it as that X11 window (see KbFocus).
+    pub fn give_keyboard(&mut self, surface: Option<WlSurface>, serial: Serial) {
+        let focus = surface.map(|s| {
+            let x11 = self.window_for(&s).and_then(|w| w.x11_surface().cloned());
+            match x11 {
+                Some(x) => KbFocus::X11(x),
+                None => KbFocus::Wl(s),
+            }
+        });
+        let kb = self.keyboard.clone();
+        kb.set_focus(self, focus, serial);
+    }
+
+    /// The surface that has the keyboard (a window's, a panel's or the locker's).
+    pub fn focused_surface(&self) -> Option<WlSurface> {
+        self.keyboard.current_focus().and_then(|f| f.surface())
+    }
+
+    /// Show `window` as the active one and all others as not (Wayland windows hear it with their next configure).
+    fn mark_active(&mut self, window: &Window) {
+        for w in self.space.elements() {
+            w.set_activated(w == window);
+            if let Some(t) = w.toplevel() {
+                t.send_pending_configure();
+            }
+        }
     }
 
     /// Bring a window forward (from minimized too) and give it the keyboard.
     pub fn activate_surface(&mut self, surface: &WlSurface) {
         self.wake();
         // a window on another workspace: go there first
-        if let Some(ws) = self.parked.iter().find(|(w, _, _)| w.toplevel().map(|t| t.wl_surface() == surface).unwrap_or(false)).map(|(_, ws, _)| *ws) {
+        if let Some(ws) = self.parked.iter().find(|(w, _, _)| is_window_of(w, surface)).map(|(_, ws, _)| *ws) {
             self.switch_workspace(ws);
         }
-        if let Some(i) = self.minimized.iter().position(|w| w.toplevel().map(|t| t.wl_surface() == surface).unwrap_or(false)) {
+        if let Some(i) = self.minimized.iter().position(|w| is_window_of(w, surface)) {
             let w = self.minimized.remove(i);
             let at = self.saved.iter().find(|(s, _)| s == surface).map(|(_, r)| r.loc).unwrap_or((80, 80).into());
+            if let Some(x) = w.x11_surface() {
+                let _ = x.set_suspended(false);
+            }
+            x11_place(&w, at, w.geometry().size);
             self.space.map_element(w, at, true);
             self.retile();
         }
-        let Some(window) = self.space.elements().find(|w| w.toplevel().map(|t| t.wl_surface() == surface).unwrap_or(false)).cloned() else { return };
+        let Some(window) = self.shown_window(surface) else { return };
         self.space.raise_element(&window, true);
-        for w in self.space.elements() {
-            w.set_activated(*w == window);
-            if let Some(t) = w.toplevel() {
-                t.send_pending_configure();
-            }
-        }
-        let kb = self.keyboard.clone();
-        kb.set_focus(self, Some(surface.clone()), SERIAL_COUNTER.next_serial());
+        self.mark_active(&window);
+        self.give_keyboard(Some(surface.clone()), SERIAL_COUNTER.next_serial());
         self.touch_focus(surface);
     }
 
     pub fn close_surface(&mut self, surface: &WlSurface) {
-        if let Some(t) = self.toplevel_of(surface) {
+        let Some(w) = self.window_for(surface) else { return };
+        if let Some(t) = w.toplevel() {
             t.send_close();
+        } else if let Some(x) = w.x11_surface() {
+            let _ = x.close();
         }
     }
 
     pub fn minimize_surface(&mut self, surface: &WlSurface) {
         self.wake();
-        let Some(window) = self.space.elements().find(|w| w.toplevel().map(|t| t.wl_surface() == surface).unwrap_or(false)).cloned() else { return };
+        let Some(window) = self.shown_window(surface) else { return };
         let loc = self.space.element_location(&window).unwrap_or_default();
         self.saved.retain(|(s, _)| s != surface);
         self.saved.push((surface.clone(), Rectangle::new(loc, window.geometry().size)));
         self.space.unmap_elem(&window);
+        // an X11 program is told it is hidden (_NET_WM_STATE_HIDDEN), so a game may stop drawing
+        if let Some(x) = window.x11_surface() {
+            let _ = x.set_suspended(true);
+        }
         self.minimized.push(window);
         self.retile();
         // the keyboard goes to the window now on top
-        let next = self.space.elements().last().and_then(|w| w.toplevel().map(|t| t.wl_surface().clone()));
-        let kb = self.keyboard.clone();
-        kb.set_focus(self, next, SERIAL_COUNTER.next_serial());
+        let next = self.space.elements().rev().find_map(surface_of);
+        self.give_keyboard(next, SERIAL_COUNTER.next_serial());
     }
 
     pub fn set_maximized(&mut self, surface: &WlSurface, on: bool) {
-        let Some(t) = self.toplevel_of(surface) else { return };
+        let Some(w) = self.window_for(surface) else { return };
         if on {
-            self.maximize_request(t);
+            self.maximize(&w);
         } else {
-            self.unmaximize_request(t);
+            self.restore_window(&w);
         }
     }
 
     pub fn set_fullscreen(&mut self, surface: &WlSurface, on: bool) {
-        let Some(t) = self.toplevel_of(surface) else { return };
+        let Some(w) = self.window_for(surface) else { return };
         if on {
-            self.fullscreen_request(t, None);
+            self.fullscreen(&w);
         } else {
-            self.unfullscreen_request(t);
+            self.restore_window(&w);
         }
     }
 
@@ -413,15 +665,15 @@ impl App {
     }
 
     fn focused(&self) -> Option<WlSurface> {
-        let f = self.keyboard.current_focus()?;
-        self.space.elements().find(|w| w.toplevel().map(|t| t.wl_surface() == &f).unwrap_or(false)).and_then(|w| w.toplevel().map(|t| t.wl_surface().clone()))
+        let f = self.focused_surface()?;
+        self.space.elements().any(|w| is_window_of(w, &f)).then_some(f)
     }
 
     pub fn run_action(&mut self, action: Action) {
         self.wake();
         use xdg_toplevel::State as S;
         let current = self.focused();
-        let has = |app: &App, s: &WlSurface, st: S| app.toplevel_of(s).map(|t| t.current_state().states.contains(st)).unwrap_or(false);
+        let has = |app: &App, s: &WlSurface, st: S| app.has_state(s, st);
         match action {
             Action::None => {}
             Action::ToggleStart => self.panel("ToggleStart", None),
@@ -445,8 +697,8 @@ impl App {
             Action::Restore => {
                 if let Some(s) = current {
                     if has(self, &s, S::Maximized) || has(self, &s, S::Fullscreen) || has(self, &s, S::TiledLeft) || has(self, &s, S::TiledRight) {
-                        if let Some(t) = self.toplevel_of(&s) {
-                            self.restore_window(&t);
+                        if let Some(w) = self.window_for(&s) {
+                            self.restore_window(&w);
                         }
                     } else {
                         self.minimize_surface(&s);
@@ -464,7 +716,7 @@ impl App {
                 }
             }
             Action::SnapLeft | Action::SnapRight => {
-                let Some(t) = current.and_then(|s| self.toplevel_of(&s)) else { return };
+                let Some(t) = current.and_then(|s| self.window_for(&s)) else { return };
                 let zone = layer_map_for_output(&self.output).non_exclusive_zone();
                 let half = zone.size.w / 2;
                 let (area, st) = if action == Action::SnapLeft { (Rectangle::new(zone.loc, (half, zone.size.h).into()), S::TiledLeft) } else { (Rectangle::new((zone.loc.x + half, zone.loc.y).into(), (zone.size.w - half, zone.size.h).into()), S::TiledRight) };
@@ -515,17 +767,25 @@ impl App {
             .space
             .elements()
             .filter(|w| {
-                let Some(t) = w.toplevel() else { return false };
-                let st = t.current_state().states;
-                !self.floating.contains(t.wl_surface()) && !st.contains(xdg_toplevel::State::Maximized) && !st.contains(xdg_toplevel::State::Fullscreen)
+                // (an X11 window waits until XWayland has made its surface; X11 menus, tooltips and splash screens float)
+                let Some(s) = w.wl_surface() else { return false };
+                if w.x11_surface().is_some_and(|x| x.is_popup()) {
+                    return false;
+                }
+                !self.floating.contains(&s) && !win_has(w, xdg_toplevel::State::Maximized) && !win_has(w, xdg_toplevel::State::Fullscreen)
             })
             .cloned()
             .collect();
-        tiled.sort_by_key(|w| w.toplevel().and_then(|t| self.opened_at.iter().position(|s| s == t.wl_surface())).unwrap_or(usize::MAX));
+        tiled.sort_by_key(|w| w.wl_surface().and_then(|s| self.opened_at.iter().position(|x| *x == *s)).unwrap_or(usize::MAX));
         for (w, r) in tiled.iter().zip(tiling::dwindle(zone, tiled.len(), 8)) {
-            let Some(t) = w.toplevel().cloned() else { continue };
-            t.with_pending_state(|s| s.size = Some(r.size));
-            t.send_pending_configure();
+            if let Some(t) = w.toplevel() {
+                t.with_pending_state(|s| s.size = Some(r.size));
+                t.send_pending_configure();
+            } else if let Some(x) = w.x11_surface() {
+                let _ = x.configure(r);
+            } else {
+                continue;
+            }
             self.space.map_element(w.clone(), r.loc, false);
         }
     }
@@ -604,7 +864,7 @@ impl App {
                 }
             }
             None => {
-                let existing: Vec<WlSurface> = self.all_windows().iter().filter_map(|(w, _)| w.toplevel().map(|t| t.wl_surface().clone())).collect();
+                let existing: Vec<WlSurface> = self.all_windows().iter().filter_map(|(w, _)| surface_of(w)).collect();
                 let mut list: Vec<WlSurface> = self.focus_order.iter().filter(|s| existing.contains(s)).cloned().collect();
                 for s in existing {
                     if !list.contains(&s) {
@@ -650,9 +910,8 @@ impl App {
         }
         self.retile();
         self.maybe_ask();
-        let next = self.focus_order.iter().find(|s| self.space.elements().any(|w| w.toplevel().map(|t| t.wl_surface() == *s).unwrap_or(false))).cloned();
-        let kb = self.keyboard.clone();
-        kb.set_focus(self, next, SERIAL_COUNTER.next_serial());
+        let next = self.focus_order.iter().find(|s| self.space.elements().any(|w| is_window_of(w, s))).cloned();
+        self.give_keyboard(next, SERIAL_COUNTER.next_serial());
     }
 
     /// Send a window to another workspace (it disappears from this one).
@@ -661,19 +920,18 @@ impl App {
         if n == self.current_ws {
             return;
         }
-        let Some(window) = self.space.elements().find(|w| w.toplevel().map(|t| t.wl_surface() == surface).unwrap_or(false)).cloned() else { return };
+        let Some(window) = self.shown_window(surface) else { return };
         let loc = self.space.element_location(&window).unwrap_or_default();
         self.space.unmap_elem(&window);
         self.parked.push((window, n, loc));
         self.retile();
-        let next = self.focus_order.iter().find(|s| *s != surface && self.space.elements().any(|w| w.toplevel().map(|t| t.wl_surface() == *s).unwrap_or(false))).cloned();
-        let kb = self.keyboard.clone();
-        kb.set_focus(self, next, SERIAL_COUNTER.next_serial());
+        let next = self.focus_order.iter().find(|s| *s != surface && self.space.elements().any(|w| is_window_of(w, s))).cloned();
+        self.give_keyboard(next, SERIAL_COUNTER.next_serial());
     }
 
     fn bar_visible(&self, w: &Window) -> bool {
-        let Some(t) = w.toplevel() else { return false };
-        self.decorated.contains(t.wl_surface()) && !t.current_state().states.contains(xdg_toplevel::State::Fullscreen)
+        let Some(s) = w.wl_surface() else { return false };
+        self.decorated.contains(&s) && !win_has(w, xdg_toplevel::State::Fullscreen)
     }
 
     /// The window controls (the pill at the top right inside the window), in screen coordinates.
@@ -744,10 +1002,10 @@ impl App {
         }
         let pos = self.pointer_location;
         let Some((window, loc)) = self.space.element_under(pos).map(|(w, l)| (w.clone(), l)) else { return false };
-        let Some(t) = window.toplevel() else { return false };
+        let Some(surface) = surface_of(&window) else { return false };
         let pointer = self.pointer.clone();
         let start = smithay::input::pointer::GrabStartData { focus: None, button, location: pos };
-        self.activate_surface(&t.wl_surface().clone());
+        self.activate_surface(&surface);
         let size = window.geometry().size;
         if button == 0x110 {
             pointer.set_grab(self, MoveGrab { start, window, origin: loc }, serial, Focus::Clear);
@@ -770,28 +1028,28 @@ impl App {
         let pointer = self.pointer.clone();
         let start = smithay::input::pointer::GrabStartData { focus: None, button, location: pos };
         if let Some((window, edges)) = self.edge_at(pos) {
-            let Some(t) = window.toplevel() else { return false };
-            self.activate_surface(&t.wl_surface().clone());
+            let Some(surface) = surface_of(&window) else { return false };
+            self.activate_surface(&surface);
             let origin = self.space.element_location(&window).unwrap_or_default();
             let size = window.geometry().size;
             pointer.set_grab(self, ResizeGrab { start, window, edges, origin, size }, serial, Focus::Clear);
             return true;
         }
         let Some((window, hit)) = self.bar_at(pos) else { return false };
-        let Some(surface) = window.toplevel().map(|t| t.wl_surface().clone()) else { return false };
+        let Some(surface) = surface_of(&window) else { return false };
         self.activate_surface(&surface);
         match hit {
             Hit::Close => self.close_surface(&surface),
             Hit::Minimize => self.minimize_surface(&surface),
             Hit::Maximize => {
-                let on = !self.toplevel_of(&surface).map(|t| t.current_state().states.contains(xdg_toplevel::State::Maximized)).unwrap_or(false);
+                let on = !self.has_state(&surface, xdg_toplevel::State::Maximized);
                 self.set_maximized(&surface, on);
             }
             Hit::Drag => {
                 let double = matches!(&self.last_click, Some((t, s)) if s == &surface && t.elapsed() < std::time::Duration::from_millis(400));
                 self.last_click = Some((std::time::Instant::now(), surface.clone()));
                 if double {
-                    let on = !self.toplevel_of(&surface).map(|t| t.current_state().states.contains(xdg_toplevel::State::Maximized)).unwrap_or(false);
+                    let on = !self.has_state(&surface, xdg_toplevel::State::Maximized);
                     self.set_maximized(&surface, on);
                 } else {
                     let origin = self.space.element_location(&window).unwrap_or_default();
@@ -835,7 +1093,7 @@ impl App {
             }
         }
         if let Some((list, index)) = self.switcher.clone() {
-            let entries: Vec<(String, String)> = list.iter().map(|s| with_states(s, |st| st.data_map.get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>().map(|d| { let d = d.lock().unwrap(); (d.title.clone().unwrap_or_default(), d.app_id.clone().unwrap_or_default()) }).unwrap_or_default())).collect();
+            let entries: Vec<(String, String)> = list.iter().map(|s| self.window_for(s).map(|w| title_app(&w)).unwrap_or_else(|| xdg_title_app(s))).collect();
             if self.switcher_art.as_ref().map(|(k, _)| k != &(entries.clone(), index)).unwrap_or(true) {
                 if let Some(f) = &self.fonts {
                     self.switcher_art = Some(((entries.clone(), index), switcher::make(f, &entries, index, accent())));
@@ -855,9 +1113,8 @@ impl App {
             let Some(loc) = self.space.element_location(&w) else { continue };
             let geo = w.geometry();
             // the controls sit on top of the program's own picture, so they come first in a front-to-back list
-            if let (Some(r), Some(t)) = (self.bar_rect(&w), w.toplevel()) {
-                let surface = t.wl_surface().clone();
-                let key = BarKey { active: self.keyboard.current_focus().map(|f| f == surface).unwrap_or(false), hover: self.bar_hover.as_ref().filter(|(s, _)| s == &surface).map(|(_, h)| *h) };
+            if let (Some(r), Some(surface)) = (self.bar_rect(&w), surface_of(&w)) {
+                let key = BarKey { active: self.focused_surface().as_ref() == Some(&surface), hover: self.bar_hover.as_ref().filter(|(s, _)| s == &surface).map(|(_, h)| *h) };
                 if self.bars.get(&surface).map(|b| b.key != key).unwrap_or(true) {
                     self.bars.insert(surface.clone(), deco::make(key));
                 }
@@ -956,24 +1213,18 @@ impl App {
             let wants = with_states(l.wl_surface(), |st| st.cached_state.get::<LayerSurfaceCachedState>().current().keyboard_interactivity != KeyboardInteractivity::None);
             if wants {
                 let kb = self.keyboard.clone();
-                kb.set_focus(self, Some(l.wl_surface().clone()), serial);
+                kb.set_focus(self, Some(KbFocus::Wl(l.wl_surface().clone())), serial);
             }
             return;
         }
         let Some((window, _)) = self.space.element_under(pos).map(|(w, l)| (w.clone(), l)) else { return };
         self.space.raise_element(&window, true);
-        let surface = window.toplevel().map(|t| t.wl_surface().clone());
-        for w in self.space.elements() {
-            w.set_activated(*w == window);
-            if let Some(t) = w.toplevel() {
-                t.send_pending_configure();
-            }
-        }
-        let kb = self.keyboard.clone();
+        let surface = surface_of(&window);
+        self.mark_active(&window);
         if let Some(s) = &surface {
             self.touch_focus(s);
         }
-        kb.set_focus(self, surface, serial);
+        self.give_keyboard(surface, serial);
     }
 
     pub fn on_input(&mut self, event: InputEvent<WinitInput>) {
@@ -1009,7 +1260,7 @@ impl App {
                     eprintln!("pointer {:.0},{:.0}", pos.x, pos.y);
                 }
                 let serial = SERIAL_COUNTER.next_serial();
-                let hover = self.bar_at(pos).and_then(|(w, h)| w.toplevel().map(|t| (t.wl_surface().clone(), h)));
+                let hover = self.bar_at(pos).and_then(|(w, h)| surface_of(&w).map(|s| (s, h)));
                 if hover != self.bar_hover {
                     self.bar_hover = hover;
                 }
@@ -1056,6 +1307,10 @@ impl CompositorHandler for App {
         &mut self.compositor_state
     }
     fn client_compositor_state<'a>(&self, client: &'a Client) -> &'a CompositorClientState {
+        // XWayland is a client of its own kind (Smithay starts it with its own client data)
+        if let Some(x) = client.get_data::<smithay::xwayland::XWaylandClientData>() {
+            return &x.compositor_state;
+        }
         &client.get_data::<ClientState>().unwrap().compositor_state
     }
     fn commit(&mut self, surface: &WlSurface) {
@@ -1067,7 +1322,7 @@ impl CompositorHandler for App {
             while let Some(p) = get_parent(&root) {
                 root = p;
             }
-            if let Some(w) = self.space.elements().find(|w| w.toplevel().map(|t| t.wl_surface() == &root).unwrap_or(false)).cloned() {
+            if let Some(w) = self.space.elements().find(|w| is_window_of(w, &root)).cloned() {
                 w.on_commit();
             }
         }
@@ -1170,13 +1425,14 @@ smithay::delegate_cursor_shape!(App);
 smithay::delegate_tablet_manager!(App);
 
 impl SeatHandler for App {
-    type KeyboardFocus = WlSurface;
+    type KeyboardFocus = KbFocus;
+    // the pointer needs no X11 variant: XWayland reads pointer events on the window's own surface
     type PointerFocus = WlSurface;
     type TouchFocus = WlSurface;
     fn seat_state(&mut self) -> &mut SeatState<Self> {
         &mut self.seat_state
     }
-    fn focus_changed(&mut self, _: &Seat<Self>, _: Option<&WlSurface>) {}
+    fn focus_changed(&mut self, _: &Seat<Self>, _: Option<&KbFocus>) {}
     fn cursor_image(&mut self, _: &Seat<Self>, image: CursorImageStatus) {
         if let Some(f) = self.cursor_hook.as_mut() {
             f(&image);
@@ -1218,42 +1474,12 @@ impl XdgShellHandler for App {
         surface.send_configure();
         let at = (60 + 36 * (n as i32 % 8), 60 + 36 * (n as i32 % 8));
         self.space.map_element(window.clone(), at, true);
-        if self.decorate_all {
-            self.decorated.push(surface.wl_surface().clone());
-        }
-        self.opened_at.push(surface.wl_surface().clone());
-        self.foreign_added(&window);
-        self.retile();
-        let serial = SERIAL_COUNTER.next_serial();
-        let kb = self.keyboard.clone();
-        kb.set_focus(self, Some(surface.wl_surface().clone()), serial);
-        self.touch_focus(surface.wl_surface());
+        let decorate = self.decorate_all;
+        self.adopt(&window, surface.wl_surface(), decorate);
     }
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
-        self.wake();
-        self.foreign_removed(surface.wl_surface());
-        self.decorated.retain(|s| s != surface.wl_surface());
-        self.focus_order.retain(|s| s != surface.wl_surface());
-        self.opened_at.retain(|s| s != surface.wl_surface());
-        self.parked.retain(|(w, _, _)| w.toplevel().map(|t| t != &surface).unwrap_or(true));
-        if let Some((list, i)) = &mut self.switcher {
-            list.retain(|s| s != surface.wl_surface());
-            *i = (*i).min(list.len().saturating_sub(1));
-        }
-        self.bars.remove(surface.wl_surface());
-        self.minimized.retain(|w| w.toplevel().map(|t| t != &surface).unwrap_or(true));
-        let gone = self.space.elements().find(|w| w.toplevel().map(|t| *t == surface).unwrap_or(false)).cloned();
-        if let Some(w) = gone {
-            self.space.unmap_elem(&w);
-        }
-        // the keyboard goes to the window now on top
-        let next = self.space.elements().last().and_then(|w| w.toplevel().map(|t| t.wl_surface().clone()));
-        let serial = SERIAL_COUNTER.next_serial();
-        let kb = self.keyboard.clone();
-        kb.set_focus(self, next, serial);
-        self.floating.retain(|s| s != surface.wl_surface());
-        self.retile();
+        self.window_gone(Some(surface.wl_surface()), |w| w.toplevel() == Some(&surface));
     }
 
     fn move_request(&mut self, surface: ToplevelSurface, _seat: wl_seat::WlSeat, serial: Serial) {
@@ -1279,21 +1505,27 @@ impl XdgShellHandler for App {
     }
 
     fn maximize_request(&mut self, surface: ToplevelSurface) {
-        let zone = layer_map_for_output(&self.output).non_exclusive_zone();
-        self.fit_window(&surface, zone, xdg_toplevel::State::Maximized);
+        if let Some(w) = self.window_of(&surface) {
+            self.maximize(&w);
+        }
     }
 
     fn unmaximize_request(&mut self, surface: ToplevelSurface) {
-        self.restore_window(&surface);
+        if let Some(w) = self.window_of(&surface) {
+            self.restore_window(&w);
+        }
     }
 
     fn fullscreen_request(&mut self, surface: ToplevelSurface, _output: Option<WlOutput>) {
-        let size = self.output.current_mode().map(|m| m.size.to_logical(1)).unwrap_or_default();
-        self.fit_window(&surface, Rectangle::new((0, 0).into(), size), xdg_toplevel::State::Fullscreen);
+        if let Some(w) = self.window_of(&surface) {
+            self.fullscreen(&w);
+        }
     }
 
     fn unfullscreen_request(&mut self, surface: ToplevelSurface) {
-        self.restore_window(&surface);
+        if let Some(w) = self.window_of(&surface) {
+            self.restore_window(&w);
+        }
     }
 
     fn new_popup(&mut self, surface: PopupSurface, positioner: PositionerState) {
@@ -1362,7 +1594,7 @@ impl SessionLockHandler for App {
         }
         surface.send_configure();
         let kb = self.keyboard.clone();
-        kb.set_focus(self, Some(surface.wl_surface().clone()), SERIAL_COUNTER.next_serial());
+        kb.set_focus(self, Some(KbFocus::Wl(surface.wl_surface().clone())), SERIAL_COUNTER.next_serial());
         self.lock_surface = Some(surface);
     }
 }

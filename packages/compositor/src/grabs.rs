@@ -66,6 +66,7 @@ impl PointerGrab<App> for MoveGrab {
         let delta = event.location - self.start.location;
         let to = (self.origin.to_f64() + delta).to_i32_round();
         data.space.map_element(self.window.clone(), to, true);
+        crate::state::x11_place(&self.window, to, self.window.geometry().size);
     }
 
     fn button(&mut self, data: &mut App, handle: &mut PointerInnerHandle<'_, App>, event: &ButtonEvent) {
@@ -117,6 +118,8 @@ impl PointerGrab<App> for ResizeGrab {
         let x = if left { self.origin.x + self.size.w - w } else { self.origin.x };
         let y = if top { self.origin.y + self.size.h - h } else { self.origin.y };
         data.space.map_element(self.window.clone(), (x, y), false);
+        // an X11 window is given its new size and place at once (it has no configure round trip like a Wayland one)
+        crate::state::x11_place(&self.window, (x, y).into(), (w, h).into());
     }
 
     fn button(&mut self, data: &mut App, handle: &mut PointerInnerHandle<'_, App>, event: &ButtonEvent) {

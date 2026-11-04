@@ -5,14 +5,12 @@
 use smithay::desktop::Window;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::{Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource};
-use smithay::wayland::compositor::with_states;
-use smithay::wayland::shell::xdg::XdgToplevelSurfaceData;
 use wayland_protocols_wlr::foreign_toplevel::v1::server::{
     zwlr_foreign_toplevel_handle_v1::{self, ZwlrForeignToplevelHandleV1},
     zwlr_foreign_toplevel_manager_v1::{self, ZwlrForeignToplevelManagerV1},
 };
 
-use crate::state::App;
+use crate::state::{self, App};
 
 /// What a handle was last told, so only changes are sent.
 #[derive(Default, Clone, PartialEq)]
@@ -44,24 +42,21 @@ pub fn create_global(dh: &DisplayHandle) {
 }
 
 fn describe(app: &App, window: &Window, minimized: bool) -> Option<Told> {
-    let t = window.toplevel()?;
-    let (title, app_id) = with_states(t.wl_surface(), |s| {
-        let d = s.data_map.get::<XdgToplevelSurfaceData>().map(|d| d.lock().unwrap());
-        (d.as_ref().and_then(|d| d.title.clone()).unwrap_or_default(), d.as_ref().and_then(|d| d.app_id.clone()).unwrap_or_default())
-    });
-    let cur = t.current_state();
+    // Wayland and X11 windows alike (an X11 window is listed once XWayland has made its surface)
+    let surface = state::surface_of(window)?;
+    let (title, app_id) = state::title_app(window);
     let mut state = vec![];
     use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as S;
-    if cur.states.contains(S::Maximized) {
+    if state::win_has(window, S::Maximized) {
         state.push(STATE_MAXIMIZED);
     }
     if minimized {
         state.push(STATE_MINIMIZED);
     }
-    if app.keyboard.current_focus().map(|f| &f == t.wl_surface()).unwrap_or(false) {
+    if app.focused_surface().as_ref() == Some(&surface) {
         state.push(STATE_ACTIVATED);
     }
-    if cur.states.contains(S::Fullscreen) {
+    if state::win_has(window, S::Fullscreen) {
         state.push(STATE_FULLSCREEN);
     }
     Some(Told { title, app_id, state })
@@ -82,13 +77,13 @@ fn send(handle: &ZwlrForeignToplevelHandleV1, old: &Told, new: &Told) {
 
 impl App {
     fn new_handle(&mut self, mgr: &ZwlrForeignToplevelManagerV1, window: &Window, minimized: bool) {
-        let (Some(client), Some(t)) = (mgr.client(), window.toplevel()) else { return };
+        let (Some(client), Some(surface)) = (mgr.client(), state::surface_of(window)) else { return };
         let dh = self.display_handle.clone();
-        let Ok(handle) = client.create_resource::<ZwlrForeignToplevelHandleV1, WlSurface, App>(&dh, mgr.version(), t.wl_surface().clone()) else { return };
+        let Ok(handle) = client.create_resource::<ZwlrForeignToplevelHandleV1, WlSurface, App>(&dh, mgr.version(), surface.clone()) else { return };
         mgr.toplevel(&handle);
         let told = describe(self, window, minimized).unwrap_or_default();
         send(&handle, &Told::default(), &told);
-        self.toplevels.entries.push(Entry { surface: t.wl_surface().clone(), handle, told });
+        self.toplevels.entries.push(Entry { surface, handle, told });
     }
 
     /// A window opened: every shell program that asked gets to know it.
@@ -118,7 +113,7 @@ impl App {
         let windows: Vec<(Window, bool)> = self.all_windows();
         let mut entries = std::mem::take(&mut self.toplevels.entries);
         for e in entries.iter_mut() {
-            let Some((w, min)) = windows.iter().find(|(w, _)| w.toplevel().map(|t| t.wl_surface() == &e.surface).unwrap_or(false)) else { continue };
+            let Some((w, min)) = windows.iter().find(|(w, _)| state::is_window_of(w, &e.surface)) else { continue };
             if let Some(new) = describe(self, w, *min) {
                 if new != e.told {
                     send(&e.handle, &e.told, &new);
