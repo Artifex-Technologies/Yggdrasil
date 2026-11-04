@@ -62,9 +62,13 @@ game full screen (no see-through patches, keys and mouse reach it). `YGGDRASIL_C
 Not built yet (in the order I would do them):
 1. Trying resize, maximize, full screen and minimize by hand, and X11 programs (above): xterm, Steam, a Proton game.
 2. The panel's workspace buttons following the compositor's workspaces (the protocol `ext-workspace`), and key repeat for the volume keys.
-4. Tiling, and more workspaces than four.
-5. GPU clients (linux-dmabuf), idle inhibit (videos), primary selection, cursor shapes, fractional scale, xdg-activation, xdg-decoration.
-6. **The hardware backend**: DRM/KMS output, libinput, a seat (logind or seatd), several monitors, scaling, VRR, NVIDIA. This is what would let it run the real session instead of Hyprland; it should be developed in a virtual machine (Limbo), never on the live session.
+4. More workspaces than four.
+5. Full screen windows above the top bar and dock (today the panels are drawn over a full screen window: wrong for games).
+   Built 2026-11-04, not yet tried by hand: GPU clients (linux-dmabuf, with default feedback naming the render node), idle inhibit,
+   primary selection, cursor shapes (the nested window's pointer follows them), fractional scale (1.0 until outputs get a scale),
+   xdg-activation (only with a token from the person's own input in the last 10 s).
+6. **The hardware backend**: DRM/KMS output, libinput, a seat (logind or seatd), several monitors, scaling, VRR, NVIDIA, explicit sync (linux-drm-syncobj-v1, which NVIDIA needs to avoid flicker and frames
+   out of order), direct scanout for full screen games, and tearing control. This is what would let it run the real session instead of Hyprland; it should be developed in a virtual machine (Limbo), never on the live session.
 7. Screen recording and screenshots (the portal), output management for Settings > Displays.
 
 Why not before: the roadmap puts the compositor last, once the pieces around it are stable; they now are (panel, lock, idle, greeter,
