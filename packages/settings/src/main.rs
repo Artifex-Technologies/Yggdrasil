@@ -55,7 +55,8 @@ enum Page {
     DefaultApps,
     /// The assistant the operating system provides (only when it has one: its assistant integration).
     Assistant,
-    Shortcuts,
+    /// Keyboard shortcuts now; typing (spelling, languages) joins it as a tab.
+    Keyboard,
     About,
     /// Shown under About while Developer options are on.
     Developer,
@@ -84,25 +85,27 @@ enum AppSub {
     Boot,
 }
 
-const PAGES: [(Page, &str, Icon); 18] = [
-    (Page::Network, "Wi-Fi & Network", Icon::Wifi),
-    (Page::Bluetooth, "Bluetooth", Icon::Bluetooth),
-    (Page::Displays, "Displays", Icon::Display),
-    (Page::Sound, "Sound", Icon::Sound),
-    (Page::Appearance, "Appearance", Icon::Appearance),
-    (Page::Power, "Power", Icon::Power),
-    (Page::Users, "Users", Icon::User),
-    (Page::Security, "Security", Icon::Shield),
-    (Page::Restore, "Restore points", Icon::Restart),
-    (Page::Firewall, "Firewall", Icon::Shield),
-    (Page::DateTime, "Date & Time", Icon::Clock),
-    (Page::Printers, "Printers", Icon::Printer),
-    (Page::Apps, "Apps", Icon::Apps),
-    (Page::DefaultApps, "Default apps", Icon::Apps),
-    (Page::Assistant, "Assistant", Icon::Sound),
-    (Page::Shortcuts, "Keyboard Shortcuts", Icon::Keyboard),
-    (Page::About, "About", Icon::Info),
-    (Page::Developer, "Developer Mode", Icon::Keyboard),
+// The sidebar, in groups (a heading is drawn where the group changes). The words after the name are what the search also
+// finds the page by: what is inside it, not only its title.
+const PAGES: [(Page, &str, Icon, &str, &str); 18] = [
+    (Page::Network, "Wi-Fi & Network", Icon::Wifi, "Connections", "internet ethernet vpn proxy"),
+    (Page::Bluetooth, "Bluetooth", Icon::Bluetooth, "Connections", "headphones controller pair"),
+    (Page::Displays, "Displays", Icon::Display, "Devices", "monitor screen resolution refresh night light scale"),
+    (Page::Sound, "Sound", Icon::Sound, "Devices", "audio volume speaker microphone output input"),
+    (Page::Keyboard, "Keyboard", Icon::Keyboard, "Devices", "shortcuts keys hotkeys typing find my mouse color picker"),
+    (Page::Printers, "Printers", Icon::Printer, "Devices", "print scanner"),
+    (Page::Power, "Power", Icon::Power, "Devices", "battery sleep suspend graphics card gpu processor cpu fans"),
+    (Page::Appearance, "Appearance", Icon::Appearance, "Personal", "theme dark light accent wallpaper icons top bar notifications lock screen workspaces boot"),
+    (Page::Assistant, "Assistant", Icon::Sound, "Personal", "voice"),
+    (Page::Apps, "Apps", Icon::Apps, "Apps", "installed optional software uninstall minos"),
+    (Page::DefaultApps, "Default apps", Icon::Apps, "Apps", "browser mail music video open with"),
+    (Page::Security, "Security", Icon::Shield, "Privacy & security", "password login sudo monitor distress"),
+    (Page::Firewall, "Firewall", Icon::Shield, "Privacy & security", "ports network block"),
+    (Page::Restore, "Restore points", Icon::Restart, "Privacy & security", "snapshot backup rollback undo"),
+    (Page::Users, "Users", Icon::User, "System", "account people"),
+    (Page::DateTime, "Date & Time", Icon::Clock, "System", "clock timezone"),
+    (Page::About, "About", Icon::Info, "System", "version system information hardware"),
+    (Page::Developer, "Developer Mode", Icon::Keyboard, "System", "developer options"),
 ];
 
 enum Msg {
@@ -408,7 +411,7 @@ impl App {
                 Page::DefaultApps => Msg::Defaults(defaults::load()),
                 Page::Assistant => Msg::Assistant(controls::load(yggdrasil_conf::integrations::first("assistant").map(|i| i.controls()).unwrap_or_default())),
                 Page::Printers => Msg::Printers(printers::load()),
-                Page::Shortcuts | Page::Developer => return,
+                Page::Keyboard | Page::Developer => return,
             };
             let _ = tx.send(msg);
             ctx.request_repaint();
@@ -522,8 +525,12 @@ fn start_sub() -> String {
 fn start_page() -> Page {
     let arg = std::env::args().nth(1).unwrap_or_default().to_lowercase();
     let arg = arg.split(':').next().unwrap_or_default().to_string();
-    PAGES.iter().find(|(p, name, _)| format!("{p:?}").to_lowercase() == arg || name.to_lowercase().starts_with(&arg) && !arg.is_empty())
-        .map(|(p, _, _)| *p)
+    // the old page name, from links made before Keyboard Shortcuts became Keyboard
+    if arg == "shortcuts" {
+        return Page::Keyboard;
+    }
+    PAGES.iter().find(|(p, name, ..)| format!("{p:?}").to_lowercase() == arg || name.to_lowercase().starts_with(&arg) && !arg.is_empty())
+        .map(|(p, ..)| *p)
         .unwrap_or(Page::Network)
 }
 
@@ -596,44 +603,54 @@ impl eframe::App for App {
                 ui.add_space(8.0);
                 let q = self.search.to_lowercase();
                 let developer_on = yggdrasil_conf::PanelConf::load().developer;
-                for (p, name, icon) in PAGES {
-                    let assistant_name = if p == Page::Assistant { yggdrasil_conf::integrations::first("assistant").and_then(|i| i.get("name").map(str::to_string)) } else { None };
-                    let name: &str = assistant_name.as_deref().unwrap_or(name);
-                    if p == Page::Developer && !developer_on || p == Page::Assistant && yggdrasil_conf::integrations::first("assistant").is_none() {
-                        continue;
+                // the list scrolls on its own (the search box stays put), so a short window still reaches every page
+                egui::ScrollArea::vertical().id_salt("pages-list").auto_shrink([false, false]).show(ui, |ui| {
+                    let mut last_group = "";
+                    for (p, name, icon, group, words) in PAGES {
+                        let assistant_name = if p == Page::Assistant { yggdrasil_conf::integrations::first("assistant").and_then(|i| i.get("name").map(str::to_string)) } else { None };
+                        let name: &str = assistant_name.as_deref().unwrap_or(name);
+                        if p == Page::Developer && !developer_on || p == Page::Assistant && yggdrasil_conf::integrations::first("assistant").is_none() {
+                            continue;
+                        }
+                        if !q.is_empty() && !name.to_lowercase().contains(&q) && !words.contains(&q) {
+                            continue;
+                        }
+                        if q.is_empty() && group != last_group {
+                            ui.add_space(if last_group.is_empty() { 2.0 } else { 10.0 });
+                            ui.label(RichText::new(group).size(12.0).color(pal.dim));
+                            ui.add_space(2.0);
+                        }
+                        last_group = group;
+                        let sel = self.page == p;
+                        let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::click());
+                        if sel {
+                            ui.painter().rect_filled(rect, CornerRadius::same(8), pal.select);
+                        } else if resp.hovered() {
+                            ui.painter().rect_filled(rect, CornerRadius::same(8), pal.hover);
+                        }
+                        let icon_rect = egui::Rect::from_center_size(egui::pos2(rect.left() + 20.0, rect.center().y), vec2(18.0, 18.0));
+                        icons::paint(ui.painter(), icon_rect, icon, if sel { pal.accent } else { pal.text });
+                        ui.painter().text(egui::pos2(rect.left() + 40.0, rect.center().y), egui::Align2::LEFT_CENTER, name, egui::FontId::proportional(14.0), pal.text);
+                        if resp.clicked() && p == Page::Appearance {
+                            self.app_sub = AppSub::Main;
+                        }
+                        if resp.clicked() {
+                            self.distress.close();
+                        }
+                        if resp.clicked() && p == Page::Security {
+                            self.sec_sub = SecSub::Main;
+                        }
+                        if resp.clicked() && p == Page::Power {
+                            self.power_gpu = false;
+                            self.power_cpu = false;
+                        }
+                        if resp.clicked() && !sel {
+                            self.page = p;
+                            self.status.clear();
+                            self.load(p, &ctx);
+                        }
                     }
-                    if !q.is_empty() && !name.to_lowercase().contains(&q) {
-                        continue;
-                    }
-                    let sel = self.page == p;
-                    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::click());
-                    if sel {
-                        ui.painter().rect_filled(rect, CornerRadius::same(8), pal.select);
-                    } else if resp.hovered() {
-                        ui.painter().rect_filled(rect, CornerRadius::same(8), pal.hover);
-                    }
-                    let icon_rect = egui::Rect::from_center_size(egui::pos2(rect.left() + 20.0, rect.center().y), vec2(18.0, 18.0));
-                    icons::paint(ui.painter(), icon_rect, icon, if sel { pal.accent } else { pal.text });
-                    ui.painter().text(egui::pos2(rect.left() + 40.0, rect.center().y), egui::Align2::LEFT_CENTER, name, egui::FontId::proportional(14.0), pal.text);
-                    if resp.clicked() && p == Page::Appearance {
-                        self.app_sub = AppSub::Main;
-                    }
-                    if resp.clicked() {
-                        self.distress.close();
-                    }
-                    if resp.clicked() && p == Page::Security {
-                        self.sec_sub = SecSub::Main;
-                    }
-                    if resp.clicked() && p == Page::Power {
-                        self.power_gpu = false;
-                        self.power_cpu = false;
-                    }
-                    if resp.clicked() && !sel {
-                        self.page = p;
-                        self.status.clear();
-                        self.load(p, &ctx);
-                    }
-                }
+                });
             });
 
         egui::CentralPanel::default()
@@ -676,7 +693,7 @@ impl eframe::App for App {
                         Page::Printers => self.page_printers(ui, &pal, &ctx),
                         Page::DateTime => self.page_time(ui, &pal, &ctx),
                         Page::Apps => self.page_apps(ui, &pal, &ctx),
-                        Page::Shortcuts => page_shortcuts(ui, &pal),
+                        Page::Keyboard => page_shortcuts(ui, &pal),
                         Page::Developer => self.page_developer(ui, &pal, &ctx),
                     }
                 });
@@ -3471,7 +3488,9 @@ fn color_picker_section(ui: &mut egui::Ui, pal: &Palette) {
     });
 }
 
-fn page_shortcuts(ui: &mut egui::Ui, pal: &Palette) {
+/// The tools that live on a shortcut key: under the shortcuts list, not above it.
+fn shortcut_tools(ui: &mut egui::Ui, pal: &Palette) {
+    ui.add_space(8.0);
     // Find my mouse (the panel; ~/.config/yggdrasil/tools.conf)
     let mut tools = yggdrasil_conf::tools::ToolsConf::load();
     ui::group(ui, pal, Some("Tools"), |ui| {
@@ -3482,6 +3501,9 @@ fn page_shortcuts(ui: &mut egui::Ui, pal: &Palette) {
         });
     });
     color_picker_section(ui, pal);
+}
+
+fn page_shortcuts(ui: &mut egui::Ui, pal: &Palette) {
     // Yggdrasil's session: the shortcuts as Hyprland has them right now, with their own descriptions, grouped, with a search
     if sys::hyprland() {
         let list = hypr_shortcuts();
@@ -3518,6 +3540,7 @@ fn page_shortcuts(ui: &mut egui::Ui, pal: &Palette) {
         if ui::quiet(ui, pal, "Add your own shortcuts…").on_hover_text("Opens your own settings file for the session (~/.config/yggdrasil/hyprland.lua)").clicked() {
             open_own_shortcuts();
         }
+        shortcut_tools(ui, pal);
         return;
     }
     let groups: [(&str, &[(&str, &str)]); 3] = [
@@ -3549,6 +3572,7 @@ fn page_shortcuts(ui: &mut egui::Ui, pal: &Palette) {
             }
         });
     }
+    shortcut_tools(ui, pal);
 }
 
 fn main() -> eframe::Result {
