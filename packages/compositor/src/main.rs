@@ -6,6 +6,9 @@
 //!       opens a window and serves a Wayland socket (its name is printed as WAYLAND_DISPLAY=...);
 //!       programs given with --run are started inside it
 //!
+//! X11 programs run through XWayland, started with the compositor (its display is printed as DISPLAY=...);
+//! YGGDRASIL_COMPOSITOR_XWAYLAND=0 leaves it out.
+//!
 //! See docs/COMPOSITOR.md for what is built and what is not.
 
 mod deco;
@@ -16,6 +19,7 @@ mod switcher;
 mod tiling;
 mod state;
 mod toplevels;
+mod xwayland;
 
 use std::sync::Arc;
 
@@ -62,6 +66,20 @@ fn gpu_buffers(app: &mut App, dh: &smithay::reexports::wayland_server::DisplayHa
     drop(b);
     let r = backend.clone();
     app.dmabuf_import = Some(Box::new(move |d| r.borrow_mut().renderer().import_dmabuf(d, None).is_ok()));
+}
+
+/// Start the --run programs: on this compositor's Wayland socket, and X11 ones on its XWayland (never the host's X server).
+fn start_programs(run: &[Vec<String>], wayland: &str, x11: Option<u32>) {
+    for cmd in run {
+        let mut c = std::process::Command::new(&cmd[0]);
+        c.args(&cmd[1..]).env("WAYLAND_DISPLAY", wayland).env_remove("DISPLAY");
+        if let Some(n) = x11 {
+            c.env("DISPLAY", format!(":{n}"));
+        }
+        if let Err(e) = c.spawn() {
+            eprintln!("yggdrasil-compositor: cannot start {}: {e}", cmd[0]);
+        }
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -142,12 +160,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     event_loop.handle().insert_source(socket, |stream, _, app| {
         let _ = app.display_handle.insert_client(stream, Arc::new(ClientState::default()));
     })?;
-    for cmd in &run {
-        let mut c = std::process::Command::new(&cmd[0]);
-        c.args(&cmd[1..]).env("WAYLAND_DISPLAY", &name).env_remove("DISPLAY");
-        if let Err(e) = c.spawn() {
-            eprintln!("yggdrasil-compositor: cannot start {}: {e}", cmd[0]);
-        }
+    // X11 programs (XWayland). The --run programs wait until it has answered (a fraction of a second), so an X11 program among
+    // them finds its window manager there; without XWayland they start at once.
+    let xwayland = std::env::var("YGGDRASIL_COMPOSITOR_XWAYLAND").map(|v| v != "0" && v != "off").unwrap_or(true);
+    let start_run = {
+        let name = name.clone();
+        move |app: &mut App| start_programs(&run, &name, app.x11_display)
+    };
+    if !xwayland {
+        start_run(&mut app);
+    } else if let Err(e) = xwayland::start(&mut app, event_loop.handle(), Box::new(start_run.clone())) {
+        eprintln!("yggdrasil-compositor: XWayland could not start ({e}); X11 programs will not run");
+        start_run(&mut app);
     }
 
     // workspaces.conf and shortcuts.conf are read again when they change (Settings writes them)

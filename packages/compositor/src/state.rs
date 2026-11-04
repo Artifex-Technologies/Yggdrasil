@@ -40,7 +40,6 @@ use crate::toplevels::Toplevels;
 use crate::deco::{self, Bar, Hit, Key as BarKey};
 use crate::draw::Fonts;
 use smithay::backend::renderer::element::memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement};
-use smithay::backend::renderer::{ImportAll, ImportMem};
 use smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode as DecoMode;
 use smithay::utils::{IsAlive, Scale};
 use smithay::wayland::seat::WaylandFocus;
@@ -51,9 +50,11 @@ use std::collections::HashMap;
 
 smithay::render_elements! {
     /// What is drawn each frame: the programs' own pictures and the title bars the compositor adds.
-    pub Elem<R> where R: ImportAll + ImportMem;
-    Surface = WaylandSurfaceRenderElement<R>,
-    Bar = MemoryRenderBufferRenderElement<R>,
+    pub Elem<=GlesRenderer>;
+    Surface = WaylandSurfaceRenderElement<GlesRenderer>,
+    Bar = MemoryRenderBufferRenderElement<GlesRenderer>,
+    /// a full screen X11 window, drawn with its alpha channel ignored (see xwayland.rs)
+    Opaque = crate::xwayland::OpaqueElement,
 }
 use smithay::backend::input::KeyState;
 use smithay::input::keyboard::ModifiersState;
@@ -147,6 +148,15 @@ pub struct App {
     parked: Vec<(Window, usize, Point<i32, Logical>)>,
     /// X11 windows snapped to a half of the screen (a Wayland window keeps that in its xdg state; X11 has no such state).
     x11_snapped: Vec<WlSurface>,
+    /// X11 programs (xwayland.rs): the window manager once XWayland is ready, its display number (DISPLAY=:n), and the X11
+    /// menus and tooltips now shown (override-redirect windows: drawn where they ask, on top, never given the keyboard).
+    pub xwm: Option<smithay::xwayland::X11Wm>,
+    pub x11_display: Option<u32>,
+    pub xwayland_shell_state: smithay::wayland::xwayland_shell::XWaylandShellState,
+    pub overlays: Vec<X11Surface>,
+    pub loop_handle: LoopHandle<'static, App>,
+    /// The shader that draws full screen X11 windows opaque, made the first time one is drawn (None if it failed to build).
+    opaque_shader: Option<Option<smithay::backend::renderer::gles::GlesTexProgram>>,
 }
 
 /// How many workspaces there are.
@@ -276,6 +286,7 @@ impl App {
         let mut seat = seat_state.new_wl_seat(dh, "seat0");
         let keyboard = seat.add_keyboard(Default::default(), 300, 40).expect("keyboard");
         let pointer = seat.add_pointer();
+        let loop_handle = handle.clone();
         App {
             ping,
             display_handle: dh.clone(),
@@ -347,7 +358,45 @@ impl App {
             conf_times: (None, None),
             parked: vec![],
             x11_snapped: vec![],
+            xwm: None,
+            x11_display: None,
+            xwayland_shell_state: smithay::wayland::xwayland_shell::XWaylandShellState::new::<Self>(dh),
+            overlays: vec![],
+            loop_handle,
+            opaque_shader: None,
         }
+    }
+
+    /// Where the next window opens: one after another, a little offset.
+    pub fn cascade(&mut self) -> Point<i32, Logical> {
+        let n = self.opened;
+        self.opened += 1;
+        (60 + 36 * (n as i32 % 8), 60 + 36 * (n as i32 % 8)).into()
+    }
+
+    /// Every window gets the window controls (YGGDRASIL_COMPOSITOR_DECORATE=all, for testing).
+    pub fn decorates_all(&self) -> bool {
+        self.decorate_all
+    }
+
+    /// Give a window the window controls, or take them away.
+    pub fn set_decorated(&mut self, surface: &WlSurface, on: bool) {
+        if on && !self.decorated.contains(surface) {
+            self.decorated.push(surface.clone());
+        } else if !on {
+            self.decorated.retain(|s| s != surface);
+            self.bars.remove(surface);
+        }
+        self.wake();
+    }
+
+    pub fn x11_snapped_has(&self, surface: &WlSurface) -> bool {
+        self.x11_snapped.contains(surface)
+    }
+
+    /// Is this window laid out by tiling (the workspace showing tiles, and it is not floating, maximized or full screen)?
+    pub fn is_tiled(&self, w: &Window, s: &WlSurface) -> bool {
+        self.ws_profile(self.current_ws) == Some(Profile::Tiling) && !self.floating.contains(s) && !win_has(w, xdg_toplevel::State::Maximized) && !win_has(w, xdg_toplevel::State::Fullscreen)
     }
 
     pub fn window_of(&self, surface: &ToplevelSurface) -> Option<Window> {
@@ -428,7 +477,7 @@ impl App {
         self.fit_window(window, zone, xdg_toplevel::State::Maximized);
     }
 
-    /// Make a window full screen (the whole output, over the panels).
+    /// Make a window full screen (the whole output).
     pub fn fullscreen(&mut self, window: &Window) {
         let size = self.output.current_mode().map(|m| m.size.to_logical(1)).unwrap_or_default();
         self.fit_window(window, Rectangle::new((0, 0).into(), size), xdg_toplevel::State::Fullscreen);
@@ -514,13 +563,14 @@ impl App {
     }
 
     /// Show `window` as the active one and all others as not (Wayland windows hear it with their next configure).
-    fn mark_active(&mut self, window: &Window) {
+    pub fn mark_active(&mut self, window: &Window) {
         for w in self.space.elements() {
             w.set_activated(w == window);
             if let Some(t) = w.toplevel() {
                 t.send_pending_configure();
             }
         }
+        self.x11_raise(window);
     }
 
     /// Bring a window forward (from minimized too) and give it the keyboard.
@@ -644,7 +694,11 @@ impl App {
 
     fn spawn(&self, cmd: &str) {
         let mut c = std::process::Command::new("sh");
+        // X11 programs go to this compositor's XWayland, never to the host's X server
         c.arg("-c").arg(cmd).env_remove("DISPLAY");
+        if let Some(n) = self.x11_display {
+            c.env("DISPLAY", format!(":{n}"));
+        }
         if !self.socket.is_empty() {
             c.env("WAYLAND_DISPLAY", &self.socket);
         }
@@ -767,12 +821,9 @@ impl App {
             .space
             .elements()
             .filter(|w| {
-                // (an X11 window waits until XWayland has made its surface; X11 menus, tooltips and splash screens float)
+                // (an X11 window waits until XWayland has made its surface)
                 let Some(s) = w.wl_surface() else { return false };
-                if w.x11_surface().is_some_and(|x| x.is_popup()) {
-                    return false;
-                }
-                !self.floating.contains(&s) && !win_has(w, xdg_toplevel::State::Maximized) && !win_has(w, xdg_toplevel::State::Fullscreen)
+                self.is_tiled(w, &s)
             })
             .cloned()
             .collect();
@@ -1025,6 +1076,10 @@ impl App {
     /// A click on the window controls or a resize grip. Returns true when the compositor took it (the program under it never sees it).
     fn press_on_decoration(&mut self, serial: Serial, button: u32) -> bool {
         let pos = self.pointer_location;
+        // an X11 menu over the controls takes the click
+        if self.over_overlay(pos) {
+            return false;
+        }
         let pointer = self.pointer.clone();
         let start = smithay::input::pointer::GrabStartData { focus: None, button, location: pos };
         if let Some((window, edges)) = self.edge_at(pos) {
@@ -1061,11 +1116,11 @@ impl App {
     }
 
     /// What is drawn this frame, front to back: panels on the top layers, the windows with their title bars, then the layers behind.
-    pub fn scene(&mut self, renderer: &mut GlesRenderer) -> Vec<Elem<GlesRenderer>> {
+    pub fn scene(&mut self, renderer: &mut GlesRenderer) -> Vec<Elem> {
         use smithay::backend::renderer::element::AsRenderElements;
-        let mut out: Vec<Elem<GlesRenderer>> = vec![];
+        let mut out: Vec<Elem> = vec![];
         let scale = Scale::from(1.0);
-        let layer_els = |app: &App, renderer: &mut GlesRenderer, layers: &[Layer], out: &mut Vec<Elem<GlesRenderer>>| {
+        let layer_els = |app: &App, renderer: &mut GlesRenderer, layers: &[Layer], out: &mut Vec<Elem>| {
             let map = layer_map_for_output(&app.output);
             for layer in layers {
                 for l in map.layers_on(*layer).rev() {
@@ -1107,6 +1162,11 @@ impl App {
                 }
             }
         }
+        // X11 menus and tooltips, last shown in front, over everything but the switcher and the profile question
+        for x in self.overlays.iter().rev() {
+            let loc = x.geometry().loc;
+            out.extend(x.render_elements::<WaylandSurfaceRenderElement<GlesRenderer>>(renderer, loc.to_physical(1), scale, 1.0).into_iter().map(Elem::from));
+        }
         layer_els(self, renderer, &[Layer::Overlay, Layer::Top], &mut out);
         let windows: Vec<Window> = self.space.elements().rev().cloned().collect();
         for w in windows {
@@ -1124,10 +1184,28 @@ impl App {
                     }
                 }
             }
-            out.extend(w.render_elements::<WaylandSurfaceRenderElement<GlesRenderer>>(renderer, (loc - geo.loc).to_physical(1), scale, 1.0).into_iter().map(Elem::from));
+            let els = w.render_elements::<WaylandSurfaceRenderElement<GlesRenderer>>(renderer, (loc - geo.loc).to_physical(1), scale, 1.0);
+            // a full screen X11 window (a game) is drawn opaque: see OPAQUE_SHADER in xwayland.rs
+            let opaque = if w.x11_surface().is_some_and(|x| x.is_fullscreen()) { self.opaque_shader(renderer) } else { None };
+            match opaque {
+                Some(program) => out.extend(els.into_iter().map(|inner| Elem::Opaque(crate::xwayland::OpaqueElement { inner, program: program.clone() }))),
+                None => out.extend(els.into_iter().map(Elem::from)),
+            }
         }
         layer_els(self, renderer, &[Layer::Bottom, Layer::Background], &mut out);
         out
+    }
+
+    /// The shader for opaque X11 windows, built once (the first time a full screen X11 window is drawn).
+    fn opaque_shader(&mut self, renderer: &mut GlesRenderer) -> Option<smithay::backend::renderer::gles::GlesTexProgram> {
+        if self.opaque_shader.is_none() {
+            let built = renderer.compile_custom_texture_shader(crate::xwayland::OPAQUE_SHADER, &[]);
+            if let Err(e) = &built {
+                eprintln!("yggdrasil-compositor: the shader for opaque X11 windows did not build, they are drawn as they are: {e}");
+            }
+            self.opaque_shader = Some(built.ok());
+        }
+        self.opaque_shader.clone().flatten()
     }
 
     /// Something changed: draw the screen again soon.
@@ -1162,6 +1240,11 @@ impl App {
         if let Some(ls) = &self.lock_surface {
             smithay::desktop::utils::send_frames_surface_tree(ls.wl_surface(), &out, t, Some(Duration::ZERO), |_, _| Some(out.clone()));
         }
+        for x in &self.overlays {
+            if let Some(s) = x.wl_surface() {
+                smithay::desktop::utils::send_frames_surface_tree(&s, &out, t, Some(Duration::ZERO), |_, _| Some(out.clone()));
+            }
+        }
     }
 
     pub fn lock_elements(&self, renderer: &mut GlesRenderer) -> Vec<WaylandSurfaceRenderElement<GlesRenderer>> {
@@ -1176,6 +1259,10 @@ impl App {
     pub fn surface_under(&self, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
         if self.locked {
             return self.lock_surface.as_ref().map(|l| (l.wl_surface().clone(), (0.0, 0.0).into()));
+        }
+        // X11 menus and tooltips are in front of everything
+        if let Some(x) = self.overlay_under(pos) {
+            return Some(x);
         }
         let map = layer_map_for_output(&self.output);
         let on_layer = |layer: Layer| {
@@ -1204,6 +1291,10 @@ impl App {
             return;
         }
         let pos = self.pointer_location;
+        // a click in an X11 menu leaves the keyboard where it is (the menu's own window keeps it)
+        if self.over_overlay(pos) {
+            return;
+        }
         let layer_hit = {
             let map = layer_map_for_output(&self.output);
             [Layer::Overlay, Layer::Top].into_iter().find_map(|layer| map.layer_under(layer, pos).cloned())
@@ -1432,7 +1523,13 @@ impl SeatHandler for App {
     fn seat_state(&mut self) -> &mut SeatState<Self> {
         &mut self.seat_state
     }
-    fn focus_changed(&mut self, _: &Seat<Self>, _: Option<&KbFocus>) {}
+    /// The program with the keyboard is the one offered the clipboard and the middle-click selection (Smithay offers them only
+    /// to the focused program; without this, what one program copied reached no other, X11 or Wayland).
+    fn focus_changed(&mut self, seat: &Seat<Self>, focus: Option<&KbFocus>) {
+        let client = focus.and_then(|f| f.surface()).and_then(|s| self.display_handle.get_client(s.id()).ok());
+        smithay::wayland::selection::data_device::set_data_device_focus(&self.display_handle, seat, client.clone());
+        smithay::wayland::selection::primary_selection::set_primary_focus(&self.display_handle, seat, client);
+    }
     fn cursor_image(&mut self, _: &Seat<Self>, image: CursorImageStatus) {
         if let Some(f) = self.cursor_hook.as_mut() {
             f(&image);
@@ -1443,6 +1540,25 @@ delegate_seat!(App);
 
 impl SelectionHandler for App {
     type SelectionUserData = ();
+
+    /// A Wayland program copied something (or the clipboard emptied): X11 programs are offered it too.
+    fn new_selection(&mut self, ty: smithay::wayland::selection::SelectionTarget, source: Option<smithay::wayland::selection::SelectionSource>, _seat: Seat<Self>) {
+        if let Some(wm) = self.xwm.as_mut() {
+            if let Err(e) = wm.new_selection(ty, source.map(|s| s.mime_types())) {
+                eprintln!("yggdrasil-compositor: X11 programs could not be offered the clipboard: {e}");
+            }
+        }
+    }
+
+    /// A Wayland program pastes what an X11 program copied (the X11 one is asked through the window manager).
+    fn send_selection(&mut self, ty: smithay::wayland::selection::SelectionTarget, mime_type: String, fd: std::os::fd::OwnedFd, _seat: Seat<Self>, _: &()) {
+        let handle = self.loop_handle.clone();
+        if let Some(wm) = self.xwm.as_mut() {
+            if let Err(e) = wm.send_selection(ty, mime_type, fd, handle) {
+                eprintln!("yggdrasil-compositor: could not paste from an X11 program: {e}");
+            }
+        }
+    }
 }
 impl DataDeviceHandler for App {
     fn data_device_state(&self) -> &DataDeviceState {
@@ -1465,14 +1581,12 @@ impl XdgShellHandler for App {
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
         self.wake();
         // New windows open one after another, a little offset, and take the keyboard.
-        let n = self.opened;
-        self.opened += 1;
+        let at = self.cascade();
         let window = Window::new_wayland_window(surface.clone());
         surface.with_pending_state(|s| {
             s.states.set(xdg_toplevel::State::Activated);
         });
         surface.send_configure();
-        let at = (60 + 36 * (n as i32 % 8), 60 + 36 * (n as i32 % 8));
         self.space.map_element(window.clone(), at, true);
         let decorate = self.decorate_all;
         self.adopt(&window, surface.wl_surface(), decorate);
