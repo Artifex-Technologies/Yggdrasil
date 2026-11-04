@@ -63,8 +63,8 @@ Not built yet (in the order I would do them):
 1. Trying resize, maximize, full screen and minimize by hand, and X11 programs (above): xterm, Steam, a Proton game.
 2. The panel's workspace buttons following the compositor's workspaces (the protocol `ext-workspace`), and key repeat for the volume keys.
 4. More workspaces than four.
-5. Full screen windows above the top bar and dock (today the panels are drawn over a full screen window: wrong for games).
-   Built 2026-11-04, not yet tried by hand: GPU clients (linux-dmabuf, with default feedback naming the render node), idle inhibit,
+5. Built 2026-11-04, not yet tried by hand: a full screen window in front covers the top bar and dock (they go behind it and get
+   no pointer; the Overlay layer stays in front). Also built 2026-11-04, not yet tried by hand: GPU clients (linux-dmabuf, with default feedback naming the render node), idle inhibit,
    primary selection, cursor shapes (the nested window's pointer follows them), fractional scale (1.0 until outputs get a scale),
    xdg-activation (only with a token from the person's own input in the last 10 s).
 6. **The hardware backend**: DRM/KMS output, libinput, a seat (logind or seatd), several monitors, scaling, VRR, NVIDIA, explicit sync (linux-drm-syncobj-v1, which NVIDIA needs to avoid flicker and frames

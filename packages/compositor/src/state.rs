@@ -1167,7 +1167,10 @@ impl App {
             let loc = x.geometry().loc;
             out.extend(x.render_elements::<WaylandSurfaceRenderElement<GlesRenderer>>(renderer, loc.to_physical(1), scale, 1.0).into_iter().map(Elem::from));
         }
-        layer_els(self, renderer, &[Layer::Overlay, Layer::Top], &mut out);
+        // A full screen window in front (a game, a video) covers the top bar and the dock: the Top layer then goes behind the
+        // windows. The Overlay layer (the lock's own picture, alerts that must be seen) stays in front.
+        let full_front = self.space.elements().last().is_some_and(|w| win_has(w, xdg_toplevel::State::Fullscreen));
+        layer_els(self, renderer, if full_front { &[Layer::Overlay][..] } else { &[Layer::Overlay, Layer::Top][..] }, &mut out);
         let windows: Vec<Window> = self.space.elements().rev().cloned().collect();
         for w in windows {
             let Some(loc) = self.space.element_location(&w) else { continue };
@@ -1192,7 +1195,7 @@ impl App {
                 None => out.extend(els.into_iter().map(Elem::from)),
             }
         }
-        layer_els(self, renderer, &[Layer::Bottom, Layer::Background], &mut out);
+        layer_els(self, renderer, if full_front { &[Layer::Top, Layer::Bottom, Layer::Background][..] } else { &[Layer::Bottom, Layer::Background][..] }, &mut out);
         out
     }
 
@@ -1271,7 +1274,9 @@ impl App {
             let (s, p) = l.surface_under(pos - geo.loc.to_f64(), WindowSurfaceType::ALL)?;
             Some((s, (p + geo.loc).to_f64()))
         };
-        if let Some(x) = on_layer(Layer::Overlay).or_else(|| on_layer(Layer::Top)) {
+        // behind a full screen window the top bar and dock are hidden, so they get no pointer either (see scene())
+        let full_front = self.space.elements().last().is_some_and(|w| win_has(w, xdg_toplevel::State::Fullscreen));
+        if let Some(x) = on_layer(Layer::Overlay).or_else(|| if full_front { None } else { on_layer(Layer::Top) }) {
             return Some(x);
         }
         if self.bar_at(pos).is_some() || self.edge_at(pos).is_some() {
