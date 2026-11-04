@@ -1,5 +1,12 @@
 # Yggdrasil on its own: no KDE, no Labyrinth
 
+> **Status 2026-11-04: KDE is gone.** It was removed from the owner's PC on 2026-10-24 and from the code on 2026-10-26 (commit 93cd99d:
+> nothing of KDE is started, called or linked). Yggdrasil runs as its own session on Hyprland 0.57 (`packages/session`); its own
+> compositor is still in progress and runs only nested. Part 1 below is kept as the record of the audit of 2026-10-23; the "Now"
+> notes say what is true today. Kept on purpose: the tray protocol's standard `org.kde` names, `kdeglobals` (the file Qt programs
+> read colours from), `X-KDE` autostart keys other programs use, and a one-time import of the tiling and colour choices made under KDE.
+> Still missing since KDE left: what `kaccess` and KWin gave for accessibility (sticky keys, magnifier and the rest; ACCESSIBILITY.md).
+
 The single checklist for making Yggdrasil a desktop environment of its own (audited 2026-10-23 from the running machine and both
 repositories; it replaces the partial snapshot in [KDE_INVENTORY.md](KDE_INVENTORY.md)). Two goals:
 
@@ -12,7 +19,7 @@ Decisions this follows: Rust and lightweight (the "must be light" rule); secrets
 
 ---
 
-## Part 1: KDE, everything that is still there
+## Part 1: KDE, everything that was still there (2026-10-23)
 
 Audit numbers: 114 KDE packages installed (44 in the `plasma` group, 62 KDE Frameworks, 4 KDE applications, 24 installed explicitly);
 23 KDE packages in Labyrinth's ISO list; 29 source files in Yggdrasil call into KDE; 9 Labyrinth scripts and 12 config files in the
@@ -24,25 +31,25 @@ Labyrinth image configure KDE. **Yggdrasil's own packages depend on KDE librarie
 **What KWin keeps tied to it (found 2026-10-23):** KWin 6.8 offers neither `ext-session-lock-v1` (Yggdrasil's lock screen), output power control (display off) nor the standard screen-copy protocols (the portal's screenshots and screen sharing). Those rows therefore move with the compositor (1b), not before it.
 
 
-| KDE piece | What it does today | Replacement | State |
+| KDE piece | What it did (2026-10-23) | Replacement | State |
 | --- | --- | --- | --- |
-| ✅ 2026-10-23 `powerdevil` | dim, screen off, sleep, brightness, power profiles, battery | `yggdrasil-idle` (timers, and the "don't sleep" requests as logind block locks) + power-profiles-daemon; brightness keys through the panel and `brightnessctl` | masked; display-off still calls `kscreen-doctor` until the compositor offers output power. Not yet: low-battery warning (laptops) |
-| `xdg-desktop-portal-kde` | screenshot, screen sharing, colour pick, settings, inhibit, notifications, app chooser | `yggdrasil-portal` (Rust) | file chooser done; the rest to do (screen capture goes through KWin's interface until the compositor) |
-| `kwallet-pam`, `kwalletd6`, `ksecretd`, `signon-kwallet-extension` | secret storage | **oo7** (Rust Secret Service, MIT, in Arch extra; decided 2026-10-23 over gnome-keyring, on condition that it keeps secrets private: encrypted at rest with a key from the login password, unlocked by PAM, locked again when it should be; to be verified in its source before any secret moves) | `yggdrasil-keyring-sync` to be pointed at oo7; switch needs the owner (saved passwords move) |
-| `kscreenlocker` | lock screen | `yggdrasil-lock` (Rust, ext-session-lock) | built; switch on with a rescue path |
+| ✅ 2026-10-23 `powerdevil` | dim, screen off, sleep, brightness, power profiles, battery | `yggdrasil-idle` (timers, and the "don't sleep" requests as logind block locks) + power-profiles-daemon; brightness keys through the panel and `brightnessctl` | masked; display-off still calls `kscreen-doctor` until the compositor offers output power. Not yet: low-battery warning (laptops). **Now (2026-11-04):** display-off goes through the compositor's output-power protocol; no KDE tool is called. |
+| `xdg-desktop-portal-kde` | screenshot, screen sharing, colour pick, settings, inhibit, notifications, app chooser | `yggdrasil-portal` (Rust) | file chooser done; the rest to do (screen capture goes through KWin's interface until the compositor). **Now (2026-11-04):** KDE's portal is gone; `yggdrasil-portal` serves the file chooser and appearance (dark or light, accent), Hyprland's portal screenshots and screen sharing, the GTK one the rest. |
+| `kwallet-pam`, `kwalletd6`, `ksecretd`, `signon-kwallet-extension` | secret storage | **oo7** (Rust Secret Service, MIT, in Arch extra; decided 2026-10-23 over gnome-keyring, on condition that it keeps secrets private: encrypted at rest with a key from the login password, unlocked by PAM, locked again when it should be; to be verified in its source before any secret moves) | `yggdrasil-keyring-sync` to be pointed at oo7; switch needs the owner (saved passwords move). **Now (2026-11-04):** KWallet is gone; gnome-keyring serves the secrets and `yggdrasil-keyring-sync` works with it. oo7 is not installed; the switch to it has not happened. |
+| `kscreenlocker` | lock screen | `yggdrasil-lock` (Rust, ext-session-lock) | built; switch on with a rescue path. **Now (2026-11-04):** kscreenlocker is gone; `yggdrasil-lock` is the lock screen (Hyprland offers ext-session-lock). |
 | ✅ 2026-10-24 `sddm` | login screen | greetd + `yggdrasil-greeter` (Rust) | in use on the owner's machine (SDDM removed) and in the Labyrinth image (the live medium signs in through greetd's `initial_session`) |
 | ✅ 2026-10-23 `plasma-nm` (secret agent in kded) | Wi-Fi password prompts | NetworkManager secret agent in the question box (`yggdrasil-polkit`, netagent.rs): Wi-Fi, 802.1x, VPN, mobile; answers only NetworkManager, stores nothing | done |
 | ✅ 2026-10-23 `bluedevil` | Bluetooth pairing prompts | BlueZ `Agent1` in the question box (btagent.rs): codes shown, typed or confirmed; answers only BlueZ | done (pairing a new device not yet tried with real hardware) |
-| `plasma-pa` | volume applet (kded parts) | Yggdrasil sound (Settings + Fylgja already) | remove once nothing calls it |
-| ✅ 2026-10-23 `kded6` (25 modules) | tray registry, Wi-Fi and Bluetooth prompts, media keys, GTK theme sync, accent, low-disk notice, and unused ones | panel: tray registry (snwatcher.rs), media keys (mediakeys.rs, the same shortcut names), low-disk warning; portal: dark/light and accent (`appearance.conf`); question box: Wi-Fi and Bluetooth | masked; kaccess stays (screen reader key, sticky keys) until the compositor. Not yet: the out-of-memory notice |
-| `plasma-workspace` (`plasmashell`, `startplasma`, `ksmserver`) | wallpaper, session start and logout, autostart | wallpaper layer in the panel; session = a systemd user target that starts the compositor and Yggdrasil | to do (session start with care: it is how you log in) |
-| `kscreen`, `libkscreen` (+ `kscreen-doctor` in 4 Yggdrasil files) | display layout and scale | Settings > Displays speaking the output-management Wayland protocol itself; drops the `libkscreen` dependency | to do |
-| `kconfig` (library dependency of panel and Settings) | reading KDE config files | plain file parsing; nothing of ours should read KDE config at all once KDE is gone | to do |
-| `plasma-systemmonitor` | task manager (Ctrl+Shift+Esc) | a small Yggdrasil task manager | to do |
-| `plasma-firewall` | firewall page | Settings > Firewall (exists) | remove |
-| `spectacle` | screenshots | Yggdrasil screenshot through `yggdrasil-portal` | to do |
-| `breeze`, `breeze-gtk`, `kde-gtk-config`, `klassy`, `kvantum` | KDE theme, GTK theme bridge, window decoration, Qt theming | `yggdrasil-theme` writes GTK (and Qt via a plain qt6ct/kvantum-free style) settings itself; cursor theme of our own or a non-KDE one | to do |
-| `kdeplasma-addons`, `plasma6-applets-window-title`, `plasma-browser-integration`, `kio-extras`, `baloo`, `milou`, `kactivitymanagerd`, `kaccess`, `drkonqi`, `kinfocenter`, `systemsettings`, `kmenuedit` | Plasma extras | nothing (Minos has its own search; Settings is ours) | remove (kaccess: only after the accessibility plan) |
+| `plasma-pa` | volume applet (kded parts) | Yggdrasil sound (Settings + Fylgja already) | remove once nothing calls it. **Now (2026-11-04):** removed. |
+| ✅ 2026-10-23 `kded6` (25 modules) | tray registry, Wi-Fi and Bluetooth prompts, media keys, GTK theme sync, accent, low-disk notice, and unused ones | panel: tray registry (snwatcher.rs), media keys (mediakeys.rs, the same shortcut names), low-disk warning; portal: dark/light and accent (`appearance.conf`); question box: Wi-Fi and Bluetooth | masked; kaccess stays (screen reader key, sticky keys) until the compositor. Not yet: the out-of-memory notice. **Now (2026-11-04):** kded and kaccess are gone; the panel's own watcher, the media keys (bound by Hyprland to `yggdrasil-mediakey`) and the rest are in use. **Nothing replaces kaccess yet**: no sticky keys and no screen-reader key. |
+| `plasma-workspace` (`plasmashell`, `startplasma`, `ksmserver`) | wallpaper, session start and logout, autostart | wallpaper layer in the panel; session = a systemd user target that starts the compositor and Yggdrasil | to do (session start with care: it is how you log in). **Now (2026-11-04):** done: `yggdrasil-session` (on Hyprland) and the `yggdrasil-session.target` user target; the panel draws the wallpaper. |
+| `kscreen`, `libkscreen` (+ `kscreen-doctor` in 4 Yggdrasil files) | display layout and scale | Settings > Displays speaking the output-management Wayland protocol itself; drops the `libkscreen` dependency | to do. **Now (2026-11-04):** done differently: Settings > Displays writes Hyprland's monitor settings; the `libkscreen` dependency is gone. |
+| `kconfig` (library dependency of panel and Settings) | reading KDE config files | plain file parsing; nothing of ours should read KDE config at all once KDE is gone | to do. **Now (2026-11-04):** the `kconfig` dependency is gone (plain file parsing). Still read on purpose: `kdeglobals` (written by Yggdrasil for Qt programs) and, once, the tiling and colour choices KDE left in `kwinrc` and `kdeglobals`. |
+| `plasma-systemmonitor` | task manager (Ctrl+Shift+Esc) | a small Yggdrasil task manager | to do. **Now (2026-11-04):** removed; Ctrl+Shift+Esc opens `btop` in a terminal. A Yggdrasil task manager is still to do. |
+| `plasma-firewall` | firewall page | Settings > Firewall (exists) | remove. **Now (2026-11-04):** removed. |
+| `spectacle` | screenshots | Yggdrasil screenshot through `yggdrasil-portal` | to do. **Now (2026-11-04):** removed; `yggdrasil-shot` takes screenshots (Print, Super+Shift+S). |
+| `breeze`, `breeze-gtk`, `kde-gtk-config`, `klassy`, `kvantum` | KDE theme, GTK theme bridge, window decoration, Qt theming | `yggdrasil-theme` writes GTK (and Qt via a plain qt6ct/kvantum-free style) settings itself; cursor theme of our own or a non-KDE one | to do. **Now (2026-11-04):** done: none of these is installed; `yggdrasil-theme` writes the GTK and Qt colours and has its own cursor theme (THEME.md). |
+| `kdeplasma-addons`, `plasma6-applets-window-title`, `plasma-browser-integration`, `kio-extras`, `baloo`, `milou`, `kactivitymanagerd`, `kaccess`, `drkonqi`, `kinfocenter`, `systemsettings`, `kmenuedit` | Plasma extras | nothing (Minos has its own search; Settings is ours) | remove (kaccess: only after the accessibility plan). **Now (2026-11-04):** all removed, kaccess included, before the accessibility plan had a replacement for it. |
 | ✅ 2026-10-24 Labyrinth image: `labyrinth-plasma-setup`, `labyrinth-hide-kde-settings`, `labyrinth-displays(-kde)`, `labyrinth-panel-mode`, `labyrinth-switch-mode`, `labyrinth-tiling`, `labyrinth-lockwatch`, `labyrinth-keyring-migrate`, `labyrinth-selfcheck`; `/etc/xdg/kwinrc`, `kscreenlockerrc`, `powerdevilrc`, `plasma-workspace`, `kde-portals.conf`, `sddm.conf.d`, `kwinrulesrc`, `/usr/share/kwin`, `/usr/share/labyrinth/plasma` | configure KDE | each goes with the piece it configures | removed from the Labyrinth image (labyrinth-displays lost its KDE mode; labyrinth-selfcheck checks Hyprland and greetd instead) |
 
 ### 1b. The compositor (decided 2026-10-23: chosen by measurement, the shell made independent of it)
@@ -56,13 +63,14 @@ cosmic-comp, and Yggdrasil's own Smithay compositor, measured on idle memory and
 distro-packaged compositor that wins is preferred (it updates with the system); window tools (FancyZones, Grab And Move, Window
 Hopper) then talk to it through one small adapter.
 
-| KDE piece | What it does today | Replacement |
+| KDE piece | What it did (2026-10-23) | Replacement |
 | --- | --- | --- |
-| `kwin` (+ `kwin-scripts-krohnkite`, `/usr/share/kwin` scripts) | draws every window, input, the Wayland protocols the panel uses (`plasma-window-management`, `org_kde_plasma_shell`), tiling, rules | `yggdrasil-compositor` (Rust, Smithay): standard protocols (layer-shell, foreign-toplevel, output management, screencopy) |
-| `kglobalaccel` | global shortcuts, including KWin's own | shortcuts inside the compositor |
-| KWin D-Bus calls in Yggdrasil (`org.kde.KWin` in 15 files) | effects, reconfigure, screenshots, colour pick | the compositor's own interface |
+| `kwin` (+ `kwin-scripts-krohnkite`, `/usr/share/kwin` scripts) | draws every window, input, the Wayland protocols the panel uses (`plasma-window-management`, `org_kde_plasma_shell`), tiling, rules | `yggdrasil-compositor` (Rust, Smithay): standard protocols (layer-shell, foreign-toplevel, output management, screencopy). **Now (2026-11-04):** Hyprland won the bake-off and is the compositor; KWin and Krohnkite are gone. `yggdrasil-compositor` is still a first version that runs only nested; its hardware backend is not built. |
+| `kglobalaccel` | global shortcuts, including KWin's own | shortcuts inside the compositor. **Now (2026-11-04):** Hyprland binds every key; kglobalacceld is gone (the KDE Frameworks library `kglobalaccel` is still installed only because a KDE-based app, ghostwriter, needs it). |
+| KWin D-Bus calls in Yggdrasil (`org.kde.KWin` in 15 files) | effects, reconfigure, screenshots, colour pick | the compositor's own interface. **Now (2026-11-04):** no `org.kde.KWin` call is left in Yggdrasil. |
 
 Until then KWin and kglobalaccel are the **only** KDE pieces that should remain. The parked tools are written on the compositor.
+(Now: no KDE piece of the desktop remains. The parked tools were resumed on 2026-10-25, written for Hyprland and Yggdrasil's panel.)
 
 ### 1c. Not the desktop: applications and the installer
 
@@ -70,9 +78,9 @@ These use KDE's libraries (KDE Frameworks) without being the desktop. The librar
 
 | Package | Uses | Choice for the owner |
 | --- | --- | --- |
-| `kdenlive` (video editor), `ghostwriter` (Markdown) | KDE Frameworks | keep as apps (Agora), or pick non-KDE ones (e.g. Shotcut/Pitivi; Apostrophe) |
-| `calamares` (Labyrinth's installer), `kpmcore` | KDE Frameworks | Labyrinth's choice: keep, or a Rust installer of its own |
-| `kaccounts-integration`, `kirigami-addons`, `kquickimageeditor` | pulled in by the above | go with them |
+| `kdenlive` (video editor), `ghostwriter` (Markdown) | KDE Frameworks | keep as apps (Agora), or pick non-KDE ones (e.g. Shotcut/Pitivi; Apostrophe). **Now (2026-11-04):** ghostwriter is installed, kdenlive is not. |
+| `calamares` (Labyrinth's installer), `kpmcore` | KDE Frameworks | Labyrinth's choice: keep, or a Rust installer of its own. **Now (2026-11-04):** `yggdrasil-installer` exists; calamares and kpmcore are still installed on the owner's PC. |
+| `kaccounts-integration`, `kirigami-addons`, `kquickimageeditor` | pulled in by the above | go with them. **Now (2026-11-04):** not installed. |
 
 ---
 
