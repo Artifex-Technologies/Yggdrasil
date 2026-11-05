@@ -132,6 +132,24 @@ class GpuRun(unittest.TestCase):
         self.assertNotIn("DXVK_FILTER_DEVICE_NAME", env)
         self.assertEqual(env["DRI_PRIME"], "pci-0000_03_00_0")
 
+    def test_frames_on_the_arc_while_the_2070_draws(self):
+        with self.two():
+            cs = m.cards(m.vulkan_devices(VULKANINFO))
+        argv = m.frames_command(cs[0], cs[1], cs, ["%command%", "-arg"], 3)
+        g = argv.index("gamescope")
+        outer, gs, inner = argv[:g], argv[g:argv.index("--") + 1], argv[argv.index("--") + 1:]
+        self.assertIn("LSFGVK_ENV=1", outer)
+        self.assertIn("LSFGVK_MULTIPLIER=3", outer)
+        self.assertIn("DRI_PRIME=pci-0000_03_00_0", outer, "gamescope composites on the Arc")
+        self.assertEqual(gs[gs.index("--prefer-vk-device") + 1], "8086:e20b")
+        self.assertEqual(gs[1:3], ["--backend", "sdl"], "a Vulkan swapchain lsfg-vk can work on")
+        self.assertEqual(inner[-2:], ["%command%", "-arg"])
+        self.assertIn("DISABLE_LSFGVK=1", inner, "no frame generation inside the game itself")
+        for k in ("LSFGVK_ENV", "LSFGVK_MULTIPLIER", "DRI_PRIME", "MESA_VK_DEVICE_SELECT"):
+            self.assertIn(k, inner[inner.index("-u") - 1:], f"{k} is taken away from the game")
+        self.assertIn("__NV_PRIME_RENDER_OFFLOAD=1", inner, "the game draws on the 2070")
+        self.assertIn("__VK_LAYER_NV_optimus=NVIDIA_only", inner, "the game's value replaces gamescope's")
+
     def test_a_card_number_that_does_not_exist_is_refused(self):
         with self.two():
             cs = m.cards([])

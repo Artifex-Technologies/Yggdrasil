@@ -4,6 +4,9 @@
     yggdrasil-gpu-run list [--json]       the cards, numbered as Settings > Games shows them
     yggdrasil-gpu-run N COMMAND [ARGS...] run COMMAND on card N
     yggdrasil-gpu-run env N               the environment that does it, one VAR=value per line
+    yggdrasil-gpu-run N --frames-on M [--multiplier X] COMMAND [ARGS...]
+                                          experimental: COMMAND draws on card N, Lossless Scaling's frame generation
+                                          (lsfg-vk) runs on card M
 
 In Steam: a game's Properties > Launch options:  yggdrasil-gpu-run 2 %command%
 
@@ -18,6 +21,14 @@ What it sets, for the card that should draw:
 The picture still reaches the screen through the card the monitor is plugged into; the copy between cards is done by the
 drivers (PRIME). Frame generation on a second card (Lossless Scaling's dual-GPU mode) needs lsfg-vk to support it: not yet.
 Nothing here needs administrator rights, and nothing is changed on the system: it only starts the program.
+
+Frame generation on another card (--frames-on, experimental, 2026-11-05): lsfg-vk has no dual-card mode yet, and its licence
+does not allow a changed copy, so this is built from unchanged parts. The game runs inside gamescope (Valve's compositor, SDL
+backend: it shows its picture through a Vulkan swapchain). The game draws on card N; gamescope composites and presents on
+card M, and lsfg-vk is switched on for gamescope alone (LSFGVK_ENV=1, LSFGVK_MULTIPLIER), so the extra frames are made on
+card M from gamescope's output. The game itself has lsfg-vk switched off (DISABLE_LSFGVK=1) and gamescope's card variables
+taken away. Lossless Scaling's own dual-card advice applies: the monitor is plugged into card M. Not yet tried on two real
+cards.
 """
 
 import json
@@ -139,6 +150,18 @@ def environment(card, all_cards):
     return env
 
 
+def frames_command(game, frames, all_cards, command, multiplier=2):
+    """The argv that runs `command` on card `game` inside gamescope on card `frames`, with lsfg-vk on gamescope only."""
+    outer = environment(frames, all_cards)
+    inner = environment(game, all_cards)
+    outer.update({"LSFGVK_ENV": "1", "LSFGVK_MULTIPLIER": str(multiplier)})
+    unset = [k for k in outer if k not in inner]
+    argv = ["env"] + [f"{k}={v}" for k, v in outer.items()]
+    argv += ["gamescope", "--backend", "sdl", "--prefer-vk-device", f"{frames['vendor']:04x}:{frames['device']:04x}", "-f", "--"]
+    argv += ["env"] + [a for k in unset for a in ("-u", k)] + ["DISABLE_LSFGVK=1"] + [f"{k}={v}" for k, v in inner.items()]
+    return argv + list(command)
+
+
 def pick(arg, all_cards):
     try:
         n = int(arg)
@@ -171,6 +194,22 @@ def main(argv):
         return 0
     cs = cards()
     c = pick(argv[0], cs)
+    if c and len(argv) > 2 and argv[1] == "--frames-on":
+        f = pick(argv[2], cs)
+        rest = argv[3:]
+        multiplier = 2
+        if len(rest) >= 2 and rest[0] == "--multiplier" and rest[1].isdigit() and 2 <= int(rest[1]) <= 20:
+            multiplier = int(rest[1])
+            rest = rest[2:]
+        if not f or f is c or not rest:
+            print("yggdrasil-gpu-run: usage: yggdrasil-gpu-run N --frames-on M [--multiplier X] COMMAND (two different cards)", file=sys.stderr)
+            return 2
+        argv2 = frames_command(c, f, cs, rest, multiplier)
+        try:
+            os.execvp(argv2[0], argv2)
+        except OSError as e:
+            print(f"yggdrasil-gpu-run: cannot start gamescope: {e}", file=sys.stderr)
+            return 127
     if not c or len(argv) < 2:
         print(f"yggdrasil-gpu-run: usage: yggdrasil-gpu-run N COMMAND (cards: {', '.join(str(x['number']) for x in cs) or 'none found'})", file=sys.stderr)
         return 2

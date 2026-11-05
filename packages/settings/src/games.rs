@@ -5,7 +5,11 @@
 //!   on it (`yggdrasil-gpu-run 2 %command%`), with a Copy button.
 //! - Frame generation: lsfg-vk (a Vulkan layer, from Agora: its licence keeps it out of the system itself) and Lossless
 //!   Scaling (Steam, paid), whose files it needs. Its own window (lsfg-vk-ui) sets the games and multipliers; this page says
-//!   what is there and opens the rest. Frame generation on a second card waits on lsfg-vk (not supported by it yet).
+//!   what is there and opens the rest.
+//! - On a second card (experimental): lsfg-vk has no dual-card mode and its licence forbids a changed copy, so
+//!   `yggdrasil-gpu-run N --frames-on M` runs the game on card N inside gamescope on card M, with lsfg-vk on gamescope's own
+//!   output only (see helpers/gpu-run). The page suggests the game on a card without the monitor and the frames on the card
+//!   the monitor is plugged into, as Lossless Scaling's dual-card advice has it.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
@@ -74,6 +78,21 @@ pub fn describe(c: &Card) -> String {
 /// The Steam launch option that runs a game on card `n`.
 pub fn launch_option(n: u32) -> String {
     format!("yggdrasil-gpu-run {n} %command%")
+}
+
+/// For two or more cards: (the card the game draws on, the card that makes the extra frames). The frames go on the card the
+/// monitor is plugged into (else the one the computer started on), the game on the first other card.
+pub fn dual_pick(cards: &[Card]) -> Option<(u32, u32)> {
+    if cards.len() < 2 {
+        return None;
+    }
+    let frames = cards.iter().find(|c| c.screens > 0).or_else(|| cards.iter().find(|c| c.boot)).unwrap_or(&cards[0]);
+    let game = cards.iter().find(|c| c.number != frames.number)?;
+    Some((game.number, frames.number))
+}
+
+pub fn dual_option(game: u32, frames: u32) -> String {
+    format!("yggdrasil-gpu-run {game} --frames-on {frames} %command%")
 }
 
 /// Steam's library folders: its own folder and every `"path"` in libraryfolders.vdf.
@@ -202,7 +221,22 @@ impl State {
                     crate::sys::spawn("steam", &[&format!("steam://store/{LOSSLESS_SCALING}")]);
                 }
             });
-            ui::row(ui, pal, false, "On a second graphics card", Some("Lossless Scaling's dual-card mode (the game on one card, the extra frames on another) is not in lsfg-vk yet. When it is, it is set here."), |_| {});
+            match dual_pick(&info.cards) {
+                Some((game, frames)) => {
+                    let sub = format!("Experimental: the game draws on card {game}, the extra frames are made on card {frames} (the one your monitor is on), through gamescope. Not yet tried on two real cards. To swap them, swap the two numbers.");
+                    ui::row(ui, pal, false, "On a second graphics card", Some(&sub), |ui| {
+                        let ready = info.lsfg && info.lossless;
+                        let label = if self.copied == Some(0) { "Copied" } else { "Copy launch option" };
+                        let r = ui.add_enabled_ui(ready, |ui| ui::action(ui, pal, label)).inner;
+                        let r = r.on_hover_text(if ready { dual_option(game, frames) } else { "Needs lsfg-vk and Lossless Scaling first".to_string() });
+                        if r.clicked() {
+                            ui.ctx().copy_text(dual_option(game, frames));
+                            self.copied = Some(0);
+                        }
+                    });
+                }
+                None => ui::row(ui, pal, false, "On a second graphics card", Some("Lossless Scaling's dual-card mode (the game on one card, the extra frames on another): with a second card installed, a launch option for it shows here (experimental)."), |_| {}),
+            }
         });
         ui.add_space(6.0);
         if ui::quiet(ui, pal, "Look again").clicked() {
@@ -225,6 +259,16 @@ mod tests {
         assert_eq!(describe(&c[1]), "Driver: xe");
         assert!(parse_cards("not json").is_none());
         assert_eq!(launch_option(2), "yggdrasil-gpu-run 2 %command%");
+    }
+
+    #[test]
+    fn the_frames_go_on_the_card_the_monitor_is_on() {
+        let c = |number, screens, boot| Card { number, name: String::new(), driver: String::new(), boot, screens };
+        assert_eq!(dual_pick(&[c(1, 0, true)]), None, "one card");
+        assert_eq!(dual_pick(&[c(1, 1, true), c(2, 0, false)]), Some((2, 1)));
+        assert_eq!(dual_pick(&[c(1, 0, true), c(2, 1, false)]), Some((1, 2)), "the monitor on the second card");
+        assert_eq!(dual_pick(&[c(1, 0, false), c(2, 0, true)]), Some((1, 2)), "no screen known: the card it started on");
+        assert_eq!(dual_option(1, 2), "yggdrasil-gpu-run 1 --frames-on 2 %command%");
     }
 
     #[test]

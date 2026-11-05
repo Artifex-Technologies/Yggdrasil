@@ -34,9 +34,17 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
     Labyrinth's catalog has it as "Frame generation", from the AUR's source recipe), whether Lossless Scaling is installed in
     any Steam library (it supplies the frame generation; Open in Steam otherwise), and "Choose games", which opens lsfg-vk's own
     window. lsfg-vk is not part of the desktop: its licence (CC BY-NC-ND 4.0) forbids changing it and commercial use.
-  - **On a second card:** Lossless Scaling's dual-card mode (the game on one card, the extra frames on another) is not in lsfg-vk
-    yet (its documentation: "will be available in future releases"). When it is, the setting goes in this group, using the
-    card numbers above.
+  - **On a second card (experimental):** Lossless Scaling's dual-card mode (the game on one card, the extra frames on another) is
+    not in lsfg-vk ("will be available in future releases"), and its licence forbids a changed copy. So it is built from
+    unchanged parts: `yggdrasil-gpu-run N --frames-on M [--multiplier X] %command%` runs the game on card N inside gamescope
+    (SDL backend: it presents through a Vulkan swapchain) on card M, switches lsfg-vk on for gamescope alone (`LSFGVK_ENV=1`,
+    `LSFGVK_MULTIPLIER`) and off in the game (`DISABLE_LSFGVK=1`, gamescope's card variables taken away). The extra frames are
+    made on card M from gamescope's output. With two cards the page offers it with Copy launch option (once lsfg-vk and
+    Lossless Scaling are there): the frames on the card the monitor is plugged into, the game on the other.
+    Checked on one card (2026-11-05): gamescope's SDL output loads implicit Vulkan layers (Mesa's device-select was inserted)
+    and presents through vkCreateSwapchainKHR / vkQueuePresentKHR, where lsfg-vk works. (MangoHud cannot show this: it skips
+    any process named gamescope.) Not yet run with lsfg-vk and Lossless Scaling, nor on two real cards. Costs a little input
+    latency, as on Windows.
 
   ![Settings > Games](../assets/screenshots/settings-games.png)
 
