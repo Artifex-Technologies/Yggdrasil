@@ -319,13 +319,25 @@ impl Panel {
             let title = format!("Port {n}");
             let mut changed = false;
             ui::group(ui, pal, Some(&title), |ui| {
-                ui::row(ui, pal, true, "Name", Some("Your own name for what is plugged in here"), |ui| {
-                    let hint = if p.role == "pump" { "e.g. Graphics card pump" } else { "e.g. Top exhaust" };
+                let speed = match (c.pct, connected.contains_key(&n)) {
+                    (_, false) => "not connected".to_string(),
+                    (Some(pct), _) if blind => format!("{pct} %, no speed signal"),
+                    (Some(pct), _) => format!("{pct} %, {} RPM", c.rpm),
+                    (None, _) if blind => "no speed signal".to_string(),
+                    (None, _) => format!("{} RPM", c.rpm),
+                };
+                // the first line: the person's own name for what is plugged in (typed right there), and its speed now
+                ui::row_with(ui, pal, true, |ui| {
+                    let hint = if p.role == "pump" { "Name it, e.g. Graphics card pump" } else { "Name it, e.g. Top exhaust" };
                     let mut name = p.name.clone();
-                    if ui::field(ui, pal, &mut name, hint, 220.0, false).changed() {
+                    // wide enough for a long name, leaving the speed its room
+                    let width = (ui.available_width() - 40.0).clamp(180.0, 420.0);
+                    if ui::field(ui, pal, &mut name, hint, width, false).changed() {
                         p.name = name.chars().filter(|c| !c.is_control()).take(NAME_MAX).collect();
                         changed = true;
                     }
+                }, None, |ui| {
+                    ui.label(speed);
                 });
                 ui::row(ui, pal, false, "Kind", Some("A pump keeps one speed; a fan follows the temperatures"), |ui| {
                     let sel = (p.role != "pump") as usize;
@@ -335,16 +347,6 @@ impl Panel {
                             changed = true;
                         }
                     }
-                });
-                let speed = match (c.pct, connected.contains_key(&n)) {
-                    (_, false) => "not connected".to_string(),
-                    (Some(pct), _) if blind => format!("{pct} %, no speed signal"),
-                    (Some(pct), _) => format!("{pct} %, {} RPM", c.rpm),
-                    (None, _) if blind => "no speed signal".to_string(),
-                    (None, _) => format!("{} RPM", c.rpm),
-                };
-                ui::row(ui, pal, false, "Speed now", None, |ui| {
-                    ui.label(speed);
                 });
                 if p.role == "pump" {
                     let mut v = p.fixed.max(PUMP_MIN) as f32;

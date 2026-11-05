@@ -49,7 +49,8 @@ pub fn link_row(ui: &mut egui::Ui, pal: &Palette, first: bool, title: &str, subt
     clicked
 }
 
-fn row_with(ui: &mut egui::Ui, pal: &Palette, first: bool, title: impl FnOnce(&mut egui::Ui), subtitle: Option<&str>, control: impl FnOnce(&mut egui::Ui)) {
+/// A row with anything as its title (a text box, for a name the person types), laid out as `row`.
+pub fn row_with(ui: &mut egui::Ui, pal: &Palette, first: bool, title: impl FnOnce(&mut egui::Ui), subtitle: Option<&str>, control: impl FnOnce(&mut egui::Ui)) {
     if !first {
         let r = ui.available_rect_before_wrap();
         ui.painter().hline(r.left()..=r.right(), r.top(), Stroke::new(1.0, pal.border));
