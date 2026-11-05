@@ -13,27 +13,60 @@
      "format": "kv",
      "newline": "crlf",
      "template_lines": [
-      "Audio.AltNameColor = false", "Audio.MusicVol = 1.00000000", "Audio.Output = 0", "Audio.SFXVol = 1.00000000",
-      "Audio.Subtitles = false", "Audio.VoiceVol = 1.00000000", "Control.AimAssistEnabled = true", "Control.AimingPosition = 1",
-      "Control.ControllerSensitivity = 2", "Control.FireButtonControls = true", "Control.InvertX = false", "Control.InvertY = false",
-      "Control.MouseSensitivity = 0.50000000", "Control.Shock = true", "Game.Played = 0",
-      "QualityOptions.ActorMotionBlur = true", "QualityOptions.Bloom = true", "QualityOptions.Blur = true",
-      "QualityOptions.ConfigType = 4", "QualityOptions.Decals = true", "QualityOptions.Distortion = true", "QualityOptions.DoF = true",
-      "QualityOptions.EdgeAA = false", "QualityOptions.Flare = true", "QualityOptions.Glow = true",
-      "QualityOptions.HighLightQuality = true", "QualityOptions.ManipColor = true", "QualityOptions.ShaderQuality = 1",
-      "QualityOptions.Shadows = 1", "Window.Fullscreen = true", "Window.Gamma = 0.50000000", "Window.Height = 1080",
-      "Window.Hz = 60", "Window.Left = 0", "Window.MessageNotification = 1", "Window.State = 0", "Window.Top = 0",
-      "Window.VSync = False", "Window.Width = 1920"
+      "Audio.AltNameColor = false",
+      "Audio.MusicVol = 1.00000000",
+      "Audio.Output = 0",
+      "Audio.SFXVol = 1.00000000",
+      "Audio.Subtitles = false",
+      "Audio.VoiceVol = 1.00000000",
+      "Control.AimAssistEnabled = true",
+      "Control.AimingPosition = 1",
+      "Control.ControllerSensitivity = 2",
+      "Control.FireButtonControls = true",
+      "Control.InvertX = false",
+      "Control.InvertY = false",
+      "Control.MouseSensitivity = 0.50000000",
+      "Control.Shock = true",
+      "Game.Played = 0",
+      "QualityOptions.ActorMotionBlur = true",
+      "QualityOptions.Bloom = true",
+      "QualityOptions.Blur = true",
+      "QualityOptions.ConfigType = 4",
+      "QualityOptions.Decals = true",
+      "QualityOptions.Distortion = true",
+      "QualityOptions.DoF = true",
+      "QualityOptions.EdgeAA = false",
+      "QualityOptions.Flare = true",
+      "QualityOptions.Glow = true",
+      "QualityOptions.HighLightQuality = true",
+      "QualityOptions.ManipColor = true",
+      "QualityOptions.ShaderQuality = 1",
+      "QualityOptions.Shadows = 1",
+      "Window.Fullscreen = true",
+      "Window.Gamma = 0.50000000",
+      "Window.Height = 1080",
+      "Window.Hz = 60",
+      "Window.Left = 0",
+      "Window.MessageNotification = 1",
+      "Window.State = 0",
+      "Window.Top = 0",
+      "Window.VSync = False",
+      "Window.Width = 1920"
      ],
-     "set": { "Window.Width": "{width}", "Window.Height": "{height}", "Window.Fullscreen": "true", "Window.VSync": "False" }
+     "set": {
+      "Window.Width": "{width}",
+      "Window.Height": "{height}",
+      "Window.Fullscreen": "true",
+      "Window.VSync": "False"
+     }
     }
    ]
   },
   {
    "appid": "377160",
    "name": "Fallout 4",
-   "title": "Your screen's size, borderless, and the settings files its launcher would make",
-   "about": "Without its launcher's settings files the game starts at 1280x720. This makes them from the game's own templates and sets your screen's size, borderless full screen (the most reliable under Proton). At 21:9 the world is wider; the HUD and menus stay 16:9-shaped and stretched, which needs an interface mod.",
+   "title": "Your screen's size, and the settings files its launcher would make",
+   "about": "Without its launcher's settings files the game starts at 1280x720. This makes them from the game's own templates at your screen's size. The launcher's first run then picks graphics settings (Ultra on a strong card) and keeps the size. At 21:9 the world is wider; the title screen, HUD and menus stay 16:9-shaped, which needs an interface mod.",
    "tip": "Its physics are tied to the frame rate and break above 60 fps: with frame generation at 3x (180 Hz) the game runs at 60 and the screen at 180.",
    "files": [
     {
@@ -41,7 +74,13 @@
      "format": "ini",
      "newline": "crlf",
      "template": "{game}/Fallout4/Fallout4Prefs.ini",
-     "set": { "Display": { "iSize W": "{width}", "iSize H": "{height}", "bBorderless": "1", "bFull Screen": "0" } }
+     "set": {
+      "Display": {
+       "iSize W": "{width}",
+       "iSize H": "{height}",
+       "bBorderless": "1"
+      }
+     }
     },
     {
      "path": "{documents}/My Games/Fallout4/Fallout4.ini",
