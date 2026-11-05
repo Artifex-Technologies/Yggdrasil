@@ -3,7 +3,10 @@
 //! - Graphics cards: read by `yggdrasil-gpu-run list --json` (helpers/gpu-run), the same code that later starts the game, so
 //!   the numbers here are the numbers it takes. With two or more cards each one shows the Steam launch option that runs a game
 //!   on it (`yggdrasil-gpu-run 2 %command%`), with a Copy button.
-//! - Frame generation: lsfg-vk (a Vulkan layer, from Agora: its licence keeps it out of the system itself) and Lossless
+//! - Frame generation (Labyrinth's own, labyrinth-framegen): every installed Steam game with Off / 2x / 3x / 4x, written to
+//!   ~/.config/labyrinth-framegen/games.conf, which its launcher (`labyrinth-framegen %command%` in the game's Steam launch
+//!   options, once) reads when the game starts.
+//! - Lossless Scaling frame generation: lsfg-vk (a Vulkan layer, from Agora: its licence keeps it out of the system itself) and Lossless
 //!   Scaling (Steam, paid), whose files it needs. Its own window (lsfg-vk-ui) sets the games and multipliers; this page says
 //!   what is there and opens the rest.
 //! - On a second card (experimental): lsfg-vk has no dual-card mode and its licence forbids a changed copy, so
@@ -24,8 +27,14 @@ const GPU_RUN: &str = "/usr/bin/yggdrasil-gpu-run";
 const LSFG_LAYERS: [&str; 2] = ["/usr/share/vulkan/implicit_layer.d/VkLayer_LSFGVK_frame_generation.json", ".local/share/vulkan/implicit_layer.d/VkLayer_LSFGVK_frame_generation.json"];
 /// Lossless Scaling's Steam app id.
 const LOSSLESS_SCALING: &str = "993090";
-/// Agora's page for the frame generation component (Labyrinth's catalog).
+/// Agora's page for the lsfg-vk component (Labyrinth's catalog).
 const AGORA_APP: &str = "frame-generation";
+/// Labyrinth's own frame generation: its layer manifest (present when installed) and Agora page.
+const FRAMEGEN_LAYER: &str = "/usr/share/vulkan/implicit_layer.d/labyrinth_framegen.x86_64.json";
+const FRAMEGEN_AGORA: &str = "labyrinth-framegen";
+pub const FRAMEGEN_OPTION: &str = "labyrinth-framegen %command%";
+/// The choices per game, as Off, 2x, 3x, 4x.
+pub const FRAMEGEN_CHOICES: [&str; 4] = ["Off", "2x", "3x", "4x"];
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Card {
@@ -44,6 +53,97 @@ pub struct Info {
     pub lsfg: bool,
     pub lossless: bool,
     pub steam: bool,
+    pub framegen: bool,
+    /// installed Steam games: (app id, name), by name
+    pub games: Vec<(String, String)>,
+    /// labyrinth-framegen's games.conf as it is
+    pub framegen_conf: String,
+}
+
+/// ~/.config/labyrinth-framegen/games.conf
+pub fn framegen_conf_path() -> PathBuf {
+    // the launcher's own folder (XDG_CONFIG_HOME, else ~/.config), not Yggdrasil's
+    let base = std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join(".config"));
+    base.join("labyrinth-framegen/games.conf")
+}
+
+/// A game's choice in games.conf: 0 (off or not listed), 2, 3 or 4.
+pub fn framegen_choice(conf: &str, id: &str) -> u32 {
+    let mut v = 0;
+    for l in conf.lines() {
+        let mut w = l.split_whitespace();
+        if w.next() == Some(id) {
+            v = match w.next() {
+                Some("2") => 2,
+                Some("3") => 3,
+                Some("4") => 4,
+                _ => 0,
+            };
+        }
+    }
+    v
+}
+
+/// games.conf with this game's choice set (0 = off); every other line is kept as it is.
+pub fn framegen_set(conf: &str, id: &str, choice: u32) -> String {
+    let value = if (2..=4).contains(&choice) { choice.to_string() } else { "off".to_string() };
+    let mut out: Vec<String> = vec![];
+    let mut done = false;
+    for l in conf.lines() {
+        if l.split_whitespace().next() == Some(id) {
+            if !done {
+                out.push(format!("{id} {value}"));
+                done = true;
+            }
+        } else {
+            out.push(l.to_string());
+        }
+    }
+    if !done {
+        if out.is_empty() {
+            out.push("# Frame generation per Steam game: <app id> <off|2|3|4>, written by Settings > Games".into());
+        }
+        out.push(format!("{id} {value}"));
+    }
+    out.join("\n") + "\n"
+}
+
+/// An appmanifest's id and name.
+pub fn manifest_game(acf: &str) -> Option<(String, String)> {
+    let field = |key: &str| {
+        acf.lines().find_map(|l| {
+            let l = l.trim();
+            let rest = l.strip_prefix(&format!("\"{key}\""))?;
+            Some(rest.trim().trim_matches('"').to_string())
+        })
+    };
+    let (id, name) = (field("appid")?, field("name")?);
+    // Steam's own tools are not games
+    let tool = ["Proton", "Steam Linux Runtime", "Steamworks Common", "SteamVR"].iter().any(|t| name.starts_with(t)) || name.contains("Redistributable");
+    (!tool && !id.is_empty() && !name.is_empty()).then_some((id, name))
+}
+
+/// The installed Steam games, by name.
+pub fn steam_games(home: &Path) -> Vec<(String, String)> {
+    let mut games: Vec<(String, String)> = vec![];
+    for root in steam_roots(home) {
+        let vdf = std::fs::read_to_string(root.join("steamapps/libraryfolders.vdf")).unwrap_or_default();
+        for lib in libraries(&root, &vdf) {
+            let Ok(rd) = std::fs::read_dir(lib.join("steamapps")) else { continue };
+            for e in rd.flatten() {
+                let n = e.file_name().to_string_lossy().to_string();
+                if n.starts_with("appmanifest_") && n.ends_with(".acf") {
+                    if let Some(g) = std::fs::read_to_string(e.path()).ok().as_deref().and_then(manifest_game) {
+                        if !games.iter().any(|x| x.0 == g.0) {
+                            games.push(g);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    games.sort_by_key(|g| g.1.to_lowercase());
+    games
 }
 
 /// `yggdrasil-gpu-run list --json`.
@@ -132,6 +232,9 @@ pub fn load() -> Info {
         lsfg: Path::new(LSFG_LAYERS[0]).is_file() || home.join(LSFG_LAYERS[1]).is_file(),
         lossless: lossless_installed(&home),
         steam: !steam_roots(&home).is_empty(),
+        framegen: Path::new(FRAMEGEN_LAYER).is_file(),
+        games: steam_games(&home),
+        framegen_conf: std::fs::read_to_string(framegen_conf_path()).unwrap_or_default(),
     }
 }
 
@@ -198,7 +301,50 @@ impl State {
             ui.label(RichText::new("To run a game on a card: in Steam, the game's Properties > Launch options, paste its launch option (for example yggdrasil-gpu-run 2 %command%). The picture reaches your screen through the card the monitor is plugged into.").color(pal.dim).size(12.5));
         }
 
-        ui::group(ui, pal, Some("Frame generation (Lossless Scaling)"), |ui| {
+        ui::group(ui, pal, Some("Frame generation (preview)"), |ui| {
+            if !info.framegen {
+                ui::row(ui, pal, true, "Frame generation", Some("Labyrinth's own: more frames on the screen than the game draws, for Vulkan and Proton games. From Agora."), |ui| {
+                    if ui::action(ui, pal, "Get it in Agora").clicked() {
+                        let _ = std::process::Command::new("agora").env("AGORA_PAGE", format!("detail:{FRAMEGEN_AGORA}")).spawn();
+                        self.info = None;
+                    }
+                });
+                return;
+            }
+            let label = if self.copied == Some(u32::MAX) { "Copied" } else { "Copy launch option" };
+            ui::row(ui, pal, true, "In Steam, once per game", Some("Properties > Launch options: labyrinth-framegen %command%. Then choose below; no further Steam changes."), |ui| {
+                if ui::action(ui, pal, label).on_hover_text(FRAMEGEN_OPTION).clicked() {
+                    ui.ctx().copy_text(FRAMEGEN_OPTION.to_string());
+                    self.copied = Some(u32::MAX);
+                }
+            });
+            if info.games.is_empty() {
+                ui::row(ui, pal, false, "No Steam games found", None, |_| {});
+            }
+            for (id, name) in &info.games {
+                let now = framegen_choice(&info.framegen_conf, id);
+                let selected = if now >= 2 { (now - 1) as usize } else { 0 };
+                let mut pick = None;
+                ui::row(ui, pal, false, name, None, |ui| {
+                    pick = ui::segmented(ui, pal, &FRAMEGEN_CHOICES, selected);
+                });
+                if let Some(i) = pick {
+                    let choice = if i == 0 { 0 } else { i as u32 + 1 };
+                    let text = framegen_set(&info.framegen_conf, id, choice);
+                    let path = framegen_conf_path();
+                    let saved = path.parent().map(std::fs::create_dir_all).transpose().and_then(|_| std::fs::write(&path, &text));
+                    if saved.is_ok() {
+                        if let Some(i) = self.info.as_mut() {
+                            i.framegen_conf = text;
+                        }
+                    }
+                }
+            }
+        });
+        ui.add_space(6.0);
+        ui.label(RichText::new("The game is held to your refresh rate divided by the multiplier (at 180 Hz and 3x: the game at 60, the screen at 180). It adds about one game frame of delay. A choice takes effect the next time the game starts.").color(pal.dim).size(12.5));
+
+        ui::group(ui, pal, Some("Lossless Scaling frame generation (lsfg-vk)"), |ui| {
             ui::row(ui, pal, true, "lsfg-vk", Some(if info.lsfg { "Installed: Lossless Scaling's frame generation for Linux games" } else { "Brings Lossless Scaling's frame generation to Linux games. From Agora." }), |ui| {
                 if info.lsfg {
                     if ui::action(ui, pal, "Choose games").on_hover_text("lsfg-vk's own settings: which games, and how many frames").clicked() {
@@ -259,6 +405,27 @@ mod tests {
         assert_eq!(describe(&c[1]), "Driver: xe");
         assert!(parse_cards("not json").is_none());
         assert_eq!(launch_option(2), "yggdrasil-gpu-run 2 %command%");
+    }
+
+    #[test]
+    fn frame_generation_choices_are_read_and_written() {
+        let conf = "# mine\n47780 3\ndefault 2\n";
+        assert_eq!(framegen_choice(conf, "47780"), 3);
+        assert_eq!(framegen_choice(conf, "1332010"), 0, "not listed: off here (the default line is the launcher's business)");
+        let c = framegen_set(conf, "47780", 0);
+        assert_eq!(c, "# mine\n47780 off\ndefault 2\n", "changed in place, the rest kept");
+        let c = framegen_set(&c, "1332010", 4);
+        assert!(c.ends_with("1332010 4\n"));
+        assert_eq!(framegen_choice(&c, "1332010"), 4);
+        assert!(framegen_set("", "1", 2).starts_with("# Frame generation per Steam game"), "a new file says what it is");
+    }
+
+    #[test]
+    fn steam_manifests_name_games_and_skip_tools() {
+        let acf = "\"AppState\"\n{\n\t\"appid\"\t\t\"47780\"\n\t\"name\"\t\t\"Dead Space 2\"\n}\n";
+        assert_eq!(manifest_game(acf), Some(("47780".into(), "Dead Space 2".into())));
+        let tool = "\"AppState\"\n{\n\t\"appid\"\t\t\"1493710\"\n\t\"name\"\t\t\"Proton Experimental\"\n}\n";
+        assert_eq!(manifest_game(tool), None);
     }
 
     #[test]

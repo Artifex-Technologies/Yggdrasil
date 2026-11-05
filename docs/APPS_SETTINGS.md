@@ -30,7 +30,11 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
     card `DXVK_FILTER_DEVICE_NAME` and `VKD3D_FILTER_DEVICE_NAME` (Proton's DirectX translation) when vulkaninfo names it. The
     picture still reaches the screen through the card the monitor is plugged into (the drivers copy it across). Tested against
     a pretend two-card /sys (an RTX 2070 with an Arc B580); not yet on a real second card.
-  - **Frame generation (Lossless Scaling):** whether lsfg-vk is installed (its Vulkan layer; Get it in Agora otherwise, where
+  - **Frame generation (preview)**, Labyrinth's own (labyrinth-framegen, from Agora): every installed Steam game (from the
+    appmanifests in all Steam libraries; Proton and Steam's runtimes left out) with Off / 2x / 3x / 4x, saved at once to
+    `~/.config/labyrinth-framegen/games.conf` (`<app id> <off|2|3|4>`). The game needs `labyrinth-framegen %command%` in its
+    Steam launch options once (Copy launch option); the launcher reads the choice when the game starts.
+  - **Lossless Scaling frame generation (lsfg-vk):** whether lsfg-vk is installed (its Vulkan layer; Get it in Agora otherwise, where
     Labyrinth's catalog has it as "Frame generation", from the AUR's source recipe), whether Lossless Scaling is installed in
     any Steam library (it supplies the frame generation; Open in Steam otherwise), and "Choose games", which opens lsfg-vk's own
     window. lsfg-vk is not part of the desktop: its licence (CC BY-NC-ND 4.0) forbids changing it and commercial use.
