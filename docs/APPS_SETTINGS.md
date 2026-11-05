@@ -72,6 +72,9 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
     - Connected ports the setting leaves alone are listed, with "Control it as a fan".
     - Apply sends the whole setting to `pkexec casefan set -` on stdin (policy `org.yggdrasil.casefan.set`), which cleans it,
       saves it and restarts the service. The page reads `casefan get` every 3 s only while it is open.
+
+    ![Settings > Power > Fans, a fan's curves](../assets/screenshots/settings-fans-curves.png)
+
   - Each connected port has a role: a pump keeps one speed, never below 60 %; a fan follows two curves, one for the processor's
     package temperature and one for the graphics card's, and runs at whichever asks for more.
   - At 92 °C on the processor or 83 °C on the card every port runs at 100 %. A temperature it cannot read puts every port at

@@ -19,7 +19,7 @@ version that runs in a window ([docs/COMPOSITOR.md](docs/COMPOSITOR.md)). The ch
 | --- | --- | --- |
 | `packages/session` | `yggdrasil-session` | the session on Hyprland: its configuration (Lua), window rules, keys, and a small Hyprland plugin so programs' own minimize buttons work |
 | `packages/panel` | `yggdrasil-panel` | top bar, dock, tray, start menu, calendar, notifications, wallpaper, and Fylgja (the notch) ([docs/FYLGJA.md](docs/FYLGJA.md), [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md)) |
-| `packages/settings` | `yggdrasil-settings` | Settings: network, displays, sound, appearance, power and idle, users and their rights, security, restore points, apps and more |
+| `packages/settings` | `yggdrasil-settings` | Settings: network, displays, sound, appearance, power, fans and idle, users and their rights, security, restore points, apps and more |
 | `packages/minos` | `minos` | the file manager, and (through `packages/portal`) the open and save dialog of every program ([keys](docs/keys/minos.md)) |
 | `packages/market` | `agora` | Agora, the app store: the catalog, the Arch repositories, the AUR and Flathub in one place ([docs/MARKETPLACE.md](docs/MARKETPLACE.md)) |
 | `packages/lock` | `yggdrasil-lock`, `yggdrasil-greeter`, `yggdrasil-shot` | the lock screen and the login screen with selectable designs ([docs/LOCKSCREEN.md](docs/LOCKSCREEN.md), [docs/LOGIN_SCREEN.md](docs/LOGIN_SCREEN.md)), the boot splash, and the screenshot tool (Print: freezes the screen first, so open menus can be captured) |
@@ -156,12 +156,16 @@ Applications are shown as windows on a 1920×1080 desktop.
 | *Settings: Appearance.* | *Settings: Apps, sorted by use, with restart, quit and remove.* |
 | ![Settings, Lock screen](assets/screenshots/settings-lock-screen-designs.png) | ![Minos](assets/screenshots/minos-explorer.png) |
 | *Settings: the lock screen designs.* | *Minos, the file manager: tabs, places, details.* |
+| ![Settings, Fans](assets/screenshots/settings-fans.png) | ![Settings, Fans, a fan's curves](assets/screenshots/settings-fans-curves.png) |
+| *Settings: Power > Fans. The temperatures, the pump and each case fan's speed now, and its profile.* | *Settings: a fan's own curves, one for the processor and one for the graphics card, dragged point by point.* |
 | ![Agora](assets/screenshots/marketplace.png) | ![The installer, keyboard](assets/screenshots/installer-keyboard.png) |
 | *Agora, the app store.* | *The installer: keyboards by type.* |
 | ![The installer, partitions](assets/screenshots/installer-disk-manual.png) | ![The installer, account](assets/screenshots/installer-account.png) |
 | *The installer: choosing partitions beside Windows (sample disks).* | *The installer: the account (sample name).* |
 
 The installer pictures use `yggdrasil-installer --demo PAGE`: sample disks and names, and nothing can be installed from it.
+The others come from `scripts/screenshot-desktop.sh`, which shows the desktop on a 1920×1080 screen inside a running Hyprland
+session (`start`, `run yggdrasil-settings power:fans`, `shot FILE.png`, `stop`) and changes nothing in that session.
 
 ## Building
 
