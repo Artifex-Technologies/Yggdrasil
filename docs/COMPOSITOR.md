@@ -73,8 +73,20 @@ shortcuts. `YGGDRASIL_COMPOSITOR_XWAYLAND=0` leaves it out. What is written:
   window is marked inactive and the window now on top becomes the active one.
 - The panel inside the compositor: the minimized xterm was in the dock; a click brought it back with the keyboard, and the top
   bar named it.
-- Not yet: Steam and a Proton game (Steam runs in the owner's session and cannot run twice; to try with the owner), drag and
-  drop, resize from the edges.
+- **Steam and games (2026-11-05):** Steam's client runs: its window, its menus (in place, with hover), its pop-ups (closed with
+  their own buttons), the dock entry with a dot per window, the top bar's name.
+  - Steam asked for a 1373x1080 window on the 1280x800 screen, and its launch-options question, centred on that window, landed
+    off the edge where nobody could answer it, so the game never started. **Fixed:** a window is never bigger than the space the
+    panels leave free and is placed wholly on it (`xwayland::fit_in`, at map and when it asks to grow).
+  - Poly Bridge 2 (native, Unity): full screen as asked, covering the panels, no see-through patches; the mouse reached it.
+  - Dead Space 2 through Proton 11: the Wine dialogs ("Activation successful!") showed with the window controls; the game's
+    window (`steam_app_47780`) went full screen and minimized itself when Steam took the focus (old DirectX 9 games do), the
+    dock showed it with the game's own icon and brought it back full screen with the keyboard. **Open:** it then drew only a
+    thin strip at the top left, the rest black. To find out whether that is this compositor (XWayland's mode emulation through
+    wp_viewporter, or the opaque shader with a scaled buffer) or the game's own setup, run it the same way in a nested Hyprland.
+  - Small gaps: the Wine dialogs' class `steam_proton` has no dock icon; the dock's hover card stays over a full screen game while
+    the pointer is on it.
+- Not yet: drag and drop, resize from the edges.
 - Small gaps seen: the dock shows a plain icon for xterm (its desktop entry names an XPM picture the panel does not load); the
   dock's hover preview of an X11 window is empty; a compositor ended with SIGTERM leaves its `wayland-N` socket file behind.
 

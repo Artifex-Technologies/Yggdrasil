@@ -74,6 +74,15 @@ fn same(a: &X11Surface, b: &X11Surface) -> bool {
     a.xwm_id() == b.xwm_id() && a.window_id() == b.window_id()
 }
 
+/// `want` made to fit in `zone`: no bigger than it, and moved so that all of it is on it.
+pub fn fit_in(zone: Rectangle<i32, Logical>, want: Rectangle<i32, Logical>) -> Rectangle<i32, Logical> {
+    let w = want.size.w.min(zone.size.w).max(1);
+    let h = want.size.h.min(zone.size.h).max(1);
+    let x = want.loc.x.min(zone.loc.x + zone.size.w - w).max(zone.loc.x);
+    let y = want.loc.y.min(zone.loc.y + zone.size.h - h).max(zone.loc.y);
+    Rectangle::new((x, y).into(), (w, h).into())
+}
+
 /// A game, recognised by its X11 class: a Steam game (`steam_app_<id>`) or a Windows program through Wine or Proton (`<name>.exe`).
 /// Games are drawn opaque whatever their alpha channel holds.
 pub fn is_game(x: &X11Surface) -> bool {
@@ -192,8 +201,14 @@ impl XwmHandler for App {
             }
             return;
         }
-        let at = self.cascade();
-        let _ = window.configure(Rectangle::new(at, geo.size));
+        // never bigger than the space the panels leave free, and wholly on it: Steam asks for 1373x1080 on a 1280x800 screen, and a
+        // question it centres on that window landed off the edge, where nobody could answer it (found 2026-11-05)
+        let zone = smithay::desktop::layer_map_for_output(&self.output).non_exclusive_zone();
+        let screen = self.output.current_mode().map(|m| m.size.to_logical(1)).unwrap_or_default();
+        let game_full = is_game(&window) && screen.w > 0 && geo.size.w >= screen.w && geo.size.h >= screen.h;
+        let place = if game_full { Rectangle::new(self.cascade(), geo.size) } else { fit_in(zone, Rectangle::new(self.cascade(), geo.size)) };
+        let at = place.loc;
+        let _ = window.configure(place);
         let w = Window::new_x11_window(window.clone());
         self.space.map_element(w.clone(), at, true);
         // What it asked for before it was shown (full screen, maximized) is read on another thread: x11_asked acts on it.
@@ -201,8 +216,7 @@ impl XwmHandler for App {
             r.ask(window.window_id());
         }
         // A game the size of the screen that did not say so is taken as going full screen (a guess, so only for games).
-        let screen = self.output.current_mode().map(|m| m.size.to_logical(1)).unwrap_or_default();
-        if is_game(&window) && screen.w > 0 && geo.size.w >= screen.w && geo.size.h >= screen.h {
+        if game_full {
             self.fullscreen(&w);
         }
     }
@@ -259,6 +273,12 @@ impl XwmHandler for App {
         }
         if let Some(h) = h {
             geo.size.h = h as i32;
+        }
+        // a shown window may grow only as far as the free space (a full screen one was answered above)
+        if self.x11_window(&window).is_some() {
+            let zone = smithay::desktop::layer_map_for_output(&self.output).non_exclusive_zone();
+            geo.size.w = geo.size.w.min(zone.size.w.max(1));
+            geo.size.h = geo.size.h.min(zone.size.h.max(1));
         }
         let _ = window.configure(geo);
     }
@@ -492,6 +512,15 @@ impl RenderElement<GlesRenderer> for OpaqueElement {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_big_window_is_fitted_into_the_free_space() {
+        let zone = Rectangle::new((0, 40).into(), (1280, 680).into());
+        let r = |x, y, w, h| Rectangle::<i32, Logical>::new((x, y).into(), (w, h).into());
+        assert_eq!(fit_in(zone, r(132, 132, 1373, 1080)), r(0, 40, 1280, 680), "Steam's window, shrunk and moved on");
+        assert_eq!(fit_in(zone, r(100, 100, 400, 300)), r(100, 100, 400, 300), "a window that fits is left alone");
+        assert_eq!(fit_in(zone, r(1100, 600, 400, 300)), r(880, 420, 400, 300), "moved back on at the edge");
+    }
 
     #[test]
     fn games_are_known_by_their_class() {
