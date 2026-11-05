@@ -1,0 +1,327 @@
+#!/usr/bin/env python3
+"""yggdrasil-game-fix: per-game fixes for Steam games (Settings > Games > Game fixes).
+
+    yggdrasil-game-fix list [--json]     the fixes for games that are installed, and whether each is applied
+    yggdrasil-game-fix apply APPID       apply a game's fix (its settings files backed up first)
+    yggdrasil-game-fix undo APPID        put the game's files back as they were
+
+The fixes are data (/usr/share/yggdrasil/game-fixes.json, or YGGDRASIL_GAME_FIXES): for each game, settings files and the
+values to set in them. A value can name the screen: {width}, {height} (the desktop's largest monitor: hyprctl, else xrandr;
+YGGDRASIL_SCREEN=WxH overrides). Paths can use {game} (the install folder), {prefix} (Proton's drive_c), {userprofile},
+{localappdata}, {documents}. A file the game has not made yet can be made from a template (a file in the game's folder, or
+lines in the catalogue).
+
+Files: "kv" ("Key = value" lines, as Dead Space 2's settings.txt) or "ini" ([Section] and key=value lines). Every other line
+is kept as it is. Before the first change a file is copied to FILE.yggdrasil-backup; a file this program made gets
+FILE.yggdrasil-created instead. Undo restores the backup or removes the made file. Nothing here needs administrator rights.
+"""
+
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+CATALOGUE = os.environ.get("YGGDRASIL_GAME_FIXES", "/usr/share/yggdrasil/game-fixes.json")
+BACKUP = ".yggdrasil-backup"
+CREATED = ".yggdrasil-created"
+
+
+# --- Steam -------------------------------------------------------------------------------------------------------------
+
+def steam_roots(home):
+    return [r for r in (os.path.join(home, ".local/share/Steam"), os.path.join(home, ".steam/steam")) if os.path.isdir(os.path.join(r, "steamapps"))]
+
+
+def libraries(root):
+    libs = [root]
+    try:
+        with open(os.path.join(root, "steamapps/libraryfolders.vdf"), encoding="utf-8", errors="replace") as f:
+            for m in re.finditer(r'"path"\s+"([^"]+)"', f.read()):
+                p = m.group(1).replace("\\\\", "\\")
+                if p not in libs:
+                    libs.append(p)
+    except OSError:
+        pass
+    return libs
+
+
+def installed(home):
+    """{appid: (steamapps folder, install folder name, name)} for every installed game."""
+    out = {}
+    seen = set()
+    for root in steam_roots(home):
+        for lib in libraries(root):
+            sa = os.path.join(lib, "steamapps")
+            real = os.path.realpath(sa)
+            if real in seen or not os.path.isdir(sa):
+                continue
+            seen.add(real)
+            for n in os.listdir(sa):
+                if not (n.startswith("appmanifest_") and n.endswith(".acf")):
+                    continue
+                try:
+                    with open(os.path.join(sa, n), encoding="utf-8", errors="replace") as f:
+                        text = f.read()
+                except OSError:
+                    continue
+                field = lambda k: (re.search(r'"%s"\s+"([^"]*)"' % k, text) or [None, ""])[1]
+                if field("appid"):
+                    out[field("appid")] = (sa, field("installdir"), field("name"))
+    return out
+
+
+def places(steamapps, installdir, appid):
+    prefix = os.path.join(steamapps, "compatdata", appid, "pfx", "drive_c")
+    user = os.path.join(prefix, "users", "steamuser")
+    return {
+        "game": os.path.join(steamapps, "common", installdir),
+        "prefix": prefix,
+        "userprofile": user,
+        "localappdata": os.path.join(user, "AppData", "Local"),
+        "documents": os.path.join(user, "Documents"),
+    }
+
+
+# --- the screen --------------------------------------------------------------------------------------------------------
+
+def screen():
+    """(width, height) of the largest monitor."""
+    forced = os.environ.get("YGGDRASIL_SCREEN", "")
+    m = re.fullmatch(r"(\d+)x(\d+)", forced)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    try:
+        mons = json.loads(subprocess.run(["hyprctl", "-j", "monitors"], capture_output=True, text=True, timeout=5).stdout)
+        best = max(mons, key=lambda x: x["width"] * x["height"])
+        return int(best["width"]), int(best["height"])
+    except Exception:
+        pass
+    try:
+        out = subprocess.run(["xrandr", "--current"], capture_output=True, text=True, timeout=5).stdout
+        sizes = [(int(a), int(b)) for a, b in re.findall(r" connected (?:primary )?(\d+)x(\d+)\+", out)]
+        if sizes:
+            return max(sizes, key=lambda s: s[0] * s[1])
+    except Exception:
+        pass
+    return None
+
+
+# --- files -------------------------------------------------------------------------------------------------------------
+
+def fill(text, values):
+    return re.sub(r"\{(\w+)\}", lambda m: str(values.get(m.group(1), m.group(0))), text)
+
+
+def read_lines(path):
+    with open(path, encoding="utf-8", errors="surrogateescape", newline="") as f:
+        text = f.read()
+    crlf = "\r\n" in text
+    return text.replace("\r\n", "\n").split("\n"), crlf
+
+
+def write_lines(path, lines, crlf):
+    text = "\n".join(lines)
+    if not text.endswith("\n"):
+        text += "\n"
+    if crlf:
+        text = text.replace("\n", "\r\n")
+    with open(path, "w", encoding="utf-8", errors="surrogateescape", newline="") as f:
+        f.write(text)
+
+
+def kv_get(lines, key):
+    for l in lines:
+        k, sep, v = l.partition("=")
+        if sep and k.strip() == key:
+            return v.strip()
+    return None
+
+
+def kv_set(lines, key, value):
+    for i, l in enumerate(lines):
+        k, sep, _ = l.partition("=")
+        if sep and k.strip() == key:
+            lines[i] = f"{key} = {value}"
+            return lines
+    while lines and lines[-1] == "":
+        lines.pop()
+    lines.append(f"{key} = {value}")
+    return lines
+
+
+def ini_find(lines, section):
+    """(index of the [section] line, index after its last line) or None."""
+    start = None
+    for i, l in enumerate(lines):
+        s = l.strip()
+        if s.startswith("[") and s.endswith("]"):
+            if start is not None:
+                return start, i
+            if s[1:-1].strip().lower() == section.lower():
+                start = i
+    return (start, len(lines)) if start is not None else None
+
+
+def ini_get(lines, section, key):
+    found = ini_find(lines, section)
+    if not found:
+        return None
+    for l in lines[found[0] + 1:found[1]]:
+        k, sep, v = l.partition("=")
+        if sep and k.strip().lower() == key.lower():
+            return v.strip()
+    return None
+
+
+def ini_set(lines, section, key, value):
+    found = ini_find(lines, section)
+    if not found:
+        while lines and lines[-1] == "":
+            lines.pop()
+        lines += ["", f"[{section}]", f"{key}={value}"]
+        return lines
+    start, end = found
+    for i in range(start + 1, end):
+        k, sep, _ = lines[i].partition("=")
+        if sep and k.strip().lower() == key.lower():
+            lines[i] = f"{key}={value}"
+            return lines
+    # after the section's last non-empty line
+    at = end
+    while at > start + 1 and lines[at - 1].strip() == "":
+        at -= 1
+    lines.insert(at, f"{key}={value}")
+    return lines
+
+
+def wanted(spec, values):
+    """[(section or None, key, value)] the file should hold."""
+    out = []
+    for k, v in spec.get("set", {}).items():
+        if isinstance(v, dict):
+            out += [(k, kk, fill(str(vv), values)) for kk, vv in v.items()]
+        else:
+            out.append((None, k, fill(str(v), values)))
+    return out
+
+
+def file_state(path, spec, values):
+    """'applied', 'not applied' or 'missing' (no file yet)."""
+    if not os.path.isfile(path):
+        return "missing"
+    lines, _ = read_lines(path)
+    for section, key, value in wanted(spec, values):
+        now = ini_get(lines, section, key) if spec["format"] == "ini" else kv_get(lines, key)
+        if now is None or now.strip().lower() != value.lower():
+            return "not applied"
+    return "applied"
+
+
+# --- fixes -------------------------------------------------------------------------------------------------------------
+
+def load_catalogue():
+    with open(CATALOGUE, encoding="utf-8") as f:
+        return json.load(f)["games"]
+
+
+def context(fix, games):
+    sa, installdir, name = games[fix["appid"]]
+    values = places(sa, installdir, fix["appid"])
+    size = screen()
+    if size:
+        values["width"], values["height"] = size
+    return values
+
+
+def status(fix, games):
+    """'applied', 'not applied', 'start once' (Proton has not made the game's folders yet) or 'no screen'."""
+    values = context(fix, games)
+    if "width" not in values:
+        return "no screen", values
+    in_prefix = any("{" + p + "}" in s["path"] for s in fix["files"] for p in ("prefix", "userprofile", "localappdata", "documents"))
+    if in_prefix and not os.path.isdir(values["prefix"]):
+        return "start once", values
+    states = [file_state(fill(spec["path"], values), spec, values) for spec in fix["files"]]
+    return ("applied" if all(s == "applied" for s in states) else "not applied"), values
+
+
+def apply(fix, games):
+    state, values = status(fix, games)
+    if state in ("no screen", "start once"):
+        raise SystemExit({"no screen": "the screen size could not be read", "start once": "start the game once first (Proton makes its folders then)"}[state])
+    for spec in fix["files"]:
+        path = fill(spec["path"], values)
+        if os.path.isfile(path):
+            if not os.path.exists(path + BACKUP) and not os.path.exists(path + CREATED):
+                shutil.copy2(path, path + BACKUP)
+            lines, crlf = read_lines(path)
+        else:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            crlf = spec.get("newline", "lf") == "crlf"
+            template = spec.get("template")
+            if template and os.path.isfile(fill(template, values)):
+                lines, crlf = read_lines(fill(template, values))
+            else:
+                lines = [fill(l, values) for l in spec.get("template_lines", [])]
+            open(path + CREATED, "w").close()
+        for section, key, value in wanted(spec, values):
+            lines = ini_set(lines, section, key, value) if spec["format"] == "ini" else kv_set(lines, key, value)
+        write_lines(path, lines, crlf)
+
+
+def undo(fix, games):
+    values = context(fix, games)
+    for spec in fix["files"]:
+        path = fill(spec["path"], values)
+        if os.path.exists(path + BACKUP):
+            shutil.move(path + BACKUP, path)
+        elif os.path.exists(path + CREATED):
+            for p in (path, path + CREATED):
+                if os.path.exists(p):
+                    os.remove(p)
+
+
+def main(argv):
+    home = os.environ.get("HOME", "")
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0 if argv else 2
+    try:
+        fixes = load_catalogue()
+    except (OSError, ValueError, KeyError) as e:
+        print(f"yggdrasil-game-fix: cannot read {CATALOGUE}: {e}", file=sys.stderr)
+        return 1
+    games = installed(home)
+    mine = [f for f in fixes if f["appid"] in games]
+    if argv[0] == "list":
+        rows = []
+        for f in mine:
+            state, values = status(f, games)
+            rows.append({"appid": f["appid"], "name": f["name"], "title": f["title"], "about": f.get("about", ""), "tip": f.get("tip", ""),
+                         "state": state, "screen": f"{values['width']}x{values['height']}" if "width" in values else ""})
+        if "--json" in argv:
+            print(json.dumps(rows, indent=1))
+        else:
+            for r in rows:
+                print(f"{r['appid']}  {r['name']}: {r['title']}  [{r['state']}]")
+        return 0
+    if argv[0] in ("apply", "undo") and len(argv) > 1:
+        fix = next((f for f in mine if f["appid"] == argv[1]), None)
+        if not fix:
+            print(f"yggdrasil-game-fix: no fix for an installed game {argv[1]}", file=sys.stderr)
+            return 2
+        try:
+            (apply if argv[0] == "apply" else undo)(fix, games)
+        except SystemExit as e:
+            print(f"yggdrasil-game-fix: {e}", file=sys.stderr)
+            return 1
+        print(status(fix, games)[0])
+        return 0
+    print(__doc__.strip(), file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

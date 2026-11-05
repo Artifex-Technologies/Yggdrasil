@@ -2,7 +2,7 @@
 # Built from packages/settings in this repository (and the shared look in packages/yggdrasil-ui).
 pkgname=yggdrasil-settings
 pkgver=0.1.0
-pkgrel=30
+pkgrel=31
 pkgdesc="Settings: Wi-Fi, Bluetooth, displays, sound, appearance, power and more"
 arch=('x86_64')
 provides=('labyrinth-settings')
@@ -42,6 +42,9 @@ package() {
   install -Dm644 "$_src/yggdrasil-gpu.desktop" "$pkgdir/usr/share/applications/yggdrasil-gpu.desktop"
   # Games: run a program on a chosen graphics card (a Steam launch option: yggdrasil-gpu-run 2 %command%)
   install -Dm755 "$_src/helpers/gpu-run" "$pkgdir/usr/bin/yggdrasil-gpu-run"
+  # Games > Game fixes: the per-game fixes and their catalogue
+  install -Dm755 "$_src/helpers/game-fix" "$pkgdir/usr/lib/yggdrasil/game-fix"
+  install -Dm644 "$_src/data/game-fixes.json" "$pkgdir/usr/share/yggdrasil/game-fixes.json"
   install -Dm644 "$_src/yggdrasil-cpu.desktop" "$pkgdir/usr/share/applications/yggdrasil-cpu.desktop"
   # the administrator helpers Settings runs with pkexec: accounts (Users) and power-mode limits (Power, Developer options)
   install -Dm755 "$_src/helpers/account" "$pkgdir/usr/lib/yggdrasil/account"

@@ -30,6 +30,15 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
     card `DXVK_FILTER_DEVICE_NAME` and `VKD3D_FILTER_DEVICE_NAME` (Proton's DirectX translation) when vulkaninfo names it. The
     picture still reaches the screen through the card the monitor is plugged into (the drivers copy it across). Tested against
     a pretend two-card /sys (an RTX 2070 with an Arc B580); not yet on a real second card.
+  - **Game fixes** (2026-11-05): per-game fixes for installed Steam games, each with Apply / Undo. `helpers/game-fix`
+    (/usr/lib/yggdrasil/game-fix) applies the catalogue `data/game-fixes.json` (/usr/share/yggdrasil/game-fixes.json): per game,
+    settings files ("Key = value" or ini) and the values to set, which can be the screen's size ({width}, {height}: the
+    largest monitor, from hyprctl or xrandr). A file is backed up before its first change (FILE.yggdrasil-backup), or marked
+    as made (FILE.yggdrasil-created, from a template in the game's folder or lines in the catalogue); Undo restores it. A game
+    Proton has not started yet shows "Start the game once first". No administrator rights. First fixes: **Dead Space 2**
+    (its menu never offers 21:9; settings.txt at the screen's size, V-Sync off: true 21:9 tried at 3440x1440) and
+    **Fallout 4** (the settings files its launcher would make, from its templates, at the screen's size, borderless; the
+    HUD stays 16:9 and stretched). Tests: `helpers/tests/test_game_fix.py`. Patches to games' code come per game.
   - **Frame generation (preview)**, Labyrinth's own (labyrinth-framegen, from Agora): every installed Steam game (from the
     appmanifests in all Steam libraries; Proton and Steam's runtimes left out) with Off / 2x / 3x / 4x, saved at once to
     `~/.config/labyrinth-framegen/games.conf` (`<app id> <off|2|3|4>`). The game needs `labyrinth-framegen %command%` in its

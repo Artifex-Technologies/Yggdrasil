@@ -23,6 +23,8 @@ use yggdrasil_ui::theme::Palette;
 use crate::ui;
 
 const GPU_RUN: &str = "/usr/bin/yggdrasil-gpu-run";
+/// The per-game fixes (helpers/game-fix and data/game-fixes.json).
+const GAME_FIX: &str = "/usr/lib/yggdrasil/game-fix";
 /// lsfg-vk's Vulkan layer manifest: present when it is installed (package or ~/.local).
 const LSFG_LAYERS: [&str; 2] = ["/usr/share/vulkan/implicit_layer.d/VkLayer_LSFGVK_frame_generation.json", ".local/share/vulkan/implicit_layer.d/VkLayer_LSFGVK_frame_generation.json"];
 /// Lossless Scaling's Steam app id.
@@ -45,8 +47,38 @@ pub struct Card {
     pub screens: u32,
 }
 
+/// One game's fix, as `game-fix list --json` gives it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Fix {
+    pub appid: String,
+    pub name: String,
+    pub title: String,
+    pub about: String,
+    pub tip: String,
+    /// applied, not applied, start once, no screen
+    pub state: String,
+    pub screen: String,
+}
+
+pub fn parse_fixes(json: &str) -> Option<Vec<Fix>> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    let s = |x: &serde_json::Value, k: &str| x[k].as_str().unwrap_or("").to_string();
+    Some(v.as_array()?.iter().map(|x| Fix { appid: s(x, "appid"), name: s(x, "name"), title: s(x, "title"), about: s(x, "about"), tip: s(x, "tip"), state: s(x, "state"), screen: s(x, "screen") }).collect())
+}
+
+/// What a fix's row says about its state.
+pub fn fix_state(f: &Fix) -> &'static str {
+    match f.state.as_str() {
+        "applied" => "Applied",
+        "start once" => "Start the game once first: Proton makes its folders then",
+        "no screen" => "The screen size could not be read",
+        _ => "Not applied",
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Info {
+    pub fixes: Vec<Fix>,
     pub cards: Vec<Card>,
     /// yggdrasil-gpu-run is missing or failed (the cards could not be read)
     pub no_reader: bool,
@@ -232,6 +264,7 @@ pub fn load() -> Info {
         lsfg: Path::new(LSFG_LAYERS[0]).is_file() || home.join(LSFG_LAYERS[1]).is_file(),
         lossless: lossless_installed(&home),
         steam: !steam_roots(&home).is_empty(),
+        fixes: std::process::Command::new(GAME_FIX).args(["list", "--json"]).output().ok().filter(|o| o.status.success()).and_then(|o| parse_fixes(&String::from_utf8_lossy(&o.stdout))).unwrap_or_default(),
         framegen: Path::new(FRAMEGEN_LAYER).is_file(),
         games: steam_games(&home),
         framegen_conf: std::fs::read_to_string(framegen_conf_path()).unwrap_or_default(),
@@ -241,6 +274,7 @@ pub fn load() -> Info {
 #[derive(Default)]
 pub struct State {
     info: Option<Info>,
+    fix_message: Option<String>,
     rx: Option<Receiver<Info>>,
     copied: Option<u32>,
 }
@@ -299,6 +333,45 @@ impl State {
         if info.cards.len() > 1 {
             ui.add_space(6.0);
             ui.label(RichText::new("To run a game on a card: in Steam, the game's Properties > Launch options, paste its launch option (for example yggdrasil-gpu-run 2 %command%). The picture reaches your screen through the card the monitor is plugged into.").color(pal.dim).size(12.5));
+        }
+
+        if !info.fixes.is_empty() {
+            let mut run: Option<(&'static str, String)> = None;
+            ui::group(ui, pal, Some("Game fixes"), |ui| {
+                for (i, f) in info.fixes.iter().enumerate() {
+                    let sub = format!("{}. {}\n{}{}{}", f.title, fix_state(f), f.about, if f.tip.is_empty() { "" } else { "\n" }, f.tip);
+                    ui::row(ui, pal, i == 0, &f.name, Some(&sub), |ui| {
+                        match f.state.as_str() {
+                            "applied" => {
+                                if ui::quiet(ui, pal, "Undo").on_hover_text("Put the game's files back as they were").clicked() {
+                                    run = Some(("undo", f.appid.clone()));
+                                }
+                            }
+                            "not applied" => {
+                                let tip = if f.screen.is_empty() { String::new() } else { format!("For your {} screen; the game's files are backed up first", f.screen.replace('x', "\u{d7}")) };
+                                if ui::action(ui, pal, "Apply").on_hover_text(tip).clicked() {
+                                    run = Some(("apply", f.appid.clone()));
+                                }
+                            }
+                            _ => {}
+                        }
+                    });
+                }
+            });
+            if let Some((what, id)) = run {
+                let out = std::process::Command::new(GAME_FIX).args([what, &id]).output();
+                self.fix_message = match out {
+                    Ok(o) if o.status.success() => None,
+                    Ok(o) => Some(String::from_utf8_lossy(&o.stderr).trim().trim_start_matches("yggdrasil-game-fix: ").to_string()),
+                    Err(e) => Some(e.to_string()),
+                };
+                self.reload();
+            }
+            if let Some(m) = &self.fix_message {
+                ui.colored_label(egui::Color32::from_rgb(200, 90, 60), m);
+            }
+            ui.add_space(4.0);
+            ui.label(RichText::new("Fixes are made per game. A game's own menu may undo one if you change the same setting there.").color(pal.dim).size(12.5));
         }
 
         ui::group(ui, pal, Some("Frame generation (preview)"), |ui| {
@@ -405,6 +478,17 @@ mod tests {
         assert_eq!(describe(&c[1]), "Driver: xe");
         assert!(parse_cards("not json").is_none());
         assert_eq!(launch_option(2), "yggdrasil-gpu-run 2 %command%");
+    }
+
+    #[test]
+    fn game_fixes_are_read() {
+        let j = r#"[{"appid":"47780","name":"Dead Space 2","title":"Full screen","about":"a","tip":"","state":"applied","screen":"3440x1440"},
+                    {"appid":"377160","name":"Fallout 4","title":"Size","about":"b","tip":"t","state":"start once","screen":""}]"#;
+        let f = parse_fixes(j).unwrap();
+        assert_eq!(f.len(), 2);
+        assert_eq!(fix_state(&f[0]), "Applied");
+        assert!(fix_state(&f[1]).starts_with("Start the game once"));
+        assert!(parse_fixes("[").is_none());
     }
 
     #[test]
