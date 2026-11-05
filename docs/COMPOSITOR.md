@@ -81,9 +81,12 @@ shortcuts. `YGGDRASIL_COMPOSITOR_XWAYLAND=0` leaves it out. What is written:
   - Poly Bridge 2 (native, Unity): full screen as asked, covering the panels, no see-through patches; the mouse reached it.
   - Dead Space 2 through Proton 11: the Wine dialogs ("Activation successful!") showed with the window controls; the game's
     window (`steam_app_47780`) went full screen and minimized itself when Steam took the focus (old DirectX 9 games do), the
-    dock showed it with the game's own icon and brought it back full screen with the keyboard. **Open:** it then drew only a
-    thin strip at the top left, the rest black. To find out whether that is this compositor (XWayland's mode emulation through
-    wp_viewporter, or the opaque shader with a scaled buffer) or the game's own setup, run it the same way in a nested Hyprland.
+    dock showed it with the game's own icon and brought it back full screen with the keyboard. It then drew only a thin strip
+    at the top left. The same run in a nested Hyprland at the same size drew the whole picture (Hyprland ignores a program's
+    own minimize, so the game never minimized there). The strip was the game's picture cut to a minimized window's size: Wine
+    learns a window was restored from ICCCM's WM_STATE going from Iconic back to Normal, and Smithay writes WM_STATE only on
+    map and unmap. **Fixed:** minimizing sets WM_STATE to Iconic and restoring sets it to Normal (`x11asked.rs`); the game now
+    comes back whole, and keys reach it.
   - Small gaps: the Wine dialogs' class `steam_proton` has no dock icon; the dock's hover card stays over a full screen game while
     the pointer is on it.
 - Not yet: drag and drop, resize from the edges.

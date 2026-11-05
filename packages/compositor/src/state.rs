@@ -592,6 +592,9 @@ impl App {
             let at = self.saved.iter().find(|(s, _)| s == surface).map(|(_, r)| r.loc).unwrap_or((80, 80).into());
             if let Some(x) = w.x11_surface() {
                 let _ = x.set_suspended(false);
+                if let Some(r) = &self.x11_reader {
+                    r.iconic(x.window_id(), false);
+                }
             }
             x11_place(&w, at, w.geometry().size);
             self.space.map_element(w, at, true);
@@ -629,6 +632,10 @@ impl App {
         // an X11 program is told it is hidden (_NET_WM_STATE_HIDDEN), so a game may stop drawing
         if let Some(x) = window.x11_surface() {
             let _ = x.set_suspended(true);
+            // and minimized in ICCCM's WM_STATE, which Wine watches (see x11asked.rs)
+            if let Some(r) = &self.x11_reader {
+                r.iconic(x.window_id(), true);
+            }
         }
         // no longer the active window (an X11 one loses _NET_WM_STATE_FOCUSED)
         window.set_activated(false);

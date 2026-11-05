@@ -9,13 +9,19 @@
 //! The same thread closes X11 windows: a program that takes part in WM_DELETE_WINDOW is asked to close, as Smithay would ask;
 //! one that does not (glxgears, some old programs and games) has its connection ended (XKillClient), as KWin and Hyprland do.
 //! Smithay destroys such a window instead, which leaves the program running with no window (found 2026-11-05 with glxgears).
+//!
+//! It also keeps ICCCM's WM_STATE in step with minimizing: Iconic when a window is minimized, Normal when it is shown again.
+//! Smithay only writes it when a window is mapped or unmapped. Wine watches it: a game that minimized itself (old DirectX 9
+//! games do when they lose the focus) is restored only when WM_STATE goes back to Normal. Without that Wine kept the game at
+//! its minimized size, and on the dock's restore only a strip of the picture showed (Dead Space 2, found 2026-11-05).
 
 use std::sync::mpsc::{channel, Sender};
 
 use smithay::reexports::calloop::channel::{channel as loop_channel, Event};
 use smithay::reexports::calloop::LoopHandle;
 use x11rb::connection::Connection;
-use x11rb::protocol::xproto::{AtomEnum, ClientMessageEvent, ConnectionExt, EventMask};
+use x11rb::protocol::xproto::{AtomEnum, ClientMessageEvent, ConnectionExt, EventMask, PropMode};
+use x11rb::wrapper::ConnectionExt as _;
 
 use crate::state::App;
 
@@ -47,6 +53,17 @@ pub fn read(window: u32, states: &[u32], a: &Atoms) -> Asked {
 enum Job {
     Ask(u32),
     Close(u32),
+    /// WM_STATE: Iconic (minimized) or Normal
+    Iconic(u32, bool),
+}
+
+/// ICCCM's WM_STATE values.
+const NORMAL_STATE: u32 = 1;
+const ICONIC_STATE: u32 = 3;
+
+/// The WM_STATE property's value: the state and no icon window.
+pub fn wm_state(iconic: bool) -> [u32; 2] {
+    [if iconic { ICONIC_STATE } else { NORMAL_STATE }, 0]
 }
 
 /// The thread that reads the property; dropped with the compositor.
@@ -79,13 +96,14 @@ impl Reader {
                     return;
                 };
                 let atom = |name: &str| conn.intern_atom(false, name.as_bytes()).ok().and_then(|c| c.reply().ok()).map(|r| r.atom);
-                let (Some(state), Some(fullscreen), Some(max_vert), Some(max_horz), Some(protocols), Some(delete)) = (
+                let (Some(state), Some(fullscreen), Some(max_vert), Some(max_horz), Some(protocols), Some(delete), Some(wm_state_atom)) = (
                     atom("_NET_WM_STATE"),
                     atom("_NET_WM_STATE_FULLSCREEN"),
                     atom("_NET_WM_STATE_MAXIMIZED_VERT"),
                     atom("_NET_WM_STATE_MAXIMIZED_HORZ"),
                     atom("WM_PROTOCOLS"),
                     atom("WM_DELETE_WINDOW"),
+                    atom("WM_STATE"),
                 ) else {
                     return;
                 };
@@ -94,6 +112,11 @@ impl Reader {
                 for job in rx {
                     let window = match job {
                         Job::Ask(w) => w,
+                        Job::Iconic(w, iconic) => {
+                            let _ = conn.change_property32(PropMode::REPLACE, w, wm_state_atom, wm_state_atom, &wm_state(iconic));
+                            let _ = conn.flush();
+                            continue;
+                        }
                         Job::Close(w) => {
                             let listed: Vec<u32> = conn
                                 .get_property(false, w, protocols, AtomEnum::ATOM, 0, 32)
@@ -131,6 +154,11 @@ impl Reader {
         let _ = self.tx.send(Job::Ask(window));
     }
 
+    /// Mark this window minimized (Iconic) or shown again (Normal) in WM_STATE.
+    pub fn iconic(&self, window: u32, iconic: bool) {
+        let _ = self.tx.send(Job::Iconic(window, iconic));
+    }
+
     /// Close this window: asked politely when the program takes part in WM_DELETE_WINDOW, its connection ended otherwise.
     pub fn close(&self, window: u32) {
         let _ = self.tx.send(Job::Close(window));
@@ -148,6 +176,12 @@ mod tests {
         assert_eq!(read(5, &[11, 12], &a), Asked { window: 5, fullscreen: false, maximized: true });
         assert_eq!(read(5, &[11], &a), Asked { window: 5, fullscreen: false, maximized: false }, "one direction is not maximized");
         assert_eq!(read(5, &[], &a), Asked { window: 5, fullscreen: false, maximized: false });
+    }
+
+    #[test]
+    fn wm_state_says_minimized_or_not() {
+        assert_eq!(wm_state(true), [3, 0], "IconicState, no icon window");
+        assert_eq!(wm_state(false), [1, 0], "NormalState");
     }
 
     #[test]
