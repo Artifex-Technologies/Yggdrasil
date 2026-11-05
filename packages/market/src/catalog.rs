@@ -328,7 +328,9 @@ pub fn read_installed() -> Installed {
     let comps = os().and_then(|i| i.path("components")).and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
     let v: Value = serde_json::from_str(&comps).unwrap_or(Value::Null);
     let components = v.get("components").and_then(|c| c.as_array()).map(|c| c.iter().map(|x| {
+        // everything the component installs: repository packages, AUR packages, its own build
         let mut p = strings(&x["packages"]);
+        p.extend(strings(&x["aur"]));
         if let Some(b) = x.get("pkgbuild").and_then(|b| b.as_str()) {
             p.push(b.to_string());
         }
@@ -351,6 +353,8 @@ impl Installed {
     pub fn update_for(&self, e: &Entry) -> bool {
         match &e.source {
             Source::Pacman(p) | Source::Aur(p) => p.iter().any(|x| self.updates.contains(x)),
+            // a component's packages: Labyrinth's own builds update from its repository, Proton's and Microsoft's apps from the AUR
+            Source::Component(id) => self.components.iter().find(|c| &c.0 == id).is_some_and(|c| c.1.iter().any(|x| self.updates.contains(x))),
             _ => false,
         }
     }
@@ -532,6 +536,20 @@ mod tests {
         assert!(c.apps.iter().all(|a| !a.category.is_empty() && !a.subcategory.is_empty() && a.reviewed || !a.reviewed));
         assert!(c.featured.iter().all(|(id, _, _)| c.apps.iter().any(|a| &a.id == id)), "featured apps exist");
         assert_eq!(local_builds_in(SAMPLE), vec!["own-thing-git".to_string()], "aur_updates_ok is taken out");
+    }
+
+    #[test]
+    fn a_component_shows_an_update_when_one_of_its_packages_has_one() {
+        let mut e = parse_catalog(SAMPLE, "Sample", true).unwrap().apps[0].clone();
+        e.source = Source::Component("limbo".into());
+        let mut i = Installed { pacman: HashSet::new(), flatpak: HashSet::new(), components: vec![("limbo".into(), vec!["limbo-git".into()]), ("mail".into(), vec!["proton-mail-bin".into()])], updates: vec![] };
+        assert!(!i.update_for(&e));
+        i.updates = vec!["limbo-git".into()];
+        assert!(i.update_for(&e), "Labyrinth's own build, newer in its repository");
+        e.source = Source::Component("mail".into());
+        assert!(!i.update_for(&e));
+        i.updates.push("proton-mail-bin".into());
+        assert!(i.update_for(&e), "an AUR app of a component");
     }
 
     #[test]
