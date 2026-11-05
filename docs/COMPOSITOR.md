@@ -30,7 +30,8 @@ What works (each checked by hand in the nested window):
 - **Workspace profiles** (`tiling.rs`): each workspace is **standard** (windows float) or **tiling** (Hyprland-style "dwindle": the first window takes the left half, the next the top right, and so on, with gaps). `~/.config/labyrinth/workspaces.conf` sets a default (standard, tiling, or **ask** each time an empty workspace is opened) and an exception per workspace; Settings > Appearance > Workspaces writes it and the compositor reads it again when it changes. Super+T floats or tiles one window. Checked in the nested window: with "ask" the question appeared on the empty workspace, Right and Enter chose Tiling, and the three windows that opened afterwards were laid out side by side.
 - Pointer and keyboard (from the host window), wheel, wl_output with xdg-output, clipboard (data device), viewporter, shm.
 
-**X11 programs (XWayland), built 2026-11-04, not yet tried by hand** (`src/xwayland.rs`; for Steam's client, games through Proton
+**X11 programs (XWayland), built 2026-11-04, tried by hand 2026-11-05** (xterm, glxgears, the panel inside the compositor; see
+"Tried by hand" below) (`src/xwayland.rs`; for Steam's client, games through Proton
 or Wine, and older programs). XWayland starts with the compositor and its display is printed as `DISPLAY=:n`; programs given with
 `--run` wait the fraction of a second until it has answered, then get that DISPLAY (never the host's), and so do programs started by
 shortcuts. `YGGDRASIL_COMPOSITOR_XWAYLAND=0` leaves it out. What is written:
@@ -59,6 +60,23 @@ shortcuts. `YGGDRASIL_COMPOSITOR_XWAYLAND=0` leaves it out. What is written:
 - **Dock icons for X11 programs** (in the panel, so the Hyprland session has them too): a window is matched to its desktop entry by
   its class (`StartupWMClass`), and a Steam game's window (`steam_app_<id>`) to the shortcut Steam made (`steam://rungameid/<id>`);
   a game without a shortcut gets the icon Steam saved (`steam_icon_<id>`).
+
+**Tried by hand (2026-11-05, nested window on the Hyprland session):**
+- xterm shows with the window controls; typing reaches it (keyboard focus and the X input focus).
+- Clipboard both ways: `wl-copy` on the compositor's display was read by `xclip` on its X display, and the other way round.
+- `xterm -fullscreen` (it sets `_NET_WM_STATE_FULLSCREEN` before its window shows, as games do) opened full screen.
+- glxgears (OpenGL through XWayland) ran at about 90 frames a second, drawn and moved like any window.
+- Close on glxgears, which does not take part in WM_DELETE_WINDOW: Smithay destroyed its window and left it running with no
+  window. **Fixed:** closing goes through x11asked's connection, which asks politely when the program takes part and otherwise
+  ends its connection (XKillClient, as KWin and Hyprland do). glxgears then ended with "fatal IO error", as under KWin.
+- Minimize: the window went away and showed `_NET_WM_STATE_HIDDEN`, but kept `_NET_WM_STATE_FOCUSED`. **Fixed:** a minimized
+  window is marked inactive and the window now on top becomes the active one.
+- The panel inside the compositor: the minimized xterm was in the dock; a click brought it back with the keyboard, and the top
+  bar named it.
+- Not yet: Steam and a Proton game (Steam runs in the owner's session and cannot run twice; to try with the owner), drag and
+  drop, resize from the edges.
+- Small gaps seen: the dock shows a plain icon for xterm (its desktop entry names an XPM picture the panel does not load); the
+  dock's hover preview of an X11 window is empty; a compositor ended with SIGTERM leaves its `wayland-N` socket file behind.
 
 Still missing for X11: the top panels are drawn over full screen windows, Wayland and X11 alike (fine for a desktop, wrong for a
 game); XWayland always runs (about 20 to 40 MB) instead of starting on the first X11 program; no HiDPI scaling for X11 programs;

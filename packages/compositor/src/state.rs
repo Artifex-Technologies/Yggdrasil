@@ -609,7 +609,13 @@ impl App {
         if let Some(t) = w.toplevel() {
             t.send_close();
         } else if let Some(x) = w.x11_surface() {
-            let _ = x.close();
+            // through x11asked's connection, which ends a program that cannot be asked (Smithay would leave it windowless)
+            match &self.x11_reader {
+                Some(r) => r.close(x.window_id()),
+                None => {
+                    let _ = x.close();
+                }
+            }
         }
     }
 
@@ -624,11 +630,19 @@ impl App {
         if let Some(x) = window.x11_surface() {
             let _ = x.set_suspended(true);
         }
+        // no longer the active window (an X11 one loses _NET_WM_STATE_FOCUSED)
+        window.set_activated(false);
+        if let Some(t) = window.toplevel() {
+            t.send_pending_configure();
+        }
         self.minimized.push(window);
         self.retile();
-        // the keyboard goes to the window now on top
-        let next = self.space.elements().rev().find_map(surface_of);
-        self.give_keyboard(next, SERIAL_COUNTER.next_serial());
+        // the keyboard, and the active look, go to the window now on top
+        let next = self.space.elements().rev().find(|w| surface_of(w).is_some()).cloned();
+        if let Some(w) = &next {
+            self.mark_active(w);
+        }
+        self.give_keyboard(next.as_ref().and_then(surface_of), SERIAL_COUNTER.next_serial());
     }
 
     pub fn set_maximized(&mut self, surface: &WlSurface, on: bool) {
