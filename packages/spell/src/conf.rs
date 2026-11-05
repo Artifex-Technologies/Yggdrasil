@@ -12,12 +12,14 @@ pub struct SpellConf {
     pub packs: Option<Vec<String>>,
     /// Offer the words this account added to the computer's shared list (global.rs). On unless switched off.
     pub share: bool,
+    /// Correct as you type (autocorrect.rs, the input method yggdrasil-autocorrect). Off unless switched on.
+    pub autocorrect: bool,
     other: Vec<String>,
 }
 
 impl Default for SpellConf {
     fn default() -> Self {
-        SpellConf { enabled: true, languages: vec![], packs: None, share: true, other: vec![] }
+        SpellConf { enabled: true, languages: vec![], packs: None, share: true, autocorrect: false, other: vec![] }
     }
 }
 
@@ -35,6 +37,7 @@ impl SpellConf {
                 Some(("languages", v)) => c.languages = ids(v),
                 Some(("packs", v)) => c.packs = Some(ids(v)),
                 Some(("share", v)) => c.share = !matches!(v, "no" | "false" | "off" | "0"),
+                Some(("autocorrect", v)) => c.autocorrect = matches!(v, "yes" | "true" | "on" | "1"),
                 _ if !t.is_empty() => c.other.push(line.to_string()),
                 _ => {}
             }
@@ -53,6 +56,9 @@ impl SpellConf {
         }
         if !self.share {
             s.push_str("share = no\n");
+        }
+        if self.autocorrect {
+            s.push_str("autocorrect = yes\n");
         }
         for l in &self.other {
             s.push_str(l);

@@ -101,13 +101,23 @@ impl App {
         let active = conf.active();
         let mut conf_changed = false;
         let mut resync = false;
+        let mut autocorrect_changed = false;
 
         ui::group(ui, pal, None, |ui| {
             ui::row(ui, pal, true, "Check spelling", Some("Mark misspelled words in apps that check spelling (GTK apps, browsers, Electron apps)"), |ui| {
                 if ui::switch(ui, pal, &mut conf.enabled).changed() {
                     conf_changed = true;
                     resync = true;
+                    autocorrect_changed = true;
                 }
+            });
+            ui::row(ui, pal, false, "Correct as I type", Some("Fixes a word when you finish it, only when the fix is all but certain (teh, adn, thier). Backspace straight after puts your word back. Never in passwords, numbers, addresses or terminals"), |ui| {
+                ui.add_enabled_ui(conf.enabled, |ui| {
+                    if ui::switch(ui, pal, &mut conf.autocorrect).changed() {
+                        conf_changed = true;
+                        autocorrect_changed = true;
+                    }
+                });
             });
         });
 
@@ -257,6 +267,14 @@ impl App {
 
         if conf_changed {
             let _ = conf.save();
+            // the input method runs only while it is wanted (no cost otherwise): its user service follows the switch
+            if autocorrect_changed {
+                let on = conf.enabled && conf.autocorrect;
+                std::thread::spawn(move || {
+                    let verb = if on { "enable" } else { "disable" };
+                    let _ = std::process::Command::new("systemctl").args(["--user", verb, "--now", "yggdrasil-autocorrect.service"]).output();
+                });
+            }
             self.spell.conf = Some(conf);
         }
         if resync {

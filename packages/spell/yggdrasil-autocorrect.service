@@ -1,0 +1,23 @@
+[Unit]
+Description=Yggdrasil autocorrect: fixes a word as you finish it, when the fix is all but certain (Settings > Keyboard > Spelling and languages)
+Documentation=file:///usr/share/doc/yggdrasil-spell/README.md
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/yggdrasil-autocorrect
+# it exits by itself when autocorrect is switched off (Settings also stops it); 0 is not a failure
+Restart=on-failure
+RestartSec=3
+# it reads the dictionaries and the word lists, and talks to the compositor; it writes nothing and keeps nothing
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+NoNewPrivileges=yes
+LockPersonality=yes
+MemoryMax=128M
+
+[Install]
+WantedBy=graphical-session.target

@@ -27,6 +27,25 @@ keeps **one word list** that all your apps share.
     A word denied never reaches the shared list.
   - Shared words reach every app's list like a word pack that is on, and never join an account's own list.
 
+- **Correct as you type** (`yggdrasil-autocorrect`, off unless switched on: Settings > Keyboard > Spelling and languages >
+  Correct as I type, which enables the user service). An input method (Wayland's `zwp_input_method_v2`) that never takes the
+  keyboard: apps that take part in text input (GTK, Qt, Firefox, Chromium; Electron apps with `--enable-wayland-ime`) share
+  the text around the cursor with it.
+  - When a word has just been finished (a space or punctuation typed after it), it is replaced only when the fix is all but
+    certain (`src/autocorrect.rs`):
+    - the word is wrong in every switched-on language and in no word list;
+    - it is 3 or more letters, all lowercase or capitalised;
+    - the dictionary's first suggestion is one edit away and keeps the first letter;
+    - and that suggestion is either two neighbouring letters swapped (teh, adn, thier, wrold) or the only suggestion one edit
+      away. "helo" is left alone, because "hole" comes first and "hello" is one of several.
+  - Backspace straight after a correction puts the typed word back, and that word is not corrected again until the input
+    method starts again.
+  - Never in passwords, PINs, numbers, addresses, links, names, terminals, or text an app marks hidden or sensitive; only
+    right after one character was typed (not after a paste or a cursor jump).
+  - The dictionary work runs on a thread of its own while the word is still being typed, so the answer is ready when the
+    word ends; a word not looked at yet is left alone. Tried in a GTK text box at 35 and 80 ms a key: every slip above fixed,
+    "helo" kept, undo worked. About 17 MB of memory, no CPU while idle.
+
 Nothing here uses the network (the services run with no network at all) or writes outside your own folders, except your offer to
 the shared list.
 

@@ -9,6 +9,7 @@
 //! Hunspell-compatible, MPL-2.0), so no C or C++ spell library is involved.
 
 pub mod apps;
+pub mod autocorrect;
 pub mod conf;
 pub mod dicts;
 pub mod global;

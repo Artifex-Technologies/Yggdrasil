@@ -13,10 +13,17 @@ path = "src/lib.rs"
 name = "yggdrasil-spell"
 path = "src/main.rs"
 
+[[bin]]
+name = "yggdrasil-autocorrect"
+path = "src/bin/autocorrect.rs"
+
 [dependencies]
 spellbook = "0.4.2"
 yggdrasil-conf = { path = "../yggdrasil-conf" }
 libc = "0.2"
+# the autocorrect input method (src/bin/autocorrect.rs) only
+wayland-client = "0.31"
+wayland-protocols-misc = { version = "0.3", features = ["client"] }
 
 [profile.release]
 opt-level = "s"

@@ -1,7 +1,7 @@
 # Yggdrasil's spelling library and the user service that keeps every app's word list in step: packages/spell.
 pkgname=yggdrasil-spell
 pkgver=0.1.0
-pkgrel=7
+pkgrel=8
 install=yggdrasil-spell.install
 pkgdesc="Yggdrasil spelling: Hunspell dictionaries through a Rust engine, your languages, one word list shared by your apps"
 arch=('x86_64')
@@ -29,6 +29,9 @@ check() {
 
 package() {
   install -Dm755 "$srcdir/target/release/yggdrasil-spell" "$pkgdir/usr/bin/yggdrasil-spell"
+  # correcting as you type: an input method, off unless switched on in Settings (which enables this user service)
+  install -Dm755 "$srcdir/target/release/yggdrasil-autocorrect" "$pkgdir/usr/bin/yggdrasil-autocorrect"
+  install -Dm644 "$_src/yggdrasil-autocorrect.service" "$pkgdir/usr/lib/systemd/user/yggdrasil-autocorrect.service"
   install -Dm644 "$_src/yggdrasil-spell.service" "$pkgdir/usr/lib/systemd/user/yggdrasil-spell.service"
   # on for every user (it only merges word lists; spell checking itself is switched in Settings)
   install -dm755 "$pkgdir/usr/lib/systemd/user/default.target.wants"

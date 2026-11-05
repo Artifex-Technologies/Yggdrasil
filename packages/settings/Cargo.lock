@@ -4540,6 +4540,8 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "spellbook",
+ "wayland-client",
+ "wayland-protocols-misc",
  "yggdrasil-conf",
 ]
 
