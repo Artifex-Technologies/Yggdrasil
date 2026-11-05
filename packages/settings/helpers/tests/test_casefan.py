@@ -122,3 +122,49 @@ class Loop(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Calm(unittest.TestCase):
+    """The night-3 pattern: each eval case swings the processor 42-64 C and the card 54-60 C within seconds."""
+
+    def test_average_and_ramp_keep_the_fan_steady(self):
+        writes = []
+        swing = [(58, 60), (58, 60), (43, 54), (42, 54), (58, 59), (64, 60), (58, 60), (43, 55), (42, 54)] * 8
+        temps = list(swing)
+
+        def read_cpu():
+            if not temps:
+                raise m.SensorError("done")
+            return temps[0][0]
+
+        def read_gpu():
+            return temps.pop(0)[1]
+
+        cfg = m.clean({"ports": {"6": {"role": "fan"}}})
+        m.run("x", lambda: None if writes else cfg, read_cpu, read_gpu, lambda n, p: writes.append(p), lambda s: None, lambda: False,
+              clock=lambda: 0.0)
+        speeds = writes[:-1]   # everything before the failure's own 100 % (a speed is written only when it changes)
+        self.assertLessEqual(max(speeds) - min(speeds), 6, speeds)
+        self.assertLess(len(speeds), len(swing) // 4, speeds)   # 72 readings, only a handful of changes
+        steps = [abs(b - a) for a, b in zip(speeds, speeds[1:])]
+        self.assertLessEqual(max(steps, default=0), m.RAMP_UP_PCT)
+        self.assertTrue(30 <= speeds[-1] <= 50, speeds)   # where the averaged temperatures put it on the curve
+
+    def test_hot_is_still_immediate(self):
+        writes, temps = [], [(50, 40)] * 5 + [(m.CPU_HOT_C, 40)]
+
+        def read_cpu():
+            if not temps:
+                raise m.SensorError("done")
+            return temps[0][0]
+
+        cfg = m.clean({"ports": {"6": {"role": "fan"}}})
+        m.run("x", lambda: None if writes else cfg, read_cpu, lambda: temps.pop(0)[1], lambda n, p: writes.append(p), lambda s: None,
+              lambda: False, clock=lambda: 0.0)
+        self.assertEqual(writes[-2], 100)   # the hot reading, before the failure's own 100 %
+        self.assertLess(writes[-3], 50)
+
+    def test_ramp(self):
+        self.assertEqual(m.ramp(None, 60), 60)
+        self.assertEqual(m.ramp(40, 60), 44)
+        self.assertEqual(m.ramp(60, 40), 59)

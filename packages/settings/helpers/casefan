@@ -44,6 +44,12 @@ REAPPLY_S = 30
 PUMP_MIN_PCT = 60
 FAN_MIN_PCT = 20
 STOP_FAN_PCT = 60
+# Calm, not jumpy (Matt, 2026-11-04: the exhaust rose and fell every 10-20 s as each eval case started and stopped): the curves
+# read temperatures averaged over about SMOOTH_S seconds, and a fan's speed glides toward its target by at most RAMP_UP_PCT
+# (faster) or RAMP_DOWN_PCT (slower) per step. The hot override still uses the raw readings and acts at once.
+SMOOTH_S = 30
+RAMP_UP_PCT = 4
+RAMP_DOWN_PCT = 1
 # Quiet when idle, firm under load: the 3000 RPM exhaust fan is about 750 RPM at 25 %.
 DEFAULT_CPU = [[50, 25], [65, 35], [75, 55], [85, 80], [90, 100]]
 DEFAULT_GPU = [[45, 25], [55, 35], [65, 55], [72, 80], [78, 100]]
@@ -220,6 +226,22 @@ def settle(last, want, heat):
     return last[0]
 
 
+def smooth(avg, t, step=EVERY_S, over=SMOOTH_S):
+    """An exponential running average: about `over` seconds of memory at one reading every `step` seconds."""
+    if avg is None:
+        return float(t)
+    return avg + (t - avg) * min(1.0, step / over)
+
+
+def ramp(cur, want):
+    """The next speed on the way from cur to want: up by RAMP_UP_PCT, down by RAMP_DOWN_PCT at most."""
+    if cur is None:
+        return want
+    if want > cur:
+        return min(want, cur + RAMP_UP_PCT)
+    return max(want, cur - RAMP_DOWN_PCT)
+
+
 def stop_speed(port, failed):
     if failed or port["role"] == "pump":
         return 100
@@ -292,21 +314,29 @@ def run(cpro, read_cfg, read_cpu, read_gpu, write, sleep, should_stop, clock=tim
     """The service's loop, with everything from outside passed in (tests drive it). Returns the exit code; on a sensor or
     write failure every configured port is set to 100 % before it returns."""
     cfg = read_cfg() or load()
-    last, applied = {}, 0.0
+    last, applied, avg_cpu, avg_gpu, cur = {}, 0.0, None, None, {}
     try:
         while not should_stop():
             new = read_cfg()
             if new:
                 cfg, last = new, {}
             cpu, gpu = read_cpu(), read_gpu()
-            heat = max(cpu - CPU_HOT_C, gpu - GPU_HOT_C)   # how close the hotter part is to its limit
+            avg_cpu, avg_gpu = smooth(avg_cpu, cpu), smooth(avg_gpu, gpu)
+            hot = cpu >= CPU_HOT_C or gpu >= GPU_HOT_C   # raw readings: the override never waits for the average
+            heat = max(avg_cpu - CPU_HOT_C, avg_gpu - GPU_HOT_C)   # how close the hotter part is to its limit
             again = clock() - applied >= REAPPLY_S
             for n, port in cfg["ports"].items():
-                want = settle(last.get(n), target(port, cpu, gpu), heat)
-                if n not in last or want != last[n][0] or again:
-                    write(n, want)
+                if hot:
+                    speed = 100
+                    last[n] = (100, heat)
+                else:
+                    want = settle(last.get(n), target(port, round(avg_cpu), round(avg_gpu)), heat)
                     if n not in last or want != last[n][0]:
                         last[n] = (want, heat)
+                    speed = want if port["role"] == "pump" else ramp(cur.get(n), want)
+                if speed != cur.get(n) or again:
+                    write(n, speed)
+                    cur[n] = speed
             if again:
                 applied = clock()
             sleep(EVERY_S)
