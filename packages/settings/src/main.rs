@@ -672,6 +672,8 @@ impl eframe::App for App {
                             ui.painter().rect_filled(rect, CornerRadius::same(8), pal.hover);
                         }
                         let icon_rect = egui::Rect::from_center_size(egui::pos2(rect.left() + 20.0, rect.center().y), vec2(18.0, 18.0));
+                        // Sarina gets the S of her own icon; another assistant keeps the general one
+                        let icon = if assistant_name.as_deref() == Some("Sarina") { Icon::Constellation } else { icon };
                         icons::paint(ui.painter(), icon_rect, icon, if sel { pal.accent } else { pal.text });
                         ui.painter().text(egui::pos2(rect.left() + 40.0, rect.center().y), egui::Align2::LEFT_CENTER, name, egui::FontId::proportional(14.0), pal.text);
                         if resp.clicked() && p == Page::Appearance {

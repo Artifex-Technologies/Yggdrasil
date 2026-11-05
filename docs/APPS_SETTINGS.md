@@ -65,6 +65,8 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
   Commander Pro (kernel driver `corsair_cpro`) as the root service `yggdrasil-casefan`.
   - **The page** (Power > Cooling > Fans, or `yggdrasil-settings power:fans`): the processor's and the card's temperatures,
     whether fan control is on, and for each port its speed now (percent and RPM, or "no speed signal").
+    - Each card is headed by its port; the name under it is the person's own (typed there, up to 60 characters; "Graphics
+      card pump", "Top exhaust"), and Kind makes the port a pump or a fan, because no two computers are wired alike.
     - A pump gets one slider, 60-100 %.
     - A fan gets Quiet, Balanced (casefan's default) or Cool, or Custom: its own processor and graphics card curves, dragged
       in the same editor as the graphics card's fan curve (`src/curve.rs`, shared).

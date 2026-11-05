@@ -24,6 +24,8 @@ pub enum Icon {
     Printer,
     /// Open in a window of its own: a square open at its top right corner, an arrow leaving through it.
     PopOut,
+    /// Sarina: the constellation S of her app icon (four stars joined by three lines), without its hexagon.
+    Constellation,
 }
 
 fn arc(c: Pos2, r: f32, from: f32, to: f32) -> Vec<Pos2> {
@@ -73,6 +75,18 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
         Icon::Power => {
             p.add(Shape::line(arc(c, 0.34 * w, 120.0, 420.0), s));
             p.line_segment([at(0.5, 0.1), at(0.5, 0.48)], s);
+        }
+        Icon::Constellation => {
+            // the stars of the S, top right to bottom left, as they sit in her icon (brand-icons/native/sarina.svg)
+            let stars = [at(0.75, 0.22), at(0.34, 0.33), at(0.66, 0.52), at(0.25, 0.78)];
+            let line = Stroke::new(2.0, color);
+            for pair in stars.windows(2) {
+                p.line_segment([pair[0], pair[1]], line);
+            }
+            for (i, star) in stars.into_iter().enumerate() {
+                // the outer two a little bigger, as in the icon
+                p.circle_filled(star, if i == 0 || i == 3 { 0.115 * w } else { 0.105 * w }, color);
+            }
         }
         Icon::Shield => {
             p.add(Shape::closed_line(vec![at(0.5, 0.1), at(0.84, 0.24), at(0.8, 0.56), at(0.5, 0.9), at(0.2, 0.56), at(0.16, 0.24)], s));

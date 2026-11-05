@@ -123,6 +123,22 @@ pub fn profile_of(p: &Port, min: i64) -> Option<usize> {
     profiles().iter().position(|(_, c, g)| floored(c, min) == p.cpu && floored(g, min) == p.gpu)
 }
 
+/// casefan keeps names up to this many characters.
+pub const NAME_MAX: usize = 60;
+
+/// Makes a port a pump (full speed until changed) or a fan (Balanced, raised to its floor).
+pub fn set_role(p: &mut Port, pump: bool, min: i64) {
+    if pump {
+        p.role = "pump".into();
+        p.fixed = 100;
+    } else {
+        let pr = &profiles()[1];
+        p.role = "fan".into();
+        p.cpu = floored(&pr.1, min);
+        p.gpu = floored(&pr.2, min);
+    }
+}
+
 enum Msg {
     State(Option<State>),
     Done(Result<(), String>),
@@ -270,9 +286,27 @@ impl Panel {
             let blind = c.rpm == 0;
             let min = if blind { BLIND_MIN } else { FAN_MIN };
             let Some(mut p) = self.edit.get(&n).cloned() else { continue };
-            let title = if p.name.is_empty() { format!("Port {n}") } else { p.name.clone() };
+            // the heading is what the hardware says (the port); the name is the person's own, typed on the card
+            let title = format!("Port {n}");
             let mut changed = false;
             ui::group(ui, pal, Some(&title), |ui| {
+                ui::row(ui, pal, true, "Name", Some("Your own name for what is plugged in here"), |ui| {
+                    let hint = if p.role == "pump" { "e.g. Graphics card pump" } else { "e.g. Top exhaust" };
+                    let mut name = p.name.clone();
+                    if ui::field(ui, pal, &mut name, hint, 220.0, false).changed() {
+                        p.name = name.chars().filter(|c| !c.is_control()).take(NAME_MAX).collect();
+                        changed = true;
+                    }
+                });
+                ui::row(ui, pal, false, "Kind", Some("A pump keeps one speed; a fan follows the temperatures"), |ui| {
+                    let sel = (p.role != "pump") as usize;
+                    if let Some(i) = ui::segmented(ui, pal, &["Pump", "Fan"], sel) {
+                        if i != sel {
+                            set_role(&mut p, i == 0, min);
+                            changed = true;
+                        }
+                    }
+                });
                 let speed = match (c.pct, connected.contains_key(&n)) {
                     (_, false) => "not connected".to_string(),
                     (Some(pct), _) if blind => format!("{pct} %, no speed signal"),
@@ -280,7 +314,7 @@ impl Panel {
                     (None, _) if blind => "no speed signal".to_string(),
                     (None, _) => format!("{} RPM", c.rpm),
                 };
-                ui::row(ui, pal, true, "Speed now", Some(&format!("Port {n} ({})", if p.role == "pump" { "pump" } else { "fan" })), |ui| {
+                ui::row(ui, pal, false, "Speed now", None, |ui| {
                     ui.label(speed);
                 });
                 if p.role == "pump" {
@@ -425,6 +459,19 @@ mod tests {
         quiet.gpu = floored(&profiles()[0].2, BLIND_MIN);
         assert_eq!(profile_of(&quiet, BLIND_MIN), Some(0));
         assert!(quiet.cpu.iter().all(|p| p[1] >= BLIND_MIN), "a fan with no speed signal never goes below 35 %");
+    }
+
+    #[test]
+    fn a_port_can_change_kind() {
+        let s = parse(GET).unwrap();
+        let mut p = s.ports["6"].clone();
+        set_role(&mut p, true, FAN_MIN);
+        assert_eq!((p.role.as_str(), p.fixed), ("pump", 100));
+        set_role(&mut p, false, BLIND_MIN);
+        assert_eq!(p.role, "fan");
+        assert_eq!(profile_of(&p, BLIND_MIN), Some(1), "back to Balanced, with the floor of a fan with no speed signal");
+        let v: serde_json::Value = serde_json::from_str(&to_json(&BTreeMap::from([("6".to_string(), p)]))).unwrap();
+        assert!(v["ports"]["6"]["cpu"].is_array());
     }
 
     #[test]

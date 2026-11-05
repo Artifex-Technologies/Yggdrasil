@@ -35,8 +35,9 @@ start)
     echo 'hl.monitor({ output = "", mode = "1920x1080@60", position = "0x0", scale = 1 })'
     awk '/^hl.config\(\{/{p=1} p{print} p && /^\}\)$/{exit}' "$SESSION"
     grep '"windows-float"' "$SESSION"
-    # an idle pointer is hidden, so it is not in the picture
-    echo 'hl.config({ cursor = { inactive_timeout = 1 } })'
+    # an idle pointer is hidden, so it is not in the picture; no "started without start-hyprland" banner (a test desktop has no
+    # watchdog to start it)
+    echo 'hl.config({ cursor = { inactive_timeout = 1 }, misc = { disable_watchdog_warning = true } })'
   } > "$STATE/nested.lua"
   before=$(ls "$XDG_RUNTIME_DIR" | grep -E '^wayland-[0-9]+$' | sort)
   env -u ELECTRON_RUN_AS_NODE -u ELECTRON_NO_ATTACH_CONSOLE HYPRLAND_NO_CRASHREPORTER=1 \
@@ -52,8 +53,8 @@ start)
   setsid dbus-run-session -- sh -c 'echo "$DBUS_SESSION_BUS_ADDRESS" > "$1/bus"; sleep infinity' _ "$STATE" > /dev/null 2>&1 < /dev/null &
   sleep 1
   "$0" run /usr/bin/yggdrasil-panel
-  # Hyprland's "started without start-hyprland" banner goes away by itself after a few seconds
-  sleep 16
+  # the panel draws the wallpaper, the top bar and the dock
+  sleep 3
   echo "nested desktop on $new"
   ;;
 run)
