@@ -61,8 +61,17 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
     read, the fans go back to the card. Stopping the service, or a crash (`ExecStopPost`), gives the fans back to the card;
     checked on the RTX 2080 Ti with a kill -9. Tests: `helpers/tests/test_gpufan.py`.
   - **Fixtures:** debug builds read `$YGGDRASIL_GPUFAN_FIXTURE` for screenshots of each mode.
-- **Case fans** (2026-11-04, helper and service only; the Settings page is still to come): `casefan` drives a Corsair Commander
-  Pro (kernel driver `corsair_cpro`) as the root service `yggdrasil-casefan`.
+- **Case fans** (helper and service 2026-11-04; Settings > Power > Fans 2026-11-05, `src/fans.rs`): `casefan` drives a Corsair
+  Commander Pro (kernel driver `corsair_cpro`) as the root service `yggdrasil-casefan`.
+  - **The page** (Power > Cooling > Fans, or `yggdrasil-settings power:fans`): the processor's and the card's temperatures,
+    whether fan control is on, and for each port its speed now (percent and RPM, or "no speed signal").
+    - A pump gets one slider, 60-100 %.
+    - A fan gets Quiet, Balanced (casefan's default) or Cool, or Custom: its own processor and graphics card curves, dragged
+      in the same editor as the graphics card's fan curve (`src/curve.rs`, shared).
+    - A fan with no speed signal is never set below 35 %, because it cannot be seen stopping.
+    - Connected ports the setting leaves alone are listed, with "Control it as a fan".
+    - Apply sends the whole setting to `pkexec casefan set -` on stdin (policy `org.yggdrasil.casefan.set`), which cleans it,
+      saves it and restarts the service. The page reads `casefan get` every 3 s only while it is open.
   - Each connected port has a role: a pump keeps one speed, never below 60 %; a fan follows two curves, one for the processor's
     package temperature and one for the graphics card's, and runs at whichever asks for more.
   - At 92 °C on the processor or 83 °C on the card every port runs at 100 %. A temperature it cannot read puts every port at
@@ -72,7 +81,7 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
     curves by itself.
   - Setting: `/etc/yggdrasil/case-fans.json`. Tests: `helpers/tests/test_casefan.py`.
   - On the owner's PC: port 1 is the graphics card's pump (about 3,830 RPM whatever it is set to), port 6 the 3,000 RPM Noctua
-    exhaust, and port 5 is connected but reports no speed (kept at 100 % until checked).
+    exhaust, and port 5 the 80mm Noctua over the cables and RAM, which reports no speed (its own curves, never below 35 %).
 - **Processor page** (built 2026-10-27, Matt's design; `src/cpu.rs`): the Processor row's title opens it, like the Graphics
   card's, with its own pop-out window (`--cpu-window`, app id `yggdrasil-cpu`).
   - **Readout:** package temperature and the hottest core, clocks (average and fastest), load and package power, with the

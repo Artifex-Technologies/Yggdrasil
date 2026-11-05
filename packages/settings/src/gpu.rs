@@ -12,7 +12,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, Instant};
 
-use eframe::egui::{self, pos2, vec2, Rect, RichText, Sense, Shape, Stroke};
+use eframe::egui::{self, RichText};
 use yggdrasil_ui::theme::Palette;
 
 use crate::tune::{self, Act, GpuClocks, Tune};
@@ -20,9 +20,8 @@ use crate::{sys, ui};
 
 const FIELDS: &str = "temperature.gpu,power.draw,power.limit,clocks.gr,clocks.mem,clocks.max.gr,clocks.max.mem,utilization.gpu,memory.used,memory.total,fan.speed,clocks_event_reasons.active";
 use crate::readout::{self, KEEP};
-/// The fan curve's temperature axis, in degrees C.
-const T_LO: f32 = 20.0;
-const T_HI: f32 = 100.0;
+#[cfg(test)]
+use crate::curve::move_point;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Sample {
@@ -112,14 +111,6 @@ pub fn parse_fans(json: &str) -> Option<Fans> {
         running: v["running"].as_bool().unwrap_or(false),
         ok: v["fans"].is_array(),
     })
-}
-
-/// Moves point `i` of a curve to (t, p), kept usable: at least 3 C from its neighbours, never slower than the point before it
-/// nor faster than the one after, within the axis and between the card's minimum and 100 %.
-pub fn move_point(pts: &mut [[i64; 2]], i: usize, t: i64, p: i64, min: i64) {
-    let (t_lo, p_lo) = if i == 0 { (T_LO as i64, min) } else { (pts[i - 1][0] + 3, pts[i - 1][1].max(min)) };
-    let (t_hi, p_hi) = if i + 1 == pts.len() { (T_HI as i64, 100) } else { (pts[i + 1][0] - 3, pts[i + 1][1]) };
-    pts[i] = [t.clamp(t_lo, t_hi.max(t_lo)), p.clamp(p_lo, p_hi.max(p_lo))];
 }
 
 /// The curve as `gpufan set curve=...` takes it.
@@ -449,73 +440,11 @@ impl Panel {
         }
     }
 
-    /// The curve: temperature across, speed up; drag a point to move it. The card's lowest speed and the "full speed" range
-    /// are shaded and named, and the card's temperature and speed now are marked.
+    /// The curve (curve.rs), with the card's lowest speed and its temperature and fan speed now.
     fn curve_editor(&mut self, ui: &mut egui::Ui, pal: &Palette, f: &Fans, now: Option<Sample>) {
-        let w = ui.available_width();
-        let (rect, resp) = ui.allocate_exact_size(vec2(w, 190.0), Sense::click_and_drag());
-        let plot = Rect::from_min_max(pos2(rect.left() + 40.0, rect.top() + 8.0), pos2(rect.right() - 10.0, rect.bottom() - 22.0));
-        let x = |t: f32| plot.left() + (t - T_LO) / (T_HI - T_LO) * plot.width();
-        let y = |p: f32| plot.bottom() - p / 100.0 * plot.height();
-        let painter = ui.painter_at(rect);
-        let small = egui::FontId::proportional(11.0);
-        // the grid: quiet lines every 25 % and every 20 C, labelled outside the plot
-        for p in [0.0, 25.0, 50.0, 75.0, 100.0] {
-            painter.hline(plot.x_range(), y(p), Stroke::new(1.0, pal.border));
-            painter.text(pos2(plot.left() - 6.0, y(p)), egui::Align2::RIGHT_CENTER, format!("{p:.0} %"), small.clone(), pal.dim);
-        }
-        for t in [20.0, 40.0, 60.0, 80.0, 100.0] {
-            painter.vline(x(t), plot.y_range(), Stroke::new(1.0, pal.border));
-            // the last label ends at the plot's edge instead of running past it
-            let align = if t >= T_HI { egui::Align2::RIGHT_TOP } else { egui::Align2::CENTER_TOP };
-            painter.text(pos2(x(t), plot.bottom() + 4.0), align, format!("{t:.0} °C"), small.clone(), pal.dim);
-        }
-        // below the card's lowest speed, and from the hot point on, the curve has no say
-        let min_rect = Rect::from_min_max(pos2(plot.left(), y(f.min as f32)), plot.right_bottom());
-        painter.rect_filled(min_rect, 0.0, pal.hover.gamma_multiply(0.6));
-        painter.text(pos2(plot.right() - 4.0, y(f.min as f32) + 2.0), egui::Align2::RIGHT_TOP, "below the card's lowest speed", small.clone(), pal.dim);
-        let hot = Rect::from_min_max(pos2(x(f.hot as f32), plot.top()), plot.right_bottom());
-        painter.rect_filled(hot, 0.0, pal.red.gamma_multiply(0.12));
-        painter.text(pos2(plot.right() - 4.0, plot.top() + 14.0), egui::Align2::RIGHT_TOP, format!("full speed from {} °C", f.hot), small.clone(), pal.dim);
-        // the curve, carried flat to both edges as gpufan reads it
-        let pts: Vec<egui::Pos2> = self.curve.iter().map(|p| pos2(x(p[0] as f32), y(p[1].max(f.min) as f32))).collect();
-        let mut line = vec![pos2(plot.left(), pts[0].y)];
-        line.extend(pts.iter().copied());
-        line.push(pos2(plot.right(), pts[pts.len() - 1].y));
-        painter.add(Shape::line(line, Stroke::new(2.0, pal.accent)));
-        // the card now
-        if let Some(s) = now {
-            let at = pos2(x(s.temp.clamp(T_LO, T_HI)), y(s.fan.clamp(0.0, 100.0)));
-            painter.vline(at.x, plot.y_range(), Stroke::new(1.0, pal.dim.gamma_multiply(0.6)));
-            painter.circle(at, 4.5, pal.text, Stroke::new(2.0, pal.field));
-            painter.text(pos2(at.x + 6.0, plot.top() + 14.0), egui::Align2::LEFT_TOP, format!("now {:.0} °C, {:.0} %", s.temp, s.fan), small.clone(), pal.text);
-        }
-        // dragging a point
-        let pointer = resp.interact_pointer_pos().or(resp.hover_pos());
-        if resp.drag_started() {
-            self.drag = pointer.and_then(|p| pts.iter().enumerate().map(|(i, q)| (i, q.distance(p))).filter(|(_, d)| *d < 16.0).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(i, _)| i));
-        }
-        if let (Some(i), Some(p), true) = (self.drag, pointer, resp.dragged()) {
-            let t = (T_LO + (p.x - plot.left()) / plot.width() * (T_HI - T_LO)).round() as i64;
-            let pct = ((plot.bottom() - p.y) / plot.height() * 100.0).round() as i64;
-            let before = self.curve[i];
-            move_point(&mut self.curve, i, t, pct, f.min);
-            if self.curve[i] != before {
-                self.curve_edited = true;
-            }
-        }
-        if resp.drag_stopped() {
-            self.drag = None;
-        }
-        let near = pointer.and_then(|p| pts.iter().position(|q| q.distance(p) < 16.0));
-        for (i, q) in pts.iter().enumerate() {
-            let big = self.drag == Some(i) || near == Some(i);
-            painter.circle(*q, if big { 7.0 } else { 5.5 }, pal.accent, Stroke::new(2.0, pal.field));
-        }
-        if let Some(i) = self.drag.or(near) {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
-            let c = self.curve[i];
-            painter.text(pts[i] + vec2(10.0, -10.0), egui::Align2::LEFT_BOTTOM, format!("{} °C → {} %", c[0], c[1].max(f.min)), egui::FontId::proportional(12.0), pal.text);
+        let marks = crate::curve::Marks { min: f.min, min_label: "below the card's lowest speed", hot: f.hot, now: now.map(|s| (s.temp, s.fan)) };
+        if crate::curve::editor(ui, pal, &mut self.curve, &mut self.drag, &marks) {
+            self.curve_edited = true;
         }
     }
 }

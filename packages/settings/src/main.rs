@@ -12,6 +12,8 @@ mod defaults;
 mod apps_ui;
 mod cpu;
 mod gpu;
+mod curve;
+mod fans;
 mod icons;
 mod readout;
 mod tune;
@@ -270,6 +272,9 @@ struct App {
     /// Power > Processor: the same for the processor (`power:cpu`).
     power_cpu: bool,
     cpu_panel: Option<cpu::Panel>,
+    /// Power > Fans: the case fans and the pump (`power:fans`).
+    power_fans: bool,
+    fans_panel: Option<fans::Panel>,
     /// Power > Graphics card: the unlock's confirmation while open (with the date of Sarina's last backup), and its checkbox.
     unlock_confirm: Option<Option<String>>,
     unlock_read: bool,
@@ -382,6 +387,8 @@ impl App {
             gpu_panel: None,
             power_cpu: start_sub() == "cpu",
             cpu_panel: None,
+            power_fans: start_sub() == "fans",
+            fans_panel: None,
             unlock_confirm: None,
             unlock_read: false,
             app_filter: String::new(),
@@ -577,13 +584,16 @@ impl eframe::App for App {
         // for pages that are slow to read (Wi-Fi scans, Bluetooth discovery, the package list), and not when
         // the window is in the background.
         let refreshable = matches!(self.page, Page::About | Page::Displays | Page::Sound | Page::Appearance | Page::Firewall | Page::DateTime | Page::Security)
-            || self.page == Page::Power && !self.power_gpu && !self.power_cpu;
+            || self.page == Page::Power && !self.power_gpu && !self.power_cpu && !self.power_fans;
         // a sub-page's panel (and its once-a-second reader) lives only while it is shown
         if !(self.page == Page::Power && self.power_gpu) {
             self.gpu_panel = None;
         }
         if !(self.page == Page::Power && self.power_cpu) {
             self.cpu_panel = None;
+        }
+        if !(self.page == Page::Power && self.power_fans) {
+            self.fans_panel = None;
         }
         if refreshable {
             let idle = self.loading.is_none() && !ctx.input(|i| i.pointer.any_down()) && ctx.memory(|m| m.focused().is_none()) && ctx.input(|i| i.viewport().focused != Some(false));
@@ -679,6 +689,7 @@ impl eframe::App for App {
                         if resp.clicked() && p == Page::Power {
                             self.power_gpu = false;
                             self.power_cpu = false;
+                            self.power_fans = false;
                         }
                         if resp.clicked() && !sel {
                             self.page = p;
@@ -2145,6 +2156,21 @@ impl App {
     }
 
     fn page_power(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
+        if self.power_fans {
+            ui.horizontal(|ui| {
+                if ui::quiet(ui, pal, "\u{2039}  Power").clicked() {
+                    self.power_fans = false;
+                }
+                ui.label(RichText::new("Fans").size(18.0).strong());
+            });
+            ui.add_space(6.0);
+            if let Some(p) = self.fans_panel.as_mut() {
+                p.show(ui, pal, ctx);
+            } else {
+                self.fans_panel = Some(fans::Panel::new(ctx));
+            }
+            return;
+        }
         if self.power_gpu || self.power_cpu {
             let kind = if self.power_gpu { readout::Kind::Gpu } else { readout::Kind::Cpu };
             ui.horizontal(|ui| {
@@ -2248,6 +2274,15 @@ impl App {
             });
             if p.limits.is_some() {
                 ui.label(RichText::new("These limits only hold things back; nothing here overclocks. Changing one asks for your password.").size(11.5).color(pal.dim));
+            }
+        }
+        if fans::installed() {
+            let mut open = false;
+            ui::group(ui, pal, Some("Cooling"), |ui| {
+                open = ui::link_row(ui, pal, true, "Fans", Some("The case fans and the pump, from the processor's and the graphics card's temperatures"), |_| {});
+            });
+            if open {
+                self.power_fans = true;
             }
         }
         let choices: [(i64, &str); 10] = [(0, "Never"), (1, "1 minute"), (2, "2 minutes"), (5, "5 minutes"), (10, "10 minutes"), (15, "15 minutes"), (30, "30 minutes"), (60, "1 hour"), (120, "2 hours"), (240, "4 hours")];

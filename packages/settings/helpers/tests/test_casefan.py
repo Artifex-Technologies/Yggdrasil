@@ -91,11 +91,12 @@ class Hardware(unittest.TestCase):
     def test_finds_ports_and_temperature(self):
         cp = m.find_cpro(self.root)
         self.assertTrue(cp.endswith("hwmon5"))
-        self.assertEqual(m.ports(cp), {"1": {"label": "fan1 4pin", "rpm": 3846}, "6": {"label": "fan6 4pin", "rpm": 1399}})
+        self.assertEqual(m.ports(cp), {"1": {"label": "fan1 4pin", "rpm": 3846, "pct": None}, "6": {"label": "fan6 4pin", "rpm": 1399, "pct": None}})
         self.assertEqual(m.cpu_temp(self.root), 53)
         m.set_pct(cp, "6", 50)
         with open(os.path.join(cp, "pwm6")) as f:
             self.assertEqual(f.read(), "128")
+        self.assertEqual(m.ports(cp)["6"]["pct"], 50)   # the speed last given, as Settings shows it
 
 
 class Loop(unittest.TestCase):
@@ -119,9 +120,6 @@ class Loop(unittest.TestCase):
         self.assertTrue(any(n == "6" and p > 70 for n, p in writes))   # the processor got hot
         self.assertEqual(writes[-2:], [("1", 100), ("6", 100)])        # then the sensor failed: everything at full speed
 
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class Calm(unittest.TestCase):
@@ -168,3 +166,26 @@ class Calm(unittest.TestCase):
         self.assertEqual(m.ramp(None, 60), 60)
         self.assertEqual(m.ramp(40, 60), 44)
         self.assertEqual(m.ramp(60, 40), 59)
+
+
+class SetFromStdin(unittest.TestCase):
+    """Settings sends the setting on stdin (`pkexec casefan set -`); it is cleaned like a file's."""
+
+    def test_stdin_is_cleaned_and_saved(self):
+        import io
+        import sys
+        saved, calls = [], []
+        old = (m.is_root, m.save, m.systemctl, sys.stdin)
+        m.is_root, m.save, m.systemctl = (lambda: True), (lambda c, p=None: saved.append(c)), (lambda *a: calls.append(a) or 0)
+        sys.stdin = io.StringIO(json.dumps({"ports": {"1": {"role": "pump", "fixed": 10}, "6": {"role": "fan"}, "x": {}}}))
+        try:
+            self.assertEqual(m.cmd_set("-"), 0)
+        finally:
+            m.is_root, m.save, m.systemctl, sys.stdin = old
+        self.assertEqual(saved[0]["ports"]["1"]["fixed"], m.PUMP_MIN_PCT)
+        self.assertEqual(sorted(saved[0]["ports"]), ["1", "6"])
+        self.assertIn(("restart", m.SERVICE), calls)
+
+
+if __name__ == "__main__":
+    unittest.main()

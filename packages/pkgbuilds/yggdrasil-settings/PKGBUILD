@@ -2,7 +2,7 @@
 # Built from packages/settings in this repository (and the shared look in packages/yggdrasil-ui).
 pkgname=yggdrasil-settings
 pkgver=0.1.0
-pkgrel=20
+pkgrel=21
 pkgdesc="Settings: Wi-Fi, Bluetooth, displays, sound, appearance, power and more"
 arch=('x86_64')
 provides=('labyrinth-settings')
@@ -65,6 +65,7 @@ package() {
   install -Dm644 "$_src/data/yggdrasil-gpufan.service" "$pkgdir/usr/lib/systemd/system/yggdrasil-gpufan.service"
   install -Dm755 "$_src/helpers/casefan" "$pkgdir/usr/lib/yggdrasil/casefan"
   install -Dm644 "$_src/data/yggdrasil-casefan.service" "$pkgdir/usr/lib/systemd/system/yggdrasil-casefan.service"
+  install -Dm644 "$_src/data/org.yggdrasil.casefan.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.casefan.policy"
   # tuning (Power > Processor and Graphics card, Developer options): the processor's multipliers, power limits and turbo, the
   # graphics card's clocks, with the crash guard; its root service applies kept values at start and measures package power
   install -Dm755 "$_src/helpers/tune" "$pkgdir/usr/lib/yggdrasil/tune"

@@ -8,7 +8,8 @@ Each connected port of the Commander Pro has a role:
 
 Commands:
   casefan get                     the ports, temperatures and setting, as JSON (no root needed)
-  casefan set FILE                save the setting from a JSON file and restart the service (root: pkexec)
+  casefan set FILE|-              save the setting from a JSON file (- reads it from stdin, as Settings sends it) and restart the
+                                  service (root: pkexec)
   casefan run                     as the root service yggdrasil-casefan: keep the ports on the setting
   casefan reset [failed]          ports to their stop speed (root; the service does it when it stops): fans STOP_FAN_PCT and the
                                   pump 100 % after a clean stop, everything 100 % after a failure
@@ -75,7 +76,8 @@ def find_cpro(root="/sys/class/hwmon"):
 
 
 def ports(cpro):
-    """The connected ports: {"1": {"label": "fan1 4pin", "rpm": 3846}, ...} (the driver lists only connected ones)."""
+    """The connected ports: {"1": {"label": "fan1 4pin", "rpm": 3846, "pct": 100}, ...} (the driver lists only connected ones).
+    pct is the speed last given to the port (None when the driver has none to report)."""
     out = {}
     for lab in sorted(glob.glob(os.path.join(cpro, "fan*_label"))):
         n = os.path.basename(lab)[3:-len("_label")]
@@ -86,7 +88,13 @@ def ports(cpro):
                 rpm = int(f.read().strip())
         except (OSError, ValueError):
             continue
-        out[n] = {"label": label, "rpm": rpm}
+        pct = None
+        try:
+            with open(os.path.join(cpro, f"pwm{n}")) as f:
+                pct = round(int(f.read().strip()) * 100 / 255)
+        except (OSError, ValueError):
+            pass
+        out[n] = {"label": label, "rpm": rpm, "pct": pct}
     return out
 
 
@@ -171,9 +179,9 @@ def clean(d):
         name = p.get("name") if isinstance(p.get("name"), str) else f"Port {n}"
         if p.get("role") == "pump":
             fixed = p.get("fixed") if isinstance(p.get("fixed"), int) and not isinstance(p.get("fixed"), bool) else 100
-            out["ports"][n] = {"name": name[:40], "role": "pump", "fixed": max(PUMP_MIN_PCT, min(100, fixed))}
+            out["ports"][n] = {"name": name[:60], "role": "pump", "fixed": max(PUMP_MIN_PCT, min(100, fixed))}
         else:
-            port = {"name": name[:40], "role": "fan", "cpu": [list(x) for x in DEFAULT_CPU], "gpu": [list(x) for x in DEFAULT_GPU]}
+            port = {"name": name[:60], "role": "fan", "cpu": [list(x) for x in DEFAULT_CPU], "gpu": [list(x) for x in DEFAULT_GPU]}
             for k in ("cpu", "gpu"):
                 try:
                     port[k] = check_curve(p.get(k))
@@ -283,8 +291,11 @@ def cmd_set(path):
         print("casefan: set needs root (Settings runs it with pkexec)", file=sys.stderr)
         return 1
     try:
-        with open(path, encoding="utf-8") as f:
-            cfg = clean(json.load(f))
+        if path == "-":
+            cfg = clean(json.loads(sys.stdin.read(65536)))
+        else:
+            with open(path, encoding="utf-8") as f:
+                cfg = clean(json.load(f))
     except (OSError, ValueError) as e:
         print(f"casefan: {e}", file=sys.stderr)
         return 2
