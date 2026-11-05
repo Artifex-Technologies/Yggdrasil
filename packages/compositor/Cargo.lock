@@ -2358,6 +2358,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wayland-protocols-wlr",
+ "x11rb",
  "yggdrasil-conf",
 ]
 

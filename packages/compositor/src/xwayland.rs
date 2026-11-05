@@ -47,6 +47,7 @@ pub fn start(app: &mut App, handle: LoopHandle<'static, App>, then: Box<dyn FnOn
                         let _ = wm.get_randr_primary_output();
                         app.xwm = Some(wm);
                         app.x11_display = Some(display_number);
+                        app.x11_reader = crate::x11asked::Reader::start(display_number, &wm_handle);
                         println!("DISPLAY=:{display_number}");
                     }
                     Err(e) => eprintln!("yggdrasil-compositor: the X11 window manager could not start, X11 programs will not show: {e}"),
@@ -73,7 +74,46 @@ fn same(a: &X11Surface, b: &X11Surface) -> bool {
     a.xwm_id() == b.xwm_id() && a.window_id() == b.window_id()
 }
 
+/// A game, recognised by its X11 class: a Steam game (`steam_app_<id>`) or a Windows program through Wine or Proton (`<name>.exe`).
+/// Games are drawn opaque whatever their alpha channel holds.
+pub fn is_game(x: &X11Surface) -> bool {
+    is_game_class(&x.class()) || is_game_class(&x.instance())
+}
+
+pub fn is_game_class(c: &str) -> bool {
+    let c = c.to_ascii_lowercase();
+    c.starts_with("steam_app_") || c.ends_with(".exe")
+}
+
+/// `~/.config/yggdrasil/opaque.conf`: programs always drawn opaque, one app id (X11 class) per line; # starts a comment.
+pub fn opaque_path() -> std::path::PathBuf {
+    yggdrasil_conf::dirs::config().join("opaque.conf")
+}
+
+pub fn parse_opaque(text: &str) -> Vec<String> {
+    text.lines().map(|l| l.split('#').next().unwrap_or("").trim().to_ascii_lowercase()).filter(|l| !l.is_empty()).collect()
+}
+
+/// Is this window's program in opaque.conf?
+pub fn listed(x: &X11Surface, apps: &[String]) -> bool {
+    let (c, i) = (x.class().to_ascii_lowercase(), x.instance().to_ascii_lowercase());
+    apps.iter().any(|a| *a == c || *a == i)
+}
+
 impl App {
+    /// What an X11 window asked for before it was shown (x11asked.rs), now that the answer is in: full screen or maximized,
+    /// unless it already is, or the person has placed it since.
+    pub fn x11_asked(&mut self, a: crate::x11asked::Asked) {
+        let Some(w) = self.all_windows().into_iter().map(|(w, _)| w).find(|w| w.x11_surface().is_some_and(|x| x.window_id() == a.window)) else { return };
+        let Some(x) = w.x11_surface() else { return };
+        if a.fullscreen && !x.is_fullscreen() {
+            self.fullscreen(&w);
+        } else if a.maximized && !a.fullscreen && !x.is_maximized() && !self.placed_by_layout(&w) {
+            self.maximize(&w);
+        }
+        self.wake();
+    }
+
     /// The window (shown, minimized or on another workspace) of an X11 window, if the compositor manages it.
     fn x11_window(&self, x: &X11Surface) -> Option<Window> {
         self.all_windows().into_iter().map(|(w, _)| w).find(|w| w.x11_surface().is_some_and(|s| same(s, x)))
@@ -156,10 +196,13 @@ impl XwmHandler for App {
         let _ = window.configure(Rectangle::new(at, geo.size));
         let w = Window::new_x11_window(window.clone());
         self.space.map_element(w.clone(), at, true);
-        // A window the size of the screen is a game going full screen. It may have said so before its window was shown, which
-        // Smithay's window manager does not read, so the size is the sign.
+        // What it asked for before it was shown (full screen, maximized) is read on another thread: x11_asked acts on it.
+        if let Some(r) = &self.x11_reader {
+            r.ask(window.window_id());
+        }
+        // A game the size of the screen that did not say so is taken as going full screen (a guess, so only for games).
         let screen = self.output.current_mode().map(|m| m.size.to_logical(1)).unwrap_or_default();
-        if screen.w > 0 && geo.size.w >= screen.w && geo.size.h >= screen.h {
+        if is_game(&window) && screen.w > 0 && geo.size.w >= screen.w && geo.size.h >= screen.h {
             self.fullscreen(&w);
         }
     }
@@ -443,5 +486,26 @@ impl RenderElement<GlesRenderer> for OpaqueElement {
     // that wants to scan full screen games out directly must put them on a plane that ignores alpha.
     fn underlying_storage(&self, _renderer: &mut GlesRenderer) -> Option<UnderlyingStorage<'_>> {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn games_are_known_by_their_class() {
+        assert!(is_game_class("steam_app_242760"));
+        assert!(is_game_class("TheForest.exe"));
+        assert!(is_game_class("STEAM_APP_1"));
+        assert!(!is_game_class("steam"), "Steam's own client is not a game");
+        assert!(!is_game_class("xterm"));
+        assert!(!is_game_class("exe"));
+    }
+
+    #[test]
+    fn the_opaque_list_reads() {
+        assert_eq!(parse_opaque("# games that leave junk in alpha\nMyGame\n  other  # comment\n\n"), vec!["mygame".to_string(), "other".to_string()]);
+        assert!(parse_opaque("").is_empty());
     }
 }

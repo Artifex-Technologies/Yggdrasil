@@ -14,6 +14,8 @@ yggdrasil-conf = { path = "../yggdrasil-conf" }
 smithay = { version = "0.7", default-features = false, features = ["backend_winit", "backend_egl", "backend_drm", "renderer_gl", "desktop", "wayland_frontend", "use_system_lib", "xwayland"] }
 tracing = "0.1"
 tiny-skia = "0.11"
+# x11asked.rs: one property read on its own connection (already in the tree through smithay)
+x11rb = "0.13"
 ab_glyph = "0.2"
 wayland-protocols-wlr = { version = "0.3", features = ["server"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

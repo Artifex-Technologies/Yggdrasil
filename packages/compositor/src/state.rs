@@ -143,7 +143,10 @@ pub struct App {
     chooser: Option<(usize, usize)>,
     chooser_art: Option<((usize, usize), MemoryRenderBuffer)>,
     asked_at_start: bool,
-    conf_times: (Option<std::time::SystemTime>, Option<std::time::SystemTime>),
+    conf_times: (Option<std::time::SystemTime>, Option<std::time::SystemTime>, Option<std::time::SystemTime>),
+    /// Programs always drawn opaque (opaque.conf, one app id per line: games that fill their alpha channel with junk), besides
+    /// the ones recognised as games (xwayland::is_game).
+    pub opaque_apps: Vec<String>,
     /// Windows on other workspaces: where they were, and which workspace they are on.
     parked: Vec<(Window, usize, Point<i32, Logical>)>,
     /// X11 windows snapped to a half of the screen (a Wayland window keeps that in its xdg state; X11 has no such state).
@@ -152,6 +155,8 @@ pub struct App {
     /// menus and tooltips now shown (override-redirect windows: drawn where they ask, on top, never given the keyboard).
     pub xwm: Option<smithay::xwayland::X11Wm>,
     pub x11_display: Option<u32>,
+    /// Reads what an X11 window asked for before it was shown (x11asked.rs).
+    pub x11_reader: Option<crate::x11asked::Reader>,
     pub xwayland_shell_state: smithay::wayland::xwayland_shell::XWaylandShellState,
     pub overlays: Vec<X11Surface>,
     pub loop_handle: LoopHandle<'static, App>,
@@ -355,11 +360,13 @@ impl App {
             chooser: None,
             chooser_art: None,
             asked_at_start: false,
-            conf_times: (None, None),
+            conf_times: (None, None, None),
+            opaque_apps: crate::xwayland::parse_opaque(&std::fs::read_to_string(crate::xwayland::opaque_path()).unwrap_or_default()),
             parked: vec![],
             x11_snapped: vec![],
             xwm: None,
             x11_display: None,
+            x11_reader: None,
             xwayland_shell_state: smithay::wayland::xwayland_shell::XWaylandShellState::new::<Self>(dh),
             overlays: vec![],
             loop_handle,
@@ -878,7 +885,7 @@ impl App {
         self.retile();
     }
 
-    /// Read workspaces.conf and shortcuts.conf again when they changed (Settings writes the first).
+    /// Read workspaces.conf, shortcuts.conf and opaque.conf again when they changed (Settings writes the first).
     pub fn reload_config(&mut self) {
         self.wake();
         let mtime = |p: std::path::PathBuf| std::fs::metadata(p).and_then(|m| m.modified()).ok();
@@ -893,6 +900,11 @@ impl App {
             self.conf_times.1 = sc_t;
             let (b, _) = shortcuts::load(&std::fs::read_to_string(shortcuts::config_path()).unwrap_or_default());
             self.bindings = b;
+        }
+        let op_t = mtime(crate::xwayland::opaque_path());
+        if op_t != self.conf_times.2 {
+            self.conf_times.2 = op_t;
+            self.opaque_apps = crate::xwayland::parse_opaque(&std::fs::read_to_string(crate::xwayland::opaque_path()).unwrap_or_default());
         }
     }
 
@@ -1188,8 +1200,12 @@ impl App {
                 }
             }
             let els = w.render_elements::<WaylandSurfaceRenderElement<GlesRenderer>>(renderer, (loc - geo.loc).to_physical(1), scale, 1.0);
-            // a full screen X11 window (a game) is drawn opaque: see OPAQUE_SHADER in xwayland.rs
-            let opaque = if w.x11_surface().is_some_and(|x| x.is_fullscreen()) { self.opaque_shader(renderer) } else { None };
+            // a full screen X11 window, a game, or a program in opaque.conf is drawn opaque: see OPAQUE_SHADER in xwayland.rs
+            let opaque = if w.x11_surface().is_some_and(|x| x.is_fullscreen() || crate::xwayland::is_game(x) || crate::xwayland::listed(x, &self.opaque_apps)) {
+                self.opaque_shader(renderer)
+            } else {
+                None
+            };
             match opaque {
                 Some(program) => out.extend(els.into_iter().map(|inner| Elem::Opaque(crate::xwayland::OpaqueElement { inner, program: program.clone() }))),
                 None => out.extend(els.into_iter().map(Elem::from)),

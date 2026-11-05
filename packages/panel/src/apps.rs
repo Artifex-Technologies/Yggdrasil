@@ -160,6 +160,27 @@ pub fn for_app_id<'a>(apps: &'a [App], app_id: &str) -> Option<&'a App> {
         .find(|a| a.id == app_id)
         .or_else(|| apps.iter().find(|a| a.id.to_lowercase() == lower))
         .or_else(|| apps.iter().find(|a| !a.wm_class.is_empty() && a.wm_class.to_lowercase() == lower))
+        // a running Steam game's window is `steam_app_<id>`; its shortcut (made by Steam) starts steam://rungameid/<id>
+        .or_else(|| {
+            let n = steam_game(&lower)?;
+            let url = format!("steam://rungameid/{n}");
+            apps.iter().find(|a| a.icon == format!("steam_icon_{n}") || a.exec.split_whitespace().any(|w| w.trim_matches('"') == url))
+        })
+}
+
+/// The game number of a Steam game's window (`steam_app_242760`), if it is one.
+pub fn steam_game(app_id: &str) -> Option<&str> {
+    let n = app_id.strip_prefix("steam_app_").or_else(|| app_id.strip_prefix("STEAM_APP_"))?;
+    (!n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())).then_some(n)
+}
+
+/// The icon for a window no desktop entry matches: a Steam game's own icon (Steam saves `steam_icon_<id>` in the icon theme
+/// folder whether or not it made a shortcut), otherwise the app id itself (icon themes name many icons after it).
+pub fn fallback_icon(app_id: &str) -> String {
+    match steam_game(app_id) {
+        Some(n) => format!("steam_icon_{n}"),
+        None => app_id.to_string(),
+    }
 }
 
 /// The command from an Exec line with the field codes (%u, %F ...) removed.
@@ -310,6 +331,17 @@ OnlyShowIn=KDE;GNOME;
         assert_eq!(for_app_id(&apps, "vivaldi-stable").unwrap().name, "Vivaldi");
         assert_eq!(for_app_id(&apps, "VIVALDI-STABLE").unwrap().name, "Vivaldi");
         assert!(for_app_id(&apps, "nope").is_none());
+        // a Steam game's window finds the shortcut Steam made for it, by its number (not by a longer number that starts the same)
+        let games = vec![
+            App { id: "The Forest".into(), name: "The Forest".into(), exec: "steam steam://rungameid/242760".into(), icon: "steam_icon_242760".into(), ..Default::default() },
+            App { id: "Other".into(), name: "Other".into(), exec: "steam steam://rungameid/24276".into(), icon: "x".into(), ..Default::default() },
+        ];
+        assert_eq!(for_app_id(&games, "steam_app_242760").unwrap().name, "The Forest");
+        assert_eq!(for_app_id(&games, "steam_app_24276").unwrap().name, "Other");
+        assert!(for_app_id(&games, "steam_app_1").is_none());
+        assert_eq!(fallback_icon("steam_app_1"), "steam_icon_1");
+        assert_eq!(fallback_icon("steam_app_x"), "steam_app_x");
+        assert_eq!(fallback_icon("xterm"), "xterm");
         assert!(for_app_id(&apps, "").is_none());
     }
 }

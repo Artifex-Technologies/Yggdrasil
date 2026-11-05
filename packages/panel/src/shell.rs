@@ -248,7 +248,7 @@ pub fn dock_items(m: &Model) -> Vec<DockItem> {
             items.push(DockItem {
                 app_id: id.clone(),
                 name: app.map(|a| a.name.clone()).unwrap_or_else(|| w.app_id.clone()),
-                icon: app.map(|a| a.icon.clone()).unwrap_or_else(|| w.app_id.clone()),
+                icon: app.map(|a| a.icon.clone()).unwrap_or_else(|| apps::fallback_icon(&w.app_id)),
                 wins: vec![],
                 pinned: false,
                 active: false,

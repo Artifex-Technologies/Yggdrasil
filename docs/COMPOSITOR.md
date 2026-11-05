@@ -42,18 +42,28 @@ shortcuts. `YGGDRASIL_COMPOSITOR_XWAYLAND=0` leaves it out. What is written:
 - Menus and tooltips (override-redirect windows), and menus, tooltips, notifications and splash screens that go through the window
   manager, are drawn where they ask, on top, never get the keyboard and are not listed; a click on one goes to it.
 - A window the compositor placed (tiled, maximized, full screen, snapped) keeps its place when it asks for another; others may change
-  their size but not move themselves. A window as big as the screen is taken as a game going full screen (a game may ask for full
-  screen before its window is shown, which Smithay's window manager does not read).
+  their size but not move themselves.
+- **What a window asked for before it was shown** (2026-11-05, `src/x11asked.rs`): a game that wants to start full screen, or a
+  program that wants to start maximized, sets `_NET_WM_STATE` before its window is shown. Smithay's window manager does not read
+  it, so a thread of its own reads it over its own connection to XWayland (the compositor never waits for the X server) and the
+  window goes full screen or maximized a moment after it shows. A game (below) as big as the screen that said nothing is still
+  taken as going full screen; other programs no longer are.
 - Clipboard and middle-click selection both ways between X11 and Wayland programs; an X11 program can read them only while one of
   its windows has the keyboard. The program with the keyboard is now the one offered the clipboard (this was missing for Wayland
   programs too: Smithay offers it only to the focused program).
 - Full screen X11 windows are drawn opaque (a shader that ignores the alpha channel), so a game that leaves junk in it no longer
   shows the desktop through in patches. X11 windows without an alpha visual were already opaque (XWayland hands them over as XRGB).
+- **Games are drawn opaque windowed too** (2026-11-05): a Steam game (X11 class `steam_app_<id>`) or a Windows program through Wine
+  or Proton (`<name>.exe`), whatever its alpha channel holds. Anything else that needs it goes in `~/.config/yggdrasil/opaque.conf`,
+  one app id (X11 class) per line, read again when it changes.
+- **Dock icons for X11 programs** (in the panel, so the Hyprland session has them too): a window is matched to its desktop entry by
+  its class (`StartupWMClass`), and a Steam game's window (`steam_app_<id>`) to the shortcut Steam made (`steam://rungameid/<id>`);
+  a game without a shortcut gets the icon Steam saved (`steam_icon_<id>`).
 
-Still missing for X11: a windowed game with an alpha visual is drawn with its alpha (it cannot be told from a program that means
-to be see-through); the top panels are drawn over full screen windows, Wayland and X11 alike (fine for a desktop, wrong for a
+Still missing for X11: the top panels are drawn over full screen windows, Wayland and X11 alike (fine for a desktop, wrong for a
 game); XWayland always runs (about 20 to 40 MB) instead of starting on the first X11 program; no HiDPI scaling for X11 programs;
-drag and drop between X11 and Wayland programs; X11 window icons for the dock; and the X11 cursor theme and XSETTINGS.
+drag and drop between X11 and Wayland programs; X11 window icons for programs with no desktop entry (`_NET_WM_ICON`); and the X11
+cursor theme and XSETTINGS.
 
 To try it: `yggdrasil-compositor --run xterm` (typing, its menus on Ctrl+click, moving, the window controls), then Steam
 (`--run steam`: its menus, the clipboard both ways with a Wayland program, minimize and restore from the dock), then a Proton
