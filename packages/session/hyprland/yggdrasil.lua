@@ -136,6 +136,9 @@ hl.window_rule({ name = "steam-no-self-maximize", match = { class = "^(steam)$" 
 
 -- Steam games are marked as games (for the direct path to the monitor above)
 hl.window_rule({ name = "steam-games", match = { class = "^(steam_app_.*)$" }, content = "game" })
+-- ...and drawn without their alpha channel: a game that leaves junk in it showed the desktop through in patches (The Forest's
+-- rocks and water). A game never means to be see-through. Checked in a nested Hyprland 0.57 on 2026-11-05 (getprop: true).
+hl.window_rule({ name = "steam-games-opaque", match = { class = "^(steam_app_.*)$" }, force_rgbx = true })
 
 -- ...except on the screens set to tile (Settings > Displays; ~/.config/yggdrasil/tiling, one screen per line; before that file exists,
 -- the choice made under KDE). There windows sit side by side with gaps, Omarchy-style. Settings reloads this when it changes.
