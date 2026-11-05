@@ -1,0 +1,187 @@
+#!/usr/bin/env python3
+"""yggdrasil-gpu-run: run a program (a game) on a chosen graphics card, on a computer with more than one.
+
+    yggdrasil-gpu-run list [--json]       the cards, numbered as Settings > Games shows them
+    yggdrasil-gpu-run N COMMAND [ARGS...] run COMMAND on card N
+    yggdrasil-gpu-run env N               the environment that does it, one VAR=value per line
+
+In Steam: a game's Properties > Launch options:  yggdrasil-gpu-run 2 %command%
+
+What it sets, for the card that should draw:
+- an NVIDIA card (its own driver): PRIME render offload (__NV_PRIME_RENDER_OFFLOAD, __GLX_VENDOR_LIBRARY_NAME) and
+  __VK_LAYER_NV_optimus=NVIDIA_only, so OpenGL and Vulkan both pick it;
+- an AMD or Intel card (Mesa): DRI_PRIME=pci-... (OpenGL, and Vulkan through Mesa's device-select layer) and
+  MESA_VK_DEVICE_SELECT=vendor:device; when an NVIDIA card is also present, __VK_LAYER_NV_optimus=non_NVIDIA_only hides it;
+- every card: DXVK_FILTER_DEVICE_NAME and VKD3D_FILTER_DEVICE_NAME (Proton's DirectX 9-11 and 12 translation pick their
+  Vulkan device by name), when the card's Vulkan name is known (vulkaninfo, from vulkan-tools).
+
+The picture still reaches the screen through the card the monitor is plugged into; the copy between cards is done by the
+drivers (PRIME). Frame generation on a second card (Lossless Scaling's dual-GPU mode) needs lsfg-vk to support it: not yet.
+Nothing here needs administrator rights, and nothing is changed on the system: it only starts the program.
+"""
+
+import json
+import os
+import re
+import subprocess
+import sys
+
+SYSFS = os.environ.get("YGGDRASIL_SYSFS", "/sys")
+MESA_DRIVERS = {"amdgpu", "radeon", "i915", "xe", "nouveau"}
+VENDORS = {0x10DE: "NVIDIA", 0x1002: "AMD", 0x8086: "Intel"}
+
+
+def read(path, default=""):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return default
+
+
+def pci_name(slot):
+    """The card's marketing name from the PCI database (lspci), e.g. 'GeForce RTX 2070'; empty if lspci is missing."""
+    try:
+        out = subprocess.run(["lspci", "-mm", "-s", slot], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    fields = re.findall(r'"([^"]*)"', out)
+    # "class" "vendor" "device" ...; the device often carries the name in brackets: "TU106 [GeForce RTX 2070 Rev. A]"
+    if len(fields) >= 3:
+        m = re.search(r"\[([^\]]+)\]", fields[2])
+        return m.group(1) if m else fields[2]
+    return ""
+
+
+def vulkan_devices(text=None):
+    """[(vendor_id, device_id, name)] from `vulkaninfo --summary` (or the given text)."""
+    if text is None:
+        try:
+            text = subprocess.run(["vulkaninfo", "--summary"], capture_output=True, text=True, timeout=15).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            return []
+    devices = []
+    cur = {}
+    for line in text.splitlines():
+        m = re.match(r"\s*(vendorID|deviceID|deviceName)\s*=\s*(.+)", line)
+        if not m:
+            continue
+        k, v = m.group(1), m.group(2).strip()
+        if k == "vendorID" and cur:
+            if {"vendorID", "deviceID", "deviceName"} <= cur.keys():
+                devices.append((int(cur["vendorID"], 16), int(cur["deviceID"], 16), cur["deviceName"]))
+            cur = {}
+        cur[k] = v
+    if {"vendorID", "deviceID", "deviceName"} <= cur.keys():
+        devices.append((int(cur["vendorID"], 16), int(cur["deviceID"], 16), cur["deviceName"]))
+    return devices
+
+
+def cards(vulkan=None):
+    """The graphics cards, in PCI order: dicts with number (1-based), slot, vendor, device, driver, name, vulkan_name,
+    boot (the one the computer started on), screens (connected outputs)."""
+    drm = os.path.join(SYSFS, "class", "drm")
+    found = {}
+    try:
+        names = sorted(os.listdir(drm))
+    except OSError:
+        names = []
+    for n in names:
+        if not re.fullmatch(r"card\d+", n):
+            continue
+        dev = os.path.join(drm, n, "device")
+        vendor = read(os.path.join(dev, "vendor"))
+        if not vendor:
+            continue
+        slot = os.path.basename(os.path.realpath(dev))
+        screens = 0
+        for o in names:
+            if o.startswith(n + "-") and read(os.path.join(drm, o, "status")) == "connected":
+                screens += 1
+        found[slot] = {
+            "slot": slot,
+            "vendor": int(vendor, 16),
+            "device": int(read(os.path.join(dev, "device"), "0"), 16),
+            "driver": os.path.basename(os.path.realpath(os.path.join(dev, "driver"))) if os.path.exists(os.path.join(dev, "driver")) else "",
+            "boot": read(os.path.join(dev, "boot_vga")) == "1",
+            "screens": screens,
+        }
+    vk = vulkan_devices() if vulkan is None else vulkan
+    out = []
+    for i, slot in enumerate(sorted(found)):
+        c = found[slot]
+        c["number"] = i + 1
+        c["name"] = pci_name(slot) or f"{VENDORS.get(c['vendor'], 'Graphics')} card"
+        same = [d for d in vk if d[0] == c["vendor"] and d[1] == c["device"]]
+        # two identical cards have the same Vulkan name: either picks the right model, which is what matters for the name filter
+        c["vulkan_name"] = same[0][2] if same else ""
+        out.append(c)
+    return out
+
+
+def environment(card, all_cards):
+    """The variables that make OpenGL, Vulkan and Proton draw on `card`."""
+    env = {}
+    if len(all_cards) < 2:
+        return env  # one card: nothing to choose
+    if card["vendor"] == 0x10DE and card["driver"] == "nvidia":
+        env["__NV_PRIME_RENDER_OFFLOAD"] = "1"
+        env["__GLX_VENDOR_LIBRARY_NAME"] = "nvidia"
+        env["__VK_LAYER_NV_optimus"] = "NVIDIA_only"
+    else:
+        env["DRI_PRIME"] = "pci-" + re.sub(r"[:.]", "_", card["slot"])
+        env["MESA_VK_DEVICE_SELECT"] = f"{card['vendor']:04x}:{card['device']:04x}"
+        if any(c["vendor"] == 0x10DE and c["driver"] == "nvidia" for c in all_cards):
+            env["__VK_LAYER_NV_optimus"] = "non_NVIDIA_only"
+    if card["vulkan_name"]:
+        env["DXVK_FILTER_DEVICE_NAME"] = card["vulkan_name"]
+        env["VKD3D_FILTER_DEVICE_NAME"] = card["vulkan_name"]
+    return env
+
+
+def pick(arg, all_cards):
+    try:
+        n = int(arg)
+    except ValueError:
+        return None
+    return next((c for c in all_cards if c["number"] == n), None)
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0 if argv else 2
+    if argv[0] == "list":
+        cs = cards()
+        if "--json" in argv:
+            print(json.dumps(cs, indent=1))
+        else:
+            for c in cs:
+                notes = [x for x in ("started on this card" if c["boot"] else "", f"{c['screens']} screen(s)" if c["screens"] else "") if x]
+                print(f"{c['number']}  {c['name']}  ({c['driver'] or 'no driver'}, {c['slot']}){'  ' + ', '.join(notes) if notes else ''}")
+        return 0
+    if argv[0] == "env":
+        cs = cards()
+        c = pick(argv[1] if len(argv) > 1 else "", cs)
+        if not c:
+            print(f"yggdrasil-gpu-run: no card {argv[1:] or ''}; see: yggdrasil-gpu-run list", file=sys.stderr)
+            return 2
+        for k, v in environment(c, cs).items():
+            print(f"{k}={v}")
+        return 0
+    cs = cards()
+    c = pick(argv[0], cs)
+    if not c or len(argv) < 2:
+        print(f"yggdrasil-gpu-run: usage: yggdrasil-gpu-run N COMMAND (cards: {', '.join(str(x['number']) for x in cs) or 'none found'})", file=sys.stderr)
+        return 2
+    env = dict(os.environ)
+    env.update(environment(c, cs))
+    try:
+        os.execvpe(argv[1], argv[1:], env)
+    except OSError as e:
+        print(f"yggdrasil-gpu-run: cannot start {argv[1]}: {e}", file=sys.stderr)
+        return 127
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

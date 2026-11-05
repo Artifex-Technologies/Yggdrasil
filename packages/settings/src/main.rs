@@ -21,6 +21,7 @@ mod tune;
 mod restore;
 mod spelling;
 mod distress;
+mod games;
 mod security;
 mod workspaces;
 mod zones_ui;
@@ -64,6 +65,8 @@ enum Page {
     About,
     /// Shown under About while Developer options are on.
     Developer,
+    /// Graphics cards for games, and frame generation (games.rs).
+    Games,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -103,7 +106,7 @@ enum AppSub {
 
 // The sidebar, in groups (a heading is drawn where the group changes). The words after the name are what the search also
 // finds the page by: what is inside it, not only its title.
-const PAGES: [(Page, &str, Icon, &str, &str); 18] = [
+const PAGES: [(Page, &str, Icon, &str, &str); 19] = [
     (Page::Network, "Wi-Fi & Network", Icon::Wifi, "Connections", "internet ethernet vpn proxy"),
     (Page::Bluetooth, "Bluetooth", Icon::Bluetooth, "Connections", "headphones controller pair"),
     (Page::Displays, "Displays", Icon::Display, "Devices", "monitor screen resolution refresh night light scale"),
@@ -115,6 +118,7 @@ const PAGES: [(Page, &str, Icon, &str, &str); 18] = [
     (Page::Assistant, "Assistant", Icon::Sound, "Personal", "voice"),
     (Page::Apps, "Apps", Icon::Apps, "Apps", "installed optional software uninstall minos"),
     (Page::DefaultApps, "Default apps", Icon::Apps, "Apps", "browser mail music video open with"),
+    (Page::Games, "Games", Icon::Gamepad, "Apps", "gaming steam proton graphics card gpu second card frame generation lossless scaling lsfg launch options"),
     (Page::Security, "Security", Icon::Shield, "Privacy & security", "password login sudo monitor distress limbo sandbox virtual machine guest windows license"),
     (Page::Firewall, "Firewall", Icon::Shield, "Privacy & security", "ports network block"),
     (Page::Restore, "Restore points", Icon::Restart, "Privacy & security", "snapshot backup rollback undo"),
@@ -209,6 +213,7 @@ struct App {
     demo_scroll: u32,
     demo_offset: f32,
     distress: distress::State,
+    games: games::State,
     /// Password logs: (sign-ins, failed attempts) and sudo history, read when the page opens.
     logins: Option<(Vec<security::LogEntry>, Vec<security::LogEntry>)>,
     sudo_log: Option<Vec<security::LogEntry>>,
@@ -324,6 +329,7 @@ impl App {
                 "limbo" => SecSub::Limbo,
                 _ => SecSub::Main,
             },
+            games: games::State::default(),
             distress: match start_sub().as_str() {
                 "distress-demo" => distress::State::demo(false),
                 "distress-demo-warn" => distress::State::demo(true),
@@ -449,7 +455,7 @@ impl App {
                 Page::DefaultApps => Msg::Defaults(defaults::load()),
                 Page::Assistant => Msg::Assistant(controls::load(yggdrasil_conf::integrations::first("assistant").map(|i| i.controls()).unwrap_or_default())),
                 Page::Printers => Msg::Printers(printers::load()),
-                Page::Keyboard | Page::Developer => return,
+                Page::Keyboard | Page::Developer | Page::Games => return,
             };
             let _ = tx.send(msg);
             ctx.request_repaint();
@@ -689,6 +695,9 @@ impl eframe::App for App {
                         if resp.clicked() && p == Page::Appearance {
                             self.app_sub = AppSub::Main;
                         }
+                        if resp.clicked() && p == Page::Games {
+                            self.games.reload();
+                        }
                         if resp.clicked() && p == Page::Keyboard {
                             self.key_sub = KeySub::Main;
                         }
@@ -754,6 +763,7 @@ impl eframe::App for App {
                         Page::Apps => self.page_apps(ui, &pal, &ctx),
                         Page::Keyboard => self.page_keyboard(ui, &pal, &ctx),
                         Page::Developer => self.page_developer(ui, &pal, &ctx),
+                        Page::Games => self.games.page(ui, &pal, &ctx),
                     }
                 });
             });

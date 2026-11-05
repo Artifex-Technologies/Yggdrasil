@@ -20,6 +20,26 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
   Wi-Fi only" next to an app's network switch, and the selected power mode's CPU and graphics-card limits under Power. Stored as
   `developer = yes` in ~/.config/labyrinth/panel.conf.
 
+- **Games** (`yggdrasil-settings games`, 2026-11-05): the graphics cards a game can draw on, and frame generation.
+  - Every card, with what it does: which one shows the screen, which one the computer started on, its driver. Read by
+    `yggdrasil-gpu-run list --json` (helpers/gpu-run, installed as /usr/bin/yggdrasil-gpu-run), the same code that later starts
+    the game, so the numbers on the page are the numbers it takes.
+  - With two or more cards each has **Copy launch option**: `yggdrasil-gpu-run 2 %command%` in a game's Steam launch options runs
+    it on card 2. For an NVIDIA card (its own driver) that is PRIME render offload and `__VK_LAYER_NV_optimus=NVIDIA_only`; for
+    AMD or Intel (Mesa) `DRI_PRIME=pci-...` and `MESA_VK_DEVICE_SELECT`, hiding an NVIDIA card with `non_NVIDIA_only`; for every
+    card `DXVK_FILTER_DEVICE_NAME` and `VKD3D_FILTER_DEVICE_NAME` (Proton's DirectX translation) when vulkaninfo names it. The
+    picture still reaches the screen through the card the monitor is plugged into (the drivers copy it across). Tested against
+    a pretend two-card /sys (an RTX 2070 with an Arc B580); not yet on a real second card.
+  - **Frame generation (Lossless Scaling):** whether lsfg-vk is installed (its Vulkan layer; Get it in Agora otherwise, where
+    Labyrinth's catalog has it as "Frame generation", from the AUR's source recipe), whether Lossless Scaling is installed in
+    any Steam library (it supplies the frame generation; Open in Steam otherwise), and "Choose games", which opens lsfg-vk's own
+    window. lsfg-vk is not part of the desktop: its licence (CC BY-NC-ND 4.0) forbids changing it and commercial use.
+  - **On a second card:** Lossless Scaling's dual-card mode (the game on one card, the extra frames on another) is not in lsfg-vk
+    yet (its documentation: "will be available in future releases"). When it is, the setting goes in this group, using the
+    card numbers above.
+
+  ![Settings > Games](../assets/screenshots/settings-games.png)
+
 ## How it works
 
 - **labyrinth-launch ID** starts an app inside its own systemd scope and slice (`lapp_<id>.slice`; no dash in the name, so it

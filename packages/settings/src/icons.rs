@@ -24,6 +24,8 @@ pub enum Icon {
     Printer,
     /// Open in a window of its own: a square open at its top right corner, an arrow leaving through it.
     PopOut,
+    /// Games: a gamepad (its body, a cross on the left, two buttons on the right).
+    Gamepad,
     /// Sarina: the constellation S of her app icon (four stars joined by three lines), without its hexagon.
     Constellation,
 }
@@ -111,6 +113,13 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
                 p.circle_filled(at(x, 0.42), 0.035 * w, color);
             }
             p.line_segment([at(0.3, 0.6), at(0.7, 0.6)], s);
+        }
+        Icon::Gamepad => {
+            p.rect_stroke(Rect::from_min_max(at(0.08, 0.3), at(0.92, 0.72)), 0.2 * w, s, eframe::egui::StrokeKind::Inside);
+            p.line_segment([at(0.22, 0.51), at(0.4, 0.51)], s);
+            p.line_segment([at(0.31, 0.42), at(0.31, 0.6)], s);
+            p.circle_filled(at(0.64, 0.46), 0.045 * w, color);
+            p.circle_filled(at(0.76, 0.56), 0.045 * w, color);
         }
         Icon::Restart => {
             p.add(Shape::line(arc(c, 0.3 * w, 60.0, 340.0), s));

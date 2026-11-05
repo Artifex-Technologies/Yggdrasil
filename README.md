@@ -158,6 +158,8 @@ Applications are shown as windows on a 1920×1080 desktop.
 | *Settings: the lock screen designs.* | *Minos, the file manager: tabs, places, details.* |
 | ![Settings, Cooling](assets/screenshots/settings-cooling.png) | ![Settings, Cooling, a fan's curves](assets/screenshots/settings-cooling-curves.png) |
 | *Settings: Power > Cooling. The temperatures, and each port with your own name for it, pump or fan, and its speed now.* | *Settings: a fan's own curves, one for the processor and one for the graphics card, dragged point by point. Another fan can follow them.* |
+| ![Settings, Games](assets/screenshots/settings-games.png) | |
+| *Settings: Games. The graphics cards (with two or more, a Steam launch option runs a game on the one you pick) and frame generation through Lossless Scaling.* | |
 | ![Agora](assets/screenshots/marketplace.png) | ![The installer, keyboard](assets/screenshots/installer-keyboard.png) |
 | *Agora, the app store.* | *The installer: keyboards by type.* |
 | ![The installer, partitions](assets/screenshots/installer-disk-manual.png) | ![The installer, account](assets/screenshots/installer-account.png) |
