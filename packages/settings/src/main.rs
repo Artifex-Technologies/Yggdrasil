@@ -107,7 +107,7 @@ const PAGES: [(Page, &str, Icon, &str, &str); 18] = [
     (Page::Sound, "Sound", Icon::Sound, "Devices", "audio volume speaker microphone output input"),
     (Page::Keyboard, "Keyboard", Icon::Keyboard, "Devices", "shortcuts keys hotkeys typing spelling spell check languages dictionary words find my mouse color picker"),
     (Page::Printers, "Printers", Icon::Printer, "Devices", "print scanner"),
-    (Page::Power, "Power", Icon::Power, "Devices", "battery sleep suspend graphics card gpu processor cpu fans"),
+    (Page::Power, "Power", Icon::Power, "Devices", "battery sleep suspend graphics card gpu processor cpu fans pump cooling"),
     (Page::Appearance, "Appearance", Icon::Appearance, "Personal", "theme dark light accent wallpaper icons top bar notifications lock screen workspaces boot"),
     (Page::Assistant, "Assistant", Icon::Sound, "Personal", "voice"),
     (Page::Apps, "Apps", Icon::Apps, "Apps", "installed optional software uninstall minos"),
@@ -272,7 +272,7 @@ struct App {
     /// Power > Processor: the same for the processor (`power:cpu`).
     power_cpu: bool,
     cpu_panel: Option<cpu::Panel>,
-    /// Power > Fans: the case fans and the pump (`power:fans`).
+    /// Power > Cooling: the case fans and pumps (`power:cooling`; `power:fans` too).
     power_fans: bool,
     fans_panel: Option<fans::Panel>,
     /// Power > Graphics card: the unlock's confirmation while open (with the date of Sarina's last backup), and its checkbox.
@@ -387,7 +387,7 @@ impl App {
             gpu_panel: None,
             power_cpu: start_sub() == "cpu",
             cpu_panel: None,
-            power_fans: start_sub() == "fans",
+            power_fans: matches!(start_sub().as_str(), "cooling" | "fans"),
             fans_panel: None,
             unlock_confirm: None,
             unlock_read: false,
@@ -2163,7 +2163,7 @@ impl App {
                 if ui::quiet(ui, pal, "\u{2039}  Power").clicked() {
                     self.power_fans = false;
                 }
-                ui.label(RichText::new("Fans").size(18.0).strong());
+                ui.label(RichText::new("Cooling").size(18.0).strong());
             });
             ui.add_space(6.0);
             if let Some(p) = self.fans_panel.as_mut() {
@@ -2280,8 +2280,8 @@ impl App {
         }
         if fans::installed() {
             let mut open = false;
-            ui::group(ui, pal, Some("Cooling"), |ui| {
-                open = ui::link_row(ui, pal, true, "Fans", Some("The case fans and the pump, from the processor's and the graphics card's temperatures"), |_| {});
+            ui::group(ui, pal, None, |ui| {
+                open = ui::link_row(ui, pal, true, "Cooling", Some("The case fans and pumps, from the processor's and the graphics card's temperatures"), |_| {});
             });
             if open {
                 self.power_fans = true;

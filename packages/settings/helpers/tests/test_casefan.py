@@ -168,6 +168,30 @@ class Calm(unittest.TestCase):
         self.assertEqual(m.ramp(60, 40), 59)
 
 
+class Follow(unittest.TestCase):
+    """A fan can run on another fan's curves (Matt, 2026-11-05: the exhaust on the 80mm fan's map)."""
+
+    QUIET = [[55, 35], [70, 40], [85, 80], [92, 100]]
+
+    def test_a_follower_gets_the_leaders_curves(self):
+        c = m.clean({"ports": {"5": {"role": "fan", "cpu": self.QUIET, "gpu": self.QUIET}, "6": {"role": "fan", "follow": "5"}}})
+        self.assertEqual(c["ports"]["6"]["follow"], "5")
+        self.assertEqual(c["ports"]["6"]["cpu"], self.QUIET)
+        self.assertEqual(m.target(c["ports"]["6"], 70, 30), m.target(c["ports"]["5"], 70, 30))
+
+    def test_no_self_pump_chain_or_missing_leader(self):
+        c = m.clean({"ports": {"1": {"role": "pump", "fixed": 100}, "4": {"role": "fan", "follow": "4"},
+                               "5": {"role": "fan", "follow": "6"}, "6": {"role": "fan", "follow": "5"},
+                               "3": {"role": "fan", "follow": "1"}, "2": {"role": "fan", "follow": "9"}}})
+        for n in ("2", "3", "4", "5", "6"):
+            self.assertNotIn("follow", c["ports"][n], n)
+            self.assertEqual(c["ports"][n]["cpu"], m.DEFAULT_CPU, n)
+
+    def test_a_pump_never_follows(self):
+        c = m.clean({"ports": {"1": {"role": "pump", "fixed": 80, "follow": "6"}, "6": {"role": "fan"}}})
+        self.assertNotIn("follow", c["ports"]["1"])
+
+
 class SetFromStdin(unittest.TestCase):
     """Settings sends the setting on stdin (`pkexec casefan set -`); it is cleaned like a file's."""
 

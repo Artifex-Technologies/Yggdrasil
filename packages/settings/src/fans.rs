@@ -1,4 +1,4 @@
-//! Settings > Power > Fans: the case fans and the pump on a fan controller (casefan; today a Corsair Commander Pro). Each port
+//! Settings > Power > Cooling: the case fans and the pumps on a fan controller (casefan; today a Corsair Commander Pro). Each port
 //! the setting names is a pump (one speed, never below the pump's floor) or a fan that follows two curves, one for the
 //! processor and one for the graphics card, running at whichever asks for more. A fan gets Quiet, Balanced or Cool, or its own
 //! curves (curve.rs). The temperatures and each port's speed are read every few seconds while the page is on screen; Apply
@@ -48,6 +48,8 @@ pub struct Port {
     pub fixed: i64,
     pub cpu: Curve,
     pub gpu: Curve,
+    /// Another fan whose curves this one runs on (casefan copies them in when it loads the setting).
+    pub follow: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -85,6 +87,7 @@ pub fn parse(json: &str) -> Option<State> {
             fixed: p["fixed"].as_i64().unwrap_or(100),
             cpu: curve_of(&p["cpu"]),
             gpu: curve_of(&p["gpu"]),
+            follow: p["follow"].as_str().map(String::from),
         });
     }
     let connected = v["connected"].as_object().map(|o| {
@@ -111,7 +114,11 @@ pub fn to_json(ports: &BTreeMap<String, Port>) -> String {
         let v = if p.role == "pump" {
             serde_json::json!({"name": p.name, "role": "pump", "fixed": p.fixed})
         } else {
-            serde_json::json!({"name": p.name, "role": "fan", "cpu": p.cpu, "gpu": p.gpu})
+            let mut v = serde_json::json!({"name": p.name, "role": "fan", "cpu": p.cpu, "gpu": p.gpu});
+            if let Some(l) = &p.follow {
+                v["follow"] = serde_json::json!(l);
+            }
+            v
         };
         out.insert(n.clone(), v);
     }
@@ -123,6 +130,27 @@ pub fn profile_of(p: &Port, min: i64) -> Option<usize> {
     profiles().iter().position(|(_, c, g)| floored(c, min) == p.cpu && floored(g, min) == p.gpu)
 }
 
+/// The fans another port may follow: fans that follow nobody, other than the port itself.
+pub fn leaders(ports: &BTreeMap<String, Port>, me: &str) -> Vec<String> {
+    ports.iter().filter(|(n, p)| n.as_str() != me && p.role == "fan" && p.follow.is_none()).map(|(n, _)| n.clone()).collect()
+}
+
+/// Drops a follow that no longer holds (the leader gone, a pump, or following someone itself), as casefan would, and gives
+/// every follower its leader's curves, so the page shows what will run.
+pub fn normalize(ports: &mut BTreeMap<String, Port>) {
+    let snapshot = ports.clone();
+    for (n, p) in ports.iter_mut() {
+        let Some(l) = p.follow.clone() else { continue };
+        match snapshot.get(&l) {
+            Some(lead) if l != *n && p.role == "fan" && lead.role == "fan" && lead.follow.is_none() => {
+                p.cpu = lead.cpu.clone();
+                p.gpu = lead.gpu.clone();
+            }
+            _ => p.follow = None,
+        }
+    }
+}
+
 /// casefan keeps names up to this many characters.
 pub const NAME_MAX: usize = 60;
 
@@ -131,6 +159,7 @@ pub fn set_role(p: &mut Port, pump: bool, min: i64) {
     if pump {
         p.role = "pump".into();
         p.fixed = 100;
+        p.follow = None;
     } else {
         let pr = &profiles()[1];
         p.role = "fan".into();
@@ -328,6 +357,41 @@ impl Panel {
                     });
                     return;
                 }
+                // following another fan: its curves, nothing to set here
+                let name_of = |l: &str| match self.edit.get(l).map(|x| x.name.as_str()).filter(|x| !x.is_empty()) {
+                    Some(name) => format!("Port {l} ({name})"),
+                    None => format!("Port {l}"),
+                };
+                let choices = leaders(&self.edit, &n);
+                let followers: Vec<String> = self.edit.iter().filter(|(_, x)| x.follow.as_deref() == Some(n.as_str())).map(|(k, _)| format!("Port {k}")).collect();
+                if !choices.is_empty() || p.follow.is_some() {
+                    let sub = match &p.follow {
+                        Some(_) => "Same speed in percent: each fan at its own share of its top speed".to_string(),
+                        None => "Run on another fan's curves, so one setting drives both".to_string(),
+                    };
+                    let shown = p.follow.as_deref().map(name_of).unwrap_or_else(|| "Nobody: its own curves".into());
+                    ui::row(ui, pal, false, "Follows", Some(&sub), |ui| {
+                        egui::ComboBox::from_id_salt(format!("follow-{n}")).selected_text(shown).show_ui(ui, |ui| {
+                            if ui.selectable_label(p.follow.is_none(), "Nobody: its own curves").clicked() && p.follow.is_some() {
+                                p.follow = None;
+                                changed = true;
+                            }
+                            for l in &choices {
+                                if ui.selectable_label(p.follow.as_deref() == Some(l.as_str()), name_of(l)).clicked() && p.follow.as_deref() != Some(l.as_str()) {
+                                    p.follow = Some(l.clone());
+                                    changed = true;
+                                }
+                            }
+                        });
+                    });
+                }
+                if let Some(l) = p.follow.clone() {
+                    let low = self.edit.get(&l).map(|x| x.cpu.iter().chain(x.gpu.iter()).any(|q| q[1] < BLIND_MIN)).unwrap_or(false);
+                    if blind && low {
+                        ui.label(RichText::new(format!("{}'s curves go below {BLIND_MIN} %: this fan reports no speed, so it could stop without anyone seeing.", name_of(&l))).size(11.5).color(pal.red));
+                    }
+                    return;
+                }
                 let sel = profile_of(&p, min).unwrap_or(3);
                 let sub = match sel {
                     0 => "Slow until the parts are warm; fine for desktop work and films",
@@ -349,7 +413,12 @@ impl Panel {
                     }
                 });
                 let is_open = self.open.as_deref() == Some(n.as_str());
-                ui::row(ui, pal, false, "Curves", Some("It runs at whichever curve asks for more: it follows the part working hardest"), |ui| {
+                let curves_sub = if followers.is_empty() {
+                    "It runs at whichever curve asks for more: it follows the part working hardest".to_string()
+                } else {
+                    format!("It runs at whichever curve asks for more. {} also run{} on these", followers.join(" and "), if followers.len() == 1 { "s" } else { "" })
+                };
+                ui::row(ui, pal, false, "Curves", Some(&curves_sub), |ui| {
                     if ui::quiet(ui, pal, if is_open { "Hide" } else { "Edit…" }).clicked() {
                         self.open = if is_open { None } else { Some(n.clone()) };
                         self.drag = None;
@@ -380,6 +449,7 @@ impl Panel {
             });
             if changed {
                 self.edit.insert(n.clone(), p);
+                normalize(&mut self.edit);
                 self.edited = true;
             }
         }
@@ -393,7 +463,7 @@ impl Panel {
                         if ui::quiet(ui, pal, "Control it as a fan").clicked() {
                             let min = if c.rpm == 0 { BLIND_MIN } else { FAN_MIN };
                             let pr = &profiles()[1];
-                            self.edit.insert(n.clone(), Port { name: String::new(), role: "fan".into(), fixed: 100, cpu: floored(&pr.1, min), gpu: floored(&pr.2, min) });
+                            self.edit.insert(n.clone(), Port { name: String::new(), role: "fan".into(), fixed: 100, cpu: floored(&pr.1, min), gpu: floored(&pr.2, min), follow: None });
                             self.edited = true;
                         }
                     });
@@ -472,6 +542,24 @@ mod tests {
         assert_eq!(profile_of(&p, BLIND_MIN), Some(1), "back to Balanced, with the floor of a fan with no speed signal");
         let v: serde_json::Value = serde_json::from_str(&to_json(&BTreeMap::from([("6".to_string(), p)]))).unwrap();
         assert!(v["ports"]["6"]["cpu"].is_array());
+    }
+
+    #[test]
+    fn following_another_fan() {
+        let mut ports = parse(GET).unwrap().ports;
+        assert_eq!(leaders(&ports, "6"), vec!["5".to_string()], "a pump cannot be followed");
+        ports.get_mut("6").unwrap().follow = Some("5".into());
+        normalize(&mut ports);
+        assert_eq!(ports["6"].cpu, ports["5"].cpu, "the follower shows the leader's curves");
+        assert!(leaders(&ports, "5").is_empty(), "a follower cannot be followed");
+        let v: serde_json::Value = serde_json::from_str(&to_json(&ports)).unwrap();
+        assert_eq!(v["ports"]["6"]["follow"], "5");
+        assert!(v["ports"]["5"].get("follow").is_none());
+        // the leader becomes a pump: the follow is dropped, the curves stay
+        set_role(ports.get_mut("5").unwrap(), true, FAN_MIN);
+        normalize(&mut ports);
+        assert_eq!(ports["6"].follow, None);
+        assert_eq!(parse(&format!(r#"{{"ports": {}}}"#, v["ports"])).unwrap().ports["6"].follow.as_deref(), Some("5"));
     }
 
     #[test]

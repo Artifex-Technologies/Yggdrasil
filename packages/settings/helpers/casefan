@@ -24,6 +24,7 @@ itself, which is why a stop always sets a speed instead of leaving the ports as 
 The setting is /etc/yggdrasil/case-fans.json:
   {"ports": {"1": {"name": "Graphics card pump", "role": "pump", "fixed": 100},
              "6": {"name": "Top exhaust", "role": "fan", "cpu": [[50, 25], ...], "gpu": [[45, 25], ...]}}}
+A fan may add "follow": "5" to run on port 5's curves (the same percent; port 5 must be a fan that follows nobody).
 Ports not in the setting are left alone.
 """
 import ctypes
@@ -188,6 +189,19 @@ def clean(d):
                 except ValueError:
                     pass
             out["ports"][n] = port
+    # a fan may follow another fan ("follow": "5"): it gets that fan's curves, so both run at the same percent (each at its own
+    # top speed). Only a fan that follows nobody can be followed: no chains, no loops.
+    raw = d.get("ports") or {}
+    for n, port in out["ports"].items():
+        lead = raw[n].get("follow") if isinstance(raw.get(n), dict) else None
+        if port["role"] != "fan" or not isinstance(lead, str) or lead == n or lead not in out["ports"]:
+            continue
+        leader = out["ports"][lead]
+        if leader["role"] != "fan" or isinstance(raw[lead].get("follow"), str):
+            continue
+        port["follow"] = lead
+        port["cpu"] = [list(x) for x in leader["cpu"]]
+        port["gpu"] = [list(x) for x in leader["gpu"]]
     return out
 
 

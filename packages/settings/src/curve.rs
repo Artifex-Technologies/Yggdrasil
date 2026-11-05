@@ -1,5 +1,5 @@
 //! A fan curve to look at and drag: temperature across, speed up. Shared by Settings > Power > Graphics card (gpufan) and
-//! Settings > Power > Fans (casefan). The lowest speed and the "full speed" range are shaded and named, the part's temperature
+//! Settings > Power > Cooling (casefan). The lowest speed and the "full speed" range are shaded and named, the part's temperature
 //! and the fan's speed now are marked, and a point can be dragged within its neighbours.
 
 use eframe::egui::{self, pos2, vec2, Rect, Sense, Shape, Stroke};
