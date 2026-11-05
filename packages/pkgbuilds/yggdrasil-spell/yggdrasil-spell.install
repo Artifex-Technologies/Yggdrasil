@@ -1,0 +1,7 @@
+# the shared list's merge watches the offers folder from now on (pacman's own hooks create the folder and reload systemd first)
+post_install() {
+  systemctl --no-block start yggdrasil-spell-global.path >/dev/null 2>&1 || true
+}
+post_upgrade() {
+  post_install
+}

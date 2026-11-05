@@ -1,0 +1,9 @@
+[Unit]
+Description=Yggdrasil spelling: merge the words the accounts offer into the computer's shared list when an offer changes
+
+[Path]
+PathChanged=/var/lib/yggdrasil/spell/offered
+Unit=yggdrasil-spell-global.service
+
+[Install]
+WantedBy=paths.target

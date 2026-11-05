@@ -11,6 +11,7 @@
 pub mod apps;
 pub mod conf;
 pub mod dicts;
+pub mod global;
 pub mod packs;
 pub mod words;
 

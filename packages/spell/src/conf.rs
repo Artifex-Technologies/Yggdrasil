@@ -10,12 +10,14 @@ pub struct SpellConf {
     pub languages: Vec<String>,
     /// Word packs that are on (ids); `None` means "the packs that are on by default".
     pub packs: Option<Vec<String>>,
+    /// Offer the words this account added to the computer's shared list (global.rs). On unless switched off.
+    pub share: bool,
     other: Vec<String>,
 }
 
 impl Default for SpellConf {
     fn default() -> Self {
-        SpellConf { enabled: true, languages: vec![], packs: None, other: vec![] }
+        SpellConf { enabled: true, languages: vec![], packs: None, share: true, other: vec![] }
     }
 }
 
@@ -32,6 +34,7 @@ impl SpellConf {
                 Some(("enabled", v)) => c.enabled = !matches!(v, "no" | "false" | "off" | "0"),
                 Some(("languages", v)) => c.languages = ids(v),
                 Some(("packs", v)) => c.packs = Some(ids(v)),
+                Some(("share", v)) => c.share = !matches!(v, "no" | "false" | "off" | "0"),
                 _ if !t.is_empty() => c.other.push(line.to_string()),
                 _ => {}
             }
@@ -47,6 +50,9 @@ impl SpellConf {
         let mut s = format!("# Spell checking (Settings > Keyboard > Spelling and languages)\nenabled = {}\nlanguages = {}\n", if self.enabled { "yes" } else { "no" }, self.languages.join(", "));
         if let Some(p) = &self.packs {
             s.push_str(&format!("packs = {}\n", p.join(", ")));
+        }
+        if !self.share {
+            s.push_str("share = no\n");
         }
         for l in &self.other {
             s.push_str(l);

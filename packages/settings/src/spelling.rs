@@ -17,6 +17,9 @@ pub struct State {
     packs: Vec<yggdrasil_spell::packs::Pack>,
     filter: String,
     new_word: String,
+    /// the computer's shared list: how many words, and (for an administrator) the words one account offered
+    shared: usize,
+    pending: Option<Vec<String>>,
     /// the package being downloaded or removed
     pub busy: Option<String>,
     pub note: String,
@@ -29,7 +32,26 @@ impl State {
         self.packages = dicts::PACKAGES.iter().map(|p| (p.package, p.name, dicts::package_installed(p.package))).collect();
         self.words = Some(WordList::load());
         self.packs = yggdrasil_spell::packs::installed();
+        self.shared = yggdrasil_spell::words::global().len();
+        self.pending = yggdrasil_spell::global::pending(std::path::Path::new(yggdrasil_spell::global::DIR));
     }
+}
+
+/// An administrator's choice for the shared list (`pkexec /usr/lib/yggdrasil/spell-global approve|deny WORD`), then tells the window.
+fn global_job(tx: std::sync::mpsc::Sender<Msg>, ctx: egui::Context, word: String, approve: bool) {
+    std::thread::spawn(move || {
+        let out = std::process::Command::new("pkexec").arg("/usr/lib/yggdrasil/spell-global").arg(if approve { "approve" } else { "deny" }).arg(&word).output();
+        let r = match out {
+            Ok(o) if o.status.success() => Ok(format!("\"{word}\" {}", if approve { "is shared with every account" } else { "will not be shared" })),
+            Ok(o) if o.status.code() == Some(126) || o.status.code() == Some(127) => Err("Not done: the password was not given".to_string()),
+            Ok(o) => Err(String::from_utf8_lossy(&o.stderr).lines().last().unwrap_or("not done").to_string()),
+            Err(_) => Err("pkexec is not available".to_string()),
+        };
+        // the shared words reach this account's apps too
+        let _ = apps::sync_all();
+        let _ = tx.send(Msg::Spell(r));
+        ctx.request_repaint();
+    });
 }
 
 /// Runs the package helper (`pkexec /usr/lib/agora/pkg-root`, the desktop's password box) to install or remove one dictionary
@@ -178,6 +200,39 @@ impl App {
             }
         });
         ui.label(RichText::new("Words you add in any app (\"Add to dictionary\") come here, and every app gets them. A browser reads its list when it starts.").color(pal.dim));
+        ui.add_space(8.0);
+        let mut choice: Option<(String, bool)> = None;
+        ui::group(ui, pal, Some("Shared with this computer"), |ui| {
+            ui::row(ui, pal, true, "Offer my words", Some("A word you add goes to every account on this computer once a second account adds it too, or an administrator approves it. Only plain words: never anything with digits, links or addresses"), |ui| {
+                if ui::switch(ui, pal, &mut conf.share).changed() {
+                    conf_changed = true;
+                    resync = true;
+                }
+            });
+            ui::row(ui, pal, false, "Shared words", Some("Every account on this computer gets these"), |ui| {
+                ui.label(self.spell.shared.to_string());
+            });
+            // administrators (the wheel group) can read the words waiting; nobody else sees which words another account offered
+            if let Some(waiting) = self.spell.pending.clone().filter(|p| !p.is_empty()) {
+                ui::row(ui, pal, false, &format!("Waiting for you ({})", waiting.len()), Some("Offered by one account. Share gives it to every account; Don't share keeps it out for good. Both ask for your password"), |_| {});
+                for w in waiting.iter().take(100) {
+                    ui::row(ui, pal, false, w, None, |ui| {
+                        let idle = self.spell.busy.is_none();
+                        if ui.add_enabled(idle, egui::Button::new("Don't share")).clicked() {
+                            choice = Some((w.clone(), false));
+                        }
+                        if ui.add_enabled(idle, egui::Button::new("Share")).clicked() {
+                            choice = Some((w.clone(), true));
+                        }
+                    });
+                }
+            }
+        });
+        if let Some((w, approve)) = choice {
+            self.spell.busy = Some(format!("global:{w}"));
+            self.spell.note.clear();
+            global_job(self.tx.clone(), ctx.clone(), w, approve);
+        }
         if let Some(w) = add.as_deref() {
             if !yggdrasil_spell::words::valid(w) {
                 self.spell.note = format!("\"{w}\" is not kept: a word has no spaces and is not a link, an address or a code");

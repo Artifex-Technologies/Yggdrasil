@@ -1,0 +1,7 @@
+#!/bin/sh
+# spell-global approve|deny WORD...: an administrator's choice for the computer's shared word list (Settings > Keyboard >
+# Spelling and languages runs it through pkexec). Only these two commands; the words are checked again by yggdrasil-spell.
+case "$1" in
+  approve|deny) exec /usr/bin/yggdrasil-spell global "$@" ;;
+  *) echo "usage: spell-global approve|deny WORD..." >&2; exit 2 ;;
+esac

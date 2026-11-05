@@ -1,7 +1,8 @@
 # Yggdrasil's spelling library and the user service that keeps every app's word list in step: packages/spell.
 pkgname=yggdrasil-spell
 pkgver=0.1.0
-pkgrel=6
+pkgrel=7
+install=yggdrasil-spell.install
 pkgdesc="Yggdrasil spelling: Hunspell dictionaries through a Rust engine, your languages, one word list shared by your apps"
 arch=('x86_64')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
@@ -33,4 +34,13 @@ package() {
   install -dm755 "$pkgdir/usr/lib/systemd/user/default.target.wants"
   ln -s ../yggdrasil-spell.service "$pkgdir/usr/lib/systemd/user/default.target.wants/yggdrasil-spell.service"
   install -Dm644 "$_src/README.md" "$pkgdir/usr/share/doc/yggdrasil-spell/README.md"
+  # the computer's shared word list: the drop folder for the accounts' offers, the root merge it wakes, and the administrators'
+  # approve/deny helper (pkexec)
+  install -Dm644 "$_src/yggdrasil-spell.tmpfiles" "$pkgdir/usr/lib/tmpfiles.d/yggdrasil-spell.conf"
+  install -Dm644 "$_src/yggdrasil-spell-global.path" "$pkgdir/usr/lib/systemd/system/yggdrasil-spell-global.path"
+  install -Dm644 "$_src/yggdrasil-spell-global.service" "$pkgdir/usr/lib/systemd/system/yggdrasil-spell-global.service"
+  install -dm755 "$pkgdir/usr/lib/systemd/system/paths.target.wants"
+  ln -s ../yggdrasil-spell-global.path "$pkgdir/usr/lib/systemd/system/paths.target.wants/yggdrasil-spell-global.path"
+  install -Dm755 "$_src/spell-global" "$pkgdir/usr/lib/yggdrasil/spell-global"
+  install -Dm644 "$_src/org.yggdrasil.spell.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.spell.policy"
 }

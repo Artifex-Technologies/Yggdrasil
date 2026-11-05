@@ -223,8 +223,19 @@ fn sync_locked() -> Result<(Report, usize, usize), String> {
     let mut list = WordList::load();
     let conf = crate::conf::SpellConf::load();
     let bridges = bridges(&conf.active());
-    let r = sync(&mut list, &bridges, &crate::packs::words_for(&conf.active_packs()));
+    // the computer's shared words reach every app like a pack that is always on: in the apps' lists, never in the user's
+    let mut packs = crate::packs::words_for(&conf.active_packs());
+    let shared = crate::words::global();
+    packs.all.extend(shared.iter().cloned());
+    packs.on.extend(shared);
+    let r = sync(&mut list, &bridges, &packs);
     list.save().map_err(|e| e.to_string())?;
+    // and this account's own words are offered to the shared list (or taken back when sharing is off)
+    // SAFETY: getuid cannot fail
+    let uid = unsafe { libc::getuid() };
+    if let Err(e) = crate::global::offer(std::path::Path::new(crate::global::DIR), uid, &list, conf.share && conf.enabled) {
+        eprintln!("yggdrasil-spell: offering words to the shared list: {e}");
+    }
     Ok((r, list.len(), bridges.len()))
 }
 

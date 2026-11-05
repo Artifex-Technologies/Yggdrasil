@@ -25,13 +25,65 @@ fn main() {
         Some("watch") => watch(),
         Some("packs") => packs(),
         Some("build-pack") => build_pack(rest),
+        Some("global") => global_cmd(rest),
         _ => {
             eprintln!("usage: yggdrasil-spell check WORD... | text TEXT | languages | packs | words | add WORD | remove WORD | sync | watch");
+            eprintln!("       yggdrasil-spell global shared | pending | merge | approve WORD... | deny WORD...   (merge, approve, deny: root)");
             eprintln!("       yggdrasil-spell build-pack OUT 'name' 'description' licence 'source' yes|no [--deny MISSPELLINGS] FILE...   (for packaging)");
             2
         }
     };
     std::process::exit(code);
+}
+
+/// The computer's shared list (global.rs). `merge`, `approve` and `deny` need root (the system unit runs merge; Settings runs approve
+/// and deny through pkexec); `pending` needs to be an administrator (the wheel group reads pending.txt).
+fn global_cmd(rest: &[String]) -> i32 {
+    use yggdrasil_spell::global;
+    let root = std::path::Path::new(global::DIR);
+    let is_root = unsafe { libc::geteuid() } == 0;
+    let need_root = || {
+        eprintln!("yggdrasil-spell: this needs root (Settings asks for the password)");
+        1
+    };
+    match rest.first().map(String::as_str) {
+        Some("shared") => {
+            yggdrasil_spell::words::global().iter().for_each(|w| println!("{w}"));
+            0
+        }
+        Some("pending") => match global::pending(root) {
+            Some(ws) => {
+                ws.iter().for_each(|w| println!("{w}"));
+                0
+            }
+            None => {
+                eprintln!("yggdrasil-spell: the waiting words are for administrators only");
+                1
+            }
+        },
+        Some("merge") if is_root => match global::merge(root) {
+            Ok(m) => {
+                println!("{} shared, {} waiting", m.global.len(), m.pending.len());
+                0
+            }
+            Err(e) => {
+                eprintln!("yggdrasil-spell: {e}");
+                1
+            }
+        },
+        Some(c @ ("approve" | "deny")) if is_root && rest.len() > 1 => match global::choose(root, c == "approve", &rest[1..]) {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("yggdrasil-spell: {e}");
+                1
+            }
+        },
+        Some("merge" | "approve" | "deny") => need_root(),
+        _ => {
+            eprintln!("usage: yggdrasil-spell global shared | pending | merge | approve WORD... | deny WORD...");
+            2
+        }
+    }
 }
 
 fn packs() -> i32 {

@@ -1,0 +1,23 @@
+[Unit]
+Description=Yggdrasil spelling: the computer's shared word list (two accounts offer a word, or an administrator approves it)
+Documentation=file:///usr/share/doc/yggdrasil-spell/README.md
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/yggdrasil-spell global merge
+# reads the accounts' offers (root-only files) and writes global.txt and pending.txt; nothing else
+ProtectSystem=strict
+ReadWritePaths=/var/lib/yggdrasil/spell
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+PrivateDevices=yes
+RestrictAddressFamilies=AF_UNIX
+NoNewPrivileges=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+# read the accounts' own 0600 offers, and give pending.txt to the wheel group
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_CHOWN
+MemoryMax=64M

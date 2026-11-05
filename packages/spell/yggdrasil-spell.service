@@ -9,9 +9,10 @@ RestartSec=10
 # 75: the program was updated and exits to be started again (not a failure)
 SuccessExitStatus=75
 RestartForceExitStatus=75
-# it reads the dictionaries and writes only word lists: the apps' (under ~/.config and ~/.mozilla) and its own
+# it reads the dictionaries and writes only word lists: the apps' (under ~/.config and ~/.mozilla), its own, and its offer to the
+# shared list
 ProtectSystem=strict
-ReadWritePaths=%h/.config -%h/.mozilla %h/.local/share/yggdrasil
+ReadWritePaths=%h/.config -%h/.mozilla %h/.local/share/yggdrasil -/var/lib/yggdrasil/spell/offered
 PrivateTmp=yes
 PrivateNetwork=yes
 RestrictAddressFamilies=AF_UNIX

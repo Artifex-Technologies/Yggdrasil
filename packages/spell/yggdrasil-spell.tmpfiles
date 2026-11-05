@@ -1,0 +1,4 @@
+# The computer's shared word list (yggdrasil-spell global): offered/ is like /tmp (anyone may create their own file, nobody lists it)
+d /var/lib/yggdrasil 0755 root root -
+d /var/lib/yggdrasil/spell 0755 root root -
+d /var/lib/yggdrasil/spell/offered 1733 root root -

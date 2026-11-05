@@ -1,7 +1,7 @@
 //! The user's word list (~/.local/share/yggdrasil/spell/words.txt: one word per line, then a tab and the apps it came from) and the
 //! list of words the user took out (removed.txt), so a removal reaches every app instead of coming back from one of them. The
-//! computer's shared list is /var/lib/yggdrasil/spell/global.txt (read here; filled later, words only reach it on rules the owner
-//! sets). What counts as a word for these lists is `valid`.
+//! computer's shared list is /var/lib/yggdrasil/spell/global.txt (global.rs: two accounts offer a word, or an administrator approves
+//! it). What counts as a word for these lists is `valid`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -120,9 +120,13 @@ impl WordList {
     }
 }
 
-/// The computer's shared words.
+/// The computer's shared words (global.rs decides which).
 pub fn global() -> Vec<String> {
-    std::fs::read_to_string(GLOBAL).unwrap_or_default().lines().filter(|l| !l.starts_with('#') && valid(l)).map(str::to_string).collect()
+    read_global(std::path::Path::new(GLOBAL))
+}
+
+pub fn read_global(path: &std::path::Path) -> Vec<String> {
+    std::fs::read_to_string(path).unwrap_or_default().lines().filter(|l| !l.starts_with('#') && valid(l)).map(str::to_string).collect()
 }
 
 pub(crate) fn write_atomic(path: &std::path::Path, text: &str) -> std::io::Result<()> {
