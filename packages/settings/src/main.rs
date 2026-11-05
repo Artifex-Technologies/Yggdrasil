@@ -14,6 +14,7 @@ mod cpu;
 mod gpu;
 mod curve;
 mod fans;
+mod limbo_ui;
 mod icons;
 mod readout;
 mod tune;
@@ -73,6 +74,8 @@ enum SecSub {
     Logins,
     Sudo,
     Distress,
+    /// Limbo's sandboxes (limbo_ui.rs).
+    Limbo,
 }
 
 /// The pages inside Keyboard.
@@ -112,7 +115,7 @@ const PAGES: [(Page, &str, Icon, &str, &str); 18] = [
     (Page::Assistant, "Assistant", Icon::Sound, "Personal", "voice"),
     (Page::Apps, "Apps", Icon::Apps, "Apps", "installed optional software uninstall minos"),
     (Page::DefaultApps, "Default apps", Icon::Apps, "Apps", "browser mail music video open with"),
-    (Page::Security, "Security", Icon::Shield, "Privacy & security", "password login sudo monitor distress"),
+    (Page::Security, "Security", Icon::Shield, "Privacy & security", "password login sudo monitor distress limbo sandbox virtual machine guest windows license"),
     (Page::Firewall, "Firewall", Icon::Shield, "Privacy & security", "ports network block"),
     (Page::Restore, "Restore points", Icon::Restart, "Privacy & security", "snapshot backup rollback undo"),
     (Page::Users, "Users", Icon::User, "System", "account people"),
@@ -275,6 +278,8 @@ struct App {
     /// Power > Cooling: the case fans and pumps (`power:cooling`; `power:fans` too).
     power_fans: bool,
     fans_panel: Option<fans::Panel>,
+    /// Security > Limbo (`security:limbo`): dropped when the page is left.
+    limbo_panel: Option<limbo_ui::Panel>,
     /// Power > Graphics card: the unlock's confirmation while open (with the date of Sarina's last backup), and its checkbox.
     unlock_confirm: Option<Option<String>>,
     unlock_read: bool,
@@ -316,6 +321,7 @@ impl App {
                 "logins" => SecSub::Logins,
                 "sudo" => SecSub::Sudo,
                 "distress-demo" | "distress-demo-warn" | "distress-demo-mid" | "distress" => SecSub::Distress,
+                "limbo" => SecSub::Limbo,
                 _ => SecSub::Main,
             },
             distress: match start_sub().as_str() {
@@ -389,6 +395,7 @@ impl App {
             cpu_panel: None,
             power_fans: matches!(start_sub().as_str(), "cooling" | "fans"),
             fans_panel: None,
+            limbo_panel: None,
             unlock_confirm: None,
             unlock_read: false,
             app_filter: String::new(),
@@ -594,6 +601,9 @@ impl eframe::App for App {
         }
         if !(self.page == Page::Power && self.power_fans) {
             self.fans_panel = None;
+        }
+        if !(self.page == Page::Security && self.sec_sub == SecSub::Limbo) {
+            self.limbo_panel = None;
         }
         if refreshable {
             let idle = self.loading.is_none() && !ctx.input(|i| i.pointer.any_down()) && ctx.memory(|m| m.focused().is_none()) && ctx.input(|i| i.viewport().focused != Some(false));
@@ -2589,6 +2599,7 @@ impl App {
                 SecSub::Monitor => monitor.as_str(),
                 SecSub::Logins => "Login history",
                 SecSub::Distress => "Distress password",
+                SecSub::Limbo => "Limbo",
                 _ => "Sudo history",
             };
             ui.horizontal(|ui| {
@@ -2605,6 +2616,13 @@ impl App {
             SecSub::Logins => return self.page_log(ui, pal, ctx, false),
             SecSub::Sudo => return self.page_log(ui, pal, ctx, true),
             SecSub::Distress => return self.distress.page(ui, pal, ctx),
+            SecSub::Limbo => {
+                match self.limbo_panel.as_mut() {
+                    Some(p) => p.show(ui, pal, ctx),
+                    None => self.limbo_panel = Some(limbo_ui::Panel::new(ctx)),
+                }
+                return;
+            }
             SecSub::Main => {}
         }
         let Some(o) = self.data.security.clone() else { return loading(ui) };
@@ -2639,6 +2657,14 @@ impl App {
                 open = Some(SecSub::Distress);
             }
         });
+        }
+        if limbo_ui::installed() {
+            ui.add_space(8.0);
+            ui::group(ui, pal, Some("Sandboxes"), |ui| {
+                if ui::nav_row(ui, pal, true, "Limbo", Some("Disposable guests for testing updates and looking at suspicious files: their space, and who may start them"), |_| {}) {
+                    open = Some(SecSub::Limbo);
+                }
+            });
         }
         if let Some(s) = open {
             self.sec_sub = s;

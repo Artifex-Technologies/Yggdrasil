@@ -92,6 +92,19 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
   - Setting: `/etc/yggdrasil/case-fans.json`. Tests: `helpers/tests/test_casefan.py`.
   - On the owner's PC: port 1 is the graphics card's pump (about 3,830 RPM whatever it is set to), port 6 the 3,000 RPM Noctua
     exhaust, and port 5 the 80mm Noctua over the cables and RAM, which reports no speed (its own curves, never below 35 %).
+- **Security > Limbo** (2026-11-05, `src/limbo_ui.rs`; `yggdrasil-settings security:limbo`): Limbo's sandboxes, written against
+  Limbo's protocol (Limbo `docs/SETTINGS_PAGE.md`, "Protocol") through the `limbo` command, so the page never speaks HTTP.
+  - Shown without a password (`limbo settings show --json` over `user.sock`, for members of `limbo-users`): Limbo's version,
+    whether KVM is available, the space used (base images, the guests' own changes, evidence), each guest (system, running,
+    stopped or held, processors, memory, network, its own changes, owner), the runs and hand-started guests, and the Windows
+    licenses (masked).
+  - **Ask for my password for Limbo changes:** the switch (`pkexec limbo settings password on|off`).
+  - **Start, Stop, Free space** on the person's own guests: run as the person; when Limbo answers `password_required` the
+    same command runs again through pkexec. A held guest has no buttons; its row says "held by Heimdall".
+  - **Windows licenses:** add (name, and the key on stdin, never a command line) and remove, through pkexec.
+  - Quarantine decisions are not here: they are Heimdall's (Security > the monitor's page).
+  - A Limbo from before this protocol is named as such ("older than this page"); one that does not run, or a person not in
+    `limbo-users`, gets a plain line saying what to do. Read every 5 s only while the page is open.
 - **Processor page** (built 2026-10-27, Matt's design; `src/cpu.rs`): the Processor row's title opens it, like the Graphics
   card's, with its own pop-out window (`--cpu-window`, app id `yggdrasil-cpu`).
   - **Readout:** package temperature and the hottest core, clocks (average and fastest), load and package power, with the
