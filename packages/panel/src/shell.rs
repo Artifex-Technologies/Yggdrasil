@@ -301,26 +301,13 @@ pub fn app_name_for_bar(m: &Model) -> String {
 
 /// The accent, for the current desktop and the active bits.
 
-/// The top bar: no strip of its own, just pills over the wallpaper (their backdrop is the bar's
-/// opacity setting; 0 leaves floating text), a black tab in the middle where the notch will open.
-pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts, icons: &mut Icons, hover: Option<usize>) -> Vec<Hit> {
-    let (w, h) = (pix.width() as f32, pix.height() as f32);
-    pix.fill(paint::color((0, 0, 0, 0)));
-    let lk = look(m.conf.bar_color, m.conf.bar_opacity, m.dark);
-    let cy = h / 2.0;
-    let ph = 22.0 * s;
-    let py = (h - ph) / 2.0;
-    let r = 7.0 * s;
+/// Paints the notch's tab (or the open notch with Fylgja's section titles) and returns its click areas; `first` is the index
+/// its first click area will have (for the hover highlight).
+#[allow(clippy::too_many_arguments)]
+fn paint_notch(pix: &mut Pixmap, s: f32, m: &Model, fonts: &Fonts, hover: Option<usize>, first: usize, h: f32, py: f32, ph: f32) -> Vec<Hit> {
+    let w = pix.width() as f32;
     let mut hits: Vec<Hit> = vec![];
-    let pill = |pix: &mut Pixmap, x: f32, wd: f32| {
-        if lk.bg.3 > 0 {
-            paint::fill_rounded(pix, x, py, wd, ph, r, lk.bg);
-        }
-    };
-    let lit = |hits: &Vec<Hit>| hover == Some(hits.len());
-
-    // The notch's closed tab, hanging from the top edge in the middle of the main screen.
-    if !slim {
+    let base = first;
         let nw = if m.notch_open { m.notch_w * s } else { 150.0 * s };
         let nx = (w - nw) / 2.0;
         let cy_tab = h / 2.0;
@@ -339,7 +326,7 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
                 let rect = (x - gap / 2.0, 0.0, widths[i] + gap, h);
                 if i == sel {
                     paint::fill_rounded(pix, x - 9.0 * s, cy_tab - 10.0 * s, widths[i] + 18.0 * s, 20.0 * s, 10.0 * s, (255, 255, 255, 30));
-                } else if hover == Some(hits.len()) {
+                } else if hover == Some(base + hits.len()) {
                     paint::fill_rounded(pix, x - 9.0 * s, cy_tab - 10.0 * s, widths[i] + 18.0 * s, 20.0 * s, 10.0 * s, (255, 255, 255, 14));
                 }
                 let col = if i == sel { (255, 255, 255, 255) } else { (150, 150, 165, 255) };
@@ -349,6 +336,33 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
             }
         }
         hits.push(Hit { rect: (nx, 0.0, nw, h), action: Action::Notch });
+    hits
+}
+
+/// The top bar: no strip of its own, just pills over the wallpaper (their backdrop is the bar's
+/// opacity setting; 0 leaves floating text), a black tab in the middle where the notch will open.
+pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts, icons: &mut Icons, hover: Option<usize>) -> Vec<Hit> {
+    let (w, h) = (pix.width() as f32, pix.height() as f32);
+    pix.fill(paint::color((0, 0, 0, 0)));
+    let lk = look(m.conf.bar_color, m.conf.bar_opacity, m.dark);
+    let cy = h / 2.0;
+    let ph = 22.0 * s;
+    let py = (h - ph) / 2.0;
+    let r = 7.0 * s;
+    let mut hits: Vec<Hit> = vec![];
+    let pill = |pix: &mut Pixmap, x: f32, wd: f32| {
+        if lk.bg.3 > 0 {
+            paint::fill_rounded(pix, x, py, wd, ph, r, lk.bg);
+        }
+    };
+    let lit = |hits: &Vec<Hit>| hover == Some(hits.len());
+
+    // The notch's closed tab, hanging from the top edge in the middle of the main screen. Its click areas come first (so a
+    // click on it never reaches an icon under it); it is painted again over everything at the end, so the open notch (Fylgja)
+    // covers the bar's icons instead of sitting behind them.
+    let notch_first_hit = hits.len();
+    if !slim {
+        hits.extend(paint_notch(pix, s, m, fonts, hover, notch_first_hit, h, py, ph));
     }
 
     if slim {
@@ -569,6 +583,8 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
         crate::status::Net::Wifi(_) => "network-wireless-signal-weak-symbolic",
     };
     icon_pill(pix, icons, &mut hits, &mut rx, net, Action::Network);
+    // the notch over everything (its click areas are already in, at the front)
+    paint_notch(pix, s, m, fonts, hover, notch_first_hit, h, py, ph);
     hits
 }
 
