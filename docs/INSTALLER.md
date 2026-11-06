@@ -59,10 +59,14 @@ e.g. Labyrinth's AI and security: Sarina, Heimdall) → Summary (and a box to ti
   `{"browsers": [{"id", "name", "note", "chosen"}, ...]}` (anything else in an entry, how to install it, is the OS's business).
   With a list, the plan also carries `"browsers": [ids chosen]` and `"default_browser": id`; without one there is no Browsers page
   and the plan says nothing about browsers.
-- Optional parts (Labyrinth: "AI and security", Sarina and Heimdall): the integration may name `extras = /usr/share/OS/installer-extras.json`,
-  holding `{"title", "intro", "extras": [{"id", "name", "note", "chosen" | "chosen_if_exists": "/absolute/path"}, ...]}`. One page,
-  titled by the file, shows each with a switch; an entry starts switched on when `chosen` is true or its `chosen_if_exists` file is on
-  the live system (the medium carries it). The plan carries `"extras": [ids chosen]`; with no file there is no page and no key.
+- Optional parts (Labyrinth: "Optional software", with the groups "AI and security" (Sarina, Heimdall) and "Devices" (Logitech,
+  gaming mice, Razer, Corsair, Xbox controllers, HP printers)): the integration may name `extras = /usr/share/OS/installer-extras.json`,
+  holding `{"title", "intro", "extras": [{"id", "name", "note", "group", "chosen" | "chosen_if_exists": "/absolute/path" |
+  "chosen_if_usb": ["1532", ...]}, ...]}`. One page, titled by the file, shows each with a switch, under its group's heading (entries of
+  a group listed together, in the file's order); an entry starts switched on when `chosen` is true, its `chosen_if_exists` file is on
+  the live system (the medium carries it), or a USB device from one of its `chosen_if_usb` vendors (hex ids, read from
+  /sys/bus/usb/devices/*/idVendor, compared without case) is plugged in. The plan carries `"extras": [ids chosen]`; with no file
+  there is no page and no key. (Labyrinth installs what the medium does not carry at the first login, online.)
 
 Modes: `erase` (the whole disk) and `manual` (partitions chosen by hand, Calamares-style). Still to come: shrinking a partition
 to make room automatically ("install alongside"), and partitions on more than one disk in one install.

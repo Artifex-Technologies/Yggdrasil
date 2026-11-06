@@ -19,7 +19,7 @@ version that runs in a window ([docs/COMPOSITOR.md](docs/COMPOSITOR.md)). The ch
 | --- | --- | --- |
 | `packages/session` | `yggdrasil-session` | the session on Hyprland: its configuration (Lua), window rules, keys, and a small Hyprland plugin so programs' own minimize buttons work |
 | `packages/panel` | `yggdrasil-panel` | top bar, dock, tray, start menu, calendar, notifications, wallpaper, and Fylgja (the notch) ([docs/FYLGJA.md](docs/FYLGJA.md), [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md)) |
-| `packages/settings` | `yggdrasil-settings` | Settings: network, displays, sound, appearance, power, cooling and idle, users and their rights, security, restore points, apps and more |
+| `packages/settings` | `yggdrasil-settings` | Settings: network, displays, sound, appearance, power, cooling and idle, users and their rights, security, restore points, apps, games (graphics cards, game fixes, frame generation) and more |
 | `packages/minos` | `minos` | the file manager, and (through `packages/portal`) the open and save dialog of every program ([keys](docs/keys/minos.md)) |
 | `packages/market` | `agora` | Agora, the app store: the catalog, the Arch repositories, the AUR and Flathub in one place ([docs/MARKETPLACE.md](docs/MARKETPLACE.md)) |
 | `packages/lock` | `yggdrasil-lock`, `yggdrasil-greeter`, `yggdrasil-shot` | the lock screen and the login screen with selectable designs ([docs/LOCKSCREEN.md](docs/LOCKSCREEN.md), [docs/LOGIN_SCREEN.md](docs/LOGIN_SCREEN.md)), the boot splash, and the screenshot tool (Print: freezes the screen first, so open menus can be captured) |
@@ -159,7 +159,7 @@ Applications are shown as windows on a 1920×1080 desktop.
 | ![Settings, Cooling](assets/screenshots/settings-cooling.png) | ![Settings, Cooling, a fan's curves](assets/screenshots/settings-cooling-curves.png) |
 | *Settings: Power > Cooling. The temperatures, and each port with your own name for it, pump or fan, and its speed now.* | *Settings: a fan's own curves, one for the processor and one for the graphics card, dragged point by point. Another fan can follow them.* |
 | ![Settings, Games](assets/screenshots/settings-games.png) | |
-| *Settings: Games. The graphics cards (with two or more, a Steam launch option runs a game on the one you pick) and frame generation through Lossless Scaling.* | |
+| *Settings: Games. The graphics cards (with two or more, a Steam launch option runs a game on the one you pick), game fixes (Dead Space 2 and Fallout 4 at your screen's size, with Undo), and frame generation per game: Labyrinth's own (a preview) and Lossless Scaling's.* | |
 | ![Agora](assets/screenshots/marketplace.png) | ![The installer, keyboard](assets/screenshots/installer-keyboard.png) |
 | *Agora, the app store.* | *The installer: keyboards by type.* |
 | ![The installer, partitions](assets/screenshots/installer-disk-manual.png) | ![The installer, account](assets/screenshots/installer-account.png) |
