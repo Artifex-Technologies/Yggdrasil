@@ -1811,6 +1811,7 @@ impl App {
         let mut wallpaper: Option<String> = None;
         let mut icon_use: Option<String> = None;
         let mut icon_remove: Option<String> = None;
+        let mut cursor_use: Option<String> = None;
         let mut icon_install: Option<String> = None;
         let mut brand_build = false;
         let mut minos_live = false;
@@ -1862,7 +1863,7 @@ impl App {
                 if ui::nav_row(ui, pal, true, "Top bar and dock", Some("The bar, the dock, the start menu and the notch: how they look and what they do"), |_| {}) {
                         self.app_sub = AppSub::Bar;
                 }
-                if ui::nav_row(ui, pal, false, "Icons", Some("Icon packs"), |_| {}) {
+                if ui::nav_row(ui, pal, false, "Icons", Some("Icon packs and the mouse pointer"), |_| {}) {
                         self.app_sub = AppSub::Icons;
                 }
                 if ui::nav_row(ui, pal, false, "Notifications", Some("Pop-ups, the Notification Center and Do not disturb"), |_| {}) {
@@ -1970,6 +1971,22 @@ impl App {
                 }
                 ui.add(egui::TextEdit::singleline(&mut self.icon_src).hint_text("~/Downloads/pack.tar.gz, pack.apk or https://...").desired_width((ui.available_width() - 10.0).clamp(160.0, 340.0)));
             });
+        });
+        ui::group(ui, pal, Some("Pointer"), |ui| {
+            for (i, c) in a.cursors.iter().enumerate() {
+                let current = c.id == a.cursor;
+                let sub = if c.id == sys::DEFAULT_CURSOR { "Yggdrasil's own" } else if c.user { "Installed by you" } else { "Comes with the system" };
+                ui::row(ui, pal, i == 0, &c.name, Some(sub), |ui| {
+                    if current {
+                        ui.label(RichText::new("In use").color(pal.accent));
+                    } else if ui::action(ui, pal, "Use").clicked() {
+                        cursor_use = Some(c.id.clone());
+                    }
+                });
+            }
+            if a.cursors.len() < 2 {
+                ui.label(RichText::new("Other pointer themes appear here once installed (a folder with a cursors folder in ~/.local/share/icons, or a package).").size(12.5).color(pal.dim));
+            }
         });
         }
         let modes = ["Match theme", "Dark / light"];
@@ -2170,6 +2187,9 @@ impl App {
         }
         if let Some(id) = icon_remove {
             self.change(ctx, move || sys::remove_icon_pack(&id));
+        }
+        if let Some(id) = cursor_use {
+            self.change(ctx, move || sys::set_cursor(&id));
         }
         if let Some(src) = icon_install {
             self.icon_src.clear();

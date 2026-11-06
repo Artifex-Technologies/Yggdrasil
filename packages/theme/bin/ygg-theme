@@ -5,13 +5,15 @@
   ygg-theme scheme dark|light [R,G,B]                  print a KDE colour scheme
   ygg-theme gtk dark|light [R,G,B]                     print the GTK colour definitions
   ygg-theme gtk3-theme|gtk4-theme dark|light           print the system GTK 3 or GTK 4 theme file (what the package installs)
+  ygg-theme cursor [NAME]                              print the mouse pointer theme, or switch to NAME (an installed cursor theme)
   ygg-theme --help
 
 Nothing here draws anything: it writes small text files (a KDE colour scheme, GTK colours, a few settings) from Yggdrasil's palette (the same
 colours the panel, Settings and Minos use) and the accent colour. Qt programs use Qt's own "Fusion" style with that scheme; GTK programs use
-GTK's own Adwaita with those colours; the mouse pointer is the Yggdrasil cursor theme (ygg-cursors). No other theme package is needed.
+GTK's own Adwaita with those colours; the mouse pointer is the Yggdrasil cursor theme (ygg-cursors) unless another installed cursor theme
+was chosen (Settings > Appearance > Icons, Pointer). No other theme package is needed.
 
-The choice itself is kept in ~/.config/yggdrasil/appearance.conf (style, accent); the files written for the other programs are
+The choice itself is kept in ~/.config/yggdrasil/appearance.conf (style, accent, cursor); the files written for the other programs are
 ~/.config/kdeglobals (Qt), ~/.config/gtk-3.0 and gtk-4.0 (GTK).
 """
 import os
@@ -375,14 +377,92 @@ def appearance_path():
     return os.path.join(config(), "yggdrasil", "appearance.conf")
 
 
-def write_appearance(dark, accent):
+DEFAULT_CURSOR = "Yggdrasil"
+CURSOR_SIZE = 24
+
+
+def read_appearance():
+    """appearance.conf as {key: value} ({} when there is none)."""
+    try:
+        with open(appearance_path(), encoding="utf-8") as f:
+            vals = dict(l.split("=", 1) for l in (x.split("#")[0].strip() for x in f) if "=" in l)
+    except OSError:
+        return {}
+    return {k.strip(): v.strip() for k, v in vals.items()}
+
+
+def write_appearance(dark, accent, cursor=None):
     """The desktop's own record of the choice (read by the panel, the apps and the portal, which tells other programs)."""
     p = appearance_path()
     os.makedirs(os.path.dirname(p), exist_ok=True)
+    cursor = cursor or read_appearance().get("cursor", "")
     tmp = p + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         f.write("style = %s\naccent = %s\n" % ("dark" if dark else "light", rgb(accent)))
+        if cursor and cursor != DEFAULT_CURSOR:
+            f.write("cursor = %s\n" % cursor)
     os.replace(tmp, p)
+
+
+def cursor_dirs():
+    return [os.path.join(data(), "icons"), os.path.join(home(), ".icons"), "/usr/share/icons"]
+
+
+def is_cursor_theme(name):
+    """An installed theme of that name with a cursors folder (a plain name: no paths)."""
+    if not name or "/" in name or name.startswith("."):
+        return False
+    return any(os.path.isdir(os.path.join(d, name, "cursors")) for d in cursor_dirs())
+
+
+def cursor_theme():
+    """The pointer theme chosen, when it is still installed; Yggdrasil's own otherwise."""
+    name = read_appearance().get("cursor", "")
+    return name if is_cursor_theme(name) else DEFAULT_CURSOR
+
+
+def icon_theme():
+    """The icon pack in use (Settings > Appearance > Icons writes it to kdeglobals); Liki when none was chosen."""
+    return ini_get(os.path.join(config(), "kdeglobals"), "Icons", "Theme") or "Liki"
+
+
+def apply_cursor(name, live=False):
+    """Point every place programs read the pointer from at NAME; with live, the running compositor switches now."""
+    ini_set(os.path.join(config(), "kcminputrc"), "Mouse", "cursorTheme", name)
+    for ver in ("gtk-3.0", "gtk-4.0"):
+        d = os.path.join(config(), ver)
+        os.makedirs(d, exist_ok=True)
+        ini_set(os.path.join(d, "settings.ini"), "Settings", "gtk-cursor-theme-name", name)
+    xsettings({"Gtk/CursorThemeName": name})
+    # programs started from now on (Wayland programs and the compositor at the next login read these)
+    env = os.path.join(config(), "environment.d")
+    os.makedirs(env, exist_ok=True)
+    with open(os.path.join(env, "50-yggdrasil-cursor.conf"), "w", encoding="utf-8") as f:
+        f.write("XCURSOR_THEME=%s\nXCURSOR_SIZE=%d\n" % (name, CURSOR_SIZE))
+    if shutil.which("gsettings"):
+        run("gsettings", "set", "org.gnome.desktop.interface", "cursor-theme", name)
+    if live:
+        run("systemctl", "--user", "set-environment", "XCURSOR_THEME=" + name)
+        if shutil.which("hyprctl"):
+            run("hyprctl", "setcursor", name, str(CURSOR_SIZE))
+
+
+def xsettings(want):
+    """Set keys in xsettingsd's file (X11 and XWayland programs read their theme from it) and tell it to reload."""
+    xs = os.path.join(config(), "xsettingsd", "xsettingsd.conf")
+    if not os.path.isfile(xs):
+        return
+    want = dict(want)
+    with open(xs, encoding="utf-8") as f:
+        lines = f.read().split("\n")
+    for i, line in enumerate(lines):
+        key = line.split(" ", 1)[0]
+        if key in want:
+            lines[i] = f'{key} "{want.pop(key)}"'
+    lines = [l for l in lines if l.strip()] + [f'{k} "{v}"' for k, v in want.items()]
+    with open(xs, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    run("pkill", "-HUP", "-x", "xsettingsd")
 
 
 def apply(dark, accent):
@@ -398,9 +478,9 @@ def apply(dark, accent):
     updates = scheme_sections(scheme(dark, accent))
     updates.setdefault("General", {}).update({"AccentColor": rgb(accent), "ColorScheme": name})
     updates["KDE"] = dict(updates.get("KDE", {}), widgetStyle="Fusion")
-    updates["Icons"] = {"Theme": "Liki"}
+    icons = icon_theme()
+    updates["Icons"] = {"Theme": icons}
     ini_update(kdeglobals, updates)
-    ini_set(os.path.join(config(), "kcminputrc"), "Mouse", "cursorTheme", "Yggdrasil")
     # GTK 3 and 4: the theme name, the dark flag, the pointer and the icons; the colours in each user stylesheet. Dark mode is a theme
     # of its own (Yggdrasil-dark), not only the dark flag: Chromium-based browsers (Vivaldi, Chrome) load a theme by its name and
     # ignore the flag, so with "Yggdrasil" their menus were light in dark mode
@@ -409,7 +489,7 @@ def apply(dark, accent):
         d = os.path.join(config(), ver)
         os.makedirs(d, exist_ok=True)
         ini = os.path.join(d, "settings.ini")
-        for k, v in (("gtk-application-prefer-dark-theme", "true" if dark else "false"), ("gtk-cursor-theme-name", "Yggdrasil"), ("gtk-icon-theme-name", "Liki")):
+        for k, v in (("gtk-application-prefer-dark-theme", "true" if dark else "false"), ("gtk-icon-theme-name", icons)):
             ini_set(ini, "Settings", k, v)
         ini_set(ini, "Settings", "gtk-theme-name", theme)
         # libadwaita and GTK 4 read only the user's stylesheet: put the colours there (kept apart from anything the user adds below the marker)
@@ -427,30 +507,14 @@ def apply(dark, accent):
         with open(css_path, "w", encoding="utf-8") as f:
             f.write(gtk_colors(dark, accent) + marker + (mine if mine else "\n"))
     # X11 (and XWayland) programs read their theme from xsettingsd; say the same there
-    xs = os.path.join(config(), "xsettingsd", "xsettingsd.conf")
-    if os.path.isfile(xs):
-        want = {"Net/ThemeName": theme, "Net/IconThemeName": "Liki", "Gtk/CursorThemeName": "Yggdrasil"}
-        with open(xs, encoding="utf-8") as f:
-            lines = f.read().split("\n")
-        for i, line in enumerate(lines):
-            key = line.split(" ", 1)[0]
-            if key in want:
-                lines[i] = f'{key} "{want.pop(key)}"'
-        lines = [l for l in lines if l.strip()] + [f'{k} "{v}"' for k, v in want.items()]
-        with open(xs, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines) + "\n")
-        run("pkill", "-HUP", "-x", "xsettingsd")
-    # the pointer for programs started from now on (Wayland programs read these)
-    env = os.path.join(config(), "environment.d")
-    os.makedirs(env, exist_ok=True)
-    with open(os.path.join(env, "50-yggdrasil-cursor.conf"), "w", encoding="utf-8") as f:
-        f.write("XCURSOR_THEME=Yggdrasil\nXCURSOR_SIZE=24\n")
+    xsettings({"Net/ThemeName": theme, "Net/IconThemeName": icons})
+    # the pointer (Yggdrasil's own unless another was chosen)
+    apply_cursor(cursor_theme())
     # tell what is running
     if shutil.which("gsettings"):
         run("gsettings", "set", "org.gnome.desktop.interface", "color-scheme", "prefer-dark" if dark else "default")
         run("gsettings", "set", "org.gnome.desktop.interface", "gtk-theme", theme)
-        run("gsettings", "set", "org.gnome.desktop.interface", "icon-theme", "Liki")
-        run("gsettings", "set", "org.gnome.desktop.interface", "cursor-theme", "Yggdrasil")
+        run("gsettings", "set", "org.gnome.desktop.interface", "icon-theme", icons)
 
 
 def scheme_sections(text):
@@ -497,6 +561,20 @@ def main(argv):
         dark = (argv[1] if len(argv) > 1 else "dark") != "light"
         acc = parse_accent(argv[2]) if len(argv) > 2 else DEFAULT_ACCENT
         print(scheme(dark, acc or DEFAULT_ACCENT) if cmd == "scheme" else gtk_colors(dark, acc or DEFAULT_ACCENT))
+        return 0
+    if cmd == "cursor":
+        if len(argv) < 2:
+            print(cursor_theme())
+            return 0
+        name = argv[1]
+        if not is_cursor_theme(name):
+            print(f"ygg-theme: no cursor theme called {name!r} is installed", file=sys.stderr)
+            return 1
+        dark, acc = current()
+        # the default is not written down (write_appearance leaves it out), so a later change of default reaches this user too
+        write_appearance(dark, acc, cursor=name)
+        apply_cursor(name, live=True)
+        print(f"Pointer: {name}")
         return 0
     if cmd == "apply":
         dark, acc = current()

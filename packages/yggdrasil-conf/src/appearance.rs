@@ -89,18 +89,39 @@ pub fn save(a: &Appearance) -> std::io::Result<()> {
     if let Some(d) = p.parent() {
         std::fs::create_dir_all(d)?;
     }
+    let old = std::fs::read_to_string(&p).unwrap_or_default();
+    let tmp = p.with_extension("conf.tmp");
+    std::fs::write(&tmp, render(a, &old))?;
+    std::fs::rename(tmp, p)
+}
+
+/// The file's text for these values: `style` and `accent` written anew, every other line of the old text (the pointer theme
+/// ygg-theme keeps here, comments) kept as it was.
+pub fn render(a: &Appearance, old: &str) -> String {
     let mut text = format!("style = {}\n", if a.dark { "dark" } else { "light" });
     if let Some([r, g, b]) = a.accent {
         text.push_str(&format!("accent = {r},{g},{b}\n"));
     }
-    let tmp = p.with_extension("conf.tmp");
-    std::fs::write(&tmp, text)?;
-    std::fs::rename(tmp, p)
+    for line in old.lines() {
+        let key = line.split('#').next().unwrap_or("").split_once('=').map(|(k, _)| k.trim());
+        if !matches!(key, Some("style" | "accent")) && !line.trim().is_empty() {
+            text.push_str(line);
+            text.push('\n');
+        }
+    }
+    text
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn render_keeps_other_lines() {
+        let a = Appearance { dark: false, accent: Some([1, 2, 3]) };
+        assert_eq!(render(&a, "style = dark\naccent = 9,9,9\ncursor = macOS\n"), "style = light\naccent = 1,2,3\ncursor = macOS\n");
+        assert_eq!(render(&Appearance { dark: true, accent: None }, ""), "style = dark\n");
+    }
 
     #[test]
     fn reads_its_own_file_and_falls_back_to_kde() {

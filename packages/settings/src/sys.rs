@@ -671,11 +671,24 @@ pub struct IconPack {
     pub preview: Vec<std::path::PathBuf>,
 }
 
+/// A mouse pointer theme (an X cursor theme: a folder with a cursors/ folder in it) that can be chosen.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CursorTheme {
+    /// The folder name, which is what the settings store.
+    pub id: String,
+    pub name: String,
+    /// Installed by the user (in ~/.local/share/icons or ~/.icons).
+    pub user: bool,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Appearance {
     pub icon_packs: Vec<IconPack>,
     /// The id of the pack in use.
     pub icon_theme: String,
+    pub cursors: Vec<CursorTheme>,
+    /// The id of the pointer theme in use.
+    pub cursor: String,
     pub dark: bool,
     pub accent: Option<[u8; 3]>,
     pub wallpapers: Vec<std::path::PathBuf>,
@@ -699,7 +712,7 @@ pub fn appearance() -> Appearance {
         }
     }
     wallpapers.sort();
-    Appearance { icon_packs: icon_packs(), icon_theme: current_icon_theme(), dark: look.dark, accent, wallpapers, panel: yggdrasil_conf::PanelConf::load() }
+    Appearance { icon_packs: icon_packs(), icon_theme: current_icon_theme(), cursors: cursor_themes(), cursor: current_cursor(), dark: look.dark, accent, wallpapers, panel: yggdrasil_conf::PanelConf::load() }
 }
 
 /// The largest picture in a Plasma wallpaper package's images folder (named like 3840x2160.png).
@@ -1338,6 +1351,60 @@ pub fn ini_set(text: &str, group: &str, key: &str, value: &str) -> String {
 /// ~/.config (or $XDG_CONFIG_HOME).
 pub fn config_dir() -> std::path::PathBuf {
     std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config"))
+}
+
+/// Every pointer theme installed, Yggdrasil's own first, then the user's, then the system's. "default" (only a pointer to
+/// another theme) is left out.
+pub fn cursor_themes() -> Vec<CursorTheme> {
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let roots = [(user_icons_dir(), true), (home.map(|h| h.join(".icons")), true), (Some(std::path::PathBuf::from("/usr/share/icons")), false)];
+    let mut out: Vec<CursorTheme> = vec![];
+    for (root, user) in roots {
+        let Some(root) = root else { continue };
+        let Ok(rd) = std::fs::read_dir(&root) else { continue };
+        let mut dirs: Vec<_> = rd.flatten().map(|e| e.path()).filter(|p| p.join("cursors").is_dir()).collect();
+        dirs.sort();
+        for d in dirs {
+            let id = d.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            if id == "default" || id.starts_with('.') || out.iter().any(|c| c.id == id) {
+                continue;
+            }
+            let name = std::fs::read_to_string(d.join("index.theme")).ok().and_then(|t| theme_key(&t, "Name")).filter(|n| !n.trim().is_empty()).unwrap_or_else(|| id.clone());
+            out.push(CursorTheme { id, name, user });
+        }
+    }
+    out.sort_by_key(|c| (c.id != DEFAULT_CURSOR, !c.user));
+    out
+}
+
+pub const DEFAULT_CURSOR: &str = "Yggdrasil";
+
+/// The pointer theme in use: `cursor` in ~/.config/yggdrasil/appearance.conf (ygg-theme writes it), Yggdrasil's own when none.
+pub fn current_cursor() -> String {
+    let text = std::fs::read_to_string(config_dir().join("yggdrasil/appearance.conf")).unwrap_or_default();
+    cursor_in(&text).unwrap_or_else(|| DEFAULT_CURSOR.to_string())
+}
+
+fn cursor_in(text: &str) -> Option<String> {
+    text.lines().filter_map(|l| l.split('#').next()?.split_once('=')).find(|(k, _)| k.trim() == "cursor").map(|(_, v)| v.trim().to_string()).filter(|v| !v.is_empty())
+}
+
+#[cfg(test)]
+mod cursor_tests {
+    #[test]
+    fn cursor_from_appearance() {
+        assert_eq!(super::cursor_in("style = dark\ncursor = macOS\n").as_deref(), Some("macOS"));
+        assert_eq!(super::cursor_in("style = dark\n# cursor = x\n"), None);
+    }
+}
+
+/// Switch the mouse pointer for the whole desktop (ygg-theme writes every place programs read it from, and the compositor
+/// switches at once).
+pub fn set_cursor(id: &str) -> Result<(), String> {
+    if id.is_empty() || id.contains('/') || id.starts_with('.') {
+        return Err("not a pointer theme name".into());
+    }
+    act("ygg-theme", &["cursor", id])
 }
 
 /// The icon pack in use (kept in kdeglobals, the file Qt programs read it from; the panel and Minos read it too).
