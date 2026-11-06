@@ -72,7 +72,7 @@ pub fn describe(a: &Action, m: &Model) -> Option<(Role, String, String)> {
             let t = m.tray.iter().find(|t| &t.key == key)?;
             button(if t.title.is_empty() { t.id.clone() } else { t.title.clone() })
         }
-        Action::TrayMore => button("More notification area icons".into()),
+        Action::TrayMore(_) => button("More notification area icons".into()),
     }
 }
 

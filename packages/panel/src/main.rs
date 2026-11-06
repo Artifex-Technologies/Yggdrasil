@@ -1537,15 +1537,17 @@ impl State {
     fn tray_click(&mut self, key: &str, kind: &'static str) {
         let Some(it) = self.model.tray.iter().find(|t| t.key == key).cloned() else { return };
         let (x, y) = (self.pointer_pos.0 as i32, shell::BAR_H as i32);
-        // an item with a dbusmenu gets the desktop's own menu (themed, placed under the bar); the rest are asked to show theirs
-        if kind == "ContextMenu" && !it.menu_path.is_empty() {
+        // an item with a dbusmenu gets the desktop's own menu (themed, placed under the bar); the rest are asked to show theirs.
+        // A left click opens it too: many apps (Solaar, Sunshine, Vivaldi's background icon) do nothing on Activate, and their
+        // menu is what there is to click (as on Windows and in GNOME's tray)
+        if (kind == "ContextMenu" || kind == "Activate") && !it.menu_path.is_empty() {
             if let Some(tx) = self.tray_tx.clone() {
                 let ax = self.pointer_pos.0;
                 std::thread::spawn(move || match tray::fetch_menu(&it.bus, &it.menu_path) {
                     Some(items) if !items.is_empty() => {
                         let _ = tx.send(tray::TrayMsg::Menu(it.key.clone(), items, ax));
                     }
-                    _ => tray::call(&it, "ContextMenu", x, y),
+                    _ => tray::call(&it, kind, x, y),
                 });
                 return;
             }
@@ -2895,9 +2897,9 @@ impl State {
                 self.remove_notif(id, 2);
             }
             Action::Tray(key) => self.tray_click(&key, "Activate"),
-            Action::TrayMore => {
+            Action::TrayMore(keys) => {
                 let x = self.pointer_pos.0;
-                self.open_tray_popup(trayui::TrayPop { anchor_x: x, mode: trayui::TrayMode::Overflow });
+                self.open_tray_popup(trayui::TrayPop { anchor_x: x, mode: trayui::TrayMode::Overflow(keys) });
             }
             Action::Notifications => {
                 if self.model.conf.notify_pane {

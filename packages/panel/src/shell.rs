@@ -203,8 +203,8 @@ pub enum Action {
     Notifications,
     /// A tray icon, by its registration key: left click activates it, right click opens its menu.
     Tray(String),
-    /// The chevron beside the tray icons: the ones that are hidden.
-    TrayMore,
+    /// The chevron beside the tray icons: the ones that are hidden, or that had no room beside the notch (their keys).
+    TrayMore(Vec<String>),
     /// A bar add-on's pill: its card, by index into Model::addons.
     Addon(usize),
 }
@@ -446,11 +446,34 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
         rx -= 6.0 * s;
     }
 
-    // The tray: the icons apps put in the notification area, right to left, beside the system icons.
+    // The tray: the icons apps put in the notification area, right to left, beside the system icons. On a narrow screen
+    // they must not run into the notch (Fylgja) in the middle: what is still to come on the left of them (add-ons, the
+    // network and Bluetooth icons) is set aside first, and the icons with no room go into the chevron's list.
     {
         let tsz = (16.0 * s) as u32;
         let tw = 26.0 * s;
-        for it in m.tray.iter().filter(|t| t.shown()).take(8) {
+        let notch_w = if m.notch_open { m.notch_w * s } else { 150.0 * s };
+        let notch_right = (w + notch_w) / 2.0 + 8.0 * s;
+        let addons_w: f32 = m
+            .addons
+            .iter()
+            .filter(|a| !(a.off || (a.text.is_empty() && a.icon.is_empty())))
+            .map(|a| {
+                let text = a.display(m.now_secs);
+                let icon_w = if a.icon.is_empty() { 0.0 } else if text.is_empty() { 14.0 * s } else { 20.0 * s };
+                paint::text_width(&fonts.regular, 12.0 * s, &text) + 26.0 * s + icon_w
+            })
+            .sum();
+        let system_w = (if m.status.bt != crate::status::Bt::Missing { 2.0 } else { 1.0 }) * 34.0 * s;
+        let shown: Vec<&crate::tray::TrayItem> = m.tray.iter().filter(|t| t.shown()).collect();
+        let room = |n: usize, chevron: bool| rx - n as f32 * (tw + 6.0 * s) - if chevron { 24.0 * s } else { 0.0 } - addons_w - system_w >= notch_right;
+        let any_passive = m.tray.iter().any(|t| !t.shown());
+        let mut fit = shown.len().min(8);
+        while fit > 0 && !room(fit, any_passive || fit < shown.len()) {
+            fit -= 1;
+        }
+        let crowded: Vec<String> = shown[fit..].iter().map(|t| t.key.clone()).collect();
+        for it in shown.iter().take(fit) {
             rx -= tw;
             pill(pix, rx, tw);
             if hover == Some(hits.len()) {
@@ -469,8 +492,10 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
             hits.push(Hit { rect: (rx, 0.0, tw, h), action: Action::Tray(it.key.clone()) });
             rx -= 6.0 * s;
         }
-        // icons the apps keep hidden (status "Passive") are one click away
-        if m.tray.iter().any(|t| !t.shown()) {
+        // icons the apps keep hidden (status "Passive"), and the ones with no room, are one click away
+        if any_passive || !crowded.is_empty() {
+            let mut keys = crowded.clone();
+            keys.extend(m.tray.iter().filter(|t| !t.shown()).map(|t| t.key.clone()));
             let cw = 18.0 * s;
             rx -= cw;
             pill(pix, rx, cw);
@@ -479,7 +504,7 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
             }
             let w2 = paint::text_width(&fonts.bold, 13.0 * s, "‹");
             paint::draw_text(pix, &fonts.bold, 13.0 * s, rx + (cw - w2) / 2.0, cy - 1.0 * s, lk.dim, "‹");
-            hits.push(Hit { rect: (rx, 0.0, cw, h), action: Action::TrayMore });
+            hits.push(Hit { rect: (rx, 0.0, cw, h), action: Action::TrayMore(keys) });
             rx -= 6.0 * s;
         }
     }

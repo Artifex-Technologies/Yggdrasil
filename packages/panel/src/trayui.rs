@@ -11,8 +11,8 @@ pub type Rect = (f32, f32, f32, f32);
 
 #[derive(Clone, Debug)]
 pub enum TrayMode {
-    /// The hidden icons.
-    Overflow,
+    /// The hidden icons, and those with no room on the bar (their keys, in this order).
+    Overflow(Vec<String>),
     /// One app's menu: the entries, and the ids of the submenus opened so far.
     Menu { key: String, items: Vec<MenuItem>, path: Vec<i32> },
     /// The open windows of one dock app (the dock id), as pictures. Hangs above the dock.
@@ -77,9 +77,12 @@ pub fn paint(pix: &mut Pixmap, s: f32, pop: &TrayPop, model: &Model, thumbs: &st
         act: Option<RowAct>,
     }
     let mut rows: Vec<Row> = vec![];
-    let passive: Vec<&crate::tray::TrayItem> = model.tray.iter().filter(|t| !t.shown()).collect();
+    let passive: Vec<&crate::tray::TrayItem> = match &pop.mode {
+        TrayMode::Overflow(keys) => keys.iter().filter_map(|k| model.tray.iter().find(|t| &t.key == k)).collect(),
+        _ => model.tray.iter().filter(|t| !t.shown()).collect(),
+    };
     match &pop.mode {
-        TrayMode::Overflow => {
+        TrayMode::Overflow(_) => {
             for (i, it) in passive.iter().enumerate() {
                 let label = if !it.title.is_empty() { it.title.clone() } else { it.id.clone() };
                 rows.push(Row { label, sep: false, enabled: true, checked: None, sub: false, icon: Some(i), act: Some(RowAct::Activate(it.key.clone())) });
