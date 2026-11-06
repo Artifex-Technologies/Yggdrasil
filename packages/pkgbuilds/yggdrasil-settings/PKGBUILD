@@ -17,7 +17,7 @@ optdepends=('ufw: firewall page'
             'python-pillow: your own picture as the boot screen'
             'grub: the graphics card unlock picks its boot entry for one start (Power, Developer options)'
             'nvidia-utils: the Graphics card page (Power, Developer options): readout and fan control'
-            'vulkan-tools: Games: each card's exact name, so Proton draws on the chosen card'
+            'vulkan-tools: Games: the exact name of each card, so Proton draws on the chosen card'
             'lsfg-vk: Games: frame generation (Lossless Scaling), from Agora')
 makedepends=('cargo')
 options=('!lto')
