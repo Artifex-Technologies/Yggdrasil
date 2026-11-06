@@ -20,7 +20,7 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
   Wi-Fi only" next to an app's network switch, and the selected power mode's CPU and graphics-card limits under Power. Stored as
   `developer = yes` in ~/.config/labyrinth/panel.conf.
 
-- **Games** (`yggdrasil-settings games`, 2026-11-05): the graphics cards a game can draw on, and frame generation.
+- **Games** (`yggdrasil-settings games`, 2026-11-05): the graphics cards a game can draw on, fixes for particular games, and frame generation.
   - Every card, with what it does: which one shows the screen, which one the computer started on, its driver. Read by
     `yggdrasil-gpu-run list --json` (helpers/gpu-run, installed as /usr/bin/yggdrasil-gpu-run), the same code that later starts
     the game, so the numbers on the page are the numbers it takes.
