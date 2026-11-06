@@ -332,6 +332,9 @@ struct State {
     pointer_surface: Option<usize>,
     /// Screens where the focused window is full screen: the bar and the dock step aside there (own session only).
     covered: Vec<u32>,
+    /// Over a full-screen window the dock is away; the pointer at the screen's edge brings it back over the window (this
+    /// screen), until the pointer has left it for a moment (since then).
+    dock_peek: Option<(u32, Option<Instant>)>,
     /// The windows changed since `covered` was worked out.
     covered_stale: bool,
     cursor: Option<WpCursorShapeDeviceV1>,
@@ -645,6 +648,43 @@ impl State {
         keys
     }
 
+    /// Every tenth of a second while the dock's screen has a full-screen window in front: the pointer pushed against the
+    /// dock's edge brings the dock back over the window; once the pointer has been off it for 0.4 s it goes again. The
+    /// pointer is read from Hyprland's socket (no program started), and only while a window is full screen.
+    fn check_dock_peek(&mut self) {
+        let Some(out) = self.dock_output() else { return };
+        if !self.covered.contains(&out) {
+            if self.dock_peek.take().is_some() {
+                self.built_for = None;
+            }
+            return;
+        }
+        let Some(name) = self.outputs.get(&out).map(|o| o.name.clone()) else { return };
+        let Some(&(_, x, y, w, h)) = self.layout.sizes.iter().find(|s| s.0 == name) else { return };
+        let Some(cursor) = zones::cursor() else { return };
+        let icon = self.model.conf.dock_icon;
+        let reach = shell::dock_h(icon) as f32 + self.model.conf.dock_gap as f32 + 24.0;
+        let peeking = self.dock_peek.is_some();
+        let want = shell::dock_peeks(self.model.conf.dock_pos, (x as f32, y as f32, w as f32, h as f32), reach, (cursor.0 as f32, cursor.1 as f32), peeking);
+        match (peeking, want) {
+            (false, true) => {
+                self.dock_peek = Some((out, None));
+                self.built_for = None;
+            }
+            (true, true) => self.dock_peek = Some((out, None)),
+            (true, false) => {
+                let since = self.dock_peek.and_then(|(_, t)| t).unwrap_or_else(Instant::now);
+                if since.elapsed() >= Duration::from_millis(400) {
+                    self.dock_peek = None;
+                    self.built_for = None;
+                } else {
+                    self.dock_peek = Some((out, Some(since)));
+                }
+            }
+            (false, false) => {}
+        }
+    }
+
     fn check_covered(&mut self) {
         let now = self.covered_outputs();
         if now != self.covered {
@@ -676,6 +716,10 @@ impl State {
                 self.add_wallpaper(key);
             }
             if self.covered.contains(&key) {
+                // the dock peeking over the full-screen window: on top of it, and reserving no room
+                if Some(key) == dock_out && self.dock_peek.is_some_and(|(k, _)| k == key) {
+                    self.add_layer_dock(key);
+                }
                 continue;
             }
             self.add_surface(key, Kind::Bar { slim });
@@ -735,7 +779,9 @@ impl State {
         let Some(out) = self.outputs.get(&output) else { return };
         let want = shell::dock_size(&shell::dock_items(&self.model), self.model.conf.dock_icon, self.model.conf.dock_pos);
         let wl = self.compositor.create_surface(&self.qh, ());
-        let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), Layer::Top, "yggdrasil-dock".into(), &self.qh, id);
+        // over a full-screen window it must be on the overlay layer (Hyprland draws full-screen windows above the top one)
+        let level = if self.dock_peek.is_some() { Layer::Overlay } else { Layer::Top };
+        let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), level, "yggdrasil-dock".into(), &self.qh, id);
         self.configure_layer_dock(&layer, want);
         wl.commit();
         self.surfs.push(Surf { id, kind: Kind::Dock, output, wl, layer: Some(layer), w: want.0, h: want.1, want, gap: self.model.conf.dock_gap as i32, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
@@ -751,7 +797,7 @@ impl State {
         };
         layer.set_anchor(anchor);
         layer.set_size(want.0, want.1);
-        layer.set_exclusive_zone(zone);
+        layer.set_exclusive_zone(if self.dock_peek.is_some() { 0 } else { zone });
         layer.set_margin(margin.0, margin.1, margin.2, margin.3);
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
     }
@@ -3653,6 +3699,7 @@ fn main() {
         built_for: None,
         pointer_surface: None,
         covered: vec![],
+        dock_peek: None,
         covered_stale: false,
         cursor: None,
         cursor_mgr,
@@ -3964,6 +4011,16 @@ fn main() {
             TimeoutAction::ToDuration(Duration::from_millis(100))
         })
         .expect("hold-to-talk key timer");
+    // over a full-screen window the dock comes back when the pointer is pushed against its edge
+    event_loop
+        .handle()
+        .insert_source(Timer::from_duration(Duration::from_millis(100)), |_, _, st| {
+            if !st.covered.is_empty() || st.dock_peek.is_some() {
+                st.check_dock_peek();
+            }
+            TimeoutAction::ToDuration(Duration::from_millis(100))
+        })
+        .expect("dock peek timer");
     // resting on a dock app (400 ms, as Windows does) lists its windows; the list goes when the pointer has left it
     event_loop
         .handle()

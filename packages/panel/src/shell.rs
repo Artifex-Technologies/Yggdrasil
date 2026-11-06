@@ -285,6 +285,22 @@ pub fn trash_has_files() -> bool {
     trash_dir().and_then(|d| std::fs::read_dir(d).ok()).map(|mut r| r.next().is_some()).unwrap_or(false)
 }
 
+/// Whether the dock should show over a full-screen window: the pointer (global logical pixels) pushed against the dock's
+/// edge of the screen `out` (x, y, width, height) brings it; while it shows, it stays as long as the pointer is within
+/// `reach` of that edge.
+pub fn dock_peeks(pos: DockPos, out: (f32, f32, f32, f32), reach: f32, (px, py): (f32, f32), showing: bool) -> bool {
+    let (x, y, w, h) = out;
+    if px < x || px >= x + w || py < y || py >= y + h {
+        return false;
+    }
+    let from_edge = match pos {
+        DockPos::Bottom => y + h - 1.0 - py,
+        DockPos::Left => px - x,
+        DockPos::Right => x + w - 1.0 - px,
+    };
+    if showing { from_edge <= reach } else { from_edge <= 2.0 }
+}
+
 /// The dock's size in logical pixels for the current items: wide on the bottom, tall on a side.
 pub fn dock_size(items: &[DockItem], icon: u32, pos: DockPos) -> (u32, u32) {
     let n = items.len().max(1) as f32;
@@ -1534,6 +1550,17 @@ pub fn paint_dock(pix: &mut Pixmap, s: f32, m: &Model, fonts: &Fonts, icons: &mu
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_dock_peeks_over_a_full_screen_window_from_its_edge() {
+        let out = (0.0, 0.0, 1210.0, 834.0);
+        assert!(!dock_peeks(DockPos::Bottom, out, 100.0, (600.0, 700.0), false), "not from the middle of the screen");
+        assert!(dock_peeks(DockPos::Bottom, out, 100.0, (600.0, 833.0), false), "pushed against the bottom edge");
+        assert!(dock_peeks(DockPos::Bottom, out, 100.0, (600.0, 760.0), true), "it stays while the pointer is on it");
+        assert!(!dock_peeks(DockPos::Bottom, out, 100.0, (600.0, 600.0), true), "and goes once it is well above it");
+        assert!(dock_peeks(DockPos::Left, (3000.0, 0.0, 3440.0, 1440.0), 100.0, (3000.0, 500.0), false));
+        assert!(!dock_peeks(DockPos::Bottom, out, 100.0, (1300.0, 833.0), false), "another screen's edge does not count");
+    }
+
     use super::*;
 
     #[test]
