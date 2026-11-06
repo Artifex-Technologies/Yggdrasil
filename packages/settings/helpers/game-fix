@@ -14,6 +14,9 @@ lines in the catalogue).
 Files: "kv" ("Key = value" lines, as Dead Space 2's settings.txt) or "ini" ([Section] and key=value lines). Every other line
 is kept as it is. Before the first change a file is copied to FILE.yggdrasil-backup; a file this program made gets
 FILE.yggdrasil-created instead. Undo restores the backup or removes the made file. Nothing here needs administrator rights.
+
+A fix can also carry "launch": a Steam launch option the game needs (Fallout 4: start the game without Bethesda's launcher, which
+keeps the keyboard). It is only listed: Settings > Games offers it to copy, since Steam keeps launch options to itself.
 """
 
 import json
@@ -300,6 +303,7 @@ def main(argv):
         for f in mine:
             state, values = status(f, games)
             rows.append({"appid": f["appid"], "name": f["name"], "title": f["title"], "about": f.get("about", ""), "tip": f.get("tip", ""),
+                         "launch": f.get("launch", ""),
                          "state": state, "screen": f"{values['width']}x{values['height']}" if "width" in values else ""})
         if "--json" in argv:
             print(json.dumps(rows, indent=1))

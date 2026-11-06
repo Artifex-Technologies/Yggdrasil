@@ -105,6 +105,12 @@ class GameFix(unittest.TestCase):
         m.undo(fix, self.games)
         self.assertFalse(os.path.exists(self.prefs()))
 
+    def test_fallout_4_offers_its_launch_option(self):
+        f = self.fixes["377160"]
+        self.assertIn("Fallout4Launcher.exe/Fallout4.exe", f["launch"])
+        self.assertTrue(f["launch"].endswith("%command%"))
+        self.assertEqual(self.fixes["47780"].get("launch", ""), "", "Dead Space 2 needs none")
+
     def test_ini_keys_go_into_their_section(self):
         lines = ["[Display]", "iSize W=1280", "", "[Other]", "x=1"]
         lines = m.ini_set(lines, "Display", "bBorderless", "1")

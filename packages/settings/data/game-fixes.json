@@ -65,8 +65,8 @@
   {
    "appid": "377160",
    "name": "Fallout 4",
-   "title": "Your screen's size, and the settings files its launcher would make",
-   "about": "Without its launcher's settings files the game starts at 1280x720. This makes them from the game's own templates at your screen's size. The launcher's first run then picks graphics settings (Ultra on a strong card) and keeps the size. At 21:9 the world is wider; the title screen, HUD and menus stay 16:9-shaped, which needs an interface mod.",
+   "title": "Your screen's size, its settings files, and starting without Bethesda's launcher",
+   "about": "Without its launcher's settings files the game starts at 1280x720: this makes them from the game's own templates at your screen's size. Its launcher also keeps the keyboard once the game is up (the mouse works, the keys do not): Copy launch option and put it in Steam's launch options for the game (Properties > Launch options) to start the game directly. At 21:9 the world is wider; the title screen, HUD and menus stay 16:9-shaped, which needs an interface mod.",
    "tip": "Its physics are tied to the frame rate and break above 60 fps: with frame generation at 3x (180 Hz) the game runs at 60 and the screen at 180.",
    "files": [
     {
@@ -89,7 +89,8 @@
      "template": "{game}/Fallout4_Default.ini",
      "set": {}
     }
-   ]
+   ],
+   "launch": "bash -c 'exec \"${@/Fallout4Launcher.exe/Fallout4.exe}\"' -- %command%"
   }
  ]
 }

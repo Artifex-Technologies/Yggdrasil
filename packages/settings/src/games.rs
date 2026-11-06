@@ -58,12 +58,24 @@ pub struct Fix {
     /// applied, not applied, start once, no screen
     pub state: String,
     pub screen: String,
+    /// a Steam launch option the game needs (only offered to copy)
+    pub launch: String,
+}
+
+/// The launch option to copy for a fix: with Labyrinth's frame generation installed, through its launcher too (one launch
+/// option holds both; without it installed, `labyrinth-framegen` would not exist and the game would not start).
+pub fn fix_launch(launch: &str, framegen: bool) -> String {
+    if framegen && !launch.is_empty() {
+        format!("labyrinth-framegen {launch}")
+    } else {
+        launch.to_string()
+    }
 }
 
 pub fn parse_fixes(json: &str) -> Option<Vec<Fix>> {
     let v: serde_json::Value = serde_json::from_str(json).ok()?;
     let s = |x: &serde_json::Value, k: &str| x[k].as_str().unwrap_or("").to_string();
-    Some(v.as_array()?.iter().map(|x| Fix { appid: s(x, "appid"), name: s(x, "name"), title: s(x, "title"), about: s(x, "about"), tip: s(x, "tip"), state: s(x, "state"), screen: s(x, "screen") }).collect())
+    Some(v.as_array()?.iter().map(|x| Fix { appid: s(x, "appid"), name: s(x, "name"), title: s(x, "title"), about: s(x, "about"), tip: s(x, "tip"), state: s(x, "state"), screen: s(x, "screen"), launch: s(x, "launch") }).collect())
 }
 
 /// What a fix's row says about its state.
@@ -274,6 +286,7 @@ pub fn load() -> Info {
 #[derive(Default)]
 pub struct State {
     info: Option<Info>,
+    copied_launch: Option<String>,
     fix_message: Option<String>,
     rx: Option<Receiver<Info>>,
     copied: Option<u32>,
@@ -341,6 +354,14 @@ impl State {
                 for (i, f) in info.fixes.iter().enumerate() {
                     let sub = format!("{}. {}\n{}{}{}", f.title, fix_state(f), f.about, if f.tip.is_empty() { "" } else { "\n" }, f.tip);
                     ui::row(ui, pal, i == 0, &f.name, Some(&sub), |ui| {
+                        if !f.launch.is_empty() {
+                            let option = fix_launch(&f.launch, info.framegen);
+                            let label = if self.copied_launch.as_deref() == Some(f.appid.as_str()) { "Copied" } else { "Copy launch option" };
+                            if ui::quiet(ui, pal, label).on_hover_text(format!("For Steam: Properties > Launch options\n{option}")).clicked() {
+                                ui.ctx().copy_text(option);
+                                self.copied_launch = Some(f.appid.clone());
+                            }
+                        }
                         match f.state.as_str() {
                             "applied" => {
                                 if ui::quiet(ui, pal, "Undo").on_hover_text("Put the game's files back as they were").clicked() {
@@ -478,6 +499,14 @@ mod tests {
         assert_eq!(describe(&c[1]), "Driver: xe");
         assert!(parse_cards("not json").is_none());
         assert_eq!(launch_option(2), "yggdrasil-gpu-run 2 %command%");
+    }
+
+    #[test]
+    fn a_fix_launch_option_includes_frame_generation_only_when_installed() {
+        let l = "bash -c 'exec \"${@/A.exe/B.exe}\"' -- %command%";
+        assert_eq!(fix_launch(l, true), format!("labyrinth-framegen {l}"));
+        assert_eq!(fix_launch(l, false), l);
+        assert_eq!(fix_launch("", true), "", "no launch option: nothing to copy");
     }
 
     #[test]
