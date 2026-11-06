@@ -28,7 +28,7 @@ yggdrasil-timer reconcile          see above
 
 | file | to |
 | --- | --- |
-| `target/release/yggdrasil-timer` | `/usr/bin/yggdrasil-timer` |
+| `target/release/yggdrasil-timer` (in Yggdrasil's shared `target/`) | `/usr/bin/yggdrasil-timer` |
 | `timer.conf` | `/usr/share/yggdrasil/integrations/timer.conf` |
 | `timer-symbolic.svg` | `/usr/share/yggdrasil/icons/timer-symbolic.svg` |
 | `yggdrasil-timer-reconcile.desktop` | `/etc/xdg/autostart/yggdrasil-timer-reconcile.desktop` |

@@ -1,0 +1,5 @@
+# One build folder for every Yggdrasil package (Yggdrasil/target, a relative path here means next to this .cargo folder):
+# the dependencies they share (egui, wgpu, zbus, ...) are compiled and stored once instead of once per package. The package
+# recipes (packages/pkgbuilds) pass their own --target-dir and are not affected. A program built by hand is in target/release.
+[build]
+target-dir = "target"

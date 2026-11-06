@@ -171,7 +171,9 @@ session (`start`, `run yggdrasil-settings power:cooling`, `shot FILE.png`, `stop
 
 ## Building
 
-Every program is its own Cargo project (`cd packages/<name> && cargo build --release`). `packages/pkgbuilds/<name>/PKGBUILD` builds a package from the source next to it
+Every program is its own Cargo project (`cd packages/<name> && cargo build --release`); they all build into one shared folder,
+`target/` at the top of the repository (`.cargo/config.toml`), so the libraries they share are compiled once. A program built
+by hand is in `target/release/`. `packages/pkgbuilds/<name>/PKGBUILD` builds a package from the source next to it
 (`makepkg -f` in that folder). Labyrinth OS builds them with its `scripts/build-local-packages.sh`. Tests: `cargo test` in each folder; CI runs them and `cargo audit`.
 
 Some pages appear only when the operating system provides what they need (for example Settings > Security > Distress password needs

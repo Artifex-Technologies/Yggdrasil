@@ -26,7 +26,7 @@ The rules and timings follow [gabrielecirulli/2048](https://github.com/gabrielec
 and the Evil rule follow [imranZERO/omarchy-2048](https://github.com/imranZERO/omarchy-2048). Both are MIT, and this is a new
 program written from them.
 
-    cargo build --release      # target/release/yggdrasil-2048
+    cargo build --release      # ../../target/release/yggdrasil-2048 (Yggdrasil's shared build folder)
     cargo test                 # move and merge rules, Fibonacci, undo, game over, Daily, Evil
 
 Installs: `/usr/bin/yggdrasil-2048`, `yggdrasil-2048.desktop` in `/usr/share/applications`; the icon `yggdrasil-2048` comes

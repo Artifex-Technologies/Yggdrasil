@@ -24,7 +24,7 @@ the battery level. Built on `yggdrasil-gamepads` (packages/gamepads). Ideas from
 
 | file | installed as |
 |---|---|
-| `target/release/yggdrasil-controllers` | `/usr/bin/yggdrasil-controllers` |
+| `target/release/yggdrasil-controllers` (in Yggdrasil's shared `target/`) | `/usr/bin/yggdrasil-controllers` |
 | `controllers.conf` | `/usr/share/yggdrasil/integrations/controllers.conf` |
 | `yggdrasil-controllers.service` | `/usr/lib/systemd/user/yggdrasil-controllers.service` (enabled for every user) |
 | `70-yggdrasil-controllers.rules` | `/usr/lib/udev/rules.d/70-yggdrasil-controllers.rules` |
