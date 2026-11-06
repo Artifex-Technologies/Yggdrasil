@@ -51,13 +51,27 @@ struct Extra {
     id: String,
     name: String,
     note: String,
-    /// Chosen to start with (`chosen`, or `chosen_if_exists`: a file on the live system, i.e. this medium carries it).
+    /// The heading it is shown under (`group`; entries of one group are listed together, in the list's order).
+    group: String,
+    /// Chosen to start with (`chosen`; `chosen_if_exists`: a file on the live system, i.e. this medium carries it; or
+    /// `chosen_if_usb`: a plugged-in USB device from one of these vendors, hex ids such as "1532").
     chosen: bool,
 }
 
-/// The OS's optional parts: `{"title", "intro", "extras": [{"id", "name", "note", "chosen" | "chosen_if_exists"}, ...]}`; what
-/// else each entry says is the OS's business. `exists` answers for `chosen_if_exists` (the file system, outside tests).
-fn parse_extras(text: &str, exists: &dyn Fn(&str) -> bool) -> (String, String, Vec<Extra>) {
+/// The vendor ids (lowercase hex) of the USB devices plugged in now.
+fn usb_vendors() -> Vec<String> {
+    let mut v: Vec<String> = std::fs::read_dir("/sys/bus/usb/devices")
+        .map(|rd| rd.flatten().filter_map(|e| std::fs::read_to_string(e.path().join("idVendor")).ok()).map(|s| s.trim().to_lowercase()).collect())
+        .unwrap_or_default();
+    v.sort();
+    v.dedup();
+    v
+}
+
+/// The OS's optional parts: `{"title", "intro", "extras": [{"id", "name", "note", "group", "chosen" | "chosen_if_exists" |
+/// "chosen_if_usb"}, ...]}`; what else each entry says is the OS's business. `exists` answers for `chosen_if_exists` (the file
+/// system, outside tests); `usb` is the vendor ids plugged in (usb_vendors, outside tests).
+fn parse_extras(text: &str, exists: &dyn Fn(&str) -> bool, usb: &[String]) -> (String, String, Vec<Extra>) {
     let v: serde_json::Value = serde_json::from_str(text).unwrap_or(serde_json::Value::Null);
     let list = v["extras"]
         .as_array()
@@ -65,8 +79,9 @@ fn parse_extras(text: &str, exists: &dyn Fn(&str) -> bool) -> (String, String, V
             a.iter()
                 .filter_map(|e| {
                     let id = e["id"].as_str()?.to_string();
-                    let chosen = e["chosen"].as_bool().unwrap_or(false) || e["chosen_if_exists"].as_str().is_some_and(|p| p.starts_with('/') && exists(p));
-                    Some(Extra { name: e["name"].as_str().unwrap_or(&id).to_string(), note: e["note"].as_str().unwrap_or("").to_string(), chosen, id })
+                    let plugged = e["chosen_if_usb"].as_array().is_some_and(|ids| ids.iter().filter_map(|x| x.as_str()).any(|x| usb.iter().any(|u| u.eq_ignore_ascii_case(x))));
+                    let chosen = e["chosen"].as_bool().unwrap_or(false) || e["chosen_if_exists"].as_str().is_some_and(|p| p.starts_with('/') && exists(p)) || plugged;
+                    Some(Extra { name: e["name"].as_str().unwrap_or(&id).to_string(), note: e["note"].as_str().unwrap_or("").to_string(), group: e["group"].as_str().unwrap_or("").to_string(), chosen, id })
                 })
                 .collect()
         })
@@ -439,7 +454,7 @@ impl App {
             self.manual_mode = true;
         }
         if self.extras.is_empty() {
-            self.set_extras(parse_extras(r#"{"title":"AI and security","intro":"Optional. Both can be added or removed later in Agora.","extras":[{"id":"sarina","name":"Sarina","note":"Your local AI assistant","chosen":true},{"id":"heimdall","name":"Heimdall","note":"Watches this computer for attacks"}]}"#, &|_| false));
+            self.set_extras(parse_extras(r#"{"title":"AI and security","intro":"Optional. Both can be added or removed later in Agora.","extras":[{"id":"sarina","name":"Sarina","note":"Your local AI assistant","chosen":true},{"id":"heimdall","name":"Heimdall","note":"Watches this computer for attacks"}]}"#, &|_| false, &[]));
         }
         if self.browsers.is_empty() {
             self.set_browsers(parse_browsers(r#"{"browsers":[{"id":"vivaldi","name":"Vivaldi","note":"Chromium-based, very customisable","chosen":true},{"id":"firefox","name":"Firefox","note":"Mozilla's browser"},{"id":"librewolf","name":"LibreWolf","note":"Firefox, hardened for privacy"}]}"#));
@@ -505,7 +520,7 @@ impl App {
         app.set_browsers(list.and_then(|f| std::fs::read_to_string(f).ok()).map(|t| parse_browsers(&t)).unwrap_or_default());
         let extras = yggdrasil_conf::integrations::first("installer").and_then(|i| i.get("extras").map(str::to_string));
         if let Some(t) = extras.and_then(|f| std::fs::read_to_string(f).ok()) {
-            app.set_extras(parse_extras(&t, &|p| std::path::Path::new(p).exists()));
+            app.set_extras(parse_extras(&t, &|p| std::path::Path::new(p).exists(), &usb_vendors()));
         }
         let args: Vec<String> = std::env::args().collect();
         if let Some(i) = args.iter().position(|a| a == "--demo") {
@@ -982,7 +997,16 @@ impl eframe::App for App {
                     Page::Extras => {
                         heading(ui, &pal, &self.extras_title.clone(), &self.extras_intro.clone());
                         let mut toggle = None;
+                        let mut group = "";
                         for e in &self.extras {
+                            if e.group != group {
+                                group = &e.group;
+                                if !group.is_empty() {
+                                    ui.add_space(6.0);
+                                    ui.label(RichText::new(group).strong().color(pal.dim));
+                                    ui.add_space(4.0);
+                                }
+                            }
                             let on = self.chosen_extras.contains(&e.id);
                             ui.horizontal(|ui| {
                                 let label = RichText::new(format!("{}  {}", if on { "✔" } else { "  " }, e.name)).color(if on { pal.on_accent() } else { pal.text });
@@ -1203,7 +1227,7 @@ mod tests {
     #[test]
     fn optional_parts_come_from_the_os_and_start_chosen_when_the_medium_has_them() {
         let text = r#"{"title":"AI and security","intro":"Optional.","extras":[{"id":"sarina","name":"Sarina","note":"n","chosen_if_exists":"/usr/bin/sarina","components":["sarina"]},{"id":"heimdall","name":"Heimdall","chosen_if_exists":"/usr/bin/heimdalld"},{"name":"no id"},{"id":"x","chosen_if_exists":"relative/path"}]}"#;
-        let (title, intro, list) = parse_extras(text, &|p| p == "/usr/bin/heimdalld" || p == "relative/path");
+        let (title, intro, list) = parse_extras(text, &|p| p == "/usr/bin/heimdalld" || p == "relative/path", &[]);
         assert_eq!((title.as_str(), intro.as_str()), ("AI and security", "Optional."));
         assert_eq!(list.iter().map(|e| (e.id.as_str(), e.chosen)).collect::<Vec<_>>(), [("sarina", false), ("heimdall", true), ("x", false)], "only an absolute path counts");
         let mut app = App::new();
@@ -1217,6 +1241,16 @@ mod tests {
         app.set_extras((String::new(), String::new(), vec![]));
         assert!(!app.pages().contains(&Page::Extras), "nothing offered: no page");
         assert!(app.plan().get("extras").is_none());
+    }
+
+    #[test]
+    fn device_software_starts_chosen_when_such_a_device_is_plugged_in() {
+        let text = r#"{"extras":[{"id":"razer","group":"Devices","name":"Razer","chosen_if_usb":["1532"]},{"id":"logitech","group":"Devices","name":"Logitech","chosen_if_usb":["046D"]},{"id":"hp","group":"Devices","name":"HP","chosen_if_usb":["03f0"]}]}"#;
+        let (_, _, list) = parse_extras(text, &|_| false, &["1532".to_string(), "046d".to_string()]);
+        assert_eq!(list.iter().map(|e| (e.id.as_str(), e.chosen)).collect::<Vec<_>>(), [("razer", true), ("logitech", true), ("hp", false)], "vendor ids compare without case");
+        assert!(list.iter().all(|e| e.group == "Devices"));
+        let (_, _, none) = parse_extras(text, &|_| false, &[]);
+        assert!(none.iter().all(|e| !e.chosen), "nothing plugged in: nothing ticked");
     }
 
     #[test]
