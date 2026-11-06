@@ -38,7 +38,7 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
     Proton has not started yet shows "Start the game once first". No administrator rights. First fixes: **Dead Space 2**
     (its menu never offers 21:9; settings.txt at the screen's size, V-Sync off: true 21:9 tried at 3440x1440) and
     **Fallout 4** (the settings files its launcher would make, from its templates, at the screen's size, borderless; the
-    HUD stays 16:9 and stretched; and a launch option that starts the game without Bethesda's launcher, which kept the keyboard
+    world fills 21:9 (confirmed by the owner in play), the HUD stays 16:9 and stretched; and a launch option that starts the game without Bethesda's launcher, which kept the keyboard
     once the game was up: tried by the owner 2026-11-05, keys work). A fix's `launch` is offered with Copy launch option (with
     `labyrinth-framegen` in front when frame generation is installed); Steam keeps launch options to itself, so it is copied,
     not written. Tests: `helpers/tests/test_game_fix.py`. Patches to games' code come per game.
