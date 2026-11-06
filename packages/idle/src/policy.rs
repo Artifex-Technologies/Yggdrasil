@@ -6,6 +6,9 @@ pub enum Step {
     /// The falling characters (yggdrasil-splash --screensaver), until the user is back.
     Screensaver,
     Dim,
+    /// The screen covered in black (an OLED's pixels are then off), the pointer hidden. Not the monitor's own power-off, which on
+    /// some monitors and graphics cards looks like unplugging it (Hyprland 0.57 died when such a monitor came back, 2026-11-05).
+    Blank,
     Lock,
     DisplayOff,
     Suspend,
@@ -17,6 +20,7 @@ impl Step {
         match self {
             Step::Screensaver => "screensaver",
             Step::Dim => "dim",
+            Step::Blank => "black-screen",
             Step::Lock => "lock",
             Step::DisplayOff => "display-off",
             Step::Suspend => "suspend",
@@ -31,6 +35,7 @@ pub struct Config {
     pub act: bool,
     pub screensaver: u32,
     pub dim: u32,
+    pub blank: u32,
     pub lock: u32,
     pub display_off: u32,
     pub suspend: u32,
@@ -43,7 +48,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Config { act: false, screensaver: 0, dim: 0, lock: 0, display_off: 0, suspend: 0, hibernate: 0, dim_level: 30, lights_off: true }
+        Config { act: false, screensaver: 0, dim: 0, blank: 0, lock: 0, display_off: 0, suspend: 0, hibernate: 0, dim_level: 30, lights_off: true }
     }
 }
 
@@ -60,6 +65,7 @@ impl Config {
                 "mode" => c.act = v == "act",
                 "screensaver" => c.screensaver = secs.unwrap_or(c.screensaver),
                 "dim" => c.dim = secs.unwrap_or(c.dim),
+                "blank" => c.blank = secs.unwrap_or(c.blank),
                 "lock" => c.lock = secs.unwrap_or(c.lock),
                 "display_off" => c.display_off = secs.unwrap_or(c.display_off),
                 "suspend" => c.suspend = secs.unwrap_or(c.suspend),
@@ -72,9 +78,9 @@ impl Config {
         c
     }
 
-    /// Every step that has a time, in the order it happens (ties keep the order screensaver, dim, lock, display-off, suspend).
+    /// Every step that has a time, in the order it happens (ties keep the order screensaver, dim, black screen, lock, display-off, suspend).
     pub fn steps(&self) -> Vec<(u32, Step)> {
-        let mut v: Vec<(u32, Step)> = [(self.screensaver, Step::Screensaver), (self.dim, Step::Dim), (self.lock, Step::Lock), (self.display_off, Step::DisplayOff), (self.suspend, Step::Suspend), (self.hibernate, Step::Hibernate)]
+        let mut v: Vec<(u32, Step)> = [(self.screensaver, Step::Screensaver), (self.dim, Step::Dim), (self.blank, Step::Blank), (self.lock, Step::Lock), (self.display_off, Step::DisplayOff), (self.suspend, Step::Suspend), (self.hibernate, Step::Hibernate)]
             .into_iter()
             .filter(|(s, _)| *s > 0)
             .collect();
@@ -85,7 +91,12 @@ impl Config {
 
 /// Steps that also put the keyboard lights out (the screen is dimmed, off or covered).
 pub fn darkens(step: Step) -> bool {
-    matches!(step, Step::Screensaver | Step::Dim | Step::DisplayOff)
+    matches!(step, Step::Screensaver | Step::Dim | Step::Blank | Step::DisplayOff)
+}
+
+/// Steps that hide the mouse pointer (it is drawn above everything, so a dimmed or black screen would keep it lit).
+pub fn hides_pointer(step: Step) -> bool {
+    matches!(step, Step::Dim | Step::Blank)
 }
 
 /// The inactivity marks the observer reports on, whatever the settings (seconds).
@@ -114,7 +125,7 @@ pub fn blocking_inhibitors(list: Vec<(String, String, String, String, u32, u32)>
 
 pub fn blocked_by_inhibitors(step: Step, what: &[&str]) -> bool {
     match step {
-        Step::Screensaver | Step::Dim | Step::Lock | Step::DisplayOff => what.iter().any(|w| w.contains("idle")),
+        Step::Screensaver | Step::Dim | Step::Blank | Step::Lock | Step::DisplayOff => what.iter().any(|w| w.contains("idle")),
         Step::Suspend | Step::Hibernate => what.iter().any(|w| w.contains("idle") || w.contains("sleep")),
     }
 }
@@ -122,6 +133,15 @@ pub fn blocked_by_inhibitors(step: Step, what: &[&str]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn black_screen_comes_after_dim() {
+        let c = Config::parse("mode = act\ndim = 60\nblank = 300\n");
+        assert_eq!(c.steps(), vec![(60, Step::Dim), (300, Step::Blank)]);
+        assert!(hides_pointer(Step::Blank) && hides_pointer(Step::Dim) && !hides_pointer(Step::Lock));
+        assert!(darkens(Step::Blank));
+        assert!(blocked_by_inhibitors(Step::Blank, &["idle"]));
+    }
 
     #[test]
     fn only_blocking_locks_hold_back_sleep() {
@@ -133,7 +153,7 @@ mod tests {
     #[test]
     fn parses_and_ignores_junk() {
         let c = Config::parse("# comment\nmode = act\ndim = 300  # five minutes\nlock = soon\nsuspend=1800\nbogus = 1\n");
-        assert_eq!(c, Config { act: true, screensaver: 0, dim: 300, lock: 0, display_off: 0, suspend: 1800, hibernate: 0, dim_level: 30, lights_off: true });
+        assert_eq!(c, Config { act: true, screensaver: 0, dim: 300, blank: 0, lock: 0, display_off: 0, suspend: 1800, hibernate: 0, dim_level: 30, lights_off: true });
         let c = Config::parse("mode = act\nscreensaver = 180\ndim = 300\n");
         assert_eq!(c.steps(), vec![(180, Step::Screensaver), (300, Step::Dim)], "the screensaver first, then the dim over it");
         assert_eq!(Config::parse("dim_level = 5").dim_level, 10);

@@ -94,6 +94,24 @@ pub struct App {
     screensaver: Option<std::process::Child>,
     /// The lights hooks were told "lights-off" and not yet "lights-on".
     lights_out: bool,
+    /// The pointer is hidden (dim or black screen): Hyprland's own idle-pointer timeout as it was before, to put back.
+    pointer_was: Option<f32>,
+}
+
+/// The value this program sets Hyprland's `cursor:inactive_timeout` to while it hides the pointer. Seeing it at start-up means an
+/// earlier run ended with the pointer hidden, so it is put back to 0 (Hyprland's default).
+const POINTER_HIDDEN: f32 = 0.25;
+
+/// Hyprland's `cursor:inactive_timeout` now (seconds; 0 = never hide), or None when Hyprland does not answer.
+fn pointer_timeout() -> Option<f32> {
+    let out = run("hyprctl", &["-j", "getoption", "cursor:inactive_timeout"]);
+    let at = out.find("\"float\"")?;
+    let rest = out[at + 7..].trim_start_matches([':', ' ']);
+    rest.split([',', '}', '\n']).next()?.trim().parse().ok()
+}
+
+fn set_pointer_timeout(secs: f32) {
+    run("hyprctl", &["eval", &format!("hl.config({{ cursor = {{ inactive_timeout = {secs} }} }})")]);
 }
 
 /// Runs every lights hook with `arg` ("lights-off" or "lights-on"), without waiting: the system's (/usr/lib/yggdrasil/idle.d, e.g.
@@ -140,6 +158,9 @@ impl Dispatch<ExtIdleNotificationV1, u32> for App {
                 if let Some(d) = app.dimmer.as_mut() {
                     d.hide();
                 }
+                if let Some(was) = app.pointer_was.take() {
+                    set_pointer_timeout(was);
+                }
                 // the screensaver ends as soon as the user is back (the key or click that woke it went to it, not to a program)
                 if let Some(mut c) = app.screensaver.take() {
                     let _ = c.kill();
@@ -178,6 +199,14 @@ impl App {
             return;
         }
         log(&format!("doing {}", step.name()));
+        if policy::hides_pointer(step) && self.pointer_was.is_none() {
+            // the pointer is drawn above everything (its own plane), so the dim and black covers never darken it: Hyprland hides an
+            // unmoved pointer once it has been still this long, and it has been still for the whole idle time already
+            if let Some(was) = pointer_timeout() {
+                self.pointer_was = Some(if was == POINTER_HIDDEN { 0.0 } else { was });
+                set_pointer_timeout(POINTER_HIDDEN);
+            }
+        }
         if self.conf.lights_off && policy::darkens(step) && !self.lights_out {
             self.lights_out = true;
             lights("lights-off");
@@ -206,6 +235,10 @@ impl App {
             Step::Dim => match self.dimmer.as_mut() {
                 Some(d) => d.show(&self.globals, &self.qh, dim::alpha_for(self.conf.dim_level)),
                 None => log("cannot dim: the compositor lacks layer-shell or viewporter"),
+            },
+            Step::Blank => match self.dimmer.as_mut() {
+                Some(d) => d.show(&self.globals, &self.qh, 1.0),
+                None => log("cannot black the screen: the compositor lacks layer-shell or viewporter"),
             },
         }
     }
@@ -250,7 +283,10 @@ fn main() {
         log("dimming is not available here (needs layer-shell, wp-viewporter, wl_shm)");
     }
     let power = power::Power::new(&globals, &qh);
-    let mut app = App { conf, dimmer, power, globals, qh: qh.clone(), longest: None, done: HashMap::new(), screensaver: None, lights_out: false };
+    let mut app = App { conf, dimmer, power, globals, qh: qh.clone(), longest: None, done: HashMap::new(), screensaver: None, lights_out: false, pointer_was: None };
+    if pointer_timeout() == Some(POINTER_HIDDEN) {
+        set_pointer_timeout(0.0);
+    }
     let mut last_check = Instant::now();
     loop {
         if queue.dispatch_pending(&mut app).is_err() || conn.flush().is_err() {

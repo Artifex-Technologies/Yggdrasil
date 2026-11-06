@@ -110,6 +110,8 @@ hl.config({
     allow_session_lock_restore = true,
     -- XDG_CURRENT_DESKTOP is Yggdrasil on purpose (programs and portals follow it): no warning about it being set from outside
     disable_xdg_env_checks = true,
+    -- yggdrasil-session is Hyprland's watchdog (it restarts it with these settings after a crash, not in safe mode)
+    disable_watchdog_warning = true,
   },
 
   cursor = {

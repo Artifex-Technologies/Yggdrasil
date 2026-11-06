@@ -7,13 +7,13 @@ will use Yggdrasil as well, so Yggdrasil must never depend on anything that only
 
 | Piece | Today's program (package) | Notes |
 | --- | --- | --- |
-| Session (on Hyprland 0.57: configuration, window rules, keys) | `yggdrasil-session` | the desktop's login entry "Yggdrasil" |
+| Session (on Hyprland 0.57: configuration, window rules, keys) | `yggdrasil-session` | the desktop's login entry "Yggdrasil". It is Hyprland's watchdog: after a crash Hyprland starts again with Yggdrasil's settings (safe mode only after 3 crashes in 10 minutes), the crashed run's log kept in `~/.local/state/yggdrasil/hyprland-logs/`; monitor connects and disconnects are timed in `monitor-events.log` there |
 | Panel: top bar, dock, tray, Fylgja, notifications, start menu, wallpaper | `yggdrasil-panel` | |
 | Settings | `yggdrasil-settings` | Labyrinth-only pages (games, Artifex apps) are separable |
 | File manager and file chooser | `minos`, `yggdrasil-portal` | |
 | Marketplace | `agora` | shared by Labyrinth and Chymaera through editions |
 | Lock screen, login screen | `yggdrasil-lock`, `yggdrasil-greeter` (package `yggdrasil-lock`) | designs shared |
-| Idle manager (dim, lock, screen off, sleep) | `yggdrasil-idle` | |
+| Idle manager (dim, black screen, lock, screen off, sleep) | `yggdrasil-idle` | the pointer hides while dimmed or black. Black screen keeps the monitor on (black pixels; kind to OLEDs), unlike screen off, which some monitors treat as unplugging |
 | Polkit agent, keyring sync, distress password | `yggdrasil-polkit`, `yggdrasil-keyring-sync`, `labyrinth-distress` (+ PAM module) | |
 | Compositor | `yggdrasil-compositor` | first version, nested only (COMPOSITOR.md); Hyprland is the compositor today |
 | Calculator, weather | `yggdrasil-calculator`, `yggdrasil-weather` | small apps |

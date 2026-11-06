@@ -91,14 +91,61 @@ before=$(ls "$runtime/hypr" 2>/dev/null)
 ) &
 keeper=$!
 
-# start-hyprland is Hyprland's own launcher (it restarts it safely after a crash); without it Hyprland shows a warning
-if command -v start-hyprland >/dev/null; then
-  start-hyprland -- --config "$conf"
-else
-  Hyprland --config "$conf"
+# Monitors coming and going, with the time, straight from the kernel (so it is written even if Hyprland is the one in trouble):
+# 2026-11-05 Hyprland 0.57.1 died when a monitor that had been switched off came back. Trimmed to its last 2000 lines each login.
+events=$state/monitor-events.log
+[[ -f $events ]] && tail -n 2000 "$events" >"$events.tmp" 2>/dev/null && mv -f "$events.tmp" "$events"
+echo "$(date '+%F %T') session start" >>"$events"
+watch_monitors=
+if command -v udevadm >/dev/null; then
+  ( udevadm monitor --kernel --subsystem-match=drm 2>/dev/null | while IFS= read -r line; do
+      [[ $line == KERNEL* ]] && echo "$(date '+%F %T') $line"
+    done >>"$events" ) &
+  watch_monitors=$!
 fi
-code=$?
+
+# Our own small watchdog in place of start-hyprland: after a crash, Hyprland's launcher started it again in SAFE MODE (no
+# Yggdrasil settings, so no panel, no shortcuts, no Wi-Fi menu; 2026-11-05). Here a crash keeps that session's log, then
+# Hyprland starts again with Yggdrasil's settings. Only when it keeps crashing (3 times in 10 minutes, which points at the
+# settings themselves) does the next start use safe mode. The "not started by start-hyprland" warning is turned off in
+# yggdrasil.lua (misc.disable_watchdog_warning).
+logs=$state/hyprland-logs
+mkdir -p "$logs"
+crashes=()
+safe=
+run=0
+while :; do
+  run=$((run + 1))
+  if [[ -n $safe ]]; then
+    Hyprland --safe-mode
+  else
+    Hyprland --config "$conf"
+  fi
+  code=$?
+  # a normal sign-out, or Hyprland told to stop (SIGTERM, SIGINT): not a crash
+  (( code == 0 || code == 143 || code == 130 )) && break
+  # a crash (or a fatal error): keep this instance's log before the next one starts and its folder is cleared
+  d=$(ls -td "$runtime"/hypr/*/ 2>/dev/null | head -n1)
+  [[ -n $d && -f $d/hyprland.log ]] && cp -f "$d/hyprland.log" "$logs/$(date +%Y-%m-%d-%H%M%S)-run$run-crashed-exit$code.log"
+  echo "$(date '+%F %T') Hyprland ended with exit $code" >>"$events"
+  now=$(date +%s)
+  recent=()
+  for t in "${crashes[@]}"; do (( now - t < 600 )) && recent+=("$t"); done
+  crashes=("${recent[@]}" "$now")
+  [[ -n $safe ]] && break  # safe mode itself failed: give up, back to the login screen
+  if (( ${#crashes[@]} >= 3 )); then
+    safe=1
+    log "Hyprland crashed ${#crashes[@]} times in 10 minutes (exit $code); starting it in safe mode"
+  else
+    log "Hyprland crashed (exit $code); starting it again with Yggdrasil's settings. Log kept in $logs"
+    # say so once the panel is back (it serves notifications)
+    ( sleep 10; notify-send -a Yggdrasil -i dialog-warning "The desktop restarted" "Hyprland stopped unexpectedly and was started again. Open programs had to close; its log is kept in ~/.local/state/yggdrasil/hyprland-logs." 2>/dev/null ) &
+  fi
+  sleep 1
+done
 kill "$keeper" 2>/dev/null
+[[ -n $watch_monitors ]] && pkill -P "$watch_monitors" 2>/dev/null; kill "$watch_monitors" 2>/dev/null
+echo "$(date '+%F %T') session end" >>"$events"
 d=$(ls -td "$runtime"/hypr/*/ 2>/dev/null | head -n1)
 [[ -n $d && -f $d/hyprland.log ]] && cp -f "$d/hyprland.log" "$state/hyprland-last.log"
 # the session's programs (the panel and the rest) end with it

@@ -882,6 +882,9 @@ pub struct Idle {
     pub dim_level: i64,
     /// Keyboard lights go off while the screen is dimmed, off or showing the screensaver.
     pub lights_off: bool,
+    /// The screen covered in black, the pointer hidden (minutes; 0 = never). Unlike turning the screen off, the monitor stays
+    /// connected, so nothing has to come back from an unplug.
+    pub blank: i64,
     pub screen_off: i64,
     pub lock: i64,
     pub sleep: i64,
@@ -894,7 +897,7 @@ pub struct Idle {
 
 impl Default for Idle {
     fn default() -> Self {
-        Idle { screensaver: 0, dim: 5, dim_level: 30, lights_off: true, screen_off: 0, lock: 0, sleep: 0, hibernate: 0, can_sleep: true, can_hibernate: true, sleep_note: String::new() }
+        Idle { screensaver: 0, dim: 5, dim_level: 30, lights_off: true, blank: 0, screen_off: 0, lock: 0, sleep: 0, hibernate: 0, can_sleep: true, can_hibernate: true, sleep_note: String::new() }
     }
 }
 
@@ -917,6 +920,7 @@ pub fn parse_idle(text: &str) -> Idle {
             "screensaver" => i.screensaver = n / 60,
             "dim" => i.dim = n / 60,
             "dim_level" => i.dim_level = n.clamp(10, 90),
+            "blank" => i.blank = n / 60,
             "display_off" => i.screen_off = n / 60,
             "lock" => i.lock = n / 60,
             "suspend" => i.sleep = n / 60,
@@ -929,8 +933,8 @@ pub fn parse_idle(text: &str) -> Idle {
 
 pub fn idle_text(i: &Idle) -> String {
     format!(
-        "# Written by Settings > Power. yggdrasil-idle acts on these (seconds of inactivity, 0 = never).\nmode = act\nscreensaver = {}\ndim = {}\ndim_level = {}\nlights_off = {}\ndisplay_off = {}\nlock = {}\nsuspend = {}\nhibernate = {}\n",
-        i.screensaver * 60, i.dim * 60, i.dim_level, i.lights_off as u8, i.screen_off * 60, i.lock * 60, i.sleep * 60, i.hibernate * 60
+        "# Written by Settings > Power. yggdrasil-idle acts on these (seconds of inactivity, 0 = never).\nmode = act\nscreensaver = {}\ndim = {}\ndim_level = {}\nlights_off = {}\nblank = {}\ndisplay_off = {}\nlock = {}\nsuspend = {}\nhibernate = {}\n",
+        i.screensaver * 60, i.dim * 60, i.dim_level, i.lights_off as u8, i.blank * 60, i.screen_off * 60, i.lock * 60, i.sleep * 60, i.hibernate * 60
     )
 }
 
@@ -993,7 +997,7 @@ mod idle_tests {
 
     #[test]
     fn round_trip() {
-        let i = Idle { screensaver: 3, dim: 7, dim_level: 40, lights_off: false, screen_off: 15, lock: 10, sleep: 0, hibernate: 120, can_sleep: true, can_hibernate: true, sleep_note: String::new() };
+        let i = Idle { screensaver: 3, dim: 7, dim_level: 40, lights_off: false, blank: 20, screen_off: 15, lock: 10, sleep: 0, hibernate: 120, can_sleep: true, can_hibernate: true, sleep_note: String::new() };
         assert_eq!(parse_idle(&idle_text(&i)), i);
     }
 

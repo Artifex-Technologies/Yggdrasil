@@ -2332,9 +2332,10 @@ impl App {
         let mut idle = p.idle.clone();
         let mut idle_changed = false;
         ui::group(ui, pal, Some("When idle"), |ui| {
-            let rows: [(&str, &str, i64, bool); 6] = [
+            let rows: [(&str, &str, i64, bool); 7] = [
                 ("saver", "Screensaver after", p.idle.screensaver, true),
                 ("dim", "Dim the screen after", p.idle.dim, true),
+                ("black", "Black screen after", p.idle.blank, true),
                 ("off", "Turn off the screen after", p.idle.screen_off, true),
                 ("lock", "Lock the screen after", p.idle.lock, true),
                 ("sleep", "Sleep after", p.idle.sleep, p.idle.can_sleep),
@@ -2351,6 +2352,7 @@ impl App {
                                     match key {
                                         "saver" => idle.screensaver = m,
                                         "dim" => idle.dim = m,
+                                        "black" => idle.blank = m,
                                         "off" => idle.screen_off = m,
                                         "lock" => idle.lock = m,
                                         "sleep" => idle.sleep = m,
@@ -2363,7 +2365,7 @@ impl App {
                     });
                 });
             }
-            ui::row(ui, pal, false, "Brightness while dimmed", Some("The screen is dimmed by drawing over it, on every monitor. It comes back at the first key or mouse move. Nothing dims while a video plays"), |ui| {
+            ui::row(ui, pal, false, "Brightness while dimmed", Some("The screen is dimmed by drawing over it, on every monitor; Black screen draws plain black (an OLED's pixels are then off) and keeps the monitor on, so it is the gentle way to rest the screen. The mouse pointer hides with both. It all comes back at the first key or mouse move. Nothing dims while a video plays"), |ui| {
                 let mut v = idle.dim_level as f32;
                 let r = ui::slider_range(ui, pal, &mut v, 10.0..=90.0, " %");
                 // saved when the slider is let go (or a click on the track), not on every pixel of a drag
