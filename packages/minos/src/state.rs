@@ -129,6 +129,18 @@ impl State {
         }
     }
 
+    /// Drag and drop in the sidebar: the favorite at `from` goes to the gap before the one at `to` (`to` may be the length:
+    /// the end). Returns whether anything moved.
+    pub fn move_favorite(&mut self, from: usize, to: usize) -> bool {
+        if from >= self.favorites.len() || to > self.favorites.len() || to == from || to == from + 1 {
+            return false;
+        }
+        let item = self.favorites.remove(from);
+        let to = if to > from { to - 1 } else { to };
+        self.favorites.insert(to, item);
+        true
+    }
+
     pub fn toggle_tag(&mut self, p: &Path, tag: &str) {
         let v = self.tags.entry(p.to_path_buf()).or_default();
         if let Some(i) = v.iter().position(|t| t == tag) {
@@ -172,6 +184,22 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_favorite_dragged_to_a_new_place() {
+        let mut st = State::default();
+        st.favorites = ["a", "b", "c", "d"].iter().map(PathBuf::from).collect();
+        let names = |st: &State| st.favorites.iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>().join("");
+        assert!(st.move_favorite(0, 3), "a to the gap before d");
+        assert_eq!(names(&st), "bcad");
+        assert!(st.move_favorite(3, 0), "d to the top");
+        assert_eq!(names(&st), "dbca");
+        assert!(st.move_favorite(1, 4), "b to the end");
+        assert_eq!(names(&st), "dcab");
+        assert!(!st.move_favorite(2, 2) && !st.move_favorite(2, 3), "dropped where it already is");
+        assert!(!st.move_favorite(9, 0) && !st.move_favorite(0, 9));
+        assert_eq!(names(&st), "dcab");
+    }
 
     #[test]
     fn roundtrip_and_missing_fields() {

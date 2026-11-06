@@ -72,6 +72,34 @@ pub fn favorites() -> Vec<Place> {
         .collect()
 }
 
+/// The well-known folders that get their own picture in the sidebar (as Windows draws Desktop, Documents, Downloads ...).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Special {
+    Home,
+    Desktop,
+    Documents,
+    Downloads,
+    Music,
+    Pictures,
+    Videos,
+    Objects3D,
+}
+
+/// Which well-known folder `path` is, if any: the user's XDG folders, home, and a "3D Objects" folder in home.
+pub fn special(path: &Path) -> Option<Special> {
+    let known = [
+        (Special::Desktop, dirs::desktop_dir()),
+        (Special::Documents, dirs::document_dir()),
+        (Special::Downloads, dirs::download_dir()),
+        (Special::Music, dirs::audio_dir()),
+        (Special::Pictures, dirs::picture_dir()),
+        (Special::Videos, dirs::video_dir()),
+        (Special::Home, dirs::home_dir()),
+        (Special::Objects3D, dirs::home_dir().map(|h| h.join("3D Objects"))),
+    ];
+    known.into_iter().find(|(_, p)| p.as_deref() == Some(path)).map(|(s, _)| s)
+}
+
 /// Sidebar label for a path. The well-known user folders get fixed English names
 /// even when the folder on disk is localized (e.g. "Documentos"); anything else
 /// uses its own folder name.
@@ -361,6 +389,18 @@ mod tests {
         {"name":"vda2","type":"part","size":84825604096,"fstype":"btrfs","label":"Labyrinth","mountpoints":["/home","/","/var/log"]}]},
       {"name":"zram0","type":"disk","size":8000000000,"mountpoints":["[SWAP]"]},
       {"name":"sr0","type":"rom","size":1000}]}"#;
+
+    #[test]
+    fn the_well_known_folders_are_recognised() {
+        if let Some(d) = dirs::download_dir() {
+            assert_eq!(special(&d), Some(Special::Downloads));
+        }
+        if let Some(h) = dirs::home_dir() {
+            assert_eq!(special(&h), Some(Special::Home));
+            assert_eq!(special(&h.join("3D Objects")), Some(Special::Objects3D));
+            assert_eq!(special(&h.join("some project")), None);
+        }
+    }
 
     #[test]
     fn disks_list_the_device_with_its_partitions() {

@@ -57,6 +57,15 @@ fn same_drive(src: Option<&PathBuf>, dest: &Path) -> bool {
 /// Drag-and-drop payload: the files being dragged.
 struct DragPaths(Vec<PathBuf>);
 
+/// A favorite being dragged in the sidebar to a new place: its index.
+#[derive(Clone, Copy, Debug)]
+struct DragFav(usize);
+
+/// A tab being dragged: its pane and index. Let go outside the window, it opens in a new Minos window; on another tab,
+/// it moves there.
+#[derive(Clone, Copy, Debug)]
+struct DragTab(usize, usize);
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Nav {
     Up,
@@ -110,6 +119,12 @@ enum Action {
     SetColor(PathBuf, Option<[u8; 3]>),
     ToggleFav(PathBuf),
     MoveFav(PathBuf, i32),
+    /// A favorite dragged from one place in the list to the gap before another (or the end).
+    ReorderFav(usize, usize),
+    /// A tab moved to another place in its pane's tab strip (the gap before index `to`).
+    MoveTab(usize, usize, usize),
+    /// A tab dragged out of the window: it opens in a new Minos window and leaves this one.
+    DetachTab(usize, usize),
     ResetFavs,
     Move(Vec<PathBuf>, PathBuf),
     CopyPath(PathBuf),
@@ -902,8 +917,20 @@ fn tab_strip(ui: &mut egui::Ui, pane: &Pane, pi: usize, pal: &Palette, actions: 
             let galley = ui.painter().layout_no_wrap(title, FontId::proportional(13.5), pal.text);
             let pin_w = if t.tab.pinned { 14.0 } else { 0.0 };
             let w = (10.0 + 18.0 + 6.0 + pin_w + galley.size().x + 8.0 + 20.0 + 6.0).min(230.0);
-            let (rect, resp) = ui.allocate_exact_size(vec2(w, 32.0), Sense::click());
+            let (rect, resp) = ui.allocate_exact_size(vec2(w, 32.0), Sense::click_and_drag());
             let active = i == pane.active;
+            // tabs can be dragged: along the strip to a new place, or out of the window into a window of their own
+            resp.dnd_set_drag_payload(DragTab(pi, i));
+            let after = ui.input(|inp| inp.pointer.hover_pos()).is_some_and(|p| p.x > rect.center().x);
+            if resp.dnd_hover_payload::<DragTab>().is_some_and(|d| d.0 == pi && d.1 != i) {
+                let x = if after { rect.right() + 1.0 } else { rect.left() - 2.0 };
+                ui.painter().line_segment([pos2(x, rect.top() + 4.0), pos2(x, rect.bottom() - 4.0)], egui::Stroke::new(2.0, pal.accent));
+            }
+            if let Some(d) = resp.dnd_release_payload::<DragTab>() {
+                if d.0 == pi {
+                    actions.push(Action::MoveTab(pi, d.1, if after { i + 1 } else { i }));
+                }
+            }
             let fill = if active {
                 pal.tab_active
             } else if resp.hovered() {
@@ -975,6 +1002,27 @@ fn tab_strip(ui: &mut egui::Ui, pane: &Pane, pi: usize, pal: &Palette, actions: 
             actions.push(Action::NewTab(pi));
         }
     });
+    // a tab being dragged from this strip: its name follows the pointer, and let go outside the window it opens in a
+    // window of its own (as browsers do)
+    let ctx = ui.ctx().clone();
+    if let Some(d) = egui::DragAndDrop::payload::<DragTab>(&ctx).filter(|d| d.0 == pi) {
+        let window = ctx.viewport_rect();
+        let at = ctx.input(|inp| inp.pointer.latest_pos());
+        let outside = at.is_none_or(|p| !window.shrink(2.0).contains(p));
+        if let (Some(at), Some(t)) = (at, pane.tabs.get(d.1)) {
+            let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("minos-tab-drag")));
+            let text = if outside && pane.tabs.len() > 1 { format!("{}  (new window)", tab_title(&t.dir())) } else { tab_title(&t.dir()) };
+            let galley = painter.layout_no_wrap(text, FontId::proportional(13.5), pal.text);
+            let r = Rect::from_min_size(at + vec2(12.0, 8.0), galley.size() + vec2(16.0, 8.0));
+            painter.rect_filled(r, CornerRadius::same(6), pal.tab_active);
+            painter.galley(r.min + vec2(8.0, 4.0), galley, pal.text);
+            ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+        }
+        if ctx.input(|inp| inp.pointer.any_released()) && outside {
+            actions.push(Action::DetachTab(pi, d.1));
+            egui::DragAndDrop::clear_payload(&ctx);
+        }
+    }
 }
 
 fn crumbs(dir: &Path) -> Vec<(String, PathBuf)> {
@@ -1659,6 +1707,8 @@ struct App {
     focus: usize,
     st: State,
     st_path: Option<PathBuf>,
+    /// A window made from a torn-off tab: it saves favorites and settings, but leaves the main window's saved tabs alone.
+    detached: bool,
     last_saved: Instant,
     dirty: bool,
     clipboard: Option<(Vec<PathBuf>, bool)>,
@@ -1791,6 +1841,7 @@ impl App {
             focus: 0,
             st,
             st_path,
+            detached: false,
             last_saved: Instant::now(),
             dirty: false,
             clipboard: None,
@@ -2209,7 +2260,13 @@ impl App {
 
     fn save(&mut self) {
         if let Some(p) = &self.st_path {
-            if let Err(e) = self.st.save_to(p) {
+            let mut st = self.st.clone();
+            if self.detached {
+                // the tabs saved for next time stay the main window's
+                let saved = State::load_from(p);
+                (st.tabs, st.active, st.split, st.right_tabs, st.right_active) = (saved.tabs, saved.active, saved.split, saved.right_tabs, saved.right_active);
+            }
+            if let Err(e) = st.save_to(p) {
                 self.status = format!("Could not save settings: {e}");
             }
         }
@@ -2661,6 +2718,40 @@ impl App {
                         self.dirty = true;
                     }
                 }
+                Action::ReorderFav(from, to) => {
+                    if self.st.move_favorite(from, to) {
+                        self.dirty = true;
+                    }
+                }
+                Action::MoveTab(p, from, to) => {
+                    let pane = &mut self.panes[p];
+                    if from < pane.tabs.len() && to <= pane.tabs.len() && to != from && to != from + 1 {
+                        let active = pane.tabs[pane.active].dir();
+                        let t = pane.tabs.remove(from);
+                        let to = if to > from { to - 1 } else { to };
+                        pane.tabs.insert(to, t);
+                        pane.active = pane.tabs.iter().position(|t| t.dir() == active).unwrap_or(to);
+                        self.dirty = true;
+                    }
+                }
+                Action::DetachTab(p, i) => {
+                    // a new window with only that folder; the tab leaves this one (a lone tab stays: nothing to tear off)
+                    let pane = &self.panes[p];
+                    if pane.tabs.len() > 1 && i < pane.tabs.len() {
+                        let dir = pane.tabs[i].dir();
+                        let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("minos"));
+                        match std::process::Command::new(exe).arg("--window").arg(&dir).spawn() {
+                            Ok(_) => {
+                                let pinned = pane.tabs[i].tab.pinned;
+                                if pinned {
+                                    self.panes[p].tabs[i].tab.pinned = false;
+                                }
+                                queue.push_front(Action::CloseTab(p, i));
+                            }
+                            Err(e) => self.status = format!("Could not open a new window: {e}"),
+                        }
+                    }
+                }
                 Action::ResetFavs => {
                     self.st.favorites = places::favorites().into_iter().map(|p| p.path).collect();
                     self.dirty = true;
@@ -2746,8 +2837,25 @@ fn section_heading(ui: &mut egui::Ui, pal: &Palette, text: &str) {
 
 /// One row of the sidebar: icon, label, and optionally a usage bar underneath (drives).
 fn side_row(ui: &mut egui::Ui, pal: &Palette, icon: Icon, icon_color: Color32, sys: &[&str], label: &str, selected: bool, bar: Option<(f32, Color32)>) -> egui::Response {
+    side_row_with(ui, pal, icon, icon_color, sys, None, label, selected, bar, false)
+}
+
+/// A sidebar row. `special` draws a well-known folder's own picture; `drag` lets the row be dragged (favorites).
+#[allow(clippy::too_many_arguments)]
+fn side_row_with(
+    ui: &mut egui::Ui,
+    pal: &Palette,
+    icon: Icon,
+    icon_color: Color32,
+    sys: &[&str],
+    special: Option<places::Special>,
+    label: &str,
+    selected: bool,
+    bar: Option<(f32, Color32)>,
+    drag: bool,
+) -> egui::Response {
     let h = if bar.is_some() { 40.0 } else { 28.0 };
-    let (rect, r) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::click());
+    let (rect, r) = ui.allocate_exact_size(vec2(ui.available_width(), h), if drag { Sense::click_and_drag() } else { Sense::click() });
     let row = Rect::from_min_size(rect.min, vec2(rect.width(), 28.0));
     if selected {
         ui.painter().rect_filled(row, CornerRadius::same(8), pal.select);
@@ -2755,7 +2863,9 @@ fn side_row(ui: &mut egui::Ui, pal: &Palette, icon: Icon, icon_color: Color32, s
         ui.painter().rect_filled(row, CornerRadius::same(8), pal.hover);
     }
     let icon_rect = Rect::from_min_size(row.min + vec2(8.0, 4.0), vec2(20.0, 20.0));
-    if sys.is_empty() || !sysicon::paint(ui.painter(), icon_rect, sys) {
+    if let Some(sp) = special {
+        icons::paint_special(ui.painter(), icon_rect, sp);
+    } else if sys.is_empty() || !sysicon::paint(ui.painter(), icon_rect, sys) {
         icons::paint(ui.painter(), Rect::from_min_size(row.min + vec2(8.0, 5.0), vec2(18.0, 18.0)), icon, icon_color);
     }
     ui.painter().with_clip_rect(row.shrink2(vec2(4.0, 0.0))).text(pos2(row.left() + 34.0, row.center().y), Align2::LEFT_CENTER, label, FontId::proportional(13.5), pal.text);
@@ -2771,7 +2881,8 @@ fn side_row(ui: &mut egui::Ui, pal: &Palette, icon: Icon, icon_color: Color32, s
 
 impl App {
     #[allow(clippy::too_many_arguments)]
-    fn nav_row(&self, ui: &mut egui::Ui, pal: &Palette, icon: Icon, icon_color: Color32, label: &str, path: &Path, bar: Option<(f32, Color32)>, fav: bool, actions: &mut Vec<Action>) {
+    /// `fav`: the row is favorite number `fav` (drawn with its folder's own picture, draggable to a new place).
+    fn nav_row(&self, ui: &mut egui::Ui, pal: &Palette, icon: Icon, icon_color: Color32, label: &str, path: &Path, bar: Option<(f32, Color32)>, fav: Option<usize>, actions: &mut Vec<Action>) {
         let selected = {
             let p = &self.panes[self.focus];
             p.tabs[p.active].dir() == path
@@ -2783,9 +2894,23 @@ impl App {
             Icon::Folder if icon_color == pal.folder => sysicon::folder_names(&name),
             _ => vec![],
         };
-        let r = side_row(ui, pal, icon, icon_color, &sys, label, selected, bar);
+        // a well-known folder (Desktop, Documents, ...) has its own picture, unless it was given a colour
+        let special = fav.and_then(|_| places::special(path)).filter(|_| icon_color == pal.folder);
+        let r = side_row_with(ui, pal, icon, icon_color, &sys, special, label, selected, bar, fav.is_some());
         if r.clicked() {
             actions.push(Action::Go(self.focus, path.to_path_buf()));
+        }
+        // dragging a favorite to a new place: a line shows the gap it would go into
+        if let Some(i) = fav {
+            r.dnd_set_drag_payload(DragFav(i));
+            let after = |r: &egui::Response| ui.input(|inp| inp.pointer.hover_pos()).is_some_and(|p| p.y > r.rect.center().y);
+            if r.dnd_hover_payload::<DragFav>().is_some() {
+                let y = if after(&r) { r.rect.bottom() } else { r.rect.top() };
+                ui.painter().line_segment([pos2(r.rect.left() + 6.0, y), pos2(r.rect.right() - 6.0, y)], egui::Stroke::new(2.0, pal.accent));
+            }
+            if let Some(d) = r.dnd_release_payload::<DragFav>() {
+                actions.push(Action::ReorderFav(d.0, if after(&r) { i + 1 } else { i }));
+            }
         }
         if r.middle_clicked() {
             actions.push(Action::OpenTab(self.focus, path.to_path_buf()));
@@ -2795,7 +2920,7 @@ impl App {
                 actions.push(Action::Move(d.0.clone(), path.to_path_buf()));
             }
         }
-        if fav {
+        if fav.is_some() {
             r.context_menu(|ui| {
                 if ui.button("Move up").clicked() {
                     actions.push(Action::MoveFav(path.to_path_buf(), -1));
@@ -2917,15 +3042,28 @@ impl App {
     fn sidebar(&self, ui: &mut egui::Ui, pal: &Palette, actions: &mut Vec<Action>) {
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             section_heading(ui, pal, "Places");
-            self.nav_row(ui, pal, Icon::Computer, pal.drive, &places::pc_name(), &places::this_pc(), None, false, actions);
+            self.nav_row(ui, pal, Icon::Computer, pal.drive, &places::pc_name(), &places::this_pc(), None, None, actions);
             if let Some(home) = dirs::home_dir() {
-                self.nav_row(ui, pal, Icon::Home, pal.drive, "My User Home", &home, None, false, actions);
+                self.nav_row(ui, pal, Icon::Home, pal.drive, "My User Home", &home, None, None, actions);
             }
 
             section_heading(ui, pal, "Favorites");
-            for path in &self.st.favorites {
+            for (i, path) in self.st.favorites.iter().enumerate() {
                 let tint = self.st.color_for(path).map(rgb).unwrap_or(pal.folder);
-                self.nav_row(ui, pal, Icon::Folder, tint, &places::label_for(path), path, None, true, actions);
+                self.nav_row(ui, pal, Icon::Folder, tint, &places::label_for(path), path, None, Some(i), actions);
+            }
+            // the favorite being dragged follows the pointer
+            if let (Some(d), Some(at)) = (egui::DragAndDrop::payload::<DragFav>(ui.ctx()), ui.ctx().pointer_interact_pos()) {
+                if let Some(path) = self.st.favorites.get(d.0) {
+                    let layer = egui::LayerId::new(egui::Order::Tooltip, egui::Id::new("minos-fav-drag"));
+                    let painter = ui.ctx().layer_painter(layer);
+                    let text = places::label_for(path);
+                    let galley = painter.layout_no_wrap(text, FontId::proportional(13.5), pal.text);
+                    let r = Rect::from_min_size(at + vec2(12.0, -10.0), galley.size() + vec2(16.0, 8.0));
+                    painter.rect_filled(r, CornerRadius::same(6), pal.tab_active);
+                    painter.galley(r.min + vec2(8.0, 4.0), galley, pal.text);
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                }
             }
             if ui.small_button("Reset favorites").clicked() {
                 actions.push(Action::ResetFavs);
@@ -2935,7 +3073,7 @@ impl App {
             if self.disks.is_empty() {
                 for d in &self.drives {
                     let frac = listing::used_fraction(d.total, d.free);
-                    self.nav_row(ui, pal, Icon::Drive, pal.drive, &d.label, &d.path, Some((frac, theme::usage_color(pal, frac))), false, actions);
+                    self.nav_row(ui, pal, Icon::Drive, pal.drive, &d.label, &d.path, Some((frac, theme::usage_color(pal, frac))), None, actions);
                 }
             }
             for d in self.disks.iter().filter(|d| !d.removable) {
@@ -2953,7 +3091,7 @@ impl App {
             }
             if let Some(c) = &self.cloud {
                 match c.state {
-                    CloudState::Ready => self.nav_row(ui, pal, Icon::Cloud, pal.dim, &c.label, &c.path, None, false, actions),
+                    CloudState::Ready => self.nav_row(ui, pal, Icon::Cloud, pal.dim, &c.label, &c.path, None, None, actions),
                     CloudState::NotMounted => {
                         let (rect, r) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::click());
                         if r.hovered() {
@@ -3659,6 +3797,12 @@ fn since_start(what: &str) {
     }
 }
 
+/// `--window FOLDER`: the folder of a tab dragged out of another Minos window.
+fn window_arg(argv: &[String]) -> Option<PathBuf> {
+    let i = argv.iter().position(|a| a == "--window")?;
+    argv.get(i + 1).map(PathBuf::from).filter(|p| p.is_dir())
+}
+
 fn main() -> eframe::Result {
     STARTED.get_or_init(Instant::now);
     let argv: Vec<String> = std::env::args().skip(1).collect();
@@ -3703,6 +3847,13 @@ fn main() -> eframe::Result {
                 app.st_path = None;
                 PICK_GLOBS.lock().unwrap().clear();
                 app.picker = Some(pk);
+            } else if let Some(p) = window_arg(&argv) {
+                // a tab torn off another window: only that folder, and this window does not keep its tabs for next time
+                let (sort, hidden) = (app.panes[0].sort, app.st.show_hidden);
+                app.panes[0].tabs = vec![TabView::new(p, false, sort, hidden)];
+                app.panes[0].active = 0;
+                app.st.split = false;
+                app.detached = true;
             } else if let Some(p) = std::env::args().nth(1).filter(|a| !a.starts_with("--")).map(|a| start_path(&a)).filter(|p| p.is_dir()) {
                 let (sort, hidden) = (app.panes[0].sort, app.st.show_hidden);
                 app.panes[0].tabs.push(TabView::new(p, false, sort, hidden));

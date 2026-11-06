@@ -238,3 +238,75 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
         }
     }
 }
+
+/// The well-known folders' pictures, in full colour (our own drawings, in the manner of Windows Explorer's): a monitor for
+/// Desktop, a page for Documents, an arrow into a tray for Downloads, a note for Music, a landscape for Pictures, a film strip
+/// for Videos, a house for Home, a cube for 3D Objects.
+pub fn paint_special(p: &Painter, rect: Rect, which: minos_core::places::Special) {
+    use minos_core::places::Special;
+    let f = Frame::new(rect);
+    let poly = |pts: &[(f32, f32)], c: Color32| {
+        p.add(Shape::convex_polygon(pts.iter().map(|&(x, y)| f.p(x, y)).collect(), c, Stroke::NONE));
+    };
+    let blue = Color32::from_rgb(52, 132, 240);
+    let deep = Color32::from_rgb(28, 92, 196);
+    let rim = Stroke::new((f.size * 0.045).max(1.0), Color32::from_rgb(70, 78, 92));
+    match which {
+        Special::Desktop => {
+            p.rect_filled(f.rect(0.06, 0.14, 0.94, 0.7), CornerRadius::same(2), Color32::from_rgb(52, 60, 74));
+            p.rect_filled(f.rect(0.11, 0.19, 0.89, 0.65), CornerRadius::same(1), blue);
+            p.rect_filled(f.rect(0.11, 0.42, 0.89, 0.65), CornerRadius::same(1), deep);
+            p.rect_filled(f.rect(0.43, 0.7, 0.57, 0.8), CornerRadius::ZERO, Color32::from_rgb(150, 156, 168));
+            p.rect_filled(f.rect(0.28, 0.8, 0.72, 0.87), CornerRadius::same(1), Color32::from_rgb(150, 156, 168));
+        }
+        Special::Documents => {
+            poly(&[(0.2, 0.06), (0.62, 0.06), (0.82, 0.26), (0.82, 0.94), (0.2, 0.94)], Color32::from_rgb(246, 248, 251));
+            p.add(Shape::closed_line([(0.2, 0.06), (0.62, 0.06), (0.82, 0.26), (0.82, 0.94), (0.2, 0.94)].iter().map(|&(x, y)| f.p(x, y)).collect(), rim));
+            poly(&[(0.62, 0.06), (0.82, 0.26), (0.62, 0.26)], Color32::from_rgb(200, 206, 216));
+            for (y, w) in [(0.42, 0.7), (0.54, 0.7), (0.66, 0.7), (0.78, 0.56)] {
+                p.line_segment([f.p(0.3, y), f.p(w, y)], Stroke::new((f.size * 0.05).max(1.0), blue));
+            }
+        }
+        Special::Downloads => {
+            p.rect_filled(f.rect(0.4, 0.08, 0.6, 0.5), CornerRadius::ZERO, blue);
+            poly(&[(0.16, 0.44), (0.84, 0.44), (0.5, 0.8)], blue);
+            p.rect_filled(f.rect(0.12, 0.85, 0.88, 0.93), CornerRadius::same(1), deep);
+        }
+        Special::Music => {
+            p.circle_filled(f.p(0.3, 0.76), f.size * 0.14, blue);
+            p.circle_filled(f.p(0.7, 0.66), f.size * 0.14, blue);
+            p.rect_filled(f.rect(0.37, 0.22, 0.44, 0.76), CornerRadius::ZERO, blue);
+            p.rect_filled(f.rect(0.77, 0.12, 0.84, 0.66), CornerRadius::ZERO, blue);
+            poly(&[(0.37, 0.22), (0.84, 0.1), (0.84, 0.24), (0.37, 0.36)], deep);
+        }
+        Special::Pictures => {
+            p.rect_filled(f.rect(0.06, 0.14, 0.94, 0.86), CornerRadius::same(2), Color32::from_rgb(140, 190, 246));
+            p.circle_filled(f.p(0.72, 0.34), f.size * 0.08, Color32::from_rgb(250, 204, 64));
+            poly(&[(0.06, 0.86), (0.38, 0.44), (0.7, 0.86)], Color32::from_rgb(64, 168, 84));
+            poly(&[(0.44, 0.86), (0.68, 0.56), (0.94, 0.86)], Color32::from_rgb(38, 128, 62));
+            p.rect_stroke(f.rect(0.06, 0.14, 0.94, 0.86), CornerRadius::same(2), rim, StrokeKind::Inside);
+        }
+        Special::Videos => {
+            p.rect_filled(f.rect(0.12, 0.08, 0.88, 0.92), CornerRadius::same(2), Color32::from_rgb(52, 56, 66));
+            for k in 0..5 {
+                let y = 0.13 + k as f32 * 0.16;
+                for x in [0.16, 0.77] {
+                    p.rect_filled(f.rect(x, y, x + 0.07, y + 0.08), CornerRadius::same(1), Color32::from_rgb(230, 232, 238));
+                }
+            }
+            p.rect_filled(f.rect(0.29, 0.14, 0.71, 0.47), CornerRadius::same(1), blue);
+            p.rect_filled(f.rect(0.29, 0.53, 0.71, 0.86), CornerRadius::same(1), deep);
+        }
+        Special::Home => {
+            p.rect_filled(f.rect(0.2, 0.46, 0.8, 0.9), CornerRadius::ZERO, Color32::from_rgb(240, 242, 246));
+            p.rect_stroke(f.rect(0.2, 0.46, 0.8, 0.9), CornerRadius::ZERO, rim, StrokeKind::Inside);
+            poly(&[(0.06, 0.52), (0.5, 0.1), (0.94, 0.52)], blue);
+            p.rect_filled(f.rect(0.43, 0.64, 0.57, 0.9), CornerRadius::ZERO, Color32::from_rgb(150, 100, 60));
+        }
+        Special::Objects3D => {
+            poly(&[(0.5, 0.1), (0.88, 0.3), (0.5, 0.5), (0.12, 0.3)], Color32::from_rgb(150, 200, 250));
+            poly(&[(0.12, 0.3), (0.5, 0.5), (0.5, 0.92), (0.12, 0.72)], blue);
+            poly(&[(0.5, 0.5), (0.88, 0.3), (0.88, 0.72), (0.5, 0.92)], deep);
+        }
+    }
+}
