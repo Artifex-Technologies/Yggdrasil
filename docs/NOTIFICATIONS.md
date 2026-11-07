@@ -53,7 +53,7 @@ Only one program can own the name `org.freedesktop.Notifications`. What decides 
 
 ## Quiet hours and pop-ups by app (2026-11-07)
 
-Settings > Apps > Notifications: **Quiet hours** (a daily stretch, e.g. 22:00 to 07:00, with no pop-ups, as Do not disturb) and
+Settings > Appearance > Notifications: **Quiet hours** (a daily stretch, e.g. 22:00 to 07:00, with no pop-ups, as Do not disturb) and
 **Pop-ups by app** (a switch for every app that has sent a notification; a muted app's notifications are only kept in the
 Notification Center). A critical notification always pops up, so muting an app never hides a security alarm or a low battery.
 The rules are `~/.config/yggdrasil/notifications.conf` (`yggdrasil_conf::notifyrules`), read by the panel at each notification;

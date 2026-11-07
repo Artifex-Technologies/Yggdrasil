@@ -2,7 +2,7 @@
 //! muted. Everything is still kept in the Notification Center, and a critical notification (a security alarm, a low battery)
 //! always pops up: muting an app can never hide one.
 //!
-//! The file is `~/.config/yggdrasil/notifications.conf` (Settings > Apps > Notifications writes it):
+//! The file is `~/.config/yggdrasil/notifications.conf` (Settings > Appearance > Notifications writes it):
 //!
 //! ```text
 //! quiet = on
@@ -74,7 +74,7 @@ impl NotifyRules {
 
     pub fn to_text(&self) -> String {
         format!(
-            "# Which notifications pop up. Edited by Settings (Apps > Notifications).\nquiet = {}\nquiet_from = {}\nquiet_to = {}\nmuted = {}\n",
+            "# Which notifications pop up. Edited by Settings (Appearance > Notifications).\nquiet = {}\nquiet_from = {}\nquiet_to = {}\nmuted = {}\n",
             if self.quiet { "on" } else { "off" },
             show_time(self.quiet_from),
             show_time(self.quiet_to),
