@@ -78,7 +78,7 @@ These use KDE's libraries (KDE Frameworks) without being the desktop. The librar
 
 | Package | Uses | Choice for the owner |
 | --- | --- | --- |
-| `kdenlive` (video editor), `ghostwriter` (Markdown) | KDE Frameworks | keep as apps (Agora), or pick non-KDE ones (e.g. Shotcut/Pitivi; Apostrophe). **Now (2026-11-04):** ghostwriter is installed, kdenlive is not. |
+| `kdenlive` (video editor), `ghostwriter` (Markdown) | KDE Frameworks | keep as apps (Agora), or pick non-KDE ones (e.g. Shotcut/Pitivi; Apostrophe). **Now (2026-11-04):** ghostwriter is installed, kdenlive is not. **Decided 2026-11-07:** ghostwriter stays (in Agora, Notes & Writing); Kdenlive is out of Agora. |
 | `calamares` (Labyrinth's installer), `kpmcore` | KDE Frameworks | Labyrinth's choice: keep, or a Rust installer of its own. **Now (2026-11-04):** `yggdrasil-installer` exists; calamares and kpmcore are still installed on the owner's PC. **2026-11-07:** Calamares is removed from Labyrinth's ISO; `yggdrasil-installer` is its installer. |
 | `kaccounts-integration`, `kirigami-addons`, `kquickimageeditor` | pulled in by the above | go with them. **Now (2026-11-04):** not installed. |
 
