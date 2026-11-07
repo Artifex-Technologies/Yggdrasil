@@ -523,6 +523,18 @@ pub fn from_alert(v: &serde_json::Value, min: &str, id: u32) -> Option<Notif> {
     if severity_rank(sev) < severity_rank(min) {
         return None;
     }
+    // the alert's fields: at the top of the monitor's alerts, or under "event" in older ones
+    let field = |k: &str| {
+        v.get("fields")
+            .or_else(|| v.get("event").and_then(|e| e.get("Fields").or_else(|| e.get("fields"))))
+            .and_then(|f| f.get(k))
+            .and_then(|x| x.as_str())
+    };
+    // Sarina's evals plant hostile files and fake secrets on purpose: the monitor still catches and keeps those alerts (the evals
+    // score them) but marks them practice, and they are not popped up as if they were real
+    if field("practice") == Some("1") {
+        return None;
+    }
     let detector = v.get("detector_id").and_then(|x| x.as_str()).unwrap_or("alert");
     let summary = clean(v.get("summary").and_then(|x| x.as_str()).unwrap_or(""));
     // the monitor's own plain-language next step, when it gives one, under the summary
@@ -532,11 +544,7 @@ pub fn from_alert(v: &serde_json::Value, min: &str, id: u32) -> Option<Notif> {
         None => summary,
     };
     // a blocked app that connected has a page of its own in Settings
-    let link = v
-        .get("event")
-        .and_then(|e| e.get("Fields").or_else(|| e.get("fields")))
-        .and_then(|f| f.get("app"))
-        .and_then(|a| a.as_str())
+    let link = field("app")
         .filter(|a| !a.is_empty() && detector == "connection-watch")
         .map(|a| format!("apps:{a}"))
         .unwrap_or_else(|| "security:monitor".into());
@@ -1027,6 +1035,12 @@ mod tests {
         let explained = serde_json::json!({"severity":"warning","detector_id":"inbound","summary":"blocked","explain":{"what":"w","serious":"s","done":"d","do":"Nothing to do"}});
         assert_eq!(from_alert(&explained, "warning", 2).unwrap().body, "blocked\nWhat to do: Nothing to do", "the monitor's next step comes under the summary");
         assert_eq!(from_alert(&info, "info", 1).unwrap().link, "security:monitor", "other alerts open the monitor's page");
+        // the monitor's alerts carry their fields at the top
+        let top = serde_json::json!({"detector_id": "connection-watch", "severity": "warning", "summary": "s", "fields": {"app": "y"}});
+        assert_eq!(from_alert(&top, "warning", 3).unwrap().link, "apps:y");
+        // Sarina's evals: caught and kept by the monitor, not popped up
+        let practice = serde_json::json!({"detector_id": "injection-phrase", "severity": "critical", "summary": "s", "fields": {"practice": "1"}});
+        assert!(from_alert(&practice, "warning", 4).is_none());
     }
 }
 
