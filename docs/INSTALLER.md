@@ -115,6 +115,9 @@ Windows-like layout (its EFI partition kept, a new 40 GB / in the free space, en
 GRUB went into EFI/Labyrinth without a fallback copy, and the system started to the login screen after one password in GRUB.
 
 Known limit: GRUB reads the encryption password with a US keyboard layout. With another layout (AZERTY, QWERTZ, Dvorak ...)
-the same keys give other characters there; to be solved (a GRUB keymap, or a password typed the same way on both).
+the same keys give other characters there. Since 2026-11-07 the disk page says so in amber under the password fields when the
+chosen keyboard is not plain US. A GRUB keymap (`grub-kbdcomp`, with `ckbcomp` from CachyOS's repository) only works with GRUB's
+`at_keyboard` input, which on many UEFI computers cannot read a USB keyboard at all: that would lock the person out, so it waits
+for a test on real hardware.
 
 Calamares was removed from Labyrinth's ISO on 2026-11-07; this installer is the only one on the medium.

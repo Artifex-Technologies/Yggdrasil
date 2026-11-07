@@ -203,6 +203,20 @@ fn locales() -> Vec<String> {
     out
 }
 
+/// The warning for an encrypted disk with a keyboard that is not plain US: the boot menu (GRUB) reads the password with the US
+/// layout, so letters that sit elsewhere on this keyboard come out differently there. None for US.
+fn boot_layout_note(layout: &str, variant: &str) -> Option<String> {
+    if layout == "us" && variant.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "At start-up this password is typed before the system knows your keyboard: it is read as if the keyboard were US English, \
+         not {}. Choose a password of letters and digits that sit in the same places on both (or switch your keyboard to US while you type it), \
+         or it will not open the disk.",
+        if variant.is_empty() { layout.to_string() } else { format!("{layout} ({variant})") }
+    ))
+}
+
 fn keymaps() -> Vec<String> {
     let mut v = run_lines("localectl", &["list-x11-keymap-layouts"]);
     if v.is_empty() {
@@ -939,6 +953,10 @@ impl eframe::App for App {
                             ui.add_space(6.0);
                             field(ui, &mut self.crypt_pw, "Encryption password (at least 8 characters)", true);
                             field(ui, &mut self.crypt_pw2, "The same again", true);
+                            if let Some(note) = boot_layout_note(&self.keymap, &self.keymap_variant) {
+                                ui.add_space(4.0);
+                                ui.label(RichText::new(note).color(pal.amber));
+                            }
                         }
                     }
                     Page::Account => {
@@ -1266,6 +1284,9 @@ mod tests {
     #[test]
     fn reports_are_read() {
         assert_eq!(parse_report("STEP 3 9 Encrypting"), Some(Report::Step(3, 9, "Encrypting".into())));
+        assert!(boot_layout_note("us", "").is_none());
+        assert!(boot_layout_note("fr", "").unwrap().contains("not fr"));
+        assert!(boot_layout_note("us", "dvorak").unwrap().contains("us (dvorak)"));
         assert_eq!(parse_report("INFO copied 40%"), Some(Report::Info("copied 40%".into())));
         assert_eq!(parse_report("ERROR the disk is busy"), Some(Report::Error("the disk is busy".into())));
         assert_eq!(parse_report("DONE"), Some(Report::Done));
