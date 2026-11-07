@@ -2,6 +2,14 @@
 
 Findings from 2026-10-17 (read from the marketplace's public repository `omacom/omarchy-plugin-marketplace`; nothing was installed or run).
 
+**What was done instead (2026-10 and 2026-11).** The sandboxed QML host below (stage 1) was never built. The plugins I picked were
+rewritten in Rust as native Yggdrasil apps, following each plugin's design, and Agora lists them in the system's own catalog:
+under Plugins the timer (`packages/timer`), health reminders (`packages/health`), browser warm-up (`packages/browser-warm`),
+the agent-usage add-on (`packages/agent-usage`), Proton Authenticator codes (`packages/authenticator`) and the controllers add-on
+(`packages/controllers`); under Play 2048 (`packages/game-2048`) and Sudoku (`packages/sudoku`). The clipboard (snipboard,
+`packages/clipboard`) is part of the desktop. Each one's licence and author are in THIRD_PARTY_NOTICES.md. The Omarchy registry
+itself can still be added in Agora to browse; nothing from it is installed. The rest of this page is the original study.
+
 ## What the marketplace is
 
 - plugins.omarchy.org / omarchyplugins.com is a **catalog**: a static site plus `registry.json` (about 11 MB, 5,603 listings on this date). Each entry points at a public GitHub repository and a commit that was checked when it was listed.
@@ -21,7 +29,7 @@ The plugins are not programs we can just run: they are QML for a shell we do not
 ## Proposed stages (each useful on its own)
 
 0. **A store page** in Settings (next to Optional software): browse and search the catalog from `registry.json` (fetched on request, cached), filter by category and tag, show the verification state and the flagged capabilities in plain words, and hide or block the risky ones. No Omarchy code runs yet.
-1. **Quattro host, sandboxed:** a vendored Omarchy shell tree plus Quickshell in a bubblewrap sandbox (`labyrinth-plugin-host`), loading one plugin per sandbox, pinned to a commit; start with games and panels (214 games). Per-plugin permissions shown in Settings > Apps like any app.
+1. **Quattro host, sandboxed** (not built; the plugins were rewritten in Rust instead, see the top): a vendored Omarchy shell tree plus Quickshell in a bubblewrap sandbox (`labyrinth-plugin-host`), loading one plugin per sandbox, pinned to a commit; start with games and panels (214 games). Per-plugin permissions shown in Settings > Apps like any app.
 2. **Plugin lock designs for our locker**, as a separate piece of work (a Labyrinth design format and a few designs ported by hand), or the real plugins once a compositor offers session-lock.
 
 CachyOS ships no app store of its own that I know of (it has a "Hello" welcome app with tweaks and a package list); Manjaro's is Pamac, a package-manager front end, which is a different thing from a plugin market. Labyrinth already has `labyrinth-apps` (optional software); stage 0 would be the plugin-sized version of it.

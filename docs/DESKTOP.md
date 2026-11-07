@@ -127,8 +127,8 @@ All under `profile/airootfs/home/live/.config/` (copied into new users' `/etc/sk
 
 | Piece | File | State |
 | --- | --- | --- |
-| Session, keybindings (Omarchy's), NVIDIA env | `hypr/hyprland.lua`, `hypr/bindings/tiling.lua` | Adapted from Chymaera's boot-tested Lua config. **Lua not parsed or run for Labyrinth** (no Lua on the dev machine) |
-| Look: rounding 12, shadows, blur, gaps 6/12 | `hypr/looks/labyrinth.lua` | Same constructs as Chymaera's tested look; values are a first guess |
+| Session, keybindings (Omarchy's), NVIDIA env | `hypr/hyprland.lua`, `hypr/bindings/tiling.lua` | Adapted from Chymaera's (now Niflheim OS's) boot-tested Lua config. **Lua not parsed or run for Labyrinth** (no Lua on the dev machine) |
+| Look: rounding 12, shadows, blur, gaps 6/12 | `hypr/looks/labyrinth.lua` | Same constructs as Chymaera's (now Niflheim's) tested look; values are a first guess |
 | Top bar | `waybar/config.jsonc`, `style.css` | JSON parses, every listed module is defined; **never rendered** |
 | Dock | `nwg-dock-hyprland/style.css`, started by `labyrinth-shell` | **Never rendered** |
 | Spotify controls | bar modules + `playerctl -p spotify` | **Never run.** Needs Spotify running |
@@ -198,7 +198,7 @@ write-once-and-reload. **Not tested, because it needs the real machine:**
 ## Optional software
 
 Spotify, Obsidian, Steam, Proton Drive, Proton Pass and the rest are optional
-*components*, not part of every install; see [COMPONENTS.md](COMPONENTS.md).
+*components*, not part of every install; see Labyrinth's [COMPONENTS.md](https://github.com/Artifex-Technologies/Labyrinth_OS/blob/main/docs/COMPONENTS.md).
 
 ## Quick settings and hibernate
 
@@ -217,13 +217,13 @@ resume configuration. That is a decision for you; see the end of this file.
 - **Left buttons for non-GTK windows.** Hyprland draws no title bars. Qt, Electron
   and Firefox windows follow their own settings. The `hyprbars` plugin can draw
   macOS-style buttons on every window, but I do not know its Lua configuration syntax
-  for Hyprland 0.56 and did not guess.
+  for Hyprland 0.57 and did not guess.
 - **Dock is not COSMIC's dock.** It copies the look (translucent rounded shelf), not
   its behavior (applet-based, panel integration).
 - **The bar has no popups** (no slider panel for volume or Wi-Fi); clicking opens the
   matching app (pavucontrol, nm-connection-editor, blueman). A Quickshell shell like
-  Omarchy's would add them; it needs the Omarchy repo's packages, which Chymaera also
-  has not adopted.
+  Omarchy's would add them; it needs the Omarchy repo's packages, which Niflheim OS (formerly
+  Chymaera OS) also has not adopted.
 - **Battery and brightness** are left out (desktop PC).
 - **Weather privacy:** Open-Meteo and aviationweather.gov receive the coordinates of the
   place you set (never guessed from your IP). See WEATHER.md.
@@ -233,7 +233,7 @@ resume configuration. That is a decision for you; see the end of this file.
   package database (84 of 97 found). Not found there and so unverified: the
   `linux-cachyos*` kernels, `proton-cachyos`, `protonup-qt` (likely AUR or a CachyOS
   repo), and our two local packages (`calamares`, `proton-pass`).
-- Nothing here has run on a real GPU. Chymaera's equivalent was boot-tested only with
+- Nothing here has run on a real GPU. Chymaera's (now Niflheim OS's) equivalent was boot-tested only with
   software rendering in a VM.
 
 ## Seeing the real desktop in a VM

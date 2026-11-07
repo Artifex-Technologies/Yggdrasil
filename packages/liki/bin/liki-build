@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build Liki, the icon pack of Yggdrasil (shared by Labyrinth and Chymaera): app logos for the apps installed here.
+"""Build Liki, the icon pack of Yggdrasil (shared by Labyrinth and Niflheim): app logos for the apps installed here.
 
   liki-build [--shape SHAPE] [--style STYLE] [--name NAME]
 
