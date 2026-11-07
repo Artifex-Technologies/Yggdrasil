@@ -25,6 +25,7 @@ mod games;
 mod security;
 mod workspaces;
 mod zones_ui;
+mod netconf;
 mod sys;
 mod ui;
 mod users;
@@ -203,8 +204,11 @@ struct App {
     loading: Option<Page>,
     status: String,
     wifi_password: Option<(String, String)>,
-    /// Network > Private addresses: the address being typed for a network (by its profile's id).
-    mac_typed: std::collections::HashMap<String, String>,
+    /// Wi-Fi & Network: the saved network whose own page is open (its profile's id), what is being changed on it, and
+    /// whether "Forget" was asked.
+    net_open: Option<String>,
+    net_draft: Option<netconf::Profile>,
+    net_forget: bool,
     // Security page
     sec_filter: usize,
     /// The alert whose explanation is open (its time and detector).
@@ -316,7 +320,9 @@ impl App {
             loading: None,
             status: String::new(),
             wifi_password: None,
-            mac_typed: Default::default(),
+            net_open: None,
+            net_draft: None,
+            net_forget: false,
             sec_filter: 1,
             sec_open: None,
             demo_scroll: if start_sub().starts_with("distress-demo-") { 8 } else { 0 },
@@ -712,6 +718,10 @@ impl eframe::App for App {
                             self.power_cpu = false;
                             self.power_fans = false;
                         }
+                        if resp.clicked() && p == Page::Network {
+                            self.net_open = None;
+                            self.net_draft = None;
+                        }
                         if resp.clicked() && !sel {
                             self.page = p;
                             self.status.clear();
@@ -743,10 +753,7 @@ impl eframe::App for App {
                     }
                     match self.page {
                         Page::About => self.page_about(ui, &pal, &ctx),
-                        Page::Network => {
-                            self.page_network(ui, &pal, &ctx);
-                            self.mac_section(ui, &pal, &ctx);
-                        }
+                        Page::Network => self.page_network(ui, &pal, &ctx),
                         Page::Bluetooth => self.page_bluetooth(ui, &pal, &ctx),
                         Page::Displays => self.page_displays(ui, &pal, &ctx),
                         Page::Sound => self.page_sound(ui, &pal, &ctx),
@@ -1144,13 +1151,26 @@ impl App {
 
     fn page_network(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         let Some(n) = self.data.network.clone() else { return loading(ui) };
-        let wired: Vec<&sys::NetDevice> = n.devices.iter().filter(|d| d.kind == "ethernet").collect();
+        if let Some(uuid) = self.net_open.clone() {
+            return self.network_page(ui, pal, ctx, &n, &uuid);
+        }
+        let mut open: Option<String> = None;
+        // Wired shows only while a cable is plugged in
+        let wired: Vec<&sys::NetDevice> = n.devices.iter().filter(|d| d.kind == "ethernet" && sys::cable_in(&d.state)).collect();
         if !wired.is_empty() {
             ui::group(ui, pal, Some("Wired"), |ui| {
                 for (i, d) in wired.iter().enumerate() {
                     let on = d.state.starts_with("connected");
-                    let sub = if on { format!("Connected · {}", d.connection) } else { "Cable unplugged or off".into() };
-                    ui::row(ui, pal, i == 0, &format!("Ethernet ({})", d.device), Some(&sub), |_| {});
+                    let sub = if on { "Connected".to_string() } else { "Cable plugged in, not connected".into() };
+                    let title = format!("Ethernet ({})", d.device);
+                    match n.saved.iter().find(|p| !p.wifi && p.name == d.connection) {
+                        Some(p) => {
+                            if ui::nav_row(ui, pal, i == 0, &title, Some(&sub), |_| {}) {
+                                open = Some(p.uuid.clone());
+                            }
+                        }
+                        None => ui::row(ui, pal, i == 0, &title, Some(&sub), |_| {}),
+                    }
                 }
             });
         }
@@ -1176,22 +1196,32 @@ impl App {
                     ui::row(ui, pal, true, "No networks found", None, |_| {});
                 }
                 for (i, w) in n.networks.iter().enumerate() {
-                    let sub = format!("{}{}", if w.secured { "Secured" } else { "Open" }, if w.in_use { " · Connected" } else { "" });
-                    ui::row(ui, pal, i == 0, &w.ssid, Some(&sub), |ui| {
+                    let saved = n.saved.iter().find(|p| p.wifi && p.ssid == w.ssid);
+                    let sub = format!("{}{}", if w.secured { "Secured" } else { "Open" }, if w.in_use { " · Connected" } else if saved.is_some() { " · Saved" } else { "" });
+                    let control = |ui: &mut egui::Ui| {
                         if w.in_use {
                             if ui::quiet(ui, pal, "Disconnect").clicked() {
                                 disconnect = true;
                             }
                         } else if ui::action(ui, pal, "Connect").clicked() {
-                            connect = Some((w.ssid.clone(), w.secured));
+                            connect = Some((w.ssid.clone(), w.secured && saved.is_none()));
                         }
                         ui.add_space(8.0);
                         ui::signal_bars(ui, pal, w.signal);
-                    });
+                    };
+                    // a saved network's name opens its own page (address, IP, DNS, proxy)
+                    match saved {
+                        Some(p) => {
+                            if ui::link_row(ui, pal, i == 0, &w.ssid, Some(&sub), control) {
+                                open = Some(p.uuid.clone());
+                            }
+                        }
+                        None => ui::row(ui, pal, i == 0, &w.ssid, Some(&sub), control),
+                    }
                 }
             });
-            if let Some((ssid, secured)) = connect {
-                if secured {
+            if let Some((ssid, ask)) = connect {
+                if ask {
                     self.wifi_password = Some((ssid, String::new()));
                 } else {
                     self.change(ctx, move || sys::act("nmcli", &["device", "wifi", "connect", &ssid]));
@@ -1210,67 +1240,227 @@ impl App {
                 });
             }
         }
+        // saved Wi-Fi networks not in range now: their pages too (to change or forget them)
+        let away: Vec<&netconf::Profile> = n.saved.iter().filter(|p| p.wifi && !n.networks.iter().any(|w| w.ssid == p.ssid)).collect();
+        if !away.is_empty() {
+            ui.add_space(8.0);
+            ui::group(ui, pal, Some("Known networks"), |ui| {
+                for (i, p) in away.iter().enumerate() {
+                    let title = if p.ssid.is_empty() { &p.name } else { &p.ssid };
+                    if ui::nav_row(ui, pal, i == 0, title, Some("Not in range"), |_| {}) {
+                        open = Some(p.uuid.clone());
+                    }
+                }
+            });
+        }
+        if let Some(u) = open {
+            self.net_open = Some(u);
+            self.net_draft = None;
+            self.net_forget = false;
+            self.status.clear();
+        }
     }
 
-    /// Network > Private addresses: per saved network, which hardware (MAC) address it sees, as on phones. Private (a random one
-    /// for that network, the same every time), a new random one each time, the real one, or one typed in.
-    fn mac_section(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
-        let Some(n) = self.data.network.clone() else { return };
-        if n.saved.is_empty() {
+    /// One saved network's own page: what it gave the computer, auto-join, private address, IPv4, IPv6, DNS, proxy, forget.
+    fn network_page(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context, n: &sys::Network, uuid: &str) {
+        let Some(saved) = n.saved.iter().find(|p| p.uuid == uuid).cloned() else {
+            // forgotten, or gone: back to the list
+            self.net_open = None;
+            self.net_draft = None;
             return;
+        };
+        if self.net_draft.as_ref().is_none_or(|d| d.uuid != uuid) {
+            self.net_draft = Some(saved.clone());
         }
-        let mut set: Option<(String, bool, sys::MacMode)> = None;
+        let Some(mut d) = self.net_draft.take() else { return };
+        let live = n.live.get(uuid);
+        let title = if saved.wifi && !saved.ssid.is_empty() { saved.ssid.clone() } else { saved.name.clone() };
+        ui.add_space(6.0);
+        let mut back = false;
+        ui.horizontal(|ui| {
+            if ui::icon_button(ui, pal, Icon::Back, "Wi-Fi & Network", true, false).clicked() {
+                back = true;
+            }
+            ui.vertical(|ui| {
+                ui.label(RichText::new(&title).size(20.0).strong());
+                let state = if live.is_some() { "Connected" } else { "Saved" };
+                ui.label(RichText::new(if saved.wifi { format!("Wi-Fi · {state}") } else { format!("Wired · {state}") }).size(12.0).color(pal.dim));
+            });
+        });
         ui.add_space(8.0);
-        ui::group(ui, pal, Some("Private addresses"), |ui| {
-            for (i, s) in n.saved.iter().enumerate() {
-                let (idx, sub) = match &s.mac {
-                    sys::MacMode::Private => (0, "A random address of its own for this network, the same every time".to_string()),
-                    sys::MacMode::Random => (1, "A new random address every time it connects".to_string()),
-                    sys::MacMode::Real => (2, if s.wifi { "This computer's real address (Heimdall keeps it only on networks you trust)".to_string() } else { "This computer's real address".to_string() }),
-                    sys::MacMode::Custom(a) => (3, format!("Uses {a}")),
+        if let Some(l) = live {
+            ui::group(ui, pal, Some("Connection"), |ui| {
+                let mut first = true;
+                // one value a line (a network can give several IPv6 addresses)
+                let mut show = |ui: &mut egui::Ui, k: &str, v: &[String]| {
+                    if v.is_empty() {
+                        return;
+                    }
+                    ui::row(ui, pal, first, k, None, |ui| {
+                        ui.add(egui::Label::new(RichText::new(v.join("\n")).color(pal.dim)).selectable(true).extend());
+                    });
+                    first = false;
                 };
-                let title = if s.wifi { s.name.clone() } else { format!("{} (wired)", s.name) };
-                ui::row(ui, pal, i == 0, &title, Some(&sub), |ui| {
-                    if let Some(k) = ui::segmented(ui, pal, &["Private", "New each time", "Real", "Custom"], idx) {
-                        match k {
-                            0 => set = Some((s.uuid.clone(), s.wifi, sys::MacMode::Private)),
-                            1 => set = Some((s.uuid.clone(), s.wifi, sys::MacMode::Random)),
-                            2 => set = Some((s.uuid.clone(), s.wifi, sys::MacMode::Real)),
-                            _ => {
-                                let start = if let sys::MacMode::Custom(a) = &s.mac { a.clone() } else { sys::random_mac() };
-                                self.mac_typed.entry(s.uuid.clone()).or_insert(start);
-                            }
-                        }
+                let one = |x: &String| if x.is_empty() { vec![] } else { vec![x.clone()] };
+                show(ui, if l.v4.len() > 1 { "IP addresses" } else { "IP address" }, &l.v4);
+                show(ui, "Router", &one(&l.router));
+                show(ui, if l.v6.len() > 1 { "IPv6 addresses" } else { "IPv6 address" }, &l.v6);
+                show(ui, "DNS servers", &l.dns);
+                show(ui, "Hardware address", &one(&l.hw));
+            });
+            ui.add_space(8.0);
+        }
+        ui::group(ui, pal, None, |ui| {
+            let (t, sub) = if saved.wifi { ("Auto-Join", "Join this network by itself when it is in range") } else { ("Connect automatically", "When the cable is plugged in") };
+            ui::row(ui, pal, true, t, Some(sub), |ui| {
+                ui::switch(ui, pal, &mut d.auto_join);
+            });
+        });
+        ui.add_space(8.0);
+        ui::group(ui, pal, Some("Private address"), |ui| {
+            let (idx, sub) = match &d.mac {
+                sys::MacMode::Private => (0, "A random hardware address of its own for this network, the same every time"),
+                sys::MacMode::Random => (1, "A new random hardware address every time it joins"),
+                sys::MacMode::Real => (2, if saved.wifi { "This computer's real hardware address (Heimdall keeps it only on networks you trust)" } else { "This computer's real hardware address" }),
+                sys::MacMode::Custom(_) => (3, "A hardware address you type in"),
+            };
+            ui::row(ui, pal, true, "Address", Some(sub), |ui| {
+                if let Some(k) = ui::segmented(ui, pal, &["Private", "New each time", "Real", "Custom"], idx) {
+                    d.mac = match k {
+                        0 => sys::MacMode::Private,
+                        1 => sys::MacMode::Random,
+                        2 => sys::MacMode::Real,
+                        _ => sys::MacMode::Custom(if let sys::MacMode::Custom(a) = &saved.mac { a.clone() } else { sys::random_mac() }),
+                    };
+                }
+            });
+            if let sys::MacMode::Custom(a) = &mut d.mac {
+                ui::row(ui, pal, false, "Custom address", None, |ui| {
+                    if ui::quiet(ui, pal, "Random").on_hover_text("Make up an address, like macchanger -r").clicked() {
+                        *a = sys::random_mac();
+                    }
+                    ui::field(ui, pal, a, "02:1A:2B:3C:4D:5E", 170.0, false);
+                });
+            }
+        });
+        ui.add_space(8.0);
+        for six in [false, true] {
+            let ip = if six { &mut d.v6 } else { &mut d.v4 };
+            ui::group(ui, pal, Some(if six { "IPv6" } else { "IPv4" }), |ui| {
+                let opts: &[&str] = if six { &["Automatic", "Manual", "Off"] } else { &["Automatic", "Manual"] };
+                let idx = match ip.method {
+                    netconf::IpMethod::Auto => 0,
+                    netconf::IpMethod::Manual => 1,
+                    netconf::IpMethod::Off => 2,
+                };
+                let sub = match ip.method {
+                    netconf::IpMethod::Auto => "The router gives the address",
+                    netconf::IpMethod::Manual => "An address you type in",
+                    netconf::IpMethod::Off => "IPv6 is not used on this network",
+                };
+                ui::row(ui, pal, true, "Configure", Some(sub), |ui| {
+                    if let Some(k) = ui::segmented(ui, pal, opts, idx) {
+                        ip.method = [netconf::IpMethod::Auto, netconf::IpMethod::Manual, netconf::IpMethod::Off][k];
                     }
                 });
-                // typing an address: shown once Custom was picked (or is in use)
-                let typing = self.mac_typed.contains_key(&s.uuid) || matches!(s.mac, sys::MacMode::Custom(_));
-                if typing {
-                    let text = self.mac_typed.entry(s.uuid.clone()).or_insert_with(|| if let sys::MacMode::Custom(a) = &s.mac { a.clone() } else { sys::random_mac() });
-                    ui.horizontal(|ui| {
-                        ui.add_space(12.0);
-                        ui::field(ui, pal, text, "02:1A:2B:3C:4D:5E", 190.0, false);
-                        let ok = sys::valid_mac(text.trim());
-                        if ui::quiet(ui, pal, "Random").on_hover_text("Make up an address, like macchanger -r").clicked() {
-                            *text = sys::random_mac();
-                        }
-                        if ui.add_enabled(ok, egui::Button::new("Use this address")).clicked() {
-                            set = Some((s.uuid.clone(), s.wifi, sys::MacMode::Custom(text.trim().to_uppercase())));
-                        }
-                        if !ok {
-                            ui.label(RichText::new("Six pairs like 02:1A:2B:3C:4D:5E").color(pal.dim));
-                        }
+                if ip.method == netconf::IpMethod::Manual {
+                    let (ah, rh) = if six { ("2001:db8::20/64", "2001:db8::1") } else { ("192.168.1.20/24", "192.168.1.1") };
+                    ui::row(ui, pal, false, "Address", Some("With its prefix length after a slash"), |ui| {
+                        ui::field(ui, pal, &mut ip.address, ah, 200.0, false);
+                    });
+                    ui::row(ui, pal, false, "Router", None, |ui| {
+                        ui::field(ui, pal, &mut ip.router, rh, 200.0, false);
                     });
                 }
+                if ip.method != netconf::IpMethod::Off {
+                    ui::row(ui, pal, false, "DNS servers", Some(if six { "Separated by commas, like 2606:4700:4700::1111" } else { "Separated by commas, like 1.1.1.1, 9.9.9.9" }), |ui| {
+                        ui::field(ui, pal, &mut ip.dns, "From the router", 200.0, false);
+                    });
+                }
+            });
+            ui.add_space(8.0);
+        }
+        ui::group(ui, pal, Some("HTTP proxy"), |ui| {
+            let idx = match d.proxy {
+                netconf::ProxyMode::Off => 0,
+                netconf::ProxyMode::Manual => 1,
+                netconf::ProxyMode::Auto => 2,
+            };
+            ui::row(ui, pal, true, "Proxy", Some("For programs that ask the system for its proxy"), |ui| {
+                if let Some(k) = ui::segmented(ui, pal, &["Off", "Manual", "Automatic"], idx) {
+                    d.proxy = [netconf::ProxyMode::Off, netconf::ProxyMode::Manual, netconf::ProxyMode::Auto][k];
+                }
+            });
+            match d.proxy {
+                netconf::ProxyMode::Manual => ui::row(ui, pal, false, "Server", Some("Name or address, a colon, the port"), |ui| {
+                    ui::field(ui, pal, &mut d.proxy_server, "proxy.example.com:8080", 200.0, false);
+                }),
+                netconf::ProxyMode::Auto => ui::row(ui, pal, false, "Configuration", Some("The proxy file's web address (PAC)"), |ui| {
+                    ui::field(ui, pal, &mut d.pac_url, "http://wpad.example.com/wpad.dat", 240.0, false);
+                }),
+                netconf::ProxyMode::Off => {}
             }
-            ui.add_space(4.0);
-            ui.label(RichText::new("A change is used from the next time the computer connects to that network.").color(pal.dim));
         });
-        if let Some((uuid, wifi, mode)) = set {
-            if !matches!(mode, sys::MacMode::Custom(_)) {
-                self.mac_typed.remove(&uuid);
+        ui.add_space(10.0);
+        let dirty = d != saved;
+        let (mut save, mut rejoin, mut undo, mut forget) = (false, false, false, false);
+        if dirty {
+            ui.horizontal(|ui| {
+                if ui::action(ui, pal, "Save").clicked() {
+                    save = true;
+                }
+                if live.is_some() && ui::quiet(ui, pal, "Save and reconnect").on_hover_text("The connection drops for a moment").clicked() {
+                    save = true;
+                    rejoin = true;
+                }
+                if ui::quiet(ui, pal, "Undo changes").clicked() {
+                    undo = true;
+                }
+            });
+            ui.label(RichText::new(if live.is_some() { "Saved changes are used the next time it connects, or now with Save and reconnect." } else { "Saved changes are used the next time it connects." }).color(pal.dim));
+        }
+        ui.add_space(14.0);
+        ui.horizontal(|ui| {
+            if !self.net_forget {
+                if ui.button(RichText::new("Forget this network").color(pal.red)).clicked() {
+                    self.net_forget = true;
+                }
+            } else {
+                ui.label(if saved.wifi { "Its password and settings go; joining again needs the password." } else { "Its settings go." });
+                if ui.button(RichText::new("Forget").color(pal.red)).clicked() {
+                    forget = true;
+                }
+                if ui::quiet(ui, pal, "Keep it").clicked() {
+                    self.net_forget = false;
+                }
             }
-            self.change(ctx, move || sys::set_mac(&uuid, wifi, &mode));
+        });
+        if undo {
+            d = saved.clone();
+        }
+        if save {
+            match netconf::changes(&saved, &d) {
+                Ok(pairs) => {
+                    let id = uuid.to_string();
+                    self.change(ctx, move || {
+                        netconf::save(&id, &pairs)?;
+                        if rejoin { netconf::rejoin(&id) } else { Ok(()) }
+                    });
+                }
+                Err(e) => self.status = e,
+            }
+        }
+        self.net_draft = Some(d);
+        if forget {
+            let id = uuid.to_string();
+            self.change(ctx, move || netconf::forget(&id));
+            back = true;
+        }
+        if back {
+            self.net_open = None;
+            self.net_draft = None;
+            self.net_forget = false;
+            self.status.clear();
         }
     }
 

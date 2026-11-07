@@ -192,6 +192,12 @@ pub struct NetDevice {
     pub connection: String,
 }
 
+/// Whether a wired adapter has a cable in: NetworkManager calls it "unavailable" without one (and leaves alone one it does
+/// not manage).
+pub fn cable_in(state: &str) -> bool {
+    !(state.starts_with("unavailable") || state.starts_with("unmanaged") || state.is_empty())
+}
+
 /// `nmcli -t -f DEVICE,TYPE,STATE,CONNECTION device`, Ethernet and Wi-Fi only.
 pub fn net_devices(text: &str) -> Vec<NetDevice> {
     text.lines()
@@ -206,7 +212,9 @@ pub struct Network {
     pub wifi_on: bool,
     pub devices: Vec<NetDevice>,
     pub networks: Vec<Wifi>,
-    pub saved: Vec<SavedNet>,
+    pub saved: Vec<crate::netconf::Profile>,
+    /// What each connected profile (by its id) was given: addresses, router, DNS.
+    pub live: std::collections::HashMap<String, crate::netconf::Live>,
 }
 
 /// Which hardware (MAC) address the computer shows a network, as on phones.
@@ -263,42 +271,24 @@ pub fn random_mac() -> String {
     b.iter().map(|x| format!("{x:02X}")).collect::<Vec<_>>().join(":")
 }
 
-/// A saved network (a NetworkManager profile, Wi-Fi or wired) and its address setting.
-#[derive(Clone, Debug, PartialEq)]
-pub struct SavedNet {
-    pub name: String,
-    pub uuid: String,
-    pub wifi: bool,
-    pub mac: MacMode,
-}
-
-fn saved_nets() -> Vec<SavedNet> {
+/// The saved networks (NetworkManager profiles, Wi-Fi and wired) with their settings.
+fn saved_nets() -> Vec<crate::netconf::Profile> {
     let mut out = vec![];
     for line in run("nmcli", &["-t", "-f", "NAME,UUID,TYPE", "connection", "show"]).unwrap_or_default().lines() {
         let f = nm_fields(line);
-        if f.len() < 3 {
+        if f.len() < 3 || (f[2] != "802-11-wireless" && f[2] != "802-3-ethernet") {
             continue;
         }
-        let wifi = f[2] == "802-11-wireless";
-        if !wifi && f[2] != "802-3-ethernet" {
-            continue;
+        if let Some(p) = crate::netconf::load(&f[1]) {
+            out.push(p);
         }
-        let key = if wifi { "802-11-wireless.cloned-mac-address" } else { "802-3-ethernet.cloned-mac-address" };
-        let v = run("nmcli", &["-g", key, "connection", "show", &f[1]]).unwrap_or_default();
-        out.push(SavedNet { name: f[0].clone(), uuid: f[1].clone(), wifi, mac: MacMode::from_nm(&v, wifi) });
     }
     out
 }
 
-/// Sets which address a saved network sees; it is used from the next time the computer connects to it.
-pub fn set_mac(uuid: &str, wifi: bool, mode: &MacMode) -> Result<(), String> {
-    if let MacMode::Custom(a) = mode {
-        if !valid_mac(a) {
-            return Err("that is not a usable address (six pairs like 02:1A:2B:3C:4D:5E)".into());
-        }
-    }
-    let key = if wifi { "802-11-wireless.cloned-mac-address" } else { "802-3-ethernet.cloned-mac-address" };
-    act("nmcli", &["connection", "modify", uuid, key, &mode.to_nm()])
+/// The connected profiles and the device each is on (`nmcli -t -f UUID,DEVICE connection show --active`).
+pub fn active_profiles(text: &str) -> Vec<(String, String)> {
+    text.lines().map(nm_fields).filter(|f| f.len() >= 2 && !f[1].is_empty()).map(|f| (f[0].clone(), f[1].clone())).collect()
 }
 
 pub fn network() -> Network {
@@ -307,6 +297,10 @@ pub fn network() -> Network {
         devices: net_devices(&run("nmcli", &["-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device"]).unwrap_or_default()),
         networks: wifi_list(&run("nmcli", &["-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "device", "wifi", "list"]).unwrap_or_default()),
         saved: saved_nets(),
+        live: active_profiles(&run("nmcli", &["-t", "-f", "UUID,DEVICE", "connection", "show", "--active"]).unwrap_or_default())
+            .into_iter()
+            .map(|(uuid, dev)| (uuid, crate::netconf::live(&dev)))
+            .collect(),
     }
 }
 
@@ -1122,6 +1116,9 @@ mod tests {
         assert_eq!(d.len(), 2);
         assert_eq!(d[0].connection, "Wired connection 1");
         assert_eq!(d[1].kind, "wifi");
+        // Wired shows only with a cable in
+        assert!(cable_in("connected") && cable_in("disconnected") && cable_in("connecting (getting IP configuration)"));
+        assert!(!cable_in("unavailable") && !cable_in("unmanaged"));
     }
 
     #[test]
