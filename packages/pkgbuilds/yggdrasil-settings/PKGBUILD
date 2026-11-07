@@ -13,6 +13,7 @@ license=('MPL-2.0')
 depends=('gcc-libs' 'yggdrasil-spell' 'libxkbcommon' 'wayland' 'vulkan-icd-loader' 'libglvnd' 'fontconfig'
          'networkmanager' 'bluez-utils' 'libpulse' 'power-profiles-daemon' 'pciutils' 'python' 'polkit')
 optdepends=('ufw: firewall page'
+            "cuda: the graphics card unlock's correctness check and benchmark (gpuunlock bench)"
             'plymouth: the boot screen (Appearance > Boot screen)'
             'python-pillow: your own picture as the boot screen'
             'grub: the graphics card unlock picks its boot entry for one start (Power, Developer options)'
@@ -60,6 +61,8 @@ package() {
   # its password rule, the boot menu fragment (prints nothing unless an attempt is armed) and the two services that follow an
   # attempt (they start only while one is pending; arming enables them). Plan: Labyrinth OS docs/GPU_UNLOCK.md
   install -Dm755 "$_src/helpers/gpuunlock" "$pkgdir/usr/lib/yggdrasil/gpuunlock"
+  # its correctness check and tensor benchmark, compiled with nvcc on first use (Phase 2; needs the cuda package)
+  install -Dm644 "$_src/helpers/gpuunlock-bench.cu" "$pkgdir/usr/lib/yggdrasil/gpuunlock-bench.cu"
   install -Dm644 "$_src/data/gpu-unlock-supported.json" "$pkgdir/usr/share/yggdrasil/gpu-unlock/supported.json"
   install -Dm644 "$_src/data/org.yggdrasil.gpuunlock.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.gpuunlock.policy"
   install -Dm755 "$_src/data/41_gpu_unlock" "$pkgdir/etc/grub.d/41_gpu_unlock"

@@ -31,6 +31,11 @@ UNLOCKED_LOG = ("turing_unlock: entry: plm=0xffffff8f ss0=0x2300000 ss1=0x6 wpr2
                 "turing_unlock: unlock result: ss0=0x88888888 ss1=0x8 readout=0x0 (want ss0=0x88888888 ss1=0x8 readout=0)\n"
                 "turing_unlock: TU102 FEAT UNLOCKED\npci 0000:01:00.0: turing_unlock: unlocked\n")
 STATES = ("unsupported", "supported", "armed", "unlocked", "failed", "throttled", "secure-boot", "no-nvidia")
+# gpuunlock-bench's output on the locked card (the real numbers of the first quick run, 2026-11-07, as a full run) and unlocked
+LOCKED = {"device": "NVIDIA GeForce RTX 2080 Ti", "pci": "0000:01:00.0", "sms": 68, "quick": False, "samples": 7,
+          "check": {"compared": 4096, "wrong": 0, "max_abs_err": 0, "ok": True},
+          "gemm_f16_acc_f32": [{"n": 4096, "tflops": 50.1}, {"n": 8192, "tflops": 52.8}], "mma_f16_acc_f32": 49.9, "mma_f16_acc_f16": 99.6}
+UNLOCKED = dict(LOCKED, gemm_f16_acc_f32=[{"n": 4096, "tflops": 81.7}, {"n": 8192, "tflops": 77.9}], mma_f16_acc_f32=99.1, mma_f16_acc_f16=99.4)
 
 
 def load(path, name):
@@ -65,6 +70,7 @@ class Fake:
         self.mkconfig_extra = ""
         self.kernel_log = ""
         self.compute = ""
+        self.power = "260.00, 260.00"
 
     def __call__(self, argv, timeout=60):
         self.calls.append(argv)
@@ -78,7 +84,7 @@ class Fake:
         if name == "journalctl":
             return 0, self.kernel_log
         if name == "nvidia-smi":
-            return 0, self.compute
+            return 0, self.power if "--query-gpu=power.limit,power.default_limit" in argv else self.compute
         if name == "grub-mkconfig":
             env = dict(os.environ, YGGDRASIL_GPUUNLOCK_ENTRY=os.path.join(self.t.m.STATE_DIR, "entry.cfg"))
             frag = subprocess.run(["sh", FRAGMENT], capture_output=True, text=True, env=env).stdout
@@ -112,6 +118,9 @@ class Base(unittest.TestCase):
         self.root("etc/mkinitcpio.conf.d/zz-turing-unlock.conf", "MODULES+=(turing_unlock)\n")
         self.boot("aaaa-1111", "root=UUID=3118e509 rw quiet splash")
         self.card(MATT)
+        # the locked baseline Phase 2 records (arming waits for it); no test runs the real benchmark
+        put(self.state("baseline.json"), json.dumps(dict(LOCKED, bdf=MATT["bdf"], vbios=MATT["vbios"].upper())))
+        m.run_bench = lambda bdf, quick=False: (None, "the CUDA toolkit is not installed (a test)")
 
     def root(self, rel, content, mode="w"):
         put(os.path.join(self.m.ROOT, rel), content, mode)
@@ -137,7 +146,8 @@ class Base(unittest.TestCase):
         return os.path.join(self.m.STATE_DIR, name)
 
     def written(self):
-        return sorted(os.listdir(self.m.STATE_DIR)) if os.path.isdir(self.m.STATE_DIR) else []
+        """What the helper wrote to its state folder (the baseline the set-up puts there aside)."""
+        return sorted(n for n in os.listdir(self.m.STATE_DIR) if n != "baseline.json") if os.path.isdir(self.m.STATE_DIR) else []
 
     def table(self, change):
         t = js(TABLE)
@@ -396,6 +406,75 @@ class Markers(Base):
     def test_release_waits_for_a_pending_attempt(self):
         self.assertEqual(self.m.cmd_release(), 2)
         self.assertTrue(os.path.exists(self.state("power-hold")))
+
+
+class Bench(Base):
+    def test_rule_eight_judges_the_unlock(self):
+        ok, ratio, why = self.m.judge(LOCKED, UNLOCKED)
+        self.assertTrue(ok, why)
+        self.assertAlmostEqual(ratio, 99.1 / 49.9)
+        self.assertIn("cuBLAS 8192 77.9 TFLOPS against 52.8", why)
+        cases = [
+            (dict(UNLOCKED, check={"compared": 4096, "wrong": 3, "ok": False}), "Wrong results: 3 of 4096"),
+            (dict(UNLOCKED, mma_f16_acc_f32=60.0), "under the 1.5x"),
+            (dict(UNLOCKED, mma_f16_acc_f16=70.0), "control rate"),     # throttled or busy: nothing to compare
+            (dict(UNLOCKED, quick=True), "quick run"),
+            ({k: v for k, v in UNLOCKED.items() if k != "mma_f16_acc_f16"}, "incomplete"),
+        ]
+        for now, expect in cases:
+            ok, _, why = self.m.judge(LOCKED, now)
+            self.assertFalse(ok, expect)
+            self.assertIn(expect, why)
+        ok, _, why = self.m.judge(None, UNLOCKED)
+        self.assertFalse(ok)
+        self.assertIn("No locked baseline", why)
+
+    def test_arming_waits_for_a_full_baseline_of_this_card(self):
+        self.assertIsNone(self.m.status()["arm_blocker"])
+        for bad, expect in [(None, "No locked baseline"), (dict(LOCKED, quick=True), "not a full, correct run"),
+                            (dict(LOCKED, bdf="0000:02:00.0", vbios="90.02.17.00.3E"), "another card"),
+                            (dict(LOCKED, bdf=MATT["bdf"], vbios="90.02.17.00.47"), "another card")]:
+            if os.path.exists(self.state("baseline.json")):
+                os.remove(self.state("baseline.json"))
+            if bad:
+                put(self.state("baseline.json"), json.dumps(bad))
+            self.assertIn(expect, self.m.status()["arm_blocker"])
+            self.assertEqual(self.m.cmd_arm(), 2)
+
+    def test_the_baseline_is_measured_locked_idle_and_at_default_watts(self):
+        os.remove(self.state("baseline.json"))
+        self.m.run_bench = lambda bdf, quick=False: (dict(LOCKED), None)
+        self.fake.power = "290.00, 260.00"
+        self.assertEqual(self.m.cmd_bench(["--baseline"]), 2, "Performance mode's 290 W is not the baseline")
+        self.fake.power = "260.00, 260.00"
+        self.fake.compute = "4242, /usr/bin/ollama"
+        self.assertEqual(self.m.cmd_bench(["--baseline"]), 2, "the card must be idle")
+        self.fake.compute = ""
+        self.fake.kernel_log = UNLOCKED_LOG
+        self.assertEqual(self.m.cmd_bench(["--baseline"]), 2, "never on an unlocked card")
+        self.fake.kernel_log = ""
+        self.assertFalse(os.path.exists(self.state("baseline.json")))
+        self.assertEqual(self.m.cmd_bench(["--baseline"]), 0)
+        b = js(self.state("baseline.json"))
+        self.assertEqual((b["bdf"], b["vbios"], b["watts"]), (MATT["bdf"], "90.02.17.00.3E", 260.0))
+        self.assertIsNone(self.m.status()["arm_blocker"])
+        # wrong results on the locked card keep no baseline
+        os.remove(self.state("baseline.json"))
+        self.m.run_bench = lambda bdf, quick=False: (dict(LOCKED, check={"compared": 4096, "wrong": 1, "ok": False}), None)
+        self.assertEqual(self.m.cmd_bench(["--baseline"]), 1)
+        self.assertFalse(os.path.exists(self.state("baseline.json")))
+        self.assertEqual(self.m.cmd_bench(["--quick", "--baseline"]), 2)
+        self.assertEqual(self.m.cmd_bench(["--fast"]), 2)
+
+    def test_a_confirmed_unlock_needs_the_benchmark(self):
+        self.fake.kernel_log = UNLOCKED_LOG
+        self.m.run_bench = lambda bdf, quick=False: (dict(UNLOCKED), None)
+        ok, ratio, why = self.m.check_unlock()
+        self.assertTrue(ok, why)
+        self.m.run_bench = lambda bdf, quick=False: (None, "the CUDA toolkit is not installed")
+        ok, _, why = self.m.check_unlock()
+        self.assertFalse(ok)
+        self.assertIn("could not be checked: the CUDA toolkit", why)
 
 
 class ModuleLog(Base):

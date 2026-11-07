@@ -17,7 +17,9 @@ Commands:
   gpuunlock release           end the power hold (root): after the measurements, or when giving up
   gpuunlock boot              early at every start while an attempt is pending (yggdrasil-gpu-unlock-boot.service)
   gpuunlock verify            once the desktop is up after an attempt (yggdrasil-gpu-unlock-verify.service)
-  gpuunlock bench             the tensor benchmark (Phase 2; not built yet)
+  gpuunlock bench [--quick]   the correctness check and tensor benchmark on the card (needs the CUDA toolkit's nvcc)
+  gpuunlock bench --baseline  the same on the locked card at its default watts, kept as the baseline the unlock is judged by
+                              (root; arming waits for it)
 
 How an attempt is followed: `arm` writes `armed`. A start through the one-try entry has the module's option in /proc/cmdline:
 early in that start `boot` turns `armed` into `trying` with this start's boot id. Once the desktop is up, `verify` reads the
@@ -28,9 +30,11 @@ did not try; the entry stays until it is picked or cancelled.
 
 State: /var/lib/yggdrasil/gpu-unlock/ (state.json, armed, trying, entry.cfg, power-hold, log).
 """
+import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -58,6 +62,13 @@ VBIOS_RX = re.compile(r"^[0-9A-F]{2}(\.[0-9A-F]{2}){4}$")
 BDF_RX = re.compile(r"^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$")
 BOARD_MAKERS = {"1043": "ASUS", "1458": "Gigabyte", "1462": "MSI", "10de": "NVIDIA", "3842": "EVGA", "19da": "Zotac", "196e": "PNY",
                 "1569": "Palit", "10b0": "Gainward", "1b4c": "KFA2/Galax", "1acc": "Point of View", "7377": "Colorful", "1da2": "Sapphire"}
+# The benchmark (gpuunlock-bench.cu, next to this program): compiled with the CUDA toolkit's nvcc on first use, kept per source.
+BENCH_SRC = "/usr/lib/yggdrasil/gpuunlock-bench.cu"
+NVCC = "/opt/cuda/bin/nvcc"
+# Rule 8: "Unlocked" needs correct results and the FP32-accumulate tensor rate at least this many times the locked baseline;
+# the FP16-accumulate rate (never halved) must stay within CONTROL_DRIFT of the baseline's, or the card was busy or held back.
+MIN_RATIO = 1.5
+CONTROL_DRIFT = 0.15
 HOT_C = 85
 HOT_CAP_W = 200
 
@@ -282,9 +293,22 @@ def menu_problem():
     return None
 
 
+def baseline_problem():
+    """Why there is no locked baseline to judge an attempt by, or None (rule 8: the ratio is against the card's own locked rate)."""
+    b = read_json(sp("baseline.json"))
+    if not b:
+        return "No locked baseline yet: run gpuunlock bench --baseline on the idle card at its default watts first"
+    if b.get("quick") or not b.get("check", {}).get("ok") or not b.get("mma_f16_acc_f32"):
+        return "The locked baseline is not a full, correct run: run gpuunlock bench --baseline again"
+    card = nvidia_card() or {}
+    if b.get("bdf") != card.get("bdf") or b.get("vbios") != card.get("vbios"):
+        return "The locked baseline was measured on another card or firmware: run gpuunlock bench --baseline again"
+    return None
+
+
 def arm_blocker(entry):
     """Why arming cannot start on a supported card right now, or None."""
-    return module_problem() or menu_problem()
+    return module_problem() or menu_problem() or baseline_problem()
 
 
 def hold_on():
@@ -575,13 +599,98 @@ def module_result(kernel_log=None):
     return False, f"The module gave no result ({lines[-1][:120]})"
 
 
+def bench_source():
+    """The benchmark's source: the installed one, or the one next to this program (a checkout)."""
+    for p in (at(BENCH_SRC), os.path.join(os.path.dirname(os.path.abspath(__file__)), "gpuunlock-bench.cu")):
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def bench_binary():
+    """(path, problem): the compiled benchmark, built with nvcc the first time (one build per source text)."""
+    src = bench_source()
+    if not src:
+        return None, "the benchmark's source is missing (gpuunlock-bench.cu)"
+    nvcc = shutil.which("nvcc") or (NVCC if os.path.isfile(NVCC) else None)
+    if not nvcc:
+        return None, "the CUDA toolkit is not installed (pacman -S cuda): the benchmark is compiled with its nvcc"
+    with open(src, "rb") as f:
+        digest = hashlib.sha256(f.read()).hexdigest()[:16]
+    cache = at("/var/cache/yggdrasil/gpuunlock-bench") if is_root() else os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "yggdrasil", "gpuunlock-bench")
+    out = os.path.join(cache, f"gpuunlock-bench-{digest}")
+    if not os.path.isfile(out):
+        try:
+            os.makedirs(cache, exist_ok=True)
+        except OSError as e:
+            return None, f"no folder for the benchmark ({e.strerror})"
+        code, msg = run([nvcc, "-O3", "-arch=sm_75", "-std=c++17", "-o", out + ".part", src, "-lcublas"], timeout=600)
+        if code != 0 or not os.path.isfile(out + ".part"):
+            remove(out + ".part")
+            return None, f"the benchmark did not compile ({msg[-200:] or 'no program came out'})"
+        os.replace(out + ".part", out)
+    return out, None
+
+
+def run_bench(bdf, quick=False):
+    """(result, problem): the benchmark's JSON for the card at `bdf`."""
+    binary, why = bench_binary()
+    if why:
+        return None, why
+    code, out = run([binary, "--pci", bdf] + (["--quick"] if quick else []), timeout=900)
+    try:
+        res = json.loads(out.strip().splitlines()[-1])
+    except (IndexError, ValueError):
+        return None, f"the benchmark gave no result (exit {code}: {out[-160:]})"
+    if "error" in res:
+        return None, f"the benchmark stopped: {str(res['error'])[:160]}"
+    return res, None
+
+
+def gemm_at(res, n=8192):
+    return next((g.get("tflops") for g in res.get("gemm_f16_acc_f32") or [] if g.get("n") == n), None)
+
+
+def judge(baseline, now):
+    """(ok, ratio, why) by rule 8: the outputs match the processor's, the card computed as it did when the baseline was taken (the
+    FP16-accumulate control within CONTROL_DRIFT), and the FP32-accumulate tensor rate is at least MIN_RATIO times the baseline's."""
+    chk = now.get("check") or {}
+    if not chk.get("ok"):
+        return False, None, f"Wrong results: {chk.get('wrong', '?')} of {chk.get('compared', '?')} outputs differ from the processor's"
+    if not baseline:
+        return False, None, "No locked baseline to compare with (gpuunlock bench --baseline)"
+    if now.get("quick") or baseline.get("quick"):
+        return False, None, "A quick run measures nothing; the full benchmark is needed"
+    try:
+        b, n = float(baseline["mma_f16_acc_f32"]), float(now["mma_f16_acc_f32"])
+        bc, nc = float(baseline["mma_f16_acc_f16"]), float(now["mma_f16_acc_f16"])
+    except (KeyError, TypeError, ValueError):
+        return False, None, "The benchmark's result is incomplete"
+    if b <= 0 or bc <= 0:
+        return False, None, "The locked baseline is not usable"
+    if abs(nc / bc - 1) > CONTROL_DRIFT:
+        return False, None, f"The control rate (FP16 accumulate) is {nc:.1f} TFLOPS against {bc:.1f} locked: the card was busy or held back, so the comparison means nothing; measure again"
+    ratio = n / b
+    if ratio < MIN_RATIO:
+        return False, ratio, f"Tensor rate {ratio:.2f}x of locked, under the {MIN_RATIO}x that shows the unlock"
+    gb, gn = gemm_at(baseline), gemm_at(now)
+    gemm = f"; cuBLAS 8192 {gn:.1f} TFLOPS against {gb:.1f}" if gb and gn else ""
+    return True, ratio, f"Tensor rate {ratio:.2f}x of locked ({n:.1f} against {b:.1f} TFLOPS{gemm}), results correct"
+
+
 def check_unlock():
     """(ok, ratio, why) for the card as it is now: the module's own result, then the correctness check against the processor
-    and the tensor benchmark against the locked baseline (built in Phase 2)."""
+    and the tensor benchmark against the locked baseline (rule 8)."""
     ok, why = module_result()
     if not ok:
         return False, None, why
-    return False, None, "The module reports the unlock, but the correctness check and benchmark are not built yet (Phase 2), so it is not confirmed"
+    card = nvidia_card()
+    if not card:
+        return False, None, "The module reports the unlock, but the card is not visible to the driver"
+    res, why = run_bench(card["bdf"])
+    if why:
+        return False, None, f"The module reports the unlock, but it could not be checked: {why}"
+    return judge(read_json(sp("baseline.json")), res)
 
 
 def thermal_verdict(samples):
@@ -639,9 +748,46 @@ def cmd_verify():
     return 0
 
 
-def cmd_bench():
-    print("gpuunlock: the benchmark is built in Phase 2 (docs/GPU_UNLOCK.md); nothing was run", file=sys.stderr)
-    return 3
+def power_limits():
+    """(limit, default) in watts from nvidia-smi, or (None, None)."""
+    code, out = run(["nvidia-smi", "--query-gpu=power.limit,power.default_limit", "--format=csv,noheader,nounits"], timeout=15)
+    try:
+        a, b = [float(x) for x in out.splitlines()[0].split(",")]
+        return a, b
+    except (IndexError, ValueError):
+        return None, None
+
+
+def cmd_bench(args=()):
+    quick, baseline = "--quick" in args, "--baseline" in args
+    if set(args) - {"--quick", "--baseline"} or quick and baseline:
+        return refuse("usage: gpuunlock bench [--quick | --baseline]")
+    card = nvidia_card()
+    if not card or not card.get("driver"):
+        return refuse("no NVIDIA card with its driver loaded")
+    if baseline:
+        if not need_root("bench --baseline"):
+            return 1
+        if module_result()[0]:
+            return refuse("the card is unlocked at this start; the baseline is measured locked")
+        limit, default = power_limits()
+        if limit is None or abs(limit - default) > 1:
+            return refuse(f"the card is at {limit} W; the baseline is measured at its default {default} W (Settings > Power, or the power hold)")
+    if not quick:
+        busy = card_busy()
+        if busy:
+            return refuse(f"the card must be idle for a measurement: {busy}")
+    res, why = run_bench(card["bdf"], quick)
+    if why:
+        return refuse(why, 1)
+    print(json.dumps(res))
+    if baseline:
+        if not res.get("check", {}).get("ok"):
+            return refuse("wrong results on the locked card: no baseline kept", 1)
+        res.update({"time": now(), "bdf": card["bdf"], "vbios": card["vbios"], "driver": card["driver"], "watts": power_limits()[0]})
+        write_json(sp("baseline.json"), res)
+        log(f"baseline: FP32-accumulate {res['mma_f16_acc_f32']} TFLOPS, control {res['mma_f16_acc_f16']}, cuBLAS 8192 {gemm_at(res)}")
+    return 0 if res.get("check", {}).get("ok") else 1
 
 
 def main(argv):
@@ -651,7 +797,9 @@ def main(argv):
     c = argv[1]
     if c == "status":
         return cmd_status("--json" in argv[2:])
-    cmds = {"arm": cmd_arm, "disarm": cmd_disarm, "reenable": cmd_reenable, "release": cmd_release, "boot": cmd_boot, "verify": cmd_verify, "bench": cmd_bench}
+    if c == "bench":
+        return cmd_bench(argv[2:])
+    cmds = {"arm": cmd_arm, "disarm": cmd_disarm, "reenable": cmd_reenable, "release": cmd_release, "boot": cmd_boot, "verify": cmd_verify}
     if c in cmds and len(argv) == 2:
         return cmds[c]()
     print("gpuunlock: unknown command (see --help)", file=sys.stderr)
