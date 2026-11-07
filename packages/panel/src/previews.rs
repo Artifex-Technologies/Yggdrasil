@@ -277,7 +277,7 @@ mod tests {
         assert_eq!(label("librewolf", "LibreWolf", "Privacy Guides — LibreWolf"), "Privacy Guides");
         assert_eq!(label("brave-browser", "Brave", "YouTube - Brave"), "YouTube");
         assert_eq!(label("vivaldi-stable", "Vivaldi", "Vivaldi"), "Vivaldi");
-        assert_eq!(label("minos", "Minos", "/home/zlothra/Documents/Github"), "Github");
+        assert_eq!(label("minos", "Minos", "/home/alex/Documents/Github"), "Github");
         assert_eq!(label("org.gnome.Nautilus", "Files", "Downloads – Files"), "Downloads");
         assert_eq!(label("org.gnome.gedit", "Text Editor", "*notes.txt (~/Documents) - gedit"), "notes.txt");
         assert_eq!(label("dev.zed.Zed", "Zed", "main.rs — yggdrasil"), "main.rs");

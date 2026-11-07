@@ -15,9 +15,9 @@ class Account(unittest.TestCase):
         self.passwd = os.path.join(self.d, "passwd")
         self.group = os.path.join(self.d, "group")
         self.calls = os.path.join(self.d, "calls.log")
-        open(self.passwd, "w").write("root:x:0:0::/root:/bin/bash\nzlothra:x:1000:1000:Zlothra,,,:/home/zlothra:/bin/bash\nclaude-agent:x:1001:1001::/home/claude-agent:/bin/bash\n"
+        open(self.passwd, "w").write("root:x:0:0::/root:/bin/bash\nrobin:x:1000:1000:Robin,,,:/home/robin:/bin/bash\nclaude-agent:x:1001:1001::/home/claude-agent:/bin/bash\n"
                                      "sam:x:1002:1002:Sam Doe:/home/sam:/bin/bash\nnobody:x:65534:65534::/:/usr/bin/nologin\n")
-        open(self.group, "w").write("wheel:x:998:zlothra,claude-agent\nusers:x:985:\naudio:x:996:\nvideo:x:983:\nstorage:x:100:\nlp:x:7:\n")
+        open(self.group, "w").write("wheel:x:998:robin,claude-agent\nusers:x:985:\naudio:x:996:\nvideo:x:983:\nstorage:x:100:\nlp:x:7:\n")
         for name, body in [("useradd", 'echo "useradd $*" >> %s' % self.calls), ("userdel", 'echo "userdel $*" >> %s' % self.calls),
                            ("gpasswd", 'echo "gpasswd $*" >> %s' % self.calls), ("chpasswd", 'echo "chpasswd $(cat)" >> %s\n[ -z "$CHPASSWD_FAIL" ]' % self.calls),
                            ("getent", "exit 2"), ("loginctl", 'echo "$SESSIONS"')]:
@@ -38,7 +38,7 @@ class Account(unittest.TestCase):
 
     def test_list_shows_login_accounts_and_who_is_admin(self):
         accts = json.loads(self.run_it("list").stdout)
-        self.assertEqual([(a["login"], a["admin"]) for a in accts], [("zlothra", True), ("claude-agent", True), ("sam", False)])
+        self.assertEqual([(a["login"], a["admin"]) for a in accts], [("robin", True), ("claude-agent", True), ("sam", False)])
         self.assertEqual(accts[2]["full_name"], "Sam Doe")
 
     def test_add_standard_user_never_puts_the_password_on_a_command_line(self):
@@ -72,14 +72,14 @@ class Account(unittest.TestCase):
         self.assertNotIn("-r", self.calls_text().split("userdel")[1])                      # home kept by default
         self.assertEqual(self.run_it("remove", "sam", "--delete-home").returncode, 0)
         self.assertIn("userdel -r sam", self.calls_text())
-        for who in ["zlothra", "claude-agent", "root", "nobody", "nosuch"]:
+        for who in ["robin", "claude-agent", "root", "nobody", "nosuch"]:
             self.assertNotEqual(self.run_it("remove", who).returncode, 0, who)                # yourself, the agent, system accounts
         self.assertNotEqual(self.run_it("remove", "sam", env={"SESSIONS": "1 1002 sam seat0"}).returncode, 0)  # logged in
 
     def test_admin_changes_and_the_last_administrator(self):
         self.assertEqual(self.run_it("admin", "sam", "on").returncode, 0)
         self.assertIn("gpasswd -a sam wheel", self.calls_text())
-        self.assertNotEqual(self.run_it("admin", "zlothra", "off").returncode, 0)             # your own rights
+        self.assertNotEqual(self.run_it("admin", "robin", "off").returncode, 0)             # your own rights
         self.assertNotEqual(self.run_it("admin", "claude-agent", "off").returncode, 0)        # not ours to change here
         open(self.group, "w").write("wheel:x:998:sam,claude-agent\nusers:x:985:\n")
         self.assertNotEqual(self.run_it("admin", "sam", "off", env={"PKEXEC_UID": "1000"}).returncode, 0)   # the only human administrator

@@ -152,10 +152,10 @@ pub fn strength(pw: &str) -> (&'static str, f32) {
 mod tests {
     #[test]
     fn accounts_come_from_passwd_and_group() {
-        let p = "root:x:0:0::/root:/bin/bash\nzlothra:x:1000:1000:Zlothra,,,:/home/zlothra:/bin/bash\nsam:x:1002:1002:Sam Doe:/home/sam:/bin/bash\nnobody:x:65534:65534::/:/usr/bin/nologin\n";
-        let g = "wheel:x:998:zlothra,claude-agent\nusers:x:985:\n";
+        let p = "root:x:0:0::/root:/bin/bash\nrobin:x:1000:1000:Robin,,,:/home/robin:/bin/bash\nsam:x:1002:1002:Sam Doe:/home/sam:/bin/bash\nnobody:x:65534:65534::/:/usr/bin/nologin\n";
+        let g = "wheel:x:998:robin,claude-agent\nusers:x:985:\n";
         let a = parse_accounts(p, g);
-        assert_eq!(a.iter().map(|x| (x.login.as_str(), x.admin)).collect::<Vec<_>>(), vec![("zlothra", true), ("sam", false)]);
+        assert_eq!(a.iter().map(|x| (x.login.as_str(), x.admin)).collect::<Vec<_>>(), vec![("robin", true), ("sam", false)]);
         assert_eq!(a[1].full_name, "Sam Doe");
     }
 
@@ -175,8 +175,8 @@ mod tests {
 
     #[test]
     fn passwd_line_is_read() {
-        let a = parse_passwd("zlothra:x:1000:1000:Z Lothra,,,:/home/zlothra:/bin/bash").unwrap();
-        assert_eq!((a.login.as_str(), a.full_name.as_str(), a.uid, a.home.as_str()), ("zlothra", "Z Lothra", 1000, "/home/zlothra"));
+        let a = parse_passwd("robin:x:1000:1000:Z Lothra,,,:/home/robin:/bin/bash").unwrap();
+        assert_eq!((a.login.as_str(), a.full_name.as_str(), a.uid, a.home.as_str()), ("robin", "Z Lothra", 1000, "/home/robin"));
         assert!(parse_passwd("broken").is_none());
     }
 

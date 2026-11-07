@@ -289,8 +289,8 @@ mod tests {
         assert_eq!(parse_default("no system default destination"), "");
         let d = parse_devices("device for Brother_HL: ipp://brother.local/ipp/print\ndevice for PDF: cups-pdf:/\n");
         assert_eq!(d["Brother_HL"], "ipp://brother.local/ipp/print");
-        let j = parse_jobs("Brother_HL-12            zlothra          1024   Wed 22 Oct 2026 10:00:00 AM MDT\n");
-        assert_eq!(j, vec![Job { id: "Brother_HL-12".into(), printer: "Brother_HL".into(), owner: "zlothra".into(), size: "1024".into() }]);
+        let j = parse_jobs("Brother_HL-12            alex          1024   Wed 22 Oct 2026 10:00:00 AM MDT\n");
+        assert_eq!(j, vec![Job { id: "Brother_HL-12".into(), printer: "Brother_HL".into(), owner: "alex".into(), size: "1024".into() }]);
     }
 
     #[test]
