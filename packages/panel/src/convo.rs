@@ -2,8 +2,8 @@
 //! that voicewave::mic_level gives every ~33 ms (0 is a quiet room, 1 is loud): it learns the room's noise in the first moments, notices
 //! when speech starts, and calls the end of an utterance after about a second of quiet.
 
-/// How long the shortcut must be held to count as "hold to talk" (a single question, sent when the key comes up). Shorter is a tap.
-pub const HOLD_MS: u128 = 500;
+/// A question asked within this long of the last one carries on the same conversation (she keeps what was said).
+pub const CONTINUE_SECS: u64 = 180;
 /// Quiet after speech that ends an utterance.
 pub const END_SILENCE_MS: u32 = 1000;
 /// Without any speech for this long, listening gives up (the conversation ends).
@@ -97,25 +97,32 @@ impl Vad {
     }
 }
 
-/// What a key press followed by a release means, given how long the key was held and whether a conversation was already listening when it went down.
+/// What a press of the talk key does. Tap to start, tap again to send: only the key going down counts, so it does not matter which
+/// key of Super+S is let go first (Hyprland reports a release only while Super is still held, and a missed release used to leave the
+/// recording running).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Press {
-    /// A tap: start a conversation (listen until you stop talking; after her answer, listen again).
-    StartConversation,
-    /// A tap while a conversation was listening: stop it.
-    StopConversation,
-    /// Held: one question, sent now.
-    SingleQuestion,
+pub enum Tap {
+    /// Start recording (stopping her voice if she is talking).
+    Start,
+    /// Stop recording and send the question.
+    Send,
+    /// She is working on an answer: the press does nothing.
+    Ignore,
 }
 
-pub fn classify(held_ms: u128, conversation_was_listening: bool) -> Press {
-    if held_ms >= HOLD_MS {
-        Press::SingleQuestion
-    } else if conversation_was_listening {
-        Press::StopConversation
+pub fn tap(listening: bool, thinking: bool) -> Tap {
+    if thinking {
+        Tap::Ignore
+    } else if listening {
+        Tap::Send
     } else {
-        Press::StartConversation
+        Tap::Start
     }
+}
+
+/// Whether a new question continues the conversation: asked within CONTINUE_SECS of the last one.
+pub fn continues(since_last: Option<std::time::Duration>) -> bool {
+    since_last.is_some_and(|d| d.as_secs() < CONTINUE_SECS)
 }
 
 #[cfg(test)]
@@ -177,10 +184,13 @@ mod tests {
     }
 
     #[test]
-    fn taps_and_holds() {
-        assert_eq!(classify(120, false), Press::StartConversation);
-        assert_eq!(classify(120, true), Press::StopConversation);
-        assert_eq!(classify(900, false), Press::SingleQuestion);
-        assert_eq!(classify(900, true), Press::SingleQuestion);
+    fn tap_to_start_tap_to_send() {
+        assert_eq!(tap(false, false), Tap::Start);
+        assert_eq!(tap(true, false), Tap::Send);
+        assert_eq!(tap(false, true), Tap::Ignore, "a press while she is answering does nothing");
+        use std::time::Duration;
+        assert!(continues(Some(Duration::from_secs(60))));
+        assert!(!continues(Some(Duration::from_secs(CONTINUE_SECS))));
+        assert!(!continues(None));
     }
 }

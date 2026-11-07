@@ -147,12 +147,12 @@ impl PanelBus {
         let _ = self.0.send(BusMsg::Ask);
     }
 
-    /// The hold-to-talk key went down (for compositors that report press and release: bind both, AskPress then AskRelease).
+    /// The talk key went down: tap to start recording, tap again to send.
     fn ask_press(&self) {
         let _ = self.0.send(BusMsg::AskKey(true));
     }
 
-    /// The hold-to-talk key came up.
+    /// The talk key came up (kept for older bindings; not used: tap to start, tap again to send).
     fn ask_release(&self) {
         let _ = self.0.send(BusMsg::AskKey(false));
     }
@@ -194,7 +194,7 @@ impl PanelBus {
 }
 
 /// A popover and what it shows.
-/// Hold-to-talk's key, as `yggdrasil-panelctl ask-press` / `ask-release` report it (Hyprland binds Super+S and Ctrl+Alt+S to them).
+/// The talk key, as `yggdrasil-panelctl ask-press` (and the older `ask-release`) report it; Hyprland binds Super+S and Ctrl+Alt+S.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum VoiceKey {
     Down,
@@ -456,9 +456,8 @@ struct State {
     /// The current recording ends by itself when you stop talking (a tap), instead of when the key comes up (a hold).
     vad_mode: bool,
     vad: convo::Vad,
-    key_down_at: Option<std::time::Instant>,
-    /// The key went down while a conversation was listening (a tap then stops it).
-    down_in_conv: bool,
+    /// When the last question was sent (a new one within convo::CONTINUE_SECS continues the conversation).
+    conv_last: Option<std::time::Instant>,
     /// The conversation's id (her session continues across its turns), and how many turns in a row had nothing to hear.
     conv_id: Option<String>,
     conv_misses: u32,
@@ -907,49 +906,38 @@ impl State {
         }
     }
 
-    /// The shortcut went down or up. A tap starts a conversation (it listens until you stop talking, she answers, then it listens again; a tap stops
-    /// it); holding the key is one question, sent when you let go. Pressing while she talks stops her and listens.
+    /// The talk key: tap to start recording, tap again to send (convo::tap). Its release is not used. A question within
+    /// convo::CONTINUE_SECS of the last one carries on the same conversation; after that a new one begins.
     fn voice_key(&mut self, k: VoiceKey) {
-        match k {
-            VoiceKey::Down => {
-                self.key_down_at = Some(std::time::Instant::now());
-                self.down_in_conv = self.conv && self.vad_mode && matches!(self.model.fylgja.voice, fylgja::Voice::Listening(_));
-                if self.down_in_conv || matches!(self.model.fylgja.voice, fylgja::Voice::Thinking(_)) {
-                    return; // already listening (this press may be the one that stops it) or busy answering
+        if k == VoiceKey::Up {
+            return;
+        }
+        let listening = matches!(self.model.fylgja.voice, fylgja::Voice::Listening(_));
+        let thinking = matches!(self.model.fylgja.voice, fylgja::Voice::Thinking(_));
+        match convo::tap(listening, thinking) {
+            convo::Tap::Ignore => {}
+            convo::Tap::Send => {
+                self.conv_last = Some(std::time::Instant::now());
+                self.send_recording();
+            }
+            convo::Tap::Start => {
+                if !convo::continues(self.conv_last.map(|t| t.elapsed())) {
+                    self.forget_conversation();
                 }
-                let interrupting = self.speech_since.is_some();
+                if self.conv_id.is_none() {
+                    self.conv_id = Some(format!("{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)));
+                }
+                self.vad_mode = false;
+                self.conv = false;
                 self.begin_listening();
-                if interrupting {
-                    self.vad_mode = false; // decided when the key comes up
-                }
             }
-            VoiceKey::Up => {
-                // the release binding also fires for an S let go after Super (or while typing): only an up that ends a press counts
-                let Some(down) = self.key_down_at.take() else { return };
-                let held = down.elapsed().as_millis();
-                if !matches!(self.model.fylgja.voice, fylgja::Voice::Listening(_)) {
-                    return;
-                }
-                match convo::classify(held, self.down_in_conv) {
-                    convo::Press::StopConversation => self.end_conversation(),
-                    convo::Press::SingleQuestion => {
-                        self.vad_mode = false;
-                        self.conv = false;
-                        self.send_recording();
-                    }
-                    convo::Press::StartConversation => {
-                        // keep recording: it ends when you stop talking. With her voice off there is no spoken back and forth, so one question only.
-                        self.vad_mode = true;
-                        self.conv = self.model.conf.assistant_speaks;
-                        self.vad = convo::Vad::new();
-                        self.conv_misses = 0;
-                        if self.conv && self.conv_id.is_none() {
-                            self.conv_id = Some(format!("{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)));
-                        }
-                    }
-                }
-                self.down_in_conv = false;
-            }
+        }
+    }
+
+    /// Drops the conversation's session (her memory of what was said in it), so the next question starts afresh.
+    fn forget_conversation(&mut self) {
+        if let (Some(id), Some(dir)) = (self.conv_id.take(), assistant::get().and_then(|a| a.runtime_dir())) {
+            let _ = std::fs::remove_file(dir.join(format!("conv-{id}.session")));
         }
     }
 
@@ -3776,8 +3764,7 @@ fn main() {
         conv: false,
         vad_mode: false,
         vad: convo::Vad::new(),
-        key_down_at: None,
-        down_in_conv: false,
+        conv_last: None,
         conv_id: None,
         conv_misses: 0,
         last_tick: None,
@@ -3999,18 +3986,6 @@ fn main() {
             }
         })
         .expect("window picture channel");
-    // Hold-to-talk's key-up, whichever key is let go first: Hyprland reports the release binding only while Super is still held, so
-    // letting go of Super before S lost it (the recording ran on and Super+S did not stop it). While the key is down, ask Hyprland
-    // whether S is still held; when it is not and no release came, act on the release as if it had.
-    event_loop
-        .handle()
-        .insert_source(Timer::from_duration(Duration::from_millis(100)), |_, _, st| {
-            if st.key_down_at.is_some_and(|t| t.elapsed() >= Duration::from_millis(150)) && zones::keys_down(&["s", "S"], "yggdrasil-voice-key") == Some(false) {
-                st.voice_key(VoiceKey::Up);
-            }
-            TimeoutAction::ToDuration(Duration::from_millis(100))
-        })
-        .expect("hold-to-talk key timer");
     // over a full-screen window the dock comes back when the pointer is pushed against its edge
     event_loop
         .handle()

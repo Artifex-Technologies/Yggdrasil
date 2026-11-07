@@ -7,8 +7,8 @@
 #   fylgja [N]       Fylgja on section N (0 Controls, 1 Today, 2 Stats, 3 Notifications, 4 Wallpaper, 5 Power)
 #   clipboard        open or close the clipboard window (yggdrasil-clipboard)   (bind to Super+V)
 #   ask              start or send a spoken question to the assistant   (bind to Super+S)
-#   ask-press        the hold-to-talk key went down   } bind both where the compositor reports press and release:
-#   ask-release      the hold-to-talk key came up     } tap for a conversation, hold for one question
+#   ask-press        the talk key went down: tap to start recording, tap again to send (bind the press only)
+#   ask-release      the talk key came up (accepted from older bindings; does nothing)
 #   zones            the window zones sheet for the window in front, or close it   (bind to Super+Shift+Z)
 #   zones-drag       a dragged window reached the notch   } called by the session's Lua while a window is dragged,
 #   zones-drop       the drag ended                        } not by hand

@@ -22,11 +22,11 @@ Each file starts with `kind = ...`.
 ```
 kind = assistant
 name = Sarina                      # shown in the panel, Fylgja and Settings
-ask = /usr/local/bin/labyrinth-sarina-ask        # hold-to-talk: the recording's path is added as the last argument; prints the answer
+ask = /usr/local/bin/labyrinth-sarina-ask        # talk key (tap to start, tap to send): the recording's path is added as the last argument; prints the answer
 speak = /usr/local/bin/labyrinth-sarina-speak    # reads text aloud (text on standard input); `--stop` stops it
 warm = /usr/local/bin/labyrinth-sarina-warm      # optional: wake the model while you are still talking
 runtime = labyrinth-sarina         # folder in $XDG_RUNTIME_DIR where it reports speaking.pid and conversations (conv-ID.session)
-shortcut = Super+S                 # the hold-to-talk key Yggdrasil registers (Ctrl+Alt+S is added as a second way in)
+shortcut = Super+S                 # the talk key Yggdrasil registers, tap to start and tap to send (Ctrl+Alt+S is a second way in)
 ```
 
 Yggdrasil owns the key, the recording, Fylgja's listening and speaking animation and the answer card; the assistant owns the rest.

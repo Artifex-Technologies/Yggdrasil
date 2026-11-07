@@ -1,5 +1,5 @@
 //! The assistant the operating system provides, if any (an `assistant` integration file, see Yggdrasil's docs/INTEGRATIONS.md).
-//! The panel owns the hold-to-talk key, the recording, Fylgja's listening and speaking animation and the answer card; the
+//! The panel owns the talk key (tap to start, tap to send), the recording, Fylgja's listening and speaking animation and the answer card; the
 //! assistant's programs do the rest. With no assistant installed, none of this is offered.
 
 use std::path::PathBuf;
