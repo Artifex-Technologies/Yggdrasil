@@ -1,0 +1,13 @@
+#!/bin/bash
+# yggdrasil-zoom: the magnifier. Hyprland's zoom around the pointer (cursor:zoom_factor), in steps of half a time, from 1 (off)
+# to 8. Super+Alt+= zooms in, Super+Alt+- out, Super+Alt+0 turns it off. docs/ACCESSIBILITY.md.
+#   yggdrasil-zoom in|out|off
+set -u
+case ${1:-} in in | out | off) ;; *) echo "usage: yggdrasil-zoom in|out|off" >&2; exit 2 ;; esac
+cur=$(hyprctl getoption cursor:zoom_factor 2>/dev/null | awk '$1 == "float:" { print $2; exit }')
+next=$(awk -v c="${cur:-1}" -v a="$1" 'BEGIN {
+  n = (a == "in") ? c + 0.5 : (a == "out") ? c - 0.5 : 1
+  if (n < 1) n = 1
+  if (n > 8) n = 8
+  printf "%.1f", n }')
+exec hyprctl eval "hl.config({ cursor = { zoom_factor = $next } })" >/dev/null

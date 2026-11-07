@@ -296,6 +296,11 @@ cmd("SUPER + SHIFT + C", "yggdrasil-colorpicker", { desc = "Color picker" })
 -- Ctrl tapped on its own tells the panel (a release bind on a modifier), which puts a spotlight on the pointer after two taps in a
 -- short time (Settings > Keyboard Shortcuts can switch it off). The binds do not consume the key: Ctrl reaches programs as always.
 cmd("SUPER + SLASH", "yggdrasil-panelctl shortcuts", { desc = "Keyboard shortcuts" })
+-- accessibility (docs/ACCESSIBILITY.md): the magnifier (Hyprland's zoom around the pointer) and the screen reader
+cmd("SUPER + ALT + EQUAL", "yggdrasil-zoom in", { repeating = true, desc = "Magnifier: zoom in around the pointer" })
+cmd("SUPER + ALT + MINUS", "yggdrasil-zoom out", { repeating = true, desc = "Magnifier: zoom out" })
+cmd("SUPER + ALT + 0", "yggdrasil-zoom off", { desc = "Magnifier off" })
+cmd("SUPER + ALT + S", "yggdrasil-screen-reader", { desc = "Screen reader (Orca) on or off" })
 cmd("CTRL + CONTROL_L", "yggdrasil-panelctl cursor-tap", { release = true, non_consuming = true, desc = "Find my mouse (press Ctrl twice)" })
 cmd("CTRL + CONTROL_R", "yggdrasil-panelctl cursor-tap", { release = true, non_consuming = true, desc = "Find my mouse (press Ctrl twice)" })
 

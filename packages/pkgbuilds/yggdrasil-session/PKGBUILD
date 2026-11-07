@@ -18,6 +18,8 @@ package() {
   install -Dm755 "$_src/bin/yggdrasil-snap" "$pkgdir/usr/bin/yggdrasil-snap"
   install -Dm755 "$_src/bin/yggdrasil-close" "$pkgdir/usr/bin/yggdrasil-close"
   install -Dm755 "$_src/bin/yggdrasil-logout" "$pkgdir/usr/bin/yggdrasil-logout"
+  install -Dm755 "$_src/bin/yggdrasil-zoom" "$pkgdir/usr/bin/yggdrasil-zoom"
+  install -Dm755 "$_src/bin/yggdrasil-screen-reader" "$pkgdir/usr/bin/yggdrasil-screen-reader"
   install -Dm755 "$_src/bin/yggdrasil-hypr-plugin" "$pkgdir/usr/bin/yggdrasil-hypr-plugin"
   install -Dm755 "$_src/bin/yggdrasil-hypr-logkeep" "$pkgdir/usr/bin/yggdrasil-hypr-logkeep"
   install -Dm644 "$_src/hyprland/plugin/minimize.cpp" "$pkgdir/usr/share/yggdrasil/hyprland/plugin/minimize.cpp"

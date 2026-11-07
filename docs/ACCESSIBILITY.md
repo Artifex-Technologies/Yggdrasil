@@ -48,16 +48,21 @@ with Orca before trusting the table below**, and again when eframe is upgraded.
 5. **No high-contrast or reduced-motion setting, no big-cursor setting.** Add a high-contrast palette variant in `yggdrasil-ui`, a "reduce
    motion" switch (animations in the panel are short, but there are some), and cursor size in Settings.
 6. **Not shipped:** Orca, Speech Dispatcher, eSpeak NG, braille. Added now as the optional component `accessibility` (and in the
-   "everything" preset). Still to do: install it on every machine by default, a boot-menu entry that starts the live ISO with speech
-   (archiso's `accessibility=on` / espeakup), and a Super+Alt+S binding (KDE's shortcut went with KDE; nothing in the Yggdrasil session starts a screen reader from the keyboard yet).
+   "everything" preset). **Super+Alt+S starts or stops Orca since 2026-11-07** (`yggdrasil-screen-reader`, in yggdrasil-session; it
+   says how to install Orca when it is missing). Still to do: install it on every machine by default, and a boot-menu entry that
+   starts the live ISO with speech (archiso's `accessibility=on` / espeakup).
 7. **Sticky/slow/bounce keys, mouse keys, the magnifier: missing now.** They came from KDE (kaccess and KWin effects), which is gone.
    Hyprland 0.57 has no setting for sticky, slow or bounce keys or mouse keys (checked in its option list, `hyprctl descriptions`).
    It does have a zoom around the pointer (`cursor:zoom_factor`, 1 to 10), but Yggdrasil binds no key to it and Settings has no
-   switch for it, so for a user there is no magnifier today. To do: a magnifier switch and keys on that zoom, and sticky keys in
-   Yggdrasil itself or in the compositor (libinput supports sticky/bounce keys only partly). Yggdrasil's own compositor must offer
+   switch for it, so for a user there was no magnifier. **The magnifier keys since 2026-11-07:** Super+Alt+= zooms in around the
+   pointer, Super+Alt+- out, Super+Alt+0 off (`yggdrasil-zoom`, steps of half a time up to 8; not yet tried on screen). To do: a
+   switch and the zoom level in Settings, and sticky keys in Yggdrasil itself or in the compositor (libinput supports sticky/bounce
+   keys only partly). Yggdrasil's own compositor must offer
    them too when it runs the real session.
 8. **On-screen keyboard: missing now.** `qt6-virtualkeyboard` went with Plasma and no other on-screen keyboard is installed; our own
-   lock screen and password box have none either. Needed for tablets and for some motor impairments.
+   lock screen and password box have none either. Needed for tablets and for some motor impairments. The Wayland ones that work
+   with Hyprland (wvkbd, squeekboard) are not in Arch's repositories (checked 2026-11-07), so this needs our own (a panel surface on
+   the virtual-keyboard protocol) or a package built for Labyrinth's repository.
 
 ## Already fine
 
