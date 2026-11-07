@@ -3,7 +3,7 @@
 #
 # Prints the one-try entry only while an attempt is armed: `gpuunlock arm` writes entry.cfg, a copy of the menu's first entry
 # with turing_unlock.targets= added for this card, and `gpuunlock verify` or `disarm` removes it. Without the file it prints
-# nothing, so grub-mkconfig's output is unchanged. The entry is never the default: Matt picks it by hand at a restart. It
+# nothing, so grub-mkconfig's output is unchanged. The entry is never the default: I pick it by hand at a restart. It
 # never fails, so it can never stop a kernel update from writing the boot menu.
 entry=${YGGDRASIL_GPUUNLOCK_ENTRY:-/var/lib/yggdrasil/gpu-unlock/entry.cfg}
 [ -r "$entry" ] || exit 0

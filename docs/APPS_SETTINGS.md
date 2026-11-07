@@ -86,11 +86,11 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
   change); the root service `yggdrasil-powerlimit.service` (the operating system switches it on) applies the active mode's limits on every mode change (CPU: `scaling_max_freq` as a percent
   of `cpuinfo_max_freq`; GPU: `nvidia-smi -pl`). Verified on the RTX 2080 Ti and the Intel pstate CPU; restored to defaults.
   On the Power page they sit in the Power mode group, under the mode selector, for the mode that is selected: Processor, then
-  Graphics card (each with a reset icon left of its slider); choosing another mode shows and changes that mode's limits (Matt's layout, 2026-10-27).
+  Graphics card (each with a reset icon left of its slider); choosing another mode shows and changes that mode's limits (my layout, 2026-10-27).
   While the graphics card unlock is armed or measured, `/var/lib/yggdrasil/gpu-unlock/power-hold` exists and no mode goes above
   the card's default watts (the modes' own limits stay saved and come back when the hold ends); `powerlimit get` reports it as
   `gpu.hold` and the slider stops there.
-- **Graphics card page** (built 2026-10-27, Matt's design; `src/gpu.rs`): the Graphics card row's title opens it. An
+- **Graphics card page** (built 2026-10-27, my design; `src/gpu.rs`): the Graphics card row's title opens it. An
   Afterburner-style panel for an NVIDIA card: a live readout (temperature, power against the limit, core and memory clocks,
   load, video memory, fans, and what is holding the clocks back) with the last two minutes as small graphs, each on its own
   fixed scale, the value at a moment on hover; the selected power mode's power limit; and the fans (`/usr/lib/yggdrasil/gpufan`):
@@ -149,7 +149,7 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
   - Quarantine decisions are not here: they are Heimdall's (Security > the monitor's page).
   - A Limbo from before this protocol is named as such ("older than this page"); one that does not run, or a person not in
     `limbo-users`, gets a plain line saying what to do. Read every 5 s only while the page is open.
-- **Processor page** (built 2026-10-27, Matt's design; `src/cpu.rs`): the Processor row's title opens it, like the Graphics
+- **Processor page** (built 2026-10-27, my design; `src/cpu.rs`): the Processor row's title opens it, like the Graphics
   card's, with its own pop-out window (`--cpu-window`, app id `yggdrasil-cpu`).
   - **Readout:** package temperature and the hottest core, clocks (average and fastest), load and package power, with the
     same graphs (they fill their box from the first seconds, then cover the last two minutes). Read from sysfs and /proc once a second while the panel is shown; the power comes from the

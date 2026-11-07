@@ -169,7 +169,7 @@ class Calm(unittest.TestCase):
 
 
 class Follow(unittest.TestCase):
-    """A fan can run on another fan's curves (Matt, 2026-11-05: the exhaust on the 80mm fan's map)."""
+    """A fan can run on another fan's curves (my request, 2026-11-05: the exhaust on the 80mm fan's map)."""
 
     QUIET = [[55, 35], [70, 40], [85, 80], [92, 100]]
 

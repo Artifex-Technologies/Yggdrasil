@@ -46,7 +46,7 @@ REAPPLY_S = 30
 PUMP_MIN_PCT = 60
 FAN_MIN_PCT = 20
 STOP_FAN_PCT = 60
-# Calm, not jumpy (Matt, 2026-11-04: the exhaust rose and fell every 10-20 s as each eval case started and stopped): the curves
+# Calm, not jumpy (my request, 2026-11-04: the exhaust rose and fell every 10-20 s as each eval case started and stopped): the curves
 # read temperatures averaged over about SMOOTH_S seconds, and a fan's speed glides toward its target by at most RAMP_UP_PCT
 # (faster) or RAMP_DOWN_PCT (slower) per step. The hot override still uses the raw readings and acts at once.
 SMOOTH_S = 30

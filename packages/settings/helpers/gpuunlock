@@ -4,7 +4,7 @@
 The plan, its safety rules and its phases are in Labyrinth OS, docs/GPU_UNLOCK.md (section 12: the method since 2026-10-27). In
 short: only a card whose identity matches an entry of the support table exactly is offered the unlock. The unlock itself is
 nlzy/turing-unlock's kernel module, which loads from the start-up image before the graphics driver and does nothing unless
-`turing_unlock.targets=` is on the kernel command line. Arming adds one boot-menu entry with that option, which Matt picks by hand
+`turing_unlock.targets=` is on the kernel command line. Arming adds one boot-menu entry with that option, which I pick by hand
 at a restart: a start through any other entry is a normal one, and nothing writes to the card once its driver has it. Nothing here
 raises the card's power: while an attempt is armed and until its measurements are done, every power mode is held at the card's
 default watts (powerlimit reads the hold).

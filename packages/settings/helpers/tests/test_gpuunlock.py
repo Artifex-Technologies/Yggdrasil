@@ -282,7 +282,7 @@ class Arming(Base):
         self.assertEqual(cfg.count("menuentry 'Labyrinth Linux, graphics card unlock (one try)'"), 1)
         self.assertIn("turing_unlock.targets=0000:01:00.0\n", cfg)
         self.assertEqual(self.m.first_entry_id(cfg), "gnulinux-simple-3118e509", "the normal start stays first and default")
-        self.assertEqual(self.fake.ran("grub-reboot"), [], "nothing picks the entry but Matt")
+        self.assertEqual(self.fake.ran("grub-reboot"), [], "nothing picks the entry but me")
         self.assertEqual(self.fake.ran("grub-editenv"), [])
         self.assertTrue(os.path.exists(self.state("power-hold")))
         self.assertEqual(oct(os.stat(self.state("armed")).st_mode & 0o777), "0o600")
