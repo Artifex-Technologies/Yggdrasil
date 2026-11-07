@@ -3,8 +3,9 @@
 //! - Graphics cards: read by `yggdrasil-gpu-run list --json` (helpers/gpu-run), the same code that later starts the game, so
 //!   the numbers here are the numbers it takes. With two or more cards each one shows the Steam launch option that runs a game
 //!   on it (`yggdrasil-gpu-run 2 %command%`), with a Copy button.
-//! - Frame generation (Labyrinth's own, labyrinth-framegen): every installed Steam game with Off / 2x / 3x / 4x, written to
-//!   ~/.config/labyrinth-framegen/games.conf, which its launcher (`labyrinth-framegen %command%` in the game's Steam launch
+//! - Frame generation (Kairos, Labyrinth's own; labyrinth-framegen until 2026-11-07): every installed Steam game with Off / 2x /
+//!   3x / 4x, written to ~/.config/kairos/games.conf (the old ~/.config/labyrinth-framegen/games.conf is read while the new
+//!   one does not exist, and its lines carried over on the first change), which its launcher (`kairos %command%` in the game's Steam launch
 //!   options, once) reads when the game starts.
 //! - Lossless Scaling frame generation: lsfg-vk (a Vulkan layer, from Agora: its licence keeps it out of the system itself) and Lossless
 //!   Scaling (Steam, paid), whose files it needs. Its own window (lsfg-vk-ui) sets the games and multipliers; this page says
@@ -31,10 +32,11 @@ const LSFG_LAYERS: [&str; 2] = ["/usr/share/vulkan/implicit_layer.d/VkLayer_LSFG
 const LOSSLESS_SCALING: &str = "993090";
 /// Agora's page for the lsfg-vk component (Labyrinth's catalog).
 const AGORA_APP: &str = "frame-generation";
-/// Labyrinth's own frame generation: its layer manifest (present when installed) and Agora page.
-const FRAMEGEN_LAYER: &str = "/usr/share/vulkan/implicit_layer.d/labyrinth_framegen.x86_64.json";
-const FRAMEGEN_AGORA: &str = "labyrinth-framegen";
-pub const FRAMEGEN_OPTION: &str = "labyrinth-framegen %command%";
+/// Kairos, Labyrinth's own frame generation: its layer manifest (present when installed; the second, before the rename) and
+/// Agora page.
+const FRAMEGEN_LAYERS: [&str; 2] = ["/usr/share/vulkan/implicit_layer.d/kairos.x86_64.json", "/usr/share/vulkan/implicit_layer.d/labyrinth_framegen.x86_64.json"];
+const FRAMEGEN_AGORA: &str = "kairos";
+pub const FRAMEGEN_OPTION: &str = "kairos %command%";
 /// The choices per game, as Off, 2x, 3x, 4x.
 pub const FRAMEGEN_CHOICES: [&str; 4] = ["Off", "2x", "3x", "4x"];
 
@@ -63,10 +65,10 @@ pub struct Fix {
 }
 
 /// The launch option to copy for a fix: with Labyrinth's frame generation installed, through its launcher too (one launch
-/// option holds both; without it installed, `labyrinth-framegen` would not exist and the game would not start).
+/// option holds both; without it installed, `kairos` would not exist and the game would not start).
 pub fn fix_launch(launch: &str, framegen: bool) -> String {
     if framegen && !launch.is_empty() {
-        format!("labyrinth-framegen {launch}")
+        format!("kairos {launch}")
     } else {
         launch.to_string()
     }
@@ -100,15 +102,23 @@ pub struct Info {
     pub framegen: bool,
     /// installed Steam games: (app id, name), by name
     pub games: Vec<(String, String)>,
-    /// labyrinth-framegen's games.conf as it is
+    /// Kairos's games.conf as it is
     pub framegen_conf: String,
 }
 
-/// ~/.config/labyrinth-framegen/games.conf
+/// ~/.config/kairos/games.conf, where choices are written.
 pub fn framegen_conf_path() -> PathBuf {
-    // the launcher's own folder (XDG_CONFIG_HOME, else ~/.config), not Yggdrasil's
-    let base = std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join(".config"));
-    base.join("labyrinth-framegen/games.conf")
+    config_base().join("kairos/games.conf")
+}
+
+/// The launcher's own folder (XDG_CONFIG_HOME, else ~/.config), not Yggdrasil's.
+fn config_base() -> PathBuf {
+    std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join(".config"))
+}
+
+/// The choices as they are: Kairos's games.conf, or the one from before the rename while there is no new one.
+pub fn framegen_conf_read() -> String {
+    std::fs::read_to_string(framegen_conf_path()).or_else(|_| std::fs::read_to_string(config_base().join("labyrinth-framegen/games.conf"))).unwrap_or_default()
 }
 
 /// A game's choice in games.conf: 0 (off or not listed), 2, 3 or 4.
@@ -277,9 +287,9 @@ pub fn load() -> Info {
         lossless: lossless_installed(&home),
         steam: !steam_roots(&home).is_empty(),
         fixes: std::process::Command::new(GAME_FIX).args(["list", "--json"]).output().ok().filter(|o| o.status.success()).and_then(|o| parse_fixes(&String::from_utf8_lossy(&o.stdout))).unwrap_or_default(),
-        framegen: Path::new(FRAMEGEN_LAYER).is_file(),
+        framegen: FRAMEGEN_LAYERS.iter().any(|p| Path::new(p).is_file()),
         games: steam_games(&home),
-        framegen_conf: std::fs::read_to_string(framegen_conf_path()).unwrap_or_default(),
+        framegen_conf: framegen_conf_read(),
     }
 }
 
@@ -397,7 +407,7 @@ impl State {
 
         ui::group(ui, pal, Some("Frame generation (preview)"), |ui| {
             if !info.framegen {
-                ui::row(ui, pal, true, "Frame generation", Some("Labyrinth's own: more frames on the screen than the game draws, for Vulkan and Proton games. From Agora."), |ui| {
+                ui::row(ui, pal, true, "Frame generation", Some("Kairos, Labyrinth's own: more frames on the screen than the game draws, for Vulkan and Proton games. From Agora."), |ui| {
                     if ui::action(ui, pal, "Get it in Agora").clicked() {
                         let _ = std::process::Command::new("agora").env("AGORA_PAGE", format!("detail:{FRAMEGEN_AGORA}")).spawn();
                         self.info = None;
@@ -406,7 +416,7 @@ impl State {
                 return;
             }
             let label = if self.copied == Some(u32::MAX) { "Copied" } else { "Copy launch option" };
-            ui::row(ui, pal, true, "In Steam, once per game", Some("Properties > Launch options: labyrinth-framegen %command%. Then choose below; no further Steam changes."), |ui| {
+            ui::row(ui, pal, true, "In Steam, once per game", Some("Properties > Launch options: kairos %command%. Then choose below; no further Steam changes."), |ui| {
                 if ui::action(ui, pal, label).on_hover_text(FRAMEGEN_OPTION).clicked() {
                     ui.ctx().copy_text(FRAMEGEN_OPTION.to_string());
                     self.copied = Some(u32::MAX);
@@ -504,7 +514,7 @@ mod tests {
     #[test]
     fn a_fix_launch_option_includes_frame_generation_only_when_installed() {
         let l = "bash -c 'exec \"${@/A.exe/B.exe}\"' -- %command%";
-        assert_eq!(fix_launch(l, true), format!("labyrinth-framegen {l}"));
+        assert_eq!(fix_launch(l, true), format!("kairos {l}"));
         assert_eq!(fix_launch(l, false), l);
         assert_eq!(fix_launch("", true), "", "no launch option: nothing to copy");
     }

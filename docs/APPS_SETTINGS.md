@@ -40,11 +40,12 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
     **Fallout 4** (the settings files its launcher would make, from its templates, at the screen's size, borderless; the
     world fills 21:9 (confirmed by the owner in play), the HUD stays 16:9 and stretched; and a launch option that starts the game without Bethesda's launcher, which kept the keyboard
     once the game was up: tried by the owner 2026-11-05, keys work). A fix's `launch` is offered with Copy launch option (with
-    `labyrinth-framegen` in front when frame generation is installed); Steam keeps launch options to itself, so it is copied,
+    `kairos` in front when frame generation is installed); Steam keeps launch options to itself, so it is copied,
     not written. Tests: `helpers/tests/test_game_fix.py`. Patches to games' code come per game.
-  - **Frame generation (preview)**, Labyrinth's own (labyrinth-framegen, from Agora): every installed Steam game (from the
+  - **Frame generation (preview)**, Kairos, Labyrinth's own (`labyrinth-framegen` until 2026-11-07; from Agora): every installed Steam game (from the
     appmanifests in all Steam libraries; Proton and Steam's runtimes left out) with Off / 2x / 3x / 4x, saved at once to
-    `~/.config/labyrinth-framegen/games.conf` (`<app id> <off|2|3|4>`). The game needs `labyrinth-framegen %command%` in its
+    `~/.config/kairos/games.conf` (`<app id> <off|2|3|4>`; the old `~/.config/labyrinth-framegen/games.conf` is read until the first
+    change). The game needs `kairos %command%` (the old `labyrinth-framegen %command%` still works) in its
     Steam launch options once (Copy launch option); the launcher reads the choice when the game starts.
   - **Lossless Scaling frame generation (lsfg-vk):** whether lsfg-vk is installed (its Vulkan layer; Get it in Agora otherwise, where
     Labyrinth's catalog has it as "Frame generation", from the AUR's source recipe), whether Lossless Scaling is installed in
