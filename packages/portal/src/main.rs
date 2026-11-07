@@ -4,6 +4,11 @@
 //! sandbox do that. Nothing is logged but errors.
 //!
 //! It also answers `org.freedesktop.impl.portal.Settings` (settings.rs): dark or light, and the accent colour, for every program.
+//!
+//! The dialog opens in the folder the same program last picked from (remembered per program in
+//! `~/.local/state/yggdrasil/picker-folders`), unless the program asks for a folder of its own. "The same program" is the
+//! app id the portal gives, else the window with the focus when the dialog is asked for (Hyprland; that is the program
+//! asking), else the dialog's title.
 
 mod settings;
 
@@ -102,6 +107,49 @@ unsafe fn libc_kill(pid: i32) {
     kill(pid, 15);
 }
 
+/// Where the last folder of each program is kept: `key<TAB>folder` lines.
+fn folders_file() -> Option<std::path::PathBuf> {
+    let base = std::env::var_os("XDG_STATE_HOME").map(std::path::PathBuf::from).filter(|p| p.is_absolute()).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/state")))?;
+    Some(base.join("yggdrasil/picker-folders"))
+}
+
+fn remembered(key: &str) -> Option<String> {
+    let text = std::fs::read_to_string(folders_file()?).ok()?;
+    text.lines().filter_map(|l| l.split_once('\t')).find(|(k, _)| *k == key).map(|(_, f)| f.to_string()).filter(|f| std::path::Path::new(f).is_dir())
+}
+
+fn remember(key: &str, folder: &str) {
+    let Some(path) = folders_file() else { return };
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    // newest first, kept to the last 200 programs
+    let mut lines: Vec<String> = text.lines().filter(|l| l.split_once('\t').is_some_and(|(k, _)| k != key)).map(str::to_string).collect();
+    lines.insert(0, format!("{key}\t{folder}"));
+    lines.truncate(200);
+    if let Some(d) = path.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    let _ = std::fs::write(&path, lines.join("\n") + "\n");
+}
+
+/// Which program is asking: its app id, else the class of the window with the focus (Hyprland), else the dialog's title.
+fn program_key(app_id: &str, title: &str) -> String {
+    if !app_id.is_empty() {
+        return format!("app:{app_id}");
+    }
+    if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some() {
+        if let Ok(out) = Command::new("hyprctl").args(["activewindow", "-j"]).stderr(Stdio::null()).output() {
+            let text = String::from_utf8_lossy(&out.stdout);
+            // the window's class, from Hyprland's JSON without a JSON library: "class": "daedalus",
+            if let Some(rest) = text.split("\"class\": \"").nth(1) {
+                if let Some(class) = rest.split('"').next().filter(|c| !c.is_empty()) {
+                    return format!("window:{class}");
+                }
+            }
+        }
+    }
+    format!("title:{title}")
+}
+
 /// Run Minos as a chooser; Some(paths) when the user chose, None when they cancelled.
 fn pick(handle: &str, running: &Arc<Mutex<HashMap<String, u32>>>, args: Vec<String>) -> Option<Vec<String>> {
     let child = Command::new("minos").arg("--pick").args(&args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn();
@@ -133,11 +181,12 @@ fn reply(paths: Option<Vec<String>>, filters: &Filters) -> (u32, Results) {
 }
 
 impl Chooser {
-    async fn run(&self, server: &zbus::object_server::ObjectServer, handle: OwnedObjectPath, mode: &str, title: String, o: Options, extra: Vec<String>) -> (u32, Results) {
+    async fn run(&self, server: &zbus::object_server::ObjectServer, handle: OwnedObjectPath, app_id: &str, mode: &str, title: String, o: Options, extra: Vec<String>) -> (u32, Results) {
+        let key = program_key(app_id, &title);
         let _ = server.at(handle.as_str(), Request { handle: handle.to_string(), running: self.running.clone() }).await;
         let table = std::fs::read_to_string("/usr/share/mime/globs2").unwrap_or_default();
         let filters: Filters = o.get("filters").and_then(|v| Filters::try_from(v.clone()).ok()).unwrap_or_default();
-        let mut args = vec![mode.to_string(), "--title".into(), title];
+        let mut args = vec![mode.to_string(), "--title".into(), title.clone()];
         if opt_bool(&o, "multiple") {
             args.push("--multiple".into());
         }
@@ -160,7 +209,8 @@ impl Chooser {
             args.push("--name".into());
             args.push(n);
         }
-        if let Some(f) = folder {
+        // the program's own folder wins; else where it last picked from
+        if let Some(f) = folder.or_else(|| remembered(&key)) {
             args.push("--folder".into());
             args.push(f);
         }
@@ -175,25 +225,32 @@ impl Chooser {
         let (h, run) = (handle.to_string(), self.running.clone());
         let paths = blocking::unblock(move || pick(&h, &run, args)).await;
         let _ = server.remove::<Request, _>(handle.as_str()).await;
+        if let Some(first) = paths.as_ref().and_then(|p| p.first()) {
+            let p = std::path::Path::new(first);
+            let dir = if mode == "dir" || p.is_dir() { Some(p) } else { p.parent() };
+            if let Some(d) = dir {
+                remember(&key, &d.display().to_string());
+            }
+        }
         reply(paths, &filters)
     }
 }
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.FileChooser")]
 impl Chooser {
-    async fn open_file(&self, #[zbus(object_server)] server: &zbus::object_server::ObjectServer, handle: OwnedObjectPath, _app_id: String, _parent: String, title: String, options: Options) -> (u32, Results) {
+    async fn open_file(&self, #[zbus(object_server)] server: &zbus::object_server::ObjectServer, handle: OwnedObjectPath, app_id: String, _parent: String, title: String, options: Options) -> (u32, Results) {
         let mode = if opt_bool(&options, "directory") { "dir" } else { "open" };
-        self.run(server, handle, mode, title, options, vec![]).await
+        self.run(server, handle, &app_id, mode, title, options, vec![]).await
     }
 
-    async fn save_file(&self, #[zbus(object_server)] server: &zbus::object_server::ObjectServer, handle: OwnedObjectPath, _app_id: String, _parent: String, title: String, options: Options) -> (u32, Results) {
-        self.run(server, handle, "save", title, options, vec![]).await
+    async fn save_file(&self, #[zbus(object_server)] server: &zbus::object_server::ObjectServer, handle: OwnedObjectPath, app_id: String, _parent: String, title: String, options: Options) -> (u32, Results) {
+        self.run(server, handle, &app_id, "save", title, options, vec![]).await
     }
 
     /// Save several files into one folder: pick the folder, answer with each file name inside it.
-    async fn save_files(&self, #[zbus(object_server)] server: &zbus::object_server::ObjectServer, handle: OwnedObjectPath, _app_id: String, _parent: String, title: String, options: Options) -> (u32, Results) {
+    async fn save_files(&self, #[zbus(object_server)] server: &zbus::object_server::ObjectServer, handle: OwnedObjectPath, app_id: String, _parent: String, title: String, options: Options) -> (u32, Results) {
         let names: Vec<String> = options.get("files").and_then(|v| Vec::<Vec<u8>>::try_from(v.clone()).ok()).unwrap_or_default().into_iter().map(bytes_text).collect();
-        let (code, mut r) = self.run(server, handle, "dir", title, options, vec![]).await;
+        let (code, mut r) = self.run(server, handle, &app_id, "dir", title, options, vec![]).await;
         if code != 0 {
             return (code, r);
         }
