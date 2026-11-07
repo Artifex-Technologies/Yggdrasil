@@ -1,13 +1,20 @@
-# Yggdrasil's installer window (Rust, egui): installs the operating system from its live medium through the OS's own install
-# program (an integration file of kind "installer"). Built from packages/installer in this repository.
+# Yggdrasil's installer window (Rust, egui) and yggdrasil-install-system, the program that does the work from an archiso live
+# medium: partitions, encryption, btrfs, copying the system, the account, GRUB. The OS names itself, its clean-up and finishing
+# programs and its lists in an integration file of kind "installer" (docs/INSTALLER.md); it may name a program of its own instead.
+# Built from packages/installer in this repository.
 pkgname=yggdrasil-installer
 pkgver=0.1.0
-pkgrel=1
-pkgdesc="Installs the operating system from its live medium: Yggdrasil's window, the OS's own install steps"
+pkgrel=2
+pkgdesc="Installs the operating system from its live medium: Yggdrasil's window and install program"
 arch=('x86_64')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
 license=('MPL-2.0')
-depends=('gcc-libs' 'polkit' 'systemd')
+depends=('gcc-libs' 'polkit' 'systemd'
+         # yggdrasil-install-system
+         'python' 'util-linux' 'cryptsetup' 'btrfs-progs' 'dosfstools' 'squashfs-tools' 'grub' 'efibootmgr')
+optdepends=('e2fsprogs: ext4 for partitions chosen by hand'
+            'xfsprogs: XFS for partitions chosen by hand'
+            'flatpak: browsers from Flathub on the Browsers page')
 makedepends=('cargo')
 options=('!lto')
 
@@ -21,8 +28,10 @@ build() {
 check() {
   cd "$_src"
   cargo test --release --locked --target-dir "$srcdir/target"
+  python3 -m unittest discover -s helpers/tests
 }
 
 package() {
   install -Dm755 "$srcdir/target/release/yggdrasil-installer" "$pkgdir/usr/bin/yggdrasil-installer"
+  install -Dm755 "$_src/helpers/install-system" "$pkgdir/usr/bin/yggdrasil-install-system"
 }

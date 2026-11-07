@@ -162,6 +162,18 @@ wallpaper = /usr/share/wallpapers/labyrinth/labyrinth-purple.png
 
 The operating system's name and logo come from `/etc/os-release` (`NAME`, `LOGO`), not from here.
 
+### `installer` (the live medium's installer)
+
+```
+kind = installer
+command = /usr/bin/yggdrasil-install-system      # Yggdrasil's own install program, or the OS's
+name = Labyrinth
+cleanup = /usr/local/bin/labyrinth-install-cleanup
+```
+
+The window (`yggdrasil-installer`) runs `command`; the other keys (name, clean-up and finishing programs, boot menu theme, kernel
+options, the browser and optional-part lists) are in [INSTALLER.md](INSTALLER.md).
+
 ### `settings-page` (an OS page in Settings)
 
 ```

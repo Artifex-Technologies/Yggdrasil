@@ -1,0 +1,1087 @@
+#!/usr/bin/python3 -I
+"""yggdrasil-install-system: installs the operating system from its live medium (archiso) onto a disk. Yggdrasil's installer
+window runs it as root (pkexec) and shows what it says; it can also be run by hand. Nothing is asked here: the choices come as
+one JSON object on standard input, so passwords never appear on a command line.
+
+    {"disk": "/dev/nvme0n1", "mode": "erase",
+     "encrypt": true, "encrypt_password": "...",          (LUKS2; one password at start-up)
+     "user": {"name": "Full Name", "login": "me", "password": "..."},
+     "hostname": "my-pc", "timezone": "America/Denver", "locale": "en_US.UTF-8", "keymap": "us", "keymap_variant": "",
+     "browsers": ["vivaldi", "librewolf"], "default_browser": "vivaldi",      (optional; ids from the OS's browser list)
+     "extras": ["heimdall"]}                                                  (optional; ids from the OS's optional parts)
+
+    Partitions chosen by hand instead of the whole disk ("mode": "manual"; only on the chosen disk):
+    {"disk": "/dev/nvme0n1", "mode": "manual", "new_table": false,
+     "delete": [4],                                       (partition numbers, removed first)
+     "create": [{"id": "a", "start": 512110190592, "size": 214748364800, "kind": "linux"}],   (bytes; kind linux|efi|swap)
+     "use": [{"part": "/dev/nvme0n1p1", "mount": "/boot/efi", "format": null},                  (an existing EFI partition, kept)
+             {"part": "new:a", "mount": "/", "format": "btrfs"}],
+     "encrypt": true, "encrypt_password": "...", ...}    (encryption is for / only)
+
+    yggdrasil-install-system --check < plan.json      only check the plan and the computer, change nothing
+    yggdrasil-install-system --disks                  the disks it could install onto (JSON), with their partitions and free space
+
+What it prints, one line each (the installer reads these):
+    STEP n N text        step n of N has started
+    INFO text            something worth knowing
+    WARN text            something went wrong but the install goes on
+    ERROR text           the install stopped (nothing after this)
+    DONE                 finished: the computer can restart into the new system
+
+The steps: check, partition (a 1 GiB EFI partition and the rest for the system), encrypt (optional, LUKS2), format (btrfs with
+the subvolumes @, @home, @cache, @log), copy the system from the medium, set it up inside (the OS's clean-up program, language,
+keyboard, time zone, name, the account; root stays locked and the account administers with sudo), the start-up image, GRUB, and
+the OS's finishing program. In "manual" mode the partitions are the ones chosen (an existing EFI partition, Windows' for one, is
+used as it is: GRUB is added beside what is there and the firmware's fallback copy is left alone).
+
+What belongs to the operating system comes from its installer integration file (the first of kind "installer", as the window
+picks it; Yggdrasil's docs/INSTALLER.md) and /etc/os-release, so the same program installs any system built on Yggdrasil:
+
+    kind = installer
+    command = /usr/bin/yggdrasil-install-system
+    name = Example                       shown in messages, the boot menu and the disk labels (default: NAME in os-release, less " OS")
+    medium = /run/archiso/bootmnt/example/x86_64/airootfs.sfs          the system to copy (default: from ID in os-release)
+    cleanup = /usr/local/bin/example-install-cleanup                   run inside the new system first: takes away the live medium's
+                                                                       account, sign-in and no-password rules
+    finish = /usr/local/bin/example-install-finish                     run inside the new system last (a failure stops the install)
+    boot_menu_theme = /usr/local/bin/example-grub-theme                run inside after the plain boot menu is written
+    kernel_options = quiet splash                                      (default: quiet)
+    groups = users wheel video audio kvm                               the account's groups (those the system has)
+    reserved_logins = heimdall sarina                                  account names not offered (every existing account is taken too)
+    min_size_gb = 30                                                   the smallest disk (default 30)
+    browsers = /usr/share/OS/installer-browsers.json                   the Browsers page (also read by the window)
+    extras = /usr/share/OS/installer-extras.json                       the optional parts page (also read by the window)
+    components = /usr/share/OS/components.json                         what each optional part installs
+    first_login = /var/lib/OS/first-login-components.json              where chosen parts the medium lacks are written down for the
+                                                                       new user's first login (without it they are left for Agora)
+"""
+import json
+import os
+import pwd
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+INTEGRATION_DIRS = ["/usr/share/yggdrasil/integrations", "/etc/yggdrasil/integrations"]
+# the keys that make a browser the default (as /etc/xdg/mimeapps.list sets them)
+BROWSER_MIME = ["x-scheme-handler/http", "x-scheme-handler/https", "x-scheme-handler/about", "x-scheme-handler/unknown", "text/html",
+                "application/xhtml+xml"]
+# manual partitioning: what each mount point may be formatted as, and the least / needs
+MOUNTS = {"/": ("btrfs", "ext4", "xfs"), "/home": ("btrfs", "ext4", "xfs"), "/var": ("btrfs", "ext4", "xfs"), "/srv": ("btrfs", "ext4", "xfs"),
+          "/opt": ("btrfs", "ext4", "xfs"), "/boot/efi": ("vfat",), "swap": ("swap",)}
+MIN_ROOT = 20 * 1024**3
+MIN_ESP = 260 * 1024**2
+MIB = 1024**2
+SUBVOLUMES = [("@", ""), ("@home", "home"), ("@cache", "var/cache"), ("@log", "var/log")]
+# accounts the live medium or the login screen use, whatever the OS
+RESERVED = {"root", "live", "greeter"}
+# What GRUB is set up with: a short menu and no submenu or recovery entries.
+GRUB_DEFAULTS = {
+    "GRUB_TIMEOUT": "2",
+    # the first entry, not the last one chosen: remembering means GRUB writing its grubenv file, which it cannot do on btrfs
+    # ("sparse file not allowed", then a "press any key" stop at every start)
+    "GRUB_DEFAULT": "0",
+    "GRUB_SAVEDEFAULT": "false",
+    "GRUB_DISABLE_SUBMENU": "true",
+    "GRUB_TERMINAL_OUTPUT": "console",
+    "GRUB_DISABLE_RECOVERY": "true",
+}
+
+# ---------------------------------------------------------------- the operating system's settings
+# configure() fills these from the integration file and os-release before anything is done; the values here are what a system
+# that says nothing gets (and what the tests see).
+OS_NAME = "Linux"
+OS_ID = "linux"
+SFS = "/run/archiso/bootmnt/linux/x86_64/airootfs.sfs"
+TARGET = "/mnt/linux-install"
+MAPPER = "linux-root"
+CLEANUP = None
+FINISH = None
+BOOT_THEME = None
+KERNEL_OPTIONS = ["quiet"]
+GROUPS = ["users", "lp", "video", "network", "storage", "wheel", "audio", "kvm"]
+RESERVED_EXTRA = set()
+MIN_BYTES = 30 * 1024**3
+BROWSERS_FILE = None
+EXTRAS_FILE = None
+COMPONENTS_FILE = None
+FIRST_LOGIN_FILE = None
+
+
+def parse_conf(text):
+    """key = value lines; '#' starts a comment anywhere (as Yggdrasil's integration files are read)."""
+    values = {}
+    for line in text.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if "=" in line:
+            k, v = line.split("=", 1)
+            values[k.strip()] = v.strip()
+    return values
+
+
+def installer_integration(dirs=None):
+    """The installer integration file's keys: of the files in the folders (a later folder's file of the same name replaces an
+    earlier one), the first by name whose kind is "installer". Empty when there is none."""
+    found = {}
+    for d in dirs or INTEGRATION_DIRS:
+        try:
+            names = os.listdir(d)
+        except OSError:
+            continue
+        for n in names:
+            if not n.endswith(".conf"):
+                continue
+            try:
+                with open(os.path.join(d, n)) as f:
+                    values = parse_conf(f.read())
+            except OSError:
+                continue
+            if values.get("kind"):
+                found[n[:-len(".conf")]] = values
+    for stem in sorted(found):
+        if found[stem]["kind"] == "installer":
+            return {k: v for k, v in found[stem].items() if v}
+    return {}
+
+
+def os_release(path="/etc/os-release"):
+    try:
+        with open(path) as f:
+            return {k: v.strip('"\'') for k, v in parse_conf(f.read()).items()}
+    except OSError:
+        return {}
+
+
+def absolute(v):
+    """An absolute path without '..', or None."""
+    return v if v and v.startswith("/") and ".." not in v.split("/") else None
+
+
+def configure(conf, release):
+    """Sets the OS's values from its integration file (`conf`) and os-release (`release`), both as dicts."""
+    global OS_NAME, OS_ID, SFS, TARGET, MAPPER, CLEANUP, FINISH, BOOT_THEME, KERNEL_OPTIONS, GROUPS, RESERVED_EXTRA, MIN_BYTES
+    global BROWSERS_FILE, EXTRAS_FILE, COMPONENTS_FILE, FIRST_LOGIN_FILE
+    name = conf.get("name") or re.sub(r"\s+OS$", "", release.get("NAME", "")) or "Linux"
+    OS_NAME = re.sub(r"[^A-Za-z0-9 ._-]", "", name).strip() or "Linux"
+    OS_ID = re.sub(r"[^a-z0-9_-]", "", (release.get("ID") or OS_NAME).lower()) or "linux"
+    SFS = os.environ.get("YGGDRASIL_INSTALL_SFS") or absolute(conf.get("medium")) or f"/run/archiso/bootmnt/{OS_ID}/x86_64/airootfs.sfs"
+    TARGET = os.environ.get("YGGDRASIL_INSTALL_TARGET") or f"/mnt/{OS_ID}-install"
+    MAPPER = f"{OS_ID}-root"
+    CLEANUP, FINISH, BOOT_THEME = absolute(conf.get("cleanup")), absolute(conf.get("finish")), absolute(conf.get("boot_menu_theme"))
+    if conf.get("kernel_options"):
+        KERNEL_OPTIONS = conf["kernel_options"].split()
+    if conf.get("groups"):
+        GROUPS = conf["groups"].split()
+    RESERVED_EXTRA = set(conf.get("reserved_logins", "").split())
+    if conf.get("min_size_gb", "").isdigit():
+        MIN_BYTES = int(conf["min_size_gb"]) * 1024**3
+    BROWSERS_FILE, EXTRAS_FILE = absolute(conf.get("browsers")), absolute(conf.get("extras"))
+    COMPONENTS_FILE, FIRST_LOGIN_FILE = absolute(conf.get("components")), absolute(conf.get("first_login"))
+    GRUB_DEFAULTS["GRUB_DISTRIBUTOR"] = OS_NAME
+
+
+def login_taken(login):
+    """Whether an account name belongs to the system: the live medium's accounts are the new system's too."""
+    if login in RESERVED or login in RESERVED_EXTRA:
+        return True
+    try:
+        pwd.getpwnam(login)
+        return True
+    except KeyError:
+        return False
+
+
+STEPS = ["Checking the computer", "Preparing the disk", "Encrypting", "Formatting", "Copying the system", "Setting it up",
+         "Making the start-up image", "Installing the boot menu", "Finishing"]
+
+
+def say(kind, text=""):
+    print(f"{kind} {text}".rstrip(), flush=True)
+
+
+class Stop(Exception):
+    pass
+
+
+def run(argv, stdin=None, check=True, capture=False):
+    """Runs a program; on failure stops the install with its error output."""
+    r = subprocess.run(argv, input=stdin, text=True, capture_output=True)
+    if check and r.returncode != 0:
+        shown = argv[4:] if argv[:1] == ["chroot"] else argv  # the program, not the chroot and search path around it
+        raise Stop(f"{' '.join(shown[:3])} failed: {(r.stderr or r.stdout).strip()[-400:]}")
+    return r.stdout if capture else r
+
+
+def inside(argv, stdin=None, check=True):
+    """Runs a program inside the new system (chroot), with the system's full search path: pkexec gives the installer one
+    without /usr/local/bin, where an OS keeps its own helpers (a finishing program once found no menu theme there)."""
+    return run(["chroot", TARGET, "/usr/bin/env", "PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/sbin"] + argv, stdin=stdin, check=check)
+
+
+# ---------------------------------------------------------------- the plan
+
+LOGIN = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+HOSTNAME = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
+LOCALE = re.compile(r"^[A-Za-z_]+(\.[A-Za-z0-9-]+)?(@[a-z]+)?$")
+KEYMAP = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def check_plan(p):
+    """The plan, checked: an error message, or None when it can be installed."""
+    if p.get("mode") not in ("erase", "manual"):
+        return "unknown way to install (erase or manual)"
+    disk = p.get("disk", "")
+    if not re.fullmatch(r"/dev/[A-Za-z0-9/_-]+", disk):
+        return "no disk chosen"
+    if p["mode"] == "manual":
+        problem = check_manual(p)
+        if problem:
+            return problem
+    u = p.get("user") or {}
+    if not LOGIN.match(u.get("login", "")):
+        return "the account name must start with a small letter and use only small letters, digits, - and _"
+    if login_taken(u.get("login")):
+        return "that account name is taken by the system"
+    if len(u.get("password", "")) < 1:
+        return "the account needs a password"
+    if ":" in u.get("name", "") or "\n" in u.get("name", ""):
+        return "the full name may not contain : or a line break"
+    if not HOSTNAME.match(p.get("hostname", "")):
+        return "the computer's name may use letters, digits and - (not at the start or end)"
+    if p.get("encrypt") and len(p.get("encrypt_password", "")) < 8:
+        return "the encryption password needs at least 8 characters"
+    tz = p.get("timezone", "")
+    if not tz or ".." in tz or not os.path.isfile(os.path.join("/usr/share/zoneinfo", tz)):
+        return "unknown time zone"
+    if not LOCALE.match(p.get("locale", "")):
+        return "unknown language setting"
+    if not KEYMAP.match(p.get("keymap", "")):
+        return "unknown keyboard layout"
+    if p.get("keymap_variant") and not KEYMAP.match(p["keymap_variant"]):
+        return "unknown keyboard variant"
+    if "browsers" in p:
+        known = {b["id"] for b in browser_catalog()}
+        chosen = p["browsers"]
+        if not isinstance(chosen, list) or any(not isinstance(b, str) or b not in known for b in chosen):
+            return "unknown browser chosen"
+        if p.get("default_browser") and p["default_browser"] not in chosen:
+            return "the default browser must be one of those chosen"
+    if "extras" in p:
+        known = {e["id"] for e in extras_catalog()}
+        if not isinstance(p["extras"], list) or any(not isinstance(e, str) or e not in known for e in p["extras"]):
+            return "unknown optional part chosen"
+    return None
+
+
+# ---------------------------------------------------------------- browsers
+
+
+def browser_catalog(path=None):
+    """The browsers the installer offers (the integration's "browsers" file); none when there is no such file."""
+    try:
+        return [b for b in json.load(open(path or BROWSERS_FILE)).get("browsers", []) if isinstance(b, dict) and b.get("id")]
+    except (OSError, ValueError, TypeError):
+        return []
+
+
+def browser_plan(catalog, chosen):
+    """What choosing `chosen` (ids) means: the repository packages of the others to remove (only those installed are), the ones
+    to install, and the Flathub apps to install."""
+    remove, install, flatpaks = [], [], []
+    for b in catalog:
+        pk = b.get("packages", [])
+        if b["id"] in chosen:
+            install += pk
+            if b.get("flatpak"):
+                flatpaks.append(b["flatpak"])
+        else:
+            remove += pk
+    keep = set(install)
+    return {"remove": [x for x in remove if x not in keep], "install": install, "flatpaks": flatpaks}
+
+
+def mimeapps_with_browser(text, desktop):
+    """/etc/xdg/mimeapps.list with `desktop` opening web links and pages (the keys added under [Default Applications] if
+    missing)."""
+    lines = text.splitlines()
+    if not any(l.strip() == "[Default Applications]" for l in lines):
+        lines.append("[Default Applications]")
+    seen = set()
+    out = []
+    for l in lines:
+        k = l.split("=", 1)[0].strip()
+        if "=" in l and k in BROWSER_MIME and not l.lstrip().startswith("#"):
+            out.append(f"{k}={desktop}")
+            seen.add(k)
+        else:
+            out.append(l)
+    at = next(i for i, l in enumerate(out) if l.strip() == "[Default Applications]") + 1
+    for k in reversed([k for k in BROWSER_MIME if k not in seen]):
+        out.insert(at, f"{k}={desktop}")
+    return "\n".join(out) + "\n"
+
+
+def dock_with_browser(text, browser_ids, default_id):
+    """The dock's pinned apps with the browser pinned there (any of `browser_ids`) replaced by the default one, or taken out
+    when there is none; other browsers pinned are taken out."""
+    out, placed = [], False
+    for l in text.splitlines():
+        if l.strip() in browser_ids and not l.lstrip().startswith("#"):
+            if default_id and not placed:
+                out.append(default_id)
+                placed = True
+            continue
+        out.append(l)
+    return "\n".join(out) + "\n"
+
+
+def with_dns(fn):
+    """Runs fn with the new system able to look up names: its /run is empty, so its resolv.conf (a link into /run) points
+    nowhere; the live system's own answers are lent to it for the time being."""
+    link = f"{TARGET}/etc/resolv.conf"
+    live = ""
+    try:
+        live = open("/etc/resolv.conf").read()
+    except OSError:
+        pass
+    made = None
+    if os.path.islink(link):
+        dest = os.readlink(link)
+        dest = os.path.normpath(os.path.join("/etc", dest)) if not dest.startswith("/") else dest
+        made = TARGET + dest
+        if not os.path.exists(made):
+            os.makedirs(os.path.dirname(made), exist_ok=True)
+            with open(made, "w") as f:
+                f.write(live)
+        else:
+            made = None
+    try:
+        return fn()
+    finally:
+        if made:
+            os.remove(made)
+
+
+def set_up_browsers(p):
+    """The browsers chosen in the installer: the others that came on the medium are removed, the rest installed (from the
+    repositories, or Flathub; both need the internet, and a browser that cannot be had is left for Agora: never a reason to stop
+    the install), and the default one opens web links and sits in the dock."""
+    if "browsers" not in p:
+        return
+    catalog = browser_catalog()
+    chosen = p["browsers"]
+    plan = browser_plan(catalog, chosen)
+    names = {b["id"]: b.get("name", b["id"]) for b in catalog}
+    have = [x for x in plan["remove"] if inside(["pacman", "-Q", x], check=False).returncode == 0]
+    if have:
+        say("INFO", "removing the browsers not chosen: " + ", ".join(have))
+        r = inside(["pacman", "-Rns", "--noconfirm"] + have, check=False)
+        if r.returncode != 0:
+            say("WARN", "could not remove " + ", ".join(have) + ": " + (r.stderr or r.stdout).strip()[-200:])
+    missing = [x for x in plan["install"] if inside(["pacman", "-Q", x], check=False).returncode != 0]
+    flat = plan["flatpaks"]
+    if missing or flat:
+        def fetch():
+            if missing:
+                say("INFO", "installing " + ", ".join(missing) + " (from the internet)")
+                r = inside(["pacman", "-S", "--needed", "--noconfirm"] + missing, check=False)
+                if r.returncode != 0:
+                    # the medium's package lists may be older than the mirrors: bring the system up to date with them
+                    r = inside(["pacman", "-Syu", "--needed", "--noconfirm"] + missing, check=False)
+                if r.returncode != 0:
+                    say("WARN", "could not install " + ", ".join(missing) + " (no internet?); Agora can install them later")
+            for app in flat:
+                inside(["flatpak", "remote-add", "--system", "--if-not-exists", "flathub", "https://dl.flathub.org/repo/flathub.flatpakrepo"], check=False)
+                say("INFO", f"installing {app} from Flathub")
+                r = inside(["flatpak", "install", "--system", "-y", "--noninteractive", "flathub", app], check=False)
+                if r.returncode != 0:
+                    say("WARN", f"could not install {app} from Flathub (no internet?); Agora can install it later")
+        with_dns(fetch)
+    # the default: the one picked, else the first chosen; only one that is really there now
+    order = ([p["default_browser"]] if p.get("default_browser") else []) + chosen
+    dirs = [f"{TARGET}/usr/share/applications", f"{TARGET}/var/lib/flatpak/exports/share/applications"]
+    default = None
+    for bid in order:
+        b = next((x for x in catalog if x["id"] == bid), None)
+        for d in (b or {}).get("desktop", []):
+            if any(os.path.exists(os.path.join(dd, d)) for dd in dirs):
+                default = d
+                break
+        if default:
+            break
+    if not chosen:
+        say("INFO", "no browser chosen: Agora has them all")
+    elif not default:
+        say("WARN", "none of the chosen browsers could be installed; Agora can install one later")
+    else:
+        say("INFO", f"default browser: {default}")
+        mf = f"{TARGET}/etc/xdg/mimeapps.list"
+        text = open(mf).read() if os.path.exists(mf) else ""
+        with open(mf, "w") as f:
+            f.write(mimeapps_with_browser(text, default))
+    dock = f"{TARGET}/etc/yggdrasil/dock"
+    if os.path.exists(dock):
+        ids = {d[:-len(".desktop")] for b in catalog for d in b.get("desktop", [])}
+        with open(dock) as f:
+            text = f.read()
+        with open(dock, "w") as f:
+            f.write(dock_with_browser(text, ids, default[:-len(".desktop")] if default else None))
+
+
+# ---------------------------------------------------------------- optional parts (AI and security)
+
+
+def extras_catalog(path=None):
+    """The optional parts the installer offers (the integration's "extras" file); none when there is no such file."""
+    try:
+        return [e for e in json.load(open(path or EXTRAS_FILE)).get("extras", []) if isinstance(e, dict) and e.get("id")]
+    except (OSError, ValueError, TypeError):
+        return []
+
+
+def components(path=None):
+    """The OS's optional components by id (the integration's "components" file)."""
+    try:
+        return {c["id"]: c for c in json.load(open(path or COMPONENTS_FILE)).get("components", []) if c.get("id")}
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def component_packages(c):
+    """The names pacman knows a component by (a pkgbuild component installs its own name)."""
+    return list(c.get("packages", [])) + list(c.get("aur", [])) + ([c["pkgbuild"]] if c.get("pkgbuild") else [])
+
+
+def extras_plan(catalog, chosen, comps, installed):
+    """What choosing `chosen` (extra ids) means for the new system, given what it has (`installed`, package names): the
+    packages of parts not chosen to remove, the chosen components it already has (kept: their services are switched on), and
+    the chosen components it lacks (installed at the first login; they are built or fetched, so they need the internet)."""
+    keep, queue, drop = [], [], []
+    for e in catalog:
+        for cid in e.get("components", []):
+            c = comps.get(cid)
+            if not c:
+                continue
+            if e["id"] in chosen:
+                if all(x in installed for x in component_packages(c)):
+                    keep.append(cid)
+                elif cid not in queue:
+                    queue.append(cid)
+            else:
+                drop.append(cid)
+    wanted = {x for cid in keep + queue for x in component_packages(comps[cid])}
+    remove = [x for cid in drop for x in component_packages(comps[cid]) if x in installed and x not in wanted]
+    return {"remove": list(dict.fromkeys(remove)), "keep": keep, "queue": queue}
+
+
+def set_up_extras(p):
+    """The optional parts chosen in the installer (an assistant, a security monitor): those on the medium are kept, with
+    their services on, or removed when not chosen; chosen ones the medium does not carry are written down for the new user's
+    first login (the integration's "first_login" file, which the OS's own program reads), or left for Agora when the OS names no
+    such file. Never a reason to stop the install."""
+    if "extras" not in p:
+        return
+    catalog, comps = extras_catalog(), components()
+    names = [x for c in comps.values() for x in component_packages(c)]
+    installed = {x for x in names if inside(["pacman", "-Q", x], check=False).returncode == 0}
+    plan = extras_plan(catalog, p["extras"], comps, installed)
+    if plan["remove"]:
+        say("INFO", "removing what was not chosen: " + ", ".join(plan["remove"]))
+        r = inside(["pacman", "-Rns", "--noconfirm"] + plan["remove"], check=False)
+        if r.returncode != 0:
+            say("WARN", "could not remove " + ", ".join(plan["remove"]) + ": " + (r.stderr or r.stdout).strip()[-200:])
+    login = (p.get("user") or {}).get("login", "")
+    for cid in plan["keep"]:
+        c = comps[cid]
+        for unit in c.get("enable_system", []):
+            inside(["systemctl", "enable", unit], check=False)
+        if c.get("enable_global"):
+            inside(["systemctl", "--global", "enable"] + c["enable_global"], check=False)
+        if c.get("add_groups") and login:
+            inside(["usermod", "-aG", ",".join(c["add_groups"]), login], check=False)
+    if plan["keep"]:
+        say("INFO", "kept: " + ", ".join(comps[c].get("name", c) for c in plan["keep"]))
+    if plan["queue"] and not FIRST_LOGIN_FILE:
+        say("INFO", "not on the installer, to install from Agora: " + ", ".join(comps[c].get("name", c) for c in plan["queue"]))
+    elif plan["queue"]:
+        f = f"{TARGET}{FIRST_LOGIN_FILE}"
+        os.makedirs(os.path.dirname(f), exist_ok=True)
+        with open(f, "w") as out:
+            json.dump({"user": login, "components": plan["queue"]}, out)
+        # the user's first login removes it once everything is installed
+        inside(["chown", login, FIRST_LOGIN_FILE], check=False)
+        say("INFO", "not on the installer, installed at the first login (needs the internet): " + ", ".join(comps[c].get("name", c) for c in plan["queue"]))
+
+
+def check_manual(p):
+    """The shape of a manual plan (the disk itself is checked in preflight): an error, or None."""
+    creates = p.get("create") or []
+    ids = set()
+    for c in creates:
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,16}", str(c.get("id", ""))) or c["id"] in ids:
+            return "a new partition has no proper id"
+        ids.add(c["id"])
+        if c.get("kind") not in ("linux", "efi", "swap") or not isinstance(c.get("start"), int) or not isinstance(c.get("size"), int) or c["size"] < MIB:
+            return "a new partition is not described properly"
+    if not all(isinstance(n, int) and n > 0 for n in p.get("delete") or []):
+        return "a partition to delete is not a number"
+    uses = p.get("use") or []
+    mounts = [u.get("mount") for u in uses]
+    for u in uses:
+        m, fmt, part_ = u.get("mount"), u.get("format"), str(u.get("part", ""))
+        if m not in MOUNTS:
+            return f"{m} cannot be chosen as a mount point"
+        if fmt is not None and fmt not in MOUNTS[m]:
+            return f"{m} cannot be formatted as {fmt}"
+        if part_.startswith("new:"):
+            if part_[4:] not in ids:
+                return f"{part_} is not one of the new partitions"
+            if fmt is None:
+                return "a new partition has to be formatted"
+        elif not re.fullmatch(r"/dev/[A-Za-z0-9/_-]+", part_):
+            return "a partition is not named properly"
+    if mounts.count("/") != 1:
+        return "choose exactly one partition for / (the system)"
+    if mounts.count("/boot/efi") != 1:
+        return "choose an EFI system partition for /boot/efi"
+    if len([m for m in mounts if m != "swap"]) != len(set(m for m in mounts if m != "swap")):
+        return "a mount point is chosen twice"
+    if next(u for u in uses if u["mount"] == "/").get("format") is None:
+        return "the partition for / has to be formatted (the system is copied onto an empty one)"
+    if len({u["part"] for u in uses}) != len(uses):
+        return "a partition is used twice"
+    return None
+
+
+def console_keymap(layout, variant, root=""):
+    """The text console's keymap for an X11 layout and variant ("gb" -> "uk", "us"+"dvorak" -> "dvorak"): from systemd's own
+    table (the first row that fits, as localectl does), else a console keymap of the same name, else "us"."""
+    try:
+        with open(f"{root}/usr/share/systemd/kbd-model-map", encoding="utf-8") as f:
+            rows = [l.split() for l in f if l.strip() and not l.startswith("#")]
+    except OSError:
+        rows = []
+    def row(v):
+        return next((r[0] for r in rows if len(r) >= 4 and r[1] == layout and r[3] == v), None)
+
+    def keymap_file(name):
+        for _, _, files in os.walk(f"{root}/usr/share/kbd/keymaps"):
+            if name + ".map.gz" in files or name + ".map" in files:
+                return name
+        return None
+
+    # the exact pair, then a console keymap named after the variant (colemak), then the layout's own
+    for found in ((row(variant) if variant else None), (keymap_file(variant) if variant else None), row("-"), keymap_file(layout)):
+        if found:
+            return found
+    return "us"
+
+
+# ---------------------------------------------------------------- disks
+
+def disks():
+    """Whole disks it could install onto: not the live medium, not read-only, not a loop or zram device."""
+    out = json.loads(run(["lsblk", "-J", "-b", "-d", "-o", "NAME,PATH,SIZE,MODEL,TRAN,RO,TYPE,RM"], capture=True))
+    live = live_disk()
+    found = []
+    for d in out.get("blockdevices", []):
+        if d.get("type") != "disk" or d.get("ro") or d["path"] == live or d["name"].startswith(("loop", "zram", "sr")):
+            continue
+        size = int(d.get("size") or 0)
+        entry = {"path": d["path"], "size": size, "model": (d.get("model") or "").strip(),
+                 "removable": bool(d.get("rm")), "transport": d.get("tran") or "", "big_enough": size >= MIN_BYTES}
+        entry.update(disk_layout(d["path"], size))
+        found.append(entry)
+    return found
+
+
+def disk_layout(disk, size):
+    """What is on a disk: its partition table (gpt, dos or none), its partitions (with what is on them) and its free space, in bytes.
+    From lsblk, which needs no root (the installer lists the disks as the live user)."""
+    try:
+        tree = json.loads(run(["lsblk", "-J", "-b", "-o", "PATH,START,SIZE,FSTYPE,LABEL,PARTLABEL,PARTTYPE,PARTN,PTTYPE,MOUNTPOINTS,TYPE", disk],
+                              check=False, capture=True) or "{}").get("blockdevices", [])
+    except ValueError:
+        tree = []
+    flat = []
+
+    def walk(items):
+        for x in items:
+            flat.append(x)
+            walk(x.get("children") or [])
+    walk(tree)
+    table = next((x.get("pttype") or "" for x in flat if x.get("path") == disk), "")
+    parts = []
+    for x in flat:
+        if x.get("type") != "part" or x.get("start") is None:
+            continue
+        parts.append({"path": x["path"], "number": int(x.get("partn") or 0), "start": int(x["start"]) * 512, "size": int(x.get("size") or 0),
+                      "fstype": x.get("fstype") or "", "label": x.get("label") or x.get("partlabel") or "",
+                      "efi": (x.get("parttype") or "").lower() in ("c12a7328-f81f-11d2-ba4b-00a0c93ec93b", "0xef"),
+                      "mounted": any(m for m in (x.get("mountpoints") or []) if m)})
+    parts.sort(key=lambda q: q["start"])
+    return {"table": table, "partitions": parts, "free": free_space([(q["start"], q["size"]) for q in parts], MIB, size - MIB)}
+
+
+def free_space(used, first, last):
+    """The gaps between partitions (start, size in bytes), each starting on a MiB; slivers under 16 MiB (alignment) are not offered."""
+    gaps, at = [], first
+    for start, size in sorted(used) + [(last, 0)]:
+        a = -(-max(at, first) // MIB) * MIB
+        b = min(start, last)
+        if b - a >= 16 * MIB:
+            gaps.append({"start": a, "size": (b - a) // MIB * MIB})
+        at = max(at, start + size)
+    return gaps
+
+
+def live_disk():
+    """The disk the live system runs from (never offered)."""
+    src = run(["findmnt", "-no", "SOURCE", "/run/archiso/bootmnt"], check=False, capture=True).strip()
+    if not src:
+        return None
+    parent = run(["lsblk", "-no", "PKNAME", src], check=False, capture=True).strip()
+    return f"/dev/{parent}" if parent else src
+
+
+def part(disk, n):
+    """Partition n of a disk: /dev/sda2, /dev/nvme0n1p2, /dev/vda2."""
+    return f"{disk}p{n}" if disk[-1].isdigit() else f"{disk}{n}"
+
+
+def settle():
+    run(["udevadm", "settle"], check=False)
+    time.sleep(1)
+
+
+# ---------------------------------------------------------------- the steps
+
+def step(n, total):
+    say("STEP", f"{n} {total} {STEPS[n - 1]}")
+
+
+def preflight(p):
+    if not os.path.isdir("/sys/firmware/efi"):
+        raise Stop(f"this computer started without UEFI; {OS_NAME} installs on UEFI computers only (turn off Legacy/CSM)")
+    if not os.path.isfile(SFS):
+        raise Stop(f"the system to copy was not found ({SFS}); start the installer from the {OS_NAME} USB")
+    disk = p["disk"]
+    choice = next((d for d in disks() if d["path"] == disk), None)
+    if not choice:
+        raise Stop(f"{disk} cannot be installed onto (not a disk, read-only, or the {OS_NAME} USB itself)")
+    if not choice["big_enough"]:
+        raise Stop(f"{disk} is too small: {OS_NAME} needs at least {MIN_BYTES // 1024**3} GB")
+    if p["mode"] == "erase":
+        mounted = run(["lsblk", "-nr", "-o", "MOUNTPOINTS", disk], capture=True).split()
+        if any(m for m in mounted if m):
+            raise Stop(f"something on {disk} is in use (mounted); close it first")
+    else:
+        problem = manual_fits(p, choice)
+        if problem:
+            raise Stop(problem)
+
+
+def manual_fits(p, d):
+    """A manual plan against the disk as it is now: the partitions it names exist and are not in use, the new ones fit in free space,
+    and / and the EFI partition are big enough. An error, or None."""
+    parts = {q["path"]: q for q in d.get("partitions", [])}
+    by_num = {q["number"]: q for q in d.get("partitions", [])}
+    deleted = set(by_num) if p.get("new_table") else set(p.get("delete") or [])
+    if not p.get("new_table") and not d.get("table"):
+        return "the disk has no partition table: start with a new one"
+    for n in deleted:
+        if n not in by_num:
+            return f"there is no partition {n} to delete"
+        if by_num[n]["mounted"]:
+            return f"{by_num[n]['path']} is in use (mounted)"
+    kept = [q for q in d.get("partitions", []) if q["number"] not in deleted]
+    first = MIB
+    last = d["size"] - MIB
+    gaps = free_space([(q["start"], q["size"]) for q in kept], first, last)
+    taken = []
+    for c in p.get("create") or []:
+        inside_gap = any(g["start"] <= c["start"] and c["start"] + c["size"] <= g["start"] + g["size"] for g in gaps)
+        overlaps = any(c["start"] < t[0] + t[1] and t[0] < c["start"] + c["size"] for t in taken)
+        if not inside_gap or overlaps or c["start"] % MIB:
+            return "a new partition does not fit in the free space"
+        taken.append((c["start"], c["size"]))
+    sizes = {f"new:{c['id']}": c["size"] for c in p.get("create") or []}
+    for u in p.get("use") or []:
+        if not u["part"].startswith("new:"):
+            q = parts.get(u["part"])
+            if not q or q["number"] in deleted:
+                return f"{u['part']} is not a partition on {d['path']} (or it is being deleted)"
+            if q["mounted"]:
+                return f"{u['part']} is in use (mounted)"
+            if u["format"] is None and u["mount"] == "/boot/efi" and q["fstype"] != "vfat":
+                return f"{u['part']} has no FAT file system to use as the EFI partition as it is: format it"
+            if u["format"] is None and u["mount"] != "/boot/efi" and not q["fstype"]:
+                return f"{u['part']} has no file system to keep: format it"
+            sizes[u["part"]] = q["size"]
+        if u["mount"] == "/" and sizes[u["part"]] < MIN_ROOT:
+            return f"/ needs at least {MIN_ROOT // 1024**3} GB"
+        if u["mount"] == "/boot/efi" and sizes[u["part"]] < MIN_ESP:
+            return f"the EFI partition needs at least {MIN_ESP // MIB} MB"
+    return None
+
+
+def partition(disk):
+    run(["wipefs", "-a", disk])
+    # GPT: 1 GiB EFI system partition, the rest for the system
+    layout = f"label: gpt\nsize=1GiB, type=uefi, name=EFI\ntype=linux, name={OS_NAME.replace(' ', '_')}\n"
+    run(["sfdisk", "--wipe", "always", "--wipe-partitions", "always", disk], stdin=layout)
+    settle()
+    return part(disk, 1), part(disk, 2)
+
+
+def manual_partition(p):
+    """Carries out the partitioning of a manual plan. Returns {"new:id": device} for the partitions made."""
+    disk = p["disk"]
+    if p.get("new_table"):
+        run(["wipefs", "-a", disk])
+        run(["sfdisk", "--wipe", "always", disk], stdin="label: gpt\n")
+    else:
+        for n in sorted(p.get("delete") or [], reverse=True):
+            run(["sfdisk", "--delete", disk, str(n)])
+    settle()
+    ss = int(json.loads(run(["sfdisk", "-J", disk], capture=True))["partitiontable"].get("sectorsize", 512))
+    made = {}
+    for c in p.get("create") or []:
+        start = c["start"] // ss
+        kind = {"efi": "uefi", "swap": "swap"}.get(c["kind"], "linux")
+        run(["sfdisk", "--append", disk], stdin=f"start={start}, size={c['size'] // ss}, type={kind}\n")
+        settle()
+        table = json.loads(run(["sfdisk", "-J", disk], capture=True))["partitiontable"]
+        node = next((q["node"] for q in table.get("partitions", []) if int(q["start"]) == start), None)
+        if not node:
+            raise Stop("the new partition could not be found after making it")
+        made["new:" + c["id"]] = node
+    # an existing partition chosen as the EFI partition and formatted gets the EFI type, so firmware looks there
+    for u in p.get("use") or []:
+        if u["mount"] == "/boot/efi" and u["format"] and not u["part"].startswith("new:"):
+            num = re.search(r"(\d+)$", u["part"]).group(1)
+            run(["sfdisk", "--part-type", disk, num, "uefi"], check=False)
+    settle()
+    return made
+
+
+def encrypt(dev, password):
+    # LUKS2 with PBKDF2: GRUB (which reads /boot from inside) cannot open Argon2 keys
+    run(["cryptsetup", "luksFormat", "--batch-mode", "--type", "luks2", "--pbkdf", "pbkdf2", "--label", f"{OS_NAME.replace(' ', '_')}-crypt",
+         "--key-file=-", dev], stdin=password)
+    run(["cryptsetup", "open", "--key-file=-", dev, MAPPER], stdin=password)
+    return f"/dev/mapper/{MAPPER}"
+
+
+MKFS = {"btrfs": ["mkfs.btrfs", "-f", "-L"], "ext4": ["mkfs.ext4", "-F", "-L"], "xfs": ["mkfs.xfs", "-f", "-L"], "vfat": ["mkfs.vfat", "-F", "32", "-n"],
+        "swap": ["mkswap", "-L"]}
+LABELS = {"/home": "Home", "/boot/efi": "EFI", "swap": "swap", "/var": "Var", "/srv": "Srv", "/opt": "Opt"}
+
+
+def format_and_mount(uses):
+    """uses: [(device, mount point, file system to make or None to keep)]. Formats, mounts / first and the rest under it.
+    A new btrfs / gets the subvolumes (@home only when /home has no partition of its own). Returns the fstab lines."""
+    for dev, mount, fmt in uses:
+        if fmt:
+            run(MKFS[fmt] + [LABELS.get(mount, OS_NAME.replace(" ", "_")[:16]), dev])
+    root_dev, _, root_fs = next(u for u in uses if u[1] == "/")
+    own_home = any(m == "/home" for _, m, _ in uses)
+    os.makedirs(TARGET, exist_ok=True)
+    fstab = []
+    if root_fs == "btrfs":
+        subs = [(sv, where) for sv, where in SUBVOLUMES if not (where == "home" and own_home)]
+        run(["mount", root_dev, TARGET])
+        for sub, _ in subs:
+            run(["btrfs", "subvolume", "create", f"{TARGET}/{sub}"])
+        run(["umount", TARGET])
+        opts = "compress=zstd:1,noatime"
+        ru = uuid_of(root_dev)
+        for sub, where in subs:
+            dst = os.path.join(TARGET, where)
+            os.makedirs(dst, exist_ok=True)
+            run(["mount", "-o", f"{opts},subvol={sub}", root_dev, dst])
+            fstab.append(f"UUID={ru} /{where} btrfs {opts},subvol=/{sub} 0 0")
+    else:
+        run(["mount", root_dev, TARGET])
+        fstab.append(f"UUID={uuid_of(root_dev)} / {root_fs} noatime 0 1")
+    for dev, mount, fmt in sorted((u for u in uses if u[1] not in ("/", "swap")), key=lambda u: u[1].count("/")):
+        dst = TARGET + mount
+        os.makedirs(dst, exist_ok=True)
+        run(["mount", dev, dst])
+        fs = fmt or run(["blkid", "-s", "TYPE", "-o", "value", dev], capture=True).strip()
+        opts = "umask=0077" if mount == "/boot/efi" else ("compress=zstd:1,noatime" if fs == "btrfs" else "noatime")
+        fstab.append(f"UUID={uuid_of(dev)} {mount} {fs} {opts} 0 {0 if fs == 'btrfs' else 2}")
+    for dev, mount, _ in uses:
+        if mount == "swap":
+            fstab.append(f"UUID={uuid_of(dev)} none swap defaults 0 0")
+    return fstab
+
+
+def copy_system():
+    """unsquashfs, with its percentage turned into INFO lines every 10%."""
+    proc = subprocess.Popen(["unsquashfs", "-f", "-percentage", "-d", TARGET, SFS], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    last = -10
+    for line in proc.stdout:
+        line = line.strip()
+        if line.isdigit() and int(line) >= last + 10:
+            last = int(line)
+            say("INFO", f"copied {last}%")
+    err = proc.stderr.read()
+    if proc.wait() != 0:
+        raise Stop(f"copying the system failed: {err.strip()[-400:]}")
+
+
+def bind_mounts():
+    # a fresh /run (the live system's would keep the new one busy at the end), with udev's part for the disk tools
+    for src, dst, extra in [("proc", "proc", ["-t", "proc"]), ("sys", "sys", ["-t", "sysfs"]), ("/dev", "dev", ["--rbind"]),
+                            ("tmpfs", "run", ["-t", "tmpfs"]), ("/run/udev", "run/udev", ["--bind"])]:
+        d = os.path.join(TARGET, dst)
+        os.makedirs(d, exist_ok=True)
+        run(["mount"] + extra + [src, d])
+        if "--rbind" in extra or "--bind" in extra:
+            # one way only: unmounting it at the end must never unmount anything of the live system (bind mounts are shared)
+            run(["mount", "--make-rslave", d])
+    if os.path.isdir("/sys/firmware/efi/efivars"):
+        run(["mount", "-t", "efivarfs", "efivarfs", f"{TARGET}/sys/firmware/efi/efivars"], check=False)
+
+
+def uuid_of(dev):
+    return run(["blkid", "-s", "UUID", "-o", "value", dev], capture=True).strip()
+
+
+def write_fstab(lines):
+    with open(f"{TARGET}/etc/fstab", "w") as f:
+        f.write("\n".join(["# Written by yggdrasil-install-system. <device> <mount point> <type> <options> <dump> <pass>"] + lines) + "\n")
+
+
+def set_up(p):
+    # the OS's own clean-up of everything that belongs to the live medium (live account, autologin, no-password rules ...),
+    # and its kernels and start-up image presets put back
+    if CLEANUP and os.path.exists(TARGET + CLEANUP):
+        inside([CLEANUP])
+    else:
+        say("WARN", "this system names no clean-up program for the live medium's settings (\"cleanup\" in its installer integration)")
+    # a new machine id at first start (the medium's must not be shared)
+    with open(f"{TARGET}/etc/machine-id", "w"):
+        pass
+    # language
+    loc = p["locale"]
+    gen = f"{TARGET}/etc/locale.gen"
+    text = open(gen).read() if os.path.exists(gen) else ""
+    if not re.search(rf"^{re.escape(loc)}\s", text, re.M):
+        charset = loc.split(".")[1] if "." in loc else "UTF-8"
+        text = re.sub(rf"^#\s*({re.escape(loc)}\s)", r"\1", text, flags=re.M) if re.search(rf"^#\s*{re.escape(loc)}\s", text, re.M) else text + f"{loc} {charset}\n"
+        with open(gen, "w") as f:
+            f.write(text)
+    inside(["locale-gen"], check=False)
+    with open(f"{TARGET}/etc/locale.conf", "w") as f:
+        f.write(f"LANG={loc}\n")
+    # keyboard: the text console (its own keymap names), and the desktop (X11's setting, which Yggdrasil's session reads)
+    layout, variant = p["keymap"], p.get("keymap_variant", "")
+    with open(f"{TARGET}/etc/vconsole.conf", "w") as f:
+        f.write(f"KEYMAP={console_keymap(layout, variant, TARGET)}\nXKBLAYOUT={layout}\n" + (f"XKBVARIANT={variant}\n" if variant else ""))
+    os.makedirs(f"{TARGET}/etc/X11/xorg.conf.d", exist_ok=True)
+    with open(f"{TARGET}/etc/X11/xorg.conf.d/00-keyboard.conf", "w") as f:
+        f.write(f'Section "InputClass"\n    Identifier "system-keyboard"\n    MatchIsKeyboard "on"\n    Option "XkbLayout" "{layout}"\n'
+                + (f'    Option "XkbVariant" "{variant}"\n' if variant else "") + "EndSection\n")
+    # time zone and the hardware clock in UTC
+    lt = f"{TARGET}/etc/localtime"
+    if os.path.lexists(lt):
+        os.remove(lt)
+    os.symlink(f"/usr/share/zoneinfo/{p['timezone']}", lt)
+    inside(["hwclock", "--systohc", "--utc"], check=False)
+    # the computer's name
+    with open(f"{TARGET}/etc/hostname", "w") as f:
+        f.write(p["hostname"] + "\n")
+    with open(f"{TARGET}/etc/hosts", "w") as f:
+        f.write(f"127.0.0.1 localhost\n::1 localhost\n127.0.1.1 {p['hostname']}.localdomain {p['hostname']}\n")
+    # the account: an administrator through sudo (wheel); root stays locked
+    u = p["user"]
+    groups = [g for g in GROUPS if inside(["getent", "group", g], check=False).returncode == 0]
+    inside(["useradd", "-m", "-G", ",".join(groups), "-s", "/bin/bash", "-c", u.get("name", ""), u["login"]])
+    inside(["chpasswd"], stdin=f"{u['login']}:{u['password']}\n")
+    inside(["passwd", "-l", "root"], check=False)
+    os.makedirs(f"{TARGET}/etc/sudoers.d", exist_ok=True)
+    with open(f"{TARGET}/etc/sudoers.d/10-{OS_ID}-wheel", "w") as f:
+        f.write("# Written by yggdrasil-install-system: administrators (the wheel group) use sudo with their own password.\n%wheel ALL=(ALL:ALL) ALL\n")
+    os.chmod(f"{TARGET}/etc/sudoers.d/10-{OS_ID}-wheel", 0o440)
+    # the login screen: greetd with Yggdrasil's greeter; never leave the system without one
+    if not os.path.exists(f"{TARGET}/usr/lib/systemd/system/greetd.service"):
+        raise Stop("the system has no login screen (greetd is missing)")
+    inside(["systemctl", "enable", "-f", "greetd.service"])
+
+
+def encryption_setup(dev):
+    """Encrypted system: the start-up image opens it with a key file, so the password is typed once (in GRUB)."""
+    key = f"{TARGET}/crypto_keyfile.bin"
+    with open(key, "wb") as f:
+        f.write(os.urandom(4096))
+    os.chmod(key, 0o000)
+    return key
+
+
+def systemd_initramfs():
+    """Whether the new system's start-up image is built with systemd (Arch's default since mkinitcpio 39) rather than busybox."""
+    try:
+        text = open(f"{TARGET}/etc/mkinitcpio.conf").read()
+    except OSError:
+        return True
+    hooks = next((l for l in text.splitlines() if l.strip().startswith("HOOKS=")), "")
+    return " systemd " in " " + hooks.replace("(", " ").replace(")", " ") + " "
+
+
+def initramfs(encrypted):
+    os.makedirs(f"{TARGET}/etc/mkinitcpio.conf.d", exist_ok=True)
+    if encrypted:
+        hook = "sd-encrypt" if systemd_initramfs() else "encrypt"
+        with open(f"{TARGET}/etc/mkinitcpio.conf.d/{OS_ID}-encrypt.conf", "w") as f:
+            f.write(f'''# Written by yggdrasil-install-system: the system disk is encrypted. "{hook}" opens it (before resume and filesystems)
+# with the key file inside this image, so the password is asked once, by GRUB.
+if [[ " ${{HOOKS[*]}} " != *" encrypt "* && " ${{HOOKS[*]}} " != *" sd-encrypt "* ]]; then
+  _ly=()
+  for _h in "${{HOOKS[@]}}"; do
+    [[ $_h == resume || $_h == filesystems ]] && [[ " ${{_ly[*]}} " != *" {hook} "* ]] && _ly+=({hook})
+    _ly+=("$_h")
+  done
+  HOOKS=("${{_ly[@]}}")
+  unset _ly _h
+fi
+FILES+=(/crypto_keyfile.bin)
+''')
+    inside(["mkinitcpio", "-P"])
+    # the image holds the key: only root may read it
+    for img in os.listdir(f"{TARGET}/boot"):
+        if img.startswith("initramfs-"):
+            os.chmod(f"{TARGET}/boot/{img}", 0o600)
+
+
+def bootloader(encrypted, crypt_uuid, root_uuid, fallback=True):
+    path = f"{TARGET}/etc/default/grub"
+    text = open(path).read() if os.path.exists(path) else ""
+    options = list(KERNEL_OPTIONS)
+    if encrypted:
+        if systemd_initramfs():
+            options += [f"rd.luks.name={crypt_uuid}={MAPPER}", f"rd.luks.key={crypt_uuid}=/crypto_keyfile.bin", f"root=/dev/mapper/{MAPPER}"]
+        else:
+            options += [f"cryptdevice=UUID={crypt_uuid}:{MAPPER}", "cryptkey=rootfs:/crypto_keyfile.bin", f"root=/dev/mapper/{MAPPER}"]
+    values = dict(GRUB_DEFAULTS)
+    values["GRUB_CMDLINE_LINUX_DEFAULT"] = "'" + " ".join(options) + "'"
+    if encrypted:
+        values["GRUB_ENABLE_CRYPTODISK"] = "y"
+    for k, v in values.items():
+        line = f"{k}={v}"
+        if re.search(rf"^#?\s*{k}=", text, re.M):
+            text = re.sub(rf"^#?\s*{k}=.*$", line.replace("\\", "\\\\"), text, count=1, flags=re.M)
+        else:
+            text += line + "\n"
+    with open(path, "w") as f:
+        f.write(text)
+    inside(["grub-install", "--target=x86_64-efi", "--efi-directory=/boot/efi", f"--bootloader-id={OS_NAME.replace(' ', '_')}", "--recheck"])
+    # a second copy at the firmware's fallback path, for computers that forget boot entries; not on an EFI partition that was
+    # there before (Windows' own): its fallback is another system's
+    if fallback:
+        inside(["grub-install", "--target=x86_64-efi", "--efi-directory=/boot/efi", "--removable"], check=False)
+    # the plain menu first (the theme's installer keeps a copy of it to fall back on), then the OS's own look, if it has one
+    inside(["grub-mkconfig", "-o", "/boot/grub/grub.cfg"])
+    if BOOT_THEME and os.path.exists(TARGET + BOOT_THEME):
+        r = inside([BOOT_THEME], check=False)
+        if r.returncode != 0:
+            say("WARN", f"the {OS_NAME} menu theme could not be installed; the plain menu is used: " + (r.stderr or r.stdout).strip()[-200:])
+
+
+def unmount_all():
+    if run(["umount", "-R", TARGET], check=False).returncode != 0:
+        run(["umount", "-R", "-l", TARGET], check=False)
+    run(["cryptsetup", "close", MAPPER], check=False)
+
+
+def install(p):
+    total = len(STEPS)
+    step(1, total)
+    preflight(p)
+    step(2, total)
+    if p["mode"] == "erase":
+        say("INFO", f"installing onto {p['disk']}; everything on it is erased")
+        esp, root_part = partition(p["disk"])
+        plan = [(esp, "/boot/efi", "vfat"), (root_part, "/", "btrfs")]
+    else:
+        say("INFO", f"installing onto the partitions chosen on {p['disk']}")
+        made = manual_partition(p)
+        plan = [(made.get(u["part"], u["part"]), u["mount"], u["format"]) for u in p["use"]]
+        root_part = next(dev for dev, m, _ in plan if m == "/")
+    step(3, total)
+    encrypted = bool(p.get("encrypt"))
+    root = root_part
+    if encrypted:
+        root = encrypt(root_part, p["encrypt_password"])
+        plan = [(root if m == "/" else dev, m, fmt) for dev, m, fmt in plan]
+    else:
+        say("INFO", "not encrypted (as chosen)")
+    step(4, total)
+    fstab = format_and_mount(plan)
+    step(5, total)
+    copy_system()
+    step(6, total)
+    bind_mounts()
+    write_fstab(fstab)
+    set_up(p)
+    set_up_browsers(p)
+    set_up_extras(p)
+    if encrypted:
+        encryption_setup(root_part)
+        run(["cryptsetup", "luksAddKey", "--batch-mode", "--key-file=-", root_part, f"{TARGET}/crypto_keyfile.bin"], stdin=p["encrypt_password"])
+    step(7, total)
+    initramfs(encrypted)
+    step(8, total)
+    # the firmware's fallback copy only on an EFI partition made for this system (erased or formatted now)
+    esp_formatted = next(fmt for _, m, fmt in plan if m == "/boot/efi") is not None
+    bootloader(encrypted, uuid_of(root_part), uuid_of(root), fallback=esp_formatted)
+    step(9, total)
+    if FINISH and os.path.exists(TARGET + FINISH):
+        r = inside([FINISH], check=False)
+        for line in (r.stdout or "").splitlines():
+            if "WARNING" in line:
+                say("WARN", line.split("WARNING:", 1)[-1].strip())
+        if r.returncode != 0:
+            raise Stop("the last checks of the new system failed: " + (r.stdout or r.stderr).strip()[-400:])
+    unmount_all()
+    say("DONE")
+
+
+def main():
+    args = sys.argv[1:]
+    configure(installer_integration(), os_release())
+    if args[:1] == ["--disks"]:
+        print(json.dumps(disks()))
+        return
+    try:
+        plan = json.loads(sys.stdin.read() or "{}")
+    except ValueError:
+        say("ERROR", "the plan is not JSON")
+        sys.exit(2)
+    problem = check_plan(plan)
+    if problem:
+        say("ERROR", problem)
+        sys.exit(2)
+    if args[:1] == ["--check"]:
+        say("DONE")
+        return
+    if os.geteuid() != 0:
+        say("ERROR", "yggdrasil-install-system needs root")
+        sys.exit(1)
+    try:
+        install(plan)
+    except Stop as e:
+        say("ERROR", str(e))
+        unmount_all()
+        sys.exit(1)
+    except Exception as e:  # noqa: BLE001
+        say("ERROR", f"unexpected: {e}")
+        unmount_all()
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

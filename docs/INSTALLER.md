@@ -1,16 +1,43 @@
 # The installer
 
 `yggdrasil-installer` installs an operating system from its live medium. Yggdrasil supplies the window (the same egui look as
-Settings and Minos, no other toolkit); the operating system supplies the program that does the work. The two meet in an
+Settings and Minos, no other toolkit) and, in the same package, `yggdrasil-install-system`, a program that does the work from an
+archiso medium; an operating system uses it, or names a program of its own that keeps the contract below. The two meet in an
 integration file (see INTEGRATIONS.md):
 
 ```
 # /usr/share/yggdrasil/integrations/<os>-installer.conf
 kind = installer
-command = /usr/local/bin/labyrinth-install-system
+command = /usr/bin/yggdrasil-install-system
 ```
 
 Without such a file the window says the system has no installer and offers nothing.
+
+## yggdrasil-install-system
+
+Since 2026-11-07 (it was Labyrinth's `labyrinth-install-system` until then; Niflheim OS needed the same one). It partitions (the
+whole disk: a 1 GiB EFI partition and the rest; or the partitions chosen by hand), encrypts / with LUKS2 if asked (one password,
+typed in GRUB), makes btrfs with the subvolumes `@`, `@home`, `@cache`, `@log` (ext4 or XFS by hand), copies the medium's system,
+sets up language, keyboard, time zone, the computer's name and the account (an administrator through sudo; root stays locked),
+switches on greetd, builds the start-up image and installs GRUB. What belongs to the OS comes from the same integration file and
+`/etc/os-release`; every key is optional:
+
+| Key | What it is | Without it |
+| --- | --- | --- |
+| `name` | the OS's name in messages, the boot menu, the EFI entry and the disk labels | `NAME` in os-release, less " OS" |
+| `medium` | the squashfs to copy | `/run/archiso/bootmnt/<ID>/x86_64/airootfs.sfs` (`ID` from os-release, archiso's `install_dir`) |
+| `cleanup` | a program run inside the new system first, taking away what belongs to the live medium (its account, its automatic sign-in, its no-password rules) | a warning: the new system keeps them |
+| `finish` | a program run inside the new system last; a failure stops the install, a `WARNING:` line in its output becomes a note | nothing |
+| `boot_menu_theme` | a program run inside after the plain boot menu is written | the plain menu |
+| `kernel_options` | the kernel's options in GRUB | `quiet` |
+| `groups` | the account's groups (those the system has) | users, lp, video, network, storage, wheel, audio, kvm |
+| `reserved_logins` | account names not offered, beyond every account the medium already has and root, live and greeter | |
+| `min_size_gb` | the smallest disk | 30 |
+| `browsers`, `extras` | the lists for the Browsers and optional-parts pages (below; the window reads them too) | no such page |
+| `components` | what each optional part installs and switches on | |
+| `first_login` | where chosen parts the medium lacks are written down (`{"user", "components"}`) for the OS's own first-login program | they are left for Agora |
+
+Paths are absolute, without `..`. Its tests: `python3 -m unittest discover -s helpers/tests` in `packages/installer`.
 
 ## The pages
 
@@ -71,17 +98,18 @@ e.g. Labyrinth's AI and security: Sarina, Heimdall) → Summary (and a box to ti
 Modes: `erase` (the whole disk) and `manual` (partitions chosen by hand, Calamares-style). Still to come: shrinking a partition
 to make room automatically ("install alongside"), and partitions on more than one disk in one install.
 
-## Labyrinth's program
+## How the program installs
 
-`labyrinth-install-system` (Labyrinth repository, `profile/airootfs/usr/local/bin`) checks the computer (UEFI, the disk not in
-use, at least 30 GB), writes a GPT with a 1 GiB EFI partition and the rest for the system, optionally LUKS2 (PBKDF2, because GRUB
-reads /boot from inside it; a key file in the start-up image so the password is typed once, in GRUB), btrfs with `@`, `@home`,
-`@cache`, `@log`, copies the system from the medium (`unsquashfs`), sets it up inside (Labyrinth's `labyrinth-install-cleanup`,
-language, keyboard, time zone, name, the account in `wheel` with sudo; root stays locked; greetd as the login screen), builds
-the start-up image (`sd-encrypt` or `encrypt`, whichever the system's mkinitcpio uses), installs GRUB (plus the firmware's
-fallback path) with Labyrinth's menu theme, and runs `labyrinth-install-bootfinish`.
+`yggdrasil-install-system` checks the computer (UEFI, the disk not in use, at least `min_size_gb`), writes a GPT with a 1 GiB EFI
+partition and the rest for the system, optionally LUKS2 (PBKDF2, because GRUB reads /boot from inside it; a key file in the
+start-up image so the password is typed once, in GRUB), btrfs with `@`, `@home`, `@cache`, `@log`, copies the system from the
+medium (`unsquashfs`), sets it up inside (the OS's `cleanup` program, language, keyboard, time zone, name, the account in `wheel`
+with sudo; root stays locked; greetd as the login screen), builds the start-up image (`sd-encrypt` or `encrypt`, whichever the
+system's mkinitcpio uses), installs GRUB (plus the firmware's fallback path) with the OS's `boot_menu_theme`, and runs its
+`finish` program. Labyrinth's integration file names `labyrinth-install-cleanup`, `labyrinth-install-bootfinish` and
+`labyrinth-grub-theme` for those.
 
-Tested in a QEMU/OVMF virtual machine from the 2026-10-23 ISO: whole disk unencrypted (boots to a login, the account, groups,
+Tested (as Labyrinth's program) in a QEMU/OVMF virtual machine from the 2026-10-23 ISO: whole disk unencrypted (boots to a login, the account, groups,
 language, time zone and sudo as chosen) and encrypted (GRUB asks the password once). 2026-10-25: manual mode beside a
 Windows-like layout (its EFI partition kept, a new 40 GB / in the free space, encrypted): the EFI partition was not formatted,
 GRUB went into EFI/Labyrinth without a fallback copy, and the system started to the login screen after one password in GRUB.
