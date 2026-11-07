@@ -12,6 +12,7 @@ pub mod apps;
 pub mod autocorrect;
 pub mod conf;
 pub mod dicts;
+pub mod electron;
 pub mod global;
 pub mod packs;
 pub mod words;

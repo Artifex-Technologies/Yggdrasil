@@ -7,6 +7,7 @@
 //!   yggdrasil-spell add WORD | remove WORD
 //!   yggdrasil-spell sync              merge every app's list into yours and back (once)
 //!   yggdrasil-spell watch             sync whenever an app's list, your list or the settings change (the user service)
+//!   yggdrasil-spell electron on|off|status   autocorrect in Electron apps (VS Code, Obsidian): their --enable-wayland-ime flag
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -26,14 +27,40 @@ fn main() {
         Some("packs") => packs(),
         Some("build-pack") => build_pack(rest),
         Some("global") => global_cmd(rest),
+        Some("electron") => electron_cmd(rest),
         _ => {
-            eprintln!("usage: yggdrasil-spell check WORD... | text TEXT | languages | packs | words | add WORD | remove WORD | sync | watch");
+            eprintln!("usage: yggdrasil-spell check WORD... | text TEXT | languages | packs | words | add WORD | remove WORD | sync | watch | electron on|off|status");
             eprintln!("       yggdrasil-spell global shared | pending | merge | approve WORD... | deny WORD...   (merge, approve, deny: root)");
             eprintln!("       yggdrasil-spell build-pack OUT 'name' 'description' licence 'source' yes|no [--deny MISSPELLINGS] FILE...   (for packaging)");
             2
         }
     };
     std::process::exit(code);
+}
+
+/// The Electron apps' input-method flag (electron.rs); they read it when they start.
+fn electron_cmd(rest: &[String]) -> i32 {
+    use yggdrasil_spell::electron;
+    match rest.first().map(String::as_str) {
+        Some("status") | None => {
+            println!("{}", if electron::is_on() { "on" } else { "off" });
+            0
+        }
+        Some(w @ ("on" | "off")) => match electron::set(w == "on") {
+            Ok(()) => {
+                println!("{w}: restart VS Code, Obsidian and other Electron apps for it to take effect");
+                0
+            }
+            Err(e) => {
+                eprintln!("yggdrasil-spell: {e}");
+                1
+            }
+        },
+        _ => {
+            eprintln!("usage: yggdrasil-spell electron on|off|status");
+            2
+        }
+    }
 }
 
 /// The computer's shared list (global.rs). `merge`, `approve` and `deny` need root (the system unit runs merge; Settings runs approve

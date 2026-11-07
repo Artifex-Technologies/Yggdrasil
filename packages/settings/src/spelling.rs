@@ -119,6 +119,16 @@ impl App {
                     }
                 });
             });
+            if conf.autocorrect {
+                let mut electron = yggdrasil_spell::electron::is_on();
+                ui::row(ui, pal, false, "Also in Electron apps", Some("VS Code, Obsidian and other Electron apps, after they are restarted. With some versions this flag has caused doubled or lost keys there: switch it off again if typing goes wrong"), |ui| {
+                    if ui::switch(ui, pal, &mut electron).changed() {
+                        if let Err(e) = yggdrasil_spell::electron::set(electron) {
+                            self.spell.note = format!("Electron apps: {e}");
+                        }
+                    }
+                });
+            }
         });
 
         ui.add_space(8.0);

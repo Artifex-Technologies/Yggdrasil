@@ -58,6 +58,9 @@ yggdrasil-spell global shared | pending | merge | approve WORD... | deny WORD...
 
 Still open:
 
-- Electron apps take part in autocorrect only when started with `--enable-wayland-ime`; nothing adds that flag for them yet.
+- Electron apps take part in autocorrect only when started with `--enable-wayland-ime`. Since 2026-11-07 a switch under "Correct
+  as I type" (and `yggdrasil-spell electron on|off|status`) writes it into `~/.config/electron-flags.conf` (apps on Arch's
+  electron, Obsidian among them) and `code-flags.conf` (VS Code), marked as Yggdrasil's; off takes out only that line. Off by
+  default: with some Electron versions the flag has caused doubled or lost keys. Not yet tried with VS Code and Obsidian here.
 - Word packs by size (SCOWL's small, medium and large English lists) are not built; the packs now are the cspell-dicts topic
   lists (tech terms, companies, gaming, names).
