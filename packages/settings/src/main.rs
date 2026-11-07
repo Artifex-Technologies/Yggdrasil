@@ -2655,6 +2655,7 @@ impl App {
                 });
             }
         });
+        notify_rules(ui, pal);
         }
         if self.app_sub == AppSub::Wallpaper {
         ui::group(ui, pal, Some("Wallpaper"), |ui| {
@@ -4343,4 +4344,54 @@ fn ramp_bar(ui: &mut egui::Ui, pal: &Palette, from: u32, to: u32) {
         ui.painter().rect_filled(egui::Rect::from_min_max(egui::pos2(x, rect.top()), egui::pos2(x + w + 0.5, rect.bottom())), 0.0, egui::Color32::from_rgb(r, g, b));
     }
     ui.painter().rect_stroke(rect, CornerRadius::same(2), egui::Stroke::new(1.0, pal.border), egui::StrokeKind::Outside);
+}
+
+/// Quiet hours and muted apps (yggdrasil_conf::notifyrules): read and saved here, read by the panel at each notification.
+fn notify_rules(ui: &mut egui::Ui, pal: &Palette) {
+    use yggdrasil_conf::notifyrules::{parse_time, seen_apps, show_time, NotifyRules};
+    let mut rules = NotifyRules::load();
+    let before = rules.clone();
+    let id = egui::Id::new("notify-quiet-times");
+    let (mut from, mut to) = ui.data_mut(|d| d.get_temp::<(String, String)>(id)).unwrap_or_else(|| (show_time(rules.quiet_from), show_time(rules.quiet_to)));
+    ui.add_space(8.0);
+    ui::group(ui, pal, Some("Quiet hours"), |ui| {
+        ui::row(ui, pal, true, "Quiet hours", Some("Every day between these times no pop-ups, as with Do not disturb (critical alerts still show; everything is kept)"), |ui| {
+            ui::switch(ui, pal, &mut rules.quiet);
+        });
+        if rules.quiet {
+            ui::row(ui, pal, false, "From and to", Some("24-hour times, e.g. 22:00 to 07:00 (past midnight is fine)"), |ui| {
+                let r2 = ui::field(ui, pal, &mut to, "07:00", 60.0, false);
+                ui.label("to");
+                let r1 = ui::field(ui, pal, &mut from, "22:00", 60.0, false);
+                if r1.lost_focus() || r2.lost_focus() {
+                    if let (Some(f), Some(t)) = (parse_time(&from), parse_time(&to)) {
+                        (rules.quiet_from, rules.quiet_to) = (f, t);
+                    }
+                }
+            });
+        }
+    });
+    ui.data_mut(|d| d.insert_temp(id, (from, to)));
+    let apps = seen_apps();
+    ui.add_space(8.0);
+    ui::group(ui, pal, Some("Pop-ups by app"), |ui| {
+        if apps.is_empty() {
+            ui::row(ui, pal, true, "No app has sent a notification yet", Some("Each one is listed here after its first"), |_| {});
+        }
+        for (n, (key, name)) in apps.iter().enumerate() {
+            let mut on = !rules.muted.contains(key);
+            ui::row(ui, pal, n == 0, name, Some(if on { "Pops up" } else { "Muted: kept in the Notification Center only (critical alerts still show)" }), |ui| {
+                if ui::switch(ui, pal, &mut on).changed() {
+                    if on {
+                        rules.muted.remove(key);
+                    } else {
+                        rules.muted.insert(key.clone());
+                    }
+                }
+            });
+        }
+    });
+    if rules != before {
+        let _ = rules.save();
+    }
 }

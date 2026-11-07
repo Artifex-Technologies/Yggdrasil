@@ -47,6 +47,15 @@ Only one program can own the name `org.freedesktop.Notifications`. What decides 
 
 ## Not built yet (list for later)
 - The theme option (macOS look vs a more Windows-like look) in Settings > Appearance.
-- Quiet hours; per-app mute; inline reply.
+- Inline reply. (Quiet hours and pop-ups by app: built 2026-11-07, below.)
 - A notification sound; images/avatars sent by apps (`image-data`).
 - Heimdall alerts de-duplicated when it replays old session alerts after a restart.
+
+## Quiet hours and pop-ups by app (2026-11-07)
+
+Settings > Apps > Notifications: **Quiet hours** (a daily stretch, e.g. 22:00 to 07:00, with no pop-ups, as Do not disturb) and
+**Pop-ups by app** (a switch for every app that has sent a notification; a muted app's notifications are only kept in the
+Notification Center). A critical notification always pops up, so muting an app never hides a security alarm or a low battery.
+The rules are `~/.config/yggdrasil/notifications.conf` (`yggdrasil_conf::notifyrules`), read by the panel at each notification;
+the apps seen are in `~/.local/state/yggdrasil/notification-apps`. Not yet seen on screen.
+

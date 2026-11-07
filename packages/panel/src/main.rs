@@ -1456,8 +1456,13 @@ impl State {
         match msg {
             notify::NMsg::New(n) => {
                 let (id, urgency) = (n.id, n.urgency);
+                // quiet hours and muted apps (yggdrasil_conf::notifyrules); the app is noted so Settings can offer to mute it
+                let key = n.group_key();
+                yggdrasil_conf::notifyrules::remember_app(&key, if n.app.is_empty() { &key } else { &n.app });
+                let rules = yggdrasil_conf::notifyrules::NotifyRules::load();
+                let pops = rules.pops_up(&key, urgency, self.model.conf.notify_dnd, yggdrasil_conf::notifyrules::minute_now());
                 self.model.notifs.add(n);
-                if self.model.conf.notify_toasts && urgency > 0 && (!self.model.conf.notify_dnd || urgency == 2) {
+                if self.model.conf.notify_toasts && urgency > 0 && pops {
                     self.toasts.retain(|t| *t != id);
                     self.toasts.push(id);
                     while self.toasts.len() > 3 {
