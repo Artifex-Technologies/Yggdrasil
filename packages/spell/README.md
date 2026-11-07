@@ -55,3 +55,9 @@ yggdrasil-spell words             yggdrasil-spell add WORD        yggdrasil-spel
 yggdrasil-spell sync              yggdrasil-spell watch
 yggdrasil-spell global shared | pending | merge | approve WORD... | deny WORD...    (merge, approve, deny: root)
 ```
+
+Still open:
+
+- Electron apps take part in autocorrect only when started with `--enable-wayland-ime`; nothing adds that flag for them yet.
+- Word packs by size (SCOWL's small, medium and large English lists) are not built; the packs now are the cspell-dicts topic
+  lists (tech terms, companies, gaming, names).

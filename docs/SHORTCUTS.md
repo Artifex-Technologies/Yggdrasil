@@ -35,8 +35,8 @@ of date). Settings > Keyboard Shortcuts and the cheat sheet (Win + /) show the l
 
 | Keys | What it does |
 | --- | --- |
-| Win + S | Talk to the assistant (hold) |
-| Ctrl + Alt + S | Talk to the assistant (hold) |
+| Win + S | Talk to the assistant (tap to start, tap to send) |
+| Ctrl + Alt + S | Talk to the assistant (tap to start, tap to send) |
 | Win + V | Clipboard history and snippets |
 | Win + E | Files (Minos) |
 | Win + Return | Terminal |

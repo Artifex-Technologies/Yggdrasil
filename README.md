@@ -19,7 +19,7 @@ version that runs in a window ([docs/COMPOSITOR.md](docs/COMPOSITOR.md)). The ch
 | --- | --- | --- |
 | `packages/session` | `yggdrasil-session` | the session on Hyprland: its configuration (Lua), window rules, keys, and a small Hyprland plugin so programs' own minimize buttons work |
 | `packages/panel` | `yggdrasil-panel` | top bar, dock, tray, start menu, calendar, notifications, wallpaper, and Fylgja (the notch) ([docs/FYLGJA.md](docs/FYLGJA.md), [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md)) |
-| `packages/settings` | `yggdrasil-settings` | Settings: network, displays, sound, appearance, power, cooling and idle, users and their rights, security, restore points, apps, games (graphics cards, game fixes, frame generation) and more |
+| `packages/settings` | `yggdrasil-settings` | Settings: Wi-Fi & Network (each saved network has its own page: auto-join, private address, IPv4 and IPv6, DNS, proxy, forget; Wired only with a cable in; Devices, who is on a trusted home network, from the security integration's `devices_scan`; Wi-Fi checks, why the Wi-Fi is slow, from its `wifi_check`: [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md)), displays, sound, appearance, power, cooling and idle, users and their rights, security, restore points, apps, games (graphics cards, game fixes, frame generation) and more |
 | `packages/minos` | `minos` | the file manager, and (through `packages/portal`) the open and save dialog of every program ([keys](docs/keys/minos.md)) |
 | `packages/market` | `agora` | Agora, the app store: the catalog, the Arch repositories, the AUR and Flathub in one place ([docs/MARKETPLACE.md](docs/MARKETPLACE.md)) |
 | `packages/lock` | `yggdrasil-lock`, `yggdrasil-greeter`, `yggdrasil-shot` | the lock screen and the login screen with selectable designs ([docs/LOCKSCREEN.md](docs/LOCKSCREEN.md), [docs/LOGIN_SCREEN.md](docs/LOGIN_SCREEN.md)), the boot splash, and the screenshot tool (Print: freezes the screen first, so open menus can be captured) |
@@ -32,6 +32,18 @@ version that runs in a window ([docs/COMPOSITOR.md](docs/COMPOSITOR.md)). The ch
 | `packages/xmove` | `yggdrasil-xmove` | lets X11 programs that draw their own title bar (Steam) be moved and resized |
 | `packages/compositor` | `yggdrasil-compositor` | Yggdrasil's own compositor (Smithay), in progress |
 | `packages/calculator`, `packages/weather` | | small apps ([docs/WEATHER.md](docs/WEATHER.md)) |
+| `packages/spell` | `yggdrasil-spell`, `yggdrasil-autocorrect` | spell checking in every app: the Hunspell dictionaries, one word list your apps share, a list shared by the computer, and correct as you type ([README](packages/spell/README.md)) |
+| `packages/huginn` | `huginn` | Huginn, the video app: videos without an account, subscriptions kept on this computer, played in its window ([README](packages/huginn/README.md)) |
+| `packages/clipboard` | `yggdrasil-clipboard` | clipboard history and snippets (Win + V) |
+| `packages/colorpicker` | `yggdrasil-colorpicker` | pick a colour anywhere on the screen and copy it (Win + Shift + C) |
+| `packages/authenticator` | `yggdrasil-authenticator` | Proton Authenticator's codes: type to search, Enter copies |
+| `packages/timer` | `yggdrasil-timer` | a countdown timer in the top bar |
+| `packages/health` | `yggdrasil-health` | break reminders (eyes, movement, water, breathing, meals, wind-down) with a top bar pill |
+| `packages/controllers` | `yggdrasil-controllers` | game controllers in the top bar: battery, rumble test, light bar colour, notifications |
+| `packages/gamepads` | | the game controller library that Settings and the controllers add-on share (reads sysfs) |
+| `packages/agent-usage` | `yggdrasil-agent-usage` | a top bar add-on: how much of Claude's weekly and 5-hour limits is used |
+| `packages/browser-warm` | `yggdrasil-browser-warm` | keeps the default browser running with no windows, so new windows and links open almost at once |
+| `packages/game-2048`, `packages/sudoku` | `yggdrasil-2048`, `yggdrasil-sudoku` | games: 2048 and Sudoku |
 | `packages/yggdrasil-ui`, `packages/yggdrasil-conf` | | the shared look (egui theme, icons, window chrome) and the shared settings and integration files |
 | `packages/liki` | `liki-build` and others | **Liki**, the icon pack ([docs/LIKI.md](docs/LIKI.md)) |
 | `packages/theme` | `ygg-theme`, `ygg-cursors` | the look of GTK and Qt programs (dark mode included) and the mouse pointer ([docs/THEME.md](docs/THEME.md)) |
@@ -75,8 +87,8 @@ additions included; [docs/SHORTCUTS.md](docs/SHORTCUTS.md) is the same list. Thi
 
 | Keys | What it does |
 | --- | --- |
-| Win + S | Talk to the assistant (hold) |
-| Ctrl + Alt + S | Talk to the assistant (hold) |
+| Win + S | Talk to the assistant (tap to start, tap to send) |
+| Ctrl + Alt + S | Talk to the assistant (tap to start, tap to send) |
 | Win + V | Clipboard history and snippets |
 | Win + E | Files (Minos) |
 | Win + Return | Terminal |
