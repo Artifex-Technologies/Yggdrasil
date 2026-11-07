@@ -1,6 +1,6 @@
-//! Wi-Fi & Network > Devices: who is on this network, from Heimdall's device list (`GET /v1/lan/devices`, Heimdall's
-//! docs/DEVICES.md). Heimdall looks every 5 minutes, only on networks the owner trusted; Settings shows the list, lets the
-//! owner rename a device (kept here, per user) and asks for a scan now.
+//! Wi-Fi & Network > Devices: who is on this network, from the security monitor's device list (the `security` integration:
+//! `GET /v1/lan/devices` on its `api`, and `devices_scan` to look again now; docs/INTEGRATIONS.md). Settings shows the list,
+//! lets the owner rename a device (kept here, per user) and asks for a look now. Without `devices_scan` there is no page.
 
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -54,7 +54,9 @@ struct Store {
 /// The list for one connection, as Settings shows it.
 #[derive(Clone, Debug, Default)]
 pub struct List {
-    /// "scanned", "not_trusted", "router_changed", "offline", "waiting" (no scan yet), or "unavailable" (Heimdall not running or too old)
+    /// the security monitor's name (the integration's `name`)
+    pub monitor: String,
+    /// "scanned", "not_trusted", "router_changed", "offline", "waiting" (no scan yet), or "unavailable" (the monitor is not running or too old)
     pub status: String,
     pub ssid: String,
     /// seconds since 1970 (UTC)
@@ -79,7 +81,7 @@ pub fn parse(body: &str, uuid: &str) -> List {
     let Some(n) = n else { return List { status, ..Default::default() } };
     let mut devices = n.devices;
     devices.sort_by_key(|d| (order(&d.kind), d.name.is_empty(), d.name.to_lowercase(), ip_key(&d.ip)));
-    List { status, ssid: n.ssid, last_scan: crate::security::parse_time(&n.last_scan).unwrap_or(0), devices }
+    List { status, ssid: n.ssid, last_scan: crate::security::parse_time(&n.last_scan).unwrap_or(0), devices, ..Default::default() }
 }
 
 fn order(kind: &str) -> u8 {
@@ -94,19 +96,29 @@ fn ip_key(ip: &str) -> Vec<u32> {
     ip.split('.').filter_map(|p| p.parse().ok()).collect()
 }
 
-/// Reads Heimdall's list for connection `uuid` (a local call, quick; empty when Heimdall is not there).
-pub fn load(uuid: &str) -> List {
-    let api = yggdrasil_conf::integrations::security().and_then(|i| i.loopback("api"));
-    let body = api.and_then(|a| crate::sys::run("curl", &["-s", "-m", "3", "--proto", "=http", &format!("http://{a}/v1/lan/devices")]));
-    match body {
-        Some(b) if b.trim_start().starts_with('{') => parse(&b, uuid),
-        _ => List { status: "unavailable".into(), ..Default::default() },
-    }
+/// The security integration, when it keeps a device list (it declares `devices_scan`).
+fn monitor() -> Option<&'static yggdrasil_conf::integrations::Integration> {
+    yggdrasil_conf::integrations::security().filter(|i| i.command("devices_scan").is_some())
 }
 
-/// Starts Heimdall's scan and waits for it (a few seconds). A polkit rule lets an administrator start this one unit.
+/// Reads the list for connection `uuid` (a local call, quick). None when no security monitor keeps one.
+pub fn load(uuid: &str) -> Option<List> {
+    let i = monitor()?;
+    let name = i.get("name").unwrap_or("The security monitor").to_string();
+    let body = i.loopback("api").and_then(|a| crate::sys::run("curl", &["-s", "-m", "3", "--proto", "=http", &format!("http://{a}/v1/lan/devices")]));
+    let mut l = match body {
+        Some(b) if b.trim_start().starts_with('{') => parse(&b, uuid),
+        _ => List { status: "unavailable".into(), ..Default::default() },
+    };
+    l.monitor = name;
+    Some(l)
+}
+
+/// Asks the monitor to look again now and waits for it (a few seconds): the integration's `devices_scan` command.
 pub fn scan_now() -> Result<(), String> {
-    crate::sys::act("systemctl", &["start", "heimdall-lan-scan.service"])
+    let cmd = monitor().and_then(|i| i.command("devices_scan")).ok_or("there is no device list")?;
+    let out = std::process::Command::new(&cmd[0]).args(&cmd[1..]).stdin(std::process::Stdio::null()).output().map_err(|e| e.to_string())?;
+    if out.status.success() { Ok(()) } else { Err(String::from_utf8_lossy(&out.stderr).trim().to_string()) }
 }
 
 /// What a kind is called, for people.

@@ -158,7 +158,7 @@ enum Msg {
     DirSize(std::path::PathBuf, u64),
     /// A language was downloaded or removed (Keyboard > Spelling and languages), or why not.
     Spell(Result<String, String>),
-    /// Wi-Fi & Network > Wi-Fi checks finished (Heimdall's report), or why not.
+    /// Wi-Fi & Network > Wi-Fi checks finished (the security monitor's report), or why not.
     WifiHealth(Result<wifihealth::Report, String>),
     Done(Page, Result<(), String>),
 }
@@ -1276,7 +1276,7 @@ impl App {
                 });
             }
         }
-        // who else is on this network (Heimdall's device list)
+        // who else is on this network (the security monitor's device list)
         if let Some((_, l)) = &n.lan {
             ui.add_space(8.0);
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
@@ -1285,7 +1285,7 @@ impl App {
             let mut check = false;
             ui::group(ui, pal, Some("This network"), |ui| {
                 go = ui::nav_row(ui, pal, true, "Devices on this network", Some(&sub), |_| {});
-                if n.devices.iter().any(|d| d.kind == "wifi" && d.state.starts_with("connected")) {
+                if wifihealth::available() && n.devices.iter().any(|d| d.kind == "wifi" && d.state.starts_with("connected")) {
                     check = ui::nav_row(ui, pal, false, "Wi-Fi checks", Some("Why is it slow? Signal, channel, other devices, the internet"), |_| {});
                 }
             });
@@ -1320,7 +1320,7 @@ impl App {
         }
     }
 
-    /// Wi-Fi & Network > Devices: every device Heimdall found on this network, router and this computer first.
+    /// Wi-Fi & Network > Devices: every device the security monitor found on this network, router and this computer first.
     fn devices_page(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context, n: &sys::Network) {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
         let Some((_, l)) = n.lan.clone() else {
@@ -1351,10 +1351,10 @@ impl App {
         }
         ui.add_space(8.0);
         let note = match l.status.as_str() {
-            "not_trusted" => Some("Devices are listed only on networks you trust (your home network). On other networks Heimdall does not look around: they are not yours."),
-            "router_changed" => Some("This network's router is not the one it had when you trusted the network, so Heimdall did not look. If you changed the router, trust the network again."),
-            "unavailable" => Some("Heimdall is not running, or is too old to keep a device list."),
-            "waiting" => Some("The first look runs within a few minutes of Heimdall starting."),
+            "not_trusted" => Some(format!("Devices are listed only on networks you trust (your home network). On other networks {} does not look around: they are not yours.", l.monitor)),
+            "router_changed" => Some(format!("This network's router is not the one it had when you trusted the network, so {} did not look. If you changed the router, trust the network again.", l.monitor)),
+            "unavailable" => Some(format!("{} is not running, or is too old to keep a device list.", l.monitor)),
+            "waiting" => Some(format!("The first look runs within a few minutes of {} starting.", l.monitor)),
             _ => None,
         };
         if let Some(t) = note {
@@ -1402,7 +1402,7 @@ impl App {
         }
     }
 
-    /// Wi-Fi & Network > Wi-Fi checks: run Heimdall's check and show what it found, the likely cause first.
+    /// Wi-Fi & Network > Wi-Fi checks: run the security monitor's check and show what it found, the likely cause first.
     fn wifi_check_page(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         ui.add_space(6.0);
         let mut back = false;
@@ -1475,7 +1475,7 @@ impl App {
             }
         });
         ui.add_space(8.0);
-        // problems first, then the rest in the order Heimdall gave
+        // problems first, then the rest in the order the check gave
         let mut findings = r.findings.clone();
         findings.sort_by_key(|f| match f.status.as_str() {
             "bad" => 0,
@@ -1659,7 +1659,7 @@ impl App {
             let (idx, sub) = match &d.mac {
                 sys::MacMode::Private => (0, "A random hardware address of its own for this network, the same every time"),
                 sys::MacMode::Random => (1, "A new random hardware address every time it joins"),
-                sys::MacMode::Real => (2, if saved.wifi { "This computer's real hardware address (Heimdall keeps it only on networks you trust)" } else { "This computer's real hardware address" }),
+                sys::MacMode::Real => (2, if saved.wifi { "This computer's real hardware address (used only on networks you trust)" } else { "This computer's real hardware address" }),
                 sys::MacMode::Custom(_) => (3, "A hardware address you type in"),
             };
             ui::row(ui, pal, true, "Address", Some(sub), |ui| {
@@ -4274,7 +4274,7 @@ fn lan_summary(l: &devices::List, now: i64) -> String {
     match l.status.as_str() {
         "not_trusted" => return "Only on networks you trust".into(),
         "router_changed" => return "Not listed: the router changed".into(),
-        "unavailable" => return "Heimdall is not running".into(),
+        "unavailable" => return format!("{} is not running", l.monitor),
         "waiting" => return "The first look runs in a few minutes".into(),
         _ => {}
     }

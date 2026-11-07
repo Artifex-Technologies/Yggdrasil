@@ -215,7 +215,7 @@ pub struct Network {
     pub saved: Vec<crate::netconf::Profile>,
     /// What each connected profile (by its id) was given: addresses, router, DNS.
     pub live: std::collections::HashMap<String, crate::netconf::Live>,
-    /// Heimdall's device list for the connection that has the router (its id, and the list).
+    /// The security monitor's device list for the connection that has the router (its id, and the list), when it keeps one.
     pub lan: Option<(String, crate::devices::List)>,
 }
 
@@ -233,7 +233,7 @@ pub enum MacMode {
 }
 
 impl MacMode {
-    /// From NetworkManager's cloned-mac-address value. Unset follows the default, which Heimdall makes private on Wi-Fi.
+    /// From NetworkManager's cloned-mac-address value. Unset follows the default, which the security setup makes private on Wi-Fi.
     pub fn from_nm(v: &str, wifi: bool) -> MacMode {
         match v.trim() {
             "stable" | "stable-ssid" => MacMode::Private,
@@ -307,10 +307,7 @@ pub fn network() -> Network {
     };
     // the connection to the router (not a VPN or Tailscale's tunnel)
     let home = n.live.iter().filter(|(_, l)| !l.router.is_empty()).map(|(u, _)| u.clone()).min();
-    n.lan = home.map(|u| {
-        let l = crate::devices::load(&u);
-        (u, l)
-    });
+    n.lan = home.and_then(|u| crate::devices::load(&u).map(|l| (u, l)));
     n
 }
 
@@ -323,7 +320,7 @@ mod mac_tests {
         assert_eq!(MacMode::from_nm("stable", true), MacMode::Private);
         assert_eq!(MacMode::from_nm("random", true), MacMode::Random);
         assert_eq!(MacMode::from_nm("permanent", true), MacMode::Real);
-        assert_eq!(MacMode::from_nm("", true), MacMode::Private, "Wi-Fi defaults to private (Heimdall)");
+        assert_eq!(MacMode::from_nm("", true), MacMode::Private, "Wi-Fi defaults to private");
         assert_eq!(MacMode::from_nm("", false), MacMode::Real, "wired keeps the real one by default");
         assert_eq!(MacMode::from_nm("02:1a:2b:3c:4d:5e", true), MacMode::Custom("02:1A:2B:3C:4D:5E".into()));
         assert_eq!(MacMode::Custom("02:1a:2b:3c:4d:5e".into()).to_nm(), "02:1A:2B:3C:4D:5E");
