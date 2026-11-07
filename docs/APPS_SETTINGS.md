@@ -18,7 +18,7 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
 - **Optional software** and **Minos** are the other two tabs.
 - **Developer options** (About: click the logo five times while holding the ` key): adds "Any connection / Ethernet only /
   Wi-Fi only" next to an app's network switch, and the selected power mode's CPU and graphics-card limits under Power. Stored as
-  `developer = yes` in ~/.config/labyrinth/panel.conf.
+  `developer = yes` in ~/.config/yggdrasil/panel.conf.
 
 - **Games** (`yggdrasil-settings games`, 2026-11-05): the graphics cards a game can draw on, fixes for particular games, and frame generation.
   - Every card, with what it does: which one shows the screen, which one the computer started on, its driver. Read by

@@ -89,5 +89,4 @@ GRUB went into EFI/Labyrinth without a fallback copy, and the system started to 
 Known limit: GRUB reads the encryption password with a US keyboard layout. With another layout (AZERTY, QWERTZ, Dvorak ...)
 the same keys give other characters there; to be solved (a GRUB keymap, or a password typed the same way on both).
 
-Calamares stays on the medium as a fallback (`labyrinth-install --calamares`, or the launcher's second action) until this
-installer has been used on real hardware.
+Calamares was removed from Labyrinth's ISO on 2026-11-07; this installer is the only one on the medium.

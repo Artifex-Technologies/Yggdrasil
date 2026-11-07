@@ -1,5 +1,7 @@
 # Yggdrasil HTPC (plan)
 
+**Parked (my choice, 2026-11-07).** Nothing more is planned or built for the HTPC mode until I un-park it. The page below is the plan as it stood.
+
 A living-room mode of Yggdrasil: run from the couch with a game controller or a TV remote, in the spirit of the Xbox dashboard
 (and SteamOS's Big Picture, with an Xbox-like look). Planned 2026-10-24; nothing below is built yet except the player's core.
 

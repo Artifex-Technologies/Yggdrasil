@@ -5,7 +5,7 @@ layouts opens under it; drop the window on a zone and it fills that part of the 
 window in front (then click a zone; Esc cancels). Settings > Displays > Window zones turns it on or off, sets the space around
 windows and picks which layouts the sheet shows (`~/.config/yggdrasil/zones.conf`).
 
-## How a drag is noticed (Hyprland 0.56)
+## How a drag is noticed (Hyprland 0.57)
 
 Only a **Super+drag** opens the sheet. Learned on the owner's machine on 2026-10-25:
 

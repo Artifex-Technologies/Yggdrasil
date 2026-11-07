@@ -19,7 +19,7 @@ on one: those results are listed as "unverified".
 | Top bar, dock, start menu, notification toasts, notification pane, tray | custom tiny-skia on layer-shell (`yggdrasil-panel`) | **No**: not in the accessibility tree at all (no accesskit in its lock) | Start menu: Super, typing, Tab/arrows/Enter/Escape. Dock, bar, tray and toast buttons: no keyboard path | the biggest gap |
 | Lock screen | custom (`yggdrasil-lock`) | **No** | Password typing and Enter only | a screen-reader user cannot tell that it is locked or whether a password failed |
 | Calculator | egui | as above | as above | |
-| Boot menu / installer | GRUB / Calamares (Qt) | Calamares: Qt exposes AT-SPI; GRUB: none | | the live ISO has no speech boot entry |
+| Boot menu / installer | GRUB / `yggdrasil-installer` (egui, eframe 0.36) | installer: as the egui apps above (AccessKit is in its lock, unverified); GRUB: none | installer: Tab and arrows in egui widgets | the live ISO has no speech boot entry; Calamares is no longer used (removed from Labyrinth's ISO on 2026-11-07) |
 | Compositor features (zoom, high contrast colours, sticky keys) | were KWin and kaccess; today Hyprland | **Missing since KDE left (2026-10-24)** | | Hyprland 0.57 has a zoom around the pointer (`cursor:zoom_factor`) that Yggdrasil does not switch on or offer anywhere, and no sticky, slow or bounce keys setting; no high-contrast mode |
 
 On this machine (rechecked 2026-11-04): the AT-SPI bus is running (`at-spi2-core` is installed); **Orca and Speech Dispatcher are not
@@ -45,7 +45,7 @@ with Orca before trusting the table below**, and again when eframe is upgraded.
    Super+Tab for the dock, Super+N for the newest notification's buttons: Allow / Deny prompts from "Ask before connecting" are otherwise mouse-only).
 4. **Text size and reduce motion: built for the egui apps (2026-10-16), not yet for the panel.** Settings > Appearance > Accessibility sets 100/125/150/200 % for Settings, Minos, the admin password box, Calculator and the keyring tool (egui zoom, applied within a second), and "Reduce motion" for their animations. The bar, dock, start menu, toasts and lock screen still follow only the screen scale. Original finding: **No text size setting.** Settings > Appearance has display scale (fractional) but no "text size" for our apps. Add a 100/125/150/200 % setting
    read by the panel and every egui app (`pixels_per_point` multiplier), so low-vision users need not enlarge the whole desktop.
-5. **No high-contrast or reduced-motion setting, no big-cursor setting.** Add a high-contrast palette variant in `labyrinth-ui`, a "reduce
+5. **No high-contrast or reduced-motion setting, no big-cursor setting.** Add a high-contrast palette variant in `yggdrasil-ui`, a "reduce
    motion" switch (animations in the panel are short, but there are some), and cursor size in Settings.
 6. **Not shipped:** Orca, Speech Dispatcher, eSpeak NG, braille. Added now as the optional component `accessibility` (and in the
    "everything" preset). Still to do: install it on every machine by default, a boot-menu entry that starts the live ISO with speech

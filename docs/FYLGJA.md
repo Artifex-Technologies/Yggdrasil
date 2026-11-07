@@ -12,7 +12,7 @@ pointer away to close. Code: `packages/panel/src/fylgja.rs`.
 - The wheel (or a click on the card) opens the full notch. All seven section titles are always shown in
   the black band along the top, the current one lit; scroll to move on, or click a title to go there. Moving the pointer away slides it back up.
 - Opened by a shortcut it stays until Esc or a click outside: **Super+V** the clipboard history,
-  **Super+S** a question for Sarina (see [SARINA_VOICE.md](SARINA_VOICE.md)).
+  **Super+S** a question for Sarina (see Labyrinth's [SARINA_VOICE.md](https://github.com/Artifex-Technologies/Labyrinth_OS/blob/main/docs/SARINA_VOICE.md)).
 - While open, the bar's black tab widens into the card so there is no separate bar or step.
 
 ## Sections

@@ -46,7 +46,7 @@ today is given in *italics* after it.
    2026-10-15 with "never sleep" written in its config; a system-level block (`/etc/systemd/sleep.conf.d/10-never-sleep.conf`)
    is the stopgap. Own it: read the idle state through Wayland, honour logind inhibitors, one clear setting
    per behaviour, an honest log of why it slept. *Today: `yggdrasil-idle`.*
-2. **Notification service** (`org.freedesktop.Notifications`), with the notch or a right-hand pane (see STATUS.md). **Built 2026-10-16** (see NOTIFICATIONS.md): service, grouped list, pop-ups, Fylgja section, right pane, Heimdall feed; to check on a fresh install.
+2. **Notification service** (`org.freedesktop.Notifications`), with the notch or a right-hand pane (see Labyrinth's [STATUS.md](https://github.com/Artifex-Technologies/Labyrinth_OS/blob/main/docs/STATUS.md)). **Built 2026-10-16** (see NOTIFICATIONS.md): service, grouped list, pop-ups, Fylgja section, right pane, Heimdall feed; to check on a fresh install.
 3. **Portals backend** (replaces xdg-desktop-portal-kde): **Minos as the file chooser** (the open/save dialog
    every app shows), screenshot and screencast. This is also where per-app permissions (files, camera,
    microphone, location, screen) are asked and remembered, so it is the heart of the privacy model. *Today: `yggdrasil-portal`
@@ -120,6 +120,6 @@ gnome-keyring's login keyring is locked with the login password; `pam_gnome_keyr
 - **Settings (a Users page, built since: USERS_KEYRING.md) must change passwords through the PAM password stack** with the old and the new password
   (a small helper speaking PAM, like `passwd`), never through AccountsService's `SetPassword` or by writing the shadow file: those have no old password,
   so the keyring would be left behind. KDE's own Users page did exactly that (it is gone with KDE).
-- **When they do get out of step anyway** (an administrator reset the password, a tool that bypassed PAM): `yggdrasil-keyring-sync` (to build, autostart at login):
+- **When they do get out of step anyway** (an administrator reset the password, a tool that bypassed PAM): `yggdrasil-keyring-sync` (built: `packages/keyring-sync`, USERS_KEYRING.md; autostart at login):
   if the login keyring is locked after login, ask once for the *previous* password in our own dialog and change the keyring to the current one through
   gnome-keyring's `ChangeWithMasterPassword` (the call Seahorse uses). The end user sees one clear question, not an app asking for a password they do not remember.
