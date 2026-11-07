@@ -27,6 +27,7 @@ mod workspaces;
 mod zones_ui;
 mod netconf;
 mod devices;
+mod wifihealth;
 mod sys;
 mod ui;
 mod users;
@@ -157,6 +158,8 @@ enum Msg {
     DirSize(std::path::PathBuf, u64),
     /// A language was downloaded or removed (Keyboard > Spelling and languages), or why not.
     Spell(Result<String, String>),
+    /// Wi-Fi & Network > Wi-Fi checks finished (Heimdall's report), or why not.
+    WifiHealth(Result<wifihealth::Report, String>),
     Done(Page, Result<(), String>),
 }
 
@@ -216,6 +219,10 @@ struct App {
     lan_dev: Option<String>,
     lan_names: std::collections::BTreeMap<String, String>,
     lan_rename: Option<String>,
+    /// Wi-Fi & Network > Wi-Fi checks: the page is open, a check is running, the last result.
+    wifi_check_open: bool,
+    wifi_check_running: bool,
+    wifi_check: Option<Result<wifihealth::Report, String>>,
     // Security page
     sec_filter: usize,
     /// The alert whose explanation is open (its time and detector).
@@ -335,6 +342,9 @@ impl App {
             lan_dev: None,
             lan_names: devices::read_names(),
             lan_rename: None,
+            wifi_check_open: start_sub() == "checks",
+            wifi_check_running: false,
+            wifi_check: None,
             sec_filter: 1,
             sec_open: None,
             demo_scroll: if start_sub().starts_with("distress-demo-") { 8 } else { 0 },
@@ -563,6 +573,11 @@ impl App {
                     self.dir_sizes.insert(p, n);
                     continue;
                 }
+                Msg::WifiHealth(r) => {
+                    self.wifi_check_running = false;
+                    self.wifi_check = Some(r);
+                    continue;
+                }
                 Msg::Spell(r) => {
                     self.spell.busy = None;
                     self.spell.note = match r {
@@ -734,6 +749,7 @@ impl eframe::App for App {
                             self.net_open = None;
                             self.lan_open = false;
                             self.lan_dev = None;
+                            self.wifi_check_open = false;
                             self.net_draft = None;
                         }
                         if resp.clicked() && !sel {
@@ -1171,6 +1187,9 @@ impl App {
         if self.lan_open {
             return self.devices_page(ui, pal, ctx, &n);
         }
+        if self.wifi_check_open {
+            return self.wifi_check_page(ui, pal, ctx);
+        }
         let mut open: Option<String> = None;
         // Wired shows only while a cable is plugged in
         let wired: Vec<&sys::NetDevice> = n.devices.iter().filter(|d| d.kind == "ethernet" && sys::cable_in(&d.state)).collect();
@@ -1263,12 +1282,20 @@ impl App {
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
             let sub = lan_summary(l, now);
             let mut go = false;
-            ui::group(ui, pal, Some("Devices"), |ui| {
+            let mut check = false;
+            ui::group(ui, pal, Some("This network"), |ui| {
                 go = ui::nav_row(ui, pal, true, "Devices on this network", Some(&sub), |_| {});
+                if n.devices.iter().any(|d| d.kind == "wifi" && d.state.starts_with("connected")) {
+                    check = ui::nav_row(ui, pal, false, "Wi-Fi checks", Some("Why is it slow? Signal, channel, other devices, the internet"), |_| {});
+                }
             });
             if go {
                 self.lan_open = true;
                 self.lan_dev = None;
+                self.status.clear();
+            }
+            if check {
+                self.wifi_check_open = true;
                 self.status.clear();
             }
         }
@@ -1373,6 +1400,105 @@ impl App {
             self.lan_dev = Some(m);
             self.lan_rename = None;
         }
+    }
+
+    /// Wi-Fi & Network > Wi-Fi checks: run Heimdall's check and show what it found, the likely cause first.
+    fn wifi_check_page(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
+        ui.add_space(6.0);
+        let mut back = false;
+        ui.horizontal(|ui| {
+            if ui::icon_button(ui, pal, Icon::Back, "Wi-Fi & Network", true, false).clicked() {
+                back = true;
+            }
+            ui.vertical(|ui| {
+                ui.label(RichText::new("Wi-Fi checks").size(20.0).strong());
+                ui.label(RichText::new("Measures the connection for about 10 seconds; nothing is changed").size(12.0).color(pal.dim));
+            });
+        });
+        if back {
+            self.wifi_check_open = false;
+            return;
+        }
+        ui.add_space(8.0);
+        let mut start: Option<bool> = None;
+        ui::group(ui, pal, None, |ui| {
+            if self.wifi_check_running {
+                ui::row(ui, pal, true, "Checking…", Some("Signal, channel, the router and the internet"), |ui| {
+                    ui.spinner();
+                });
+            } else {
+                ui::row(ui, pal, true, "Check this connection", Some("About 10 seconds"), |ui| {
+                    if ui::action(ui, pal, "Check").clicked() {
+                        start = Some(false);
+                    }
+                });
+                ui::row(ui, pal, false, "Check with a speed test", Some("About 20 seconds; downloads from the update server"), |ui| {
+                    if ui::quiet(ui, pal, "Check and test speed").clicked() {
+                        start = Some(true);
+                    }
+                });
+            }
+        });
+        if let Some(speed) = start {
+            self.wifi_check_running = true;
+            let tx = self.tx.clone();
+            let ctx = ctx.clone();
+            std::thread::spawn(move || {
+                let _ = tx.send(Msg::WifiHealth(wifihealth::run(speed)));
+                ctx.request_repaint();
+            });
+        }
+        let Some(result) = &self.wifi_check else { return };
+        ui.add_space(8.0);
+        let r = match result {
+            Ok(r) => r.clone(),
+            Err(e) => {
+                ui.colored_label(pal.red, e);
+                return;
+            }
+        };
+        let colour = |s: &str| match s {
+            "bad" => pal.red,
+            "warn" => pal.amber,
+            "good" => pal.green,
+            _ => pal.dim,
+        };
+        ui::group(ui, pal, None, |ui| {
+            ui.horizontal(|ui| {
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+                ui.painter().circle_filled(rect.center(), 6.0, colour(&r.verdict));
+                ui.label(RichText::new(&r.summary).size(16.0).strong());
+            });
+            if r.connected {
+                let l = &r.link;
+                ui.label(RichText::new(format!("{} · {} channel {} ({} MHz) · {} dBm · {:.0} Mbps down / {:.0} up link rate", l.ssid, l.band, l.channel, l.width, l.signal_dbm, l.rx_mbps, l.tx_mbps)).size(12.0).color(pal.dim));
+            }
+        });
+        ui.add_space(8.0);
+        // problems first, then the rest in the order Heimdall gave
+        let mut findings = r.findings.clone();
+        findings.sort_by_key(|f| match f.status.as_str() {
+            "bad" => 0,
+            "warn" => 1,
+            _ => 2,
+        });
+        ui::group(ui, pal, Some("What was found"), |ui| {
+            for (i, f) in findings.iter().enumerate() {
+                if i > 0 {
+                    ui.separator();
+                }
+                ui.horizontal_top(|ui| {
+                    let (rect, _) = ui.allocate_exact_size(egui::vec2(14.0, 18.0), egui::Sense::hover());
+                    ui.painter().circle_filled(rect.center(), 4.5, colour(&f.status));
+                    ui.vertical(|ui| {
+                        ui.label(RichText::new(&f.title).strong());
+                        if !f.detail.is_empty() {
+                            ui.add(egui::Label::new(RichText::new(&f.detail).color(pal.dim)).wrap());
+                        }
+                    });
+                });
+            }
+        });
     }
 
     /// One device: its name (the owner may give it one), what it is, its addresses, services, first and last seen.
