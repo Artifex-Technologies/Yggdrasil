@@ -212,7 +212,7 @@ mod tests {
         for w in ["Yggdrasil", "don't", "Heimdall's", "e-mail", "café", "Sarina"] {
             assert!(shareable(w), "{w}");
         }
-        for w in ["x86_64", "hunter2", "a", "matt@example.com", "https://x.org", "-dash", "end-", "www.example", "a.b", "Pa55word", "qzxkwrtpl", "two words"] {
+        for w in ["x86_64", "hunter2", "a", "ada@example.com", "https://x.org", "-dash", "end-", "www.example", "a.b", "Pa55word", "qzxkwrtpl", "two words"] {
             assert!(!shareable(w), "{w}");
         }
     }

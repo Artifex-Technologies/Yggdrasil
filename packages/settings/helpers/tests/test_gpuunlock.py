@@ -18,7 +18,7 @@ POWERLIMIT = os.path.join(HERE, "..", "powerlimit")
 TABLE = os.path.join(HERE, "..", "..", "data", "gpu-unlock-supported.json")
 FRAGMENT = os.path.join(HERE, "..", "..", "data", "41_gpu_unlock")
 
-MATT = {"bdf": "0000:01:00.0", "device": "1e07", "sub": ("1462", "3711"), "vbios": "90.02.17.00.3e", "bar0": "0x00000000de000000"}
+MSI_CARD = {"bdf": "0000:01:00.0", "device": "1e07", "sub": ("1462", "3711"), "vbios": "90.02.17.00.3e", "bar0": "0x00000000de000000"}
 ASUS = {"bdf": "0000:02:00.0", "device": "1e07", "sub": ("1043", "866a"), "vbios": "90.02.17.00.47", "bar0": "0x00000000fa000000"}
 OPEN = "NVRM version: NVIDIA UNIX Open Kernel Module for x86_64  615.78.08  Release Build  (notroot@)  Fri Oct 23 2026\n"
 CLOSED = "NVRM version: NVIDIA UNIX x86_64 Kernel Module  615.78.08  Release Build  (notroot@)  Fri Oct 23 2026\n"
@@ -117,9 +117,9 @@ class Base(unittest.TestCase):
         self.root("usr/lib/firmware/turing-unlock/610.43.03/v67-tu102-610.43.03.bin", "fw")
         self.root("etc/mkinitcpio.conf.d/zz-turing-unlock.conf", "MODULES+=(turing_unlock)\n")
         self.boot("aaaa-1111", "root=UUID=3118e509 rw quiet splash")
-        self.card(MATT)
+        self.card(MSI_CARD)
         # the locked baseline Phase 2 records (arming waits for it); no test runs the real benchmark
-        put(self.state("baseline.json"), json.dumps(dict(LOCKED, bdf=MATT["bdf"], vbios=MATT["vbios"].upper())))
+        put(self.state("baseline.json"), json.dumps(dict(LOCKED, bdf=MSI_CARD["bdf"], vbios=MSI_CARD["vbios"].upper())))
         m.run_bench = lambda bdf, quick=False: (None, "the CUDA toolkit is not installed (a test)")
 
     def root(self, rel, content, mode="w"):
@@ -171,13 +171,13 @@ class Identity(Base):
         self.assertEqual(s["reason"], "No tested entry for ASUS 1043:866a with VBIOS 90.02.17.00.47 (tested: MSI 1462:3711, VBIOS 90.02.17.00.3E)")
 
     def test_the_same_card_on_the_other_driver_is_not(self):
-        self.card(MATT, driver=CLOSED)
+        self.card(MSI_CARD, driver=CLOSED)
         s = self.m.status()
         self.assertEqual(s["state"], "unsupported")
         self.assertIn("another NVIDIA driver series", s["reason"])
 
     def test_no_driver_means_no_firmware_version_and_no_offer(self):
-        self.card(MATT, loaded=False)
+        self.card(MSI_CARD, loaded=False)
         self.assertIn("driver is not loaded", self.m.status()["reason"])
 
     def test_no_nvidia_card(self):
@@ -433,7 +433,7 @@ class Bench(Base):
         self.assertIsNone(self.m.status()["arm_blocker"])
         for bad, expect in [(None, "No locked baseline"), (dict(LOCKED, quick=True), "not a full, correct run"),
                             (dict(LOCKED, bdf="0000:02:00.0", vbios="90.02.17.00.3E"), "another card"),
-                            (dict(LOCKED, bdf=MATT["bdf"], vbios="90.02.17.00.47"), "another card")]:
+                            (dict(LOCKED, bdf=MSI_CARD["bdf"], vbios="90.02.17.00.47"), "another card")]:
             if os.path.exists(self.state("baseline.json")):
                 os.remove(self.state("baseline.json"))
             if bad:
@@ -456,7 +456,7 @@ class Bench(Base):
         self.assertFalse(os.path.exists(self.state("baseline.json")))
         self.assertEqual(self.m.cmd_bench(["--baseline"]), 0)
         b = js(self.state("baseline.json"))
-        self.assertEqual((b["bdf"], b["vbios"], b["watts"]), (MATT["bdf"], "90.02.17.00.3E", 260.0))
+        self.assertEqual((b["bdf"], b["vbios"], b["watts"]), (MSI_CARD["bdf"], "90.02.17.00.3E", 260.0))
         self.assertIsNone(self.m.status()["arm_blocker"])
         # wrong results on the locked card keep no baseline
         os.remove(self.state("baseline.json"))

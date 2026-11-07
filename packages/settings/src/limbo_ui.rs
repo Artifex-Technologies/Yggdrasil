@@ -186,6 +186,7 @@ pub fn wants_password(out: &str) -> bool {
 enum Msg {
     Shown(Option<Shown>),
     Done(Result<(), String>),
+    Report(Result<std::path::PathBuf, String>),
 }
 
 pub struct Panel {
@@ -200,6 +201,8 @@ pub struct Panel {
     lic_key: String,
     adding: bool,
     free_confirm: Option<String>,
+    /// Where the last report was saved.
+    saved: Option<String>,
 }
 
 pub fn installed() -> bool {
@@ -245,6 +248,38 @@ fn run(args: &[String], root: bool, stdin: Option<String>) -> Result<(), String>
     }
 }
 
+/// Where a report is kept: ~/Documents (else the home folder), named by the date, a number added if one exists.
+pub fn report_path(home: &std::path::Path, date: &str, exists: &dyn Fn(&std::path::Path) -> bool) -> std::path::PathBuf {
+    let docs = home.join("Documents");
+    let dir = if exists(&docs) { docs } else { home.to_path_buf() };
+    let mut p = dir.join(format!("Limbo report {date}.md"));
+    let mut n = 2;
+    while exists(&p) {
+        p = dir.join(format!("Limbo report {date} ({n}).md"));
+        n += 1;
+    }
+    p
+}
+
+/// `limbo report` for the last seven days, through pkexec (the audit log and the quarantine records are root's), kept as
+/// Markdown in the person's Documents and opened with their Markdown app.
+fn save_report() -> Result<std::path::PathBuf, String> {
+    let o = Command::new("pkexec").args([LIMBO, "report", "--since", "7d"]).stdin(Stdio::null()).output().map_err(|_| "pkexec is not available".to_string())?;
+    if !o.status.success() {
+        if matches!(o.status.code(), Some(126) | Some(127)) {
+            return Err("No report: the password was not given.".into());
+        }
+        let err = String::from_utf8_lossy(&o.stderr);
+        return Err(format!("No report: {}", err.lines().next().unwrap_or("Limbo did not answer")));
+    }
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from).ok_or("No home folder")?;
+    let date = Command::new("date").arg("+%Y-%m-%d").output().map(|d| String::from_utf8_lossy(&d.stdout).trim().to_string()).unwrap_or_default();
+    let path = report_path(&home, &date, &|p| p.exists());
+    std::fs::write(&path, &o.stdout).map_err(|e| format!("Not saved: {e}"))?;
+    let _ = Command::new("xdg-open").arg(&path).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
+    Ok(path)
+}
+
 fn one_line(out: &str) -> String {
     match parse(out) {
         Some(Shown::Error(_, line)) => line,
@@ -255,7 +290,7 @@ fn one_line(out: &str) -> String {
 impl Panel {
     pub fn new(ctx: &egui::Context) -> Panel {
         let (tx, rx) = channel();
-        let mut p = Panel { tx, rx, shown: None, busy: false, status: String::new(), loaded: None, lic_name: String::new(), lic_key: String::new(), adding: false, free_confirm: None };
+        let mut p = Panel { tx, rx, shown: None, busy: false, status: String::new(), loaded: None, lic_name: String::new(), lic_key: String::new(), adding: false, free_confirm: None, saved: None };
         p.load(ctx);
         p
     }
@@ -292,6 +327,13 @@ impl Panel {
                         self.status = e;
                     }
                     self.load(ctx);
+                }
+                Msg::Report(r) => {
+                    self.busy = false;
+                    match r {
+                        Ok(p) => self.saved = Some(p.display().to_string()),
+                        Err(e) => self.status = e,
+                    }
                 }
             }
         }
@@ -339,6 +381,24 @@ impl Panel {
             ui::row(ui, pal, true, "Ask for my password for Limbo changes", Some("Off: you start, stop and change your own guests without it. Quarantine decisions and anything Heimdall restricted always ask"), |ui| {
                 if ui.add_enabled_ui(!self.busy, |ui| ui::switch(ui, pal, &mut ask)).inner.changed() {
                     job = Some((vec!["settings".into(), "password".into(), if ask { "on" } else { "off" }.into()], true, None));
+                }
+            });
+        });
+        ui.add_space(8.0);
+        ui::group(ui, pal, None, |ui| {
+            let sub = match &self.saved {
+                Some(p) => format!("Saved: {p}"),
+                None => "What the guests did and every hold of the last seven days, in plain words (Markdown), for you or for someone helping you".to_string(),
+            };
+            ui::row(ui, pal, true, "Evidence report", Some(&sub), |ui| {
+                if ui.add_enabled(!self.busy, egui::Button::new("Save a report…")).clicked() {
+                    self.busy = true;
+                    self.status.clear();
+                    let (tx, ctx) = (self.tx.clone(), ctx.clone());
+                    std::thread::spawn(move || {
+                        let _ = tx.send(Msg::Report(save_report()));
+                        ctx.request_repaint();
+                    });
                 }
             });
         });
@@ -446,7 +506,7 @@ mod tests {
       "instances": [
         {"name": "lab", "kind": "instance", "os": "linux", "state": "running", "running": true, "address": "", "cpus": 2, "memory_mb": 4096,
          "network": "none", "disk": {"base_bytes": 2147483648, "own_bytes": 52428800, "virtual_bytes": 0, "disk_gb": 0},
-         "shared_folder": "off", "clipboard": "off", "devices": [], "disposable": false, "owner": "matt", "mine": true,
+         "shared_folder": "off", "clipboard": "off", "devices": [], "disposable": false, "owner": "ada", "mine": true,
          "hold": null, "held_by_heimdall": false, "pending": false, "license": "", "overrides": {}},
         {"name": "run-x1", "kind": "run", "os": "linux", "state": "held", "running": false, "cpus": 1, "memory_mb": 2048, "network": "none",
          "disk": {"base_bytes": 1, "own_bytes": 0}, "owner": "", "mine": false,
@@ -472,6 +532,19 @@ mod tests {
         assert!(!wants_password(r#"{"error": "x", "code": "not_owner"}"#));
         assert!(!wants_password("not json"));
         assert_eq!(parse(e), Some(Shown::Error("password_required".into(), "password_required: Limbo changes need the password on this computer.".into())));
+    }
+
+    #[test]
+    fn reports_go_to_documents_and_never_over_an_earlier_one() {
+        use std::path::{Path, PathBuf};
+        let home = Path::new("/home/ada");
+        let taken = |list: &'static [&'static str]| move |p: &Path| list.iter().any(|x| Path::new(x) == p);
+        assert_eq!(report_path(home, "2026-11-07", &taken(&["/home/ada/Documents"])), PathBuf::from("/home/ada/Documents/Limbo report 2026-11-07.md"));
+        assert_eq!(
+            report_path(home, "2026-11-07", &taken(&["/home/ada/Documents", "/home/ada/Documents/Limbo report 2026-11-07.md"])),
+            PathBuf::from("/home/ada/Documents/Limbo report 2026-11-07 (2).md")
+        );
+        assert_eq!(report_path(home, "2026-11-07", &taken(&[])), PathBuf::from("/home/ada/Limbo report 2026-11-07.md"), "no Documents folder");
     }
 
     #[test]

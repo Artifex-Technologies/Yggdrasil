@@ -1577,9 +1577,9 @@ mod limit_tests {
     #[test]
     fn gpu_unlock_parse_and_when_a_row_is_shown() {
         // this computer: an MSI card that is not in the support table, so no row; the reason is kept for the log
-        let matt = parse_gpu_unlock(r#"{"gpu":{"name":"NVIDIA GeForce RTX 2080 Ti","device":"10de:1e07","subsystem":"1462:3711","vbios":"90.02.17.00.3E"},"secure_boot":false,"state":"unsupported","reason":"No tested entry for MSI 1462:3711 with VBIOS 90.02.17.00.3E (tested: ASUS 1043:866a, VBIOS 90.02.17.00.47)","arm_blocker":null,"last_attempt":null,"since":null,"ratio":null,"power_hold":false,"log":"/var/lib/yggdrasil/gpu-unlock/log"}"#).unwrap();
-        assert!(!matt.offered());
-        assert!(matt.reason.contains("1462:3711") && matt.reason.contains("90.02.17.00.3E"));
+        let msi = parse_gpu_unlock(r#"{"gpu":{"name":"NVIDIA GeForce RTX 2080 Ti","device":"10de:1e07","subsystem":"1462:3711","vbios":"90.02.17.00.3E"},"secure_boot":false,"state":"unsupported","reason":"No tested entry for MSI 1462:3711 with VBIOS 90.02.17.00.3E (tested: ASUS 1043:866a, VBIOS 90.02.17.00.47)","arm_blocker":null,"last_attempt":null,"since":null,"ratio":null,"power_hold":false,"log":"/var/lib/yggdrasil/gpu-unlock/log"}"#).unwrap();
+        assert!(!msi.offered());
+        assert!(msi.reason.contains("1462:3711") && msi.reason.contains("90.02.17.00.3E"));
         let state = |s: &str| parse_gpu_unlock(&format!(r#"{{"state":"{s}","reason":"r","arm_blocker":null,"since":"2026-10-27T09:12:00","ratio":2.0,"power_hold":true}}"#)).unwrap();
         assert!(!state("no-nvidia").offered());
         for s in ["supported", "armed", "unlocked", "failed", "throttled", "secure-boot"] {
