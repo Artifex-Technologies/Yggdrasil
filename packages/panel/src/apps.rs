@@ -13,6 +13,8 @@ pub struct App {
     pub no_display: bool,
     /// The desktop entry's Categories (Utility, Network, ...).
     pub categories: Vec<String>,
+    /// Terminal=true: a command-line program, started in a terminal.
+    pub terminal: bool,
     pub path: PathBuf,
 }
 
@@ -54,6 +56,7 @@ pub fn parse_entry_for(id: &str, text: &str, path: &Path, desktops: &[String]) -
             "Exec" => app.exec = v.to_string(),
             "StartupWMClass" => app.wm_class = v.to_string(),
             "NoDisplay" => app.no_display = v == "true",
+            "Terminal" => app.terminal = v == "true",
             "Categories" => app.categories = v.split(';').filter(|c| !c.is_empty()).map(str::to_string).collect(),
             "OnlyShowIn" => only_in = v.to_lowercase(),
             "NotShowIn" => not_in = v.to_lowercase(),
@@ -111,7 +114,9 @@ pub fn load_all() -> Vec<App> {
 
 /// The start menu's folder for an app, from its freedesktop categories (the first kind that fits).
 pub fn folder_of(a: &App) -> &'static str {
-    const MAP: [(&str, &str); 12] = [
+    // Security first: a security tool is also a Network or System one, and is looked for under Security (Niflheim's tools)
+    const MAP: [(&str, &str); 13] = [
+        ("Security", "Security"),
         ("Game", "Games"),
         ("AudioVideo", "Multimedia"),
         ("Audio", "Multimedia"),
@@ -235,9 +240,45 @@ pub fn launch(app: &App) {
             return;
         }
     }
-    let cmd = command(&app.exec);
+    let mut cmd = command(&app.exec);
+    if app.terminal {
+        match in_terminal(&cmd, std::env::var("TERMINAL").ok().as_deref(), &on_path) {
+            Some(c) => cmd = c,
+            None => return,
+        }
+    }
     let Some((prog, args)) = cmd.split_first() else { return };
     let _ = std::process::Command::new("setsid").arg("-f").arg(prog).args(args).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
+}
+
+/// Terminals a command-line app can be started in: (program, the arguments that come before the command), as Minos knows them.
+const TERMINALS: [(&str, &[&str]); 7] = [
+    ("ghostty", &["-e"]),
+    ("foot", &[]),
+    ("kitty", &[]),
+    ("alacritty", &["-e"]),
+    ("konsole", &["-e"]),
+    ("gnome-terminal", &["--"]),
+    ("xterm", &["-e"]),
+];
+
+fn on_path(program: &str) -> bool {
+    std::env::var_os("PATH").is_some_and(|paths| std::env::split_paths(&paths).any(|d| d.join(program).is_file()))
+}
+
+/// A command-line app's command in a terminal (`$TERMINAL` when it is a known one, else the first installed), with the user's
+/// shell open there afterwards: a tool started from the menu (nmap, sqlmap) prints its help and waits to be used. The command is
+/// arguments to sh, never script text. None when no terminal is installed.
+pub fn in_terminal(cmd: &[String], terminal_env: Option<&str>, installed: &dyn Fn(&str) -> bool) -> Option<Vec<String>> {
+    if cmd.is_empty() {
+        return None;
+    }
+    let preferred = terminal_env.and_then(|t| TERMINALS.iter().find(|(name, _)| *name == t)).filter(|(name, _)| installed(name));
+    let (term, before) = preferred.or_else(|| TERMINALS.iter().find(|(name, _)| installed(name)))?;
+    let mut out: Vec<String> = std::iter::once(term.to_string()).chain(before.iter().map(|s| s.to_string())).collect();
+    out.extend(["sh", "-c", "\"$@\"; echo; exec \"${SHELL:-/bin/sh}\"", "sh"].map(String::from));
+    out.extend(cmd.iter().cloned());
+    Some(out)
 }
 
 /// The dock's pinned apps, in order: ~/.config/yggdrasil/dock (one desktop id per line), else the
@@ -277,6 +318,10 @@ mod tests {
         let names: Vec<&str> = f.iter().map(|(n, _)| *n).collect();
         assert_eq!(names, ["Accessories", "Development", "Games", "Internet", "Multimedia", "Other"]);
         assert_eq!(folder_of(&apps[2]), "Multimedia");
+        assert_eq!(folder_of(&mk("nmap", "Network;Security;")), "Security", "a security tool is under Security, not Internet");
+        let t = "[Desktop Entry]\nType=Application\nName=nmap\nExec=nmap\nTerminal=true\nCategories=Network;Security;\n";
+        let a = parse_entry("sarina-nmap", t, Path::new("/x")).unwrap();
+        assert!(a.terminal && !mk("Zed", "").terminal);
         let mut hidden = mk("Hidden", "Utility;");
         hidden.no_display = true;
         assert!(folders(&[hidden]).is_empty());
@@ -317,6 +362,16 @@ OnlyShowIn=KDE;GNOME;
     #[test]
     fn exec_field_codes_are_removed() {
         assert_eq!(command("vivaldi-stable %U"), vec!["vivaldi-stable"]);
+        let cmd = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let only = |names: &'static [&'static str]| move |p: &str| names.contains(&p);
+        assert_eq!(
+            in_terminal(&cmd(&["nmap"]), None, &only(&["ghostty", "xterm"])).unwrap(),
+            cmd(&["ghostty", "-e", "sh", "-c", "\"$@\"; echo; exec \"${SHELL:-/bin/sh}\"", "sh", "nmap"])
+        );
+        assert_eq!(in_terminal(&cmd(&["nmap", "-h"]), Some("xterm"), &only(&["ghostty", "xterm"])).unwrap()[..2], cmd(&["xterm", "-e"])[..]);
+        assert_eq!(in_terminal(&cmd(&["htop"]), Some("weird-term"), &only(&["foot"])).unwrap()[0], "foot", "an unknown $TERMINAL is passed over");
+        assert!(in_terminal(&cmd(&["nmap"]), None, &only(&[])).is_none(), "no terminal installed");
+        assert!(in_terminal(&[], None, &only(&["ghostty"])).is_none());
         assert_eq!(command("env FOO=1 \"/opt/my app/run\" --flag %f"), vec!["env", "FOO=1", "/opt/my app/run", "--flag"]);
         assert_eq!(command("sh -c 'echo 100%%'"), vec!["sh", "-c", "'echo", "100%'"]);
     }
