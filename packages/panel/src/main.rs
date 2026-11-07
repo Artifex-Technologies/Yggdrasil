@@ -4238,8 +4238,9 @@ fn main() {
         })
         .expect("layout timer");
 
-    // Settings writes ~/.config/yggdrasil/panel.conf; pick changes up within a second.
+    // Settings writes ~/.config/yggdrasil/panel.conf; pick changes up within a second. Agora pins apps in ~/.config/yggdrasil/dock.
     let mut seen = PanelConf::modified();
+    let mut seen_dock = yggdrasil_conf::dock::modified();
     event_loop
         .handle()
         .insert_source(Timer::from_duration(Duration::from_secs(1)), move |_, _, st| {
@@ -4247,6 +4248,15 @@ fn main() {
             // the accent color is in kdeglobals, not panel.conf: look at it every second
             if paint::refresh_accent() {
                 st.dirty = true;
+            }
+            let dock_now = yggdrasil_conf::dock::modified();
+            if dock_now != seen_dock {
+                seen_dock = dock_now;
+                let pinned = apps::pinned();
+                if pinned != st.model.pinned {
+                    st.model.pinned = pinned;
+                    st.dirty = true;
+                }
             }
             let now = PanelConf::modified();
             if now != seen {

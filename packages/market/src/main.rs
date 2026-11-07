@@ -971,6 +971,21 @@ impl App {
                 }
             });
         }
+        if can_remove && idle {
+            x += 102.0;
+        }
+        // pin to (or take off) the dock: an installed app with a menu entry
+        if let Some(id) = installed.then(|| desktop_id(&e)).flatten() {
+            let pinned = yggdrasil_conf::dock::pinned().contains(&id);
+            ui.scope_builder(UiBuilder::new().max_rect(Rect::from_min_size(rect.left_top() + vec2(x, 92.0), vec2(124.0, 30.0))), |ui| {
+                let (r, resp) = ui.allocate_exact_size(vec2(124.0, 30.0), Sense::click());
+                ui.painter().rect_filled(r, CornerRadius::same(255), if resp.hovered() { self.pal.hover } else { self.pal.field });
+                ui.painter().text(r.center(), Align2::CENTER_CENTER, if pinned { "UNPIN" } else { "PIN TO DOCK" }, FontId::proportional(14.0), self.pal.accent);
+                if resp.on_hover_text(if pinned { "Take it off the dock" } else { "Keep it on the dock" }).clicked() {
+                    yggdrasil_conf::dock::set_pinned(&id, !pinned);
+                }
+            });
+        }
         if let Some(j) = self.job_snapshot(&e.id) {
             ui.add_space(8.0);
             self.progress_card(ui, &j);
@@ -1436,4 +1451,16 @@ fn main() -> eframe::Result {
             Ok(Box::new(App::new(&cc.egui_ctx)))
         }),
     )
+}
+
+/// The desktop id an app is started by (its catalog `launch`, else its id), when a menu entry of that name is installed.
+fn desktop_id(e: &Entry) -> Option<String> {
+    let id = if e.launch.is_empty() { e.id.clone() } else { e.launch.clone() };
+    let id = id.trim_end_matches(".desktop").to_string();
+    let data = std::env::var("XDG_DATA_DIRS").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/usr/local/share:/usr/share".into());
+    let home = std::env::var_os("XDG_DATA_HOME").map(std::path::PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share")));
+    let mut dirs: Vec<std::path::PathBuf> = data.split(':').filter(|d| !d.is_empty()).map(std::path::PathBuf::from).collect();
+    dirs.extend(home);
+    dirs.push("/var/lib/flatpak/exports/share".into());
+    dirs.iter().any(|d| d.join("applications").join(format!("{id}.desktop")).is_file()).then_some(id)
 }

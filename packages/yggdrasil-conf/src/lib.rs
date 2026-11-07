@@ -11,6 +11,7 @@ pub fn own_session() -> bool {
     std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|d| d.split(':').any(|x| x == "Yggdrasil"))
 }
 pub mod dirs;
+pub mod dock;
 pub mod integrations;
 pub mod nightlight;
 pub mod notifyrules;

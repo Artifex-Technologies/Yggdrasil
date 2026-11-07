@@ -284,26 +284,12 @@ pub fn in_terminal(cmd: &[String], terminal_env: Option<&str>, installed: &dyn F
 /// The dock's pinned apps, in order: ~/.config/yggdrasil/dock (one desktop id per line), else the
 /// system default.
 pub fn pinned() -> Vec<String> {
-    // yours, then the operating system's or administrator's default, then the desktop's own
-    let user = Some(yggdrasil_conf::dirs::config().join("dock"));
-    for p in [user, Some(yggdrasil_conf::dirs::system_config().join("dock")), Some(yggdrasil_conf::dirs::system_data().join("dock"))].into_iter().flatten() {
-        if let Ok(t) = std::fs::read_to_string(p) {
-            let v: Vec<String> = t.lines().map(|l| l.trim().trim_end_matches(".desktop").replace("finder", "minos")).filter(|l| !l.is_empty() && !l.starts_with('#')).collect();
-            if !v.is_empty() {
-                return v;
-            }
-        }
-    }
-    vec![]
+    yggdrasil_conf::dock::pinned()
 }
 
 /// Write the dock's pinned apps (one id per line) to ~/.config/yggdrasil/dock.
 pub fn save_pinned(ids: &[String]) {
-    let p = yggdrasil_conf::dirs::config().join("dock");
-    if let Some(d) = p.parent() {
-        let _ = std::fs::create_dir_all(d);
-    }
-    let _ = std::fs::write(p, ids.join("\n") + "\n");
+    yggdrasil_conf::dock::save_pinned(ids)
 }
 
 #[cfg(test)]

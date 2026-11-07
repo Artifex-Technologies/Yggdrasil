@@ -22,7 +22,8 @@ No hidden installs. **Get** opens a terminal (Ghostty) and runs the command show
 `source.type` is `pacman`, `aur` (packages) or `flatpak` (`app`). `category` is any text (Create, Work, Play and Develop get their own tabs).
 
 ## Not done yet
-Installing plugins from the Omarchy registry (not planned: the ones wanted were rewritten in Rust, above), in-app progress instead of a terminal, ratings, screenshots, the Artifex apps (waiting to learn which), a dock/start-menu pin, remembering search history.
+Installing plugins from the Omarchy registry (not planned: the ones wanted were rewritten in Rust, above), in-app progress instead of a terminal, ratings, screenshots, the Artifex apps (waiting to learn which), a start-menu pin, remembering search history. (Pin to dock: built 2026-11-07, on an installed app's page when it has a menu
+entry; `yggdrasil_conf::dock`, which the panel re-reads within a second.)
 
 ## Descriptions and screenshots (added 2026-10-17)
 An app's page can show a fuller description, screenshots, the licence, the maker and the website. The data is AppStream, the standard store metadata:
