@@ -544,10 +544,15 @@ pub fn from_alert(v: &serde_json::Value, min: &str, id: u32) -> Option<Notif> {
         None => summary,
     };
     // a blocked app that connected has a page of its own in Settings
-    let link = field("app")
-        .filter(|a| !a.is_empty() && detector == "connection-watch")
-        .map(|a| format!("apps:{a}"))
-        .unwrap_or_else(|| "security:monitor".into());
+    // a new device on the home network opens the device list
+    let link = if detector == "lan-watch" && v.get("event_kind").and_then(|k| k.as_str()) == Some("new_lan_device") {
+        "network:devices".to_string()
+    } else {
+        field("app")
+            .filter(|a| !a.is_empty() && detector == "connection-watch")
+            .map(|a| format!("apps:{a}"))
+            .unwrap_or_else(|| "security:monitor".into())
+    };
     Some(Notif {
         id,
         app: security_app().into(),
@@ -1038,6 +1043,8 @@ mod tests {
         // the monitor's alerts carry their fields at the top
         let top = serde_json::json!({"detector_id": "connection-watch", "severity": "warning", "summary": "s", "fields": {"app": "y"}});
         assert_eq!(from_alert(&top, "warning", 3).unwrap().link, "apps:y");
+        let device = serde_json::json!({"detector_id": "lan-watch", "severity": "warning", "summary": "a new device joined", "event_kind": "new_lan_device"});
+        assert_eq!(from_alert(&device, "warning", 5).unwrap().link, "network:devices", "a new device opens the device list");
         // Sarina's evals: caught and kept by the monitor, not popped up
         let practice = serde_json::json!({"detector_id": "injection-phrase", "severity": "critical", "summary": "s", "fields": {"practice": "1"}});
         assert!(from_alert(&practice, "warning", 4).is_none());

@@ -215,6 +215,8 @@ pub struct Network {
     pub saved: Vec<crate::netconf::Profile>,
     /// What each connected profile (by its id) was given: addresses, router, DNS.
     pub live: std::collections::HashMap<String, crate::netconf::Live>,
+    /// Heimdall's device list for the connection that has the router (its id, and the list).
+    pub lan: Option<(String, crate::devices::List)>,
 }
 
 /// Which hardware (MAC) address the computer shows a network, as on phones.
@@ -292,7 +294,7 @@ pub fn active_profiles(text: &str) -> Vec<(String, String)> {
 }
 
 pub fn network() -> Network {
-    Network {
+    let mut n = Network {
         wifi_on: run("nmcli", &["radio", "wifi"]).map(|s| s.trim() == "enabled").unwrap_or(false),
         devices: net_devices(&run("nmcli", &["-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device"]).unwrap_or_default()),
         networks: wifi_list(&run("nmcli", &["-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "device", "wifi", "list"]).unwrap_or_default()),
@@ -301,7 +303,15 @@ pub fn network() -> Network {
             .into_iter()
             .map(|(uuid, dev)| (uuid, crate::netconf::live(&dev)))
             .collect(),
-    }
+        lan: None,
+    };
+    // the connection to the router (not a VPN or Tailscale's tunnel)
+    let home = n.live.iter().filter(|(_, l)| !l.router.is_empty()).map(|(u, _)| u.clone()).min();
+    n.lan = home.map(|u| {
+        let l = crate::devices::load(&u);
+        (u, l)
+    });
+    n
 }
 
 #[cfg(test)]

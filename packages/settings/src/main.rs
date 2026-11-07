@@ -26,6 +26,7 @@ mod security;
 mod workspaces;
 mod zones_ui;
 mod netconf;
+mod devices;
 mod sys;
 mod ui;
 mod users;
@@ -209,6 +210,12 @@ struct App {
     net_open: Option<String>,
     net_draft: Option<netconf::Profile>,
     net_forget: bool,
+    /// Wi-Fi & Network > Devices: the list is open; the device whose page is open (its hardware address); the owner's own
+    /// names; the name being typed.
+    lan_open: bool,
+    lan_dev: Option<String>,
+    lan_names: std::collections::BTreeMap<String, String>,
+    lan_rename: Option<String>,
     // Security page
     sec_filter: usize,
     /// The alert whose explanation is open (its time and detector).
@@ -323,6 +330,11 @@ impl App {
             net_open: None,
             net_draft: None,
             net_forget: false,
+            // `yggdrasil-settings network:devices` (the link in a new-device alert)
+            lan_open: start_sub() == "devices",
+            lan_dev: None,
+            lan_names: devices::read_names(),
+            lan_rename: None,
             sec_filter: 1,
             sec_open: None,
             demo_scroll: if start_sub().starts_with("distress-demo-") { 8 } else { 0 },
@@ -720,6 +732,8 @@ impl eframe::App for App {
                         }
                         if resp.clicked() && p == Page::Network {
                             self.net_open = None;
+                            self.lan_open = false;
+                            self.lan_dev = None;
                             self.net_draft = None;
                         }
                         if resp.clicked() && !sel {
@@ -1154,6 +1168,9 @@ impl App {
         if let Some(uuid) = self.net_open.clone() {
             return self.network_page(ui, pal, ctx, &n, &uuid);
         }
+        if self.lan_open {
+            return self.devices_page(ui, pal, ctx, &n);
+        }
         let mut open: Option<String> = None;
         // Wired shows only while a cable is plugged in
         let wired: Vec<&sys::NetDevice> = n.devices.iter().filter(|d| d.kind == "ethernet" && sys::cable_in(&d.state)).collect();
@@ -1240,6 +1257,21 @@ impl App {
                 });
             }
         }
+        // who else is on this network (Heimdall's device list)
+        if let Some((_, l)) = &n.lan {
+            ui.add_space(8.0);
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+            let sub = lan_summary(l, now);
+            let mut go = false;
+            ui::group(ui, pal, Some("Devices"), |ui| {
+                go = ui::nav_row(ui, pal, true, "Devices on this network", Some(&sub), |_| {});
+            });
+            if go {
+                self.lan_open = true;
+                self.lan_dev = None;
+                self.status.clear();
+            }
+        }
         // saved Wi-Fi networks not in range now: their pages too (to change or forget them)
         let away: Vec<&netconf::Profile> = n.saved.iter().filter(|p| p.wifi && !n.networks.iter().any(|w| w.ssid == p.ssid)).collect();
         if !away.is_empty() {
@@ -1258,6 +1290,186 @@ impl App {
             self.net_draft = None;
             self.net_forget = false;
             self.status.clear();
+        }
+    }
+
+    /// Wi-Fi & Network > Devices: every device Heimdall found on this network, router and this computer first.
+    fn devices_page(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context, n: &sys::Network) {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+        let Some((_, l)) = n.lan.clone() else {
+            self.lan_open = false;
+            return;
+        };
+        if let Some(mac) = self.lan_dev.clone() {
+            if let Some(d) = l.devices.iter().find(|d| d.mac == mac) {
+                return self.device_page(ui, pal, d, &l, now);
+            }
+            self.lan_dev = None;
+        }
+        ui.add_space(6.0);
+        let mut back = false;
+        ui.horizontal(|ui| {
+            if ui::icon_button(ui, pal, Icon::Back, "Wi-Fi & Network", true, false).clicked() {
+                back = true;
+            }
+            ui.vertical(|ui| {
+                ui.label(RichText::new("Devices").size(20.0).strong());
+                let on = if l.ssid.is_empty() { "This network".to_string() } else { l.ssid.clone() };
+                ui.label(RichText::new(format!("{on} · {}", lan_summary(&l, now))).size(12.0).color(pal.dim));
+            });
+        });
+        if back {
+            self.lan_open = false;
+            return;
+        }
+        ui.add_space(8.0);
+        let note = match l.status.as_str() {
+            "not_trusted" => Some("Devices are listed only on networks you trust (your home network). On other networks Heimdall does not look around: they are not yours."),
+            "router_changed" => Some("This network's router is not the one it had when you trusted the network, so Heimdall did not look. If you changed the router, trust the network again."),
+            "unavailable" => Some("Heimdall is not running, or is too old to keep a device list."),
+            "waiting" => Some("The first look runs within a few minutes of Heimdall starting."),
+            _ => None,
+        };
+        if let Some(t) = note {
+            ui::group(ui, pal, None, |ui| {
+                ui.add(egui::Label::new(RichText::new(t).color(pal.dim)).wrap());
+            });
+            ui.add_space(8.0);
+        }
+        let mut open: Option<String> = None;
+        let fresh = |d: &devices::Device| security::parse_time(&d.first_seen).is_some_and(|t| now - t < 86_400 && t - first_scan(&l) > 60);
+        let online = |d: &devices::Device| security::parse_time(&d.last_seen).is_some_and(|t| l.last_scan - t < 60);
+        let (on, off): (Vec<&devices::Device>, Vec<&devices::Device>) = l.devices.iter().partition(|d| online(d));
+        for (title, list) in [("Here now", &on), ("Seen before", &off)] {
+            if list.is_empty() {
+                continue;
+            }
+            ui::group(ui, pal, Some(title), |ui| {
+                for (i, d) in list.iter().enumerate() {
+                    let name = devices::shown_name(d, &self.lan_names);
+                    // the router and this computer are already named for what they are
+                    let mut sub = if matches!(d.kind.as_str(), "router" | "this") { vec![] } else { vec![devices::kind_name(&d.kind).to_string()] };
+                    if !d.vendor.is_empty() && !name.contains(&d.vendor) {
+                        sub.push(d.vendor.clone());
+                    }
+                    sub.push(d.ip.clone());
+                    if !online(d) {
+                        if let Some(t) = security::parse_time(&d.last_seen) {
+                            sub.push(format!("seen {}", devices::ago(now, t)));
+                        }
+                    }
+                    let title = if fresh(d) { format!("{name}  ·  New") } else { name };
+                    if ui::nav_row(ui, pal, i == 0, &title, Some(&sub.join(" · ")), |_| {}) {
+                        open = Some(d.mac.clone());
+                    }
+                }
+            });
+            ui.add_space(8.0);
+        }
+        if l.status != "unavailable" && ui::quiet(ui, pal, "Scan now").clicked() {
+            self.change(ctx, devices::scan_now);
+        }
+        if let Some(m) = open {
+            self.lan_dev = Some(m);
+            self.lan_rename = None;
+        }
+    }
+
+    /// One device: its name (the owner may give it one), what it is, its addresses, services, first and last seen.
+    fn device_page(&mut self, ui: &mut egui::Ui, pal: &Palette, d: &devices::Device, l: &devices::List, now: i64) {
+        let name = devices::shown_name(d, &self.lan_names);
+        ui.add_space(6.0);
+        let mut back = false;
+        ui.horizontal(|ui| {
+            if ui::icon_button(ui, pal, Icon::Back, "Devices", true, false).clicked() {
+                back = true;
+            }
+            ui.vertical(|ui| {
+                ui.label(RichText::new(&name).size(20.0).strong());
+                ui.label(RichText::new(devices::kind_name(&d.kind)).size(12.0).color(pal.dim));
+            });
+        });
+        if back {
+            self.lan_dev = None;
+            self.lan_rename = None;
+            return;
+        }
+        ui.add_space(8.0);
+        let mut rename = self.lan_rename.take();
+        let mut save: Option<String> = None;
+        ui::group(ui, pal, Some("Name"), |ui| {
+            let own = self.lan_names.contains_key(&d.mac.to_uppercase());
+            match rename.as_mut() {
+                Some(text) => {
+                    ui::row(ui, pal, true, "Your name for it", None, |ui| {
+                        if ui::action(ui, pal, "Save").clicked() {
+                            save = Some(text.trim().to_string());
+                        }
+                        ui.add_space(6.0);
+                        ui::field(ui, pal, text, &name, 220.0, false);
+                    });
+                }
+                None => {
+                    let sub = if own { "Your name; only this computer uses it" } else { "Rename it to remember whose it is" };
+                    ui::row(ui, pal, true, &name, Some(sub), |ui| {
+                        if own && ui::quiet(ui, pal, "Use its own name").clicked() {
+                            save = Some(String::new());
+                        }
+                        if ui::quiet(ui, pal, "Rename").clicked() {
+                            rename = Some(if own { name.clone() } else { String::new() });
+                        }
+                    });
+                }
+            }
+            if !d.name.is_empty() && d.name != name {
+                ui::row(ui, pal, false, "Its own name", None, |ui| {
+                    ui.add(egui::Label::new(RichText::new(&d.name).color(pal.dim)).selectable(true));
+                });
+            }
+        });
+        if let Some(new) = save {
+            let key = d.mac.to_uppercase();
+            if new.is_empty() {
+                self.lan_names.remove(&key);
+            } else {
+                self.lan_names.insert(key, new.chars().filter(|c| !c.is_control()).take(64).collect());
+            }
+            if let Err(e) = devices::write_names(&self.lan_names) {
+                self.status = format!("The name could not be saved: {e}");
+            }
+            rename = None;
+        }
+        self.lan_rename = rename;
+        ui.add_space(8.0);
+        ui::group(ui, pal, Some("About"), |ui| {
+            let mut first = true;
+            let mut show = |ui: &mut egui::Ui, k: &str, v: String| {
+                if v.is_empty() {
+                    return;
+                }
+                ui::row(ui, pal, first, k, None, |ui| {
+                    ui.add(egui::Label::new(RichText::new(v).color(pal.dim)).selectable(true).extend());
+                });
+                first = false;
+            };
+            show(ui, "Made by", if d.vendor.is_empty() && d.private_mac { "Not known (private address)".into() } else { d.vendor.clone() });
+            show(ui, "Model", d.model.clone());
+            show(ui, "IP address", d.ip.clone());
+            show(ui, "Hardware address", d.mac.clone());
+            let services: Vec<&str> = d.services.iter().filter_map(|s| devices::service_name(s)).collect();
+            show(ui, "Offers", services.join(", "));
+            let when = |t: &str| security::parse_time(t).map(|t| devices::ago(now, t)).unwrap_or_default();
+            let last = security::parse_time(&d.last_seen).unwrap_or(0);
+            show(ui, "First seen", when(&d.first_seen));
+            show(ui, "Last seen", if l.last_scan - last < 60 { "Here now".into() } else { when(&d.last_seen) });
+        });
+        if d.private_mac {
+            ui.add_space(8.0);
+            ui::group(ui, pal, None, |ui| {
+                ui.add(egui::Label::new(RichText::new(
+                    "This device uses a private address: phones, tablets and laptops make one up for each network, so the maker is not known. It stays the same on this network unless its owner resets it.",
+                ).color(pal.dim)).wrap());
+            });
         }
     }
 
@@ -3929,6 +4141,29 @@ fn page_shortcuts(ui: &mut egui::Ui, pal: &Palette) {
             }
         });
     }
+}
+
+/// "10 devices · 2 new" or why there is no list.
+fn lan_summary(l: &devices::List, now: i64) -> String {
+    match l.status.as_str() {
+        "not_trusted" => return "Only on networks you trust".into(),
+        "router_changed" => return "Not listed: the router changed".into(),
+        "unavailable" => return "Heimdall is not running".into(),
+        "waiting" => return "The first look runs in a few minutes".into(),
+        _ => {}
+    }
+    let here = l.devices.iter().filter(|d| security::parse_time(&d.last_seen).is_some_and(|t| l.last_scan - t < 60)).count();
+    let fresh = l.devices.iter().filter(|d| security::parse_time(&d.first_seen).is_some_and(|t| now - t < 86_400 && t - first_scan(l) > 60)).count();
+    let mut s = format!("{here} here now");
+    if fresh > 0 {
+        s += &format!(" · {fresh} new today");
+    }
+    s
+}
+
+/// When the list began: the earliest first sighting (devices found by the first look are not "new").
+fn first_scan(l: &devices::List) -> i64 {
+    l.devices.iter().filter_map(|d| security::parse_time(&d.first_seen)).min().unwrap_or(0)
 }
 
 fn main() -> eframe::Result {
