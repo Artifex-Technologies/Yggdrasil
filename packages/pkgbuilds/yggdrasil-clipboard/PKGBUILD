@@ -1,7 +1,7 @@
 # Yggdrasil's clipboard: history (in memory only) and saved snippets in a window, Super+V: packages/clipboard.
 pkgname=yggdrasil-clipboard
 pkgver=0.1.0
-pkgrel=1
+pkgrel=2
 pkgdesc="Yggdrasil clipboard history and snippets window"
 arch=('x86_64')
 url="https://github.com/Artifex-Technologies/Yggdrasil"

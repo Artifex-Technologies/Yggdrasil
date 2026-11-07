@@ -1,7 +1,7 @@
 # Yggdrasil's Color Picker: pick a colour anywhere on the screen (Win + Shift + C) and copy it: packages/colorpicker.
 pkgname=yggdrasil-colorpicker
 pkgver=0.1.0
-pkgrel=1
+pkgrel=2
 pkgdesc="Yggdrasil Color Picker: a frozen screen with a loupe, the colour copied in the chosen format"
 arch=('x86_64')
 url="https://github.com/Artifex-Technologies/Yggdrasil"

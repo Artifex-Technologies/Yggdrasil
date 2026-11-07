@@ -4,7 +4,7 @@
 # (CC BY-SA 4.0) is used only while building, to keep known typos out of the packs; it is not installed.
 pkgname=yggdrasil-spell-packs
 pkgver=2026.11.03
-pkgrel=1
+pkgrel=2
 _commit=0964f5242efaf11541eaed8a6abffa1c4d8aa277
 pkgdesc="Word packs for Yggdrasil's spell checking: software and tech terms, companies and products, gaming, people's names"
 arch=('any')

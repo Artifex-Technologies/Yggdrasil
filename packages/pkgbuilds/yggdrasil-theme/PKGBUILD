@@ -3,7 +3,7 @@
 # and cursors drawn by ygg-cursors. Nothing is downloaded and no other theme package is needed.
 pkgname=yggdrasil-theme
 pkgver=0.1.0
-pkgrel=2
+pkgrel=3
 pkgdesc="Yggdrasil's colour scheme, GTK colours and mouse cursors (replaces the WhiteSur themes)"
 arch=('any')
 url="https://github.com/Artifex-Technologies/Yggdrasil"

@@ -1,7 +1,7 @@
 # VLC in Yggdrasil's look: libVLC 3 plays, Yggdrasil's window around the picture (packages/player).
 pkgname=yggdrasil-player
 pkgver=0.1.0
-pkgrel=3
+pkgrel=4
 pkgdesc="VLC in Yggdrasil's look: libVLC plays, Yggdrasil's window"
 arch=('x86_64')
 url="https://github.com/Artifex-Technologies/Yggdrasil"

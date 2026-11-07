@@ -3,7 +3,7 @@
 # this directory with `makepkg -s`.
 pkgname=yggdrasil-weather
 pkgver=0.1.0
-pkgrel=4
+pkgrel=5
 pkgdesc="Multi-model weather consensus for the Yggdrasil bar, scored against measured temperatures"
 arch=('x86_64')
 provides=('labyrinth-weather')

@@ -5,7 +5,7 @@
 # the code is only built and tested on Windows so far.
 pkgname=yggdrasil-minos
 pkgver=0.1.0
-pkgrel=2
+pkgrel=3
 pkgdesc="Minos, Yggdrasil's file explorer (egui), and the Proton Drive link verifier"
 replaces=('labyrinth-minos' 'labyrinth-finder')
 conflicts=('labyrinth-minos' 'labyrinth-finder')

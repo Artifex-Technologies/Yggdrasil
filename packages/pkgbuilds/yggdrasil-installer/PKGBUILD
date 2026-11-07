@@ -4,7 +4,7 @@
 # Built from packages/installer in this repository.
 pkgname=yggdrasil-installer
 pkgver=0.1.0
-pkgrel=2
+pkgrel=3
 pkgdesc="Installs the operating system from its live medium: Yggdrasil's window and install program"
 arch=('x86_64')
 url="https://github.com/Artifex-Technologies/Yggdrasil"

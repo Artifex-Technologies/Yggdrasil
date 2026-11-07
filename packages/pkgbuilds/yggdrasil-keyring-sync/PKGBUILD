@@ -1,7 +1,7 @@
 # Yggdrasil keyring sync: one question at login if the keyring and the login password drifted apart (Rust): built from packages/keyring-sync in this repository.
 pkgname=yggdrasil-keyring-sync
 pkgver=0.1.0
-pkgrel=1
+pkgrel=2
 pkgdesc="Yggdrasil keyring sync: one question at login if the keyring and the login password drifted apart"
 arch=('x86_64')
 provides=('labyrinth-keyring-sync')
