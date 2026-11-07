@@ -412,6 +412,24 @@ impl Panel {
             for (n, i) in mine.iter().enumerate() {
                 ui::row(ui, pal, n == 0, &i.name, Some(&describe(i)), |ui| {
                     let can = !self.busy && !i.held && (i.mine || i.owner.is_empty());
+                    // what the guest may reach: root's choice, with the password every time; from its next start
+                    let shown = match i.network.as_str() {
+                        "none" => "No network",
+                        "internet-only" => "Internet only",
+                        "allowlist" => "Listed addresses",
+                        _ => "Network",
+                    };
+                    egui::ComboBox::from_id_salt(("limbo-net", &i.name)).selected_text(shown).width(130.0).show_ui(ui, |ui| {
+                        for (mode, label, hint) in [
+                            ("none", "No network", "Nothing in or out"),
+                            ("internet-only", "Internet only", "The internet, never this computer, the home network or other guests"),
+                        ] {
+                            if ui.add_enabled(!self.busy && !i.held, egui::Button::selectable(i.network == mode, label)).on_hover_text(hint).clicked() && i.network != mode {
+                                job = Some((vec!["instance".into(), "set".into(), i.name.clone(), "--network".into(), mode.into()], true, None));
+                            }
+                        }
+                        ui.label(RichText::new("Listed addresses only: limbo instance set NAME --network allowlist --allow ADDRESS:tcp:PORT").size(11.0).color(pal.dim));
+                    }).response.on_hover_text("What it may reach, from its next start (asks for your password)");
                     if i.running {
                         if ui.add_enabled(can, egui::Button::new("Stop")).clicked() {
                             job = Some((vec!["instance".into(), "stop".into(), i.name.clone()], false, None));
