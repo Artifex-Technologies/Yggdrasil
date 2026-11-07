@@ -12,7 +12,7 @@ jobs:
     container: archlinux:latest
     steps:
       - name: Tools
-        run: pacman -Syu --noconfirm --needed git rust base-devel pkgconf wayland libxkbcommon fontconfig pam dbus libxcrypt libinput mesa
+        run: pacman -Syu --noconfirm --needed git rust base-devel pkgconf wayland libxkbcommon fontconfig pam dbus libxcrypt libinput mesa libvlc
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0, pinned by commit
         with:
           persist-credentials: false
@@ -24,7 +24,9 @@ jobs:
           for d in packages/*/; do
             [ -f "$d/Cargo.toml" ] || continue
             (cd "$d" && cargo test --quiet) || failed="$failed $d(tests)"
-            (cd "$d" && ~/.cargo/bin/cargo-audit audit -D warnings --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2026-0192 --ignore RUSTSEC-2026-0370 --ignore RUSTSEC-2026-0371 --ignore RUSTSEC-2026-0372) || failed="$failed $d(audit)"
+            # RUSTSEC-2026-0196/0197: cgmath (unmaintained; Matrix::swap_columns unsound for identical indices) comes with smithay
+            # 0.7, the newest, in the compositor; nothing here calls swap_columns. Revisit when smithay drops cgmath.
+            (cd "$d" && ~/.cargo/bin/cargo-audit audit -D warnings --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2026-0192 --ignore RUSTSEC-2026-0370 --ignore RUSTSEC-2026-0371 --ignore RUSTSEC-2026-0372 --ignore RUSTSEC-2026-0196 --ignore RUSTSEC-2026-0197) || failed="$failed $d(audit)"
           done
           [ -z "$failed" ] || { echo "failed:$failed"; exit 1; }
   recipes:
