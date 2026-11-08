@@ -1,12 +1,12 @@
 [package]
-name = "yggdrasil-reader"
+name = "saga-md"
 version = "0.1.0"
 edition = "2021"
-description = "Markdown Reader: Markdown and text files shown formatted, or as their source to read and edit"
+description = "Saga MD: Markdown and text files shown formatted, or as their source to read and edit"
 license = "MPL-2.0"
 
 [[bin]]
-name = "yggdrasil-reader"
+name = "saga-md"
 path = "src/main.rs"
 
 [dependencies]

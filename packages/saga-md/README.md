@@ -1,6 +1,6 @@
-# Markdown Reader (`yggdrasil-reader`)
+# Saga MD (`saga-md`)
 
-One Markdown or text file in one page, in Yggdrasil's look (light or dark like the rest of the desktop):
+Yggdrasil's Markdown reader. One Markdown or text file in one page, in Yggdrasil's look (light or dark like the rest of the desktop):
 
 - **Formatted** (Markdown files open this way): headings, bold and italic in the system font, lists and task lists, tables, quotes and
   GitHub's alerts (`> [!NOTE]`), code blocks with a Copy button, footnotes, pictures from the file's own folder.
@@ -29,4 +29,4 @@ The switch in the title bar, or **Ctrl+E**, changes between the two. There is ne
 
 Not done yet: find on the page, syntax colours in code blocks, line numbers in the source.
 
-    yggdrasil-reader [--source] [--zoom PERCENT] [FILE[#heading]]
+    saga-md [--source] [--zoom PERCENT] [FILE[#heading]]

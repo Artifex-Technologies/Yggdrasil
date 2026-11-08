@@ -1,4 +1,4 @@
-# Markdown Reader keyboard shortcuts
+# Saga MD keyboard shortcuts
 
 | Keys | What it does |
 | --- | --- |

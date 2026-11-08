@@ -1,12 +1,12 @@
 [Desktop Entry]
 Type=Application
-Name=Markdown Reader
-GenericName=Markdown and Text Reader
+Name=Saga MD
+GenericName=Markdown Reader
 Comment=Read Markdown and text files formatted, or see and edit their source
-Exec=yggdrasil-reader %f
+Exec=saga-md %f
 Icon=text-markdown
 Terminal=false
 Categories=Utility;TextTools;
 MimeType=text/markdown;text/x-markdown;text/plain;
-Keywords=markdown;md;readme;text;notes;viewer;reader;
-StartupWMClass=yggdrasil-reader
+Keywords=markdown;md;readme;text;notes;viewer;reader;saga;
+StartupWMClass=saga-md

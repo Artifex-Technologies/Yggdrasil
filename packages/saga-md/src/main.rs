@@ -1,4 +1,4 @@
-//! Markdown Reader: one Markdown or text file in one page, either **formatted** (headings, lists, tables, pictures, code) or as its
+//! Saga MD, Yggdrasil's Markdown reader: one Markdown or text file in one page, either **formatted** (headings, lists, tables, pictures, code) or as its
 //! **source**, the text itself, which can also be edited and saved. A switch in the title bar (or Ctrl+E) changes between the two;
 //! there is never a second pane.
 //!
@@ -18,8 +18,8 @@ use std::time::{Duration, Instant, SystemTime};
 use yggdrasil_ui::theme::{self, Palette};
 use yggdrasil_ui::{chrome, sysicon};
 
-const APP_ID: &str = "yggdrasil-reader";
-const APP_NAME: &str = "Markdown Reader";
+const APP_ID: &str = "saga-md";
+const APP_NAME: &str = "Saga MD";
 /// The widest the text runs (at 100 %), so lines stay readable in a wide window.
 const MAX_WIDTH: f32 = 860.0;
 const BASE_SIZE: f32 = 15.5;
@@ -376,7 +376,7 @@ fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
     let target = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let dir = target.parent().unwrap_or(Path::new("."));
     let name = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let tmp = dir.join(format!(".{name}.reader-{}", std::process::id()));
+    let tmp = dir.join(format!(".{name}.saga-{}", std::process::id()));
     match std::fs::write(&tmp, text) {
         Ok(()) => {
             if let Ok(m) = std::fs::metadata(&target) {
@@ -408,7 +408,7 @@ fn pick_file() -> Option<PathBuf> {
     use std::collections::HashMap;
     use zbus::zvariant::{OwnedValue, Value};
     let conn = zbus::blocking::Connection::session().ok()?;
-    let token = format!("yggdrasil_reader_{}", std::process::id());
+    let token = format!("saga_md_{}", std::process::id());
     let sender = conn.unique_name()?.trim_start_matches(':').replace('.', "_");
     let request = format!("/org/freedesktop/portal/desktop/request/{sender}/{token}");
     let proxy = zbus::blocking::Proxy::new(&conn, "org.freedesktop.portal.Desktop", request, "org.freedesktop.portal.Request").ok()?;
@@ -1114,7 +1114,7 @@ fn empty_page(ui: &mut egui::Ui, pal: &Palette, acts: &mut Vec<Pending>) {
     });
 }
 
-/// What the command line asks for: `yggdrasil-reader [--source] [--zoom PERCENT] [FILE[#heading]]` (a file:// address works too).
+/// What the command line asks for: `saga-md [--source] [--zoom PERCENT] [FILE[#heading]]` (a file:// address works too).
 #[derive(Debug, PartialEq)]
 struct Start {
     path: Option<PathBuf>,
@@ -1166,7 +1166,7 @@ mod tests {
     use super::*;
 
     fn scratch(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("ygg-reader-{name}-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("saga-md-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d

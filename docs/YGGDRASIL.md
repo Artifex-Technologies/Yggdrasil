@@ -17,7 +17,7 @@ Chymaera OS, then Niflheim OS; [LykanOS](https://github.com/Artifex-Technologies
 | Polkit agent, keyring sync, distress password | `yggdrasil-polkit`, `yggdrasil-keyring-sync`, `labyrinth-distress` (+ PAM module) | |
 | Compositor | `yggdrasil-compositor` | first version, nested only (COMPOSITOR.md); Hyprland is the compositor today |
 | Calculator, weather | `yggdrasil-calculator`, `yggdrasil-weather` | small apps |
-| Markdown Reader | `yggdrasil-reader` | Markdown and text files, formatted or as their source (replaced ghostwriter, KDE's, 2026-11-08) |
+| Saga MD (Markdown reader) | `saga-md` | Markdown and text files, formatted or as their source (replaced ghostwriter, KDE's, 2026-11-08) |
 | Look for other programs (colour scheme, GTK colours, cursors) | `ygg-theme`, `ygg-cursors` (package `yggdrasil-theme`; [THEME.md](THEME.md)) | replaced WhiteSur |
 | Icons | `liki-build` and the others (package `liki-icon-theme`; [LIKI.md](LIKI.md)) | the pack is Liki |
 | Shared library and settings file | `yggdrasil-ui`, `yggdrasil-conf`; `~/.config/yggdrasil/` | renamed from `labyrinth-ui`, `labyrinth-conf` and `~/.config/labyrinth/` on 2026-10-23 |
