@@ -31,4 +31,5 @@ check() {
 package() {
   install -Dm755 "$srcdir/target/release/saga-md" "$pkgdir/usr/bin/saga-md"
   install -Dm644 "$_src/saga-md.desktop" "$pkgdir/usr/share/applications/saga-md.desktop"
+  install -Dm644 "$_src/saga-md.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/saga-md.svg"
 }

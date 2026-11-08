@@ -1102,7 +1102,7 @@ fn empty_page(ui: &mut egui::Ui, pal: &Palette, acts: &mut Vec<Pending>) {
     ui.vertical_centered(|ui| {
         ui.add_space((ui.available_height() / 2.0 - 110.0).max(20.0));
         let (icon, _) = ui.allocate_exact_size(vec2(72.0, 72.0), Sense::hover());
-        sysicon::paint(ui.painter(), icon, &["text-markdown", "text-x-markdown", "text-x-generic"]);
+        sysicon::paint(ui.painter(), icon, &["saga-md", "text-markdown", "text-x-markdown", "text-x-generic"]);
         ui.add_space(14.0);
         ui.label(RichText::new("Open a Markdown or text file").size(19.0).strong());
         ui.add_space(6.0);
