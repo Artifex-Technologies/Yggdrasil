@@ -34,7 +34,6 @@ version that runs in a window ([docs/COMPOSITOR.md](docs/COMPOSITOR.md)). The ch
 | `packages/calculator`, `packages/weather` | | small apps ([docs/WEATHER.md](docs/WEATHER.md)) |
 | `packages/saga-md` | `saga-md` | Saga MD, the Markdown reader: a Markdown or text file formatted, or its source to read and edit; Ctrl + E switches ([README](packages/saga-md/README.md)) |
 | `packages/spell` | `yggdrasil-spell`, `yggdrasil-autocorrect` | spell checking in every app: the Hunspell dictionaries, one word list your apps share, a list shared by the computer, and correct as you type ([README](packages/spell/README.md)) |
-| `packages/huginn` | `huginn` | Huginn, the video app: videos without an account, subscriptions kept on this computer, played in its window ([README](packages/huginn/README.md)) |
 | `packages/clipboard` | `yggdrasil-clipboard` | clipboard history and snippets (Win + V) |
 | `packages/colorpicker` | `yggdrasil-colorpicker` | pick a colour anywhere on the screen and copy it (Win + Shift + C) |
 | `packages/authenticator` | `yggdrasil-authenticator` | Proton Authenticator's codes: type to search, Enter copies |
