@@ -12,6 +12,9 @@ RestartForceExitStatus=75
 # it reads the dictionaries and writes only word lists: the apps' (under ~/.config and ~/.mozilla), its own, and its offer to the
 # shared list
 ProtectSystem=strict
+# a new account has neither folder yet, and a missing ReadWritePaths folder stops the start (a restart every 10 s, found in a
+# VM test of the live ISO 2026-11-08): made first, outside the sandbox ("+")
+ExecStartPre=+/usr/bin/mkdir -p %h/.config %h/.local/share/yggdrasil
 ReadWritePaths=%h/.config -%h/.mozilla %h/.local/share/yggdrasil -/var/lib/yggdrasil/spell/offered
 PrivateTmp=yes
 PrivateNetwork=yes
