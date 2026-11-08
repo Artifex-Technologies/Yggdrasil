@@ -443,6 +443,8 @@ struct State {
     speech_since: Option<std::time::Instant>,
     /// Her voice saying an answer sentence by sentence while the rest is still being written.
     speaker: Option<fylgja::Speaker>,
+    /// Answers closed with the talk key before they came: dropped when they arrive.
+    drop_answers: u32,
     /// This answer was (or is being) said sentence by sentence: the whole of it is not said again when it is complete.
     streamed: bool,
     /// In a conversation: listen again at this moment (a breath after she has finished, so the end of her voice is not heard as the owner).
@@ -914,8 +916,21 @@ impl State {
         }
         let listening = matches!(self.model.fylgja.voice, fylgja::Voice::Listening(_));
         let thinking = matches!(self.model.fylgja.voice, fylgja::Voice::Thinking(_));
-        match convo::tap(listening, thinking) {
-            convo::Tap::Ignore => {}
+        let speaking = self.speaker.is_some() || self.speech_since.is_some();
+        match convo::tap(listening, thinking, speaking) {
+            convo::Tap::Close => {
+                if thinking {
+                    // the answer still on its way is dropped when it comes (voice_rx); sentences already stop at Idle
+                    self.drop_answers += 1;
+                    self.model.fylgja.voice = fylgja::Voice::Idle;
+                }
+                // a conversation does not listen again by itself; its session stays for a follow-up within CONTINUE_SECS
+                self.conv = false;
+                self.vad_mode = false;
+                self.conv_last = Some(std::time::Instant::now());
+                self.stop_speech();
+                self.dirty = true;
+            }
             convo::Tap::Send => {
                 self.conv_last = Some(std::time::Instant::now());
                 self.send_recording();
@@ -3761,6 +3776,7 @@ fn main() {
         viz_tx,
         speech_since: None,
         speaker: None,
+        drop_answers: 0,
         streamed: false,
         listen_at: None,
         speech_env: None,
@@ -4065,6 +4081,10 @@ fn main() {
         .handle()
         .insert_source(voice_rx, |event, _, st| {
             if let calloop::channel::Event::Msg(r) = event {
+                if st.drop_answers > 0 {
+                    st.drop_answers -= 1; // closed with the talk key while she was thinking
+                    return;
+                }
                 match r {
                     Ok(t) if !t.is_empty() => st.voice_answer(&t),
                     Ok(_) => st.voice_failed(&format!("{} had nothing to say.", assistant::name())),

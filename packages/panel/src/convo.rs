@@ -102,19 +102,20 @@ impl Vad {
 /// recording running).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tap {
-    /// Start recording (stopping her voice if she is talking).
+    /// Start recording.
     Start,
     /// Stop recording and send the question.
     Send,
-    /// She is working on an answer: the press does nothing.
-    Ignore,
+    /// She is working on an answer or saying it: the press closes her (the answer is dropped, her voice stops). The next press
+    /// asks again, and within CONTINUE_SECS it carries on the same conversation.
+    Close,
 }
 
-pub fn tap(listening: bool, thinking: bool) -> Tap {
-    if thinking {
-        Tap::Ignore
-    } else if listening {
+pub fn tap(listening: bool, thinking: bool, speaking: bool) -> Tap {
+    if listening {
         Tap::Send
+    } else if thinking || speaking {
+        Tap::Close
     } else {
         Tap::Start
     }
@@ -185,9 +186,11 @@ mod tests {
 
     #[test]
     fn tap_to_start_tap_to_send() {
-        assert_eq!(tap(false, false), Tap::Start);
-        assert_eq!(tap(true, false), Tap::Send);
-        assert_eq!(tap(false, true), Tap::Ignore, "a press while she is answering does nothing");
+        assert_eq!(tap(false, false, false), Tap::Start);
+        assert_eq!(tap(true, false, false), Tap::Send);
+        assert_eq!(tap(false, true, false), Tap::Close, "a press while she works on an answer closes her");
+        assert_eq!(tap(false, false, true), Tap::Close, "a press while she talks closes her, it does not start a question");
+        assert_eq!(tap(true, false, true), Tap::Send, "her voice is stopped before recording, so listening wins");
         use std::time::Duration;
         assert!(continues(Some(Duration::from_secs(60))));
         assert!(!continues(Some(Duration::from_secs(CONTINUE_SECS))));
