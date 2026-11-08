@@ -360,8 +360,13 @@ pub fn wallpaper_path_file() -> Option<std::path::PathBuf> {
     Some(dirs::config().join("wallpaper"))
 }
 
-/// The wallpaper picture's path, if one was chosen.
+/// The wallpaper picture's path: the one chosen, else the operating system's default (its branding), so a new account's
+/// desktop is not black before anyone picks one (found in a VM install test, 2026-11-08).
 pub fn wallpaper() -> Option<String> {
+    chosen_wallpaper().or_else(|| integrations::default_wallpaper().map(|p| p.display().to_string()))
+}
+
+fn chosen_wallpaper() -> Option<String> {
     let t = std::fs::read_to_string(wallpaper_path_file()?).ok()?;
     let p = t.lines().next()?.trim().to_string();
     (!p.is_empty()).then_some(p)

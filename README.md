@@ -93,6 +93,9 @@ additions included; [docs/SHORTCUTS.md](docs/SHORTCUTS.md) is the same list. Thi
 | Win + E | Files (Minos) |
 | Win + Return | Terminal |
 | Win + Shift + C | Color picker |
+| Win + Alt + − | Magnifier: zoom out |
+| Win + Alt + 0 | Magnifier off |
+| Win + Alt + S | Screen reader (Orca) on or off |
 
 ### System
 
@@ -112,6 +115,7 @@ additions included; [docs/SHORTCUTS.md](docs/SHORTCUTS.md) is the same list. Thi
 | --- | --- |
 | Win + Left drag | Move the window |
 | Win + Right drag | Resize the window |
+| Win + Alt + = | Magnifier: zoom in around the pointer |
 | Ctrl twice | Find my mouse |
 
 ### Screenshots

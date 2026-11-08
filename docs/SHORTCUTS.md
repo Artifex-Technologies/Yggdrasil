@@ -41,6 +41,9 @@ of date). Settings > Keyboard Shortcuts and the cheat sheet (Win + /) show the l
 | Win + E | Files (Minos) |
 | Win + Return | Terminal |
 | Win + Shift + C | Color picker |
+| Win + Alt + − | Magnifier: zoom out |
+| Win + Alt + 0 | Magnifier off |
+| Win + Alt + S | Screen reader (Orca) on or off |
 
 ## System
 
@@ -60,6 +63,7 @@ of date). Settings > Keyboard Shortcuts and the cheat sheet (Win + /) show the l
 | --- | --- |
 | Win + Left drag | Move the window |
 | Win + Right drag | Resize the window |
+| Win + Alt + = | Magnifier: zoom in around the pointer |
 | Ctrl twice | Find my mouse |
 
 ## Screenshots
