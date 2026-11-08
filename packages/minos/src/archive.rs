@@ -45,6 +45,13 @@ pub fn split(path: &Path) -> Option<(PathBuf, String)> {
     None
 }
 
+/// Whether `path` is an item *inside* an archive (which is read-only here), as opposed to the archive file itself, which is an
+/// ordinary file to move, copy, rename or delete. (`split` answers Some for the archive file too, with "" inside: that is the
+/// archive's top when browsing it.) 2026-11-08: zip files could not be moved, cut, renamed or deleted for want of this.
+pub fn inside(path: &Path) -> bool {
+    split(path).is_some_and(|(_, inner)| !inner.is_empty())
+}
+
 /// The 7-Zip executable, if one is installed.
 pub fn find_7z() -> Option<&'static PathBuf> {
     static FOUND: OnceLock<Option<PathBuf>> = OnceLock::new();
@@ -305,6 +312,19 @@ mod tests {
         assert!(is_archive_name(Path::new("a.rar")));
         assert!(!is_archive_name(Path::new("a.docx")));
         assert!(!is_archive_name(Path::new("zip")));
+    }
+
+    #[test]
+    fn the_archive_file_itself_is_not_inside_it() {
+        let d = std::env::temp_dir().join(format!("minos-inside-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let zip = d.join("Drivers 2.08.zip");
+        std::fs::write(&zip, b"PK").unwrap();
+        assert_eq!(split(&zip), Some((zip.clone(), String::new())), "browsing the archive's top");
+        assert!(!inside(&zip), "the zip file itself moves, renames and deletes like any file");
+        assert!(inside(&zip.join("setup/readme.txt")));
+        assert!(!inside(&d.join("folder.zip.d/file")) && !inside(&d));
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

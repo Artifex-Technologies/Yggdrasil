@@ -468,10 +468,13 @@ fn inline_rename(ui: &mut egui::Ui, pal: &Palette, e: &Entry) -> bool {
         let mut state = egui::TextEdit::load_state(&ctx, id).unwrap_or_default();
         state.cursor.set_char_range(Some(egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(stem))));
         state.store(&ctx, id);
+        // Focus before the field is drawn: egui collapses a selection in a field that does not have focus (it owns the
+        // keyboard's text input only while focused), so focusing it afterwards left the cursor at the end of "New Folder" and
+        // typing was added to the name instead of replacing it (2026-11-08).
+        ctx.memory_mut(|m| m.request_focus(id));
     }
     let r = ui.add(egui::TextEdit::singleline(&mut d.text).id(id).desired_width(ui.available_width().max(80.0)).text_color(pal.text));
     if d.fresh {
-        r.request_focus();
         d.fresh = false;
     }
     let (esc, enter, window_unfocused) = ui.input(|i| (i.key_pressed(egui::Key::Escape), i.key_pressed(egui::Key::Enter), i.viewport().focused == Some(false)));
@@ -591,7 +594,7 @@ fn entry_interact(
                 ui.close();
             }
             // only for a file you have marked as runnable (double-click never runs anything)
-            if e.usage.is_none() && archive::split(&e.path).is_none() && run::runnable(&e.path) && ui.button("Run in terminal").clicked() {
+            if e.usage.is_none() && !archive::inside(&e.path) && run::runnable(&e.path) && ui.button("Run in terminal").clicked() {
                 actions.push(Action::RunInTerminal(e.path.clone()));
                 ui.close();
             }
@@ -638,7 +641,7 @@ fn entry_interact(
         }
         // Archives (7-Zip): extract from one, or compress the selection into one.
         if e.usage.is_none() && !places::is_this_pc(&e.path) {
-            let inside = archive::split(&e.path).is_some();
+            let inside = archive::inside(&e.path);
             if archive::is_archive_file(&e.path) {
                 ui.separator();
                 if ui.button("Extract here").clicked() {
@@ -2599,7 +2602,7 @@ impl App {
                     };
                     self.reload_all();
                 }
-                Action::Cut(v) if v.iter().any(|p| archive::split(p).is_some()) => {
+                Action::Cut(v) if v.iter().any(|p| archive::inside(p)) => {
                     self.status = "Items inside an archive cannot be cut; copy them out instead".into();
                 }
                 Action::Cut(v) => {
@@ -2624,8 +2627,8 @@ impl App {
                     let mut errs = vec![];
                     let mut files = vec![];
                     for src in &paths {
-                        if let Some((arc, inner)) = archive::split(src) {
-                            // Copying out of an archive extracts. (Cut is blocked above.)
+                        if let Some((arc, inner)) = archive::split(src).filter(|(_, inner)| !inner.is_empty()) {
+                            // Copying out of an archive extracts (an archive file itself is copied as a file). (Cut is blocked above.)
                             let is_dir = archive::list_cached(&arc).ok().and_then(|l| l.into_iter().find(|e| e.path == inner)).map(|e| e.is_dir).unwrap_or(false);
                             let r = if is_dir { archive::extract_entry(&arc, &inner, &dest) } else { archive::extract_file_flat(&arc, &inner, &dest).map(|_| ()) };
                             if let Err(e) = r {
@@ -2652,7 +2655,7 @@ impl App {
                         self.status = "Drop on a drive or a folder".into();
                         continue;
                     }
-                    if archive::split(&dest).is_some() || paths.iter().any(|p| archive::split(p).is_some()) {
+                    if archive::split(&dest).is_some() || paths.iter().any(|p| archive::inside(p)) {
                         self.status = "Archives are read-only here: use Extract, or copy and paste".into();
                         continue;
                     }
@@ -2661,14 +2664,14 @@ impl App {
                     let mv = if m.shift { true } else if m.command { false } else { same_drive(paths.first(), &dest) };
                     self.start_transfer(ctx, paths, dest, mv);
                 }
-                Action::Rename(path) if archive::split(&path).is_some() => {
+                Action::Rename(path) if archive::inside(&path) => {
                     self.status = "Items inside an archive cannot be renamed".into();
                 }
                 Action::Rename(path) => {
                     let text = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                     self.rename = Some(RenameDlg { path, text, fresh: true });
                 }
-                Action::Trash(paths) if paths.iter().any(|p| archive::split(p).is_some()) => {
+                Action::Trash(paths) if paths.iter().any(|p| archive::inside(p)) => {
                     self.status = "Items inside an archive cannot be deleted from here".into();
                 }
                 Action::Trash(paths) => {
