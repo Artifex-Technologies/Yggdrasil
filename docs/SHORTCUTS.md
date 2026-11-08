@@ -54,7 +54,7 @@ of date). Settings > Keyboard Shortcuts and the cheat sheet (Win + /) show the l
 | Win + N | Notifications |
 | Win + I | Settings |
 | Win + L | Lock the screen |
-| Ctrl + Shift + Esc | Running programs |
+| Ctrl + Shift + Esc | Task Manager (again: brings it to the front) |
 | Win + / | Keyboard shortcuts |
 
 ## Mouse

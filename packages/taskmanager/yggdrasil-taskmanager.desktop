@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Task Manager
+GenericName=System Monitor
+Comment=See and end running apps and processes, watch performance, choose startup apps and services
+Exec=yggdrasil-taskmanager
+Icon=utilities-system-monitor
+Terminal=false
+Categories=System;Monitor;
+Keywords=processes;tasks;kill;end;performance;cpu;memory;services;startup;
+StartupWMClass=yggdrasil-taskmanager

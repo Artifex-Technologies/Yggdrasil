@@ -106,7 +106,7 @@ additions included; [docs/SHORTCUTS.md](docs/SHORTCUTS.md) is the same list. Thi
 | Win + N | Notifications |
 | Win + I | Settings |
 | Win + L | Lock the screen |
-| Ctrl + Shift + Esc | Running programs |
+| Ctrl + Shift + Esc | Task Manager (again: brings it to the front) |
 | Win + / | Keyboard shortcuts |
 
 ### Mouse

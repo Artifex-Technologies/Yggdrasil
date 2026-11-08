@@ -1,0 +1,30 @@
+# Task Manager: apps and processes, performance graphs, startup apps, users, details and services (packages/taskmanager).
+pkgname=yggdrasil-taskmanager
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Task Manager: apps and processes, performance graphs, startup apps, users, details and services"
+arch=('x86_64')
+url="https://github.com/Artifex-Technologies/Yggdrasil"
+license=('MPL-2.0')
+depends=('gcc-libs' 'libxkbcommon' 'wayland' 'vulkan-icd-loader' 'libglvnd' 'fontconfig' 'systemd' 'polkit')
+optdepends=('nvidia-utils: NVIDIA graphics card numbers on the Performance tab'
+            'xdg-utils: Open file location and Run new task for folders and web addresses')
+makedepends=('cargo')
+options=('!lto')
+
+_src="$startdir/../../taskmanager"
+
+build() {
+  cd "$_src"
+  cargo build --release --locked --target-dir "$srcdir/target"
+}
+
+check() {
+  cd "$_src"
+  cargo test --release --locked --target-dir "$srcdir/target"
+}
+
+package() {
+  install -Dm755 "$srcdir/target/release/yggdrasil-taskmanager" "$pkgdir/usr/bin/yggdrasil-taskmanager"
+  install -Dm644 "$_src/yggdrasil-taskmanager.desktop" "$pkgdir/usr/share/applications/yggdrasil-taskmanager.desktop"
+}

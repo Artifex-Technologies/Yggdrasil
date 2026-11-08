@@ -268,7 +268,7 @@ cmd("SUPER + E", "minos", { desc = "Files (Minos)" })
 cmd("SUPER + I", "yggdrasil-settings", { desc = "Settings" })
 cmd("SUPER + RETURN", "ghostty", { desc = "Terminal" })
 cmd("SUPER + L", "loginctl lock-session", { desc = "Lock the screen" })
-cmd("CTRL + SHIFT + ESCAPE", "ghostty -e btop", { desc = "Running programs" })
+cmd("CTRL + SHIFT + ESCAPE", "yggdrasil-taskmanager", { desc = "Task Manager (again: brings it to the front)" })
 
 cmd("ALT + F4", "yggdrasil-close", { desc = "Close the window (programs that keep running: hide it)" })
 cmd("SUPER + Q", "yggdrasil-close", { desc = "Close the window (programs that keep running: hide it)" })

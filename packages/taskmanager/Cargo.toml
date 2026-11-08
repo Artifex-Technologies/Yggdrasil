@@ -1,0 +1,18 @@
+[package]
+name = "yggdrasil-taskmanager"
+version = "0.1.0"
+edition = "2021"
+description = "Task Manager: apps and processes, performance graphs, startup apps, users, details and services"
+license = "MPL-2.0"
+
+[[bin]]
+name = "yggdrasil-taskmanager"
+path = "src/main.rs"
+
+[dependencies]
+yggdrasil-conf = { path = "../yggdrasil-conf" }
+yggdrasil-ui = { path = "../yggdrasil-ui" }
+eframe = "0.36.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+libc = "0.2"
