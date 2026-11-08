@@ -364,6 +364,22 @@ def with_dns(fn):
             os.remove(made)
 
 
+def remove_packages(names):
+    """Removes packages from the new system (pacman -Rns). One that a program staying on the system needs (Sarina's bubblewrap
+    and binutils, which Flatpak and the compilers use too) cannot go and is kept: that is no fault, so it is only noted. Returns
+    the ones kept."""
+    left = list(dict.fromkeys(names))
+    if not left or inside(["pacman", "-Rns", "--noconfirm"] + left, check=False).returncode == 0:
+        return []
+    # one at a time, until a round removes nothing more (a package another one on the list needed goes in a later round)
+    while True:
+        left = [x for x in left if inside(["pacman", "-Q", x], check=False).returncode == 0]
+        kept = [x for x in left if inside(["pacman", "-Rns", "--noconfirm", x], check=False).returncode != 0]
+        if not kept or len(kept) == len(left):
+            return kept
+        left = kept
+
+
 def set_up_browsers(p):
     """The browsers chosen in the installer: the others that came on the medium are removed, the rest installed (from the
     repositories, or Flathub; both need the internet, and a browser that cannot be had is left for Agora: never a reason to stop
@@ -377,9 +393,9 @@ def set_up_browsers(p):
     have = [x for x in plan["remove"] if inside(["pacman", "-Q", x], check=False).returncode == 0]
     if have:
         say("INFO", "removing the browsers not chosen: " + ", ".join(have))
-        r = inside(["pacman", "-Rns", "--noconfirm"] + have, check=False)
-        if r.returncode != 0:
-            say("WARN", "could not remove " + ", ".join(have) + ": " + (r.stderr or r.stdout).strip()[-200:])
+        kept = remove_packages(have)
+        if kept:
+            say("INFO", "kept, as other programs need them: " + ", ".join(kept))
     missing = [x for x in plan["install"] if inside(["pacman", "-Q", x], check=False).returncode != 0]
     flat = plan["flatpaks"]
     if missing or flat:
@@ -489,9 +505,9 @@ def set_up_extras(p):
     plan = extras_plan(catalog, p["extras"], comps, installed)
     if plan["remove"]:
         say("INFO", "removing what was not chosen: " + ", ".join(plan["remove"]))
-        r = inside(["pacman", "-Rns", "--noconfirm"] + plan["remove"], check=False)
-        if r.returncode != 0:
-            say("WARN", "could not remove " + ", ".join(plan["remove"]) + ": " + (r.stderr or r.stdout).strip()[-200:])
+        kept = remove_packages(plan["remove"])
+        if kept:
+            say("INFO", "kept, as other programs need them: " + ", ".join(kept))
     login = (p.get("user") or {}).get("login", "")
     for cid in plan["keep"]:
         c = comps[cid]

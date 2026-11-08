@@ -255,5 +255,41 @@ class TheOperatingSystem(unittest.TestCase):
         self.assertIsNone(inst.check_plan(plan()))
 
 
+class RemovePackages(unittest.TestCase):
+    """A fake pacman: z stays and needs b; d (on the list) needs c."""
+
+    def setUp(self):
+        self.installed = {"a", "b", "c", "d", "z"}
+        needs = {"z": {"b"}, "d": {"c"}}
+
+        class R:
+            def __init__(self, code):
+                self.returncode, self.stdout, self.stderr = code, "", ""
+
+        def inside(argv, stdin=None, check=True):
+            if argv[:2] == ["pacman", "-Q"]:
+                return R(0 if argv[2] in self.installed else 1)
+            targets = [x for x in argv[1:] if not x.startswith("-")]
+            staying = self.installed - set(targets)
+            if any(t not in self.installed or any(t in needs.get(s, ()) for s in staying) for t in targets):
+                return R(1)
+            self.installed -= set(targets)
+            return R(0)
+
+        self.old, inst.inside = inst.inside, inside
+
+    def tearDown(self):
+        inst.inside = self.old
+
+    def test_what_another_program_needs_is_kept_and_the_rest_goes(self):
+        self.assertEqual(inst.remove_packages(["a", "b", "c", "d"]), ["b"])
+        self.assertEqual(self.installed, {"b", "z"})
+
+    def test_all_at_once_when_nothing_else_needs_them(self):
+        self.assertEqual(inst.remove_packages(["c", "d", "a"]), [])
+        self.assertEqual(self.installed, {"b", "z"})
+        self.assertEqual(inst.remove_packages([]), [])
+
+
 if __name__ == "__main__":
     unittest.main()
