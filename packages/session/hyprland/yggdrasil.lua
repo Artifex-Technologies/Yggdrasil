@@ -229,6 +229,23 @@ hl.on("window.open", function(w)
   if not ok then io.stderr:write("yggdrasil: putting a window back: " .. tostring(err) .. "\n") end
 end)
 
+-- A panel pop-up (start menu, Fylgja, calendar, a tray menu, the voice island's card...) that had the keyboard closes: hand
+-- the keyboard back to the window in front. Hyprland gives it back when a click lands on another window, but a click on the
+-- window that was already active (VS Code's text box) left the keys going nowhere until you switched apps and back
+-- (2026-11-07). Focusing the window that is already in front changes nothing when the keyboard is where it should be.
+hl.on("layer.closed", function(l)
+  local ok, err = pcall(function()
+    if l and l.namespace and l.namespace:sub(1, 10) ~= "yggdrasil-" then return end
+    for _, o in ipairs(hl.get_layers()) do
+      -- another one wants the keyboard (menu to menu); the closing one may still be listed
+      if o.mapped and (o.keyboard_interactivity or 0) > 0 and not (l and o.address == l.address) then return end
+    end
+    local w = hl.get_active_window()
+    if w and w.mapped then hl.dispatch(hl.dsp.focus({ window = "address:" .. w.address })) end
+  end)
+  if not ok then io.stderr:write("yggdrasil: giving the keyboard back: " .. tostring(err) .. "\n") end
+end)
+
 -- Window zones (FancyZones-style; the panel's zones.rs): drag a window to the notch at the top of a screen and a sheet of layouts
 -- opens under it; let go on a zone and the window fills that part of the screen. The panel notices the drag and the drop by
 -- itself (the mouse's left button from the kernel, the window and pointer from Hyprland): no binding on the mouse button here,
