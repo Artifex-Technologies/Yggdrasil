@@ -421,11 +421,42 @@ def remove_entry():
 # ---------------------------------------------------------------- the card in use
 
 
+BUSY_SM = 10  # % of the card's processors a program may use on average and still count as idle (a desktop redrawing)
+
+
+def pmon_busy(out):
+    """The programs `nvidia-smi pmon -s u` shows using the card's processors (BUSY_SM % or more on average over its samples),
+    as "name (N %)". A program that only holds the card (the compositor, a browser, Sunshine waiting for a stream) shows "-"."""
+    cols, use = None, {}
+    for line in out.splitlines():
+        if line.startswith("#"):
+            if cols is None:
+                cols = line.lstrip("#").split()
+            continue
+        if not cols or "sm" not in cols or "pid" not in cols or not line.strip():
+            continue
+        f = line.split(None, len(cols) - 1)
+        if len(f) < len(cols):
+            continue
+        sm = f[cols.index("sm")]
+        name = f[-1].strip().split()[0] if f[-1].strip() else f[cols.index("pid")]
+        use.setdefault(f[cols.index("pid")], [name, []])[1].append(int(sm) if sm.isdigit() else 0)
+    return [f"{n} ({sum(v) // len(v)} %)" for n, v in use.values() if v and sum(v) / len(v) >= BUSY_SM]
+
+
 def card_busy():
-    """What is using the card for compute (a language model, a benchmark), or None. The first attempt is made on an idle card."""
-    code, out = run(["nvidia-smi", "--query-compute-apps=pid,process_name", "--format=csv,noheader"], timeout=15)
+    """What is using the card for compute (a language model, a benchmark, a game), or None. The first attempt is made on an idle
+    card. Programs that only hold the card (the desktop, Sunshine, a browser, an editor) do not count: the open driver lists them
+    as compute programs too, so the list alone would never be empty on a desktop."""
+    code, out = run(["nvidia-smi", "pmon", "-c", "3", "-s", "u"], timeout=30)
     if code == 0 and out.strip():
-        return "programs are computing on the card: " + ", ".join(l.split(",")[-1].strip() for l in out.splitlines() if l.strip())
+        busy = pmon_busy(out)
+        if busy:
+            return "programs are computing on the card: " + ", ".join(busy)
+    else:
+        code, out = run(["nvidia-smi", "--query-compute-apps=pid,process_name", "--format=csv,noheader"], timeout=15)
+        if code == 0 and out.strip():
+            return "programs are computing on the card: " + ", ".join(l.split(",")[-1].strip() for l in out.splitlines() if l.strip())
     try:
         with urllib.request.urlopen(OLLAMA_PS, timeout=2) as r:
             models = json.load(r).get("models") or []

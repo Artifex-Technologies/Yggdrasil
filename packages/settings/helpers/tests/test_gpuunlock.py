@@ -35,6 +35,13 @@ STATES = ("unsupported", "supported", "armed", "unlocked", "failed", "throttled"
 LOCKED = {"device": "NVIDIA GeForce RTX 2080 Ti", "pci": "0000:01:00.0", "sms": 68, "quick": False, "samples": 7,
           "check": {"compared": 4096, "wrong": 0, "max_abs_err": 0, "ok": True},
           "gemm_f16_acc_f32": [{"n": 4096, "tflops": 50.1}, {"n": 8192, "tflops": 52.8}], "mma_f16_acc_f32": 49.9, "mma_f16_acc_f16": 99.6}
+# nvidia-smi pmon -s u on the desktop (driver 620, 2026-11-07): programs holding the card show "-"
+PMON_HEAD = ("# gpu         pid   type     sm    mem    enc    dec    jpg    ofa    command \n"
+             "# Idx           #    C/G      %      %      %      %      %      %    name \n")
+PMON_IDLE = ("    0       1672     G      -      -      -      -      -      -    Hyprland       \n"
+             "    0       2282   C+G      -      -      -      -      -      -    sunshine       \n"
+             "    0       2686   C+G      -      -      -      -      -      -    Code --gp      \n"
+             "    0       6195   C+G      2      1      -      -      -      -    renderD128 --cr\n")
 UNLOCKED = dict(LOCKED, gemm_f16_acc_f32=[{"n": 4096, "tflops": 81.7}, {"n": 8192, "tflops": 77.9}], mma_f16_acc_f32=99.1, mma_f16_acc_f16=99.4)
 
 
@@ -70,6 +77,7 @@ class Fake:
         self.mkconfig_extra = ""
         self.kernel_log = ""
         self.compute = ""
+        self.pmon = ""
         self.power = "260.00, 260.00"
 
     def __call__(self, argv, timeout=60):
@@ -84,6 +92,8 @@ class Fake:
         if name == "journalctl":
             return 0, self.kernel_log
         if name == "nvidia-smi":
+            if "pmon" in argv:
+                return 0, PMON_HEAD + self.pmon
             return 0, self.power if "--query-gpu=power.limit,power.default_limit" in argv else self.compute
         if name == "grub-mkconfig":
             env = dict(os.environ, YGGDRASIL_GPUUNLOCK_ENTRY=os.path.join(self.t.m.STATE_DIR, "entry.cfg"))
@@ -310,7 +320,7 @@ class Arming(Base):
         self.assertEqual(self.written(), [])
 
     def test_a_busy_card_is_not_armed(self):
-        self.fake.compute = "4242, ollama"
+        self.fake.pmon = "    0       4242     C     97     40      -      -      -      -    ollama         \n"
         self.assertEqual(self.m.cmd_arm(), 2)
         self.assertEqual(self.fake.ran("snapper"), [])
 
@@ -447,8 +457,11 @@ class Bench(Base):
         self.fake.power = "290.00, 260.00"
         self.assertEqual(self.m.cmd_bench(["--baseline"]), 2, "Performance mode's 290 W is not the baseline")
         self.fake.power = "260.00, 260.00"
-        self.fake.compute = "4242, /usr/bin/ollama"
+        self.fake.pmon = PMON_IDLE + "    0       4242     C     97     40      -      -      -      -    ollama         \n"
         self.assertEqual(self.m.cmd_bench(["--baseline"]), 2, "the card must be idle")
+        self.fake.pmon = PMON_IDLE * 3
+        self.fake.compute = "2282, /usr/bin/sunshine\n2686, /usr/share/code/code"
+        self.assertIsNone(self.m.card_busy(), "programs only holding the card (desktop, Sunshine, an editor) are idle")
         self.fake.compute = ""
         self.fake.kernel_log = UNLOCKED_LOG
         self.assertEqual(self.m.cmd_bench(["--baseline"]), 2, "never on an unlocked card")
@@ -465,6 +478,17 @@ class Bench(Base):
         self.assertFalse(os.path.exists(self.state("baseline.json")))
         self.assertEqual(self.m.cmd_bench(["--quick", "--baseline"]), 2)
         self.assertEqual(self.m.cmd_bench(["--fast"]), 2)
+
+    def test_what_counts_as_busy(self):
+        self.assertEqual(self.m.pmon_busy(PMON_HEAD + PMON_IDLE), [])
+        game = "    0       7000     G     85     30      -      -      -      -    GameThread     \n"
+        self.assertEqual(self.m.pmon_busy(PMON_HEAD + game + PMON_IDLE + game.replace(" 85 ", " 75 ")), ["GameThread (80 %)"])
+        blip = "    0       6195   C+G     20      5      -      -      -      -    renderD128 --cr\n"
+        self.assertEqual(self.m.pmon_busy(PMON_HEAD + blip + PMON_IDLE + PMON_IDLE), [], "one short redraw is not busy")
+        self.assertEqual(self.m.pmon_busy("no header\n    0  1  C  99  -  -  -  -  -  x\n"), [])
+        # without pmon (an older nvidia-smi) the old list is the answer
+        self.fake.fail.add("nvidia-smi")
+        self.assertIsNone(self.m.card_busy())
 
     def test_a_confirmed_unlock_needs_the_benchmark(self):
         self.fake.kernel_log = UNLOCKED_LOG
