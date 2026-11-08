@@ -1,0 +1,30 @@
+# Markdown Reader: Markdown and text files shown formatted, or as their source to read and edit (packages/reader).
+pkgname=yggdrasil-reader
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Markdown Reader: Markdown and text files shown formatted, or as their source to read and edit"
+arch=('x86_64')
+url="https://github.com/Artifex-Technologies/Yggdrasil"
+license=('MPL-2.0')
+depends=('gcc-libs' 'libxkbcommon' 'wayland' 'vulkan-icd-loader' 'libglvnd' 'fontconfig')
+optdepends=('xdg-utils: open web links and other files in their own programs'
+            'xdg-desktop-portal: the Open dialog (in Yggdrasil it is Minos)')
+makedepends=('cargo')
+options=('!lto')
+
+_src="$startdir/../../reader"
+
+build() {
+  cd "$_src"
+  cargo build --release --locked --target-dir "$srcdir/target"
+}
+
+check() {
+  cd "$_src"
+  cargo test --release --locked --target-dir "$srcdir/target"
+}
+
+package() {
+  install -Dm755 "$srcdir/target/release/yggdrasil-reader" "$pkgdir/usr/bin/yggdrasil-reader"
+  install -Dm644 "$_src/yggdrasil-reader.desktop" "$pkgdir/usr/share/applications/yggdrasil-reader.desktop"
+}

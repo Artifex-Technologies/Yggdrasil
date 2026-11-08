@@ -1,0 +1,19 @@
+[package]
+name = "yggdrasil-reader"
+version = "0.1.0"
+edition = "2021"
+description = "Markdown Reader: Markdown and text files shown formatted, or as their source to read and edit"
+license = "MPL-2.0"
+
+[[bin]]
+name = "yggdrasil-reader"
+path = "src/main.rs"
+
+[dependencies]
+yggdrasil-conf = { path = "../yggdrasil-conf" }
+yggdrasil-ui = { path = "../yggdrasil-ui" }
+eframe = "0.36.2"
+egui_extras = { version = "0.36.2", features = ["file", "image", "svg"] }
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+pulldown-cmark = { version = "0.13.6", default-features = false }
+zbus = "5"

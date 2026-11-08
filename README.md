@@ -32,6 +32,7 @@ version that runs in a window ([docs/COMPOSITOR.md](docs/COMPOSITOR.md)). The ch
 | `packages/xmove` | `yggdrasil-xmove` | lets X11 programs that draw their own title bar (Steam) be moved and resized |
 | `packages/compositor` | `yggdrasil-compositor` | Yggdrasil's own compositor (Smithay), in progress |
 | `packages/calculator`, `packages/weather` | | small apps ([docs/WEATHER.md](docs/WEATHER.md)) |
+| `packages/reader` | `yggdrasil-reader` | Markdown Reader: a Markdown or text file formatted, or its source to read and edit; Ctrl + E switches ([README](packages/reader/README.md)) |
 | `packages/spell` | `yggdrasil-spell`, `yggdrasil-autocorrect` | spell checking in every app: the Hunspell dictionaries, one word list your apps share, a list shared by the computer, and correct as you type ([README](packages/spell/README.md)) |
 | `packages/huginn` | `huginn` | Huginn, the video app: videos without an account, subscriptions kept on this computer, played in its window ([README](packages/huginn/README.md)) |
 | `packages/clipboard` | `yggdrasil-clipboard` | clipboard history and snippets (Win + V) |
@@ -153,6 +154,7 @@ additions included; [docs/SHORTCUTS.md](docs/SHORTCUTS.md) is the same list. Thi
 | Screenshot, lock and login screens | screenshot: drag an area, click a window, Enter whole screen; lock: Enter unlocks, Esc clears; login: Tab another user, F2 session | [docs/keys/lock-and-login.md](docs/keys/lock-and-login.md) |
 | Authenticator | type to search, ↑ ↓ move, Enter copies the code | [docs/keys/authenticator.md](docs/keys/authenticator.md) |
 | Calculator | type the sum, Enter works it out, Esc clears | [docs/keys/calculator.md](docs/keys/calculator.md) |
+| Markdown Reader | Ctrl + E formatted / source, Ctrl + S save, Ctrl + O open, Alt + ← back, Ctrl + + / − / 0 text size | [docs/keys/reader.md](docs/keys/reader.md) |
 | Video player | Space or K play / pause, ← → or J / L step, ↑ ↓ volume, M mute, F full screen, O open | [docs/keys/player.md](docs/keys/player.md) |
 | 2048 | arrows, WASD or HJKL slide, U undo, N new game | [docs/keys/2048.md](docs/keys/2048.md) |
 | Sudoku | arrows or HJKL move, 1-9 place, N notes, U undo, Shift + H hint, P pause | [docs/keys/sudoku.md](docs/keys/sudoku.md) |
