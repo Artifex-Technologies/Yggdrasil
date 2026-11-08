@@ -359,24 +359,8 @@ pub fn current_hour() -> u32 {
     }
 }
 
-/// The desktop's accent color (kdeglobals), else the operating system's default (its branding), else Yggdrasil's.
+/// The desktop's accent colour (Settings > Appearance), else the operating system's default (its branding), else Yggdrasil's.
 pub fn accent() -> (u8, u8, u8, u8) {
-    let dir = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")));
-    let text = dir.and_then(|d| std::fs::read_to_string(d.join("kdeglobals")).ok()).unwrap_or_default();
-    let mut general = false;
-    for l in text.lines() {
-        let l = l.trim();
-        if l.starts_with('[') {
-            general = l == "[General]";
-        } else if general {
-            if let Some(v) = l.strip_prefix("AccentColor=") {
-                let p: Vec<u8> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
-                if p.len() == 3 {
-                    return (p[0], p[1], p[2], 255);
-                }
-            }
-        }
-    }
-    let a = yggdrasil_conf::integrations::default_accent();
+    let a = yggdrasil_conf::appearance::load().accent.unwrap_or_else(yggdrasil_conf::integrations::default_accent);
     (a[0], a[1], a[2], 255)
 }

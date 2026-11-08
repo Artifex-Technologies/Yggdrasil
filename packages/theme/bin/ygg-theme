@@ -2,19 +2,21 @@
 """ygg-theme: Yggdrasil's look for the programs Yggdrasil does not write (Qt, KDE and GTK programs) and for the mouse pointer.
 
   ygg-theme apply [--dark|--light] [--accent R,G,B]   write the colour scheme and the GTK settings for this user and switch to them
-  ygg-theme scheme dark|light [R,G,B]                  print a KDE colour scheme
+  ygg-theme scheme dark|light [R,G,B]                  print the colour scheme for programs built on KDE's libraries
   ygg-theme gtk dark|light [R,G,B]                     print the GTK colour definitions
   ygg-theme gtk3-theme|gtk4-theme dark|light           print the system GTK 3 or GTK 4 theme file (what the package installs)
   ygg-theme cursor [NAME]                              print the mouse pointer theme, or switch to NAME (an installed cursor theme)
   ygg-theme --help
 
-Nothing here draws anything: it writes small text files (a KDE colour scheme, GTK colours, a few settings) from Yggdrasil's palette (the same
-colours the panel, Settings and Minos use) and the accent colour. Qt programs use Qt's own "Fusion" style with that scheme; GTK programs use
-GTK's own Adwaita with those colours; the mouse pointer is the Yggdrasil cursor theme (ygg-cursors) unless another installed cursor theme
-was chosen (Settings > Appearance > Icons, Pointer). No other theme package is needed.
+Nothing here draws anything: it writes small text files (GTK colours, a few settings) from Yggdrasil's palette (the same colours the
+panel, Settings and Minos use) and the accent colour. GTK programs use GTK's own Adwaita with those colours; plain Qt programs follow the
+light or dark style through the desktop portal; the mouse pointer is the Yggdrasil cursor theme (ygg-cursors) unless another installed
+cursor theme was chosen (Settings > Appearance > Icons, Pointer). No other theme package is needed.
 
-The choice itself is kept in ~/.config/yggdrasil/appearance.conf (style, accent, cursor); the files written for the other programs are
-~/.config/kdeglobals (Qt), ~/.config/gtk-3.0 and gtk-4.0 (GTK).
+The choice itself is kept in ~/.config/yggdrasil/appearance.conf (style, accent, icons, cursor); the files written for the other programs
+are ~/.config/gtk-3.0 and gtk-4.0 (GTK). Only when a program built on KDE's libraries is installed (ghostwriter, Krita: they read KDE's
+settings files and nothing else) are KDE's files written for it too: the colour scheme (~/.config/kdeglobals,
+~/.local/share/color-schemes) and the pointer (~/.config/kcminputrc). Nothing of KDE's is read.
 """
 import os
 import re
@@ -392,13 +394,17 @@ def read_appearance():
 
 
 def write_appearance(dark, accent, cursor=None):
-    """The desktop's own record of the choice (read by the panel, the apps and the portal, which tells other programs)."""
+    """The desktop's own record of the choice (read by the panel, the apps and the portal, which tells other programs). The icon pack
+    (Settings writes it) is kept as it was."""
     p = appearance_path()
     os.makedirs(os.path.dirname(p), exist_ok=True)
-    cursor = cursor or read_appearance().get("cursor", "")
+    old = read_appearance()
+    cursor = cursor or old.get("cursor", "")
     tmp = p + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         f.write("style = %s\naccent = %s\n" % ("dark" if dark else "light", rgb(accent)))
+        if old.get("icons"):
+            f.write("icons = %s\n" % old["icons"])
         if cursor and cursor != DEFAULT_CURSOR:
             f.write("cursor = %s\n" % cursor)
     os.replace(tmp, p)
@@ -422,13 +428,26 @@ def cursor_theme():
 
 
 def icon_theme():
-    """The icon pack in use (Settings > Appearance > Icons writes it to kdeglobals); Liki when none was chosen."""
-    return ini_get(os.path.join(config(), "kdeglobals"), "Icons", "Theme") or "Liki"
+    """The icon pack in use (Settings > Appearance > Icons, `icons` in appearance.conf); Liki when none was chosen."""
+    name = read_appearance().get("icons", "")
+    return name if name and "/" not in name and not name.startswith(".") else "Liki"
+
+
+def kde_programs():
+    """Whether a program built on KDE's libraries is installed (it reads its colours and pointer from KDE's settings files): KDE's
+    settings library, or KDE's Flatpak runtime. YGG_THEME_KDE=1 or 0 decides instead (tests)."""
+    force = os.environ.get("YGG_THEME_KDE")
+    if force in ("0", "1"):
+        return force == "1"
+    libs = [os.path.join(d, n) for d in ("/usr/lib", "/usr/lib64") for n in ("libKF6ConfigCore.so.6", "libKF5ConfigCore.so.5")]
+    runtimes = ["/var/lib/flatpak/runtime/org.kde.Platform", os.path.join(data(), "flatpak", "runtime", "org.kde.Platform")]
+    return any(os.path.exists(p) for p in libs + runtimes)
 
 
 def apply_cursor(name, live=False):
     """Point every place programs read the pointer from at NAME; with live, the running compositor switches now."""
-    ini_set(os.path.join(config(), "kcminputrc"), "Mouse", "cursorTheme", name)
+    if kde_programs():
+        ini_set(os.path.join(config(), "kcminputrc"), "Mouse", "cursorTheme", name)
     for ver in ("gtk-3.0", "gtk-4.0"):
         d = os.path.join(config(), ver)
         os.makedirs(d, exist_ok=True)
@@ -467,20 +486,9 @@ def xsettings(want):
 
 def apply(dark, accent):
     write_appearance(dark, accent)
-    kdeglobals = os.path.join(config(), "kdeglobals")
-    name = "YggdrasilDark" if dark else "YggdrasilLight"
-    # the colour scheme, in the user's own folder (the accent is part of it)
-    sdir = os.path.join(data(), "color-schemes")
-    os.makedirs(sdir, exist_ok=True)
-    with open(os.path.join(sdir, name + ".colors"), "w", encoding="utf-8") as f:
-        f.write(scheme(dark, accent))
-    # Qt programs (KDE's ones too) read the colours from kdeglobals itself (not from the scheme file), so they go in there
-    updates = scheme_sections(scheme(dark, accent))
-    updates.setdefault("General", {}).update({"AccentColor": rgb(accent), "ColorScheme": name})
-    updates["KDE"] = dict(updates.get("KDE", {}), widgetStyle="Fusion")
     icons = icon_theme()
-    updates["Icons"] = {"Theme": icons}
-    ini_update(kdeglobals, updates)
+    if kde_programs():
+        write_kde_scheme(dark, accent, icons)
     # GTK 3 and 4: the theme name, the dark flag, the pointer and the icons; the colours in each user stylesheet. Dark mode is a theme
     # of its own (Yggdrasil-dark), not only the dark flag: Chromium-based browsers (Vivaldi, Chrome) load a theme by its name and
     # ignore the flag, so with "Yggdrasil" their menus were light in dark mode
@@ -517,6 +525,21 @@ def apply(dark, accent):
         run("gsettings", "set", "org.gnome.desktop.interface", "icon-theme", icons)
 
 
+def write_kde_scheme(dark, accent, icons):
+    """For programs built on KDE's libraries only: the colour scheme in the user's folder, and the same colours, accent and icon pack in
+    kdeglobals (those programs read them from kdeglobals itself, not from the scheme file)."""
+    name = "YggdrasilDark" if dark else "YggdrasilLight"
+    sdir = os.path.join(data(), "color-schemes")
+    os.makedirs(sdir, exist_ok=True)
+    with open(os.path.join(sdir, name + ".colors"), "w", encoding="utf-8") as f:
+        f.write(scheme(dark, accent))
+    updates = scheme_sections(scheme(dark, accent))
+    updates.setdefault("General", {}).update({"AccentColor": rgb(accent), "ColorScheme": name})
+    updates["KDE"] = dict(updates.get("KDE", {}), widgetStyle="Fusion")
+    updates["Icons"] = {"Theme": icons}
+    ini_update(os.path.join(config(), "kdeglobals"), updates)
+
+
 def scheme_sections(text):
     """A colour scheme file as {group: {key: value}}."""
     out, cur = {}, None
@@ -531,19 +554,9 @@ def scheme_sections(text):
 
 
 def current():
-    """(dark, accent) from the settings now: the desktop's own file, else what KDE's settings said before it existed."""
-    try:
-        with open(appearance_path(), encoding="utf-8") as f:
-            vals = dict(l.split("=", 1) for l in (x.split("#")[0].strip() for x in f) if "=" in l)
-        vals = {k.strip(): v.strip() for k, v in vals.items()}
-        return vals.get("style", "dark") != "light", parse_accent(vals.get("accent", "")) or DEFAULT_ACCENT
-    except OSError:
-        pass
-    k = os.path.join(config(), "kdeglobals")
-    s = (ini_get(k, "General", "ColorScheme") or "").lower()
-    dark = "light" not in s
-    acc = parse_accent(ini_get(k, "General", "AccentColor") or "") or DEFAULT_ACCENT
-    return dark, acc
+    """(dark, accent) from the desktop's own file (dark and the default accent when there is none)."""
+    vals = read_appearance()
+    return vals.get("style", "dark") != "light", parse_accent(vals.get("accent", "")) or DEFAULT_ACCENT
 
 
 def main(argv):

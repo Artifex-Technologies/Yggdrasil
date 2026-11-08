@@ -4265,7 +4265,7 @@ fn main() {
         .handle()
         .insert_source(Timer::from_duration(Duration::from_secs(1)), move |_, _, st| {
             st.tick_confirm();
-            // the accent color is in kdeglobals, not panel.conf: look at it every second
+            // the accent colour is in appearance.conf, not panel.conf: look at it every second
             if paint::refresh_accent() {
                 st.dirty = true;
             }

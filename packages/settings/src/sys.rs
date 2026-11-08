@@ -979,8 +979,8 @@ mod ini_tests {
 
     #[test]
     fn reads_and_sets_one_value() {
-        let t = "[General]\nAccentColor=1,2,3\n\n[Icons]\nTheme=breeze\n";
-        assert_eq!(ini_get(t, "Icons", "Theme").as_deref(), Some("breeze"));
+        let t = "[General]\nAccentColor=1,2,3\n\n[Icons]\nTheme=Papirus\n";
+        assert_eq!(ini_get(t, "Icons", "Theme").as_deref(), Some("Papirus"));
         assert_eq!(ini_get(t, "General", "Theme"), None);
         let s = ini_set(t, "Icons", "Theme", "Liki");
         assert_eq!(ini_get(&s, "Icons", "Theme").as_deref(), Some("Liki"));
@@ -1304,7 +1304,7 @@ pub fn icon_packs() -> Vec<IconPack> {
     out
 }
 
-/// One value from an INI-style settings file (`[group]`, `key=value`), such as kdeglobals.
+/// One value from an INI-style settings file (`[group]`, `key=value`), such as GTK's settings.ini.
 pub fn ini_get(text: &str, group: &str, key: &str) -> Option<String> {
     let mut inside = false;
     for line in text.lines() {
@@ -1417,9 +1417,9 @@ pub fn set_cursor(id: &str) -> Result<(), String> {
     act("ygg-theme", &["cursor", id])
 }
 
-/// The icon pack in use (kept in kdeglobals, the file Qt programs read it from; the panel and Minos read it too).
+/// The icon pack in use (`icons` in ~/.config/yggdrasil/appearance.conf; the panel, Minos and ygg-theme read it too).
 pub fn current_icon_theme() -> String {
-    std::fs::read_to_string(config_dir().join("kdeglobals")).ok().and_then(|t| ini_get(&t, "Icons", "Theme")).unwrap_or_default()
+    yggdrasil_conf::appearance::icon_pack().unwrap_or_default()
 }
 
 fn ini_write(path: &std::path::Path, group: &str, key: &str, value: &str) -> Result<(), String> {
@@ -1432,19 +1432,20 @@ fn ini_write(path: &std::path::Path, group: &str, key: &str, value: &str) -> Res
     std::fs::rename(&tmp, path).map_err(|e| e.to_string())
 }
 
-/// Choose an icon pack for the whole desktop (the panel, Minos, GTK and Qt programs follow it): the settings files are written
-/// here (kdeglobals is the file Qt programs read it from).
+/// Choose an icon pack for the whole desktop (the panel, Minos, GTK and Qt programs follow it): the desktop's own record, then
+/// GTK's settings here; `ygg-theme apply` tells the rest (X11 programs, and KDE-library programs when any are installed).
 pub fn set_icon_pack(id: &str) -> Result<(), String> {
     if id.is_empty() || id.contains('/') || id.starts_with('.') {
         return Err("not an icon pack name".into());
     }
     let cfg = config_dir();
-    ini_write(&cfg.join("kdeglobals"), "Icons", "Theme", id)?;
+    yggdrasil_conf::appearance::set_icon_pack(id).map_err(|e| e.to_string())?;
     for gtk in ["gtk-3.0", "gtk-4.0"] {
         ini_write(&cfg.join(gtk).join("settings.ini"), "Settings", "gtk-icon-theme-name", id)?;
     }
     // GTK 4 and portal-aware programs read it from GNOME's settings store, when there is one
     let _ = std::process::Command::new("gsettings").args(["set", "org.gnome.desktop.interface", "icon-theme", id]).stdin(std::process::Stdio::null()).status();
+    let _ = std::process::Command::new("ygg-theme").arg("apply").stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).status();
     Ok(())
 }
 

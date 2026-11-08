@@ -11,9 +11,7 @@ case $side in left|right|up|down|top|bottom) ;; *) echo "usage: yggdrasil-snap l
 
 conf=${XDG_CONFIG_HOME:-$HOME/.config}
 tiling_screens() {
-  if [[ -f $conf/yggdrasil/tiling ]]; then sed 's/#.*//; s/,/\n/g' "$conf/yggdrasil/tiling" | tr -d ' '
-  else sed -n '/^\[Script-labyrinth-screen-keys\]/,/^\[/s/^tilingOutputs=//p' "$conf/kwinrc" 2>/dev/null | tr ',' '\n'
-  fi
+  [[ -f $conf/yggdrasil/tiling ]] && sed 's/#.*//; s/,/\n/g' "$conf/yggdrasil/tiling" | tr -d ' '
 }
 focused=$(hyprctl -j monitors | python3 -I -c 'import json,sys; print(next((m["name"] for m in json.load(sys.stdin) if m.get("focused")), ""))')
 if [[ -n $focused ]] && tiling_screens | grep -qxF "$focused"; then

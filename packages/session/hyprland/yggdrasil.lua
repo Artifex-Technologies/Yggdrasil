@@ -142,8 +142,8 @@ hl.window_rule({ name = "steam-games", match = { class = "^(steam_app_.*)$" }, c
 -- rocks and water). A game never means to be see-through. Checked in a nested Hyprland 0.57 on 2026-11-05 (getprop: true).
 hl.window_rule({ name = "steam-games-opaque", match = { class = "^(steam_app_.*)$" }, force_rgbx = true })
 
--- ...except on the screens set to tile (Settings > Displays; ~/.config/yggdrasil/tiling, one screen per line; before that file exists,
--- the choice made under KDE). There windows sit side by side with gaps, Omarchy-style. Settings reloads this when it changes.
+-- ...except on the screens set to tile (Settings > Displays; ~/.config/yggdrasil/tiling, one screen per line). There windows sit side
+-- by side with gaps, Omarchy-style. Settings reloads this when it changes.
 local function tiling_screens()
   local list = {}
   local f = io.open(config_home .. "/yggdrasil/tiling", "r")
@@ -152,19 +152,6 @@ local function tiling_screens()
       for name in (line:gsub("#.*", "")):gmatch("[%w%-_%.]+") do table.insert(list, name) end
     end
     f:close()
-    return list
-  end
-  local k = io.open(config_home .. "/kwinrc", "r")
-  if k then
-    local in_group = false
-    for line in k:lines() do
-      if line:match("^%[") then in_group = (line == "[Script-labyrinth-screen-keys]")
-      elseif in_group then
-        local v = line:match("^tilingOutputs=(.*)$")
-        if v then for name in v:gmatch("[%w%-_%.]+") do table.insert(list, name) end end
-      end
-    end
-    k:close()
   end
   return list
 end

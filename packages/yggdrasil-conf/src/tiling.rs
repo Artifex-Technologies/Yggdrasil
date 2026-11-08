@@ -1,8 +1,7 @@
 //! Which screens tile (Omarchy-style: windows side by side, their own workspaces, a slim bar without the dock) while the others keep
 //! floating windows and the dock. One small file, `~/.config/yggdrasil/tiling`, one screen (connector name, e.g. `HDMI-A-1`) per line:
 //! Settings > Displays writes it, and the panel and the compositor read it.
-//!
-//! Until the file exists, the choice made under KDE is read once (KWin's `kwinrc`, `[Script-labyrinth-screen-keys] tilingOutputs`).
+//! No file: no screen tiles.
 
 use std::path::{Path, PathBuf};
 
@@ -24,35 +23,13 @@ pub fn parse(text: &str) -> Vec<String> {
     out
 }
 
-/// The same list from KWin's settings text.
-pub fn parse_kwinrc(text: &str) -> Vec<String> {
-    let mut group = false;
-    for line in text.lines() {
-        let line = line.trim();
-        if line.starts_with('[') {
-            group = line == "[Script-labyrinth-screen-keys]";
-            continue;
-        }
-        if group {
-            if let Some(v) = line.strip_prefix("tilingOutputs=") {
-                return parse(v);
-            }
-        }
-    }
-    vec![]
-}
-
-fn load_from(own: &Path, kwinrc: &Path) -> Vec<String> {
-    match std::fs::read_to_string(own) {
-        Ok(t) => parse(&t),
-        Err(_) => std::fs::read_to_string(kwinrc).map(|t| parse_kwinrc(&t)).unwrap_or_default(),
-    }
+fn load_from(own: &Path) -> Vec<String> {
+    std::fs::read_to_string(own).map(|t| parse(&t)).unwrap_or_default()
 }
 
 /// The screens that tile.
 pub fn outputs() -> Vec<String> {
-    let kde = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config"));
-    load_from(&path(), &kde.join("kwinrc"))
+    load_from(&path())
 }
 
 pub fn set_outputs(names: &[String]) -> std::io::Result<()> {
@@ -75,16 +52,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn names_from_the_file_or_from_kde() {
+    fn names_from_the_file() {
         assert_eq!(parse("# tiles\nHDMI-A-1\nDP-2, DP-3\n\nHDMI-A-1\nbad name!\n"), vec!["HDMI-A-1", "DP-2", "DP-3"]);
-        assert_eq!(parse_kwinrc("[Other]\ntilingOutputs=X\n[Script-labyrinth-screen-keys]\ntilingOutputs=HDMI-A-1,DP-2\n"), vec!["HDMI-A-1", "DP-2"]);
         let d = std::env::temp_dir().join(format!("ygg-tiling-{}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();
-        let (own, kw) = (d.join("tiling"), d.join("kwinrc"));
-        std::fs::write(&kw, "[Script-labyrinth-screen-keys]\ntilingOutputs=HDMI-A-1\n").unwrap();
-        assert_eq!(load_from(&own, &kw), vec!["HDMI-A-1"], "no own file yet: KDE's choice");
-        std::fs::write(&own, "").unwrap();
-        assert!(load_from(&own, &kw).is_empty(), "an empty own file means none tile");
+        let own = d.join("tiling");
+        std::fs::write(d.join("kwinrc"), "[Script-labyrinth-screen-keys]\ntilingOutputs=HDMI-A-1\n").unwrap();
+        assert!(load_from(&own).is_empty(), "no file: none tile, whatever KWin's file says");
+        std::fs::write(&own, "HDMI-A-1\n").unwrap();
+        assert_eq!(load_from(&own), vec!["HDMI-A-1"]);
         let _ = std::fs::remove_dir_all(&d);
     }
 }

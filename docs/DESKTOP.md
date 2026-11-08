@@ -29,7 +29,7 @@ the Hyprland power menu). It sets what the login screen starts on and logs you o
 
 Inside the macOS-style desktop, one monitor could work like Omarchy while the others stayed
 Windows/macOS-like (in the Yggdrasil session today the same split is made by Hyprland window rules, from
-`~/.config/yggdrasil/tiling`, and the KDE-era choice in `kwinrc` is read once if that file does not exist yet). It was one Plasma session, so the clipboard, drag and drop and moving windows
+`~/.config/yggdrasil/tiling`). It was one Plasma session, so the clipboard, drag and drop and moving windows
 between screens all work. On this machine the LG DualUp is that screen (`"tiling": true` in
 `displays.json`; labyrinth-displays turns it on once per port). By hand: `labyrinth-tiling HDMI-A-1`,
 `labyrinth-tiling off`, `labyrinth-tiling` (show).

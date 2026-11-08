@@ -22,32 +22,11 @@ struct Cache {
     tex: HashMap<(String, u32), Option<TextureHandle>>,
 }
 
-/// The icon theme chosen in KDE (`[Icons] Theme` in kdeglobals).
-pub fn parse_icon_theme(kdeglobals: &str) -> Option<String> {
-    let mut in_icons = false;
-    for line in kdeglobals.lines() {
-        let line = line.trim();
-        if line.starts_with('[') {
-            in_icons = line == "[Icons]";
-        } else if in_icons {
-            if let Some(v) = line.strip_prefix("Theme=") {
-                let v = v.trim();
-                return (!v.is_empty()).then(|| v.to_string());
-            }
-        }
-    }
-    None
-}
-
-/// The chain to look icons up in: the pack chosen in KDE first (so another pack changes what is shown),
+/// The chain to look icons up in: the pack chosen in Settings > Appearance > Icons first (so another pack changes what is shown),
 /// then Liki, the desktop's own, which fills in whatever that pack has no icon for, so nothing is ever missing.
 /// Looked at again when the pack or its files change (see `refresh`), so a new pack or accent shows without a restart.
 fn compute_chain() -> Vec<String> {
-    let chosen = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-        .and_then(|d| std::fs::read_to_string(d.join("kdeglobals")).ok())
-        .and_then(|t| parse_icon_theme(&t));
+    let chosen = yggdrasil_conf::appearance::icon_pack();
     let mut v: Vec<String> = vec![];
     if let Some(c) = chosen {
         if c != "Liki" {
@@ -75,10 +54,7 @@ fn fingerprint() -> u64 {
         let n = t.and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos() as u64).unwrap_or(0);
         h = (h ^ n).wrapping_mul(1099511628211);
     };
-    let cfg = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")));
-    if let Some(c) = cfg {
-        mix(std::fs::metadata(c.join("kdeglobals")).and_then(|m| m.modified()).ok());
-    }
+    mix(std::fs::metadata(yggdrasil_conf::appearance::path()).and_then(|m| m.modified()).ok());
     for theme in compute_chain() {
         for byte in theme.bytes() {
             mix(Some(std::time::UNIX_EPOCH + std::time::Duration::from_nanos(byte as u64)));

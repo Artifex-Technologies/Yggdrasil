@@ -33,17 +33,16 @@ PURPLE = "7c54d6"
 
 
 def accent_hex():
-    """The desktop's accent color (kdeglobals), as rrggbb; Labyrinth purple if it is not set."""
+    """The desktop's accent colour (Settings > Appearance: `accent = r,g,b` in ~/.config/yggdrasil/appearance.conf), as rrggbb;
+    Labyrinth purple if it is not set."""
     base = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
     try:
-        section = ""
-        for line in open(os.path.join(base, "kdeglobals"), encoding="utf-8", errors="replace"):
-            line = line.strip()
-            if line.startswith("["):
-                section = line
-            elif section == "[General]" and line.startswith("AccentColor="):
-                r, g, b = [int(x) for x in line.split("=", 1)[1].split(",")]
-                return "%02x%02x%02x" % (r, g, b)
+        for line in open(os.path.join(base, "yggdrasil", "appearance.conf"), encoding="utf-8", errors="replace"):
+            key, _, value = line.split("#", 1)[0].partition("=")
+            if key.strip() == "accent":
+                r, g, b = [int(x) for x in value.split(",")]
+                if all(0 <= c < 256 for c in (r, g, b)):
+                    return "%02x%02x%02x" % (r, g, b)
     except (OSError, ValueError):
         pass
     return PURPLE

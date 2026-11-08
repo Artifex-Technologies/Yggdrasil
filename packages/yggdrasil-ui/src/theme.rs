@@ -74,28 +74,6 @@ fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
     Color32::from_rgb(f(a.r(), b.r()), f(a.g(), b.g()), f(a.b(), b.b()))
 }
 
-/// The accent color from KDE's settings text (`[General]` then `AccentColor=r,g,b`).
-pub fn parse_kde_accent(text: &str) -> Option<[u8; 3]> {
-    let mut in_general = false;
-    for line in text.lines() {
-        let line = line.trim();
-        if line.starts_with('[') {
-            in_general = line == "[General]";
-            continue;
-        }
-        if !in_general {
-            continue;
-        }
-        if let Some(v) = line.strip_prefix("AccentColor=") {
-            let parts: Vec<u8> = v.trim().trim_matches('"').split(',').filter_map(|x| x.trim().parse().ok()).collect();
-            if parts.len() == 3 {
-                return Some([parts[0], parts[1], parts[2]]);
-            }
-        }
-    }
-    None
-}
-
 /// The accent the user chose (Settings > Appearance, `~/.config/yggdrasil/appearance.conf`); None when they chose none.
 pub fn system_accent() -> Option<[u8; 3]> {
     yggdrasil_conf::appearance::load().accent
@@ -235,30 +213,6 @@ mod tests {
     }
 
     use super::*;
-
-    #[test]
-    fn reads_the_kde_accent() {
-        let text = "[General]\nColorScheme=YggdrasilDark\nAccentColor=124,84,214\n\n[KDE]\nwidgetStyle=Fusion\n";
-        assert_eq!(parse_kde_accent(text), Some([124, 84, 214]));
-    }
-
-    #[test]
-    fn ignores_an_accent_in_the_wrong_section() {
-        assert_eq!(parse_kde_accent("[Other]\nAccentColor=1,2,3\n"), None);
-    }
-
-    #[test]
-    fn rejects_malformed_values() {
-        assert_eq!(parse_kde_accent("[General]\nAccentColor=12,34\n"), None);
-        assert_eq!(parse_kde_accent("[General]\nAccentColor=a,b,c\n"), None);
-        assert_eq!(parse_kde_accent("[General]\nAccentColor=300,0,0\n"), None);
-        assert_eq!(parse_kde_accent(""), None);
-    }
-
-    #[test]
-    fn tolerates_quotes_and_spaces() {
-        assert_eq!(parse_kde_accent("[General]\nAccentColor=\"10, 20, 30\"\n"), Some([10, 20, 30]));
-    }
 
     #[test]
     fn no_accent_gives_the_default_palette() {

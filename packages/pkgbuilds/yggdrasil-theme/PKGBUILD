@@ -26,10 +26,6 @@ package() {
   # the cursors (an X cursor theme, which Wayland programs use as well)
   install -d "$pkgdir/usr/share/icons"
   cp -a "$srcdir/cursors" "$pkgdir/usr/share/icons/Yggdrasil"
-  # the colour schemes (each user's copy, in the accent they chose, is written by ygg-theme apply)
-  install -d "$pkgdir/usr/share/color-schemes"
-  "$_src/bin/ygg-theme" scheme dark  > "$pkgdir/usr/share/color-schemes/YggdrasilDark.colors"
-  "$_src/bin/ygg-theme" scheme light > "$pkgdir/usr/share/color-schemes/YggdrasilLight.colors"
   # the GTK 3 and GTK 4 themes: GTK's own with Yggdrasil's colours and surfaces (libadwaita programs read the colours in the user's stylesheet that ygg-theme writes)
   install -d "$pkgdir/usr/share/themes/Yggdrasil/gtk-3.0"
   "$_src/bin/ygg-theme" gtk3-theme light > "$pkgdir/usr/share/themes/Yggdrasil/gtk-3.0/gtk.css"

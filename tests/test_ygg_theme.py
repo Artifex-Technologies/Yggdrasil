@@ -94,7 +94,7 @@ class Settings(unittest.TestCase):
 
     def test_apply_writes_everything_and_keeps_the_users_own_css(self):
         d = tempfile.mkdtemp()
-        env = dict(os.environ, HOME=d, XDG_CONFIG_HOME=os.path.join(d, ".config"), XDG_DATA_HOME=os.path.join(d, ".local/share"), PATH="/nonexistent")
+        env = dict(os.environ, HOME=d, XDG_CONFIG_HOME=os.path.join(d, ".config"), XDG_DATA_HOME=os.path.join(d, ".local/share"), PATH="/nonexistent", YGG_THEME_KDE="1")
         os.makedirs(os.path.join(d, ".config/gtk-4.0"))
         open(os.path.join(d, ".config/gtk-4.0/gtk.css"), "w").write("@import 'colors.css';\nwindow { border-radius: 3px; }\n")
         r = subprocess.run([sys.executable, os.path.join(BIN, "ygg-theme"), "apply", "--dark", "--accent", "12,34,56"], env=env, capture_output=True, text=True)
@@ -116,6 +116,20 @@ class Settings(unittest.TestCase):
         css2 = open(os.path.join(d, ".config/gtk-4.0/gtk.css")).read()
         self.assertEqual(css2.count("border-radius: 3px"), 1)
         self.assertEqual(parse_ini(open(os.path.join(d, ".config/kdeglobals")).read())["[General]"]["ColorScheme"], "YggdrasilLight")
+
+    def test_no_kde_files_without_kde_programs(self):
+        d = tempfile.mkdtemp()
+        env = dict(os.environ, HOME=d, XDG_CONFIG_HOME=os.path.join(d, ".config"), XDG_DATA_HOME=os.path.join(d, ".local/share"), PATH="/nonexistent", YGG_THEME_KDE="0")
+        os.makedirs(os.path.join(d, ".config/yggdrasil"))
+        open(os.path.join(d, ".config/yggdrasil/appearance.conf"), "w").write("style = dark\naccent = 1,2,3\nicons = Papirus\n")
+        r = subprocess.run([sys.executable, os.path.join(BIN, "ygg-theme"), "apply", "--light"], env=env, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for kde in (".config/kdeglobals", ".config/kcminputrc", ".local/share/color-schemes"):
+            self.assertFalse(os.path.exists(os.path.join(d, kde)), kde)
+        own = open(os.path.join(d, ".config/yggdrasil/appearance.conf")).read()
+        self.assertEqual(own, "style = light\naccent = 1,2,3\nicons = Papirus\n", "the icon pack is kept")
+        g3 = parse_ini(open(os.path.join(d, ".config/gtk-3.0/settings.ini")).read())["[Settings]"]
+        self.assertEqual(g3["gtk-icon-theme-name"], "Papirus")
 
 
 class Cursors(unittest.TestCase):

@@ -27,45 +27,17 @@ pub fn on_accent() -> Rgba {
     if 0.2126 * l(r) + 0.7152 * l(g) + 0.0722 * l(b) > 0.45 { (24, 20, 36, 255) } else { (255, 255, 255, 255) }
 }
 
-/// Read the accent color from kdeglobals (`AccentColor=r,g,b` under [General]); true when it changed.
+/// Read the accent colour (Settings > Appearance, `~/.config/yggdrasil/appearance.conf`; the operating system's default when none
+/// was chosen); true when it changed.
 pub fn refresh_accent() -> bool {
-    let dir = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")));
-    let Some(text) = dir.and_then(|d| std::fs::read_to_string(d.join("kdeglobals")).ok()) else { return false };
-    let mut in_general = false;
-    for line in text.lines() {
-        let l = line.trim();
-        if l.starts_with('[') {
-            in_general = l == "[General]";
-        } else if in_general {
-            if let Some(v) = l.strip_prefix("AccentColor=") {
-                let p: Vec<u32> = v.trim().trim_matches('"').split(',').filter_map(|x| x.trim().parse().ok()).collect();
-                if p.len() == 3 && p.iter().all(|c| *c < 256) {
-                    let packed = (p[0] << 16) | (p[1] << 8) | p[2];
-                    return ACCENT_RGB.swap(packed, std::sync::atomic::Ordering::Relaxed) != packed;
-                }
-            }
-        }
-    }
-    false
+    let [r, g, b] = yggdrasil_conf::appearance::load().accent.unwrap_or_else(yggdrasil_conf::integrations::default_accent);
+    let packed = ((r as u32) << 16) | ((g as u32) << 8) | b as u32;
+    ACCENT_RGB.swap(packed, std::sync::atomic::Ordering::Relaxed) != packed
 }
 
-/// The icon theme chosen in KDE (`[Icons] Theme` in kdeglobals).
+/// The icon pack chosen in Settings > Appearance > Icons (None: Liki).
 pub fn selected_icon_theme() -> Option<String> {
-    let dir = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
-    let text = std::fs::read_to_string(dir.join("kdeglobals")).ok()?;
-    let mut in_icons = false;
-    for line in text.lines() {
-        let line = line.trim();
-        if line.starts_with('[') {
-            in_icons = line == "[Icons]";
-        } else if in_icons {
-            if let Some(v) = line.strip_prefix("Theme=") {
-                let v = v.trim();
-                return (!v.is_empty()).then(|| v.to_string());
-            }
-        }
-    }
-    None
+    yggdrasil_conf::appearance::icon_pack()
 }
 
 pub fn color(c: Rgba) -> Color {
