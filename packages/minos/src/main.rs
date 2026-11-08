@@ -507,6 +507,14 @@ struct Ctx<'a> {
 }
 
 const RENAME_ID: &str = "minos-rename";
+const CUT_ID: &str = "minos-cut";
+/// How opaque a cut item's icon is drawn.
+const CUT_OPACITY: f32 = 0.4;
+
+/// Whether `p` is cut (waiting to be pasted somewhere).
+fn is_cut(ctx: &egui::Context, p: &Path) -> bool {
+    ctx.data(|d| d.get_temp::<Arc<std::collections::HashSet<PathBuf>>>(egui::Id::new(CUT_ID))).is_some_and(|s| s.contains(p))
+}
 const RENAME_RESULT_ID: &str = "minos-rename-result";
 
 /// If `e` is being renamed, shows the editor in place of its name and returns true. Enter keeps
@@ -1409,7 +1417,13 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
             let status_col = st.drive_status && !in_pc && !in_archive && ui.available_width() >= 560.0 && places::proton_drive_candidates().iter().any(|r| dir.starts_with(r));
             let name_cell = |ui: &mut egui::Ui, e: &Entry| {
                 ui.horizontal(|ui| {
-                    entry_icon(ui, &pal, st, e, 18.0);
+                    let cut = is_cut(ui.ctx(), &e.path);
+                    ui.scope(|ui| {
+                        if cut {
+                            ui.multiply_opacity(CUT_OPACITY);
+                        }
+                        entry_icon(ui, &pal, st, e, 18.0);
+                    });
                     if let Some(b) = cloud::badge_for(&e.path, cx.links, cx.reports) {
                         let (rect, r) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
                         paint_badge(ui.painter(), rect.center(), b, &pal);
@@ -1565,10 +1579,16 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
                         }
                         let img_rect = Rect::from_min_size(rect.min + vec2(6.0, 4.0), vec2(size, size));
                         let tint = st.color_for(&e.path).map(rgb);
+                        let cut = is_cut(ui.ctx(), &e.path);
                         if !e.is_dir && !in_archive && is_image(&e.path) && ui.is_rect_visible(rect) {
-                            egui::Image::new(file_uri(&e.path)).fit_to_exact_size(img_rect.size()).corner_radius(6).paint_at(ui, img_rect);
+                            let alpha = if cut { (255.0 * CUT_OPACITY) as u8 } else { 255 };
+                            egui::Image::new(file_uri(&e.path)).fit_to_exact_size(img_rect.size()).corner_radius(6).tint(Color32::from_white_alpha(alpha)).paint_at(ui, img_rect);
                         } else {
-                            paint_entry_icon(ui.painter(), &pal, st, e, img_rect);
+                            let mut painter = ui.painter().clone();
+                            if cut {
+                                painter.multiply_opacity(CUT_OPACITY);
+                            }
+                            paint_entry_icon(&painter, &pal, st, e, img_rect);
                         }
                         let mut badge_x = -10.0;
                         if let Some(b) = cloud::badge_for(&e.path, cx.links, cx.reports) {
@@ -3615,6 +3635,12 @@ impl eframe::App for App {
             d.insert_temp(egui::Id::new("minos-rename-seen"), false);
         });
         let clip_has = self.clipboard.is_some();
+        // what is cut and not yet pasted: drawn faded (as on Windows), until it is pasted or another copy or cut replaces it
+        let cut: Arc<std::collections::HashSet<PathBuf>> = Arc::new(match &self.clipboard {
+            Some((v, true)) => v.iter().cloned().collect(),
+            _ => Default::default(),
+        });
+        ctx.data_mut(|d| d.insert_temp(egui::Id::new(CUT_ID), cut));
         let focus = self.focus;
         if self.picker.is_some() {
             let cur = self.panes[focus].tabs[self.panes[focus].active].dir();
