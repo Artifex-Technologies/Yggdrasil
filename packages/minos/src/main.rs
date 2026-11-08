@@ -46,6 +46,60 @@ enum TEvent {
 }
 
 /// Whether `dest` is on the same drive as `src` (a move there is just a rename, not a copy and a delete).
+/// Files as the system clipboard carries them between file managers: one file:// address per line (text/uri-list form).
+fn uri_list(paths: &[PathBuf]) -> String {
+    use std::os::unix::ffi::OsStrExt;
+    let mut out = String::new();
+    for p in paths {
+        out.push_str("file://");
+        for &b in p.as_os_str().as_bytes() {
+            if b.is_ascii_alphanumeric() || b"/-._~".contains(&b) {
+                out.push(b as char);
+            } else {
+                out.push_str(&format!("%{b:02X}"));
+            }
+        }
+        out.push_str("\r\n");
+    }
+    out
+}
+
+/// The files a clipboard's text names (file:// addresses, or plain absolute paths, one per line; GNOME's "copy"/"cut" first
+/// line is skipped), those that exist. Empty when the text is not a list of files.
+fn paths_from_clipboard(text: &str) -> Vec<PathBuf> {
+    use std::os::unix::ffi::OsStringExt;
+    let mut out = Vec::new();
+    for line in text.lines().map(str::trim).filter(|l| !l.is_empty() && *l != "copy" && *l != "cut" && !l.starts_with('#')) {
+        let path = if let Some(rest) = line.strip_prefix("file://") {
+            let rest = rest.strip_prefix("localhost").unwrap_or(rest);
+            let b = rest.as_bytes();
+            let mut bytes = Vec::with_capacity(b.len());
+            let mut i = 0;
+            while i < b.len() {
+                let hex = |c: u8| (c as char).to_digit(16);
+                if b[i] == b'%' && i + 2 < b.len() {
+                    if let (Some(h), Some(l)) = (hex(b[i + 1]), hex(b[i + 2])) {
+                        bytes.push((h * 16 + l) as u8);
+                        i += 3;
+                        continue;
+                    }
+                }
+                bytes.push(b[i]);
+                i += 1;
+            }
+            PathBuf::from(std::ffi::OsString::from_vec(bytes))
+        } else if line.starts_with('/') {
+            PathBuf::from(line)
+        } else {
+            return Vec::new(); // text that is not a list of files
+        };
+        if path.exists() {
+            out.push(path);
+        }
+    }
+    out
+}
+
 fn same_drive(src: Option<&PathBuf>, dest: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
     match (src.and_then(|s| s.parent()).and_then(|p| std::fs::metadata(p).ok()), std::fs::metadata(dest).ok()) {
@@ -1311,6 +1365,42 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
         }
     });
 
+    // The list's empty space (all of it in an empty folder): registered before the rows, so a row takes its own clicks and
+    // this only the clicks between and below them. Right-click opens the folder's menu (2026-11-08: there was none, so an
+    // empty folder could not be pasted into with the mouse).
+    let mut bg_area = ui.available_rect_before_wrap();
+    bg_area.max.y -= 26.0; // the item count below the list
+    let bg = ui.interact(bg_area, ui.id().with(("minos-list-bg", cx.pi)), Sense::click());
+    let read_only = in_pc || in_archive;
+    bg.context_menu(|ui| {
+        if ui.add_enabled(clip_has && !read_only, egui::Button::new("Paste")).clicked() {
+            actions.push(Action::Paste(cx.pi));
+            ui.close();
+        }
+        ui.separator();
+        if ui.add_enabled(!read_only, egui::Button::new("New folder")).clicked() {
+            actions.push(Action::NewFolder(cx.pi));
+            ui.close();
+        }
+        if ui.add_enabled(!read_only, egui::Button::new("New file")).clicked() {
+            actions.push(Action::NewFile(cx.pi));
+            ui.close();
+        }
+        ui.separator();
+        if ui.selectable_label(st.view == ViewMode::Details, "Details view").clicked() {
+            actions.push(Action::SetView(ViewMode::Details));
+            ui.close();
+        }
+        if ui.selectable_label(st.view == ViewMode::Gallery, "Gallery view").clicked() {
+            actions.push(Action::SetView(ViewMode::Gallery));
+            ui.close();
+        }
+        if ui.button("Refresh (F5)").clicked() {
+            actions.push(Action::Reload);
+            ui.close();
+        }
+    });
+
     match st.view {
         ViewMode::Details => {
             // The row, not the name, takes the clicks and drags (see entry_interact below).
@@ -1715,6 +1805,9 @@ struct App {
     last_saved: Instant,
     dirty: bool,
     clipboard: Option<(Vec<PathBuf>, bool)>,
+    /// What Minos last put on the system clipboard for its own copy or cut (the files as file:// addresses), to tell its own
+    /// list from one another program copied since.
+    clip_text: Option<String>,
     rename: Option<RenameDlg>,
     rename_unseen: u8,
     transfer: Option<Transfer>,
@@ -1848,6 +1941,7 @@ impl App {
             last_saved: Instant::now(),
             dirty: false,
             clipboard: None,
+            clip_text: None,
             rename: None,
             rename_unseen: 0,
             transfer: None,
@@ -2607,10 +2701,16 @@ impl App {
                 }
                 Action::Cut(v) => {
                     self.status = format!("{} item(s) cut", v.len());
+                    let text = uri_list(&v);
+                    ctx.copy_text(text.clone());
+                    self.clip_text = Some(text);
                     self.clipboard = Some((v, true));
                 }
                 Action::Copy(v) => {
                     self.status = format!("{} item(s) copied", v.len());
+                    let text = uri_list(&v);
+                    ctx.copy_text(text.clone());
+                    self.clip_text = Some(text);
                     self.clipboard = Some((v, false));
                 }
                 Action::Paste(p) => {
@@ -3324,6 +3424,7 @@ impl eframe::App for App {
             let sel = self.selected_in_focus();
             let f = self.focus;
             let mut open_search = false;
+            let mut paste_req: Option<Option<String>> = None;
             ctx.input_mut(|i| {
                 use egui::{Key, Modifiers};
                 for (key, nav) in [(Key::ArrowUp, Nav::Up), (Key::ArrowDown, Nav::Down), (Key::ArrowLeft, Nav::Left), (Key::ArrowRight, Nav::Right), (Key::Home, Nav::Home), (Key::End, Nav::End), (Key::PageUp, Nav::PageUp), (Key::PageDown, Nav::PageDown)] {
@@ -3354,7 +3455,7 @@ impl eframe::App for App {
                 // deliver them as key presses, so key_pressed(C) alone never fires.
                 let copy_ev = i.events.iter().any(|e| matches!(e, egui::Event::Copy));
                 let cut_ev = i.events.iter().any(|e| matches!(e, egui::Event::Cut));
-                let paste_ev = i.events.iter().any(|e| matches!(e, egui::Event::Paste(_)));
+                let paste_text = i.events.iter().find_map(|e| if let egui::Event::Paste(t) = e { Some(t.clone()) } else { None });
                 if (i.modifiers.alt && i.key_pressed(egui::Key::ArrowUp)) || i.key_pressed(egui::Key::Backspace) {
                     actions.push(Action::Up(f));
                 }
@@ -3376,8 +3477,12 @@ impl eframe::App for App {
                 if (copy_ev || (cmd && i.key_pressed(egui::Key::C))) && !sel.is_empty() {
                     actions.push(Action::Copy(sel.clone()));
                 }
-                if paste_ev || (cmd && i.key_pressed(egui::Key::V)) {
-                    actions.push(Action::Paste(f));
+                // Ctrl+V comes only as a paste event, and only when the system clipboard holds text: Minos's copy and cut put the
+                // files there as file:// addresses (below), so it does; with nothing there, the key itself (rarely seen) still pastes
+                if let Some(t) = paste_text {
+                    paste_req = Some(Some(t));
+                } else if cmd && i.key_pressed(egui::Key::V) {
+                    paste_req = Some(None);
                 }
                 if i.key_pressed(egui::Key::F2) && sel.len() == 1 {
                     actions.push(Action::Rename(sel[0].clone()));
@@ -3389,6 +3494,22 @@ impl eframe::App for App {
                     actions.push(Action::NewFolder(f));
                 }
             });
+            if let Some(text) = paste_req {
+                match text {
+                    // another program's files (or text) since Minos's own copy
+                    Some(t) if self.clip_text.as_deref() != Some(t.as_str()) => {
+                        let paths = paths_from_clipboard(&t);
+                        if paths.is_empty() {
+                            self.status = "The clipboard holds text, not files".into();
+                        } else {
+                            self.clipboard = Some((paths, false));
+                            self.clip_text = Some(t);
+                            actions.push(Action::Paste(f));
+                        }
+                    }
+                    _ => actions.push(Action::Paste(f)),
+                }
+            }
             if open_search {
                 let t = self.panes[self.focus].cur();
                 t.search_open = true;
@@ -3924,4 +4045,29 @@ mod session {
 fn accent_colour() -> Color32 {
     let a = yggdrasil_conf::integrations::default_accent();
     Color32::from_rgb(a[0], a[1], a[2])
+}
+
+#[cfg(test)]
+mod clipboard_tests {
+    use super::*;
+
+    #[test]
+    fn files_go_onto_the_clipboard_and_come_back() {
+        let d = std::env::temp_dir().join(format!("minos-clip-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let a = d.join("HPT FTDI Drivers 2.08.zip");
+        let b = d.join("ünïcode & more.txt");
+        std::fs::write(&a, b"x").unwrap();
+        std::fs::write(&b, b"y").unwrap();
+        let text = uri_list(&[a.clone(), b.clone()]);
+        assert!(text.contains("HPT%20FTDI%20Drivers%202.08.zip"), "{text}");
+        assert_eq!(paths_from_clipboard(&text), vec![a.clone(), b.clone()]);
+        // GNOME's form, and plain paths
+        assert_eq!(paths_from_clipboard(&format!("copy\nfile://{}", a.display().to_string().replace(' ', "%20"))), vec![a.clone()]);
+        assert_eq!(paths_from_clipboard(&format!("{}\n", b.display())), vec![b.clone()]);
+        // ordinary text is not a list of files
+        assert!(paths_from_clipboard("hello world").is_empty());
+        assert!(paths_from_clipboard("file:///no/such/file").is_empty());
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }
