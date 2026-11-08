@@ -15,7 +15,7 @@ Without such a file the window says the system has no installer and offers nothi
 
 ## yggdrasil-install-system
 
-Since 2026-11-07 (it was Labyrinth's `labyrinth-install-system` until then; Niflheim OS needed the same one). It partitions (the
+Since 2026-11-07 (it was Labyrinth's `labyrinth-install-system` until then; LykanOS needed the same one). It partitions (the
 whole disk: a 1 GiB EFI partition and the rest; or the partitions chosen by hand), encrypts / with LUKS2 if asked (one password,
 typed in GRUB), makes btrfs with the subvolumes `@`, `@home`, `@cache`, `@log` (ext4 or XFS by hand), copies the medium's system,
 sets up language, keyboard, time zone, the computer's name and the account (an administrator through sudo; root stays locked),

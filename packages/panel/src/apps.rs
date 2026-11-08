@@ -114,7 +114,7 @@ pub fn load_all() -> Vec<App> {
 
 /// The start menu's folder for an app, from its freedesktop categories (the first kind that fits).
 pub fn folder_of(a: &App) -> &'static str {
-    // Security first: a security tool is also a Network or System one, and is looked for under Security (Niflheim's tools)
+    // Security first: a security tool is also a Network or System one, and is looked for under Security (LykanOS's tools)
     const MAP: [(&str, &str); 13] = [
         ("Security", "Security"),
         ("Game", "Games"),

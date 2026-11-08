@@ -11,7 +11,7 @@ The single checklist for making Yggdrasil a desktop environment of its own (audi
 repositories; it replaces the partial snapshot in [KDE_INVENTORY.md](KDE_INVENTORY.md)). Two goals:
 
 1. **No KDE.** Every KDE piece is either rewritten in Rust as part of Yggdrasil, replaced by a small standard non-KDE component, or removed.
-2. **No Labyrinth inside Yggdrasil.** Yggdrasil is the desktop; Labyrinth OS, Niflheim OS and any other system install it. Nothing in
+2. **No Labyrinth inside Yggdrasil.** Yggdrasil is the desktop; Labyrinth OS, LykanOS and any other system install it. Nothing in
    Yggdrasil may be named after, depend on, or assume one OS. OS-specific features plug in from the OS side.
 
 Decisions this follows: Rust and lightweight (the "must be light" rule); secrets in gnome-keyring, not KWallet and not our own

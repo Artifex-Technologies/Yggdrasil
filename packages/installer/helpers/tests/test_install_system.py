@@ -223,21 +223,23 @@ class TheOperatingSystem(unittest.TestCase):
         self.assertEqual(inst.installer_integration([self.folder({})]), {})
 
     def test_names_paths_and_labels_follow_the_os(self):
-        release = inst.os_release(os.path.join(self.folder({"os-release": 'NAME="Niflheim OS"\nID=niflheim\n'}), "os-release"))
-        inst.configure({"cleanup": "/usr/local/bin/niflheim-install-cleanup", "finish": "relative/finish", "boot_menu_theme": "/a/../b",
+        release = inst.os_release(os.path.join(self.folder({"os-release": 'NAME="LykanOS"\nID=lykanos\n'}), "os-release"))
+        inst.configure({"cleanup": "/usr/local/bin/lykanos-install-cleanup", "finish": "relative/finish", "boot_menu_theme": "/a/../b",
                         "kernel_options": "quiet splash", "groups": "users wheel", "min_size_gb": "40", "first_login": "/var/lib/n/first.json"},
                        release)
-        self.assertEqual((inst.OS_NAME, inst.OS_ID), ("Niflheim", "niflheim"), "os-release's name without the ' OS'")
-        self.assertEqual(inst.SFS, "/run/archiso/bootmnt/niflheim/x86_64/airootfs.sfs")
-        self.assertEqual((inst.TARGET, inst.MAPPER), ("/mnt/niflheim-install", "niflheim-root"))
-        self.assertEqual(inst.CLEANUP, "/usr/local/bin/niflheim-install-cleanup")
+        self.assertEqual((inst.OS_NAME, inst.OS_ID), ("LykanOS", "lykanos"), "os-release's name (nothing to drop)")
+        self.assertEqual(inst.SFS, "/run/archiso/bootmnt/lykanos/x86_64/airootfs.sfs")
+        self.assertEqual((inst.TARGET, inst.MAPPER), ("/mnt/lykanos-install", "lykanos-root"))
+        self.assertEqual(inst.CLEANUP, "/usr/local/bin/lykanos-install-cleanup")
         self.assertIsNone(inst.FINISH, "only absolute paths")
         self.assertIsNone(inst.BOOT_THEME, "no '..'")
         self.assertEqual(inst.KERNEL_OPTIONS, ["quiet", "splash"])
         self.assertEqual(inst.GROUPS, ["users", "wheel"])
         self.assertEqual(inst.MIN_BYTES, 40 * 1024**3)
         self.assertEqual(inst.FIRST_LOGIN_FILE, "/var/lib/n/first.json")
-        self.assertEqual(inst.GRUB_DEFAULTS["GRUB_DISTRIBUTOR"], "Niflheim")
+        self.assertEqual(inst.GRUB_DEFAULTS["GRUB_DISTRIBUTOR"], "LykanOS")
+        inst.configure({}, {"NAME": "Labyrinth OS", "ID": "labyrinth"})
+        self.assertEqual(inst.OS_NAME, "Labyrinth", "os-release's name without the ' OS'")
         inst.configure({"name": "Labyrinth", "medium": "/run/archiso/bootmnt/lab/x86_64/airootfs.sfs"}, {"NAME": "Labyrinth OS", "ID": "labyrinth"})
         self.assertEqual((inst.OS_NAME, inst.SFS), ("Labyrinth", "/run/archiso/bootmnt/lab/x86_64/airootfs.sfs"))
 
