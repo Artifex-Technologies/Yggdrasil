@@ -46,6 +46,11 @@ enum TEvent {
 }
 
 /// Whether `dest` is on the same drive as `src` (a move there is just a rename, not a copy and a delete).
+/// Clipboard text as compared: line endings and trailing blank lines do not count.
+fn same_text(t: &str) -> String {
+    t.replace("\r\n", "\n").trim_end().to_string()
+}
+
 /// Files as the system clipboard carries them between file managers: one file:// address per line (text/uri-list form).
 fn uri_list(paths: &[PathBuf]) -> String {
     use std::os::unix::ffi::OsStrExt;
@@ -2027,17 +2032,27 @@ impl App {
                 dnd::DndEvent::Hover(p) => self.ext_hover = Some(p),
                 dnd::DndEvent::Leave => self.ext_hover = None,
                 dnd::DndEvent::Drop { paths, at, moved } => {
+                    if std::env::var_os("MINOS_DEBUG").is_some() {
+                        eprintln!("minos: {} item(s) dropped here ({})", paths.len(), if moved { "move" } else { "copy" });
+                    }
                     self.ext_hover = None;
                     dropped.push((paths, at, moved));
                 }
                 dnd::DndEvent::Finished => dnd.finished(),
             }
         }
-        // The pointer has left the window with files in hand: hand them to the compositor.
+        // Files in hand reaching the window's edge: hand them to the compositor, so they can go to another window (another
+        // Minos too) or program. While still inside: a drag may only start while this window holds the pointer, and on
+        // Hyprland that ends the moment the pointer leaves it (KWin, where this was first built, still allowed it after;
+        // 2026-11-08 dragging between Minos windows did nothing). A drop back on this window arrives as a drop like any other.
         if !dnd.dragging_out() && egui::DragAndDrop::has_payload_of_type::<DragPaths>(ctx) && dnd.can_start() {
-            let outside = ctx.input(|i| i.pointer.latest_pos()).map(|p| !ctx.content_rect().contains(p)).unwrap_or(true);
-            if outside {
+            const EDGE: f32 = 14.0;
+            let at_edge = ctx.input(|i| i.pointer.latest_pos()).map(|p| !ctx.content_rect().shrink(EDGE).contains(p)).unwrap_or(true);
+            if at_edge {
                 if let Some(p) = egui::DragAndDrop::payload::<DragPaths>(ctx) {
+                    if std::env::var_os("MINOS_DEBUG").is_some() {
+                        eprintln!("minos: dragging {} item(s) out of the window", p.0.len());
+                    }
                     dnd.start_drag(p.0.clone());
                     egui::DragAndDrop::clear_payload(ctx);
                 }
@@ -2057,6 +2072,15 @@ impl App {
             let dest = rows.iter().find(|(r, _)| r.contains(pt)).map(|(_, p)| p.clone()).unwrap_or_else(|| self.panes[pane].tabs[self.panes[pane].active].dir());
             if places::is_virtual(&dest) || archive::split(&dest).is_some() {
                 self.status = "Drop on a drive or a folder".into();
+                continue;
+            }
+            // dropped back where they came from (a drag can leave this window and return): nothing to do
+            let paths: Vec<PathBuf> = paths.into_iter().filter(|p| p.parent() != Some(dest.as_path())).collect();
+            if paths.is_empty() {
+                continue;
+            }
+            if paths.iter().any(|p| dest.starts_with(p)) {
+                self.status = "A folder cannot go into itself".into();
                 continue;
             }
             let mv = moved && same_drive(paths.first(), &dest);
@@ -3523,7 +3547,9 @@ impl eframe::App for App {
             if let Some(text) = paste_req {
                 match text {
                     // another program's files (or text) since Minos's own copy
-                    Some(t) if self.clip_text.as_deref() != Some(t.as_str()) => {
+                    // compared without line endings: Minos writes \r\n (text/uri-list), egui hands \n back, and a cut pasted
+                    // with Ctrl+V was taken for another program's files and copied instead of moved (2026-11-08)
+                    Some(t) if self.clip_text.as_deref().map(same_text) != Some(same_text(&t)) => {
                         let paths = paths_from_clipboard(&t);
                         if paths.is_empty() {
                             self.status = "The clipboard holds text, not files".into();
@@ -4097,6 +4123,7 @@ mod clipboard_tests {
         // GNOME's form, and plain paths
         assert_eq!(paths_from_clipboard(&format!("copy\nfile://{}", a.display().to_string().replace(' ', "%20"))), vec![a.clone()]);
         assert_eq!(paths_from_clipboard(&format!("{}\n", b.display())), vec![b.clone()]);
+        assert_eq!(same_text(&text), same_text(&text.replace("\r\n", "\n")), "Minos's own list comes back with \\n only");
         // ordinary text is not a list of files
         assert!(paths_from_clipboard("hello world").is_empty());
         assert!(paths_from_clipboard("file:///no/such/file").is_empty());
