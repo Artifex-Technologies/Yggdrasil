@@ -1120,11 +1120,17 @@ fn breadcrumb(ui: &mut egui::Ui, pal: &Palette, t: &mut TabView, pi: usize, widt
     if t.editing {
         let inner = rect.shrink2(vec2(8.0, 3.0));
         let mut child = ui.new_child(UiBuilder::new().max_rect(inner).layout(Layout::left_to_right(Align::Center)));
-        let r = child.add(egui::TextEdit::singleline(&mut t.address).frame(egui::Frame::NONE).desired_width(inner.width()));
+        let id = egui::Id::new(("minos-address", pi));
         if t.edit_fresh {
-            r.request_focus();
+            // the whole path selected, ready to copy or type over; focus first, or egui drops the selection (see inline_rename)
+            let mut state = egui::TextEdit::load_state(child.ctx(), id).unwrap_or_default();
+            let all = egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(t.address.chars().count()));
+            state.cursor.set_char_range(Some(all));
+            state.store(child.ctx(), id);
+            child.ctx().memory_mut(|m| m.request_focus(id));
             t.edit_fresh = false;
         }
+        let r = child.add(egui::TextEdit::singleline(&mut t.address).id(id).frame(egui::Frame::NONE).desired_width(inner.width()));
         let (enter, esc) = ui.input(|i| (i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Escape)));
         if r.lost_focus() || esc {
             if enter && !esc {
