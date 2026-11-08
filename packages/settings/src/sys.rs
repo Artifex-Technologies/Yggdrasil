@@ -648,7 +648,7 @@ pub fn set_tiling(name: &str, on: bool) -> Result<(), String> {
 
 // ---------------------------------------------------------------- Appearance
 
-pub const ACCENTS: [(&str, [u8; 3]); 9] = [
+pub const ACCENTS: [(&str, [u8; 3]); 10] = [
     ("Purple", [124, 84, 214]),
     ("Blue", [61, 132, 245]),
     ("Teal", [38, 162, 158]),
@@ -656,6 +656,8 @@ pub const ACCENTS: [(&str, [u8; 3]); 9] = [
     ("Yellow", [230, 176, 30]),
     ("Orange", [240, 120, 40]),
     ("Red", [224, 60, 70]),
+    // Rosewood #65000b (2026-11-07), BlackArch's kind of deep red, beside LykanOS's teal; on a dark style its text is lifted
+    ("Rosewood", [101, 0, 11]),
     ("Pink", [220, 90, 160]),
     ("White", [255, 255, 255]),
 ];

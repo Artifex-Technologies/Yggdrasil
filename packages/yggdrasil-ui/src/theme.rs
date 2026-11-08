@@ -49,11 +49,24 @@ pub fn palette_for(dark: bool, accent: Option<[u8; 3]>) -> Palette {
     let mut p = base_palette(dark);
     if let Some([r, g, b]) = accent {
         let a = Color32::from_rgb(r, g, b);
-        p.accent = a;
+        // the accent is also text and lines: one too dark to read on the dark style (Rosewood #65000b) is lifted, same hue;
+        // the tab and selection colours keep the real one
+        p.accent = if dark { readable_on_dark(a) } else { a };
         p.tab_active = mix(p.bg, a, if dark { 0.55 } else { 0.40 });
         p.select = mix(p.bg, a, if dark { 0.28 } else { 0.30 });
     }
     p
+}
+
+/// A colour whose brightest channel is under 150 is scaled up until it is 176 (hue kept), so it reads on the dark style.
+pub fn readable_on_dark(c: Color32) -> Color32 {
+    let m = c.r().max(c.g()).max(c.b());
+    if m >= 150 || m == 0 {
+        return c;
+    }
+    let k = 176.0 / m as f32;
+    let f = |x: u8| (x as f32 * k).round().min(255.0) as u8;
+    Color32::from_rgb(f(c.r()), f(c.g()), f(c.b()))
 }
 
 fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
@@ -210,6 +223,17 @@ pub fn apply_opacity(ctx: &egui::Context, dark: bool, accent: Option<[u8; 3]>, p
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_very_dark_accent_is_lifted_for_text_on_dark() {
+        let rosewood = Color32::from_rgb(101, 0, 11);
+        let p = palette_for(true, Some([101, 0, 11]));
+        assert_eq!(p.accent, Color32::from_rgb(176, 0, 19), "same hue, readable");
+        assert_eq!(palette_for(false, Some([101, 0, 11])).accent, rosewood, "the light style keeps it");
+        assert_eq!(readable_on_dark(Color32::from_rgb(124, 84, 214)), Color32::from_rgb(124, 84, 214), "bright enough already");
+        assert_eq!(readable_on_dark(Color32::BLACK), Color32::BLACK);
+    }
+
     use super::*;
 
     #[test]
