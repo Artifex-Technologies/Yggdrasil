@@ -41,7 +41,7 @@ if [[ -z $mode ]]; then
 fi
 [[ -n $shape ]] || shape=$(cat "${XDG_CONFIG_HOME:-$HOME/.config}/labyrinth/minos-icon-shape" 2>/dev/null || echo tile)
 [[ $shape == plain ]] || shape=tile
-pack=$(ini "$CONF/kdeglobals" Icons Theme)
+pack=$(ini "$CONF/kdeglobals" Icons Theme || true)   # a new account has no kdeglobals (the autostart failed there, 2026-11-08)
 [[ -n $pack ]] || pack=Liki
 
 IFS=, read -r r g b <<<"$accent"
