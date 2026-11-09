@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use wayland_client::globals::GlobalList;
 use wayland_client::protocol::{wl_buffer, wl_compositor, wl_output, wl_region, wl_shm, wl_shm_pool, wl_surface};
-use wayland_client::{Connection, Dispatch, QueueHandle};
+use wayland_client::{Connection, Dispatch, Proxy, QueueHandle};
 use wayland_protocols::wp::viewporter::client::{wp_viewport::WpViewport, wp_viewporter::WpViewporter};
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::{Layer, ZwlrLayerShellV1};
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::{self, Anchor, KeyboardInteractivity, ZwlrLayerSurfaceV1};
@@ -22,7 +22,22 @@ struct Overlay {
     wl: wl_surface::WlSurface,
     layer: ZwlrLayerSurfaceV1,
     viewport: WpViewport,
+    /// The screen it covers, bound for this overlay (the binding goes with it).
+    output: wl_output::WlOutput,
     configured: bool,
+}
+
+impl Drop for Overlay {
+    /// Dropping the proxies alone sends nothing, and each dimming bound every screen again: the viewport and the layer go before
+    /// their surface, then the screen's binding is given back (wl_output has `release` from version 3).
+    fn drop(&mut self) {
+        self.viewport.destroy();
+        self.layer.destroy();
+        self.wl.destroy();
+        if self.output.version() >= 3 {
+            self.output.release();
+        }
+    }
 }
 
 pub struct Dimmer {
@@ -81,9 +96,9 @@ impl Dimmer {
     /// Fade the screens down to `alpha` opacity.
     pub fn show(&mut self, globals: &GlobalList, qh: &QueueHandle<App>, alpha: f32) {
         if self.overlays.is_empty() {
-            let outputs: Vec<u32> = globals.contents().with_list(|l| l.iter().filter(|g| g.interface == "wl_output").map(|g| g.name).collect());
-            for name in outputs {
-                let out = globals.registry().bind::<wl_output::WlOutput, _, _>(name, 1, qh, ());
+            let outputs: Vec<(u32, u32)> = globals.contents().with_list(|l| l.iter().filter(|g| g.interface == "wl_output").map(|g| (g.name, g.version)).collect());
+            for (name, version) in outputs {
+                let out = globals.registry().bind::<wl_output::WlOutput, _, _>(name, version.clamp(1, 4), qh, ());
                 let wl = self.compositor.create_surface(qh, ());
                 let id = self.next_id;
                 self.next_id += 1;
@@ -98,7 +113,7 @@ impl Dimmer {
                 region.destroy();
                 let viewport = self.viewporter.get_viewport(&wl, qh, ());
                 wl.commit();
-                self.overlays.push(Overlay { id, wl, layer, viewport, configured: false });
+                self.overlays.push(Overlay { id, wl, layer, viewport, output: out, configured: false });
             }
         }
         self.fade(alpha, FADE_IN);
@@ -130,10 +145,7 @@ impl Dimmer {
 
     pub fn closed(&mut self, id: u32) {
         if let Some(i) = self.overlays.iter().position(|o| o.id == id) {
-            let o = self.overlays.remove(i);
-            o.viewport.destroy();
-            o.layer.destroy();
-            o.wl.destroy();
+            self.overlays.remove(i); // Overlay's Drop destroys it
         }
     }
 
@@ -148,11 +160,7 @@ impl Dimmer {
         }
         self.paint(qh);
         if !self.shown && self.alpha <= 0.001 {
-            for o in self.overlays.drain(..) {
-                o.viewport.destroy();
-                o.layer.destroy();
-                o.wl.destroy();
-            }
+            self.overlays.clear(); // Overlay's Drop destroys each
         }
     }
 
@@ -209,5 +217,59 @@ mod tests {
         assert!((alpha_for(30) - 0.7).abs() < 1e-6);
         assert!((alpha_for(100) - 0.1).abs() < 1e-6, "never fully bright: capped at 90");
         assert!((alpha_for(0) - 0.9).abs() < 1e-6, "never fully black");
+    }
+
+    // the test binds globals by hand, without the registry's list
+    wayland_client::delegate_noop!(crate::App: ignore wayland_client::protocol::wl_registry::WlRegistry);
+
+    /// Where in `sent` (object id, opcode) the request `name` on `p` is; it must be there.
+    fn at(sent: &[(u32, u16)], p: &impl wayland_client::Proxy, name: &str) -> usize {
+        let op = p.id().interface().requests.iter().position(|m| m.name == name).unwrap() as u16;
+        sent.iter().position(|r| *r == (p.id().protocol_id(), op)).unwrap_or_else(|| panic!("{} {name} was not sent", p.id()))
+    }
+
+    /// An overlay that goes takes its viewport, layer and surface with it, in that order, and gives back its screen. No compositor:
+    /// what this side of a socket pair wrote is read back from the other side.
+    #[test]
+    fn an_overlay_is_destroyed_in_order_and_gives_back_its_screen() {
+        use super::*;
+        use crate::App;
+        use std::io::Read;
+        use wayland_client::protocol::wl_registry::WlRegistry;
+
+        let (ours, mut peer) = std::os::unix::net::UnixStream::pair().unwrap();
+        let conn = Connection::from_socket(ours).unwrap();
+        let queue = conn.new_event_queue::<App>();
+        let qh = queue.handle();
+        let registry: WlRegistry = conn.display().get_registry(&qh, ());
+        let compositor: wl_compositor::WlCompositor = registry.bind(1, 4, &qh, ());
+        let layer_shell: ZwlrLayerShellV1 = registry.bind(2, 4, &qh, ());
+        let viewporter: WpViewporter = registry.bind(3, 1, &qh, ());
+        let output: wl_output::WlOutput = registry.bind(4, 4, &qh, ());
+        let wl = compositor.create_surface(&qh, ());
+        let layer = layer_shell.get_layer_surface(&wl, Some(&output), Layer::Overlay, "test".into(), &qh, 1);
+        let viewport = viewporter.get_viewport(&wl, &qh, ());
+        drop(Overlay { id: 1, wl: wl.clone(), layer: layer.clone(), viewport: viewport.clone(), output: output.clone(), configured: true });
+        conn.flush().unwrap();
+        peer.set_nonblocking(true).unwrap();
+        let mut bytes = vec![];
+        let mut chunk = [0u8; 4096];
+        while let Ok(n) = peer.read(&mut chunk) {
+            if n == 0 {
+                break;
+            }
+            bytes.extend_from_slice(&chunk[..n]);
+        }
+        let mut sent = vec![];
+        let mut i = 0;
+        while i + 8 <= bytes.len() {
+            let word = u32::from_ne_bytes(bytes[i + 4..i + 8].try_into().unwrap());
+            sent.push((u32::from_ne_bytes(bytes[i..i + 4].try_into().unwrap()), (word & 0xffff) as u16));
+            i += ((word >> 16) as usize).max(8);
+        }
+        let surface = at(&sent, &wl, "destroy");
+        assert!(at(&sent, &viewport, "destroy") < surface, "the viewport goes before its surface");
+        assert!(at(&sent, &layer, "destroy") < surface, "the layer goes before its surface");
+        at(&sent, &output, "release");
     }
 }
