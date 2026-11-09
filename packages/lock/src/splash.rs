@@ -245,6 +245,18 @@ fn new_column(rng: &mut Rng, h: f32, glyphs: usize, start: bool) -> Column {
     Column { chars: (0..len).map(|_| rng.below(glyphs)).collect(), head: head.round(), speed: (2 + rng.below(6)) as f32 }
 }
 
+/// One of a screen's two buffers, and whether the compositor still has it. Destroyed when dropped: when the screen changes size
+/// both are replaced, and a proxy that is only dropped leaves the buffer, and its mapping of the memory, in the compositor (the
+/// screensaver can run for hours). Destroying one the compositor still shows is allowed, since its memory is never written again;
+/// it also stops a late release of the old buffer from marking the new one at its place as free.
+struct Buf(WlBuffer, bool);
+
+impl Drop for Buf {
+    fn drop(&mut self) {
+        self.0.destroy();
+    }
+}
+
 struct Screen {
     output: WlOutput,
     surface: WlSurface,
@@ -252,7 +264,7 @@ struct Screen {
     size: (u32, u32),
     configured: bool,
     /// Two buffers in one shared-memory file: one shown, one drawn into.
-    bufs: Vec<(WlBuffer, bool)>,
+    bufs: Vec<Buf>,
     map: Option<MmapMut>,
     pix: Option<Pixmap>,
     cols: Vec<Column>,
@@ -328,7 +340,7 @@ impl Dispatch<ZwlrLayerSurfaceV1, usize> for App {
                 if let Some(s) = app.screens.get_mut(i) {
                     if (width, height) != s.size && width > 0 && height > 0 {
                         s.size = (width, height);
-                        s.bufs.clear();
+                        s.bufs.clear(); // each destroyed (Buf), with the memory they were in
                         s.map = None;
                         s.pix = None;
                         s.cols.clear();
@@ -360,7 +372,7 @@ impl App {
         let file = std::fs::File::from(fd);
         let Ok(map) = (unsafe { MmapMut::map_mut(&file) }) else { return };
         let pool = self.shm.create_pool(file.as_fd(), (one * 2) as i32, qh, ());
-        let bufs = (0..2).map(|k| (pool.create_buffer((k * one) as i32, w as i32, h as i32, stride as i32, wl_shm::Format::Argb8888, qh, (i, k)), false)).collect();
+        let bufs = (0..2).map(|k| Buf(pool.create_buffer((k * one) as i32, w as i32, h as i32, stride as i32, wl_shm::Format::Argb8888, qh, (i, k)), false)).collect();
         pool.destroy();
         let glyphs = GLYPHS.chars().count();
         let n = (w as f32 / CELL_W) as usize + 1;

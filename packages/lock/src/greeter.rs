@@ -31,7 +31,7 @@ use wayland_client::protocol::{
     wl_shm_pool::WlShmPool,
     wl_surface::WlSurface,
 };
-use wayland_client::{delegate_noop, Connection, Dispatch, QueueHandle, WEnum};
+use wayland_client::{delegate_noop, Connection, Dispatch, Proxy, QueueHandle, WEnum};
 use wayland_protocols::xdg::shell::client::{
     xdg_surface::{self, XdgSurface},
     xdg_toplevel::{self, XdgToplevel},
@@ -55,6 +55,9 @@ struct App {
     size: (u32, u32),
     configured: bool,
     xkb: Option<xkb::State>,
+    keyboard: Option<WlKeyboard>,
+    /// Pictures handed to the compositor that it has not given back yet (see MAX_IN_FLIGHT).
+    in_flight: u32,
     users: Vec<User>,
     sel: usize,
     lock_state: Lock,
@@ -81,10 +84,15 @@ delegate_noop!(App: ignore WlShm);
 delegate_noop!(App: ignore WlShmPool);
 delegate_noop!(App: ignore WlSurface);
 
+/// A new picture every second, each in a buffer of its own that is destroyed when the compositor gives it back. One that does not
+/// give them back (a screen that is off) would gather a screenful a second; with this many still out, a frame is left out.
+const MAX_IN_FLIGHT: u32 = 3;
+
 impl Dispatch<wl_buffer::WlBuffer, ()> for App {
-    fn event(_: &mut Self, b: &WlBuffer, e: wl_buffer::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+    fn event(app: &mut Self, b: &WlBuffer, e: wl_buffer::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
         if let wl_buffer::Event::Release = e {
             b.destroy();
+            app.in_flight = app.in_flight.saturating_sub(1);
         }
     }
 }
@@ -119,10 +127,18 @@ impl Dispatch<XdgToplevel, ()> for App {
 }
 
 impl Dispatch<WlSeat, ()> for App {
-    fn event(_: &mut Self, seat: &WlSeat, e: wl_seat::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>) {
+    fn event(app: &mut Self, seat: &WlSeat, e: wl_seat::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>) {
         if let wl_seat::Event::Capabilities { capabilities: WEnum::Value(c) } = e {
+            // one keyboard at a time: the capabilities come again when any device comes or goes, and a second keyboard object
+            // would get every key too (the password typed twice)
             if c.contains(wl_seat::Capability::Keyboard) {
-                seat.get_keyboard(qh, ());
+                if app.keyboard.is_none() {
+                    app.keyboard = Some(seat.get_keyboard(qh, ()));
+                }
+            } else if let Some(k) = app.keyboard.take() {
+                if seat.version() >= 3 {
+                    k.release();
+                }
             }
         }
     }
@@ -232,7 +248,7 @@ impl App {
 
     fn draw(&mut self) {
         let (w, h) = self.size;
-        if !self.configured || w == 0 || h == 0 {
+        if !self.configured || w == 0 || h == 0 || self.in_flight >= MAX_IN_FLIGHT {
             return;
         }
         let Some(mut pix) = Pixmap::new(w, h) else { return };
@@ -281,6 +297,7 @@ impl App {
         let pool = self.shm.create_pool(file.as_fd(), size as i32, &self.qh, ());
         let buf = pool.create_buffer(0, w as i32, h as i32, stride as i32, wl_shm::Format::Argb8888, &self.qh, ());
         pool.destroy();
+        self.in_flight += 1;
         self.surface.attach(Some(&buf), 0, 0);
         self.surface.damage_buffer(0, 0, w as i32, h as i32);
         self.surface.commit();
@@ -475,6 +492,8 @@ fn main() {
         size: (1280, 720),
         configured: false,
         xkb: None,
+        keyboard: None,
+        in_flight: 0,
         users,
         sel: 0,
         lock_state: Lock::default(),

@@ -33,7 +33,7 @@ use wayland_client::protocol::{
     wl_shm_pool::WlShmPool,
     wl_surface::WlSurface,
 };
-use wayland_client::{delegate_noop, Connection, Dispatch, QueueHandle, WEnum};
+use wayland_client::{delegate_noop, Connection, Dispatch, Proxy, QueueHandle, WEnum};
 use wayland_protocols::ext::session_lock::v1::client::{
     ext_session_lock_manager_v1::ExtSessionLockManagerV1,
     ext_session_lock_surface_v1::{self, ExtSessionLockSurfaceV1},
@@ -49,7 +49,14 @@ struct LockSurf {
     ls: ExtSessionLockSurfaceV1,
     w: u32,
     h: u32,
+    /// Pictures handed to the compositor that it has not given back yet.
+    in_flight: u32,
 }
+
+/// A new picture every second, each in a buffer of its own that is destroyed when the compositor gives it back. One that does not
+/// give them back (a screen switched off may draw nothing until it is on again) would gather a screenful a second all night;
+/// with this many still out, a frame is left out (the next second draws again).
+const MAX_IN_FLIGHT: u32 = 3;
 
 struct App {
     qh: QueueHandle<App>,
@@ -60,6 +67,7 @@ struct App {
     locked: bool,
     lock_state: Lock,
     xkb: Option<xkb::State>,
+    keyboard: Option<WlKeyboard>,
     auth: Box<dyn Authenticator>,
     user: String,
     fonts: draw::Fonts,
@@ -85,10 +93,13 @@ delegate_noop!(App: ignore WlSurface);
 delegate_noop!(App: ignore WlOutput);
 delegate_noop!(App: ExtSessionLockManagerV1);
 
-impl Dispatch<wl_buffer::WlBuffer, ()> for App {
-    fn event(_: &mut Self, b: &WlBuffer, e: wl_buffer::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+impl Dispatch<wl_buffer::WlBuffer, usize> for App {
+    fn event(app: &mut Self, b: &WlBuffer, e: wl_buffer::Event, idx: &usize, _: &Connection, _: &QueueHandle<Self>) {
         if let wl_buffer::Event::Release = e {
             b.destroy(); // each frame has its own buffer: it is done with once the compositor lets go
+            if let Some(s) = app.surfaces.get_mut(*idx) {
+                s.in_flight = s.in_flight.saturating_sub(1);
+            }
         }
     }
 }
@@ -128,10 +139,18 @@ impl Dispatch<ExtSessionLockSurfaceV1, usize> for App {
 }
 
 impl Dispatch<WlSeat, ()> for App {
-    fn event(_: &mut Self, seat: &WlSeat, e: wl_seat::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>) {
+    fn event(app: &mut Self, seat: &WlSeat, e: wl_seat::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>) {
         if let wl_seat::Event::Capabilities { capabilities: WEnum::Value(c) } = e {
+            // One keyboard at a time. The compositor says the capabilities again when any device comes or goes (a mouse plugged in
+            // while locked): a second keyboard object would get every key too, and the password would be typed twice.
             if c.contains(wl_seat::Capability::Keyboard) {
-                seat.get_keyboard(qh, ());
+                if app.keyboard.is_none() {
+                    app.keyboard = Some(seat.get_keyboard(qh, ()));
+                }
+            } else if let Some(k) = app.keyboard.take() {
+                if seat.version() >= 3 {
+                    k.release();
+                }
             }
         }
     }
@@ -206,7 +225,7 @@ impl App {
 
     fn draw(&mut self, idx: usize) {
         let (w, h) = (self.surfaces[idx].w, self.surfaces[idx].h);
-        if w == 0 || h == 0 {
+        if w == 0 || h == 0 || self.surfaces[idx].in_flight >= MAX_IN_FLIGHT {
             return;
         }
         let Some(mut pix) = Pixmap::new(w, h) else { return };
@@ -228,9 +247,10 @@ impl App {
             dst[3] = src[3];
         }
         let pool = self.shm.create_pool(file.as_fd(), size as i32, &self.qh, ());
-        let buf = pool.create_buffer(0, w as i32, h as i32, stride as i32, wl_shm::Format::Argb8888, &self.qh, ());
+        let buf = pool.create_buffer(0, w as i32, h as i32, stride as i32, wl_shm::Format::Argb8888, &self.qh, idx);
         pool.destroy();
-        let s = &self.surfaces[idx];
+        let s = &mut self.surfaces[idx];
+        s.in_flight += 1;
         s.wl.attach(Some(&buf), 0, 0);
         s.wl.damage_buffer(0, 0, w as i32, h as i32);
         s.wl.commit();
@@ -333,11 +353,11 @@ fn main() {
 
     // Lock first, then cover every output with a lock surface (the compositor says "locked" once they are shown).
     let lock = manager.lock(&qh, ());
-    let mut app = App { qh: qh.clone(), conn: conn.clone(), shm, lock: lock.clone(), surfaces: vec![], locked: false, lock_state: Lock::default(), xkb: None, auth: authenticator, user: user_name(), fonts, design: design::chosen(), wallpaper: design::wallpaper_path().and_then(|p| design::load_picture(&p)), avatar: design::avatar_path().and_then(|p| design::load_picture(&p)), walls: Default::default(), done: None, #[cfg(feature = "test-auth")] test_keys: std::env::var("YGGDRASIL_LOCK_TEST_KEYS").ok().map(|k| (Instant::now(), k)) };
+    let mut app = App { qh: qh.clone(), conn: conn.clone(), shm, lock: lock.clone(), surfaces: vec![], locked: false, lock_state: Lock::default(), xkb: None, keyboard: None, auth: authenticator, user: user_name(), fonts, design: design::chosen(), wallpaper: design::wallpaper_path().and_then(|p| design::load_picture(&p)), avatar: design::avatar_path().and_then(|p| design::load_picture(&p)), walls: Default::default(), done: None, #[cfg(feature = "test-auth")] test_keys: std::env::var("YGGDRASIL_LOCK_TEST_KEYS").ok().map(|k| (Instant::now(), k)) };
     for (i, out) in outputs.iter().enumerate() {
         let wl = compositor.create_surface(&qh, ());
         let ls = lock.get_lock_surface(&wl, out, &qh, i);
-        app.surfaces.push(LockSurf { wl, ls, w: 0, h: 0 });
+        app.surfaces.push(LockSurf { wl, ls, w: 0, h: 0, in_flight: 0 });
     }
     if app.surfaces.is_empty() {
         lock.unlock_and_destroy();
