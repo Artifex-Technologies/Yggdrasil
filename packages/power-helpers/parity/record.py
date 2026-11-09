@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """record: a read-only sample of this computer as a fake tree for --dry-run --root (and py_dryrun.py): the fan controller's
 and the processor's hwmon readings, the graphics card through NVML get calls only (ROOT/nvml.json), the helpers' settings and
-state files, the power limits, turbo and boot id. Nothing is written outside OUT, nothing is set on any device.
+state files, the power limits, turbo and boot id; for powerlimit the processor's cpufreq policies, the power-mode limits, the
+graphics card unlock's power hold, and the answers of busctl (the power mode) and nvidia-smi --query-gpu (the card's power
+limits) in ROOT/commands.json. Nothing is written outside OUT, nothing is set on any device.
 
 The MSRs need root to read, so the sample's /dev/cpu/N/msr files are made from what the tune service last published
 (/run/yggdrasil/tune.json); without it they are left out.
@@ -14,6 +16,7 @@ import json
 import os
 import shutil
 import struct
+import subprocess
 import sys
 
 
@@ -29,6 +32,15 @@ def copy(src, root):
     with open(dst, "wb") as f:
         f.write(data)
     return True
+
+
+def asked(cmd):
+    """A command that only asks, as commands.json records its answer: {"rc", "out"}, or null when it is not there."""
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return {"rc": p.returncode, "out": p.stdout}
 
 
 def nvml():
@@ -95,6 +107,19 @@ def main(argv):
     for p in glob.glob("/sys/class/powercap/intel-rapl:0/*"):
         if os.path.basename(p) in ("constraint_0_power_limit_uw", "constraint_1_power_limit_uw", "max_energy_range_uj", "energy_uj"):
             copy(p, root)
+    # powerlimit: the policies, the limits (both places), the hold, and what busctl and nvidia-smi answer (questions only)
+    for pol in glob.glob("/sys/devices/system/cpu/cpufreq/policy*"):
+        for f in ("cpuinfo_min_freq", "cpuinfo_max_freq", "scaling_max_freq"):
+            copy(os.path.join(pol, f), root)
+    for p in ["/etc/yggdrasil/power-limits.json", "/etc/labyrinth/power-limits.json", "/var/lib/yggdrasil/gpu-unlock/power-hold"]:
+        copy(p, root)
+    answers = {}
+    for name, path in (("org.freedesktop.UPower.PowerProfiles", "/org/freedesktop/UPower/PowerProfiles"), ("net.hadess.PowerProfiles", "/net/hadess/PowerProfiles")):
+        answers[f"busctl get-property {name}"] = asked(["busctl", "get-property", name, path, name, "ActiveProfile"])
+    answers["nvidia-smi --query-gpu"] = asked(["nvidia-smi", "--query-gpu=name,power.limit,power.default_limit,power.min_limit,power.max_limit",
+                                                "--format=csv,noheader,nounits"])
+    with open(os.path.join(root, "commands.json"), "w") as f:
+        json.dump(answers, f)
     try:
         with open(os.path.join(root, "nvml.json"), "w") as f:
             json.dump(nvml(), f)

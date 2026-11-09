@@ -295,8 +295,108 @@ def cases(work, samples):
             (f"{tag}: gpufan reset", "gpufan", same, ["reset"], None, None),
             (f"{tag}: tune get", "tune", same, ["get"], None, None),
             (f"{tag}: tune watch", "tune", same, ["watch"], 3, None),
+            (f"{tag}: powerlimit get", "powerlimit", same, ["get"], None, None),
+            (f"{tag}: powerlimit apply", "powerlimit", same, ["apply"], None, None),
+            (f"{tag}: powerlimit watch", "powerlimit", same, ["watch"], 4, None),
         ]
     return c
+
+
+# ---------------------------------------------------------------- the merged service against the helpers one by one
+
+LOOPS = {"tune": ["watch"], "casefan": ["run"], "gpufan": ["run"], "powerlimit": ["watch"]}
+PARTS = tuple(LOOPS)
+CARD_LIST = {"temp": [40, 60, 75, 73, 71, 70], "fans": [30, 30], "min": 24, "max": 100, "core": 0, "mem": 0, "max_core": 2100}
+CARD_STEADY = {"temp": 50, "fans": [30, 30], "min": 24, "max": 100, "core": 0, "mem": 0, "max_core": 2100}
+
+
+def all_tree(root, nvml=CARD_STEADY, case_cfg=PUMP_AND_FAN, gpu_cfg=CURVE, limits=None, mode="balanced", smi=RTX, cpro=True,
+             pkg_temp="53000", **tune):
+    """Every helper's inputs in one tree: tune's, casefan's, gpufan's and powerlimit's (one card for all, None: no driver)."""
+    tune_tree(root, **tune)
+    casefan_tree(root, cfg=case_cfg, cpro=cpro, pkg_temp=pkg_temp)
+    gpufan_tree(root, cfg=gpu_cfg)
+    powerlimit_tree(root, mode=mode, limits={"balanced": {"cpu": 80, "gpu": 200}, "performance": {"gpu": 300}} if limits is None else limits, smi=smi)
+    if nvml is None:
+        os.remove(os.path.join(root, "nvml.json"))
+    else:
+        files(root, "/", {"nvml.json": nvml})
+
+
+def merged_cases(samples):
+    """(name, tree builder, the parts switched on, steps, through --parts instead of switch files)"""
+    at = lambda **k: (lambda r: all_tree(r, **k))
+    xid = "NVRM: Xid (PCI:0000:01:00): 13, pid=4242, Graphics Exception\n"
+    c = [
+        ("all four, the tests' trees", at(), PARTS, 20, False),
+        ("all four, 45 rounds (reapplies at 30 s)", at(), PARTS, 45, False),
+        ("all four, the card's readings run out (casefan and gpufan fail, tune and powerlimit go on)", at(nvml=CARD_LIST), PARTS, 20, False),
+        ("all four, no NVIDIA driver", at(nvml=None, smi=None), PARTS, 10, False),
+        ("all four, init fails", at(nvml={**CARD_STEADY, "fail": {"nvmlInit_v2": 9}}), PARTS, 10, False),
+        ("all four, the processor hot", at(pkg_temp="95000"), PARTS, 6, False),
+        ("all four, no processor temperature", at(pkg_temp="hot"), PARTS, 6, False),
+        ("all four, no Commander Pro", at(cpro=False), PARTS, 6, False),
+        ("all four, gpufan on auto ends at once", at(gpu_cfg={"mode": "auto"}), PARTS, 6, False),
+        ("all four, the tuning guard after a freeze, kept multipliers",
+         at(conf={"cpu": {"ratios": [52] * 8}}, tuned={"boot_id": "boot-0", "since": "2026-11-08 22:10"}), PARTS, 6, False),
+        ("all four, an Xid with the card's clocks kept", at(conf={"gpu": {"core": 150, "mem": 900, "cap": None}}, kmsg=xid), PARTS, 6, False),
+        ("all four, the power mode changes",
+         at(mode=["balanced"] * 3 + ["performance"] * 4 + ["power-saver"]), PARTS, 10, False),
+        ("tune and powerlimit only (the others switched off)", at(), ("tune", "powerlimit"), 8, False),
+        ("casefan alone", at(nvml=CARD_LIST), ("casefan",), 12, False),
+        ("named with --parts", at(), ("gpufan", "powerlimit"), 8, True),
+    ]
+    for i, s in enumerate(samples):
+        same = lambda r, s=s: shutil.copytree(s, r, symlinks=True, dirs_exist_ok=True)
+        c += [(f"sample {i + 1}: all four", same, PARTS, 40, False),
+              (f"sample {i + 1}: all four, gpufan on a curve", lambda r, s=s: (same(r), files(r, "/etc/yggdrasil", {"gpu-fan.json": CURVE})),
+               PARTS, 20, False)]
+    return c
+
+
+def rust_dry(args, helper, root, steps, cargs):
+    env = {k: v for k, v in os.environ.items() if k != "SERVICE_RESULT"}
+    cmd = [os.path.join(args.bin, helper), "--dry-run", "--root", root] + (["--steps", str(steps)] if steps else []) + cargs
+    p = subprocess.run(cmd, capture_output=True, text=True, timeout=120, env=env)
+    return normalize(p.stdout, root), normalize(p.stderr, root), p.returncode
+
+
+def tagged(text, tag):
+    return "".join(line[len(tag) + 3:] for line in text.splitlines(True) if line.startswith(f"[{tag}] "))
+
+
+def merged_case(args, case, work, n):
+    """The merged service's dry run, part by part, against each helper run on its own on the same tree, followed by what its
+    old unit's ExecStopPost ran (casefan reset, with "failed" after a failed run; gpufan reset)."""
+    name, build, on, steps, via_parts = case
+    root = os.path.join(work, f"merged{n}")
+    os.makedirs(root)
+    build(root)
+    root = os.path.realpath(root)
+    if not via_parts:
+        files(root, "/run/yggdrasil/power/on", {p: f"token-{p}" for p in on})
+    mo, me, mc = rust_dry(args, "power", root, steps, (["--parts", ",".join(on)] if via_parts else []) + ["run"])
+    exits = {m.group(1): int(m.group(2)) for m in re.finditer(r"^\[power\] (\w+) exit (-?\d+)$", mo, re.M)}
+    problems = []
+    for part in PARTS:
+        got = (tagged(mo, part), tagged(me, part), exits.get(part))
+        if part not in on:
+            if got != ("", "", None):
+                problems.append(f"{part} is switched off but ran")
+            continue
+        so, se, sc = rust_dry(args, part, root, steps, LOOPS[part])
+        if part in ("casefan", "gpufan"):
+            ro, rerr, _ = rust_dry(args, part, root, None, ["reset"] + (["failed"] if part == "casefan" and sc != 0 else []))
+            so, se = so + ro, se + rerr
+        if got != (so, se, sc):
+            problems.append(f"{part}:\n" + "".join(difflib.unified_diff((so + se + f"exit {sc}\n").splitlines(True),
+                                                                        (got[0] + got[1] + f"exit {got[2]}\n").splitlines(True),
+                                                                        f"{part} on its own", f"{part} in the merged service")))
+    stray = [line for line in (mo + me).splitlines() if not re.match(r"^\[(power|tune|casefan|gpufan|powerlimit)\] ", line)]
+    if stray or mc != 0:
+        problems.append(f"exit {mc}; lines of no part: {stray[:5]}")
+    counts = {p: tagged(mo, p).count("\n") for p in on}
+    return not problems, "\n".join(problems), counts
 
 
 # ---------------------------------------------------------------- running both
@@ -443,9 +543,17 @@ def main(argv):
         print(f"{'same' if not bad else 'DIFFERENT'}  casefan's loop over {total} temperature sequences x settings ({len(bad)} differ)")
         for si, qi, d in bad[:5]:
             print(f"  setting {si}, sequence {qi}:\n{d}")
+        msame = mdiff = 0
+        for n, case in enumerate(merged_cases([os.path.realpath(s) for s in args.sample])):
+            ok, detail, counts = merged_case(args, case, work, n)
+            msame += ok
+            mdiff += not ok
+            print(f"{'same' if ok else 'DIFFERENT'}  merged service: {case[0]}" + (f"  (lines: {counts})" if args.v else ""))
+            if not ok:
+                print(detail)
         print(f"\n{same} cases the same, {diff} different; help {'same' if not bad_help else 'different'}; "
-              f"{total - len(bad)}/{total} sequences the same")
-        return 0 if not diff and not bad and not bad_help else 1
+              f"{total - len(bad)}/{total} sequences the same; merged service: {msame} cases the same, {mdiff} different")
+        return 0 if not diff and not bad and not bad_help and not mdiff else 1
     finally:
         shutil.rmtree(work, ignore_errors=True)
 

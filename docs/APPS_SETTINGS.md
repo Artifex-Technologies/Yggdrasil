@@ -90,7 +90,8 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
   Graphics card (each with a reset icon left of its slider); choosing another mode shows and changes that mode's limits (my layout, 2026-10-27).
   While the graphics card unlock is armed or measured, `/var/lib/yggdrasil/gpu-unlock/power-hold` exists and no mode goes above
   the card's default watts (the modes' own limits stay saved and come back when the hold ends); `powerlimit get` reports it as
-  `gpu.hold` and the slider stops there.
+  `gpu.hold` and the slider stops there. Ported to Rust on 2026-11-09 with its tests and dry-run parity (below); the
+  package still installs the Python script until the switch to the merged service.
 - **Graphics card page** (built 2026-10-27, my design; `src/gpu.rs`): the Graphics card row's title opens it. An
   Afterburner-style panel for an NVIDIA card: a live readout (temperature, power against the limit, core and memory clocks,
   load, video memory, fans, and what is holding the clocks back) with the last two minutes as small graphs, each on its own
@@ -171,13 +172,15 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
     unguarded, since they cannot freeze anything. The processor's own values are read once per start of the computer.
   - **Checked on the i9-9900K and the 2080 Ti** with lower values only (multipliers down one, core -50 MHz) and back.
     Rust since 2026-11-09 (below). Tests: `packages/power-helpers/src/tune/tests.rs`.
-- **tune, casefan and gpufan in Rust** (2026-11-09, `packages/power-helpers`): the three root helpers above run all the
-  time (or while a fan curve is on) and were Python on a Rust desktop. The port keeps their interface so Settings and the
-  units do not change: commands, arguments, JSON (byte for byte), settings and state files, exit codes, log lines, and every
-  safety rule. The other helpers (account, powerlimit, bootscreen, gpuunlock, game-fix, gpu-run) stay Python for now.
-  - **Status:** the package installs the Rust binaries at the same `/usr/lib/yggdrasil/` paths (pkgrel 35). The Python
-    scripts and their tests are kept in `helpers/python/` until the Rust ones have run a while: to go back, install them
-    over the binaries (`install -m755 helpers/python/{tune,casefan,gpufan} /usr/lib/yggdrasil/`) and restart the services.
+- **tune, casefan, gpufan and powerlimit in Rust** (2026-11-09, `packages/power-helpers`): the four root helpers above run
+  all the time (gpufan while a fan curve is on) and were Python on a Rust desktop. The port keeps their interface so Settings
+  and the units do not change: commands, arguments, environment variables, JSON (byte for byte), settings and state files,
+  exit codes, log lines, and every safety rule. The other helpers (account, bootscreen, gpuunlock, game-fix, gpu-run) stay
+  Python for now.
+  - **Status:** the package installs the Rust tune, casefan and gpufan at the same `/usr/lib/yggdrasil/` paths (pkgrel 35).
+    The Python scripts and their tests are kept in `helpers/python/` until the Rust ones have run a while: to go back, install
+    them over the binaries (`install -m755 helpers/python/{tune,casefan,gpufan} /usr/lib/yggdrasil/`) and restart the
+    services. powerlimit's port is on main but not installed: it comes with the merged service (below).
   - **Light:** no crate but libc, no async runtime, one thread each; libnvidia-ml is opened at run time (dlopen), so
     without the NVIDIA driver they run and say so. `tune watch` reads the kernel's messages from `/dev/kmsg` instead of a
     `journalctl -k -f` child (journalctl only when /dev/kmsg cannot be opened; the service logs which one it reads).
@@ -188,15 +191,53 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
   - **Dry run:** every command takes `--dry-run` (each write is printed as `dry run: ...`, nothing is written: no sysfs, MSR,
     NVML set call, file, systemctl or logger), and with it `--root DIR` (every system path under DIR, the card from
     DIR/nvml.json: no hardware at all) and `--steps N` (N rounds of a service's loop on a virtual clock).
-  - **Parity:** the 44 cases of the Python tests are Rust tests with the same names and expectations.
+  - **Parity:** the 44 cases of the Python tests are Rust tests with the same names and expectations, and powerlimit's six
+    (`tests/test_settings_powerlimit.py`, and `test_gpuunlock.py`'s PowerHold, which tests powerlimit's hold).
     `parity/compare.py` runs the Rust helpers and the Python scripts (through `parity/py_dryrun.py`, which replaces only
     their outside) in dry runs on the same fake trees: the tests' fixtures, more cases around them, and samples of a real
-    computer from `parity/record.py` (read-only), plus casefan's loop over 1,216 temperature sequences. On 2026-11-09:
-    83 of 83 cases and all sequences the same.
+    computer from `parity/record.py` (read-only), plus casefan's loop over 1,216 temperature sequences. In a fake tree the
+    commands that only ask (busctl for the power mode, `nvidia-smi --query-gpu`) answer from `ROOT/commands.json`, which
+    record.py fills from this computer's answers. On 2026-11-09, with a sample of my PC: 120 of 120 cases (37 of them
+    powerlimit's) and all sequences the same.
   - **Different on purpose:** a setting whose "ports" is not an object crashed the Python casefan, leaving the ports at
     their last speed (its `reset` crashed too); the Rust one treats it as a failure: every port at 100 %, after a clean stop
     too, since which port is the pump cannot be told. The help text adds the dry-run paragraph. Python tracebacks become one
-    "helper: message" line, still exit code 1. `tune watch` logs where it reads the kernel's messages from.
+    "helper: message" line, still exit code 1. `tune watch` logs where it reads the kernel's messages from. powerlimit: an
+    infinite number from nvidia-smi (Python crashed on `round(inf)`) counts as no answer, like "[N/A]".
+- **One service, yggdrasil-power** (2026-11-09, `packages/power-helpers/src/power.rs`, `/usr/lib/yggdrasil/power`):
+  `nvmlInit` costs every process about 26 MB, and three always-on services paid it separately (tune, casefan, and gpufan
+  with a curve). yggdrasil-power runs the loops of tune watch, casefan run, gpufan run and powerlimit watch in one process,
+  one thread each (no async runtime), with the card opened once and shared (NVML is thread-safe; it is shut down when no
+  part holds it).
+  - **The old units are switches:** yggdrasil-tune, -casefan, -gpufan and -powerlimit stay, each a oneshot unit that is
+    bound to yggdrasil-power: its start runs `power on PART` (a token in `/run/yggdrasil/power/on/PART`, and it waits until
+    the service has the part), its stop `power off PART` (it waits for the part's clean stop). So `systemctl enable`,
+    `disable`, `start`, `stop`, `is-active` and the restart that `casefan set` and `gpufan set` run work by the old names, a
+    restart of yggdrasil-casefan is still a clean stop of the fans then a fresh read of the setting, and it touches no other
+    part (an alias of yggdrasil-power would have restarted tune too, which clears a trial, and `gpufan set auto`'s
+    `disable --now` would have stopped everything). yggdrasil-power has no [Install]; the switches pull it in, and it stops
+    when none is on. Settings, the polkit rules and the installer (which enables yggdrasil-powerlimit) do not change.
+  - **Each part's safety stays its own:** a part's loop that fails makes its old ExecStopPost's stop on its thread (casefan:
+    every port 100 %; gpufan: fans back to the card) and starts again after its old RestartSec, up to its old start limit
+    (casefan and gpufan 10 in 120 s; then it stays at its failure stop and its unit is stopped, so `is-active` says so); the
+    other parts go on. A panic is caught on the part's thread, which makes its failure stop; every other part makes its
+    failure stop too and the service ends with exit code 1. If casefan's loop stops moving for 20 s (stuck in NVML or a
+    driver), the supervisor, which never calls NVML, puts every Commander Pro port at 100 % through sysfs and ends the
+    service with exit code 1. Whatever way the service ends, ExecStopPost (`power stopped`) makes the stop of each part still
+    switched on from a new process, and systemd starts the service again after 5 s. Without NVML, casefan cannot read the
+    card, so its ports go to 100 % as before, while tune and powerlimit go on.
+  - **Parity:** `compare.py` also runs the merged service's dry run (each line it prints starts with `[part]`) and checks,
+    part by part, the same lines in the same order and the same exit code as each helper run on its own followed by its old
+    ExecStopPost (`casefan reset`, `gpufan reset`): 17 of 17 cases the same on 2026-11-09 (the tests' trees, a card whose
+    readings run out, no driver, a failing init, no Commander Pro, gpufan on auto, the tuning guard, an Xid, mode changes,
+    parts switched off, and my PC's sample). The supervisor's isolation rules have their own tests (`src/power/tests.rs`).
+  - **Memory, measured 2026-11-09** (dry runs on a sample of my PC with the real card loaded, `--real-card`): the merged
+    service 29.6 MB resident (24.0 MB proportional), six threads; on their own tune 29.1, casefan 28.7, gpufan 28.8 and the
+    Rust powerlimit 2.7 MB, 89.2 MB together. Running on my PC before the switch: tune 29.8, casefan 29.4 and the Python
+    powerlimit 11.5 MB (plus 2.9 MB in swap), and gpufan another 29 MB while a curve is on. CPU is noise either way
+    (about 0.1 % of a core for all four).
+  - **Status:** on main (built and tested by the package's check()); the package change that installs it is on the branch
+    `power-service-switch` until it has run on my PC.
 - **Graphics card unlock** (`/usr/lib/yggdrasil/gpuunlock`, built 2026-10-27 as Phase 0 of Labyrinth OS's
   [GPU_UNLOCK.md](https://github.com/Artifex-Technologies/Labyrinth_OS/blob/main/docs/GPU_UNLOCK.md)): a "Tensor-rate unlock"
   row under the Graphics card row, only with Developer options on and only for a card listed exactly (device, board, VBIOS, driver series)

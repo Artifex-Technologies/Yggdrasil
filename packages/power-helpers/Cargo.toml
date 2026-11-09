@@ -27,6 +27,11 @@ path = "src/bin/gpufan.rs"
 name = "powerlimit"
 path = "src/bin/powerlimit.rs"
 
+# the root service yggdrasil-power: the loops of the four above in one process (src/power.rs)
+[[bin]]
+name = "power"
+path = "src/bin/power.rs"
+
 # libnvidia-ml is opened at run time (dlopen), so the helpers run, and say so, on a computer without the NVIDIA driver
 [dependencies]
 libc = "0.2"
@@ -35,3 +40,5 @@ libc = "0.2"
 opt-level = "s"
 lto = true
 strip = true
+# panic = "abort" must never be set: the merged service catches a part's panic and makes that part's failure stop
+panic = "unwind"
