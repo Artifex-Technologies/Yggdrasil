@@ -48,7 +48,8 @@ struct St {
     conn: Connection,
     serial: Arc<AtomicU32>,
     down: Arc<AtomicBool>,
-    offers: HashMap<ObjectId, Vec<String>>,
+    /// Offers announced and not yet taken up by a drag entering (each with the types it offers).
+    offers: HashMap<ObjectId, (WlDataOffer, Vec<String>)>,
     entered: Option<(WlDataOffer, bool)>,
     action: DndAction,
     pos: (f32, f32),
@@ -247,14 +248,28 @@ impl Dispatch<WlPointer, ()> for St {
         }
     }
 }
+impl St {
+    /// Destroys the offers that were announced and not taken up (dropping their proxies alone sends nothing).
+    fn forget_offers(&mut self) {
+        for (_, (o, _)) in self.offers.drain() {
+            o.destroy();
+        }
+    }
+}
+
 impl Dispatch<WlDataDevice, ()> for St {
     fn event(st: &mut Self, _: &WlDataDevice, event: wl_data_device::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
         match event {
             wl_data_device::Event::DataOffer { id } => {
-                st.offers.insert(id.id(), vec![]);
+                st.offers.insert(id.id(), (id, vec![]));
             }
             wl_data_device::Event::Enter { serial, x, y, id: Some(offer), .. } => {
-                let mimes = st.offers.get(&offer.id()).cloned().unwrap_or_default();
+                let mimes = st.offers.remove(&offer.id()).map(|o| o.1).unwrap_or_default();
+                st.forget_offers(); // only the one entering is in use
+                // a drag that entered without leaving first: the old offer goes
+                if let Some((o, _)) = st.entered.take() {
+                    o.destroy();
+                }
                 let files = mimes.iter().any(|m| m == URI_LIST);
                 if files {
                     let ours = mimes.iter().any(|m| m == "application/x-minos-drag");
@@ -279,7 +294,6 @@ impl Dispatch<WlDataDevice, ()> for St {
             }
             wl_data_device::Event::Leave => {
                 if let Some((o, _)) = st.entered.take() {
-                    st.offers.remove(&o.id());
                     o.destroy();
                 }
                 let _ = st.tx.send(DndEvent::Leave);
@@ -309,6 +323,14 @@ impl Dispatch<WlDataDevice, ()> for St {
                     ctx.request_repaint();
                 });
             }
+            // The clipboard: egui reads it through its own data device, this one only does drag and drop. Every copy made anywhere
+            // while Minos has the keyboard announces a new offer here; they were never destroyed, so the compositor kept each one.
+            wl_data_device::Event::Selection { id } => {
+                st.forget_offers();
+                if let Some(o) = id {
+                    o.destroy();
+                }
+            }
             _ => {}
         }
     }
@@ -319,7 +341,11 @@ impl Dispatch<WlDataDevice, ()> for St {
 impl Dispatch<WlDataOffer, ()> for St {
     fn event(st: &mut Self, offer: &WlDataOffer, event: wl_data_offer::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
         match event {
-            wl_data_offer::Event::Offer { mime_type } => st.offers.entry(offer.id()).or_default().push(mime_type),
+            wl_data_offer::Event::Offer { mime_type } => {
+                if let Some(o) = st.offers.get_mut(&offer.id()) {
+                    o.1.push(mime_type);
+                }
+            }
             wl_data_offer::Event::Action { dnd_action: WEnum::Value(a) } => st.action = a,
             _ => {}
         }
@@ -357,3 +383,87 @@ delegate_noop!(St: ignore WlSurface);
 delegate_noop!(St: ignore WlShm);
 delegate_noop!(St: WlShmPool);
 delegate_noop!(St: ignore WlBuffer);
+
+/// The compositor's side is played by the test: it writes events into one end of a socket pair and reads back what this side sent.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::net::UnixStream;
+
+    // the test binds globals by hand, without the registry's list
+    delegate_noop!(St: ignore WlRegistry);
+
+    /// One event on the wire: object, opcode, arguments.
+    fn event(obj: u32, opcode: u16, args: &[u8]) -> Vec<u8> {
+        let mut m = obj.to_ne_bytes().to_vec();
+        m.extend_from_slice(&((((8 + args.len()) as u32) << 16) | opcode as u32).to_ne_bytes());
+        m.extend_from_slice(args);
+        m
+    }
+
+    fn string(s: &str) -> Vec<u8> {
+        let mut m = ((s.len() + 1) as u32).to_ne_bytes().to_vec();
+        m.extend_from_slice(s.as_bytes());
+        m.push(0);
+        while m.len() % 4 != 0 {
+            m.push(0);
+        }
+        m
+    }
+
+    /// Requests this side sent, as (object id, opcode).
+    fn sent(peer: &mut UnixStream) -> Vec<(u32, u16)> {
+        peer.set_nonblocking(true).unwrap();
+        let mut bytes = vec![];
+        let mut chunk = [0u8; 4096];
+        while let Ok(n) = peer.read(&mut chunk) {
+            if n == 0 {
+                break;
+            }
+            bytes.extend_from_slice(&chunk[..n]);
+        }
+        let (mut out, mut i) = (vec![], 0);
+        while i + 8 <= bytes.len() {
+            let word = u32::from_ne_bytes(bytes[i + 4..i + 8].try_into().unwrap());
+            out.push((u32::from_ne_bytes(bytes[i..i + 4].try_into().unwrap()), (word & 0xffff) as u16));
+            i += ((word >> 16) as usize).max(8);
+        }
+        out
+    }
+
+    #[test]
+    fn clipboard_offers_are_destroyed() {
+        let (ours, mut peer) = UnixStream::pair().unwrap();
+        let conn = Connection::from_socket(ours).unwrap();
+        let mut queue = conn.new_event_queue::<St>();
+        let qh = queue.handle();
+        let registry: WlRegistry = conn.display().get_registry(&qh, ());
+        let seat: WlSeat = registry.bind(1, 5, &qh, ());
+        let manager: WlDataDeviceManager = registry.bind(2, 3, &qh, ());
+        let device = manager.get_data_device(&seat, &qh, ());
+        conn.flush().unwrap();
+        let _ = sent(&mut peer);
+        let (tx, _rx) = channel();
+        let mut st = St { ctx: eframe::egui::Context::default(), tx, conn: conn.clone(), serial: Default::default(), down: Default::default(), offers: HashMap::new(), entered: None, action: DndAction::empty(), pos: (0.0, 0.0), out_paths: Default::default(), icon: Default::default() };
+        // three copies made in other programs: each a new offer (ids the compositor picks), its type, then the selection
+        let dev = device.id().protocol_id();
+        let offers: Vec<u32> = (0..3).map(|k| 0xff00_0000 + k).collect();
+        let mut wire = vec![];
+        for &o in &offers {
+            wire.extend(event(dev, wl_data_device::EVT_DATA_OFFER_OPCODE, &o.to_ne_bytes()));
+            wire.extend(event(o, wl_data_offer::EVT_OFFER_OPCODE, &string("text/plain")));
+            wire.extend(event(dev, wl_data_device::EVT_SELECTION_OPCODE, &o.to_ne_bytes()));
+        }
+        peer.set_nonblocking(false).unwrap();
+        peer.write_all(&wire).unwrap();
+        while queue.blocking_dispatch(&mut st).unwrap() == 0 {}
+        let _ = queue.dispatch_pending(&mut st);
+        conn.flush().unwrap();
+        let sent = sent(&mut peer);
+        let destroy = WlDataOffer::interface().requests.iter().position(|m| m.name == "destroy").unwrap() as u16;
+        for o in offers {
+            assert!(sent.contains(&(o, destroy)), "offer {o:#x} was not destroyed: {sent:?}");
+        }
+        assert!(st.offers.is_empty(), "nothing kept on this side either");
+    }
+}
