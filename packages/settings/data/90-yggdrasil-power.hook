@@ -1,0 +1,13 @@
+# After an upgrade from the separate power services: each of yggdrasil-tune, -casefan, -gpufan and -powerlimit that still
+# runs its own helper is restarted, so it becomes a switch of yggdrasil-power at once (power adopt). Named to run after
+# systemd's own daemon-reload hook (30-...); does nothing in a chroot or on a system that has already moved.
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Path
+Target = usr/lib/yggdrasil/power
+
+[Action]
+Description = Moving the power services into yggdrasil-power...
+When = PostTransaction
+Exec = /usr/lib/yggdrasil/power adopt

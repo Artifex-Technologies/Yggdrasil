@@ -14,7 +14,7 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HELPER = os.path.join(HERE, "..", "gpuunlock")
-POWERLIMIT = os.path.join(HERE, "..", "powerlimit")
+POWERLIMIT = os.path.join(HERE, "..", "python", "powerlimit")  # the Python one, kept for a rollback (the package installs the Rust one)
 TABLE = os.path.join(HERE, "..", "..", "data", "gpu-unlock-supported.json")
 FRAGMENT = os.path.join(HERE, "..", "..", "data", "41_gpu_unlock")
 

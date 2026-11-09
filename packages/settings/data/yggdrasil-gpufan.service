@@ -1,16 +1,16 @@
 [Unit]
-Description=Graphics card fans on the speed or curve chosen in Settings (Power > Graphics card)
-After=nvidia-persistenced.service
-# no NVIDIA card or driver: give up after a few tries instead of trying forever
-StartLimitIntervalSec=120
-StartLimitBurst=10
+Description=Graphics card fans on the speed or curve chosen in Settings (Power > Graphics card): a part of yggdrasil-power
+Requires=yggdrasil-power.service
+After=yggdrasil-power.service
 
 [Service]
-ExecStart=/usr/lib/yggdrasil/gpufan run
-# whatever way it stopped, the fans go back to the card's own control
-ExecStopPost=/usr/lib/yggdrasil/gpufan reset
-Restart=on-failure
-RestartSec=5
+# a switch: yggdrasil-power runs `gpufan run`'s loop while this is active (`gpufan set` enables and restarts it, or for "auto"
+# disables and stops it). Whatever way the part stops, the fans go back to the card's own control. With the setting on "auto"
+# the part ends by itself and the service stops this unit, as the old service ended.
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/yggdrasil/power on gpufan
+ExecStop=/usr/lib/yggdrasil/power off gpufan
 
 [Install]
 WantedBy=multi-user.target

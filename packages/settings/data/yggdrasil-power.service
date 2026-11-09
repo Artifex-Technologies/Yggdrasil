@@ -1,0 +1,17 @@
+[Unit]
+Description=Settings > Power in one process: the tuning guard, case fans, graphics card fans and power-mode limits (each switched on by its own unit)
+After=nvidia-persistenced.service systemd-modules-load.service power-profiles-daemon.service
+# started by the units that switch its parts (yggdrasil-tune, -casefan, -gpufan, -powerlimit), stopped when none is on; it has
+# no [Install] of its own
+StopWhenUnneeded=yes
+# it ends with an error only when a part panicked or casefan's loop stood still; then systemd starts it again, up to here
+StartLimitIntervalSec=120
+StartLimitBurst=10
+
+[Service]
+ExecStart=/usr/lib/yggdrasil/power run
+# whatever way it ended (a crash, a kill), each part still switched on makes its stop once more from a new process: casefan's
+# ports (fans 60 % and the pump 100 %, everything 100 % when SERVICE_RESULT is not "success"), gpufan's fans back to the card
+ExecStopPost=/usr/lib/yggdrasil/power stopped
+Restart=on-failure
+RestartSec=5

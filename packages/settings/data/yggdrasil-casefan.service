@@ -1,15 +1,17 @@
 [Unit]
-Description=Case fans and pump on the Corsair Commander Pro, following the processor and graphics card temperatures (Settings > Power)
-After=nvidia-persistenced.service systemd-modules-load.service
-StartLimitIntervalSec=120
-StartLimitBurst=10
+Description=Case fans and pump on the Corsair Commander Pro, following the processor and graphics card temperatures (Settings > Power): a part of yggdrasil-power
+Requires=yggdrasil-power.service
+After=yggdrasil-power.service
 
 [Service]
-ExecStart=/usr/lib/yggdrasil/casefan run
-# a clean stop: fans at a moderate speed, the pump full; a crash or failure (SERVICE_RESULT is not "success"): everything full
-ExecStopPost=/usr/lib/yggdrasil/casefan reset
-Restart=on-failure
-RestartSec=5
+# a switch: yggdrasil-power runs `casefan run`'s loop while this is active. Its start returns once the service has the part;
+# its stop once the part made its clean stop (fans 60 %, the pump 100 %). If the loop fails, the part makes its failure stop
+# (everything 100 %) and starts again 5 s later, at most 10 times in 120 s. `casefan set` restarts this unit: a clean stop,
+# then a fresh read of the setting; no other part is touched.
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/yggdrasil/power on casefan
+ExecStop=/usr/lib/yggdrasil/power off casefan
 
 [Install]
 WantedBy=multi-user.target

@@ -1,10 +1,15 @@
 [Unit]
-Description=Power-mode limits for the processor and graphics card (Settings > Power)
-After=power-profiles-daemon.service
+Description=Power-mode limits for the processor and graphics card (Settings > Power): a part of yggdrasil-power
+Requires=yggdrasil-power.service
+After=yggdrasil-power.service
 
 [Service]
-ExecStart=/usr/lib/yggdrasil/powerlimit watch
-Restart=on-failure
+# a switch: yggdrasil-power runs `powerlimit watch`'s loop while this is active (it applies the active mode's limits, and
+# again on every change of mode, limits or power hold)
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/yggdrasil/power on powerlimit
+ExecStop=/usr/lib/yggdrasil/power off powerlimit
 
 [Install]
 WantedBy=multi-user.target

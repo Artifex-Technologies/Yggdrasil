@@ -1,4 +1,5 @@
-"""Tests for Settings' power-limit helper. Run: python tests/test_settings_powerlimit.py"""
+"""Tests for Settings' power-limit helper, the Python one kept in helpers/python for a rollback (the Rust port carries the same cases:
+packages/power-helpers/src/powerlimit/tests.rs). Run: python tests/test_settings_powerlimit.py"""
 import json
 import os
 import sys
@@ -19,7 +20,7 @@ def load_module(name, path):
     return mod
 
 
-pl = load_module("powerlimit", os.path.join(ROOT, "packages", "settings", "helpers", "powerlimit"))
+pl = load_module("powerlimit", os.path.join(ROOT, "packages", "settings", "helpers", "python", "powerlimit"))
 
 
 class PowerLimitTests(unittest.TestCase):

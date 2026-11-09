@@ -1,7 +1,7 @@
 # Settings > Apps, Developer options, and the per-app controls
 
 Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known about each app, and changes to it),
-`apps_ui.rs` (the pages), the power-limit helper `packages/settings/helpers/powerlimit` (installed as `/usr/lib/yggdrasil/powerlimit`;
+`apps_ui.rs` (the pages), the power-limit helper `packages/power-helpers/src/powerlimit.rs` (installed as `/usr/lib/yggdrasil/powerlimit`; the Python one it replaced is in `helpers/python/`;
 `tests/test_settings_powerlimit.py`), and, for the per-app network rules and sandbox, the operating system's launcher declared in its
 `apps` integration (INTEGRATIONS.md; on Labyrinth `labyrinth-launch` and `labyrinth-appnet`, tested in Labyrinth's repository).
 `cargo test` in `packages/settings`.
@@ -90,8 +90,8 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
   Graphics card (each with a reset icon left of its slider); choosing another mode shows and changes that mode's limits (my layout, 2026-10-27).
   While the graphics card unlock is armed or measured, `/var/lib/yggdrasil/gpu-unlock/power-hold` exists and no mode goes above
   the card's default watts (the modes' own limits stay saved and come back when the hold ends); `powerlimit get` reports it as
-  `gpu.hold` and the slider stops there. Ported to Rust on 2026-11-09 with its tests and dry-run parity (below); the
-  package still installs the Python script until the switch to the merged service.
+  `gpu.hold` and the slider stops there. Rust since pkgrel 36 (ported 2026-11-09 with its tests and dry-run parity,
+  below); `powerlimit watch` is now a part of yggdrasil-power.
 - **Graphics card page** (built 2026-10-27, my design; `src/gpu.rs`): the Graphics card row's title opens it. An
   Afterburner-style panel for an NVIDIA card: a live readout (temperature, power against the limit, core and memory clocks,
   load, video memory, fans, and what is holding the clocks back) with the last two minutes as small graphs, each on its own
@@ -177,10 +177,10 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
   and the units do not change: commands, arguments, environment variables, JSON (byte for byte), settings and state files,
   exit codes, log lines, and every safety rule. The other helpers (account, bootscreen, gpuunlock, game-fix, gpu-run) stay
   Python for now.
-  - **Status:** the package installs the Rust tune, casefan and gpufan at the same `/usr/lib/yggdrasil/` paths (pkgrel 35).
-    The Python scripts and their tests are kept in `helpers/python/` until the Rust ones have run a while: to go back, install
-    them over the binaries (`install -m755 helpers/python/{tune,casefan,gpufan} /usr/lib/yggdrasil/`) and restart the
-    services. powerlimit's port is on main but not installed: it comes with the merged service (below).
+  - **Status:** the package installs the Rust tune, casefan, gpufan and powerlimit at the same `/usr/lib/yggdrasil/` paths
+    (tune, casefan and gpufan since pkgrel 35, powerlimit since 36, with the merged service below). The Python scripts and
+    their tests are kept in `helpers/python/` until the Rust ones have run a while; to go back, reinstall the package before
+    (pkgrel 35 for the merged service, 34 for the Python helpers).
   - **Light:** no crate but libc, no async runtime, one thread each; libnvidia-ml is opened at run time (dlopen), so
     without the NVIDIA driver they run and say so. `tune watch` reads the kernel's messages from `/dev/kmsg` instead of a
     `journalctl -k -f` child (journalctl only when /dev/kmsg cannot be opened; the service logs which one it reads).
@@ -209,14 +209,23 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
   with a curve). yggdrasil-power runs the loops of tune watch, casefan run, gpufan run and powerlimit watch in one process,
   one thread each (no async runtime), with the card opened once and shared (NVML is thread-safe; it is shut down when no
   part holds it).
-  - **The old units are switches:** yggdrasil-tune, -casefan, -gpufan and -powerlimit stay, each a oneshot unit that is
-    bound to yggdrasil-power: its start runs `power on PART` (a token in `/run/yggdrasil/power/on/PART`, and it waits until
+  - **The old units are switches:** yggdrasil-tune, -casefan, -gpufan and -powerlimit stay, each a oneshot unit that
+    requires yggdrasil-power: its start runs `power on PART` (a token in `/run/yggdrasil/power/on/PART`, and it waits until
     the service has the part), its stop `power off PART` (it waits for the part's clean stop). So `systemctl enable`,
     `disable`, `start`, `stop`, `is-active` and the restart that `casefan set` and `gpufan set` run work by the old names, a
     restart of yggdrasil-casefan is still a clean stop of the fans then a fresh read of the setting, and it touches no other
     part (an alias of yggdrasil-power would have restarted tune too, which clears a trial, and `gpufan set auto`'s
     `disable --now` would have stopped everything). yggdrasil-power has no [Install]; the switches pull it in, and it stops
     when none is on. Settings, the polkit rules and the installer (which enables yggdrasil-powerlimit) do not change.
+  - **Requires, not BindsTo** (checked 2026-11-09 with stand-in units in a user manager): with BindsTo a crash of the service
+    stopped the switches before its ExecStopPost ran, so that saw no part switched on (casefan's failure stop would have been
+    missed), and the restart found nothing to run. With Requires a crash or a kill -9 leaves the switches on for
+    ExecStopPost, then systemd restarts them with the service; restarting one switch leaves the service and the others
+    alone; stopping the last one stops the service; at the service's start limit the switches end inactive, so `is-active`
+    tells the truth.
+  - **Upgrading:** the package's pacman hook (`90-yggdrasil-power.hook`, after systemd's reload) runs `power adopt`, which
+    restarts each of the four units that still runs its old helper process, so an upgraded system moves into the one service
+    at once instead of at its next restart.
   - **Each part's safety stays its own:** a part's loop that fails makes its old ExecStopPost's stop on its thread (casefan:
     every port 100 %; gpufan: fans back to the card) and starts again after its old RestartSec, up to its old start limit
     (casefan and gpufan 10 in 120 s; then it stays at its failure stop and its unit is stopped, so `is-active` says so); the
@@ -236,8 +245,9 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
     Rust powerlimit 2.7 MB, 89.2 MB together. Running on my PC before the switch: tune 29.8, casefan 29.4 and the Python
     powerlimit 11.5 MB (plus 2.9 MB in swap), and gpufan another 29 MB while a curve is on. CPU is noise either way
     (about 0.1 % of a core for all four).
-  - **Status:** on main (built and tested by the package's check()); the package change that installs it is on the branch
-    `power-service-switch` until it has run on my PC.
+  - **Status:** the package installs it (pkgrel 36): `/usr/lib/yggdrasil/power`, yggdrasil-power.service, the four units as
+    its switches, and the Rust powerlimit. Kept on the branch `power-service-switch` (the daily publish builds main) until it
+    has run on my PC. To go back: reinstall pkgrel 35, then start the four units again (they are separate services again).
 - **Graphics card unlock** (`/usr/lib/yggdrasil/gpuunlock`, built 2026-10-27 as Phase 0 of Labyrinth OS's
   [GPU_UNLOCK.md](https://github.com/Artifex-Technologies/Labyrinth_OS/blob/main/docs/GPU_UNLOCK.md)): a "Tensor-rate unlock"
   row under the Graphics card row, only with Developer options on and only for a card listed exactly (device, board, VBIOS, driver series)
