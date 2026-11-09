@@ -31,7 +31,7 @@ it within 5 minutes of the game ending. Nothing stays running.
 | --- | --- |
 | `yggdrasil-leakwatch` | the leak watch: a leak in a game or the desktop matters most during a long session |
 | `labyrinth-scan`, `labyrinth-scan-watch`, `labyrinth-scan-full` | the virus scans: a file downloaded during a game is checked at once |
-| `heimdall` (heimdalld) | the security watcher itself |
+| `heimdall` (heimdalld) | the security watcher itself: alerts, detectors and responses never wait. Its own 6-hourly audits (packages, kernel, hardening) ask `yggdrasil-gametime status` first and wait like the chores (Heimdall `685c2dd`, 2026-11-09) |
 | `heimdall-lan-scan` | who is on the home network; an intruder doesn't wait for my game to end |
 | `labyrinth-sarina-held` | tells me when a program is broken because Heimdall holds its file |
 | `snapper-timeline` | the hourly restore points: small, and the thing that saves me after a bad change |
