@@ -290,6 +290,8 @@ pub struct Service {
     /// the service: the states file, and the old units stopped when their part ends by itself or gives up
     state_file: Option<PathBuf>,
     units: bool,
+    /// old units to stop once they are active (see stop_unit)
+    unit_stops: Vec<String>,
     /// a stop of this service alone (tests); the stop signal works too
     pub quit: Arc<Stopper>,
     waker: Arc<Waker>,
@@ -313,6 +315,7 @@ impl Service {
             switches,
             state_file,
             units,
+            unit_stops: Vec::new(),
             quit: Arc::new(Stopper::new()?),
             waker: Arc::new(Waker::new()?),
             inotify,
@@ -367,12 +370,28 @@ impl Service {
     }
 
     /// The service: stops a part's old unit when the part ended by itself or gave up, so `systemctl is-active` tells the
-    /// truth about it as it did (the unit's stop then runs `power off`, which finds the part already stopped).
-    fn stop_unit(&self, i: usize) {
+    /// truth about it as it did (the unit's stop then runs `power off`, which finds the part already stopped). Not while the
+    /// unit is still starting (its `power on` waiting: a part on "auto" ends at once), which a stop would cancel half way:
+    /// it waits in unit_stops until the unit is active.
+    fn stop_unit(&mut self, i: usize) {
         if self.units {
-            let unit = format!("yggdrasil-{}.service", self.slots[i].part.name());
-            Ctx::system().act("systemctl", &["stop", "--no-block", &unit]);
+            self.unit_stops.push(format!("yggdrasil-{}.service", self.slots[i].part.name()));
+            self.stop_units();
         }
+    }
+
+    fn stop_units(&mut self) {
+        self.unit_stops.retain(|unit| {
+            let state = Ctx::system().ask("systemctl", &["is-active", unit]).map(|(_, out)| crate::py::strip(&out).to_string()).unwrap_or_default();
+            match state.as_str() {
+                "activating" | "reloading" => true,
+                "active" => {
+                    Ctx::system().act("systemctl", &["stop", "--no-block", unit]);
+                    false
+                }
+                _ => false,
+            }
+        });
     }
 
     /// One look at a part: its switch, its thread. Some(reason) when the service must end on a failure.
@@ -525,6 +544,9 @@ impl Service {
             if fatal.is_none() {
                 fatal = self.watchdog();
             }
+            if !self.unit_stops.is_empty() {
+                self.stop_units();
+            }
             self.write_state();
             if fatal.is_some() || self.quitting() {
                 break;
@@ -533,7 +555,8 @@ impl Service {
             if self.base.dry && self.base.steps.is_some() && !self.slots.iter().any(|s| matches!(s.life, Life::Running { .. } | Life::Waiting { .. })) {
                 break;
             }
-            let mut secs: f64 = self.tick;
+            // an old unit waiting to be stopped is looked at often, until it has started
+            let mut secs: f64 = if self.unit_stops.is_empty() { self.tick } else { self.tick.min(0.25) };
             for s in &self.slots {
                 if let Life::Waiting { until, .. } = s.life {
                     secs = secs.min(until - now);
