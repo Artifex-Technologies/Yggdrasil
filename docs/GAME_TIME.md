@@ -17,6 +17,7 @@ it within 5 minutes of the game ending. Nothing stays running.
 | `heimdall-intel-update.service` | system | Heimdall's IP databases, threat lists and the security tracker | daily lists; a few hours late changes nothing |
 | `heimdall-dns-blocklist.service` | system | the DNS block list (malware, phishing, scams) | the list in use keeps blocking; only the refresh waits. It also reloads NetworkManager's DNS, which I don't want mid-game |
 | `heimdall-inventory.service` | system | the daily inventory of programs outside the packages | reads many files: disk and page cache a game wants |
+| `limbo-image-verify.service` | system | Limbo's weekly full check of its base images (ships its own drop-in, used only when game time is installed) | reads every image in full: tens of GB of disk a game wants |
 | `fstrim.service` | system | the weekly SSD trim | heavy disk work, can stall loading |
 | `archlinux-keyring-wkd-sync.service` | system | the weekly refresh of the Arch packagers' keys | only matters at the next update |
 | `snapper-cleanup.service` | system | deleting old restore points | btrfs deletions are heavy disk work |
