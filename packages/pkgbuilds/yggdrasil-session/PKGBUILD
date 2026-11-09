@@ -24,6 +24,7 @@ package() {
   install -Dm755 "$_src/bin/yggdrasil-hypr-logkeep" "$pkgdir/usr/bin/yggdrasil-hypr-logkeep"
   install -Dm644 "$_src/hyprland/plugin/minimize.cpp" "$pkgdir/usr/share/yggdrasil/hyprland/plugin/minimize.cpp"
   install -Dm644 "$_src/hyprland/yggdrasil.lua" "$pkgdir/usr/share/yggdrasil/hyprland/yggdrasil.lua"
+  install -Dm644 "$_src/hyprland/keep-clear.lua" "$pkgdir/usr/share/yggdrasil/hyprland/keep-clear.lua"
   # the person at the screen may read their mice and touchpads (the end of a window drag, for window zones); never keyboards
   install -Dm644 "$_src/udev/71-yggdrasil-pointer.rules" "$pkgdir/usr/lib/udev/rules.d/71-yggdrasil-pointer.rules"
   # the login screen lists it as "Yggdrasil"

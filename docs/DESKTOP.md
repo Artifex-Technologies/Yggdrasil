@@ -90,7 +90,13 @@ How the macOS mode was put together (KDE era; none of this is used now):
   that runs at 60 Hz or more, at its highest refresh rate), once per monitor.
 - Windows never sit under the dock: KWin reserves its space for maximized windows, and the KWin
   script `labyrinth-fit-windows` (`usr/share/kwin/scripts/`) shrinks a window that opens or grows
-  taller than the free area. Full-screen windows are exempt.
+  taller than the free area. Full-screen windows are exempt. The Hyprland session lost that rule
+  until 2026-11-08 (a window back from maximize took its old size, under the dock). Since then the
+  keep-clear block in `packages/session/hyprland/yggdrasil.lua` (with `keep-clear.lua`) moves a
+  floating window out from under the bar and the dock, and shortens it if it does not fit. It runs
+  when the window opens, when it comes back from maximize or full screen, and when the bar or the
+  dock appears on a screen. Dragging a window there by hand is left alone, and so are games and
+  true full screen.
 - Verified in a VM: the desktop, the dock, the window buttons, the global menu in the top bar, the
   Meta-key launcher, the installer, maximize stopping at the dock, full screen and Meta + Alt + P
   (now also Meta + Space) raising the panels over it. Not yet verified: NVIDIA, the real monitors.
