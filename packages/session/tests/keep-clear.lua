@@ -52,6 +52,14 @@ local turned = { x = 0, y = 0, width = 1920, height = 1080, scale = 1.0, transfo
   reserved = { top = 28.0, right = 0.0, bottom = 70.0, left = 0.0 } }
 check("turned screen", { 0, 28, 1080, 1822 }, kc.fit(0, 28, 1080, 1900, turned))
 
+-- back from maximize: a window as big as the free room gets a normal size (three quarters, centred)
+check("VS Code's old size under the dock", { 151, 120, 908, 552 }, kc.normal(0, 28, 1210, 806, ipad))
+check("Vivaldi at the maximized size", { 151, 120, 908, 552 }, kc.normal(0, 29, 1208, 734, ipad))
+check("a normal window keeps its size", nil, kc.normal(200, 100, 700, 500, ipad))
+check("wide but short keeps its size", nil, kc.normal(0, 28, 1210, 400, ipad))
+check("the whole screen (a game) is left alone", nil, kc.normal(0, 0, 1210, 834, ipad))
+check("big screen", { 1640, 205, 2580, 1059 }, kc.normal(1210, 28, 3440, 1412, wide))
+
 if failed > 0 then
   io.stderr:write(failed .. " failed\n")
   os.exit(1)

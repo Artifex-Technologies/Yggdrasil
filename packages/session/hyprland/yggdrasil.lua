@@ -226,7 +226,8 @@ if not keep_clear_ok then
   io.stderr:write("yggdrasil: keep-clear.lua: " .. tostring(keep_clear) .. "\n")
   keep_clear = nil
 end
-local function clear_of_bars(w)
+-- back: the window has just come back from maximize or full screen (then a size as big as the free room becomes a normal one)
+local function clear_of_bars(w, back)
   if not keep_clear or not w or not w.mapped or not w.floating or (w.fullscreen or 0) ~= 0 or w.pinned then return end
   if w.content_type == "game" then return end
   local ws = w.workspace
@@ -236,7 +237,9 @@ local function clear_of_bars(w)
   if not x or not width or width < 1 or height < 1 then return end
   local m = hl.get_monitor_at(x + width / 2, y + height / 2) or w.monitor
   if not m then return end
-  local nx, ny, nw, nh = keep_clear.fit(x, y, width, height, m)
+  local nx, ny, nw, nh
+  if back then nx, ny, nw, nh = keep_clear.normal(x, y, width, height, m) end
+  if not nx then nx, ny, nw, nh = keep_clear.fit(x, y, width, height, m) end
   if not nx then return end
   local target = "address:" .. w.address
   -- resizing keeps a window centred, so the size first, then the place
@@ -245,13 +248,13 @@ local function clear_of_bars(w)
 end
 -- a moment later: Hyprland (and the program) settle the window's size first; address nil = every window
 local clear_timers = {}
-local function clear_later(address, ms)
+local function clear_later(address, ms, back)
   local t
   t = hl.timer(function()
     clear_timers[t] = nil
     local ok, err = pcall(function()
       for _, o in ipairs(hl.get_windows()) do
-        if address == nil or o.address == address then clear_of_bars(o) end
+        if address == nil or o.address == address then clear_of_bars(o, back) end
       end
     end)
     if not ok then io.stderr:write("yggdrasil: keeping windows clear of the bar and dock: " .. tostring(err) .. "\n") end
@@ -265,13 +268,14 @@ hl.on("window.open", function(w)
     clear_later(w.address, 1200)
   end
 end)
+-- the window comes as a userdata object (not a table)
 hl.on("window.fullscreen", function(w)
-  local a = type(w) == "table" and w.address or nil
-  if not a then
+  local ok, a = pcall(function() return w.address end)
+  if not ok or not a then
     local active = hl.get_active_window()
     a = active and active.address
   end
-  if a then clear_later(a, 250) end
+  if a then clear_later(a, 250, true) end
 end)
 hl.on("layer.opened", function(l)
   if l and (l.namespace == "yggdrasil-dock" or l.namespace == "yggdrasil-panel") then clear_later(nil, 300) end
