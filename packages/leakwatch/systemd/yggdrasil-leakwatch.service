@@ -1,0 +1,8 @@
+[Unit]
+Description=Leak watch: one memory sample (Yggdrasil)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/yggdrasil-leakwatch sample
+Nice=19
+IOSchedulingClass=idle
