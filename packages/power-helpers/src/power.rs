@@ -48,6 +48,8 @@ Commands:
                             process (casefan: fans 60 %, the pump 100 %, everything 100 % after a failure; gpufan: the fans
                             back to the card)
   power status              the parts' states, as JSON
+  power adopt               after an upgrade from the separate services (the package's pacman hook): restarts each old unit
+                            that still runs its own helper, so it becomes a switch of this service at once
 
 PART is tune, casefan, gpufan or powerlimit. Switches: /run/yggdrasil/power/on/PART; states: /run/yggdrasil/power/state.json.
 A part whose loop fails starts again after 5 s, as its own unit did (casefan and gpufan: at most 10 times in 120 s); a part
@@ -767,6 +769,32 @@ pub fn stopped(ctx: &Ctx, failed: bool) {
     }
 }
 
+/// After an upgrade from the separate services (the package's pacman hook runs this once the units are reloaded): each old
+/// unit still running its own helper process is restarted, so the old helper stops and the unit becomes a switch of
+/// yggdrasil-power at once. Until then it would run with its unit's new definition, which has no ExecStopPost and no
+/// Restart= for that process. A switch has no process of its own (no main PID), so it is left alone; so is everything in
+/// a chroot (systemctl answers nothing there).
+pub fn cmd_adopt(ctx: &Ctx) -> i32 {
+    if !ctx.is_root() {
+        crate::warn!("power: adopt needs root (the package's pacman hook runs it)");
+        return 1;
+    }
+    for name in NAMES {
+        let unit = format!("yggdrasil-{name}.service");
+        let Some((0, out)) = ctx.ask("systemctl", &["show", "-p", "MainPID", "--value", &unit]) else { continue };
+        if old_process(&out) {
+            crate::warn!("power: {unit} still runs its own process: restarting it as a part of {SERVICE}");
+            ctx.act("systemctl", &["restart", &unit]);
+        }
+    }
+    0
+}
+
+/// `systemctl show -p MainPID --value` of a unit that still runs a process of its own.
+pub fn old_process(main_pid: &str) -> bool {
+    crate::py::int(main_pid).is_ok_and(|pid| pid > 0)
+}
+
 pub fn cmd_status(ctx: &Ctx) -> i32 {
     let running = ctx.ask("systemctl", &["is-active", "--quiet", SERVICE]).map(|(c, _)| c) == Some(0);
     let mut out = Obj::new().with("running", running.into());
@@ -821,6 +849,7 @@ pub fn main(args: Vec<String>) -> i32 {
         ("on", 3) => cmd_on(&ctx, &argv[2]),
         ("off", 3) => cmd_off(&ctx, &argv[2]),
         ("stopped", 2) => cmd_stopped(&ctx),
+        ("adopt", 2) => cmd_adopt(&ctx),
         ("status", 2) => cmd_status(&ctx),
         _ => {
             crate::warn!("power: unknown command (see --help)");

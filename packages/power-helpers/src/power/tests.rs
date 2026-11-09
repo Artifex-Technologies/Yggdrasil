@@ -253,6 +253,17 @@ fn on_and_off_wait_for_the_service() {
 }
 
 #[test]
+fn adopt_restarts_only_the_units_that_still_run_an_old_helper() {
+    assert!(old_process("890107\n") && !old_process("0\n") && !old_process("") && !old_process("Running in chroot"));
+    let d = TempDir::new();
+    let c = ctx(d.path());
+    d.files("", &[("commands.json", r#"{"systemctl show -p MainPID --value yggdrasil-casefan": "4242\n", "systemctl show -p MainPID --value yggdrasil-gpufan": null, "systemctl show -p MainPID --value": "0\n"}"#)]);
+    assert_eq!(cmd_adopt(&c), 0);
+    let ran: Vec<String> = c.recorded.borrow().as_ref().unwrap().iter().filter(|l| l.contains("restart")).cloned().collect();
+    assert_eq!(ran, ["systemctl restart yggdrasil-casefan.service"]);
+}
+
+#[test]
 fn stopped_makes_the_stop_of_each_part_still_switched_on() {
     let d = TempDir::new();
     d.files("sys/class/hwmon/hwmon5", &[("name", "corsaircpro"), ("fan1_label", "fan1 4pin"), ("fan1_input", "3846"), ("fan6_label", "fan6 4pin"), ("fan6_input", "1399"), ("pwm1", ""), ("pwm6", "")]);
