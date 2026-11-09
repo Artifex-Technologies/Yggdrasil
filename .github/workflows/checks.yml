@@ -29,6 +29,24 @@ jobs:
             (cd "$d" && ~/.cargo/bin/cargo-audit audit -D warnings --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2026-0192 --ignore RUSTSEC-2026-0370 --ignore RUSTSEC-2026-0371 --ignore RUSTSEC-2026-0372 --ignore RUSTSEC-2026-0196 --ignore RUSTSEC-2026-0197) || failed="$failed $d(audit)"
           done
           [ -z "$failed" ] || { echo "failed:$failed"; exit 1; }
+  # The panel in a headless sway, building new pictures over and over (pop-ups, toasts, the screen changing size): the buffers it
+  # leaves with the compositor must not pile up. Fails on a buffer that is dropped without being destroyed (the 4 GB of 2026-11-09).
+  panel-leaks:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Tools
+        run: pacman -Syu --noconfirm --needed git rust base-devel pkgconf wayland libxkbcommon fontconfig dbus sway ttf-dejavu
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0, pinned by commit
+        with:
+          persist-credentials: false
+      - name: Build the panel
+        run: cd packages/panel && cargo build --locked
+      - name: Stress test (headless sway, its own session bus)
+        run: |
+          # sway does not run as root
+          useradd -m ci && chown -R ci "$GITHUB_WORKSPACE"
+          su ci -c "cd '$GITHUB_WORKSPACE' && packages/panel/tests/leak-stress.sh target/debug/yggdrasil-panel"
   recipes:
     runs-on: ubuntu-latest
     container: archlinux:latest
