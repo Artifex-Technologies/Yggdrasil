@@ -104,7 +104,7 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
     service `yggdrasil-gpufan`, which drives the fans through NVML (no X server needed). Never below the card's lowest
     speed; at 85 °C or more, full speed. A speed comes down only once the card is 3 °C cooler. If the temperature cannot be
     read, the fans go back to the card. Stopping the service, or a crash (`ExecStopPost`), gives the fans back to the card;
-    checked on the RTX 2080 Ti with a kill -9. Tests: `helpers/tests/test_gpufan.py`.
+    checked on the RTX 2080 Ti with a kill -9. Rust since 2026-11-09 (below). Tests: `packages/power-helpers/src/gpufan/tests.rs`.
   - **Fixtures:** debug builds read `$YGGDRASIL_GPUFAN_FIXTURE` for screenshots of each mode.
 - **Cooling: case fans and pumps** (helper and service 2026-11-04; Settings > Power > Cooling 2026-11-05, `src/fans.rs`): `casefan` drives a Corsair
   Commander Pro (kernel driver `corsair_cpro`) as the root service `yggdrasil-casefan`.
@@ -134,7 +134,7 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
   - After a clean stop, fans go to 60 % and the pump to 100 %; after a crash (`SERVICE_RESULT` not success), everything goes to
     100 %. The Commander Pro keeps the last speed it was given until it loses power; it does not go back to its own stored
     curves by itself.
-  - Setting: `/etc/yggdrasil/case-fans.json`. Tests: `helpers/tests/test_casefan.py`.
+  - Setting: `/etc/yggdrasil/case-fans.json`. Rust since 2026-11-09 (below). Tests: `packages/power-helpers/src/casefan/tests.rs`.
   - On the owner's PC: port 1 is the graphics card's pump (about 3,830 RPM whatever it is set to), port 6 the 3,000 RPM Noctua
     exhaust, and port 5 the 80mm Noctua over the cables and RAM, which reports no speed (its own curves, never below 35 %).
 - **Security > Limbo** (2026-11-05, `src/limbo_ui.rs`; `yggdrasil-settings security:limbo`): Limbo's sandboxes, written against
@@ -170,14 +170,14 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
   - **What is guarded:** power limits and turbo are kept in /etc/yggdrasil/tuning.json and applied at every start
     unguarded, since they cannot freeze anything. The processor's own values are read once per start of the computer.
   - **Checked on the i9-9900K and the 2080 Ti** with lower values only (multipliers down one, core -50 MHz) and back.
-    Tests: `helpers/tests/test_tune.py`.
+    Rust since 2026-11-09 (below). Tests: `packages/power-helpers/src/tune/tests.rs`.
 - **tune, casefan and gpufan in Rust** (2026-11-09, `packages/power-helpers`): the three root helpers above run all the
   time (or while a fan curve is on) and were Python on a Rust desktop. The port keeps their interface so Settings and the
   units do not change: commands, arguments, JSON (byte for byte), settings and state files, exit codes, log lines, and every
   safety rule. The other helpers (account, powerlimit, bootscreen, gpuunlock, game-fix, gpu-run) stay Python for now.
-  - **Status:** built and tested, not installed yet. The switch (the package installs the Rust binaries at the same
-    `/usr/lib/yggdrasil/` paths; the Python scripts move to `helpers/python/` for a rollback) is the branch
-    `power-helpers-switch`, so the daily package publish does not ship it before it has run on this PC under watch.
+  - **Status:** the package installs the Rust binaries at the same `/usr/lib/yggdrasil/` paths (pkgrel 35). The Python
+    scripts and their tests are kept in `helpers/python/` until the Rust ones have run a while: to go back, install them
+    over the binaries (`install -m755 helpers/python/{tune,casefan,gpufan} /usr/lib/yggdrasil/`) and restart the services.
   - **Light:** no crate but libc, no async runtime, one thread each; libnvidia-ml is opened at run time (dlopen), so
     without the NVIDIA driver they run and say so. `tune watch` reads the kernel's messages from `/dev/kmsg` instead of a
     `journalctl -k -f` child (journalctl only when /dev/kmsg cannot be opened; the service logs which one it reads).

@@ -1,8 +1,10 @@
 # Settings: the everyday settings in one app (GNOME-style), for Yggdrasil.
-# Built from packages/settings in this repository (and the shared look in packages/yggdrasil-ui).
+# Built from packages/settings in this repository (and the shared look in packages/yggdrasil-ui), with Settings > Power's
+# root helpers tune, casefan and gpufan from packages/power-helpers (Rust; the Python scripts they replaced are kept in
+# packages/settings/helpers/python for a rollback).
 pkgname=yggdrasil-settings
 pkgver=0.1.0
-pkgrel=34
+pkgrel=35
 pkgdesc="Settings: Wi-Fi, Bluetooth, displays, sound, appearance, power and more"
 arch=('x86_64')
 provides=('labyrinth-settings')
@@ -24,9 +26,12 @@ makedepends=('cargo')
 options=('!lto')
 
 _src="$startdir/../../settings"
+_power="$startdir/../../power-helpers"
 
 build() {
   cd "$_src"
+  cargo build --release --locked --target-dir "$srcdir/target"
+  cd "$_power"
   cargo build --release --locked --target-dir "$srcdir/target"
 }
 
@@ -34,6 +39,9 @@ check() {
   cd "$_src"
   cargo test --release --locked --target-dir "$srcdir/target"
   python3 -m unittest discover -s helpers/tests
+  # the power helpers' tests run on fake hwmon trees, a fake card and stand-in MSRs: no hardware is touched
+  cd "$_power"
+  cargo test --release --locked --target-dir "$srcdir/target"
 }
 
 package() {
@@ -70,15 +78,15 @@ package() {
   install -Dm644 "$_src/data/yggdrasil-gpu-unlock-verify.service" "$pkgdir/usr/lib/systemd/system/yggdrasil-gpu-unlock-verify.service"
   # the graphics card's fans (Power > Graphics card): the helper, its password rule, and the root service that keeps them on a
   # chosen speed or curve (started and stopped by the helper; stopping it gives the fans back to the card)
-  install -Dm755 "$_src/helpers/gpufan" "$pkgdir/usr/lib/yggdrasil/gpufan"
+  install -Dm755 "$srcdir/target/release/gpufan" "$pkgdir/usr/lib/yggdrasil/gpufan"
   install -Dm644 "$_src/data/org.yggdrasil.gpufan.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.gpufan.policy"
   install -Dm644 "$_src/data/yggdrasil-gpufan.service" "$pkgdir/usr/lib/systemd/system/yggdrasil-gpufan.service"
-  install -Dm755 "$_src/helpers/casefan" "$pkgdir/usr/lib/yggdrasil/casefan"
+  install -Dm755 "$srcdir/target/release/casefan" "$pkgdir/usr/lib/yggdrasil/casefan"
   install -Dm644 "$_src/data/yggdrasil-casefan.service" "$pkgdir/usr/lib/systemd/system/yggdrasil-casefan.service"
   install -Dm644 "$_src/data/org.yggdrasil.casefan.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.casefan.policy"
   # tuning (Power > Processor and Graphics card, Developer options): the processor's multipliers, power limits and turbo, the
   # graphics card's clocks, with the crash guard; its root service applies kept values at start and measures package power
-  install -Dm755 "$_src/helpers/tune" "$pkgdir/usr/lib/yggdrasil/tune"
+  install -Dm755 "$srcdir/target/release/tune" "$pkgdir/usr/lib/yggdrasil/tune"
   install -Dm644 "$_src/data/org.yggdrasil.tune.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.tune.policy"
   install -Dm644 "$_src/data/yggdrasil-tune.service" "$pkgdir/usr/lib/systemd/system/yggdrasil-tune.service"
 }
