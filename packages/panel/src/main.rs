@@ -248,6 +248,16 @@ struct Buffer {
     busy: Arc<AtomicBool>,
 }
 
+impl Drop for Buffer {
+    /// Dropping the proxy alone sends nothing, so the buffer lived on in the compositor and kept its memory mapped there:
+    /// on 2026-11-09 Hyprland held 819 of the panel's old buffers, about 4 GB, after a day and a half (each redraw at a
+    /// new size, each pop-up, toast and dock rebuild left one behind). A buffer is only dropped when the compositor is
+    /// done with it (not busy) or its surface is gone.
+    fn drop(&mut self) {
+        self.buffer.destroy();
+    }
+}
+
 struct Surf {
     id: usize,
     kind: Kind,
