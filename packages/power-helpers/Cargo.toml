@@ -1,0 +1,33 @@
+[package]
+name = "yggdrasil-power-helpers"
+version = "0.1.0"
+edition = "2021"
+description = "Settings > Power's root helpers: tune (processor multipliers, power limits, graphics card clocks, with the crash guard), casefan (Corsair Commander Pro fans and pump) and gpufan (NVIDIA fans)"
+license = "MPL-2.0"
+
+[lib]
+name = "power_helpers"
+path = "src/lib.rs"
+
+# installed as /usr/lib/yggdrasil/tune, casefan and gpufan (packages/pkgbuilds/yggdrasil-settings), where Settings and the
+# yggdrasil-tune, -casefan and -gpufan services call them
+[[bin]]
+name = "tune"
+path = "src/bin/tune.rs"
+
+[[bin]]
+name = "casefan"
+path = "src/bin/casefan.rs"
+
+[[bin]]
+name = "gpufan"
+path = "src/bin/gpufan.rs"
+
+# libnvidia-ml is opened at run time (dlopen), so the helpers run, and say so, on a computer without the NVIDIA driver
+[dependencies]
+libc = "0.2"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
