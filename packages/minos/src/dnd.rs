@@ -53,6 +53,9 @@ struct St {
     action: DndAction,
     pos: (f32, f32),
     out_paths: Arc<Mutex<Vec<PathBuf>>>,
+    /// The tile that travels with a drag out, destroyed when the drag ends (dropping the proxies alone left each one in the
+    /// compositor, found 2026-11-09 with the panel's buffers).
+    icon: Arc<Mutex<Option<(WlSurface, WlBuffer)>>>,
 }
 
 pub struct Dnd {
@@ -66,6 +69,7 @@ pub struct Dnd {
     serial: Arc<AtomicU32>,
     down: Arc<AtomicBool>,
     out_paths: Arc<Mutex<Vec<PathBuf>>>,
+    icon: Arc<Mutex<Option<(WlSurface, WlBuffer)>>>,
     pub events: Receiver<DndEvent>,
     dragging_out: bool,
 }
@@ -92,7 +96,8 @@ pub fn init(frame: &eframe::Frame, ctx: &eframe::egui::Context) -> Option<Dnd> {
     let serial = Arc::new(AtomicU32::new(0));
     let down = Arc::new(AtomicBool::new(false));
     let out_paths = Arc::new(Mutex::new(vec![]));
-    let mut st = St { ctx: ctx.clone(), tx, conn: conn.clone(), serial: serial.clone(), down: down.clone(), offers: HashMap::new(), entered: None, action: DndAction::empty(), pos: (0.0, 0.0), out_paths: out_paths.clone() };
+    let icon = Arc::new(Mutex::new(None));
+    let mut st = St { ctx: ctx.clone(), tx, conn: conn.clone(), serial: serial.clone(), down: down.clone(), offers: HashMap::new(), entered: None, action: DndAction::empty(), pos: (0.0, 0.0), out_paths: out_paths.clone(), icon: icon.clone() };
     queue.roundtrip(&mut st).ok()?;
     std::thread::Builder::new()
         .name("minos-dnd".into())
@@ -117,7 +122,7 @@ pub fn init(frame: &eframe::Frame, ctx: &eframe::egui::Context) -> Option<Dnd> {
             }
         })
         .ok()?;
-    Some(Dnd { qh, manager, device, compositor, shm, surface, conn, serial, down, out_paths, events, dragging_out: false })
+    Some(Dnd { qh, manager, device, compositor, shm, surface, conn, serial, down, out_paths, icon, events, dragging_out: false })
 }
 
 impl Dnd {
@@ -146,13 +151,17 @@ impl Dnd {
         source.offer("application/x-minos-drag".into());
         source.set_actions(DndAction::Copy | DndAction::Move);
         let icon = self.icon();
-        self.device.start_drag(Some(&source), &self.surface, icon.as_ref(), self.serial.load(Ordering::Relaxed));
+        self.device.start_drag(Some(&source), &self.surface, icon.as_ref().map(|(s, _)| s), self.serial.load(Ordering::Relaxed));
+        if let Some((s, b)) = std::mem::replace(&mut *self.icon.lock().unwrap(), icon) {
+            s.destroy();
+            b.destroy();
+        }
         let _ = self.conn.flush();
         self.dragging_out = true;
     }
 
     /// A small purple tile that travels with the pointer.
-    fn icon(&self) -> Option<WlSurface> {
+    fn icon(&self) -> Option<(WlSurface, WlBuffer)> {
         const N: i32 = 40;
         let mut px = Vec::with_capacity((N * N * 4) as usize);
         for y in 0..N {
@@ -173,7 +182,7 @@ impl Dnd {
         let s = self.compositor.create_surface(&self.qh, ());
         s.attach(Some(&buf), 0, 0);
         s.commit();
-        Some(s)
+        Some((s, buf))
     }
 }
 
@@ -330,6 +339,10 @@ impl Dispatch<WlDataSource, ()> for St {
             }
             wl_data_source::Event::Cancelled | wl_data_source::Event::DndFinished => {
                 source.destroy();
+                if let Some((s, b)) = st.icon.lock().unwrap().take() {
+                    s.destroy();
+                    b.destroy();
+                }
                 st.down.store(false, Ordering::Relaxed);
                 let _ = st.tx.send(DndEvent::Finished);
                 st.ctx.request_repaint();
