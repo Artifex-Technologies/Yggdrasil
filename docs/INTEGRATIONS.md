@@ -27,10 +27,16 @@ speak = /usr/local/bin/labyrinth-sarina-speak    # reads text aloud (text on sta
 warm = /usr/local/bin/labyrinth-sarina-warm      # optional: wake the model while you are still talking
 runtime = labyrinth-sarina         # folder in $XDG_RUNTIME_DIR where it reports speaking.pid and conversations (conv-ID.session)
 shortcut = Super+S                 # the talk key Yggdrasil registers, tap to start and tap to send (Ctrl+Alt+S is a second way in)
+question = /usr/local/bin/labyrinth-ask-sarina --voice   # optional: a typed question, added as the last argument; prints the answer; should only read
+crash_question = The program {program} just crashed ({signal}). Look into it: ...   # optional: how the crash watch asks
 ```
 
 Yggdrasil owns the key, the recording, Fylgja's listening and speaking animation and the answer card; the assistant owns the rest.
 Its settings are declared with the controls below and appear on Settings' Assistant page.
+
+With `question`, the crash watch (`yggdrasil-crashwatch`, packages/crashwatch) offers "Ask NAME" on its crash notices and runs
+it, in the home folder, with `crash_question` (`{program}` and `{signal}` filled in) or a plain question of its own. Without
+`question` (or without an assistant), crash notices offer nothing.
 
 ### `packages` (how Agora installs software)
 

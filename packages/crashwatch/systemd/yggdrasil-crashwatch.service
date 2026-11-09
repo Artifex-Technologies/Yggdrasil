@@ -1,0 +1,15 @@
+# Yggdrasil's crash watch, a user service that is off until you turn it on: a notice when one of your own programs crashes,
+# with "Ask <assistant>" when the system has an assistant. Turn on: systemctl --user enable --now yggdrasil-crashwatch
+[Unit]
+Description=Crash watch: a notice when one of your programs crashes (Yggdrasil)
+Documentation=file:///usr/share/doc/yggdrasil-crashwatch/README.md
+
+[Service]
+ExecStart=/usr/bin/yggdrasil-crashwatch
+Restart=on-failure
+RestartSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

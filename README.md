@@ -40,6 +40,7 @@ version that runs in a window ([docs/COMPOSITOR.md](docs/COMPOSITOR.md)). The ch
 | `packages/timer` | `yggdrasil-timer` | a countdown timer in the top bar |
 | `packages/health` | `yggdrasil-health` | break reminders (eyes, movement, water, breathing, meals, wind-down) with a top bar pill |
 | `packages/leakwatch` | `yggdrasil-leakwatch` | the leak watch: every 5 minutes (a timer; nothing stays running) each program's memory and the images it left with Hyprland; a warning when one keeps growing for hours |
+| `packages/crashwatch` | `yggdrasil-crashwatch` | the crash watch (off until turned on): a notice when one of your programs crashes, with "Ask ..." when the system has an assistant; about 0.4 MB while it waits ([README](packages/crashwatch/README.md)) |
 | `packages/gametime` | `yggdrasil-gametime` | game time: while a game runs, background updates and chores wait and catch up afterwards; the leak watch, virus scans and Heimdall keep running ([docs/GAME_TIME.md](docs/GAME_TIME.md)) |
 | `packages/controllers` | `yggdrasil-controllers` | game controllers in the top bar: battery, rumble test, light bar colour, notifications |
 | `packages/gamepads` | | the game controller library that Settings and the controllers add-on share (reads sysfs) |

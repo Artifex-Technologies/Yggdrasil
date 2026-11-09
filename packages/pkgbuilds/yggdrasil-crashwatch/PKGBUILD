@@ -1,0 +1,35 @@
+# Maintainer: Yggdrasil
+# Builds yggdrasil-crashwatch from packages/crashwatch/ in this repository. Build from
+# this directory with `makepkg -s`.
+pkgname=yggdrasil-crashwatch
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Yggdrasil's crash watch: a notice when one of your programs crashes, with an Ask action when the system has an assistant"
+arch=('x86_64')
+url="https://github.com/Artifex-Technologies/Yggdrasil"
+license=('MPL-2.0')
+# systemd-coredump stores the cores it watches for
+depends=('gcc-libs' 'glibc' 'systemd')
+makedepends=('cargo')
+options=('!lto')
+
+_src="$startdir/../../crashwatch"
+
+build() {
+  cd "$_src"
+  cargo build --release --locked --target-dir "$srcdir/target"
+}
+
+check() {
+  cd "$_src"
+  # the library and the watcher as it runs; the live D-Bus check needs a private session bus (see tests/live_dbus.rs)
+  cargo test --release --locked --target-dir "$srcdir/target"
+}
+
+package() {
+  install -Dm755 "$srcdir/target/release/yggdrasil-crashwatch" "$pkgdir/usr/bin/yggdrasil-crashwatch"
+  install -Dm755 "$srcdir/target/release/crashwatch-notice" "$pkgdir/usr/lib/yggdrasil/crashwatch-notice"
+  # a user service, off until each account turns it on (systemctl --user enable --now yggdrasil-crashwatch)
+  install -Dm644 "$_src/systemd/yggdrasil-crashwatch.service" "$pkgdir/usr/lib/systemd/user/yggdrasil-crashwatch.service"
+  install -Dm644 "$_src/README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
+}
