@@ -1,0 +1,7 @@
+[Unit]
+Description=Game time: start this account's chores that waited for a game (Yggdrasil)
+Documentation=file:///usr/share/doc/yggdrasil-gametime/README.md
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/yggdrasil-gametime catch-up --user

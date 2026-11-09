@@ -1,0 +1,10 @@
+[Unit]
+Description=Game time: catch up on this account's chores after a game, checked every 5 minutes (Yggdrasil)
+
+[Timer]
+OnStartupSec=5min
+OnUnitActiveSec=5min
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

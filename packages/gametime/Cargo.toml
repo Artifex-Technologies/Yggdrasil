@@ -1,0 +1,20 @@
+[package]
+name = "yggdrasil-gametime"
+version = "0.1.0"
+edition = "2021"
+description = "Yggdrasil's game time: while a game runs, background updates and chores wait (systemd ExecCondition=) and catch up afterwards; security keeps running. No daemon: it looks in /proc when systemd asks."
+license = "MPL-2.0"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "yggdrasil-gametime"
+path = "src/main.rs"
+
+# no dependencies: it reads /proc and a few small files, and runs systemctl after a game
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

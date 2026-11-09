@@ -1,0 +1,41 @@
+# Virus definitions: ClamAV's freshclam daemon keeps running and cannot wait for a game, so game time switches to ClamAV's
+# own clamav-freshclam-once.timer (every 2 hours with this package, and waiting while a game runs). Removing the package
+# puts the daemon back. ClamAV's settings (/etc/clamav) are not touched. Safe to run again: each step leaves things as they
+# are when they are already so; inside a chroot (an ISO build, the installer) only the enabling is done.
+
+_daemon=clamav-freshclam.service
+_timer=clamav-freshclam-once.timer
+
+_have_clamav() {
+  [ -e /usr/lib/systemd/system/$_daemon ] && [ -e /usr/lib/systemd/system/$_timer ]
+}
+
+_to_timer() {
+  # the catch-up starts now rather than at the next boot (its timer is wanted by timers.target from the package)
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  systemctl --no-block start yggdrasil-gametime-catch-up.timer >/dev/null 2>&1 || true
+  _have_clamav || return 0
+  local changed=0
+  systemctl is-enabled --quiet $_daemon 2>/dev/null && changed=1
+  systemctl is-enabled --quiet $_timer 2>/dev/null || changed=1
+  systemctl disable --now $_daemon >/dev/null 2>&1 || true
+  systemctl enable --now $_timer >/dev/null 2>&1 || true
+  if [ $changed = 1 ]; then
+    echo ":: ClamAV's signatures now update every 2 hours from $_timer, waiting while a game runs"
+  fi
+}
+
+post_install() {
+  _to_timer
+}
+
+post_upgrade() {
+  _to_timer
+}
+
+post_remove() {
+  [ -e /usr/lib/systemd/system/$_daemon ] || return 0
+  systemctl disable --now $_timer >/dev/null 2>&1 || true
+  systemctl enable --now $_daemon >/dev/null 2>&1 || true
+  echo ":: ClamAV's signatures update from the freshclam daemon again ($_daemon)"
+}

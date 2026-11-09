@@ -1,0 +1,13 @@
+[Unit]
+Description=Game time: start the chores that waited for a game (Yggdrasil)
+Documentation=file:///usr/share/doc/yggdrasil-gametime/README.md
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/yggdrasil-gametime catch-up --system
+# it reads /proc and its own list in /run, and asks systemd to start units; nothing else
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=-/run/yggdrasil-gametime
+ProtectHome=yes
+PrivateTmp=yes
