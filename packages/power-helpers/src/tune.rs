@@ -572,7 +572,7 @@ impl<'a> Tune<'a> {
 
     fn need_root(&self, what: &str) -> bool {
         if !self.hw.is_root(self) {
-            eprintln!("tune: {what} needs root (Settings runs it with pkexec)");
+            crate::warn!("tune: {what} needs root (Settings runs it with pkexec)");
             return false;
         }
         true
@@ -633,7 +633,7 @@ impl<'a> Tune<'a> {
                     .into(),
             )
             .with("service", service.into());
-        println!("{}", crate::json::dumps(&out.into()));
+        crate::out!("{}", crate::json::dumps(&out.into()));
         Ok(0)
     }
 
@@ -978,7 +978,7 @@ enum SetErr {
 }
 
 fn fail(msg: &str, code: i32) -> i32 {
-    eprintln!("tune: {msg}");
+    crate::warn!("tune: {msg}");
     code
 }
 
@@ -1126,12 +1126,12 @@ pub fn main(args: Vec<String>) -> i32 {
     let (ctx, argv) = match Ctx::from_args(args) {
         Ok(x) => x,
         Err(e) => {
-            eprintln!("tune: {e}");
+            crate::warn!("tune: {e}");
             return 2;
         }
     };
     if argv.len() < 2 || argv[1] == "-h" || argv[1] == "--help" {
-        println!("{HELP}{DRY_RUN_HELP}");
+        crate::out!("{HELP}{DRY_RUN_HELP}");
         return if argv.len() >= 2 { 0 } else { 2 };
     }
     let t = Tune::new(&ctx, &System);
@@ -1148,14 +1148,14 @@ pub fn main(args: Vec<String>) -> i32 {
         "set" if !rest.is_empty() => t.cmd_set(&rest[0], &rest[1..]),
         "watch" if rest.is_empty() => t.cmd_watch(),
         _ => {
-            eprintln!("tune: unknown command (see --help)");
+            crate::warn!("tune: unknown command (see --help)");
             return 2;
         }
     };
     match r {
         Ok(code) => code,
         Err(Crash(e)) => {
-            eprintln!("tune: {e}");
+            crate::warn!("tune: {e}");
             1
         }
     }

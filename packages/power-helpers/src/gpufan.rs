@@ -234,7 +234,7 @@ pub fn run(nv: &mut dyn Card, env: &mut dyn Env) -> i32 {
     let code = match result {
         Ok(()) => 0,
         Err(NvmlError(e)) => {
-            eprintln!("gpufan: {e}; the fans are back on the card's own control");
+            crate::warn!("gpufan: {e}; the fans are back on the card's own control");
             1
         }
     };
@@ -275,13 +275,13 @@ pub fn cmd_get(ctx: &Ctx) -> i32 {
     if let Err(NvmlError(e)) = r {
         out.set("error", e.into());
     }
-    println!("{}", crate::json::dumps(&out.into()));
+    crate::out!("{}", crate::json::dumps(&out.into()));
     0
 }
 
 pub fn cmd_set(ctx: &Ctx, arg: &str) -> i32 {
     if !ctx.is_root() {
-        eprintln!("gpufan: set needs root (Settings runs it with pkexec)");
+        crate::warn!("gpufan: set needs root (Settings runs it with pkexec)");
         return 1;
     }
     let mut cfg = load(ctx, &conf(ctx));
@@ -304,11 +304,11 @@ pub fn cmd_set(ctx: &Ctx, arg: &str) -> i32 {
         Ok(())
     })();
     if let Err(e) = r {
-        eprintln!("gpufan: {e}");
+        crate::warn!("gpufan: {e}");
         return 2;
     }
     if let Err(e) = save(ctx, &cfg, &conf(ctx)) {
-        eprintln!("gpufan: {e}");
+        crate::warn!("gpufan: {e}");
         return 1;
     }
     if cfg.mode == "auto" {
@@ -325,7 +325,7 @@ pub fn cmd_set(ctx: &Ctx, arg: &str) -> i32 {
 
 pub fn cmd_reset(ctx: &Ctx) -> i32 {
     if !ctx.is_root() {
-        eprintln!("gpufan: reset needs root");
+        crate::warn!("gpufan: reset needs root");
         return 1;
     }
     let Ok(mut nv) = Nvml::open(ctx) else { return 0 };
@@ -363,14 +363,14 @@ impl Env for Service<'_> {
 
 pub fn cmd_run(ctx: &Ctx) -> i32 {
     if !ctx.is_root() {
-        eprintln!("gpufan: run is the root service (yggdrasil-gpufan)");
+        crate::warn!("gpufan: run is the root service (yggdrasil-gpufan)");
         return 1;
     }
     sys::catch_stop_signals();
     let mut nv = match Nvml::open(ctx) {
         Ok(n) => n,
         Err(NvmlError(e)) => {
-            eprintln!("gpufan: {e}");
+            crate::warn!("gpufan: {e}");
             return 1;
         }
     };
@@ -381,12 +381,12 @@ pub fn main(args: Vec<String>) -> i32 {
     let (ctx, argv) = match Ctx::from_args(args) {
         Ok(x) => x,
         Err(e) => {
-            eprintln!("gpufan: {e}");
+            crate::warn!("gpufan: {e}");
             return 2;
         }
     };
     if argv.len() < 2 || argv[1] == "-h" || argv[1] == "--help" {
-        println!("{HELP}{DRY_RUN_HELP}");
+        crate::out!("{HELP}{DRY_RUN_HELP}");
         return if argv.len() >= 2 { 0 } else { 2 };
     }
     match (argv[1].as_str(), argv.len()) {
@@ -395,7 +395,7 @@ pub fn main(args: Vec<String>) -> i32 {
         ("run", 2) => cmd_run(&ctx),
         ("reset", 2) => cmd_reset(&ctx),
         _ => {
-            eprintln!("gpufan: unknown command (see --help)");
+            crate::warn!("gpufan: unknown command (see --help)");
             2
         }
     }

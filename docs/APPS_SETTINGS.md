@@ -171,6 +171,31 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
     unguarded, since they cannot freeze anything. The processor's own values are read once per start of the computer.
   - **Checked on the i9-9900K and the 2080 Ti** with lower values only (multipliers down one, core -50 MHz) and back.
     Tests: `helpers/tests/test_tune.py`.
+- **tune, casefan and gpufan in Rust** (2026-11-09, `packages/power-helpers`): the three root helpers above run all the
+  time (or while a fan curve is on) and were Python on a Rust desktop. The port keeps their interface so Settings and the
+  units do not change: commands, arguments, JSON (byte for byte), settings and state files, exit codes, log lines, and every
+  safety rule. The other helpers (account, powerlimit, bootscreen, gpuunlock, game-fix, gpu-run) stay Python for now.
+  - **Status:** built and tested, not installed yet. The switch (the package installs the Rust binaries at the same
+    `/usr/lib/yggdrasil/` paths; the Python scripts move to `helpers/python/` for a rollback) is the branch
+    `power-helpers-switch`, so the daily package publish does not ship it before it has run on this PC under watch.
+  - **Light:** no crate but libc, no async runtime, one thread each; libnvidia-ml is opened at run time (dlopen), so
+    without the NVIDIA driver they run and say so. `tune watch` reads the kernel's messages from `/dev/kmsg` instead of a
+    `journalctl -k -f` child (journalctl only when /dev/kmsg cannot be opened; the service logs which one it reads).
+  - **Memory, measured 2026-11-09:** each Rust helper is about 2.8 MB on its own; `nvmlInit` adds about 26 MB in any
+    process (the NVIDIA 620 driver maps libcuda and starts a thread), so with the card open each is about 29 MB. The Python
+    ones showed 16.5 MB (casefan) and 19 MB (tune) resident but had about 23 MB each swapped to zram, so about 40 MB each,
+    and tune's journalctl child held another 46 MB: about 88 MB for tune, about 29 MB in Rust.
+  - **Dry run:** every command takes `--dry-run` (each write is printed as `dry run: ...`, nothing is written: no sysfs, MSR,
+    NVML set call, file, systemctl or logger), and with it `--root DIR` (every system path under DIR, the card from
+    DIR/nvml.json: no hardware at all) and `--steps N` (N rounds of a service's loop on a virtual clock).
+  - **Parity:** the 44 cases of the Python tests are Rust tests with the same names and expectations.
+    `parity/compare.py` runs the Rust helpers and the Python scripts (through `parity/py_dryrun.py`, which replaces only
+    their outside) in dry runs on the same fake trees: the tests' fixtures, more cases around them, and samples of a real
+    computer from `parity/record.py` (read-only), plus casefan's loop over 1,216 temperature sequences. On 2026-11-09:
+    83 of 83 cases and all sequences the same.
+  - **Different on purpose:** a setting whose "ports" is not an object crashed the Python casefan, leaving the ports at
+    their last speed (its `reset` crashed too); the Rust one treats it as a failure: every port at 100 %. The help text
+    adds the dry-run paragraph. Python tracebacks become one "helper: message" line, still exit code 1.
 - **Graphics card unlock** (`/usr/lib/yggdrasil/gpuunlock`, built 2026-10-27 as Phase 0 of Labyrinth OS's
   [GPU_UNLOCK.md](https://github.com/Artifex-Technologies/Labyrinth_OS/blob/main/docs/GPU_UNLOCK.md)): a "Tensor-rate unlock"
   row under the Graphics card row, only with Developer options on and only for a card listed exactly (device, board, VBIOS, driver series)

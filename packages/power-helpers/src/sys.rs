@@ -107,7 +107,7 @@ impl Ctx {
 
     /// One line of a dry run's account.
     pub fn say(&self, what: &str) {
-        println!("dry run: {what}");
+        crate::out!("dry run: {what}");
         let _ = std::io::stdout().flush();
     }
 
@@ -291,6 +291,26 @@ impl Ctx {
     }
 }
 
+// ---------------------------------------------------------------- output that never takes the helper down
+
+/// eprintln! that cannot panic: a broken stderr (journald restarted) must never stop a helper on its way to a safe speed.
+#[macro_export]
+macro_rules! warn {
+    ($($t:tt)*) => {{
+        use std::io::Write as _;
+        let _ = writeln!(std::io::stderr(), $($t)*);
+    }};
+}
+
+/// println! that cannot panic (a reader that went away).
+#[macro_export]
+macro_rules! out {
+    ($($t:tt)*) => {{
+        use std::io::Write as _;
+        let _ = writeln!(std::io::stdout(), $($t)*);
+    }};
+}
+
 // ---------------------------------------------------------------- signals
 
 static STOP: AtomicBool = AtomicBool::new(false);
@@ -313,6 +333,22 @@ pub fn catch_stop_signals() {
 
 pub fn stopping() -> bool {
     STOP.load(Ordering::SeqCst)
+}
+
+/// Runs `f` with SIGTERM and SIGINT blocked in this thread, so threads it starts (libnvidia-ml starts one in nvmlInit)
+/// inherit the block and a stop signal always reaches the main thread, cutting its wait short.
+pub fn without_stop_signals<T>(f: impl FnOnce() -> T) -> T {
+    unsafe {
+        let mut set: libc::sigset_t = std::mem::zeroed();
+        let mut old: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut set);
+        libc::sigaddset(&mut set, libc::SIGTERM);
+        libc::sigaddset(&mut set, libc::SIGINT);
+        libc::pthread_sigmask(libc::SIG_BLOCK, &set, &mut old);
+        let r = f();
+        libc::pthread_sigmask(libc::SIG_SETMASK, &old, std::ptr::null_mut());
+        r
+    }
 }
 
 /// Sleeps `s` seconds, returning early when a stop signal arrives.

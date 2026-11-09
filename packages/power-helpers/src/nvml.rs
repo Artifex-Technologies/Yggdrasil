@@ -152,7 +152,7 @@ impl Card {
             return Ok(Card { backend: Backend::Fake(RefCell::new(f)), dry: ctx.dry });
         }
         let lib = lib().map_err(OpenError::Library)?;
-        let rc = call!(lib, "nvmlInit_v2", fn(), );
+        let rc = crate::sys::without_stop_signals(|| call!(lib, "nvmlInit_v2", fn(), ));
         if rc != SUCCESS {
             return Err(OpenError::Init(rc));
         }
@@ -253,14 +253,21 @@ impl Card {
 
     // ------------------------------------------------------------ the calls that change the card (never in a dry run)
 
-    fn dry_say(&self, what: String) -> Result<(), i32> {
-        println!("dry run: {what}");
+    /// A dry run's set call: printed, never made. A stand-in card may be told to refuse it ("fail"), so the way a refusal is
+    /// handled can be seen too.
+    fn dry_say(&self, name: &str, what: String) -> Result<(), i32> {
+        if let Backend::Fake(f) = &self.backend {
+            if let Some(c) = f.borrow().fails(name) {
+                return Err(c);
+            }
+        }
+        crate::out!("dry run: {what}");
         Ok(())
     }
 
     pub fn set_fan_speed(&self, i: u32, pct: u32) -> Result<(), i32> {
         if self.dry {
-            return self.dry_say(format!("nvmlDeviceSetFanSpeed_v2(fan {i}, {pct})"));
+            return self.dry_say("nvmlDeviceSetFanSpeed_v2", format!("nvmlDeviceSetFanSpeed_v2(fan {i}, {pct})"));
         }
         match &self.backend {
             Backend::Real { lib, dev } => Self::ok(call!(lib, "nvmlDeviceSetFanSpeed_v2", fn(*mut c_void, c_uint, c_uint), *dev, i, pct)),
@@ -270,7 +277,7 @@ impl Card {
 
     pub fn set_default_fan_speed(&self, i: u32) -> Result<(), i32> {
         if self.dry {
-            return self.dry_say(format!("nvmlDeviceSetDefaultFanSpeed_v2(fan {i})"));
+            return self.dry_say("nvmlDeviceSetDefaultFanSpeed_v2", format!("nvmlDeviceSetDefaultFanSpeed_v2(fan {i})"));
         }
         match &self.backend {
             Backend::Real { lib, dev } => Self::ok(call!(lib, "nvmlDeviceSetDefaultFanSpeed_v2", fn(*mut c_void, c_uint), *dev, i)),
@@ -280,7 +287,7 @@ impl Card {
 
     pub fn set_clock_offset(&self, kind: u32, mhz: i32) -> Result<(), i32> {
         if self.dry {
-            return self.dry_say(format!("nvmlDeviceSetClockOffsets(type {kind}, pstate 0, {mhz} MHz)"));
+            return self.dry_say("nvmlDeviceSetClockOffsets", format!("nvmlDeviceSetClockOffsets(type {kind}, pstate 0, {mhz} MHz)"));
         }
         match &self.backend {
             Backend::Real { lib, dev } => {
@@ -293,7 +300,7 @@ impl Card {
 
     pub fn set_locked_clocks(&self, max_mhz: u32) -> Result<(), i32> {
         if self.dry {
-            return self.dry_say(format!("nvmlDeviceSetGpuLockedClocks(0, {max_mhz})"));
+            return self.dry_say("nvmlDeviceSetGpuLockedClocks", format!("nvmlDeviceSetGpuLockedClocks(0, {max_mhz})"));
         }
         match &self.backend {
             Backend::Real { lib, dev } => Self::ok(call!(lib, "nvmlDeviceSetGpuLockedClocks", fn(*mut c_void, c_uint, c_uint), *dev, 0, max_mhz)),
@@ -303,7 +310,7 @@ impl Card {
 
     pub fn reset_locked_clocks(&self) -> Result<(), i32> {
         if self.dry {
-            return self.dry_say("nvmlDeviceResetGpuLockedClocks()".into());
+            return self.dry_say("nvmlDeviceResetGpuLockedClocks", "nvmlDeviceResetGpuLockedClocks()".into());
         }
         match &self.backend {
             Backend::Real { lib, dev } => Self::ok(call!(lib, "nvmlDeviceResetGpuLockedClocks", fn(*mut c_void), *dev)),

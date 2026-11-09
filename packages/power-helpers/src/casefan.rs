@@ -401,7 +401,7 @@ pub fn run(env: &mut dyn Env) -> i32 {
     let mut cfg = match first {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("casefan: {e}");
+            crate::warn!("casefan: {e}");
             return 1;
         }
     };
@@ -455,7 +455,7 @@ pub fn run(env: &mut dyn Env) -> i32 {
     match result {
         Ok(()) => 0,
         Err(e) => {
-            eprintln!("casefan: {e}; every port is at full speed");
+            crate::warn!("casefan: {e}; every port is at full speed");
             for (n, _) in &cfg.ports {
                 let _ = env.write(n, 100);
             }
@@ -489,7 +489,7 @@ pub fn cmd_get(ctx: &Ctx) -> i32 {
     let cfg = match load(ctx, &conf(ctx)) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("casefan: {e}");
+            crate::warn!("casefan: {e}");
             return 1;
         }
     };
@@ -518,7 +518,7 @@ pub fn cmd_get(ctx: &Ctx) -> i32 {
         Ok(t) => out.set("gpu", t.into()),
         Err(e) => out.set("error", e.to_string().into()),
     }
-    println!("{}", crate::json::dumps(&out.into()));
+    crate::out!("{}", crate::json::dumps(&out.into()));
     0
 }
 
@@ -544,25 +544,25 @@ pub fn cmd_set(ctx: &Ctx, path: &str) -> i32 {
 /// `set`, with the standard input passed in (tests give it a text).
 pub fn cmd_set_from(ctx: &Ctx, path: &str, stdin: &mut dyn std::io::Read) -> i32 {
     if !ctx.is_root() {
-        eprintln!("casefan: set needs root (Settings runs it with pkexec)");
+        crate::warn!("casefan: set needs root (Settings runs it with pkexec)");
         return 1;
     }
     let d = match read_setting(path, stdin) {
         Ok(d) => d,
         Err(e) => {
-            eprintln!("casefan: {e}");
+            crate::warn!("casefan: {e}");
             return 2;
         }
     };
     let cfg = match clean(&d) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("casefan: {e}");
+            crate::warn!("casefan: {e}");
             return 1;
         }
     };
     if let Err(e) = save(ctx, &cfg, &conf(ctx)) {
-        eprintln!("casefan: {e}");
+        crate::warn!("casefan: {e}");
         return 1;
     }
     ctx.act("systemctl", &["enable", SERVICE]);
@@ -575,7 +575,7 @@ pub fn cmd_set_from(ctx: &Ctx, path: &str, stdin: &mut dyn std::io::Read) -> i32
 
 pub fn cmd_reset(ctx: &Ctx, failed: bool) -> i32 {
     if !ctx.is_root() {
-        eprintln!("casefan: reset needs root");
+        crate::warn!("casefan: reset needs root");
         return 1;
     }
     let Some(cpro) = find_cpro(ctx, &hwmon(ctx)) else { return 0 };
@@ -636,18 +636,18 @@ impl Env for Service<'_> {
 
 pub fn cmd_run(ctx: &Ctx) -> i32 {
     if !ctx.is_root() {
-        eprintln!("casefan: run is the root service (yggdrasil-casefan)");
+        crate::warn!("casefan: run is the root service (yggdrasil-casefan)");
         return 1;
     }
     let Some(cpro) = find_cpro(ctx, &hwmon(ctx)) else {
-        eprintln!("casefan: no Corsair Commander Pro (corsair_cpro driver) found");
+        crate::warn!("casefan: no Corsair Commander Pro (corsair_cpro driver) found");
         return 1;
     };
     sys::catch_stop_signals();
     let gpu = match Gpu::open(ctx) {
         Ok(g) => g,
         Err(e) => {
-            eprintln!("casefan: {e}");
+            crate::warn!("casefan: {e}");
             return 1;
         }
     };
@@ -658,12 +658,12 @@ pub fn main(args: Vec<String>) -> i32 {
     let (ctx, argv) = match Ctx::from_args(args) {
         Ok(x) => x,
         Err(e) => {
-            eprintln!("casefan: {e}");
+            crate::warn!("casefan: {e}");
             return 2;
         }
     };
     if argv.len() < 2 || argv[1] == "-h" || argv[1] == "--help" {
-        println!("{HELP}{DRY_RUN_HELP}");
+        crate::out!("{HELP}{DRY_RUN_HELP}");
         return if argv.len() >= 2 { 0 } else { 2 };
     }
     let c = argv[1].as_str();
@@ -676,7 +676,7 @@ pub fn main(args: Vec<String>) -> i32 {
             cmd_reset(&ctx, failed)
         }
         _ => {
-            eprintln!("casefan: unknown command (see --help)");
+            crate::warn!("casefan: unknown command (see --help)");
             2
         }
     }
