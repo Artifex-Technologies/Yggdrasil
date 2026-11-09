@@ -10,10 +10,15 @@ line for line, apart from what differs on purpose:
 Cases: the Python tests' fixtures as trees, more cases around them, any recorded samples of a real computer (record.py), and
 casefan's loop over many temperature sequences (the test sequences and seeded random walks).
 
+Then the merged service (`power run`, one process for the four loops): on the same trees, its dry run must print, part by
+part, the same lines in the same order as each Rust helper run on its own followed by what its old unit's ExecStopPost ran
+(`casefan reset` / `gpufan reset`), with the same exit codes. Each of its lines is "[part] ..." (merged_case).
+
     compare.py [--python DIR] [--bin DIR] [--sample ROOT]... [--seeds N] [-v]
 
---python: the folder with the Python tune, casefan and gpufan (default: ../../settings/helpers/python, else ../../settings/helpers)
---bin: the folder with the Rust binaries (default: ../../../target/release; build with cargo build --release --examples)
+--python: the folder with the Python tune, casefan, gpufan and powerlimit (default: each from ../../settings/helpers/python,
+          else ../../settings/helpers)
+--bin: the folder with the Rust binaries (default: ../../../target/release; build with cargo build --release --bins --examples)
 """
 import argparse
 import difflib
@@ -33,6 +38,16 @@ from contextlib import redirect_stderr
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STOCK = [50, 50, 48, 48, 47, 47, 47, 47]
+HELPERS = os.path.normpath(os.path.join(HERE, "..", "..", "settings", "helpers"))
+
+
+def py_helper(args, name):
+    """The Python script of a helper: in --python, else where the package keeps it (helpers/python after a switch to Rust,
+    helpers before)."""
+    for d in ([args.python] if args.python else []) + [os.path.join(HELPERS, "python"), HELPERS]:
+        if os.path.exists(os.path.join(d, name)):
+            return os.path.join(d, name)
+    raise SystemExit(f"compare: no Python {name} (give --python)")
 
 
 # ---------------------------------------------------------------- fake trees
@@ -95,6 +110,31 @@ def tune_tree(root, conf=None, status=None, tuned=None, kmsg="", programmable=Tr
         files(root, "/etc/yggdrasil", {"tuning.json": conf})
     files(root, "/", {"nvml.json": {"temp": 40, "fans": [30, 30], "min": 24, "max": 100, "core": 0, "mem": 0, "max_core": 2100}})
     files(root, "/dev", {"kmsg": kmsg})
+
+
+RTX = "NVIDIA GeForce RTX 2080 Ti, 260.00, 260.00, 100.00, 330.00\n"
+UPOWER = "busctl get-property org.freedesktop.UPower.PowerProfiles"
+HADESS = "busctl get-property net.hadess.PowerProfiles"
+
+
+def profile(mode):
+    return f's "{mode}"\n'
+
+
+def powerlimit_tree(root, mode="balanced", limits=None, old=None, hold=None, smi=RTX, policies=4, cmds=None):
+    """Four processor policies (0.8-4.7 GHz), the power mode and the card's limits through commands.json, the limits file
+    (the new place, the old one, or neither) and the graphics card unlock's power hold."""
+    for i in range(policies):
+        files(root, f"/sys/devices/system/cpu/cpufreq/policy{i}",
+              {"cpuinfo_min_freq": "800000\n", "cpuinfo_max_freq": "4700000\n" if i < 2 else "4600000\n", "scaling_max_freq": "4700000\n"})
+    answers = {UPOWER: [profile(m) for m in mode] if isinstance(mode, list) else profile(mode), "nvidia-smi --query-gpu": smi}
+    files(root, "/", {"commands.json": {**answers, **(cmds or {})}})
+    if limits is not None:
+        files(root, "/etc/yggdrasil", {"power-limits.json": limits})
+    if old is not None:
+        files(root, "/etc/labyrinth", {"power-limits.json": old})
+    if hold is not None:
+        files(root, "/var/lib/yggdrasil/gpu-unlock", {"power-hold": hold})
 
 
 PUMP_AND_FAN = {"ports": {"1": {"name": "pump", "role": "pump", "fixed": 100}, "6": {"role": "fan"}}}
@@ -200,6 +240,46 @@ def cases(work, samples):
          ["try", "gpu", "core=120"], None, None),
         ("tune watch, no card", "tune", lambda r: (tune_tree(r), os.remove(os.path.join(r, "nvml.json"))), ["watch"], 2, None),
     ]
+    pl = lambda **k: (lambda r: powerlimit_tree(r, **k))
+    LIMITS = {"balanced": {"cpu": 80, "gpu": 200}, "power-saver": {"cpu": 40, "gpu": 150}, "performance": {"gpu": 300}}
+    c += [
+        ("powerlimit get", "powerlimit", pl(limits=LIMITS), ["get"], None, None),
+        ("powerlimit get, no card", "powerlimit", pl(limits=LIMITS, smi=None), ["get"], None, None),
+        ("powerlimit get, the card cannot say ([N/A])", "powerlimit", pl(limits=LIMITS, smi="NVIDIA X, [N/A], [N/A], [N/A], [N/A]\n"), ["get"], None, None),
+        ("powerlimit get, nvidia-smi fails", "powerlimit", pl(smi={"rc": 9, "out": "NVIDIA-SMI has failed\n"}), ["get"], None, None),
+        ("powerlimit get, nvidia-smi too slow", "powerlimit", pl(smi={"timeout": True}), ["get"], None, None),
+        ("powerlimit get, a hold at the default", "powerlimit", pl(limits=LIMITS, hold={"watts": None, "why": "armed"}), ["get"], None, None),
+        ("powerlimit get, a heat hold", "powerlimit", pl(limits=LIMITS, hold={"watts": 200}), ["get"], None, None),
+        ("powerlimit get, a broken hold", "powerlimit", pl(hold="not json"), ["get"], None, None),
+        ("powerlimit get, the old place", "powerlimit", pl(old={"balanced": {"cpu": 50}}), ["get"], None, None),
+        ("powerlimit get, unusable limits left out", "powerlimit",
+         pl(limits={"balanced": {"cpu": 0, "gpu": 5000}, "turbo": {"cpu": 50}, "power-saver": {"cpu": True, "gpu": 10.5}, "performance": "x"}), ["get"], None, None),
+        ("powerlimit get, an older power-profiles-daemon", "powerlimit", pl(cmds={UPOWER: None, HADESS: profile("power-saver")}), ["get"], None, None),
+        ("powerlimit get, no busctl", "powerlimit", pl(cmds={UPOWER: None, HADESS: None}), ["get"], None, None),
+        ("powerlimit get, no processor policies", "powerlimit", pl(policies=0), ["get"], None, None),
+        ("powerlimit apply", "powerlimit", pl(limits=LIMITS), ["apply"], None, None),
+        ("powerlimit apply, nothing set (full speed, the card's default)", "powerlimit", pl(smi="NVIDIA X, 200.00, 260.00, 100.00, 330.00\n"), ["apply"], None, None),
+        ("powerlimit apply, the card already there", "powerlimit", pl(limits=LIMITS, smi="NVIDIA X, 200.00, 260.00, 100.00, 330.00\n"), ["apply"], None, None),
+        ("powerlimit apply, a hold caps the card", "powerlimit", pl(mode="performance", limits=LIMITS, hold={"watts": 220}), ["apply"], None, None),
+        ("powerlimit apply, above the card's top", "powerlimit", pl(mode="performance", limits={"performance": {"gpu": 900}}), ["apply"], None, None),
+        ("powerlimit apply, no mode known", "powerlimit", pl(limits=LIMITS, cmds={UPOWER: None, HADESS: {"rc": 1, "out": ""}}), ["apply"], None, None),
+        ("powerlimit apply, no card", "powerlimit", pl(mode="power-saver", limits=LIMITS, smi=None), ["apply"], None, None),
+        ("powerlimit set, the active mode", "powerlimit", pl(limits=LIMITS), ["set", "balanced", "cpu=70", "gpu=0180"], None, None),
+        ("powerlimit set, another mode (nothing applied)", "powerlimit", pl(limits=LIMITS), ["set", "performance", "cpu=95"], None, None),
+        ("powerlimit set, default takes limits away", "powerlimit", pl(limits=LIMITS), ["set", "balanced", "cpu=default", "gpu=default"], None, None),
+        ("powerlimit set, out of range is saved as given", "powerlimit", pl(limits=LIMITS), ["set", "balanced", "cpu=500"], None, None),
+        ("powerlimit set, from the old place", "powerlimit", pl(old={"power-saver": {"cpu": 50}}), ["set", "balanced", "gpu=250"], None, None),
+        ("powerlimit set, an unknown mode", "powerlimit", pl(limits=LIMITS), ["set", "turbo", "cpu=50"], None, None),
+        ("powerlimit set, an unknown limit", "powerlimit", pl(limits=LIMITS), ["set", "balanced", "fan=50"], None, None),
+        ("powerlimit set, not a number", "powerlimit", pl(limits=LIMITS), ["set", "balanced", "cpu=-5"], None, None),
+        ("powerlimit set, no =", "powerlimit", pl(limits=LIMITS), ["set", "balanced", "gpu"], None, None),
+        ("powerlimit set with too few words", "powerlimit", pl(limits=LIMITS), ["set", "balanced"], None, None),
+        ("powerlimit watch, one mode", "powerlimit", pl(limits=LIMITS), ["watch"], 5, None),
+        ("powerlimit watch, the mode changes", "powerlimit",
+         pl(mode=["balanced", "balanced", "balanced", "performance", "performance", "performance", "power-saver"], limits=LIMITS), ["watch"], 8, None),
+        ("powerlimit watch, no card, no mode", "powerlimit", pl(limits=LIMITS, smi=None, cmds={UPOWER: None, HADESS: None}), ["watch"], 3, None),
+        ("powerlimit unknown command", "powerlimit", pl(), ["spin"], None, None),
+    ]
     for i, s in enumerate(samples):
         tag = f"sample {i + 1}"
         same = lambda r, s=s: shutil.copytree(s, r, symlinks=True, dirs_exist_ok=True)
@@ -239,7 +319,7 @@ def run_case(args, case, work, n):
     build(root)
     root = os.path.realpath(root)
     rust = [os.path.join(args.bin, helper), "--dry-run", "--root", root] + (["--steps", str(steps)] if steps else []) + cargs
-    py = [sys.executable, os.path.join(HERE, "py_dryrun.py"), os.path.join(args.python, helper), root] + (["--steps", str(steps)] if steps else []) + ["--"] + cargs
+    py = [sys.executable, os.path.join(HERE, "py_dryrun.py"), py_helper(args, helper), root] + (["--steps", str(steps)] if steps else []) + ["--"] + cargs
     out = []
     for cmd in (rust, py):
         p = subprocess.run(cmd, input=stdin, capture_output=True, text=True, timeout=120)
@@ -257,10 +337,10 @@ def run_case(args, case, work, n):
 def help_case(args):
     """The help text: the Rust one is the Python docstring, then the dry-run paragraph."""
     bad = []
-    for h in ("tune", "casefan", "gpufan"):
+    for h in ("tune", "casefan", "gpufan", "powerlimit"):
         for a in ([], ["--help"]):
             r = subprocess.run([os.path.join(args.bin, h), *a], capture_output=True, text=True)
-            p = subprocess.run([sys.executable, os.path.join(args.python, h), *a], capture_output=True, text=True)
+            p = subprocess.run([sys.executable, py_helper(args, h), *a], capture_output=True, text=True)
             doc = p.stdout[:-1]   # print(__doc__): the docstring, then a newline
             if not (r.stdout.startswith(doc) and "Dry run" in r.stdout[len(doc):] and r.returncode == p.returncode):
                 bad.append(f"{h} {a}")
@@ -323,7 +403,7 @@ SETTINGS = [
 
 
 def replay_all(args):
-    m = load_py(os.path.join(args.python, "casefan"))
+    m = load_py(py_helper(args, "casefan"))
     exe = os.path.join(args.bin, "examples", "casefan_replay")
     total, bad = 0, []
     for si, setting in enumerate(SETTINGS):
@@ -345,9 +425,6 @@ def main(argv):
     ap.add_argument("--seeds", type=int, default=300)
     ap.add_argument("-v", action="store_true")
     args = ap.parse_args(argv[1:])
-    if not args.python:
-        moved = os.path.normpath(os.path.join(HERE, "..", "..", "settings", "helpers", "python"))
-        args.python = moved if os.path.exists(os.path.join(moved, "casefan")) else os.path.normpath(os.path.join(HERE, "..", "..", "settings", "helpers"))
     work = tempfile.mkdtemp(prefix="power-helpers-compare-")
     try:
         same = diff = 0

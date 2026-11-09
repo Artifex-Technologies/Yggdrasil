@@ -60,6 +60,33 @@ pub fn int(text: &str) -> Result<i64, String> {
     Ok(v.clamp(i64::MIN as i128, i64::MAX as i128) as i64)
 }
 
+/// float(text): surrounding whitespace, a sign, digits with single underscores between them, a point, an exponent, or
+/// inf/infinity/nan in any case. Err is the ValueError's text.
+pub fn float(text: &str) -> Result<f64, String> {
+    let bad = || format!("could not convert string to float: {}", repr(text));
+    let s = strip(text);
+    let b = s.as_bytes();
+    for (i, c) in b.iter().enumerate() {
+        if *c == b'_' && !(i > 0 && b[i - 1].is_ascii_digit() && b.get(i + 1).is_some_and(u8::is_ascii_digit)) {
+            return Err(bad());
+        }
+    }
+    let plain: String = s.chars().filter(|c| *c != '_').collect();
+    if plain.is_empty() || plain.contains(char::is_whitespace) {
+        return Err(bad());
+    }
+    plain.parse::<f64>().map_err(|_| bad())
+}
+
+/// text.splitlines()[0], or None when there is no line (the separators str.splitlines() knows).
+pub fn first_line(text: &str) -> Option<&str> {
+    if text.is_empty() {
+        return None;
+    }
+    let end = text.find(['\n', '\r', '\x0b', '\x0c', '\x1c', '\x1d', '\x1e', '\u{85}', '\u{2028}', '\u{2029}']).unwrap_or(text.len());
+    Some(&text[..end])
+}
+
 fn printable(c: char) -> bool {
     let u = c as u32;
     !(u < 0x20
@@ -213,6 +240,17 @@ mod tests {
         assert_eq!(int("abc"), Err("invalid literal for int() with base 10: 'abc'".into()));
         assert!(int("1__0").is_err() && int("_1").is_err() && int("").is_err() && int("--5").is_err());
         assert!(isdigit("007") && !isdigit("") && !isdigit("-1") && !isdigit("1.0"));
+    }
+
+    #[test]
+    fn float_and_splitlines_are_pythons() {
+        assert_eq!(float(" 250.00 "), Ok(250.0));
+        assert_eq!((float("1_000.5"), float("-3"), float(".5"), float("1e3")), (Ok(1000.5), Ok(-3.0), Ok(0.5), Ok(1000.0)));
+        assert!(float("inf").unwrap().is_infinite() && float("NaN").unwrap().is_nan());
+        assert_eq!(float("[N/A]"), Err("could not convert string to float: '[N/A]'".into()));
+        assert!(float("1__0").is_err() && float("_1").is_err() && float("").is_err() && float("1 0").is_err());
+        assert_eq!(first_line("a, b\nc\n"), Some("a, b"));
+        assert_eq!((first_line("x\r\ny"), first_line("\n"), first_line("")), (Some("x"), Some(""), None));
     }
 
     #[test]

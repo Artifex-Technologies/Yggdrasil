@@ -14,6 +14,7 @@ pub mod casefan;
 pub mod gpufan;
 pub mod json;
 pub mod nvml;
+pub mod powerlimit;
 pub mod py;
 pub mod sys;
 pub mod tune;

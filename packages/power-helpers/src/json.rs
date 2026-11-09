@@ -610,6 +610,19 @@ pub fn dump_indent1(v: &Json) -> String {
     s
 }
 
+/// The value with every object's keys in order (what json.dump(sort_keys=True) writes).
+pub fn sorted(v: &Json) -> Json {
+    match v {
+        Json::Obj(o) => {
+            let mut items: Vec<(&str, &Json)> = o.iter().collect();
+            items.sort_by(|a, b| a.0.cmp(b.0));
+            Json::Obj(items.into_iter().fold(Obj::new(), |acc, (k, v)| acc.with(k, sorted(v))))
+        }
+        Json::Arr(a) => Json::Arr(a.iter().map(sorted).collect()),
+        v => v.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

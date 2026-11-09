@@ -936,7 +936,7 @@ impl<'a> Tune<'a> {
                     }
                 } else {
                     self.ctx.wait(wait);
-                    if sys::stopping() {
+                    if self.ctx.stop_requested() {
                         continue;
                     }
                 }
@@ -1041,13 +1041,18 @@ impl Kernel {
         Some(Kernel { fd, records: false, child: Some(child), buf: Vec::new(), source: format!("journalctl ({}: {kmsg_err})", path.display()) })
     }
 
-    /// Waits up to `secs` for messages. With --steps nothing is waited for: the virtual clock moves on instead.
+    /// Waits up to `secs` for messages, or a stop (the stop signal, or in the merged service this part switched off). With
+    /// --steps nothing is waited for: the virtual clock moves on instead.
     pub fn wait(&mut self, ctx: &Ctx, secs: f64) -> Event {
+        ctx.beat();
         let virtual_clock = ctx.steps.is_some();
         let ms = if virtual_clock { 0 } else { (secs * 1000.0).ceil().min(i32::MAX as f64) as i32 };
-        let mut pfd = libc::pollfd { fd: self.fd.as_raw_fd(), events: libc::POLLIN, revents: 0 };
-        let n = unsafe { libc::poll(&mut pfd, 1, ms) };
-        if n < 0 {
+        let mut pfds = vec![libc::pollfd { fd: self.fd.as_raw_fd(), events: libc::POLLIN, revents: 0 }];
+        if !virtual_clock {
+            pfds.extend(ctx.stop_fds().into_iter().map(|fd| libc::pollfd { fd, events: libc::POLLIN, revents: 0 }));
+        }
+        let n = unsafe { libc::poll(pfds.as_mut_ptr(), pfds.len() as libc::nfds_t, ms) };
+        if n < 0 || (n > 0 && pfds[0].revents == 0) {
             return Event::Interrupted;
         }
         if n == 0 {

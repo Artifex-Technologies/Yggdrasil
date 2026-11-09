@@ -6,11 +6,18 @@
 //! --root the card is a stand-in read from ROOT/nvml.json, so a dry run against a fake tree touches no card at all:
 //!   {"temp": 55 or [40, 60, ...] (one reading each, then the card is lost), "fans": [45, 45], "min": 24, "max": 100,
 //!    "core": 0, "mem": 0, "max_core": 2100, "fail": {"nvmlInit_v2": 3, ...}}
+//! (--real-card takes the real card instead, read only, for a dry run against a fake tree with libnvidia-ml loaded.)
+//!
+//! Sharing: nvmlInit costs a process about 26 MB (the 620 driver maps libcuda and starts a thread). A Ctx with a Slot (the
+//! merged service gives every part the same one) makes Card::open hand out the card that is already open in the process,
+//! so the parts share one initialisation; it is shut down when the last of them lets go. NVML is thread-safe, so the parts
+//! call it from their own threads with no lock of ours around the calls. A fake card is never shared (each Card::open reads
+//! ROOT/nvml.json afresh, as a separate process would), so a dry run of the merged service reads it as the helpers run one
+//! by one do.
 
-use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::ffi::{c_char, c_int, c_uint, c_void, CStr, CString};
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use crate::json::Json;
 use crate::sys::Ctx;
@@ -130,18 +137,51 @@ impl Fake {
 
 enum Backend {
     Real { lib: &'static Lib, dev: *mut c_void },
-    Fake(RefCell<Fake>),
+    Fake(Mutex<Fake>),
 }
 
-/// The first card, open (nvmlInit_v2 done) until dropped (nvmlShutdown).
-pub struct Card {
+/// The card itself: nvmlInit_v2 done and the handle taken; nvmlShutdown when the last Card holding it is dropped.
+struct Inner {
     backend: Backend,
+}
+
+// NVML is thread-safe (its documentation: calls may be made from several threads at once), and a device handle stays valid
+// until nvmlShutdown, which only Inner's drop calls, once nothing can use the handle any more.
+unsafe impl Send for Inner {}
+unsafe impl Sync for Inner {}
+
+impl Drop for Inner {
+    fn drop(&mut self) {
+        if let Backend::Real { lib, .. } = &self.backend {
+            call!(lib, "nvmlShutdown", fn(), );
+        }
+    }
+}
+
+/// The card that is open in the process, for the merged service's parts to share (see the top of this file).
+#[derive(Default)]
+pub struct Slot(Mutex<Weak<Inner>>);
+
+impl Slot {
+    pub fn new() -> Slot {
+        Slot::default()
+    }
+
+    /// Whether a card is open through this slot now.
+    pub fn is_open(&self) -> bool {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).strong_count() > 0
+    }
+}
+
+/// The first card, open (nvmlInit_v2 done) until dropped (nvmlShutdown, once no other Card shares it).
+pub struct Card {
+    inner: Arc<Inner>,
     dry: bool,
 }
 
 impl Card {
     pub fn open(ctx: &Ctx) -> Result<Card, OpenError> {
-        if ctx.fake_root() {
+        if ctx.fake_card() {
             let f = Fake::load(ctx).map_err(OpenError::Library)?;
             if let Some(c) = f.fails("nvmlInit_v2") {
                 return Err(OpenError::Init(c));
@@ -149,25 +189,33 @@ impl Card {
             if let Some(c) = f.fails("nvmlDeviceGetHandleByIndex_v2") {
                 return Err(OpenError::Handle(c));
             }
-            return Ok(Card { backend: Backend::Fake(RefCell::new(f)), dry: ctx.dry });
+            return Ok(Card { inner: Arc::new(Inner { backend: Backend::Fake(Mutex::new(f)) }), dry: ctx.dry });
         }
-        let lib = lib().map_err(OpenError::Library)?;
-        let rc = crate::sys::without_stop_signals(|| call!(lib, "nvmlInit_v2", fn(), ));
-        if rc != SUCCESS {
-            return Err(OpenError::Init(rc));
+        let Some(slot) = &ctx.cards else {
+            return Ok(Card { inner: Arc::new(open_real()?), dry: ctx.dry });
+        };
+        // the slot is held while a card is opened, so two parts starting together open it once
+        let mut held = slot.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(inner) = held.upgrade() {
+            return Ok(Card { inner, dry: ctx.dry });
         }
-        let mut dev: *mut c_void = std::ptr::null_mut();
-        let rc = call!(lib, "nvmlDeviceGetHandleByIndex_v2", fn(c_uint, *mut *mut c_void), 0, &mut dev);
-        if rc != SUCCESS {
-            // as the Python helpers did: no nvmlShutdown after a failed handle (the process ends right after)
-            return Err(OpenError::Handle(rc));
-        }
-        Ok(Card { backend: Backend::Real { lib, dev }, dry: ctx.dry })
+        let inner = Arc::new(open_real()?);
+        *held = Arc::downgrade(&inner);
+        Ok(Card { inner, dry: ctx.dry })
+    }
+
+    fn backend(&self) -> &Backend {
+        &self.inner.backend
+    }
+
+    /// Whether this card and another are the same opened card (the merged service's parts share one).
+    pub fn same(&self, other: &Card) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
     }
 
     fn fake_get<T>(&self, name: &str, f: impl FnOnce(&mut Fake) -> Result<T, i32>) -> Result<T, i32> {
-        let Backend::Fake(fk) = &self.backend else { unreachable!() };
-        let mut fk = fk.borrow_mut();
+        let Backend::Fake(fk) = self.backend() else { unreachable!() };
+        let mut fk = fk.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(c) = fk.fails(name) {
             return Err(c);
         }
@@ -183,7 +231,7 @@ impl Card {
     }
 
     pub fn temp(&self) -> Result<u32, i32> {
-        match &self.backend {
+        match self.backend() {
             Backend::Real { lib, dev } => {
                 let mut v: c_uint = 0;
                 Self::ok(call!(lib, "nvmlDeviceGetTemperature", fn(*mut c_void, c_uint, *mut c_uint), *dev, TEMPERATURE_GPU, &mut v))?;
@@ -197,7 +245,7 @@ impl Card {
     }
 
     pub fn num_fans(&self) -> Result<u32, i32> {
-        match &self.backend {
+        match self.backend() {
             Backend::Real { lib, dev } => {
                 let mut v: c_uint = 0;
                 Self::ok(call!(lib, "nvmlDeviceGetNumFans", fn(*mut c_void, *mut c_uint), *dev, &mut v))?;
@@ -208,7 +256,7 @@ impl Card {
     }
 
     pub fn fan_speed(&self, i: u32) -> Result<u32, i32> {
-        match &self.backend {
+        match self.backend() {
             Backend::Real { lib, dev } => {
                 let mut v: c_uint = 0;
                 Self::ok(call!(lib, "nvmlDeviceGetFanSpeed_v2", fn(*mut c_void, c_uint, *mut c_uint), *dev, i, &mut v))?;
@@ -219,7 +267,7 @@ impl Card {
     }
 
     pub fn min_max_fan_speed(&self) -> Result<(u32, u32), i32> {
-        match &self.backend {
+        match self.backend() {
             Backend::Real { lib, dev } => {
                 let (mut lo, mut hi): (c_uint, c_uint) = (0, 0);
                 Self::ok(call!(lib, "nvmlDeviceGetMinMaxFanSpeed", fn(*mut c_void, *mut c_uint, *mut c_uint), *dev, &mut lo, &mut hi))?;
@@ -230,7 +278,7 @@ impl Card {
     }
 
     pub fn clock_offset(&self, kind: u32) -> Result<i32, i32> {
-        match &self.backend {
+        match self.backend() {
             Backend::Real { lib, dev } => {
                 let mut o = ClockOffset { version: CLOCK_OFFSET_V1, kind, pstate: 0, ..Default::default() };
                 Self::ok(call!(lib, "nvmlDeviceGetClockOffsets", fn(*mut c_void, *mut ClockOffset), *dev, &mut o))?;
@@ -241,7 +289,7 @@ impl Card {
     }
 
     pub fn max_clock(&self, kind: u32) -> Result<u32, i32> {
-        match &self.backend {
+        match self.backend() {
             Backend::Real { lib, dev } => {
                 let mut v: c_uint = 0;
                 Self::ok(call!(lib, "nvmlDeviceGetMaxClockInfo", fn(*mut c_void, c_uint, *mut c_uint), *dev, kind, &mut v))?;
@@ -256,8 +304,8 @@ impl Card {
     /// A dry run's set call: printed, never made. A stand-in card may be told to refuse it ("fail"), so the way a refusal is
     /// handled can be seen too.
     fn dry_say(&self, name: &str, what: String) -> Result<(), i32> {
-        if let Backend::Fake(f) = &self.backend {
-            if let Some(c) = f.borrow().fails(name) {
+        if let Backend::Fake(f) = self.backend() {
+            if let Some(c) = f.lock().unwrap_or_else(|e| e.into_inner()).fails(name) {
                 return Err(c);
             }
         }
@@ -269,7 +317,7 @@ impl Card {
         if self.dry {
             return self.dry_say("nvmlDeviceSetFanSpeed_v2", format!("nvmlDeviceSetFanSpeed_v2(fan {i}, {pct})"));
         }
-        match &self.backend {
+        match self.backend() {
             Backend::Real { lib, dev } => Self::ok(call!(lib, "nvmlDeviceSetFanSpeed_v2", fn(*mut c_void, c_uint, c_uint), *dev, i, pct)),
             Backend::Fake(_) => Ok(()),
         }
@@ -279,7 +327,7 @@ impl Card {
         if self.dry {
             return self.dry_say("nvmlDeviceSetDefaultFanSpeed_v2", format!("nvmlDeviceSetDefaultFanSpeed_v2(fan {i})"));
         }
-        match &self.backend {
+        match self.backend() {
             Backend::Real { lib, dev } => Self::ok(call!(lib, "nvmlDeviceSetDefaultFanSpeed_v2", fn(*mut c_void, c_uint), *dev, i)),
             Backend::Fake(_) => Ok(()),
         }
@@ -289,7 +337,7 @@ impl Card {
         if self.dry {
             return self.dry_say("nvmlDeviceSetClockOffsets", format!("nvmlDeviceSetClockOffsets(type {kind}, pstate 0, {mhz} MHz)"));
         }
-        match &self.backend {
+        match self.backend() {
             Backend::Real { lib, dev } => {
                 let mut o = ClockOffset { version: CLOCK_OFFSET_V1, kind, pstate: 0, offset_mhz: mhz, ..Default::default() };
                 Self::ok(call!(lib, "nvmlDeviceSetClockOffsets", fn(*mut c_void, *mut ClockOffset), *dev, &mut o))
@@ -302,7 +350,7 @@ impl Card {
         if self.dry {
             return self.dry_say("nvmlDeviceSetGpuLockedClocks", format!("nvmlDeviceSetGpuLockedClocks(0, {max_mhz})"));
         }
-        match &self.backend {
+        match self.backend() {
             Backend::Real { lib, dev } => Self::ok(call!(lib, "nvmlDeviceSetGpuLockedClocks", fn(*mut c_void, c_uint, c_uint), *dev, 0, max_mhz)),
             Backend::Fake(_) => Ok(()),
         }
@@ -312,17 +360,53 @@ impl Card {
         if self.dry {
             return self.dry_say("nvmlDeviceResetGpuLockedClocks", "nvmlDeviceResetGpuLockedClocks()".into());
         }
-        match &self.backend {
+        match self.backend() {
             Backend::Real { lib, dev } => Self::ok(call!(lib, "nvmlDeviceResetGpuLockedClocks", fn(*mut c_void), *dev)),
             Backend::Fake(_) => Ok(()),
         }
     }
 }
 
-impl Drop for Card {
-    fn drop(&mut self) {
-        if let Backend::Real { lib, .. } = &self.backend {
-            call!(lib, "nvmlShutdown", fn(), );
-        }
+/// nvmlInit_v2 and the first card's handle. A failed handle shuts NVML down again (each nvmlInit is counted, and the merged
+/// service lives on after a failed open).
+fn open_real() -> Result<Inner, OpenError> {
+    let lib = lib().map_err(OpenError::Library)?;
+    let rc = crate::sys::without_stop_signals(|| call!(lib, "nvmlInit_v2", fn(), ));
+    if rc != SUCCESS {
+        return Err(OpenError::Init(rc));
+    }
+    let mut dev: *mut c_void = std::ptr::null_mut();
+    let rc = call!(lib, "nvmlDeviceGetHandleByIndex_v2", fn(c_uint, *mut *mut c_void), 0, &mut dev);
+    if rc != SUCCESS {
+        call!(lib, "nvmlShutdown", fn(), );
+        return Err(OpenError::Handle(rc));
+    }
+    Ok(Inner { backend: Backend::Real { lib, dev } })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testutil::{ctx, TempDir};
+
+    #[test]
+    fn parts_with_one_slot_share_the_card_and_let_it_go_together() {
+        let d = TempDir::new();
+        d.files("", &[("nvml.json", r#"{"temp": [40, 41, 42], "fans": [30]}"#)]);
+        // a fake card is never shared: each open reads nvml.json afresh, as a separate process would
+        let mut a = ctx(d.path());
+        a.cards = Some(Arc::new(Slot::new()));
+        let (x, y) = (Card::open(&a).unwrap(), Card::open(&a).unwrap());
+        assert!(!x.same(&y));
+        assert_eq!((x.temp(), y.temp()), (Ok(40), Ok(40)));
+        // the slot's own rule, on stand-in cards: one card while anyone holds it, a new one after the last lets go
+        let slot = Slot::new();
+        let first = Arc::new(Inner { backend: Backend::Fake(Mutex::new(Fake::load(&a).unwrap())) });
+        *slot.0.lock().unwrap() = Arc::downgrade(&first);
+        assert!(slot.is_open());
+        let again = slot.0.lock().unwrap().upgrade().unwrap();
+        assert!(Arc::ptr_eq(&first, &again));
+        drop((first, again));
+        assert!(!slot.is_open(), "shut down once the last part let go");
     }
 }

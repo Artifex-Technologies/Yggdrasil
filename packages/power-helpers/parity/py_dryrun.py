@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""py_dryrun: the Python helpers (tune, casefan, gpufan) run as the Rust ones run with --dry-run --root ROOT [--steps N], so the
-two can be compared line by line. The Python scripts' own code makes every decision; only the outside is replaced:
+"""py_dryrun: the Python helpers (tune, casefan, gpufan, powerlimit) run as the Rust ones run with --dry-run --root ROOT
+[--steps N], so the two can be compared line by line. The Python scripts' own code makes every decision; only the outside is
+replaced:
 
   - every system path is taken under a scratch copy of ROOT (writes land there, so later reads see them, as the Rust dry run's
     memory of its writes does), and printed under ROOT;
@@ -10,6 +11,10 @@ two can be compared line by line. The Python scripts' own code makes every decis
   - the card is ROOT/nvml.json, behind a stand-in libnvidia-ml with the same rules as the Rust one (a list of temperatures is
     read one by one, then the card is lost, NVML error 15);
   - root checks pass; systemctl is-active and is-system-running really run (they only ask);
+  - the commands that only ask (busctl, nvidia-smi --query-gpu, systemctl is-active) take their answers from
+    ROOT/commands.json when it names them, by the Rust dry run's rules (the longest key that starts the command line; a
+    text, {"rc", "out"}, {"timeout": true} or null; a list gives one answer per call, its last one after that); nvidia-smi
+    -pl is printed only;
   - with --steps N the service loops run N rounds on a virtual clock that starts at 1000.0 s.
 
     py_dryrun.py HELPER ROOT [--steps N] -- ARGS...       (HELPER: the Python script's path; stdin is passed on)
@@ -162,12 +167,59 @@ class VClock:
         self.now += max(0.0, s)
 
 
-def systemctl_for(say_prefix=""):
-    import subprocess
+class FakeCommands:
+    """ROOT/commands.json, read as the Rust dry run reads it."""
+
+    def __init__(self, path):
+        with open(path) as f:
+            d = json.load(f)
+        # each key: [its answers, how many were given]
+        self.entries = {k: [list(v) if isinstance(v, list) and v else [v], 0] for k, v in d.items()}
+
+    def answer(self, cmd):
+        """None when no key fits (the command runs as usual); else (rc, out), or raises as subprocess.run would."""
+        import subprocess
+        line = " ".join(cmd)
+        keys = [k for k in self.entries if line.startswith(k)]
+        if not keys:
+            return None
+        e = self.entries[max(keys, key=len)]
+        a = e[0][min(e[1], len(e[0]) - 1)]
+        e[1] += 1
+        if isinstance(a, str):
+            return 0, a
+        if isinstance(a, dict) and a.get("timeout"):
+            raise subprocess.TimeoutExpired(cmd, 0)
+        if isinstance(a, dict):
+            return a.get("rc", 0), a.get("out", "")
+        raise FileNotFoundError(2, "No such file or directory", cmd[0])
+
+
+def fake_commands(paths):
+    p = paths("/commands.json")
+    return FakeCommands(p) if os.path.exists(p) else None
+
+
+def asking_run(paths):
+    """subprocess.run for the commands that only ask: commands.json's answer when it names the command, else the real one."""
+    import subprocess as real_sp
+    cmds = fake_commands(paths)
+
+    def run(cmd, *a, **k):
+        got = cmds.answer(cmd) if cmds else None
+        if got is None:
+            return real_sp.run(cmd, *a, **k)
+        rc, out = got
+        return real_sp.CompletedProcess(cmd, rc, out if k.get("text") else out.encode(), "" if k.get("text") else b"")
+    return run
+
+
+def systemctl_for(paths):
+    run = asking_run(paths)
 
     def systemctl(*args):
         if args and args[0] in ("is-active", "is-system-running"):
-            return subprocess.run(["systemctl", *args], capture_output=True, text=True).returncode
+            return run(["systemctl", *args], capture_output=True, text=True).returncode
         say("run systemctl " + " ".join(args))
         return 0
     return systemctl
@@ -183,7 +235,7 @@ def casefan(m, paths, steps, args):
     m.find_cpro = lambda root=hwmon: orig_find(root)
     m.cpu_temp = lambda root=hwmon: orig_temp(root)
     m.is_root = lambda: True
-    m.systemctl = systemctl_for()
+    m.systemctl = systemctl_for(paths)
     m.ctypes = fake_ctypes(paths)
     orig_set = m.set_pct
 
@@ -236,7 +288,7 @@ def casefan(m, paths, steps, args):
 def gpufan(m, paths, steps, args):
     m.CONF = paths(m.CONF)
     m.is_root = lambda: True
-    m.systemctl = systemctl_for()
+    m.systemctl = systemctl_for(paths)
     m.ctypes = fake_ctypes(paths)
     orig_save = m.save
 
@@ -338,9 +390,11 @@ def tune(m, paths, steps, args):
         def terminate(self):
             self.stdout.close()
 
+    asking = asking_run(paths)
+
     def run(cmd, *a, **k):
         if cmd[:2] == ["systemctl", "is-active"] or cmd[:2] == ["systemctl", "is-system-running"]:
-            return real_sp.run(cmd, *a, **k)
+            return asking(cmd, *a, **k)
         raise RuntimeError(f"unexpected command {cmd}")
     sp.Popen = Journal
     sp.run = run
@@ -361,6 +415,80 @@ def tune(m, paths, steps, args):
     return m.main(["tune", *args])
 
 
+# ---------------------------------------------------------------- powerlimit
+
+
+class Done(Exception):
+    """--steps rounds of `watch` are done (the Rust dry run then returns 0)."""
+
+
+def powerlimit(m, paths, steps, args):
+    m.STATE, m.OLD_STATE, m.CPUFREQ, m.HOLD = paths(m.STATE), paths(m.OLD_STATE), paths(m.CPUFREQ), paths(m.HOLD)
+    real_os = m.os
+    m.os = types.SimpleNamespace(**{k: getattr(real_os, k) for k in dir(real_os) if not k.startswith("__")})
+    m.os.geteuid = lambda: 0
+    real_open = open
+
+    class Shown:
+        """A file opened for writing: printed as the Rust dry run prints the write, once it is written."""
+
+        def __init__(self, f, path):
+            self.f, self.path, self.text = f, path, ""
+
+        def write(self, s):
+            self.text += s
+            return self.f.write(s)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *e):
+            self.f.close()
+            say(f"write {paths.shown(self.path)}: {self.text}")
+            return False
+
+    def shown_open(path, mode="r", *a, **k):
+        f = real_open(path, mode, *a, **k)
+        # the limits file is written through PATH.tmp, shown once it is in place (save_state below)
+        return Shown(f, path) if "w" in mode and not str(path).endswith(".tmp") else f
+    m.open = shown_open
+    orig_save = m.save_state
+
+    def save_state(state, path=None):
+        orig_save(state, path)
+        p = path or m.STATE
+        with real_open(p) as f:
+            say(f"write {paths.shown(p)}: {json.dumps(json.load(f))}")
+    m.save_state = save_state
+
+    import subprocess as real_sp
+    asking = asking_run(paths)
+
+    def run(cmd, *a, **k):
+        if cmd[:2] == ["nvidia-smi", "-pl"]:
+            say("run " + " ".join(cmd))
+            return real_sp.CompletedProcess(cmd, 0, b"", b"")
+        return asking(cmd, *a, **k)
+    m.subprocess = types.SimpleNamespace(**{k: getattr(real_sp, k) for k in dir(real_sp) if not k.startswith("__")})
+    m.subprocess.run = run
+
+    if args[:1] == ["watch"] and steps is not None:
+        clock, rounds = VClock(), [0]
+        m.time = clock.module()
+
+        def sleep(s):
+            clock.sleep(s)
+            rounds[0] += 1
+            if rounds[0] >= steps:
+                raise Done()
+        m.time.sleep = sleep
+        try:
+            return m.main(["powerlimit", *args])
+        except Done:
+            return 0
+    return m.main(["powerlimit", *args])
+
+
 def main(argv):
     if "--" not in argv or len(argv) < 4:
         print(__doc__, file=sys.stderr)
@@ -372,7 +500,7 @@ def main(argv):
     try:
         m = load(helper)
         kind = os.path.basename(helper)
-        rc = {"casefan": casefan, "gpufan": gpufan, "tune": tune}[kind](m, paths, steps, args)
+        rc = {"casefan": casefan, "gpufan": gpufan, "tune": tune, "powerlimit": powerlimit}[kind](m, paths, steps, args)
     finally:
         paths.done()
     sys.stdout.flush()
