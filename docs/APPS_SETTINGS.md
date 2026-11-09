@@ -194,8 +194,9 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
     computer from `parity/record.py` (read-only), plus casefan's loop over 1,216 temperature sequences. On 2026-11-09:
     83 of 83 cases and all sequences the same.
   - **Different on purpose:** a setting whose "ports" is not an object crashed the Python casefan, leaving the ports at
-    their last speed (its `reset` crashed too); the Rust one treats it as a failure: every port at 100 %. The help text
-    adds the dry-run paragraph. Python tracebacks become one "helper: message" line, still exit code 1.
+    their last speed (its `reset` crashed too); the Rust one treats it as a failure: every port at 100 %, after a clean stop
+    too, since which port is the pump cannot be told. The help text adds the dry-run paragraph. Python tracebacks become one
+    "helper: message" line, still exit code 1. `tune watch` logs where it reads the kernel's messages from.
 - **Graphics card unlock** (`/usr/lib/yggdrasil/gpuunlock`, built 2026-10-27 as Phase 0 of Labyrinth OS's
   [GPU_UNLOCK.md](https://github.com/Artifex-Technologies/Labyrinth_OS/blob/main/docs/GPU_UNLOCK.md)): a "Tensor-rate unlock"
   row under the Graphics card row, only with Developer options on and only for a card listed exactly (device, board, VBIOS, driver series)

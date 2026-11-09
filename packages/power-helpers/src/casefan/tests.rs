@@ -269,6 +269,9 @@ fn an_unusable_setting_fails_safe() {
     d.files("etc/yggdrasil", &[("case-fans.json", r#"{"ports": [1]}"#)]);
     assert_eq!(cmd_reset(&c, true), 0);
     assert_eq!(std::fs::read_to_string(cp.join("pwm1")).unwrap(), "255", "a failed stop still puts the port at 100 %");
+    std::fs::write(cp.join("pwm1"), "100").unwrap();
+    assert_eq!(cmd_reset(&c, false), 0);
+    assert_eq!(std::fs::read_to_string(cp.join("pwm1")).unwrap(), "255", "so does a clean one: which port is the pump is unknown");
 }
 
 #[test]

@@ -579,9 +579,11 @@ pub fn cmd_reset(ctx: &Ctx, failed: bool) -> i32 {
         return 1;
     }
     let Some(cpro) = find_cpro(ctx, &hwmon(ctx)) else { return 0 };
-    // an unusable setting (the Python helper crashed here and left the ports as they were): every port as a fan, so a failed
-    // stop still puts everything at 100 %
-    let cfg = load(ctx, &conf(ctx)).unwrap_or_default();
+    // an unusable setting (the Python helper crashed here and left the ports as they were): there is no telling which port is
+    // the pump, so every port goes to 100 %, as after a failure
+    let cfg = load(ctx, &conf(ctx));
+    let failed = failed || cfg.is_err();
+    let cfg = cfg.unwrap_or_default();
     for (n, _) in ports(ctx, &cpro) {
         let _ = set_pct(ctx, &cpro, &n, stop_speed(cfg.port(&n), failed));
     }
