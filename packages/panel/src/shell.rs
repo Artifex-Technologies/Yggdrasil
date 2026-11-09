@@ -100,7 +100,11 @@ impl WinHandle {
         }
     }
 
-    pub fn destroy(&self) {
+}
+
+impl Drop for WinHandle {
+    /// The handle goes in the compositor too when the window leaves the list (dropping the proxy alone sends nothing).
+    fn drop(&mut self) {
         match self {
             WinHandle::Wlr(h) => h.destroy(),
         }

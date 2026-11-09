@@ -284,12 +284,19 @@ struct Surf {
 }
 
 impl Surf {
-    fn destroy(self) {
-        if let Some((f, v)) = &self.frac {
+    /// Takes the surface away (Drop does the work: a surface removed any other way goes too).
+    fn destroy(self) {}
+}
+
+impl Drop for Surf {
+    /// Like the buffers, a surface whose proxies were only dropped would stay in the compositor. The objects that give it a role
+    /// or a size go before it (the protocols ask for that order); its buffers go right after it, when the fields are dropped.
+    fn drop(&mut self) {
+        if let Some((f, v)) = self.frac.take() {
             f.destroy();
             v.destroy();
         }
-        if let Some(l) = &self.layer {
+        if let Some(l) = self.layer.take() {
             l.destroy();
         }
         self.wl.destroy();
@@ -304,6 +311,19 @@ struct Out {
     /// Where the compositor says this output is in the global space, in logical pixels (x, y, width, height), from xdg-output.
     logical: Option<(i32, i32, u32, u32)>,
     xdg: Option<ZxdgOutputV1>,
+}
+
+impl Drop for Out {
+    /// A screen that went away (or was bound again): its xdg-output and the wl_output go in the compositor too. Every time a
+    /// monitor was switched off and on again the old pair stayed behind.
+    fn drop(&mut self) {
+        if let Some(x) = self.xdg.take() {
+            x.destroy();
+        }
+        if self.wl.version() >= 3 {
+            self.wl.release();
+        }
+    }
 }
 
 struct Assets {
@@ -352,6 +372,8 @@ struct State {
     seat: Option<WlSeat>,
     next_key: u32,
     dirty: bool,
+    /// A surface had no buffer to draw into (all with the compositor): the next one that comes back redraws.
+    buffers_starved: bool,
     /// The calendar popover, when open: its output and how many months from this one it shows.
     popup: Option<Popup>,
     /// The popover card's rectangle in logical pixels.
@@ -492,6 +514,8 @@ struct State {
     /// The output of the surface that was just clicked.
     click_output: Option<u32>,
     keyboard: Option<WlKeyboard>,
+    /// The pointer (its cursor-shape device is `cursor`); given back when the seat loses it, made again when it returns.
+    pointer: Option<WlPointer>,
     /// The scroll came from a wheel (counted in steps) rather than smoothly.
     axis_wheel: bool,
     axis_acc: f32,
@@ -579,6 +603,42 @@ fn read_layout() -> Layout {
 /// Whether the desktop style is dark (Settings > Appearance; one small file read, no program started).
 fn system_dark() -> bool {
     yggdrasil_conf::appearance::load().dark
+}
+
+/// The most buffers one surface keeps. Two take turns as a rule (one on the screen, one being drawn); more are made only while the
+/// compositor still holds the others.
+const MAX_BUFS: usize = 4;
+
+/// What a surface does with its buffers before drawing: the free ones of another size go (`drop`, places in rising order), then
+/// it draws into one of the rest, a new one, or none for now.
+#[derive(Debug, PartialEq)]
+struct Pick {
+    drop: Vec<usize>,
+    then: Then,
+}
+
+#[derive(Debug, PartialEq)]
+enum Then {
+    /// The free one at this place (counted after `drop`).
+    Reuse(usize),
+    New,
+    /// All MAX_BUFS are still with the compositor: draw when one comes back.
+    Wait,
+}
+
+/// Chooses from a surface's buffers, each (width, height, still with the compositor), for a picture of `w` x `h`. A buffer the
+/// compositor still holds is never let go here; it goes when it comes back and is not needed, or with its surface. Pure, for tests.
+fn pick_buffer(bufs: &[(u32, u32, bool)], w: u32, h: u32) -> Pick {
+    let stale = |&(bw, bh, busy): &(u32, u32, bool)| !busy && (bw, bh) != (w, h);
+    let drop: Vec<usize> = (0..bufs.len()).filter(|&i| stale(&bufs[i])).collect();
+    let kept: Vec<&(u32, u32, bool)> = bufs.iter().filter(|b| !stale(b)).collect();
+    // what is kept and free is the right size
+    let then = match kept.iter().position(|b| !b.2) {
+        Some(i) => Then::Reuse(i),
+        None if kept.len() >= MAX_BUFS => Then::Wait,
+        None => Then::New,
+    };
+    Pick { drop, then }
 }
 
 fn new_buffer(shm: &WlShm, qh: &QueueHandle<State>, w: u32, h: u32) -> Option<Buffer> {
@@ -2852,17 +2912,26 @@ impl State {
         }
         let surf = &mut self.surfs[i];
         surf.hits = hits;
-        let idx = match surf.bufs.iter().position(|b| !b.busy.load(Ordering::Acquire) && b.w == pw && b.h == ph) {
-            Some(i) => i,
-            None => {
-                surf.bufs.retain(|b| b.busy.load(Ordering::Acquire) || (b.w == pw && b.h == ph));
-                match new_buffer(&self.shm, &self.qh, pw, ph) {
-                    Some(b) => {
-                        surf.bufs.push(b);
-                        surf.bufs.len() - 1
-                    }
-                    None => return,
+        let seen: Vec<(u32, u32, bool)> = surf.bufs.iter().map(|b| (b.w, b.h, b.busy.load(Ordering::Acquire))).collect();
+        let pick = pick_buffer(&seen, pw, ph);
+        // highest first, so the other places stay right (each buffer is destroyed as it goes: Buffer's Drop)
+        for &d in pick.drop.iter().rev() {
+            surf.bufs.remove(d);
+        }
+        let idx = match pick.then {
+            Then::Reuse(i) => i,
+            Then::New => match new_buffer(&self.shm, &self.qh, pw, ph) {
+                Some(b) => {
+                    surf.bufs.push(b);
+                    surf.bufs.len() - 1
                 }
+                None => return,
+            },
+            Then::Wait => {
+                // every buffer is still with the compositor (a screen that is off may not let go of them until it draws again):
+                // draw once one comes back, instead of making ever more of them
+                self.buffers_starved = true;
+                return;
             }
         };
         let b = &mut surf.bufs[idx];
@@ -3191,9 +3260,12 @@ impl Dispatch<WlSurface, ()> for State {
 }
 
 impl Dispatch<WlBuffer, Arc<AtomicBool>> for State {
-    fn event(_: &mut Self, _: &WlBuffer, event: wl_buffer::Event, busy: &Arc<AtomicBool>, _: &Connection, _: &QueueHandle<Self>) {
+    fn event(state: &mut Self, _: &WlBuffer, event: wl_buffer::Event, busy: &Arc<AtomicBool>, _: &Connection, _: &QueueHandle<Self>) {
         if let wl_buffer::Event::Release = event {
             busy.store(false, Ordering::Release);
+            if std::mem::take(&mut state.buffers_starved) {
+                state.dirty = true;
+            }
         }
     }
 }
@@ -3234,17 +3306,45 @@ impl Dispatch<ZwlrLayerSurfaceV1, usize> for State {
 impl Dispatch<WlSeat, ()> for State {
     fn event(state: &mut Self, seat: &WlSeat, event: wl_seat::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>) {
         if let wl_seat::Event::Capabilities { capabilities: WEnum::Value(c) } = event {
-            if c.contains(wl_seat::Capability::Keyboard) && state.keyboard.is_none() {
-                state.keyboard = Some(seat.get_keyboard(qh, ()));
+            // A device kind that goes away (the last mouse unplugged, a keyboard asleep) is given back; when it returns a new one is
+            // made, since the compositor no longer sends anything to the old one. One of each at a time: the compositor may say
+            // the capabilities again with nothing changed.
+            let release = seat.version() >= 3;
+            if c.contains(wl_seat::Capability::Keyboard) {
+                if state.keyboard.is_none() {
+                    state.keyboard = Some(seat.get_keyboard(qh, ()));
+                }
+            } else if let Some(k) = state.keyboard.take() {
+                if release {
+                    k.release();
+                }
+                state.repeat = None;
             }
-            if c.contains(wl_seat::Capability::Touch) && state.touch.is_none() {
-                state.touch = Some(seat.get_touch(qh, ()));
+            if c.contains(wl_seat::Capability::Touch) {
+                if state.touch.is_none() {
+                    state.touch = Some(seat.get_touch(qh, ()));
+                }
+            } else if let Some(t) = state.touch.take() {
+                if release {
+                    t.release();
+                }
+                state.touch_id = None;
             }
-            if c.contains(wl_seat::Capability::Pointer) && state.seat.is_none() {
+            if c.contains(wl_seat::Capability::Pointer) {
                 state.seat = Some(seat.clone());
-                let p = seat.get_pointer(qh, ());
-                if let Some(m) = &state.cursor_mgr {
-                    state.cursor = Some(m.get_pointer(&p, qh, ()));
+                if state.pointer.is_none() {
+                    let p = seat.get_pointer(qh, ());
+                    if let Some(m) = &state.cursor_mgr {
+                        state.cursor = Some(m.get_pointer(&p, qh, ()));
+                    }
+                    state.pointer = Some(p);
+                }
+            } else if let Some(p) = state.pointer.take() {
+                if let Some(c) = state.cursor.take() {
+                    c.destroy();
+                }
+                if release {
+                    p.release();
                 }
             }
         }
@@ -3599,10 +3699,8 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for State {
             E::OutputEnter { output } => state.model.wins[pos].outputs.push(output),
             E::OutputLeave { output } => state.model.wins[pos].outputs.retain(|o| *o != output),
             E::Done => state.model.wins[pos].ready = true,
-            E::Closed => {
-                let w = state.model.wins.remove(pos);
-                w.proxy.destroy();
-            }
+            // the handle is destroyed with the window (WinHandle's Drop)
+            E::Closed => drop(state.model.wins.remove(pos)),
             _ => return,
         }
         if std::env::var_os("YGGDRASIL_PANEL_DEBUG").is_some() {
@@ -3724,6 +3822,7 @@ fn main() {
         seat: None,
         next_key: 0,
         dirty: false,
+        buffers_starved: false,
         popup: None,
         popup_card: (0.0, 0.0, 0.0, 0.0),
         addon_hits: vec![],
@@ -3811,6 +3910,7 @@ fn main() {
         pointer_pos: (0.0, 0.0),
         click_output: None,
         keyboard: None,
+        pointer: None,
         axis_wheel: false,
         axis_acc: 0.0,
     };
@@ -4337,4 +4437,142 @@ mod layout_tests {
     }
 
 
+}
+
+/// Wayland objects are destroyed when the panel lets go of them, in the order the protocols ask for. No compositor: the panel's side
+/// of a socket pair, and what it wrote read back from the other side.
+#[cfg(test)]
+mod cleanup_tests {
+    use super::*;
+    use std::io::Read;
+    use std::os::unix::net::UnixStream;
+
+    // the tests bind globals by hand, without the registry's list
+    delegate_noop!(State: ignore WlRegistry);
+
+    struct Wire {
+        conn: Connection,
+        peer: UnixStream,
+        qh: QueueHandle<State>,
+        registry: WlRegistry,
+        _queue: wayland_client::EventQueue<State>,
+    }
+
+    fn wire() -> Wire {
+        let (ours, peer) = UnixStream::pair().unwrap();
+        let conn = Connection::from_socket(ours).unwrap();
+        let queue = conn.new_event_queue::<State>();
+        let qh = queue.handle();
+        let registry = conn.display().get_registry(&qh, ());
+        Wire { conn, peer, qh, registry, _queue: queue }
+    }
+
+    impl Wire {
+        /// Every request sent so far, as (object id, opcode).
+        fn sent(&mut self) -> Vec<(u32, u16)> {
+            self.conn.flush().unwrap();
+            self.peer.set_nonblocking(true).unwrap();
+            let mut bytes = vec![];
+            let mut chunk = [0u8; 4096];
+            while let Ok(n) = self.peer.read(&mut chunk) {
+                if n == 0 {
+                    break;
+                }
+                bytes.extend_from_slice(&chunk[..n]);
+            }
+            let mut out = vec![];
+            let mut at = 0;
+            while at + 8 <= bytes.len() {
+                let id = u32::from_ne_bytes(bytes[at..at + 4].try_into().unwrap());
+                let word = u32::from_ne_bytes(bytes[at + 4..at + 8].try_into().unwrap());
+                out.push((id, (word & 0xffff) as u16));
+                at += ((word >> 16) as usize).max(8);
+            }
+            out
+        }
+    }
+
+    /// Where in `sent` the request `name` on `p` is (it must be there).
+    fn at(sent: &[(u32, u16)], p: &impl Proxy, name: &str) -> usize {
+        let op = p.id().interface().requests.iter().position(|m| m.name == name).unwrap() as u16;
+        sent.iter().position(|r| *r == (p.id().protocol_id(), op)).unwrap_or_else(|| panic!("{} {name} was not sent", p.id()))
+    }
+
+    #[test]
+    fn a_dropped_buffer_is_destroyed() {
+        let mut w = wire();
+        let shm: WlShm = w.registry.bind(1, 1, &w.qh, ());
+        let b = new_buffer(&shm, &w.qh, 4, 2).unwrap();
+        let wl = b.buffer.clone();
+        drop(b);
+        let sent = w.sent();
+        at(&sent, &wl, "destroy");
+        assert!(!wl.is_alive());
+    }
+
+    #[test]
+    fn a_surface_goes_with_its_role_its_scale_and_its_buffers() {
+        let mut w = wire();
+        let compositor: WlCompositor = w.registry.bind(1, 4, &w.qh, ());
+        let shm: WlShm = w.registry.bind(2, 1, &w.qh, ());
+        let layer_shell: ZwlrLayerShellV1 = w.registry.bind(3, 4, &w.qh, ());
+        let frac_mgr: WpFractionalScaleManagerV1 = w.registry.bind(4, 1, &w.qh, ());
+        let viewporter: WpViewporter = w.registry.bind(5, 1, &w.qh, ());
+        let wl = compositor.create_surface(&w.qh, ());
+        let layer = layer_shell.get_layer_surface(&wl, None, Layer::Top, "test".into(), &w.qh, 0);
+        let frac = frac_mgr.get_fractional_scale(&wl, &w.qh, 0);
+        let viewport = viewporter.get_viewport(&wl, &w.qh, ());
+        let bufs = vec![new_buffer(&shm, &w.qh, 4, 4).unwrap(), new_buffer(&shm, &w.qh, 8, 8).unwrap()];
+        let buf_proxies: Vec<WlBuffer> = bufs.iter().map(|b| b.buffer.clone()).collect();
+        let s = Surf { id: 0, kind: Kind::Toast, output: 0, wl: wl.clone(), layer: Some(layer.clone()), w: 4, h: 4, want: (4, 4), gap: 0, configured: true, bufs, hits: vec![], hover: None, frac: Some((frac.clone(), viewport.clone())), fscale: 1.0, stamp: None };
+        // taken out of the list without destroy(): the Drop does it all the same
+        let mut list = vec![s];
+        list.clear();
+        let sent = w.sent();
+        let surface = at(&sent, &wl, "destroy");
+        for (role, what) in [(at(&sent, &frac, "destroy"), "fractional scale"), (at(&sent, &viewport, "destroy"), "viewport"), (at(&sent, &layer, "destroy"), "layer surface")] {
+            assert!(role < surface, "the {what} goes before its surface");
+        }
+        for b in &buf_proxies {
+            at(&sent, b, "destroy");
+        }
+    }
+
+    #[test]
+    fn a_screen_that_goes_releases_its_output() {
+        let mut w = wire();
+        let mgr: ZxdgOutputManagerV1 = w.registry.bind(1, 3, &w.qh, ());
+        let new = w.registry.bind::<WlOutput, _, _>(2, 4, &w.qh, 2);
+        let old = w.registry.bind::<WlOutput, _, _>(3, 2, &w.qh, 3);
+        let xdg_new = mgr.get_xdg_output(&new, &w.qh, 2);
+        let xdg_old = mgr.get_xdg_output(&old, &w.qh, 3);
+        let mut outputs: HashMap<u32, Out> = HashMap::new();
+        outputs.insert(2, Out { wl: new.clone(), name: "DP-1".into(), scale: 1, ready: true, logical: None, xdg: Some(xdg_new.clone()) });
+        outputs.insert(3, Out { wl: old.clone(), name: "DP-2".into(), scale: 1, ready: true, logical: None, xdg: Some(xdg_old.clone()) });
+        outputs.remove(&2);
+        outputs.remove(&3);
+        let sent = w.sent();
+        at(&sent, &xdg_new, "destroy");
+        at(&sent, &xdg_old, "destroy");
+        at(&sent, &new, "release");
+        // wl_output before version 3 has no release request: nothing more may be sent for it (that would be a protocol error)
+        let old_id = old.id().protocol_id();
+        assert_eq!(sent.iter().filter(|r| r.0 == old_id).count(), 0, "nothing sent on a version 2 output");
+    }
+
+    #[test]
+    fn buffers_are_reused_replaced_and_kept_within_bounds() {
+        let pick = |b: &[(u32, u32, bool)]| pick_buffer(b, 10, 10);
+        assert_eq!(pick(&[]), Pick { drop: vec![], then: Then::New });
+        assert_eq!(pick(&[(10, 10, false)]), Pick { drop: vec![], then: Then::Reuse(0) });
+        assert_eq!(pick(&[(10, 10, true)]), Pick { drop: vec![], then: Then::New }, "the one on the screen is not drawn over");
+        // a size change: free buffers of the old size go, the one still on the screen stays until it comes back
+        assert_eq!(pick(&[(5, 5, false), (5, 5, true)]), Pick { drop: vec![0], then: Then::New });
+        assert_eq!(pick(&[(5, 5, false), (10, 10, true), (10, 10, false)]), Pick { drop: vec![0], then: Then::Reuse(1) }, "counted after the drop");
+        assert_eq!(pick(&[(10, 10, false), (5, 5, false)]), Pick { drop: vec![1], then: Then::Reuse(0) }, "an old size goes even when one is free");
+        // a compositor that holds every buffer: no fifth one, wait for one to come back
+        assert_eq!(pick(&[(10, 10, true); MAX_BUFS]), Pick { drop: vec![], then: Then::Wait });
+        assert_eq!(pick(&[(5, 5, true), (5, 5, true), (5, 5, true), (5, 5, false)]), Pick { drop: vec![3], then: Then::New });
+        assert_eq!(pick(&[(5, 5, true), (5, 5, true), (10, 10, true), (10, 10, true)]), Pick { drop: vec![], then: Then::Wait }, "held ones are never let go");
+    }
 }
