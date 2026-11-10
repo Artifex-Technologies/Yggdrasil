@@ -1,0 +1,3 @@
+
+window scale > trough > slider, window scale slider { background-color: @window_fg_color; background-image: none; border-color: @window_fg_color; box-shadow: none; }
+window scale > trough > slider:hover { background-color: @accent_color; border-color: @accent_color; }

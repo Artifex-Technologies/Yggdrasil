@@ -1,0 +1,31 @@
+
+/* GTK 4's own theme uses fixed greys (libadwaita programs read the colours above instead), so the plain GTK 4 programs get their surfaces here. */
+window, .background { background-color: @window_bg_color; color: @window_fg_color; }
+.view, textview > text, iconview, listview, columnview, treeview.view, entry, spinbutton, dropdown > button, searchentry { background-color: @view_bg_color; color: @view_fg_color; }
+headerbar, .titlebar, searchbar, actionbar { background-color: @headerbar_bg_color; color: @headerbar_fg_color; border-color: @headerbar_border_color; box-shadow: none; }
+headerbar:backdrop, .titlebar:backdrop { background-color: @headerbar_backdrop_color; }
+sidebar, .sidebar, placessidebar, stacksidebar { background-color: @sidebar_bg_color; color: @sidebar_fg_color; }
+notebook > header { background-color: @headerbar_bg_color; border-color: @borders; }
+notebook > header > tabs > tab:checked { box-shadow: inset 0 -2px @accent_bg_color; }
+notebook > stack { background-color: @window_bg_color; }
+button, button.flat:hover, entry, spinbutton, dropdown > button, combobox button { border-color: @borders; }
+button { background-image: none; background-color: @card_bg_color; color: @card_fg_color; box-shadow: none; }
+button:hover { background-color: mix(@card_bg_color, @accent_bg_color, 0.15); }
+button:checked, button:active { background-color: @accent_bg_color; color: @accent_fg_color; }
+button.suggested-action { background-color: @accent_bg_color; color: @accent_fg_color; }
+button.destructive-action { background-color: @destructive_bg_color; color: @destructive_fg_color; }
+button.flat, button.image-button.flat { background-color: transparent; border-color: transparent; }
+entry:focus-within, spinbutton:focus-within, searchentry:focus-within { border-color: @accent_bg_color; outline-color: @accent_bg_color; }
+selection, text selection, .view:selected, row:selected, listview > row:selected, columnview > listview > row:selected, treeview.view:selected, iconview:selected, menuitem:hover, modelbutton:hover { background-color: @accent_bg_color; color: @accent_fg_color; }
+row:hover:not(:selected), listview > row:hover:not(:selected) { background-color: mix(@view_bg_color, @accent_bg_color, 0.12); }
+scale highlight, progressbar progress, levelbar block.filled, switch:checked, check:checked, radio:checked { background-color: @accent_bg_color; color: @accent_fg_color; border-color: @accent_bg_color; }
+scale trough, progressbar trough, levelbar trough, switch { background-color: @card_bg_color; border-color: @borders; }
+scale slider, switch slider { background-color: @window_fg_color; border-color: @borders; }
+scrollbar slider { background-color: mix(@window_fg_color, @window_bg_color, 0.65); }
+popover, popover.background, menu, .menu, popover > contents, popover.menu > contents { background-color: @popover_bg_color; color: @popover_fg_color; border-color: @borders; }
+tooltip, tooltip.background { background-color: @card_bg_color; color: @card_fg_color; border: 1px solid @borders; }
+separator { background-color: @borders; }
+link, .link, label link { color: @link_color; }
+.error, label.error { color: @error_color; }
+.warning { color: @warning_color; }
+.success { color: @success_color; }

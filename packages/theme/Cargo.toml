@@ -1,0 +1,34 @@
+[package]
+name = "yggdrasil-theme-tools"
+version = "0.1.0"
+edition = "2021"
+description = "ygg-theme in Rust: Yggdrasil's colour scheme, GTK colours and themes, and the mouse pointer for the programs Yggdrasil does not write (replacing the Python script at the same path)"
+license = "MPL-2.0"
+
+[lib]
+name = "ygg_theme"
+path = "src/lib.rs"
+
+# installed as /usr/bin/ygg-theme (packages/pkgbuilds/yggdrasil-theme), which also runs it when the package is built to write
+# the system GTK 3 and GTK 4 themes
+[[bin]]
+name = "ygg-theme"
+path = "src/bin/ygg-theme.rs"
+
+# the parity runs (parity/compare.py): GTK 4's own theme retinted in any accent
+[[example]]
+name = "theme_retint"
+path = "examples/theme_retint.rs"
+
+# libgtk-4 is opened at run time (dlopen), only for gtk4-theme; without it the theme falls back as the script's did
+[dependencies]
+libc = "0.2"
+regex = { version = "1", default-features = false, features = ["std", "unicode"] }
+yggdrasil-pycompat = { path = "../pycompat" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
