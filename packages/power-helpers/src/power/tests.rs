@@ -5,16 +5,26 @@
 //! a running supervisor, and `power stopped` on a fake Commander Pro.
 
 use std::fs;
-use std::sync::Mutex;
-use std::time::Duration;
+use std::sync::{Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 use super::*;
 use crate::testutil::{ctx, TempDir};
 
+/// What the parts did, and the hold a part standing still waits on until the test lets it go.
 #[derive(Default)]
-struct Log(Mutex<Vec<String>>);
+struct Log(Mutex<Vec<String>>, Mutex<bool>, Condvar);
 
 impl Log {
+    /// as if stuck inside a driver: no beat until the test lets go (a minute at most, so a broken test cannot hang)
+    fn hold(&self) {
+        let free = self.1.lock().unwrap();
+        let _ = self.2.wait_timeout_while(free, Duration::from_secs(60), |free| !*free).unwrap();
+    }
+    fn let_go(&self) {
+        *self.1.lock().unwrap() = true;
+        self.2.notify_all();
+    }
     fn push(&self, s: String) {
         self.0.lock().unwrap().push(s);
     }
@@ -61,7 +71,7 @@ impl Part for Fake {
                 panic!("a stand-in part panicking on purpose");
             }
             Kind::Stall => {
-                std::thread::sleep(Duration::from_millis(700)); // no beat: as if stuck inside a driver
+                self.log.hold(); // no beat: as if stuck inside a driver
                 0
             }
             Kind::End => 0,
@@ -100,10 +110,18 @@ fn service(d: &TempDir, parts: Vec<Arc<dyn Part>>) -> Service {
     s
 }
 
+/// A switch as `power on`/`off` make it: the token is written to a file beside it and renamed into place, so the supervisor
+/// never sees the switch half written. (fs::write straight to the switch creates it empty first; inotify wakes the supervisor
+/// on that, it starts the part on the token "", then sees "t1" and takes it as switched on anew: a clean stop and a second
+/// start that the tests counted as wrong. That was the runners' failures, never the service's.)
 fn switch(d: &TempDir, name: &str, token: Option<&str>) {
     let p = d.path().join("on").join(name);
     match token {
-        Some(t) => fs::write(p, t).unwrap(),
+        Some(t) => {
+            let tmp = p.with_extension("tmp");
+            fs::write(&tmp, format!("{t}\n")).unwrap();
+            fs::rename(&tmp, &p).unwrap();
+        }
         None => fs::remove_file(p).unwrap(),
     }
 }
@@ -116,12 +134,14 @@ fn state(dir: &Path, name: &str) -> (String, String) {
     (o.at("state").str().unwrap_or("").into(), o.at("token").str().unwrap_or("").into())
 }
 
+/// Waits for an event the test can see; the limit only stops a broken test from hanging (a busy runner is slow, not wrong).
 fn until(what: &str, f: impl Fn() -> bool) {
-    for _ in 0..400 {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
         if f() {
             return;
         }
-        std::thread::sleep(Duration::from_millis(10));
+        std::thread::sleep(Duration::from_millis(5));
     }
     panic!("never: {what}");
 }
@@ -202,6 +222,8 @@ fn a_loop_standing_still_gets_its_safe_state_from_the_supervisor_and_the_others_
     assert!(log.count("s safe state from the supervisor") >= 1);
     assert_eq!(log.count("a failure stop"), 1, "the part that was fine made its failure stop before the service ended");
     assert!(svc.stuck(), "the stuck thread is left behind (the process exits without it)");
+    assert_eq!((log.count("s clean stop"), log.count("s failure stop")), (0, 0), "its own stop never came: the supervisor made it");
+    log.let_go();
 }
 
 #[test]
