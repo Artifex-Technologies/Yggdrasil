@@ -1,0 +1,26 @@
+[package]
+name = "yggdrasil-agora-helpers"
+version = "0.1.0"
+edition = "2021"
+description = "Agora's administrator helper in Rust: pkg-root, one narrow pacman command that can be cancelled and cleaned up (replacing the Python script at the same path, with the same rules)"
+license = "MPL-2.0"
+
+[lib]
+name = "pkg_root"
+path = "src/lib.rs"
+
+# installed as /usr/lib/agora/pkg-root (packages/pkgbuilds/yggdrasil-agora), which the sudo stand-in runs through pkexec
+[[bin]]
+name = "pkg-root"
+path = "src/bin/pkg-root.rs"
+
+[dependencies]
+libc = "0.2"
+yggdrasil-pycompat = { path = "../pycompat" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
