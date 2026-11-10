@@ -176,10 +176,24 @@ fn pacmans_exit_code_is_given_back() {
     assert_eq!(code(&y.go(&["-S", "--noconfirm", "krita"])), 241, "killed by SIGTERM: sys.exit(-15)");
 }
 
+/// Whether the sandbox works here: a user and mount namespace, and the mounts tests/sandbox.sh makes in it (a container or a
+/// build chroot may allow neither).
 fn namespaces() -> bool {
-    Command::new("unshare").args(["-rm", "true"]).output().map(|o| o.status.success()).unwrap_or(false)
-        && std::path::Path::new("/var/cache/pacman/pkg").is_dir()
-        && std::path::Path::new("/run/user").is_dir()
+    if !std::path::Path::new("/var/cache/pacman/pkg").is_dir() || !std::path::Path::new("/run/user").is_dir() {
+        return false;
+    }
+    let w = tmp("probe");
+    fs::create_dir_all(w.join("agora")).unwrap();
+    fs::create_dir_all(w.join("cache")).unwrap();
+    let ok = Command::new("unshare")
+        .args(["-rm", "sh", concat!(env!("CARGO_MANIFEST_DIR"), "/tests/sandbox.sh")])
+        .arg(&w)
+        .arg("true")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    let _ = fs::remove_dir_all(&w);
+    ok
 }
 
 /// A world for a cancel: a stand-in pacman whose install adds "newpkg", downloads a file and then takes its time.
