@@ -7,6 +7,7 @@ use smithay::backend::input::{AbsolutePositionEvent, Axis, AxisSource, ButtonSta
 use smithay::backend::renderer::element::surface::{render_elements_from_surface_tree, WaylandSurfaceRenderElement};
 use smithay::backend::renderer::element::Kind;
 use smithay::backend::renderer::gles::GlesRenderer;
+use smithay::backend::renderer::pixman::PixmanRenderer;
 use smithay::backend::renderer::utils::on_commit_buffer_handler;
 use smithay::backend::winit::WinitInput;
 use smithay::desktop::{layer_map_for_output, LayerSurface, PopupKind, PopupManager, Space, Window, WindowSurfaceType};
@@ -56,6 +57,50 @@ smithay::render_elements! {
     /// a full screen X11 window, drawn with its alpha channel ignored (see xwayland.rs)
     Opaque = crate::xwayland::OpaqueElement,
 }
+
+smithay::render_elements! {
+    /// The same for the software renderer of the headless backend (headless.rs): no shaders, so no opaque variant.
+    pub PixElem<=PixmanRenderer>;
+    Surface = WaylandSurfaceRenderElement<PixmanRenderer>,
+    Bar = MemoryRenderBufferRenderElement<PixmanRenderer>,
+}
+
+/// A renderer the scene can be drawn with: the GPU one of the nested window (GLES) and the software one of the headless
+/// backend (pixman). They differ only in how a window that must be drawn opaque is drawn.
+pub trait Draw: smithay::backend::renderer::Renderer + smithay::backend::renderer::ImportAll + smithay::backend::renderer::ImportMem + Sized {
+    type Elem: smithay::backend::renderer::element::RenderElement<Self> + From<WaylandSurfaceRenderElement<Self>> + From<MemoryRenderBufferRenderElement<Self>>;
+    /// A window's elements; `opaque` when its alpha channel must be ignored (a full screen X11 window, a game).
+    fn window_elements(app: &mut App, renderer: &mut Self, els: Vec<WaylandSurfaceRenderElement<Self>>, opaque: bool) -> Vec<Self::Elem>;
+}
+
+impl Draw for GlesRenderer {
+    type Elem = Elem;
+    fn window_elements(app: &mut App, renderer: &mut Self, els: Vec<WaylandSurfaceRenderElement<Self>>, opaque: bool) -> Vec<Elem> {
+        match opaque.then(|| app.opaque_shader(renderer)).flatten() {
+            Some(program) => els.into_iter().map(|inner| Elem::Opaque(crate::xwayland::OpaqueElement { inner, program: program.clone() })).collect(),
+            None => els.into_iter().map(Elem::from).collect(),
+        }
+    }
+}
+
+impl Draw for PixmanRenderer {
+    type Elem = PixElem;
+    // no shader to ignore the alpha channel with; games do not run headless
+    fn window_elements(_: &mut App, _: &mut Self, els: Vec<WaylandSurfaceRenderElement<Self>>, _: bool) -> Vec<PixElem> {
+        els.into_iter().map(PixElem::from).collect()
+    }
+}
+
+/// An output's size in logical coordinates (its mode divided by its scale).
+pub fn logical_size(o: &Output) -> smithay::utils::Size<i32, Logical> {
+    let scale = o.current_scale().fractional_scale();
+    o.current_mode().map(|m| o.current_transform().transform_size(m.size.to_f64().to_logical(scale).to_i32_round())).unwrap_or_default()
+}
+
+/// An output's place and size in the space, in logical coordinates.
+pub fn output_rect(o: &Output) -> Rectangle<i32, Logical> {
+    Rectangle::new(o.current_location(), logical_size(o))
+}
 use smithay::backend::input::KeyState;
 use smithay::input::keyboard::ModifiersState;
 use smithay::wayland::shm::{ShmHandler, ShmState};
@@ -98,9 +143,9 @@ pub struct App {
     pub keyboard: KeyboardHandle<Self>,
     pub pointer: PointerHandle<Self>,
     pub pointer_location: Point<f64, Logical>,
-    /// The session is locked: only `lock_surface` is shown and it alone gets input.
+    /// The session is locked: only the lock surfaces are shown (one per output) and they alone get input.
     pub locked: bool,
-    lock_surface: Option<LockSurface>,
+    lock_surfaces: Vec<(Output, LockSurface)>,
     opened: usize,
     /// Where a window was (and how big) before it was maximized or made full screen.
     saved: Vec<(WlSurface, Rectangle<i32, Logical>)>,
@@ -324,7 +369,7 @@ impl App {
             pointer,
             pointer_location: (0.0, 0.0).into(),
             locked: false,
-            lock_surface: None,
+            lock_surfaces: vec![],
             opened: 0,
             saved: vec![],
             minimized: vec![],
@@ -486,8 +531,8 @@ impl App {
 
     /// Make a window full screen (the whole output).
     pub fn fullscreen(&mut self, window: &Window) {
-        let size = self.output.current_mode().map(|m| m.size.to_logical(1)).unwrap_or_default();
-        self.fit_window(window, Rectangle::new((0, 0).into(), size), xdg_toplevel::State::Fullscreen);
+        let r = output_rect(&self.output);
+        self.fit_window(window, r, xdg_toplevel::State::Fullscreen);
     }
 
     /// A window has opened (an X11 one: XWayland has made its surface): list it for the panel, lay the workspace out again and
@@ -1149,16 +1194,24 @@ impl App {
     }
 
     /// What is drawn this frame, front to back: panels on the top layers, the windows with their title bars, then the layers behind.
-    pub fn scene(&mut self, renderer: &mut GlesRenderer) -> Vec<Elem> {
+    /// One output's part: everything is placed relative to the output's own corner and drawn at its scale (the nested window has
+    /// one output at 0,0 with scale 1; the headless backend may have several, side by side, at any scale). The switcher and the
+    /// profile question are shown on the first output only.
+    pub fn scene<R: Draw>(&mut self, renderer: &mut R, output: &Output) -> Vec<R::Elem>
+    where
+        R::TextureId: Send + Clone + 'static,
+    {
         use smithay::backend::renderer::element::AsRenderElements;
-        let mut out: Vec<Elem> = vec![];
-        let scale = Scale::from(1.0);
-        let layer_els = |app: &App, renderer: &mut GlesRenderer, layers: &[Layer], out: &mut Vec<Elem>| {
-            let map = layer_map_for_output(&app.output);
+        let mut out: Vec<R::Elem> = vec![];
+        let scale = Scale::from(output.current_scale().fractional_scale());
+        let origin = output.current_location();
+        let primary = output == &self.output;
+        let layer_els = |renderer: &mut R, layers: &[Layer], out: &mut Vec<R::Elem>| {
+            let map = layer_map_for_output(output);
             for layer in layers {
                 for l in map.layers_on(*layer).rev() {
                     let Some(geo) = map.layer_geometry(l) else { continue };
-                    out.extend(l.render_elements::<WaylandSurfaceRenderElement<GlesRenderer>>(renderer, geo.loc.to_physical(1), scale, 1.0).into_iter().map(Elem::from));
+                    out.extend(l.render_elements::<WaylandSurfaceRenderElement<R>>(renderer, geo.loc.to_physical_precise_round(scale), scale, 1.0).into_iter().map(R::Elem::from));
                 }
             }
         };
@@ -1166,44 +1219,49 @@ impl App {
             self.asked_at_start = true;
             self.maybe_ask();
         }
-        if let Some((ws, sel)) = self.chooser {
-            if self.chooser_art.as_ref().map(|(k, _)| *k != (ws, sel)).unwrap_or(true) {
-                if let Some(f) = &self.fonts {
-                    self.chooser_art = Some(((ws, sel), switcher::make_chooser(f, ws, sel, accent())));
+        // where a picture made by the compositor (in logical coordinates of the space) goes on this output
+        let at = |p: Point<i32, Logical>| -> Point<f64, smithay::utils::Physical> { (p - origin).to_f64().to_physical(scale) };
+        let screen = logical_size(output);
+        if primary {
+            if let Some((ws, sel)) = self.chooser {
+                if self.chooser_art.as_ref().map(|(k, _)| *k != (ws, sel)).unwrap_or(true) {
+                    if let Some(f) = &self.fonts {
+                        self.chooser_art = Some(((ws, sel), switcher::make_chooser(f, ws, sel, accent())));
+                    }
+                }
+                if let Some((_, buf)) = &self.chooser_art {
+                    let (w, h) = switcher::chooser_size();
+                    let p = at(origin + Point::from(((screen.w - w) / 2, (screen.h - h) / 2)));
+                    if let Ok(el) = MemoryRenderBufferRenderElement::from_buffer(renderer, p, buf, None, None, None, Kind::Unspecified) {
+                        out.push(R::Elem::from(el));
+                    }
                 }
             }
-            if let (Some((_, buf)), Some(mode)) = (&self.chooser_art, self.output.current_mode()) {
-                let (w, h) = switcher::chooser_size();
-                let at = ((mode.size.w - w) as f64 / 2.0, (mode.size.h - h) as f64 / 2.0);
-                if let Ok(el) = MemoryRenderBufferRenderElement::from_buffer(renderer, at, buf, None, None, None, Kind::Unspecified) {
-                    out.push(Elem::from(el));
+            if let Some((list, index)) = self.switcher.clone() {
+                let entries: Vec<(String, String)> = list.iter().map(|s| self.window_for(s).map(|w| title_app(&w)).unwrap_or_else(|| xdg_title_app(s))).collect();
+                if self.switcher_art.as_ref().map(|(k, _)| k != &(entries.clone(), index)).unwrap_or(true) {
+                    if let Some(f) = &self.fonts {
+                        self.switcher_art = Some(((entries.clone(), index), switcher::make(f, &entries, index, accent())));
+                    }
                 }
-            }
-        }
-        if let Some((list, index)) = self.switcher.clone() {
-            let entries: Vec<(String, String)> = list.iter().map(|s| self.window_for(s).map(|w| title_app(&w)).unwrap_or_else(|| xdg_title_app(s))).collect();
-            if self.switcher_art.as_ref().map(|(k, _)| k != &(entries.clone(), index)).unwrap_or(true) {
-                if let Some(f) = &self.fonts {
-                    self.switcher_art = Some(((entries.clone(), index), switcher::make(f, &entries, index, accent())));
-                }
-            }
-            if let (Some((_, buf)), Some(mode)) = (&self.switcher_art, self.output.current_mode()) {
-                let (w, h) = switcher::size(switcher::visible(entries.len(), index).len());
-                let at = ((mode.size.w - w) as f64 / 2.0, (mode.size.h - h) as f64 / 2.0);
-                if let Ok(el) = MemoryRenderBufferRenderElement::from_buffer(renderer, at, buf, None, None, None, Kind::Unspecified) {
-                    out.push(Elem::from(el));
+                if let Some((_, buf)) = &self.switcher_art {
+                    let (w, h) = switcher::size(switcher::visible(entries.len(), index).len());
+                    let p = at(origin + Point::from(((screen.w - w) / 2, (screen.h - h) / 2)));
+                    if let Ok(el) = MemoryRenderBufferRenderElement::from_buffer(renderer, p, buf, None, None, None, Kind::Unspecified) {
+                        out.push(R::Elem::from(el));
+                    }
                 }
             }
         }
         // X11 menus and tooltips, last shown in front, over everything but the switcher and the profile question
         for x in self.overlays.iter().rev() {
-            let loc = x.geometry().loc;
-            out.extend(x.render_elements::<WaylandSurfaceRenderElement<GlesRenderer>>(renderer, loc.to_physical(1), scale, 1.0).into_iter().map(Elem::from));
+            let loc = x.geometry().loc - origin;
+            out.extend(x.render_elements::<WaylandSurfaceRenderElement<R>>(renderer, loc.to_physical_precise_round(scale), scale, 1.0).into_iter().map(R::Elem::from));
         }
         // A full screen window in front (a game, a video) covers the top bar and the dock: the Top layer then goes behind the
         // windows. The Overlay layer (the lock's own picture, alerts that must be seen) stays in front.
         let full_front = self.space.elements().last().is_some_and(|w| win_has(w, xdg_toplevel::State::Fullscreen));
-        layer_els(self, renderer, if full_front { &[Layer::Overlay][..] } else { &[Layer::Overlay, Layer::Top][..] }, &mut out);
+        layer_els(renderer, if full_front { &[Layer::Overlay][..] } else { &[Layer::Overlay, Layer::Top][..] }, &mut out);
         let windows: Vec<Window> = self.space.elements().rev().cloned().collect();
         for w in windows {
             let Some(loc) = self.space.element_location(&w) else { continue };
@@ -1215,24 +1273,17 @@ impl App {
                     self.bars.insert(surface.clone(), deco::make(key));
                 }
                 if let Some(bar) = self.bars.get(&surface) {
-                    if let Ok(el) = MemoryRenderBufferRenderElement::from_buffer(renderer, (r.loc.x as f64, r.loc.y as f64), &bar.buffer, None, None, None, Kind::Unspecified) {
-                        out.push(Elem::from(el));
+                    if let Ok(el) = MemoryRenderBufferRenderElement::from_buffer(renderer, at(r.loc), &bar.buffer, None, None, None, Kind::Unspecified) {
+                        out.push(R::Elem::from(el));
                     }
                 }
             }
-            let els = w.render_elements::<WaylandSurfaceRenderElement<GlesRenderer>>(renderer, (loc - geo.loc).to_physical(1), scale, 1.0);
+            let els = w.render_elements::<WaylandSurfaceRenderElement<R>>(renderer, (loc - geo.loc - origin).to_physical_precise_round(scale), scale, 1.0);
             // a full screen X11 window, a game, or a program in opaque.conf is drawn opaque: see OPAQUE_SHADER in xwayland.rs
-            let opaque = if w.x11_surface().is_some_and(|x| x.is_fullscreen() || crate::xwayland::is_game(x) || crate::xwayland::listed(x, &self.opaque_apps)) {
-                self.opaque_shader(renderer)
-            } else {
-                None
-            };
-            match opaque {
-                Some(program) => out.extend(els.into_iter().map(|inner| Elem::Opaque(crate::xwayland::OpaqueElement { inner, program: program.clone() }))),
-                None => out.extend(els.into_iter().map(Elem::from)),
-            }
+            let opaque = w.x11_surface().is_some_and(|x| x.is_fullscreen() || crate::xwayland::is_game(x) || crate::xwayland::listed(x, &self.opaque_apps));
+            out.extend(R::window_elements(self, renderer, els, opaque));
         }
-        layer_els(self, renderer, if full_front { &[Layer::Top, Layer::Bottom, Layer::Background][..] } else { &[Layer::Bottom, Layer::Background][..] }, &mut out);
+        layer_els(renderer,if full_front { &[Layer::Top, Layer::Bottom, Layer::Background][..] } else { &[Layer::Bottom, Layer::Background][..] }, &mut out);
         out
     }
 
@@ -1257,29 +1308,73 @@ impl App {
         self.loop_signal.stop();
     }
 
-    /// The window was resized: lay the panels out again and resize the lock surface.
+    /// An output changed size or scale (the nested window was resized, the headless backend was told to): lay the panels out
+    /// again, resize the lock surfaces and tell the programs the new scale.
     pub fn output_resized(&mut self) {
         self.wake();
-        layer_map_for_output(&self.output).arrange();
+        for o in self.space.outputs().cloned().collect::<Vec<_>>() {
+            layer_map_for_output(&o).arrange();
+        }
         self.retile();
-        if let (Some(ls), Some(mode)) = (&self.lock_surface, self.output.current_mode()) {
-            ls.with_pending_state(|s| s.size = Some((mode.size.w as u32, mode.size.h as u32).into()));
+        for (o, ls) in &self.lock_surfaces {
+            let size = logical_size(o);
+            ls.with_pending_state(|s| s.size = Some((size.w as u32, size.h as u32).into()));
             ls.send_configure();
+        }
+        self.apply_scale();
+    }
+
+    /// The output a surface is shown on (a panel's own, a window's first), else the first one.
+    pub fn output_of(&self, surface: &WlSurface) -> Output {
+        for o in self.space.outputs() {
+            if layer_map_for_output(o).layer_for_surface(surface, WindowSurfaceType::ALL).is_some() {
+                return o.clone();
+            }
+        }
+        if let Some(w) = self.space.elements().find(|w| is_window_of(w, surface)) {
+            if let Some(o) = self.space.outputs_for_element(w).into_iter().next() {
+                return o;
+            }
+        }
+        self.output.clone()
+    }
+
+    /// Every panel and window is told the scale of its output: the fractional scale (wp-fractional-scale) and the whole-number
+    /// buffer scale (wl_surface version 6). Only changes are sent.
+    pub fn apply_scale(&self) {
+        let tell = |o: &Output, surface: &WlSurface, states: &smithay::wayland::compositor::SurfaceData| {
+            let s = o.current_scale();
+            smithay::wayland::fractional_scale::with_fractional_scale(states, |fs| fs.set_preferred_scale(s.fractional_scale()));
+            // never a transform: the nested window's output is "flipped" only because of how OpenGL counts rows
+            smithay::wayland::compositor::send_surface_state(surface, states, s.integer_scale(), smithay::utils::Transform::Normal);
+        };
+        for o in self.space.outputs() {
+            for l in layer_map_for_output(o).layers() {
+                l.with_surfaces(|surface, states| tell(o, surface, states));
+            }
+        }
+        for w in self.space.elements() {
+            let o = self.space.outputs_for_element(w).into_iter().next().unwrap_or_else(|| self.output.clone());
+            w.with_surfaces(|surface, states| tell(&o, surface, states));
         }
     }
 
     pub fn send_frames(&self, t: Duration) {
-        let out = self.output.clone();
+        let primary = self.output.clone();
         for w in self.space.elements() {
+            let out = self.space.outputs_for_element(w).into_iter().next().unwrap_or_else(|| primary.clone());
             w.send_frame(&out, t, Some(Duration::ZERO), |_, _| Some(out.clone()));
         }
-        let map = layer_map_for_output(&self.output);
-        for l in map.layers() {
-            l.send_frame(&out, t, Some(Duration::ZERO), |_, _| Some(out.clone()));
+        for out in self.space.outputs() {
+            let map = layer_map_for_output(out);
+            for l in map.layers() {
+                l.send_frame(out, t, Some(Duration::ZERO), |_, _| Some(out.clone()));
+            }
         }
-        if let Some(ls) = &self.lock_surface {
-            smithay::desktop::utils::send_frames_surface_tree(ls.wl_surface(), &out, t, Some(Duration::ZERO), |_, _| Some(out.clone()));
+        for (out, ls) in &self.lock_surfaces {
+            smithay::desktop::utils::send_frames_surface_tree(ls.wl_surface(), out, t, Some(Duration::ZERO), |_, _| Some(out.clone()));
         }
+        let out = primary;
         for x in &self.overlays {
             if let Some(s) = x.wl_surface() {
                 smithay::desktop::utils::send_frames_surface_tree(&s, &out, t, Some(Duration::ZERO), |_, _| Some(out.clone()));
@@ -1287,29 +1382,43 @@ impl App {
         }
     }
 
-    pub fn lock_elements(&self, renderer: &mut GlesRenderer) -> Vec<WaylandSurfaceRenderElement<GlesRenderer>> {
-        match &self.lock_surface {
-            Some(ls) => render_elements_from_surface_tree(renderer, ls.wl_surface(), (0, 0), 1.0, 1.0, Kind::Unspecified),
+    /// While locked: the locker's own picture for this output, and nothing else.
+    pub fn lock_elements<R>(&self, renderer: &mut R, output: &Output) -> Vec<WaylandSurfaceRenderElement<R>>
+    where
+        R: smithay::backend::renderer::Renderer + smithay::backend::renderer::ImportAll,
+        R::TextureId: Clone + 'static,
+    {
+        let scale = output.current_scale().fractional_scale();
+        match self.lock_surfaces.iter().find(|(o, _)| o == output) {
+            Some((_, ls)) => render_elements_from_surface_tree(renderer, ls.wl_surface(), (0, 0), scale, 1.0, Kind::Unspecified),
             None => vec![],
         }
+    }
+
+    /// The output a point of the space is on (the first one when it is on none).
+    pub fn output_at(&self, pos: Point<f64, Logical>) -> Output {
+        self.space.outputs().find(|o| output_rect(o).to_f64().contains(pos)).cloned().unwrap_or_else(|| self.output.clone())
     }
 
     /// The surface under a point, and where that surface's origin is on screen. Panels on the top layers first, then windows, then
     /// the layers behind them; while the session is locked, only the lock surface.
     pub fn surface_under(&self, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
+        let output = self.output_at(pos);
+        let origin = output.current_location();
         if self.locked {
-            return self.lock_surface.as_ref().map(|l| (l.wl_surface().clone(), (0.0, 0.0).into()));
+            return self.lock_surfaces.iter().find(|(o, _)| o == &output).map(|(_, l)| (l.wl_surface().clone(), origin.to_f64()));
         }
         // X11 menus and tooltips are in front of everything
         if let Some(x) = self.overlay_under(pos) {
             return Some(x);
         }
-        let map = layer_map_for_output(&self.output);
+        let map = layer_map_for_output(&output);
+        let local = pos - origin.to_f64();
         let on_layer = |layer: Layer| {
-            let l = map.layer_under(layer, pos)?;
+            let l = map.layer_under(layer, local)?;
             let geo = map.layer_geometry(l)?;
-            let (s, p) = l.surface_under(pos - geo.loc.to_f64(), WindowSurfaceType::ALL)?;
-            Some((s, (p + geo.loc).to_f64()))
+            let (s, p) = l.surface_under(local - geo.loc.to_f64(), WindowSurfaceType::ALL)?;
+            Some((s, (p + geo.loc + origin).to_f64()))
         };
         // behind a full screen window the top bar and dock are hidden, so they get no pointer either (see scene())
         let full_front = self.space.elements().last().is_some_and(|w| win_has(w, xdg_toplevel::State::Fullscreen));
@@ -1338,8 +1447,10 @@ impl App {
             return;
         }
         let layer_hit = {
-            let map = layer_map_for_output(&self.output);
-            [Layer::Overlay, Layer::Top].into_iter().find_map(|layer| map.layer_under(layer, pos).cloned())
+            let output = self.output_at(pos);
+            let map = layer_map_for_output(&output);
+            let local = pos - output.current_location().to_f64();
+            [Layer::Overlay, Layer::Top].into_iter().find_map(|layer| map.layer_under(layer, local).cloned())
         };
         if let Some(l) = layer_hit {
             use smithay::wayland::shell::wlr_layer::{KeyboardInteractivity, LayerSurfaceCachedState};
@@ -1462,12 +1573,21 @@ impl CompositorHandler for App {
         // Panels and backgrounds: their size and place are settled on every commit, and the first commit is answered with the
         // first configure (arrange() never sends that one by itself).
         use smithay::wayland::shell::wlr_layer::LayerSurfaceData;
-        let mut map = layer_map_for_output(&self.output);
-        if let Some(layer) = map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL).cloned() {
-            map.arrange();
-            let sent = with_states(layer.wl_surface(), |st| st.data_map.get::<LayerSurfaceData>().map(|d| d.lock().unwrap().initial_configure_sent).unwrap_or(false));
-            if !sent {
-                layer.layer_surface().send_configure();
+        for o in self.space.outputs().cloned().collect::<Vec<_>>() {
+            let mut map = layer_map_for_output(&o);
+            if let Some(layer) = map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL).cloned() {
+                map.arrange();
+                let sent = with_states(layer.wl_surface(), |st| st.data_map.get::<LayerSurfaceData>().map(|d| d.lock().unwrap().initial_configure_sent).unwrap_or(false));
+                if !sent {
+                    // the first configure, with the output's scale told before it (a program then draws its first picture sharp)
+                    let s = o.current_scale();
+                    layer.with_surfaces(|surface, states| {
+                        smithay::wayland::fractional_scale::with_fractional_scale(states, |fs| fs.set_preferred_scale(s.fractional_scale()));
+                        smithay::wayland::compositor::send_surface_state(surface, states, s.integer_scale(), smithay::utils::Transform::Normal);
+                    });
+                    layer.layer_surface().send_configure();
+                }
+                break;
             }
         }
     }
@@ -1525,10 +1645,11 @@ impl smithay::wayland::selection::primary_selection::PrimarySelectionHandler for
 }
 smithay::delegate_primary_selection!(App);
 
-// Fractional scaling: programs are told the output's scale so they draw sharp at 125 % or 150 % (1.0 until outputs get a scale).
+// Fractional scaling: programs are told the output's scale so they draw sharp at 125 % or 150 % (the nested window is always 1.0; headless outputs have the scale
+// they were given). Changes later are sent by apply_scale().
 impl smithay::wayland::fractional_scale::FractionalScaleHandler for App {
     fn new_fractional_scale(&mut self, surface: WlSurface) {
-        let scale = self.space.outputs().next().map(|o| o.current_scale().fractional_scale()).unwrap_or(1.0);
+        let scale = self.output_of(&surface).current_scale().fractional_scale();
         smithay::wayland::compositor::with_states(&surface, |states| {
             smithay::wayland::fractional_scale::with_fractional_scale(states, |fs| fs.set_preferred_scale(scale));
         });
@@ -1713,10 +1834,12 @@ impl WlrLayerShellHandler for App {
 
     fn layer_destroyed(&mut self, surface: WlrLayerSurface) {
         self.wake();
-        let mut map = layer_map_for_output(&self.output);
-        let found = map.layers().find(|l| l.layer_surface() == &surface).cloned();
-        if let Some(l) = found {
-            map.unmap_layer(&l);
+        for o in self.space.outputs() {
+            let mut map = layer_map_for_output(o);
+            let found = map.layers().find(|l| l.layer_surface() == &surface).cloned();
+            if let Some(l) = found {
+                map.unmap_layer(&l);
+            }
         }
     }
 }
@@ -1741,17 +1864,21 @@ impl SessionLockHandler for App {
     fn unlock(&mut self) {
         self.wake();
         self.locked = false;
-        self.lock_surface = None;
+        self.lock_surfaces.clear();
     }
 
-    fn new_surface(&mut self, surface: LockSurface, _output: WlOutput) {
-        if let Some(mode) = self.output.current_mode() {
-            surface.with_pending_state(|s| s.size = Some((mode.size.w as u32, mode.size.h as u32).into()));
-        }
+    /// One lock surface per output, as big as it; the keyboard goes to the one on the first output.
+    fn new_surface(&mut self, surface: LockSurface, output: WlOutput) {
+        let output = Output::from_resource(&output).unwrap_or_else(|| self.output.clone());
+        let size = logical_size(&output);
+        surface.with_pending_state(|s| s.size = Some((size.w as u32, size.h as u32).into()));
         surface.send_configure();
-        let kb = self.keyboard.clone();
-        kb.set_focus(self, Some(KbFocus::Wl(surface.wl_surface().clone())), SERIAL_COUNTER.next_serial());
-        self.lock_surface = Some(surface);
+        if output == self.output || self.lock_surfaces.is_empty() {
+            let kb = self.keyboard.clone();
+            kb.set_focus(self, Some(KbFocus::Wl(surface.wl_surface().clone())), SERIAL_COUNTER.next_serial());
+        }
+        self.lock_surfaces.retain(|(o, _)| o != &output);
+        self.lock_surfaces.push((output, surface));
     }
 }
 delegate_session_lock!(App);

@@ -204,7 +204,7 @@ impl XwmHandler for App {
         // never bigger than the space the panels leave free, and wholly on it: Steam asks for 1373x1080 on a 1280x800 screen, and a
         // question it centres on that window landed off the edge, where nobody could answer it (found 2026-11-05)
         let zone = smithay::desktop::layer_map_for_output(&self.output).non_exclusive_zone();
-        let screen = self.output.current_mode().map(|m| m.size.to_logical(1)).unwrap_or_default();
+        let screen = crate::state::logical_size(&self.output);
         let game_full = is_game(&window) && screen.w > 0 && geo.size.w >= screen.w && geo.size.h >= screen.h;
         let place = if game_full { Rectangle::new(self.cascade(), geo.size) } else { fit_in(zone, Rectangle::new(self.cascade(), geo.size)) };
         let at = place.loc;

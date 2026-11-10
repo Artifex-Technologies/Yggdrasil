@@ -1,19 +1,25 @@
 //! yggdrasil-compositor: Yggdrasil's own Wayland compositor, on Smithay, in development (the session runs on Hyprland meanwhile).
 //!
-//! Today it runs nested in a window (winit backend) while it is being built, so it cannot touch the real session:
+//! It runs nested in a window (winit backend) or headless (virtual outputs in memory, for tests), so it cannot touch the real
+//! session:
 //!
-//!   yggdrasil-compositor [--run COMMAND ARGS... [--run COMMAND ...]]
+//!   yggdrasil-compositor [OPTIONS] [--run COMMAND ARGS... [--run COMMAND ...]]
 //!       opens a window and serves a Wayland socket (its name is printed as WAYLAND_DISPLAY=...);
-//!       programs given with --run are started inside it
+//!       programs given with --run are started inside it (options go before the first --run)
+//!   yggdrasil-compositor --headless [--outputs N] [--size WxH] [--scale S] [--output WxH[@S]]... [--run ...]
+//!       no window, no GPU: outputs drawn in memory with the software renderer, a control socket for tests (headless.rs)
+//!   yggdrasil-compositor ctl COMMAND...
+//!       sends one command to a headless compositor (outputs, resize, scale, screenshot, windows, layers, quit)
 //!
 //! X11 programs run through XWayland, started with the compositor (its display is printed as DISPLAY=...);
-//! YGGDRASIL_COMPOSITOR_XWAYLAND=0 leaves it out.
+//! YGGDRASIL_COMPOSITOR_XWAYLAND=0 leaves it out (headless leaves it out unless it is 1).
 //!
 //! See docs/COMPOSITOR.md for what is built and what is not.
 
 mod deco;
 mod draw;
 mod grabs;
+mod headless;
 mod shortcuts;
 mod switcher;
 mod tiling;
@@ -29,6 +35,7 @@ use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::backend::winit::{self, WinitEvent};
 use smithay::output::{Mode, Output, PhysicalProperties, Subpixel};
 use smithay::reexports::calloop::generic::Generic;
+use smithay::reexports::calloop::ping::{Ping, PingSource};
 use smithay::reexports::calloop::{EventLoop, Interest, Mode as LoopMode, PostAction};
 use smithay::reexports::wayland_server::Display;
 use smithay::utils::{Rectangle, Transform};
@@ -83,16 +90,13 @@ fn start_programs(run: &[Vec<String>], wayland: &str, x11: Option<u32>) {
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    if let Ok(f) = tracing_subscriber::EnvFilter::try_from_default_env() {
-        tracing_subscriber::fmt().with_env_filter(f).init();
-    }
-    let args: Vec<String> = std::env::args().skip(1).collect();
+/// The command line: the options before the first --run, and the --run commands (everything up to the next --run is one).
+fn split_args(args: &[String]) -> (Vec<String>, Vec<Vec<String>>) {
+    let mut opts = vec![];
     let mut run: Vec<Vec<String>> = vec![];
     let mut i = 0;
     while i < args.len() {
         if args[i] == "--run" {
-            // everything up to the next --run is one command
             let mut cmd = vec![];
             i += 1;
             while i < args.len() && args[i] != "--run" {
@@ -103,17 +107,95 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 run.push(cmd);
             }
         } else {
+            opts.push(args[i].clone());
             i += 1;
         }
     }
+    (opts, run)
+}
 
-    let mut event_loop: EventLoop<App> = EventLoop::try_new()?;
+/// What both backends share: the clients' display, the socket they connect to (printed as WAYLAND_DISPLAY=...), XWayland, the
+/// --run programs and the look at the config files.
+fn serve(event_loop: &EventLoop<'static, App>, display: Display<App>, app: &mut App, run: Vec<Vec<String>>, xwayland_default: bool) -> Result<(), Box<dyn std::error::Error>> {
+    event_loop.handle().insert_source(Generic::new(display, Interest::READ, LoopMode::Level), |_, display, app| {
+        // SAFETY: the display is not dropped while it is registered here.
+        unsafe { display.get_mut().dispatch_clients(app).unwrap() };
+        Ok(PostAction::Continue)
+    })?;
+    let socket = ListeningSocketSource::new_auto()?;
+    let name = socket.socket_name().to_string_lossy().into_owned();
+    println!("WAYLAND_DISPLAY={name}");
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    app.socket = name.clone();
+    event_loop.handle().insert_source(socket, |stream, _, app| {
+        let _ = app.display_handle.insert_client(stream, Arc::new(ClientState::default()));
+    })?;
+    // X11 programs (XWayland). The --run programs wait until it has answered (a fraction of a second), so an X11 program among
+    // them finds its window manager there; without XWayland they start at once.
+    let xwayland = std::env::var("YGGDRASIL_COMPOSITOR_XWAYLAND").map(|v| v != "0" && v != "off").unwrap_or(xwayland_default);
+    let start_run = {
+        let name = name.clone();
+        move |app: &mut App| start_programs(&run, &name, app.x11_display)
+    };
+    if !xwayland {
+        start_run(app);
+    } else if let Err(e) = xwayland::start(app, event_loop.handle(), Box::new(start_run.clone())) {
+        eprintln!("yggdrasil-compositor: XWayland could not start ({e}); X11 programs will not run");
+        start_run(app);
+    }
+
+    // workspaces.conf and shortcuts.conf are read again when they change (Settings writes them)
+    event_loop.handle().insert_source(smithay::reexports::calloop::timer::Timer::from_duration(std::time::Duration::from_secs(2)), |_, _, app| {
+        app.reload_config();
+        smithay::reexports::calloop::timer::TimeoutAction::ToDuration(std::time::Duration::from_secs(2))
+    })?;
+    Ok(())
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if let Ok(f) = tracing_subscriber::EnvFilter::try_from_default_env() {
+        tracing_subscriber::fmt().with_env_filter(f).init();
+    }
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("ctl") {
+        std::process::exit(headless::ctl(&args[1..]));
+    }
+    let (opts, run) = split_args(&args);
+    if headless::wanted(&opts) {
+        return run_headless(&opts, run);
+    }
+
+    let event_loop: EventLoop<App> = EventLoop::try_new()?;
     let display: Display<App> = Display::new()?;
+    let (ping, ping_source) = smithay::reexports::calloop::ping::make_ping()?;
+    run_nested(event_loop, display, ping, ping_source, run)
+}
+
+/// The headless backend (headless.rs): virtual outputs, the software renderer, a control socket.
+fn run_headless(opts: &[String], run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
+    let specs = headless::outputs_from(opts)?;
+    let runtime = headless::check_env()?;
+    let event_loop: EventLoop<App> = EventLoop::try_new()?;
+    let display: Display<App> = Display::new()?;
+    let dh = display.handle();
+    let (ping, ping_source) = smithay::reexports::calloop::ping::make_ping()?;
+    let outputs = headless::make_outputs(&dh, &specs);
+    toplevels::create_global(&dh);
+    let mut app = App::new(&dh, outputs[0].clone(), event_loop.handle(), event_loop.get_signal(), ping);
+    for o in &outputs {
+        app.space.map_output(o, o.current_location());
+    }
+    serve(&event_loop, display, &mut app, run, false)?;
+    headless::run(event_loop, app, outputs, ping_source, runtime)
+}
+
+/// The nested backend: a window on the running desktop (winit), drawn with the GPU.
+fn run_nested(mut event_loop: EventLoop<'static, App>, display: Display<App>, ping: Ping, ping_source: PingSource, run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
     let dh = display.handle();
     let (backend, winit) = winit::init::<GlesRenderer>().map_err(|e| format!("cannot open a window: {e}"))?;
     backend.window().set_title("Yggdrasil compositor (nested)");
     let backend = std::rc::Rc::new(std::cell::RefCell::new(backend));
-    let (ping, ping_source) = smithay::reexports::calloop::ping::make_ping()?;
 
     let mode = Mode { size: backend.borrow().window_size(), refresh: 60_000 };
     let output = Output::new("yggdrasil-1".into(), PhysicalProperties { size: (0, 0).into(), subpixel: Subpixel::Unknown, make: "Yggdrasil".into(), model: "nested window".into() });
@@ -148,38 +230,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ping.ping();
     app.space.map_output(&output, (0, 0));
 
-    // Wayland clients: the display itself, and the socket they connect to.
-    event_loop.handle().insert_source(Generic::new(display, Interest::READ, LoopMode::Level), |_, display, app| {
-        // SAFETY: the display is not dropped while it is registered here.
-        unsafe { display.get_mut().dispatch_clients(app).unwrap() };
-        Ok(PostAction::Continue)
-    })?;
-    let socket = ListeningSocketSource::new_auto()?;
-    let name = socket.socket_name().to_string_lossy().into_owned();
-    println!("WAYLAND_DISPLAY={name}");
-    app.socket = name.clone();
-    event_loop.handle().insert_source(socket, |stream, _, app| {
-        let _ = app.display_handle.insert_client(stream, Arc::new(ClientState::default()));
-    })?;
-    // X11 programs (XWayland). The --run programs wait until it has answered (a fraction of a second), so an X11 program among
-    // them finds its window manager there; without XWayland they start at once.
-    let xwayland = std::env::var("YGGDRASIL_COMPOSITOR_XWAYLAND").map(|v| v != "0" && v != "off").unwrap_or(true);
-    let start_run = {
-        let name = name.clone();
-        move |app: &mut App| start_programs(&run, &name, app.x11_display)
-    };
-    if !xwayland {
-        start_run(&mut app);
-    } else if let Err(e) = xwayland::start(&mut app, event_loop.handle(), Box::new(start_run.clone())) {
-        eprintln!("yggdrasil-compositor: XWayland could not start ({e}); X11 programs will not run");
-        start_run(&mut app);
-    }
-
-    // workspaces.conf and shortcuts.conf are read again when they change (Settings writes them)
-    event_loop.handle().insert_source(smithay::reexports::calloop::timer::Timer::from_duration(std::time::Duration::from_secs(2)), |_, _, app| {
-        app.reload_config();
-        smithay::reexports::calloop::timer::TimeoutAction::ToDuration(std::time::Duration::from_secs(2))
-    })?;
+    serve(&event_loop, display, &mut app, run, true)?;
     let mut damage_tracker = OutputDamageTracker::from_output(&output);
     let start = std::time::Instant::now();
     let mut dh2 = dh.clone();
@@ -197,10 +248,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let Ok((renderer, mut fb)) = backend.bind() else { return };
                 if app.locked {
                     // While the session is locked only the locker's own picture is drawn: nothing of the session shows.
-                    let elements = app.lock_elements(renderer);
+                    let elements = app.lock_elements(renderer, &output);
                     damage = damage_tracker.render_output(renderer, &mut fb, age, &elements, [0.0f32, 0.0, 0.0, 1.0]).ok().and_then(|r| r.damage.cloned());
                 } else {
-                    let elements = app.scene(renderer);
+                    let elements = app.scene(renderer, &output);
                     damage = damage_tracker.render_output(renderer, &mut fb, age, &elements, [0.05f32, 0.05, 0.08, 1.0]).ok().and_then(|r| r.damage.cloned());
                 }
             }
@@ -224,4 +275,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = app.display_handle.flush_clients();
     })?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_args;
+
+    #[test]
+    fn options_come_before_the_programs() {
+        let a: Vec<String> = ["--headless", "--size", "800x600", "--run", "foot", "-e", "true", "--run", "panel"].iter().map(|s| s.to_string()).collect();
+        let (opts, run) = split_args(&a);
+        assert_eq!(opts, ["--headless", "--size", "800x600"]);
+        assert_eq!(run, vec![vec!["foot", "-e", "true"], vec!["panel"]]);
+    }
 }

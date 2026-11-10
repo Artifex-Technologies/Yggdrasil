@@ -2,7 +2,7 @@
 name = "yggdrasil-compositor"
 version = "0.1.0"
 edition = "2021"
-description = "Yggdrasil's own Wayland compositor (Smithay), in development: the session runs on Hyprland meanwhile. Runs nested in a window while it is built."
+description = "Yggdrasil's own Wayland compositor (Smithay), in development: the session runs on Hyprland meanwhile. Runs nested in a window, or headless for tests, while it is built."
 license = "MPL-2.0"
 
 [[bin]]
@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 yggdrasil-conf = { path = "../yggdrasil-conf" }
-smithay = { version = "0.7", default-features = false, features = ["backend_winit", "backend_egl", "backend_drm", "renderer_gl", "desktop", "wayland_frontend", "use_system_lib", "xwayland"] }
+smithay = { version = "0.7", default-features = false, features = ["backend_winit", "backend_egl", "backend_drm", "renderer_gl", "renderer_pixman", "desktop", "wayland_frontend", "use_system_lib", "xwayland"] }
 tracing = "0.1"
 tiny-skia = "0.11"
 # x11asked.rs: one property read on its own connection (already in the tree through smithay)
@@ -19,6 +19,14 @@ x11rb = "0.13"
 ab_glyph = "0.2"
 wayland-protocols-wlr = { version = "0.3", features = ["server"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# headless.rs: an output's picture written as a PNG (screenshots for tests); already in the tree
+png = "0.17"
+
+[dev-dependencies]
+# tests/headless.rs: a small Wayland client that maps a panel (layer surface) and a window on the headless backend
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 
 [profile.release]
 opt-level = 2
