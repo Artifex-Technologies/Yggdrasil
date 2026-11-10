@@ -5,7 +5,8 @@ import sys
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-HELPER = os.path.join(ROOT, "packages", "market", "helpers", "pkg-root")
+# the Python script, kept for a rollback; the Rust pkg-root that replaced it is packages/agora-helpers (tests/pkg_root.rs)
+HELPER = os.path.join(ROOT, "packages", "market", "helpers", "python", "pkg-root")
 
 
 def run(args, uid="1000"):
