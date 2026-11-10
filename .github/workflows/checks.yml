@@ -12,7 +12,8 @@ jobs:
     container: archlinux:latest
     steps:
       - name: Tools
-        run: pacman -Syu --noconfirm --needed git rust base-devel pkgconf wayland libxkbcommon fontconfig pam dbus libxcrypt libinput mesa libvlc
+        # pixman: the compositor's software renderer (its headless tests run a compositor in the container)
+        run: pacman -Syu --noconfirm --needed git rust base-devel pkgconf wayland libxkbcommon fontconfig pam dbus libxcrypt libinput mesa libvlc pixman
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0, pinned by commit
         with:
           persist-credentials: false
@@ -47,6 +48,26 @@ jobs:
           # sway does not run as root
           useradd -m ci && chown -R ci "$GITHUB_WORKSPACE"
           su ci -c "cd '$GITHUB_WORKSPACE' && packages/panel/tests/leak-stress.sh target/debug/yggdrasil-panel"
+  # The same stress test on Yggdrasil's own compositor in its headless mode (software renderer, no GPU, sizes changed through its
+  # control socket): the first of our own pieces tested on our own compositor. The sway job stays until this one has proven itself.
+  panel-leaks-own-compositor:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Tools
+        run: pacman -Syu --noconfirm --needed git rust base-devel pkgconf wayland libxkbcommon fontconfig dbus ttf-dejavu pixman mesa libinput
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0, pinned by commit
+        with:
+          persist-credentials: false
+      - name: Build the panel and the compositor
+        run: |
+          (cd packages/panel && cargo build --locked)
+          (cd packages/compositor && cargo build --locked)
+      - name: Stress test (headless yggdrasil-compositor, its own session bus)
+        run: |
+          # a normal account, as for sway (the compositor itself would run as root, but nothing here needs that)
+          useradd -m ci && chown -R ci "$GITHUB_WORKSPACE"
+          su ci -c "cd '$GITHUB_WORKSPACE' && packages/panel/tests/leak-stress.sh --compositor yggdrasil target/debug/yggdrasil-panel"
   recipes:
     runs-on: ubuntu-latest
     container: archlinux:latest

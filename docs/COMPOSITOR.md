@@ -5,7 +5,60 @@ lock, the idle manager, the panel and the login screen all run on one compositor
 
 **Today (2026-11-04):** Yggdrasil's desktop runs as its own session on **Hyprland 0.57** (`packages/session`, `yggdrasil-session`,
 configured in `packages/session/hyprland/yggdrasil.lua`). Hyprland is the real compositor; this one is still in progress and runs
-only nested in a window (below). KDE, and with it KWin, is gone (2026-10-24).
+nested in a window (below) or headless, with no screen at all, for tests (2026-11-10, next section). KDE, and with it KWin, is gone
+(2026-10-24).
+
+**The plan (2026-11-10):** Hyprland stays the daily compositor while the rest of Yggdrasil is ported to Rust; once that is done,
+this compositor replaces it. The headless mode is the first step: our own desktop pieces are tested on our own compositor in CI,
+long before it drives a real screen.
+
+## Headless: the hidden test mode (built 2026-11-10)
+
+    yggdrasil-compositor --headless [--outputs N] [--size WxH] [--scale S] [--output WxH[@S]]... [--run COMMAND ...]
+
+(`--backend headless` is the same.) No window, no screen, no GPU and no input devices: each output is a picture in memory, drawn with
+Smithay's software renderer (pixman), so it runs in a CI container. Source: `src/headless.rs`.
+- **Outputs**: `--outputs 2 --size 1600x900 --scale 1.5` gives two alike, `--output 1600x900 --output 1280x720@1.5` one of each;
+  default one 1920x1080 at scale 1. They are named HEADLESS-1, HEADLESS-2 ... and sit side by side from 0,0. Each is a wl_output
+  (version 4, with its name) and an xdg-output with its logical size and place.
+- **Scale**: programs are told it through wp-fractional-scale (in 120ths), wl_surface's preferred buffer scale (version 6) and
+  wl_output's whole-number scale (1.5 is sent as 2 there); the panels' first configure already carries it, and everything is drawn
+  at the output's scale (a 1.5 output shows the panel sharp, not blown up).
+- **Several outputs** (this needed changes beyond the backend): each output has its own panels (layer map), its own lock surface
+  while locked, its own part of the scene, and the pointer finds the output it is on. The switcher and the profile question show on
+  the first output; windows open, maximize and go full screen there.
+- **Control socket** in the compositor's own runtime folder (`$XDG_RUNTIME_DIR/yggdrasil-compositor-wayland-N.ctl`, mode 0600,
+  printed as `YGGDRASIL_COMPOSITOR_CTL=...`), one line per connection; `yggdrasil-compositor ctl COMMAND` sends one:
+  `outputs`, `resize HEADLESS-1 1280x720`, `scale HEADLESS-1 1.5`, `screenshot HEADLESS-1 /path/shot.png` (what is pending is drawn
+  first), `windows`, `layers`, `quit`. The answer is the lines, then `ok` or `error: ...`.
+- **Safety**: it refuses to start without `XDG_RUNTIME_DIR`, and refuses the desktop's own `/run/user/UID` unless
+  `YGGDRASIL_COMPOSITOR_SHARED_RUNTIME=1`; WAYLAND_DISPLAY, DISPLAY, HYPRLAND_INSTANCE_SIGNATURE and the other compositors' variables
+  are cleared before anything starts, so nothing it starts can reach the running desktop. XWayland is left out unless
+  `YGGDRASIL_COMPOSITOR_XWAYLAND=1`. A socket path must fit in 108 bytes, so give it a short folder (the tests use `/tmp`).
+- **Lightness**: as nested, nothing is drawn while nothing changes; a burst of commits is folded into at most one frame per 16 ms.
+- **The panel runs on it**: the wallpaper, the top bar and the dock map and draw (wlr-layer-shell, xdg-output, wlr-foreign-toplevel,
+  fractional scale, viewporter, cursor-shape are the same code as nested), at scale 1 and 1.5, and follow a size change. Its window
+  previews need ext-foreign-toplevel-list and ext-image-copy-capture, which this compositor does not have; the panel leaves them out.
+
+Tests (`cargo test` in `packages/compositor`; the CI's rust job runs them): 30 in all, 24 unit tests (5 new: the options, sizes
+and scales, the refused runtime folder) and 6 end-to-end ones in `tests/headless.rs`, where a small Wayland client of the test's own
+talks to a compositor started in a private folder: the outputs appear with the size, scale, name and place asked for (one and
+several); a layer surface (a red bar) and a toplevel (a blue window) are mapped and listed, and the screenshot shows red and blue
+exactly where they were put and the background elsewhere; a resize and a scale change reach the client (output events, a new
+configure, the fractional scale 120 -> 240 -> 150); a bar drawn at buffer scale 2 on a scale 2 output covers exactly its rows of
+the picture; `quit` ends it and leaves no socket behind; no runtime folder is refused.
+
+**The panel's leak test runs on it** (`packages/panel/tests/leak-stress.sh --compositor yggdrasil`, CI job
+`panel-leaks-own-compositor`; the sway variant and its job stay until this one has proven itself): the same notifications, pop-ups
+and resizes, counting the panel's memfd mappings in this compositor's `/proc/PID/smaps` (Smithay keeps a shared-memory pool mapped
+while a buffer made from it lives, as wlroots does). Proof, 20 rounds, 2026-11-10: the panel from main passes (9 mappings, 2.3 MB
+after the warm-up and after 20 rounds); the leaky panel (the parent of c79d95f) fails (32 mappings after the warm-up, 376 after 20
+rounds, about 490 MB). The same in the rootless podman container (`--podman`): main 9 mappings, pass; leaky 374, fail. For
+comparison headless sway in that container: main 12, pass; leaky 617, fail.
+
+Not built headless yet: input (no seat devices; a test cannot click or type yet), GPU buffers (linux-dmabuf is not offered: shared
+memory only), drawing the pointer, screen capture for programs (only the control socket's screenshot), outputs added or removed while
+running, and placing outputs other than side by side.
 
 ## Status (2026-10-18): first version, runs nested in a window only
 
@@ -108,14 +161,33 @@ Not built yet (in the order I would do them):
 4. More workspaces than four.
 5. Built 2026-11-04, not yet tried by hand: a full screen window in front covers the top bar and dock (they go behind it and get
    no pointer; the Overlay layer stays in front). Also built 2026-11-04, not yet tried by hand: GPU clients (linux-dmabuf, with default feedback naming the render node), idle inhibit,
-   primary selection, cursor shapes (the nested window's pointer follows them), fractional scale (1.0 until outputs get a scale),
-   xdg-activation (only with a token from the person's own input in the last 10 s).
-6. **The hardware backend**: DRM/KMS output, libinput, a seat (logind or seatd), several monitors, scaling, VRR, NVIDIA, explicit sync (linux-drm-syncobj-v1, which NVIDIA needs to avoid flicker and frames
-   out of order), direct scanout for full screen games, and tearing control. This is what would let it run the real session instead of Hyprland; it should be developed in a virtual machine (Limbo), never on the live session.
-7. Screen recording and screenshots (the portal), output management for Settings > Displays.
+   primary selection, cursor shapes (the nested window's pointer follows them), xdg-activation (only with a token from the
+   person's own input in the last 10 s). Fractional scale is now tested headless (2026-11-10), at 1, 1.25, 1.5 and 2.
+6. **More of our programs in the headless tests** (2026-11-10 has the panel's leak test and the backend's own tests): the lock
+   screen (ext-session-lock, one surface per output, built for it), the idle manager, Settings; for that, input in the headless mode
+   (a virtual keyboard and pointer driven from the control socket, inside the compositor only, never the real devices),
+   ext-foreign-toplevel-list and ext-image-copy-capture (the panel's window previews), and drawing the pointer.
+7. **The hardware backend** (DRM/KMS), what it needs, in order:
+   - a seat: libseat (logind or seatd) through Smithay's session backend, to open the GPU and input devices without root, and
+     to give them up on a VT switch and take them back (pause and resume);
+   - udev to find the GPUs and the connectors and to follow hotplug; each connector becomes an `Output` with its real modes and
+     its EDID make, model and size. The several-outputs work of the headless mode (a scene, panels and a lock surface per output,
+     the pointer finding its output) is already the code a multi-monitor desktop needs; outputs must also come and go while
+     running, and be placed as Settings > Displays says (wlr-output-management), not only side by side;
+   - GBM and EGL on the GPU, and Smithay's `DrmCompositor` per output: frames paced by the page flip (vblank) instead of the
+     headless 16 ms timer, direct scanout of full screen games on a plane, dmabuf feedback with scanout tranches;
+   - libinput for the keyboard, mouse and touchpad: `on_input` is written for the nested window's events today and must take any
+     input backend, with relative pointer motion, pointer constraints and acceleration, and the compositor drawing the pointer
+     itself (an xcursor theme; nested, the host draws it);
+   - NVIDIA: nvidia-drm with modeset on, explicit sync (linux-drm-syncobj-v1, which NVIDIA needs to avoid flicker and frames out
+     of order), and a GPU manager for machines with two GPUs;
+   - VRR (the connector's VRR_ENABLED property) and tearing control (wp-tearing-control) for games; gamma and night light.
+   This is what would let it run the real session instead of Hyprland; it is developed in a virtual machine (Limbo), never on the
+   live session, and the headless tests keep running in CI the whole time.
+8. Screen recording and screenshots (the portal), output management for Settings > Displays.
 
 Why not before: the roadmap puts the compositor last, once the pieces around it are stable; they now are (panel, lock, idle, greeter,
-portal, polkit), and each of them can be developed and tested on this compositor in a window.
+portal, polkit), and each of them can be developed and tested on this compositor in a window, and since 2026-11-10 headless in CI.
 
 Debugging: `YGGDRASIL_COMPOSITOR_DEBUG=1` prints pointer positions, button presses and move requests. To drive it from a script, move the host pointer
 with `ydotool` in small steps (the host accelerates movement by about 1.7x) and read the positions it prints.
