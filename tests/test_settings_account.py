@@ -6,7 +6,8 @@ import subprocess
 import tempfile
 import unittest
 
-BIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "packages", "settings", "helpers", "account")
+# the Python script, kept for a rollback; the Rust helper that replaced it is packages/settings-helpers (tests/account.rs)
+BIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "packages", "settings", "helpers", "python", "account")
 
 
 class Account(unittest.TestCase):
