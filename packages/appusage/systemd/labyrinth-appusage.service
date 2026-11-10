@@ -1,0 +1,13 @@
+# How long each app has been running, for Settings > Apps (sort by usage). On for every account (the installer enables it
+# globally); it follows the user's scopes in the cgroup tree and sleeps in between.
+[Unit]
+Description=Count how long each app has been running (Settings > Apps, sort by usage)
+Documentation=file:///usr/share/doc/yggdrasil-appusage/README.md
+
+[Service]
+ExecStart=/usr/bin/labyrinth-appusage
+Restart=on-failure
+Nice=15
+
+[Install]
+WantedBy=default.target
