@@ -1,38 +1,50 @@
 # Yggdrasil's look for the programs it does not write (Qt, KDE and GTK programs) and its mouse cursors: packages/theme.
 # It replaces the WhiteSur KDE, GTK and cursor themes: a colour scheme (used with Qt's own Fusion style), GTK colours on GTK's own Adwaita,
-# and cursors drawn by ygg-cursors. Nothing is downloaded and no other theme package is needed.
+# and cursors drawn by ygg-cursors. Nothing is downloaded and no other theme package is needed. ygg-theme is Rust
+# (packages/theme/src; the Python script it replaced is kept in packages/theme/python for a rollback); ygg-cursors, which draws
+# the cursors once here at build time, is still Python with Pillow.
 pkgname=yggdrasil-theme
 pkgver=0.1.0
-pkgrel=3
+pkgrel=4
 pkgdesc="Yggdrasil's colour scheme, GTK colours and mouse cursors (replaces the WhiteSur themes)"
-arch=('any')
+arch=('x86_64')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
 license=('MPL-2.0')
-depends=('python')
-makedepends=('python-pillow' 'python-gobject' 'gtk4')
-optdepends=('gtk3: GTK 3 programs use the Yggdrasil GTK theme')
+depends=('glibc' 'gcc-libs')
+# gtk4: GTK 4's own theme is read from it (at build time) to make Yggdrasil's
+makedepends=('cargo' 'python-pillow' 'gtk4')
+optdepends=('gtk3: GTK 3 programs use the Yggdrasil GTK theme'
+            'python-pillow: ygg-cursors, to draw the cursor theme again (the package has it drawn)')
 provides=('labyrinth-cursors')
-options=('!strip')
+options=('!lto')
 
 _src="$startdir/../../theme"
 
 build() {
+  cd "$_src"
+  cargo build --release --locked --target-dir "$srcdir/target"
   python3 "$_src/bin/ygg-cursors" "$srcdir/cursors"
 }
 
+check() {
+  cd "$_src"
+  # the colours, ini files and a scratch home's apply and cursor: nothing of the builder's own is touched
+  cargo test --release --locked --target-dir "$srcdir/target"
+}
+
 package() {
-  install -Dm755 "$_src/bin/ygg-theme" "$pkgdir/usr/bin/ygg-theme"
+  install -Dm755 "$srcdir/target/release/ygg-theme" "$pkgdir/usr/bin/ygg-theme"
   install -Dm755 "$_src/bin/ygg-cursors" "$pkgdir/usr/bin/ygg-cursors"
   # the cursors (an X cursor theme, which Wayland programs use as well)
   install -d "$pkgdir/usr/share/icons"
   cp -a "$srcdir/cursors" "$pkgdir/usr/share/icons/Yggdrasil"
   # the GTK 3 and GTK 4 themes: GTK's own with Yggdrasil's colours and surfaces (libadwaita programs read the colours in the user's stylesheet that ygg-theme writes)
   install -d "$pkgdir/usr/share/themes/Yggdrasil/gtk-3.0"
-  "$_src/bin/ygg-theme" gtk3-theme light > "$pkgdir/usr/share/themes/Yggdrasil/gtk-3.0/gtk.css"
-  "$_src/bin/ygg-theme" gtk3-theme dark  > "$pkgdir/usr/share/themes/Yggdrasil/gtk-3.0/gtk-dark.css"
+  "$srcdir/target/release/ygg-theme" gtk3-theme light > "$pkgdir/usr/share/themes/Yggdrasil/gtk-3.0/gtk.css"
+  "$srcdir/target/release/ygg-theme" gtk3-theme dark  > "$pkgdir/usr/share/themes/Yggdrasil/gtk-3.0/gtk-dark.css"
   install -d "$pkgdir/usr/share/themes/Yggdrasil/gtk-4.0"
-  "$_src/bin/ygg-theme" gtk4-theme light > "$pkgdir/usr/share/themes/Yggdrasil/gtk-4.0/gtk.css"
-  "$_src/bin/ygg-theme" gtk4-theme dark  > "$pkgdir/usr/share/themes/Yggdrasil/gtk-4.0/gtk-dark.css"
+  "$srcdir/target/release/ygg-theme" gtk4-theme light > "$pkgdir/usr/share/themes/Yggdrasil/gtk-4.0/gtk.css"
+  "$srcdir/target/release/ygg-theme" gtk4-theme dark  > "$pkgdir/usr/share/themes/Yggdrasil/gtk-4.0/gtk-dark.css"
   # the same dark, as a theme of its own: programs that load a theme by name and ignore the dark flag (Chromium's menus) get dark
   for v in 3 4; do
     install -d "$pkgdir/usr/share/themes/Yggdrasil-dark/gtk-$v.0"

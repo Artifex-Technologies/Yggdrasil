@@ -10,7 +10,7 @@ switches the mouse pointer. Settings, the panel (Fylgja) and the package build r
     ygg-theme gtk3-theme|gtk4-theme dark|light           print the system GTK 3 or GTK 4 theme file (what the package installs)
     ygg-theme cursor [NAME]                              print the mouse pointer theme, or switch to NAME
 
-It is in Rust (`src/`), replacing the Python script (`bin/ygg-theme`, kept in `python/ygg-theme` for a rollback once the package switches), with the same
+It is in Rust (`src/`), replacing the Python script that is kept in `python/ygg-theme` for a rollback, with the same
 commands, output and files byte for byte. `gtk4-theme` reads GTK 4's own theme from the installed libgtk-4, opened at run
 time (no python-gobject), and replaces its colours as the script did; without libgtk-4 it falls back as the script did
 (GTK's own theme underneath, Yggdrasil's surfaces on top).
