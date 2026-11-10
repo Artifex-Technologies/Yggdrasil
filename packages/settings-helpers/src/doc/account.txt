@@ -1,0 +1,18 @@
+account: add, remove and change accounts for Settings > Users (run with pkexec; `list` needs no root).
+
+  account list                                   JSON: every login account (uid 1000 and up), with its access
+  account groups                                 JSON: the optional groups this system has, with what each allows
+  account add NAME           [--full-name TEXT] [--admin]
+                                                 create NAME with a home folder; the password is read from standard input (one line)
+  account admin NAME on|off                      make an account an administrator (group wheel) or a standard user
+  account remove NAME [--delete-home]            delete the account (its home folder stays unless --delete-home)
+  account name NAME TEXT                         change the full name
+  account password NAME                          set NAME's password (another account's; read from standard input, one line)
+  account login NAME on|off                      allow or stop signing in (off: no login shell and the password locked)
+  account sudo NAME password|nopassword          whether sudo asks an administrator for the password
+  account group NAME GROUP on|off                optional access (OPTIONAL_GROUPS below: virtual machines, serial ports ...)
+
+Rules it enforces, whatever the caller says: names are lowercase letters, digits, '-' and '_' (at most 31, starting with a letter);
+only accounts from uid 1000 up are touched; never the account that asked (PKEXEC_UID), never an account the operating system keeps
+for itself (/etc/yggdrasil/protected-accounts: one name per line, `name*` for every name starting so; an OS lists its service or
+assistant accounts there), never an account that is logged in, and the last administrator cannot be demoted or removed. A password never appears in a command line: it goes to `chpasswd` on standard input.

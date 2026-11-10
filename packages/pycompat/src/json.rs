@@ -85,6 +85,39 @@ fn write(out: &mut String, v: &Value, indent: Option<usize>, level: usize) {
     }
 }
 
+/// str(v) of a value json.load made: text as it is, everything else as repr() writes it.
+pub fn py_str(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        _ => py_repr(v),
+    }
+}
+
+/// repr(v) of a value json.load made: None, True, 1, 1.5, 'text', [..., ...], {'key': ...}.
+pub fn py_repr(v: &Value) -> String {
+    match v {
+        Value::Null => "None".into(),
+        Value::Bool(b) => (if *b { "True" } else { "False" }).into(),
+        Value::Number(n) => match (n.as_i64(), n.as_u64()) {
+            (Some(i), _) => i.to_string(),
+            (_, Some(u)) => u.to_string(),
+            _ => {
+                let f = n.as_f64().unwrap_or(f64::NAN);
+                if f.is_nan() {
+                    "nan".into()
+                } else if f.is_infinite() {
+                    (if f > 0.0 { "inf" } else { "-inf" }).into()
+                } else {
+                    float_repr(f)
+                }
+            }
+        },
+        Value::String(s) => crate::repr(s),
+        Value::Array(a) => format!("[{}]", a.iter().map(py_repr).collect::<Vec<_>>().join(", ")),
+        Value::Object(m) => format!("{{{}}}", m.iter().map(|(k, x)| format!("{}: {}", crate::repr(k), py_repr(x))).collect::<Vec<_>>().join(", ")),
+    }
+}
+
 /// A JSON string as ensure_ascii writes it.
 pub fn string(out: &mut String, s: &str) {
     out.push('"');

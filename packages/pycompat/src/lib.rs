@@ -11,7 +11,7 @@
 pub mod json;
 mod unicode_tables;
 
-use unicode_tables::{DECIMAL_ZEROS, DIGIT, PRINTABLE, SPACE};
+use unicode_tables::{DECIMAL_ZEROS, DIGIT, PRINTABLE, SPACE, WORD};
 
 fn in_ranges(table: &[(u32, u32)], c: char) -> bool {
     let c = c as u32;
@@ -54,6 +54,14 @@ pub fn isprintable(c: char) -> bool {
     in_ranges(PRINTABLE, c)
 }
 
+/// \w in a Python pattern on text (str.isalnum() or "_").
+pub fn isword(c: char) -> bool {
+    in_ranges(WORD, c)
+}
+
+/// \s in a Python pattern on text (str.isspace()).
+pub const PY_SPACE_CLASS: &str = r"[\s\x1c-\x1f]";
+
 /// str.strip() with no argument.
 pub fn strip(s: &str) -> &str {
     s.trim_matches(isspace)
@@ -67,6 +75,33 @@ pub fn rstrip(s: &str) -> &str {
 /// str.split() with no argument: the words between runs of whitespace.
 pub fn split(s: &str) -> Vec<&str> {
     s.split(isspace).filter(|w| !w.is_empty()).collect()
+}
+
+/// str.splitlines(): lines without their ends, which are \n, \r, \r\n, \v, \f, \x1c-\x1e, \x85, U+2028 and U+2029.
+pub fn splitlines(s: &str) -> Vec<&str> {
+    let mut out = vec![];
+    let mut start = 0;
+    let mut it = s.char_indices().peekable();
+    while let Some((i, c)) = it.next() {
+        let end = match c {
+            '\r' => {
+                if let Some((_, '\n')) = it.peek() {
+                    it.next();
+                    i + 2
+                } else {
+                    i + 1
+                }
+            }
+            '\n' | '\u{b}' | '\u{c}' | '\u{1c}' | '\u{1d}' | '\u{1e}' | '\u{85}' | '\u{2028}' | '\u{2029}' => i + c.len_utf8(),
+            _ => continue,
+        };
+        out.push(&s[start..i]);
+        start = end;
+    }
+    if start < s.len() {
+        out.push(&s[start..]);
+    }
+    out
 }
 
 /// int(text) (base 10): surrounding whitespace, a sign, decimal digits of any script with single underscores between them.
@@ -143,6 +178,29 @@ pub fn repr(s: &str) -> String {
         }
     }
     out.push(quote);
+    out
+}
+
+/// repr() of bytes: b'...' with \xhh for every byte outside space..~ (and \t \n \r).
+pub fn repr_bytes(b: &[u8]) -> String {
+    let quote = if b.contains(&b'\'') && !b.contains(&b'"') { b'"' } else { b'\'' };
+    let mut out = String::from("b");
+    out.push(quote as char);
+    for &c in b {
+        match c {
+            b'\\' => out.push_str("\\\\"),
+            b'\t' => out.push_str("\\t"),
+            b'\n' => out.push_str("\\n"),
+            b'\r' => out.push_str("\\r"),
+            c if c == quote => {
+                out.push('\\');
+                out.push(quote as char);
+            }
+            0x20..=0x7e => out.push(c as char),
+            c => out.push_str(&format!("\\x{c:02x}")),
+        }
+    }
+    out.push(quote as char);
     out
 }
 
@@ -230,6 +288,9 @@ mod tests {
         assert!(!isspace('\u{200b}'));
         assert_eq!(strip("\u{1f} a b\u{3000}"), "a b");
         assert_eq!(split("  a \t b\n"), vec!["a", "b"]);
+        assert_eq!(splitlines("a\r\nb\rc\nd\u{b}e\u{2028}f\n"), vec!["a", "b", "c", "d", "e", "f"]);
+        assert_eq!(splitlines("a\n\nb"), vec!["a", "", "b"]);
+        assert_eq!(splitlines(""), Vec::<&str>::new());
     }
 
     #[test]
@@ -241,6 +302,8 @@ mod tests {
         assert_eq!(repr("caf\u{e9}"), "'caf\u{e9}'");
         assert_eq!(repr("\u{a0}\u{200b}\u{10ffff}"), "'\\xa0\\u200b\\U0010ffff'");
         assert_eq!(repr_list(&["3"]), "['3']");
+        assert_eq!(repr_bytes(b"/usr/bin/x"), "b'/usr/bin/x'");
+        assert_eq!(repr_bytes("caf\u{e9}'".as_bytes()), "b\"caf\\xc3\\xa9'\"");
         assert_eq!(repr_list::<&str>(&[]), "[]");
     }
 

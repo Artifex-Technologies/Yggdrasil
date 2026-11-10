@@ -1,0 +1,44 @@
+[package]
+name = "yggdrasil-settings-helpers"
+version = "0.1.0"
+edition = "2021"
+description = "Settings' on-demand helpers in Rust, replacing the Python scripts at the same paths with the same interface: account (Users, through pkexec), bootscreen (Appearance > Boot screen, through pkexec), game-fix (Games > Game fixes) and yggdrasil-gpu-run (Games: a program on a chosen graphics card)"
+license = "MPL-2.0"
+
+[lib]
+name = "settings_helpers"
+path = "src/lib.rs"
+
+# installed as /usr/lib/yggdrasil/account, bootscreen and game-fix, and /usr/bin/yggdrasil-gpu-run (packages/pkgbuilds/yggdrasil-settings)
+[[bin]]
+name = "account"
+path = "src/bin/account.rs"
+
+[[bin]]
+name = "bootscreen"
+path = "src/bin/bootscreen.rs"
+
+[[bin]]
+name = "game-fix"
+path = "src/bin/game-fix.rs"
+
+[[bin]]
+name = "gpu-run"
+path = "src/bin/gpu-run.rs"
+
+# image: only the three formats the Python script let Pillow decode (no decoder that hands a file to another program)
+[dependencies]
+libc = "0.2"
+regex = { version = "1", default-features = false, features = ["std", "unicode"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+yggdrasil-pycompat = { path = "../pycompat" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[dev-dependencies]
+serde_json = "1"

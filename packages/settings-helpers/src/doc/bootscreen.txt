@@ -1,0 +1,11 @@
+bootscreen: what shows while the computer starts and shuts down (Settings > Appearance > Boot screen), through Plymouth.
+
+  bootscreen get                       what is set (JSON): ready, theme, choice, themes, the boot loader
+  bootscreen set animation             the operating system's own animation (its branding's boot_theme; Labyrinth: purple rain)
+  bootscreen set messages              the start-up messages, as text
+  bootscreen set picture FILE          your own picture, in the middle of a black screen
+  (set needs root: Settings runs it with pkexec)
+
+The first "set" also switches Plymouth on: a mkinitcpio drop-in adds its hook after kms (or udev), and on GRUB "splash" is added
+to the kernel options (the old /etc/default/grub is kept as /etc/default/grub.before-bootscreen). The start-up image is rebuilt
+(mkinitcpio -P), which takes a minute.

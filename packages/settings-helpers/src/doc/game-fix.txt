@@ -1,0 +1,18 @@
+yggdrasil-game-fix: per-game fixes for Steam games (Settings > Games > Game fixes).
+
+    yggdrasil-game-fix list [--json]     the fixes for games that are installed, and whether each is applied
+    yggdrasil-game-fix apply APPID       apply a game's fix (its settings files backed up first)
+    yggdrasil-game-fix undo APPID        put the game's files back as they were
+
+The fixes are data (/usr/share/yggdrasil/game-fixes.json, or YGGDRASIL_GAME_FIXES): for each game, settings files and the
+values to set in them. A value can name the screen: {width}, {height} (the desktop's largest monitor: hyprctl, else xrandr;
+YGGDRASIL_SCREEN=WxH overrides). Paths can use {game} (the install folder), {prefix} (Proton's drive_c), {userprofile},
+{localappdata}, {documents}. A file the game has not made yet can be made from a template (a file in the game's folder, or
+lines in the catalogue).
+
+Files: "kv" ("Key = value" lines, as Dead Space 2's settings.txt) or "ini" ([Section] and key=value lines). Every other line
+is kept as it is. Before the first change a file is copied to FILE.yggdrasil-backup; a file this program made gets
+FILE.yggdrasil-created instead. Undo restores the backup or removes the made file. Nothing here needs administrator rights.
+
+A fix can also carry "launch": a Steam launch option the game needs (Fallout 4: start the game without Bethesda's launcher, which
+keeps the keyboard). It is only listed: Settings > Games offers it to copy, since Steam keeps launch options to itself.

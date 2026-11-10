@@ -38,4 +38,5 @@ out.append("pub static DECIMAL_ZEROS: &[u32] = &[%s];\n" % ", ".join("0x%X" % z 
 out.append("/// str.isdigit()\n" + table("DIGIT", ranges(lambda c: c.isdigit())))
 out.append("/// str.isspace()\n" + table("SPACE", ranges(lambda c: c.isspace())))
 out.append("/// str.isprintable() (one character)\n" + table("PRINTABLE", ranges(lambda c: c.isprintable())))
+out.append("/// \\w in a Python pattern on text: str.isalnum() or an underscore\n" + table("WORD", ranges(lambda c: c.isalnum() or c == "_")))
 open(sys.argv[1], "w").write("\n".join(out))

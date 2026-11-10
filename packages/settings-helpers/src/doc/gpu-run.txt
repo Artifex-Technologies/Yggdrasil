@@ -1,0 +1,30 @@
+yggdrasil-gpu-run: run a program (a game) on a chosen graphics card, on a computer with more than one.
+
+    yggdrasil-gpu-run list [--json]       the cards, numbered as Settings > Games shows them
+    yggdrasil-gpu-run N COMMAND [ARGS...] run COMMAND on card N
+    yggdrasil-gpu-run env N               the environment that does it, one VAR=value per line
+    yggdrasil-gpu-run N --frames-on M [--multiplier X] COMMAND [ARGS...]
+                                          experimental: COMMAND draws on card N, Lossless Scaling's frame generation
+                                          (lsfg-vk) runs on card M
+
+In Steam: a game's Properties > Launch options:  yggdrasil-gpu-run 2 %command%
+
+What it sets, for the card that should draw:
+- an NVIDIA card (its own driver): PRIME render offload (__NV_PRIME_RENDER_OFFLOAD, __GLX_VENDOR_LIBRARY_NAME) and
+  __VK_LAYER_NV_optimus=NVIDIA_only, so OpenGL and Vulkan both pick it;
+- an AMD or Intel card (Mesa): DRI_PRIME=pci-... (OpenGL, and Vulkan through Mesa's device-select layer) and
+  MESA_VK_DEVICE_SELECT=vendor:device; when an NVIDIA card is also present, __VK_LAYER_NV_optimus=non_NVIDIA_only hides it;
+- every card: DXVK_FILTER_DEVICE_NAME and VKD3D_FILTER_DEVICE_NAME (Proton's DirectX 9-11 and 12 translation pick their
+  Vulkan device by name), when the card's Vulkan name is known (vulkaninfo, from vulkan-tools).
+
+The picture still reaches the screen through the card the monitor is plugged into; the copy between cards is done by the
+drivers (PRIME). Frame generation on a second card (Lossless Scaling's dual-GPU mode) needs lsfg-vk to support it: not yet.
+Nothing here needs administrator rights, and nothing is changed on the system: it only starts the program.
+
+Frame generation on another card (--frames-on, experimental, 2026-11-05): lsfg-vk has no dual-card mode yet, and its licence
+does not allow a changed copy, so this is built from unchanged parts. The game runs inside gamescope (Valve's compositor, SDL
+backend: it shows its picture through a Vulkan swapchain). The game draws on card N; gamescope composites and presents on
+card M, and lsfg-vk is switched on for gamescope alone (LSFGVK_ENV=1, LSFGVK_MULTIPLIER), so the extra frames are made on
+card M from gamescope's output. The game itself has lsfg-vk switched off (DISABLE_LSFGVK=1) and gamescope's card variables
+taken away. Lossless Scaling's own dual-card advice applies: the monitor is plugged into card M. Not yet tried on two real
+cards.
