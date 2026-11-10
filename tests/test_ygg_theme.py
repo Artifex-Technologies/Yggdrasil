@@ -10,10 +10,13 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(ROOT, "packages", "theme", "bin")
+# ygg-theme's Python script, kept for a rollback (the Rust one that replaced it is packages/theme/src, tests in src/tests.rs and
+# tests/ygg_theme.rs); ygg-cursors is still the Python one in bin/
+PY = os.path.join(ROOT, "packages", "theme", "python")
 
 
 def load(name):
-    path = os.path.join(BIN, name)
+    path = os.path.join(PY if name == "ygg-theme" else BIN, name)
     loader = importlib.machinery.SourceFileLoader(name.replace("-", "_"), path)
     spec = importlib.util.spec_from_loader(name.replace("-", "_"), loader)
     mod = importlib.util.module_from_spec(spec)
@@ -97,7 +100,7 @@ class Settings(unittest.TestCase):
         env = dict(os.environ, HOME=d, XDG_CONFIG_HOME=os.path.join(d, ".config"), XDG_DATA_HOME=os.path.join(d, ".local/share"), PATH="/nonexistent", YGG_THEME_KDE="1")
         os.makedirs(os.path.join(d, ".config/gtk-4.0"))
         open(os.path.join(d, ".config/gtk-4.0/gtk.css"), "w").write("@import 'colors.css';\nwindow { border-radius: 3px; }\n")
-        r = subprocess.run([sys.executable, os.path.join(BIN, "ygg-theme"), "apply", "--dark", "--accent", "12,34,56"], env=env, capture_output=True, text=True)
+        r = subprocess.run([sys.executable, os.path.join(PY, "ygg-theme"), "apply", "--dark", "--accent", "12,34,56"], env=env, capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
         k = parse_ini(open(os.path.join(d, ".config/kdeglobals")).read())
         self.assertEqual(k["[General]"]["ColorScheme"], "YggdrasilDark")
@@ -112,7 +115,7 @@ class Settings(unittest.TestCase):
         self.assertIn("border-radius: 3px", css)
         self.assertNotIn("colors.css", css)
         # applying again does not pile things up
-        subprocess.run([sys.executable, os.path.join(BIN, "ygg-theme"), "apply", "--light"], env=env, capture_output=True)
+        subprocess.run([sys.executable, os.path.join(PY, "ygg-theme"), "apply", "--light"], env=env, capture_output=True)
         css2 = open(os.path.join(d, ".config/gtk-4.0/gtk.css")).read()
         self.assertEqual(css2.count("border-radius: 3px"), 1)
         self.assertEqual(parse_ini(open(os.path.join(d, ".config/kdeglobals")).read())["[General]"]["ColorScheme"], "YggdrasilLight")
@@ -122,7 +125,7 @@ class Settings(unittest.TestCase):
         env = dict(os.environ, HOME=d, XDG_CONFIG_HOME=os.path.join(d, ".config"), XDG_DATA_HOME=os.path.join(d, ".local/share"), PATH="/nonexistent", YGG_THEME_KDE="0")
         os.makedirs(os.path.join(d, ".config/yggdrasil"))
         open(os.path.join(d, ".config/yggdrasil/appearance.conf"), "w").write("style = dark\naccent = 1,2,3\nicons = Papirus\n")
-        r = subprocess.run([sys.executable, os.path.join(BIN, "ygg-theme"), "apply", "--light"], env=env, capture_output=True, text=True)
+        r = subprocess.run([sys.executable, os.path.join(PY, "ygg-theme"), "apply", "--light"], env=env, capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
         for kde in (".config/kdeglobals", ".config/kcminputrc", ".local/share/color-schemes"):
             self.assertFalse(os.path.exists(os.path.join(d, kde)), kde)
