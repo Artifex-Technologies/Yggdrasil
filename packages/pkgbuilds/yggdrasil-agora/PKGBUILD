@@ -1,7 +1,8 @@
-# Agora: apps in one place (built from packages/market in this repository).
+# Agora: apps in one place (built from packages/market in this repository), with its administrator helper pkg-root from
+# packages/agora-helpers (Rust; the Python script it replaced is kept in packages/market/helpers/python for a rollback).
 pkgname=yggdrasil-agora
 pkgver=0.1.0
-pkgrel=4
+pkgrel=5
 pkgdesc="Agora: browse and install apps from Yggdrasil's catalog and repositories you add"
 arch=('x86_64')
 provides=('labyrinth-market')
@@ -9,20 +10,26 @@ conflicts=('labyrinth-market')
 replaces=('labyrinth-market')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
 license=('MPL-2.0')
-depends=('gcc-libs' 'libxkbcommon' 'wayland' 'vulkan-icd-loader' 'libglvnd' 'fontconfig' 'curl' 'yay' 'ghostty' 'polkit' 'python')
+depends=('gcc-libs' 'libxkbcommon' 'wayland' 'vulkan-icd-loader' 'libglvnd' 'fontconfig' 'curl' 'yay' 'ghostty' 'polkit')
 optdepends=('flatpak: apps from Flathub')
 makedepends=('cargo')
 options=('!lto')
 
 _src="$startdir/../../market"
+_helpers="$startdir/../../agora-helpers"
 
 build() {
   cd "$_src"
+  cargo build --release --locked --target-dir "$srcdir/target"
+  cd "$_helpers"
   cargo build --release --locked --target-dir "$srcdir/target"
 }
 
 check() {
   cd "$_src"
+  cargo test --release --locked --target-dir "$srcdir/target"
+  # pkg-root's refusals with a stand-in pacman; its cancel tests run in a user namespace of their own (skipped without one)
+  cd "$_helpers"
   cargo test --release --locked --target-dir "$srcdir/target"
 }
 
@@ -31,7 +38,7 @@ package() {
   install -Dm644 "$_src/agora.desktop" "$pkgdir/usr/share/applications/agora.desktop"
   # the administrator helpers: a password-box stand-in for sudo, and one narrow pacman command that can be cancelled and cleaned up
   install -Dm755 "$_src/helpers/sudo" "$pkgdir/usr/lib/agora/sudo"
-  install -Dm755 "$_src/helpers/pkg-root" "$pkgdir/usr/lib/agora/pkg-root"
+  install -Dm755 "$srcdir/target/release/pkg-root" "$pkgdir/usr/lib/agora/pkg-root"
   # the password is remembered a few minutes for the helper only, so one update asks once
   install -Dm644 "$_src/data/org.yggdrasil.agora.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.agora.policy"
 }
