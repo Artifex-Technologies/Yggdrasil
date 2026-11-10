@@ -1,7 +1,7 @@
 # Yggdrasil: the desktop environment
 
 Named by the owner on 2026-10-18. **Yggdrasil** is the desktop environment that replaced KDE (KDE is gone since 2026-10-24); **Labyrinth OS** is the distribution that ships it. LykanOS (formerly
-Chymaera OS, then Niflheim OS; [LykanOS](https://github.com/Artifex-Technologies/LykanOS)) will use Yggdrasil as well, so Yggdrasil must never depend on anything that only Labyrinth has (the games stack, the Artifex store entries, Labyrinth's branding).
+Chymaera OS; [LykanOS](https://github.com/Artifex-Technologies/LykanOS)) will use Yggdrasil as well, so Yggdrasil must never depend on anything that only Labyrinth has (the games stack, the Artifex store entries, Labyrinth's branding).
 
 ## What belongs to Yggdrasil
 
@@ -33,7 +33,7 @@ pack and the Labyrinth app tiles (`labyrinth-brand-pack`, `labyrinth-app-icons`)
    `~/.config/yggdrasil/` and `/etc/yggdrasil/`. The old names stay as symlinks and the old config folder is read when the new one is missing, so nothing breaks on a
    running machine. Every place that names them has to change together: PKGBUILDs, autostart files, `.desktop` files, polkit policies, D-Bus names
    (now `org.yggdrasil.*`, such as `org.yggdrasil.Panel`), Heimdall's rules, the tests and the docs.
-3. **LykanOS:** the LykanOS repository (renamed from Chymaera_OS to Niflheim_OS, then LykanOS, on 2026-11-07) does not mention Labyrinth. It takes the `yggdrasil-*` packages from the Yggdrasil repository; until it does, it
+3. **LykanOS:** the LykanOS repository (renamed from Chymaera_OS to LykanOS on 2026-11-07) does not mention Labyrinth. It takes the `yggdrasil-*` packages from the Yggdrasil repository; until it does, it
    keeps KDE (its package list still has Plasma and SDDM, checked 2026-11-04).
 
 Decided (owner, 2026-10-18):

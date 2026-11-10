@@ -1,6 +1,6 @@
 # Liki: Yggdrasil's icon pack
 
-**Liki** is the main icon theme of Yggdrasil, shared by Labyrinth and LykanOS, formerly Niflheim OS and Chymaera OS (the pack used to be called "Labyrinth Brands"). Source: `packages/liki`; package: `liki-icon-theme`.
+**Liki** is the main icon theme of Yggdrasil, shared by Labyrinth and LykanOS, formerly Chymaera OS (the pack used to be called "Labyrinth Brands"). Source: `packages/liki`; package: `liki-icon-theme`.
 It stands on `hicolor` only. **No KDE (Breeze), macOS (MacTahoe) or GNOME (Adwaita) icons are used or required.**
 
 ## What it holds
@@ -26,7 +26,7 @@ Settings > Appearance > Icons lists every pack on the system and in `~/.local/sh
 Another pack is used first; Liki and the default app icon fill in what it lacks.
 
 ## LykanOS
-LykanOS (formerly Niflheim OS and Chymaera OS) uses the same package; nothing in Liki is Labyrinth-specific.
+LykanOS (formerly Chymaera OS) uses the same package; nothing in Liki is Labyrinth-specific.
 
 ## System icons (symbolic)
 

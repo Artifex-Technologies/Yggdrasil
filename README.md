@@ -1,7 +1,7 @@
 # Yggdrasil
 
 **Yggdrasil** is a desktop environment written in Rust. It is the desktop of [Labyrinth OS](https://github.com/Artifex-Technologies/Labyrinth_OS)
-and is built to be reused by other systems (LykanOS, formerly Niflheim OS and Chymaera OS, will use it too), so nothing here may depend on one
+and is built to be reused by other systems (LykanOS, formerly Chymaera OS, will use it too), so nothing here may depend on one
 operating system: what an OS adds (an assistant, a security monitor, an installer's steps) it describes in integration files
 ([docs/INTEGRATIONS.md](docs/INTEGRATIONS.md)), and Yggdrasil shows the matching features.
 
