@@ -11,7 +11,7 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HELPER = os.path.join(HERE, "..", "game-fix")
-CATALOGUE = os.path.join(HERE, "..", "..", "data", "game-fixes.json")
+CATALOGUE = os.path.join(HERE, "..", "..", "..", "data", "game-fixes.json")
 
 
 def load():

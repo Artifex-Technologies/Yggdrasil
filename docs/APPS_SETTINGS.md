@@ -22,7 +22,7 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
 
 - **Games** (`yggdrasil-settings games`, 2026-11-05): the graphics cards a game can draw on, fixes for particular games, and frame generation.
   - Every card, with what it does: which one shows the screen, which one the computer started on, its driver. Read by
-    `yggdrasil-gpu-run list --json` (helpers/gpu-run, installed as /usr/bin/yggdrasil-gpu-run), the same code that later starts
+    `yggdrasil-gpu-run list --json` (packages/settings-helpers, Rust, installed as /usr/bin/yggdrasil-gpu-run), the same code that later starts
     the game, so the numbers on the page are the numbers it takes.
   - With two or more cards each has **Copy launch option**: `yggdrasil-gpu-run 2 %command%` in a game's Steam launch options runs
     it on card 2. For an NVIDIA card (its own driver) that is PRIME render offload and `__VK_LAYER_NV_optimus=NVIDIA_only`; for
@@ -41,7 +41,7 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
     world fills 21:9 (confirmed by the owner in play), the HUD stays 16:9 and stretched; and a launch option that starts the game without Bethesda's launcher, which kept the keyboard
     once the game was up: tried by the owner 2026-11-05, keys work). A fix's `launch` is offered with Copy launch option (with
     `kairos` in front when frame generation is installed); Steam keeps launch options to itself, so it is copied,
-    not written. Tests: `helpers/tests/test_game_fix.py`. Patches to games' code come per game.
+    not written. Tests: `packages/settings-helpers/src/gamefix/tests.rs`. Patches to games' code come per game.
   - **Frame generation (preview)**, Kairos, Labyrinth's own (`labyrinth-framegen` until 2026-11-07; from Agora): every installed Steam game (from the
     appmanifests in all Steam libraries; Proton and Steam's runtimes left out) with Off / 2x / 3x / 4x, saved at once to
     `~/.config/kairos/games.conf` (`<app id> <off|2|3|4>`; the old `~/.config/labyrinth-framegen/games.conf` is read until the first

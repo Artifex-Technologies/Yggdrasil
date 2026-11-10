@@ -1,10 +1,12 @@
 # Settings: the everyday settings in one app (GNOME-style), for Yggdrasil.
 # Built from packages/settings in this repository (and the shared look in packages/yggdrasil-ui), with Settings > Power's
 # root helpers tune, casefan, gpufan and powerlimit from packages/power-helpers (Rust; the Python scripts they replaced are
-# kept in packages/settings/helpers/python for a rollback), whose loops run in one root service, yggdrasil-power.
+# kept in packages/settings/helpers/python for a rollback), whose loops run in one root service, yggdrasil-power, and the
+# on-demand helpers account, bootscreen, game-fix and yggdrasil-gpu-run from packages/settings-helpers (Rust; their Python
+# scripts are kept there too).
 pkgname=yggdrasil-settings
 pkgver=0.1.0
-pkgrel=36
+pkgrel=37
 pkgdesc="Settings: Wi-Fi, Bluetooth, displays, sound, appearance, power and more"
 arch=('x86_64')
 provides=('labyrinth-settings')
@@ -17,7 +19,6 @@ depends=('gcc-libs' 'yggdrasil-spell' 'libxkbcommon' 'wayland' 'vulkan-icd-loade
 optdepends=('ufw: firewall page'
             "cuda: the graphics card unlock's correctness check and benchmark (gpuunlock bench)"
             'plymouth: the boot screen (Appearance > Boot screen)'
-            'python-pillow: your own picture as the boot screen'
             'grub: the graphics card unlock picks its boot entry for one start (Power, Developer options)'
             'nvidia-utils: the Graphics card page (Power, Developer options): readout and fan control'
             'vulkan-tools: Games: the exact name of each card, so Proton draws on the chosen card'
@@ -27,11 +28,14 @@ options=('!lto')
 
 _src="$startdir/../../settings"
 _power="$startdir/../../power-helpers"
+_helpers="$startdir/../../settings-helpers"
 
 build() {
   cd "$_src"
   cargo build --release --locked --target-dir "$srcdir/target"
   cd "$_power"
+  cargo build --release --locked --target-dir "$srcdir/target"
+  cd "$_helpers"
   cargo build --release --locked --target-dir "$srcdir/target"
 }
 
@@ -42,6 +46,10 @@ check() {
   # the power helpers' tests run on fake hwmon trees, a fake card and stand-in MSRs: no hardware is touched
   cd "$_power"
   cargo test --release --locked --target-dir "$srcdir/target"
+  # account against a made-up /etc and stand-in tools, bootscreen's drop-ins in bash and pictures, game-fix on a pretend
+  # Steam library, gpu-run on a pretend /sys: nothing on the system is touched
+  cd "$_helpers"
+  cargo test --release --locked --target-dir "$srcdir/target"
 }
 
 package() {
@@ -50,18 +58,18 @@ package() {
   # Power > Graphics card in its own window (yggdrasil-settings --gpu-window): named, with an icon, for the dock
   install -Dm644 "$_src/yggdrasil-gpu.desktop" "$pkgdir/usr/share/applications/yggdrasil-gpu.desktop"
   # Games: run a program on a chosen graphics card (a Steam launch option: yggdrasil-gpu-run 2 %command%)
-  install -Dm755 "$_src/helpers/gpu-run" "$pkgdir/usr/bin/yggdrasil-gpu-run"
+  install -Dm755 "$srcdir/target/release/gpu-run" "$pkgdir/usr/bin/yggdrasil-gpu-run"
   # Games > Game fixes: the per-game fixes and their catalogue
-  install -Dm755 "$_src/helpers/game-fix" "$pkgdir/usr/lib/yggdrasil/game-fix"
+  install -Dm755 "$srcdir/target/release/game-fix" "$pkgdir/usr/lib/yggdrasil/game-fix"
   install -Dm644 "$_src/data/game-fixes.json" "$pkgdir/usr/share/yggdrasil/game-fixes.json"
   install -Dm644 "$_src/yggdrasil-cpu.desktop" "$pkgdir/usr/share/applications/yggdrasil-cpu.desktop"
   # the administrator helpers Settings runs with pkexec: accounts (Users) and power-mode limits (Power, Developer options)
-  install -Dm755 "$_src/helpers/account" "$pkgdir/usr/lib/yggdrasil/account"
+  install -Dm755 "$srcdir/target/release/account" "$pkgdir/usr/lib/yggdrasil/account"
   install -Dm755 "$srcdir/target/release/powerlimit" "$pkgdir/usr/lib/yggdrasil/powerlimit"
   install -Dm644 "$_src/data/org.yggdrasil.account.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.account.policy"
   install -Dm644 "$_src/data/org.yggdrasil.powerlimit.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.powerlimit.policy"
   # the boot screen (Appearance > Boot screen): Plymouth's theme, switched on the first time
-  install -Dm755 "$_src/helpers/bootscreen" "$pkgdir/usr/lib/yggdrasil/bootscreen"
+  install -Dm755 "$srcdir/target/release/bootscreen" "$pkgdir/usr/lib/yggdrasil/bootscreen"
   install -Dm644 "$_src/data/org.yggdrasil.bootscreen.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.bootscreen.policy"
   # applies the limits on every power-mode change (a part of yggdrasil-power); the operating system decides whether it is on
   install -Dm644 "$_src/data/yggdrasil-powerlimit.service" "$pkgdir/usr/lib/systemd/system/yggdrasil-powerlimit.service"
