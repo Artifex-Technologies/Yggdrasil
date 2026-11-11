@@ -28,6 +28,10 @@ pub enum Icon {
     Gamepad,
     /// Sarina: the constellation S of her app icon (four stars joined by three lines), without its hexagon.
     Constellation,
+    /// A padlock: a secured Wi-Fi network.
+    Lock,
+    /// A check mark: the network this computer is on.
+    Check,
 }
 
 fn arc(c: Pos2, r: f32, from: f32, to: f32) -> Vec<Pos2> {
@@ -141,6 +145,15 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
         }
         Icon::Back => {
             p.add(Shape::line(vec![at(0.6, 0.22), at(0.34, 0.5), at(0.6, 0.78)], s));
+        }
+        Icon::Lock => {
+            p.add(Shape::line(arc(at(0.5, 0.46), 0.18 * w, 0.0, 180.0), s));
+            p.line_segment([at(0.32, 0.46), at(0.32, 0.5)], s);
+            p.line_segment([at(0.68, 0.46), at(0.68, 0.5)], s);
+            p.rect_filled(Rect::from_min_max(at(0.22, 0.48), at(0.78, 0.88)), 0.06 * w, color);
+        }
+        Icon::Check => {
+            p.add(Shape::line(vec![at(0.16, 0.54), at(0.4, 0.78), at(0.86, 0.24)], Stroke::new(2.2, color)));
         }
         Icon::Info => {
             p.circle_stroke(c, 0.38 * w, s);

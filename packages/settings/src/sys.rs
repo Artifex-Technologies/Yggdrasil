@@ -4,8 +4,12 @@
 use std::collections::BTreeMap;
 use std::process::Command;
 
-/// Run a program and return its standard output, or None if it is missing or failed.
+/// Run a program and return its standard output, or None if it is missing or failed. (A debug build started with a fixture
+/// answers from it and runs nothing: fixture.rs.)
 pub fn run(cmd: &str, args: &[&str]) -> Option<String> {
+    if let Some(f) = crate::fixture::get() {
+        return f.answer(cmd, args);
+    }
     let out = Command::new(cmd).args(args).output().ok()?;
     if out.status.success() {
         Some(String::from_utf8_lossy(&out.stdout).into_owned())
@@ -16,6 +20,9 @@ pub fn run(cmd: &str, args: &[&str]) -> Option<String> {
 
 /// Run a program for its effect; Err carries its error output.
 pub fn act(cmd: &str, args: &[&str]) -> Result<(), String> {
+    if crate::fixture::get().is_some() {
+        return Err("A made-up system (a fixture): nothing is changed.".into());
+    }
     match Command::new(cmd).args(args).output() {
         Ok(o) if o.status.success() => Ok(()),
         Ok(o) => Err(String::from_utf8_lossy(&o.stderr).trim().to_string()),
@@ -25,6 +32,9 @@ pub fn act(cmd: &str, args: &[&str]) -> Result<(), String> {
 
 /// Start a program and leave it running (an app, a terminal).
 pub fn spawn(cmd: &str, args: &[&str]) {
+    if crate::fixture::get().is_some() {
+        return;
+    }
     let _ = Command::new(cmd).args(args).spawn();
 }
 
@@ -217,6 +227,67 @@ pub struct Network {
     pub live: std::collections::HashMap<String, crate::netconf::Live>,
     /// The security monitor's device list for the connection that has the router (its id, and the list), when it keeps one.
     pub lan: Option<(String, crate::devices::List)>,
+    /// What the radio last heard: the kernel's scan list, read without sending anything, grouped by name
+    /// (yggdrasil-wifiscan). Empty when Wi-Fi is off or the list could not be read (`air_error` says why). Shared, not
+    /// copied, when the page takes its copy of the data each frame.
+    pub air: std::sync::Arc<Vec<yggdrasil_wifiscan::Network>>,
+    pub air_error: String,
+    /// The makers of the access points shown, by the first three bytes of their addresses (the IEEE list, offline).
+    pub makers: std::sync::Arc<std::collections::HashMap<[u8; 3], String>>,
+    /// What Settings remembers between visits: when each access point was first and last heard, each network's last lease.
+    pub memory: std::sync::Arc<crate::wifimem::Memory>,
+}
+
+impl Network {
+    /// What the radio heard of the network with this name (NetworkManager's name for it).
+    pub fn air_for(&self, ssid: &str) -> Option<&yggdrasil_wifiscan::Network> {
+        if ssid.is_empty() {
+            return None;
+        }
+        self.air.iter().find(|a| !a.hidden() && a.ssid == ssid.as_bytes()).or_else(|| self.air.iter().find(|a| !a.hidden() && a.name() == ssid))
+    }
+
+    /// Who made an access point ("" when not known: a made-up address, or not in the list).
+    pub fn maker(&self, mac: &[u8; 6]) -> &str {
+        self.makers.get(&[mac[0], mac[1], mac[2]]).map(String::as_str).unwrap_or("")
+    }
+}
+
+/// The kernel's last scan results on the Wi-Fi adapters (or a fixture's made-up ones), grouped by name.
+fn air(devices: &[String]) -> (Vec<yggdrasil_wifiscan::Network>, String) {
+    if let Some(f) = crate::fixture::get() {
+        return (yggdrasil_wifiscan::group(yggdrasil_wifiscan::parse_fixture(&f.scan)), String::new());
+    }
+    let mut all = Vec::new();
+    let mut err = String::new();
+    for d in devices {
+        match yggdrasil_wifiscan::nl80211::scan_dump(d) {
+            Ok(v) => all.extend(v),
+            Err(e) => err = e.to_string(),
+        }
+    }
+    (yggdrasil_wifiscan::group(all), if devices.is_empty() { String::new() } else { err })
+}
+
+/// The makers of these address prefixes, from the IEEE list on disk. Each prefix is looked up once per run (the list is a
+/// few megabytes).
+fn makers(want: Vec<[u8; 3]>) -> std::collections::HashMap<[u8; 3], String> {
+    static CACHE: std::sync::Mutex<BTreeMap<[u8; 3], Option<String>>> = std::sync::Mutex::new(BTreeMap::new());
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    let mut missing: Vec<[u8; 3]> = want.iter().filter(|p| !cache.contains_key(*p)).copied().collect();
+    missing.sort();
+    missing.dedup();
+    if !missing.is_empty() {
+        let found = yggdrasil_wifiscan::oui::makers(std::path::Path::new(yggdrasil_wifiscan::oui::OUI_PATH), &missing);
+        for p in missing {
+            cache.insert(p, found.get(&p).cloned());
+        }
+    }
+    want.into_iter().filter_map(|p| cache.get(&p).cloned().flatten().map(|n| (p, n))).collect()
+}
+
+pub fn unix_now() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
 /// Which hardware (MAC) address the computer shows a network, as on phones.
@@ -304,11 +375,52 @@ pub fn network() -> Network {
             .map(|(uuid, dev)| (uuid, crate::netconf::live(&dev)))
             .collect(),
         lan: None,
+        air: Default::default(),
+        air_error: String::new(),
+        makers: Default::default(),
+        memory: Default::default(),
     };
     // the connection to the router (not a VPN or Tailscale's tunnel)
     let home = n.live.iter().filter(|(_, l)| !l.router.is_empty()).map(|(u, _)| u.clone()).min();
     n.lan = home.and_then(|u| crate::devices::load(&u).map(|l| (u, l)));
+    if n.wifi_on {
+        let devs: Vec<String> = n.devices.iter().filter(|d| d.kind == "wifi").map(|d| d.device.clone()).collect();
+        let (heard, err) = air(&devs);
+        n.air = std::sync::Arc::new(heard);
+        n.air_error = err;
+    }
+    remember(&mut n, unix_now());
+    // the makers of the access points (made-up addresses have none) and of the vendor extras they announce
+    let seen_before = n.saved.iter().flat_map(|p| p.seen_bssids.iter()).filter_map(|b| yggdrasil_wifiscan::parse_mac(b));
+    let heard = n.air.iter().flat_map(|a| a.aps.iter()).map(|a| a.bss.bssid);
+    let mut want: Vec<[u8; 3]> = heard.chain(seen_before).filter(|m| !yggdrasil_wifiscan::oui::is_local(m)).map(|m| [m[0], m[1], m[2]]).collect();
+    want.extend(n.air.iter().flat_map(|a| a.aps.iter()).flat_map(|a| a.info.vendors.iter()).map(|v| v.oui));
+    want.sort();
+    want.dedup();
+    n.makers = std::sync::Arc::new(makers(want));
     n
+}
+
+/// Notes what was heard and the saved networks' leases in Settings' memory (wifimem.rs), and keeps it in `n` for the pages.
+/// With a fixture it is read, never written.
+fn remember(n: &mut Network, now: i64) {
+    let mut m = crate::wifimem::load();
+    let mut write = false;
+    for ap in n.air.iter().flat_map(|a| a.aps.iter()) {
+        let ago = i64::from(ap.bss.seen_ms_ago.unwrap_or(0)) / 1000;
+        write |= m.note_seen(&yggdrasil_wifiscan::mac_text(&ap.bss.bssid), now - ago);
+    }
+    for p in &n.saved {
+        if let Some(l) = n.live.get(&p.uuid).filter(|l| !l.v4.is_empty() || !l.router.is_empty()) {
+            write |= m.note_lease(&p.uuid, crate::wifimem::Lease::from_live(l, now));
+        }
+    }
+    let saved: Vec<&str> = n.saved.iter().map(|p| p.uuid.as_str()).collect();
+    write |= m.prune(now, &saved);
+    if write && crate::fixture::get().is_none() {
+        let _ = crate::wifimem::save(&m);
+    }
+    n.memory = std::sync::Arc::new(m);
 }
 
 #[cfg(test)]

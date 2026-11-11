@@ -4532,6 +4532,7 @@ dependencies = [
  "yggdrasil-gamepads",
  "yggdrasil-spell",
  "yggdrasil-ui",
+ "yggdrasil-wifiscan",
 ]
 
 [[package]]
@@ -4553,6 +4554,13 @@ dependencies = [
  "eframe",
  "resvg 0.48.1",
  "yggdrasil-conf",
+]
+
+[[package]]
+name = "yggdrasil-wifiscan"
+version = "0.1.0"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

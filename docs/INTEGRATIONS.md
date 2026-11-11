@@ -76,10 +76,10 @@ An alert is `{"time": RFC 3339, "detector_id", "severity": "info" | "warning" | 
 (Settings > Notifications chooses how many); Settings > Security gets a page named `name` with the state, alerts, new connections,
 the quarantine, the scan, the declared controls and, while the assistant is contained, a "Restore and release" button, and what the monitor holds in its own quarantine with Release and It's malware. Each part appears only when its key is there.
 
-With `devices_scan`, Settings > Wi-Fi & Network gets **Devices**: `GET /v1/lan/devices` answers `{"networks": [{"uuid", "ssid",
+With `devices_scan`, Settings > Wi-Fi & Network gets **Devices** (under This Network, on the connected network's own page): `GET /v1/lan/devices` answers `{"networks": [{"uuid", "ssid",
 "last_scan", "devices": [{"mac", "ip", "name", "vendor", "model", "kind", "services", "private_mac", "first_seen",
 "last_seen"}]}], "status", "status_uuid"}` (`kind`: router, this, tv, speaker, printer, phone, computer, console, smart, private,
-other; `status`: scanned, not_trusted, router_changed, offline). With `wifi_check`, it gets **Wi-Fi checks**: the command prints
+other; `status`: scanned, not_trusted, router_changed, offline). With `wifi_check`, it gets **Wi-Fi checks** (there too): the command prints
 `{"connected", "summary", "verdict": "good" | "warn" | "bad", "link": {"ssid", "band", "channel", "width", "signal_dbm",
 "rx_mbps", "tx_mbps"}, "findings": [{"check", "status": "good" | "info" | "warn" | "bad", "title", "detail"}]}`. A monitor's
 new-device alert (`detector_id` "lan-watch", `event_kind` "new_lan_device") opens Devices when clicked.

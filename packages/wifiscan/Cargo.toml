@@ -1,0 +1,18 @@
+[package]
+name = "yggdrasil-wifiscan"
+version = "0.1.0"
+edition = "2021"
+description = "What nearby Wi-Fi networks broadcast, read from the kernel's own scan results (no root, nothing sent): access points, security, Wi-Fi generation, WPS and the device details it announces, roaming support, makers"
+license = "MPL-2.0"
+
+[lib]
+name = "yggdrasil_wifiscan"
+path = "src/lib.rs"
+
+[dependencies]
+# the netlink socket (nl80211.rs); everything else is safe Rust
+libc = "0.2"
+
+[dev-dependencies]
+# property tests: information elements are hostile input from anyone in radio range
+proptest = { version = "1.12", default-features = false, features = ["std"] }

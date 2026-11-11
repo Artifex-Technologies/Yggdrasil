@@ -6,7 +6,7 @@
 # scripts are kept there too).
 pkgname=yggdrasil-settings
 pkgver=0.1.0
-pkgrel=37
+pkgrel=38
 pkgdesc="Settings: Wi-Fi, Bluetooth, displays, sound, appearance, power and more"
 arch=('x86_64')
 provides=('labyrinth-settings')
@@ -17,6 +17,7 @@ license=('MPL-2.0')
 depends=('gcc-libs' 'yggdrasil-spell' 'libxkbcommon' 'wayland' 'vulkan-icd-loader' 'libglvnd' 'fontconfig'
          'networkmanager' 'bluez-utils' 'libpulse' 'power-profiles-daemon' 'pciutils' 'python' 'polkit')
 optdepends=('ufw: firewall page'
+            'hwdata: Wi-Fi & Network: who made each access point (the IEEE list, read offline; pciutils brings it too)'
             "cuda: the graphics card unlock's correctness check and benchmark (gpuunlock bench)"
             'plymouth: the boot screen (Appearance > Boot screen)'
             'grub: the graphics card unlock picks its boot entry for one start (Power, Developer options)'
@@ -29,6 +30,7 @@ options=('!lto')
 _src="$startdir/../../settings"
 _power="$startdir/../../power-helpers"
 _helpers="$startdir/../../settings-helpers"
+_wifiscan="$startdir/../../wifiscan"
 
 build() {
   cd "$_src"
@@ -49,6 +51,9 @@ check() {
   # account against a made-up /etc and stand-in tools, bootscreen's drop-ins in bash and pictures, game-fix on a pretend
   # Steam library, gpu-run on a pretend /sys: nothing on the system is touched
   cd "$_helpers"
+  cargo test --release --locked --target-dir "$srcdir/target"
+  # Wi-Fi & Network's reader of what networks broadcast (built into Settings): its parsers on random and damaged input
+  cd "$_wifiscan"
   cargo test --release --locked --target-dir "$srcdir/target"
 }
 

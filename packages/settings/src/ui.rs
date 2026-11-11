@@ -83,6 +83,70 @@ pub fn signal_bars(ui: &mut egui::Ui, pal: &Palette, signal: u8) {
     }
 }
 
+/// What was clicked on a Wi-Fi network's row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NetClick {
+    None,
+    /// The row itself (join it, or open it when there is nothing to join).
+    Row,
+    /// Its (i): the network's own page.
+    Info,
+}
+
+/// A Wi-Fi network's row, as on a phone: a check mark when this computer is on it, the name (and a line under it), then on the
+/// right a padlock when it is secured, the signal bars and an (i). The whole row is one button; the (i) is a button of its own.
+pub fn net_row(ui: &mut egui::Ui, pal: &Palette, first: bool, check: bool, title: &str, subtitle: Option<&str>, lock: bool, signal: Option<u8>) -> NetClick {
+    let bg = ui.painter().add(egui::Shape::Noop);
+    let id = ui.next_auto_id();
+    let mut info = egui::Rect::NOTHING;
+    let r = ui.scope(|ui| {
+        let title_ui = |ui: &mut egui::Ui| {
+            ui.horizontal(|ui| {
+                if check {
+                    let (rect, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
+                    crate::icons::paint(ui.painter(), rect, crate::icons::Icon::Check, pal.accent);
+                    ui.add_space(2.0);
+                }
+                ui.add(egui::Label::new(RichText::new(title).size(14.0)).wrap());
+            });
+        };
+        row_with(ui, pal, first, title_ui, subtitle, |ui| {
+            let (rect, _) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::hover());
+            info = rect;
+            ui.add_space(6.0);
+            match signal {
+                Some(s) => signal_bars(ui, pal, s),
+                None => {
+                    ui.allocate_exact_size(vec2(22.0, 18.0), Sense::hover());
+                }
+            }
+            ui.add_space(4.0);
+            let (l, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
+            if lock {
+                crate::icons::paint(ui.painter(), l, crate::icons::Icon::Lock, pal.text.gamma_multiply(0.75));
+            }
+        });
+    });
+    let resp = ui.interact(r.response.rect, id.with("net"), Sense::click());
+    let over_info = resp.hover_pos().is_some_and(|p| info.expand(2.0).contains(p));
+    if resp.hovered() {
+        let mut hl = r.response.rect.expand2(vec2(6.0, 0.0));
+        hl.min.y += if first { 3.0 } else { 4.0 };
+        hl.max.y -= 3.0;
+        ui.painter().set(bg, egui::Shape::rect_filled(hl, CornerRadius::same(8), if over_info { Color32::TRANSPARENT } else { pal.hover }));
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    if over_info {
+        ui.painter().circle_filled(info.center(), 13.0, pal.hover);
+    }
+    crate::icons::paint(ui.painter(), info.shrink(3.0), crate::icons::Icon::Info, pal.accent);
+    if resp.clicked() {
+        if resp.interact_pointer_pos().is_some_and(|p| info.expand(2.0).contains(p)) { NetClick::Info } else { NetClick::Row }
+    } else {
+        NetClick::None
+    }
+}
+
 /// An on/off switch, drawn like GNOME's (accent when on).
 pub fn switch(ui: &mut egui::Ui, pal: &Palette, on: &mut bool) -> egui::Response {
     let (rect, mut resp) = ui.allocate_exact_size(vec2(44.0, 24.0), Sense::click());

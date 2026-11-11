@@ -53,6 +53,14 @@ pub struct Profile {
     pub proxy: ProxyMode,
     pub pac_url: String,
     pub proxy_server: String,
+    /// When it was last connected (NetworkManager's `connection.timestamp`, seconds since 1970; 0: never).
+    pub last_connected: i64,
+    /// The saved key management (`802-11-wireless-security.key-mgmt`: wpa-psk, sae, wpa-eap, owe ...; empty: open).
+    pub key_mgmt: String,
+    /// Joined even though it leaves its name out of its beacons.
+    pub hidden: bool,
+    /// The access points NetworkManager has seen for it (`802-11-wireless.seen-bssids`).
+    pub seen_bssids: Vec<String>,
 }
 
 /// What a connected network gave the computer (shown, not changed).
@@ -63,6 +71,36 @@ pub struct Live {
     pub v6: Vec<String>,
     pub dns: Vec<String>,
     pub hw: String,
+    /// The DHCP lease (IPv4), when the address came from one: its length in seconds, the server that gave it, when it ends
+    /// (seconds since 1970), and the domain the network calls itself.
+    pub lease_secs: Option<u64>,
+    pub dhcp_server: String,
+    pub lease_ends: Option<i64>,
+    pub domain: String,
+}
+
+/// The network an address with its prefix is on: "192.168.1.20/24" -> "192.168.1.0/24".
+pub fn subnet(addr: &str) -> Option<String> {
+    let (a, p) = addr.split_once('/')?;
+    let a: Ipv4Addr = a.trim().parse().ok()?;
+    let p: u32 = p.trim().parse().ok().filter(|p| *p <= 32)?;
+    let mask = if p == 0 { 0 } else { u32::MAX << (32 - p) };
+    Some(format!("{}/{p}", Ipv4Addr::from(u32::from(a) & mask)))
+}
+
+/// The saved security, for people (NetworkManager's key management; WPA2 and WPA3 transition networks are saved as wpa-psk).
+pub fn key_mgmt_label(k: &str) -> &'static str {
+    match k {
+        "" => "No password (open)",
+        "none" => "WEP key",
+        "ieee8021x" => "Account (dynamic WEP)",
+        "wpa-psk" => "Password (WPA/WPA2-Personal)",
+        "sae" => "Password (WPA3-Personal)",
+        "wpa-eap" => "Account (802.1X Enterprise)",
+        "wpa-eap-suite-b-192" => "Account (WPA3-Enterprise 192-bit)",
+        "owe" => "No password (Enhanced Open)",
+        _ => "Secured",
+    }
 }
 
 /// `nmcli -t connection show UUID` (one `key:value` a line, ':' in values escaped) as a map.
@@ -134,10 +172,14 @@ pub fn parse(m: &HashMap<String, String>) -> Profile {
         proxy,
         pac_url: g("proxy.pac-url"),
         proxy_server,
+        last_connected: g("connection.timestamp").parse().unwrap_or(0),
+        key_mgmt: g("802-11-wireless-security.key-mgmt"),
+        hidden: g("802-11-wireless.hidden") == "yes",
+        seen_bssids: g("802-11-wireless.seen-bssids").split(',').map(str::trim).filter(|b| b.len() == 17).map(str::to_uppercase).collect(),
     }
 }
 
-/// `nmcli -t -f IP4.ADDRESS,IP4.GATEWAY,IP4.DNS,IP6.ADDRESS,IP6.DNS,GENERAL.HWADDR device show DEV`.
+/// `nmcli -t -f IP4.ADDRESS,IP4.GATEWAY,IP4.DNS,IP6.ADDRESS,IP6.DNS,GENERAL.HWADDR,DHCP4 device show DEV`.
 pub fn parse_live(text: &str) -> Live {
     let mut l = Live::default();
     for (k, v) in settings_map(text) {
@@ -152,6 +194,18 @@ pub fn parse_live(text: &str) -> Live {
             "IP6.ADDRESS" if !v.starts_with("fe80") => l.v6.push(v),
             "IP4.DNS" | "IP6.DNS" => l.dns.push(v),
             "GENERAL.HWADDR" => l.hw = v,
+            // "dhcp_lease_time = 43200"
+            "DHCP4.OPTION" => {
+                let Some((name, val)) = v.split_once(" = ") else { continue };
+                let val = val.trim();
+                match name.trim() {
+                    "dhcp_lease_time" => l.lease_secs = val.parse().ok(),
+                    "dhcp_server_identifier" => l.dhcp_server = val.to_string(),
+                    "expiry" => l.lease_ends = val.parse().ok(),
+                    "domain_name" => l.domain = val.chars().filter(|c| !c.is_control()).take(64).collect(),
+                    _ => {}
+                }
+            }
             _ => {}
         }
     }
@@ -275,7 +329,7 @@ pub fn load(uuid: &str) -> Option<Profile> {
 }
 
 pub fn live(device: &str) -> Live {
-    parse_live(&sys::run("nmcli", &["-t", "-f", "IP4.ADDRESS,IP4.GATEWAY,IP4.DNS,IP6.ADDRESS,IP6.DNS,GENERAL.HWADDR", "device", "show", device]).unwrap_or_default())
+    parse_live(&sys::run("nmcli", &["-t", "-f", "IP4.ADDRESS,IP4.GATEWAY,IP4.DNS,IP6.ADDRESS,IP6.DNS,GENERAL.HWADDR,DHCP4", "device", "show", device]).unwrap_or_default())
 }
 
 /// Writes the changes; they are used from the next time the computer joins the network.
@@ -306,7 +360,8 @@ mod tests {
     use super::*;
 
     const HOME: &str = "connection.id:Home\nconnection.uuid:1b2c\nconnection.type:802-11-wireless\nconnection.autoconnect:yes\n\
-802-11-wireless.ssid:Home\n802-11-wireless.cloned-mac-address:permanent\nipv4.method:auto\nipv4.dns:\nipv4.addresses:\n\
+connection.timestamp:1794000000\n802-11-wireless-security.key-mgmt:sae\n802-11-wireless.hidden:no\n\
+802-11-wireless.seen-bssids:02\\:00\\:00\\:00\\:00\\:01,02\\:00\\:00\\:00\\:00\\:02\n802-11-wireless.ssid:Home\n802-11-wireless.cloned-mac-address:permanent\nipv4.method:auto\nipv4.dns:\nipv4.addresses:\n\
 ipv4.gateway:--\nipv6.method:auto\nipv6.dns:\nipv6.addresses:\nipv6.gateway:--\nproxy.method:none\nproxy.pac-url:\nproxy.pac-script:\n";
 
     #[test]
@@ -314,6 +369,9 @@ ipv4.gateway:--\nipv6.method:auto\nipv6.dns:\nipv6.addresses:\nipv6.gateway:--\n
         let p = parse(&settings_map(HOME));
         assert_eq!((p.name.as_str(), p.uuid.as_str(), p.wifi, p.ssid.as_str(), p.auto_join), ("Home", "1b2c", true, "Home", true));
         assert_eq!(p.mac, MacMode::Real);
+        assert_eq!((p.last_connected, p.key_mgmt.as_str(), p.hidden), (1_794_000_000, "sae", false));
+        assert_eq!(p.seen_bssids, vec!["02:00:00:00:00:01".to_string(), "02:00:00:00:00:02".to_string()]);
+        assert_eq!(key_mgmt_label(&p.key_mgmt), "Password (WPA3-Personal)");
         assert_eq!(p.v4, Ip { method: IpMethod::Auto, address: String::new(), router: String::new(), dns: String::new() });
         assert_eq!(p.proxy, ProxyMode::Off);
         // typed-in addresses, servers, IPv6 off, and a proxy of ours read back as Manual
@@ -374,8 +432,14 @@ ipv4.gateway:--\nipv6.method:auto\nipv6.dns:\nipv6.addresses:\nipv6.gateway:--\n
     #[test]
     fn what_a_connected_network_gave_is_read() {
         let t = "GENERAL.HWADDR:AA\\:BB\\:CC\\:DD\\:EE\\:FF\nIP4.ADDRESS[1]:192.168.1.20/24\nIP4.GATEWAY:192.168.1.1\nIP4.DNS[1]:192.168.1.1\n\
-IP6.ADDRESS[1]:2001\\:db8\\:\\:20/64\nIP6.ADDRESS[2]:fe80\\:\\:1/64\nIP6.DNS[1]:--\n";
+IP6.ADDRESS[1]:2001\\:db8\\:\\:20/64\nIP6.ADDRESS[2]:fe80\\:\\:1/64\nIP6.DNS[1]:--\n\
+DHCP4.OPTION[1]:dhcp_lease_time = 43200\nDHCP4.OPTION[2]:dhcp_server_identifier = 192.168.1.1\nDHCP4.OPTION[3]:expiry = 1794100000\n\
+DHCP4.OPTION[4]:domain_name = lan\nDHCP4.OPTION[5]:requested_routers = 1\n";
         let l = parse_live(t);
+        assert_eq!((l.lease_secs, l.dhcp_server.as_str(), l.lease_ends, l.domain.as_str()), (Some(43200), "192.168.1.1", Some(1_794_100_000), "lan"));
+        assert_eq!(subnet("192.168.1.20/24").as_deref(), Some("192.168.1.0/24"));
+        assert_eq!(subnet("10.20.30.40/8").as_deref(), Some("10.0.0.0/8"));
+        assert_eq!((subnet("10.0.0.1"), subnet("10.0.0.1/40"), subnet("x/24")), (None, None, None));
         assert_eq!(l.hw, "AA:BB:CC:DD:EE:FF");
         assert_eq!((l.v4, l.router.as_str(), l.dns), (vec!["192.168.1.20/24".to_string()], "192.168.1.1", vec!["192.168.1.1".to_string()]));
         assert_eq!(l.v6, vec!["2001:db8::20/64".to_string()], "the link-local address is left out");
