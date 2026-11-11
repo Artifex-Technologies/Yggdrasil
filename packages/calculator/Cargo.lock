@@ -4292,7 +4292,6 @@ dependencies = [
 name = "yggdrasil-ui"
 version = "0.1.0"
 dependencies = [
- "dirs",
  "eframe",
  "resvg",
  "yggdrasil-conf",

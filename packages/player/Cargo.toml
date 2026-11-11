@@ -17,10 +17,9 @@ required-features = ["app"]
 # the window needs these; the library (src/vlc.rs, for Huginn) needs none of them
 [features]
 default = ["app"]
-app = ["dep:yggdrasil-conf", "dep:yggdrasil-ui", "dep:eframe", "dep:zbus"]
+app = ["dep:yggdrasil-ui", "dep:eframe", "dep:zbus"]
 
 [dependencies]
-yggdrasil-conf = { path = "../yggdrasil-conf", optional = true }
 yggdrasil-ui = { path = "../yggdrasil-ui", optional = true }
 eframe = { version = "0.36.2", optional = true }
 zbus = { version = "5", optional = true }

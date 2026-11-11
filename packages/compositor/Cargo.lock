@@ -2381,7 +2381,6 @@ dependencies = [
  "png",
  "smithay",
  "tiny-skia",
- "tracing",
  "tracing-subscriber",
  "wayland-client",
  "wayland-protocols",

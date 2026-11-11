@@ -10,7 +10,6 @@ name = "saga-md"
 path = "src/main.rs"
 
 [dependencies]
-yggdrasil-conf = { path = "../yggdrasil-conf" }
 yggdrasil-ui = { path = "../yggdrasil-ui" }
 eframe = "0.36.2"
 egui_extras = { version = "0.36.2", features = ["file", "image", "svg"] }

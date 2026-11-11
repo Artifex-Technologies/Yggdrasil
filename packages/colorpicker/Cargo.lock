@@ -400,14 +400,6 @@ dependencies = [
  "wayland-client",
  "wayland-protocols",
  "wayland-protocols-wlr",
- "yggdrasil-conf",
-]
-
-[[package]]
-name = "yggdrasil-conf"
-version = "0.1.0"
-dependencies = [
- "libc",
 ]
 
 [[package]]

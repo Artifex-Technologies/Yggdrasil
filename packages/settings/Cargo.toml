@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 eframe = "0.36.2"
 egui_extras = { version = "0.36.2", features = ["file", "image", "svg"] }
+# never called directly: egui_extras' "image" loader decodes only the formats switched on here (app icons, pictures)
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
 yggdrasil-ui = { path = "../yggdrasil-ui" }
 yggdrasil-conf = { path = "../yggdrasil-conf" }

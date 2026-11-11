@@ -17,10 +17,9 @@ required-features = ["picker"]
 [features]
 default = ["picker"]
 # The picker itself (Wayland, drawing). Settings uses the library without it: formats, history, the chosen format.
-picker = ["dep:wayland-client", "dep:wayland-protocols", "dep:wayland-protocols-wlr", "dep:memmap2", "dep:rustix", "dep:tiny-skia", "dep:ab_glyph", "dep:yggdrasil-conf"]
+picker = ["dep:wayland-client", "dep:wayland-protocols", "dep:wayland-protocols-wlr", "dep:memmap2", "dep:rustix", "dep:tiny-skia", "dep:ab_glyph"]
 
 [dependencies]
-yggdrasil-conf = { path = "../yggdrasil-conf", optional = true }
 wayland-client = { version = "0.31", optional = true }
 wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"], optional = true }
 wayland-protocols-wlr = { version = "0.3", features = ["client"], optional = true }
