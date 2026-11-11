@@ -1,26 +1,43 @@
 # Liki: Yggdrasil's icon pack (used by every system that installs Yggdrasil) and the tools that build and manage it (packages/liki).
+# liki-build, liki-icns and liki-icon-import are Rust (packages/liki/src; the Python scripts they replaced are kept in
+# packages/liki/python for a rollback); liki-icon and liki-minos-icon are shell scripts.
 pkgname=liki-icon-theme
 pkgver=0.1.0
-pkgrel=3
+pkgrel=4
 pkgdesc="Liki, Yggdrasil's icon pack: the system's own icons, the default app icon, and liki-build for app logos"
-arch=('any')
+arch=('x86_64')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
 license=('MPL-2.0' 'CC0-1.0' 'ISC')
-depends=('python' 'hicolor-icon-theme')
+# expat: liki-icon-import reads a pack's plain appfilter.xml with it (opened at run time, as Python's ElementTree used it)
+depends=('glibc' 'gcc-libs' 'expat' 'hicolor-icon-theme')
+makedepends=('cargo')
 optdepends=('gtk3: gtk-update-icon-cache for the user copy of the pack')
 provides=('labyrinth-brand-pack')
-options=('!strip')
+options=('!lto')
 
 _src="$startdir/../../liki"
+
+build() {
+  cd "$_src"
+  cargo build --release --locked --target-dir "$srcdir/target"
+}
+
+check() {
+  cd "$_src"
+  # the tools on scratch folders (nothing of the builder's own is written) and broken packs, icns files and XML
+  cargo test --release --locked --target-dir "$srcdir/target"
+}
 
 package() {
   # the logos (a selection from Simple Icons, CC0) and the Minos artwork the tools read
   install -d "$pkgdir/usr/share/liki"
   cp -r "$_src/share/brand-icons" "$_src/share/minos-icon" "$_src/share/symbolic" "$pkgdir/usr/share/liki/"
   # the pack itself: Yggdrasil's own icons and the default app icon (the apps' logos are made per user by liki-build)
-  LIKI_BRAND_ICONS="$_src/share/brand-icons" python3 "$_src/bin/liki-build" --natives-only --out "$pkgdir/usr/share/icons/Liki"
+  LIKI_BRAND_ICONS="$_src/share/brand-icons" "$srcdir/target/release/liki-build" --natives-only --out "$pkgdir/usr/share/icons/Liki"
   rm -f "$pkgdir/usr/share/icons/Liki/icon-theme.cache"
+  for f in liki-build liki-icns liki-icon-import; do install -Dm755 "$srcdir/target/release/$f" "$pkgdir/usr/bin/$f"; done
   for f in "$_src"/bin/liki-*; do install -Dm755 "$f" "$pkgdir/usr/bin/$(basename "$f")"; done
+  install -Dm644 "$_src/README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
   # the old names keep working until Yggdrasil's programs are renamed
   install -Dm644 "$_src/liki-minos-icon.desktop" "$pkgdir/etc/xdg/autostart/liki-minos-icon.desktop"
 }

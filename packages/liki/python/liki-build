@@ -19,7 +19,6 @@ panel's other icon sources give. The pack is written to ~/.local/share/icons/<NA
 "Liki"); choose it in Settings > Appearance to use it.
 """
 import argparse
-import glob
 import json
 import math
 import os
@@ -227,12 +226,27 @@ def make(shape, style, svg_text, brand, purple=PURPLE):
     )
 
 
+def listing(d, suffix):
+    """The files in folder d whose names end in suffix, not hidden ones, in the folder's own order (what
+    glob.glob(d + "/*" + suffix) gave, without reading d itself as a pattern: a "[" in the pack's name made glob delete
+    the SVGs of another pack)."""
+    names = []
+    try:
+        with os.scandir(d) as it:
+            for e in it:
+                names.append(e.name)
+    except OSError:
+        pass
+    return [os.path.join(d, n) for n in names if n.endswith(suffix) and not n.startswith(".")]
+
+
 def installed_icon_names():
-    """(icon name, app name) for each desktop file here."""
+    """(icon name, app name) for each desktop file here. An icon name with "/" or a NUL in it is left out (the logo was
+    written outside the pack, or the build stopped)."""
     out = []
     dirs = ["/usr/share/applications", os.path.expanduser("~/.local/share/applications"), "/var/lib/flatpak/exports/share/applications"]
     for d in dirs:
-        for f in glob.glob(os.path.join(d, "*.desktop")):
+        for f in listing(d, ".desktop"):
             icon = name = ""
             try:
                 for line in open(f, encoding="utf-8", errors="replace"):
@@ -242,7 +256,7 @@ def installed_icon_names():
                         name = line[5:].strip()
             except OSError:
                 continue
-            if icon and not icon.startswith("/"):
+            if icon and "/" not in icon and "\0" not in icon:
                 out.append((icon, name))
     return out
 
@@ -278,9 +292,19 @@ def main():
         try:
             last = json.load(open(conf_path()))
         except (OSError, ValueError):
+            last = None
+        if not isinstance(last, dict):
             print("No earlier build to repeat.")
             return 0
-        a.shape, a.style, a.name = last.get("shape", a.shape), last.get("style", a.style), last.get("name", a.name)
+
+        # what the last build remembered; a value that is not a shape, a style or a usable pack name is left as given
+        # (a damaged file used to stop the build after the pack's icons were deleted)
+        def remembered(key, ok, given):
+            value = last.get(key, given)
+            return value if isinstance(value, str) and ok(value) else given
+        a.shape = remembered("shape", lambda v: v in GLYPH_SIZE, a.shape)
+        a.style = remembered("style", lambda v: v in ("brand", "dark", "purple"), a.style)
+        a.name = remembered("name", lambda v: v != "" and v.isprintable() and "/" not in v and v not in (".", ".."), a.name)
     accent = accent_hex()
 
     colors = json.load(open(os.path.join(SRC, "colors.json")))
@@ -290,7 +314,7 @@ def main():
     for ctx in CONTEXTS:
         d = os.path.join(out, ctx, "scalable")
         os.makedirs(d, exist_ok=True)
-        for f in glob.glob(os.path.join(d, "*.svg")):
+        for f in listing(d, ".svg"):
             os.remove(f)
 
     written = 0
@@ -306,7 +330,7 @@ def main():
         open(os.path.join(out, "mimetypes", "scalable", name + ".svg"), "w", encoding="utf-8").write(mime_icon(colour, glyph))
         written += 1
     # the system's symbolic icons (panel, Fylgja, Settings): Lucide, ISC, drawn in currentColor so the program tints them
-    for f in glob.glob(os.path.join(os.path.dirname(SRC), "symbolic", "*.svg")):
+    for f in listing(os.path.join(os.path.dirname(SRC), "symbolic"), ".svg"):
         shutil.copy(f, os.path.join(out, "status", "scalable", os.path.basename(f)))
         written += 1
     # the brands' apps
@@ -330,7 +354,11 @@ def main():
     sections = "".join(f"{NL}[{c}/scalable]{NL}Size=128{NL}MinSize=8{NL}MaxSize=1024{NL}Type=Scalable{NL}Context={x}{NL}" for c, x in CONTEXTS.items())
     text = f"[Icon Theme]{NL}Name={a.name}{NL}Comment=Yggdrasil's icon pack: app logos from Simple Icons ({a.shape}, {a.style}) and its own glyphs; an app without an icon gets the default app icon{NL}Inherits=hicolor{NL}Directories={dirs}{NL}{sections}"
     open(os.path.join(out, "index.theme"), "w", encoding="utf-8").write(text)
-    subprocess.run(["gtk-update-icon-cache", "-qf", out], stderr=subprocess.DEVNULL, check=False)
+    try:
+        # GTK's icon cache, when the tool is there (it is optional: the build used to stop without it)
+        subprocess.run(["gtk-update-icon-cache", "-qf", out], stderr=subprocess.DEVNULL, check=False)
+    except OSError:
+        pass
     if not a.out:
         # remembered, so the pack can be rebuilt in the new accent color when it changes (--rebuild)
         try:

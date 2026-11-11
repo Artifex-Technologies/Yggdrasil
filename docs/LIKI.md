@@ -20,6 +20,7 @@ The panel, Minos, the Marketplace and Settings all use that order and notice a c
 - `liki-minos-icon`: with another pack chosen, gives Minos that pack's own file-manager icon (in the user's `hicolor`); with Liki chosen there is nothing to do, `liki-build` draws Minos.
 - `liki-icon APP FILE`: use a picture for one app (also `--import FOLDER`, `--reset APP`); `liki-icns` reads macOS `.icns` files.
 - `liki-icon-import PACK`: turns an Android icon pack into a Linux icon theme ([ANDROID_ICON_PACKS.md](ANDROID_ICON_PACKS.md)).
+- `liki-build`, `liki-icns` and `liki-icon-import` are Rust since 2026-11-11 (`packages/liki/src`), with the same arguments, output and files as the Python scripts they replaced (kept in `packages/liki/python` for a rollback); the bugs fixed on the way and the parity tests are in [packages/liki/README.md](../packages/liki/README.md). `liki-icon` and `liki-minos-icon` are shell scripts.
 
 ## Choosing and installing another pack
 Settings > Appearance > Icons lists every pack on the system and in `~/.local/share/icons`; "Use" applies it to the whole desktop and "Install an icon pack" takes a folder, an archive or a link.

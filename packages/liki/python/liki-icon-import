@@ -12,16 +12,20 @@ with the programs' own icon names, so the desktop picks the pictures up once the
 Only use packs you have the right to use; this reads the files, it does not check licences.
 """
 import argparse
-import glob
 import os
 import re
 import struct
 import sys
 import xml.etree.ElementTree as ET
 import zipfile
+import zlib
 
 MAX_TOTAL = 700 * 1024 * 1024      # unpacked bytes read from one pack
 MAX_PNG = 6 * 1024 * 1024          # one picture
+MAX_APPFILTER = 32 * 1024 * 1024   # appfilter.xml (the largest packs' lists are a few MB)
+# what reading a broken or crafted archive can raise besides BadZipFile (a broken deflate stream, a file that ends early,
+# an encrypted or unknown kind of member, a bad name or offset): all of them mean the pack cannot be read
+READ_ERRORS = (zlib.error, EOFError, NotImplementedError, RuntimeError, ValueError, OverflowError)
 GENERIC = {"com", "org", "net", "io", "android", "google", "apps", "app", "the", "activity", "main", "launcher", "mobile", "free", "pro", "lite", "beta", "dev", "desktop", "stable"}
 
 
@@ -81,6 +85,13 @@ def parse_axml(data):
     return out
 
 
+def read_member(zf, info):
+    """A member's bytes, at most its stated size: zf.read() inflated a member fully before cutting it to that size, so a
+    small crafted pack could take gigabytes of memory."""
+    with zf.open(info) as f:
+        return f.read(max(info.file_size, 1))
+
+
 def parse_appfilter(zf):
     """[(component, drawable)] from assets/appfilter.xml (plain) or res/xml/appfilter.xml (compiled)."""
     names = {n.lower(): n for n in zf.namelist()}
@@ -89,10 +100,14 @@ def parse_appfilter(zf):
         real = names.get(path)
         if not real:
             continue
-        data = zf.read(real)
+        info = zf.getinfo(real)
+        if info.file_size > MAX_APPFILTER:
+            continue
+        data = read_member(zf, info)
         try:
             elems = parse_axml(data) if data[:2] == b"\x03\x00" else [(e.tag, dict(e.attrib)) for e in ET.fromstring(data).iter()]
-        except (ValueError, ET.ParseError, struct.error):
+        except (ValueError, IndexError, ET.ParseError, struct.error):
+            # (IndexError: a string pool pointing past the end, which used to stop the import with a traceback)
             continue
         for tag, a in elems:
             if tag == "item" and a.get("drawable"):
@@ -123,7 +138,7 @@ def collect_pngs(zf):
         total += info.file_size
         if total > MAX_TOTAL:
             break
-        b = zf.read(info)
+        b = read_member(zf, info)
         size = png_size(b)
         if not size or size[0] != size[1] or size[0] < 32:
             continue
@@ -135,12 +150,25 @@ def collect_pngs(zf):
 
 # ---------------------------------------------------------------- matching
 
+def listing(d, suffix):
+    """The files in folder d whose names end in suffix, not hidden ones, in the folder's own order (glob.glob would read
+    a "[" in the home folder's path as a pattern)."""
+    names = []
+    try:
+        with os.scandir(d) as it:
+            for e in it:
+                names.append(e.name)
+    except OSError:
+        pass
+    return [os.path.join(d, n) for n in names if n.endswith(suffix) and not n.startswith(".")]
+
+
 def installed_apps():
     """[(icon_name, keys)] for the installed programs: the names an Android pack might call them."""
     dirs = ["/usr/share/applications", os.path.expanduser("~/.local/share/applications"), "/var/lib/flatpak/exports/share/applications", os.path.expanduser("~/.local/share/flatpak/exports/share/applications")]
     apps = {}
     for d in dirs:
-        for f in glob.glob(os.path.join(d, "*.desktop")):
+        for f in listing(d, ".desktop"):
             try:
                 text = open(f, encoding="utf-8", errors="replace").read()
             except OSError:
@@ -181,7 +209,8 @@ def match(items, pngs, apps):
     """{linux icon name: picture name}. A program gets a picture when one of its own names (icon name, command, window
     class, desktop file, display name) is the same as the picture's name; failing that, when it is the same as the pack's
     package or class name for exactly one picture. A name that several pictures claim (generic ones like "settings")
-    is never guessed."""
+    is never guessed. Names are tried with the icon's own first, then the longest, then alphabetically (among names of
+    equal length the order used to follow the set's hashing, which changes from run to run)."""
     by_name = {}      # normalised picture name -> picture
     by_pkg = {}       # normalised package / class name -> set of pictures
     for comp, drawable in items:
@@ -192,7 +221,7 @@ def match(items, pngs, apps):
             by_pkg.setdefault(k, set()).add(drawable)
     chosen = {}
     for icon, keys in apps:
-        order = sorted(keys, key=lambda x: (x != norm(icon), -len(x)))
+        order = sorted(keys, key=lambda x: (x != norm(icon), -len(x), x))
         for k in order:
             if len(k) >= 3 and k in by_name:
                 chosen[icon] = by_name[k]
@@ -210,9 +239,13 @@ def safe_icon_name(n):
 
 
 def build(pack, name, out_root):
-    with zipfile.ZipFile(pack) as zf:
-        items = parse_appfilter(zf)
-        pngs = collect_pngs(zf)
+    try:
+        with zipfile.ZipFile(pack) as zf:
+            items = parse_appfilter(zf)
+            pngs = collect_pngs(zf)
+    except READ_ERRORS as e:
+        # used to end in a traceback; now the same answer as a file that is not a zip
+        raise zipfile.BadZipFile(str(e)) from e
     if not pngs:
         raise SystemExit("No PNG pictures found in that file (is it an Android icon pack?).")
     if not items:

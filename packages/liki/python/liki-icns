@@ -25,4 +25,6 @@ def biggest_png(data):
 if __name__ == "__main__":
     if len(sys.argv) != 3:
         sys.exit(__doc__)
-    open(sys.argv[2], "wb").write(biggest_png(open(sys.argv[1], "rb").read()))
+    # read and checked before the output is opened: a file that is not an .icns left an empty picture behind
+    png = biggest_png(open(sys.argv[1], "rb").read())
+    open(sys.argv[2], "wb").write(png)

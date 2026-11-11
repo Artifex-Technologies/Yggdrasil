@@ -1,0 +1,38 @@
+[package]
+name = "yggdrasil-liki"
+version = "0.1.0"
+edition = "2021"
+description = "Liki's tools in Rust: liki-build (the icon pack of app logos), liki-icns (the biggest PNG in a macOS .icns) and liki-icon-import (an Android icon pack as a Linux icon theme), replacing the Python scripts at the same paths with the same arguments, output, exit codes and files"
+license = "MPL-2.0"
+
+[lib]
+name = "liki"
+path = "src/lib.rs"
+
+# installed as /usr/bin/liki-build, liki-icns and liki-icon-import (packages/pkgbuilds/liki-icon-theme)
+[[bin]]
+name = "liki-build"
+path = "src/bin/liki-build.rs"
+
+[[bin]]
+name = "liki-icns"
+path = "src/bin/liki-icns.rs"
+
+[[bin]]
+name = "liki-icon-import"
+path = "src/bin/liki-icon-import.rs"
+
+# libexpat (the XML parser Python's ElementTree used, so plain appfilter.xml files parse or fail as they did) is opened at run
+# time, only for an icon pack with a plain-text appfilter.xml; miniz_oxide inflates the pack's deflated files
+[dependencies]
+libc = "0.2"
+miniz_oxide = { version = "0.8", default-features = false, features = ["with-alloc"] }
+regex = { version = "1", default-features = false, features = ["std", "unicode"] }
+yggdrasil-pycompat = { path = "../pycompat" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

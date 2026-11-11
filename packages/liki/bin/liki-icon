@@ -22,7 +22,8 @@ install_icon() {
   local ext=${file##*.}; ext=${ext,,}
   local tmp=
   if [[ $ext == icns ]]; then
-    tmp=$(mktemp --suffix=.png); liki-icns "$file" "$tmp"; file=$tmp; ext=png
+    # (a broken .icns used to leave mktemp's empty file to be installed as the icon under --import)
+    tmp=$(mktemp --suffix=.png); liki-icns "$file" "$tmp" || { rm -f "$tmp"; return 1; }; file=$tmp; ext=png
   fi
   [[ $ext == png || $ext == svg ]] || { echo "use an .svg, .png or .icns file: $file" >&2; return 1; }
   mkdir -p "$DIR"

@@ -27,4 +27,5 @@ licence, listed here.
   - omarchy-sudoku-plugin ((c) 2026 Morganczech (gruut)): `packages/sudoku`.
 - **omarchy-weather-nowcast** (Hizoul, GPL-3.0): only the idea of the rain view in `packages/weather`; no code is taken from it.
 - **Simple Icons** (CC0-1.0): the brand logos in `packages/liki/share/brand-icons`.
+- **CPython** (Python Software Foundation License 2.0): `packages/liki/src/argparse.rs` and `packages/liki/src/import/zip.rs` are written anew in Rust to behave as Python 3.14's `argparse` (parsing, help layout, messages) and `zipfile` (reading an archive) do, following their source closely so the tools that replaced Python scripts answer as the scripts did. No Python code is included.
 - **Microsoft PowerToys** (MIT, (c) Microsoft Corporation): `packages/colorpicker` follows its Color Picker (a frozen screen, a loupe, copy formats); no code is taken from it.

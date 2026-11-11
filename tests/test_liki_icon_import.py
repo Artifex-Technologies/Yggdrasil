@@ -9,7 +9,8 @@ import zipfile
 import zlib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-path = os.path.join(ROOT, "packages", "liki", "bin", "liki-icon-import")
+# the Python script, kept for a rollback (the Rust one that replaced it is packages/liki/src/import, parity in packages/liki/parity)
+path = os.path.join(ROOT, "packages", "liki", "python", "liki-icon-import")
 loader = importlib.machinery.SourceFileLoader("labyrinth_icon_import", path)
 spec = importlib.util.spec_from_loader("labyrinth_icon_import", loader)
 ii = importlib.util.module_from_spec(spec)
