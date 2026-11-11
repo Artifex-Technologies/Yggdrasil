@@ -16,8 +16,8 @@ use yggdrasil_ui::theme::Palette;
 use crate::curve::{self, Marks};
 use crate::ui;
 
-/// Where the helper may be: the package's place, or /usr/local where it was installed by hand before the package had it.
-const HELPERS: [&str; 2] = ["/usr/lib/yggdrasil/casefan", "/usr/local/lib/yggdrasil/casefan"];
+/// The helper, where the package installs it (and the only path its polkit rule allows).
+const HELPER: &str = "/usr/lib/yggdrasil/casefan";
 /// casefan's floors (PUMP_MIN_PCT, FAN_MIN_PCT): it enforces them too.
 pub const PUMP_MIN: i64 = 60;
 pub const FAN_MIN: i64 = 20;
@@ -195,7 +195,7 @@ pub fn installed() -> bool {
 }
 
 fn helper() -> Option<&'static str> {
-    HELPERS.into_iter().find(|p| std::path::Path::new(p).exists())
+    std::path::Path::new(HELPER).exists().then_some(HELPER)
 }
 
 impl Panel {
