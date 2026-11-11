@@ -261,7 +261,7 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
     the first entry with the option, printed by `/etc/grub.d/41_gpu_unlock` only while armed. The owner picks it by hand at
     a restart; it is never the default.
   - **Following an attempt:** `yggdrasil-gpu-unlock-boot.service` and `-verify.service` follow it. The attempt is known by
-    the option in /proc/cmdline, the result by the module's kernel log, and the entry goes away after its one try. Tests: `helpers/tests/test_gpuunlock.py`. A debug build reads the status from
+    the option in /proc/cmdline, the result by the module's kernel log, and the entry goes away after its one try. Tests: `helpers/tests/test_gpuunlock.py` (CI runs them on every push since 2026-11-11). A debug build reads the status from
   `$YGGDRASIL_GPUUNLOCK_FIXTURE` (for screenshots of the other states).
 
 ## Ask before connecting (built 2026-10-16)

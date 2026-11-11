@@ -68,6 +68,19 @@ jobs:
           # a normal account, as for sway (the compositor itself would run as root, but nothing here needs that)
           useradd -m ci && chown -R ci "$GITHUB_WORKSPACE"
           su ci -c "cd '$GITHUB_WORKSPACE' && packages/panel/tests/leak-stress.sh --compositor yggdrasil target/debug/yggdrasil-panel"
+  # gpuunlock is a live root helper still in Python (Settings runs it through pkexec); its tests fake every outside program,
+  # /sys, /proc and /etc, so they run without a graphics card.
+  gpuunlock:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Tools
+        run: pacman -Syu --noconfirm --needed git python
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0, pinned by commit
+        with:
+          persist-credentials: false
+      - name: Tests
+        run: python3 -m unittest discover -s packages/settings/helpers/tests -p 'test_gpuunlock.py' -v
   recipes:
     runs-on: ubuntu-latest
     container: archlinux:latest
