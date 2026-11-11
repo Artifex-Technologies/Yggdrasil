@@ -1,4 +1,5 @@
-"""Tests for yggdrasil-install-system's pure parts. python3 -m unittest discover -s helpers/tests"""
+"""Tests for the Python yggdrasil-install-system (helpers/python, kept for a rollback; the program installed is the Rust port in
+packages/install-system, compared with this one by its parity/compare.py). python3 -m unittest discover -s helpers/tests"""
 import importlib.machinery
 import importlib.util
 import os
@@ -6,7 +7,8 @@ import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-TOOL = os.path.join(os.path.dirname(HERE), "install-system")
+# the Python script, kept for a rollback since the Rust port (packages/install-system) replaced it
+TOOL = os.path.join(os.path.dirname(HERE), "python", "install-system")
 loader = importlib.machinery.SourceFileLoader("install_system", TOOL)
 spec = importlib.util.spec_from_loader("install_system", loader)
 inst = importlib.util.module_from_spec(spec)

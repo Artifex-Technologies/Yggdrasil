@@ -1,0 +1,25 @@
+# The plan as fuzzed input: cargo +nightly fuzz run plan (cargo-fuzz), or see ../README.md for a run without cargo-fuzz.
+[package]
+name = "yggdrasil-install-system-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+license = "MPL-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+yggdrasil-install-system = { path = ".." }
+
+[[bin]]
+name = "plan"
+path = "fuzz_targets/plan.rs"
+test = false
+doc = false
+bench = false
+
+# not part of any other crate's build
+[workspace]
+members = ["."]

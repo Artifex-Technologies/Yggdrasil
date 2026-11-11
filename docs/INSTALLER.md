@@ -37,7 +37,14 @@ switches on greetd, builds the start-up image and installs GRUB. What belongs to
 | `components` | what each optional part installs and switches on | |
 | `first_login` | where chosen parts the medium lacks are written down (`{"user", "components"}`) for the OS's own first-login program | they are left for Agora |
 
-Paths are absolute, without `..`. Its tests: `python3 -m unittest discover -s helpers/tests` in `packages/installer`.
+Paths are absolute, without `..`.
+
+Since 2026-11-11 it is Rust (`packages/install-system`, see its README): the same plan, checks and messages, the same programs
+with the same arguments in the same order, the same files and exit codes as the Python script it replaced, which I keep in
+`packages/installer/helpers/python` for a rollback (its tests: `python3 -m unittest discover -s helpers/tests` in
+`packages/installer`). `parity/compare.py` runs both on made-up computers in a namespace of their own, with every disk tool a
+stand-in, and compares everything they do; `cargo test` runs the install on a made-up computer in the test itself, with random
+plans (a refused plan runs nothing; no plan ever names another disk to a disk tool).
 
 ## The pages
 
@@ -75,10 +82,17 @@ e.g. Labyrinth's AI and security: Sarina, Heimdall) → Summary (and a box to ti
   ```
 
   `delete` comes first, then `create` (bytes, on MiB boundaries, in free space; `kind` linux, efi or swap), then `use`: mount points
-  /, /home, /var, /srv, /boot/efi and swap; `format` is the file system to make (btrfs, ext4, xfs; vfat for /boot/efi; swap) or
-  null to keep what is there (never for /). Exactly one / (at least 20 GB) and one /boot/efi (at least 260 MB) are needed.
+  /, /home, /var, /srv, /opt, /boot/efi and swap; `format` is the file system to make (btrfs, ext4, xfs; vfat for /boot/efi; swap)
+  or null to keep what is there (never for /). Exactly one / (at least 20 GB) and one /boot/efi (at least 260 MB) are needed.
+  `new_table` is true or false (or left out); partition numbers are numbers, not true or false; the ids of new partitions are
+  text.
   Encryption applies to / only. An EFI partition that is kept (Windows' own, for one) gets the OS's boot loader beside what is
   on it, and its firmware fallback file is left alone.
+- What it refuses before it changes anything (exit code 2, one `ERROR` line): anything that is not a JSON object, a value of the
+  wrong kind (it gets that value's message), a name, language or keyboard with a line break at the end, a password with a line
+  break in it (chpasswd reads one account per line; GRUB ends the disk's password at Enter), a time zone that is not a name under
+  /usr/share/zoneinfo, and text that is not Unicode (a lone surrogate) or a plan nested deeper than 20 levels ("the plan is not
+  JSON").
 - It reports one line each, and the window shows them: `STEP n N text` (step n of N started), `INFO text`, `WARN text` (shown
   as a note, the install goes on), `ERROR text` (it stopped), `DONE`.
 - `COMMAND --check` (with the plan on stdin) checks the plan without changing anything.

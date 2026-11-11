@@ -1,17 +1,18 @@
 # Yggdrasil's installer window (Rust, egui) and yggdrasil-install-system, the program that does the work from an archiso live
 # medium: partitions, encryption, btrfs, copying the system, the account, GRUB. The OS names itself, its clean-up and finishing
 # programs and its lists in an integration file of kind "installer" (docs/INSTALLER.md); it may name a program of its own instead.
-# Built from packages/installer in this repository.
+# Built from packages/installer (the window) and packages/install-system (the install program, Rust; the Python script it
+# replaced is kept in packages/installer/helpers/python for a rollback).
 pkgname=yggdrasil-installer
 pkgver=0.1.0
-pkgrel=3
+pkgrel=4
 pkgdesc="Installs the operating system from its live medium: Yggdrasil's window and install program"
 arch=('x86_64')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
 license=('MPL-2.0')
-depends=('gcc-libs' 'polkit' 'systemd'
-         # yggdrasil-install-system
-         'python' 'util-linux' 'cryptsetup' 'btrfs-progs' 'dosfstools' 'squashfs-tools' 'grub' 'efibootmgr')
+depends=('gcc-libs' 'glibc' 'polkit' 'systemd'
+         # what yggdrasil-install-system runs
+         'util-linux' 'cryptsetup' 'btrfs-progs' 'dosfstools' 'squashfs-tools' 'grub' 'efibootmgr')
 optdepends=('e2fsprogs: ext4 for partitions chosen by hand'
             'xfsprogs: XFS for partitions chosen by hand'
             'flatpak: browsers from Flathub on the Browsers page')
@@ -19,19 +20,25 @@ makedepends=('cargo')
 options=('!lto')
 
 _src="$startdir/../../installer"
+_sys="$startdir/../../install-system"
 
 build() {
   cd "$_src"
+  cargo build --release --locked --target-dir "$srcdir/target"
+  cd "$_sys"
   cargo build --release --locked --target-dir "$srcdir/target"
 }
 
 check() {
   cd "$_src"
   cargo test --release --locked --target-dir "$srcdir/target"
-  python3 -m unittest discover -s helpers/tests
+  # the install program on a made-up computer that runs nothing (every program it would run is answered in the test itself),
+  # random plans, and the program itself only for what changes nothing (--check, --disks, a refused plan)
+  cd "$_sys"
+  cargo test --release --locked --target-dir "$srcdir/target"
 }
 
 package() {
   install -Dm755 "$srcdir/target/release/yggdrasil-installer" "$pkgdir/usr/bin/yggdrasil-installer"
-  install -Dm755 "$_src/helpers/install-system" "$pkgdir/usr/bin/yggdrasil-install-system"
+  install -Dm755 "$srcdir/target/release/yggdrasil-install-system" "$pkgdir/usr/bin/yggdrasil-install-system"
 }

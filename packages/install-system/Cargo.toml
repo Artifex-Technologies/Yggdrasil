@@ -1,0 +1,32 @@
+[package]
+name = "yggdrasil-install-system"
+version = "0.1.0"
+edition = "2021"
+description = "Installs the operating system from its live medium onto a disk (the work behind Yggdrasil's installer window): the Rust yggdrasil-install-system, replacing the Python script at the same path with the same plan, checks, commands, messages, files and exit codes"
+license = "MPL-2.0"
+
+[lib]
+name = "install_system"
+path = "src/lib.rs"
+
+# installed as /usr/bin/yggdrasil-install-system (packages/pkgbuilds/yggdrasil-installer)
+[[bin]]
+name = "yggdrasil-install-system"
+path = "src/bin/yggdrasil-install-system.rs"
+
+[dependencies]
+# getrandom, geteuid, getpwnam and chmod's modes
+libc = "0.2"
+yggdrasil-pycompat = { path = "../pycompat" }
+
+[dev-dependencies]
+# property tests: random plans (the checks never panic; a refused plan never runs a disk command)
+proptest = { version = "1.12", default-features = false, features = ["std"] }
+
+# unwinding (not abort): a panic in the middle of an install is caught, reported as an ERROR line and the new system unmounted,
+# as the Python script did with an unexpected exception
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true

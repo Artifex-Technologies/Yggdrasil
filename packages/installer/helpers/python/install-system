@@ -3,6 +3,9 @@
 window runs it as root (pkexec) and shows what it says; it can also be run by hand. Nothing is asked here: the choices come as
 one JSON object on standard input, so passwords never appear on a command line.
 
+This Python script is kept for a rollback: the program installed is its Rust port (packages/install-system), which does the
+same with the same plan, messages, programs and files; its parity/compare.py runs both on made-up computers.
+
     {"disk": "/dev/nvme0n1", "mode": "erase",
      "encrypt": true, "encrypt_password": "...",          (LUKS2; one password at start-up)
      "user": {"name": "Full Name", "login": "me", "password": "..."},
@@ -18,7 +21,7 @@ one JSON object on standard input, so passwords never appear on a command line.
              {"part": "new:a", "mount": "/", "format": "btrfs"}],
      "encrypt": true, "encrypt_password": "...", ...}    (encryption is for / only)
 
-    yggdrasil-install-system --check < plan.json      only check the plan and the computer, change nothing
+    yggdrasil-install-system --check < plan.json      only check the plan, change nothing
     yggdrasil-install-system --disks                  the disks it could install onto (JSON), with their partitions and free space
 
 What it prints, one line each (the installer reads these):
@@ -768,7 +771,7 @@ def manual_fits(p, d):
     deleted = set(by_num) if p.get("new_table") else set(p.get("delete") or [])
     if not p.get("new_table") and not d.get("table"):
         return "the disk has no partition table: start with a new one"
-    for n in deleted:
+    for n in sorted(deleted):  # in order: the first problem found is the same every time (a set's order is not)
         if n not in by_num:
             return f"there is no partition {n} to delete"
         if by_num[n]["mounted"]:
