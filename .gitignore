@@ -15,3 +15,6 @@ profile/airootfs/usr/share/icons/Labyrinth/apps/scalable/*
 packages/pkgbuilds/*/src/
 packages/pkgbuilds/*/pkg/
 packages/pkgbuilds/*/*.pkg.tar.*
+
+# Claude Code helpers' scratch worktrees and local settings
+/.claude/
