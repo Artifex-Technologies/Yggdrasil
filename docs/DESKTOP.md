@@ -31,7 +31,7 @@ Inside the macOS-style desktop, one monitor could work like Omarchy while the ot
 Windows/macOS-like (in the Yggdrasil session today the same split is made by Hyprland window rules, from
 `~/.config/yggdrasil/tiling`). It was one Plasma session, so the clipboard, drag and drop and moving windows
 between screens all work. On this machine the LG DualUp is that screen (`"tiling": true` in
-`displays.json`; labyrinth-displays turns it on once per port). By hand: `labyrinth-tiling HDMI-A-1`,
+`displays.json`; labyrinth-displays turned it on once per port; both removed 2026-11-11, nothing ran them any more). By hand: `labyrinth-tiling HDMI-A-1`,
 `labyrinth-tiling off`, `labyrinth-tiling` (show).
 
 | | Everyday screens | Tiling screen |
@@ -153,7 +153,7 @@ Omacosy ([MIT](https://github.com/paulsp94/omacosy)) is a macOS desktop, so thes
 | Omacosy | Labyrinth | State |
 | --- | --- | --- |
 | Bar: workspaces, active app, Spotify, weather, network, volume, clock | Waybar modules, same order | Built, never rendered |
-| Floats pill (shown only when the workspace has floating windows) | `labyrinth-floats` | Built, **tested** with a fake `hyprctl`. Click action not added: the Lua-era `hyprctl dispatch` syntax is unverified |
+| Floats pill (shown only when the workspace has floating windows) | `labyrinth-floats` | Removed 2026-11-11 with Waybar (Yggdrasil's own panel replaced it) |
 | Activity pill opens a floating btop | `custom/activity` + a float rule for `labyrinth-activity` | Built, never run |
 | `Super+K` keybinding cheat sheet | `labyrinth-keys` (reads `hyprctl binds -j`) | Built, **tested** with a fake `hyprctl` |
 | Caps Lock as the Super key | Not enabled. In Hyprland it is one input option (`kb_options = "caps:super"`); add it to `hyprland.lua` if you want it | Not done |
@@ -175,7 +175,7 @@ Read from Windows on 2026-10-10 (read-only):
 | Windows scaling | 100% | 125% (shown as 2048x2304) |
 | Position | 0,0 | Right of display 1, top edge 783 px above display 1's top |
 
-`labyrinth-displays` (run at login) turns that into Hyprland's documented
+Removed 2026-11-11 (nothing ran it any more; kept here as the record of the layout): `labyrinth-displays` turned that into Hyprland's documented
 `hl.monitor({ output, mode, position, scale })` calls and saves them in
 `~/.config/hypr/monitors.lua`, which `hyprland.lua` loads in a protected call. Rules in
 `/usr/share/labyrinth/displays.json` match on the monitor's model, **not** its port name
