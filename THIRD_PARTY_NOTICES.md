@@ -27,5 +27,7 @@ licence, listed here.
   - omarchy-sudoku-plugin ((c) 2026 Morganczech (gruut)): `packages/sudoku`.
 - **omarchy-weather-nowcast** (Hizoul, GPL-3.0): only the idea of the rain view in `packages/weather`; no code is taken from it.
 - **Simple Icons** (CC0-1.0): the brand logos in `packages/liki/share/brand-icons`.
+- **Pillow** (MIT-CMU, (c) 1997-2011 Secret Labs AB, (c) 1995-2011 Fredrik Lundh and contributors, (c) 2010 Jeffrey A. Clark and contributors): `packages/theme/src/cursors` (draw.rs, resample.rs, text.rs) is translated from Pillow 13.0's drawing, resampling and text code so ygg-cursors draws the cursors exactly as the Python script did with Pillow; the licence is in `packages/theme/src/cursors/NOTICE-Pillow` and installed with the package.
+- **Aileron** (CC0-1.0, Sora Sagano, dotcolon.net): `packages/theme/src/cursors/aileron-subset.ttf`, the subset Pillow carries as its default font, used by ygg-cursors where Pillow used it.
 - **CPython** (Python Software Foundation License 2.0): `packages/liki/src/argparse.rs` and `packages/liki/src/import/zip.rs` are written anew in Rust to behave as Python 3.14's `argparse` (parsing, help layout, messages) and `zipfile` (reading an archive) do, following their source closely so the tools that replaced Python scripts answer as the scripts did. No Python code is included.
 - **Microsoft PowerToys** (MIT, (c) Microsoft Corporation): `packages/colorpicker` follows its Color Picker (a frozen screen, a loupe, copy formats); no code is taken from it.

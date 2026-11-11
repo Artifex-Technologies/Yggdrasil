@@ -1,20 +1,24 @@
 # Yggdrasil's look for the programs it does not write (Qt, KDE and GTK programs) and its mouse cursors: packages/theme.
 # It replaces the WhiteSur KDE, GTK and cursor themes: a colour scheme (used with Qt's own Fusion style), GTK colours on GTK's own Adwaita,
-# and cursors drawn by ygg-cursors. Nothing is downloaded and no other theme package is needed. ygg-theme is Rust
-# (packages/theme/src; the Python script it replaced is kept in packages/theme/python for a rollback); ygg-cursors, which draws
-# the cursors once here at build time, is still Python with Pillow.
+# and cursors drawn by ygg-cursors. Nothing is downloaded and no other theme package is needed. ygg-theme and ygg-cursors are
+# Rust (packages/theme/src; the Python scripts they replaced are kept in packages/theme/python for a rollback). ygg-cursors
+# draws the cursors once here at build time, every pixel as the Python script drew it with Pillow (the help cursor's "?" with
+# FreeType, laid out by libraqm, in the font fc-match names; Pillow's own default font when there is none).
 pkgname=yggdrasil-theme
 pkgver=0.1.0
-pkgrel=4
+pkgrel=5
 pkgdesc="Yggdrasil's colour scheme, GTK colours and mouse cursors (replaces the WhiteSur themes)"
 arch=('x86_64')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
-license=('MPL-2.0')
+# MIT-CMU: the drawing translated from Pillow; CC0-1.0: the Aileron subset Pillow carries as its default font
+license=('MPL-2.0' 'MIT-CMU' 'CC0-1.0')
 depends=('glibc' 'gcc-libs')
-# gtk4: GTK 4's own theme is read from it (at build time) to make Yggdrasil's
-makedepends=('cargo' 'python-pillow' 'gtk4')
+# gtk4: GTK 4's own theme is read from it (at build time) to make Yggdrasil's; fontconfig, freetype2 and libraqm: the help
+# cursor's "?" (found with fc-match, opened at run time), as Pillow drew it
+makedepends=('cargo' 'gtk4' 'fontconfig' 'freetype2' 'libraqm')
 optdepends=('gtk3: GTK 3 programs use the Yggdrasil GTK theme'
-            'python-pillow: ygg-cursors, to draw the cursor theme again (the package has it drawn)')
+            'freetype2: ygg-cursors, to draw the help cursor again (the package has the cursors drawn)'
+            'libraqm: ygg-cursors lays the help cursor out with it, as the package did')
 provides=('labyrinth-cursors')
 options=('!lto')
 
@@ -23,18 +27,20 @@ _src="$startdir/../../theme"
 build() {
   cd "$_src"
   cargo build --release --locked --target-dir "$srcdir/target"
-  python3 "$_src/bin/ygg-cursors" "$srcdir/cursors"
+  "$srcdir/target/release/ygg-cursors" "$srcdir/cursors"
 }
 
 check() {
   cd "$_src"
-  # the colours, ini files and a scratch home's apply and cursor: nothing of the builder's own is touched
+  # the colours, ini files and a scratch home's apply and cursor, and the cursors against Pillow's own (every file's bytes):
+  # nothing of the builder's own is touched
   cargo test --release --locked --target-dir "$srcdir/target"
 }
 
 package() {
   install -Dm755 "$srcdir/target/release/ygg-theme" "$pkgdir/usr/bin/ygg-theme"
-  install -Dm755 "$_src/bin/ygg-cursors" "$pkgdir/usr/bin/ygg-cursors"
+  install -Dm755 "$srcdir/target/release/ygg-cursors" "$pkgdir/usr/bin/ygg-cursors"
+  install -Dm644 "$_src/src/cursors/NOTICE-Pillow" "$pkgdir/usr/share/licenses/$pkgname/NOTICE-Pillow"
   # the cursors (an X cursor theme, which Wayland programs use as well)
   install -d "$pkgdir/usr/share/icons"
   cp -a "$srcdir/cursors" "$pkgdir/usr/share/icons/Yggdrasil"

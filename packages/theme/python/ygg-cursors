@@ -5,7 +5,7 @@
   ygg-cursors OUTDIR --preview  also writes OUTDIR/preview.png, a sheet of every shape
 
 White shapes with a dark purple outline, so they read on any background; the busy ring uses the accent purple. Nothing is downloaded and
-no other theme is used: the shapes are drawn here (Pillow) at 8x and shrunk, in five sizes (24, 32, 48, 64, 96 px).
+no other theme is used: the shapes are drawn here as Pillow draws them, at 8x and shrunk, in five sizes (24, 32, 48, 64, 96 px).
 """
 import math
 import os

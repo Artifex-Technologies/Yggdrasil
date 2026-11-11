@@ -15,7 +15,7 @@ It replaced the WhiteSur KDE, GTK and cursor themes (about 29 MB, GPL-3, macOS-s
 - Settings > Appearance (dark or light, the accent colour) and the notch's dark-mode switch call it, so a change shows in every program.
 - `ygg-theme scheme|gtk|gtk3-theme ...` print the files (the GTK themes are what the package installs; the KDE colour scheme is no longer installed system-wide, 2026-11-08).
 - `ygg-theme cursor [NAME]` prints the pointer theme in use or switches to an installed one: every place programs read it from (GTK and Qt settings, xsettingsd, `environment.d`, gsettings) and, at once, the running compositor (`hyprctl setcursor`) and the session's environment. A theme that is later removed falls back to Yggdrasil's. `ygg-theme apply` keeps the chosen pointer and the chosen icon pack (it used to put both back to Yggdrasil's and Liki).
-- `ygg-cursors OUTDIR [--preview]` draws the cursor theme (the package runs it at build time; Pillow is only needed for that).
+- `ygg-cursors OUTDIR [--preview]` draws the cursor theme (the package runs it at build time). It is Rust since 2026-11-11 and draws every pixel as the Python script did with Pillow (the drawing, the shrinking and the help cursor's "?" translated from Pillow, see `packages/theme/README.md`); Python and Pillow are no longer needed.
 
 ## Why this and not a bigger theme
 Lightweight (a few text files and one small cursor set, nothing running), stable (it uses Qt's and GTK's own styles, which every release keeps working), secure and private (nothing is downloaded, no third-party theme code or scripts are installed or run, no network), and one palette for everything.

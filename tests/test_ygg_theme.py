@@ -9,14 +9,13 @@ import tempfile
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BIN = os.path.join(ROOT, "packages", "theme", "bin")
-# ygg-theme's Python script, kept for a rollback (the Rust one that replaced it is packages/theme/src, tests in src/tests.rs and
-# tests/ygg_theme.rs); ygg-cursors is still the Python one in bin/
+# ygg-theme's and ygg-cursors' Python scripts, kept for a rollback (the Rust ones that replaced them are packages/theme/src,
+# tests in src/tests.rs and tests/; the cursors' parity with Pillow in packages/theme/parity/cursors.py)
 PY = os.path.join(ROOT, "packages", "theme", "python")
 
 
 def load(name):
-    path = os.path.join(PY if name == "ygg-theme" else BIN, name)
+    path = os.path.join(PY, name)
     loader = importlib.machinery.SourceFileLoader(name.replace("-", "_"), path)
     spec = importlib.util.spec_from_loader(name.replace("-", "_"), loader)
     mod = importlib.util.module_from_spec(spec)
@@ -139,7 +138,7 @@ class Cursors(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.out = tempfile.mkdtemp()
-        r = subprocess.run([sys.executable, os.path.join(BIN, "ygg-cursors"), cls.out], capture_output=True, text=True)
+        r = subprocess.run([sys.executable, os.path.join(PY, "ygg-cursors"), cls.out], capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
 
     def read(self, name):

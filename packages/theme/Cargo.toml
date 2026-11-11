@@ -2,7 +2,7 @@
 name = "yggdrasil-theme-tools"
 version = "0.1.0"
 edition = "2021"
-description = "ygg-theme in Rust: Yggdrasil's colour scheme, GTK colours and themes, and the mouse pointer for the programs Yggdrasil does not write (replacing the Python script at the same path)"
+description = "ygg-theme and ygg-cursors in Rust: Yggdrasil's colour scheme, GTK colours and themes, the mouse pointer for the programs Yggdrasil does not write, and the cursor theme drawn as Pillow drew it (replacing the Python scripts at the same paths)"
 license = "MPL-2.0"
 
 [lib]
@@ -15,6 +15,11 @@ path = "src/lib.rs"
 name = "ygg-theme"
 path = "src/bin/ygg-theme.rs"
 
+# installed as /usr/bin/ygg-cursors; the package runs it to draw the cursor theme (packages/pkgbuilds/yggdrasil-theme)
+[[bin]]
+name = "ygg-cursors"
+path = "src/bin/ygg-cursors.rs"
+
 # the parity runs (parity/compare.py): GTK 4's own theme retinted in any accent
 [[example]]
 name = "theme_retint"
@@ -23,6 +28,8 @@ path = "examples/theme_retint.rs"
 # libgtk-4 is opened at run time (dlopen), only for gtk4-theme; without it the theme falls back as the script's did
 [dependencies]
 libc = "0.2"
+# the cursors' preview sheet is written as a PNG (zlib)
+miniz_oxide = { version = "0.8", default-features = false, features = ["with-alloc"] }
 regex = { version = "1", default-features = false, features = ["std", "unicode"] }
 yggdrasil-pycompat = { path = "../pycompat" }
 
