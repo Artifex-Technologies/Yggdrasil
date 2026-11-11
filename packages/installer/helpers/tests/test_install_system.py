@@ -257,6 +257,104 @@ class TheOperatingSystem(unittest.TestCase):
         self.assertIsNone(inst.check_plan(plan()))
 
 
+class WhatThePlanMayNotSay(unittest.TestCase):
+    """Plans the window never sends, refused with a message before anything is done (they used to stop the program with a
+    traceback, or pass and stop the install after the disk was changed)."""
+
+    def test_a_value_of_the_wrong_kind_gets_that_values_message(self):
+        self.assertEqual(inst.check_plan([]), "the plan is not a JSON object")
+        self.assertEqual(inst.check_plan(plan(disk=5)), "no disk chosen")
+        self.assertEqual(inst.check_plan(plan(user=["a"])), "the account name must start with a small letter and use only small letters, digits, - and _")
+        self.assertEqual(inst.check_plan(plan(user={"name": "A", "login": 5, "password": "x"})), "the account name must start with a small letter and use only small letters, digits, - and _")
+        for pw in (None, 5, ["longenough"]):
+            self.assertEqual(inst.check_plan(plan(user={"name": "A", "login": "a", "password": pw})), "the account needs a password", pw)
+        self.assertEqual(inst.check_plan(plan(user={"name": None, "login": "a", "password": "x"})), "the full name may not contain : or a line break")
+        self.assertEqual(inst.check_plan(plan(hostname=5)), "the computer's name may use letters, digits and - (not at the start or end)")
+        self.assertEqual(inst.check_plan(plan(encrypt=True, encrypt_password=list("12345678"))), "the encryption password needs at least 8 characters")
+        self.assertEqual(inst.check_plan(plan(encrypt=True, encrypt_password=12345678)), "the encryption password needs at least 8 characters")
+        self.assertEqual(inst.check_plan(plan(timezone=5)), "unknown time zone")
+        self.assertEqual(inst.check_plan(plan(locale=None)), "unknown language setting")
+        self.assertEqual(inst.check_plan(plan(keymap=["us"])), "unknown keyboard layout")
+        self.assertEqual(inst.check_plan(plan(keymap_variant=5)), "unknown keyboard variant")
+        self.assertIsNone(inst.check_plan(plan(keymap_variant=None)), "no variant")
+
+    def test_a_final_line_break_is_not_part_of_a_name(self):
+        self.assertIn("account name", inst.check_plan(plan(user={"name": "A", "login": "ada\n", "password": "x"})))
+        self.assertIn("computer's name", inst.check_plan(plan(hostname="x\n")))
+        self.assertEqual(inst.check_plan(plan(locale="en_US.UTF-8\n")), "unknown language setting")
+        self.assertEqual(inst.check_plan(plan(keymap="us\n")), "unknown keyboard layout")
+        self.assertEqual(inst.check_plan(plan(keymap_variant="dvorak\n")), "unknown keyboard variant")
+
+    def test_passwords_stay_one_line(self):
+        self.assertEqual(inst.check_plan(plan(user={"name": "A", "login": "a", "password": "x\nroot:y"})),
+                         "the account's password may not contain a line break", "chpasswd would set root's password")
+        self.assertEqual(inst.check_plan(plan(user={"name": "A", "login": "a", "password": "x\0y"})), "the account's password may not contain a line break")
+        self.assertEqual(inst.check_plan(plan(encrypt=True, encrypt_password="longenough\n")), "the encryption password may not contain a line break")
+        self.assertEqual(inst.check_plan(plan(user={"name": "A\0", "login": "a", "password": "x"})), "the full name may not contain : or a line break")
+        self.assertIsNone(inst.check_plan(plan(user={"name": "A", "login": "a", "password": "p:a s\tw"})))
+
+    def test_a_time_zone_is_a_name_under_zoneinfo(self):
+        self.assertEqual(inst.check_plan(plan(timezone="/etc/hostname")), "unknown time zone")
+        self.assertEqual(inst.check_plan(plan(timezone="/usr/share/zoneinfo/UTC")), "unknown time zone")
+
+    def test_a_manual_plan_says_exactly_what_it_means(self):
+        self.assertEqual(inst.check_plan(manual(new_table="false")), "a new partition table is chosen with true or false",
+                         "text was true: every partition erased")
+        self.assertEqual(inst.check_plan(manual(new_table=0)), "a new partition table is chosen with true or false")
+        self.assertIsNone(inst.check_plan(manual(new_table=None)))
+        self.assertEqual(inst.check_plan(manual(delete=[True])), "a partition to delete is not a number", "true was partition 1")
+        self.assertEqual(inst.check_plan(manual(delete=4)), "a partition to delete is not a number")
+        self.assertEqual(inst.check_plan(manual(create=[{"id": 5, "start": 300 * GB, "size": 150 * GB, "kind": "linux"}])),
+                         "a new partition has no proper id")
+        self.assertEqual(inst.check_plan(manual(create=[{"id": "r", "start": True, "size": 150 * GB, "kind": "linux"}])),
+                         "a new partition is not described properly")
+        self.assertEqual(inst.check_plan(manual(create={"id": "r"})), "a new partition is not described properly")
+        self.assertEqual(inst.check_plan(manual(create=["r"])), "a new partition has no proper id")
+        self.assertEqual(inst.check_plan(manual(use="x")), "choose exactly one partition for / (the system)")
+        self.assertEqual(inst.check_plan(manual(use=[5])), "None cannot be chosen as a mount point")
+        self.assertEqual(inst.check_plan(manual(use=[{"part": "/dev/vda1", "mount": ["/"]}])), "['/'] cannot be chosen as a mount point")
+        self.assertEqual(inst.check_plan(manual(use=[{"part": "/dev/vda1", "mount": "/boot/efi", "format": False}])),
+                         "/boot/efi cannot be formatted as False")
+
+    def test_a_number_to_delete_twice_is_deleted_once(self):
+        calls = []
+        old = (inst.run, inst.settle)
+
+        def run(argv, stdin=None, check=True, capture=False):
+            calls.append(argv)
+            return '{"partitiontable": {"sectorsize": 512, "partitions": []}}' if capture else None
+        inst.run, inst.settle = run, lambda: None
+        try:
+            inst.manual_partition(manual(delete=[2, 3, 2], create=[], use=[]))
+        finally:
+            inst.run, inst.settle = old
+        self.assertEqual([c for c in calls if "--delete" in c], [["sfdisk", "--delete", "/dev/vda", "3"], ["sfdisk", "--delete", "/dev/vda", "2"]])
+
+    def test_the_lists_keep_entries_with_a_text_id(self):
+        self.assertEqual(inst.browser_catalog(written([{"id": "x"}])), [], "not an object at the top")
+        self.assertEqual(inst.browser_catalog(written({"browsers": {"id": "x"}})), [])
+        self.assertEqual([b["id"] for b in inst.browser_catalog(written({"browsers": [{"id": 5}, {"id": ["x"]}, {"id": "ok"}]}))], ["ok"])
+        cat = inst.browser_catalog(written({"browsers": [{"id": "a", "packages": "abc", "flatpak": 5}, {"id": "b", "packages": ["b", 7]}]}))
+        self.assertEqual(inst.browser_plan(cat, ["a"]), {"remove": ["b"], "install": [], "flatpaks": []})
+        comps = inst.components(written({"components": [{"id": "c", "packages": ["p"], "aur": "q", "pkgbuild": 5, "name": None}]}))
+        self.assertEqual(inst.component_packages(comps["c"]), ["p"])
+        self.assertEqual(inst.component_name(comps, "c"), "c")
+
+    def test_nesting(self):
+        self.assertEqual(inst.nesting(5), 0)
+        self.assertEqual(inst.nesting([[[]]]), 2)
+        self.assertEqual(inst.nesting({"a": [{"b": 1}]}), 3)
+
+    def test_what_is_not_a_plan(self):
+        import subprocess
+        for data in (b'{"user": {"name": "\xff"}}', b'{"user": {"name": "\\ud800"}}', b"[" * 22 + b"]" * 22, b"[" * 200000, b"1" * 4301,
+                     b"\xef\xbb\xbf{}"):
+            r = subprocess.run([TOOL, "--check"], input=data, capture_output=True)
+            self.assertEqual((r.returncode, r.stdout, r.stderr), (2, b"ERROR the plan is not JSON\n", b""), data[:40])
+        r = subprocess.run([TOOL, "--check"], input=b"[" * 21 + b"]" * 21, capture_output=True)
+        self.assertEqual((r.returncode, r.stdout), (2, b"ERROR the plan is not a JSON object\n"), "20 levels inside are JSON")
+
+
 class RemovePackages(unittest.TestCase):
     """A fake pacman: z stays and needs b; d (on the list) needs c."""
 

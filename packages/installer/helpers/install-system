@@ -6,7 +6,7 @@ one JSON object on standard input, so passwords never appear on a command line.
     {"disk": "/dev/nvme0n1", "mode": "erase",
      "encrypt": true, "encrypt_password": "...",          (LUKS2; one password at start-up)
      "user": {"name": "Full Name", "login": "me", "password": "..."},
-     "hostname": "my-pc", "timezone": "America/Denver", "locale": "en_US.UTF-8", "keymap": "us", "keymap_variant": "",
+     "hostname": "my-pc", "timezone": "Europe/Berlin", "locale": "en_US.UTF-8", "keymap": "us", "keymap_variant": "",
      "browsers": ["vivaldi", "librewolf"], "default_browser": "vivaldi",      (optional; ids from the OS's browser list)
      "extras": ["heimdall"]}                                                  (optional; ids from the OS's optional parts)
 
@@ -136,7 +136,7 @@ def installer_integration(dirs=None):
             try:
                 with open(os.path.join(d, n)) as f:
                     values = parse_conf(f.read())
-            except OSError:
+            except (OSError, ValueError):  # ValueError: not UTF-8
                 continue
             if values.get("kind"):
                 found[n[:-len(".conf")]] = values
@@ -150,13 +150,23 @@ def os_release(path="/etc/os-release"):
     try:
         with open(path) as f:
             return {k: v.strip('"\'') for k, v in parse_conf(f.read()).items()}
-    except OSError:
+    except (OSError, ValueError):
         return {}
 
 
 def absolute(v):
     """An absolute path without '..', or None."""
     return v if v and v.startswith("/") and ".." not in v.split("/") else None
+
+
+def whole(v):
+    """A whole number in the plan: JSON's true and false are not numbers (Python's bool is an int: true was partition 1)."""
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def texts(v):
+    """The text items of a list in one of the OS's files (a list is expected there; anything else is no list)."""
+    return [x for x in v if isinstance(x, str)] if isinstance(v, list) else []
 
 
 def configure(conf, release):
@@ -222,44 +232,79 @@ def inside(argv, stdin=None, check=True):
 
 # ---------------------------------------------------------------- the plan
 
-LOGIN = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
-HOSTNAME = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
-LOCALE = re.compile(r"^[A-Za-z_]+(\.[A-Za-z0-9-]+)?(@[a-z]+)?$")
-KEYMAP = re.compile(r"^[A-Za-z0-9_-]+$")
+# whole values (fullmatch: a pattern ending in '$' let a final line break through, "ada\n" as an account name)
+LOGIN = re.compile(r"[a-z_][a-z0-9_-]{0,31}")
+HOSTNAME = re.compile(r"[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?")
+LOCALE = re.compile(r"[A-Za-z_]+(\.[A-Za-z0-9-]+)?(@[a-z]+)?")
+KEYMAP = re.compile(r"[A-Za-z0-9_-]+")
+DEVICE = re.compile(r"/dev/[A-Za-z0-9/_-]+")
+PART_ID = re.compile(r"[A-Za-z0-9_-]{1,16}")
+# how deep a plan may nest (it needs three levels); a far deeper one stopped json with a RecursionError at some depth
+MAX_NESTING = 20
+
+
+def fits(pattern, v):
+    """Whether v is text and all of it fits the pattern."""
+    return isinstance(v, str) and pattern.fullmatch(v) is not None
+
+
+def nesting(v):
+    """How many levels of lists and objects a JSON value has inside it."""
+    deepest, todo = 0, [(v, 0)]
+    while todo:
+        x, d = todo.pop()
+        deepest = max(deepest, d)
+        if isinstance(x, dict):
+            todo += [(y, d + 1) for y in x.values()]
+        elif isinstance(x, list):
+            todo += [(y, d + 1) for y in x]
+    return deepest
 
 
 def check_plan(p):
-    """The plan, checked: an error message, or None when it can be installed."""
+    """The plan, checked: an error message, or None when it can be installed. A value of the wrong kind (a number where text
+    belongs, say) gets the message of that value."""
+    if not isinstance(p, dict):
+        return "the plan is not a JSON object"
     if p.get("mode") not in ("erase", "manual"):
         return "unknown way to install (erase or manual)"
-    disk = p.get("disk", "")
-    if not re.fullmatch(r"/dev/[A-Za-z0-9/_-]+", disk):
+    if not fits(DEVICE, p.get("disk", "")):
         return "no disk chosen"
     if p["mode"] == "manual":
         problem = check_manual(p)
         if problem:
             return problem
-    u = p.get("user") or {}
-    if not LOGIN.match(u.get("login", "")):
+    u = p.get("user") if isinstance(p.get("user"), dict) else {}
+    login, password, name = u.get("login", ""), u.get("password", ""), u.get("name", "")
+    if not fits(LOGIN, login):
         return "the account name must start with a small letter and use only small letters, digits, - and _"
-    if login_taken(u.get("login")):
+    if login_taken(login):
         return "that account name is taken by the system"
-    if len(u.get("password", "")) < 1:
+    if not isinstance(password, str) or len(password) < 1:
         return "the account needs a password"
-    if ":" in u.get("name", "") or "\n" in u.get("name", ""):
+    # chpasswd reads "login:password" lines: after a line break the rest would be another account's line (root's, say)
+    if any(c in password for c in "\r\n\0"):
+        return "the account's password may not contain a line break"
+    if not isinstance(name, str) or any(c in name for c in ":\n\0"):
         return "the full name may not contain : or a line break"
-    if not HOSTNAME.match(p.get("hostname", "")):
+    if not fits(HOSTNAME, p.get("hostname", "")):
         return "the computer's name may use letters, digits and - (not at the start or end)"
-    if p.get("encrypt") and len(p.get("encrypt_password", "")) < 8:
-        return "the encryption password needs at least 8 characters"
+    if p.get("encrypt"):
+        secret = p.get("encrypt_password", "")
+        if not isinstance(secret, str) or len(secret) < 8:
+            return "the encryption password needs at least 8 characters"
+        # typed in GRUB, where Enter ends it: one with a line break could never be typed
+        if any(c in secret for c in "\r\n\0"):
+            return "the encryption password may not contain a line break"
     tz = p.get("timezone", "")
-    if not tz or ".." in tz or not os.path.isfile(os.path.join("/usr/share/zoneinfo", tz)):
+    # (os.path.join drops the folder before an absolute name)
+    if not isinstance(tz, str) or not tz or tz.startswith("/") or ".." in tz or not os.path.isfile(os.path.join("/usr/share/zoneinfo", tz)):
         return "unknown time zone"
-    if not LOCALE.match(p.get("locale", "")):
+    if not fits(LOCALE, p.get("locale", "")):
         return "unknown language setting"
-    if not KEYMAP.match(p.get("keymap", "")):
+    if not fits(KEYMAP, p.get("keymap", "")):
         return "unknown keyboard layout"
-    if p.get("keymap_variant") and not KEYMAP.match(p["keymap_variant"]):
+    if p.get("keymap_variant") and not fits(KEYMAP, p["keymap_variant"]):
         return "unknown keyboard variant"
     if "browsers" in p:
         known = {b["id"] for b in browser_catalog()}
@@ -278,12 +323,21 @@ def check_plan(p):
 # ---------------------------------------------------------------- browsers
 
 
-def browser_catalog(path=None):
-    """The browsers the installer offers (the integration's "browsers" file); none when there is no such file."""
+def entries(path, key):
+    """The entries listed under `key` in one of the OS's JSON files that have an id (text, as the window reads them); none
+    when the file cannot be read or is not such a list."""
     try:
-        return [b for b in json.load(open(path or BROWSERS_FILE)).get("browsers", []) if isinstance(b, dict) and b.get("id")]
+        with open(path) as f:
+            data = json.load(f)
     except (OSError, ValueError, TypeError):
         return []
+    items = data.get(key) if isinstance(data, dict) else None
+    return [x for x in items if isinstance(x, dict) and isinstance(x.get("id"), str) and x["id"]] if isinstance(items, list) else []
+
+
+def browser_catalog(path=None):
+    """The browsers the installer offers (the integration's "browsers" file); none when there is no such file."""
+    return entries(path or BROWSERS_FILE, "browsers")
 
 
 def browser_plan(catalog, chosen):
@@ -291,10 +345,10 @@ def browser_plan(catalog, chosen):
     to install, and the Flathub apps to install."""
     remove, install, flatpaks = [], [], []
     for b in catalog:
-        pk = b.get("packages", [])
+        pk = texts(b.get("packages"))
         if b["id"] in chosen:
             install += pk
-            if b.get("flatpak"):
+            if isinstance(b.get("flatpak"), str) and b["flatpak"]:
                 flatpaks.append(b["flatpak"])
         else:
             remove += pk
@@ -348,8 +402,8 @@ def with_dns(fn):
         pass
     made = None
     if os.path.islink(link):
-        dest = os.readlink(link)
-        dest = os.path.normpath(os.path.join("/etc", dest)) if not dest.startswith("/") else dest
+        # normalised whether relative or not: a link with ".." in it must not lead outside the new system
+        dest = os.path.normpath(os.path.join("/etc", os.readlink(link)))
         made = TARGET + dest
         if not os.path.exists(made):
             os.makedirs(os.path.dirname(made), exist_ok=True)
@@ -421,7 +475,7 @@ def set_up_browsers(p):
     default = None
     for bid in order:
         b = next((x for x in catalog if x["id"] == bid), None)
-        for d in (b or {}).get("desktop", []):
+        for d in texts((b or {}).get("desktop")):
             if any(os.path.exists(os.path.join(dd, d)) for dd in dirs):
                 default = d
                 break
@@ -439,7 +493,7 @@ def set_up_browsers(p):
             f.write(mimeapps_with_browser(text, default))
     dock = f"{TARGET}/etc/yggdrasil/dock"
     if os.path.exists(dock):
-        ids = {d[:-len(".desktop")] for b in catalog for d in b.get("desktop", [])}
+        ids = {d[:-len(".desktop")] for b in catalog for d in texts(b.get("desktop"))}
         with open(dock) as f:
             text = f.read()
         with open(dock, "w") as f:
@@ -451,23 +505,21 @@ def set_up_browsers(p):
 
 def extras_catalog(path=None):
     """The optional parts the installer offers (the integration's "extras" file); none when there is no such file."""
-    try:
-        return [e for e in json.load(open(path or EXTRAS_FILE)).get("extras", []) if isinstance(e, dict) and e.get("id")]
-    except (OSError, ValueError, TypeError):
-        return []
+    return entries(path or EXTRAS_FILE, "extras")
 
 
 def components(path=None):
     """The OS's optional components by id (the integration's "components" file)."""
-    try:
-        return {c["id"]: c for c in json.load(open(path or COMPONENTS_FILE)).get("components", []) if c.get("id")}
-    except (OSError, ValueError, TypeError):
-        return {}
+    return {c["id"]: c for c in entries(path or COMPONENTS_FILE, "components")}
 
 
 def component_packages(c):
     """The names pacman knows a component by (a pkgbuild component installs its own name)."""
-    return list(c.get("packages", [])) + list(c.get("aur", [])) + ([c["pkgbuild"]] if c.get("pkgbuild") else [])
+    return texts(c.get("packages")) + texts(c.get("aur")) + ([c["pkgbuild"]] if isinstance(c.get("pkgbuild"), str) and c["pkgbuild"] else [])
+
+
+def component_name(comps, cid):
+    return comps[cid]["name"] if isinstance(comps[cid].get("name"), str) else cid
 
 
 def extras_plan(catalog, chosen, comps, installed):
@@ -476,7 +528,7 @@ def extras_plan(catalog, chosen, comps, installed):
     the chosen components it lacks (installed at the first login; they are built or fetched, so they need the internet)."""
     keep, queue, drop = [], [], []
     for e in catalog:
-        for cid in e.get("components", []):
+        for cid in texts(e.get("components")):
             c = comps.get(cid)
             if not c:
                 continue
@@ -511,16 +563,16 @@ def set_up_extras(p):
     login = (p.get("user") or {}).get("login", "")
     for cid in plan["keep"]:
         c = comps[cid]
-        for unit in c.get("enable_system", []):
+        for unit in texts(c.get("enable_system")):
             inside(["systemctl", "enable", unit], check=False)
-        if c.get("enable_global"):
-            inside(["systemctl", "--global", "enable"] + c["enable_global"], check=False)
-        if c.get("add_groups") and login:
-            inside(["usermod", "-aG", ",".join(c["add_groups"]), login], check=False)
+        if texts(c.get("enable_global")):
+            inside(["systemctl", "--global", "enable"] + texts(c.get("enable_global")), check=False)
+        if texts(c.get("add_groups")) and login:
+            inside(["usermod", "-aG", ",".join(texts(c.get("add_groups"))), login], check=False)
     if plan["keep"]:
-        say("INFO", "kept: " + ", ".join(comps[c].get("name", c) for c in plan["keep"]))
+        say("INFO", "kept: " + ", ".join(component_name(comps, c) for c in plan["keep"]))
     if plan["queue"] and not FIRST_LOGIN_FILE:
-        say("INFO", "not on the installer, to install from Agora: " + ", ".join(comps[c].get("name", c) for c in plan["queue"]))
+        say("INFO", "not on the installer, to install from Agora: " + ", ".join(component_name(comps, c) for c in plan["queue"]))
     elif plan["queue"]:
         f = f"{TARGET}{FIRST_LOGIN_FILE}"
         os.makedirs(os.path.dirname(f), exist_ok=True)
@@ -528,26 +580,34 @@ def set_up_extras(p):
             json.dump({"user": login, "components": plan["queue"]}, out)
         # the user's first login removes it once everything is installed
         inside(["chown", login, FIRST_LOGIN_FILE], check=False)
-        say("INFO", "not on the installer, installed at the first login (needs the internet): " + ", ".join(comps[c].get("name", c) for c in plan["queue"]))
+        say("INFO", "not on the installer, installed at the first login (needs the internet): " + ", ".join(component_name(comps, c) for c in plan["queue"]))
 
 
 def check_manual(p):
-    """The shape of a manual plan (the disk itself is checked in preflight): an error, or None."""
+    """The shape of a manual plan (the disk itself is checked in preflight): an error, or None. Something that is not an object
+    where an object belongs reads as an empty one."""
+    # only true or false: "false" (text) was true, and a new table erases every partition on the disk
+    if p.get("new_table") is not None and not isinstance(p["new_table"], bool):
+        return "a new partition table is chosen with true or false"
     creates = p.get("create") or []
+    if not isinstance(creates, list):
+        return "a new partition is not described properly"
     ids = set()
     for c in creates:
-        if not re.fullmatch(r"[A-Za-z0-9_-]{1,16}", str(c.get("id", ""))) or c["id"] in ids:
+        c = c if isinstance(c, dict) else {}
+        if not fits(PART_ID, c.get("id")) or c["id"] in ids:
             return "a new partition has no proper id"
         ids.add(c["id"])
-        if c.get("kind") not in ("linux", "efi", "swap") or not isinstance(c.get("start"), int) or not isinstance(c.get("size"), int) or c["size"] < MIB:
+        if c.get("kind") not in ("linux", "efi", "swap") or not whole(c.get("start")) or not whole(c.get("size")) or c["size"] < MIB:
             return "a new partition is not described properly"
-    if not all(isinstance(n, int) and n > 0 for n in p.get("delete") or []):
+    deletes = p.get("delete") or []
+    if not isinstance(deletes, list) or not all(whole(n) and n > 0 for n in deletes):
         return "a partition to delete is not a number"
     uses = p.get("use") or []
-    mounts = [u.get("mount") for u in uses]
+    uses = [u if isinstance(u, dict) else {} for u in uses] if isinstance(uses, list) else []
     for u in uses:
         m, fmt, part_ = u.get("mount"), u.get("format"), str(u.get("part", ""))
-        if m not in MOUNTS:
+        if not isinstance(m, str) or m not in MOUNTS:
             return f"{m} cannot be chosen as a mount point"
         if fmt is not None and fmt not in MOUNTS[m]:
             return f"{m} cannot be formatted as {fmt}"
@@ -556,8 +616,9 @@ def check_manual(p):
                 return f"{part_} is not one of the new partitions"
             if fmt is None:
                 return "a new partition has to be formatted"
-        elif not re.fullmatch(r"/dev/[A-Za-z0-9/_-]+", part_):
+        elif not fits(DEVICE, part_):
             return "a partition is not named properly"
+    mounts = [u["mount"] for u in uses]
     if mounts.count("/") != 1:
         return "choose exactly one partition for / (the system)"
     if mounts.count("/boot/efi") != 1:
@@ -759,7 +820,7 @@ def manual_partition(p):
         run(["wipefs", "-a", disk])
         run(["sfdisk", "--wipe", "always", disk], stdin="label: gpt\n")
     else:
-        for n in sorted(p.get("delete") or [], reverse=True):
+        for n in sorted(set(p.get("delete") or []), reverse=True):  # a number given twice is deleted once
             run(["sfdisk", "--delete", disk, str(n)])
     settle()
     ss = int(json.loads(run(["sfdisk", "-J", disk], capture=True))["partitiontable"].get("sectorsize", 512))
@@ -1074,7 +1135,12 @@ def main():
         return
     try:
         plan = json.loads(sys.stdin.read() or "{}")
-    except ValueError:
+        # every text in it Unicode (bytes that are not UTF-8, or a lone surrogate from a \ud800 escape, would get as far as a
+        # command line or a file and stop the install there, after the disk was changed), and nested no deeper than a plan is
+        json.dumps(plan, ensure_ascii=False).encode()
+        if nesting(plan) > MAX_NESTING:
+            raise ValueError("nested too deeply")
+    except (ValueError, RecursionError):
         say("ERROR", "the plan is not JSON")
         sys.exit(2)
     problem = check_plan(plan)
