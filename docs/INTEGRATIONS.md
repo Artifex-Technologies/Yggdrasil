@@ -45,7 +45,7 @@ kind = packages
 name = Labyrinth                   # whose catalog it is: "Reviewed by Labyrinth"
 catalog = /usr/share/labyrinth/agora/catalog.json     # the OS's reviewed catalog (format: docs/MARKETPLACE.md)
 components = /usr/share/labyrinth/components.json     # the OS's own optional software (id and packages of each)
-component = /usr/local/bin/labyrinth-apps             # run with `install ID` or `remove ID`; AGORA_SUDO names a password-box sudo
+component = /usr/bin/labyrinth-apps                   # run with `install ID` or `remove ID`; AGORA_SUDO names a password-box sudo
 own_builds = /usr/share/labyrinth/pkgbuilds           # one folder per package the OS builds itself: never updated from the AUR
 edition = labyrinth                # optional: which entries of a shared catalog apply (default: ID in /etc/os-release)
 ```
@@ -59,7 +59,7 @@ kind = security
 name = Heimdall
 api = http://127.0.0.1:8930                # GET /healthz answers "ok"; GET /v1/alerts?n=N lists alerts. Loopback addresses only
 scan = /usr/local/bin/labyrinth-security-setting scan   # + a folder; prints "INFECTED path: Signature" lines and a "scanned ..." line
-quarantine = /usr/local/bin/labyrinth-quarantine        # `list --json`, `restore ID`, `delete ID`
+quarantine = /usr/bin/labyrinth-quarantine              # `list --json`, `restore ID`, `delete ID`
 distress = /usr/bin/labyrinth-distress     # optional: the distress password's root helper (run with pkexec), Settings and the lock screen
 distress_set = /etc/labyrinth/distress.json   # when this exists, a wrong password at the lock screen is shown to the helper
 contained = /etc/heimdall/contained        # optional: when this file exists the assistant is contained (JSON "reason", "level")
@@ -145,12 +145,12 @@ An add-on with a `card` opens its card from the pill; `open` is for an add-on th
 
 ```
 kind = apps
-launch = /usr/local/bin/labyrinth-launch           # + a desktop id; exits 0 when it started the app (dock, start menu, Settings)
+launch = /usr/bin/labyrinth-launch                 # + a desktop id; exits 0 when it started the app (dock, start menu, Settings)
 unit_prefix = lapp_                                # its systemd units: PREFIXid.slice per app, PREFIXid_N.scope per run
 settings = %h/.config/labyrinth/apps               # ID.json per app, read by the launcher: {"sandbox", "files": "all" | "folders",
                                                    #   "folders", "see_others"}; written by Settings > Apps
 usage = %h/.local/share/labyrinth/app-usage.json   # {ID: {"launches", "last", "seconds"}}: "sort by usage"
-network = /usr/local/bin/labyrinth-appnet          # run with pkexec: `set ID allow|block|ethernet|wifi|ask`
+network = /usr/bin/labyrinth-appnet                # run with pkexec: `set ID allow|block|ethernet|wifi|ask`
 network_rules = /etc/labyrinth/app-network.json    # {"rules": {UID: {ID: mode}}}, readable by the user
 network_ask = /run/labyrinth/appnet-ask.sock       # {"op":"list"} and {"op":"forget","app","ip"}, one JSON line each way
 ```

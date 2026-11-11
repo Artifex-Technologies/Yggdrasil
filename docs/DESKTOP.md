@@ -126,24 +126,27 @@ applet for weather and Spotify, blur once apps adopt it) is possible later.
 **Omacosy** is macOS-only (a Swift bar, AeroSpace, Karabiner, launchd); none of its
 code can run here. Its **layout** is what we copy; its bar items map to Waybar modules.
 
-## What is built
+## What was built
 
 All under `profile/airootfs/home/live/.config/` (copied into new users' `/etc/skel` by
-`labyrinth-install-cleanup`) plus `/usr/local/bin`:
+`labyrinth-install-cleanup`) plus `/usr/local/bin`. This tiling desktop was removed on 2026-11-05 (Labyrinth OS commit
+`bcafed8`): its configs, Waybar, mako, fuzzel, foot and the helper scripts below are gone, and Yggdrasil has its own bar,
+notifications, launcher and lock screen. Only the GTK settings and the weather remain.
 
 | Piece | File | State |
 | --- | --- | --- |
-| Session, keybindings (Omarchy's), NVIDIA env | `hypr/hyprland.lua`, `hypr/bindings/tiling.lua` | Adapted from Chymaera's (now LykanOS's) boot-tested Lua config. **Lua not parsed or run for Labyrinth** (no Lua on the dev machine) |
-| Look: rounding 12, shadows, blur, gaps 6/12 | `hypr/looks/labyrinth.lua` | Same constructs as Chymaera's (now LykanOS's) tested look; values are a first guess |
-| Top bar | `waybar/config.jsonc`, `style.css` | JSON parses, every listed module is defined; **never rendered** |
-| Dock | `nwg-dock-hyprland/style.css`, started by `labyrinth-shell` | **Never rendered** |
-| Spotify controls | bar modules + `playerctl -p spotify` | **Never run.** Needs Spotify running |
+| Session, keybindings (Omarchy's), NVIDIA env | `hypr/hyprland.lua`, `hypr/bindings/tiling.lua` | Removed 2026-11-05 (was adapted from Chymaera's, now LykanOS's, boot-tested Lua config) |
+| Look: rounding 12, shadows, blur, gaps 6/12 | `hypr/looks/labyrinth.lua` | Removed 2026-11-05 |
+| Top bar | `waybar/config.jsonc`, `style.css` | Removed 2026-11-05 (never rendered) |
+| Dock | `nwg-dock-hyprland/style.css`, started by `labyrinth-shell` | Removed 2026-11-05 with `labyrinth-shell` (never rendered) |
+| Spotify controls | bar modules + `playerctl -p spotify` | Removed 2026-11-05 with the bar (never run) |
 | Weather (optional component) | `packages/yggdrasil-weather` (Rust) | **Tested**, and run live against the real services. See [WEATHER.md](WEATHER.md) |
-| Power / quick settings | `labyrinth-quick-settings` (fuzzel menu) | **Tested** with stand-in menu and systemctl |
+| Power / quick settings | `labyrinth-quick-settings` (fuzzel menu) | Removed 2026-11-05 (it was tested with a stand-in menu and systemctl) |
 | Left-side buttons (GTK apps) | `gtk-3.0/settings.ini`, `gtk-4.0/settings.ini` | Standard GTK setting; not seen on screen |
-| Translucent terminal | `foot/foot.ini` | Needed so blur is visible |
+| Translucent terminal | `foot/foot.ini` | Removed 2026-11-05 |
 
-Tests: `tests/test_desktop_scripts.sh` (16 checks), `tests/test_bar_tools.py` (7).
+Tests: Labyrinth OS's `tests/test_desktop_scripts.sh` now has 2 checks (the GTK buttons' order, and that none of the removed
+desktop's configs is left); `tests/test_bar_tools.py` went with the bar on 2026-11-05.
 
 ## What we took from Omacosy
 
@@ -152,10 +155,10 @@ Omacosy ([MIT](https://github.com/paulsp94/omacosy)) is a macOS desktop, so thes
 
 | Omacosy | Labyrinth | State |
 | --- | --- | --- |
-| Bar: workspaces, active app, Spotify, weather, network, volume, clock | Waybar modules, same order | Built, never rendered |
-| Floats pill (shown only when the workspace has floating windows) | `labyrinth-floats` | Removed 2026-11-11 with Waybar (Yggdrasil's own panel replaced it) |
-| Activity pill opens a floating btop | `custom/activity` + a float rule for `labyrinth-activity` | Built, never run |
-| `Super+K` keybinding cheat sheet | `labyrinth-keys` (reads `hyprctl binds -j`) | Built, **tested** with a fake `hyprctl` |
+| Bar: workspaces, active app, Spotify, weather, network, volume, clock | Waybar modules, same order | Removed 2026-11-05 with Waybar (never rendered) |
+| Floats pill (shown only when the workspace has floating windows) | `labyrinth-floats` | Removed 2026-11-11 (Waybar, which showed it, went on 2026-11-05; Yggdrasil's own panel replaced it) |
+| Activity pill opens a floating btop | `custom/activity` + a float rule for `labyrinth-activity` | Removed 2026-11-05 with Waybar (never run) |
+| `Super+K` keybinding cheat sheet | `labyrinth-keys` (reads `hyprctl binds -j`) | Removed 2026-11-05 (it was tested with a fake `hyprctl`) |
 | Caps Lock as the Super key | Not enabled. In Hyprland it is one input option (`kb_options = "caps:super"`); add it to `hyprland.lua` if you want it | Not done |
 | Workspace overview with live previews and search | Would need a Hyprland plugin (hyprexpo); its Lua configuration is unverified | Not done |
 | Focus follows mouse, focus ring | `follow_mouse = 1` and a thin border already set | Done |
