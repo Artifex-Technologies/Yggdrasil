@@ -45,3 +45,34 @@ read) and the files afterwards must be the same.
 
 They stay in `packages/settings/helpers` (after the switch, `helpers/python/`) with their tests, for a rollback, until
 these have run a while.
+
+## Why Rust: measured
+
+Measured on 2026-11-11 with `tools/bench-port.py` against the Python scripts from git, on the parity script's made-up
+worlds (stand-in tools, scratch files; `bootscreen set` as root of a user namespace of its own), on my desktop (16 threads).
+Method and every case: [docs/PORT_NUMBERS.md](../../docs/PORT_NUMBERS.md).
+
+| Metric | Python | Rust | Change |
+| --- | --- | --- | --- |
+| `account list`, wall time | 23.7 ms | 0.50 ms | −98 %, 23.2 ms faster |
+| `account add` (stand-in useradd and chpasswd), wall time | 31.3 ms | 6.91 ms | −78 %, 24.3 ms faster |
+| `bootscreen get`, wall time | 28.3 ms | 3.00 ms | −89 %, 25.3 ms faster |
+| `game-fix apply` (Dead Space 2), wall time | 27.4 ms | 1.76 ms | −94 %, 25.6 ms faster |
+| `bootscreen set picture` (a 12-megapixel photo), wall time | 1132 ms | 815 ms | −28 %, 317 ms faster |
+| `bootscreen set picture`, peak memory | 129.8 MB | 189.3 MB | **+46 %, 59.5 MB more** |
+| `gpu-run list --json`, wall time | 31.4 ms | 32.1 ms | **+2 %, 0.70 ms slower** (CPU −68 %) |
+| `gpu-run 2 PROGRAM`, wall time | 29.6 ms | 33.6 ms | **+14 %, 4.0 ms slower** (CPU −60 %) |
+| a command's peak memory (the others) | 13.5–15.0 MB | 2.5–4.6 MB | −66 to −82 % |
+| on disk | 46 KB of scripts (+ Python, 75 MB, and python-pillow, 4.9 MB) | 3.8 MB (four binaries) | +3.8 MB, python-pillow no longer needed |
+
+Where Rust is worse: `gpu-run` waits for lspci and vulkaninfo in 10 ms steps (Python's subprocess returns the moment they
+end), so it spends less CPU but more time; and `bootscreen` decodes and scales the whole photo in memory at once, so its
+peak is higher than Pillow's.
+
+More accurate:
+
+- Parity: account 302, bootscreen 51, game-fix 466 and gpu-run 294 cases, all the same.
+- Tests: the scripts' 35 carried over and 20 more, 8 of them hostile input for `account`.
+- `account`: a name ending in a newline passed the script's pattern (Python's `$` matches before it) and went on to useradd;
+  now it is refused at once.
+- Where a script stopped with a traceback, the helper stops with exit code 1 and one line on standard error.

@@ -78,3 +78,22 @@ whole archives, the archives' own fields).
 
 They stay in `python/` with the same fixes, for a rollback, until these have run a while; `tests/test_liki_icon_import.py`
 still tests that one.
+
+## Why Rust: measured
+
+Measured on 2026-11-11 with `tools/bench-port.py` against the Python scripts from git (before these fixes), on the parity
+script's made-up worlds, on my desktop (16 threads). Method and every case: [docs/PORT_NUMBERS.md](../../docs/PORT_NUMBERS.md).
+
+| Metric | Python | Rust | Change |
+| --- | --- | --- | --- |
+| `liki-build --natives-only` (the package's pack), wall time | 46.7 ms | 2.75 ms | −94 %, 44.0 ms faster |
+| `liki-build`, a user's pack with app logos, wall time | 51.4 ms | 7.10 ms | −86 %, 44.3 ms faster |
+| `liki-icns`, wall time | 9.27 ms | 0.44 ms | −95 %, 8.8 ms faster |
+| `liki-icon-import`, a small pack, wall time | 48.5 ms | 1.58 ms | −97 %, 46.9 ms faster |
+| `liki-icon-import`, a pack of 3,000 icons, wall time | 127 ms | 30.3 ms | −76 %, 97.0 ms faster |
+| peak memory | 10.1–22.5 MB | 2.3–5.7 MB | −74 to −83 % |
+| on disk | 35 KB of scripts (+ Python, 75 MB) | 1.3 MB (three binaries) | +1.3 MB; Liki no longer needs Python |
+
+More accurate: the nine bugs listed above under "Bugs fixed" (found while porting, fixed in both), and parity of liki-build
+120 of 120 cases, liki-icns 210 of 210, liki-icon-import 40 of 40 made packs, 17 of 17 crafted archives and 800 of 800
+fuzzed ones.

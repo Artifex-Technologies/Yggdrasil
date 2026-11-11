@@ -190,6 +190,26 @@ The installer pictures use `yggdrasil-installer --demo PAGE`: sample disks and n
 The others come from `scripts/screenshot-desktop.sh`, which shows the desktop on a 1920×1080 screen inside a running Hyprland
 session (`start`, `run yggdrasil-settings power:cooling`, `shot FILE.png`, `stop`) and changes nothing in that session.
 
+## Why Rust: measured
+
+Each program I ported from Python, against the Python it replaced, on the same inputs (2026-11-11, my desktop, 16 threads).
+How it was measured and every case: [docs/PORT_NUMBERS.md](docs/PORT_NUMBERS.md). Each package's README has its own table,
+the bugs the port fixed and where the Rust one is worse.
+
+| Program | Time, Python → Rust | Memory, Python → Rust | More |
+| --- | --- | --- | --- |
+| tune, casefan, gpufan, powerlimit | `casefan get` 39.9 → 2.16 ms (−95 %) | the four loops (no card): 35.4 → 0.9 MB PSS (−98 %), 650 → 170 wake-ups a minute | [power-helpers](packages/power-helpers/README.md) |
+| account, bootscreen, game-fix, gpu-run | `account list` 23.7 → 0.50 ms (−98 %); `gpu-run` 0.7 to 4 ms **slower** | 13.5–15.0 → 2.5–4.6 MB; a boot picture 130 → 189 MB (**+46 %**) | [settings-helpers](packages/settings-helpers/README.md) |
+| labyrinth-appusage | start 18.5 → 1.1 ms CPU (−94 %) | 7.0 → 0.6 MB PSS (−92 %) | [appusage](packages/appusage/README.md) |
+| the crash watch | start 22.8 → 0.38 ms CPU (−98 %) | 23.8 → 0.4 MB PSS (−99 %) | [crashwatch](packages/crashwatch/README.md) |
+| pkg-root | a refused command 20.0 → 0.44 ms (−98 %) | 12.8 → 2.4 MB (−81 %) | [agora-helpers](packages/agora-helpers/README.md) |
+| ygg-theme | `gtk4-theme` 116 → 32.9 ms (−72 %) | 57.6 → 32.3 MB (−44 %) | [theme](packages/theme/README.md) |
+| ygg-cursors | 1057 → 1604 ms (**+52 %, slower**) | 31.5 → 15.1 MB (−52 %) | [theme](packages/theme/README.md) |
+| liki-build, liki-icns, liki-icon-import | a pack of 3,000 icons 127 → 30.3 ms (−76 %) | 22.5 → 5.7 MB (−74 %) | [liki](packages/liki/README.md) |
+
+On disk the binaries are bigger than the scripts (0.3 to 1.3 MB each against a few KB), but the scripts needed Python
+(75 MB), and Agora, the theme package and Liki no longer do.
+
 ## Building
 
 Every program is its own Cargo project (`cd packages/<name> && cargo build --release`); they all build into one shared folder,

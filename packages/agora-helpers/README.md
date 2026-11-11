@@ -32,3 +32,27 @@ yay sends, pacman failing or killed, cancels before, during and just after a run
 installed list and the cache folder must be the same.
 
     cargo build --release && python3 parity/compare.py [-v]
+
+## Why Rust: measured
+
+Measured on 2026-11-11 with `tools/bench-port.py` against the Python script from git, with a stand-in pacman (the install in
+the parity script's namespace sandbox), on my desktop (16 threads). Method and every case: [docs/PORT_NUMBERS.md](../../docs/PORT_NUMBERS.md).
+
+| Metric | Python | Rust | Change |
+| --- | --- | --- | --- |
+| a refused command, wall time | 20.0 ms | 0.44 ms | −98 %, 19.5 ms faster |
+| an install (stand-in pacman), wall time | 273 ms | 252 ms | −8 %, 20.9 ms faster |
+| an install, CPU time | 23.3 ms | 2.47 ms | −89 %, 20.9 ms less |
+| peak memory | 12.8–12.9 MB | 2.4–4.3 MB | −67 to −81 % |
+| on disk | 5.7 KB script (+ Python, 75 MB) | 363 KB | +357 KB; Agora no longer needs Python |
+
+Both look for the cancel file every 0.25 s while pacman runs, so an install takes at least 250 ms either way.
+
+More accurate:
+
+- A package name or `--ignore` list ending in a newline passed the script's patterns (Python's `$` matches before a final
+  newline); it is refused now.
+- Parity: 136 cases in the sandbox (refusals, yay's shapes, pacman failing or killed, cancels before, during and just after
+  a run): all the same.
+- Tests: the script's 12 carried over, 5 on hostile arguments and cancel files, pacman's exit codes, and two cancels in a
+  namespace of their own.

@@ -43,3 +43,29 @@ that runs through Proton/Wine usually reports its own errors without a Linux cra
 
     yggdrasil-crashwatch --dry-run              print "EXE crashed (SIGNAL)" for each new crash of yours instead of a notice
     crashwatch-notice --print EXE SIGNAL        what a notice would say (and what the assistant would be asked)
+
+## Why Rust: measured
+
+It replaces Labyrinth OS's Python `labyrinth-crash-watch`, which followed the journal through a `journalctl -f` child.
+Measured on 2026-11-11 with `tools/bench-port.py` against that script from git (the Labyrinth OS repository), both waiting
+for 60 s after a 5 s start, on my desktop (16 threads); stand-ins for notify-send, and the Rust one with `--dry-run`, so a
+crash meanwhile would show nothing. Method: [docs/PORT_NUMBERS.md](../../docs/PORT_NUMBERS.md).
+
+| Metric | Python | Rust | Change |
+| --- | --- | --- | --- |
+| memory while it waits (RSS) | 38.8 MB (Python and journalctl) | 2.4 MB (one process) | −94 %, 36.4 MB less |
+| memory while it waits (PSS) | 23.8 MB | 0.4 MB | −99 %, 23.5 MB less |
+| start (CPU in its first 5 s) | 22.8 ms | 0.38 ms | −98 %, 22.4 ms less |
+| CPU per minute while it waits | 0.23 ms | 0.00 ms | −100 %, 0.23 ms less |
+| wake-ups per minute while it waits | 3 | 0 | −100 %, 3 fewer |
+| on disk | 3.8 KB script (+ Python, 75 MB, shared) | 350 KB, and 1.27 MB for the notice program | +1.6 MB |
+
+Where Rust is worse: it sees only crashes whose core is stored (see "What it misses"); the journal showed the others too.
+
+What else changed:
+
+- Instead of reading every crash record in the journal through journalctl, it reads the program and the signal from the
+  attributes systemd-coredump sets on the core file, and whose crash it is from the file's name.
+- Each notice runs in a short-lived process of its own, so the watcher holds no D-Bus connection; "Ask ..." is offered only
+  when the system's assistant can be asked.
+- Tests: 11 unit, 3 on the watcher (inotify, attributes, the user filter, the rate limit) and 1 on a private D-Bus.

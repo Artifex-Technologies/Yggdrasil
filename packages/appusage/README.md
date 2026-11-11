@@ -38,3 +38,31 @@ Python script, which also started systemctl every 30 seconds.
 It is kept in `python/` with its tests, for a rollback, until this one has run a while: it was
 `/usr/local/bin/labyrinth-appusage` in Labyrinth OS's image. `parity/compare.py` runs both on the same inputs (scope names,
 usage files, this computer's own scopes) and shows they decide and write the same.
+
+## Why Rust: measured
+
+Measured on 2026-11-11 with `tools/bench-port.py` against the Python script from git, writing to a scratch folder, on my
+desktop (16 threads); the service ran 60 s after a 5 s start. Method and every case: [docs/PORT_NUMBERS.md](../../docs/PORT_NUMBERS.md).
+
+| Metric | Python | Rust | Change |
+| --- | --- | --- | --- |
+| the service, memory (PSS) | 7.0 MB | 0.6 MB | −92 %, 6.4 MB less |
+| the service, memory (RSS) | 12.9 MB | 2.6 MB | −79 %, 10.2 MB less |
+| the service, CPU per minute | 1.60 ms | 1.35 ms | −15 %, 0.25 ms less (about the same) |
+| the service, wake-ups per minute | 8 | 2 | −75 %, 6 fewer |
+| the service, start (CPU in its first 5 s) | 18.5 ms | 1.11 ms | −94 %, 17.4 ms less |
+| `--once`, wall time | 26.2 ms | 20.9 ms | −20 %, 5.3 ms faster |
+| `--once`, CPU time | 24.6 ms | 2.35 ms | −90 %, 22.2 ms less |
+| on disk | 3.7 KB script (+ Python, 75 MB, shared) | 503 KB | +499 KB |
+
+Idle CPU was already small for the script (it woke every 30 s); the gain is memory and that nothing is started every 30 s.
+`--once` asks systemctl, as the script did; the Rust one waits for it in 20 ms steps, so most of its 20.9 ms is waiting.
+
+More accurate:
+
+- Time is counted from an app's first scope to its last one's end. The script added 30 s to whatever ran at each sample:
+  an app open for 10 s between two samples counted nothing, one started just before a sample got 30 s.
+- Parity: 12,018 scope names against two sets of desktop entries, 40 sample sequences (240 samples) on empty, broken and
+  odd files, and this computer's own scopes: all the same, apart from the order new apps are added to the file (the
+  script's followed its set's order, which changed from run to run; here it is sorted).
+- Tests: the script's 2 carried over, 8 more, and a live one on the user's own systemd.
