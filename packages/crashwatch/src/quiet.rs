@@ -1,6 +1,7 @@
-//! One notice per program every ten minutes, so a crash loop does not become a storm of notices.
+//! One notice per program every ten minutes, so a crash loop does not become a storm of notices; and one per crash, though
+//! both its core file and its journal entry tell of it.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 /// How long a program stays quiet after a notice about it, in seconds.
 pub const QUIET_SECS: u64 = 600;
@@ -36,9 +37,42 @@ impl Quiet {
     }
 }
 
+/// The crashes already handled, by process id: a stored core's file and its journal entry both tell of one crash, and only
+/// the first to arrive counts. The last 64 are kept (a process id comes back only after millions of others).
+#[derive(Default)]
+pub struct Seen {
+    pids: VecDeque<u32>,
+}
+
+impl Seen {
+    /// Whether this is the first word of the crash of process `pid`; it counts as seen from now on.
+    pub fn first(&mut self, pid: u32) -> bool {
+        if self.pids.contains(&pid) {
+            return false;
+        }
+        if self.pids.len() == 64 {
+            self.pids.pop_front();
+        }
+        self.pids.push_back(pid);
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_crash_once() {
+        let mut s = Seen::default();
+        assert!(s.first(4242));
+        assert!(!s.first(4242), "the journal entry after the core file");
+        assert!(s.first(4243));
+        for p in 0..64 {
+            s.first(10_000 + p);
+        }
+        assert!(s.first(4242), "long forgotten");
+    }
 
     #[test]
     fn one_notice_per_program_every_ten_minutes() {

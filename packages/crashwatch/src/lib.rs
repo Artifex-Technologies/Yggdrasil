@@ -1,13 +1,15 @@
-//! Crash watch: when one of your own programs crashes and systemd-coredump stores its core, a notice says which program and
-//! which signal; when the system has an assistant that answers typed questions (an `assistant` integration file with a
-//! `question` command, docs/INTEGRATIONS.md), the notice offers to ask it. See README.md.
+//! Crash watch: when one of your own programs crashes, a notice says which program and which signal; when the system has an
+//! assistant that answers typed questions (an `assistant` integration file with a `question` command, docs/INTEGRATIONS.md),
+//! the notice offers to ask it. See README.md.
 //!
 //! The watcher (`yggdrasil-crashwatch`) follows the core folder with inotify and learns everything it needs from the new file's
 //! name (whose crash) and its extended attributes (which program, which signal), which systemd-coredump sets and which the
-//! crashing user may read through the file's ACL. It never opens a core. Each notice runs in its own short-lived process
-//! (`crashwatch-notice`), so the watcher never holds a D-Bus connection.
+//! crashing user may read through the file's ACL. It never opens a core. A crash whose core is not stored has only its
+//! journal entry, so the watcher also follows the user's own journal file for systemd-coredump's message (journal.rs). Each
+//! notice runs in its own short-lived process (`crashwatch-notice`), so the watcher never holds a D-Bus connection.
 
 pub mod core;
+pub mod journal;
 pub mod notice;
 pub mod quiet;
 

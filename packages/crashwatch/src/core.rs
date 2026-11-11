@@ -90,6 +90,22 @@ pub fn crash_of(core: &CoreName, uid: u32, attr: impl Fn(&str) -> Option<String>
     Some(Crash { exe, signal })
 }
 
+/// The crash a journal entry of systemd-coredump records (its "process dumped core" message, with the COREDUMP_* fields), if
+/// it is `uid`'s own: the crashed process's id (when the entry has one) and what a notice says. `field` reads one field.
+pub fn crash_of_entry(uid: u32, field: impl Fn(&str) -> Option<String>) -> Option<(Option<u32>, Crash)> {
+    if field("COREDUMP_UID")?.trim() != uid.to_string() {
+        return None;
+    }
+    let pid = field("COREDUMP_PID").and_then(|p| p.trim().parse().ok());
+    let exe = field("COREDUMP_EXE")
+        .map(|e| clean_exe(e.trim_end_matches(" (deleted)")))
+        .filter(|e| !e.is_empty())
+        .or_else(|| field("COREDUMP_COMM").map(|c| clean_exe(&c)).filter(|c| !c.is_empty()))
+        .unwrap_or_else(|| "a program".to_string());
+    let signal = field("COREDUMP_SIGNAL").map(|s| signal_name(&s)).unwrap_or_else(|| "a signal".to_string());
+    Some((pid, Crash { exe, signal }))
+}
+
 /// A program path made safe to show: letters, digits and `_ . / + -` only, at most 100 characters (as the Python version did).
 pub fn clean_exe(s: &str) -> String {
     s.chars().filter(|c| c.is_alphanumeric() || matches!(c, '_' | '.' | '/' | '+' | '-')).take(100).collect()
@@ -187,6 +203,29 @@ mod tests {
         assert_eq!((c.exe.as_str(), c.signal.as_str()), ("game.x86_64", "a signal"), "the file was already gone");
         let c = crash_of(&CoreName { comm: "  ".into(), uid: 1000, pid: 1 }, 1000, attrs(&[])).unwrap();
         assert_eq!(c.exe, "a program");
+    }
+
+    fn fields(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+        let m: HashMap<String, String> = pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        move |k: &str| m.get(k).cloned()
+    }
+
+    #[test]
+    fn crashes_from_the_journal() {
+        // a core that was not stored (Storage=none): the entry has no COREDUMP_FILENAME
+        let e = fields(&[("COREDUMP_UID", "1000"), ("COREDUMP_PID", "4242"), ("COREDUMP_EXE", "/opt/Game/game.x86_64"), ("COREDUMP_SIGNAL", "11"), ("COREDUMP_COMM", "game.x86_64")]);
+        assert_eq!(crash_of_entry(1000, &e), Some((Some(4242), Crash { exe: "/opt/Game/game.x86_64".into(), signal: "SIGSEGV".into() })));
+        assert_eq!(crash_of_entry(1001, &e), None, "another user's crash");
+        assert_eq!(crash_of_entry(1000, fields(&[("COREDUMP_PID", "1"), ("COREDUMP_EXE", "/x")])), None, "no owner: not shown");
+        // what is missing or odd falls back as for a core file
+        assert_eq!(crash_of_entry(1000, fields(&[("COREDUMP_UID", "10000"), ("COREDUMP_EXE", "/x")])), None, "not a prefix match");
+        let e = fields(&[("COREDUMP_UID", "1000"), ("COREDUMP_EXE", "/usr/bin/vivaldi-bin (deleted)"), ("COREDUMP_SIGNAL", "6")]);
+        assert_eq!(crash_of_entry(1000, &e), Some((None, Crash { exe: "/usr/bin/vivaldi-bin".into(), signal: "SIGABRT".into() })));
+        let e = fields(&[("COREDUMP_UID", "1000"), ("COREDUMP_PID", "x"), ("COREDUMP_COMM", "steamwebhelper")]);
+        assert_eq!(crash_of_entry(1000, &e), Some((None, Crash { exe: "steamwebhelper".into(), signal: "a signal".into() })));
+        let e = fields(&[("COREDUMP_UID", "1000"), ("COREDUMP_EXE", "/usr/bin/a b;rm -rf $HOME")]);
+        assert_eq!(crash_of_entry(1000, &e).unwrap().1.exe, "/usr/bin/abrm-rfHOME", "cleaned like a file's attributes");
+        assert_eq!(crash_of_entry(1000, fields(&[("COREDUMP_UID", "1000")])).unwrap().1.exe, "a program");
     }
 
     #[test]

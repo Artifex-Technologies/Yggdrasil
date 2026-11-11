@@ -2,13 +2,13 @@
 name = "yggdrasil-crashwatch"
 version = "0.1.0"
 edition = "2021"
-description = "Yggdrasil's crash watch: a notice when one of your own programs crashes, with an Ask action when the system has an assistant. Watches the folder systemd-coredump writes to; reads nothing else and sends nothing anywhere."
+description = "Yggdrasil's crash watch: a notice when one of your own programs crashes, with an Ask action when the system has an assistant. Watches the folder systemd-coredump writes to, and your own journal for its crash messages; sends nothing anywhere."
 license = "MPL-2.0"
 
 [lib]
 path = "src/lib.rs"
 
-# The watcher: the only part that stays running. It uses libc alone (no D-Bus), so it stays at a few hundred kilobytes.
+# The watcher: the only part that stays running. It uses libc and libsystemd's sd-journal (no D-Bus), so it stays small.
 [[bin]]
 name = "yggdrasil-crashwatch"
 path = "src/main.rs"

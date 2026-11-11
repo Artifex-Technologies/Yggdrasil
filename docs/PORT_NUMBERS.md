@@ -165,12 +165,16 @@ against the one Rust `power run`. The Python crash watch's RSS includes its jour
 
 | case | metric | old (Python) | Rust | change |
 | --- | --- | --- | --- | --- |
-| the service, idle | CPU per minute | 0.23 ms | 0.00 ms | −100 %, 0.23 ms less |
-| | wake-ups per minute | 3 | 0 | −100 %, 3 fewer |
-| | RSS (2 / 1 processes) | 38.8 MB | 2.4 MB | −94 %, 36.4 MB less |
-| | PSS | 23.8 MB | 0.4 MB | −99 %, 23.5 MB less |
-| | start (CPU in the first 5 s) | 22.8 ms | 0.38 ms | −98 %, 22.4 ms less |
-| on disk | | labyrinth-crash-watch 3.8 KB (scripts; the interpreter is shared) | yggdrasil-crashwatch 350 KB, crashwatch-notice 1269 KB (binaries) | |
+| the service, idle | CPU per minute | 9.44 ms | 0.04 ms | −100 %, 9.40 ms less |
+| | wake-ups per minute | 170 | 2 | −99 %, 168 fewer |
+| | RSS (2 / 1 processes) | 40.1 MB | 4.0 MB | −90 %, 36.1 MB less |
+| | PSS | 22.9 MB | 0.8 MB | −97 %, 22.1 MB less |
+| | start (CPU in the first 5 s) | 49.7 ms | 0.61 ms | −99 %, 49.1 ms less |
+| on disk | | labyrinth-crash-watch 3.8 KB (scripts; the interpreter is shared) | yggdrasil-crashwatch 359 KB, crashwatch-notice 1269 KB (binaries) | |
+
+From a later run the same day, after the Rust one began to follow the user's journal file as well (for the crashes whose
+core is not stored); the computer was busier then, which shows in the Python's CPU and wake-ups. Measured back to back just
+before that change, the Rust one took 2.4 MB RSS and 0.3 MB PSS, 0 wake-ups and 0.00 ms CPU a minute, 0.32 ms to start.
 
 ### pkg-root ([packages/agora-helpers](../packages/agora-helpers/README.md))
 

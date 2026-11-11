@@ -133,17 +133,11 @@ fn show(exe: &str, signal: &str, a: Option<Assistant>, n: &Notice) -> zbus::Resu
         let Some(m) = signals.next() else { return Ok(()) };
         let body = m.body();
         match m.header().member().map(|x| x.as_str()) {
-            Some("ActionInvoked") => {
-                if body.deserialize::<(u32, String)>().is_ok_and(|(nid, key)| nid == id && key == ASK) {
-                    ASKING.store(true, Ordering::SeqCst);
-                    break;
-                }
+            Some("ActionInvoked") if body.deserialize::<(u32, String)>().is_ok_and(|(nid, key)| nid == id && key == ASK) => {
+                ASKING.store(true, Ordering::SeqCst);
+                break;
             }
-            Some("NotificationClosed") => {
-                if body.deserialize::<(u32, u32)>().is_ok_and(|(nid, _)| nid == id) {
-                    return Ok(());
-                }
-            }
+            Some("NotificationClosed") if body.deserialize::<(u32, u32)>().is_ok_and(|(nid, _)| nid == id) => return Ok(()),
             _ => {}
         }
     }

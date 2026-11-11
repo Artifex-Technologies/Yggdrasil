@@ -8,8 +8,8 @@ pkgdesc="Yggdrasil's crash watch: a notice when one of your programs crashes, wi
 arch=('x86_64')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
 license=('MPL-2.0')
-# systemd-coredump stores the cores it watches for
-depends=('gcc-libs' 'glibc' 'systemd')
+# systemd-coredump stores the cores it watches for; libsystemd reads the journal (the crashes whose core is not stored)
+depends=('gcc-libs' 'glibc' 'systemd' 'systemd-libs')
 makedepends=('cargo')
 options=('!lto')
 

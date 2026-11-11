@@ -179,8 +179,11 @@ fn notices_on_a_private_bus() {
     // 4. the whole way: a core appears, the watcher starts the notice
     let cores = d.join("coredump");
     std::fs::create_dir_all(&cores).unwrap();
+    // an empty folder of journal files: the user's own journal is not followed here
+    let journal = d.join("journal");
+    std::fs::create_dir_all(&journal).unwrap();
     let mut w = Command::new(env!("CARGO_BIN_EXE_yggdrasil-crashwatch"))
-        .args(["--dir", cores.to_str().unwrap()])
+        .args(["--dir", cores.to_str().unwrap(), "--journal-dir", journal.to_str().unwrap()])
         .env("CRASHWATCH_NOTICE", env!("CARGO_BIN_EXE_crashwatch-notice"))
         .env("CRASHWATCH_INTEGRATIONS", &without)
         .env("HOME", &home)

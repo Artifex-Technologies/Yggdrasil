@@ -50,9 +50,16 @@ impl Drop for Running {
     }
 }
 
+/// An empty folder of journal files, so the user's own journal is not followed here (tests/journal.rs follows one).
+fn no_journal(dir: &Path) -> PathBuf {
+    let j = dir.parent().unwrap().join("journal");
+    std::fs::create_dir_all(&j).unwrap();
+    j
+}
+
 fn start(dir: &Path, notice: &Path) -> Running {
     let c = Command::new(env!("CARGO_BIN_EXE_yggdrasil-crashwatch"))
-        .args(["--dir", dir.to_str().unwrap()])
+        .args(["--dir", dir.to_str().unwrap(), "--journal-dir", no_journal(dir).to_str().unwrap()])
         .env("CRASHWATCH_NOTICE", notice)
         .stdin(Stdio::null())
         .spawn()
@@ -143,9 +150,10 @@ fn waits_for_the_folder_to_exist() {
 
 #[test]
 fn dry_run_prints_instead() {
-    let d = tmp("dry");
+    let d = tmp("dry").join("coredump");
+    std::fs::create_dir_all(&d).unwrap();
     let mut c = Command::new(env!("CARGO_BIN_EXE_yggdrasil-crashwatch"))
-        .args(["--dry-run", "--dir", d.to_str().unwrap()])
+        .args(["--dry-run", "--dir", d.to_str().unwrap(), "--journal-dir", no_journal(&d).to_str().unwrap()])
         .env("CRASHWATCH_NOTICE", "/nonexistent")
         .stdout(Stdio::piped())
         .spawn()
@@ -158,5 +166,5 @@ fn dry_run_prints_instead() {
     if stored {
         assert_eq!(String::from_utf8_lossy(&out.stdout), "/usr/bin/game crashed (SIGFPE)\n");
     }
-    let _ = std::fs::remove_dir_all(&d);
+    let _ = std::fs::remove_dir_all(d.parent().unwrap());
 }

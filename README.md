@@ -40,7 +40,7 @@ version that runs in a window ([docs/COMPOSITOR.md](docs/COMPOSITOR.md)). The ch
 | `packages/timer` | `yggdrasil-timer` | a countdown timer in the top bar |
 | `packages/health` | `yggdrasil-health` | break reminders (eyes, movement, water, breathing, meals, wind-down) with a top bar pill |
 | `packages/leakwatch` | `yggdrasil-leakwatch` | the leak watch: every 5 minutes (a timer; nothing stays running) each program's memory and the images it left with Hyprland; a warning when one keeps growing for hours |
-| `packages/crashwatch` | `yggdrasil-crashwatch` | the crash watch (off until turned on): a notice when one of your programs crashes, with "Ask ..." when the system has an assistant; about 0.4 MB while it waits ([README](packages/crashwatch/README.md)) |
+| `packages/crashwatch` | `yggdrasil-crashwatch` | the crash watch (off until turned on): a notice when one of your programs crashes, with "Ask ..." when the system has an assistant; about 0.8 MB while it waits ([README](packages/crashwatch/README.md)) |
 | `packages/gametime` | `yggdrasil-gametime` | game time: while a game runs, background updates and chores wait and catch up afterwards; the leak watch, virus scans and Heimdall keep running ([docs/GAME_TIME.md](docs/GAME_TIME.md)) |
 | `packages/controllers` | `yggdrasil-controllers` | game controllers in the top bar: battery, rumble test, light bar colour, notifications |
 | `packages/gamepads` | | the game controller library that Settings and the controllers add-on share (reads sysfs) |
@@ -201,7 +201,7 @@ the bugs the port fixed and where the Rust one is worse.
 | tune, casefan, gpufan, powerlimit | `casefan get` 39.9 → 2.16 ms (−95 %) | the four loops (no card): 35.4 → 0.9 MB PSS (−98 %), 650 → 170 wake-ups a minute | [power-helpers](packages/power-helpers/README.md) |
 | account, bootscreen, game-fix, gpu-run | `account list` 23.7 → 0.50 ms (−98 %); `gpu-run list` 32.1 → 9.14 ms (−72 %) | 13.5–15.0 → 2.5–4.6 MB; a boot picture 130 → 189 MB (**+46 %**) | [settings-helpers](packages/settings-helpers/README.md) |
 | labyrinth-appusage | start 18.5 → 1.1 ms CPU (−94 %) | 7.0 → 0.6 MB PSS (−92 %) | [appusage](packages/appusage/README.md) |
-| the crash watch | start 22.8 → 0.38 ms CPU (−98 %) | 23.8 → 0.4 MB PSS (−99 %) | [crashwatch](packages/crashwatch/README.md) |
+| the crash watch | start 49.7 → 0.61 ms CPU (−99 %) | 22.9 → 0.8 MB PSS (−97 %) | [crashwatch](packages/crashwatch/README.md) |
 | pkg-root | a refused command 20.0 → 0.44 ms (−98 %) | 12.8 → 2.4 MB (−81 %) | [agora-helpers](packages/agora-helpers/README.md) |
 | ygg-theme | `gtk4-theme` 116 → 32.9 ms (−72 %) | 57.6 → 32.3 MB (−44 %) | [theme](packages/theme/README.md) |
 | ygg-cursors | 1057 → 1604 ms (**+52 %, slower**) | 31.5 → 15.1 MB (−52 %) | [theme](packages/theme/README.md) |
