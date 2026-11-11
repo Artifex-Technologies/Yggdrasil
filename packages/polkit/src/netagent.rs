@@ -113,6 +113,8 @@ pub struct NetAgent {
 
 #[zbus::interface(name = "org.freedesktop.NetworkManager.SecretAgent")]
 impl NetAgent {
+    // NetworkManager's GetSecrets: the arguments are the D-Bus method's own
+    #[allow(clippy::too_many_arguments)]
     async fn get_secrets(&self, connection: Settings, _connection_path: zbus::zvariant::OwnedObjectPath, setting_name: String, hints: Vec<String>, flags: u32, #[zbus(header)] hdr: zbus::message::Header<'_>, #[zbus(connection)] conn: &zbus::Connection) -> Result<Settings, AgentError> {
         if !from_network_manager(conn, &hdr).await {
             return Err(AgentError::PermissionDenied("only NetworkManager may ask".into()));

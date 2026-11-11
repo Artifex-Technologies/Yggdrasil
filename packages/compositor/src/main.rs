@@ -242,19 +242,19 @@ fn run_nested(mut event_loop: EventLoop<'static, App>, display: Display<App>, pi
         WinitEvent::Input(event) => app.on_input(event),
         WinitEvent::Redraw => {
             let mut backend = backend.borrow_mut();
-            let mut damage: Option<Vec<Rectangle<i32, smithay::utils::Physical>>> = None;
-            {
+            let damage: Option<Vec<Rectangle<i32, smithay::utils::Physical>>> = {
                 let age = backend.buffer_age().unwrap_or(0);
                 let Ok((renderer, mut fb)) = backend.bind() else { return };
-                if app.locked {
+                let d = if app.locked {
                     // While the session is locked only the locker's own picture is drawn: nothing of the session shows.
                     let elements = app.lock_elements(renderer, &output);
-                    damage = damage_tracker.render_output(renderer, &mut fb, age, &elements, [0.0f32, 0.0, 0.0, 1.0]).ok().and_then(|r| r.damage.cloned());
+                    damage_tracker.render_output(renderer, &mut fb, age, &elements, [0.0f32, 0.0, 0.0, 1.0]).ok().and_then(|r| r.damage.cloned())
                 } else {
                     let elements = app.scene(renderer, &output);
-                    damage = damage_tracker.render_output(renderer, &mut fb, age, &elements, [0.05f32, 0.05, 0.08, 1.0]).ok().and_then(|r| r.damage.cloned());
-                }
-            }
+                    damage_tracker.render_output(renderer, &mut fb, age, &elements, [0.05f32, 0.05, 0.08, 1.0]).ok().and_then(|r| r.damage.cloned())
+                };
+                d
+            };
             // only what changed is sent on; a frame with no change at all is not even submitted
             if let Some(d) = &damage {
                 let _ = backend.submit(Some(d));

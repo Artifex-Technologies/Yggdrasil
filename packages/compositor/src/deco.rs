@@ -72,7 +72,7 @@ pub fn make(key: Key) -> Bar {
     }
     // tiny-skia is premultiplied RGBA; the buffer wants Argb8888 (BGRA bytes)
     let mut data = Vec::with_capacity((w * h * 4) as usize);
-    for p in pix.data().chunks_exact(4) {
+    for p in pix.data().as_chunks::<4>().0 {
         data.extend_from_slice(&[p[2], p[1], p[0], p[3]]);
     }
     let buffer = MemoryRenderBuffer::from_slice(&data, Fourcc::Argb8888, (w as i32, h as i32), 1, Transform::Normal, None);

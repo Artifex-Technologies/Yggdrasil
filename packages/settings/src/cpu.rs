@@ -106,6 +106,8 @@ fn package_power() -> Option<f32> {
     (now - t < 10.0).then(|| v["power_w"].as_f64().map(|w| w as f32)).flatten()
 }
 
+// about one message a second: their size does not matter
+#[allow(clippy::large_enum_variant)]
 enum Msg {
     Sample(Sample),
     Loaded(Option<sys::PowerLimits>, String, Option<Tune>),

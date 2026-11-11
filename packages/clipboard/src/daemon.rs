@@ -24,7 +24,7 @@ fi
 cat >/dev/null"#;
 
 pub fn socket_path() -> std::path::PathBuf {
-    let run = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from).unwrap_or_else(|| std::env::temp_dir());
+    let run = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir);
     run.join("yggdrasil-clipboard.sock")
 }
 

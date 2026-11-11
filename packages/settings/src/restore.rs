@@ -51,7 +51,7 @@ pub fn parse_list(json: &str) -> Vec<Snap> {
                 .collect()
         })
         .unwrap_or_default();
-    out.sort_by(|a, b| b.number.cmp(&a.number));
+    out.sort_by_key(|a| std::cmp::Reverse(a.number));
     out
 }
 

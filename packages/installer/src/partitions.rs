@@ -369,7 +369,7 @@ pub fn ui(ui: &mut egui::Ui, pal: &Palette, m: &mut Manual, disk_size: u64, part
             let (mut mount, mut fs) = (cur.mount.clone(), cur.format.clone().unwrap_or_default());
             use_choice(ui, &format!("use-{key}"), &mut mount, &mut fs, true);
             if mount != cur.mount || Some(fs.clone()) != cur.format {
-                m.set_use(&key, (!mount.is_empty()).then(|| Use { mount, format: Some(fs) }));
+                m.set_use(&key, (!mount.is_empty()).then_some(Use { mount, format: Some(fs) }));
             }
             if ui.button("Remove this new partition").clicked() {
                 let id = n.id.clone();

@@ -276,7 +276,7 @@ mod tests {
     #[test]
     fn printers_and_their_state() {
         let t = "printer Brother_HL is idle.  enabled since Wed 22 Oct 2026 10:00:00 AM\nprinter Office now printing Office-12.  enabled since Wed\nprinter Old disabled since Wed 22 Oct 2026 -\n\tPaused\n";
-        let p = parse_printers(&t);
+        let p = parse_printers(t);
         assert_eq!(p.len(), 3);
         assert_eq!(p[0], ("Brother_HL".into(), "idle".into(), "".into()));
         assert_eq!(p[1].1, "printing");

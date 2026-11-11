@@ -118,6 +118,8 @@ pub fn curve_arg(pts: &[[i64; 2]]) -> String {
     format!("curve={}", pts.iter().map(|p| format!("{}:{}", p[0], p[1])).collect::<Vec<_>>().join(","))
 }
 
+// about one message a second: their size does not matter
+#[allow(clippy::large_enum_variant)]
 enum Msg {
     Sample(Sample),
     Limits(Option<sys::PowerLimits>, String),

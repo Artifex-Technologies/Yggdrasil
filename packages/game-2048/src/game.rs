@@ -166,12 +166,15 @@ pub struct Game {
     pub rng: Rng,
 }
 
+/// A tile's slide: (value, from, to), cells as (x, y).
+pub type Slide = (u32, (usize, usize), (usize, usize));
+
 /// What a move did, for the animation: where each tile of the old board went, the cells where two became one, the new tile.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Moved {
     pub moved: bool,
     /// (value, from, to) for every tile of the board before the move.
-    pub slides: Vec<(u32, (usize, usize), (usize, usize))>,
+    pub slides: Vec<Slide>,
     pub merged: Vec<(usize, usize)>,
     pub spawned: Option<(usize, usize)>,
     pub gained: u32,
@@ -395,9 +398,9 @@ mod tests {
     fn board(rows: &[&[u32]]) -> Game {
         let size = rows.len();
         let mut g = Game::new(size, Mode::Classic, "");
-        for x in 0..size {
-            for y in 0..size {
-                g.cells[x][y] = rows[y][x];
+        for (y, row) in rows.iter().enumerate() {
+            for (x, &v) in row.iter().enumerate() {
+                g.cells[x][y] = v;
             }
         }
         g.over = false;

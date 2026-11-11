@@ -76,7 +76,7 @@ pub fn load() -> Vec<Row> {
         .enumerate()
         .map(|(i, k)| {
             let mut choices: Vec<Choice> = progs.iter().filter(|(_, _, m)| k.mimes.iter().any(|x| m.iter().any(|y| y == x))).map(|(id, n, _)| Choice { id: id.clone(), name: n.clone() }).collect();
-            choices.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+            choices.sort_by_key(|a| a.name.to_lowercase());
             Row { kind: i, current: current(k.mimes[0]), choices }
         })
         .collect()

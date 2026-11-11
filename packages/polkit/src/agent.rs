@@ -20,7 +20,7 @@ pub enum UiMsg {
     Confirm { button: String, reply: Sender<bool> },
     Message { text: String, error: bool },
     /// The request is over (close the dialog).
-    Done { ok: bool },
+    Done,
 }
 
 pub struct Agent {

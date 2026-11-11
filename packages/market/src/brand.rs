@@ -30,7 +30,9 @@ pub fn white(svg: &str) -> Option<String> {
 
 /// A logo for the first name that has one: (its white SVG, the tile colour, a stable name for egui's image cache).
 pub fn find(names: &[&str]) -> Option<(String, Color32, String)> {
-    static CACHE: Mutex<Option<HashMap<String, Option<(String, Color32)>>>> = Mutex::new(None);
+    // name -> (its white SVG, the tile colour), or None when Liki has no logo of that name
+    type Cache = HashMap<String, Option<(String, Color32)>>;
+    static CACHE: Mutex<Option<Cache>> = Mutex::new(None);
     for n in names {
         let slug = n.to_lowercase();
         if slug.is_empty() || !slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {

@@ -1169,7 +1169,7 @@ pub fn components(json: &str, installed: &dyn Fn(&str) -> bool) -> Vec<Component
                 .map(|c| {
                     let pkgs: Vec<&str> = c["packages"].as_array().map(|p| p.iter().filter_map(|x| x.as_str()).collect()).unwrap_or_default();
                     let pkgbuild = c["pkgbuild"].as_str();
-                    let ok = if !pkgs.is_empty() { pkgs.iter().all(|p| installed(p)) } else { pkgbuild.map(|p| installed(p)).unwrap_or(false) };
+                    let ok = if !pkgs.is_empty() { pkgs.iter().all(|p| installed(p)) } else { pkgbuild.map(installed).unwrap_or(false) };
                     Component {
                         id: c["id"].as_str().unwrap_or("").to_string(),
                         name: c["name"].as_str().unwrap_or("").to_string(),

@@ -34,6 +34,9 @@ struct Playing {
     inhibit: Option<zbus::zvariant::OwnedFd>,
 }
 
+/// Something the window does after drawing a frame (the frame's widgets only note what was clicked).
+type Deferred = Box<dyn FnOnce(&mut App, &egui::Context)>;
+
 struct App {
     now: Option<Playing>,
     error: Option<String>,
@@ -80,7 +83,7 @@ fn path_from_uri(uri: &str) -> Option<PathBuf> {
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
     while i < b.len() {
-        if b[i] == b'%' && i + 2 < b.len() + 0 && i + 2 <= b.len() - 1 {
+        if b[i] == b'%' && i + 2 < b.len() {
             if let Ok(v) = u8::from_str_radix(std::str::from_utf8(&b[i + 1..i + 3]).ok()?, 16) {
                 out.push(v);
                 i += 3;
@@ -172,6 +175,7 @@ impl App {
         app
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn open_stream(&mut self, url: &str, audio: Option<&str>, title: String, start: Option<f64>, user_agent: Option<&str>, referer: Option<&str>, ctx: &egui::Context) {
         self.close();
         let c = ctx.clone();
@@ -480,7 +484,7 @@ impl eframe::App for App {
         let full = ctx.content_rect();
         let playing_something = self.now.is_some();
         let bg = if playing_something { Color32::BLACK } else { pal.bg };
-        let mut actions: Vec<Box<dyn FnOnce(&mut App, &egui::Context)>> = vec![];
+        let mut actions: Vec<Deferred> = vec![];
 
         egui::CentralPanel::default().frame(egui::Frame::new().fill(bg)).show(ui, |ui| {
             // the picture, as large as fits
@@ -668,7 +672,7 @@ mod tests {
         }
         assert!(matches!(a(&["--audio", "http://plain", "https://v"]), Some(Start::Stream { audio: None, .. })), "plain http is not taken");
         assert!(matches!(a(&["/home/a/x.mkv"]), Some(Start::File(_))));
-        assert!(matches!(a(&["file:///home/a/My%20Film.mkv"]), Some(Start::File(p)) if p == PathBuf::from("/home/a/My Film.mkv")));
+        assert!(matches!(a(&["file:///home/a/My%20Film.mkv"]), Some(Start::File(p)) if p == Path::new("/home/a/My Film.mkv")));
         assert!(a(&[]).is_none());
     }
 

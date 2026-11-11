@@ -876,7 +876,7 @@ impl eframe::App for App {
                         if let Some(why) = &d.readonly {
                             ui.label(RichText::new("read only").size(12.0).color(pal.dim)).on_hover_text(format!("Cannot be saved: {why}"));
                         }
-                        let folder = d.path.parent().map(|p| tidy_path(p)).unwrap_or_default();
+                        let folder = d.path.parent().map(tidy_path).unwrap_or_default();
                         let room = (ui.available_width() - self.right_w - chrome::controls_width() - 40.0).clamp(0.0, 360.0);
                         if room > 40.0 {
                             ui.allocate_ui(vec2(room, 20.0), |ui| ui.add(Label::new(RichText::new(folder).size(12.0).color(pal.dim)).truncate()));

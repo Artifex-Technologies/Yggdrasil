@@ -6,8 +6,6 @@ use serde::Deserialize;
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct Finding {
     #[serde(default)]
-    pub check: String,
-    #[serde(default)]
     pub status: String,
     #[serde(default)]
     pub title: String,

@@ -569,7 +569,7 @@ mod tests {
     fn implicit_multiplication() {
         assert_eq!(ev("2(3+4)"), 14.0);
         assert_eq!(ev("(1+2)(3+4)"), 21.0);
-        assert!((ev("2π") - 6.283185307179586).abs() < 1e-12);
+        assert!((ev("2π") - std::f64::consts::TAU).abs() < 1e-12);
         assert_eq!(txt("3sin(30)"), "1.5");
     }
 

@@ -453,6 +453,7 @@ impl App {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn start_job(&mut self, ctx: &egui::Context, id: &str, name: &str, op: install::Op, prog: String, args: Vec<String>, undo: install::Undo) {
         let (tx, ctx_a, ctx_b, id2, name2) = (self.tx.clone(), ctx.clone(), ctx.clone(), id.to_string(), name.to_string());
         let job = install::start(id, name, op, prog, args, undo, move || ctx_a.request_repaint(), move |status| {
@@ -1312,9 +1313,9 @@ impl eframe::App for App {
         let accent = theme::system_accent();
         theme::apply(&ctx, dark, accent);
         self.pal = theme::palette_for(dark, accent);
-        let pal = self.pal.clone();
+        let pal = self.pal;
         // look for updates every half hour while the window is open (and again soon after an install)
-        if !self.checking && self.last_check.map(|t| t.elapsed() > Duration::from_secs(if self.update_list.is_empty() { 1800 } else { 1800 })).unwrap_or(true) && self.jobs.iter().all(|j| j.lock().map(|g| g.status != install::Status::Running).unwrap_or(true)) {
+        if !self.checking && self.last_check.map(|t| t.elapsed() > Duration::from_secs(1800)).unwrap_or(true) && self.jobs.iter().all(|j| j.lock().map(|g| g.status != install::Status::Running).unwrap_or(true)) {
             self.check_updates(&ctx);
         }
 

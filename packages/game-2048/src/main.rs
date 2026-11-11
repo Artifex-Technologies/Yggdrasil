@@ -111,7 +111,7 @@ fn today() -> String {
 /// A move being drawn: the tiles sliding from the old board, then the merged ones popping and the new one growing.
 struct Anim {
     t0: Instant,
-    slides: Vec<(u32, (usize, usize), (usize, usize))>,
+    slides: Vec<game::Slide>,
     merged: Vec<(usize, usize)>,
     spawned: Option<(usize, usize)>,
 }

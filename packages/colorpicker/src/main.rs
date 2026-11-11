@@ -464,7 +464,7 @@ fn from_ppm(data: &[u8]) -> Option<Img> {
     let (w, h): (u32, u32) = (fields[1].parse().ok()?, fields[2].parse().ok()?);
     let rgb = data.get(i + 1..i + 1 + (w * h * 3) as usize)?;
     let mut px = Vec::with_capacity((w * h * 4) as usize);
-    for p in rgb.chunks_exact(3) {
+    for p in rgb.as_chunks::<3>().0 {
         px.extend_from_slice(&[p[2], p[1], p[0], 255]);
     }
     Some(Img { w, h, px })

@@ -73,7 +73,7 @@ fn app_icon(ui: &mut egui::Ui, pal: &Palette, a: &AppInfo, size: f32) {
 
 fn sorted<'a>(apps: &'a [AppInfo], sort: usize, sizes: &HashMap<String, u64>, filter: &str, system: bool) -> Vec<&'a AppInfo> {
     let f = filter.trim().to_lowercase();
-    let mut v: Vec<&AppInfo> = apps.iter().filter(|a| (system || !a.system || a.running.len() > 0 || a.net != NetMode::Allow) && (f.is_empty() || a.name.to_lowercase().contains(&f) || a.id.to_lowercase().contains(&f))).collect();
+    let mut v: Vec<&AppInfo> = apps.iter().filter(|a| (system || !a.system || !a.running.is_empty() || a.net != NetMode::Allow) && (f.is_empty() || a.name.to_lowercase().contains(&f) || a.id.to_lowercase().contains(&f))).collect();
     match sort {
         0 => v.sort_by(|a, b| b.seconds.cmp(&a.seconds).then(b.launches.cmp(&a.launches)).then(b.last_used.cmp(&a.last_used)).then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))),
         1 => v.sort_by(|a, b| sizes.get(&b.id).unwrap_or(&0).cmp(sizes.get(&a.id).unwrap_or(&0)).then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))),

@@ -259,7 +259,7 @@ fn write_png(image: &Image<'static, 'static>, path: &Path) -> Result<(), String>
     let bytes = unsafe { std::slice::from_raw_parts(image.data() as *const u8, stride * h) };
     let mut rgb = Vec::with_capacity(w * h * 3);
     for row in bytes.chunks(stride).take(h) {
-        for px in row[..w * 4].chunks_exact(4) {
+        for px in row[..w * 4].as_chunks::<4>().0 {
             let v = u32::from_ne_bytes([px[0], px[1], px[2], px[3]]);
             rgb.extend_from_slice(&[(v >> 16) as u8, (v >> 8) as u8, v as u8]);
         }

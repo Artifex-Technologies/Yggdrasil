@@ -68,7 +68,7 @@ impl App {
                         d.notes.push((text, error));
                     }
                 }
-                UiMsg::Done { .. } => {
+                UiMsg::Done => {
                     if let Some(mut d) = self.dialog.take() {
                         d.input.zeroize();
                     }

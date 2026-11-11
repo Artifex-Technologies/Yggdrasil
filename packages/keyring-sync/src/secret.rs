@@ -96,13 +96,6 @@ impl Keyring {
         }
         Ok(())
     }
-
-    /// How many items are in the keyring (readable only when it is unlocked; labels, not secrets).
-    pub fn item_count(&self) -> Option<usize> {
-        let p = Proxy::new(&self.conn, SERVICE, self.collection.as_str(), "org.freedesktop.DBus.Properties").ok()?;
-        let v: OwnedValue = p.call("Get", &("org.freedesktop.Secret.Collection", "Items")).ok()?;
-        Vec::<OwnedObjectPath>::try_from(v).ok().map(|l| l.len())
-    }
 }
 
 /// Starts over with an empty login keyring protected by `password`: the old file is moved aside (not deleted), the daemon restarted.

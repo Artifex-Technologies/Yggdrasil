@@ -107,21 +107,30 @@ use smithay::wayland::shm::{ShmHandler, ShmState};
 use smithay::wayland::viewporter::ViewporterState;
 use smithay::{delegate_compositor, delegate_data_device, delegate_idle_notify, delegate_layer_shell, delegate_output, delegate_seat, delegate_session_lock, delegate_shm, delegate_viewporter, delegate_xdg_shell};
 
+/// How the renderer takes in a program's GPU picture (true when it could).
+pub type DmabufImport = Box<dyn FnMut(&smithay::backend::allocator::dmabuf::Dmabuf) -> bool>;
+/// Shows the pointer the way it should look.
+pub type CursorHook = Box<dyn FnMut(&CursorImageStatus)>;
+/// The switcher's picture, and the windows and the choice it was drawn for.
+type SwitcherArt = ((Vec<(String, String)>, usize), MemoryRenderBuffer);
+
 pub struct App {
     /// GPU pictures from programs (linux-dmabuf): the protocol's state, and how the renderer takes one in (set by the backend;
     /// None until then, when every import fails and programs fall back to shared memory).
     pub dmabuf_state: smithay::wayland::dmabuf::DmabufState,
-    pub dmabuf_import: Option<Box<dyn FnMut(&smithay::backend::allocator::dmabuf::Dmabuf) -> bool>>,
+    pub dmabuf_import: Option<DmabufImport>,
     /// Surfaces that keep the screen awake (idle-inhibit: a video, a game): while any is alive, idle does not start.
     pub inhibitors: Vec<WlSurface>,
-    pub idle_inhibit_state: smithay::wayland::idle_inhibit::IdleInhibitManagerState,
+    // The protocol states named with a leading _ (here and further down) are only held: each owns its global (what programs
+    // see advertised) and no handler reads it back.
+    pub _idle_inhibit_state: smithay::wayland::idle_inhibit::IdleInhibitManagerState,
     pub primary_selection_state: smithay::wayland::selection::primary_selection::PrimarySelectionState,
-    pub fractional_scale_state: smithay::wayland::fractional_scale::FractionalScaleManagerState,
+    pub _fractional_scale_state: smithay::wayland::fractional_scale::FractionalScaleManagerState,
     pub activation_state: smithay::wayland::xdg_activation::XdgActivationState,
-    pub cursor_shape_state: smithay::wayland::cursor_shape::CursorShapeManagerState,
-    pub tablet_state: smithay::wayland::tablet_manager::TabletManagerState,
+    pub _cursor_shape_state: smithay::wayland::cursor_shape::CursorShapeManagerState,
+    pub _tablet_state: smithay::wayland::tablet_manager::TabletManagerState,
     /// What the pointer should look like, for the backend to show (nested: the host window's cursor).
-    pub cursor_hook: Option<Box<dyn FnMut(&CursorImageStatus)>>,
+    pub cursor_hook: Option<CursorHook>,
     /// Wakes the drawing: the screen is drawn only when something changed (a program committed a picture, input, a setting).
     ping: smithay::reexports::calloop::ping::Ping,
     pub display_handle: DisplayHandle,
@@ -135,8 +144,8 @@ pub struct App {
     pub shm_state: ShmState,
     pub seat_state: SeatState<Self>,
     pub data_device_state: DataDeviceState,
-    pub output_manager_state: OutputManagerState,
-    pub viewporter_state: ViewporterState,
+    pub _output_manager_state: OutputManagerState,
+    pub _viewporter_state: ViewporterState,
     pub lock_state: SessionLockManagerState,
     pub idle_state: IdleNotifierState<Self>,
     pub seat: Seat<Self>,
@@ -168,7 +177,7 @@ pub struct App {
     decorate_all: bool,
     bar_hover: Option<(WlSurface, Hit)>,
     last_click: Option<(std::time::Instant, WlSurface)>,
-    pub decoration_state: XdgDecorationState,
+    pub _decoration_state: XdgDecorationState,
     /// Windows, most recently used first (for the switcher).
     focus_order: Vec<WlSurface>,
     /// Windows in the order they were opened (tiling follows it).
@@ -177,7 +186,7 @@ pub struct App {
     switcher: Option<(Vec<WlSurface>, usize)>,
     /// The modifiers held down to keep the switcher open (those of the Tab binding): letting go of one picks the window.
     switcher_hold: Mods,
-    switcher_art: Option<((Vec<(String, String)>, usize), MemoryRenderBuffer)>,
+    switcher_art: Option<SwitcherArt>,
     current_ws: usize,
     /// The workspace profiles from workspaces.conf, and what was chosen for the workspaces that ask.
     ws_conf: tiling::Conf,
@@ -351,17 +360,17 @@ impl App {
             dmabuf_state: smithay::wayland::dmabuf::DmabufState::new(),
             dmabuf_import: None,
             inhibitors: vec![],
-            idle_inhibit_state: smithay::wayland::idle_inhibit::IdleInhibitManagerState::new::<Self>(dh),
+            _idle_inhibit_state: smithay::wayland::idle_inhibit::IdleInhibitManagerState::new::<Self>(dh),
             primary_selection_state: smithay::wayland::selection::primary_selection::PrimarySelectionState::new::<Self>(dh),
-            fractional_scale_state: smithay::wayland::fractional_scale::FractionalScaleManagerState::new::<Self>(dh),
+            _fractional_scale_state: smithay::wayland::fractional_scale::FractionalScaleManagerState::new::<Self>(dh),
             activation_state: smithay::wayland::xdg_activation::XdgActivationState::new::<Self>(dh),
-            cursor_shape_state: smithay::wayland::cursor_shape::CursorShapeManagerState::new::<Self>(dh),
-            tablet_state: smithay::wayland::tablet_manager::TabletManagerState::new::<Self>(dh),
+            _cursor_shape_state: smithay::wayland::cursor_shape::CursorShapeManagerState::new::<Self>(dh),
+            _tablet_state: smithay::wayland::tablet_manager::TabletManagerState::new::<Self>(dh),
             cursor_hook: None,
             seat_state,
             data_device_state: DataDeviceState::new::<Self>(dh),
-            output_manager_state: OutputManagerState::new_with_xdg_output::<Self>(dh),
-            viewporter_state: ViewporterState::new::<Self>(dh),
+            _output_manager_state: OutputManagerState::new_with_xdg_output::<Self>(dh),
+            _viewporter_state: ViewporterState::new::<Self>(dh),
             lock_state: SessionLockManagerState::new::<Self, _>(dh, |_| true),
             idle_state: IdleNotifierState::new(dh, handle),
             seat,
@@ -392,7 +401,7 @@ impl App {
             decorate_all: std::env::var("YGGDRASIL_COMPOSITOR_DECORATE").map(|v| v == "all").unwrap_or(false),
             bar_hover: None,
             last_click: None,
-            decoration_state: XdgDecorationState::new::<Self>(dh),
+            _decoration_state: XdgDecorationState::new::<Self>(dh),
             focus_order: vec![],
             opened_at: vec![],
             switcher: None,

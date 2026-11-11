@@ -113,9 +113,7 @@ pub fn change_password_with(cmdline: &str, current: &str, new: &str) -> Result<(
         let mut sent = false;
         if stage == 0 && fresh.contains("current password") {
             sent = send(current, &mut stdin).is_ok();
-        } else if stage == 1 && fresh.contains("new password:") && !fresh.contains("retype") {
-            sent = send(new, &mut stdin).is_ok();
-        } else if stage == 2 && fresh.contains("retype new password") {
+        } else if (stage == 1 && fresh.contains("new password:") && !fresh.contains("retype")) || (stage == 2 && fresh.contains("retype new password")) {
             sent = send(new, &mut stdin).is_ok();
         }
         if sent {
@@ -145,6 +143,82 @@ pub fn strength(pw: &str) -> (&'static str, f32) {
         (12..=15, 1) => ("Fair", 0.6),
         (12..=15, _) => ("Good", 0.8),
         _ => ("Strong", 1.0),
+    }
+}
+
+/// Every login account (uid 1000 up) from the text of /etc/passwd and /etc/group; `admin` is membership of wheel.
+pub fn parse_accounts(passwd: &str, group: &str) -> Vec<Account> {
+    let admins: Vec<&str> = group.lines().find(|l| l.starts_with("wheel:")).map(|l| l.rsplit(':').next().unwrap_or("").split(',').filter(|s| !s.is_empty()).collect()).unwrap_or_default();
+    passwd.lines().filter_map(parse_passwd).filter(|a| a.uid >= 1000 && a.uid < 60000).map(|mut a| {
+        a.admin = admins.contains(&a.login.as_str());
+        a
+    }).collect()
+}
+
+/// Every account and the optional groups this system has (name, what it allows), from the account helper's `list` and `groups`
+/// (they need no administrator). Without the helper: the accounts from /etc/passwd, with no access details.
+pub fn all() -> (Vec<Account>, Vec<(String, String)>) {
+    let helper = "/usr/lib/yggdrasil/account";
+    let list = crate::sys::run(helper, &["list"]).and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
+    let accounts = match list.as_ref().and_then(|v| v.as_array()) {
+        Some(a) => a.iter().filter_map(account_from_json).collect(),
+        None => {
+            let p = std::fs::read_to_string("/etc/passwd").unwrap_or_default();
+            let g = std::fs::read_to_string("/etc/group").unwrap_or_default();
+            parse_accounts(&p, &g)
+        }
+    };
+    let groups = crate::sys::run(helper, &["groups"]).and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
+    let mut groups: Vec<(String, String)> = groups.as_ref().and_then(|v| v.as_object()).map(|o| o.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect()).unwrap_or_default();
+    groups.sort();
+    (accounts, groups)
+}
+
+fn account_from_json(v: &serde_json::Value) -> Option<Account> {
+    Some(Account {
+        login: v["login"].as_str()?.to_string(),
+        full_name: v["full_name"].as_str().unwrap_or("").to_string(),
+        uid: v["uid"].as_u64()? as u32,
+        admin: v["admin"].as_bool().unwrap_or(false),
+        home: v["home"].as_str().unwrap_or("").to_string(),
+        protected: v["protected"].as_bool().unwrap_or(false),
+        can_login: v["can_login"].as_bool().unwrap_or(true),
+        sudo_nopassword: v["sudo_nopassword"].as_bool().unwrap_or(false),
+        groups: v["groups"].as_array().map(|a| a.iter().filter_map(|g| g.as_str().map(str::to_string)).collect()).unwrap_or_default(),
+    })
+}
+
+/// A login name the helper will accept: 1 to 31 lowercase letters, digits, - or _, starting with a letter.
+pub fn valid_login(s: &str) -> bool {
+    let mut c = s.chars();
+    s.len() <= 31 && c.next().map(|f| f.is_ascii_lowercase()).unwrap_or(false) && c.all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-' || ch == '_')
+}
+
+/// A login name suggested from a full name ("Alex Rivera" -> "alex").
+pub fn suggest_login(full: &str) -> String {
+    let first: String = full.split_whitespace().next().unwrap_or("").to_lowercase().chars().filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit()).collect();
+    if first.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) { String::new() } else { first }
+}
+
+/// Runs the account helper (/usr/lib/yggdrasil/account) with the administrator question (pkexec). `stdin` carries a password, never a command line.
+pub fn manage(args: &[&str], stdin: Option<&str>) -> Result<String, String> {
+    let mut child = Command::new("pkexec").arg("/usr/lib/yggdrasil/account").args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| format!("pkexec: {e}"))?;
+    if let Some(mut si) = child.stdin.take() {
+        if let Some(s) = stdin {
+            let _ = si.write_all(s.as_bytes());
+            let _ = si.write_all(b"\n");
+        }
+    }
+    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    match out.status.code() {
+        Some(0) => Ok(text),
+        Some(126) | Some(127) => Err("The administrator question was cancelled or refused.".into()),
+        _ => {
+            let msg: String = err.trim_start_matches("account: ").chars().take(300).collect();
+            Err(if msg.is_empty() { "That did not work.".to_string() } else { msg })
+        }
     }
 }
 
@@ -238,80 +312,4 @@ echo "passwd: password updated successfully"
         assert!(e.contains("too weak"), "{e}");
     }
 
-}
-
-/// Every login account (uid 1000 up) from the text of /etc/passwd and /etc/group; `admin` is membership of wheel.
-pub fn parse_accounts(passwd: &str, group: &str) -> Vec<Account> {
-    let admins: Vec<&str> = group.lines().find(|l| l.starts_with("wheel:")).map(|l| l.rsplit(':').next().unwrap_or("").split(',').filter(|s| !s.is_empty()).collect()).unwrap_or_default();
-    passwd.lines().filter_map(parse_passwd).filter(|a| a.uid >= 1000 && a.uid < 60000).map(|mut a| {
-        a.admin = admins.contains(&a.login.as_str());
-        a
-    }).collect()
-}
-
-/// Every account and the optional groups this system has (name, what it allows), from the account helper's `list` and `groups`
-/// (they need no administrator). Without the helper: the accounts from /etc/passwd, with no access details.
-pub fn all() -> (Vec<Account>, Vec<(String, String)>) {
-    let helper = "/usr/lib/yggdrasil/account";
-    let list = crate::sys::run(helper, &["list"]).and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
-    let accounts = match list.as_ref().and_then(|v| v.as_array()) {
-        Some(a) => a.iter().filter_map(account_from_json).collect(),
-        None => {
-            let p = std::fs::read_to_string("/etc/passwd").unwrap_or_default();
-            let g = std::fs::read_to_string("/etc/group").unwrap_or_default();
-            parse_accounts(&p, &g)
-        }
-    };
-    let groups = crate::sys::run(helper, &["groups"]).and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
-    let mut groups: Vec<(String, String)> = groups.as_ref().and_then(|v| v.as_object()).map(|o| o.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect()).unwrap_or_default();
-    groups.sort();
-    (accounts, groups)
-}
-
-fn account_from_json(v: &serde_json::Value) -> Option<Account> {
-    Some(Account {
-        login: v["login"].as_str()?.to_string(),
-        full_name: v["full_name"].as_str().unwrap_or("").to_string(),
-        uid: v["uid"].as_u64()? as u32,
-        admin: v["admin"].as_bool().unwrap_or(false),
-        home: v["home"].as_str().unwrap_or("").to_string(),
-        protected: v["protected"].as_bool().unwrap_or(false),
-        can_login: v["can_login"].as_bool().unwrap_or(true),
-        sudo_nopassword: v["sudo_nopassword"].as_bool().unwrap_or(false),
-        groups: v["groups"].as_array().map(|a| a.iter().filter_map(|g| g.as_str().map(str::to_string)).collect()).unwrap_or_default(),
-    })
-}
-
-/// A login name the helper will accept: 1 to 31 lowercase letters, digits, - or _, starting with a letter.
-pub fn valid_login(s: &str) -> bool {
-    let mut c = s.chars();
-    s.len() <= 31 && c.next().map(|f| f.is_ascii_lowercase()).unwrap_or(false) && c.all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-' || ch == '_')
-}
-
-/// A login name suggested from a full name ("Alex Rivera" -> "alex").
-pub fn suggest_login(full: &str) -> String {
-    let first: String = full.trim().split_whitespace().next().unwrap_or("").to_lowercase().chars().filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit()).collect();
-    if first.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) { String::new() } else { first }
-}
-
-/// Runs the account helper (/usr/lib/yggdrasil/account) with the administrator question (pkexec). `stdin` carries a password, never a command line.
-pub fn manage(args: &[&str], stdin: Option<&str>) -> Result<String, String> {
-    let mut child = Command::new("pkexec").arg("/usr/lib/yggdrasil/account").args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| format!("pkexec: {e}"))?;
-    if let Some(mut si) = child.stdin.take() {
-        if let Some(s) = stdin {
-            let _ = si.write_all(s.as_bytes());
-            let _ = si.write_all(b"\n");
-        }
-    }
-    let out = child.wait_with_output().map_err(|e| e.to_string())?;
-    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-    match out.status.code() {
-        Some(0) => Ok(text),
-        Some(126) | Some(127) => Err("The administrator question was cancelled or refused.".into()),
-        _ => {
-            let msg: String = err.trim_start_matches("account: ").chars().take(300).collect();
-            Err(if msg.is_empty() { "That did not work.".to_string() } else { msg })
-        }
-    }
 }

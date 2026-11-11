@@ -95,6 +95,7 @@ pub enum NetClick {
 
 /// A Wi-Fi network's row, as on a phone: a check mark when this computer is on it, the name (and a line under it), then on the
 /// right a padlock when it is secured, the signal bars and an (i). The whole row is one button; the (i) is a button of its own.
+#[allow(clippy::too_many_arguments)]
 pub fn net_row(ui: &mut egui::Ui, pal: &Palette, first: bool, check: bool, title: &str, subtitle: Option<&str>, lock: bool, signal: Option<u8>) -> NetClick {
     let bg = ui.painter().add(egui::Shape::Noop);
     let id = ui.next_auto_id();

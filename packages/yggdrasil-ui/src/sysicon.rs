@@ -168,7 +168,7 @@ pub fn paint(painter: &Painter, rect: Rect, names: &[&str]) -> bool {
     let ctx = painter.ctx();
     refresh(ctx);
     let px = ((rect.width().min(rect.height()) * ctx.pixels_per_point()).ceil() as u32).clamp(16, 512);
-    let px = (px + 7) / 8 * 8; // fewer distinct sizes, fewer textures
+    let px = px.div_ceil(8) * 8; // fewer distinct sizes, fewer textures
     let c = cache(ctx);
     let mut c = match c.lock() {
         Ok(c) => c,

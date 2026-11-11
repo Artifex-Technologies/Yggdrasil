@@ -67,30 +67,11 @@ pub fn make(fonts: &Fonts, entries: &[(String, String)], index: usize, accent: (
         }
     }
     let mut data = Vec::with_capacity((w * h * 4) as usize);
-    for p in pix.data().chunks_exact(4) {
+    for p in pix.data().as_chunks::<4>().0 {
         data.extend_from_slice(&[p[2], p[1], p[0], p[3]]);
     }
     MemoryRenderBuffer::from_slice(&data, Fourcc::Argb8888, (w, h), 1, Transform::Normal, None)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn few_windows_all_show() {
-        assert_eq!(visible(3, 1), 0..3);
-    }
-
-    #[test]
-    fn many_windows_show_the_ones_around_the_choice() {
-        assert_eq!(visible(20, 0), 0..7);
-        assert_eq!(visible(20, 10), 7..14);
-        assert_eq!(visible(20, 19), 13..20);
-        assert!(visible(20, 10).contains(&10));
-    }
-}
-
 
 pub const CHOOSER_W: i32 = 270;
 pub const CHOOSER_H: i32 = 130;
@@ -127,8 +108,26 @@ pub fn make_chooser(fonts: &Fonts, workspace: usize, selected: usize, accent: (u
     }
     draw_text(&mut pix, &fonts.regular, 11.0, PAD as f32, h as f32 - 12.0, (160, 160, 176, 255), "Left / Right to choose, Enter to confirm, Escape for standard");
     let mut data = Vec::with_capacity((w * h * 4) as usize);
-    for p in pix.data().chunks_exact(4) {
+    for p in pix.data().as_chunks::<4>().0 {
         data.extend_from_slice(&[p[2], p[1], p[0], p[3]]);
     }
     MemoryRenderBuffer::from_slice(&data, Fourcc::Argb8888, (w, h), 1, Transform::Normal, None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn few_windows_all_show() {
+        assert_eq!(visible(3, 1), 0..3);
+    }
+
+    #[test]
+    fn many_windows_show_the_ones_around_the_choice() {
+        assert_eq!(visible(20, 0), 0..7);
+        assert_eq!(visible(20, 10), 7..14);
+        assert_eq!(visible(20, 19), 13..20);
+        assert!(visible(20, 10).contains(&10));
+    }
 }

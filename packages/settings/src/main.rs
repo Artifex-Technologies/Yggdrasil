@@ -2672,7 +2672,7 @@ impl App {
             let (title, sub) = if o.running { ("Watching".to_string(), format!("Last 24 hours: {} critical, {} warnings, {} notes", count("critical"), count("warning"), count("info"))) } else { ("Not running".to_string(), format!("{} does not answer on this computer", o.name)) };
             ui::row(ui, pal, true, &title, Some(&sub), |ui| {
                 let (rect, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
-                ui.painter().circle_filled(rect.center(), 6.0, if !o.running { pal.red } else if count("critical") > 0 { pal.red } else if count("warning") > 0 { pal.amber } else { pal.green });
+                ui.painter().circle_filled(rect.center(), 6.0, if !o.running || count("critical") > 0 { pal.red } else if count("warning") > 0 { pal.amber } else { pal.green });
             });
         });
         let mut release = false;
@@ -3185,7 +3185,7 @@ impl App {
                     });
                 });
                 if allow {
-                    self.change(ctx, || restore::allow_me());
+                    self.change(ctx, restore::allow_me);
                 }
             }
             restore::State::Ready(list) => {

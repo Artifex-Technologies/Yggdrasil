@@ -135,7 +135,7 @@ fn dialog() -> eframe::Result {
                     agent::UiMsg::Prompt { text: text("text"), echo: v.get("echo").and_then(|e| e.as_bool()).unwrap_or(false), reply: rtx }
                 }
                 "message" => agent::UiMsg::Message { text: text("text"), error: v.get("error").and_then(|e| e.as_bool()).unwrap_or(false) },
-                "done" => agent::UiMsg::Done { ok: true },
+                "done" => agent::UiMsg::Done,
                 _ => continue,
             };
             let _ = tx.send(msg);

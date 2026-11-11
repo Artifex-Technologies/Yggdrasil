@@ -100,7 +100,6 @@ pub struct Entry {
 
 #[derive(Clone, Debug, Default)]
 pub struct Catalog {
-    pub name: String,
     pub apps: Vec<Entry>,
     /// (id, tagline, kicker)
     pub featured: Vec<(String, String, String)>,
@@ -180,7 +179,7 @@ pub fn parse_catalog(text: &str, from: &str, trusted: bool) -> Result<Catalog, S
             }
         }
     }
-    Ok(Catalog { name: if s(&v, "name").is_empty() { from.to_string() } else { s(&v, "name") }, apps, featured, tile_colors })
+    Ok(Catalog { apps, featured, tile_colors })
 }
 
 /// Omarchy's marketplace registry: a long list of plugin repositories. Listed for browsing; each is unreviewed and runs
@@ -231,7 +230,7 @@ pub fn parse_omarchy(text: &str, from: &str) -> Result<Catalog, String> {
             });
         }
     }
-    Ok(Catalog { name: "Omarchy plugins".into(), apps, featured: vec![], tile_colors: Default::default() })
+    Ok(Catalog { apps, featured: vec![], tile_colors: Default::default() })
 }
 
 // ------------------------------------------------------------------ repositories the user added

@@ -64,7 +64,6 @@ pub struct AppInfo {
     pub id: String,
     pub name: String,
     pub comment: String,
-    pub icon: String,
     pub icon_path: Option<PathBuf>,
     pub desktop: PathBuf,
     pub exec: String,
@@ -381,7 +380,7 @@ pub fn list_apps(icon_theme: &str) -> Vec<AppInfo> {
             let Ok(text) = std::fs::read_to_string(&path) else { continue };
             let d = parse_desktop(&text);
             let truthy = |k: &str| d.get(k).map(|v| v.eq_ignore_ascii_case("true")).unwrap_or(false);
-            if d.get("Type").map(|t| t != "Application").unwrap_or(true) || truthy("NoDisplay") || truthy("Hidden") || d.get("Name").is_none() {
+            if d.get("Type").map(|t| t != "Application").unwrap_or(true) || truthy("NoDisplay") || truthy("Hidden") || !d.contains_key("Name") {
                 continue;
             }
             seen.insert(id.clone());
@@ -391,7 +390,6 @@ pub fn list_apps(icon_theme: &str) -> Vec<AppInfo> {
                 name: d.get("Name").cloned().unwrap_or_else(|| id.clone()),
                 comment: d.get("Comment").cloned().unwrap_or_default(),
                 icon_path: icon_path(&icon, icon_theme),
-                icon,
                 desktop: path.clone(),
                 exec: d.get("Exec").cloned().unwrap_or_default(),
                 flatpak: flat || d.contains_key("X-Flatpak"),

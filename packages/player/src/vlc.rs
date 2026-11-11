@@ -125,7 +125,7 @@ unsafe extern "C" fn display_cb(opaque: *mut c_void, _picture: *mut c_void) {
     if let Ok(mut f) = p.shown.lock() {
         let n = p.w * p.h;
         f.rgba.resize(n * 4, 0);
-        for (d, s) in f.rgba.chunks_exact_mut(4).zip(p.back.chunks_exact(4)) {
+        for (d, s) in f.rgba.as_chunks_mut::<4>().0.iter_mut().zip(p.back.as_chunks::<4>().0) {
             d[0] = s[2];
             d[1] = s[1];
             d[2] = s[0];

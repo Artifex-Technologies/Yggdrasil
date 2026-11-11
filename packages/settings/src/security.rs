@@ -196,7 +196,7 @@ pub fn parse_alerts(body: &str) -> Vec<Alert> {
             })
         })
         .collect();
-    out.sort_by(|a, b| b.time.cmp(&a.time));
+    out.sort_by_key(|a| std::cmp::Reverse(a.time));
     out
 }
 
