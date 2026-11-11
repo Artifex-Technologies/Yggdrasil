@@ -27,7 +27,7 @@ children already waited for), and the memory of the whole process tree at its en
     nice -n 19 python3 tools/bench-port.py [--only NAME,...] [--runs N] [--heavy-runs N] [--daemon-seconds S]
                                            [--labyrinth DIR] [--json FILE] [-v]
 
-NAME: power, settings-helpers, appusage, crashwatch, pkg-root, theme, cursors, liki
+NAME: power, settings-helpers, appusage, crashwatch, pkg-root, theme, cursors, liki, install-system
 --labyrinth: the Labyrinth OS repository (the crash watch's Python script is in its history; default ../Labyrinth_OS)
 """
 import argparse
@@ -66,6 +66,7 @@ OLD = {
     "liki-build": ("yggdrasil", "1cd6211", "packages/liki/bin/liki-build"),
     "liki-icns": ("yggdrasil", "1cd6211", "packages/liki/bin/liki-icns"),
     "liki-icon-import": ("yggdrasil", "1cd6211", "packages/liki/bin/liki-icon-import"),
+    "install-system": ("yggdrasil", "a234048", "packages/installer/helpers/install-system"),
 }
 
 ARGS = None
@@ -652,6 +653,69 @@ def liki_cases(old):
     return [bench(c) for c in cases], []
 
 
+# The install program's stand-ins for the bench: tiny shell scripts with canned answers (made by the parity script's own
+# fake.py for the same made-up computer), so that what is timed is the install program, not a Python stand-in started 60
+# times. They write nothing down and change nothing; unsquashfs copies the made-up system into the target (in the
+# sandbox's own tmpfs).
+INSTALL_STANDINS = {
+    "lsblk": """case "$1 $2 $3" in
+  "-J -b -d") cat "$WORLD/out/lsblk-d" ;;
+  "-J -b -o") n=$(basename "$5"); [ -f "$WORLD/out/lsblk-$n" ] && cat "$WORLD/out/lsblk-$n" || exit 32 ;;
+  "-nr -o MOUNTPOINTS") printf '\\n\\n\\n\\n' ;;
+  *) [ "$3" = /dev/sdy1 ] && echo sdy ;;
+esac""",
+    "findmnt": "echo /dev/sdy1",
+    "blkid": """if [ "$2" = TYPE ]; then echo btrfs; else echo 0f3c2a1e-0000-4000-8000-$(echo "$5" | cksum | cut -c1-12 | tr ' ' 0); fi""",
+    "unsquashfs": """cp -a "$WORLD/medium/." "$4" && printf '0\\n4\\n9\\n10\\n17\\n20\\n35\\n41\\n50\\n63\\n70\\n79\\n80\\n90\\n99\\n100\\n'""",
+}
+
+
+def install_cases(old):
+    """The parity script's made-up computer: a plan refused (nothing runs, no sandbox), --check of a whole plan (with
+    browsers and optional parts), --disks (Windows, NVMe, a disk too small, the live USB) and a whole install of the
+    whole-disk plan, all three in the parity script's namespace sandbox (an empty /dev, tmpfs for /mnt, /run and
+    /sys/firmware; every program a stand-in). Both versions spend 1 s of the install in udevadm settle's wait."""
+    par = os.path.join(PKG, "install-system")
+    ic = load(os.path.join(par, "parity", "compare.py"), "install_compare")
+    w = mkdir("install", "w")
+    nv = "/dev/nvmez0n1"
+    spec = ic.world(state={"disks": [ic.windows_disk(), ic.disk(nv, size=1000 * ic.GB, table="gpt", tran="nvme", parts=[
+        ic.part(nv, 1, 1, 512, ic.ESP, "vfat"), ic.part(nv, 2, 513, 100 * 1024, ic.LINUX, "ext4")]),
+        ic.disk("/dev/vdx", size=20 * ic.GB), ic.disk("/dev/sdy", size=16 * ic.GB, table="dos", tran="usb", rm=True)]})
+    ic.build(w, spec)
+    env = base_env(PATH="/usr/bin:/bin", FAKEPATH=os.path.join(w, "bin"), WORLD=w)
+    out = os.path.join(w, "out")
+    os.makedirs(out)
+    # the canned answers, from fake.py itself
+    fake_env = dict(env, WORLD=w)
+    for name, args in [("d", ["-J", "-b", "-d", "-o", "NAME,PATH,SIZE,MODEL,TRAN,RO,TYPE,RM"])] + \
+            [(d["path"][5:], ["-J", "-b", "-o", "PATH,START,SIZE,FSTYPE,LABEL,PARTLABEL,PARTTYPE,PARTN,PTTYPE,MOUNTPOINTS,TYPE", d["path"]]) for d in spec["state"]["disks"]]:
+        r = subprocess.run([os.path.join(w, "bin", "lsblk")] + args, env=fake_env, capture_output=True, check=True)
+        write(os.path.join(out, "lsblk-" + name), r.stdout)
+    medium = os.path.join(w, "medium")
+    for path, text in ic.medium()["files"].items():
+        write(os.path.join(medium, path), text)
+    for path, dest in ic.medium()["links"].items():
+        os.makedirs(os.path.dirname(os.path.join(medium, path)), exist_ok=True)
+        os.symlink(dest, os.path.join(medium, path))
+    for t in ic.TOOLS:
+        p = os.path.join(w, "bin", t)
+        os.remove(p)
+        write(p, "#!/bin/sh\nPATH=/usr/bin:/bin\n" + INSTALL_STANDINS.get(t, "exit 0") + "\n", 0o755)
+    sandbox = ["unshare", "-r", "-m", "--propagation", "private", "sh", os.path.join(par, "parity", "sandbox.sh"), w]
+    py, rs = [PY, "-I", old["install-system"]], [os.path.join(BIN, "yggdrasil-install-system")]
+    whole = json.dumps(ic.plan()).encode()
+    choices = json.dumps(ic.plan(browsers=["firefox", "librewolf"], default_browser="librewolf", extras=["monitor"])).encode()
+    refused = json.dumps(ic.plan(hostname="-x")).encode()
+    cases = [
+        Case("a plan refused (nothing runs)", py, rs, base_env(), stdin=refused),
+        Case("--check, a plan with browsers and optional parts", py + ["--check"], rs + ["--check"], env, stdin=choices, sandbox=sandbox),
+        Case("--disks (four made-up disks)", py + ["--disks"], rs + ["--disks"], env, stdin=b"", sandbox=sandbox),
+        Case("a whole install (stand-ins; 1 s of it is udevadm settle's wait)", py, rs, env, stdin=whole, sandbox=sandbox, runs=ARGS.heavy_runs),
+    ]
+    return [bench(c) for c in cases], []
+
+
 PROGRAMS = {
     "power": (power_cases, ["tune", "casefan", "gpufan", "powerlimit"], ["tune", "casefan", "gpufan", "powerlimit", "power"]),
     "settings-helpers": (settings_cases, ["account", "bootscreen", "game-fix", "gpu-run"], ["account", "bootscreen", "game-fix", "gpu-run"]),
@@ -661,6 +725,7 @@ PROGRAMS = {
     "theme": (theme_cases, ["ygg-theme"], ["ygg-theme"]),
     "cursors": (cursors_cases, ["ygg-cursors"], ["ygg-cursors"]),
     "liki": (liki_cases, ["liki-build", "liki-icns", "liki-icon-import"], ["liki-build", "liki-icns", "liki-icon-import"]),
+    "install-system": (install_cases, ["install-system"], ["yggdrasil-install-system"]),
 }
 
 

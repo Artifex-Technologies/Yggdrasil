@@ -206,9 +206,10 @@ the bugs the port fixed and where the Rust one is worse.
 | ygg-theme | `gtk4-theme` 116 → 32.9 ms (−72 %) | 57.6 → 32.3 MB (−44 %) | [theme](packages/theme/README.md) |
 | ygg-cursors | 1057 → 1604 ms (**+52 %, slower**) | 31.5 → 15.1 MB (−52 %) | [theme](packages/theme/README.md) |
 | liki-build, liki-icns, liki-icon-import | a pack of 3,000 icons 127 → 30.3 ms (−76 %) | 22.5 → 5.7 MB (−74 %) | [liki](packages/liki/README.md) |
+| yggdrasil-install-system | `--check` 35.6 → 0.72 ms (−98 %); a whole install (stand-ins) 106 → 62.4 ms CPU | 18.0 → 3.6 MB (−80 %) | [install-system](packages/install-system/README.md) |
 
 On disk the binaries are bigger than the scripts (0.3 to 1.3 MB each against a few KB), but the scripts needed Python
-(75 MB), and Agora, the theme package and Liki no longer do.
+(75 MB), and Agora, the theme package, Liki and the installer no longer do.
 
 ## Building
 

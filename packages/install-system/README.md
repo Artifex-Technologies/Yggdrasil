@@ -43,6 +43,16 @@ of these let a plan through that the window never sends:
 A number given twice in `delete` is deleted once, and the partitions to delete are checked in order (a set's order decided which
 problem was named first).
 
+The live system's /dev and /run/udev are bound into the new system one way only in one call (`mount --rbind --make-rslave`):
+before, the bind and `--make-rslave` were two calls, and had the second failed, the cleanup's `umount -R` of the new system
+would have unmounted the live system's own /dev/pts, /dev/shm ... through the shared bind. The cleanup now also makes every
+mount under the new system a slave (`mount --make-rslave TARGET`) before `umount -R`, once anything of the live system was
+bound in, and unmounts nothing when that fails (the new system then stays mounted until the restart, with a WARN line when
+the install itself went through). A test makes each of the install's calls fail in turn, with that cleanup call failing or
+not, and checks that `umount -R` never follows a bind without a slave first; `parity/bind-check.sh` checks with this
+computer's own mount(8), on tmpfs folders in a throwaway namespace, that a plain `--rbind` then `umount -R` does unmount the
+"live" submounts and that both ways above keep them.
+
 ## What is not 1:1
 
 - Where the script stopped with a traceback (outside the install: `--disks` when lsblk fails or prints something else than it
@@ -60,6 +70,41 @@ problem was named first).
 Nothing here runs a real disk tool. What a command does to a real disk (partitioning, LUKS, file systems, GRUB on the
 firmware) is compared as the exact command, arguments and standard input both programs run; that those commands install a
 working system I check in a virtual machine (docs/INSTALLER.md).
+
+## Why Rust: measured
+
+Measured on 2026-11-11 with `tools/bench-port.py` against the Python script from git (`a234048`, the commit before the port),
+on the parity script's made-up computer: the refused plan with no sandbox, the rest in the parity script's namespace sandbox,
+with tiny shell stand-ins with canned answers (so that the program is timed, not a Python stand-in), on my desktop (16
+threads). Method and every case: [docs/PORT_NUMBERS.md](../../docs/PORT_NUMBERS.md).
+
+| Metric | Python | Rust | Change |
+| --- | --- | --- | --- |
+| a refused plan, wall time | 36.0 ms | 0.93 ms | −97 %, 35.0 ms faster |
+| `--check` (browsers and optional parts), wall time | 35.6 ms | 0.72 ms | −98 %, 34.9 ms faster |
+| `--disks` (four made-up disks), wall time | 44.4 ms | 8.73 ms | −80 %, 35.6 ms faster |
+| a whole install with stand-ins, CPU time | 106 ms | 62.4 ms | −41 %, 43.9 ms less |
+| a whole install, wall time (1 s of it is udevadm settle's wait) | 1100 ms | 1057 ms | −4 % |
+| peak memory | 17.2–18.3 MB | 3.6–4.5 MB | −75 to −80 % |
+| on disk | 56 KB script (+ Python, 75 MB) | 736 KB | +680 KB; the installer package no longer needs Python |
+
+Where it is not better: on disk it is bigger than the script (which needed Python); and on a real computer the install's
+time is unsquashfs, mkinitcpio and GRUB, so the 40 ms are nothing there. In `--disks` and the whole install most of the
+Rust program's time is the stand-ins themselves (5 and about 60 shell processes), and its peak memory may be one of them.
+
+What the port is for is the rest:
+
+- The bugs above, fixed in both, of which the worst let a hand-written plan erase every partition on the chosen disk
+  (`"new_table": "false"`) or set root's password through chpasswd, and the bind of the live /dev, which could have
+  unmounted the live system's own /dev/pts and /dev/shm.
+- Parity (parity/compare.py, final build): 9/9 `--disks`, 22/22 `--check`, 119/119 installs (whole disk and manual,
+  encrypted or not, every file system, browsers, optional parts, languages, keyboards, a failure at each step), 3000/3000
+  random plans, 120/120 random whole installs, 1171/1171 plans from the fuzzer's corpus; with the earlier runs, 10,000
+  random plans and 300 random whole installs, all the same.
+- Tests: the script's tests carried over; installs on a made-up computer in the test itself; where the passwords go; each
+  call of an install failing in turn (the live /dev); property tests with random plans (80,000 passed: no panic, a refused
+  plan runs nothing, no disk tool is given anything but the chosen disk, its partitions and the mapper, with Windows on a
+  second disk beside it); a fuzz target (13 million plans in 5 minutes, no failure).
 
 ## Tests and parity
 

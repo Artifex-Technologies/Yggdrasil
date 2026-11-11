@@ -34,7 +34,7 @@ is in each package's README ("Why Rust: measured") and in the main README; this 
 - Everything runs at `nice -n 19`, one process at a time (the whole run takes about ten minutes).
 
     cargo build --release      # in each ported package
-    nice -n 19 python3 tools/bench-port.py [--only power,settings-helpers,appusage,crashwatch,pkg-root,theme,cursors,liki] [--json FILE] [-v]
+    nice -n 19 python3 tools/bench-port.py [--only power,settings-helpers,appusage,crashwatch,pkg-root,theme,cursors,liki,install-system] [--json FILE] [-v]
 
 Machine: my desktop, 16 threads, Linux 7.3, Python 3.14.9.
 
@@ -51,6 +51,7 @@ Machine: my desktop, 16 threads, Linux 7.3, Python 3.14.9.
 | ygg-theme | `0cda95e:packages/theme/bin/ygg-theme` |
 | ygg-cursors | `daf2334:packages/theme/bin/ygg-cursors` |
 | liki-build, liki-icns, liki-icon-import | `1cd6211:packages/liki/bin/NAME` |
+| yggdrasil-install-system | `a234048:packages/installer/helpers/install-system` (run as its shebang runs it, `python3 -I`) |
 
 ## Results (2026-11-11)
 
@@ -228,3 +229,32 @@ against the one Rust `power run`. The Python crash watch's RSS includes its jour
 | | CPU time | 127 ms | 30.1 ms | −76 %, 96.7 ms less |
 | | peak RSS | 22.5 MB | 5.7 MB | −74 %, 16.7 MB less |
 | on disk | | liki-build 21.6 KB, liki-icns 1.0 KB, liki-icon-import 12.1 KB (scripts; the interpreter is shared) | liki-build 568 KB, liki-icns 283 KB, liki-icon-import 513 KB (binaries) | |
+
+### yggdrasil-install-system ([packages/install-system](../packages/install-system/README.md))
+
+Measured on its own later the same day (`--only install-system`), on the parity script's made-up computer: a refused plan
+with no sandbox (nothing runs), and `--check`, `--disks` and a whole install in the parity script's namespace sandbox (an
+empty /dev; /mnt, /run and /sys/firmware tmpfs; every program a stand-in). For the bench the stand-ins are tiny shell
+scripts with canned answers, made by the parity script's own fake.py for the same computer, so that the program is timed
+and not a Python stand-in: in the whole install both start the same 60 or so of them, and their time is in both CPU times.
+Both wait 1 s in `udevadm settle`. On a real computer an install's time is unsquashfs, mkinitcpio and GRUB; these 40 ms
+are nothing there.
+
+| case | metric | old (Python) | Rust | change |
+| --- | --- | --- | --- | --- |
+| a plan refused (nothing runs) | wall (median; p10–p90) | 36.0 ms (35.3 ms–36.6 ms) | 0.93 ms (0.85 ms–1.01 ms) | −97 %, 35.0 ms faster |
+| | CPU time | 35.6 ms | 0.78 ms | −98 %, 34.8 ms less |
+| | peak RSS | 18.0 MB | 3.6 MB | −80 %, 14.4 MB less |
+| --check, a plan with browsers and optional parts | wall (median; p10–p90) | 35.6 ms (35.0 ms–36.4 ms) | 0.72 ms (0.70 ms–0.75 ms) | −98 %, 34.9 ms faster |
+| | CPU time | 35.3 ms | 0.64 ms | −98 %, 34.7 ms less |
+| | peak RSS | 18.0 MB | 3.6 MB | −80 %, 14.4 MB less |
+| --disks (four made-up disks) | wall (median; p10–p90) | 44.4 ms (44.0 ms–45.0 ms) | 8.73 ms (8.59 ms–8.95 ms) | −80 %, 35.6 ms faster |
+| | CPU time | 44.3 ms | 8.62 ms | −81 %, 35.7 ms less |
+| | peak RSS | 17.2 MB | 4.1 MB | −76 %, 13.1 MB less |
+| a whole install (stand-ins; 1 s of it is udevadm settle's wait) | wall (median; p10–p90) | 1100 ms (1098 ms–1101 ms) | 1057 ms (1055 ms–1058 ms) | −4 %, 43.0 ms faster |
+| | CPU time | 106 ms | 62.4 ms | −41 %, 43.9 ms less |
+| | peak RSS | 18.3 MB | 4.5 MB | −75 %, 13.8 MB less |
+| on disk | | install-system 56.0 KB (scripts; the interpreter is shared) | yggdrasil-install-system 736 KB (binaries) | |
+
+In `--disks` and the whole install, most of the Rust program's time is the stand-ins (five and about sixty shell processes),
+and its peak memory may be one of them.

@@ -533,6 +533,11 @@ def cases_install(jobs):
         ("udevadm fails (no matter)", fail("udevadm", code=1)),
     ]:
         add(label, world(state={"fail": [rule]}), plan(encrypt=True, encrypt_password=DISK_PW) if "cryptsetup" in label else None)
+    add("the live /dev's bind fails (made a slave, then unmounted)", world(state={"fail": [fail("mount", "--rbind", stderr="mount: busy\n")]}))
+    add("the live /run/udev's bind fails", world(state={"fail": [fail("mount", "--bind", stderr="mount: no udev\n")]}))
+    add("the new system cannot be made a slave: left mounted", world(state={"fail": [fail("mount", "--make-rslave")]}), plan(encrypt=True, encrypt_password=DISK_PW))
+    add("the bind fails and so does making a slave: nothing unmounted", world(state={"fail": [fail("mount", "--rbind"), fail("mount", "--make-rslave")]}))
+    add("a failure before the bind: unmounted as before", world(state={"fail": [fail("unsquashfs"), fail("mount", "--make-rslave")]}))
     add("cryptsetup luksFormat fails", world(state={"fail": [fail("cryptsetup", "luksFormat", stderr="Cannot format device\n")]}), plan(encrypt=True, encrypt_password=DISK_PW))
     add("cryptsetup open fails", world(state={"fail": [fail("cryptsetup", "open", stderr="No key available\n")]}), plan(encrypt=True, encrypt_password=DISK_PW))
     add("cryptsetup luksAddKey fails", world(state={"fail": [fail("cryptsetup", "luksAddKey", stderr="Key slot full\n")]}), plan(encrypt=True, encrypt_password=DISK_PW))
@@ -705,6 +710,14 @@ def main():
     PYTHON = ARGS.python or next(p for p in (os.path.join(helpers, "python", "install-system"), os.path.join(helpers, "install-system")) if os.path.exists(p))
     BIN = ARGS.bin or os.path.normpath(os.path.join(HERE, "..", "..", "..", "target", "release", "yggdrasil-install-system"))
     SCRATCH = tempfile.mkdtemp(prefix="install-system-parity-")
+    # what the program counts on, with this computer's own mount(8), on scratch tmpfs folders in a throwaway namespace
+    bc = subprocess.run(["unshare", "-r", "-m", "--propagation", "private", "sh", os.path.join(HERE, "bind-check.sh"), os.path.join(SCRATCH, "bind-check")],
+                        capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"})
+    left = bc.stdout.split()
+    if bc.returncode != 0 or len(left) != 3 or left[1:] != ["2", "2"]:
+        raise SystemExit(f"compare: mount(8) does not keep the live /dev's submounts as the program counts on: {bc.stdout!r} {bc.stderr[-300:]!r}")
+    print(f"mount(8): the live submounts left after umount -R of the new system: {left[0]} of 2 with a plain --rbind (the hazard), "
+          f"2 with --rbind --make-rslave, 2 after the cleanup's mount --make-rslave", flush=True)
     jobs = []
     cases_disks(jobs)
     cases_check(jobs)

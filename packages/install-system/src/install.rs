@@ -64,6 +64,8 @@ pub struct Ctx<'a> {
     pub os: Os,
     pub host: Host,
     pub sys: &'a mut dyn System,
+    /// Whether the live system's /dev or /run/udev has been bound into the new system (unmount_all() then takes care).
+    pub bound: bool,
 }
 
 fn strings(v: &[&str]) -> Vec<String> {
@@ -685,25 +687,27 @@ impl Ctx<'_> {
     }
 
     fn bind_mounts(&mut self) -> R<()> {
-        // a fresh /run (the live system's would keep the new one busy at the end), with udev's part for the disk tools
+        // a fresh /run (the live system's would keep the new one busy at the end), with udev's part for the disk tools. The live
+        // system's own are bound one way only, in the same call (--make-rslave): bind mounts are shared, and unmounting a shared
+        // one at the end would unmount the live system's /dev/pts, /dev/shm ... too. A separate call afterwards could fail and
+        // leave a shared one behind.
         let mounts: [(&str, &str, &[&str]); 5] = [
             ("proc", "proc", &["-t", "proc"]),
             ("sys", "sys", &["-t", "sysfs"]),
-            ("/dev", "dev", &["--rbind"]),
+            ("/dev", "dev", &["--rbind", "--make-rslave"]),
             ("tmpfs", "run", &["-t", "tmpfs"]),
-            ("/run/udev", "run/udev", &["--bind"]),
+            ("/run/udev", "run/udev", &["--bind", "--make-rslave"]),
         ];
         for (src, dst, extra) in mounts {
             let d = py::join(&self.os.target, dst);
             py::makedirs(&d)?;
+            if src.starts_with('/') {
+                self.bound = true;
+            }
             let mut argv = strings(&["mount"]);
             argv.extend(strings(extra));
             argv.extend(strings(&[src, &d]));
             self.run(&argv, None, true)?;
-            if extra.contains(&"--rbind") || extra.contains(&"--bind") {
-                // one way only: unmounting it at the end must never unmount anything of the live system (bind mounts are shared)
-                self.run(&strings(&["mount", "--make-rslave", &d]), None, true)?;
-            }
         }
         if py::isdir(&format!("{}/efivars", self.host.efi)) {
             let efivars = self.t("/sys/firmware/efi/efivars");
@@ -1300,8 +1304,19 @@ FILES+=(/crypto_keyfile.bin)
         Ok(())
     }
 
-    pub fn unmount_all(&mut self) -> R<()> {
+    /// Unmounts the new system and closes its encryption. Once the live system's /dev was bound into it, everything under it is
+    /// made a slave first, so that umount -R can never reach the live system's own mounts (whatever happened to the bind); when
+    /// that cannot be done nothing is unmounted, and false is returned (a restart unmounts it).
+    pub fn unmount_all(&mut self) -> R<bool> {
         let target = self.os.target.clone();
+        if self.bound
+            && self
+                .run(&strings(&["mount", "--make-rslave", &target]), None, false)?
+                .code
+                != 0
+        {
+            return Ok(false);
+        }
         if self
             .run(&strings(&["umount", "-R", &target]), None, false)?
             .code
@@ -1311,7 +1326,7 @@ FILES+=(/crypto_keyfile.bin)
         }
         let mapper = self.os.mapper.clone();
         self.run(&strings(&["cryptsetup", "close", &mapper]), None, false)?;
-        Ok(())
+        Ok(true)
     }
 
     pub fn install(&mut self, p: &Py) -> R<()> {
@@ -1427,7 +1442,13 @@ FILES+=(/crypto_keyfile.bin)
                 ));
             }
         }
-        self.unmount_all()?;
+        if !self.unmount_all()? {
+            let target = self.os.target.clone();
+            self.say(
+                "WARN",
+                &format!("the new system stays mounted at {target} until the computer restarts"),
+            )?;
+        }
         self.say("DONE", "")
     }
 }

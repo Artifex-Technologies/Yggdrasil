@@ -128,6 +128,10 @@ pub struct Fake {
     pub target: String,
     pub medium: Vec<(String, String)>,
     pub random_calls: usize,
+    /// the call (counted from 0) that fails, whatever it is
+    pub fail_at: Option<usize>,
+    /// for each call, whether it failed
+    pub failed: Vec<bool>,
 }
 
 pub fn medium() -> Vec<(String, String)> {
@@ -185,6 +189,8 @@ impl Fake {
             target: target.into(),
             medium: medium(),
             random_calls: 0,
+            fail_at: None,
+            failed: vec![],
         }
     }
 
@@ -456,12 +462,15 @@ impl Fake {
 impl System for Fake {
     fn run(&mut self, argv: &[String], stdin: Option<&str>) -> R<Output> {
         self.calls.push((argv.to_vec(), stdin.map(str::to_string)));
+        let failing = self.fail_at == Some(self.calls.len() - 1);
+        self.failed.push(failing);
         let own = if argv[0] == "chroot" {
             &argv[4..]
         } else {
             argv
         };
-        if self.fail.iter().any(|f| own.starts_with(f)) {
+        if failing || self.fail.iter().any(|f| own.starts_with(f)) {
+            *self.failed.last_mut().unwrap() = true;
             return Ok(out(1, "", "failed (made up)\n"));
         }
         let rest = &argv[1..];
@@ -511,6 +520,11 @@ impl System for Fake {
         line: &mut dyn FnMut(&str) -> R<Option<String>>,
     ) -> R<(i32, String)> {
         self.calls.push((argv.to_vec(), None));
+        let failing = self.fail_at == Some(self.calls.len() - 1);
+        self.failed.push(failing);
+        if failing {
+            return Ok((1, "unsquashfs: failed (made up)\n".into()));
+        }
         self.make_medium();
         for p in ["0", "10", "55", "100"] {
             if let Some(said) = line(&format!("{p}\n"))? {

@@ -357,6 +357,62 @@ class WhatThePlanMayNotSay(unittest.TestCase):
         self.assertEqual((r.returncode, r.stdout), (2, b"ERROR the plan is not a JSON object\n"), "20 levels inside are JSON")
 
 
+class TheLiveSystemsMounts(unittest.TestCase):
+    """The live system's /dev and /run/udev are bound one way only, in one call, and umount -R of the new system can never
+    reach the live system's own mounts through them: after such a bind, every mount under the new system is made a slave
+    first, and if that fails nothing is unmounted."""
+
+    def setUp(self):
+        self.calls, self.failing = [], []
+        self.old = (inst.run, inst.TARGET, inst.BOUND)
+        inst.TARGET, inst.BOUND = tempfile.mkdtemp(), False
+
+        class R:
+            def __init__(self, code):
+                self.returncode, self.stdout, self.stderr = code, "", "failed"
+
+        def run(argv, stdin=None, check=True, capture=False):
+            self.calls.append(argv)
+            code = 1 if any(argv[:len(f)] == f for f in self.failing) else 0
+            if code and check:
+                raise inst.Stop(f"{argv[0]} failed")
+            return R(code)
+        inst.run = run
+
+    def tearDown(self):
+        inst.run, inst.TARGET, inst.BOUND = self.old
+
+    def test_bound_one_way_in_the_same_call(self):
+        inst.bind_mounts()
+        binds = [c for c in self.calls if "--rbind" in c or "--bind" in c]
+        self.assertEqual(binds, [["mount", "--rbind", "--make-rslave", "/dev", inst.TARGET + "/dev"],
+                                 ["mount", "--bind", "--make-rslave", "/run/udev", inst.TARGET + "/run/udev"]])
+        self.assertFalse([c for c in self.calls if c[:2] == ["mount", "--make-rslave"]], "no separate call that could fail afterwards")
+        self.assertTrue(inst.BOUND)
+
+    def test_made_a_slave_before_umount_r(self):
+        inst.BOUND = True
+        self.assertTrue(inst.unmount_all())
+        self.assertEqual(self.calls, [["mount", "--make-rslave", inst.TARGET], ["umount", "-R", inst.TARGET], ["cryptsetup", "close", inst.MAPPER]])
+
+    def test_if_that_fails_nothing_is_unmounted(self):
+        inst.BOUND, self.failing = True, [["mount", "--make-rslave"]]
+        self.assertFalse(inst.unmount_all())
+        self.assertEqual(self.calls, [["mount", "--make-rslave", inst.TARGET]])
+
+    def test_a_failed_bind_still_counts(self):
+        self.failing = [["mount", "--rbind"], ["mount", "--make-rslave"]]
+        with self.assertRaises(inst.Stop):
+            inst.bind_mounts()
+        self.assertTrue(inst.BOUND, "the bind may have happened before the call failed")
+        self.assertFalse(inst.unmount_all())
+        self.assertFalse([c for c in self.calls if c[:2] == ["umount", "-R"]])
+
+    def test_before_any_bind_as_before(self):
+        self.assertTrue(inst.unmount_all())
+        self.assertEqual(self.calls[0], ["umount", "-R", inst.TARGET])
+
+
 class RemovePackages(unittest.TestCase):
     """A fake pacman: z stays and needs b; d (on the list) needs c."""
 

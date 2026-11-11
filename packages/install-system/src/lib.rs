@@ -106,7 +106,12 @@ pub fn main_with(
         Ok(os) => os,
         Err(e) => return traceback(sys, e),
     };
-    let mut ctx = Ctx { os, host, sys };
+    let mut ctx = Ctx {
+        os,
+        host,
+        sys,
+        bound: false,
+    };
     let first = args.first().map(String::as_str);
     if first == Some("--disks") {
         return match ctx.disks() {
@@ -130,7 +135,7 @@ pub fn main_with(
         return say(&mut ctx, "ERROR", "the plan is not JSON", 2);
     };
     let problem = {
-        let Ctx { os, host, sys } = &mut ctx;
+        let Ctx { os, host, sys, .. } = &mut ctx;
         let mut exists = |login: &str| sys.account_exists(login);
         plan::check_plan(
             &plan,

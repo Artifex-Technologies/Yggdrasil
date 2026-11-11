@@ -375,3 +375,106 @@ fn browsers_and_extras() {
         .contains("text/html=firefox.desktop"));
     assert_eq!(f.installed, ["firefox"]);
 }
+
+/// What may never happen to the live system's mounts in one run: a bind of its /dev or /run/udev that is not made a slave in
+/// the same call, or umount -R of the new system after such a bind without a successful `mount --make-rslave TARGET` first
+/// (umount -R would carry over to the live system's /dev/pts, /dev/shm ... through a shared bind).
+fn live_mounts_safe(f: &fake::Fake, target: &str) -> Result<(), String> {
+    let (mut bound, mut slave) = (false, false);
+    for ((argv, _), failed) in f.calls.iter().zip(&f.failed) {
+        let a: Vec<&str> = argv.iter().map(String::as_str).collect();
+        if a[0] == "mount" && (a.contains(&"--rbind") || a.contains(&"--bind")) {
+            if !a.contains(&"--make-rslave") {
+                return Err(format!("a bind without --make-rslave: {a:?}"));
+            }
+            bound = true;
+        }
+        if a == ["mount", "--make-rslave", target] && !failed {
+            slave = true;
+        }
+        if a.starts_with(&["umount", "-R"]) && bound && !slave {
+            return Err(format!("umount -R after a bind of the live /dev, with no successful mount --make-rslave first: {a:?}"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_failure_anywhere_never_unmounts_the_live_dev() {
+    let encrypted = plan_with(&[
+        ("encrypt", "true"),
+        ("encrypt_password", &format!("\"{DISK_PW}\"")),
+    ]);
+    let live = Live::new();
+    let mut whole = live.fake();
+    assert_eq!(live.run(&mut whole, &[], &encrypted), 0);
+    live_mounts_safe(&whole, &live.target()).unwrap();
+    let binds = whole
+        .calls
+        .iter()
+        .filter(|(a, _)| a[0] == "mount" && a.iter().any(|x| x == "--rbind" || x == "--bind"))
+        .count();
+    assert_eq!(binds, 2, "/dev and /run/udev");
+    assert!(
+        !whole.calls.iter().any(|(a, _)| a.len() == 3
+            && a[..2] == ["mount", "--make-rslave"]
+            && a[2] != live.target()),
+        "no separate call"
+    );
+    // each call of the install fails in turn, with the cleanup's own `mount --make-rslave TARGET` working or failing too
+    for k in 0..whole.calls.len() {
+        for slave_fails in [false, true] {
+            let live = Live::new();
+            let mut f = live.fake();
+            f.fail_at = Some(k);
+            if slave_fails {
+                f.fail.push(vec!["mount".into(), "--make-rslave".into()]);
+            }
+            let code = live.run(&mut f, &[], &encrypted);
+            live_mounts_safe(&f, &live.target()).unwrap_or_else(|e| {
+                panic!(
+                    "call {k} failing ({:?}), make-rslave failing {slave_fails}: {e}",
+                    whole.calls[k].0
+                )
+            });
+            assert!(
+                code == 1 || (code == 0 && f.out.last().unwrap() == "DONE"),
+                "call {k}: {code} {:?}",
+                f.out.last()
+            );
+        }
+    }
+}
+
+#[test]
+fn left_mounted_rather_than_unmounted_unsafely() {
+    let live = Live::new();
+    let mut f = live.fake();
+    f.fail.push(vec!["mount".into(), "--make-rslave".into()]);
+    assert_eq!(live.run(&mut f, &[], &plan().dumps()), 0);
+    let n = f.out.len();
+    assert_eq!(
+        f.out[n - 2..],
+        [
+            format!(
+                "WARN the new system stays mounted at {} until the computer restarts",
+                live.target()
+            ),
+            "DONE".to_string()
+        ]
+    );
+    assert!(
+        !f.calls
+            .iter()
+            .any(|(a, _)| a[..2] == ["umount", "-R"] || a[..2] == ["cryptsetup", "close"]),
+        "nothing unmounted, nothing closed"
+    );
+    // a failure before the live /dev is bound: nothing to make a slave
+    let mut f = live.fake();
+    f.fail.push(vec!["mkfs.btrfs".into()]);
+    assert_eq!(live.run(&mut f, &[], &plan().dumps()), 1);
+    assert!(!f
+        .calls
+        .iter()
+        .any(|(a, _)| a[..2] == ["mount", "--make-rslave"]));
+}

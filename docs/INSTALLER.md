@@ -19,7 +19,10 @@ Since 2026-11-07 (it was Labyrinth's `labyrinth-install-system` until then; Lyka
 whole disk: a 1 GiB EFI partition and the rest; or the partitions chosen by hand), encrypts / with LUKS2 if asked (one password,
 typed in GRUB), makes btrfs with the subvolumes `@`, `@home`, `@cache`, `@log` (ext4 or XFS by hand), copies the medium's system,
 sets up language, keyboard, time zone, the computer's name and the account (an administrator through sudo; root stays locked),
-switches on greetd, builds the start-up image and installs GRUB. What belongs to the OS comes from the same integration file and
+switches on greetd, builds the start-up image and installs GRUB. The live system's /dev and /run/udev are bound into the new system one way
+only, in one call (`mount --rbind --make-rslave`), and the cleanup makes everything under the new system a slave before
+`umount -R` (and unmounts nothing if it cannot): unmounting the new system must never unmount the live system's /dev/pts or
+/dev/shm. What belongs to the OS comes from the same integration file and
 `/etc/os-release`; every key is optional:
 
 | Key | What it is | Without it |

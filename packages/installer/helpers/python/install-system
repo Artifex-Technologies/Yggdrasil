@@ -913,16 +913,23 @@ def copy_system():
         raise Stop(f"copying the system failed: {err.strip()[-400:]}")
 
 
+# Whether the live system's /dev or /run/udev has been bound into the new system (unmount_all() then takes care).
+BOUND = False
+
+
 def bind_mounts():
-    # a fresh /run (the live system's would keep the new one busy at the end), with udev's part for the disk tools
-    for src, dst, extra in [("proc", "proc", ["-t", "proc"]), ("sys", "sys", ["-t", "sysfs"]), ("/dev", "dev", ["--rbind"]),
-                            ("tmpfs", "run", ["-t", "tmpfs"]), ("/run/udev", "run/udev", ["--bind"])]:
+    global BOUND
+    # a fresh /run (the live system's would keep the new one busy at the end), with udev's part for the disk tools. The live
+    # system's own are bound one way only, in the same call (--make-rslave): bind mounts are shared, and unmounting a shared
+    # one at the end would unmount the live system's /dev/pts, /dev/shm ... too. A separate call afterwards could fail and
+    # leave a shared one behind.
+    for src, dst, extra in [("proc", "proc", ["-t", "proc"]), ("sys", "sys", ["-t", "sysfs"]), ("/dev", "dev", ["--rbind", "--make-rslave"]),
+                            ("tmpfs", "run", ["-t", "tmpfs"]), ("/run/udev", "run/udev", ["--bind", "--make-rslave"])]:
         d = os.path.join(TARGET, dst)
         os.makedirs(d, exist_ok=True)
+        if src.startswith("/"):
+            BOUND = True
         run(["mount"] + extra + [src, d])
-        if "--rbind" in extra or "--bind" in extra:
-            # one way only: unmounting it at the end must never unmount anything of the live system (bind mounts are shared)
-            run(["mount", "--make-rslave", d])
     if os.path.isdir("/sys/firmware/efi/efivars"):
         run(["mount", "-t", "efivarfs", "efivarfs", f"{TARGET}/sys/firmware/efi/efivars"], check=False)
 
@@ -1072,9 +1079,15 @@ def bootloader(encrypted, crypt_uuid, root_uuid, fallback=True):
 
 
 def unmount_all():
+    """Unmounts the new system and closes its encryption. Once the live system's /dev was bound into it, everything under it
+    is made a slave first, so that umount -R can never reach the live system's own mounts (whatever happened to the bind);
+    when that cannot be done nothing is unmounted, and False is returned (a restart unmounts it)."""
+    if BOUND and run(["mount", "--make-rslave", TARGET], check=False).returncode != 0:
+        return False
     if run(["umount", "-R", TARGET], check=False).returncode != 0:
         run(["umount", "-R", "-l", TARGET], check=False)
     run(["cryptsetup", "close", MAPPER], check=False)
+    return True
 
 
 def install(p):
@@ -1126,7 +1139,8 @@ def install(p):
                 say("WARN", line.split("WARNING:", 1)[-1].strip())
         if r.returncode != 0:
             raise Stop("the last checks of the new system failed: " + (r.stdout or r.stderr).strip()[-400:])
-    unmount_all()
+    if not unmount_all():
+        say("WARN", f"the new system stays mounted at {TARGET} until the computer restarts")
     say("DONE")
 
 
