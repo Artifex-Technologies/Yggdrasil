@@ -27,7 +27,6 @@ path = "src/bin/liki-icon-import.rs"
 [dependencies]
 libc = "0.2"
 miniz_oxide = { version = "0.8", default-features = false, features = ["with-alloc"] }
-regex = { version = "1", default-features = false, features = ["std", "unicode"] }
 yggdrasil-pycompat = { path = "../pycompat" }
 
 [profile.release]
