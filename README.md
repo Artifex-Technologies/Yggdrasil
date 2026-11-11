@@ -199,7 +199,7 @@ the bugs the port fixed and where the Rust one is worse.
 | Program | Time, Python → Rust | Memory, Python → Rust | More |
 | --- | --- | --- | --- |
 | tune, casefan, gpufan, powerlimit | `casefan get` 39.9 → 2.16 ms (−95 %) | the four loops (no card): 35.4 → 0.9 MB PSS (−98 %), 650 → 170 wake-ups a minute | [power-helpers](packages/power-helpers/README.md) |
-| account, bootscreen, game-fix, gpu-run | `account list` 23.7 → 0.50 ms (−98 %); `gpu-run` 0.7 to 4 ms **slower** | 13.5–15.0 → 2.5–4.6 MB; a boot picture 130 → 189 MB (**+46 %**) | [settings-helpers](packages/settings-helpers/README.md) |
+| account, bootscreen, game-fix, gpu-run | `account list` 23.7 → 0.50 ms (−98 %); `gpu-run list` 32.1 → 9.14 ms (−72 %) | 13.5–15.0 → 2.5–4.6 MB; a boot picture 130 → 189 MB (**+46 %**) | [settings-helpers](packages/settings-helpers/README.md) |
 | labyrinth-appusage | start 18.5 → 1.1 ms CPU (−94 %) | 7.0 → 0.6 MB PSS (−92 %) | [appusage](packages/appusage/README.md) |
 | the crash watch | start 22.8 → 0.38 ms CPU (−98 %) | 23.8 → 0.4 MB PSS (−99 %) | [crashwatch](packages/crashwatch/README.md) |
 | pkg-root | a refused command 20.0 → 0.44 ms (−98 %) | 12.8 → 2.4 MB (−81 %) | [agora-helpers](packages/agora-helpers/README.md) |

@@ -60,6 +60,11 @@ another build was running on the computer, and their 10th to 90th percentiles we
 up to 45 ms for Python and 6 ms for Rust; ygg-cursors: 26 and 49 ms), the conclusions did not. Where the Rust one is worse,
 the package's README says why.
 
+Four cases are from a later run the same day, after `gpu-run`, `labyrinth-appusage --once` and `ygg-theme apply` stopped
+looking every 10, 20 or 5 ms whether the programs they start had ended and began to wait for them instead (a pidfd, in
+`packages/pycompat`): `gpu-run list --json` 32.3 → 9.14 ms, `gpu-run 2 PROGRAM` 33.8 → 10.5 ms, `--once` 20.9 → 3.68 ms,
+`apply` 21.7 → 3.73 ms (Rust before → after, both measured then, back to back). Their Python columns are from that run too.
+
 "(fake tree)" cases run the Python script through `packages/power-helpers/parity/py_dryrun.py` (the script's own code with
 the outside replaced: a copy of the small fake tree, writes printed), and the Rust helper with `--dry-run --root`. "The four
 loops as services" are the four Python scripts as four processes (casefan and gpufan sleeping in 0.2 s steps, as they did)
@@ -134,11 +139,11 @@ against the one Rust `power run`. The Python crash watch's RSS includes its jour
 | game-fix apply (Dead Space 2) | wall (median; p10–p90) | 27.4 ms (26.9 ms–28.3 ms) | 1.76 ms (1.71 ms–1.84 ms) | −94 %, 25.6 ms faster |
 | | CPU time | 27.1 ms | 1.68 ms | −94 %, 25.4 ms less |
 | | peak RSS | 15.0 MB | 3.9 MB | −74 %, 11.1 MB less |
-| gpu-run list --json | wall (median; p10–p90) | 31.4 ms (30.9 ms–32.0 ms) | 32.1 ms (32.0 ms–32.2 ms) | +2 %, 0.70 ms slower |
-| | CPU time | 32.0 ms | 10.3 ms | −68 %, 21.8 ms less |
+| gpu-run list --json | wall (median; p10–p90) | 32.1 ms (31.9 ms–32.5 ms) | 9.14 ms (8.95 ms–9.27 ms) | −72 %, 23.0 ms faster |
+| | CPU time | 32.8 ms | 10.2 ms | −69 %, 22.6 ms less |
 | | peak RSS | 13.5 MB | 4.3 MB | −68 %, 9.2 MB less |
-| gpu-run 2 PROGRAM (starts a stand-in program) | wall (median; p10–p90) | 29.6 ms (29.4 ms–29.9 ms) | 33.6 ms (33.6 ms–33.8 ms) | +14 %, 4.01 ms slower |
-| | CPU time | 31.2 ms | 12.6 ms | −60 %, 18.6 ms less |
+| gpu-run 2 PROGRAM (starts a stand-in program) | wall (median; p10–p90) | 30.3 ms (30.1 ms–30.6 ms) | 10.5 ms (10.4 ms–10.7 ms) | −65 %, 19.8 ms faster |
+| | CPU time | 31.8 ms | 12.4 ms | −61 %, 19.4 ms less |
 | | peak RSS | 13.6 MB | 4.6 MB | −66 %, 9.0 MB less |
 | on disk | | account 14.9 KB, bootscreen 9.1 KB, game-fix 12.4 KB, gpu-run 10.1 KB (scripts; the interpreter is shared) | account 454 KB, bootscreen 951 KB, game-fix 1285 KB, gpu-run 1228 KB (binaries) | |
 
@@ -146,8 +151,8 @@ against the one Rust `power run`. The Python crash watch's RSS includes its jour
 
 | case | metric | old (Python) | Rust | change |
 | --- | --- | --- | --- | --- |
-| labyrinth-appusage --once | wall (median; p10–p90) | 26.2 ms (25.7 ms–26.6 ms) | 20.9 ms (20.9 ms–21.0 ms) | −20 %, 5.25 ms faster |
-| | CPU time | 24.6 ms | 2.35 ms | −90 %, 22.2 ms less |
+| labyrinth-appusage --once | wall (median; p10–p90) | 26.1 ms (25.8 ms–26.7 ms) | 3.68 ms (3.55 ms–3.83 ms) | −86 %, 22.4 ms faster |
+| | CPU time | 24.3 ms | 2.19 ms | −91 %, 22.1 ms less |
 | | peak RSS | 12.8 MB | 6.3 MB | −51 %, 6.5 MB less |
 | the service, idle | CPU per minute | 1.60 ms | 1.35 ms | −15 %, 0.25 ms less |
 | | wake-ups per minute | 8 | 2 | −75 %, 6 fewer |
@@ -195,8 +200,8 @@ against the one Rust `power run`. The Python crash watch's RSS includes its jour
 | ygg-theme gtk4-theme dark | wall (median; p10–p90) | 116 ms (115 ms–116 ms) | 32.9 ms (32.7 ms–33.2 ms) | −72 %, 82.7 ms faster |
 | | CPU time | 120 ms | 37.3 ms | −69 %, 82.5 ms less |
 | | peak RSS | 57.6 MB | 32.3 MB | −44 %, 25.3 MB less |
-| ygg-theme apply (scratch HOME) | wall (median; p10–p90) | 33.8 ms (33.5 ms–34.1 ms) | 21.7 ms (21.5 ms–21.8 ms) | −36 %, 12.1 ms faster |
-| | CPU time | 31.6 ms | 3.50 ms | −89 %, 28.1 ms less |
+| ygg-theme apply (scratch HOME) | wall (median; p10–p90) | 34.7 ms (34.5 ms–39.4 ms) | 3.73 ms (3.61 ms–3.87 ms) | −89 %, 31.0 ms faster |
+| | CPU time | 32.8 ms | 3.62 ms | −89 %, 29.1 ms less |
 | | peak RSS | 15.9 MB | 4.0 MB | −75 %, 11.9 MB less |
 | on disk | | ygg-theme 30.3 KB (scripts; the interpreter is shared) | ygg-theme 1217 KB (binaries) | |
 

@@ -65,15 +65,16 @@ gsettings, systemctl, hyprctl and pkill; no display), on my desktop (16 threads)
 | `ygg-theme scheme`, `gtk`, `gtk3-theme`, wall time | 27.7–27.8 ms | 0.56–0.58 ms | −98 %, 27.1 ms faster |
 | `ygg-theme gtk4-theme dark` (GTK 4's own theme, retinted), wall time | 116 ms | 32.9 ms | −72 %, 82.7 ms faster |
 | `ygg-theme gtk4-theme dark`, peak memory | 57.6 MB | 32.3 MB | −44 %, 25.3 MB less |
-| `ygg-theme apply`, wall time | 33.8 ms | 21.7 ms | −36 %, 12.1 ms faster |
-| `ygg-theme apply`, CPU time | 31.6 ms | 3.50 ms | −89 %, 28.1 ms less |
+| `ygg-theme apply`, wall time | 34.7 ms | 3.73 ms | −89 %, 31.0 ms faster |
+| `ygg-theme apply`, CPU time | 32.8 ms | 3.62 ms | −89 %, 29.1 ms less |
 | `ygg-theme`, peak memory (the other commands) | 15.9 MB | 3.3–4.0 MB | −75 to −79 % |
 | `ygg-cursors OUTDIR --preview` (the whole theme), wall time | 1057 ms | 1604 ms | **+52 %, 547 ms slower** |
 | `ygg-cursors`, peak memory | 31.5 MB | 15.1 MB | −52 %, 16.5 MB less |
 | on disk | 44 KB of scripts (+ Python, 75 MB, python-gobject and python-pillow) | 1.6 MB (two binaries) | +1.6 MB; the package needs no Python |
 
-`apply` waits for each of the programs it tells (gsettings, systemctl, hyprctl, pkill) in 5 ms steps, so most of its
-21.7 ms is waiting; its CPU time is the real cost. GTK 4's library is most of `gtk4-theme`'s time and memory in both.
+`apply` waits for each of the programs it tells (gsettings, systemctl, hyprctl, pkill) and goes on the moment each one
+ends. Until 2026-11-11 it looked every 5 ms instead, and took 21.7 ms; the `apply` numbers above are from a run that day
+after the change, the rest from the first run. GTK 4's library is most of `gtk4-theme`'s time and memory in both.
 
 Where Rust is worse: `ygg-cursors` takes half a second longer than Python with Pillow, whose drawing and resampling are C.
 It runs once, when the package is built, and the package is built for size (`opt-level = "s"`); built with opt-level 3

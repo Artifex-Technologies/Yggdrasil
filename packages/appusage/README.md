@@ -51,12 +51,14 @@ desktop (16 threads); the service ran 60 s after a 5 s start. Method and every c
 | the service, CPU per minute | 1.60 ms | 1.35 ms | −15 %, 0.25 ms less (about the same) |
 | the service, wake-ups per minute | 8 | 2 | −75 %, 6 fewer |
 | the service, start (CPU in its first 5 s) | 18.5 ms | 1.11 ms | −94 %, 17.4 ms less |
-| `--once`, wall time | 26.2 ms | 20.9 ms | −20 %, 5.3 ms faster |
-| `--once`, CPU time | 24.6 ms | 2.35 ms | −90 %, 22.2 ms less |
+| `--once`, wall time | 26.1 ms | 3.68 ms | −86 %, 22.4 ms faster |
+| `--once`, CPU time | 24.3 ms | 2.19 ms | −91 %, 22.1 ms less |
 | on disk | 3.7 KB script (+ Python, 75 MB, shared) | 503 KB | +499 KB |
 
 Idle CPU was already small for the script (it woke every 30 s); the gain is memory and that nothing is started every 30 s.
-`--once` asks systemctl, as the script did; the Rust one waits for it in 20 ms steps, so most of its 20.9 ms is waiting.
+`--once` asks systemctl, as the script did, and goes on the moment it answers. Until 2026-11-11 it looked every 20 ms
+instead, and took 20.9 ms; the `--once` numbers above are from a run that day after the change, the rest from the first
+run. (The service follows the cgroup tree and starts no systemctl, so the change does not touch it.)
 
 More accurate:
 

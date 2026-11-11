@@ -4,11 +4,13 @@
 //!   - json: json.dumps' output (", " and ": ", or indent=N with ","; ensure_ascii; Python's float repr), over serde_json
 //!     values that keep a file's key order (as a dict does);
 //!   - text: int() (base 10 and 16, with Unicode digits, underscores, whitespace), str.isdigit(), str.isspace(), strip() and
-//!     split() with no argument, repr() of text and of a list of text, os.path.normpath().
+//!     split() with no argument, repr() of text and of a list of text, os.path.normpath();
+//!   - process: subprocess's timeout= (wait for a child at most so long, woken the moment it ends).
 //!
 //! The Unicode tables (unicode_tables.rs) are generated from Python's own str methods by gen_unicode.py.
 
 pub mod json;
+pub mod process;
 mod unicode_tables;
 
 use unicode_tables::{DECIMAL_ZEROS, DIGIT, PRINTABLE, SPACE, WORD};

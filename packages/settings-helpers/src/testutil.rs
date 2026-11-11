@@ -7,6 +7,12 @@ use std::sync::{Mutex, MutexGuard};
 
 pub struct TempDir(pub PathBuf);
 
+impl Default for TempDir {
+    fn default() -> TempDir {
+        TempDir::new()
+    }
+}
+
 impl TempDir {
     pub fn new() -> TempDir {
         static N: AtomicUsize = AtomicUsize::new(0);

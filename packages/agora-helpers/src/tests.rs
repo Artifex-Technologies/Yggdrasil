@@ -56,12 +56,12 @@ fn names_and_lists_are_plain_without_a_final_newline() {
 #[test]
 fn the_plan_is_the_scripts() {
     assert_eq!(check(&["-S", "--needed", "krita"]).unwrap(), Plan { args: v(&["-S", "--needed", "krita"]), installing: true });
-    assert_eq!(check(&["-Rns", "--noconfirm", "krita"]).unwrap().installing, false);
-    assert_eq!(check(&["-Syu", "--ignore", "a,b"]).unwrap().installing, false, "an upgrade is not undone");
+    assert!(!check(&["-Rns", "--noconfirm", "krita"]).unwrap().installing);
+    assert!(!check(&["-Syu", "--ignore", "a,b"]).unwrap().installing, "an upgrade is not undone");
     // -S -y: always the full upgrade, -y taken out, every -S made -Syu
     assert_eq!(check(&["-S", "-y", "--ignore", "x", "--noconfirm", "--config", "/etc/pacman.conf", "--"]).unwrap(),
                Plan { args: v(&["-Syu", "--ignore", "x", "--noconfirm", "--config", "/etc/pacman.conf", "--"]), installing: false });
-    assert_eq!(check(&["-U", "--", "/tmp/pkgs/a-1-1-x86_64.pkg.tar.zst"]).unwrap().installing, true);
+    assert!(check(&["-U", "--", "/tmp/pkgs/a-1-1-x86_64.pkg.tar.zst"]).unwrap().installing);
 }
 
 #[test]

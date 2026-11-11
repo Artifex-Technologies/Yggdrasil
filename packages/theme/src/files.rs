@@ -169,17 +169,9 @@ pub fn which(cmd: &str) -> bool {
 pub fn run(cmd: &[&str]) {
     use std::process::{Command, Stdio};
     let Ok(mut child) = Command::new(cmd[0]).args(&cmd[1..]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() else { return };
-    let until = std::time::Instant::now() + std::time::Duration::from_secs(20);
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => return,
-            Ok(None) if std::time::Instant::now() < until => std::thread::sleep(std::time::Duration::from_millis(5)),
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return;
-            }
-        }
+    if !matches!(pycompat::process::wait_timeout(&mut child, std::time::Duration::from_secs(20)), Ok(Some(_))) {
+        let _ = child.kill();
+        let _ = child.wait();
     }
 }
 

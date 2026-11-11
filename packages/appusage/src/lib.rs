@@ -160,17 +160,10 @@ fn wait_output(child: &mut std::process::Child, limit: Duration) -> Option<Vec<u
         let _ = stdout.read_to_end(&mut buf);
         buf
     });
-    let start = std::time::Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if start.elapsed() < limit => std::thread::sleep(Duration::from_millis(20)),
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
-            }
-        }
+    if !matches!(pycompat::process::wait_timeout(child, limit), Ok(Some(_))) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return None;
     }
     reader.join().ok()
 }

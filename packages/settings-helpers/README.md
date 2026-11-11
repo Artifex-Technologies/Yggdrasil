@@ -60,14 +60,16 @@ Method and every case: [docs/PORT_NUMBERS.md](../../docs/PORT_NUMBERS.md).
 | `game-fix apply` (Dead Space 2), wall time | 27.4 ms | 1.76 ms | −94 %, 25.6 ms faster |
 | `bootscreen set picture` (a 12-megapixel photo), wall time | 1132 ms | 815 ms | −28 %, 317 ms faster |
 | `bootscreen set picture`, peak memory | 129.8 MB | 189.3 MB | **+46 %, 59.5 MB more** |
-| `gpu-run list --json`, wall time | 31.4 ms | 32.1 ms | **+2 %, 0.70 ms slower** (CPU −68 %) |
-| `gpu-run 2 PROGRAM`, wall time | 29.6 ms | 33.6 ms | **+14 %, 4.0 ms slower** (CPU −60 %) |
+| `gpu-run list --json`, wall time | 32.1 ms | 9.14 ms | −72 %, 23.0 ms faster |
+| `gpu-run 2 PROGRAM`, wall time | 30.3 ms | 10.5 ms | −65 %, 19.8 ms faster |
 | a command's peak memory (the others) | 13.5–15.0 MB | 2.5–4.6 MB | −66 to −82 % |
 | on disk | 46 KB of scripts (+ Python, 75 MB, and python-pillow, 4.9 MB) | 3.8 MB (four binaries) | +3.8 MB, python-pillow no longer needed |
 
-Where Rust is worse: `gpu-run` waits for lspci and vulkaninfo in 10 ms steps (Python's subprocess returns the moment they
-end), so it spends less CPU but more time; and `bootscreen` decodes and scales the whole photo in memory at once, so its
-peak is higher than Pillow's.
+Where Rust is worse: `bootscreen` decodes and scales the whole photo in memory at once, so its peak is higher than
+Pillow's. Until 2026-11-11 `gpu-run` was slower too (32.1 and 33.6 ms): it looked every 10 ms whether lspci and
+vulkaninfo had ended, as `game-fix` did for the screen query (not part of these runs: they give the screen size). Both now
+go on the moment the program ends; the `gpu-run` numbers above are from a run that day after the change, the rest from
+the first run.
 
 More accurate:
 

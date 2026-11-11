@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -32,7 +32,7 @@ fn tmp() -> PathBuf {
     d
 }
 
-fn tool(dir: &PathBuf, name: &str, body: &str) {
+fn tool(dir: &Path, name: &str, body: &str) {
     let p = dir.join(name);
     fs::write(&p, format!("#!/bin/sh\n{body}\n")).unwrap();
     fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();

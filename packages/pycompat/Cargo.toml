@@ -2,7 +2,7 @@
 name = "yggdrasil-pycompat"
 version = "0.1.0"
 edition = "2021"
-description = "The few Python behaviours Yggdrasil's Rust ports of Python helpers depend on, so they print, parse and decide as the scripts did: json.dumps' output, int() and str.isdigit() on text, str.strip() and split(), repr() of text, os.path.normpath()"
+description = "The few Python behaviours Yggdrasil's Rust ports of Python helpers depend on, so they print, parse and decide as the scripts did: json.dumps' output, int() and str.isdigit() on text, str.strip() and split(), repr() of text, os.path.normpath(), subprocess's timeout"
 license = "MPL-2.0"
 
 [lib]
@@ -12,3 +12,6 @@ path = "src/lib.rs"
 # serde_json keeps an object's keys in the file's order (as a Python dict does) with preserve_order
 [dependencies]
 serde_json = { version = "1", features = ["preserve_order"] }
+# process.rs: pidfd_open and poll, to wait for a child with a time limit
+libc = "0.2"
+

@@ -76,17 +76,10 @@ fn timed(argv: &[&str], secs: u64) -> Option<String> {
         let mut b = vec![];
         let _ = se.read_to_end(&mut b);
     });
-    let start = std::time::Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if start.elapsed() < std::time::Duration::from_secs(secs) => std::thread::sleep(std::time::Duration::from_millis(10)),
-            _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
-            }
-        }
+    if !matches!(pycompat::process::wait_timeout(&mut child, std::time::Duration::from_secs(secs)), Ok(Some(_))) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return None;
     }
     Some(py::universal(&String::from_utf8_lossy(&reader.join().ok()?)))
 }

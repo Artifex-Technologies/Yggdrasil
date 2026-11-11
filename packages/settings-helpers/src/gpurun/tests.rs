@@ -30,7 +30,10 @@ struct Sys {
     _lock: MutexGuard<'static, ()>,
 }
 
-fn sys(cards: &[(&str, &str, &str, &str, &str, bool, &[bool])]) -> Sys {
+/// A made-up card: (drm name, PCI slot, vendor, device, driver, boot VGA, each connector connected or not).
+type FakeCard<'a> = (&'a str, &'a str, &'a str, &'a str, &'a str, bool, &'a [bool]);
+
+fn sys(cards: &[FakeCard]) -> Sys {
     let lock = env_lock();
     let root = TempDir::new();
     let drm = root.0.join("class/drm");
