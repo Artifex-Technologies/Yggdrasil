@@ -1,7 +1,5 @@
 //! Just enough drawing for the picker's loupe: text and rounded shapes on a software pixmap. (Copied from the lock screen's draw.rs, itself
 //! copied from the panel's paint.rs; to be shared through a common crate later.)
-#![allow(dead_code)]
-
 
 use std::path::PathBuf;
 
@@ -11,7 +9,6 @@ use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, PremultipliedColorU
 pub type Rgba = (u8, u8, u8, u8);
 
 pub struct Fonts {
-    pub regular: FontVec,
     pub bold: FontVec,
 }
 
@@ -24,25 +21,9 @@ fn fc_match(pattern: &str) -> Option<PathBuf> {
 impl Fonts {
     pub fn load() -> Option<Fonts> {
         let load = |pat: &str| -> Option<FontVec> { FontVec::try_from_vec(std::fs::read(fc_match(pat)?).ok()?).ok() };
-        let regular = load("sans-serif")?;
         let bold = load("sans-serif:bold").or_else(|| load("sans-serif"))?;
-        Some(Fonts { regular, bold })
+        Some(Fonts { bold })
     }
-}
-
-pub fn text_width(font: &FontVec, size: f32, s: &str) -> f32 {
-    let f = font.as_scaled(PxScale::from(size));
-    let mut w = 0.0;
-    let mut prev = None;
-    for ch in s.chars() {
-        let g = f.scaled_glyph(ch);
-        if let Some(p) = prev {
-            w += f.kern(p, g.id);
-        }
-        w += f.h_advance(g.id);
-        prev = Some(g.id);
-    }
-    w
 }
 
 pub fn draw_text(pix: &mut Pixmap, font: &FontVec, size: f32, x: f32, cy: f32, c: Rgba, s: &str) {
@@ -96,17 +77,6 @@ pub fn fill_rounded(pix: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, c:
     pb.line_to(x, y + r);
     pb.quad_to(x, y, x + r, y);
     pb.close();
-    if let Some(path) = pb.finish() {
-        let mut paint = Paint::default();
-        paint.set_color(Color::from_rgba8(c.0, c.1, c.2, c.3));
-        paint.anti_alias = true;
-        pix.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
-    }
-}
-
-pub fn fill_circle(pix: &mut Pixmap, cx: f32, cy: f32, r: f32, c: Rgba) {
-    let mut pb = PathBuilder::new();
-    pb.push_circle(cx, cy, r);
     if let Some(path) = pb.finish() {
         let mut paint = Paint::default();
         paint.set_color(Color::from_rgba8(c.0, c.1, c.2, c.3));

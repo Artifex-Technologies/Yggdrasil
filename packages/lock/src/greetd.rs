@@ -25,6 +25,7 @@ impl Greetd<std::os::unix::net::UnixStream> {
 }
 
 impl<S: Read + Write> Greetd<S> {
+    #[cfg(test)]
     pub fn new(s: S) -> Self {
         Greetd { s }
     }

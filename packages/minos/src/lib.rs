@@ -81,51 +81,6 @@ pub struct Tab {
     pub pinned: bool,
 }
 
-#[derive(Debug, Default)]
-pub struct Tabs {
-    tabs: Vec<Tab>,
-    active: usize,
-}
-
-impl Tabs {
-    pub fn open(&mut self, path: impl Into<PathBuf>) {
-        self.tabs.push(Tab { history: History::new(path), pinned: false });
-        self.active = self.tabs.len() - 1;
-    }
-
-    pub fn len(&self) -> usize {
-        self.tabs.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.tabs.is_empty()
-    }
-
-    pub fn active(&mut self) -> Option<&mut Tab> {
-        self.tabs.get_mut(self.active)
-    }
-
-    pub fn toggle_pin(&mut self, index: usize) {
-        if let Some(t) = self.tabs.get_mut(index) {
-            t.pinned = !t.pinned;
-        }
-    }
-
-    /// Close a tab unless it is pinned. Returns whether it was closed.
-    pub fn close(&mut self, index: usize) -> bool {
-        match self.tabs.get(index) {
-            Some(t) if !t.pinned => {
-                self.tabs.remove(index);
-                if self.active >= self.tabs.len() && !self.tabs.is_empty() {
-                    self.active = self.tabs.len() - 1;
-                }
-                true
-            }
-            _ => false,
-        }
-    }
-}
-
 /// Expand `~` and `$VAR` / `${VAR}` in an address-bar string using `lookup`.
 /// Unknown variables are left as written.
 pub fn expand_address(input: &str, lookup: impl Fn(&str) -> Option<String>) -> String {
@@ -193,17 +148,6 @@ mod tests {
         h.visit("/x");
         assert_eq!(h.forward(), None);
         assert_eq!(h.up(), Some(PathBuf::from("/")));
-    }
-
-    #[test]
-    fn pinned_tabs_do_not_close() {
-        let mut t = Tabs::default();
-        t.open("/a");
-        t.open("/b");
-        t.toggle_pin(0);
-        assert!(!t.close(0));
-        assert!(t.close(1));
-        assert_eq!(t.len(), 1);
     }
 
     #[test]

@@ -412,7 +412,8 @@ fn cached_state(rel: &Path, size: u64) -> Avail {
 }
 
 /// Folder states worked out in the background: the result and when, or None while it is being worked out.
-static FOLDERS: std::sync::Mutex<Option<std::collections::HashMap<PathBuf, Option<(std::time::Instant, Option<Avail>)>>>> = std::sync::Mutex::new(None);
+type FolderStates = std::collections::HashMap<PathBuf, Option<(std::time::Instant, Option<Avail>)>>;
+static FOLDERS: std::sync::Mutex<Option<FolderStates>> = std::sync::Mutex::new(None);
 
 /// Folders downloaded with "Download to this computer" and how many files they had then:
 /// ~/.local/state/yggdrasil/minos-downloaded.json, {"/home/me/ProtonDrive/Photos": 120, ...}.
@@ -624,6 +625,112 @@ pub fn availability(drive_root: &Path, path: &Path, size: u64) -> Option<Avail> 
     Some(a)
 }
 
+/// Whether rclone already has a Proton Drive remote called `proton`.
+pub fn proton_configured() -> bool {
+    Command::new("rclone").arg("listremotes").output().map(|o| String::from_utf8_lossy(&o.stdout).lines().any(|l| l.trim() == "proton:")).unwrap_or(false)
+}
+
+fn obscure(secret: &str) -> Result<String, String> {
+    use std::io::Write;
+    let mut child = Command::new("rclone").args(["obscure", "-"]).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).spawn().map_err(|e| format!("cannot run rclone (is it installed?): {e}"))?;
+    child.stdin.take().ok_or("no stdin")?.write_all(secret.as_bytes()).map_err(|e| e.to_string())?;
+    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// Sign in to Proton Drive (rclone's `protondrive` backend, remote `proton`) and start the mount at
+/// `~/ProtonDrive`, so the Cloud entry in the sidebar fills in. `mailbox` and `twofa` may be empty.
+pub fn connect_proton(user: &str, password: &str, mailbox: &str, twofa: &str) -> Result<(), String> {
+    // a lapsed sign-in is renewed in place; a first one is created
+    let verb = if proton_configured() { "update" } else { "create" };
+    let mut args: Vec<String> = if verb == "update" { ["config", "update", "proton", "username"].map(String::from).to_vec() } else { ["config", "create", "proton", "protondrive", "username"].map(String::from).to_vec() };
+    args.push(user.trim().to_string());
+    args.push("password".into());
+    args.push(obscure(password)?);
+    if !mailbox.is_empty() {
+        args.push("mailbox_password".into());
+        args.push(obscure(mailbox)?);
+    }
+    // The two-factor code is good for one sign-in only (about 30 seconds): it is handed over for this sign-in and removed again once
+    // the drive is mounted (rclone keeps a session instead). Signing in again also drops the old session, so the new code is used.
+    if verb == "update" || !twofa.trim().is_empty() {
+        args.push("2fa".into());
+        args.push(twofa.trim().to_string());
+    }
+    if verb == "update" {
+        for key in SESSION_KEYS {
+            args.push(key.into());
+            args.push(String::new());
+        }
+    }
+    let out = Command::new("rclone").args(&args).output().map_err(|e| format!("cannot run rclone: {e}"))?;
+    if !out.status.success() {
+        if verb == "create" {
+            let _ = Command::new("rclone").args(["config", "delete", "proton"]).status();
+        }
+        return Err(format!("Proton refused the sign-in: {}", String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("").trim()));
+    }
+    let mounted = start_proton_mount().and_then(|_| wait_mounted(20).then_some(()).ok_or_else(String::new));
+    forget_twofa();
+    mounted.map_err(|_| {
+        // a refused sign-in must not be retried by the service: repeated failed sign-ins can lock a Proton account for a while
+        stop_proton_mount();
+        "Proton did not accept that sign-in (check the password and the two-factor code, which lasts about 30 seconds)".to_string()
+    })
+}
+
+/// rclone's saved Proton session (made at the first sign-in, renewed by itself).
+const SESSION_KEYS: [&str; 4] = ["client_uid", "client_access_token", "client_refresh_token", "client_salted_key_pass"];
+
+/// Removes the two-factor code from rclone's saved settings: it was for one sign-in, and a later start that sent it again would be
+/// refused (and keep being refused while the service retried).
+pub fn forget_twofa() {
+    let _ = Command::new("rclone").args(["config", "update", "proton", "2fa", ""]).output();
+}
+
+/// Stops the mount and its retries (after a sign-in Proton refused).
+pub fn stop_proton_mount() {
+    let _ = Command::new("systemctl").args(["--user", "stop", "proton-drive"]).status();
+    let _ = Command::new("systemctl").args(["--user", "reset-failed", "proton-drive"]).status();
+}
+
+/// Marks an error that means "ask for the sign-in again".
+pub const SIGN_IN_AGAIN: &str = "SIGNIN:";
+
+/// The user name saved in rclone's `proton` remote, to prefill the form when the sign-in has lapsed.
+pub fn proton_username() -> String {
+    Command::new("rclone").args(["config", "show", "proton"]).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).lines().find_map(|l| l.strip_prefix("username = ").map(|v| v.trim().to_string())).unwrap_or_default()).unwrap_or_default()
+}
+
+/// Waits for the Proton Drive folder to be a mount (the service can start and then fail at its login): whether it became one.
+pub fn wait_mounted(seconds: u64) -> bool {
+    let Some(home) = dirs::home_dir() else { return false };
+    let dir = home.join("ProtonDrive");
+    for _ in 0..seconds * 2 {
+        if Command::new("mountpoint").arg("-q").arg(&dir).status().map(|s| s.success()).unwrap_or(false) {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    false
+}
+
+/// Start the mount service (Minos's package ships it as a user unit; a copy in ~/.config/systemd/user wins, as systemd does it).
+pub fn start_proton_mount() -> Result<(), String> {
+    let home = dirs::home_dir().ok_or("no home folder")?;
+    let own = home.join(".config/systemd/user/proton-drive.service");
+    if !own.is_file() && !std::path::Path::new("/usr/lib/systemd/user/proton-drive.service").is_file() {
+        return Err("the Proton Drive mount service is not installed (it comes with Minos)".into());
+    }
+    // a mount that kept failing (a lapsed sign-in) may have hit its retry limit: clear that, so this start is a fresh one
+    let _ = Command::new("systemctl").args(["--user", "reset-failed", "proton-drive"]).status();
+    let st = Command::new("systemctl").args(["--user", "enable", "--now", "proton-drive"]).output().map_err(|e| e.to_string())?;
+    if !st.status.success() {
+        return Err(format!("could not start the mount: {}", String::from_utf8_lossy(&st.stderr).trim()));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -756,110 +863,4 @@ mod tests {
         assert_eq!(avail_from_meta(Some(&m("null", true)), 100, None), Avail::Syncing);
         assert_eq!(avail_from_meta(Some("garbage"), 100, None), Avail::Cloud);
     }
-}
-
-/// Whether rclone already has a Proton Drive remote called `proton`.
-pub fn proton_configured() -> bool {
-    Command::new("rclone").arg("listremotes").output().map(|o| String::from_utf8_lossy(&o.stdout).lines().any(|l| l.trim() == "proton:")).unwrap_or(false)
-}
-
-fn obscure(secret: &str) -> Result<String, String> {
-    use std::io::Write;
-    let mut child = Command::new("rclone").args(["obscure", "-"]).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).spawn().map_err(|e| format!("cannot run rclone (is it installed?): {e}"))?;
-    child.stdin.take().ok_or("no stdin")?.write_all(secret.as_bytes()).map_err(|e| e.to_string())?;
-    let out = child.wait_with_output().map_err(|e| e.to_string())?;
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
-}
-
-/// Sign in to Proton Drive (rclone's `protondrive` backend, remote `proton`) and start the mount at
-/// `~/ProtonDrive`, so the Cloud entry in the sidebar fills in. `mailbox` and `twofa` may be empty.
-pub fn connect_proton(user: &str, password: &str, mailbox: &str, twofa: &str) -> Result<(), String> {
-    // a lapsed sign-in is renewed in place; a first one is created
-    let verb = if proton_configured() { "update" } else { "create" };
-    let mut args: Vec<String> = if verb == "update" { ["config", "update", "proton", "username"].map(String::from).to_vec() } else { ["config", "create", "proton", "protondrive", "username"].map(String::from).to_vec() };
-    args.push(user.trim().to_string());
-    args.push("password".into());
-    args.push(obscure(password)?);
-    if !mailbox.is_empty() {
-        args.push("mailbox_password".into());
-        args.push(obscure(mailbox)?);
-    }
-    // The two-factor code is good for one sign-in only (about 30 seconds): it is handed over for this sign-in and removed again once
-    // the drive is mounted (rclone keeps a session instead). Signing in again also drops the old session, so the new code is used.
-    if verb == "update" || !twofa.trim().is_empty() {
-        args.push("2fa".into());
-        args.push(twofa.trim().to_string());
-    }
-    if verb == "update" {
-        for key in SESSION_KEYS {
-            args.push(key.into());
-            args.push(String::new());
-        }
-    }
-    let out = Command::new("rclone").args(&args).output().map_err(|e| format!("cannot run rclone: {e}"))?;
-    if !out.status.success() {
-        if verb == "create" {
-            let _ = Command::new("rclone").args(["config", "delete", "proton"]).status();
-        }
-        return Err(format!("Proton refused the sign-in: {}", String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("").trim()));
-    }
-    let mounted = start_proton_mount().and_then(|_| wait_mounted(20).map_err(|_| String::new()));
-    forget_twofa();
-    mounted.map_err(|_| {
-        // a refused sign-in must not be retried by the service: repeated failed sign-ins can lock a Proton account for a while
-        stop_proton_mount();
-        "Proton did not accept that sign-in (check the password and the two-factor code, which lasts about 30 seconds)".to_string()
-    })
-}
-
-/// rclone's saved Proton session (made at the first sign-in, renewed by itself).
-const SESSION_KEYS: [&str; 4] = ["client_uid", "client_access_token", "client_refresh_token", "client_salted_key_pass"];
-
-/// Removes the two-factor code from rclone's saved settings: it was for one sign-in, and a later start that sent it again would be
-/// refused (and keep being refused while the service retried).
-pub fn forget_twofa() {
-    let _ = Command::new("rclone").args(["config", "update", "proton", "2fa", ""]).output();
-}
-
-/// Stops the mount and its retries (after a sign-in Proton refused).
-pub fn stop_proton_mount() {
-    let _ = Command::new("systemctl").args(["--user", "stop", "proton-drive"]).status();
-    let _ = Command::new("systemctl").args(["--user", "reset-failed", "proton-drive"]).status();
-}
-
-/// Marks an error that means "ask for the sign-in again".
-pub const SIGN_IN_AGAIN: &str = "SIGNIN:";
-
-/// The user name saved in rclone's `proton` remote, to prefill the form when the sign-in has lapsed.
-pub fn proton_username() -> String {
-    Command::new("rclone").args(["config", "show", "proton"]).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).lines().find_map(|l| l.strip_prefix("username = ").map(|v| v.trim().to_string())).unwrap_or_default()).unwrap_or_default()
-}
-
-/// Waits for the Proton Drive folder to be a mount (the service can start and then fail at its login).
-pub fn wait_mounted(seconds: u64) -> Result<(), ()> {
-    let Some(home) = dirs::home_dir() else { return Err(()) };
-    let dir = home.join("ProtonDrive");
-    for _ in 0..seconds * 2 {
-        if Command::new("mountpoint").arg("-q").arg(&dir).status().map(|s| s.success()).unwrap_or(false) {
-            return Ok(());
-        }
-        std::thread::sleep(std::time::Duration::from_millis(500));
-    }
-    Err(())
-}
-
-/// Start the mount service (Minos's package ships it as a user unit; a copy in ~/.config/systemd/user wins, as systemd does it).
-pub fn start_proton_mount() -> Result<(), String> {
-    let home = dirs::home_dir().ok_or("no home folder")?;
-    let own = home.join(".config/systemd/user/proton-drive.service");
-    if !own.is_file() && !std::path::Path::new("/usr/lib/systemd/user/proton-drive.service").is_file() {
-        return Err("the Proton Drive mount service is not installed (it comes with Minos)".into());
-    }
-    // a mount that kept failing (a lapsed sign-in) may have hit its retry limit: clear that, so this start is a fresh one
-    let _ = Command::new("systemctl").args(["--user", "reset-failed", "proton-drive"]).status();
-    let st = Command::new("systemctl").args(["--user", "enable", "--now", "proton-drive"]).output().map_err(|e| e.to_string())?;
-    if !st.status.success() {
-        return Err(format!("could not start the mount: {}", String::from_utf8_lossy(&st.stderr).trim()));
-    }
-    Ok(())
 }

@@ -421,35 +421,6 @@ pub fn disconnect(mac: &str) -> Result<(), String> {
     bluetoothctl(&["disconnect", mac]).map(|_| ()).ok_or_else(|| "bluetoothctl could not disconnect it".into())
 }
 
-/// `bluetoothctl info` says the device is a game controller.
-pub fn info_is_gamepad(info: &str) -> bool {
-    info.lines().any(|l| l.trim() == "Icon: input-gaming")
-}
-
-/// A paired Bluetooth controller (connected or not).
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct PairedPad {
-    pub mac: String,
-    pub name: String,
-    pub connected: bool,
-}
-
-/// The paired Bluetooth devices that are game controllers.
-pub fn paired_gamepads() -> Vec<PairedPad> {
-    let list = bluetoothctl(&["devices", "Paired"]).unwrap_or_default();
-    list.lines()
-        .filter_map(|l| {
-            let rest = l.strip_prefix("Device ")?;
-            let (mac, name) = rest.split_once(' ')?;
-            Some((mac.to_string(), name.to_string()))
-        })
-        .filter_map(|(mac, name)| {
-            let info = bluetoothctl(&["info", &mac])?;
-            info_is_gamepad(&info).then(|| PairedPad { connected: info.lines().any(|l| l.trim() == "Connected: yes"), mac: mac.to_lowercase(), name })
-        })
-        .collect()
-}
-
 // ---------------------------------------------------------------- settings
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -692,8 +663,6 @@ mod tests {
         assert_eq!(parse_color("#7c54d6"), Some([124, 84, 214]));
         assert_eq!(parse_color("7c54d6"), None);
         assert_eq!(color_hex([124, 84, 214]), "#7c54d6");
-        assert!(info_is_gamepad("Device AA\n\tName: Wireless Controller\n\tIcon: input-gaming\n"));
-        assert!(!info_is_gamepad("\tIcon: audio-headset\n"));
         assert!(valid_mac("a4:ae:12:00:11:22") && !valid_mac("a4:ae:12:00:11:22; rm") && !valid_mac("--help"));
     }
 

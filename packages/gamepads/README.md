@@ -8,7 +8,7 @@ protocol.
   DualSense, DualSense Edge, Xbox, Switch Pro, other), USB or Bluetooth, address, driver, event device, battery (percentage or
   level, and charging state) and lights (light bar, player lights, and whether they can be written).
 - `set_lightbar`, `set_player` (the PS5's player light patterns), `rumble` (a force-feedback test, the way games make it rumble).
-- `disconnect`, `paired_gamepads` (Bluetooth, through `bluetoothctl`).
+- `disconnect` (Bluetooth, through `bluetoothctl`). Settings lists the paired controllers itself (`bluetoothctl devices Paired`).
 - `Settings` in `~/.config/yggdrasil/controllers.json`: a light bar colour for all, or per controller, a player number, notifications
   and the low-battery level.
 

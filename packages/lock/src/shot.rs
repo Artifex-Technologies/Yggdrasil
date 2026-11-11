@@ -7,9 +7,11 @@
 //!   Enter           the whole screen the pointer is on
 //!   Esc, right-click  nothing
 //! The picture goes to Pictures/Screenshots and to the clipboard (wl-copy), with a notification.
-#![allow(dead_code)]
 
+// shared with the lock screen, which uses all of them; the screenshot only the accent colour
+#[allow(dead_code)]
 mod design;
+#[allow(dead_code)]
 mod draw;
 
 use std::os::fd::AsFd;
@@ -382,9 +384,9 @@ fn from_ppm(data: &[u8]) -> Option<Img> {
     let rgb = data.get(i + 1..i + 1 + (w * h * 3) as usize)?;
     let mut bright = Vec::with_capacity((w * h * 4) as usize);
     let mut dim = Vec::with_capacity((w * h * 4) as usize);
-    for p in rgb.chunks_exact(3) {
+    for p in rgb.as_chunks::<3>().0 {
         bright.extend_from_slice(&[p[2], p[1], p[0], 255]);
-        dim.extend_from_slice(&[(p[2] as u32 * DIM >> 8) as u8, (p[1] as u32 * DIM >> 8) as u8, (p[0] as u32 * DIM >> 8) as u8, 255]);
+        dim.extend_from_slice(&[((p[2] as u32 * DIM) >> 8) as u8, ((p[1] as u32 * DIM) >> 8) as u8, ((p[0] as u32 * DIM) >> 8) as u8, 255]);
     }
     Some(Img { w, h, bright, dim })
 }
@@ -420,7 +422,7 @@ fn save(img: &Img, r: R) -> Result<std::path::PathBuf, String> {
     let mut rgba = Vec::with_capacity((r.w * r.h * 4) as usize);
     for y in r.y..r.y + r.h {
         let row = &img.bright[(y as u32 * img.w * 4 + r.x as u32 * 4) as usize..][..(r.w * 4) as usize];
-        for p in row.chunks_exact(4) {
+        for p in row.as_chunks::<4>().0 {
             rgba.extend_from_slice(&[p[2], p[1], p[0], 255]);
         }
     }

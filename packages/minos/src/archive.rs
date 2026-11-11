@@ -205,7 +205,9 @@ fn os(s: &str) -> std::ffi::OsString {
 /// click. Keyed by path, modification time and size, so a changed archive is re-read.
 pub fn list_cached(archive: &Path) -> Result<Vec<ArcEntry>, String> {
     use std::sync::Mutex;
-    static CACHE: Mutex<Option<(PathBuf, Option<SystemTime>, u64, Vec<ArcEntry>)>> = Mutex::new(None);
+    // the archive, its modification time and size, and what it holds
+    type Listed = (PathBuf, Option<SystemTime>, u64, Vec<ArcEntry>);
+    static CACHE: Mutex<Option<Listed>> = Mutex::new(None);
     let meta = std::fs::metadata(archive).ok();
     let key = (archive.to_path_buf(), meta.as_ref().and_then(|m| m.modified().ok()), meta.map(|m| m.len()).unwrap_or(0));
     if let Ok(g) = CACHE.lock() {

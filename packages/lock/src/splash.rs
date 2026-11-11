@@ -10,9 +10,11 @@
 //! `yggdrasil-splash --screensaver` is the screensaver (the idle watcher starts it after the time set in Settings > Power and
 //! ends it when you are back): the same falling characters, the logo fading away after a few seconds so nothing stands still
 //! on the screen, and the key or click that wakes it goes to it, not to the program underneath.
-#![allow(dead_code)]
 
+// shared with the lock screen, which uses all of them; the splash only a picture loader and text
+#[allow(dead_code)]
 mod design;
+#[allow(dead_code)]
 mod draw;
 
 use std::io::{Read, Write};
@@ -173,7 +175,7 @@ fn blit_faded(dst: &mut [u8], dw: u32, dh: u32, src: &Pixmap, x: i32, y: i32, k:
         let s0 = (sy * sw as usize + (x0 - x) as usize) * 4;
         let d0 = (py as usize * dw as usize + x0 as usize) * 4;
         let n = (x1 - x0) as usize * 4;
-        for (d, sp) in dst[d0..d0 + n].chunks_exact_mut(4).zip(data[s0..s0 + n].chunks_exact(4)) {
+        for (d, sp) in dst[d0..d0 + n].as_chunks_mut::<4>().0.iter_mut().zip(data[s0..s0 + n].as_chunks::<4>().0) {
             if k < 256 {
                 let a = (sp[3] as u32 * k) >> 8;
                 if a == 0 {
@@ -208,7 +210,7 @@ fn clear(dst: &mut [u8], px: [u8; 4]) {
     if pre.is_empty() && post.is_empty() {
         mid.fill(u32::from_ne_bytes(px));
     } else {
-        for c in dst.chunks_exact_mut(4) {
+        for c in dst.as_chunks_mut::<4>().0 {
             c.copy_from_slice(&px);
         }
     }
@@ -258,7 +260,6 @@ impl Drop for Buf {
 }
 
 struct Screen {
-    output: WlOutput,
     surface: WlSurface,
     layer: ZwlrLayerSurfaceV1,
     size: (u32, u32),
@@ -458,7 +459,7 @@ impl App {
                         draw::draw_text(pix, &f.regular, 15.0, 40.0, 50.0 + k as f32 * 22.0, (r, g, b, 255), &clean);
                     }
                 }
-                for (d, src) in bytes.chunks_exact_mut(4).zip(pix.data().chunks_exact(4)) {
+                for (d, src) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(pix.data().as_chunks::<4>().0) {
                     d[0] = src[2];
                     d[1] = src[1];
                     d[2] = src[0];
@@ -523,8 +524,8 @@ impl App {
                 *b = ((*b as u32 * k) >> 8) as u8;
             }
             for v in mid.iter_mut() {
-                let rb = ((*v & 0x00ff_00ff) * k >> 8) & 0x00ff_00ff;
-                let ga = (((*v >> 8) & 0x00ff_00ff) * k >> 8) & 0x00ff_00ff;
+                let rb = (((*v & 0x00ff_00ff) * k) >> 8) & 0x00ff_00ff;
+                let ga = ((((*v >> 8) & 0x00ff_00ff) * k) >> 8) & 0x00ff_00ff;
                 *v = rb | (ga << 8);
             }
         }
@@ -625,7 +626,7 @@ fn main() {
             region.destroy();
         }
         surface.commit();
-        app.screens.push(Screen { output, surface, layer, size: (0, 0), configured: false, bufs: vec![], map: None, pix: None, cols: vec![], alpha, wants_frame: true, last: None });
+        app.screens.push(Screen { surface, layer, size: (0, 0), configured: false, bufs: vec![], map: None, pix: None, cols: vec![], alpha, wants_frame: true, last: None });
     }
     let Ok(mut event_loop) = EventLoop::<App>::try_new() else { return };
     if WaylandSource::new(conn.clone(), queue).insert(event_loop.handle()).is_err() {

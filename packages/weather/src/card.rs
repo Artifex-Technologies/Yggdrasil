@@ -90,6 +90,7 @@ pub fn blocks(cfg: Option<&Config>, st: &CardState) -> Value {
 /// What a press does. `current` is the place in use (saved, or the time zone's when nothing is saved); the lookups are passed in
 /// so nothing reaches the network but the one the press asks for (beaconDB only for "Automatic", Open-Meteo's search only when
 /// the search is sent). Returns the config to save, if it changed.
+#[allow(clippy::too_many_arguments)]
 pub fn press(
     id: &str,
     text: Option<&str>,

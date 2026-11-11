@@ -62,9 +62,12 @@ pub fn confidence(spread_c: f64) -> Confidence {
     }
 }
 
+/// An ensemble borrowed: (times, one temperature series per member).
+pub type EnsembleRef<'a> = (&'a [String], &'a [Vec<Option<f64>>]);
+
 /// `weights` maps a model name to its weight (missing = 1.0). `ensemble` is
 /// (times, one temperature series per member), matched to the forecast by time string.
-pub fn consensus(f: &Forecast, ensemble: Option<(&[String], &[Vec<Option<f64>>])>, weights: &HashMap<String, f64>) -> Vec<Hour> {
+pub fn consensus(f: &Forecast, ensemble: Option<EnsembleRef>, weights: &HashMap<String, f64>) -> Vec<Hour> {
     let ens_index: HashMap<&str, usize> = ensemble
         .map(|(t, _)| t.iter().enumerate().map(|(i, s)| (s.as_str(), i)).collect())
         .unwrap_or_default();

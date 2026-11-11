@@ -90,7 +90,7 @@ pub fn parse_nmcli(out: &str) -> Vec<(String, i32)> {
             ok.then(|| (mac, sig / 2 - 100))
         })
         .collect();
-    v.sort_by(|a, b| b.1.cmp(&a.1));
+    v.sort_by_key(|a| std::cmp::Reverse(a.1));
     v.dedup_by(|a, b| a.0 == b.0);
     v.truncate(30);
     v

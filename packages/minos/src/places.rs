@@ -324,7 +324,7 @@ fn num_of(v: &serde_json::Value) -> u64 {
 }
 
 fn mounts_of(v: &serde_json::Value, out: &mut Vec<PathBuf>) {
-    for m in v["mountpoints"].as_array().into_iter().flatten().chain(v["mountpoint"].as_str().map(|_| &v["mountpoint"]).into_iter()) {
+    for m in v["mountpoints"].as_array().into_iter().flatten().chain(v["mountpoint"].as_str().map(|_| &v["mountpoint"])) {
         if let Some(s) = m.as_str() {
             if !s.is_empty() && !s.starts_with('[') {
                 out.push(PathBuf::from(s));
@@ -342,7 +342,7 @@ pub fn parse_lsblk(json: &str, usage: &dyn Fn(&Path) -> Option<(u64, u64)>) -> V
     let mut disks = vec![];
     for d in v["blockdevices"].as_array().into_iter().flatten() {
         // Real disks only: no loop devices, optical drives or compressed RAM.
-        if str_of(&d["type"]) != "disk" || d["name"].as_str().map_or(true, |n| n.starts_with("zram") || n.starts_with("loop") || n.starts_with("sr")) {
+        if str_of(&d["type"]) != "disk" || d["name"].as_str().is_none_or(|n| n.starts_with("zram") || n.starts_with("loop") || n.starts_with("sr")) {
             continue;
         }
         let name = str_of(&d["name"]);

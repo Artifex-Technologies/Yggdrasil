@@ -51,7 +51,7 @@ pub fn bar_json(i: &BarInput) -> String {
     let hod: u32 = h.time.get(11..13).and_then(|s| s.parse().ok()).unwrap_or(12);
     let text = format!("{} {}", icon(h.precip_prob, hod), deg(h.mean, i.units));
 
-    let mut tip = vec![format!("{}", i.place)];
+    let mut tip = vec![i.place.to_string()];
     tip.push(format!(
         "Now: {} (models {} to {}, {} of them)",
         deg(h.mean, i.units),

@@ -405,7 +405,7 @@ mod tests {
         let mut m = ((s.len() + 1) as u32).to_ne_bytes().to_vec();
         m.extend_from_slice(s.as_bytes());
         m.push(0);
-        while m.len() % 4 != 0 {
+        while !m.len().is_multiple_of(4) {
             m.push(0);
         }
         m

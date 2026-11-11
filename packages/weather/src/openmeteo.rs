@@ -84,9 +84,12 @@ pub fn parse_multi(text: &str) -> Result<Forecast, String> {
     Ok(Forecast { times, utc_offset_s: r.utc_offset_seconds, models })
 }
 
+/// An ensemble: (times, one temperature series per member).
+pub type Ensemble = (Vec<String>, Vec<Vec<Option<f64>>>);
+
 /// Parse an ensemble reply into one temperature series per member (the unsuffixed
 /// `temperature_2m` is the control run and is included).
-pub fn parse_ensemble(text: &str) -> Result<(Vec<String>, Vec<Vec<Option<f64>>>), String> {
+pub fn parse_ensemble(text: &str) -> Result<Ensemble, String> {
     let r = raw(text)?;
     let times = times_of(&r)?;
     let members: Vec<Vec<Option<f64>>> = r

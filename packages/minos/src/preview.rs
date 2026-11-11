@@ -94,16 +94,14 @@ pub fn text_excerpt(bytes: &[u8]) -> Option<(String, bool)> {
     }
     let s = String::from_utf8_lossy(bytes);
     let mut out = String::new();
-    let mut lines = 0;
     let mut truncated = bytes.len() >= MAX_TEXT_BYTES;
-    for line in s.lines() {
+    for (lines, line) in s.lines().enumerate() {
         if lines >= TEXT_LINES || out.chars().count() + line.chars().count() > TEXT_CHARS {
             truncated = true;
             break;
         }
         out.push_str(&line.replace('\t', "    "));
         out.push('\n');
-        lines += 1;
     }
     Some((out.trim_end().to_string(), truncated))
 }
@@ -124,7 +122,10 @@ fn common_details(p: &Path, meta: Option<&std::fs::Metadata>, kind_label: &str) 
     d
 }
 
-fn decode_reader<R: std::io::BufRead + std::io::Seek>(r: R, max_px: u32) -> Result<(u32, u32, u32, u32, Vec<u8>, String), String> {
+/// (original width, original height, scaled width, scaled height, RGBA pixels, format name)
+type Decoded = (u32, u32, u32, u32, Vec<u8>, String);
+
+fn decode_reader<R: std::io::BufRead + std::io::Seek>(r: R, max_px: u32) -> Result<Decoded, String> {
     let reader = image::ImageReader::new(r).with_guessed_format().map_err(|e| e.to_string())?;
     let format = reader.format().map(|f| format!("{f:?}")).unwrap_or_default();
     let img = reader.decode().map_err(|e| e.to_string())?;
@@ -134,8 +135,7 @@ fn decode_reader<R: std::io::BufRead + std::io::Seek>(r: R, max_px: u32) -> Resu
     Ok((w, h, sw, sh, small.to_rgba8().into_raw(), format))
 }
 
-/// (original width, original height, scaled width, scaled height, RGBA pixels, format name)
-fn decode_scaled(src: ImageSource, max_px: u32) -> Result<(u32, u32, u32, u32, Vec<u8>, String), String> {
+fn decode_scaled(src: ImageSource, max_px: u32) -> Result<Decoded, String> {
     match src {
         ImageSource::Path(p) => decode_reader(std::io::BufReader::new(std::fs::File::open(p).map_err(|e| e.to_string())?), max_px),
         ImageSource::Bytes(b) => decode_reader(std::io::Cursor::new(b), max_px),

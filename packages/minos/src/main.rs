@@ -40,9 +40,12 @@ struct Transfer {
     all: bool,
 }
 
+/// What a transfer did: (source, where it went) for each item.
+type Done = Vec<(PathBuf, PathBuf)>;
+
 enum TEvent {
     Conflict(PathBuf, PathBuf, Sender<Option<fileops::Decision>>),
-    Done { stats: fileops::Stats, done: Vec<(PathBuf, PathBuf)>, mv: bool, stopped: bool, dest: PathBuf },
+    Done { stats: fileops::Stats, done: Done, mv: bool, stopped: bool, dest: PathBuf },
 }
 
 /// Whether `dest` is on the same drive as `src` (a move there is just a rename, not a copy and a delete).
@@ -562,6 +565,7 @@ fn inline_rename(ui: &mut egui::Ui, pal: &Palette, e: &Entry) -> bool {
 }
 
 /// Selection, drag source, drop target and context menu shared by both views.
+#[allow(clippy::too_many_arguments)]
 fn entry_interact(
     ctx: &egui::Context,
     r: &egui::Response,
@@ -691,20 +695,16 @@ fn entry_interact(
             actions.push(Action::CopyPath(e.path.clone()));
             ui.close();
         }
-        match drive_avail(cx.st, e) {
-            Some(cloud::Avail::Failed) => {
-                if ui.button("Retry sync").clicked() {
-                    actions.push(Action::RetrySync(e.path.clone()));
-                    ui.close();
-                }
-            }
-            Some(cloud::Avail::Cloud | cloud::Avail::Partial) => {
-                if ui.button("Download to this computer").on_hover_text("Keep a copy here, so it opens at once and works offline").clicked() {
-                    actions.push(Action::Download(targets.clone()));
-                    ui.close();
-                }
-            }
-            _ => {}
+        let avail = drive_avail(cx.st, e);
+        if matches!(avail, Some(cloud::Avail::Failed)) && ui.button("Retry sync").clicked() {
+            actions.push(Action::RetrySync(e.path.clone()));
+            ui.close();
+        }
+        if matches!(avail, Some(cloud::Avail::Cloud | cloud::Avail::Partial))
+            && ui.button("Download to this computer").on_hover_text("Keep a copy here, so it opens at once and works offline").clicked()
+        {
+            actions.push(Action::Download(targets.clone()));
+            ui.close();
         }
         // Archives (7-Zip): extract from one, or compress the selection into one.
         if e.usage.is_none() && !places::is_this_pc(&e.path) {
@@ -1341,6 +1341,7 @@ fn usage_bar(ui: &mut egui::Ui, pal: &Palette, total: u64, free: u64, width: f32
     ui.painter().text(rect.center(), Align2::CENTER_CENTER, format!("{:.0}%", frac * 100.0), FontId::proportional(11.0), Color32::WHITE);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &State, cloud_ctx: (&[Link], &BTreeMap<String, Report>), clip_has: bool, actions: &mut Vec<Action>) {
     // Whatever does not fit stays inside this pane instead of painting over its neighbour.
     ui.shrink_clip_rect(ui.max_rect());
@@ -2135,7 +2136,8 @@ impl App {
     /// Take what the transfer thread reports, and show the "already exists" dialog while it waits for an answer.
     fn poll_transfer(&mut self, ctx: &egui::Context) {
         let Some(tr) = &mut self.transfer else { return };
-        let mut finished: Option<(fileops::Stats, Vec<(PathBuf, PathBuf)>, bool, bool, PathBuf)> = None;
+        // what TEvent::Done carries: stats, what was done, a move, stopped early, the destination
+        let mut finished: Option<(fileops::Stats, Done, bool, bool, PathBuf)> = None;
         while let Ok(ev) = tr.rx.try_recv() {
             match ev {
                 TEvent::Conflict(a, b, reply) => match tr.sticky {
@@ -2966,7 +2968,7 @@ impl App {
                         std::thread::spawn(move || {
                             // the saved sign-in may have lapsed (a two-factor code or password no longer accepted): then ask again
                             // any failure here (the service refused to start, or never mounted) means: stop it, and ask for the sign-in
-                            let r = cloud::start_proton_mount().and_then(|_| cloud::wait_mounted(15).map_err(|_| String::new())).map_err(|_| {
+                            let r = cloud::start_proton_mount().and_then(|_| cloud::wait_mounted(15).then_some(()).ok_or_else(String::new)).map_err(|_| {
                                 cloud::stop_proton_mount();
                                 format!("{}Proton Drive did not start with the saved sign-in. Please sign in again.", cloud::SIGN_IN_AGAIN)
                             });
@@ -2989,6 +2991,7 @@ fn section_heading(ui: &mut egui::Ui, pal: &Palette, text: &str) {
 }
 
 /// One row of the sidebar: icon, label, and optionally a usage bar underneath (drives).
+#[allow(clippy::too_many_arguments)]
 fn side_row(ui: &mut egui::Ui, pal: &Palette, icon: Icon, icon_color: Color32, sys: &[&str], label: &str, selected: bool, bar: Option<(f32, Color32)>) -> egui::Response {
     side_row_with(ui, pal, icon, icon_color, sys, None, label, selected, bar, false)
 }
@@ -3674,10 +3677,9 @@ impl eframe::App for App {
         });
         ctx.data_mut(|d| d.insert_temp(egui::Id::new(CUT_ID), cut));
         let focus = self.focus;
-        if self.picker.is_some() {
+        if let Some(pk) = self.picker.as_mut() {
             let cur = self.panes[focus].tabs[self.panes[focus].active].dir();
             let sel: Vec<(PathBuf, bool)> = self.panes[focus].tabs[self.panes[focus].active].selected.iter().map(|p| (p.clone(), p.is_dir())).collect();
-            let pk = self.picker.as_mut().unwrap();
             if let Ok(mut g) = PICK_GLOBS.lock() {
                 *g = pk.filters.get(pk.filter).map(|f| f.1.clone()).unwrap_or_default();
             }
@@ -3872,6 +3874,7 @@ impl eframe::App for App {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn ui_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &State, cloud_ctx: (&[Link], &BTreeMap<String, Report>), clip_has: bool, actions: &mut Vec<Action>) {
     ui.push_id(pi, |ui| draw_pane(ui, pane, pi, focused, st, cloud_ctx, clip_has, actions));
 }
@@ -4081,7 +4084,7 @@ mod session {
                 Some((e.metadata().ok()?.modified().ok()?, PathBuf::from(std::fs::read_to_string(e.path()).ok()?.trim_end_matches('\n'))))
             })
             .collect();
-        v.sort_by(|a, b| b.0.cmp(&a.0));
+        v.sort_by_key(|a| std::cmp::Reverse(a.0));
         v.into_iter().map(|x| x.1).collect()
     }
 

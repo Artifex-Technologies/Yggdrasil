@@ -17,8 +17,6 @@ pub enum Icon {
     Star,
     StarFilled,
     Menu,
-    Sun,
-    Moon,
     Folder,
     File,
     Drive,
@@ -136,21 +134,6 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
             for y in [0.28, 0.5, 0.72] {
                 line(p, &f, &[(0.18, y), (0.82, y)], color);
             }
-        }
-        Icon::Sun => {
-            p.circle_stroke(f.p(0.5, 0.5), f.size * 0.17, s);
-            for i in 0..8 {
-                let a = (i as f32 * 45.0).to_radians();
-                let (c, sn) = (a.cos(), a.sin());
-                line(p, &f, &[(0.5 + 0.3 * c, 0.5 + 0.3 * sn), (0.5 + 0.42 * c, 0.5 + 0.42 * sn)], color);
-            }
-        }
-        Icon::Moon => {
-            let mut pts = arc(0.5, 0.5, 0.36, 50.0, 310.0, 22);
-            let inner = arc(0.64, 0.4, 0.3, 300.0, 60.0 - 360.0, 18);
-            pts.extend(inner);
-            pts.push(pts[0]);
-            line(p, &f, &pts, color);
         }
         Icon::Folder => {
             p.rect_filled(f.rect(0.06, 0.2, 0.46, 0.4), CornerRadius::same(2), darker(color, 0.78));

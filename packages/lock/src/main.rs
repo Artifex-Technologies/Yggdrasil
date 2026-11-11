@@ -46,7 +46,6 @@ use state::{Action, Key, Lock};
 
 struct LockSurf {
     wl: WlSurface,
-    ls: ExtSessionLockSurfaceV1,
     w: u32,
     h: u32,
     /// Pictures handed to the compositor that it has not given back yet.
@@ -240,7 +239,7 @@ impl App {
         let file = std::fs::File::from(fd);
         let Ok(mut map) = (unsafe { MmapMut::map_mut(&file) }) else { return };
         // tiny-skia is premultiplied RGBA; the Argb8888 buffer wants BGRA bytes
-        for (dst, src) in map.chunks_exact_mut(4).zip(pix.data().chunks_exact(4)) {
+        for (dst, src) in map.as_chunks_mut::<4>().0.iter_mut().zip(pix.data().as_chunks::<4>().0) {
             dst[0] = src[2];
             dst[1] = src[1];
             dst[2] = src[0];
@@ -331,7 +330,7 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let (globals, mut queue) = match registry_queue_init::<App>(&conn) {
+    let (globals, queue) = match registry_queue_init::<App>(&conn) {
         Ok(x) => x,
         Err(e) => {
             eprintln!("yggdrasil-lock: {e}");
@@ -356,8 +355,8 @@ fn main() {
     let mut app = App { qh: qh.clone(), conn: conn.clone(), shm, lock: lock.clone(), surfaces: vec![], locked: false, lock_state: Lock::default(), xkb: None, keyboard: None, auth: authenticator, user: user_name(), fonts, design: design::chosen(), wallpaper: design::wallpaper_path().and_then(|p| design::load_picture(&p)), avatar: design::avatar_path().and_then(|p| design::load_picture(&p)), walls: Default::default(), done: None, #[cfg(feature = "test-auth")] test_keys: std::env::var("YGGDRASIL_LOCK_TEST_KEYS").ok().map(|k| (Instant::now(), k)) };
     for (i, out) in outputs.iter().enumerate() {
         let wl = compositor.create_surface(&qh, ());
-        let ls = lock.get_lock_surface(&wl, out, &qh, i);
-        app.surfaces.push(LockSurf { wl, ls, w: 0, h: 0, in_flight: 0 });
+        lock.get_lock_surface(&wl, out, &qh, i);
+        app.surfaces.push(LockSurf { wl, w: 0, h: 0, in_flight: 0 });
     }
     if app.surfaces.is_empty() {
         lock.unlock_and_destroy();

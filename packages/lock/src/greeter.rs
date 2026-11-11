@@ -6,6 +6,8 @@
 //! Tab (or Down) and Shift+Tab (or Up) switch user while nothing is typed; Enter signs in; Escape clears what was typed.
 //! Exit status: 0 the session was started (greetd takes over), 2 setup problem.
 
+// shared with the lock screen, which also reads its own lock.conf, wallpaper and avatar
+#[allow(dead_code)]
 mod design;
 mod draw;
 mod greetd;
@@ -14,7 +16,7 @@ mod state;
 use std::os::fd::AsFd;
 use std::time::{Duration, Instant};
 
-use calloop::channel::{channel, Channel, Event as ChanEvent, Sender};
+use calloop::channel::{channel, Event as ChanEvent, Sender};
 use calloop::timer::{TimeoutAction, Timer};
 use calloop::EventLoop;
 use calloop_wayland_source::WaylandSource;
@@ -288,7 +290,7 @@ impl App {
         }
         let file = std::fs::File::from(fd);
         let Ok(mut map) = (unsafe { MmapMut::map_mut(&file) }) else { return };
-        for (dst, src) in map.chunks_exact_mut(4).zip(pix.data().chunks_exact(4)) {
+        for (dst, src) in map.as_chunks_mut::<4>().0.iter_mut().zip(pix.data().as_chunks::<4>().0) {
             dst[0] = src[2];
             dst[1] = src[1];
             dst[2] = src[0];
@@ -483,7 +485,7 @@ fn main() {
     top.set_fullscreen(None);
     surface.commit();
 
-    let (tx, rx): (Sender<Result<(), Fail>>, Channel<Result<(), Fail>>) = channel();
+    let (tx, rx) = channel::<Result<(), Fail>>();
     let mut app = App {
         qh: qh.clone(),
         conn: conn.clone(),

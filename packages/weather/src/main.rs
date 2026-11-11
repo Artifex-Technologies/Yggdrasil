@@ -11,7 +11,7 @@ use yggdrasil_weather::nowcast::{self, WatchState};
 use yggdrasil_weather::observe::{self, Station};
 use yggdrasil_weather::openmeteo::{self, Forecast};
 use yggdrasil_weather::report::{self, BarInput};
-use yggdrasil_weather::timeutil::{format_local, now_epoch, parse_local};
+use yggdrasil_weather::timeutil::{now_epoch, parse_local};
 use yggdrasil_weather::verify::{self, Obs, Record};
 
 const UA: &str = "yggdrasil-weather/0.1";
@@ -431,9 +431,4 @@ fn main() -> ExitCode {
             ExitCode::from(2)
         }
     }
-}
-
-#[allow(dead_code)]
-fn _keep(_: &str) -> String {
-    format_local(0, 0)
 }

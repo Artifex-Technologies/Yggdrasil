@@ -27,9 +27,6 @@ pub const ALL: [(Design, &str, &str, &str); 4] = [
 ];
 
 impl Design {
-    pub fn id(self) -> &'static str {
-        ALL.iter().find(|d| d.0 == self).map(|d| d.1).unwrap_or("split")
-    }
     pub fn parse(s: &str) -> Option<Design> {
         ALL.iter().find(|d| d.1 == s.trim().to_lowercase()).map(|d| d.0)
     }
@@ -65,8 +62,7 @@ const DIM: Rgba = (190, 184, 208, 255);
 
 fn gradient(pix: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, from: (Point, Color), to: (Point, Color)) {
     let Some(shader) = LinearGradient::new(from.0, to.0, vec![GradientStop::new(0.0, from.1), GradientStop::new(1.0, to.1)], SpreadMode::Pad, Transform::identity()) else { return };
-    let mut paint = Paint::default();
-    paint.shader = shader;
+    let paint = Paint { shader, ..Paint::default() };
     if let Some(r) = Rect::from_xywh(x, y, w, h) {
         pix.fill_rect(r, &paint, Transform::identity(), None);
     }

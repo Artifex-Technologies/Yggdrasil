@@ -47,35 +47,6 @@ fn refuse_root(p: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Copy `src` into directory `dest_dir`, never overwriting. Returns the new path.
-pub fn copy_into(src: &Path, dest_dir: &Path) -> io::Result<PathBuf> {
-    refuse_root(src)?;
-    let name = src.file_name().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no file name"))?;
-    let dst = unique_path(dest_dir, &name.to_string_lossy());
-    copy_recursive(src, &dst)?;
-    Ok(dst)
-}
-
-/// Move `src` into `dest_dir`, never overwriting. Falls back to copy + delete
-/// across filesystems. Moving onto its own folder is a no-op returning `src`.
-pub fn move_into(src: &Path, dest_dir: &Path) -> io::Result<PathBuf> {
-    refuse_root(src)?;
-    if src.parent() == Some(dest_dir) {
-        return Ok(src.to_path_buf());
-    }
-    if dest_dir.starts_with(src) {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "cannot move a folder into itself"));
-    }
-    let name = src.file_name().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no file name"))?;
-    let dst = unique_path(dest_dir, &name.to_string_lossy());
-    if std::fs::rename(src, &dst).is_ok() {
-        return Ok(dst);
-    }
-    copy_recursive(src, &dst)?;
-    if src.is_dir() { std::fs::remove_dir_all(src)? } else { std::fs::remove_file(src)? }
-    Ok(dst)
-}
-
 /// How far a transfer has got, written by the worker (and a counting thread) and read by the window that shows it.
 #[derive(Default)]
 pub struct Progress {
@@ -388,6 +359,15 @@ pub fn trash(path: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    /// A copy or move as the window makes one (nothing is in the way in these tests: Skip is never needed).
+    fn copy_to(src: &Path, dest: &Path) -> io::Result<PathBuf> {
+        transfer(src, dest, false, &mut |_, _| Some(Decision::Skip), &mut Stats::default(), &Progress::default())
+    }
+
+    fn move_to(src: &Path, dest: &Path) -> io::Result<PathBuf> {
+        transfer(src, dest, true, &mut |_, _| Some(Decision::Skip), &mut Stats::default(), &Progress::default())
+    }
+
     fn tmp(tag: &str) -> PathBuf {
         let p = std::env::temp_dir().join(format!("lf-test-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&p);
@@ -412,16 +392,19 @@ mod tests {
         std::fs::write(d.join("src/sub/f.txt"), "hi").unwrap();
         std::fs::create_dir(d.join("dest")).unwrap();
 
-        let c = copy_into(&d.join("src"), &d.join("dest")).unwrap();
+        let c = copy_to(&d.join("src"), &d.join("dest")).unwrap();
         assert_eq!(std::fs::read_to_string(c.join("sub/f.txt")).unwrap(), "hi");
         assert!(d.join("src/sub/f.txt").exists());
 
-        let c2 = copy_into(&d.join("src"), &d.join("dest")).unwrap();
+        // copying into the folder it is already in: a numbered copy
+        let c2 = copy_to(&d.join("dest/src"), &d.join("dest")).unwrap();
         assert_eq!(c2, d.join("dest/src (2)"));
 
-        let m = move_into(&d.join("src"), &d.join("dest/src (2)")).unwrap();
+        let m = move_to(&d.join("src"), &d.join("dest/src (2)")).unwrap();
         assert!(m.join("sub/f.txt").exists());
         assert!(!d.join("src").exists());
+        // moving onto its own folder changes nothing
+        assert_eq!(move_to(&m, &d.join("dest/src (2)")).unwrap(), m);
 
         let r = rename(&m, "renamed").unwrap();
         assert!(r.ends_with("renamed") && r.exists());
@@ -435,8 +418,8 @@ mod tests {
     fn refuses_folder_into_itself() {
         let d = tmp("self");
         std::fs::create_dir_all(d.join("a/b")).unwrap();
-        assert!(copy_into(&d.join("a"), &d.join("a/b")).is_err());
-        assert!(move_into(&d.join("a"), &d.join("a/b")).is_err());
+        assert!(copy_to(&d.join("a"), &d.join("a/b")).is_err());
+        assert!(move_to(&d.join("a"), &d.join("a/b")).is_err());
         assert!(d.join("a/b").exists());
     }
 
@@ -452,8 +435,8 @@ mod tests {
     #[test]
     fn roots_cannot_be_moved_copied_or_renamed() {
         let d = tmp("rootops");
-        assert!(move_into(Path::new("/"), &d).is_err());
-        assert!(copy_into(Path::new("/"), &d).is_err());
+        assert!(move_to(Path::new("/"), &d).is_err());
+        assert!(copy_to(Path::new("/"), &d).is_err());
         assert!(rename(Path::new("/"), "x").is_err());
     }
 

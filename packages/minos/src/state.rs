@@ -187,8 +187,7 @@ mod tests {
 
     #[test]
     fn a_favorite_dragged_to_a_new_place() {
-        let mut st = State::default();
-        st.favorites = ["a", "b", "c", "d"].iter().map(PathBuf::from).collect();
+        let mut st = State { favorites: ["a", "b", "c", "d"].iter().map(PathBuf::from).collect(), ..State::default() };
         let names = |st: &State| st.favorites.iter().map(|p| p.to_string_lossy().into_owned()).collect::<Vec<_>>().join("");
         assert!(st.move_favorite(0, 3), "a to the gap before d");
         assert_eq!(names(&st), "bcad");
