@@ -1,0 +1,372 @@
+//! The Hyprland backend against a stand-in Hyprland socket that answers with recorded answers and writes down every request:
+//! each tool asks and does exactly what it did through hyprctl before (the same requests, in the same order).
+//!
+//! The answers (tests/fixtures/hyprland-0.57.1) are as `hyprctl -j` printed them on Hyprland 0.57.1 (2026-11-12, read-only
+//! queries): every key, its order and Hyprland's formatting as recorded, the values (titles, classes, addresses, process ids,
+//! screens) made up. Two screens: DP-1 (2560x1440, scale 1, focused, the bar and dock reserving 28 and 70) and HDMI-A-1
+//! (1920x1080 at 1.25, to its right); four windows, one on the hidden "minimized" workspace. `monitors-minimized-open.json` has that
+//! workspace open over DP-1; `getoption-hidden.json` is the pointer timeout yggdrasil-idle sets while the screen is dimmed.
+//! `wire.txt` is what hyprctl writes to the socket for each command line, recorded against a stand-in socket in a sandbox.
+
+use std::collections::HashMap;
+use std::io::{Read, Write};
+use std::os::unix::net::UnixListener;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use yggdrasil_wm::{Desk, Desktops, MonitorRef};
+
+fn fixture(name: &str) -> String {
+    let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/hyprland-0.57.1").join(name);
+    std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))
+}
+
+/// A stand-in Hyprland: a runtime folder of its own with hypr/SIG/.socket.sock, answering `j/...` from the fixtures (or as
+/// told), "ok" to anything else, and keeping every request.
+struct FakeHyprland {
+    run: PathBuf,
+    asked: Arc<Mutex<Vec<String>>>,
+}
+
+impl FakeHyprland {
+    fn start(name: &str, answers: &[(&str, &str)]) -> FakeHyprland {
+        let run = std::env::temp_dir().join(format!("ygg-wm-hypr-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&run);
+        std::fs::create_dir_all(run.join("hypr/testsig")).unwrap();
+        let listener = UnixListener::bind(run.join("hypr/testsig/.socket.sock")).unwrap();
+        let mut table: HashMap<String, String> = HashMap::new();
+        for (q, file) in [
+            ("j/clients", "clients.json"),
+            ("j/monitors", "monitors.json"),
+            ("j/workspaces", "workspaces.json"),
+            ("j/activeworkspace", "activeworkspace.json"),
+            ("j/activewindow", "activewindow.json"),
+            ("j/cursorpos", "cursorpos.json"),
+            ("j/getoption cursor:inactive_timeout", "getoption.json"),
+        ] {
+            table.insert(q.into(), fixture(file));
+        }
+        for (q, file) in answers {
+            table.insert(q.to_string(), fixture(file));
+        }
+        let asked = Arc::new(Mutex::new(vec![]));
+        let (log, runtime) = (asked.clone(), run.clone());
+        std::thread::spawn(move || {
+            for c in listener.incoming() {
+                let Ok(mut c) = c else { break };
+                let _ = c.set_read_timeout(Some(Duration::from_millis(100)));
+                let mut req = vec![];
+                let mut b = [0u8; 4096];
+                // a request is one write; read until the asker waits for the answer
+                while let Ok(n) = c.read(&mut b) {
+                    if n == 0 {
+                        break;
+                    }
+                    req.extend_from_slice(&b[..n]);
+                }
+                let req = String::from_utf8_lossy(&req).into_owned();
+                // the zones' Super question: Hyprland's Lua writes its answer into the runtime folder
+                if req.starts_with("/eval local f = io.open(") {
+                    let _ = std::fs::write(runtime.join("yggdrasil-zones-super"), "true");
+                }
+                let answer = table.get(&req).cloned().unwrap_or_else(|| "ok".into());
+                log.lock().unwrap().push(req);
+                let _ = c.write_all(answer.as_bytes());
+            }
+        });
+        FakeHyprland { run, asked }
+    }
+
+    fn env(&self) -> impl Fn(&str) -> Option<std::ffi::OsString> + '_ {
+        move |k| match k {
+            "XDG_RUNTIME_DIR" => Some(self.run.clone().into_os_string()),
+            "HYPRLAND_INSTANCE_SIGNATURE" => Some("testsig".into()),
+            _ => None,
+        }
+    }
+
+    fn desk(&self) -> Desk {
+        let d = Desk::from_env(self.env()).expect("the stand-in Hyprland is found");
+        assert!(d.is_hyprland());
+        d
+    }
+
+    fn take(&self) -> Vec<String> {
+        std::mem::take(&mut *self.asked.lock().unwrap())
+    }
+
+    /// A program of this package run against the stand-in, with a config folder of its own.
+    fn run_tool(&self, name: &str, arg: Option<&str>, config: &Path) -> i32 {
+        let exe = match name {
+            "yggdrasil-snap" => env!("CARGO_BIN_EXE_yggdrasil-snap"),
+            _ => env!("CARGO_BIN_EXE_yggdrasil-close"),
+        };
+        let mut c = Command::new(exe);
+        c.env_clear()
+            .env("XDG_RUNTIME_DIR", &self.run)
+            .env("HYPRLAND_INSTANCE_SIGNATURE", "testsig")
+            .env("XDG_CONFIG_HOME", config)
+            .env("HOME", config);
+        if let Some(a) = arg {
+            c.arg(a);
+        }
+        c.status().unwrap().code().unwrap_or(-1)
+    }
+}
+
+impl Drop for FakeHyprland {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.run);
+    }
+}
+
+fn dispatches(v: &[&str]) -> Vec<String> {
+    v.iter().map(|s| s.to_string()).collect()
+}
+
+#[test]
+fn the_requests_are_the_bytes_hyprctl_sends() {
+    let h = FakeHyprland::start("wire", &[]);
+    let Desk::Hyprland(hy) = h.desk() else { unreachable!() };
+    for line in fixture("wire.txt").lines().filter(|l| !l.starts_with('#') && !l.is_empty()) {
+        let (cmd, bytes) = line.split_once('\t').unwrap();
+        let words: Vec<&str> = cmd.splitn(2, ' ').collect();
+        match words.as_slice() {
+            ["-j", what] => drop(hy.query(what)),
+            [what, "-j"] => drop(hy.query(what)),
+            ["dispatch", lua] => drop(hy.dispatch(lua)),
+            ["eval", lua] => drop(hy.eval(lua)),
+            _ => panic!("{cmd}"),
+        }
+        assert_eq!(h.take(), [bytes.to_string()], "{cmd}");
+    }
+}
+
+#[test]
+fn the_panels_desktops() {
+    let h = FakeHyprland::start("desktops", &[]);
+    let d = h.desk();
+    assert_eq!(d.desktops(), Desktops { ids: vec![2, 3], at: 0 }, "the hidden workspace is not a desktop");
+    assert_eq!(h.take(), ["j/workspaces", "j/activeworkspace"]);
+    d.show_desktop("3");
+    d.show_desktop("special:minimized");
+    assert_eq!(h.take(), dispatches(&[r#"/dispatch hl.dsp.focus({ workspace = "3" })"#]), "only numbered desktops are shown");
+    d.send_to_desktop("0x5a0000004000", "2");
+    d.send_to_desktop("0x5a\" })", "2");
+    assert_eq!(
+        h.take(),
+        dispatches(&[r#"/dispatch hl.dsp.window.move({ workspace = "2", follow = false, window = "address:0x5a0000004000" })"#]),
+        "an address is hex digits or nothing"
+    );
+}
+
+#[test]
+fn the_docks_minimize_and_restore() {
+    let h = FakeHyprland::start("dock", &[]);
+    let d = h.desk();
+    assert!(d.minimize_app("org.example.Terminal", "Terminal 1"));
+    assert_eq!(
+        h.take(),
+        dispatches(&[
+            "j/clients",
+            r#"/dispatch hl.dsp.window.move({ workspace = "special:minimized", follow = false, window = "address:0x5a0000003000" })"#
+        ])
+    );
+    // a window in front: focused and raised
+    assert!(d.restore_app("org.example.Editor", "notes.txt - Editor"));
+    assert_eq!(
+        h.take(),
+        dispatches(&[
+            "j/clients",
+            r#"/dispatch hl.dsp.focus({ window = "address:0x5a0000001000" })"#,
+            "/dispatch hl.dsp.window.bring_to_top()"
+        ])
+    );
+    // a minimized one: back to the focused screen's workspace (2)
+    assert!(d.restore_app("org.example.Player", "A Song - Player"));
+    assert_eq!(
+        h.take(),
+        dispatches(&[
+            "j/clients",
+            "j/monitors",
+            r#"/dispatch hl.dsp.window.move({ workspace = "2", follow = false, window = "address:0x5a0000002000" })"#,
+            r#"/dispatch hl.dsp.focus({ window = "address:0x5a0000002000" })"#,
+            "/dispatch hl.dsp.window.bring_to_top()"
+        ])
+    );
+    // two of a class and a title that matches neither: not found, nothing done (the dock then asks the usual way)
+    assert!(!d.restore_app("org.example.Terminal", "Terminal 9"));
+    assert_eq!(h.take(), ["j/clients"]);
+    // the only window of its class is found whatever its title now is
+    assert!(d.minimize_app("org.example.Editor", "renamed"));
+    assert_eq!(h.take().len(), 2);
+}
+
+#[test]
+fn a_minimized_window_comes_back_with_the_hidden_workspace_closed() {
+    let h = FakeHyprland::start("dock-open", &[("j/monitors", "monitors-minimized-open.json")]);
+    assert!(h.desk().restore_app("org.example.Player", "A Song - Player"));
+    assert_eq!(
+        h.take(),
+        dispatches(&[
+            "j/clients",
+            "j/monitors",
+            r#"/dispatch hl.dsp.workspace.toggle_special("minimized")"#,
+            r#"/dispatch hl.dsp.window.move({ workspace = "2", follow = false, window = "address:0x5a0000002000" })"#,
+            r#"/dispatch hl.dsp.focus({ window = "address:0x5a0000002000" })"#,
+            "/dispatch hl.dsp.window.bring_to_top()"
+        ])
+    );
+}
+
+#[test]
+fn window_zones() {
+    let h = FakeHyprland::start("zones", &[]);
+    let d = h.desk();
+    let w = d.active_window(true).unwrap();
+    assert_eq!((w.id.as_str(), w.at, w.floating, w.fullscreen), ("0x5a0000001000", Some((40.0, 128.0)), Some(true), false));
+    assert_eq!(w.monitor, Some(MonitorRef::Id(0)));
+    assert_eq!(d.cursor(), Some((1270.0, 14.0)));
+    let screens = d.screens();
+    assert_eq!(screens.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["DP-1", "HDMI-A-1"]);
+    assert!(screens[0].is(&MonitorRef::Id(0)) && screens[0].focused && !screens[1].focused);
+    assert_eq!(screens[0].monitor().free_area(), (0, 28, 2560, 1342));
+    assert_eq!(screens[1].monitor().logical(), (2560, 0, 1536, 864));
+    assert_eq!(h.take(), ["j/activewindow", "j/cursorpos", "j/monitors"]);
+    // a tiled window is floated, then sized, then placed
+    let answers = d.place("0x5a0000003000", false, (0, 28, 1280, 671));
+    assert_eq!(answers.len(), 3);
+    assert!(answers.iter().all(|(_, a)| a.as_deref() == Some("ok")));
+    assert_eq!(
+        h.take(),
+        dispatches(&[
+            r#"/dispatch hl.dsp.window.float({ action = "enable", window = "address:0x5a0000003000" })"#,
+            r#"/dispatch hl.dsp.window.resize({ x = 1280, y = 671, window = "address:0x5a0000003000" })"#,
+            r#"/dispatch hl.dsp.window.move({ x = 0, y = 28, window = "address:0x5a0000003000" })"#
+        ])
+    );
+    // Super held: asked through Hyprland's Lua, answered in a file in the runtime folder
+    assert_eq!(d.super_held(), Some(true));
+    let out = h.run.join("yggdrasil-zones-super");
+    assert_eq!(
+        h.take(),
+        [format!(
+            "/eval local f = io.open('{}', 'w') if f then f:write(tostring(hl.is_key_down('Super_L') or hl.is_key_down('Super_R'))) f:close() end",
+            out.display()
+        )]
+    );
+}
+
+#[test]
+fn no_window_in_front() {
+    let h = FakeHyprland::start("none", &[("j/activewindow", "activewindow-none.json")]);
+    assert_eq!(h.desk().active_window(false), None);
+}
+
+#[test]
+fn the_window_list_reads_hyprlands_fields() {
+    let h = FakeHyprland::start("list", &[]);
+    let w = h.desk().windows();
+    assert_eq!(w.len(), 4);
+    assert!(w[1].minimized && w[1].special && w[1].workspace == Some(-98));
+    assert_eq!((w[2].floating, w[2].focus_order, w[2].pid), (Some(false), 1, Some(4103)));
+    assert_eq!(w[3].monitor, Some(MonitorRef::Id(1)));
+}
+
+#[test]
+fn idle_hides_the_pointer_and_puts_it_back() {
+    let h = FakeHyprland::start("idle", &[]);
+    let d = h.desk();
+    assert_eq!(d.pointer_timeout(), Some(0.0));
+    d.set_pointer_timeout(0.25);
+    d.set_pointer_timeout(0.0);
+    assert_eq!(
+        h.take(),
+        dispatches(&[
+            "j/getoption cursor:inactive_timeout",
+            "/eval hl.config({ cursor = { inactive_timeout = 0.25 } })",
+            "/eval hl.config({ cursor = { inactive_timeout = 0 } })"
+        ])
+    );
+    let h = FakeHyprland::start("idle-hidden", &[("j/getoption cursor:inactive_timeout", "getoption-hidden.json")]);
+    assert_eq!(h.desk().pointer_timeout(), Some(0.25), "an earlier run left it hidden");
+}
+
+/// yggdrasil-snap as the shell script did it (its Python worked out the free room of the focused screen).
+#[test]
+fn snap_on_hyprland() {
+    let h = FakeHyprland::start("snap", &[]);
+    let conf = h.run.join("conf");
+    std::fs::create_dir_all(conf.join("yggdrasil")).unwrap();
+    for (side, want) in [
+        (
+            "left",
+            vec!["j/monitors", "/dispatch hl.dsp.window.resize({ x = 1280, y = 1342 })", "/dispatch hl.dsp.window.move({ x = 0, y = 28 })"],
+        ),
+        (
+            "right",
+            vec![
+                "j/monitors",
+                "/dispatch hl.dsp.window.resize({ x = 1280, y = 1342 })",
+                "/dispatch hl.dsp.window.move({ x = 1280, y = 28 })",
+            ],
+        ),
+        (
+            "top",
+            vec!["j/monitors", "/dispatch hl.dsp.window.resize({ x = 2560, y = 671 })", "/dispatch hl.dsp.window.move({ x = 0, y = 28 })"],
+        ),
+        (
+            "bottom",
+            vec!["j/monitors", "/dispatch hl.dsp.window.resize({ x = 2560, y = 671 })", "/dispatch hl.dsp.window.move({ x = 0, y = 699 })"],
+        ),
+        ("up", vec!["j/monitors", r#"/dispatch hl.dsp.window.fullscreen({ mode = "maximized" })"#]),
+        ("down", vec!["j/monitors", r#"/dispatch hl.dsp.window.move({ workspace = "special:minimized", follow = false })"#]),
+    ] {
+        assert_eq!(h.run_tool("yggdrasil-snap", Some(side), &conf), 0, "{side}");
+        assert_eq!(h.take(), dispatches(&want), "{side}");
+    }
+    // a tiling screen: the arrows move the focus instead; top and bottom still snap
+    std::fs::write(conf.join("yggdrasil/tiling"), "# tiling\nHDMI-A-1, DP-1\n").unwrap();
+    assert_eq!(h.run_tool("yggdrasil-snap", Some("left"), &conf), 0);
+    assert_eq!(h.take(), dispatches(&["j/monitors", r#"/dispatch hl.dsp.focus({ direction = "l" })"#]));
+    assert_eq!(h.run_tool("yggdrasil-snap", Some("down"), &conf), 0);
+    assert_eq!(h.take(), dispatches(&["j/monitors", r#"/dispatch hl.dsp.focus({ direction = "d" })"#]));
+    assert_eq!(h.run_tool("yggdrasil-snap", Some("top"), &conf), 0);
+    assert_eq!(h.take().len(), 3);
+    assert_eq!(h.run_tool("yggdrasil-snap", Some("sideways"), &conf), 2);
+    assert!(h.take().is_empty());
+}
+
+#[test]
+fn close_on_hyprland() {
+    let h = FakeHyprland::start("close", &[]);
+    let conf = h.run.join("conf");
+    std::fs::create_dir_all(conf.join("yggdrasil")).unwrap();
+    // the editor is in front and does not keep running
+    assert_eq!(h.run_tool("yggdrasil-close", None, &conf), 0);
+    assert_eq!(h.take(), dispatches(&["j/activewindow", "/dispatch hl.dsp.window.close()"]));
+    // listed (in another case): hidden instead
+    std::fs::write(conf.join("yggdrasil/keep-running"), "# keep\nORG.EXAMPLE.EDITOR\n").unwrap();
+    assert_eq!(h.run_tool("yggdrasil-close", None, &conf), 0);
+    assert_eq!(
+        h.take(),
+        dispatches(&["j/activewindow", r#"/dispatch hl.dsp.window.move({ workspace = "special:minimized", follow = false })"#])
+    );
+}
+
+#[test]
+fn without_hyprland_the_tools_do_nothing() {
+    let run = std::env::temp_dir().join(format!("ygg-wm-nohypr-{}", std::process::id()));
+    std::fs::create_dir_all(&run).unwrap();
+    let st = Command::new(env!("CARGO_BIN_EXE_yggdrasil-snap"))
+        .arg("left")
+        .env_clear()
+        .env("XDG_RUNTIME_DIR", &run)
+        .env("HYPRLAND_INSTANCE_SIGNATURE", "gone")
+        .status()
+        .unwrap();
+    assert_eq!(st.code(), Some(1));
+    let _ = std::fs::remove_dir_all(&run);
+}

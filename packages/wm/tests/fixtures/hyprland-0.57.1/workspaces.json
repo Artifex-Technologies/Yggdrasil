@@ -1,0 +1,40 @@
+[{
+    "address": "2",
+    "id": 2,
+    "type": "normal",
+    "name": "2",
+    "monitor": "DP-1",
+    "monitorID": 0,
+    "windows": 2,
+    "hasfullscreen": false,
+    "lastwindow": "0x5a0000001000",
+    "lastwindowtitle": "notes.txt - Editor",
+    "ispersistent": false,
+    "tiledLayout": "dwindle"
+},{
+    "address": "3",
+    "id": 3,
+    "type": "normal",
+    "name": "3",
+    "monitor": "HDMI-A-1",
+    "monitorID": 1,
+    "windows": 1,
+    "hasfullscreen": false,
+    "lastwindow": "0x5a0000004000",
+    "lastwindowtitle": "Terminal 2",
+    "ispersistent": false,
+    "tiledLayout": "dwindle"
+},{
+    "address": "-98",
+    "id": -98,
+    "type": "special",
+    "name": "special:minimized",
+    "monitor": "DP-1",
+    "monitorID": 0,
+    "windows": 1,
+    "hasfullscreen": false,
+    "lastwindow": "0x5a0000002000",
+    "lastwindowtitle": "A Song - Player",
+    "ispersistent": false,
+    "tiledLayout": "dwindle"
+}]

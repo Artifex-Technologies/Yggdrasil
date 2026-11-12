@@ -1,0 +1,29 @@
+[package]
+name = "yggdrasil-wm"
+version = "0.1.0"
+edition = "2021"
+description = "What Yggdrasil's own tools ask of the compositor and tell it to do (windows, workspaces, screens, the pointer), whichever compositor runs: Hyprland through its socket, Yggdrasil's own through its control socket. Also yggdrasil-snap and yggdrasil-close."
+license = "MPL-2.0"
+
+[lib]
+name = "yggdrasil_wm"
+path = "src/lib.rs"
+
+[[bin]]
+name = "yggdrasil-snap"
+path = "src/bin/yggdrasil-snap.rs"
+
+[[bin]]
+name = "yggdrasil-close"
+path = "src/bin/yggdrasil-close.rs"
+
+[dependencies]
+# Hyprland's answers are JSON (already in the panel's tree)
+serde_json = "1"
+# the screens type (zones::Monitor), the tiling screens and the config folder
+yggdrasil-conf = { path = "../yggdrasil-conf" }
+
+[profile.release]
+opt-level = 2
+lto = "thin"
+strip = true

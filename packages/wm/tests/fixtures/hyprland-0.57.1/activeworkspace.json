@@ -1,0 +1,14 @@
+{
+    "address": "2",
+    "id": 2,
+    "type": "normal",
+    "name": "2",
+    "monitor": "DP-1",
+    "monitorID": 0,
+    "windows": 2,
+    "hasfullscreen": false,
+    "lastwindow": "0x5a0000001000",
+    "lastwindowtitle": "notes.txt - Editor",
+    "ispersistent": false,
+    "tiledLayout": "dwindle"
+}

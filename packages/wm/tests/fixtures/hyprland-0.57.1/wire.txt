@@ -1,0 +1,15 @@
+# What hyprctl 0.57.1 writes to Hyprland's socket for each command line (recorded against a stand-in socket in a sandbox,
+# never the running session): the command line, then the bytes sent. yggdrasil-wm sends the same (tests/hyprland.rs).
+-j clients	j/clients
+-j monitors	j/monitors
+-j workspaces	j/workspaces
+-j activeworkspace	j/activeworkspace
+-j activewindow	j/activewindow
+-j cursorpos	j/cursorpos
+-j getoption cursor:inactive_timeout	j/getoption cursor:inactive_timeout
+activewindow -j	j/activewindow
+dispatch hl.dsp.window.move({ workspace = "special:minimized", follow = false, window = "address:0xabc" })	/dispatch hl.dsp.window.move({ workspace = "special:minimized", follow = false, window = "address:0xabc" })
+dispatch hl.dsp.focus({ direction = "l" })	/dispatch hl.dsp.focus({ direction = "l" })
+dispatch hl.dsp.window.resize({ x = 960, y = 1000 })	/dispatch hl.dsp.window.resize({ x = 960, y = 1000 })
+eval hl.config({ cursor = { inactive_timeout = 0.25 } })	/eval hl.config({ cursor = { inactive_timeout = 0.25 } })
+dispatch hl.dsp.window.close()	/dispatch hl.dsp.window.close()
