@@ -6,356 +6,18 @@
 //! - the screenshot is not blank: the bar's red and the window's blue are where they were put
 //! - a size or scale change through the control socket reaches the clients (output events, a new configure, the fractional scale)
 
-use std::fs::File;
-use std::io::{BufRead, BufReader, Write};
-use std::os::fd::AsFd;
-use std::os::unix::net::UnixStream;
-use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+mod common;
+
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use wayland_client::globals::{registry_queue_init, GlobalListContents};
-use wayland_client::protocol::{
-    wl_buffer::WlBuffer, wl_compositor::WlCompositor, wl_output, wl_output::WlOutput, wl_registry::WlRegistry, wl_shm, wl_shm::WlShm,
-    wl_shm_pool::WlShmPool, wl_surface::WlSurface,
-};
-use wayland_client::{delegate_noop, Connection, Dispatch, EventQueue, QueueHandle};
-use wayland_protocols::wp::fractional_scale::v1::client::{
-    wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1, wp_fractional_scale_v1, wp_fractional_scale_v1::WpFractionalScaleV1,
-};
-use wayland_protocols::xdg::shell::client::{
-    xdg_surface, xdg_surface::XdgSurface, xdg_toplevel, xdg_toplevel::XdgToplevel, xdg_wm_base, xdg_wm_base::XdgWmBase,
-};
-use wayland_protocols::xdg::xdg_output::zv1::client::{
-    zxdg_output_manager_v1::ZxdgOutputManagerV1, zxdg_output_v1, zxdg_output_v1::ZxdgOutputV1,
-};
-use wayland_protocols_wlr::layer_shell::v1::client::{
-    zwlr_layer_shell_v1, zwlr_layer_shell_v1::ZwlrLayerShellV1, zwlr_layer_surface_v1, zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
-};
-
-// ------------------------------------------------------------------ the compositor
-
-struct Compositor {
-    child: Child,
-    dir: PathBuf,
-    wayland: PathBuf,
-    ctl: PathBuf,
-}
-
-impl Compositor {
-    /// Start `yggdrasil-compositor --headless ARGS` in a folder of its own (short: a socket path must fit in 108 bytes).
-    fn start(args: &[&str]) -> Compositor {
-        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let n = N.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let dir = std::env::temp_dir().join(format!("ygg-hl-{}-{n}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(dir.join("run")).unwrap();
-        std::fs::create_dir_all(dir.join("home")).unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(dir.join("run"), std::fs::Permissions::from_mode(0o700)).unwrap();
-        let mut child = Command::new(env!("CARGO_BIN_EXE_yggdrasil-compositor"))
-            .arg("--headless")
-            .args(args)
-            .env_remove("WAYLAND_DISPLAY")
-            .env_remove("WAYLAND_SOCKET")
-            .env_remove("DISPLAY")
-            .env_remove("HYPRLAND_INSTANCE_SIGNATURE")
-            .env_remove("XDG_CONFIG_HOME")
-            .env("XDG_RUNTIME_DIR", dir.join("run"))
-            .env("HOME", dir.join("home"))
-            .env("YGGDRASIL_COMPOSITOR_XWAYLAND", "0")
-            .stdout(Stdio::piped())
-            .spawn()
-            .expect("start the compositor");
-        let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
-        let (mut wayland, mut ctl) = (None, None);
-        while wayland.is_none() || ctl.is_none() {
-            let line = lines.next().expect("the compositor ended before it was ready").unwrap();
-            if let Some(v) = line.strip_prefix("WAYLAND_DISPLAY=") {
-                wayland = Some(dir.join("run").join(v));
-            } else if let Some(v) = line.strip_prefix("YGGDRASIL_COMPOSITOR_CTL=") {
-                ctl = Some(PathBuf::from(v));
-            }
-        }
-        // keep reading (and dropping) what it prints, so it never blocks on a full pipe
-        std::thread::spawn(move || for _ in lines {});
-        Compositor { child, dir, wayland: wayland.unwrap(), ctl: ctl.unwrap() }
-    }
-
-    /// One command on the control socket: the lines before "ok", or the error.
-    fn ctl(&self, cmd: &str) -> Result<Vec<String>, String> {
-        let mut s = UnixStream::connect(&self.ctl).map_err(|e| format!("the control socket: {e}"))?;
-        s.write_all(format!("{cmd}\n").as_bytes()).map_err(|e| e.to_string())?;
-        let mut lines: Vec<String> = BufReader::new(s).lines().map(|l| l.unwrap()).collect();
-        match lines.pop().as_deref() {
-            Some("ok") => Ok(lines),
-            Some(e) => Err(e.to_string()),
-            None => Err("no answer".into()),
-        }
-    }
-
-    fn connect(&self) -> Client {
-        Client::connect(&self.wayland)
-    }
-}
-
-impl Drop for Compositor {
-    fn drop(&mut self) {
-        let _ = self.ctl("quit");
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while Instant::now() < deadline {
-            if let Ok(Some(_)) = self.child.try_wait() {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-        let _ = std::fs::remove_dir_all(&self.dir);
-    }
-}
-
-// ------------------------------------------------------------------ the client
-
-#[derive(Default, Debug, Clone)]
-struct Out {
-    name: String,
-    mode: (i32, i32),
-    scale: i32,
-    logical: (i32, i32),
-    position: (i32, i32),
-}
-
-#[derive(Default)]
-struct State {
-    outputs: Vec<Out>,
-    /// the layer surface's configures (width, height), each one acked
-    layer_sizes: Vec<(u32, u32)>,
-    toplevel_configured: bool,
-    toplevel_size: (i32, i32),
-    /// what the fractional scale object said last (in 120ths)
-    preferred_scale: Option<u32>,
-    closed: bool,
-}
-
-struct Client {
-    queue: EventQueue<State>,
-    qh: QueueHandle<State>,
-    state: State,
-    compositor: WlCompositor,
-    shm: WlShm,
-    layer_shell: ZwlrLayerShellV1,
-    wm_base: XdgWmBase,
-    fractional: WpFractionalScaleManagerV1,
-    wl_outputs: Vec<WlOutput>,
-    dir: PathBuf,
-}
-
-impl Client {
-    fn connect(socket: &Path) -> Client {
-        let conn = Connection::from_socket(UnixStream::connect(socket).expect("the Wayland socket")).unwrap();
-        let (globals, queue) = registry_queue_init::<State>(&conn).unwrap();
-        let qh = queue.handle();
-        let compositor: WlCompositor = globals.bind(&qh, 4..=6, ()).expect("wl_compositor");
-        let shm: WlShm = globals.bind(&qh, 1..=1, ()).expect("wl_shm");
-        let layer_shell: ZwlrLayerShellV1 = globals.bind(&qh, 1..=4, ()).expect("wlr-layer-shell");
-        let wm_base: XdgWmBase = globals.bind(&qh, 1..=5, ()).expect("xdg-shell");
-        let fractional: WpFractionalScaleManagerV1 = globals.bind(&qh, 1..=1, ()).expect("fractional scale");
-        let xdg_mgr: ZxdgOutputManagerV1 = globals.bind(&qh, 1..=3, ()).expect("xdg-output");
-        let mut state = State::default();
-        let mut wl_outputs = vec![];
-        for g in globals.contents().clone_list().into_iter().filter(|g| g.interface == "wl_output") {
-            let i = state.outputs.len();
-            state.outputs.push(Out::default());
-            let o: WlOutput = globals.registry().bind(g.name, g.version.min(4), &qh, i);
-            xdg_mgr.get_xdg_output(&o, &qh, i);
-            wl_outputs.push(o);
-        }
-        let dir = socket.parent().unwrap().to_path_buf();
-        let mut c = Client { queue, qh, state, compositor, shm, layer_shell, wm_base, fractional, wl_outputs, dir };
-        c.roundtrip();
-        c.roundtrip();
-        c
-    }
-
-    fn roundtrip(&mut self) {
-        self.queue.roundtrip(&mut self.state).expect("roundtrip");
-    }
-
-    /// Round trips until `done` holds (or 10 s pass).
-    fn until(&mut self, what: &str, done: impl Fn(&State) -> bool) {
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while !done(&self.state) {
-            assert!(Instant::now() < deadline, "timed out waiting for {what}");
-            self.roundtrip();
-            std::thread::sleep(Duration::from_millis(10));
-        }
-    }
-
-    /// A buffer of one colour (ARGB), in a file the compositor maps.
-    fn buffer(&self, w: i32, h: i32, argb: u32) -> WlBuffer {
-        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let path = self.dir.join(format!("buf-{}", N.fetch_add(1, std::sync::atomic::Ordering::SeqCst)));
-        let mut f = File::options().read(true).write(true).create(true).truncate(true).open(&path).unwrap();
-        let px = argb.to_le_bytes();
-        let data: Vec<u8> = std::iter::repeat_n(px, (w * h) as usize).flatten().collect();
-        f.write_all(&data).unwrap();
-        let _ = std::fs::remove_file(&path);
-        let pool = self.shm.create_pool(f.as_fd(), w * h * 4, &self.qh, ());
-        let b = pool.create_buffer(0, w, h, w * 4, wl_shm::Format::Argb8888, &self.qh, ());
-        pool.destroy();
-        b
-    }
-
-    /// A bar on the Top layer, anchored to the top, left and right edges (or all four with `height` 0) of the first output.
-    fn layer(&mut self, height: u32) -> (WlSurface, ZwlrLayerSurfaceV1) {
-        let surface = self.compositor.create_surface(&self.qh, ());
-        let _fs = self.fractional.get_fractional_scale(&surface, &self.qh, ());
-        let ls = self.layer_shell.get_layer_surface(
-            &surface,
-            Some(&self.wl_outputs[0]),
-            zwlr_layer_shell_v1::Layer::Top,
-            "test-bar".into(),
-            &self.qh,
-            (),
-        );
-        use zwlr_layer_surface_v1::Anchor;
-        let anchor = if height == 0 {
-            Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right
-        } else {
-            Anchor::Top | Anchor::Left | Anchor::Right
-        };
-        ls.set_anchor(anchor);
-        ls.set_size(0, height);
-        surface.commit();
-        self.until("the layer surface's first configure", |s| !s.layer_sizes.is_empty());
-        (surface, ls)
-    }
-}
-
-impl Dispatch<WlRegistry, GlobalListContents> for State {
-    fn event(
-        _: &mut Self,
-        _: &WlRegistry,
-        _: wayland_client::protocol::wl_registry::Event,
-        _: &GlobalListContents,
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
-    }
-}
-
-impl Dispatch<WlOutput, usize> for State {
-    fn event(st: &mut Self, _: &WlOutput, event: wl_output::Event, i: &usize, _: &Connection, _: &QueueHandle<Self>) {
-        let o = &mut st.outputs[*i];
-        match event {
-            wl_output::Event::Mode { width, height, .. } => o.mode = (width, height),
-            wl_output::Event::Scale { factor } => o.scale = factor,
-            wl_output::Event::Name { name } => o.name = name,
-            _ => {}
-        }
-    }
-}
-
-impl Dispatch<ZxdgOutputV1, usize> for State {
-    fn event(st: &mut Self, _: &ZxdgOutputV1, event: zxdg_output_v1::Event, i: &usize, _: &Connection, _: &QueueHandle<Self>) {
-        let o = &mut st.outputs[*i];
-        match event {
-            zxdg_output_v1::Event::LogicalSize { width, height } => o.logical = (width, height),
-            zxdg_output_v1::Event::LogicalPosition { x, y } => o.position = (x, y),
-            _ => {}
-        }
-    }
-}
-
-impl Dispatch<ZwlrLayerSurfaceV1, ()> for State {
-    fn event(st: &mut Self, ls: &ZwlrLayerSurfaceV1, event: zwlr_layer_surface_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
-        match event {
-            zwlr_layer_surface_v1::Event::Configure { serial, width, height } => {
-                ls.ack_configure(serial);
-                st.layer_sizes.push((width, height));
-            }
-            zwlr_layer_surface_v1::Event::Closed => st.closed = true,
-            _ => {}
-        }
-    }
-}
-
-impl Dispatch<XdgWmBase, ()> for State {
-    fn event(_: &mut Self, wm: &XdgWmBase, event: xdg_wm_base::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
-        if let xdg_wm_base::Event::Ping { serial } = event {
-            wm.pong(serial);
-        }
-    }
-}
-
-impl Dispatch<XdgSurface, ()> for State {
-    fn event(st: &mut Self, xs: &XdgSurface, event: xdg_surface::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
-        if let xdg_surface::Event::Configure { serial } = event {
-            xs.ack_configure(serial);
-            st.toplevel_configured = true;
-        }
-    }
-}
-
-impl Dispatch<XdgToplevel, ()> for State {
-    fn event(st: &mut Self, _: &XdgToplevel, event: xdg_toplevel::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
-        if let xdg_toplevel::Event::Configure { width, height, .. } = event {
-            st.toplevel_size = (width, height);
-        }
-    }
-}
-
-impl Dispatch<WpFractionalScaleV1, ()> for State {
-    fn event(st: &mut Self, _: &WpFractionalScaleV1, event: wp_fractional_scale_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
-        if let wp_fractional_scale_v1::Event::PreferredScale { scale } = event {
-            st.preferred_scale = Some(scale);
-        }
-    }
-}
-
-delegate_noop!(State: ignore WlCompositor);
-delegate_noop!(State: ignore WlShm);
-delegate_noop!(State: ignore WlShmPool);
-delegate_noop!(State: ignore WlBuffer);
-delegate_noop!(State: ignore WlSurface);
-delegate_noop!(State: ignore ZwlrLayerShellV1);
-delegate_noop!(State: ignore ZxdgOutputManagerV1);
-delegate_noop!(State: ignore WpFractionalScaleManagerV1);
-
-// ------------------------------------------------------------------ screenshots
-
-struct Picture {
-    w: usize,
-    h: usize,
-    rgb: Vec<u8>,
-}
-
-impl Picture {
-    fn load(path: &Path) -> Picture {
-        let decoder = png::Decoder::new(File::open(path).expect("the screenshot"));
-        let mut reader = decoder.read_info().unwrap();
-        let mut rgb = vec![0; reader.output_buffer_size()];
-        let info = reader.next_frame(&mut rgb).unwrap();
-        assert_eq!(info.color_type, png::ColorType::Rgb);
-        Picture { w: info.width as usize, h: info.height as usize, rgb }
-    }
-    fn at(&self, x: usize, y: usize) -> (u8, u8, u8) {
-        let i = (y * self.w + x) * 3;
-        (self.rgb[i], self.rgb[i + 1], self.rgb[i + 2])
-    }
-}
-
-/// "x,y" and "wxh" from the control socket's lists.
-fn pair(s: &str, sep: char) -> (i32, i32) {
-    let (a, b) = s.split_once(sep).unwrap();
-    (a.parse().unwrap(), b.parse().unwrap())
-}
+use common::*;
 
 // ------------------------------------------------------------------ the tests
 
 #[test]
 fn outputs_appear_with_the_size_and_scale_asked_for() {
+    let _l = limit(60, "outputs");
     let comp = Compositor::start(&["--output", "1600x900", "--output", "1280x720@1.5"]);
     let c = comp.connect();
     let outs = &c.state.outputs;
@@ -384,6 +46,7 @@ fn outputs_appear_with_the_size_and_scale_asked_for() {
 
 #[test]
 fn a_panel_and_a_window_are_mapped_and_drawn() {
+    let _l = limit(60, "panel and window");
     let comp = Compositor::start(&["--size", "800x600"]);
     let mut c = comp.connect();
 
@@ -396,18 +59,8 @@ fn a_panel_and_a_window_are_mapped_and_drawn() {
     bar.commit();
 
     // the window: blue, 200x150
-    let surface = c.compositor.create_surface(&c.qh, ());
-    let xs = c.wm_base.get_xdg_surface(&surface, &c.qh, ());
-    let top = xs.get_toplevel(&c.qh, ());
-    top.set_app_id("org.yggdrasil.test".into());
-    top.set_title("Headless test".into());
-    surface.commit();
-    c.until("the window's first configure", |s| s.toplevel_configured);
-    let blue = c.buffer(200, 150, 0xff0000ff);
-    surface.attach(Some(&blue), 0, 0);
-    surface.damage_buffer(0, 0, 200, 150);
-    surface.commit();
-    c.roundtrip();
+    let win = c.window("org.yggdrasil.test", "Headless test");
+    c.draw(&win, (200, 150), 0xff0000ff);
     c.roundtrip();
 
     let layers = comp.ctl("layers").unwrap();
@@ -441,6 +94,7 @@ fn a_panel_and_a_window_are_mapped_and_drawn() {
 
 #[test]
 fn a_resize_and_a_scale_change_reach_the_clients() {
+    let _l = limit(60, "resize and scale");
     let comp = Compositor::start(&["--size", "800x600"]);
     let mut c = comp.connect();
     let (_bg, _ls) = c.layer(0);
@@ -467,6 +121,7 @@ fn a_resize_and_a_scale_change_reach_the_clients() {
 
 #[test]
 fn the_screenshot_follows_the_scale() {
+    let _l = limit(60, "screenshot scale");
     // a bar 30 logical pixels high on an output at scale 2 covers 60 rows of the picture, all of its width
     let comp = Compositor::start(&["--size", "640x480", "--scale", "2"]);
     let mut c = comp.connect();
@@ -489,6 +144,7 @@ fn the_screenshot_follows_the_scale() {
 
 #[test]
 fn quit_ends_it_and_leaves_no_socket_behind() {
+    let _l = limit(60, "quit");
     let mut comp = Compositor::start(&[]);
     comp.ctl("quit").unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);

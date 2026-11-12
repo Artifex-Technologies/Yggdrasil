@@ -2378,6 +2378,7 @@ name = "yggdrasil-compositor"
 version = "0.1.0"
 dependencies = [
  "ab_glyph",
+ "libc",
  "png",
  "smithay",
  "tiny-skia",
