@@ -4974,21 +4974,31 @@ fn main() {
         })
         .expect("config timer");
 
-    event_loop
-        .run(None, &mut state, |st| {
-            // after a window changed, or the screens did (their names may come after the windows)
-            if st.covered_stale || st.built_for.is_none() {
-                st.covered_stale = false;
-                st.check_covered();
-            }
-            if st.built_for.is_none() {
-                st.build_surfaces();
-            }
-            if st.dirty {
-                st.redraw();
-            }
-        })
-        .expect("event loop run");
+    let ran = event_loop.run(None, &mut state, |st| {
+        // after a window changed, or the screens did (their names may come after the windows)
+        if st.covered_stale || st.built_for.is_none() {
+            st.covered_stale = false;
+            st.check_covered();
+        }
+        if st.built_for.is_none() {
+            st.build_surfaces();
+        }
+        if st.dirty {
+            st.redraw();
+        }
+    });
+    if let Err(e) = ran {
+        // the compositor went away (a log-out): end quietly instead of a crash report every time
+        if gone_compositor(&format!("{e:?}")) {
+            return;
+        }
+        panic!("event loop run: {e:?}");
+    }
+}
+
+/// An event-loop error that only means the Wayland connection closed (the session ended).
+fn gone_compositor(err: &str) -> bool {
+    err.contains("BrokenPipe") || err.contains("ConnectionReset") || err.contains("Connection reset")
 }
 
 #[cfg(test)]
@@ -4999,6 +5009,12 @@ mod layout_tests {
         let l = super::hypr_layout(&j).unwrap();
         assert_eq!(l.primary, "DP-1", "the screen at the top left");
         assert_eq!(l.sizes[1], ("DP-3".to_string(), 3440, 0, 2560, 2880));
+    }
+
+    #[test]
+    fn a_closed_compositor_is_a_quiet_end() {
+        assert!(super::gone_compositor(r#"OtherError(IoError(Os { code: 32, kind: BrokenPipe, message: "Broken pipe" }))"#));
+        assert!(!super::gone_compositor("OtherError(IoError(Os { code: 22, kind: InvalidInput }))"));
     }
 }
 
