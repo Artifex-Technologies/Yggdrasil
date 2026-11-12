@@ -355,7 +355,8 @@ impl Server {
     }
 
     fn get_server_information(&self) -> (String, String, String, String) {
-        ("Yggdrasil".into(), "Yggdrasil".into(), env!("CARGO_PKG_VERSION").into(), "1.2".into())
+        // the version is the system's (VERSION at the top of the repository, read when this is built); 1.2 is the spec's
+        ("Yggdrasil".into(), "Yggdrasil".into(), include_str!("../../../VERSION").trim_ascii().into(), "1.2".into())
     }
 }
 

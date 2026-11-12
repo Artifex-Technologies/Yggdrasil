@@ -14,13 +14,12 @@ use yggdrasil_weather::report::{self, BarInput};
 use yggdrasil_weather::timeutil::{now_epoch, parse_local};
 use yggdrasil_weather::verify::{self, Obs, Record};
 
-const UA: &str = "yggdrasil-weather/0.1";
 const MIN_SCORED: usize = 24;
 const MAX_STATION_KM: f64 = 60.0;
 
 fn http_get(url: &str) -> Result<String, String> {
     let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(12))).build().into();
-    let mut resp = agent.get(url).header("User-Agent", UA).call().map_err(|e| e.to_string())?;
+    let mut resp = agent.get(url).header("User-Agent", &yggdrasil_weather::user_agent()).call().map_err(|e| e.to_string())?;
     resp.body_mut().read_to_string().map_err(|e| e.to_string())
 }
 

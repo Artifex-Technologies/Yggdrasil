@@ -9,6 +9,14 @@
 //! paid keys, and nothing in their free offerings would add information the open
 //! models do not already carry. A `Provider` trait would be the place to add them.
 
+/// The system version (VERSION at the top of the Yggdrasil repository, the same as Labyrinth OS's), read when this is built.
+pub const VERSION: &str = include_str!("../../../VERSION").trim_ascii();
+
+/// What the program calls itself to the weather and place services: "yggdrasil-weather/1.0.0".
+pub fn user_agent() -> String {
+    format!("yggdrasil-weather/{VERSION}")
+}
+
 pub mod card;
 pub mod config;
 pub mod consensus;

@@ -4,7 +4,11 @@
 use std::time::Duration;
 
 pub const BEACONDB_URL: &str = "https://api.beacondb.net/v1/geolocate";
-const UA: &str = "yggdrasil-weather/0.1 (+https://github.com/Artifex-Technologies/Yggdrasil)";
+
+/// "yggdrasil-weather/1.0.0 (+https://github.com/Artifex-Technologies/Yggdrasil)"
+fn ua() -> String {
+    format!("{} (+https://github.com/Artifex-Technologies/Yggdrasil)", crate::user_agent())
+}
 /// How close the time zone's city must be to name a detected place after it.
 const NAME_KM: f64 = 80.0;
 
@@ -134,7 +138,7 @@ pub fn from_wifi() -> Result<Found, String> {
     let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(15))).http_status_as_error(false).build().into();
     let mut resp = agent
         .post(BEACONDB_URL)
-        .header("User-Agent", UA)
+        .header("User-Agent", &ua())
         .header("Content-Type", "application/json")
         .send(body.as_bytes())
         .map_err(|e| format!("beaconDB could not be reached: {e}"))?;
@@ -148,7 +152,7 @@ pub fn from_wifi() -> Result<Found, String> {
 /// Places named like `query` (Open-Meteo's geocoding: only the typed name is sent).
 pub fn search_places(query: &str) -> Result<Vec<crate::openmeteo::Place>, String> {
     let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(12))).build().into();
-    let mut resp = agent.get(&crate::openmeteo::geocode_url(query)).header("User-Agent", UA).call().map_err(|e| format!("the place search could not be reached: {e}"))?;
+    let mut resp = agent.get(&crate::openmeteo::geocode_url(query)).header("User-Agent", &ua()).call().map_err(|e| format!("the place search could not be reached: {e}"))?;
     crate::openmeteo::parse_places(&resp.body_mut().read_to_string().map_err(|e| e.to_string())?)
 }
 
