@@ -236,6 +236,26 @@ pub fn is_escape(sym: u32) -> bool {
     sym == keysyms::KEY_Escape
 }
 
+/// The media keys (volume, microphone, player, brightness) work on the lock screen too, whatever they are bound to (the session's
+/// Hyprland binds them with `locked = true`); no other shortcut runs while the screen is locked.
+pub fn works_locked(sym: u32) -> bool {
+    use keysyms as k;
+    [
+        k::KEY_XF86AudioRaiseVolume,
+        k::KEY_XF86AudioLowerVolume,
+        k::KEY_XF86AudioMute,
+        k::KEY_XF86AudioMicMute,
+        k::KEY_XF86AudioPlay,
+        k::KEY_XF86AudioPause,
+        k::KEY_XF86AudioNext,
+        k::KEY_XF86AudioPrev,
+        k::KEY_XF86AudioStop,
+        k::KEY_XF86MonBrightnessUp,
+        k::KEY_XF86MonBrightnessDown,
+    ]
+    .contains(&sym)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

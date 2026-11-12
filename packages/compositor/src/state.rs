@@ -908,6 +908,19 @@ impl App {
     /// Decides what a key does: a shortcut (taken, not passed to the focused program) or nothing special.
     fn key_filter(&mut self, code: u32, state: KeyState, mods: &ModifiersState, sym: u32) -> FilterResult<Action> {
         if self.locked {
+            // only the media keys' shortcuts run on the lock screen; every other key goes to the lock
+            if state == KeyState::Pressed && shortcuts::works_locked(sym) {
+                if let Some(b) = shortcuts::find(&self.bindings, Mods::of(mods), sym) {
+                    self.taken.push(code);
+                    return FilterResult::Intercept(b.action.clone());
+                }
+            }
+            if state == KeyState::Released {
+                if let Some(i) = self.taken.iter().position(|c| *c == code) {
+                    self.taken.remove(i);
+                    return FilterResult::Intercept(Action::None);
+                }
+            }
             return FilterResult::Forward;
         }
         if self.chooser.is_some() {

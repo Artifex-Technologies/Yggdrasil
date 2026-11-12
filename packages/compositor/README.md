@@ -33,7 +33,7 @@ served from the pictures in memory.
 | --- | --- | --- |
 | `src/*` unit tests (28) | options, sizes and scales, the refused runtime folder and session bus, shortcuts, tiling, placement (the same cases as `keep-clear.lua`) | `cargo test`, CI `rust` |
 | `tests/headless.rs` (6) | outputs (size, scale, name, place), a bar and a window drawn where they belong, size and scale changes reaching programs, `quit` | `cargo test`, CI `rust` |
-| `tests/behaviour.rs` (13) | with the tests' own small clients: the bar and dock reserve their room; windows open centred in the rest, kept clear of a dock that appears, back from maximize at a normal size; Super+Up/Left/Down; full screen over the bar and dock; workspaces by keys; the keyboard following new windows, clicks and an exclusive panel, typing reaching the window; the lock on every output taking every key, a second locker refused, a crashed one leaving the screen locked and a new one taking over; screen copies (whole, part, scale 2, with damage, while locked, a wrong buffer); grim's picture equal to the screen; screens off and on; idle and resume | `cargo test`, CI `rust` and `compositor-headless` |
+| `tests/behaviour.rs` (14) | with the tests' own small clients: the bar and dock reserve their room; windows open centred in the rest, kept clear of a dock that appears, back from maximize at a normal size; Super+Up/Left/Down; full screen over the bar and dock; workspaces by keys; the keyboard following new windows, clicks and an exclusive panel, typing reaching the window; the lock on every output taking every key, a second locker refused, a crashed one leaving the screen locked and a new one taking over; only the media keys' shortcuts working while locked; screen copies (whole, part, scale 2, with damage, while locked, a wrong buffer); grim's picture equal to the screen; screens off and on; idle and resume | `cargo test`, CI `rust` and `compositor-headless` |
 | `tests/apps.rs` (3) | Yggdrasil's real programs inside it: the panel (bar, dock, wallpaper drawn; the free room; the terminal stand-in centred and maximized into it; a notification toast that leaves the keyboard alone; the start menu taking the keyboard and giving it back; a smaller screen), Settings (egui drawn by Mesa in software: centred at 1060x720, drawn, Super+Up and back, Super+Q ends it), the lock screen in its test-auth build (two outputs, one at 1.5, nothing of the session shows, a wrong password keeps it locked, the right one unlocks and the keyboard goes back) | CI `compositor-headless`; on a desktop `tests/apps-podman.sh` |
 
 Every test starts its own compositor in a private folder, has a time limit (the test program ends past it), and every process it
@@ -62,8 +62,9 @@ The session's behaviour is set in `packages/session/hyprland/yggdrasil.lua` (wit
 - Four workspaces: Super+Ctrl+1..4, Super+Ctrl+Left/Right, Super+Ctrl+Shift+1..4 sending the window.
 - Click to focus (`follow_mouse = 2`), a new window takes the keyboard, a panel asking for the keyboard exclusively (the start
   menu) gets it at once and gives it back to the window when it closes (the session's `layer.closed` rule).
-- The lock (ext-session-lock): every output covered, every key to the lock, no shortcut while locked, a second locker refused,
-  a crashed locker leaves the screen locked and a new one may take over (`allow_session_lock_restore`).
+- The lock (ext-session-lock): every output covered, every key to the lock, no shortcut while locked but the media keys'
+  (Hyprland's `locked` binds), a second locker refused, a crashed locker leaves the screen locked and a new one may take over
+  (`allow_session_lock_restore`).
 - Screenshots and streaming (wlr-screencopy, shared memory), screens off and on (wlr-output-power), idle (ext-idle-notify),
   several outputs side by side at fractional scales.
 
@@ -76,7 +77,7 @@ start menu.
 1. **Our own tools still call `hyprctl`:** the panel's workspace buttons, window zones and window list, `yggdrasil-snap`,
    `yggdrasil-close`, `yggdrasil-idle`'s pointer hiding. They need ext-workspace and a control socket on the real session
    (the headless one is the start), so each tool talks to whichever compositor runs.
-2. **The shortcut table:** the media keys while locked (Hyprland's `locked` binds), Super+N, Super+W, Super+Shift+M (minimized
+2. **The shortcut table:** Super+N, Super+W, Super+Shift+M (minimized
    windows), Super+Shift+Z (zones), Print and Super+Shift+S (yggdrasil-shot), Super+Shift+C, Super+/, Ctrl+Shift+Esc, the
    magnifier (Super+Alt+=/-/0) and the screen reader (Super+Alt+S), the Ctrl double-tap (release binds that do not consume the
    key), key repeat for the volume keys.
@@ -107,7 +108,7 @@ and a way back:
 - [ ] Direct scanout of full screen games (`direct_scanout = 2`) and tearing allowed for games that ask (wp-tearing-control)
 - [ ] The lock, idle dimming, screens off and on, suspend and resume, a VT switch and back
 - [ ] Screenshots (yggdrasil-shot, the colour picker) and Sunshine streaming to the iPad
-- [ ] Every shortcut of the session's table, the media keys on the lock screen
+- [ ] Every shortcut of the session's table, the media keys on the lock screen (with the real yggdrasil-mediakey)
 - [ ] Frame times, 1% lows and input feel at least as good as Hyprland's in the bake-off games; idle CPU and memory measured
 
 ## Building and running the tests

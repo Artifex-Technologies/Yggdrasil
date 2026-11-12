@@ -127,6 +127,11 @@ pub struct Compositor {
 impl Compositor {
     /// Start `yggdrasil-compositor --headless ARGS` in a folder of its own (short: a socket path must fit in 108 bytes).
     pub fn start(args: &[&str]) -> Compositor {
+        Compositor::start_with(args, |_| {})
+    }
+
+    /// The same, with `setup` run on the test's folder first (its `home` holds the compositor's config: home/.config/yggdrasil).
+    pub fn start_with(args: &[&str], setup: impl FnOnce(&Path)) -> Compositor {
         static N: AtomicUsize = AtomicUsize::new(0);
         let n = N.fetch_add(1, Ordering::SeqCst);
         let dir = std::env::temp_dir().join(format!("ygg-hl-{}-{n}", std::process::id()));
@@ -135,6 +140,7 @@ impl Compositor {
         std::fs::create_dir_all(dir.join("home")).unwrap();
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(dir.join("run"), std::fs::Permissions::from_mode(0o700)).unwrap();
+        setup(&dir);
         // YGGDRASIL_COMPOSITOR: another build of it (tests/apps-podman.sh runs the tests in a container)
         let bin = std::env::var_os("YGGDRASIL_COMPOSITOR")
             .map(PathBuf::from)

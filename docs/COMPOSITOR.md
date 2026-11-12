@@ -62,8 +62,8 @@ socket now also makes input inside the compositor (`key`, `type`, `pointer`, `cl
 `focus`, `workspace`, `lock`, `free` and every window with its workspace and states. Headless it offers wlr-screencopy (grim and
 yggdrasil-shot work) and wlr-output-power (yggdrasil-idle's screens off). Windows now open centred in the room the bar and the dock
 leave free and keep clear of them, as in the Hyprland session (`placement.rs`, the cases of keep-clear.lua); a panel that asks for
-the keyboard exclusively (the start menu) gets it at once and gives it back; a second locker is refused while the first runs.
-`tests/behaviour.rs` (13 tests, own small clients) and `tests/apps.rs` (the panel, Settings drawn in software, the lock screen's
+the keyboard exclusively (the start menu) gets it at once and gives it back; a second locker is refused while the first runs; the media keys' shortcuts work on the lock screen, no others.
+`tests/behaviour.rs` (14 tests, own small clients) and `tests/apps.rs` (the panel, Settings drawn in software, the lock screen's
 test-auth build on two outputs) run in CI's `compositor-headless` job, and on a desktop through `tests/apps-podman.sh` in a
 container with no devices and no network. Nothing switches: Hyprland stays the session.
 

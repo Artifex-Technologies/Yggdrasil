@@ -468,6 +468,46 @@ fn a_locker_that_dies_leaves_the_screen_locked() {
     assert!(comp.screenshot("HEADLESS-1").count((0, 0, 800, 600), RGB_BLUE) > 0);
 }
 
+#[test]
+fn only_the_media_keys_work_on_the_lock_screen() {
+    let _l = limit(30, "media keys while locked");
+    // shortcuts of the test's own (shortcuts.conf in the private home): each leaves a file behind when it runs
+    let comp = Compositor::start_with(&["--size", "640x480"], |dir| {
+        let conf = dir.join("home/.config/yggdrasil");
+        std::fs::create_dir_all(&conf).unwrap();
+        let text = format!("XF86AudioMute = exec touch {0}/muted\nSuper+E = exec touch {0}/files\n", dir.display());
+        std::fs::write(conf.join("shortcuts.conf"), text).unwrap();
+    });
+    let ran = |name: &str| {
+        let p = comp.dir.join(name);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !p.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        p.exists()
+    };
+    let mut l = comp.connect();
+    let (_k, _p) = l.input();
+    let mgr: ExtSessionLockManagerV1 = l.globals.bind(&l.qh, 1..=1, ()).unwrap();
+    let lock = mgr.lock(&l.qh, ());
+    let s = l.compositor.create_surface(&l.qh, ());
+    let _ls = lock.get_lock_surface(&s, &l.wl_outputs[0], &l.qh, 0);
+    l.until("locked", |s| s.locked && !s.lock_sizes.is_empty());
+
+    comp.must("key XF86AudioMute");
+    assert!(ran("muted"), "the mute key works on the lock screen (Hyprland's locked binds)");
+    comp.must("key super+e");
+    assert!(!ran("files"), "Super+E does not start anything while locked");
+    l.roundtrip();
+    let keys: Vec<u32> = l.state.keys.iter().map(|(_, k)| *k).collect();
+    assert_eq!(keys, [125, 18], "the lock got Super+E, not the mute key");
+
+    lock.unlock_and_destroy();
+    l.roundtrip();
+    comp.must("key super+e");
+    assert!(ran("files"), "unlocked, Super+E runs again");
+}
+
 /// One screen copy through wlr-screencopy: the picture, and the copy's events.
 fn copy(
     c: &mut Client,

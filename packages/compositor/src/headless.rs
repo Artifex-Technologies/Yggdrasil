@@ -24,7 +24,8 @@
 //!   focus                        what has the keyboard: window APP TITLE, layer NAMESPACE OUTPUT, lock OUTPUT, or none
 //!   workspace                    the workspace showing (1 to 4)
 //!   lock                         "locked" or "unlocked", then one line per lock surface: output and size
-//!   key COMBO...                 press and let go of keys, one combination after another: super+ctrl+2, Return, a
+//!   key COMBO...                 press and let go of keys, one combination after another: super+ctrl+2, Return, a,
+//!                                XF86AudioMute
 //!   type TEXT                    type text (letters, digits, space and common punctuation, US layout)
 //!   pointer X Y                  move the pointer to X,Y (logical, in the space of all outputs)
 //!   click [left|right|middle]    press and let go of a pointer button where the pointer is
@@ -644,6 +645,16 @@ fn key_code(name: &str) -> Option<u32> {
         "print" => 99,
         "f11" => 87,
         "f12" => 88,
+        "xf86audiomute" | "mute" => 113,
+        "xf86audiolowervolume" | "volumedown" => 114,
+        "xf86audioraisevolume" | "volumeup" => 115,
+        "xf86audionext" => 163,
+        "xf86audioplay" => 164,
+        "xf86audioprev" => 165,
+        "xf86audiostop" => 166,
+        "xf86monbrightnessdown" => 224,
+        "xf86monbrightnessup" => 225,
+        "xf86audiomicmute" => 248,
         _ => 0,
     };
     if named != 0 {
