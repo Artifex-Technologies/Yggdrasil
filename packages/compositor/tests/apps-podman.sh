@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# The compositor's headless tests with Yggdrasil's own programs (tests/apps.rs) and the protocol tests (tests/behaviour.rs), run in
+# The compositor's headless tests with Yggdrasil's own programs (tests/apps.rs), the protocol tests (tests/behaviour.rs) and the
+# tools' layer (tests/tools.rs), run in
 # a rootless podman container: no devices (no GPU, no input), no network, no system bus, nothing of the running desktop. The way
 # to run them on a desktop machine; CI runs the same tests in its own container (the compositor-headless job).
 #
 #   packages/compositor/tests/apps-podman.sh [cargo test filters...]
 #
-# Builds what it needs first (debug): the compositor and its tests, the panel, Settings, and the lock screen with --features
-# test-auth in a folder of its own (target/test-auth), so the normal build of the lock is never the test one.
+# Builds what it needs first (debug): the compositor and its tests, the panel, Settings, yggdrasil-snap and yggdrasil-close
+# (packages/wm), and the lock screen with --features test-auth in a folder of its own (target/test-auth), so the normal build of
+# the lock is never the test one.
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -18,10 +20,11 @@ command -v podman >/dev/null || { echo "apps-podman: podman is not installed" >&
 
 (cd "$repo/packages/panel" && cargo build --locked)
 (cd "$repo/packages/settings" && cargo build --locked)
+(cd "$repo/packages/wm" && cargo build --locked)
 (cd "$repo/packages/lock" && cargo build --locked --features test-auth --target-dir "$target/test-auth" --bin yggdrasil-lock)
 cd "$repo/packages/compositor"
 cargo build --locked
-tests=$(cargo test --locked --no-run --test apps --test behaviour --message-format=json 2>/dev/null |
+tests=$(cargo test --locked --no-run --test apps --test behaviour --test tools --message-format=json 2>/dev/null |
     grep -o '"executable":"[^"]*/deps/[^"]*"' | sed 's/"executable":"//; s/"$//')
 [ -n "$tests" ] || { echo "apps-podman: the test programs were not built" >&2; exit 2; }
 
@@ -44,6 +47,8 @@ for t in $tests; do
         -e YGGDRASIL_TEST_PANEL=/target/debug/yggdrasil-panel \
         -e YGGDRASIL_TEST_SETTINGS=/target/debug/yggdrasil-settings \
         -e YGGDRASIL_TEST_LOCK=/target/test-auth/debug/yggdrasil-lock \
+        -e YGGDRASIL_TEST_SNAP=/target/debug/yggdrasil-snap \
+        -e YGGDRASIL_TEST_CLOSE=/target/debug/yggdrasil-close \
         -e YGGDRASIL_TEST_APPS_REQUIRED=1 \
         "$image" "/target/$rel" --test-threads=2 "$@" || status=1
 done

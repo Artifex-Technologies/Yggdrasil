@@ -89,9 +89,11 @@ jobs:
         run: |
           (cd packages/panel && cargo build --locked)
           (cd packages/settings && cargo build --locked)
+          # the session's window keys (yggdrasil-snap, yggdrasil-close), on the compositor through yggdrasil-wm
+          (cd packages/wm && cargo build --locked)
           # the lock screen's test build goes to a folder of its own, never mixed up with the real one
           (cd packages/lock && cargo build --locked --features test-auth --target-dir "$GITHUB_WORKSPACE/target/test-auth" --bin yggdrasil-lock)
-          (cd packages/compositor && cargo test --locked --no-run --test apps --test behaviour)
+          (cd packages/compositor && cargo test --locked --no-run --test apps --test behaviour --test tools)
       - name: Headless tests with Yggdrasil's programs
         timeout-minutes: 15
         run: |
@@ -99,8 +101,10 @@ jobs:
           YGGDRASIL_TEST_PANEL="$GITHUB_WORKSPACE/target/debug/yggdrasil-panel" \
           YGGDRASIL_TEST_SETTINGS="$GITHUB_WORKSPACE/target/debug/yggdrasil-settings" \
           YGGDRASIL_TEST_LOCK="$GITHUB_WORKSPACE/target/test-auth/debug/yggdrasil-lock" \
+          YGGDRASIL_TEST_SNAP="$GITHUB_WORKSPACE/target/debug/yggdrasil-snap" \
+          YGGDRASIL_TEST_CLOSE="$GITHUB_WORKSPACE/target/debug/yggdrasil-close" \
           YGGDRASIL_TEST_APPS_REQUIRED=1 \
-            cargo test --locked --test apps --test behaviour -- --test-threads=2
+            cargo test --locked --test apps --test behaviour --test tools -- --test-threads=2
   # gpuunlock is a live root helper still in Python (Settings runs it through pkexec); its tests fake every outside program,
   # /sys, /proc and /etc, so they run without a graphics card.
   gpuunlock:

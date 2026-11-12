@@ -1,12 +1,15 @@
-//! Yggdrasil's own programs on the headless compositor: the panel (bar, dock, wallpaper, notifications, the start menu), Settings
-//! (an egui window drawn in software) and the lock screen (in its test-auth build), with a terminal stand-in of the tests' own
-//! (tests/common's window, which records the keys it gets).
+//! Yggdrasil's own programs on the headless compositor: the panel (bar, dock, wallpaper, notifications, the start menu, its desktop
+//! buttons and window zones), Settings (an egui window drawn in software), the lock screen (in its test-auth build) and the
+//! session's window keys yggdrasil-snap and yggdrasil-close, with a terminal stand-in of the tests' own (tests/common's window,
+//! which records the keys it gets).
 //!
 //! The programs are the ones built from this repository, named by variables (nothing is looked up in PATH):
 //!   YGGDRASIL_TEST_PANEL     target/debug/yggdrasil-panel
 //!   YGGDRASIL_TEST_SETTINGS  target/debug/yggdrasil-settings
 //!   YGGDRASIL_TEST_LOCK      yggdrasil-lock built with `--features test-auth` (refused otherwise: a real build would check the
 //!                            password with PAM)
+//!   YGGDRASIL_TEST_SNAP      target/debug/yggdrasil-snap (packages/wm)
+//!   YGGDRASIL_TEST_CLOSE     target/debug/yggdrasil-close (packages/wm)
 //! A test whose program is not named is skipped, unless YGGDRASIL_TEST_APPS_REQUIRED is set (CI's compositor-headless job).
 //! tests/apps-podman.sh runs these in a container with no devices and no network.
 //!
@@ -440,4 +443,145 @@ fn the_lock_screen_covers_both_outputs_and_unlocks_with_the_password() {
     c.roundtrip();
     assert_eq!(c.state.keys.len(), 2, "typing reaches the window again");
     assert!(comp.screenshot("HEADLESS-1").count((0, 0, 1280, 720), RGB_BLUE) > 0);
+}
+
+/// A bar (32, reserved) and a dock (64, reserved) of the test's own, as the panel makes them.
+fn bar_and_dock(c: &mut Client) -> (LayerSurf, LayerSurf) {
+    let bar = c.layer_with(0, Layer::Top, "test-bar", Anchor::Top | Anchor::Left | Anchor::Right, (0, 32), 32, KeyboardInteractivity::None);
+    c.draw_layer(&bar, RED);
+    let dock = c.layer_with(0, Layer::Top, "test-dock", Anchor::Bottom, (600, 64), 64, KeyboardInteractivity::None);
+    c.draw_layer(&dock, 0xff00ff00);
+    (bar, dock)
+}
+
+/// One of the session's window keys, run once inside the compositor as its shortcut would (a Hyprland is named in the environment
+/// but not there: the compositor's own socket is found first). Its exit code.
+fn session_key(comp: &Compositor, bin: &Path, arg: Option<&str>) -> i32 {
+    let home = comp.dir.join("home");
+    let mut cmd = Command::new(bin);
+    cmd.env_clear()
+        .env("PATH", "/usr/bin")
+        .env("HOME", &home)
+        .env("XDG_RUNTIME_DIR", comp.dir.join("run"))
+        .env("WAYLAND_DISPLAY", comp.wayland.file_name().unwrap())
+        .env("HYPRLAND_INSTANCE_SIGNATURE", "no-hyprland-here")
+        .args(arg)
+        .stdin(Stdio::null());
+    dies_with_test(&mut cmd).status().expect("the session key runs").code().unwrap_or(-1)
+}
+
+#[test]
+fn the_session_keys_snap_and_close_windows_on_it() {
+    let (Some(snap), Some(close)) = (program("YGGDRASIL_TEST_SNAP"), program("YGGDRASIL_TEST_CLOSE")) else { return };
+    let _l = limit(90, "snap and close");
+    let comp = Compositor::start(&["--size", "1600x900"]);
+    let mut c = comp.connect();
+    let _layers = bar_and_dock(&mut c);
+    let t = c.window("test.terminal", "Terminal");
+    c.draw(&t, (640, 400), BLUE);
+
+    // Super+Left/Right and the top and bottom halves: the room the bar and the dock leave is 0,32 1600x804
+    for (side, rect) in
+        [("left", (0, 32, 800, 804)), ("right", (800, 32, 800, 804)), ("top", (0, 32, 1600, 402)), ("bottom", (0, 434, 1600, 402))]
+    {
+        assert_eq!(session_key(&comp, &snap, Some(side)), 0, "{side}");
+        assert_eq!(settle(&comp, &mut c, &t, "test.terminal", BLUE).rect(), rect, "{side}");
+    }
+    // Super+Up: maximized into that room, again: back
+    assert_eq!(session_key(&comp, &snap, Some("up")), 0);
+    let info = settle(&comp, &mut c, &t, "test.terminal", BLUE);
+    assert!(info.has("maximized") && info.rect() == (0, 32, 1600, 804), "{info:?}");
+    assert_eq!(session_key(&comp, &snap, Some("up")), 0);
+    assert!(!settle(&comp, &mut c, &t, "test.terminal", BLUE).has("maximized"));
+    // Super+Down: minimized
+    assert_eq!(session_key(&comp, &snap, Some("down")), 0);
+    comp.wait(10, "the terminal minimized", |c| c.window("test.terminal").is_some_and(|w| w.has("minimized")));
+    assert_eq!(session_key(&comp, &snap, Some("sideways")), 2, "a wrong side is refused");
+
+    // Super+Q: a program that keeps running (keep-running) is minimized; any other is asked to close
+    let conf = comp.dir.join("home/.config/yggdrasil");
+    std::fs::create_dir_all(&conf).unwrap();
+    std::fs::write(conf.join("keep-running"), "# music keeps playing\ntest.player\n").unwrap();
+    let p = c.window("test.player", "Player");
+    c.draw(&p, (500, 300), BLUE);
+    assert_eq!(session_key(&comp, &close, None), 0);
+    comp.wait(10, "the player minimized", |c| c.window("test.player").is_some_and(|w| w.has("minimized")));
+    c.roundtrip();
+    assert!(!c.state.wins[p.index].close_asked, "the player keeps running");
+    let o = c.window("test.other", "Other");
+    c.draw(&o, (500, 300), BLUE);
+    assert_eq!(session_key(&comp, &close, None), 0);
+    c.until("the other window asked to close", |s| s.wins[o.index].close_asked);
+    assert!(!c.state.wins[t.index].close_asked && !c.state.wins[p.index].close_asked);
+}
+
+#[test]
+fn the_panels_desktop_buttons_and_window_zones_work_on_it() {
+    let Some(panel) = program("YGGDRASIL_TEST_PANEL") else { return };
+    let _l = limit(150, "the panel's desktops and zones");
+    let comp = Compositor::start(&["--size", "1600x900"]);
+    let bus = Bus::start(&comp.dir);
+    // one layout on the zones sheet (halves), so where its zones are drawn is known
+    let conf = comp.dir.join("home/.config/yggdrasil");
+    std::fs::create_dir_all(&conf).unwrap();
+    std::fs::write(conf.join("zones.conf"), "enabled = yes\nlayouts = halves\ngap = 8\n").unwrap();
+    // the zones' trail (zones.log) is kept where the folder exists
+    std::fs::create_dir_all(comp.dir.join("home/.local/state/yggdrasil")).unwrap();
+    let mut p = App::start(&comp, &panel, Some(&bus), &[("YGGDRASIL_A11Y", "off"), ("XDG_CURRENT_DESKTOP", "Yggdrasil")]);
+    wait_for(&comp, &mut p, 60, "the bar and the dock", |c| {
+        let l = c.layers();
+        ["yggdrasil-panel", "yggdrasil-dock"].iter().all(|ns| layer(&l, ns).is_some_and(|x| x.size.0 > 0))
+    });
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !bus.has("org.yggdrasil.Panel") {
+        assert!(Instant::now() < deadline, "the panel's bus name: {}", p.log());
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let room = free_room(&comp, "HEADLESS-1");
+    let bar_h = layer(&comp.layers(), "yggdrasil-panel").unwrap().size.1;
+    let mut c = comp.connect();
+    let (_k, _p) = c.input();
+    let t = c.window("test.terminal", "Terminal");
+    c.draw(&t, (640, 400), BLUE);
+
+    // the bar's desktops (scale 1): the start button at 8 (30 wide), then the desktops' pill at 44, its slots 22 wide from 48,
+    // and "+" after the last. One desktop: "+" is at 70..92. A click makes desktop 2 and shows it.
+    let y = bar_h / 2;
+    comp.must(&format!("pointer 81 {y}"));
+    comp.must("click");
+    comp.wait(10, "desktop 2 shown from the bar's +", |c| c.must("workspace") == ["2"]);
+    // the bar reads the desktops again within two seconds: 1 and 2, the second shown; the first slot shows desktop 1
+    std::thread::sleep(Duration::from_millis(2600));
+    comp.must(&format!("pointer 59 {y}"));
+    comp.must("click");
+    comp.wait(10, "desktop 1 shown from its button", |c| c.must("workspace") == ["1"]);
+    comp.wait(10, "the terminal has the keyboard again", |c| c.focus() == "window\ttest.terminal\tTerminal");
+
+    // Super+Shift+Z (the panel's ZonesPick): the sheet opens for the window in front on its screen
+    bus.call(&["call", "org.yggdrasil.Panel", "/Panel", "org.yggdrasil.Panel", "ZonesPick"]).expect("ZonesPick");
+    wait_for(&comp, &mut p, 10, "the zones sheet", |c| layer(&c.layers(), "yggdrasil-popup").is_some_and(|l| l.size.0 > 0));
+    let sheet = layer(&comp.layers(), "yggdrasil-popup").cloned().unwrap();
+    let log = std::fs::read_to_string(comp.dir.join("home/.local/state/yggdrasil/zones.log")).unwrap_or_default();
+    assert!(log.contains("sheet open (Pick) for ") && log.contains(" on HEADLESS-1"), "the zones' trail: {log}");
+    // the card is centred at the top of the sheet: 160 wide for one layout, its thumbnail 14 in and 42 down, the left zone 3 in
+    let left_zone = (sheet.at.0 + (sheet.size.0 - 160) / 2 + 14 + 3 + 20, sheet.at.1 + 42 + 3 + 20);
+    std::thread::sleep(Duration::from_millis(300));
+    comp.must(&format!("pointer {} {}", left_zone.0, left_zone.1));
+    comp.must("click");
+    let want = yggdrasil_conf::zones::place((0.0, 0.0, 0.5, 1.0), room, 8);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let info = settle(&comp, &mut c, &t, "test.terminal", BLUE);
+        if info.rect() == want {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the terminal in the left zone {want:?}: {info:?}\nthe zones' trail: {}\npanel: {}",
+            std::fs::read_to_string(comp.dir.join("home/.local/state/yggdrasil/zones.log")).unwrap_or_default(),
+            p.log()
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert!(p.running(), "the panel is still running: {}", p.log());
 }
