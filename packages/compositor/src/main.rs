@@ -28,6 +28,7 @@ mod state;
 mod switcher;
 mod tiling;
 mod toplevels;
+mod wmctl;
 mod x11asked;
 mod xwayland;
 
@@ -88,7 +89,8 @@ fn gpu_buffers(
 fn start_programs(run: &[Vec<String>], wayland: &str, x11: Option<u32>) {
     for cmd in run {
         let mut c = std::process::Command::new(&cmd[0]);
-        c.args(&cmd[1..]).env("WAYLAND_DISPLAY", wayland).env_remove("DISPLAY");
+        // never the running desktop's compositor: Yggdrasil's tools (yggdrasil-wm) would act on Hyprland's windows otherwise
+        c.args(&cmd[1..]).env("WAYLAND_DISPLAY", wayland).env_remove("DISPLAY").env_remove("HYPRLAND_INSTANCE_SIGNATURE");
         if let Some(n) = x11 {
             c.env("DISPLAY", format!(":{n}"));
         }

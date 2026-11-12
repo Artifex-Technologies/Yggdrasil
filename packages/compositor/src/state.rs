@@ -238,6 +238,10 @@ pub struct App {
     pub loop_handle: LoopHandle<'static, App>,
     /// The shader that draws full screen X11 windows opaque, made the first time one is drawn (None if it failed to build).
     opaque_shader: Option<Option<smithay::backend::renderer::gles::GlesTexProgram>>,
+    /// Seconds without pointer motion after which the pointer is hidden (0: never), as Yggdrasil's tools set it (yggdrasil-idle
+    /// while the screen is dimmed; Hyprland's `cursor:inactive_timeout`). Kept and reported; the pointer is not drawn by this
+    /// compositor yet (the nested window's host draws it), so nothing is hidden until it is.
+    pub pointer_timeout: f64,
 }
 
 /// How many workspaces there are.
@@ -474,6 +478,7 @@ impl App {
             overlays: vec![],
             loop_handle,
             opaque_shader: None,
+            pointer_timeout: 0.0,
         }
     }
 
@@ -600,6 +605,44 @@ impl App {
     pub fn maximize(&mut self, window: &Window) {
         let zone = self.free_area(&self.output.clone());
         self.fit_window(window, zone, xdg_toplevel::State::Maximized);
+    }
+
+    /// Put a window at a place and size of the caller's choosing (Yggdrasil's tools: window zones, yggdrasil-snap), as a plain
+    /// floating window: no longer maximized, full screen or snapped, and floating on a tiling workspace. Only a window on the
+    /// workspace showing can be placed.
+    pub fn place_window(&mut self, window: &Window, rect: Rectangle<i32, Logical>) -> bool {
+        self.wake();
+        if !self.space.elements().any(|w| w == window) {
+            return false;
+        }
+        let Some(surface) = surface_of(window) else { return false };
+        if self.is_tiled(window, &surface) {
+            self.floating.push(surface.clone());
+        }
+        self.saved.retain(|(s, _)| s != &surface);
+        self.unplaced.retain(|s| s != &surface);
+        if let Some(t) = window.toplevel() {
+            t.with_pending_state(|s| {
+                for st in [
+                    xdg_toplevel::State::Maximized,
+                    xdg_toplevel::State::Fullscreen,
+                    xdg_toplevel::State::TiledLeft,
+                    xdg_toplevel::State::TiledRight,
+                ] {
+                    s.states.unset(st);
+                }
+                s.size = Some(rect.size);
+            });
+            t.send_configure();
+        } else if let Some(x) = window.x11_surface() {
+            let _ = x.set_maximized(false);
+            let _ = x.set_fullscreen(false);
+            self.x11_snapped.retain(|s| s != &surface);
+            let _ = x.configure(rect);
+        }
+        self.space.map_element(window.clone(), rect.loc, false);
+        self.retile();
+        true
     }
 
     /// The room the panels leave free on an output (what its bar and dock do not reserve), in the space's coordinates.
@@ -971,7 +1014,7 @@ impl App {
     fn spawn(&self, cmd: &str) {
         let mut c = std::process::Command::new("sh");
         // X11 programs go to this compositor's XWayland, never to the host's X server
-        c.arg("-c").arg(cmd).env_remove("DISPLAY");
+        c.arg("-c").arg(cmd).env_remove("DISPLAY").env_remove("HYPRLAND_INSTANCE_SIGNATURE");
         if let Some(n) = self.x11_display {
             c.env("DISPLAY", format!(":{n}"));
         }

@@ -31,6 +31,8 @@
 //!   click [left|right|middle]    press and let go of a pointer button where the pointer is
 //!   power NAME on|off            switch an output on or off (as wlr-output-power does)
 //!   quit                         end the compositor
+//! and the desktop commands Yggdrasil's own tools use through yggdrasil-wm (wmctl.rs: clients, active, workspaces, workspace N,
+//! activate, close, minimize, maximize, send, place, cursor, screens, pointer-timeout, modifiers).
 //! The answer is the lines, then "ok" or "error: ...".
 //!
 //! The input is made here, inside the compositor, for the tests: no input device is opened, and nothing reaches the running
@@ -446,6 +448,10 @@ fn serve(stream: UnixStream, app: &mut App, h: &mut Headless) {
 }
 
 fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String>, String> {
+    // the desktop commands Yggdrasil's own tools use (wmctl.rs) come first
+    if let Some(r) = crate::wmctl::command(words, app) {
+        return r;
+    }
     let output = |name: &str, h: &Headless| h.screen(name).map(|s| s.output.clone()).ok_or_else(|| format!("no output {name}"));
     match words {
         ["outputs"] => Ok(h
@@ -503,6 +509,7 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String
             .map(|i| {
                 let (title, app_id) = state::title_app(&i.window);
                 let size = i.window.geometry().size;
+                let (title, app_id) = (crate::wmctl::field(&title), crate::wmctl::field(&app_id));
                 format!("{app_id}\t{title}\t{},{}\t{}x{}\t{}\t{}", i.at.x, i.at.y, size.w, size.h, i.workspace + 1, i.states.join(","))
             })
             .collect()),
@@ -611,7 +618,7 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String
         }
         [] => Err("no command".into()),
         _ => Err(format!(
-            "unknown command {:?} (outputs, resize NAME WxH, scale NAME S, screenshot NAME FILE, windows, layers, free, focus, workspace, lock, key COMBO, type TEXT, pointer X Y, click [BUTTON], power NAME on|off, quit)",
+            "unknown command {:?} (outputs, resize NAME WxH, scale NAME S, screenshot NAME FILE, windows, layers, free, focus, workspace, lock, key COMBO, type TEXT, pointer X Y, click [BUTTON], power NAME on|off, quit; for the tools: clients, active, workspaces, workspace N, activate ID, close ID, minimize ID, maximize ID on|off|toggle, send ID N, place ID X Y W H, cursor, screens, pointer-timeout [S], modifiers)",
             words.join(" ")
         )),
     }

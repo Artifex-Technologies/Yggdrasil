@@ -29,6 +29,8 @@ wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 # the tests' children die with the test (prctl PR_SET_PDEATHSIG); already in the tree
 libc = "0.2"
+# tests/tools.rs: Yggdrasil's tools' own layer (packages/wm) speaking to the headless compositor
+yggdrasil-wm = { path = "../wm" }
 
 [profile.release]
 opt-level = 2
