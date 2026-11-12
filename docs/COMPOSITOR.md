@@ -56,9 +56,19 @@ after the warm-up and after 20 rounds); the leaky panel (the parent of c79d95f) 
 rounds, about 490 MB). The same in the rootless podman container (`--podman`): main 9 mappings, pass; leaky 374, fail. For
 comparison headless sway in that container: main 12, pass; leaky 617, fail.
 
-Not built headless yet: input (no seat devices; a test cannot click or type yet), GPU buffers (linux-dmabuf is not offered: shared
-memory only), drawing the pointer, screen capture for programs (only the control socket's screenshot), outputs added or removed while
-running, and placing outputs other than side by side.
+**2026-11-12: Yggdrasil's own programs are tested on it** (details, the full list of commands and tests, what it matches of the
+Hyprland session and the order to close the gap: [packages/compositor/README.md](../packages/compositor/README.md)). The control
+socket now also makes input inside the compositor (`key`, `type`, `pointer`, `click`: no input device is opened) and reports
+`focus`, `workspace`, `lock`, `free` and every window with its workspace and states. Headless it offers wlr-screencopy (grim and
+yggdrasil-shot work) and wlr-output-power (yggdrasil-idle's screens off). Windows now open centred in the room the bar and the dock
+leave free and keep clear of them, as in the Hyprland session (`placement.rs`, the cases of keep-clear.lua); a panel that asks for
+the keyboard exclusively (the start menu) gets it at once and gives it back; a second locker is refused while the first runs.
+`tests/behaviour.rs` (13 tests, own small clients) and `tests/apps.rs` (the panel, Settings drawn in software, the lock screen's
+test-auth build on two outputs) run in CI's `compositor-headless` job, and on a desktop through `tests/apps-podman.sh` in a
+container with no devices and no network. Nothing switches: Hyprland stays the session.
+
+Not built headless yet: GPU buffers (linux-dmabuf is not offered: shared memory only), drawing the pointer, outputs added or removed
+while running, and placing outputs other than side by side.
 
 ## Status (2026-10-18): first version, runs nested in a window only
 
