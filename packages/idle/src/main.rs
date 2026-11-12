@@ -98,24 +98,24 @@ pub struct App {
     screensaver: Option<std::process::Child>,
     /// The lights hooks were told "lights-off" and not yet "lights-on".
     lights_out: bool,
-    /// The pointer is hidden (dim or black screen): Hyprland's own idle-pointer timeout as it was before, to put back.
+    /// The pointer is hidden (dim or black screen): the compositor's own idle-pointer timeout as it was before, to put back.
     pointer_was: Option<f32>,
 }
 
-/// The value this program sets Hyprland's `cursor:inactive_timeout` to while it hides the pointer. Seeing it at start-up means an
-/// earlier run ended with the pointer hidden, so it is put back to 0 (Hyprland's default).
+/// The value this program sets the compositor's idle-pointer timeout to (Hyprland's `cursor:inactive_timeout`) while it hides the
+/// pointer. Seeing it at start-up means an earlier run ended with the pointer hidden, so it is put back to 0 (the default).
 const POINTER_HIDDEN: f32 = 0.25;
 
-/// Hyprland's `cursor:inactive_timeout` now (seconds; 0 = never hide), or None when Hyprland does not answer.
+/// The compositor's idle-pointer timeout now (seconds; 0 = never hide), or None when no compositor answers (yggdrasil-wm: Hyprland
+/// or Yggdrasil's own).
 fn pointer_timeout() -> Option<f32> {
-    let out = run("hyprctl", &["-j", "getoption", "cursor:inactive_timeout"]);
-    let at = out.find("\"float\"")?;
-    let rest = out[at + 7..].trim_start_matches([':', ' ']);
-    rest.split([',', '}', '\n']).next()?.trim().parse().ok()
+    yggdrasil_wm::Desk::detect()?.pointer_timeout()
 }
 
 fn set_pointer_timeout(secs: f32) {
-    run("hyprctl", &["eval", &format!("hl.config({{ cursor = {{ inactive_timeout = {secs} }} }})")]);
+    if let Some(d) = yggdrasil_wm::Desk::detect() {
+        d.set_pointer_timeout(secs);
+    }
 }
 
 /// Runs every lights hook with `arg` ("lights-off" or "lights-on"), without waiting: the system's (/usr/lib/yggdrasil/idle.d, e.g.
@@ -219,8 +219,8 @@ impl App {
         }
         log(&format!("doing {}", step.name()));
         if policy::hides_pointer(step) && self.pointer_was.is_none() {
-            // the pointer is drawn above everything (its own plane), so the dim and black covers never darken it: Hyprland hides an
-            // unmoved pointer once it has been still this long, and it has been still for the whole idle time already
+            // the pointer is drawn above everything (its own plane), so the dim and black covers never darken it: the compositor hides
+            // an unmoved pointer once it has been still this long, and it has been still for the whole idle time already
             if let Some(was) = pointer_timeout() {
                 self.pointer_was = Some(if was == POINTER_HIDDEN { 0.0 } else { was });
                 set_pointer_timeout(POINTER_HIDDEN);

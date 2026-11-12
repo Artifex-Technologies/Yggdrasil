@@ -11,6 +11,8 @@ path = "src/main.rs"
 
 [dependencies]
 yggdrasil-conf = { path = "../yggdrasil-conf" }
+# the compositor's idle-pointer timeout (Hyprland or Yggdrasil's own)
+yggdrasil-wm = { path = "../wm" }
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
