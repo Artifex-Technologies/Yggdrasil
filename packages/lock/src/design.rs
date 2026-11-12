@@ -218,7 +218,9 @@ fn split(pix: &mut Pixmap, s: &Scene) {
     );
     // the panel: the wallpaper blurred and darkened, a dark wash over it, a thin edge on its left
     let pw = (w * 0.34).clamp(420.0, 560.0).min(w);
-    let px = w - pw;
+    // on a whole pixel: the 1-pixel edge below at a fractional place trips tiny-skia's anti-aliasing (a debug assertion in
+    // hairline_aa, found by the compositor's headless test at 1280x720), and a whole pixel is crisper anyway
+    let px = (w - pw).round();
     if let Some(b) = s.blurred {
         pix.draw_pixmap(0, 0, b.as_ref(), &PixmapPaint::default(), Transform::identity(), Some(&panel_mask(pix.width(), pix.height(), px)));
     }
