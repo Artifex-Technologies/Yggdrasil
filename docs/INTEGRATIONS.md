@@ -22,9 +22,9 @@ Each file starts with `kind = ...`.
 ```
 kind = assistant
 name = Sarina                      # shown in the panel, Fylgja and Settings
-ask = /usr/local/bin/labyrinth-sarina-ask        # talk key (tap to talk hands-free, tap again to end): the recording's path is added as the last argument; prints the answer
-speak = /usr/local/bin/labyrinth-sarina-speak    # reads text aloud (text on standard input); `--stop` stops it
-warm = /usr/local/bin/labyrinth-sarina-warm      # optional: wake the model while you are still talking
+ask = /usr/bin/labyrinth-sarina-ask              # talk key (tap to talk hands-free, tap again to end): the recording's path is added as the last argument; prints the answer
+speak = /usr/bin/labyrinth-sarina-speak          # reads text aloud (text on standard input); `--stop` stops it
+warm = /usr/bin/labyrinth-sarina-warm            # optional: wake the model while you are still talking
 runtime = labyrinth-sarina         # folder in $XDG_RUNTIME_DIR where it reports speaking.pid and conversations (conv-ID.session)
 shortcut = Super+S                 # the talk key Yggdrasil registers, a tap starts a hands-free conversation, a tap ends it (Ctrl+Alt+S is a second way in)
 question = /usr/local/bin/labyrinth-ask-sarina --voice   # optional: a typed question, added as the last argument; prints the answer; should only read
