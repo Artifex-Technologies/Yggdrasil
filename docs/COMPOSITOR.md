@@ -70,6 +70,14 @@ container with no devices and no network. Nothing switches: Hyprland stays the s
 Not built headless yet: GPU buffers (linux-dmabuf is not offered: shared memory only), drawing the pointer, outputs added or removed
 while running, and placing outputs other than side by side.
 
+**2026-11-12: Yggdrasil's own tools talk to it through yggdrasil-wm** (`packages/wm`, the layer they share): the panel's desktop
+buttons, window zones, Snap Assist and the dock's minimize, `yggdrasil-snap`, `yggdrasil-close` and the idle manager's pointer find
+whichever compositor runs (this one by its control socket for their Wayland display, else Hyprland's socket) and do the same on both.
+The control socket got the desktop commands they use (`src/wmctl.rs`: windows with numbers of their own, desktops, screens, the
+pointer, placing, maximizing, minimizing and closing windows); a window's title can no longer add lines to an answer, and programs it
+starts never get Hyprland's signature. Proof on Hyprland with recorded Hyprland 0.57.1 answers, on this compositor in the headless
+tests (`tests/tools.rs`, `tests/apps.rs`): details and what still calls hyprctl in [packages/compositor/README.md](../packages/compositor/README.md).
+
 ## Status (2026-10-18): first version, runs nested in a window only
 
 It opens a window on the running desktop (winit backend) and serves its own Wayland socket; programs started with `--run` use it:
@@ -88,7 +96,7 @@ What works (each checked by hand in the nested window):
 - **Shortcuts handled by the compositor** (`shortcuts.rs`; when this was written they were KDE's `kglobalacceld`, today Hyprland binds the keys): the Super key on its own (start menu, through the panel's D-Bus service), Super+E/I/L/V/S/C/F/Q, Alt+F4, Alt+Tab, Super+arrows (maximize, restore or minimize, snap left and right), Super+Return. `~/.config/labyrinth/shortcuts.conf` changes or removes any of them. Checked in the nested window with test bindings (the host desktop keeps the Super key and Alt+Tab to itself): Ctrl+Shift+Left snapped the focused window to the left half, and Ctrl+Shift+Space opened the panel's start menu. The Super tap, Alt+Tab and the rest are written but could not be tried there.
 - **Window controls** drawn by the compositor for programs that ask for server-side decoration (`xdg-decoration`, mostly Qt programs): no title bar, only a grip and the round minimize, maximize and close buttons in the top right corner of the window with no background of their own (they take on the look of the program under them), level with the program's own menu or tool bar; the program keeps the whole height of its window. Drag by the grip (double click maximizes); or hold Super and drag anywhere with the left button to move, the right button to resize; grips just outside the edges resize too. A program that asks to draw its own controls (Minos, Settings, the Marketplace) gets none. `YGGDRASIL_COMPOSITOR_DECORATE=all` gives every window the pill (for testing). Checked in the nested window with Wireshark: the pill sat beside its menu row. Moving by the grip, Super+drag and the edge grips are written but were not tried by hand.
 - **Window switcher** (Alt+Tab): holding Alt shows a card for each window, most recently used first; Tab moves on, Shift+Tab goes back, Escape cancels, letting go of Alt picks. Checked with Ctrl+Tab in the nested window (the host keeps Alt+Tab).
-- **Workspaces** (four): Super+Ctrl+1..4 and Super+Ctrl+Left/Right switch, Super+Ctrl+Shift+1..4 send the focused window to another one; the dock still lists every window and activating one on another workspace goes there. Checked: sending a window away, and showing only it on the other workspace. The panel's workspace buttons follow Hyprland's workspaces (through `hyprctl`), not these yet.
+- **Workspaces** (four): Super+Ctrl+1..4 and Super+Ctrl+Left/Right switch, Super+Ctrl+Shift+1..4 send the focused window to another one; the dock still lists every window and activating one on another workspace goes there. Checked: sending a window away, and showing only it on the other workspace. The panel's workspace buttons follow these too since 2026-11-12 (through yggdrasil-wm and the control socket, headless; tested).
 - **Multimedia keys** are bound to `yggdrasil-mediakey` (in the panel package) (volume, mute, microphone, the running player, brightness). They could not be tried in the nested window, because the host desktop takes those keys; held keys do not repeat yet.
 - **Workspace profiles** (`tiling.rs`): each workspace is **standard** (windows float) or **tiling** (Hyprland-style "dwindle": the first window takes the left half, the next the top right, and so on, with gaps). `~/.config/labyrinth/workspaces.conf` sets a default (standard, tiling, or **ask** each time an empty workspace is opened) and an exception per workspace; Settings > Appearance > Workspaces writes it and the compositor reads it again when it changes. Super+T floats or tiles one window. Checked in the nested window: with "ask" the question appeared on the empty workspace, Right and Enter chose Tiling, and the three windows that opened afterwards were laid out side by side.
 - Pointer and keyboard (from the host window), wheel, wl_output with xdg-output, clipboard (data device), viewporter, shm.
@@ -167,7 +175,8 @@ game full screen (no see-through patches, keys and mouse reach it). `YGGDRASIL_C
 
 Not built yet (in the order I would do them):
 1. Trying resize, maximize, full screen and minimize by hand, and X11 programs (above): xterm, Steam, a Proton game.
-2. The panel's workspace buttons following the compositor's workspaces (the protocol `ext-workspace`), and key repeat for the volume keys.
+2. Key repeat for the volume keys; the protocol `ext-workspace` for other programs (the panel's workspace buttons follow this compositor's
+   workspaces through yggdrasil-wm since 2026-11-12).
 4. More workspaces than four.
 5. Built 2026-11-04, not yet tried by hand: a full screen window in front covers the top bar and dock (they go behind it and get
    no pointer; the Overlay layer stays in front). Also built 2026-11-04, not yet tried by hand: GPU clients (linux-dmabuf, with default feedback naming the render node), idle inhibit,

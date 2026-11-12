@@ -18,7 +18,8 @@ Only a **Super+drag** opens the sheet. Learned on the owner's machine on 2026-10
   placed away from the pointer the app never hears the button come up, and picks the window up again as soon as the pointer moves
   (Vivaldi, VS Code, Minos, Agora, Obsidian and Ghostty all did). Super+drag is Hyprland's own move and ends cleanly, so it is the
   one the sheet answers to.
-- **The panel cannot see the pointer during a drag** (the compositor holds it), so it asks Hyprland's socket.
+- **The panel cannot see the pointer during a drag** (the compositor holds it), so it asks the compositor's socket (through
+  yggdrasil-wm, `packages/wm`: Hyprland's socket, or the control socket of Yggdrasil's own compositor, where the same zones work).
 
 So the panel does it all (`zones::Spotter`, `zones::Buttons`):
 
@@ -27,7 +28,7 @@ So the panel does it all (`zones::Spotter`, `zones::Buttons`):
    ioctl per mouse: nothing else runs while no button is held.
 2. **The drag:** while the button is held it asks Hyprland for the window in front and the pointer. Once that window (floating) has
    moved more than 6 px and the pointer is within 180 px of the middle of its screen and 30 px under the bar, it asks once whether
-   Super is held (`hl.is_key_down('Super_L'/'Super_R')` through `hyprctl eval`); if so, the sheet opens.
+   Super is held (on Hyprland `hl.is_key_down('Super_L'/'Super_R')` through an `eval` on its socket); if so, the sheet opens.
 3. **The drop:** the button coming up (the kernel again) places the window on the zone under the pointer. The sheet takes no pointer
    input during a drag, and Snap Assist opens 350 ms after the drop.
 4. **A drop that never comes:** a drag sheet whose pointer has not moved for 8 seconds closes itself.
@@ -42,7 +43,8 @@ a zone places it.
 | Part | File |
 |---|---|
 | Layouts, `zones.conf`, the geometry (free area less the bar and dock strips, gaps, scale, rotation) | `packages/yggdrasil-conf/src/zones.rs` |
-| The sheet, the pointer through Hyprland's socket, placing the window | `packages/panel/src/zones.rs` (hooks in `main.rs`: D-Bus `ZonesDrag`/`ZonesDrop`/`ZonesPick`, `PopupKind::Zones`) |
+| The sheet, the pointer, placing the window | `packages/panel/src/zones.rs` (hooks in `main.rs`: D-Bus `ZonesDrag`/`ZonesDrop`/`ZonesPick`, `PopupKind::Zones`) |
+| Asking the compositor (the window in front, the pointer, Super held, the screens, placing) | `packages/wm` (yggdrasil-wm: Hyprland or Yggdrasil's own compositor) |
 | Snap Assist (the other zones offered to the other windows) | `packages/panel/src/assist.rs` (`PopupKind::Assist` in `main.rs`) |
 | The bindings and the timer | `packages/session/hyprland/yggdrasil.lua`, the "Window zones" block |
 | `zones`, `zones-drag`, `zones-drop` | `packages/panel/bin/yggdrasil-panelctl` |
