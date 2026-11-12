@@ -172,7 +172,15 @@ impl Desk {
 
     pub fn screens(&self) -> Vec<Screen> {
         match self {
-            Desk::Hyprland(h) => h.screens(),
+            Desk::Hyprland(h) => h.screens(false),
+            Desk::Own(o) => o.screens(),
+        }
+    }
+
+    /// The screens, asked while a window is dragged: the answer must come at once.
+    pub fn screens_quick(&self) -> Vec<Screen> {
+        match self {
+            Desk::Hyprland(h) => h.screens(true),
             Desk::Own(o) => o.screens(),
         }
     }

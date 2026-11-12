@@ -61,8 +61,8 @@ impl Hyprland {
         parse_client_one(&self.ask("j/activewindow", if quick { QUICK } else { NORMAL })?)
     }
 
-    pub fn screens(&self) -> Vec<Screen> {
-        self.query("monitors").map(|j| parse_monitors(&j)).unwrap_or_default()
+    pub fn screens(&self, quick: bool) -> Vec<Screen> {
+        self.ask("j/monitors", if quick { QUICK } else { NORMAL }).map(|j| parse_monitors(&j)).unwrap_or_default()
     }
 
     pub fn cursor(&self) -> Option<(f64, f64)> {

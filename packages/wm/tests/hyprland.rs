@@ -234,7 +234,8 @@ fn window_zones() {
     assert!(screens[0].is(&MonitorRef::Id(0)) && screens[0].focused && !screens[1].focused);
     assert_eq!(screens[0].monitor().free_area(), (0, 28, 2560, 1342));
     assert_eq!(screens[1].monitor().logical(), (2560, 0, 1536, 864));
-    assert_eq!(h.take(), ["j/activewindow", "j/cursorpos", "j/monitors"]);
+    assert_eq!(d.screens_quick(), screens, "the same, asked while dragging");
+    assert_eq!(h.take(), ["j/activewindow", "j/cursorpos", "j/monitors", "j/monitors"]);
     // a tiled window is floated, then sized, then placed
     let answers = d.place("0x5a0000003000", false, (0, 28, 1280, 671));
     assert_eq!(answers.len(), 3);

@@ -219,7 +219,7 @@ impl Spotter {
                     return false;
                 }
                 let Some(c) = desk.cursor() else { return false };
-                let monitors: Vec<Monitor> = desk.screens().iter().map(|s| s.monitor()).collect();
+                let monitors: Vec<Monitor> = desk.screens_quick().iter().map(|s| s.monitor()).collect();
                 if near_notch(&monitors, c) {
                     // once per drag: only a Super+drag opens the sheet. A title-bar drag is the app's own move, and such an app
                     // never hears the button come up once its window is placed away from the pointer: it picks the window up
