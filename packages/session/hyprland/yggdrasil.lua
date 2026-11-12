@@ -310,9 +310,9 @@ local function cmd(keys, command, opts) hl.bind(keys, hl.dsp.exec_cmd(command), 
 local function dsp(keys, dispatcher, opts) hl.bind(keys, dispatcher, opts) end
 
 cmd("SUPER + SUPER_L", "yggdrasil-panelctl start", { release = true, desc = "Start menu" })
--- tap to start, tap again to send (only the press is bound: which key is let go first no longer matters)
-cmd("SUPER + S", "yggdrasil-panelctl ask-press", { desc = "Talk to the assistant (tap to start, tap to send)" })
-cmd("CTRL + ALT + S", "yggdrasil-panelctl ask-press", { desc = "Talk to the assistant (tap to start, tap to send)" })
+-- a tap starts a hands-free conversation, a tap ends it (only the press is bound: which key is let go first no longer matters)
+cmd("SUPER + S", "yggdrasil-panelctl ask-press", { desc = "Talk to the assistant (tap to talk hands-free, tap again to end)" })
+cmd("CTRL + ALT + S", "yggdrasil-panelctl ask-press", { desc = "Talk to the assistant (tap to talk hands-free, tap again to end)" })
 cmd("SUPER + V", "yggdrasil-clipboard", { desc = "Clipboard history and snippets" })
 cmd("SUPER + C", "yggdrasil-panelctl calendar", { desc = "Calendar" })
 cmd("SUPER + N", "yggdrasil-panelctl notifications", { desc = "Notifications" })

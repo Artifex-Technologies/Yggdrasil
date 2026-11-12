@@ -97,24 +97,20 @@ impl Vad {
     }
 }
 
-/// What a press of the talk key does. Tap to start, tap again to send: only the key going down counts, so it does not matter which
-/// key of Super+S is let go first (Hyprland reports a release only while Super is still held, and a missed release used to leave the
-/// recording running).
+/// What a press of the talk key does. A tap starts a hands-free conversation: she listens until you stop talking (Vad), answers,
+/// and listens again. A tap while she listens, thinks or talks ends it. Only the key going down counts, so it does not matter
+/// which key of Super+S is let go first (Hyprland reports a release only while Super is still held).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tap {
-    /// Start recording.
+    /// Start a conversation: listen, and send when the speaker stops talking.
     Start,
-    /// Stop recording and send the question.
-    Send,
-    /// She is working on an answer or saying it: the press closes her (the answer is dropped, her voice stops). The next press
-    /// asks again, and within CONTINUE_SECS it carries on the same conversation.
+    /// End the conversation: a recording is dropped, an answer on its way is dropped, her voice stops. The next press asks
+    /// again, and within CONTINUE_SECS it carries on the same conversation.
     Close,
 }
 
 pub fn tap(listening: bool, thinking: bool, speaking: bool) -> Tap {
-    if listening {
-        Tap::Send
-    } else if thinking || speaking {
+    if listening || thinking || speaking {
         Tap::Close
     } else {
         Tap::Start
@@ -185,12 +181,12 @@ mod tests {
     }
 
     #[test]
-    fn tap_to_start_tap_to_send() {
+    fn tap_starts_a_conversation_and_ends_it() {
         assert_eq!(tap(false, false, false), Tap::Start);
-        assert_eq!(tap(true, false, false), Tap::Send);
+        assert_eq!(tap(true, false, false), Tap::Close, "a press while she listens ends the conversation");
         assert_eq!(tap(false, true, false), Tap::Close, "a press while she works on an answer closes her");
         assert_eq!(tap(false, false, true), Tap::Close, "a press while she talks closes her, it does not start a question");
-        assert_eq!(tap(true, false, true), Tap::Send, "her voice is stopped before recording, so listening wins");
+        assert_eq!(tap(true, false, true), Tap::Close);
         use std::time::Duration;
         assert!(continues(Some(Duration::from_secs(60))));
         assert!(!continues(Some(Duration::from_secs(CONTINUE_SECS))));

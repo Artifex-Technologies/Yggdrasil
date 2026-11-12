@@ -65,7 +65,7 @@ stops (checked every 30 seconds).
 - The speed test is approximate (a few streams of a few MB); a gigabit line will read low.
 - Super+V and Super+S pressed on a real keyboard. Under KDE they were written into `kglobalshortcutsrc`;
   in the Yggdrasil session Hyprland binds them (`packages/session/hyprland/yggdrasil.lua`: Super+V opens
-  `yggdrasil-clipboard`, Super+S talks to the assistant through `yggdrasil-panelctl`: tap to start, tap again to send).
+  `yggdrasil-clipboard`, Super+S talks to the assistant through `yggdrasil-panelctl`: a tap starts a hands-free conversation, a tap ends it).
 - Hibernate in the Power section on real hardware.
 - Cover pictures from the web (Spotify) are fetched once with `curl` and cached in
   `~/.cache/yggdrasil/fylgja/`.

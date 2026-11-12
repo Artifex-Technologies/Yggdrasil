@@ -149,12 +149,12 @@ impl PanelBus {
         let _ = self.0.send(BusMsg::Ask);
     }
 
-    /// The talk key went down: tap to start recording, tap again to send.
+    /// The talk key went down: a tap starts a hands-free conversation, a tap ends it.
     fn ask_press(&self) {
         let _ = self.0.send(BusMsg::AskKey(true));
     }
 
-    /// The talk key came up (kept for older bindings; not used: tap to start, tap again to send).
+    /// The talk key came up (kept for older bindings; not used: only the press counts).
     fn ask_release(&self) {
         let _ = self.0.send(BusMsg::AskKey(false));
     }
@@ -1111,7 +1111,7 @@ impl State {
         }
     }
 
-    /// The talk key: tap to start recording, tap again to send (convo::tap). Its release is not used. A question within
+    /// The talk key: a tap starts a hands-free conversation, a tap during it ends it (convo::tap). Its release is not used. A question within
     /// convo::CONTINUE_SECS of the last one carries on the same conversation; after that a new one begins.
     fn voice_key(&mut self, k: VoiceKey) {
         if k == VoiceKey::Up {
@@ -1122,6 +1122,10 @@ impl State {
         let speaking = self.speaker.is_some() || self.speech_since.is_some();
         match convo::tap(listening, thinking, speaking) {
             convo::Tap::Close => {
+                if listening {
+                    // the recording so far is dropped, not sent
+                    self.cancel_voice();
+                }
                 if thinking {
                     // the answer still on its way is dropped when it comes (voice_rx); sentences already stop at Idle
                     self.drop_answers += 1;
@@ -1134,10 +1138,6 @@ impl State {
                 self.stop_speech();
                 self.dirty = true;
             }
-            convo::Tap::Send => {
-                self.conv_last = Some(std::time::Instant::now());
-                self.send_recording();
-            }
             convo::Tap::Start => {
                 if !convo::continues(self.conv_last.map(|t| t.elapsed())) {
                     self.forget_conversation();
@@ -1148,8 +1148,10 @@ impl State {
                         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)
                     ));
                 }
-                self.vad_mode = false;
-                self.conv = false;
+                // hands-free: she sends when you stop talking, answers, and listens again until a tap ends it
+                self.vad_mode = true;
+                self.conv = true;
+                self.conv_misses = 0;
                 self.begin_listening();
             }
         }

@@ -95,8 +95,8 @@ additions included; [docs/SHORTCUTS.md](docs/SHORTCUTS.md) is the same list. Thi
 
 | Keys | What it does |
 | --- | --- |
-| Win + S | Talk to the assistant (tap to start, tap to send) |
-| Ctrl + Alt + S | Talk to the assistant (tap to start, tap to send) |
+| Win + S | Talk to the assistant (tap to talk hands-free, tap again to end) |
+| Ctrl + Alt + S | Talk to the assistant (tap to talk hands-free, tap again to end) |
 | Win + V | Clipboard history and snippets |
 | Win + E | Files (Minos) |
 | Win + Return | Terminal |
