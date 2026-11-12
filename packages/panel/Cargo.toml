@@ -26,6 +26,8 @@ zbus = "5"
 accesskit = "0.25"
 accesskit_unix = "0.24"
 yggdrasil-conf = { path = "../yggdrasil-conf" }
+# the compositor (Hyprland or Yggdrasil's own): desktops, zones, the dock's minimize, the pointer
+yggdrasil-wm = { path = "../wm" }
 
 [profile.release]
 opt-level = 2

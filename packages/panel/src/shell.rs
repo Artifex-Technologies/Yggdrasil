@@ -117,14 +117,14 @@ impl Drop for WinHandle {
 impl Win {
     /// Bring the window forward; in Hyprland, from the hidden "minimized" workspace too.
     pub fn activate(&self, seat: Option<&WlSeat>) {
-        if crate::hypr::running() && crate::hypr::restore(&self.app_id, &self.title) {
+        if crate::wm::restore(&self.app_id, &self.title) {
             return;
         }
         self.proxy.activate(seat);
     }
 
     pub fn minimize(&self) {
-        if crate::hypr::running() && crate::hypr::minimize(&self.app_id, &self.title) {
+        if crate::wm::minimize(&self.app_id, &self.title) {
             return;
         }
         self.proxy.minimize();

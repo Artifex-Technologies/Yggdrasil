@@ -4,20 +4,18 @@
 //! Hyprland gives no event while a window is dragged, and the panel gets no pointer events then (the compositor holds the
 //! pointer). So the session's Lua watches the left button (a non-consuming press binding arms a timer inside the compositor) and
 //! calls `yggdrasil-panelctl zones-drag` when a dragged window's pointer reaches the notch. Between then and the drop, and only
-//! then, the panel asks Hyprland where the pointer and the window are (its socket, no process per question) to light the zone
-//! under it. Layouts and the gap come from `zones.conf` (yggdrasil_conf::zones).
+//! then, the panel asks the compositor where the pointer and the window are (yggdrasil-wm: Hyprland's socket or Yggdrasil's own
+//! compositor's, no process per question) to light the zone under it. Layouts and the gap come from `zones.conf`
+//! (yggdrasil_conf::zones).
 //!
 //! The drop: Hyprland's release binding does not fire at the end of a window move (tried 2026-10-25), so the end of the drag is
 //! read from several signs, whichever comes first, and acted on once (`DropWatch`): the window stops following the pointer (the
 //! grip, the pointer's offset from the window's corner, changes), the pointer comes back to the sheet (an enter after the sheet
 //! settled, or a click), or the session's Lua sees the same and calls `zones-drop`.
 
-use std::io::{Read, Write};
-use std::os::unix::net::UnixStream;
-use std::process::{Command, Stdio};
-
 use resvg::tiny_skia::Pixmap;
 use yggdrasil_conf::zones::{self, Layout, Monitor, Rect, ZonesConf};
+use yggdrasil_wm::Desk;
 
 use crate::paint::{self, Fonts};
 
@@ -32,7 +30,7 @@ pub enum Mode {
 #[derive(Clone, Debug)]
 pub struct Session {
     pub mode: Mode,
-    /// The window to place (Hyprland's address).
+    /// The window to place (the compositor's name for it: Hyprland's address, or our compositor's number).
     pub address: String,
     pub floating: bool,
     pub monitor: Monitor,
@@ -211,22 +209,23 @@ impl Spotter {
             self.told = false;
             return false;
         }
-        let Some(raw) = ask("j/activewindow") else { return false };
-        let Some((address, at)) = parse_window(&raw) else { return false };
-        let floating = serde_json::from_str::<serde_json::Value>(&raw).ok().and_then(|v| v["floating"].as_bool()).unwrap_or(false);
+        let Some(desk) = Desk::detect() else { return false };
+        let Some(win) = desk.active_window(true) else { return false };
+        let Some(at) = win.at else { return false };
+        let (address, floating) = (win.id, win.floating.unwrap_or(false));
         match &self.start {
             Some((a, from)) if *a == address => {
                 if self.told || !floating || (at.0 - from.0).abs() + (at.1 - from.1).abs() <= 6.0 {
                     return false;
                 }
-                let Some(c) = cursor() else { return false };
-                let monitors = ask("j/monitors").map(|j| parse_monitors(&j)).unwrap_or_default();
+                let Some(c) = desk.cursor() else { return false };
+                let monitors: Vec<Monitor> = desk.screens().iter().map(|s| s.monitor()).collect();
                 if near_notch(&monitors, c) {
                     // once per drag: only a Super+drag opens the sheet. A title-bar drag is the app's own move, and such an app
                     // never hears the button come up once its window is placed away from the pointer: it picks the window up
                     // again on the next move (every app tried, 2026-10-25). Super+drag is Hyprland's move and ends cleanly.
                     self.told = true;
-                    let held = super_held();
+                    let held = desk.super_held();
                     note(&format!("drag at the notch; Super held: {held:?}"));
                     return held == Some(true);
                 }
@@ -239,37 +238,6 @@ impl Spotter {
                 false
             }
         }
-    }
-}
-
-/// Whether a Super key is held now, as Hyprland sees it.
-fn super_held() -> Option<bool> {
-    keys_down(&["Super_L", "Super_R"], "yggdrasil-zones-super")
-}
-
-/// Whether any of these keys (xkb names) is held now, as Hyprland sees it: asked through its Lua, which answers into a file in the
-/// runtime folder (`tag` names the file, so two askers do not read each other's answer).
-pub fn keys_down(keys: &[&str], tag: &str) -> Option<bool> {
-    let run = std::env::var("XDG_RUNTIME_DIR").ok()?;
-    let out = format!("{run}/{tag}");
-    let _ = std::fs::remove_file(&out);
-    let test = keys.iter().map(|k| format!("hl.is_key_down('{k}')")).collect::<Vec<_>>().join(" or ");
-    let lua = format!("local f = io.open('{out}', 'w') if f then f:write(tostring({test})) f:close() end");
-    let ok = Command::new("hyprctl")
-        .args(["eval", &lua])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .ok()?
-        .success();
-    if !ok {
-        return None;
-    }
-    match std::fs::read_to_string(&out).ok()?.trim() {
-        "true" => Some(true),
-        "false" => Some(false),
-        _ => None,
     }
 }
 
@@ -300,65 +268,16 @@ pub fn note(msg: &str) {
     }
 }
 
-fn hyprctl(args: &[&str]) -> Option<String> {
-    let out = Command::new("hyprctl").args(args).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
-    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
-}
-
-/// Hyprland's `monitors -j` list.
-pub fn parse_monitors(json: &str) -> Vec<Monitor> {
-    let v: serde_json::Value = serde_json::from_str(json).unwrap_or_default();
-    let Some(a) = v.as_array() else { return vec![] };
-    a.iter()
-        .filter_map(|m| {
-            let r = m["reserved"].as_array();
-            let rv = |i: usize| r.and_then(|r| r.get(i)).and_then(|v| v.as_f64()).unwrap_or(0.0).round() as i32;
-            Some(Monitor {
-                name: m["name"].as_str()?.to_string(),
-                x: m["x"].as_i64()? as i32,
-                y: m["y"].as_i64()? as i32,
-                width: m["width"].as_u64()? as u32,
-                height: m["height"].as_u64()? as u32,
-                scale: m["scale"].as_f64().unwrap_or(1.0) as f32,
-                transform: m["transform"].as_u64().unwrap_or(0) as u32,
-                reserved: [rv(0), rv(1), rv(2), rv(3)],
-            })
-        })
-        .collect()
-}
-
-/// Where the pointer is in the global space, from Hyprland's socket (cheap enough to ask every few tens of milliseconds while a
-/// window is dragged; nothing asks otherwise).
+/// Where the pointer is in the global space (cheap enough to ask every few tens of milliseconds while a window is dragged;
+/// nothing asks otherwise).
 pub fn cursor() -> Option<(f64, f64)> {
-    parse_cursor(&ask("j/cursorpos")?)
+    Desk::detect()?.cursor()
 }
 
-/// The window in front: its address and top-left corner (global logical pixels).
+/// The window in front: its name and top-left corner (global logical pixels).
 pub fn front_window() -> Option<(String, (f64, f64))> {
-    parse_window(&ask("j/activewindow")?)
-}
-
-/// One question to Hyprland's socket.
-fn ask(q: &str) -> Option<String> {
-    let sig = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").ok()?;
-    let run = std::env::var("XDG_RUNTIME_DIR").ok()?;
-    let mut s = UnixStream::connect(format!("{run}/hypr/{sig}/.socket.sock")).ok()?;
-    s.set_read_timeout(Some(std::time::Duration::from_millis(200))).ok()?;
-    s.write_all(q.as_bytes()).ok()?;
-    let mut out = String::new();
-    s.read_to_string(&mut out).ok()?;
-    Some(out)
-}
-
-fn parse_window(json: &str) -> Option<(String, (f64, f64))> {
-    let v: serde_json::Value = serde_json::from_str(json).ok()?;
-    let at = v["at"].as_array()?;
-    Some((v["address"].as_str()?.to_string(), (at.first()?.as_f64()?, at.get(1)?.as_f64()?)))
-}
-
-fn parse_cursor(json: &str) -> Option<(f64, f64)> {
-    let v: serde_json::Value = serde_json::from_str(json).ok()?;
-    Some((v["x"].as_f64()?, v["y"].as_f64()?))
+    let w = Desk::detect()?.active_window(true)?;
+    Some((w.id, w.at?))
 }
 
 /// Starts placing the window in front: on the screen under the pointer when dragging, the window's own screen from the keyboard.
@@ -367,31 +286,28 @@ pub fn begin(mode: Mode) -> Option<Session> {
     if !conf.enabled || conf.layouts.is_empty() {
         return None;
     }
-    let win: serde_json::Value = serde_json::from_str(&hyprctl(&["-j", "activewindow"])?).ok()?;
-    let address = win["address"].as_str().filter(|a| a.starts_with("0x"))?.to_string();
-    if win["fullscreen"].as_i64().unwrap_or(0) != 0 {
+    let desk = Desk::detect()?;
+    let win = desk.active_window(false).filter(|w| !w.id.is_empty())?;
+    if win.fullscreen {
         return None;
     }
-    let monitors = parse_monitors(&hyprctl(&["-j", "monitors"])?);
+    let screens = desk.screens();
+    let monitors: Vec<Monitor> = screens.iter().map(|s| s.monitor()).collect();
     let monitor = match mode {
-        Mode::Drag => cursor().and_then(|(x, y)| monitors.iter().find(|m| m.contains(x, y)).cloned()),
-        Mode::Pick => win["monitor"].as_i64().and_then(|id| {
-            let names: serde_json::Value = serde_json::from_str(&hyprctl(&["-j", "monitors"])?).ok()?;
-            let name = names.as_array()?.iter().find(|m| m["id"].as_i64() == Some(id))?["name"].as_str()?.to_string();
-            monitors.iter().find(|m| m.name == name).cloned()
-        }),
+        Mode::Drag => desk.cursor().and_then(|(x, y)| monitors.iter().find(|m| m.contains(x, y)).cloned()),
+        Mode::Pick => win.monitor.as_ref().and_then(|r| screens.iter().find(|s| s.is(r))).map(|s| s.monitor()),
     }
     .or_else(|| monitors.first().cloned())?;
     // where the pointer holds the window: while it does, the window follows the pointer
-    let at = win["at"].as_array().and_then(|a| Some((a.first()?.as_f64()?, a.get(1)?.as_f64()?)));
-    let grip = match (mode, cursor(), at) {
+    let at = win.at;
+    let grip = match (mode, desk.cursor(), at) {
         (Mode::Drag, Some((cx, cy)), Some((wx, wy))) => Some((cx - wx, cy - wy)),
         _ => None,
     };
     Some(Session {
         mode,
-        address,
-        floating: win["floating"].as_bool().unwrap_or(true),
+        address: win.id,
+        floating: win.floating.unwrap_or(true),
         monitor,
         layouts: conf.shown(),
         gap: conf.gap,
@@ -415,17 +331,11 @@ pub fn apply(s: &Session, hit: (usize, usize)) {
     place(&s.address, s.floating, r);
 }
 
-/// Puts a window (Hyprland's address) at a rectangle (global logical pixels).
-pub fn place(address: &str, floating: bool, (x, y, w, h): Rect) {
-    let win = format!("address:{address}");
-    let mut cmds = vec![];
-    if !floating {
-        cmds.push(format!(r#"hl.dsp.window.float({{ action = "enable", window = "{win}" }})"#));
-    }
-    cmds.push(format!(r#"hl.dsp.window.resize({{ x = {w}, y = {h}, window = "{win}" }})"#));
-    cmds.push(format!(r#"hl.dsp.window.move({{ x = {x}, y = {y}, window = "{win}" }})"#));
-    for c in cmds {
-        let answer = hyprctl(&["dispatch", &c]);
+/// Puts a window (the compositor's name for it) at a rectangle (global logical pixels): floating first (a tiled window cannot be
+/// placed), then its size, then its place (yggdrasil-wm).
+pub fn place(address: &str, floating: bool, rect: Rect) {
+    let Some(desk) = Desk::detect() else { return };
+    for (c, answer) in desk.place(address, floating, rect) {
         note(&format!("{c} -> {answer:?}"));
     }
 }
@@ -570,21 +480,6 @@ mod tests {
         w.held = Some((0, 2));
         assert_eq!(w.told(), Some(Some((0, 2))));
         assert_eq!(w.told(), None);
-    }
-
-    #[test]
-    fn the_window_in_front_is_read() {
-        assert_eq!(parse_window(r#"{"address":"0x55","at":[120,48],"size":[800,600]}"#), Some(("0x55".into(), (120.0, 48.0))));
-        assert_eq!(parse_window("{}"), None);
-    }
-
-    #[test]
-    fn hyprland_answers_are_read() {
-        let j = r#"[{"id":0,"name":"DP-1","x":0,"y":0,"width":3440,"height":1440,"scale":1.00,"transform":0,"reserved":[0,28,0,70]}]"#;
-        let m = parse_monitors(j);
-        assert_eq!(m[0].free_area(), (0, 28, 3440, 1342));
-        assert_eq!(parse_cursor(r#"{"x": 1720.5, "y": 12}"#), Some((1720.5, 12.0)));
-        assert_eq!(parse_cursor("garbage"), None);
     }
 
     #[test]

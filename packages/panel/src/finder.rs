@@ -3,7 +3,6 @@
 //! the screen the pointer is on, a circle closes in on the pointer, and the whole thing fades away by itself after about a second
 //! and a half. It takes no clicks and no keys, and nothing runs once it has gone.
 
-use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use resvg::tiny_skia::{BlendMode, FillRule, Paint, PathBuilder, Pixmap, Transform};
@@ -54,32 +53,26 @@ impl Spot {
     }
 }
 
-fn hyprctl_json(what: &str) -> Option<serde_json::Value> {
-    let out = Command::new("hyprctl").args(["-j", what]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
-    serde_json::from_slice(&out.stdout).ok()
-}
-
-/// The screen under the pointer from Hyprland's monitor list (`monitors -j`), and the pointer's place on it in logical pixels.
-pub fn on_monitor(cursor: (f64, f64), monitors: &serde_json::Value) -> Option<(String, f32, f32)> {
-    for m in monitors.as_array()? {
-        let scale = m["scale"].as_f64().filter(|s| *s > 0.0).unwrap_or(1.0);
-        let (mx, my) = (m["x"].as_f64()?, m["y"].as_f64()?);
+/// The screen under the pointer, and the pointer's place on it in logical pixels.
+pub fn on_monitor(cursor: (f64, f64), screens: &[yggdrasil_wm::Screen]) -> Option<(String, f32, f32)> {
+    for m in screens {
+        let scale = m.scale.filter(|s| *s > 0.0).unwrap_or(1.0);
+        let (mx, my) = (m.x as f64, m.y as f64);
         // a screen turned sideways (transform 1, 3, 5, 7) is as wide as it is tall
-        let sideways = m["transform"].as_u64().unwrap_or(0) % 2 == 1;
-        let (pw, ph) = (m["width"].as_f64()?, m["height"].as_f64()?);
+        let sideways = m.transform % 2 == 1;
+        let (pw, ph) = (m.width as f64, m.height as f64);
         let (w, h) = if sideways { (ph / scale, pw / scale) } else { (pw / scale, ph / scale) };
         if cursor.0 >= mx && cursor.0 < mx + w && cursor.1 >= my && cursor.1 < my + h {
-            return Some((m["name"].as_str()?.to_string(), (cursor.0 - mx) as f32, (cursor.1 - my) as f32));
+            return Some((m.name.clone(), (cursor.0 - mx) as f32, (cursor.1 - my) as f32));
         }
     }
     None
 }
 
-/// Where the pointer is now (Hyprland only).
+/// Where the pointer is now (the compositor says, through yggdrasil-wm).
 pub fn locate() -> Option<(String, f32, f32)> {
-    let c = hyprctl_json("cursorpos")?;
-    let cursor = (c["x"].as_f64()?, c["y"].as_f64()?);
-    on_monitor(cursor, &hyprctl_json("monitors")?)
+    let desk = yggdrasil_wm::Desk::detect()?;
+    on_monitor(desk.cursor()?, &desk.screens())
 }
 
 fn ease_out(t: f32) -> f32 {
@@ -128,10 +121,10 @@ mod tests {
 
     #[test]
     fn the_pointer_is_found_on_its_screen() {
-        let mons = serde_json::json!([
-            {"name": "DP-1", "x": 0, "y": 0, "width": 3440, "height": 1440, "scale": 1.0, "transform": 0},
-            {"name": "HDMI-A-1", "x": 3440, "y": 0, "width": 3840, "height": 2160, "scale": 2.0, "transform": 1},
-        ]);
+        let mons = yggdrasil_wm::hyprland::parse_monitors(
+            r#"[{"name": "DP-1", "x": 0, "y": 0, "width": 3440, "height": 1440, "scale": 1.0, "transform": 0},
+                {"name": "HDMI-A-1", "x": 3440, "y": 0, "width": 3840, "height": 2160, "scale": 2.0, "transform": 1}]"#,
+        );
         assert_eq!(on_monitor((100.0, 50.0), &mons), Some(("DP-1".into(), 100.0, 50.0)));
         // the second screen: 1080 x 1920 logical once turned
         assert_eq!(on_monitor((3440.0 + 500.0, 1500.0), &mons), Some(("HDMI-A-1".into(), 500.0, 1500.0)));

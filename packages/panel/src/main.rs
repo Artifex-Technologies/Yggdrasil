@@ -19,7 +19,6 @@ mod convo;
 mod devices;
 mod finder;
 mod fylgja;
-mod hypr;
 mod notify;
 mod osd;
 mod paint;
@@ -31,6 +30,7 @@ mod status;
 mod tray;
 mod trayui;
 mod voicewave;
+mod wm;
 mod zones;
 
 use std::collections::HashMap;
@@ -579,38 +579,26 @@ fn date_text() -> String {
     strftime_now(c"%a %-d %b")
 }
 
-fn command_output(cmd: &str, args: &[&str]) -> String {
-    std::process::Command::new(cmd).args(args).output().map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default()
-}
-
-/// The screens from Hyprland (`hyprctl -j monitors`): the main one is the one at the top left of the space (Hyprland has no
-/// "primary"), sizes in logical pixels.
-fn hypr_layout(json: &serde_json::Value) -> Option<Layout> {
-    let mons = json.as_array()?;
-    let mut sizes: Vec<(String, i32, i32, u32, u32)> = mons
+/// The screens from the compositor: the main one is the one at the top left of the space (Hyprland has no "primary"), sizes in
+/// logical pixels.
+fn screens_layout(screens: &[yggdrasil_wm::Screen]) -> Layout {
+    let mut sizes: Vec<(String, i32, i32, u32, u32)> = screens
         .iter()
-        .filter(|m| !m["disabled"].as_bool().unwrap_or(false))
-        .filter_map(|m| {
-            let scale = m["scale"].as_f64().unwrap_or(1.0).max(0.5);
-            let (w, h) = (m["width"].as_f64()?, m["height"].as_f64()?);
-            let (w, h) = if m["transform"].as_i64().unwrap_or(0) % 2 == 1 { (h, w) } else { (w, h) };
-            Some((
-                m["name"].as_str()?.to_string(),
-                m["x"].as_i64()? as i32,
-                m["y"].as_i64()? as i32,
-                (w / scale).round() as u32,
-                (h / scale).round() as u32,
-            ))
+        .filter(|m| !m.disabled)
+        .map(|m| {
+            let scale = m.scale.unwrap_or(1.0).max(0.5);
+            let (w, h) = (m.width as f64, m.height as f64);
+            let (w, h) = if m.transform % 2 == 1 { (h, w) } else { (w, h) };
+            (m.name.clone(), m.x, m.y, (w / scale).round() as u32, (h / scale).round() as u32)
         })
         .collect();
     sizes.sort_by_key(|s| (s.1, s.2));
     let primary = sizes.first().map(|s| s.0.clone()).unwrap_or_default();
-    Some(Layout { primary, tiling: yggdrasil_conf::tiling::outputs(), sizes })
+    Layout { primary, tiling: yggdrasil_conf::tiling::outputs(), sizes }
 }
 
 fn read_layout() -> Layout {
-    let json: serde_json::Value = serde_json::from_str(&command_output("hyprctl", &["-j", "monitors"])).unwrap_or(serde_json::Value::Null);
-    hypr_layout(&json).unwrap_or_else(|| Layout { tiling: yggdrasil_conf::tiling::outputs(), ..Default::default() })
+    screens_layout(&yggdrasil_wm::Desk::detect().map(|d| d.screens()).unwrap_or_default())
 }
 
 /// Whether the desktop style is dark (Settings > Appearance; one small file read, no program started).
@@ -737,12 +725,8 @@ impl State {
             .filter_map(|wl| self.outputs.iter().find(|(_, o)| o.wl == *wl).map(|(k, _)| *k))
             .collect();
         // Hyprland does not say which screen a window is on (no output_enter): the focused window is on the focused screen
-        if full.iter().any(|w| w.outputs.is_empty()) && std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some() {
-            let json: serde_json::Value =
-                serde_json::from_str(&command_output("hyprctl", &["-j", "monitors"])).unwrap_or(serde_json::Value::Null);
-            if let Some(name) =
-                json.as_array().and_then(|a| a.iter().find(|m| m["focused"].as_bool() == Some(true))).and_then(|m| m["name"].as_str())
-            {
+        if full.iter().any(|w| w.outputs.is_empty()) {
+            if let Some(name) = wm::focused_monitor() {
                 keys.extend(self.outputs.iter().filter(|(_, o)| o.name == name).map(|(k, _)| *k));
             }
         }
@@ -1692,12 +1676,9 @@ impl State {
         self.dirty = true;
     }
 
-    /// The screen that has the focus (Hyprland says which); None elsewhere.
+    /// The screen that has the focus (the compositor says which); None when it cannot be asked.
     fn focused_output(&self) -> Option<u32> {
-        if !hypr::running() {
-            return None;
-        }
-        let name = hypr::focused_monitor()?;
+        let name = wm::focused_monitor()?;
         self.outputs.iter().find(|(_, o)| o.name == name).map(|(k, _)| *k)
     }
 
@@ -1957,9 +1938,9 @@ impl State {
                 self.close_popup();
                 if let Some(d) = key["ws:".len()..].parse::<usize>().ok().and_then(|i| self.model.status.desktops.get(i)).cloned() {
                     match id {
-                        1 => hypr::show_desktop(&d.id),
+                        1 => wm::show_desktop(&d.id),
                         // its windows move to the desktop before it
-                        2 => hypr::remove_desktop(&d.id, &self.model.status.desktops),
+                        2 => wm::remove_desktop(&d.id, &self.model.status.desktops),
                         _ => {}
                     }
                 }
@@ -3402,20 +3383,19 @@ impl State {
             }
             Action::Workspace(i) => {
                 if let Some(d) = self.model.status.desktops.get(i) {
-                    hypr::show_desktop(&d.id);
+                    wm::show_desktop(&d.id);
                     self.model.status.current = i;
                     self.dirty = true;
                 }
             }
             Action::NewWorkspace => {
                 // count the desktops now (not from the last refresh), so the new one always goes after the last
-                let (desktops, _) = status::parse_desktops(
-                    &command_output("hyprctl", &["-j", "workspaces"]),
-                    &command_output("hyprctl", &["-j", "activeworkspace"]),
-                );
-                let last = desktops.iter().filter_map(|d| d.id.parse::<usize>().ok()).max().unwrap_or(0);
-                if last < status::MAX_DESKTOPS {
-                    hypr::show_desktop(&(last + 1).to_string());
+                if let Some(d) = yggdrasil_wm::Desk::detect() {
+                    let (desktops, _) = status::desktops(Some(&d));
+                    let last = desktops.iter().filter_map(|d| d.id.parse::<usize>().ok()).max().unwrap_or(0);
+                    if last < d.max_desktops().unwrap_or(status::MAX_DESKTOPS).min(status::MAX_DESKTOPS) {
+                        d.show_desktop(&(last + 1).to_string());
+                    }
                 }
             }
             Action::Network => run(&["yggdrasil-settings", "network"]),
@@ -5005,10 +4985,11 @@ fn gone_compositor(err: &str) -> bool {
 mod layout_tests {
     #[test]
     fn hyprland_screens_become_the_layout() {
-        let j: serde_json::Value = serde_json::from_str(r#"[{"name":"DP-3","width":2560,"height":2880,"x":3440,"y":0,"scale":1.0,"transform":0,"disabled":false},{"name":"DP-1","width":3440,"height":1440,"x":0,"y":0,"scale":1.0,"transform":0,"disabled":false}]"#).unwrap();
-        let l = super::hypr_layout(&j).unwrap();
+        let j = r#"[{"name":"DP-3","width":2560,"height":2880,"x":3440,"y":0,"scale":1.0,"transform":0,"disabled":false},{"name":"DP-1","width":3440,"height":1440,"x":0,"y":0,"scale":1.0,"transform":0,"disabled":false},{"name":"HDMI-A-1","width":1920,"height":1080,"x":-1920,"y":0,"disabled":true}]"#;
+        let l = super::screens_layout(&yggdrasil_wm::hyprland::parse_monitors(j));
         assert_eq!(l.primary, "DP-1", "the screen at the top left");
         assert_eq!(l.sizes[1], ("DP-3".to_string(), 3440, 0, 2560, 2880));
+        assert_eq!(l.sizes.len(), 2, "a screen switched off is not laid out");
     }
 
     #[test]

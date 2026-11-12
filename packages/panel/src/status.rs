@@ -1,8 +1,6 @@
 //! What the top bar shows besides the clock: the desktops (workspaces), the network and Bluetooth.
-//! Read with the system's own tools every couple of seconds on a worker thread, so the bar never
-//! waits on them. The parsing is separate from the commands so it can be tested.
-
-use serde_json::Value;
+//! Read every couple of seconds on a worker thread, so the bar never waits on them: the desktops from the compositor
+//! (yggdrasil-wm), the rest with the system's own tools. The parsing is separate from the commands so it can be tested.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Net {
@@ -51,24 +49,11 @@ fn out(cmd: &str, args: &[&str]) -> String {
         .unwrap_or_default()
 }
 
-/// The desktops from Hyprland's `hyprctl -j workspaces` and `-j activeworkspace`: the numbered workspaces that exist (they do while
-/// they hold a window or are shown) and the one in front, in order, and the position of the one in front. The hidden ones
-/// ("special:minimized") are not desktops.
-pub fn parse_desktops(workspaces: &str, active: &str) -> (Vec<Desktop>, usize) {
-    let mut ids: Vec<i64> = serde_json::from_str::<Value>(workspaces)
-        .ok()
-        .and_then(|v| v.as_array().cloned())
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|w| w["id"].as_i64())
-        .filter(|&id| id >= 1)
-        .collect();
-    let current = serde_json::from_str::<Value>(active).ok().and_then(|v| v["id"].as_i64()).filter(|&id| id >= 1);
-    ids.extend(current);
-    ids.sort_unstable();
-    ids.dedup();
-    let at = current.and_then(|c| ids.iter().position(|&id| id == c)).unwrap_or(0);
-    (ids.iter().map(|id| Desktop { id: id.to_string(), name: format!("Desktop {id}") }).collect(), at)
+/// The desktops the compositor has (the numbered workspaces that hold a window or are shown), in order, and the position of the
+/// one in front.
+pub fn desktops(d: Option<&yggdrasil_wm::Desk>) -> (Vec<Desktop>, usize) {
+    let found = d.map(|d| d.desktops()).unwrap_or_default();
+    (found.ids.iter().map(|id| Desktop { id: id.to_string(), name: format!("Desktop {id}") }).collect(), found.at)
 }
 
 /// `nmcli -t -f TYPE,STATE device` and `nmcli -t -f IN-USE,SIGNAL dev wifi`.
@@ -98,7 +83,7 @@ pub fn parse_bt(show: &str, connected: &str) -> Bt {
 }
 
 pub fn poll() -> Status {
-    let (desktops, current) = parse_desktops(&out("hyprctl", &["-j", "workspaces"]), &out("hyprctl", &["-j", "activeworkspace"]));
+    let (desktops, current) = desktops(yggdrasil_wm::Desk::detect().as_ref());
     let net = parse_net(&out("nmcli", &["-t", "-f", "TYPE,STATE", "device"]), &out("nmcli", &["-t", "-f", "IN-USE,SIGNAL", "dev", "wifi"]));
     let bt = parse_bt(&out("timeout", &["2", "bluetoothctl", "show"]), &out("timeout", &["2", "bluetoothctl", "devices", "Connected"]));
     Status { desktops, current, net, bt }
@@ -109,16 +94,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn desktops_and_the_current_one_are_read() {
-        let ws = r#"[{"id":3,"name":"3","windows":1},{"id":1,"name":"1","windows":3},{"id":-98,"name":"special:minimized","windows":1}]"#;
-        let (d, at) = parse_desktops(ws, r#"{"id":2,"name":"2"}"#);
-        assert_eq!(
-            d.iter().map(|x| x.id.as_str()).collect::<Vec<_>>(),
-            ["1", "2", "3"],
-            "the shown one is a desktop even while empty; hidden ones are not"
-        );
-        assert_eq!((d[1].name.as_str(), at), ("Desktop 2", 1));
-        assert_eq!(parse_desktops("nonsense", "").0.len(), 0);
+    fn no_compositor_no_desktops() {
+        assert_eq!(desktops(None), (vec![], 0));
     }
 
     #[test]

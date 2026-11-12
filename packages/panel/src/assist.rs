@@ -1,9 +1,7 @@
 //! Snap Assist: after a window goes into a zone (zones.rs), the layout's other zones are offered to the other windows open on that
 //! screen's desktop. The first empty zone shows those windows as tiles; a click (or Enter) puts that window there and the next empty
 //! zone takes its turn, until every zone is filled or no window is left. A click anywhere else, or Escape, stops (what was placed
-//! stays). One `hyprctl clients` when it opens; nothing runs while it waits.
-
-use std::process::{Command, Stdio};
+//! stays). One look at the compositor's windows when it opens (yggdrasil-wm); nothing runs while it waits.
 
 use resvg::tiny_skia::Pixmap;
 use yggdrasil_conf::zones::{self, Layout, Monitor, Rect};
@@ -35,39 +33,17 @@ pub struct Assist {
     pub scroll: usize,
 }
 
-/// Hyprland's `clients -j`: the windows on desktop `workspace` of screen `monitor`, not hidden or full-screen, other than `placed`,
-/// in the order it lists them (most recently focused first when it is asked with that order).
-pub fn parse_clients(json: &str, monitor: i64, workspace: i64, placed: &str) -> Vec<Win> {
-    let v: serde_json::Value = serde_json::from_str(json).unwrap_or_default();
-    let Some(a) = v.as_array() else { return vec![] };
-    let mut wins: Vec<(i64, Win)> = a
-        .iter()
-        .filter(|c| c["monitor"].as_i64() == Some(monitor) && c["workspace"]["id"].as_i64() == Some(workspace))
-        .filter(|c| c["mapped"].as_bool().unwrap_or(true) && !c["hidden"].as_bool().unwrap_or(false))
-        .filter(|c| c["fullscreen"].as_i64().unwrap_or(0) == 0 && !c["workspace"]["name"].as_str().unwrap_or("").starts_with("special:"))
-        .filter_map(|c| {
-            let address = c["address"].as_str()?.to_string();
-            (address != placed).then(|| {
-                let order = c["focusHistoryID"].as_i64().unwrap_or(i64::MAX);
-                (
-                    order,
-                    Win {
-                        address,
-                        class: c["class"].as_str().unwrap_or("").to_string(),
-                        title: c["title"].as_str().unwrap_or("").to_string(),
-                        floating: c["floating"].as_bool().unwrap_or(true),
-                    },
-                )
-            })
-        })
+/// The windows on desktop `workspace` of `screen`, not hidden, minimized or full-screen, other than `placed`, most recently used
+/// first (in the compositor's order when it does not say).
+pub fn offer(windows: Vec<yggdrasil_wm::Window>, screen: &yggdrasil_wm::Screen, workspace: i64, placed: &str) -> Vec<Win> {
+    let mut wins: Vec<(i64, Win)> = windows
+        .into_iter()
+        .filter(|c| c.monitor.as_ref().is_some_and(|m| screen.is(m)) && c.workspace == Some(workspace))
+        .filter(|c| c.mapped && !c.hidden && !c.fullscreen && !c.special && c.id != placed)
+        .map(|c| (c.focus_order, Win { address: c.id, class: c.class, title: c.title, floating: c.floating.unwrap_or(true) }))
         .collect();
     wins.sort_by_key(|(o, _)| *o);
     wins.into_iter().map(|(_, w)| w).collect()
-}
-
-fn hyprctl(args: &[&str]) -> Option<String> {
-    let out = Command::new("hyprctl").args(args).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
-    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// After a window went into zone `hit` of the session's layouts: the other zones and windows, if there is anything to offer.
@@ -77,10 +53,10 @@ pub fn begin(s: &Session, (li, zi): (usize, usize)) -> Option<Assist> {
     if empty.is_empty() {
         return None;
     }
-    let mons: serde_json::Value = serde_json::from_str(&hyprctl(&["-j", "monitors"])?).ok()?;
-    let m = mons.as_array()?.iter().find(|m| m["name"].as_str() == Some(s.monitor.name.as_str()))?;
-    let (mid, ws) = (m["id"].as_i64()?, m["activeWorkspace"]["id"].as_i64()?);
-    let wins = parse_clients(&hyprctl(&["-j", "clients"])?, mid, ws, &s.address);
+    let desk = yggdrasil_wm::Desk::detect()?;
+    let screen = desk.screens().into_iter().find(|m| m.name == s.monitor.name)?;
+    let ws = screen.active_workspace?;
+    let wins = offer(desk.windows(), &screen, ws, &s.address);
     if wins.is_empty() {
         return None;
     }
@@ -254,7 +230,8 @@ mod tests {
             {"address":"0x5","class":"z","title":"min","monitor":0,"workspace":{"id":1,"name":"1"},"floating":true,"fullscreen":0,"mapped":true,"hidden":true,"focusHistoryID":4},
             {"address":"0x6","class":"z","title":"full","monitor":0,"workspace":{"id":1,"name":"1"},"floating":true,"fullscreen":2,"mapped":true,"hidden":false,"focusHistoryID":5},
             {"address":"0x7","class":"z","title":"other screen","monitor":1,"workspace":{"id":1,"name":"1"},"floating":true,"fullscreen":0,"mapped":true,"hidden":false,"focusHistoryID":6}]"#;
-        let w = parse_clients(j, 0, 1, "0x3");
+        let screens = yggdrasil_wm::hyprland::parse_monitors(r#"[{"id":0,"name":"DP-1","x":0,"y":0,"width":3440,"height":1440}]"#);
+        let w = offer(yggdrasil_wm::hyprland::parse_clients(j), &screens[0], 1, "0x3");
         assert_eq!(w.iter().map(|w| w.address.as_str()).collect::<Vec<_>>(), vec!["0x2", "0x1"], "most recently used first");
         assert!(!w[0].floating);
     }
@@ -293,31 +270,29 @@ mod tests {
         assert_eq!(a.scroll, 0);
     }
 
-    /// On a live Hyprland session (`cargo test -- --ignored live`): opens a foot window of its own, lists this desktop's windows as
-    /// Snap Assist does, puts the foot window into a zone and reads back where Hyprland put it, then closes it.
+    /// On a live session (`cargo test -- --ignored live`; Hyprland or Yggdrasil's own compositor): opens a foot window of its own,
+    /// lists this desktop's windows as Snap Assist does, puts the foot window into a zone and reads back where the compositor put
+    /// it, then closes it.
     #[test]
     #[ignore]
     fn live_assist_lists_and_places() {
         let mut foot = std::process::Command::new("foot").args(["-a", "assist-test", "sleep", "30"]).spawn().expect("foot");
         std::thread::sleep(std::time::Duration::from_millis(1500));
-        let mons: serde_json::Value = serde_json::from_str(&hyprctl(&["-j", "monitors"]).unwrap()).unwrap();
-        let m = &mons[0];
-        let (mid, ws) = (m["id"].as_i64().unwrap(), m["activeWorkspace"]["id"].as_i64().unwrap());
-        let wins = parse_clients(&hyprctl(&["-j", "clients"]).unwrap(), mid, ws, "none");
+        let desk = yggdrasil_wm::Desk::detect().expect("a compositor");
+        let screen = desk.screens().remove(0);
+        let wins = offer(desk.windows(), &screen, screen.active_workspace.unwrap(), "none");
         let w = wins.iter().find(|w| w.class == "assist-test").expect("the test window is offered").clone();
         let mut a = assist(0);
-        a.monitor = crate::zones::parse_monitors(&hyprctl(&["-j", "monitors"]).unwrap()).remove(0);
+        a.monitor = screen.monitor();
         a.wins = vec![w.clone()];
         let ((addr, floating, rect), more) = a.take(0).unwrap();
         crate::zones::place(&addr, floating, rect);
         std::thread::sleep(std::time::Duration::from_millis(600));
-        let c: serde_json::Value = serde_json::from_str(&hyprctl(&["-j", "clients"]).unwrap()).unwrap();
-        let got = c.as_array().unwrap().iter().find(|c| c["address"].as_str() == Some(addr.as_str())).unwrap().clone();
+        let got = desk.windows().into_iter().find(|c| c.id == addr).unwrap();
         let _ = foot.kill();
         let _ = foot.wait();
-        let at = (got["at"][0].as_i64().unwrap() as i32, got["at"][1].as_i64().unwrap() as i32);
-        let size = (got["size"][0].as_i64().unwrap() as i32, got["size"][1].as_i64().unwrap() as i32);
+        let (at, size) = (got.at.unwrap(), got.size.unwrap());
         eprintln!("zone {rect:?} -> at {at:?} size {size:?}, more {more}");
-        assert_eq!((at.0, at.1, size.0, size.1), rect);
+        assert_eq!((at.0 as i32, at.1 as i32, size.0 as i32, size.1 as i32), rect);
     }
 }

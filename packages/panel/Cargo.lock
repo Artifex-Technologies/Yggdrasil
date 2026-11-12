@@ -1459,7 +1459,16 @@ dependencies = [
  "wayland-protocols-wlr",
  "xkbcommon",
  "yggdrasil-conf",
+ "yggdrasil-wm",
  "zbus",
+]
+
+[[package]]
+name = "yggdrasil-wm"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "yggdrasil-conf",
 ]
 
 [[package]]

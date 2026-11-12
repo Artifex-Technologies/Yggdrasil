@@ -275,3 +275,46 @@ pub fn parse_option_float(out: &str) -> Option<f32> {
     let rest = out[at + 7..].trim_start_matches([':', ' ']);
     rest.split([',', '}', '\n']).next()?.trim().parse().ok()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // (moved with the parsing from the panel's status.rs and zones.rs)
+
+    #[test]
+    fn desktops_and_the_current_one_are_read() {
+        let ws = r#"[{"id":3,"name":"3","windows":1},{"id":1,"name":"1","windows":3},{"id":-98,"name":"special:minimized","windows":1}]"#;
+        let d = parse_desktops(ws, r#"{"id":2,"name":"2"}"#);
+        assert_eq!(d, Desktops { ids: vec![1, 2, 3], at: 1 }, "the shown one is a desktop even while empty; hidden ones are not");
+        assert_eq!(parse_desktops("nonsense", ""), Desktops::default());
+    }
+
+    #[test]
+    fn the_window_in_front_is_read() {
+        let w = parse_client_one(r#"{"address":"0x55","at":[120,48],"size":[800,600]}"#).unwrap();
+        assert_eq!((w.id.as_str(), w.at, w.size), ("0x55", Some((120.0, 48.0)), Some((800.0, 600.0))));
+        assert_eq!((w.floating, w.fullscreen, w.mapped, w.hidden), (None, false, true, false), "missing fields as before");
+        assert_eq!(parse_client_one("{}"), None);
+    }
+
+    #[test]
+    fn hyprland_answers_are_read() {
+        let j = r#"[{"id":0,"name":"DP-1","x":0,"y":0,"width":3440,"height":1440,"scale":1.00,"transform":0,"reserved":[0,28,0,70]}]"#;
+        let m = parse_monitors(j);
+        assert_eq!(m[0].monitor().free_area(), (0, 28, 3440, 1342));
+        assert_eq!(parse_monitors(r#"[{"name":"DP-2","x":0,"y":0}]"#), vec![], "a screen without a size is left out");
+        assert_eq!(parse_cursor(r#"{"x": 1720.5, "y": 12}"#), Some((1720.5, 12.0)));
+        assert_eq!(parse_cursor("garbage"), None);
+        assert_eq!(parse_option_float(r#"{"option": "cursor:inactive_timeout", "float": 0.250000, "set": true }"#), Some(0.25));
+        assert_eq!(parse_option_float("no"), None);
+    }
+
+    #[test]
+    fn only_an_address_reaches_the_lua() {
+        assert_eq!(address("0x5a0000001000").as_deref(), Some("address:0x5a0000001000"));
+        for bad in ["5a00", "0x", "0xzz", "0x1\" })", "0x1 or true"] {
+            assert_eq!(address(bad), None, "{bad}");
+        }
+    }
+}
