@@ -145,5 +145,5 @@ and a way back:
 
 ## Building and running the tests
 
-    cargo test                                  # unit, headless and behaviour tests (the app tests skip)
-    packages/compositor/tests/apps-podman.sh    # with the panel, Settings and the lock, in a container
+    cargo test                                  # unit, headless, behaviour and tools tests (the app tests skip)
+    packages/compositor/tests/apps-podman.sh    # with the panel, Settings, the lock, snap and close, in a container
