@@ -54,7 +54,19 @@ fn family(program: &str) -> Family {
             return Family::Chromium(profile);
         }
     }
-    const FIREFOX: &[&str] = &["firefox", "firefox-esr", "firefox-developer-edition", "librewolf", "zen", "zen-browser", "floorp", "waterfox", "mullvad-browser", "torbrowser-launcher", "tor-browser"];
+    const FIREFOX: &[&str] = &[
+        "firefox",
+        "firefox-esr",
+        "firefox-developer-edition",
+        "librewolf",
+        "zen",
+        "zen-browser",
+        "floorp",
+        "waterfox",
+        "mullvad-browser",
+        "torbrowser-launcher",
+        "tor-browser",
+    ];
     if FIREFOX.contains(&name) {
         return Family::Firefox;
     }
@@ -201,7 +213,11 @@ fn target() -> Result<Target, String> {
 
 /// The desktop's app launcher (the `apps` integration): (where per-app settings live, slice prefix).
 fn launcher() -> Option<(PathBuf, String)> {
-    let dirs = [config_home().join("yggdrasil/integrations"), PathBuf::from("/etc/yggdrasil/integrations"), PathBuf::from("/usr/share/yggdrasil/integrations")];
+    let dirs = [
+        config_home().join("yggdrasil/integrations"),
+        PathBuf::from("/etc/yggdrasil/integrations"),
+        PathBuf::from("/usr/share/yggdrasil/integrations"),
+    ];
     for d in dirs {
         let Ok(rd) = std::fs::read_dir(&d) else { continue };
         let mut files: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e == "conf")).collect();
@@ -323,12 +339,15 @@ fn extra_flags() -> Vec<String> {
 
 /// The systemd-run command that starts the background browser.
 fn start_command(t: &Target, slice: Option<&str>, flags: &[String]) -> Vec<String> {
-    let mut c: Vec<String> = ["systemd-run", "--user", "--quiet", "--collect", &format!("--unit={INSTANCE}")].iter().map(|s| s.to_string()).collect();
+    let mut c: Vec<String> =
+        ["systemd-run", "--user", "--quiet", "--collect", &format!("--unit={INSTANCE}")].iter().map(|s| s.to_string()).collect();
     c.push(format!("--slice={}", slice.unwrap_or("app-graphical.slice")));
     c.push(format!("--description=Background {} (yggdrasil-browser-warm)", app_id(&t.desktop_id)));
     c.extend(["--property=KillMode=mixed", "--property=Restart=on-failure"].map(String::from));
     // the user manager may lack the session's display variables
-    for k in ["WAYLAND_DISPLAY", "DISPLAY", "XDG_CURRENT_DESKTOP", "XDG_SESSION_TYPE", "HYPRLAND_INSTANCE_SIGNATURE", "DBUS_SESSION_BUS_ADDRESS"] {
+    for k in
+        ["WAYLAND_DISPLAY", "DISPLAY", "XDG_CURRENT_DESKTOP", "XDG_SESSION_TYPE", "HYPRLAND_INSTANCE_SIGNATURE", "DBUS_SESSION_BUS_ADDRESS"]
+    {
         if let Ok(v) = std::env::var(k) {
             c.push(format!("--setenv={k}={v}"));
         }
@@ -463,11 +482,14 @@ fn status() {
         Some((pid, w)) => {
             let exe = std::fs::read_link(format!("/proc/{pid}/exe")).map(|p| p.display().to_string()).unwrap_or_default();
             println!("background browser: running, pid {pid}, {exe}");
-            println!("windows: {}", match w {
-                Some(true) => "open",
-                Some(false) => "none",
-                None => "unknown",
-            });
+            println!(
+                "windows: {}",
+                match w {
+                    Some(true) => "open",
+                    Some(false) => "none",
+                    None => "unknown",
+                }
+            );
         }
         None => println!("background browser: stopped"),
     }

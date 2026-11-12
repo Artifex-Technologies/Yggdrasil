@@ -2,8 +2,9 @@
 
 use smithay::desktop::Window;
 use smithay::input::pointer::{
-    AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent, GesturePinchUpdateEvent, GrabStartData, GestureSwipeBeginEvent,
-    GestureSwipeEndEvent, GestureSwipeUpdateEvent, MotionEvent, PointerGrab, PointerInnerHandle, RelativeMotionEvent,
+    AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent,
+    GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent, GrabStartData, MotionEvent,
+    PointerGrab, PointerInnerHandle, RelativeMotionEvent,
 };
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::ResizeEdge;
 use smithay::utils::{Logical, Point, Size};
@@ -16,7 +17,13 @@ const MIN_H: i32 = 140;
 
 macro_rules! pass_through_gestures {
     () => {
-        fn relative_motion(&mut self, data: &mut App, handle: &mut PointerInnerHandle<'_, App>, focus: Option<(<App as smithay::input::SeatHandler>::PointerFocus, Point<f64, Logical>)>, event: &RelativeMotionEvent) {
+        fn relative_motion(
+            &mut self,
+            data: &mut App,
+            handle: &mut PointerInnerHandle<'_, App>,
+            focus: Option<(<App as smithay::input::SeatHandler>::PointerFocus, Point<f64, Logical>)>,
+            event: &RelativeMotionEvent,
+        ) {
             handle.relative_motion(data, focus, event);
         }
         fn axis(&mut self, data: &mut App, handle: &mut PointerInnerHandle<'_, App>, details: AxisFrame) {
@@ -60,7 +67,13 @@ pub struct MoveGrab {
 }
 
 impl PointerGrab<App> for MoveGrab {
-    fn motion(&mut self, data: &mut App, handle: &mut PointerInnerHandle<'_, App>, _focus: Option<(<App as smithay::input::SeatHandler>::PointerFocus, Point<f64, Logical>)>, event: &MotionEvent) {
+    fn motion(
+        &mut self,
+        data: &mut App,
+        handle: &mut PointerInnerHandle<'_, App>,
+        _focus: Option<(<App as smithay::input::SeatHandler>::PointerFocus, Point<f64, Logical>)>,
+        event: &MotionEvent,
+    ) {
         // the pointer moves, but no window under it is told: the window being dragged is not "hovered" during the drag
         handle.motion(data, None, event);
         let delta = event.location - self.start.location;
@@ -98,7 +111,13 @@ impl ResizeGrab {
 }
 
 impl PointerGrab<App> for ResizeGrab {
-    fn motion(&mut self, data: &mut App, handle: &mut PointerInnerHandle<'_, App>, _focus: Option<(<App as smithay::input::SeatHandler>::PointerFocus, Point<f64, Logical>)>, event: &MotionEvent) {
+    fn motion(
+        &mut self,
+        data: &mut App,
+        handle: &mut PointerInnerHandle<'_, App>,
+        _focus: Option<(<App as smithay::input::SeatHandler>::PointerFocus, Point<f64, Logical>)>,
+        event: &MotionEvent,
+    ) {
         handle.motion(data, None, event);
         let d = event.location - self.start.location;
         let (dx, dy) = (d.x as i32, d.y as i32);
@@ -106,8 +125,22 @@ impl PointerGrab<App> for ResizeGrab {
         let right = self.has(&[ResizeEdge::Right, ResizeEdge::TopRight, ResizeEdge::BottomRight]);
         let top = self.has(&[ResizeEdge::Top, ResizeEdge::TopLeft, ResizeEdge::TopRight]);
         let bottom = self.has(&[ResizeEdge::Bottom, ResizeEdge::BottomLeft, ResizeEdge::BottomRight]);
-        let mut w = self.size.w + if right { dx } else if left { -dx } else { 0 };
-        let mut h = self.size.h + if bottom { dy } else if top { -dy } else { 0 };
+        let mut w = self.size.w
+            + if right {
+                dx
+            } else if left {
+                -dx
+            } else {
+                0
+            };
+        let mut h = self.size.h
+            + if bottom {
+                dy
+            } else if top {
+                -dy
+            } else {
+                0
+            };
         w = w.max(MIN_W);
         h = h.max(MIN_H);
         if let Some(t) = self.window.toplevel() {

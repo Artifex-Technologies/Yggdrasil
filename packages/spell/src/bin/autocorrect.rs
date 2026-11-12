@@ -145,7 +145,10 @@ impl State {
         self.purpose = p.purpose;
         self.hint = p.hint;
         if debug() {
-            eprintln!("done #{}: active={} purpose={} hint={:#x} cause={} text={:?}", self.serial, self.active, self.purpose, self.hint, p.cause, p.text);
+            eprintln!(
+                "done #{}: active={} purpose={} hint={:#x} cause={} text={:?}",
+                self.serial, self.active, self.purpose, self.hint, p.cause, p.text
+            );
         }
         let Some((text, cursor)) = p.text else { return };
         if !self.active {
@@ -189,7 +192,8 @@ impl State {
             }
         }
         // only right after one character was typed at the end of what came before (not a paste, not a jump)
-        let typed_one = prev.as_deref().is_some_and(|p| before.len() > p.len() && before.starts_with(p) && before[p.len()..].chars().count() == 1);
+        let typed_one =
+            prev.as_deref().is_some_and(|p| before.len() > p.len() && before.starts_with(p) && before[p.len()..].chars().count() == 1);
         if !typed_one {
             return;
         }
@@ -211,7 +215,14 @@ impl State {
 }
 
 impl Dispatch<wl_registry::WlRegistry, ()> for State {
-    fn event(state: &mut Self, registry: &wl_registry::WlRegistry, event: wl_registry::Event, _: &(), _: &Connection, qh: &QueueHandle<Self>) {
+    fn event(
+        state: &mut Self,
+        registry: &wl_registry::WlRegistry,
+        event: wl_registry::Event,
+        _: &(),
+        _: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
         if let wl_registry::Event::Global { name, interface, version } = event {
             match interface.as_str() {
                 "zwp_input_method_manager_v2" => state.manager = Some(registry.bind(name, 1, qh, ())),
@@ -227,11 +238,26 @@ impl Dispatch<wl_seat::WlSeat, ()> for State {
 }
 
 impl Dispatch<zwp_input_method_manager_v2::ZwpInputMethodManagerV2, ()> for State {
-    fn event(_: &mut Self, _: &zwp_input_method_manager_v2::ZwpInputMethodManagerV2, _: zwp_input_method_manager_v2::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &zwp_input_method_manager_v2::ZwpInputMethodManagerV2,
+        _: zwp_input_method_manager_v2::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 
 impl Dispatch<zwp_input_method_v2::ZwpInputMethodV2, ()> for State {
-    fn event(state: &mut Self, _: &zwp_input_method_v2::ZwpInputMethodV2, event: zwp_input_method_v2::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+    fn event(
+        state: &mut Self,
+        _: &zwp_input_method_v2::ZwpInputMethodV2,
+        event: zwp_input_method_v2::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
         use zwp_input_method_v2::Event as E;
         match event {
             E::Activate => {

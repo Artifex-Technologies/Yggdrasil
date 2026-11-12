@@ -94,7 +94,15 @@ fn load_config() -> Result<Config, String> {
     }
     let f = locate::from_timezone().map_err(|e| format!("no place: {e}; choose one in Weather's settings"))?;
     // the time zone's place, with what else was saved (units, the last chosen place)
-    let base = saved.unwrap_or(Config { name: String::new(), lat: 0.0, lon: 0.0, units: "metric".into(), mode: "timezone".into(), detected_at: 0, chosen: None });
+    let base = saved.unwrap_or(Config {
+        name: String::new(),
+        lat: 0.0,
+        lon: 0.0,
+        units: "metric".into(),
+        mode: "timezone".into(),
+        detected_at: 0,
+        chosen: None,
+    });
     Ok(Config { name: f.name, lat: f.lat, lon: f.lon, mode: "timezone".into(), detected_at: 0, ..base })
 }
 
@@ -109,7 +117,15 @@ fn detect_and_save(base: Config) -> Result<Config, String> {
 
 /// `yggdrasil-weather locate`: switch to the automatic place and find it now.
 fn cmd_locate() -> ExitCode {
-    let base = load_config().unwrap_or(Config { name: String::new(), lat: 0.0, lon: 0.0, units: "metric".into(), mode: "auto".into(), detected_at: 0, chosen: None });
+    let base = load_config().unwrap_or(Config {
+        name: String::new(),
+        lat: 0.0,
+        lon: 0.0,
+        units: "metric".into(),
+        mode: "auto".into(),
+        detected_at: 0,
+        chosen: None,
+    });
     match detect_and_save(base) {
         Ok(c) => {
             println!("found {} ({:.2}, {:.2})", c.name, c.lat, c.lon);
@@ -165,8 +181,11 @@ fn cmd_panel() -> ExitCode {
     let cfg = match load_config() {
         Ok(c) => c,
         Err(_) => {
-            println!("{}", serde_json::json!({"text": "Set weather place", "state": "warn", "icon": "weather-few-clouds-symbolic",
-                "help": "Choose your place with Settings below: found automatically, or a city you pick.", "card": card::blocks(None, &st)}));
+            println!(
+                "{}",
+                serde_json::json!({"text": "Set weather place", "state": "warn", "icon": "weather-few-clouds-symbolic",
+                "help": "Choose your place with Settings below: found automatically, or a city you pick.", "card": card::blocks(None, &st)})
+            );
             return ExitCode::SUCCESS;
         }
     };
@@ -203,7 +222,16 @@ fn cmd_press(args: &[String]) -> ExitCode {
     let now = now_epoch();
     let mut st = card::load_state(now);
     let current = load_config().ok();
-    let changed = card::press(id, args.get(1).map(String::as_str), &mut st, current, now, locate::from_timezone, locate::from_wifi, locate::search_places);
+    let changed = card::press(
+        id,
+        args.get(1).map(String::as_str),
+        &mut st,
+        current,
+        now,
+        locate::from_timezone,
+        locate::from_wifi,
+        locate::search_places,
+    );
     if let Some(c) = changed {
         match config::config_path().map(|p| config::save(&p, &c)) {
             Some(Ok(())) => {}
@@ -292,13 +320,29 @@ fn cmd_forecast(n_hours: usize) -> ExitCode {
 
 fn cmd_set_location(args: &[String]) -> ExitCode {
     let Some(path) = config::config_path() else { return die("no config directory") };
-    let base = load_config().unwrap_or(Config { name: String::new(), lat: 0.0, lon: 0.0, units: "metric".into(), mode: "manual".into(), detected_at: 0, chosen: None });
+    let base = load_config().unwrap_or(Config {
+        name: String::new(),
+        lat: 0.0,
+        lon: 0.0,
+        units: "metric".into(),
+        mode: "manual".into(),
+        detected_at: 0,
+        chosen: None,
+    });
     let cfg = if args.first().map(String::as_str) == Some("--coords") {
         let (Some(lat), Some(lon)) = (args.get(1).and_then(|s| s.parse().ok()), args.get(2).and_then(|s| s.parse().ok())) else {
             return die("usage: set-location --coords LAT LON [NAME]");
         };
         let name = if args.len() > 3 { args[3..].join(" ") } else { format!("{lat:.2}, {lon:.2}") };
-        Config { name: name.clone(), lat, lon, mode: "manual".into(), detected_at: 0, chosen: Some(config::Chosen { name, lat, lon }), ..base }
+        Config {
+            name: name.clone(),
+            lat,
+            lon,
+            mode: "manual".into(),
+            detected_at: 0,
+            chosen: Some(config::Chosen { name, lat, lon }),
+            ..base
+        }
     } else {
         let query = args.join(" ");
         if query.trim().is_empty() {
@@ -312,7 +356,15 @@ fn cmd_set_location(args: &[String]) -> ExitCode {
         for (i, other) in places.iter().enumerate().skip(1) {
             eprintln!("(other match {i}: {} at {:.3},{:.3}; use --coords to pick it)", other.label(), other.latitude, other.longitude);
         }
-        Config { name: p.label(), lat: p.latitude, lon: p.longitude, mode: "manual".into(), detected_at: 0, chosen: Some(config::Chosen { name: p.label(), lat: p.latitude, lon: p.longitude }), ..base }
+        Config {
+            name: p.label(),
+            lat: p.latitude,
+            lon: p.longitude,
+            mode: "manual".into(),
+            detected_at: 0,
+            chosen: Some(config::Chosen { name: p.label(), lat: p.latitude, lon: p.longitude }),
+            ..base
+        }
     };
     match config::save(&path, &cfg) {
         Ok(()) => {

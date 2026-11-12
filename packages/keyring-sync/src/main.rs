@@ -42,7 +42,8 @@ fn main() -> eframe::Result {
         return Ok(());
     }
     if args.iter().any(|a| a == "--cli") {
-        let (old, new) = (std::env::var("YGGDRASIL_KEYRING_OLD").unwrap_or_default(), std::env::var("YGGDRASIL_KEYRING_CURRENT").unwrap_or_default());
+        let (old, new) =
+            (std::env::var("YGGDRASIL_KEYRING_OLD").unwrap_or_default(), std::env::var("YGGDRASIL_KEYRING_CURRENT").unwrap_or_default());
         let kr = match Keyring::open() {
             Ok(k) => k,
             Err(s) => {
@@ -65,7 +66,11 @@ fn main() -> eframe::Result {
         _ => return Ok(()),
     }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([460.0, 330.0]).with_resizable(false).with_title("Keyring").with_app_id("yggdrasil-keyring-sync"),
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([460.0, 330.0])
+            .with_resizable(false)
+            .with_title("Keyring")
+            .with_app_id("yggdrasil-keyring-sync"),
         ..Default::default()
     };
     eframe::run_native("Keyring", options, Box::new(|cc| Ok(Box::new(ui::App::new(&cc.egui_ctx)))))

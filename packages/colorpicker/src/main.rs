@@ -172,7 +172,15 @@ impl App {
             let mut p = Paint::default();
             p.set_color_rgba8(col.0, col.1, col.2, 255);
             let (x0, y0, w) = (mid - inset, mid - inset, c + 2.0 * inset);
-            for r in [Rect::from_xywh(x0, y0, w, t), Rect::from_xywh(x0, y0 + w - t, w, t), Rect::from_xywh(x0, y0, t, w), Rect::from_xywh(x0 + w - t, y0, t, w)].into_iter().flatten() {
+            for r in [
+                Rect::from_xywh(x0, y0, w, t),
+                Rect::from_xywh(x0, y0 + w - t, w, t),
+                Rect::from_xywh(x0, y0, t, w),
+                Rect::from_xywh(x0 + w - t, y0, t, w),
+            ]
+            .into_iter()
+            .flatten()
+            {
                 pix.fill_rect(r, &p, Transform::identity(), None);
             }
         };
@@ -184,10 +192,19 @@ impl App {
         let sw = label - 2.0 * pad;
         draw::fill_rounded(&mut pix, pad, ly, sw, sw, 4.0 * f, (rgb.0, rgb.1, rgb.2, 255));
         if let Some(fonts) = &self.fonts {
-            draw::draw_text(&mut pix, &fonts.bold, 13.0 * f, pad + sw + 8.0 * f, ly + sw / 2.0, (240, 240, 245, 255), &colorpicker::hex(rgb));
+            draw::draw_text(
+                &mut pix,
+                &fonts.bold,
+                13.0 * f,
+                pad + sw + 8.0 * f,
+                ly + sw / 2.0,
+                (240, 240, 245, 255),
+                &colorpicker::hex(rgb),
+            );
         }
         let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
-        let (lx, ly) = colorpicker::place(px as i32, py as i32, bw.ceil() as i32, bh.ceil() as i32, img.w as i32, img.h as i32, (GAP * f) as i32);
+        let (lx, ly) =
+            colorpicker::place(px as i32, py as i32, bw.ceil() as i32, bh.ceil() as i32, img.w as i32, img.h as i32, (GAP * f) as i32);
         Some((pix, lx, ly))
     }
 
@@ -214,7 +231,12 @@ impl App {
             let Ok(map) = (unsafe { MmapMut::map_mut(&file) }) else { return };
             let pool = shm.create_pool(file.as_fd(), (one * 2) as i32, qh, ());
             s.bufs = (0..2)
-                .map(|k| Buf { buffer: pool.create_buffer((k * one) as i32, w as i32, h as i32, stride as i32, wl_shm::Format::Argb8888, qh, (i, k)), busy: false, filled: false, loupe: None })
+                .map(|k| Buf {
+                    buffer: pool.create_buffer((k * one) as i32, w as i32, h as i32, stride as i32, wl_shm::Format::Argb8888, qh, (i, k)),
+                    busy: false,
+                    filled: false,
+                    loupe: None,
+                })
                 .collect();
             pool.destroy();
             s.map = Some(map);
@@ -283,7 +305,15 @@ impl App {
 }
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for App {
-    fn event(_: &mut Self, _: &wl_registry::WlRegistry, _: wl_registry::Event, _: &GlobalListContents, _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_registry::WlRegistry,
+        _: wl_registry::Event,
+        _: &GlobalListContents,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 delegate_noop!(App: WlCompositor);
 delegate_noop!(App: ignore WlShm);
@@ -475,7 +505,9 @@ fn swatch(c: Rgb) -> Option<std::path::PathBuf> {
     let dir = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from)?;
     let hex = colorpicker::hex(c);
     let p = dir.join(format!("yggdrasil-color-{}.svg", &hex[1..]));
-    let svg = format!(r##"<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect x="4" y="4" width="56" height="56" rx="12" fill="{hex}" stroke="#00000040" stroke-width="2"/></svg>"##);
+    let svg = format!(
+        r##"<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect x="4" y="4" width="56" height="56" rx="12" fill="{hex}" stroke="#00000040" stroke-width="2"/></svg>"##
+    );
     std::fs::write(&p, svg).ok().map(|_| p)
 }
 
@@ -499,21 +531,54 @@ fn main() {
     };
     let Ok((globals, mut queue)) = registry_queue_init::<App>(&conn) else { std::process::exit(1) };
     let qh = queue.handle();
-    let (Ok(compositor), Ok(shm), Ok(layer_shell)) = (globals.bind::<WlCompositor, _, _>(&qh, 1..=6, ()), globals.bind::<WlShm, _, _>(&qh, 1..=1, ()), globals.bind::<ZwlrLayerShellV1, _, _>(&qh, 1..=4, ())) else {
+    let (Ok(compositor), Ok(shm), Ok(layer_shell)) = (
+        globals.bind::<WlCompositor, _, _>(&qh, 1..=6, ()),
+        globals.bind::<WlShm, _, _>(&qh, 1..=1, ()),
+        globals.bind::<ZwlrLayerShellV1, _, _>(&qh, 1..=4, ()),
+    ) else {
         eprintln!("yggdrasil-colorpicker: the compositor has no layer shell");
         std::process::exit(1);
     };
     let viewporter: Option<WpViewporter> = globals.bind(&qh, 1..=1, ()).ok();
-    let mut app = App { compositor, shm, screens: vec![], cursor: globals.bind(&qh, 1..=1, ()).ok(), cursor_dev: None, pointer: None, keyboard: None, at: None, nudge: (0, 0), zoom: 3, wheel: 0.0, fonts: draw::Fonts::load(), result: None };
-    let outputs: Vec<(u32, u32)> = globals.contents().with_list(|l| l.iter().filter(|g| g.interface == "wl_output").map(|g| (g.name, g.version)).collect());
+    let mut app = App {
+        compositor,
+        shm,
+        screens: vec![],
+        cursor: globals.bind(&qh, 1..=1, ()).ok(),
+        cursor_dev: None,
+        pointer: None,
+        keyboard: None,
+        at: None,
+        nudge: (0, 0),
+        zoom: 3,
+        wheel: 0.0,
+        fonts: draw::Fonts::load(),
+        result: None,
+    };
+    let outputs: Vec<(u32, u32)> =
+        globals.contents().with_list(|l| l.iter().filter(|g| g.interface == "wl_output").map(|g| (g.name, g.version)).collect());
     for (n, (name, version)) in outputs.into_iter().enumerate() {
         let output = globals.registry().bind::<WlOutput, _, _>(name, version.min(4), &qh, n);
-        app.screens.push(Screen { name: String::new(), output, img: None, surface: None, layer: None, viewport: None, size: (0, 0), bufs: vec![], map: None, frame_pending: false, dirty: true });
+        app.screens.push(Screen {
+            name: String::new(),
+            output,
+            img: None,
+            surface: None,
+            layer: None,
+            viewport: None,
+            size: (0, 0),
+            bufs: vec![],
+            map: None,
+            frame_pending: false,
+            dirty: true,
+        });
     }
     let _ = queue.roundtrip(&mut app);
     // every screen frozen at once, before anything of ours is on it
     let names: Vec<String> = app.screens.iter().map(|s| s.name.clone()).collect();
-    let shots: Vec<Option<Img>> = std::thread::scope(|sc| names.iter().map(|n| sc.spawn(move || capture(n))).collect::<Vec<_>>().into_iter().map(|h| h.join().ok().flatten()).collect());
+    let shots: Vec<Option<Img>> = std::thread::scope(|sc| {
+        names.iter().map(|n| sc.spawn(move || capture(n))).collect::<Vec<_>>().into_iter().map(|h| h.join().ok().flatten()).collect()
+    });
     for (s, img) in app.screens.iter_mut().zip(shots) {
         s.img = img;
     }
@@ -527,7 +592,14 @@ fn main() {
             continue;
         }
         let surface = app.compositor.create_surface(&qh, ());
-        let layer = layer_shell.get_layer_surface(&surface, Some(&app.screens[i].output), zwlr_layer_shell_v1::Layer::Overlay, "yggdrasil-colorpicker".into(), &qh, i);
+        let layer = layer_shell.get_layer_surface(
+            &surface,
+            Some(&app.screens[i].output),
+            zwlr_layer_shell_v1::Layer::Overlay,
+            "yggdrasil-colorpicker".into(),
+            &qh,
+            i,
+        );
         layer.set_anchor(Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right);
         layer.set_exclusive_zone(-1);
         layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);

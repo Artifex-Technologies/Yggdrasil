@@ -22,7 +22,10 @@ const RTX: &str = "NVIDIA GeForce RTX 2080 Ti, 260.00, 260.00, 100.00, 330.00\n"
 /// A fake tree: four processor policies (0.8-4.0 GHz), the mode and the card through commands.json, and a limits file.
 fn tree(d: &TempDir, mode: &str, limits: Option<&str>) {
     for i in 0..4 {
-        d.files(&format!("sys/devices/system/cpu/cpufreq/policy{i}"), &[("cpuinfo_min_freq", "800000"), ("cpuinfo_max_freq", "4000000"), ("scaling_max_freq", "4000000")]);
+        d.files(
+            &format!("sys/devices/system/cpu/cpufreq/policy{i}"),
+            &[("cpuinfo_min_freq", "800000"), ("cpuinfo_max_freq", "4000000"), ("scaling_max_freq", "4000000")],
+        );
     }
     let cmds = format!(
         r#"{{"busctl get-property org.freedesktop.UPower.PowerProfiles": "s \"{mode}\"\n", "nvidia-smi --query-gpu": {}}}"#,
@@ -127,20 +130,48 @@ fn the_mode_comes_from_power_profiles_daemon_newer_name_first() {
     };
     assert_eq!(ask(r#"{"busctl get-property org.freedesktop.UPower.PowerProfiles": " s \"performance\"\n"}"#), "performance");
     // the newer name not there (an older daemon): the old one answers
-    assert_eq!(ask(r#"{"busctl get-property org.freedesktop.UPower.PowerProfiles": {"rc": 1, "out": ""}, "busctl get-property net.hadess.PowerProfiles": "s \"power-saver\""}"#), "power-saver");
-    assert_eq!(ask(r#"{"busctl get-property org.freedesktop.UPower.PowerProfiles": {"timeout": true}, "busctl get-property net.hadess.PowerProfiles": null}"#), "");
+    assert_eq!(
+        ask(
+            r#"{"busctl get-property org.freedesktop.UPower.PowerProfiles": {"rc": 1, "out": ""}, "busctl get-property net.hadess.PowerProfiles": "s \"power-saver\""}"#
+        ),
+        "power-saver"
+    );
+    assert_eq!(
+        ask(
+            r#"{"busctl get-property org.freedesktop.UPower.PowerProfiles": {"timeout": true}, "busctl get-property net.hadess.PowerProfiles": null}"#
+        ),
+        ""
+    );
     assert_eq!(ask("{}"), "", "no busctl at all");
 }
 
 #[test]
 fn the_cards_limits_come_from_nvidia_smi() {
-    assert_eq!(parse_gpu_info(RTX), Some(GpuInfo { name: "NVIDIA GeForce RTX 2080 Ti".into(), watts: 260, default: 260, min: 100, max: 330 }));
-    assert_eq!(parse_gpu_info("X, 250.50, 251.50, 99.5, 330\nY, 1, 2, 3, 4\n").map(|g| (g.watts, g.default, g.min, g.name)), Some((250, 252, 100, "X".into())), "halves to even, first card");
-    for bad in ["X, [N/A], 260.00, 100.00, 330.00", "X, 260, 260, 100", "X, 260, 260, 100, 330, 1", "X, inf, 260, 100, 330", "X, nan, 260, 100, 330"] {
+    assert_eq!(
+        parse_gpu_info(RTX),
+        Some(GpuInfo { name: "NVIDIA GeForce RTX 2080 Ti".into(), watts: 260, default: 260, min: 100, max: 330 })
+    );
+    assert_eq!(
+        parse_gpu_info("X, 250.50, 251.50, 99.5, 330\nY, 1, 2, 3, 4\n").map(|g| (g.watts, g.default, g.min, g.name)),
+        Some((250, 252, 100, "X".into())),
+        "halves to even, first card"
+    );
+    for bad in [
+        "X, [N/A], 260.00, 100.00, 330.00",
+        "X, 260, 260, 100",
+        "X, 260, 260, 100, 330, 1",
+        "X, inf, 260, 100, 330",
+        "X, nan, 260, 100, 330",
+    ] {
         assert_eq!(parse_gpu_info(bad), None, "{bad}");
     }
     let d = TempDir::new();
-    for (answer, want) in [(r#"{"rc": 9, "out": "NVIDIA-SMI has failed"}"#, false), (r#"" \n""#, false), ("null", false), (&json::dumps(&Json::Str(RTX.into())) as &str, true)] {
+    for (answer, want) in [
+        (r#"{"rc": 9, "out": "NVIDIA-SMI has failed"}"#, false),
+        (r#"" \n""#, false),
+        ("null", false),
+        (&json::dumps(&Json::Str(RTX.into())) as &str, true),
+    ] {
         d.files("", &[("commands.json", &format!(r#"{{"nvidia-smi --query-gpu": {answer}}}"#))]);
         assert_eq!(gpu_info(&ctx(d.path())).is_some(), want, "{answer}");
     }
@@ -221,7 +252,10 @@ fn get_prints_what_settings_reads() {
     );
     d.files("var/lib/yggdrasil/gpu-unlock", &[("power-hold", "{}")]);
     d.files("", &[("commands.json", r#"{"nvidia-smi --query-gpu": null}"#)]);
-    assert_eq!(json::dumps(&get(&ctx(d.path()))), r#"{"cpu_max_khz": 5000000, "gpu": null, "active": "", "limits": {"balanced": {"gpu": 200}}}"#);
+    assert_eq!(
+        json::dumps(&get(&ctx(d.path()))),
+        r#"{"cpu_max_khz": 5000000, "gpu": null, "active": "", "limits": {"balanced": {"gpu": 200}}}"#
+    );
 }
 
 #[test]
@@ -231,7 +265,10 @@ fn watch_applies_at_start_and_again_only_when_something_changed() {
     // one answer per busctl call: the round's look, then apply's own when it applies
     let modes = ["balanced", "balanced", "balanced", "balanced", "performance", "performance", "performance"];
     let answers = modes.iter().map(|m| format!("\"s \\\"{m}\\\"\"")).collect::<Vec<_>>().join(", ");
-    let cmds = format!(r#"{{"busctl get-property org.freedesktop.UPower.PowerProfiles": [{answers}], "nvidia-smi --query-gpu": {}}}"#, json::dumps(&Json::Str(RTX.into())));
+    let cmds = format!(
+        r#"{{"busctl get-property org.freedesktop.UPower.PowerProfiles": [{answers}], "nvidia-smi --query-gpu": {}}}"#,
+        json::dumps(&Json::Str(RTX.into()))
+    );
     d.files("", &[("commands.json", &cmds)]);
     let mut c = ctx(d.path());
     c.steps = Some(4);

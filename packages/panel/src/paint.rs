@@ -22,9 +22,17 @@ pub fn on_accent() -> Rgba {
     let (r, g, b, _) = accent(255);
     let l = |c: u8| {
         let v = c as f32 / 255.0;
-        if v <= 0.03928 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+        if v <= 0.03928 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
     };
-    if 0.2126 * l(r) + 0.7152 * l(g) + 0.0722 * l(b) > 0.45 { (24, 20, 36, 255) } else { (255, 255, 255, 255) }
+    if 0.2126 * l(r) + 0.7152 * l(g) + 0.0722 * l(b) > 0.45 {
+        (24, 20, 36, 255)
+    } else {
+        (255, 255, 255, 255)
+    }
 }
 
 /// Read the accent colour (Settings > Appearance, `~/.config/yggdrasil/appearance.conf`; the operating system's default when none
@@ -129,7 +137,8 @@ impl Fonts {
     pub fn load() -> Option<Fonts> {
         let load = |pat: &str| -> Option<FontVec> { FontVec::try_from_vec(std::fs::read(fc_match(pat)?).ok()?).ok() };
         let regular = load("sans-serif")?;
-        let bold = load("sans-serif:bold").unwrap_or_else(|| FontVec::try_from_vec(std::fs::read(fc_match("sans-serif").unwrap()).unwrap()).unwrap());
+        let bold = load("sans-serif:bold")
+            .unwrap_or_else(|| FontVec::try_from_vec(std::fs::read(fc_match("sans-serif").unwrap()).unwrap()).unwrap());
         Some(Fonts { regular, bold })
     }
 }
@@ -211,8 +220,14 @@ impl Icons {
         let mut h: u64 = 1469598103934665603;
         for root in Self::roots() {
             for theme in &self.themes {
-                for sub in ["", "apps/scalable", "scalable/apps", "places/scalable", "apps", "256x256/apps", "192x192/apps", "128x128/apps"] {
-                    let t = std::fs::metadata(root.join(theme).join(sub)).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_nanos() as u64).unwrap_or(0);
+                for sub in ["", "apps/scalable", "scalable/apps", "places/scalable", "apps", "256x256/apps", "192x192/apps", "128x128/apps"]
+                {
+                    let t = std::fs::metadata(root.join(theme).join(sub))
+                        .and_then(|m| m.modified())
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_nanos() as u64)
+                        .unwrap_or(0);
                     h = (h ^ t).wrapping_mul(1099511628211);
                 }
             }
@@ -312,7 +327,8 @@ impl Icons {
             if scale < 1.0 {
                 // Shrinking a big picture (the pack's app icons are 1024 px) straight to a few dozen pixels
                 // samples it too sparsely and looks jagged: average it down instead, then place it as it is.
-                let (tw, th) = (((src.width() as f32 * scale).round() as u32).max(1), ((src.height() as f32 * scale).round() as u32).max(1));
+                let (tw, th) =
+                    (((src.width() as f32 * scale).round() as u32).max(1), ((src.height() as f32 * scale).round() as u32).max(1));
                 let small = area_resize(&src, tw, th)?;
                 let (tx, ty) = ((size - tw) / 2, (size - th) / 2);
                 pm.draw_pixmap(tx as i32, ty as i32, small.as_ref(), &tiny_skia::PixmapPaint::default(), Transform::identity(), None);
@@ -501,9 +517,18 @@ mod recolor_tests {
 
     #[test]
     fn every_colour_becomes_the_tint() {
-        assert_eq!(recolor(r##"<svg x="1"><g fill="#222"><path/></g></svg>"##, "#ffffff"), r##"<svg x="1"><g fill="#ffffff"><path/></g></svg>"##);
-        assert_eq!(recolor(r#"<svg><path stroke="currentColor" fill="none"/></svg>"#, "#fff"), r##"<svg><path stroke="#fff" fill="none"/></svg>"##);
-        assert_eq!(recolor(r##"<svg><path style="fill:#2e3436;opacity:.5"/></svg>"##, "#fff"), r##"<svg><path style="fill:#fff;opacity:.5"/></svg>"##);
+        assert_eq!(
+            recolor(r##"<svg x="1"><g fill="#222"><path/></g></svg>"##, "#ffffff"),
+            r##"<svg x="1"><g fill="#ffffff"><path/></g></svg>"##
+        );
+        assert_eq!(
+            recolor(r#"<svg><path stroke="currentColor" fill="none"/></svg>"#, "#fff"),
+            r##"<svg><path stroke="#fff" fill="none"/></svg>"##
+        );
+        assert_eq!(
+            recolor(r##"<svg><path style="fill:#2e3436;opacity:.5"/></svg>"##, "#fff"),
+            r##"<svg><path style="fill:#fff;opacity:.5"/></svg>"##
+        );
         assert_eq!(recolor("<svg ><path/></svg>", "#fff"), "<svg fill='#fff' ><path/></svg>");
     }
 }

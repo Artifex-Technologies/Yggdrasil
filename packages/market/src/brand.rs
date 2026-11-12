@@ -14,7 +14,9 @@ fn dir() -> PathBuf {
 
 fn colors() -> &'static HashMap<String, String> {
     static C: OnceLock<HashMap<String, String>> = OnceLock::new();
-    C.get_or_init(|| std::fs::read_to_string(dir().join("colors.json")).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default())
+    C.get_or_init(|| {
+        std::fs::read_to_string(dir().join("colors.json")).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+    })
 }
 
 fn hex(s: &str) -> Option<Color32> {
@@ -61,7 +63,10 @@ mod tests {
 
     #[test]
     fn the_mark_turns_white_and_the_colour_is_read() {
-        assert_eq!(white(r#"<svg role="img" viewBox="0 0 24 24"><path d="M0"/></svg>"#).unwrap(), r##"<svg fill="#ffffff" role="img" viewBox="0 0 24 24"><path d="M0"/></svg>"##);
+        assert_eq!(
+            white(r#"<svg role="img" viewBox="0 0 24 24"><path d="M0"/></svg>"#).unwrap(),
+            r##"<svg fill="#ffffff" role="img" viewBox="0 0 24 24"><path d="M0"/></svg>"##
+        );
         assert_eq!(hex("2496ED"), Some(Color32::from_rgb(0x24, 0x96, 0xED)));
         assert_eq!(hex("nope"), None);
     }

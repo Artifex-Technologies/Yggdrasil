@@ -6,8 +6,8 @@
 //! Without a system frame the window manager offers no edges to resize by, so `resize_edges`
 //! turns the outer few pixels of the window into resize handles.
 
-use eframe::egui::{self, pos2, vec2, Color32, CursorIcon, Rect, Sense, Stroke, ViewportCommand};
 use eframe::egui::viewport::ResizeDirection;
+use eframe::egui::{self, pos2, vec2, Color32, CursorIcon, Rect, Sense, Stroke, ViewportCommand};
 
 use crate::theme::Palette;
 
@@ -124,6 +124,10 @@ pub fn outline(ctx: &egui::Context, pal: &Palette) {
         return;
     }
     let rect = ctx.viewport_rect().shrink(0.5);
-    ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("window-outline")))
-        .rect_stroke(rect, 0.0, Stroke::new(1.0, pal.border), egui::StrokeKind::Inside);
+    ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("window-outline"))).rect_stroke(
+        rect,
+        0.0,
+        Stroke::new(1.0, pal.border),
+        egui::StrokeKind::Inside,
+    );
 }

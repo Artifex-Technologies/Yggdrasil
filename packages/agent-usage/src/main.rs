@@ -110,7 +110,13 @@ fn windows(payload: &Value) -> Vec<Window> {
             continue;
         }
         let kind = e["kind"].as_str().unwrap_or("").to_lowercase();
-        let w = if kind.contains("week") || kind.contains("day") { " Weekly" } else if kind.contains("hour") || kind.contains("session") { " Session" } else { "" };
+        let w = if kind.contains("week") || kind.contains("day") {
+            " Weekly"
+        } else if kind.contains("hour") || kind.contains("session") {
+            " Session"
+        } else {
+            ""
+        };
         if let Some(win) = window(&format!("{name}{w}"), e) {
             out.push(win);
         }
@@ -217,7 +223,9 @@ fn collect() -> Value {
             record(&payload, t, "")
         }
         Some((429, _)) => stale("Anthropic is limiting how often usage is asked right now."),
-        Some((401 | 403, _)) => stale("Anthropic refused Claude Code's sign-in; start Claude Code (or claude auth login) to sign in again."),
+        Some((401 | 403, _)) => {
+            stale("Anthropic refused Claude Code's sign-in; start Claude Code (or claude auth login) to sign in again.")
+        }
         Some((code, _)) => stale(&format!("Anthropic's usage address answered {code}.")),
         None => stale("Anthropic could not be reached."),
     }
@@ -231,7 +239,12 @@ fn main() {
     }
     println!("{}", rec["text"].as_str().unwrap_or(""));
     for l in rec["lines"].as_array().into_iter().flatten() {
-        println!("  {:<22} {:>5}   {}", l["title"].as_str().unwrap_or(""), l["value"].as_str().unwrap_or(""), l["note"].as_str().unwrap_or(""));
+        println!(
+            "  {:<22} {:>5}   {}",
+            l["title"].as_str().unwrap_or(""),
+            l["value"].as_str().unwrap_or(""),
+            l["note"].as_str().unwrap_or("")
+        );
     }
     println!("{}", rec["help"].as_str().unwrap_or(""));
 }
@@ -255,8 +268,10 @@ mod tests {
         let now = 1_000_000;
         // 2 days left of 7: an even pace is about 71% by now
         let resets = now + 2 * 86400;
-        let p = |used: f64| json!({"seven_day": {"utilization": used, "resets_at": resets}, "five_hour": {"utilization": 12.0, "resets_at": now + 3600},
-                                   "limits": [{"kind": "weekly_scoped", "percent": 40.0, "resets_at": resets, "scope": {"model": {"display_name": "Opus"}}}]});
+        let p = |used: f64| {
+            json!({"seven_day": {"utilization": used, "resets_at": resets}, "five_hour": {"utilization": 12.0, "resets_at": now + 3600},
+                                   "limits": [{"kind": "weekly_scoped", "percent": 40.0, "resets_at": resets, "scope": {"model": {"display_name": "Opus"}}}]})
+        };
         let ok = record(&p(50.0), now, "");
         assert_eq!(ok["text"], "Claude 50% · 2d 0h");
         assert_eq!(ok["state"], "ok");

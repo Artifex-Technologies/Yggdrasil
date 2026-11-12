@@ -86,7 +86,11 @@ fn watch(running: Arc<Mutex<Option<Child>>>) {
         restarts.push(std::time::Instant::now());
         std::thread::sleep(std::time::Duration::from_millis(300));
         *r = start();
-        crate::log(if r.is_some() { "the lock screen ended without the password: started it again" } else { "could not start yggdrasil-lock again" });
+        crate::log(if r.is_some() {
+            "the lock screen ended without the password: started it again"
+        } else {
+            "could not start yggdrasil-lock again"
+        });
         if r.is_none() {
             return;
         }
@@ -101,14 +105,29 @@ pub fn spawn() {
     std::thread::spawn(|| {
         let running: Arc<Mutex<Option<Child>>> = Arc::new(Mutex::new(None));
         let Ok(sys) = zbus::blocking::Connection::system() else { return };
-        let Ok(mgr) = zbus::blocking::Proxy::new(&sys, "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager") else { return };
+        let Ok(mgr) =
+            zbus::blocking::Proxy::new(&sys, "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager")
+        else {
+            return;
+        };
         let id = std::env::var("XDG_SESSION_ID").unwrap_or_default();
-        let session: Option<zbus::zvariant::OwnedObjectPath> = if id.is_empty() { mgr.call("GetSessionByPID", &(std::process::id(),)).ok() } else { mgr.call("GetSession", &(id.as_str(),)).ok() };
+        let session: Option<zbus::zvariant::OwnedObjectPath> = if id.is_empty() {
+            mgr.call("GetSessionByPID", &(std::process::id(),)).ok()
+        } else {
+            mgr.call("GetSession", &(id.as_str(),)).ok()
+        };
         // the machine is about to sleep: lock first, so it wakes up locked
         {
             let (sys2, run2) = (sys.clone(), running.clone());
             std::thread::spawn(move || {
-                let Ok(m) = zbus::blocking::Proxy::new(&sys2, "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager") else { return };
+                let Ok(m) = zbus::blocking::Proxy::new(
+                    &sys2,
+                    "org.freedesktop.login1",
+                    "/org/freedesktop/login1",
+                    "org.freedesktop.login1.Manager",
+                ) else {
+                    return;
+                };
                 let Ok(sigs) = m.receive_signal("PrepareForSleep") else { return };
                 let mut hold = inhibit_sleep(&m);
                 if hold.is_none() {
@@ -129,7 +148,9 @@ pub fn spawn() {
             crate::log("lock: cannot tell which login session this is; Super+L and the idle lock will not work");
             return;
         };
-        let Ok(sess) = zbus::blocking::Proxy::new(&sys, "org.freedesktop.login1", path.as_str(), "org.freedesktop.login1.Session") else { return };
+        let Ok(sess) = zbus::blocking::Proxy::new(&sys, "org.freedesktop.login1", path.as_str(), "org.freedesktop.login1.Session") else {
+            return;
+        };
         let Ok(sigs) = sess.receive_signal("Lock") else { return };
         crate::log("lock: Yggdrasil's own session, yggdrasil-lock answers lock requests");
         for _ in sigs {

@@ -81,18 +81,30 @@ pub fn parse(json: &str) -> Option<State> {
     let v: serde_json::Value = serde_json::from_str(json).ok()?;
     let mut ports = BTreeMap::new();
     for (n, p) in v["ports"].as_object()? {
-        ports.insert(n.clone(), Port {
-            name: p["name"].as_str().unwrap_or("").to_string(),
-            role: p["role"].as_str().unwrap_or("fan").to_string(),
-            fixed: p["fixed"].as_i64().unwrap_or(100),
-            cpu: curve_of(&p["cpu"]),
-            gpu: curve_of(&p["gpu"]),
-            follow: p["follow"].as_str().map(String::from),
-        });
+        ports.insert(
+            n.clone(),
+            Port {
+                name: p["name"].as_str().unwrap_or("").to_string(),
+                role: p["role"].as_str().unwrap_or("fan").to_string(),
+                fixed: p["fixed"].as_i64().unwrap_or(100),
+                cpu: curve_of(&p["cpu"]),
+                gpu: curve_of(&p["gpu"]),
+                follow: p["follow"].as_str().map(String::from),
+            },
+        );
     }
     let connected = v["connected"].as_object().map(|o| {
         o.iter()
-            .map(|(n, c)| (n.clone(), Connected { label: c["label"].as_str().unwrap_or("").to_string(), rpm: c["rpm"].as_i64().unwrap_or(0), pct: c["pct"].as_i64() }))
+            .map(|(n, c)| {
+                (
+                    n.clone(),
+                    Connected {
+                        label: c["label"].as_str().unwrap_or("").to_string(),
+                        rpm: c["rpm"].as_i64().unwrap_or(0),
+                        pct: c["pct"].as_i64(),
+                    },
+                )
+            })
             .collect()
     });
     Some(State {
@@ -201,7 +213,19 @@ fn helper() -> Option<&'static str> {
 impl Panel {
     pub fn new(ctx: &egui::Context) -> Panel {
         let (tx, rx) = channel();
-        let mut p = Panel { tx, rx, state: None, edit: BTreeMap::new(), edited: false, open: None, which_gpu: false, drag: None, status: String::new(), busy: false, loaded: None };
+        let mut p = Panel {
+            tx,
+            rx,
+            state: None,
+            edit: BTreeMap::new(),
+            edited: false,
+            open: None,
+            which_gpu: false,
+            drag: None,
+            status: String::new(),
+            busy: false,
+            loaded: None,
+        };
         p.load(ctx);
         p
     }
@@ -224,7 +248,13 @@ impl Panel {
         let (tx, ctx) = (self.tx.clone(), ctx.clone());
         std::thread::spawn(move || {
             let r = (|| {
-                let mut child = Command::new("pkexec").args([h, "set", "-"]).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().map_err(|_| "pkexec is not available".to_string())?;
+                let mut child = Command::new("pkexec")
+                    .args([h, "set", "-"])
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                    .map_err(|_| "pkexec is not available".to_string())?;
                 child.stdin.take().ok_or("no stdin")?.write_all(body.as_bytes()).map_err(|e| e.to_string())?;
                 let out = child.wait_with_output().map_err(|e| e.to_string())?;
                 match out.status.code() {
@@ -272,7 +302,14 @@ impl Panel {
         ctx.request_repaint_after(Duration::from_secs(3));
         if helper().is_none() {
             ui::group(ui, pal, None, |ui| {
-                ui::row(ui, pal, true, "Case fan control is not installed", Some("It comes with Yggdrasil's Settings package (yggdrasil-casefan)"), |_| {});
+                ui::row(
+                    ui,
+                    pal,
+                    true,
+                    "Case fan control is not installed",
+                    Some("It comes with Yggdrasil's Settings package (yggdrasil-casefan)"),
+                    |_| {},
+                );
             });
             return;
         }
@@ -306,7 +343,14 @@ impl Panel {
                 ui.label(if st.running { "On" } else { "Off" });
             });
             if let Some(e) = &st.error {
-                ui::row(ui, pal, false, "A sensor cannot be read", Some(&format!("{e}. Every port runs at full speed until it can.")), |_| {});
+                ui::row(
+                    ui,
+                    pal,
+                    false,
+                    "A sensor cannot be read",
+                    Some(&format!("{e}. Every port runs at full speed until it can.")),
+                    |_| {},
+                );
             }
         });
         let names: Vec<String> = self.edit.keys().cloned().collect();
@@ -327,18 +371,25 @@ impl Panel {
                     (None, _) => format!("{} RPM", c.rpm),
                 };
                 // the first line: the person's own name for what is plugged in (typed right there), and its speed now
-                ui::row_with(ui, pal, true, |ui| {
-                    let hint = if p.role == "pump" { "Name it, e.g. Graphics card pump" } else { "Name it, e.g. Top exhaust" };
-                    let mut name = p.name.clone();
-                    // wide enough for a long name, leaving the speed its room
-                    let width = (ui.available_width() - 40.0).clamp(180.0, 420.0);
-                    if ui::field(ui, pal, &mut name, hint, width, false).changed() {
-                        p.name = name.chars().filter(|c| !c.is_control()).take(NAME_MAX).collect();
-                        changed = true;
-                    }
-                }, None, |ui| {
-                    ui.label(speed);
-                });
+                ui::row_with(
+                    ui,
+                    pal,
+                    true,
+                    |ui| {
+                        let hint = if p.role == "pump" { "Name it, e.g. Graphics card pump" } else { "Name it, e.g. Top exhaust" };
+                        let mut name = p.name.clone();
+                        // wide enough for a long name, leaving the speed its room
+                        let width = (ui.available_width() - 40.0).clamp(180.0, 420.0);
+                        if ui::field(ui, pal, &mut name, hint, width, false).changed() {
+                            p.name = name.chars().filter(|c| !c.is_control()).take(NAME_MAX).collect();
+                            changed = true;
+                        }
+                    },
+                    None,
+                    |ui| {
+                        ui.label(speed);
+                    },
+                );
                 ui::row(ui, pal, false, "Kind", Some("A pump keeps one speed; a fan follows the temperatures"), |ui| {
                     let sel = (p.role != "pump") as usize;
                     if let Some(i) = ui::segmented(ui, pal, &["Pump", "Fan"], sel) {
@@ -350,13 +401,20 @@ impl Panel {
                 });
                 if p.role == "pump" {
                     let mut v = p.fixed.max(PUMP_MIN) as f32;
-                    ui::row(ui, pal, false, "Pump speed", Some(&format!("Always the same; never below {PUMP_MIN} %, so the liquid keeps moving")), |ui| {
-                        let r = ui::slider_range(ui, pal, &mut v, PUMP_MIN as f32..=100.0, " %");
-                        if (r.drag_stopped() || (r.changed() && !r.dragged())) && v as i64 != p.fixed {
-                            p.fixed = v as i64;
-                            changed = true;
-                        }
-                    });
+                    ui::row(
+                        ui,
+                        pal,
+                        false,
+                        "Pump speed",
+                        Some(&format!("Always the same; never below {PUMP_MIN} %, so the liquid keeps moving")),
+                        |ui| {
+                            let r = ui::slider_range(ui, pal, &mut v, PUMP_MIN as f32..=100.0, " %");
+                            if (r.drag_stopped() || (r.changed() && !r.dragged())) && v as i64 != p.fixed {
+                                p.fixed = v as i64;
+                                changed = true;
+                            }
+                        },
+                    );
                     return;
                 }
                 // following another fan: its curves, nothing to set here
@@ -365,7 +423,8 @@ impl Panel {
                     None => format!("Port {l}"),
                 };
                 let choices = leaders(&self.edit, &n);
-                let followers: Vec<String> = self.edit.iter().filter(|(_, x)| x.follow.as_deref() == Some(n.as_str())).map(|(k, _)| format!("Port {k}")).collect();
+                let followers: Vec<String> =
+                    self.edit.iter().filter(|(_, x)| x.follow.as_deref() == Some(n.as_str())).map(|(k, _)| format!("Port {k}")).collect();
                 if !choices.is_empty() || p.follow.is_some() {
                     let sub = match &p.follow {
                         Some(_) => "Same speed in percent: each fan at its own share of its top speed".to_string(),
@@ -379,7 +438,9 @@ impl Panel {
                                 changed = true;
                             }
                             for l in &choices {
-                                if ui.selectable_label(p.follow.as_deref() == Some(l.as_str()), name_of(l)).clicked() && p.follow.as_deref() != Some(l.as_str()) {
+                                if ui.selectable_label(p.follow.as_deref() == Some(l.as_str()), name_of(l)).clicked()
+                                    && p.follow.as_deref() != Some(l.as_str())
+                                {
                                     p.follow = Some(l.clone());
                                     changed = true;
                                 }
@@ -390,7 +451,14 @@ impl Panel {
                 if let Some(l) = p.follow.clone() {
                     let low = self.edit.get(&l).map(|x| x.cpu.iter().chain(x.gpu.iter()).any(|q| q[1] < BLIND_MIN)).unwrap_or(false);
                     if blind && low {
-                        ui.label(RichText::new(format!("{}'s curves go below {BLIND_MIN} %: this fan reports no speed, so it could stop without anyone seeing.", name_of(&l))).size(11.5).color(pal.red));
+                        ui.label(
+                            RichText::new(format!(
+                                "{}'s curves go below {BLIND_MIN} %: this fan reports no speed, so it could stop without anyone seeing.",
+                                name_of(&l)
+                            ))
+                            .size(11.5)
+                            .color(pal.red),
+                        );
                     }
                     return;
                 }
@@ -418,7 +486,11 @@ impl Panel {
                 let curves_sub = if followers.is_empty() {
                     "It runs at whichever curve asks for more: it follows the part working hardest".to_string()
                 } else {
-                    format!("It runs at whichever curve asks for more. {} also run{} on these", followers.join(" and "), if followers.len() == 1 { "s" } else { "" })
+                    format!(
+                        "It runs at whichever curve asks for more. {} also run{} on these",
+                        followers.join(" and "),
+                        if followers.len() == 1 { "s" } else { "" }
+                    )
                 };
                 ui::row(ui, pal, false, "Curves", Some(&curves_sub), |ui| {
                     if ui::quiet(ui, pal, if is_open { "Hide" } else { "Edit…" }).clicked() {
@@ -456,7 +528,8 @@ impl Panel {
             }
         }
         // connected ports the setting leaves alone
-        let free: Vec<(String, Connected)> = connected.iter().filter(|(n, _)| !self.edit.contains_key(*n)).map(|(n, c)| (n.clone(), c.clone())).collect();
+        let free: Vec<(String, Connected)> =
+            connected.iter().filter(|(n, _)| !self.edit.contains_key(*n)).map(|(n, c)| (n.clone(), c.clone())).collect();
         if !free.is_empty() {
             ui::group(ui, pal, Some("Other connected ports"), |ui| {
                 for (i, (n, c)) in free.iter().enumerate() {
@@ -465,7 +538,17 @@ impl Panel {
                         if ui::quiet(ui, pal, "Control it as a fan").clicked() {
                             let min = if c.rpm == 0 { BLIND_MIN } else { FAN_MIN };
                             let pr = &profiles()[1];
-                            self.edit.insert(n.clone(), Port { name: String::new(), role: "fan".into(), fixed: 100, cpu: floored(&pr.1, min), gpu: floored(&pr.2, min), follow: None });
+                            self.edit.insert(
+                                n.clone(),
+                                Port {
+                                    name: String::new(),
+                                    role: "fan".into(),
+                                    fixed: 100,
+                                    cpu: floored(&pr.1, min),
+                                    gpu: floored(&pr.2, min),
+                                    follow: None,
+                                },
+                            );
                             self.edited = true;
                         }
                     });

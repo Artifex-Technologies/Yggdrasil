@@ -137,7 +137,11 @@ pub fn parse_sink_inputs(json: &str) -> Vec<AppVol> {
         .filter_map(|i| {
             let id = i.get("index")?.as_u64()? as u32;
             let props = i.get("properties")?;
-            let name = ["application.name", "media.name"].iter().find_map(|k| props.get(k).and_then(|v| v.as_str())).unwrap_or("Sound").to_string();
+            let name = ["application.name", "media.name"]
+                .iter()
+                .find_map(|k| props.get(k).and_then(|v| v.as_str()))
+                .unwrap_or("Sound")
+                .to_string();
             let vol = i.get("volume")?.as_object()?.values().next()?.get("value_percent")?.as_str()?;
             Some(AppVol { id, name, percent: vol.trim_end_matches('%').parse().ok()? })
         })
@@ -234,7 +238,13 @@ pub fn wrap(font: &ab_glyph::FontVec, size: f32, text: &str, max: f32) -> Vec<St
 // ---------------------------------------------------------------- reading
 
 fn out(cmd: &str, args: &[&str]) -> String {
-    Command::new(cmd).args(args).stdin(Stdio::null()).stderr(Stdio::null()).output().map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default()
+    Command::new(cmd)
+        .args(args)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default()
 }
 
 fn cache_dir() -> Option<PathBuf> {
@@ -248,7 +258,11 @@ fn cover_file(url: &str) -> Option<String> {
     if let Some(p) = url.strip_prefix("file://") {
         let p = p.replace("%20", " ");
         // a browser's cover is often a bare temp file: the decoder needs an extension, so keep a copy that has one
-        let known = Path::new(&p).extension().and_then(|e| e.to_str()).map(|e| matches!(e.to_lowercase().as_str(), "jpg" | "jpeg" | "png" | "webp" | "gif")).unwrap_or(false);
+        let known = Path::new(&p)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| matches!(e.to_lowercase().as_str(), "jpg" | "jpeg" | "png" | "webp" | "gif"))
+            .unwrap_or(false);
         if known {
             return Some(p);
         }
@@ -280,7 +294,8 @@ fn cover_file(url: &str) -> Option<String> {
             return Some(p.display().to_string());
         }
     }
-    let ok = Command::new("curl").args(["-sfL", "--max-time", "6", "-o"]).arg(&base).arg(url).status().map(|s| s.success()).unwrap_or(false);
+    let ok =
+        Command::new("curl").args(["-sfL", "--max-time", "6", "-o"]).arg(&base).arg(url).status().map(|s| s.success()).unwrap_or(false);
     if !ok {
         let _ = std::fs::remove_file(&base);
         return None;
@@ -314,14 +329,27 @@ fn media() -> Option<Media> {
     let list = out("busctl", &["--user", "list", "--no-legend", "--no-pager"]);
     let mut best: Option<Media> = None;
     for bus in list.lines().filter_map(|l| l.split_whitespace().next()).filter(|n| n.starts_with("org.mpris.MediaPlayer2.")) {
-        let get = |prop: &str| parse_busctl(&out("busctl", &["--user", "--json=short", "get-property", bus, "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", prop]));
+        let get = |prop: &str| {
+            parse_busctl(&out(
+                "busctl",
+                &["--user", "--json=short", "get-property", bus, "/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", prop],
+            ))
+        };
         let status = get("PlaybackStatus").and_then(|v| v.as_str().map(String::from)).unwrap_or_default();
         let (title, artist, art, len_us) = get("Metadata").map(|d| parse_metadata(&d)).unwrap_or_default();
         let pos_us = get("Position").and_then(|v| v.as_u64().or_else(|| v.as_i64().map(|n| n.max(0) as u64))).unwrap_or(0);
         if title.is_empty() && status != "Playing" {
             continue;
         }
-        let m = Media { bus: bus.to_string(), title, artist, playing: status == "Playing", art: if art.is_empty() { None } else { cover_file(&art) }, pos_us, len_us };
+        let m = Media {
+            bus: bus.to_string(),
+            title,
+            artist,
+            playing: status == "Playing",
+            art: if art.is_empty() { None } else { cover_file(&art) },
+            pos_us,
+            len_us,
+        };
         // one that is playing wins over one that is paused
         if best.as_ref().map(|b| !b.playing && m.playing).unwrap_or(true) {
             best = Some(m);
@@ -347,7 +375,11 @@ fn temperature() -> Option<u32> {
 fn disk() -> (u64, u64) {
     let o = out("df", &["-B1", "--output=used,size", "/"]);
     let n: Vec<u64> = o.lines().nth(1).unwrap_or("").split_whitespace().filter_map(|v| v.parse().ok()).collect();
-    if n.len() == 2 { (n[0] >> 30, n[1] >> 30) } else { (0, 0) }
+    if n.len() == 2 {
+        (n[0] >> 30, n[1] >> 30)
+    } else {
+        (0, 0)
+    }
 }
 
 /// Reads what the notch shows while `active` is set, into `shared`: what is playing, volumes and load
@@ -376,7 +408,11 @@ pub fn spawn_poller(active: Arc<AtomicBool>, shared: Arc<Mutex<Snapshot>>) {
                 *g = snap.clone();
             }
             if round % 3 == 0 {
-                snap.wifi = parse_wifi(&out("nmcli", &["radio", "wifi"]), &out("nmcli", &["-t", "-f", "TYPE", "device"]), &out("nmcli", &["-t", "-f", "NAME,TYPE", "connection", "show", "--active"]));
+                snap.wifi = parse_wifi(
+                    &out("nmcli", &["radio", "wifi"]),
+                    &out("nmcli", &["-t", "-f", "TYPE", "device"]),
+                    &out("nmcli", &["-t", "-f", "NAME,TYPE", "connection", "show", "--active"]),
+                );
                 snap.bt = {
                     let show = out("timeout", &["2", "bluetoothctl", "show"]);
                     match crate::status::parse_bt(&show, "") {
@@ -475,8 +511,20 @@ fn round_corners(pm: &mut Pixmap, radius: f32) {
     for y in 0..rows {
         for x in 0..stride {
             let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
-            let cx = if px < r { r } else if px > w - r { w - r } else { continue };
-            let cy = if py < r { r } else if py > h - r { h - r } else { continue };
+            let cx = if px < r {
+                r
+            } else if px > w - r {
+                w - r
+            } else {
+                continue;
+            };
+            let cy = if py < r {
+                r
+            } else if py > h - r {
+                h - r
+            } else {
+                continue;
+            };
             let dist = ((px - cx).powi(2) + (py - cy).powi(2)).sqrt();
             let cover = (r - dist + 0.5).clamp(0.0, 1.0);
             if cover < 1.0 {
@@ -556,7 +604,14 @@ pub fn start_recording() -> Result<(Child, PathBuf), String> {
     let dir = voice_dir().ok_or("Could not make a private folder for the recording.")?;
     let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let path = dir.join(format!("ask-{stamp}.wav"));
-    let child = Command::new("pw-record").args(["--rate", "16000", "--channels", "1", "--format", "s16"]).arg(&path).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|_| "Recording needs PipeWire (pw-record), which is not installed.".to_string())?;
+    let child = Command::new("pw-record")
+        .args(["--rate", "16000", "--channels", "1", "--format", "s16"])
+        .arg(&path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|_| "Recording needs PipeWire (pw-record), which is not installed.".to_string())?;
     // the assistant may wake its model while the question is being said, so the answer does not wait for it
     if let Some(w) = crate::assistant::get().and_then(|a| a.warm()) {
         quiet(w);
@@ -645,7 +700,13 @@ impl Speaker {
 
 /// Gives the recording to the assistant and reports its reply or why there is none. Each sentence of the answer is passed on as it
 /// arrives (`say`), so it can be spoken while the rest is still being written.
-pub fn ask_assistant(wav: PathBuf, conversation: Option<String>, heard: calloop::channel::Sender<String>, say: calloop::channel::Sender<String>, done: calloop::channel::Sender<Result<String, String>>) {
+pub fn ask_assistant(
+    wav: PathBuf,
+    conversation: Option<String>,
+    heard: calloop::channel::Sender<String>,
+    say: calloop::channel::Sender<String>,
+    done: calloop::channel::Sender<Result<String, String>>,
+) {
     std::thread::spawn(move || {
         let r = run_ask(&wav, conversation.as_deref(), &heard, &say);
         let _ = std::fs::remove_file(&wav); // the question is not kept
@@ -655,7 +716,12 @@ pub fn ask_assistant(wav: PathBuf, conversation: Option<String>, heard: calloop:
 
 /// Runs the assistant's `ask` program, passing on its first line (`Heard: "..."`) as soon as it is printed, so the card can show
 /// what was understood while the answer is still being worked on. A conversation's turns share YGGDRASIL_CONVERSATION.
-fn run_ask(wav: &PathBuf, conversation: Option<&str>, heard: &calloop::channel::Sender<String>, say: &calloop::channel::Sender<String>) -> Result<String, String> {
+fn run_ask(
+    wav: &PathBuf,
+    conversation: Option<&str>,
+    heard: &calloop::channel::Sender<String>,
+    say: &calloop::channel::Sender<String>,
+) -> Result<String, String> {
     use std::io::{BufRead, BufReader};
     let name = crate::assistant::name();
     let a = crate::assistant::get().ok_or_else(|| "No assistant is installed.".to_string())?;
@@ -663,7 +729,12 @@ fn run_ask(wav: &PathBuf, conversation: Option<&str>, heard: &calloop::channel::
     if let Some(id) = conversation {
         cmd.env("YGGDRASIL_CONVERSATION", id);
     }
-    let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|_| format!("{name} is not installed properly (its program is missing)."))?;
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|_| format!("{name} is not installed properly (its program is missing)."))?;
     let mut text = String::new();
     if let Some(out) = child.stdout.take() {
         for (i, line) in BufReader::new(out).lines().map_while(Result::ok).enumerate() {
@@ -791,8 +862,18 @@ pub fn set_volume(target: &Slider, percent: u32) {
                 for (target, p) in latest {
                     let p = p.min(100);
                     let _ = match target {
-                        Slider::Master => Command::new("wpctl").args(["set-volume", "@DEFAULT_AUDIO_SINK@", &format!("{:.2}", p as f32 / 100.0)]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status(),
-                        Slider::App(id) => Command::new("pactl").args(["set-sink-input-volume", &id.to_string(), &format!("{p}%")]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status(),
+                        Slider::Master => Command::new("wpctl")
+                            .args(["set-volume", "@DEFAULT_AUDIO_SINK@", &format!("{:.2}", p as f32 / 100.0)])
+                            .stdin(Stdio::null())
+                            .stdout(Stdio::null())
+                            .stderr(Stdio::null())
+                            .status(),
+                        Slider::App(id) => Command::new("pactl")
+                            .args(["set-sink-input-volume", &id.to_string(), &format!("{p}%")])
+                            .stdin(Stdio::null())
+                            .stdout(Stdio::null())
+                            .stderr(Stdio::null())
+                            .status(),
                         Slider::Night => continue,
                     };
                 }
@@ -883,7 +964,16 @@ pub fn over(p: (f32, f32), r: (f32, f32, f32, f32)) -> bool {
 }
 
 /// A round-cornered button with a symbolic icon; a hit is added for it.
-fn icon_button(pix: &mut Pixmap, s: f32, icons: &mut Icons, hits: &mut Vec<FHit>, pointer: (f32, f32), rect: (f32, f32, f32, f32), icon: &str, act: FAct) {
+fn icon_button(
+    pix: &mut Pixmap,
+    s: f32,
+    icons: &mut Icons,
+    hits: &mut Vec<FHit>,
+    pointer: (f32, f32),
+    rect: (f32, f32, f32, f32),
+    icon: &str,
+    act: FAct,
+) {
     if over(pointer, rect) {
         paint::fill_rounded(pix, rect.0 * s, rect.1 * s, rect.2 * s, rect.3 * s, 10.0 * s, (255, 255, 255, 28));
     }
@@ -896,7 +986,11 @@ fn icon_button(pix: &mut Pixmap, s: f32, icons: &mut Icons, hits: &mut Vec<FHit>
 
 fn media_buttons(pix: &mut Pixmap, s: f32, icons: &mut Icons, hits: &mut Vec<FHit>, pointer: (f32, f32), x: f32, y: f32, playing: bool) {
     let play = if playing { "media-playback-pause-symbolic" } else { "media-playback-start-symbolic" };
-    for (i, (icon, act)) in [("media-skip-backward-symbolic", FAct::Prev), (play, FAct::PlayPause), ("media-skip-forward-symbolic", FAct::Next)].into_iter().enumerate() {
+    for (i, (icon, act)) in
+        [("media-skip-backward-symbolic", FAct::Prev), (play, FAct::PlayPause), ("media-skip-forward-symbolic", FAct::Next)]
+            .into_iter()
+            .enumerate()
+    {
         icon_button(pix, s, icons, hits, pointer, (x + 36.0 * i as f32, y, 34.0, 34.0), icon, act);
     }
 }
@@ -904,7 +998,21 @@ fn media_buttons(pix: &mut Pixmap, s: f32, icons: &mut Icons, hits: &mut Vec<FHi
 /// One tile of the Controls grid: a round icon, a label and a line under it; lit when on. A tile may
 /// have a chevron at its right with an action of its own.
 #[allow(clippy::too_many_arguments)]
-fn tile(pix: &mut Pixmap, s: f32, fonts: &Fonts, icons: &mut Icons, hits: &mut Vec<FHit>, pointer: (f32, f32), rect: (f32, f32, f32, f32), on: bool, icon: &str, label: &str, sub: &str, act: FAct, more: Option<FAct>) {
+fn tile(
+    pix: &mut Pixmap,
+    s: f32,
+    fonts: &Fonts,
+    icons: &mut Icons,
+    hits: &mut Vec<FHit>,
+    pointer: (f32, f32),
+    rect: (f32, f32, f32, f32),
+    on: bool,
+    icon: &str,
+    label: &str,
+    sub: &str,
+    act: FAct,
+    more: Option<FAct>,
+) {
     let hot = over(pointer, rect);
     let fill = match (on, hot) {
         (true, true) => (140, 100, 226, 255),
@@ -921,7 +1029,15 @@ fn tile(pix: &mut Pixmap, s: f32, fonts: &Fonts, icons: &mut Icons, hits: &mut V
     }
     let room = (w - 46.0 - chev - 4.0) * s;
     paint::draw_text(pix, &fonts.bold, 12.0 * s, (x + 44.0) * s, (y + h / 2.0 - 7.0) * s, WHITE, &fit(&fonts.bold, 12.0 * s, label, room));
-    paint::draw_text(pix, &fonts.regular, 10.0 * s, (x + 44.0) * s, (y + h / 2.0 + 8.0) * s, if on { (232, 224, 255, 255) } else { DIM }, &fit(&fonts.regular, 10.0 * s, sub, room));
+    paint::draw_text(
+        pix,
+        &fonts.regular,
+        10.0 * s,
+        (x + 44.0) * s,
+        (y + h / 2.0 + 8.0) * s,
+        if on { (232, 224, 255, 255) } else { DIM },
+        &fit(&fonts.regular, 10.0 * s, sub, room),
+    );
     match more {
         Some(m) => {
             hits.push(FHit { rect: (x, y, w - chev, h), act });
@@ -943,7 +1059,11 @@ pub fn controls_height(m: &Model, st: &FyState) -> f32 {
     let media = if snap.media.is_some() { 116.0 } else { 0.0 };
     let base: f32 = 174.0 + media + mixer;
     // Night Light's drop-down hangs from its tile over what is below; the card grows if it would reach past the bottom
-    if st.night { base.max(NIGHT_TOP + NIGHT_H + 14.0) } else { base }
+    if st.night {
+        base.max(NIGHT_TOP + NIGHT_H + 14.0)
+    } else {
+        base
+    }
 }
 
 /// Night Light's drop-down: its top below the card's top, and its height.
@@ -956,7 +1076,11 @@ fn rgb((r, g, b): (u8, u8, u8)) -> Rgba {
 
 /// 2100 as "2,100".
 fn thousands(n: u32) -> String {
-    if n >= 1000 { format!("{},{:03}", n / 1000, n % 1000) } else { n.to_string() }
+    if n >= 1000 {
+        format!("{},{:03}", n / 1000, n % 1000)
+    } else {
+        n.to_string()
+    }
 }
 
 /// Night Light's drop-down under its tile: the temperature, on a slider painted in the colours it gives (warm at the left), and
@@ -988,7 +1112,15 @@ fn paint_night(pix: &mut Pixmap, s: f32, m: &Model, (x, y, w): (f32, f32, f32), 
     hits.push(FHit { rect: (lx, sy - 12.0, iw, 24.0), act: FAct::Slide(Slider::Night) });
 
     let b = (lx, y + 70.0, iw, 26.0);
-    paint::fill_rounded(pix, b.0 * s, b.1 * s, b.2 * s, b.3 * s, 9.0 * s, if over(pointer, b) { (255, 255, 255, 34) } else { (255, 255, 255, 16) });
+    paint::fill_rounded(
+        pix,
+        b.0 * s,
+        b.1 * s,
+        b.2 * s,
+        b.3 * s,
+        9.0 * s,
+        if over(pointer, b) { (255, 255, 255, 34) } else { (255, 255, 255, 16) },
+    );
     let label = "Night Light settings…";
     let lw = paint::text_width(&fonts.regular, 11.5 * s, label);
     paint::draw_text(pix, &fonts.regular, 11.5 * s, (b.0 + b.2 / 2.0) * s - lw / 2.0, (b.1 + b.3 / 2.0) * s, WHITE, label);
@@ -1001,7 +1133,17 @@ fn clock(us: u64) -> String {
 
 /// Controls: Wi-Fi, Bluetooth, sound output, Night Light, dark mode, the volume, and what is playing.
 #[allow(clippy::too_many_arguments)]
-fn paint_controls(pix: &mut Pixmap, s: f32, m: &Model, st: &FyState, card: (f32, f32, f32, f32), pointer: (f32, f32), fonts: &Fonts, icons: &mut Icons, hits: &mut Vec<FHit>) {
+fn paint_controls(
+    pix: &mut Pixmap,
+    s: f32,
+    m: &Model,
+    st: &FyState,
+    card: (f32, f32, f32, f32),
+    pointer: (f32, f32),
+    fonts: &Fonts,
+    icons: &mut Icons,
+    hits: &mut Vec<FHit>,
+) {
     let (cx, cy, cw, _ch) = card;
     let (x0, inner) = (cx + 20.0, cw - 40.0);
     let snap = &m.fylgja.snap;
@@ -1016,17 +1158,63 @@ fn paint_controls(pix: &mut Pixmap, s: f32, m: &Model, st: &FyState, card: (f32,
         None => (false, if matches!(m.status.net, crate::status::Net::Wired) { "Wired".to_string() } else { "No adapter".to_string() }),
     };
     let wifi_sub = if wait { "…".to_string() } else { wifi_sub };
-    tile(pix, s, fonts, icons, hits, pointer, (x0, y0, tw, 46.0), wifi_on, "network-wireless-symbolic", "Wi-Fi", &wifi_sub, FAct::Wifi, Some(FAct::WifiMore));
+    tile(
+        pix,
+        s,
+        fonts,
+        icons,
+        hits,
+        pointer,
+        (x0, y0, tw, 46.0),
+        wifi_on,
+        "network-wireless-symbolic",
+        "Wi-Fi",
+        &wifi_sub,
+        FAct::Wifi,
+        Some(FAct::WifiMore),
+    );
     let (bt_on, bt_sub) = match &snap.bt {
         Some((true, name)) => (true, if name.is_empty() { "On".to_string() } else { name.clone() }),
         Some((false, _)) => (false, "Off".to_string()),
         None => (false, "No adapter".to_string()),
     };
     let bt_sub = if wait { "…".to_string() } else { bt_sub };
-    tile(pix, s, fonts, icons, hits, pointer, (x0 + tw + 8.0, y0, tw, 46.0), bt_on, if bt_on { "bluetooth-active-symbolic" } else { "bluetooth-disabled-symbolic" }, "Bluetooth", &bt_sub, FAct::Bt, Some(FAct::BtMore));
+    tile(
+        pix,
+        s,
+        fonts,
+        icons,
+        hits,
+        pointer,
+        (x0 + tw + 8.0, y0, tw, 46.0),
+        bt_on,
+        if bt_on { "bluetooth-active-symbolic" } else { "bluetooth-disabled-symbolic" },
+        "Bluetooth",
+        &bt_sub,
+        FAct::Bt,
+        Some(FAct::BtMore),
+    );
     let muted = matches!(snap.master, Some((_, true)));
-    let sink = if wait { "…".to_string() } else { snap.sinks.iter().find(|(n, _)| *n == snap.default_sink).map(|(_, d)| d.clone()).unwrap_or_else(|| "No output".to_string()) };
-    tile(pix, s, fonts, icons, hits, pointer, (x0 + 2.0 * (tw + 8.0), y0, tw, 46.0), !muted && snap.master.is_some() || st.picker, "audio-volume-high-symbolic", "Audio", &sink, FAct::Mute, if snap.sinks.is_empty() { None } else { Some(FAct::Picker) });
+    let sink = if wait {
+        "…".to_string()
+    } else {
+        snap.sinks.iter().find(|(n, _)| *n == snap.default_sink).map(|(_, d)| d.clone()).unwrap_or_else(|| "No output".to_string())
+    };
+    tile(
+        pix,
+        s,
+        fonts,
+        icons,
+        hits,
+        pointer,
+        (x0 + 2.0 * (tw + 8.0), y0, tw, 46.0),
+        !muted && snap.master.is_some() || st.picker,
+        "audio-volume-high-symbolic",
+        "Audio",
+        &sink,
+        FAct::Mute,
+        if snap.sinks.is_empty() { None } else { Some(FAct::Picker) },
+    );
 
     // row 2: Night Light, dark mode
     let hw = (inner - 8.0) / 2.0;
@@ -1037,8 +1225,36 @@ fn paint_controls(pix: &mut Pixmap, s: f32, m: &Model, st: &FyState, card: (f32,
         (_, false, true) => format!("Off until {}", nightlight::fmt_time(n.on)),
         (_, on, false) => (if on { "On" } else { "Off" }).to_string(),
     };
-    tile(pix, s, fonts, icons, hits, pointer, (x0, y0 + 54.0, hw, 46.0), snap.night, "night-light-symbolic", "Night Light", &night_sub, FAct::Night, Some(FAct::NightMore));
-    tile(pix, s, fonts, icons, hits, pointer, (x0 + hw + 8.0, y0 + 54.0, hw, 46.0), m.dark, "weather-clear-night-symbolic", "Dark mode", if m.dark { "On" } else { "Off" }, FAct::Dark, None);
+    tile(
+        pix,
+        s,
+        fonts,
+        icons,
+        hits,
+        pointer,
+        (x0, y0 + 54.0, hw, 46.0),
+        snap.night,
+        "night-light-symbolic",
+        "Night Light",
+        &night_sub,
+        FAct::Night,
+        Some(FAct::NightMore),
+    );
+    tile(
+        pix,
+        s,
+        fonts,
+        icons,
+        hits,
+        pointer,
+        (x0 + hw + 8.0, y0 + 54.0, hw, 46.0),
+        m.dark,
+        "weather-clear-night-symbolic",
+        "Dark mode",
+        if m.dark { "On" } else { "Off" },
+        FAct::Dark,
+        None,
+    );
 
     // the master volume, with a caret that drops down the mixer (only when an app is playing sound)
     let has_apps_early = !snap.apps.is_empty();
@@ -1048,13 +1264,29 @@ fn paint_controls(pix: &mut Pixmap, s: f32, m: &Model, st: &FyState, card: (f32,
     let pct = snap.master.map(|(p, _)| p).unwrap_or(0);
     let fillw = (inner * pct.min(100) as f32 / 100.0).max(30.0);
     if snap.master.is_some() {
-        paint::fill_rounded(pix, vr.0 * s, vr.1 * s, fillw * s, vr.3 * s, 15.0 * s, if muted { (90, 90, 104, 255) } else { paint::accent(255) });
+        paint::fill_rounded(
+            pix,
+            vr.0 * s,
+            vr.1 * s,
+            fillw * s,
+            vr.3 * s,
+            15.0 * s,
+            if muted { (90, 90, 104, 255) } else { paint::accent(255) },
+        );
     }
-    if let Some(ic) = icons.get_tinted(if muted { "audio-volume-muted-symbolic" } else { "audio-volume-high-symbolic" }, (16.0 * s) as u32, WHITE) {
+    if let Some(ic) =
+        icons.get_tinted(if muted { "audio-volume-muted-symbolic" } else { "audio-volume-high-symbolic" }, (16.0 * s) as u32, WHITE)
+    {
         paint::draw_pixmap(pix, ic, ((x0 + 10.0) * s) as i32, ((vy + 7.0) * s) as i32);
     }
     paint::draw_text(pix, &fonts.bold, 11.0 * s, (x0 + 34.0) * s, (vy + 15.0) * s, WHITE, "Master");
-    let label = if snap.master.is_some() { format!("{pct}%") } else if snap.ready { "No sound output".to_string() } else { String::new() };
+    let label = if snap.master.is_some() {
+        format!("{pct}%")
+    } else if snap.ready {
+        "No sound output".to_string()
+    } else {
+        String::new()
+    };
     let lw = paint::text_width(&fonts.bold, 12.0 * s, &label);
     let label_right = if has_apps_early { x0 + inner - 38.0 } else { x0 + inner - 14.0 };
     paint::draw_text(pix, &fonts.bold, 12.0 * s, label_right * s - lw, (vy + 15.0) * s, WHITE, &label);
@@ -1079,10 +1311,26 @@ fn paint_controls(pix: &mut Pixmap, s: f32, m: &Model, st: &FyState, card: (f32,
     // the mixer: every app that is playing sound, each with its own volume
     let mut next = vy + 40.0;
     if st.mixer && has_apps {
-        paint::fill_rounded(pix, x0 * s, (vy + 36.0) * s, inner * s, (snap.apps.len().min(4) as f32 * 26.0 + 4.0) * s, 12.0 * s, (24, 24, 30, 255));
+        paint::fill_rounded(
+            pix,
+            x0 * s,
+            (vy + 36.0) * s,
+            inner * s,
+            (snap.apps.len().min(4) as f32 * 26.0 + 4.0) * s,
+            12.0 * s,
+            (24, 24, 30, 255),
+        );
         for (i, a) in snap.apps.iter().take(4).enumerate() {
             let y = vy + 52.0 + 26.0 * i as f32;
-            paint::draw_text(pix, &fonts.regular, 11.5 * s, (x0 + 14.0) * s, y * s, WHITE, &fit(&fonts.regular, 11.5 * s, &a.name, 96.0 * s));
+            paint::draw_text(
+                pix,
+                &fonts.regular,
+                11.5 * s,
+                (x0 + 14.0) * s,
+                y * s,
+                WHITE,
+                &fit(&fonts.regular, 11.5 * s, &a.name, 96.0 * s),
+            );
             let (sx, sw) = (x0 + 120.0, inner - 120.0 - 56.0);
             slider(pix, s, sx, y, sw, a.percent, (176, 150, 232, 255));
             let p = format!("{}%", a.percent);
@@ -1097,7 +1345,15 @@ fn paint_controls(pix: &mut Pixmap, s: f32, m: &Model, st: &FyState, card: (f32,
     let (my, mh) = (next + 0.0, 106.0);
     if let Some(md) = &snap.media {
         paint::fill_rounded(pix, x0 * s, my * s, inner * s, mh * s, 14.0 * s, (24, 24, 30, 255));
-        paint::draw_text(pix, &fonts.regular, 10.0 * s, (x0 + 14.0) * s, (my + 14.0) * s, DIM, &fit(&fonts.regular, 10.0 * s, &sink, 200.0 * s));
+        paint::draw_text(
+            pix,
+            &fonts.regular,
+            10.0 * s,
+            (x0 + 14.0) * s,
+            (my + 14.0) * s,
+            DIM,
+            &fit(&fonts.regular, 10.0 * s, &sink, 200.0 * s),
+        );
         let art = (x0 + 14.0, my + 26.0, 58.0, 58.0);
         match &m.fylgja.art {
             Some(a) => paint::draw_pixmap(pix, a, (art.0 * s) as i32, (art.1 * s) as i32),
@@ -1135,9 +1391,25 @@ fn paint_controls(pix: &mut Pixmap, s: f32, m: &Model, st: &FyState, card: (f32,
             let rect = (lx + 5.0, ly + 5.0 + 30.0 * i as f32, lw - 10.0, 28.0);
             let current = *name == snap.default_sink;
             if current || over(pointer, rect) {
-                paint::fill_rounded(pix, rect.0 * s, rect.1 * s, rect.2 * s, rect.3 * s, 8.0 * s, if current { paint::accent(90) } else { (255, 255, 255, 24) });
+                paint::fill_rounded(
+                    pix,
+                    rect.0 * s,
+                    rect.1 * s,
+                    rect.2 * s,
+                    rect.3 * s,
+                    8.0 * s,
+                    if current { paint::accent(90) } else { (255, 255, 255, 24) },
+                );
             }
-            paint::draw_text(pix, &fonts.regular, 11.5 * s, (rect.0 + 10.0) * s, (rect.1 + 14.0) * s, WHITE, &fit(&fonts.regular, 11.5 * s, desc, (rect.2 - 20.0) * s));
+            paint::draw_text(
+                pix,
+                &fonts.regular,
+                11.5 * s,
+                (rect.0 + 10.0) * s,
+                (rect.1 + 14.0) * s,
+                WHITE,
+                &fit(&fonts.regular, 11.5 * s, desc, (rect.2 - 20.0) * s),
+            );
             hits.push(FHit { rect, act: FAct::Sink(name.clone()) });
         }
     }
@@ -1150,7 +1422,16 @@ fn paint_controls(pix: &mut Pixmap, s: f32, m: &Model, st: &FyState, card: (f32,
 }
 
 /// Draws the notch and returns its card and what can be clicked, in logical pixels.
-pub fn paint(pix: &mut Pixmap, s: f32, m: &Model, st: &FyState, slide: f32, pointer: (f32, f32), fonts: &Fonts, icons: &mut Icons) -> ((f32, f32, f32, f32), Vec<FHit>) {
+pub fn paint(
+    pix: &mut Pixmap,
+    s: f32,
+    m: &Model,
+    st: &FyState,
+    slide: f32,
+    pointer: (f32, f32),
+    fonts: &Fonts,
+    icons: &mut Icons,
+) -> ((f32, f32, f32, f32), Vec<FHit>) {
     pix.fill(paint::color((0, 0, 0, 0)));
     let w = pix.width() as f32 / s;
     if !visible(m, st) {
@@ -1178,19 +1459,59 @@ pub fn paint(pix: &mut Pixmap, s: f32, m: &Model, st: &FyState, slide: f32, poin
                 let r = if secs % 2 == 0 { 9.0 } else { 7.0 };
                 paint::fill_circle(pix, (x0 + 14.0) * s, (cy + 34.0) * s, (r + 7.0) * s, paint::accent(70));
                 paint::fill_circle(pix, (x0 + 14.0) * s, (cy + 34.0) * s, r * s, paint::accent(255));
-                paint::draw_text(pix, &fonts.bold, 15.0 * s, (x0 + 42.0) * s, (cy + 34.0) * s, WHITE, &format!("Listening…  {}:{:02}", secs / 60, secs % 60));
-                paint::draw_text(pix, &fonts.regular, 12.0 * s, x0 * s, (cy + 72.0) * s, DIM, "Ask your question. Press the shortcut again to send it, Esc to cancel.");
+                paint::draw_text(
+                    pix,
+                    &fonts.bold,
+                    15.0 * s,
+                    (x0 + 42.0) * s,
+                    (cy + 34.0) * s,
+                    WHITE,
+                    &format!("Listening…  {}:{:02}", secs / 60, secs % 60),
+                );
+                paint::draw_text(
+                    pix,
+                    &fonts.regular,
+                    12.0 * s,
+                    x0 * s,
+                    (cy + 72.0) * s,
+                    DIM,
+                    "Ask your question. Press the shortcut again to send it, Esc to cancel.",
+                );
                 let b = (x0 + inner - 74.0, cy + ch - 40.0, 74.0, 28.0);
-                paint::fill_rounded(pix, b.0 * s, b.1 * s, b.2 * s, b.3 * s, 10.0 * s, if over(pointer, b) { (150, 110, 232, 255) } else { paint::accent(255) });
+                paint::fill_rounded(
+                    pix,
+                    b.0 * s,
+                    b.1 * s,
+                    b.2 * s,
+                    b.3 * s,
+                    10.0 * s,
+                    if over(pointer, b) { (150, 110, 232, 255) } else { paint::accent(255) },
+                );
                 let lw = paint::text_width(&fonts.bold, 12.5 * s, "Send");
                 paint::draw_text(pix, &fonts.bold, 12.5 * s, (b.0 + b.2 / 2.0) * s - lw / 2.0, (b.1 + b.3 / 2.0) * s, WHITE, "Send");
                 hits.push(FHit { rect: b, act: FAct::VoiceStop });
             }
             Voice::Thinking(heard) => {
                 paint::fill_circle(pix, (x0 + 14.0) * s, (cy + 40.0) * s, 7.0 * s, paint::accent(255));
-                paint::draw_text(pix, &fonts.bold, 15.0 * s, (x0 + 42.0) * s, (cy + 40.0) * s, WHITE, &format!("{} is thinking…", crate::assistant::name()));
+                paint::draw_text(
+                    pix,
+                    &fonts.bold,
+                    15.0 * s,
+                    (x0 + 42.0) * s,
+                    (cy + 40.0) * s,
+                    WHITE,
+                    &format!("{} is thinking…", crate::assistant::name()),
+                );
                 if !heard.is_empty() {
-                    paint::draw_text(pix, &fonts.regular, 12.5 * s, x0 * s, (cy + 76.0) * s, DIM, &fit(&fonts.regular, 12.5 * s, heard, inner * s));
+                    paint::draw_text(
+                        pix,
+                        &fonts.regular,
+                        12.5 * s,
+                        x0 * s,
+                        (cy + 76.0) * s,
+                        DIM,
+                        &fit(&fonts.regular, 12.5 * s, heard, inner * s),
+                    );
                 }
             }
             Voice::Reply(text) => {
@@ -1203,7 +1524,15 @@ pub fn paint(pix: &mut Pixmap, s: f32, m: &Model, st: &FyState, slide: f32, poin
                 }
             }
             Voice::Failed(msg) => {
-                paint::draw_text(pix, &fonts.bold, 13.0 * s, x0 * s, (cy + 26.0) * s, RED, &format!("{} could not be asked", crate::assistant::name()));
+                paint::draw_text(
+                    pix,
+                    &fonts.bold,
+                    13.0 * s,
+                    x0 * s,
+                    (cy + 26.0) * s,
+                    RED,
+                    &format!("{} could not be asked", crate::assistant::name()),
+                );
                 for (i, l) in wrap(&fonts.regular, 12.5 * s, msg, inner * s).iter().take(4).enumerate() {
                     paint::draw_text(pix, &fonts.regular, 12.5 * s, x0 * s, (cy + 52.0 + 19.0 * i as f32) * s, DIM, l);
                 }
@@ -1231,7 +1560,15 @@ pub fn paint(pix: &mut Pixmap, s: f32, m: &Model, st: &FyState, slide: f32, poin
                 let room = (cx + cw - pad - 112.0) - tx;
                 let title = if md.title.is_empty() { "Playing".to_string() } else { fit(&fonts.bold, 14.0 * s, &md.title, room * s) };
                 paint::draw_text(pix, &fonts.bold, 14.0 * s, tx * s, (cy + 34.0) * s, WHITE, &title);
-                paint::draw_text(pix, &fonts.regular, 12.0 * s, tx * s, (cy + 54.0) * s, DIM, &fit(&fonts.regular, 12.0 * s, &md.artist, room * s));
+                paint::draw_text(
+                    pix,
+                    &fonts.regular,
+                    12.0 * s,
+                    tx * s,
+                    (cy + 54.0) * s,
+                    DIM,
+                    &fit(&fonts.regular, 12.0 * s, &md.artist, room * s),
+                );
                 media_buttons(pix, s, icons, &mut hits, pointer, cx + cw - pad - 108.0, cy + 26.0, md.playing);
                 // a click anywhere else on the card opens the full notch
                 hits.insert(0, FHit { rect: (cx, cy, cw, ch), act: FAct::Expand });
@@ -1286,16 +1623,27 @@ pub fn paint(pix: &mut Pixmap, s: f32, m: &Model, st: &FyState, slide: f32, poin
                     hits.push(FHit { rect, act: FAct::Wall(p.clone()) });
                 }
                 if pages > 1 {
-                    for (label, by, rect) in [("‹", -1, (cx + pad, cy + ch - 32.0, 28.0, 24.0)), ("›", 1, (cx + cw - pad - 28.0, cy + ch - 32.0, 28.0, 24.0))] {
+                    for (label, by, rect) in
+                        [("‹", -1, (cx + pad, cy + ch - 32.0, 28.0, 24.0)), ("›", 1, (cx + cw - pad - 28.0, cy + ch - 32.0, 28.0, 24.0))]
+                    {
                         let lw = paint::text_width(&fonts.bold, 16.0 * s, label);
-                        paint::draw_text(pix, &fonts.bold, 16.0 * s, (rect.0 + rect.2 / 2.0) * s - lw / 2.0, (rect.1 + rect.3 / 2.0) * s, if over(pointer, rect) { WHITE } else { DIM }, label);
+                        paint::draw_text(
+                            pix,
+                            &fonts.bold,
+                            16.0 * s,
+                            (rect.0 + rect.2 / 2.0) * s - lw / 2.0,
+                            (rect.1 + rect.3 / 2.0) * s,
+                            if over(pointer, rect) { WHITE } else { DIM },
+                            label,
+                        );
                         hits.push(FHit { rect, act: FAct::WallPage(by) });
                     }
                 }
             }
         }
         POWER => {
-            let mut acts = vec![("system-lock-screen-symbolic", "Lock", PowerAct::Lock), ("system-suspend-symbolic", "Sleep", PowerAct::Sleep)];
+            let mut acts =
+                vec![("system-lock-screen-symbolic", "Lock", PowerAct::Lock), ("system-suspend-symbolic", "Sleep", PowerAct::Sleep)];
             if m.hibernate {
                 acts.push(("system-hibernate-symbolic", "Hibernate", PowerAct::Hibernate));
             }
@@ -1305,7 +1653,15 @@ pub fn paint(pix: &mut Pixmap, s: f32, m: &Model, st: &FyState, slide: f32, poin
             let cell = inner / acts.len() as f32;
             for (i, (icon, label, act)) in acts.into_iter().enumerate() {
                 let rect = (x0 + cell * i as f32 + 3.0, top + 14.0, cell - 6.0, 84.0);
-                paint::fill_rounded(pix, rect.0 * s, rect.1 * s, rect.2 * s, rect.3 * s, 14.0 * s, if over(pointer, rect) { (255, 255, 255, 34) } else { (255, 255, 255, 14) });
+                paint::fill_rounded(
+                    pix,
+                    rect.0 * s,
+                    rect.1 * s,
+                    rect.2 * s,
+                    rect.3 * s,
+                    14.0 * s,
+                    if over(pointer, rect) { (255, 255, 255, 34) } else { (255, 255, 255, 14) },
+                );
                 if let Some(ic) = icons.get_tinted(icon, (26.0 * s) as u32, WHITE) {
                     paint::draw_pixmap(pix, ic, ((rect.0 + (rect.2 - 26.0) / 2.0) * s) as i32, ((rect.1 + 16.0) * s) as i32);
                 }
@@ -1349,7 +1705,10 @@ mod tests {
     fn what_is_playing() {
         let j = r#"{"type":"a{sv}","data":{"xesam:title":{"type":"s","data":"Gimme Shelter"},"xesam:artist":{"type":"as","data":["The Rolling Stones","Merry Clayton"]},"mpris:artUrl":{"type":"s","data":"file:///tmp/a%20b.jpg"}}}"#;
         let d = parse_busctl(j).unwrap();
-        assert_eq!(parse_metadata(&d), ("Gimme Shelter".to_string(), "The Rolling Stones, Merry Clayton".to_string(), "file:///tmp/a%20b.jpg".to_string(), 0));
+        assert_eq!(
+            parse_metadata(&d),
+            ("Gimme Shelter".to_string(), "The Rolling Stones, Merry Clayton".to_string(), "file:///tmp/a%20b.jpg".to_string(), 0)
+        );
         let long = parse_busctl(r#"{"type":"a{sv}","data":{"mpris:length":{"type":"x","data":242000000}}}"#).unwrap();
         assert_eq!(parse_metadata(&long).3, 242_000_000);
         assert_eq!(clock(242_000_000), "4:02");
@@ -1360,10 +1719,17 @@ mod tests {
 
     #[test]
     fn controls_readings() {
-        let sinks = r#"[{"index":1,"name":"alsa_output.pci.analog","description":"Speakers"},{"name":"bluez_sink.X","description":"Headphones"}]"#;
-        assert_eq!(parse_sinks(sinks), vec![("alsa_output.pci.analog".to_string(), "Speakers".to_string()), ("bluez_sink.X".to_string(), "Headphones".to_string())]);
+        let sinks =
+            r#"[{"index":1,"name":"alsa_output.pci.analog","description":"Speakers"},{"name":"bluez_sink.X","description":"Headphones"}]"#;
+        assert_eq!(
+            parse_sinks(sinks),
+            vec![("alsa_output.pci.analog".to_string(), "Speakers".to_string()), ("bluez_sink.X".to_string(), "Headphones".to_string())]
+        );
         assert!(parse_sinks("").is_empty());
-        assert_eq!(parse_wifi("enabled\n", "ethernet\nwifi\nloopback\n", "Wired connection 1:802-3-ethernet\nHome 5G:802-11-wireless\n"), Some((true, "Home 5G".to_string())));
+        assert_eq!(
+            parse_wifi("enabled\n", "ethernet\nwifi\nloopback\n", "Wired connection 1:802-3-ethernet\nHome 5G:802-11-wireless\n"),
+            Some((true, "Home 5G".to_string()))
+        );
         assert_eq!(parse_wifi("disabled\n", "wifi\n", ""), Some((false, String::new())));
         assert_eq!(parse_wifi("enabled\n", "ethernet\nloopback\n", ""), None);
         assert_eq!(parse_connected_name("Device AA:BB:CC:DD:EE:FF WH-1000XM4\n"), "WH-1000XM4");

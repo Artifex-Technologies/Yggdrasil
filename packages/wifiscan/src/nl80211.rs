@@ -59,7 +59,9 @@ pub fn scan_dump(ifname: &str) -> io::Result<Vec<Bss>> {
                     }
                 }
                 k if k == family => {
-                    if let Some(b) = payload.get(4..).and_then(|a| attrs(a).find(|(t, _)| *t == NL80211_ATTR_BSS)).and_then(|(_, v)| parse_bss(v)) {
+                    if let Some(b) =
+                        payload.get(4..).and_then(|a| attrs(a).find(|(t, _)| *t == NL80211_ATTR_BSS)).and_then(|(_, v)| parse_bss(v))
+                    {
                         if out.len() < crate::MAX_BSS {
                             out.push(b);
                         }
@@ -190,12 +192,23 @@ impl Sock {
             let s = Sock(fd);
             let mut addr: libc::sockaddr_nl = std::mem::zeroed();
             addr.nl_family = libc::AF_NETLINK as libc::sa_family_t;
-            if libc::bind(fd, &addr as *const libc::sockaddr_nl as *const libc::sockaddr, std::mem::size_of::<libc::sockaddr_nl>() as libc::socklen_t) < 0 {
+            if libc::bind(
+                fd,
+                &addr as *const libc::sockaddr_nl as *const libc::sockaddr,
+                std::mem::size_of::<libc::sockaddr_nl>() as libc::socklen_t,
+            ) < 0
+            {
                 return Err(io::Error::last_os_error());
             }
             // never wait more than two seconds for the kernel
             let tv = libc::timeval { tv_sec: 2, tv_usec: 0 };
-            libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_RCVTIMEO, &tv as *const libc::timeval as *const libc::c_void, std::mem::size_of::<libc::timeval>() as libc::socklen_t);
+            libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_RCVTIMEO,
+                &tv as *const libc::timeval as *const libc::c_void,
+                std::mem::size_of::<libc::timeval>() as libc::socklen_t,
+            );
             Ok(s)
         }
     }
@@ -205,7 +218,14 @@ impl Sock {
         let n = unsafe {
             let mut to: libc::sockaddr_nl = std::mem::zeroed();
             to.nl_family = libc::AF_NETLINK as libc::sa_family_t;
-            libc::sendto(self.0, msg.as_ptr() as *const libc::c_void, msg.len(), 0, &to as *const libc::sockaddr_nl as *const libc::sockaddr, std::mem::size_of::<libc::sockaddr_nl>() as libc::socklen_t)
+            libc::sendto(
+                self.0,
+                msg.as_ptr() as *const libc::c_void,
+                msg.len(),
+                0,
+                &to as *const libc::sockaddr_nl as *const libc::sockaddr,
+                std::mem::size_of::<libc::sockaddr_nl>() as libc::socklen_t,
+            )
         };
         if n < 0 {
             return Err(io::Error::last_os_error());

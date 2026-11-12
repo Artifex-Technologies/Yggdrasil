@@ -101,10 +101,13 @@ fn spaced(code: &str) -> String {
 /// Entries whose issuer or account holds every word typed, in any order.
 fn search<'a>(entries: &'a [Entry], q: &str) -> Vec<&'a Entry> {
     let words: Vec<String> = q.split_whitespace().map(str::to_lowercase).collect();
-    entries.iter().filter(|e| {
-        let hay = format!("{} {}", e.issuer, e.account).to_lowercase();
-        words.iter().all(|w| hay.contains(w.as_str()))
-    }).collect()
+    entries
+        .iter()
+        .filter(|e| {
+            let hay = format!("{} {}", e.issuer, e.account).to_lowercase();
+            words.iter().all(|w| hay.contains(w.as_str()))
+        })
+        .collect()
 }
 
 enum State {
@@ -135,7 +138,17 @@ struct App {
 
 impl App {
     fn new() -> App {
-        let mut a = App { demo: std::env::args().any(|x| x == "--demo"), state: State::Loading, entries: vec![], fetched: Instant::now(), query: String::new(), sel: 0, rx: None, copied: None, note: String::new() };
+        let mut a = App {
+            demo: std::env::args().any(|x| x == "--demo"),
+            state: State::Loading,
+            entries: vec![],
+            fetched: Instant::now(),
+            query: String::new(),
+            sel: 0,
+            rx: None,
+            copied: None,
+            note: String::new(),
+        };
         a.fetch(false);
         a
     }
@@ -167,9 +180,15 @@ impl App {
         let line = run_helper(&args);
         let ok = serde_json::from_str::<Value>(&line).map(|v| v["ok"] == Value::Bool(true)).unwrap_or(false);
         if ok {
-            self.copied = Some((Instant::now(), format!("{} copied; the clipboard clears in {CLEAR_AFTER} s", if e.issuer.is_empty() { &e.account } else { &e.issuer })));
+            self.copied = Some((
+                Instant::now(),
+                format!("{} copied; the clipboard clears in {CLEAR_AFTER} s", if e.issuer.is_empty() { &e.account } else { &e.issuer }),
+            ));
         } else {
-            let code = serde_json::from_str::<Value>(&line).ok().and_then(|v| v["error"].as_str().map(String::from)).unwrap_or_else(|| "INTERNAL".into());
+            let code = serde_json::from_str::<Value>(&line)
+                .ok()
+                .and_then(|v| v["error"].as_str().map(String::from))
+                .unwrap_or_else(|| "INTERNAL".into());
             self.note = explain(&code).into();
         }
     }
@@ -185,7 +204,9 @@ impl App {
                     self.state = State::Ready;
                 }
                 Err(code) if code == "KEYRING_LOCKED" && matches!(self.state, State::Loading) => self.fetch(true),
-                Err(code) if code == "HELPER_MISSING" => self.state = State::Failed("The helper (pa-helper) is not installed; reinstall the plugin from Agora.".into(), false),
+                Err(code) if code == "HELPER_MISSING" => {
+                    self.state = State::Failed("The helper (pa-helper) is not installed; reinstall the plugin from Agora.".into(), false)
+                }
                 Err(code) => self.state = State::Failed(explain(&code).into(), needs_the_app(&code)),
             }
         }
@@ -209,14 +230,22 @@ fn row(ui: &mut egui::Ui, pal: &Palette, e: &Entry, left: u64, selected: bool) -
     let col = if left <= 5 { pal.red } else { pal.accent };
     p.circle_stroke(ring_c, 9.0, egui::Stroke::new(2.5, pal.border));
     let steps = 40;
-    let pts: Vec<egui::Pos2> = (0..=((steps as f32 * frac) as usize)).map(|i| {
-        let a = -std::f32::consts::FRAC_PI_2 + i as f32 / steps as f32 * std::f32::consts::TAU;
-        ring_c + vec2(a.cos(), a.sin()) * 9.0
-    }).collect();
+    let pts: Vec<egui::Pos2> = (0..=((steps as f32 * frac) as usize))
+        .map(|i| {
+            let a = -std::f32::consts::FRAC_PI_2 + i as f32 / steps as f32 * std::f32::consts::TAU;
+            ring_c + vec2(a.cos(), a.sin()) * 9.0
+        })
+        .collect();
     if pts.len() > 1 {
         p.add(egui::Shape::line(pts, egui::Stroke::new(2.5, col)));
     }
-    p.text(rect.right_center() - vec2(46.0, 0.0), egui::Align2::RIGHT_CENTER, spaced(&e.code), FontId::monospace(20.0), if left <= 5 { pal.red } else { pal.text });
+    p.text(
+        rect.right_center() - vec2(46.0, 0.0),
+        egui::Align2::RIGHT_CENTER,
+        spaced(&e.code),
+        FontId::monospace(20.0),
+        if left <= 5 { pal.red } else { pal.text },
+    );
     resp
 }
 
@@ -246,80 +275,99 @@ impl eframe::App for App {
             self.fetch(false);
         }
 
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(pal.bg).inner_margin(Margin { left: 12, right: 10, top: 6, bottom: 12 })).show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(if self.demo { "Authenticator (demo)" } else { "Authenticator" }).strong().color(pal.text));
-                chrome::drag_area(ui, ui.available_width() - chrome::controls_width());
-                chrome::window_controls(ui, &pal);
-            });
-            ui.add_space(6.0);
-            match &self.state {
-                State::Loading => {
-                    ui.add_space(30.0);
-                    ui.vertical_centered(|ui| ui.label(RichText::new("Reading your codes…").color(pal.dim)));
-                }
-                State::Failed(why, open_app) => {
-                    let open_app = *open_app;
-                    ui.add_space(20.0);
-                    ui.label(RichText::new(why.as_str()).color(pal.text));
-                    ui.add_space(10.0);
-                    ui.horizontal(|ui| {
-                        if open_app && ui.button("Open Proton Authenticator").clicked() {
-                            let _ = std::process::Command::new(PROTON_APP).stdin(std::process::Stdio::null()).spawn();
-                        }
-                        if ui.button("Try again").clicked() {
-                            self.state = State::Loading;
-                            self.fetch(true);
-                        }
-                    });
-                }
-                State::Ready => {
-                    let resp = ui.add(egui::TextEdit::singleline(&mut self.query).hint_text("Search accounts").desired_width(f32::INFINITY).margin(vec2(10.0, 8.0)));
-                    if !resp.has_focus() && self.copied.is_none() {
-                        resp.request_focus();
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(pal.bg).inner_margin(Margin { left: 12, right: 10, top: 6, bottom: 12 }))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(if self.demo { "Authenticator (demo)" } else { "Authenticator" }).strong().color(pal.text));
+                    chrome::drag_area(ui, ui.available_width() - chrome::controls_width());
+                    chrome::window_controls(ui, &pal);
+                });
+                ui.add_space(6.0);
+                match &self.state {
+                    State::Loading => {
+                        ui.add_space(30.0);
+                        ui.vertical_centered(|ui| ui.label(RichText::new("Reading your codes…").color(pal.dim)));
                     }
-                    if resp.changed() {
-                        self.sel = 0;
-                    }
-                    let shown: Vec<Entry> = search(&self.entries, &self.query).into_iter().cloned().collect();
-                    if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) && self.sel + 1 < shown.len() {
-                        self.sel += 1;
-                    }
-                    if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
-                        self.sel = self.sel.saturating_sub(1);
-                    }
-                    let mut to_copy: Option<Entry> = None;
-                    if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        to_copy = shown.get(self.sel).cloned();
-                    }
-                    ui.add_space(8.0);
-                    let footer_h = 28.0;
-                    egui::ScrollArea::vertical().max_height(ui.available_height() - footer_h).auto_shrink([false, false]).show(ui, |ui| {
-                        if shown.is_empty() {
-                            ui.add_space(20.0);
-                            ui.vertical_centered(|ui| ui.label(RichText::new(if self.entries.is_empty() { "No accounts in Proton Authenticator yet." } else { "No account matches." }).color(pal.dim)));
-                        }
-                        for (i, e) in shown.iter().enumerate() {
-                            let left = e.remaining.saturating_sub(elapsed).max(1);
-                            if row(ui, &pal, e, left, i == self.sel).clicked() {
-                                to_copy = Some(e.clone());
+                    State::Failed(why, open_app) => {
+                        let open_app = *open_app;
+                        ui.add_space(20.0);
+                        ui.label(RichText::new(why.as_str()).color(pal.text));
+                        ui.add_space(10.0);
+                        ui.horizontal(|ui| {
+                            if open_app && ui.button("Open Proton Authenticator").clicked() {
+                                let _ = std::process::Command::new(PROTON_APP).stdin(std::process::Stdio::null()).spawn();
                             }
-                        }
-                    });
-                    if let Some(e) = to_copy {
-                        self.copy(&e);
+                            if ui.button("Try again").clicked() {
+                                self.state = State::Loading;
+                                self.fetch(true);
+                            }
+                        });
                     }
-                    ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
-                        let text = match &self.copied {
-                            Some((_, msg)) => RichText::new(msg.as_str()).color(pal.green),
-                            None if !self.note.is_empty() => RichText::new(self.note.as_str()).color(pal.amber),
-                            None => RichText::new("Enter copies the selected code · Esc closes").color(pal.dim).size(11.5),
-                        };
-                        ui.label(text);
-                    });
+                    State::Ready => {
+                        let resp = ui.add(
+                            egui::TextEdit::singleline(&mut self.query)
+                                .hint_text("Search accounts")
+                                .desired_width(f32::INFINITY)
+                                .margin(vec2(10.0, 8.0)),
+                        );
+                        if !resp.has_focus() && self.copied.is_none() {
+                            resp.request_focus();
+                        }
+                        if resp.changed() {
+                            self.sel = 0;
+                        }
+                        let shown: Vec<Entry> = search(&self.entries, &self.query).into_iter().cloned().collect();
+                        if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) && self.sel + 1 < shown.len() {
+                            self.sel += 1;
+                        }
+                        if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+                            self.sel = self.sel.saturating_sub(1);
+                        }
+                        let mut to_copy: Option<Entry> = None;
+                        if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            to_copy = shown.get(self.sel).cloned();
+                        }
+                        ui.add_space(8.0);
+                        let footer_h = 28.0;
+                        egui::ScrollArea::vertical().max_height(ui.available_height() - footer_h).auto_shrink([false, false]).show(
+                            ui,
+                            |ui| {
+                                if shown.is_empty() {
+                                    ui.add_space(20.0);
+                                    ui.vertical_centered(|ui| {
+                                        ui.label(
+                                            RichText::new(if self.entries.is_empty() {
+                                                "No accounts in Proton Authenticator yet."
+                                            } else {
+                                                "No account matches."
+                                            })
+                                            .color(pal.dim),
+                                        )
+                                    });
+                                }
+                                for (i, e) in shown.iter().enumerate() {
+                                    let left = e.remaining.saturating_sub(elapsed).max(1);
+                                    if row(ui, &pal, e, left, i == self.sel).clicked() {
+                                        to_copy = Some(e.clone());
+                                    }
+                                }
+                            },
+                        );
+                        if let Some(e) = to_copy {
+                            self.copy(&e);
+                        }
+                        ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
+                            let text = match &self.copied {
+                                Some((_, msg)) => RichText::new(msg.as_str()).color(pal.green),
+                                None if !self.note.is_empty() => RichText::new(self.note.as_str()).color(pal.amber),
+                                None => RichText::new("Enter copies the selected code · Esc closes").color(pal.dim).size(11.5),
+                            };
+                            ui.label(text);
+                        });
+                    }
                 }
-            }
-        });
+            });
         chrome::outline(&ctx, &pal);
     }
 }
@@ -370,7 +418,15 @@ mod tests {
     fn codes_are_spaced_and_search_takes_every_word() {
         assert_eq!(spaced("123456"), "123 456");
         assert_eq!(spaced("12345678"), "1234 5678");
-        let e = |i: &str, a: &str| Entry { id: i.into(), issuer: i.into(), account: a.into(), code: String::new(), next: String::new(), period: 30, remaining: 30 };
+        let e = |i: &str, a: &str| Entry {
+            id: i.into(),
+            issuer: i.into(),
+            account: a.into(),
+            code: String::new(),
+            next: String::new(),
+            period: 30,
+            remaining: 30,
+        };
         let es = vec![e("GitHub", "ada@work"), e("Proton", "ada@home"), e("GitLab", "bob@work")];
         assert_eq!(search(&es, "git work").len(), 2);
         assert_eq!(search(&es, "ada git").iter().map(|x| x.issuer.as_str()).collect::<Vec<_>>(), ["GitHub"]);

@@ -105,7 +105,9 @@ fn monitor() -> Option<&'static yggdrasil_conf::integrations::Integration> {
 pub fn load(uuid: &str) -> Option<List> {
     let i = monitor()?;
     let name = i.get("name").unwrap_or("The security monitor").to_string();
-    let body = i.loopback("api").and_then(|a| crate::sys::run("curl", &["-s", "-m", "3", "--proto", "=http", &format!("http://{a}/v1/lan/devices")]));
+    let body = i
+        .loopback("api")
+        .and_then(|a| crate::sys::run("curl", &["-s", "-m", "3", "--proto", "=http", &format!("http://{a}/v1/lan/devices")]));
     let mut l = match body {
         Some(b) if b.trim_start().starts_with('{') => parse(&b, uuid),
         _ => List { status: "unavailable".into(), ..Default::default() },
@@ -118,7 +120,11 @@ pub fn load(uuid: &str) -> Option<List> {
 pub fn scan_now() -> Result<(), String> {
     let cmd = monitor().and_then(|i| i.command("devices_scan")).ok_or("there is no device list")?;
     let out = std::process::Command::new(&cmd[0]).args(&cmd[1..]).stdin(std::process::Stdio::null()).output().map_err(|e| e.to_string())?;
-    if out.status.success() { Ok(()) } else { Err(String::from_utf8_lossy(&out.stderr).trim().to_string()) }
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
 }
 
 /// What a kind is called, for people.
@@ -175,9 +181,9 @@ pub fn ago(now: i64, t: i64) -> String {
 
 /// The owner's own names for devices, by hardware address (~/.config/yggdrasil/device-names: "MAC=name" lines).
 pub fn names_path() -> std::path::PathBuf {
-    let base = std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from).unwrap_or_else(|| {
-        std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config")
-    });
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config"));
     base.join("yggdrasil/device-names")
 }
 

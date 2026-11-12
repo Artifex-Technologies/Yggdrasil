@@ -674,7 +674,8 @@ pub fn main(args: Vec<String>) -> i32 {
         ("set", 3) => cmd_set(&ctx, &argv[2]),
         ("run", 2) => cmd_run(&ctx),
         ("reset", 2 | 3) => {
-            let failed = (argv.len() == 3 && argv[2] == "failed") || std::env::var("SERVICE_RESULT").unwrap_or_else(|_| "success".into()) != "success";
+            let failed = (argv.len() == 3 && argv[2] == "failed")
+                || std::env::var("SERVICE_RESULT").unwrap_or_else(|_| "success".into()) != "success";
             cmd_reset(&ctx, failed)
         }
         _ => {

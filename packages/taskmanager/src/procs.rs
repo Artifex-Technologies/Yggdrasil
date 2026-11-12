@@ -188,7 +188,10 @@ impl Sampler {
             let Some(st) = read(&format!("/proc/{pid}/stat")).and_then(|s| parse_stat(&s)) else { continue };
             let kernel = pid == 2 || st.ppid == 2;
             // the owner from the folder itself and memory from statm: much cheaper than reading the whole status file
-            let uid = std::os::unix::fs::MetadataExt::uid(&match e.metadata() { Ok(m) => m, Err(_) => continue });
+            let uid = std::os::unix::fs::MetadataExt::uid(&match e.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            });
             let mem = if kernel { 0 } else { read(&format!("/proc/{pid}/statm")).and_then(|s| parse_statm(&s)).unwrap_or(0) * self.page };
             let key = (pid, st.start);
             live.insert(key);
@@ -197,12 +200,18 @@ impl Sampler {
                 .entry(key)
                 .or_insert_with(|| {
                     let cmd = read(&format!("/proc/{pid}/cmdline")).unwrap_or_default();
-                    let exe = std::fs::read_link(format!("/proc/{pid}/exe")).map(|p| p.to_string_lossy().trim_end_matches(" (deleted)").to_string()).unwrap_or_default();
+                    let exe = std::fs::read_link(format!("/proc/{pid}/exe"))
+                        .map(|p| p.to_string_lossy().trim_end_matches(" (deleted)").to_string())
+                        .unwrap_or_default();
                     (cmd, exe)
                 })
                 .clone();
             // Linux shows another account's disk use only to root: not asked for
-            let (read_b, written) = if kernel || (uid != self.me && self.me != 0) { (0, 0) } else { read(&format!("/proc/{pid}/io")).and_then(|s| parse_io(&s)).unwrap_or((0, 0)) };
+            let (read_b, written) = if kernel || (uid != self.me && self.me != 0) {
+                (0, 0)
+            } else {
+                read(&format!("/proc/{pid}/io")).and_then(|s| parse_io(&s)).unwrap_or((0, 0))
+            };
             let io = read_b + written;
             let (cpu, disk) = match self.prev.get(&pid) {
                 Some(&(start, ticks, io0)) if start == st.start && dt > 0.0 => {
@@ -348,7 +357,16 @@ pub fn group(procs: &[Proc], windows: &[Window], my_uid: u32, name_of: &dyn Fn(&
         let class = wins.iter().find(|w| w.pid == root).or(wins.first()).map(|w| w.class.clone()).unwrap_or_default();
         let title = wins.first().map(|w| w.title.clone()).unwrap_or_default();
         let p = by_pid[&root];
-        let mut g = Group { kind: Some(Kind::App), name: name_of(&class, &title, &p.exe), class, root, windows: wins, started: p.started, uid: p.uid, ..Default::default() };
+        let mut g = Group {
+            kind: Some(Kind::App),
+            name: name_of(&class, &title, &p.exe),
+            class,
+            root,
+            windows: wins,
+            started: p.started,
+            uid: p.uid,
+            ..Default::default()
+        };
         if g.name.is_empty() {
             g.name = p.name.clone();
         }
@@ -408,7 +426,20 @@ pub fn signal(pids: &[u32], sig: i32) -> Vec<u32> {
 }
 
 /// Names that end the desktop session or stop the whole system when they end: asked about first.
-pub const CRITICAL: [&str; 12] = ["systemd", "Hyprland", "Xwayland", "dbus-broker", "dbus-daemon", "dbus-broker-lau", "pipewire", "wireplumber", "greetd", "yggdrasil-panel", "start-hyprland", "yggdrasil-sessi"];
+pub const CRITICAL: [&str; 12] = [
+    "systemd",
+    "Hyprland",
+    "Xwayland",
+    "dbus-broker",
+    "dbus-daemon",
+    "dbus-broker-lau",
+    "pipewire",
+    "wireplumber",
+    "greetd",
+    "yggdrasil-panel",
+    "start-hyprland",
+    "yggdrasil-sessi",
+];
 
 pub fn is_critical(p: &Proc) -> bool {
     p.pid == 1 || CRITICAL.iter().any(|c| p.name == *c || p.name.starts_with("yggdrasil-session"))

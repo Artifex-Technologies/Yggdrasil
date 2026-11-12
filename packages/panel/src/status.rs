@@ -42,7 +42,13 @@ pub struct Status {
 pub const MAX_DESKTOPS: usize = 9;
 
 fn out(cmd: &str, args: &[&str]) -> String {
-    std::process::Command::new(cmd).args(args).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).output().map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default()
+    std::process::Command::new(cmd)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default()
 }
 
 /// The desktops from Hyprland's `hyprctl -j workspaces` and `-j activeworkspace`: the numbered workspaces that exist (they do while
@@ -106,7 +112,11 @@ mod tests {
     fn desktops_and_the_current_one_are_read() {
         let ws = r#"[{"id":3,"name":"3","windows":1},{"id":1,"name":"1","windows":3},{"id":-98,"name":"special:minimized","windows":1}]"#;
         let (d, at) = parse_desktops(ws, r#"{"id":2,"name":"2"}"#);
-        assert_eq!(d.iter().map(|x| x.id.as_str()).collect::<Vec<_>>(), ["1", "2", "3"], "the shown one is a desktop even while empty; hidden ones are not");
+        assert_eq!(
+            d.iter().map(|x| x.id.as_str()).collect::<Vec<_>>(),
+            ["1", "2", "3"],
+            "the shown one is a desktop even while empty; hidden ones are not"
+        );
         assert_eq!((d[1].name.as_str(), at), ("Desktop 2", 1));
         assert_eq!(parse_desktops("nonsense", "").0.len(), 0);
     }

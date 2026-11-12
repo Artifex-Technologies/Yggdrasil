@@ -33,7 +33,11 @@ pub fn from_json(v: &serde_json::Value) -> Vec<Shortcut> {
             a.iter()
                 .map(|b| Bind {
                     modmask: b["modmask"].as_u64().unwrap_or(0) as u32,
-                    key: b["key"].as_str().filter(|k| !k.is_empty()).map(str::to_string).unwrap_or_else(|| format!("code:{}", b["keycode"].as_u64().unwrap_or(0))),
+                    key: b["key"]
+                        .as_str()
+                        .filter(|k| !k.is_empty())
+                        .map(str::to_string)
+                        .unwrap_or_else(|| format!("code:{}", b["keycode"].as_u64().unwrap_or(0))),
                     desc: b["description"].as_str().unwrap_or("").to_string(),
                     release: b["release"].as_bool().unwrap_or(false),
                 })
@@ -64,7 +68,8 @@ pub fn paint(pix: &mut Pixmap, s: f32, list: &[Shortcut], dark: bool, fonts: &Fo
     } else {
         ((250, 250, 252, 248), (20, 20, 28, 255), (100, 100, 115, 255), (0, 0, 0, 16))
     };
-    let groups: Vec<(&str, Vec<&Shortcut>)> = GROUPS.iter().map(|g| (*g, list.iter().filter(|x| x.group == *g).collect::<Vec<_>>())).filter(|(_, r)| !r.is_empty()).collect();
+    let groups: Vec<(&str, Vec<&Shortcut>)> =
+        GROUPS.iter().map(|g| (*g, list.iter().filter(|x| x.group == *g).collect::<Vec<_>>())).filter(|(_, r)| !r.is_empty()).collect();
     // three columns (two on a narrow screen), groups placed in order, each in the shortest column so far
     let cols = if w >= 1300.0 { 3 } else { 2 };
     let (row_h, head_h, gap) = (26.0, 34.0, 14.0);
@@ -87,7 +92,15 @@ pub fn paint(pix: &mut Pixmap, s: f32, list: &[Shortcut], dark: bool, fonts: &Fo
     let hw = paint::text_width(&fonts.regular, 11.5 * s, hint);
     paint::draw_text(pix, &fonts.regular, 11.5 * s, (x0 + card_w - pad) * s - hw, (y0 + pad + 6.0) * s, dim, hint);
     if groups.is_empty() {
-        paint::draw_text(pix, &fonts.regular, 13.0 * s, (x0 + pad) * s, (y0 + 70.0) * s, dim, "No shortcuts could be read from the compositor.");
+        paint::draw_text(
+            pix,
+            &fonts.regular,
+            13.0 * s,
+            (x0 + pad) * s,
+            (y0 + 70.0) * s,
+            dim,
+            "No shortcuts could be read from the compositor.",
+        );
         return;
     }
     let top = y0 + 60.0;
@@ -137,7 +150,9 @@ mod tests {
     #[test]
     fn the_card_draws_on_a_small_screen_too() {
         let Some(fonts) = Fonts::load() else { return };
-        let list = from_json(&serde_json::json!([{"modmask": 64, "key": "E", "description": "Files (Minos) with a very long description that has to be cut", "release": false}]));
+        let list = from_json(
+            &serde_json::json!([{"modmask": 64, "key": "E", "description": "Files (Minos) with a very long description that has to be cut", "release": false}]),
+        );
         for (w, h) in [(1280, 720), (3440, 1440)] {
             let mut pix = Pixmap::new(w, h).unwrap();
             paint(&mut pix, 1.0, &list, true, &fonts);

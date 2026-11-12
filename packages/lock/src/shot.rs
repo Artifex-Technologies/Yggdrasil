@@ -137,7 +137,15 @@ fn window_at(windows: &[R], p: (f64, f64)) -> Option<R> {
 }
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for App {
-    fn event(_: &mut Self, _: &wl_registry::WlRegistry, _: wl_registry::Event, _: &GlobalListContents, _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_registry::WlRegistry,
+        _: wl_registry::Event,
+        _: &GlobalListContents,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 delegate_noop!(App: WlCompositor);
 delegate_noop!(App: ignore WlShm);
@@ -229,7 +237,8 @@ impl Dispatch<WlKeyboard, ()> for App {
                 KEY_ESC => app.result = Some(None),
                 KEY_ENTER | KEY_KP_ENTER => {
                     let i = app.at.map(|a| a.0).unwrap_or(0);
-                    app.result = Some(app.screens.get(i).and_then(|s| s.img.as_ref()).map(|m| (i, R { x: 0, y: 0, w: m.w as i32, h: m.h as i32 })));
+                    app.result =
+                        Some(app.screens.get(i).and_then(|s| s.img.as_ref()).map(|m| (i, R { x: 0, y: 0, w: m.w as i32, h: m.h as i32 })));
                 }
                 _ => {}
             }
@@ -307,7 +316,11 @@ impl App {
             let file = std::fs::File::from(fd);
             let Ok(map) = (unsafe { MmapMut::map_mut(&file) }) else { return };
             let pool = shm.create_pool(file.as_fd(), (one * 2) as i32, qh, ());
-            s.bufs = (0..2).map(|k| (pool.create_buffer((k * one) as i32, w as i32, h as i32, (w * 4) as i32, wl_shm::Format::Argb8888, qh, (i, k)), false)).collect();
+            s.bufs = (0..2)
+                .map(|k| {
+                    (pool.create_buffer((k * one) as i32, w as i32, h as i32, (w * 4) as i32, wl_shm::Format::Argb8888, qh, (i, k)), false)
+                })
+                .collect();
             pool.destroy();
             s.map = Some(map);
         }
@@ -405,12 +418,18 @@ fn hypr_windows() -> std::collections::HashMap<String, Vec<R>> {
         let shown = [m["activeWorkspace"]["id"].as_i64(), m["specialWorkspace"]["id"].as_i64().filter(|id| *id != 0)];
         let mut v = vec![];
         for c in clients.as_array().into_iter().flatten() {
-            if c["hidden"].as_bool() == Some(true) || c["mapped"].as_bool() == Some(false) || !shown.contains(&c["workspace"]["id"].as_i64()) {
+            if c["hidden"].as_bool() == Some(true)
+                || c["mapped"].as_bool() == Some(false)
+                || !shown.contains(&c["workspace"]["id"].as_i64())
+            {
                 continue;
             }
             let at = (c["at"][0].as_f64().unwrap_or(0.0), c["at"][1].as_f64().unwrap_or(0.0));
             let size = (c["size"][0].as_f64().unwrap_or(0.0), c["size"][1].as_f64().unwrap_or(0.0));
-            v.push(R::from_corners(((at.0 - mx) * scale, (at.1 - my) * scale), ((at.0 - mx + size.0) * scale, (at.1 - my + size.1) * scale)));
+            v.push(R::from_corners(
+                ((at.0 - mx) * scale, (at.1 - my) * scale),
+                ((at.0 - mx + size.0) * scale, (at.1 - my + size.1) * scale),
+            ));
         }
         out.insert(name, v);
     }
@@ -426,10 +445,21 @@ fn save(img: &Img, r: R) -> Result<std::path::PathBuf, String> {
             rgba.extend_from_slice(&[p[2], p[1], p[0], 255]);
         }
     }
-    let pictures = Command::new("xdg-user-dir").arg("PICTURES").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).filter(|s| !s.is_empty());
-    let dir = std::path::PathBuf::from(pictures.unwrap_or_else(|| format!("{}/Pictures", std::env::var("HOME").unwrap_or_default()))).join("Screenshots");
+    let pictures = Command::new("xdg-user-dir")
+        .arg("PICTURES")
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty());
+    let dir = std::path::PathBuf::from(pictures.unwrap_or_else(|| format!("{}/Pictures", std::env::var("HOME").unwrap_or_default())))
+        .join("Screenshots");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let stamp = Command::new("date").arg("+%F %H-%M-%S").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+    let stamp = Command::new("date")
+        .arg("+%F %H-%M-%S")
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
     let mut path = dir.join(format!("Screenshot {stamp}.png"));
     let mut n = 2;
     while path.exists() {
@@ -447,23 +477,55 @@ fn main() {
     };
     let Ok((globals, mut queue)) = registry_queue_init::<App>(&conn) else { std::process::exit(1) };
     let qh = queue.handle();
-    let (Ok(compositor), Ok(shm), Ok(layer_shell)) = (globals.bind::<WlCompositor, _, _>(&qh, 1..=6, ()), globals.bind::<WlShm, _, _>(&qh, 1..=1, ()), globals.bind::<ZwlrLayerShellV1, _, _>(&qh, 1..=4, ())) else {
+    let (Ok(compositor), Ok(shm), Ok(layer_shell)) = (
+        globals.bind::<WlCompositor, _, _>(&qh, 1..=6, ()),
+        globals.bind::<WlShm, _, _>(&qh, 1..=1, ()),
+        globals.bind::<ZwlrLayerShellV1, _, _>(&qh, 1..=4, ()),
+    ) else {
         eprintln!("yggdrasil-shot: the compositor has no layer shell");
         std::process::exit(1);
     };
     let viewporter: Option<WpViewporter> = globals.bind(&qh, 1..=1, ()).ok();
     let accent = design::accent();
-    let mut app = App { compositor, shm, screens: vec![], cursor: globals.bind(&qh, 1..=1, ()).ok(), cursor_dev: None, pointer: None, keyboard: None, at: None, press: None, accent: (accent.0, accent.1, accent.2), result: None };
+    let mut app = App {
+        compositor,
+        shm,
+        screens: vec![],
+        cursor: globals.bind(&qh, 1..=1, ()).ok(),
+        cursor_dev: None,
+        pointer: None,
+        keyboard: None,
+        at: None,
+        press: None,
+        accent: (accent.0, accent.1, accent.2),
+        result: None,
+    };
     // the screens' names first (nothing is shown yet)
-    let outputs: Vec<(u32, u32)> = globals.contents().with_list(|l| l.iter().filter(|g| g.interface == "wl_output").map(|g| (g.name, g.version)).collect());
+    let outputs: Vec<(u32, u32)> =
+        globals.contents().with_list(|l| l.iter().filter(|g| g.interface == "wl_output").map(|g| (g.name, g.version)).collect());
     for (n, (name, version)) in outputs.into_iter().enumerate() {
         let output = globals.registry().bind::<WlOutput, _, _>(name, version.min(4), &qh, n);
-        app.screens.push(Screen { name: String::new(), output, img: None, surface: None, layer: None, viewport: None, size: (0, 0), bufs: vec![], map: None, windows: vec![], frame_pending: false, dirty: true });
+        app.screens.push(Screen {
+            name: String::new(),
+            output,
+            img: None,
+            surface: None,
+            layer: None,
+            viewport: None,
+            size: (0, 0),
+            bufs: vec![],
+            map: None,
+            windows: vec![],
+            frame_pending: false,
+            dirty: true,
+        });
     }
     let _ = queue.roundtrip(&mut app);
     // capture every screen at once, before anything of ours is on it
     let names: Vec<String> = app.screens.iter().map(|s| s.name.clone()).collect();
-    let shots: Vec<Option<Img>> = std::thread::scope(|sc| names.iter().map(|n| sc.spawn(move || capture(n))).collect::<Vec<_>>().into_iter().map(|h| h.join().ok().flatten()).collect());
+    let shots: Vec<Option<Img>> = std::thread::scope(|sc| {
+        names.iter().map(|n| sc.spawn(move || capture(n))).collect::<Vec<_>>().into_iter().map(|h| h.join().ok().flatten()).collect()
+    });
     let mut windows = hypr_windows();
     for (s, img) in app.screens.iter_mut().zip(shots) {
         s.img = img;
@@ -480,7 +542,14 @@ fn main() {
             continue;
         }
         let surface = app.compositor.create_surface(&qh, ());
-        let layer = layer_shell.get_layer_surface(&surface, Some(&app.screens[i].output), zwlr_layer_shell_v1::Layer::Overlay, "yggdrasil-shot".into(), &qh, i);
+        let layer = layer_shell.get_layer_surface(
+            &surface,
+            Some(&app.screens[i].output),
+            zwlr_layer_shell_v1::Layer::Overlay,
+            "yggdrasil-shot".into(),
+            &qh,
+            i,
+        );
         layer.set_anchor(Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right);
         layer.set_exclusive_zone(-1);
         layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
@@ -517,7 +586,8 @@ fn main() {
             if let Ok(f) = std::fs::File::open(&path) {
                 let _ = Command::new("wl-copy").args(["--type", "image/png"]).stdin(f).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
             }
-            let _ = Command::new("notify-send").arg("-i").arg(&path).args(["Screenshot", "Saved to Pictures/Screenshots and copied"]).spawn();
+            let _ =
+                Command::new("notify-send").arg("-i").arg(&path).args(["Screenshot", "Saved to Pictures/Screenshots and copied"]).spawn();
             eprintln!("yggdrasil-shot: {}", path.display());
         }
         Err(e) => {

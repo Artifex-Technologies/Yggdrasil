@@ -21,11 +21,7 @@ pub trait System {
     fn run(&mut self, argv: &[String], stdin: Option<&str>) -> R<Output>;
     /// A program whose standard output is followed line by line: `line` gets each as it comes, and what it gives back is
     /// printed there and then (as out() prints); then its exit code and standard error.
-    fn stream(
-        &mut self,
-        argv: &[String],
-        line: &mut dyn FnMut(&str) -> R<Option<String>>,
-    ) -> R<(i32, String)>;
+    fn stream(&mut self, argv: &[String], line: &mut dyn FnMut(&str) -> R<Option<String>>) -> R<(i32, String)>;
     fn sleep(&mut self, seconds: u64);
     /// os.urandom(n)
     fn random(&mut self, n: usize) -> Vec<u8>;
@@ -53,21 +49,13 @@ fn command(argv: &[String]) -> R<Command> {
 
 fn exit_code(status: std::process::ExitStatus) -> i32 {
     use std::os::unix::process::ExitStatusExt;
-    status
-        .code()
-        .unwrap_or_else(|| -status.signal().unwrap_or(1))
+    status.code().unwrap_or_else(|| -status.signal().unwrap_or(1))
 }
 
 impl System for Real {
     fn run(&mut self, argv: &[String], stdin: Option<&str>) -> R<Output> {
         let mut c = command(argv)?;
-        c.stdin(if stdin.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::inherit()
-        })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        c.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::inherit() }).stdout(Stdio::piped()).stderr(Stdio::piped());
         let mut child = c.spawn().map_err(|e| oserror(&e, &argv[0]))?;
         if let (Some(text), Some(mut pipe)) = (stdin, child.stdin.take()) {
             let text = text.to_string();
@@ -76,27 +64,15 @@ impl System for Real {
                 let _ = pipe.write_all(text.as_bytes());
             });
         }
-        let out = child
-            .wait_with_output()
-            .map_err(|e| oserror(&e, &argv[0]))?;
+        let out = child.wait_with_output().map_err(|e| oserror(&e, &argv[0]))?;
         let stdout = universal(&decode(&out.stdout)?);
         let stderr = universal(&decode(&out.stderr)?);
-        Ok(Output {
-            code: exit_code(out.status),
-            stdout,
-            stderr,
-        })
+        Ok(Output { code: exit_code(out.status), stdout, stderr })
     }
 
-    fn stream(
-        &mut self,
-        argv: &[String],
-        line: &mut dyn FnMut(&str) -> R<Option<String>>,
-    ) -> R<(i32, String)> {
+    fn stream(&mut self, argv: &[String], line: &mut dyn FnMut(&str) -> R<Option<String>>) -> R<(i32, String)> {
         let mut c = command(argv)?;
-        c.stdin(Stdio::inherit())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+        c.stdin(Stdio::inherit()).stdout(Stdio::piped()).stderr(Stdio::piped());
         let mut child = c.spawn().map_err(|e| oserror(&e, &argv[0]))?;
         let mut err_pipe = child.stderr.take().unwrap();
         let errors = std::thread::spawn(move || {
@@ -115,11 +91,7 @@ impl System for Real {
                 match byte[0] {
                     b'\n' => {}
                     b'\r' => {
-                        if out
-                            .fill_buf()
-                            .map(|b| b.first() == Some(&b'\n'))
-                            .unwrap_or(false)
-                        {
+                        if out.fill_buf().map(|b| b.first() == Some(&b'\n')).unwrap_or(false) {
                             out.consume(1);
                         }
                     }

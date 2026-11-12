@@ -26,10 +26,7 @@ pub struct Int {
 
 impl Int {
     pub fn new(v: i128) -> Int {
-        Int {
-            text: v.to_string(),
-            value: v.clamp(-CLAMP, CLAMP),
-        }
+        Int { text: v.to_string(), value: v.clamp(-CLAMP, CLAMP) }
     }
 }
 
@@ -174,17 +171,10 @@ impl Py {
             Py::Int(i) => i.text.clone(),
             Py::Float(f) => float_repr(*f),
             Py::Str(s) => pycompat::repr(s),
-            Py::List(l) => format!(
-                "[{}]",
-                l.iter().map(Py::py_repr).collect::<Vec<_>>().join(", ")
-            ),
-            Py::Dict(d) => format!(
-                "{{{}}}",
-                d.iter()
-                    .map(|(k, v)| format!("{}: {}", pycompat::repr(k), v.py_repr()))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
+            Py::List(l) => format!("[{}]", l.iter().map(Py::py_repr).collect::<Vec<_>>().join(", ")),
+            Py::Dict(d) => {
+                format!("{{{}}}", d.iter().map(|(k, v)| format!("{}: {}", pycompat::repr(k), v.py_repr())).collect::<Vec<_>>().join(", "))
+            }
         }
     }
 
@@ -262,12 +252,7 @@ pub struct NotJson;
 
 /// json.loads(text), with at most `nesting` levels inside the top value.
 pub fn loads(text: &str, nesting: usize) -> Result<Py, NotJson> {
-    let mut p = Reader {
-        s: text.as_bytes(),
-        src: text,
-        i: 0,
-        max: nesting,
-    };
+    let mut p = Reader { s: text.as_bytes(), src: text, i: 0, max: nesting };
     p.ws();
     let v = p.value(0).map_err(|()| NotJson)?;
     p.ws();
@@ -508,11 +493,7 @@ impl Reader<'_> {
         }
         let neg = text.starts_with('-');
         let v = if neg { -v } else { v }.clamp(-CLAMP, CLAMP);
-        let text = if v == 0 {
-            "0".to_string()
-        } else {
-            text.to_string()
-        };
+        let text = if v == 0 { "0".to_string() } else { text.to_string() };
         Ok(Py::Int(Int { text, value: v }))
     }
 }
@@ -527,21 +508,12 @@ mod tests {
 
     #[test]
     fn what_json_loads_accepts() {
-        assert_eq!(
-            ok(" [1e400, -0, NaN, -Infinity, 1E2, -0.0] ").py_repr(),
-            "[inf, 0, nan, -inf, 100.0, -0.0]"
-        );
+        assert_eq!(ok(" [1e400, -0, NaN, -Infinity, 1E2, -0.0] ").py_repr(), "[inf, 0, nan, -inf, 100.0, -0.0]");
         assert_eq!(ok(r#"{"a":1,"b":2,"a":3}"#).py_repr(), "{'a': 3, 'b': 2}");
         assert_eq!(ok(r#""\ud83d\ude00\u00e9\/""#), s("\u{1f600}é/"));
         assert_eq!(ok(&"1".repeat(4300)).py_str().len(), 4300);
-        assert_eq!(
-            ok("123456789012345678901234567890123456789").py_str(),
-            "123456789012345678901234567890123456789"
-        );
-        assert_eq!(
-            ok("123456789012345678901234567890123456789").whole(),
-            Some(CLAMP)
-        );
+        assert_eq!(ok("123456789012345678901234567890123456789").py_str(), "123456789012345678901234567890123456789");
+        assert_eq!(ok("123456789012345678901234567890123456789").whole(), Some(CLAMP));
         assert_eq!(ok("\"\u{7f}\u{2028}\""), s("\u{7f}\u{2028}"));
     }
 
@@ -577,46 +549,19 @@ mod tests {
             assert!(loads(t, PLAN_NESTING).is_err(), "{t:?}");
         }
         assert!(loads(&"1".repeat(4301), PLAN_NESTING).is_err());
-        assert!(loads(
-            &format!("{}{}", "[".repeat(21), "]".repeat(21)),
-            PLAN_NESTING
-        )
-        .is_ok());
-        assert!(loads(
-            &format!("{}{}", "[".repeat(22), "]".repeat(22)),
-            PLAN_NESTING
-        )
-        .is_err());
-        assert!(
-            loads(
-                &format!("{}1{}", "[".repeat(21), "]".repeat(21)),
-                PLAN_NESTING
-            )
-            .is_err(),
-            "a value 21 levels in"
-        );
+        assert!(loads(&format!("{}{}", "[".repeat(21), "]".repeat(21)), PLAN_NESTING).is_ok());
+        assert!(loads(&format!("{}{}", "[".repeat(22), "]".repeat(22)), PLAN_NESTING).is_err());
+        assert!(loads(&format!("{}1{}", "[".repeat(21), "]".repeat(21)), PLAN_NESTING).is_err(), "a value 21 levels in");
         assert!(loads(&"[".repeat(1_000_000), PLAN_NESTING).is_err());
     }
 
     #[test]
     fn written_as_python_writes_it() {
         let v = ok(r#"{"a": [1, "x\u00e9", null, true, 1.5, Infinity, NaN, {}], "b": -0}"#);
-        assert_eq!(
-            v.py_str(),
-            "{'a': [1, 'xé', None, True, 1.5, inf, nan, {}], 'b': 0}"
-        );
-        assert_eq!(
-            v.dumps(),
-            r#"{"a": [1, "x\u00e9", null, true, 1.5, Infinity, NaN, {}], "b": 0}"#
-        );
+        assert_eq!(v.py_str(), "{'a': [1, 'xé', None, True, 1.5, inf, nan, {}], 'b': 0}");
+        assert_eq!(v.dumps(), r#"{"a": [1, "x\u00e9", null, true, 1.5, Infinity, NaN, {}], "b": 0}"#);
         assert_eq!(ok("1e16").py_str(), "1e+16");
         assert_eq!(ok("[\"it's\"]").py_str(), "[\"it's\"]");
-        assert!(
-            !ok("0.0").truthy()
-                && ok("NaN").truthy()
-                && !ok("[]").truthy()
-                && ok("\"0\"").truthy()
-                && !ok("-0").truthy()
-        );
+        assert!(!ok("0.0").truthy() && ok("NaN").truthy() && !ok("[]").truthy() && ok("\"0\"").truthy() && !ok("-0").truthy());
     }
 }

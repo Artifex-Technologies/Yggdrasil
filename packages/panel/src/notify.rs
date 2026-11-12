@@ -218,7 +218,12 @@ impl Store {
     pub fn groups(&self) -> Vec<Group> {
         let mut map: HashMap<String, Group> = HashMap::new();
         for n in &self.items {
-            let g = map.entry(n.group_key()).or_insert_with(|| Group { key: n.group_key(), name: n.app.clone(), icon: String::new(), items: vec![] });
+            let g = map.entry(n.group_key()).or_insert_with(|| Group {
+                key: n.group_key(),
+                name: n.app.clone(),
+                icon: String::new(),
+                items: vec![],
+            });
             if g.icon.is_empty() && !n.icon.is_empty() {
                 g.icon = n.icon.clone();
             }
@@ -262,7 +267,13 @@ pub fn clean(text: &str) -> String {
             c => out.push(c),
         }
     }
-    let out = out.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'").replace("&apos;", "'").replace("&amp;", "&");
+    let out = out
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&");
     let out = out.trim().to_string();
     if out.chars().count() > MAX_TEXT {
         let cut: String = out.chars().take(MAX_TEXT).collect();
@@ -307,7 +318,13 @@ pub fn next_id() -> u32 {
 /// Tells the sending app a notification closed (reason 2: dismissed by the user, 3: closed by a call).
 pub fn emit_closed(id: u32, reason: u32) {
     if let Some(c) = CONN.get() {
-        let _ = c.emit_signal(None::<&str>, "/org/freedesktop/Notifications", "org.freedesktop.Notifications", "NotificationClosed", &(id, reason));
+        let _ = c.emit_signal(
+            None::<&str>,
+            "/org/freedesktop/Notifications",
+            "org.freedesktop.Notifications",
+            "NotificationClosed",
+            &(id, reason),
+        );
     }
 }
 
@@ -329,11 +346,26 @@ impl Server {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn notify(&self, app_name: String, replaces_id: u32, app_icon: String, summary: String, body: String, actions: Vec<String>, hints: HashMap<String, zbus::zvariant::OwnedValue>, _expire_timeout: i32) -> u32 {
+    fn notify(
+        &self,
+        app_name: String,
+        replaces_id: u32,
+        app_icon: String,
+        summary: String,
+        body: String,
+        actions: Vec<String>,
+        hints: HashMap<String, zbus::zvariant::OwnedValue>,
+        _expire_timeout: i32,
+    ) -> u32 {
         let id = if replaces_id != 0 { replaces_id } else { next_id() };
         let urgency = hints.get("urgency").and_then(|v| u8::try_from(v).ok()).unwrap_or(1).min(2);
-        let entry = hints.get("desktop-entry").and_then(|v| <&str>::try_from(v).ok()).unwrap_or("").trim_end_matches(".desktop").to_string();
-        let icon = if app_icon.is_empty() { hints.get("image-path").and_then(|v| <&str>::try_from(v).ok()).unwrap_or("").to_string() } else { app_icon };
+        let entry =
+            hints.get("desktop-entry").and_then(|v| <&str>::try_from(v).ok()).unwrap_or("").trim_end_matches(".desktop").to_string();
+        let icon = if app_icon.is_empty() {
+            hints.get("image-path").and_then(|v| <&str>::try_from(v).ok()).unwrap_or("").to_string()
+        } else {
+            app_icon
+        };
         let acts: Vec<(String, String)> = actions.chunks(2).filter(|c| c.len() == 2).map(|c| (c[0].clone(), clean(&c[1]))).collect();
         let _ = self.tx.send(NMsg::New(Notif {
             id,
@@ -367,7 +399,8 @@ pub fn spawn_server(tx: calloop::channel::Sender<NMsg>) {
         let mut told = false;
         loop {
             let built = zbus::blocking::connection::Builder::session()
-                .and_then(|b| b.name("org.freedesktop.Notifications")).map(|b| b.replace_existing_names(true))
+                .and_then(|b| b.name("org.freedesktop.Notifications"))
+                .map(|b| b.replace_existing_names(true))
                 .and_then(|b| b.serve_at("/org/freedesktop/Notifications", Server { tx: tx.clone() }))
                 .and_then(|b| b.build());
             match built {
@@ -406,7 +439,8 @@ fn space_of(path: &str) -> Option<(u64, u64)> {
     let c = std::ffi::CString::new(path).ok()?;
     let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
     // SAFETY: statvfs fills the struct it is given
-    (unsafe { libc::statvfs(c.as_ptr(), &mut st) } == 0).then(|| (st.f_bavail as u64 * st.f_frsize as u64, st.f_blocks as u64 * st.f_frsize as u64))
+    (unsafe { libc::statvfs(c.as_ptr(), &mut st) } == 0)
+        .then(|| (st.f_bavail as u64 * st.f_frsize as u64, st.f_blocks as u64 * st.f_frsize as u64))
 }
 
 fn gib(b: u64) -> String {
@@ -590,11 +624,17 @@ pub fn spawn_security_alerts(tx: calloop::channel::Sender<NMsg>) {
             if min != "off" {
                 if let Some(body) = http_get(&addr, "/v1/alerts?n=60") {
                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) {
-                        let list = v.as_array().cloned().or_else(|| v.get("alerts").and_then(|a| a.as_array()).cloned()).unwrap_or_default();
+                        let list =
+                            v.as_array().cloned().or_else(|| v.get("alerts").and_then(|a| a.as_array()).cloned()).unwrap_or_default();
                         // oldest first, so they arrive in order
                         let mut fresh = vec![];
                         for a in &list {
-                            let key = format!("{}|{}|{}", a.get("time").and_then(|x| x.as_str()).unwrap_or(""), a.get("detector_id").and_then(|x| x.as_str()).unwrap_or(""), a.get("summary").and_then(|x| x.as_str()).unwrap_or(""));
+                            let key = format!(
+                                "{}|{}|{}",
+                                a.get("time").and_then(|x| x.as_str()).unwrap_or(""),
+                                a.get("detector_id").and_then(|x| x.as_str()).unwrap_or(""),
+                                a.get("summary").and_then(|x| x.as_str()).unwrap_or("")
+                            );
                             if seen.insert(key) && !first {
                                 fresh.push(a.clone());
                             }
@@ -669,7 +709,18 @@ fn over(p: (f32, f32), r: Rect) -> bool {
 }
 
 /// The app's icon, or a coloured disc with its first letter when the theme has none.
-pub fn draw_app_icon(pix: &mut Pixmap, s: f32, icons: &mut Icons, fonts: &Fonts, name: &str, icon: &str, x: f32, y: f32, size: f32, urgent: bool) {
+pub fn draw_app_icon(
+    pix: &mut Pixmap,
+    s: f32,
+    icons: &mut Icons,
+    fonts: &Fonts,
+    name: &str,
+    icon: &str,
+    x: f32,
+    y: f32,
+    size: f32,
+    urgent: bool,
+) {
     let px = (size * s) as u32;
     let candidates = [icon.to_string(), name.to_lowercase(), name.to_lowercase().replace(' ', "-")];
     for c in candidates.iter().filter(|c| !c.is_empty() && !c.contains('/')) {
@@ -696,7 +747,16 @@ fn fit(font: &ab_glyph::FontVec, size: f32, text: &str, max: f32) -> String {
 
 /// Draws the grouped list inside `area` (logical px; `s` the scale) and returns what can be clicked,
 /// last drawn on top. The bottom strip holds "Clear all".
-pub fn paint_list(pix: &mut Pixmap, s: f32, area: Rect, store: &Store, pointer: (f32, f32), now: u64, fonts: &Fonts, icons: &mut Icons) -> Vec<(Rect, NAct)> {
+pub fn paint_list(
+    pix: &mut Pixmap,
+    s: f32,
+    area: Rect,
+    store: &Store,
+    pointer: (f32, f32),
+    now: u64,
+    fonts: &Fonts,
+    icons: &mut Icons,
+) -> Vec<(Rect, NAct)> {
     let mut hits: Vec<(Rect, NAct)> = vec![];
     let (ax, ay, aw, ah) = area;
     let groups = store.groups();
@@ -723,7 +783,15 @@ pub fn paint_list(pix: &mut Pixmap, s: f32, area: Rect, store: &Store, pointer: 
             Row::Head(g) => {
                 let r = (ax, y, aw, HEAD_H - 4.0);
                 let hot = over(pointer, r);
-                paint::fill_rounded(pix, r.0 * s, r.1 * s, r.2 * s, r.3 * s, 12.0 * s, if hot { (255, 255, 255, 30) } else { (255, 255, 255, 16) });
+                paint::fill_rounded(
+                    pix,
+                    r.0 * s,
+                    r.1 * s,
+                    r.2 * s,
+                    r.3 * s,
+                    12.0 * s,
+                    if hot { (255, 255, 255, 30) } else { (255, 255, 255, 16) },
+                );
                 let top = &g.items[0];
                 let urgent = g.items.iter().any(|n| n.urgency == 2);
                 draw_app_icon(pix, s, icons, fonts, &g.name, &g.icon, ax + 10.0, y + 9.0, 30.0, urgent);
@@ -737,19 +805,43 @@ pub fn paint_list(pix: &mut Pixmap, s: f32, area: Rect, store: &Store, pointer: 
                 if many {
                     let badge = g.items.len().to_string();
                     let bw = (paint::text_width(&fonts.bold, 10.5 * s, &badge) / s + 12.0).max(20.0);
-                    paint::fill_rounded(pix, (right - bw) * s, (y + 27.0) * s, bw * s, 17.0 * s, 8.5 * s, if urgent { RED } else { paint::accent(255) });
+                    paint::fill_rounded(
+                        pix,
+                        (right - bw) * s,
+                        (y + 27.0) * s,
+                        bw * s,
+                        17.0 * s,
+                        8.5 * s,
+                        if urgent { RED } else { paint::accent(255) },
+                    );
                     let lw = paint::text_width(&fonts.bold, 10.5 * s, &badge);
                     paint::draw_text(pix, &fonts.bold, 10.5 * s, (right - bw / 2.0) * s - lw / 2.0, (y + 35.5) * s, WHITE, &badge);
                     name_right = name_right.min(right - 4.0);
                 }
-                paint::draw_text(pix, &fonts.bold, 12.5 * s, text_x * s, (y + 15.0) * s, WHITE, &fit(&fonts.bold, 12.5 * s, &g.name, (name_right - text_x) * s));
+                paint::draw_text(
+                    pix,
+                    &fonts.bold,
+                    12.5 * s,
+                    text_x * s,
+                    (y + 15.0) * s,
+                    WHITE,
+                    &fit(&fonts.bold, 12.5 * s, &g.name, (name_right - text_x) * s),
+                );
                 let preview = match (top.summary.is_empty(), top.body.is_empty()) {
                     (false, false) => format!("{}: {}", top.summary, top.body.lines().next().unwrap_or("")),
                     (true, _) => top.body.clone(),
                     _ => top.summary.clone(),
                 };
                 let pw = (right - text_x - if many { 30.0 } else { 0.0 }) * s;
-                paint::draw_text(pix, &fonts.regular, 11.5 * s, text_x * s, (y + 34.0) * s, DIM, &fit(&fonts.regular, 11.5 * s, &preview, pw));
+                paint::draw_text(
+                    pix,
+                    &fonts.regular,
+                    11.5 * s,
+                    text_x * s,
+                    (y + 34.0) * s,
+                    DIM,
+                    &fit(&fonts.regular, 11.5 * s, &preview, pw),
+                );
                 hits.push((r, if many { NAct::Toggle(g.key.clone()) } else { NAct::Open(top.id) }));
                 if hot {
                     let x = (right - tw - 22.0, y + 3.0, 14.0, 14.0);
@@ -762,7 +854,15 @@ pub fn paint_list(pix: &mut Pixmap, s: f32, area: Rect, store: &Store, pointer: 
             Row::Item(n, _) => {
                 let r = (ax + 14.0, y, aw - 14.0, ITEM_H - 4.0);
                 let hot = over(pointer, r);
-                paint::fill_rounded(pix, r.0 * s, r.1 * s, r.2 * s, r.3 * s, 10.0 * s, if hot { (255, 255, 255, 26) } else { (255, 255, 255, 10) });
+                paint::fill_rounded(
+                    pix,
+                    r.0 * s,
+                    r.1 * s,
+                    r.2 * s,
+                    r.3 * s,
+                    10.0 * s,
+                    if hot { (255, 255, 255, 26) } else { (255, 255, 255, 10) },
+                );
                 let right = r.0 + r.2 - 10.0;
                 let t = ago(n.time, now);
                 let tw = paint::text_width(&fonts.regular, 10.0 * s, &t) / s;
@@ -772,9 +872,25 @@ pub fn paint_list(pix: &mut Pixmap, s: f32, area: Rect, store: &Store, pointer: 
                 }
                 let tx = r.0 + 20.0;
                 let title = if n.summary.is_empty() { &n.body } else { &n.summary };
-                paint::draw_text(pix, &fonts.bold, 12.0 * s, tx * s, (y + 13.0) * s, WHITE, &fit(&fonts.bold, 12.0 * s, title, (right - tw - 8.0 - tx) * s));
+                paint::draw_text(
+                    pix,
+                    &fonts.bold,
+                    12.0 * s,
+                    tx * s,
+                    (y + 13.0) * s,
+                    WHITE,
+                    &fit(&fonts.bold, 12.0 * s, title, (right - tw - 8.0 - tx) * s),
+                );
                 if !n.summary.is_empty() && !n.body.is_empty() {
-                    paint::draw_text(pix, &fonts.regular, 11.0 * s, tx * s, (y + 30.0) * s, DIM, &fit(&fonts.regular, 11.0 * s, &n.body, (right - tx) * s));
+                    paint::draw_text(
+                        pix,
+                        &fonts.regular,
+                        11.0 * s,
+                        tx * s,
+                        (y + 30.0) * s,
+                        DIM,
+                        &fit(&fonts.regular, 11.0 * s, &n.body, (right - tx) * s),
+                    );
                 }
                 hits.push((r, NAct::Open(n.id)));
                 if hot {
@@ -800,8 +916,30 @@ pub fn paint_list(pix: &mut Pixmap, s: f32, area: Rect, store: &Store, pointer: 
     let dw = paint::text_width(&fonts.regular, 11.0 * s, dl) / s + 18.0;
     let db = (ax + aw / 2.0 - dw / 2.0 + 20.0, fy, dw, 22.0);
     let dhot = over(pointer, db);
-    paint::fill_rounded(pix, db.0 * s, db.1 * s, db.2 * s, db.3 * s, 11.0 * s, if store.dnd { paint::accent(255) } else if dhot { (255, 255, 255, 40) } else { (255, 255, 255, 18) });
-    paint::draw_text(pix, &fonts.regular, 11.0 * s, (db.0 + 9.0) * s, (db.1 + 11.0) * s, if store.dnd || dhot { WHITE } else { (210, 210, 222, 255) }, dl);
+    paint::fill_rounded(
+        pix,
+        db.0 * s,
+        db.1 * s,
+        db.2 * s,
+        db.3 * s,
+        11.0 * s,
+        if store.dnd {
+            paint::accent(255)
+        } else if dhot {
+            (255, 255, 255, 40)
+        } else {
+            (255, 255, 255, 18)
+        },
+    );
+    paint::draw_text(
+        pix,
+        &fonts.regular,
+        11.0 * s,
+        (db.0 + 9.0) * s,
+        (db.1 + 11.0) * s,
+        if store.dnd || dhot { WHITE } else { (210, 210, 222, 255) },
+        dl,
+    );
     hits.push((db, NAct::ToggleDnd));
     let label = "Clear all";
     let lw = paint::text_width(&fonts.bold, 11.5 * s, label) / s;
@@ -841,7 +979,14 @@ pub fn surface_h() -> u32 {
 
 /// Draws the pop-ups (oldest on top, newest at the bottom corner) and returns their hits in physical pixels: first a card's
 /// close button and its action buttons, then the card, so the buttons win where they overlap.
-pub fn paint_toasts(pix: &mut Pixmap, s: f32, list: &[Notif], hover: Option<usize>, fonts: &Fonts, icons: &mut Icons) -> Vec<crate::shell::Hit> {
+pub fn paint_toasts(
+    pix: &mut Pixmap,
+    s: f32,
+    list: &[Notif],
+    hover: Option<usize>,
+    fonts: &Fonts,
+    icons: &mut Icons,
+) -> Vec<crate::shell::Hit> {
     use crate::shell::{Action, Hit};
     pix.fill(paint::color((0, 0, 0, 0)));
     let (w, h) = (pix.width() as f32 / s, pix.height() as f32 / s);
@@ -860,21 +1005,54 @@ pub fn paint_toasts(pix: &mut Pixmap, s: f32, list: &[Notif], hover: Option<usiz
         let card_idx = first_hit + 1 + acts.len();
         let lit = hover.map(|i| i >= first_hit && i <= card_idx).unwrap_or(false);
         paint::fill_rounded(pix, r.0 * s, r.1 * s, r.2 * s, r.3 * s, 16.0 * s, if lit { (14, 14, 18, 245) } else { (0, 0, 0, 238) });
-        paint::stroke_rounded(pix, (r.0 + 0.5) * s, (r.1 + 0.5) * s, (r.2 - 1.0) * s, (r.3 - 1.0) * s, 16.0 * s, s, if n.urgency == 2 { (232, 84, 84, 140) } else { (255, 255, 255, 34) });
+        paint::stroke_rounded(
+            pix,
+            (r.0 + 0.5) * s,
+            (r.1 + 0.5) * s,
+            (r.2 - 1.0) * s,
+            (r.3 - 1.0) * s,
+            16.0 * s,
+            s,
+            if n.urgency == 2 { (232, 84, 84, 140) } else { (255, 255, 255, 34) },
+        );
         draw_app_icon(pix, s, icons, fonts, &n.app, &n.icon, 14.0, y + 14.0, 36.0, n.urgency == 2);
         let tx = 62.0;
         let right = w - 14.0;
         let t = ago(n.time, now);
         let tw = paint::text_width(&fonts.regular, 10.5 * s, &t) / s;
         paint::draw_text(pix, &fonts.regular, 10.5 * s, (right - tw - 18.0) * s, (y + 17.0) * s, DIM, &t);
-        paint::draw_text(pix, &fonts.bold, 11.0 * s, tx * s, (y + 17.0) * s, (190, 190, 205, 255), &fit(&fonts.bold, 11.0 * s, &n.app, (right - tw - 30.0 - tx) * s));
+        paint::draw_text(
+            pix,
+            &fonts.bold,
+            11.0 * s,
+            tx * s,
+            (y + 17.0) * s,
+            (190, 190, 205, 255),
+            &fit(&fonts.bold, 11.0 * s, &n.app, (right - tw - 30.0 - tx) * s),
+        );
         let title = if n.summary.is_empty() { &n.body } else { &n.summary };
         paint::draw_text(pix, &fonts.bold, 13.0 * s, tx * s, (y + 38.0) * s, WHITE, &fit(&fonts.bold, 13.0 * s, title, (right - tx) * s));
         if !n.summary.is_empty() && !n.body.is_empty() {
-            paint::draw_text(pix, &fonts.regular, 12.0 * s, tx * s, (y + 58.0) * s, DIM, &fit(&fonts.regular, 12.0 * s, &n.body, (right - tx) * s));
+            paint::draw_text(
+                pix,
+                &fonts.regular,
+                12.0 * s,
+                tx * s,
+                (y + 58.0) * s,
+                DIM,
+                &fit(&fonts.regular, 12.0 * s, &n.body, (right - tx) * s),
+            );
         }
         let x = (right - 14.0, y + 6.0, 20.0, 20.0);
-        paint::draw_text(pix, &fonts.bold, 14.0 * s, (x.0 + 4.0) * s, (x.1 + 10.0) * s, if hover == Some(first_hit) { WHITE } else { DIM }, "×");
+        paint::draw_text(
+            pix,
+            &fonts.bold,
+            14.0 * s,
+            (x.0 + 4.0) * s,
+            (x.1 + 10.0) * s,
+            if hover == Some(first_hit) { WHITE } else { DIM },
+            "×",
+        );
         hits.push(Hit { rect: phys(x), action: Action::ToastClose(n.id) });
         // the app's buttons along the bottom
         let mut bx = tx;
@@ -882,7 +1060,15 @@ pub fn paint_toasts(pix: &mut Pixmap, s: f32, list: &[Notif], hover: Option<usiz
             let bw = paint::text_width(&fonts.bold, 11.5 * s, label) / s + 24.0;
             let b = (bx, y + TOAST_H - 6.0, bw, 26.0);
             let bl = hover == Some(first_hit + 1 + i);
-            paint::fill_rounded(pix, b.0 * s, b.1 * s, b.2 * s, b.3 * s, 13.0 * s, if bl { paint::accent(255) } else { (255, 255, 255, 28) });
+            paint::fill_rounded(
+                pix,
+                b.0 * s,
+                b.1 * s,
+                b.2 * s,
+                b.3 * s,
+                13.0 * s,
+                if bl { paint::accent(255) } else { (255, 255, 255, 28) },
+            );
             paint::draw_text(pix, &fonts.bold, 11.5 * s, (b.0 + 12.0) * s, (b.1 + 13.0) * s, WHITE, label);
             hits.push(Hit { rect: phys(b), action: Action::ToastAction(n.id, i) });
             bx += bw + 8.0;
@@ -902,7 +1088,18 @@ mod tests {
     use super::*;
 
     fn n(id: u32, app: &str, summary: &str, time: u64) -> Notif {
-        Notif { id, app: app.into(), entry: String::new(), icon: String::new(), summary: summary.into(), body: String::new(), urgency: 1, time, actions: vec![], link: String::new() }
+        Notif {
+            id,
+            app: app.into(),
+            entry: String::new(),
+            icon: String::new(),
+            summary: summary.into(),
+            body: String::new(),
+            urgency: 1,
+            time,
+            actions: vec![],
+            link: String::new(),
+        }
     }
 
     #[test]
@@ -968,7 +1165,12 @@ mod tests {
     #[test]
     fn toast_buttons_skip_default_and_cap_at_two() {
         let mut a = n(1, "A", "x", 1);
-        a.actions = vec![("default".into(), "Open".into()), ("allow".into(), "Allow".into()), ("deny".into(), "Deny".into()), ("more".into(), "More".into())];
+        a.actions = vec![
+            ("default".into(), "Open".into()),
+            ("allow".into(), "Allow".into()),
+            ("deny".into(), "Deny".into()),
+            ("more".into(), "More".into()),
+        ];
         let acts = toast_actions(&a);
         assert_eq!(acts.iter().map(|x| x.0.as_str()).collect::<Vec<_>>(), vec!["allow", "deny"]);
         assert!(toast_actions(&n(2, "B", "y", 1)).is_empty());
@@ -1039,7 +1241,11 @@ mod tests {
         let info = serde_json::json!({"detector_id": "connection-watch", "severity": "info", "summary": "s"});
         assert!(from_alert(&info, "warning", 1).is_none());
         let explained = serde_json::json!({"severity":"warning","detector_id":"inbound","summary":"blocked","explain":{"what":"w","serious":"s","done":"d","do":"Nothing to do"}});
-        assert_eq!(from_alert(&explained, "warning", 2).unwrap().body, "blocked\nWhat to do: Nothing to do", "the monitor's next step comes under the summary");
+        assert_eq!(
+            from_alert(&explained, "warning", 2).unwrap().body,
+            "blocked\nWhat to do: Nothing to do",
+            "the monitor's next step comes under the summary"
+        );
         assert_eq!(from_alert(&info, "info", 1).unwrap().link, "security:monitor", "other alerts open the monitor's page");
         // the monitor's alerts carry their fields at the top
         let top = serde_json::json!({"detector_id": "connection-watch", "severity": "warning", "summary": "s", "fields": {"app": "y"}});
@@ -1047,7 +1253,8 @@ mod tests {
         let device = serde_json::json!({"detector_id": "lan-watch", "severity": "warning", "summary": "a new device joined", "event_kind": "new_lan_device"});
         assert_eq!(from_alert(&device, "warning", 5).unwrap().link, "network:devices", "a new device opens the device list");
         // Sarina's evals: caught and kept by the monitor, not popped up
-        let practice = serde_json::json!({"detector_id": "injection-phrase", "severity": "critical", "summary": "s", "fields": {"practice": "1"}});
+        let practice =
+            serde_json::json!({"detector_id": "injection-phrase", "severity": "critical", "summary": "s", "fields": {"practice": "1"}});
         assert!(from_alert(&practice, "warning", 4).is_none());
     }
 }
@@ -1063,7 +1270,18 @@ mod render {
         let mut icons = Icons::new();
         let mut s = Store::default();
         let now = now_secs();
-        let mk = |id, app: &str, sum: &str, body: &str, age, urgency| Notif { id, app: app.into(), entry: String::new(), icon: String::new(), summary: sum.into(), body: body.into(), urgency, time: now - age, actions: vec![], link: String::new() };
+        let mk = |id, app: &str, sum: &str, body: &str, age, urgency| Notif {
+            id,
+            app: app.into(),
+            entry: String::new(),
+            icon: String::new(),
+            summary: sum.into(),
+            body: body.into(),
+            urgency,
+            time: now - age,
+            actions: vec![],
+            link: String::new(),
+        };
         s.add(mk(1, "Mail", "Alice", "Are we still on for lunch?", 600, 1));
         s.add(mk(2, "Mail", "Bob", "Invoice attached for October", 120, 1));
         s.add(mk(3, "Heimdall", "Critical · connection-watch", "app \"x\" has its network switched off but curl connected", 30, 2));

@@ -60,7 +60,8 @@ fn run(cmd: &str, args: &[&str]) -> String {
 
 /// Is the screen locked right now?
 fn screensaver_active() -> bool {
-    run("busctl", &["--user", "call", "org.freedesktop.ScreenSaver", "/ScreenSaver", "org.freedesktop.ScreenSaver", "GetActive"]).ends_with("true")
+    run("busctl", &["--user", "call", "org.freedesktop.ScreenSaver", "/ScreenSaver", "org.freedesktop.ScreenSaver", "GetActive"])
+        .ends_with("true")
 }
 
 /// logind's blocking inhibitors on idling or sleeping, as (who, what) pairs, e.g. ("Firefox", "idle"). Only "block" locks count:
@@ -68,7 +69,8 @@ fn screensaver_active() -> bool {
 fn inhibitors() -> Vec<(String, String)> {
     let list = || -> zbus::Result<Vec<(String, String, String, String, u32, u32)>> {
         let sys = zbus::blocking::Connection::system()?;
-        let login = zbus::blocking::Proxy::new(&sys, "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager")?;
+        let login =
+            zbus::blocking::Proxy::new(&sys, "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager")?;
         login.call("ListInhibitors", &())
     };
     policy::blocking_inhibitors(list().unwrap_or_default())
@@ -138,13 +140,28 @@ fn lights(arg: &str) {
 }
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for App {
-    fn event(_: &mut Self, _: &wl_registry::WlRegistry, _: wl_registry::Event, _: &GlobalListContents, _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_registry::WlRegistry,
+        _: wl_registry::Event,
+        _: &GlobalListContents,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 delegate_noop!(App: ignore wl_seat::WlSeat);
 delegate_noop!(App: ignore ExtIdleNotifierV1);
 
 impl Dispatch<ExtIdleNotificationV1, u32> for App {
-    fn event(app: &mut Self, _: &ExtIdleNotificationV1, event: ext_idle_notification_v1::Event, mark: &u32, _: &Connection, _: &QueueHandle<Self>) {
+    fn event(
+        app: &mut Self,
+        _: &ExtIdleNotificationV1,
+        event: ext_idle_notification_v1::Event,
+        mark: &u32,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
         match event {
             ext_idle_notification_v1::Event::Idled => {
                 app.longest = Some((app.longest.map(|(m, _)| m.max(*mark)).unwrap_or(*mark), Instant::now()));
@@ -271,19 +288,38 @@ fn main() {
         }
     };
     let qh = queue.handle();
-    let (Ok(notifier), Ok(seat)) = (globals.bind::<ExtIdleNotifierV1, _, _>(&qh, 1..=2, ()), globals.bind::<wl_seat::WlSeat, _, _>(&qh, 1..=9, ())) else {
+    let (Ok(notifier), Ok(seat)) =
+        (globals.bind::<ExtIdleNotifierV1, _, _>(&qh, 1..=2, ()), globals.bind::<wl_seat::WlSeat, _, _>(&qh, 1..=9, ()))
+    else {
         eprintln!("yggdrasil-idle: the compositor does not offer ext-idle-notify-v1");
         std::process::exit(1);
     };
     let all = marks(&conf);
-    let mut notes: Vec<ExtIdleNotificationV1> = all.iter().map(|m| notifier.get_input_idle_notification(m * 1000, &seat, &qh, *m)).collect();
-    log(&format!("started: {} (marks: {:?}s; steps: {:?})", if conf.act { "ACTING" } else { "observing only" }, all, conf.steps().iter().map(|(s, st)| format!("{}@{}", st.name(), s)).collect::<Vec<_>>()));
+    let mut notes: Vec<ExtIdleNotificationV1> =
+        all.iter().map(|m| notifier.get_input_idle_notification(m * 1000, &seat, &qh, *m)).collect();
+    log(&format!(
+        "started: {} (marks: {:?}s; steps: {:?})",
+        if conf.act { "ACTING" } else { "observing only" },
+        all,
+        conf.steps().iter().map(|(s, st)| format!("{}@{}", st.name(), s)).collect::<Vec<_>>()
+    ));
     let dimmer = dim::Dimmer::new(&globals, &qh);
     if dimmer.is_none() {
         log("dimming is not available here (needs layer-shell, wp-viewporter, wl_shm)");
     }
     let power = power::Power::new(&globals, &qh);
-    let mut app = App { conf, dimmer, power, globals, qh: qh.clone(), longest: None, done: HashMap::new(), screensaver: None, lights_out: false, pointer_was: None };
+    let mut app = App {
+        conf,
+        dimmer,
+        power,
+        globals,
+        qh: qh.clone(),
+        longest: None,
+        done: HashMap::new(),
+        screensaver: None,
+        lights_out: false,
+        pointer_was: None,
+    };
     if pointer_timeout() == Some(POINTER_HIDDEN) {
         set_pointer_timeout(0.0);
     }
@@ -322,7 +358,11 @@ fn main() {
                     }
                     let all = marks(&new);
                     notes = all.iter().map(|m| notifier.get_input_idle_notification(m * 1000, &seat, &qh, *m)).collect();
-                    log(&format!("settings changed: {} (steps: {:?})", if new.act { "ACTING" } else { "observing only" }, new.steps().iter().map(|(s, st)| format!("{}@{}", st.name(), s)).collect::<Vec<_>>()));
+                    log(&format!(
+                        "settings changed: {} (steps: {:?})",
+                        if new.act { "ACTING" } else { "observing only" },
+                        new.steps().iter().map(|(s, st)| format!("{}@{}", st.name(), s)).collect::<Vec<_>>()
+                    ));
                     app.conf = new;
                     app.done.clear();
                     app.longest = None;

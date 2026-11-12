@@ -518,7 +518,9 @@ impl<'a> Tune<'a> {
         let cpu = (|| {
             let (base, programmable) = self.hw.platform(self)?;
             let ratios = ratios_of(self.hw.rdmsr(self, MSR_TURBO_RATIO_LIMIT)?);
-            Ok::<_, OsErr>(Obj::new().with("ratios", ints_json(&ratios)).with("base", base.into()).with("programmable", programmable.into()))
+            Ok::<_, OsErr>(
+                Obj::new().with("ratios", ints_json(&ratios)).with("base", base.into()).with("programmable", programmable.into()),
+            )
         })();
         match cpu {
             Ok(c) => out.set("cpu", c.into()),
@@ -533,7 +535,10 @@ impl<'a> Tune<'a> {
             }
         };
         let read = g.and_then(|g| {
-            Ok(Obj::new().with("core", g.offset(CLOCK_GRAPHICS)?.into()).with("mem", g.offset(CLOCK_MEM)?.into()).with("max_core", g.max_core()?.into()))
+            Ok(Obj::new()
+                .with("core", g.offset(CLOCK_GRAPHICS)?.into())
+                .with("mem", g.offset(CLOCK_MEM)?.into())
+                .with("max_core", g.max_core()?.into()))
         });
         match read {
             Ok(o) => out.set("gpu", o.into()),
@@ -558,7 +563,8 @@ impl<'a> Tune<'a> {
             return Ok(false);
         }
         let shown: String = py::strip(line).chars().take(120).collect();
-        let why = format!("The graphics driver reported an error while the card's clocks were tuned ({shown}); they are back at the defaults");
+        let why =
+            format!("The graphics driver reported an error while the card's clocks were tuned ({shown}); they are back at the defaults");
         let _ = self.hw.apply_gpu(self, &GPU_DEFAULT);
         let mut rest = trial.obj().cloned().unwrap_or_default();
         rest.remove("gpu");
@@ -593,7 +599,11 @@ impl<'a> Tune<'a> {
                 w => json_number(w).filter(|f| f.is_finite()).map(|f| f.trunc() as i64),
             };
             if let Some(w) = w {
-                self.hw.write_text(self, &self.rapl(&format!("constraint_{i}_power_limit_uw")), &(w.saturating_mul(1_000_000)).to_string())?;
+                self.hw.write_text(
+                    self,
+                    &self.rapl(&format!("constraint_{i}_power_limit_uw")),
+                    &(w.saturating_mul(1_000_000)).to_string(),
+                )?;
             }
         }
         Ok(())
@@ -818,9 +828,17 @@ impl<'a> Tune<'a> {
                 let pl2 = or(p.at("pl2"), s.at("pl2"));
                 if pl1.truthy() && pl2.truthy() {
                     match (json_number(&pl1), json_number(&pl2)) {
-                        (Some(a), Some(b)) if b < a => return Err(SetErr::Value("the short-term limit may not be below the long-term one".into())),
+                        (Some(a), Some(b)) if b < a => {
+                            return Err(SetErr::Value("the short-term limit may not be below the long-term one".into()))
+                        }
                         (Some(_), Some(_)) => {}
-                        _ => return Err(SetErr::Crash(format!("'<' not supported between instances of '{}' and '{}'", pl2.type_name(), pl1.type_name()))),
+                        _ => {
+                            return Err(SetErr::Crash(format!(
+                                "'<' not supported between instances of '{}' and '{}'",
+                                pl2.type_name(),
+                                pl1.type_name()
+                            )))
+                        }
                     }
                 }
                 d.set("power", p.into());
@@ -1034,11 +1052,23 @@ impl Kernel {
             return None;
         }
         // the fallback: what the Python helper always ran
-        let mut child = Command::new("journalctl").args(["-k", "-f", "-n", "0", "-o", "cat"]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+        let mut child = Command::new("journalctl")
+            .args(["-k", "-f", "-n", "0", "-o", "cat"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok()?;
         let out = child.stdout.take()?;
         let fd: OwnedFd = out.into();
         unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFL, libc::fcntl(fd.as_raw_fd(), libc::F_GETFL) | libc::O_NONBLOCK) };
-        Some(Kernel { fd, records: false, child: Some(child), buf: Vec::new(), source: format!("journalctl ({}: {kmsg_err})", path.display()) })
+        Some(Kernel {
+            fd,
+            records: false,
+            child: Some(child),
+            buf: Vec::new(),
+            source: format!("journalctl ({}: {kmsg_err})", path.display()),
+        })
     }
 
     /// Waits up to `secs` for messages, or a stop (the stop signal, or in the merged service this part switched off). With

@@ -28,7 +28,19 @@ pub fn slider_row(ui: &mut egui::Ui, pal: &Palette, first: bool, title: &str, su
 /// right. The graph always fills its box: until two minutes of readings are in, the time across it is shorter (hover says
 /// how long ago a point was). Each graph has its own fixed scale (shown on hover), never a second axis.
 #[allow(clippy::too_many_arguments)]
-pub fn metric<T>(ui: &mut egui::Ui, pal: &Palette, first: bool, name: &str, value: &str, detail: &str, h: &[T], get: impl Fn(&T) -> f32, lo: f32, hi: f32, unit: &str) {
+pub fn metric<T>(
+    ui: &mut egui::Ui,
+    pal: &Palette,
+    first: bool,
+    name: &str,
+    value: &str,
+    detail: &str,
+    h: &[T],
+    get: impl Fn(&T) -> f32,
+    lo: f32,
+    hi: f32,
+    unit: &str,
+) {
     if !first {
         let r = ui.available_rect_before_wrap();
         ui.painter().hline(r.left()..=r.right(), r.top(), Stroke::new(1.0, pal.border));
@@ -54,12 +66,18 @@ pub fn metric<T>(ui: &mut egui::Ui, pal: &Palette, first: bool, name: &str, valu
             return;
         }
         let step = rect.width() / (h.len() - 1) as f32;
-        let at = |i: usize, s: &T| pos2(rect.left() + i as f32 * step, rect.bottom() - ((get(s) - lo) / (hi - lo)).clamp(0.0, 1.0) * rect.height());
+        let at = |i: usize, s: &T| {
+            pos2(rect.left() + i as f32 * step, rect.bottom() - ((get(s) - lo) / (hi - lo)).clamp(0.0, 1.0) * rect.height())
+        };
         let line: Vec<egui::Pos2> = h.iter().enumerate().map(|(i, s)| at(i, s)).collect();
         // a light fill under the line (drawn as thin columns: the area is not convex)
         let fill = pal.accent.gamma_multiply(0.18);
         for w in line.windows(2) {
-            painter.add(Shape::convex_polygon(vec![w[0], w[1], pos2(w[1].x, rect.bottom()), pos2(w[0].x, rect.bottom())], fill, Stroke::NONE));
+            painter.add(Shape::convex_polygon(
+                vec![w[0], w[1], pos2(w[1].x, rect.bottom()), pos2(w[0].x, rect.bottom())],
+                fill,
+                Stroke::NONE,
+            ));
         }
         painter.add(Shape::line(line.clone(), Stroke::new(2.0, pal.accent)));
         if let Some(p) = resp.hover_pos() {
@@ -85,13 +103,22 @@ pub enum Kind {
 
 impl Kind {
     fn arg(self) -> &'static str {
-        match self { Kind::Gpu => "--gpu-window", Kind::Cpu => "--cpu-window" }
+        match self {
+            Kind::Gpu => "--gpu-window",
+            Kind::Cpu => "--cpu-window",
+        }
     }
     fn title(self) -> &'static str {
-        match self { Kind::Gpu => "Graphics card", Kind::Cpu => "Processor" }
+        match self {
+            Kind::Gpu => "Graphics card",
+            Kind::Cpu => "Processor",
+        }
     }
     fn app_id(self) -> &'static str {
-        match self { Kind::Gpu => "yggdrasil-gpu", Kind::Cpu => "yggdrasil-cpu" }
+        match self {
+            Kind::Gpu => "yggdrasil-gpu",
+            Kind::Cpu => "yggdrasil-cpu",
+        }
     }
     /// The pop-out asked for on the command line, if any.
     pub fn from_args() -> Option<Kind> {
@@ -103,8 +130,11 @@ impl Kind {
 /// Settings is closed.
 pub fn pop_out(kind: Kind) {
     use std::os::unix::process::CommandExt;
-    let exe = std::env::current_exe().ok().filter(|p| p.exists()).map(|p| p.into_os_string()).unwrap_or_else(|| "yggdrasil-settings".into());
-    if let Ok(mut child) = Command::new(exe).arg(kind.arg()).process_group(0).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() {
+    let exe =
+        std::env::current_exe().ok().filter(|p| p.exists()).map(|p| p.into_os_string()).unwrap_or_else(|| "yggdrasil-settings".into());
+    if let Ok(mut child) =
+        Command::new(exe).arg(kind.arg()).process_group(0).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn()
+    {
         std::thread::spawn(move || {
             let _ = child.wait();
         });
@@ -171,7 +201,10 @@ pub fn window_main(kind: Kind) -> eframe::Result {
         kind.title(),
         options,
         Box::new(move |cc| {
-            let body = match kind { Kind::Gpu => Body::Gpu(gpu::Panel::new(&cc.egui_ctx)), Kind::Cpu => Body::Cpu(cpu::Panel::new(&cc.egui_ctx)) };
+            let body = match kind {
+                Kind::Gpu => Body::Gpu(gpu::Panel::new(&cc.egui_ctx)),
+                Kind::Cpu => Body::Cpu(cpu::Panel::new(&cc.egui_ctx)),
+            };
             Ok(Box::new(Window { kind, body }))
         }),
     )

@@ -14,7 +14,10 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
 use std::time::{Duration, Instant};
 
-use eframe::egui::{self, pos2, vec2, Align2, Color32, CornerRadius, CursorIcon, FontId, Rect, RichText, Sense, Stroke, StrokeKind, TextureHandle, TextureOptions};
+use eframe::egui::{
+    self, pos2, vec2, Align2, Color32, CornerRadius, CursorIcon, FontId, Rect, RichText, Sense, Stroke, StrokeKind, TextureHandle,
+    TextureOptions,
+};
 use yggdrasil_ui::chrome;
 use yggdrasil_ui::theme::{self, Palette};
 
@@ -72,7 +75,8 @@ fn title_of(p: &Path) -> String {
 /// Asks logind to hold off dimming and locking while a video plays (yggdrasil-idle and others honour it).
 fn inhibit_idle() -> Option<zbus::zvariant::OwnedFd> {
     let sys = zbus::blocking::Connection::system().ok()?;
-    let login = zbus::blocking::Proxy::new(&sys, "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager").ok()?;
+    let login =
+        zbus::blocking::Proxy::new(&sys, "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager").ok()?;
     login.call("Inhibit", &("idle", "VLC", "A video is playing", "block")).ok()
 }
 
@@ -111,7 +115,14 @@ fn pick_video() -> Option<PathBuf> {
     let mut opts: HashMap<&str, Value> = HashMap::new();
     opts.insert("handle_token", Value::from(token.as_str()));
     opts.insert("filters", Value::from(filters));
-    conn.call_method(Some("org.freedesktop.portal.Desktop"), "/org/freedesktop/portal/desktop", Some("org.freedesktop.portal.FileChooser"), "OpenFile", &("", "Open a video", opts)).ok()?;
+    conn.call_method(
+        Some("org.freedesktop.portal.Desktop"),
+        "/org/freedesktop/portal/desktop",
+        Some("org.freedesktop.portal.FileChooser"),
+        "OpenFile",
+        &("", "Open a video", opts),
+    )
+    .ok()?;
     let msg = answers.next()?;
     let (code, results): (u32, HashMap<String, OwnedValue>) = msg.body().deserialize().ok()?;
     if code != 0 {
@@ -124,7 +135,15 @@ fn pick_video() -> Option<PathBuf> {
 /// What to play when the window opens: a file, or a stream.
 enum Start {
     File(PathBuf),
-    Stream { url: String, audio: Option<String>, title: String, start: Option<f64>, muted: bool, user_agent: Option<String>, referer: Option<String> },
+    Stream {
+        url: String,
+        audio: Option<String>,
+        title: String,
+        start: Option<f64>,
+        muted: bool,
+        user_agent: Option<String>,
+        referer: Option<String>,
+    },
 }
 
 /// The command line: `[--title T] [--audio URL] [--start S] URL` for a stream, otherwise a file (or a file:// URI).
@@ -163,7 +182,17 @@ fn parse_args(args: Vec<std::ffi::OsString>) -> Option<Start> {
 
 impl App {
     fn new(start: Option<Start>, ctx: &egui::Context) -> App {
-        let mut app = App { now: None, error: None, picking: None, last_motion: Instant::now(), last_pointer: None, fullscreen: false, volume: 100, muted: false, scrub: None };
+        let mut app = App {
+            now: None,
+            error: None,
+            picking: None,
+            last_motion: Instant::now(),
+            last_pointer: None,
+            fullscreen: false,
+            volume: 100,
+            muted: false,
+            scrub: None,
+        };
         match start {
             Some(Start::File(f)) => app.open(f, ctx),
             Some(Start::Stream { url, audio, title, start, muted, user_agent, referer }) => {
@@ -176,7 +205,16 @@ impl App {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn open_stream(&mut self, url: &str, audio: Option<&str>, title: String, start: Option<f64>, user_agent: Option<&str>, referer: Option<&str>, ctx: &egui::Context) {
+    fn open_stream(
+        &mut self,
+        url: &str,
+        audio: Option<&str>,
+        title: String,
+        start: Option<f64>,
+        user_agent: Option<&str>,
+        referer: Option<&str>,
+        ctx: &egui::Context,
+    ) {
         self.close();
         let c = ctx.clone();
         match vlc::Player::open_stream_with(url, audio, start, user_agent, referer, Box::new(move || c.request_repaint())) {
@@ -377,19 +415,35 @@ fn icon_button(ui: &mut egui::Ui, pal: &Palette, icon: Icon, size: f32, tip: &st
             let d = if icon == Icon::Back { -1.0 } else { 1.0 };
             p.circle_stroke(c, s * 1.15, Stroke::new(1.6, pal.dim));
             p.text(c, Align2::CENTER_CENTER, "10", FontId::proportional(size * 0.30), ink);
-            p.add(egui::Shape::convex_polygon(vec![c + vec2(d * s * 0.2, -s * 1.15 - 3.0), c + vec2(d * s * 0.2, -s * 1.15 + 3.0), c + vec2(d * s * 0.75, -s * 1.15)], ink, Stroke::NONE));
+            p.add(egui::Shape::convex_polygon(
+                vec![c + vec2(d * s * 0.2, -s * 1.15 - 3.0), c + vec2(d * s * 0.2, -s * 1.15 + 3.0), c + vec2(d * s * 0.75, -s * 1.15)],
+                ink,
+                Stroke::NONE,
+            ));
         }
         Icon::Volume | Icon::Muted => {
-            let body = vec![c + vec2(-s, -s * 0.4), c + vec2(-s * 0.4, -s * 0.4), c + vec2(s * 0.2, -s), c + vec2(s * 0.2, s), c + vec2(-s * 0.4, s * 0.4), c + vec2(-s, s * 0.4)];
+            let body = vec![
+                c + vec2(-s, -s * 0.4),
+                c + vec2(-s * 0.4, -s * 0.4),
+                c + vec2(s * 0.2, -s),
+                c + vec2(s * 0.2, s),
+                c + vec2(-s * 0.4, s * 0.4),
+                c + vec2(-s, s * 0.4),
+            ];
             p.add(egui::Shape::convex_polygon(body, ink, Stroke::NONE));
             if icon == Icon::Muted {
                 p.line_segment([c + vec2(s * 0.5, -s * 0.45), c + vec2(s * 1.15, s * 0.45)], line);
                 p.line_segment([c + vec2(s * 1.15, -s * 0.45), c + vec2(s * 0.5, s * 0.45)], line);
             } else {
-                p.add(egui::Shape::Path(egui::epaint::PathShape::line((0..=8).map(|k| {
-                    let a = -0.8 + 1.6 * k as f32 / 8.0;
-                    c + vec2(s * 0.35 + a.cos() * s * 0.75, a.sin() * s * 0.75)
-                }).collect(), line)));
+                p.add(egui::Shape::Path(egui::epaint::PathShape::line(
+                    (0..=8)
+                        .map(|k| {
+                            let a = -0.8 + 1.6 * k as f32 / 8.0;
+                            c + vec2(s * 0.35 + a.cos() * s * 0.75, a.sin() * s * 0.75)
+                        })
+                        .collect(),
+                    line,
+                )));
             }
         }
         Icon::Fullscreen | Icon::Windowed => {
@@ -397,7 +451,11 @@ fn icon_button(ui: &mut egui::Ui, pal: &Palette, icon: Icon, size: f32, tip: &st
             for (sx, sy) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
                 let corner = c + vec2(sx * s, sy * s);
                 let toward = |dx: f32, dy: f32| corner + vec2(dx, dy);
-                let (a, b) = if icon == Icon::Fullscreen { (vec2(-sx * s * 0.6, 0.0), vec2(0.0, -sy * s * 0.6)) } else { (vec2(-sx * o, 0.0), vec2(0.0, -sy * o)) };
+                let (a, b) = if icon == Icon::Fullscreen {
+                    (vec2(-sx * s * 0.6, 0.0), vec2(0.0, -sy * s * 0.6))
+                } else {
+                    (vec2(-sx * o, 0.0), vec2(0.0, -sy * o))
+                };
                 let k = if icon == Icon::Fullscreen { corner } else { corner + vec2(-sx * o, -sy * o) };
                 let _ = toward;
                 p.line_segment([k, k + if icon == Icon::Fullscreen { a } else { vec2(sx * o, 0.0) }], line);
@@ -464,7 +522,8 @@ impl eframe::App for App {
                 }
             }
         }
-        let dropped: Option<PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).find(|p| !p.as_os_str().is_empty()));
+        let dropped: Option<PathBuf> =
+            ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).find(|p| !p.as_os_str().is_empty()));
         if let Some(p) = dropped {
             if is_video(&p) {
                 self.open(p, &ctx);
@@ -517,7 +576,12 @@ impl eframe::App for App {
                 c.label(RichText::new("VLC").size(26.0).strong().color(pal.text));
                 c.label(RichText::new("Open a video, or drop one on this window").color(pal.dim));
                 c.add_space(14.0);
-                let open = c.add(egui::Button::new(RichText::new("Open a video…").size(15.0).color(pal.on_accent())).fill(pal.accent).corner_radius(CornerRadius::same(8)).min_size(vec2(180.0, 36.0)));
+                let open = c.add(
+                    egui::Button::new(RichText::new("Open a video…").size(15.0).color(pal.on_accent()))
+                        .fill(pal.accent)
+                        .corner_radius(CornerRadius::same(8))
+                        .min_size(vec2(180.0, 36.0)),
+                );
                 if open.clicked() {
                     actions.push(Box::new(|a, _| a.start_pick()));
                 }
@@ -531,7 +595,9 @@ impl eframe::App for App {
             if show_bars && !self.fullscreen {
                 let top = Rect::from_min_size(full.min, vec2(full.width(), TOP_H));
                 ui.painter().rect_filled(top, 0.0, if playing_something { Color32::from_black_alpha(150) } else { pal.bg });
-                let mut c = ui.new_child(egui::UiBuilder::new().max_rect(top.shrink2(vec2(10.0, 5.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
+                let mut c = ui.new_child(
+                    egui::UiBuilder::new().max_rect(top.shrink2(vec2(10.0, 5.0))).layout(egui::Layout::left_to_right(egui::Align::Center)),
+                );
                 if icon_button(&mut c, &pal, Icon::Open, 28.0, "Open a video (O)").clicked() {
                     actions.push(Box::new(|a, _| a.start_pick()));
                 }
@@ -547,7 +613,9 @@ impl eframe::App for App {
                 let n = self.now.as_ref().unwrap();
                 let bottom = Rect::from_min_max(pos2(full.left(), full.bottom() - BOTTOM_H), full.max);
                 ui.painter().rect_filled(bottom, 0.0, Color32::from_black_alpha(160));
-                let mut c = ui.new_child(egui::UiBuilder::new().max_rect(bottom.shrink2(vec2(16.0, 6.0))).layout(egui::Layout::top_down(egui::Align::Min)));
+                let mut c = ui.new_child(
+                    egui::UiBuilder::new().max_rect(bottom.shrink2(vec2(16.0, 6.0))).layout(egui::Layout::top_down(egui::Align::Min)),
+                );
                 let (t, len) = (n.vlc.time().max(0), n.vlc.length());
                 let at = if len > 0 { (t as f64 / len as f64) as f32 } else { 0.0 };
                 if let Some(f) = seek_bar(&mut c, &pal, at, &mut self.scrub, len) {
@@ -559,7 +627,15 @@ impl eframe::App for App {
                 }
                 c.horizontal(|c| {
                     let playing = n.vlc.state() == vlc::State::Playing;
-                    if icon_button(c, &pal, if playing { Icon::Pause } else { Icon::Play }, 38.0, if playing { "Pause (Space)" } else { "Play (Space)" }).clicked() {
+                    if icon_button(
+                        c,
+                        &pal,
+                        if playing { Icon::Pause } else { Icon::Play },
+                        38.0,
+                        if playing { "Pause (Space)" } else { "Play (Space)" },
+                    )
+                    .clicked()
+                    {
                         actions.push(Box::new(|a, _| a.toggle_pause()));
                     }
                     if icon_button(c, &pal, Icon::Back, 34.0, "10 seconds back (Left)").clicked() {
@@ -571,7 +647,9 @@ impl eframe::App for App {
                     let shown = self.scrub.map(|f| (f as f64 * len as f64) as i64).unwrap_or(t);
                     c.label(RichText::new(format!("{} / {}", clock(shown), clock(len))).color(Color32::from_gray(225)).monospace());
                     c.with_layout(egui::Layout::right_to_left(egui::Align::Center), |c| {
-                        if icon_button(c, &pal, if self.fullscreen { Icon::Windowed } else { Icon::Fullscreen }, 34.0, "Full screen (F)").clicked() {
+                        if icon_button(c, &pal, if self.fullscreen { Icon::Windowed } else { Icon::Fullscreen }, 34.0, "Full screen (F)")
+                            .clicked()
+                        {
                             actions.push(Box::new(|a, c| a.toggle_fullscreen(c)));
                         }
                         let subs = n.vlc.subtitles();
@@ -612,13 +690,19 @@ impl eframe::App for App {
                         let track = Rect::from_center_size(vr.center(), vec2(vr.width(), 4.0));
                         let level = if self.muted { 0.0 } else { self.volume as f32 / 125.0 };
                         c.painter().rect_filled(track, 2.0, Color32::from_white_alpha(60));
-                        c.painter().rect_filled(Rect::from_min_max(track.min, pos2(track.left() + track.width() * level, track.bottom())), 2.0, pal.accent);
+                        c.painter().rect_filled(
+                            Rect::from_min_max(track.min, pos2(track.left() + track.width() * level, track.bottom())),
+                            2.0,
+                            pal.accent,
+                        );
                         if let Some(p) = vresp.interact_pointer_pos().filter(|_| vresp.dragged() || vresp.clicked()) {
                             let v = (((p.x - track.left()) / track.width()).clamp(0.0, 1.0) * 125.0).round() as i32;
                             actions.push(Box::new(move |a, _| a.set_volume(v)));
                         }
                         vresp.on_hover_text(format!("Volume {}% (Up/Down)", if self.muted { 0 } else { self.volume * 100 / 100 }));
-                        if icon_button(c, &pal, if self.muted || self.volume == 0 { Icon::Muted } else { Icon::Volume }, 32.0, "Mute (M)").clicked() {
+                        if icon_button(c, &pal, if self.muted || self.volume == 0 { Icon::Muted } else { Icon::Volume }, 32.0, "Mute (M)")
+                            .clicked()
+                        {
                             actions.push(Box::new(|a, _| a.toggle_mute()));
                         }
                     });

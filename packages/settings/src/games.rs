@@ -27,14 +27,18 @@ const GPU_RUN: &str = "/usr/bin/yggdrasil-gpu-run";
 /// The per-game fixes (helpers/game-fix and data/game-fixes.json).
 const GAME_FIX: &str = "/usr/lib/yggdrasil/game-fix";
 /// lsfg-vk's Vulkan layer manifest: present when it is installed (package or ~/.local).
-const LSFG_LAYERS: [&str; 2] = ["/usr/share/vulkan/implicit_layer.d/VkLayer_LSFGVK_frame_generation.json", ".local/share/vulkan/implicit_layer.d/VkLayer_LSFGVK_frame_generation.json"];
+const LSFG_LAYERS: [&str; 2] = [
+    "/usr/share/vulkan/implicit_layer.d/VkLayer_LSFGVK_frame_generation.json",
+    ".local/share/vulkan/implicit_layer.d/VkLayer_LSFGVK_frame_generation.json",
+];
 /// Lossless Scaling's Steam app id.
 const LOSSLESS_SCALING: &str = "993090";
 /// Agora's page for the lsfg-vk component (Labyrinth's catalog).
 const AGORA_APP: &str = "frame-generation";
 /// Kairos, Labyrinth's own frame generation: its layer manifest (present when installed; the second, before the rename) and
 /// Agora page.
-const FRAMEGEN_LAYERS: [&str; 2] = ["/usr/share/vulkan/implicit_layer.d/kairos.x86_64.json", "/usr/share/vulkan/implicit_layer.d/labyrinth_framegen.x86_64.json"];
+const FRAMEGEN_LAYERS: [&str; 2] =
+    ["/usr/share/vulkan/implicit_layer.d/kairos.x86_64.json", "/usr/share/vulkan/implicit_layer.d/labyrinth_framegen.x86_64.json"];
 const FRAMEGEN_AGORA: &str = "kairos";
 pub const FRAMEGEN_OPTION: &str = "kairos %command%";
 /// The choices per game, as Off, 2x, 3x, 4x.
@@ -77,7 +81,21 @@ pub fn fix_launch(launch: &str, framegen: bool) -> String {
 pub fn parse_fixes(json: &str) -> Option<Vec<Fix>> {
     let v: serde_json::Value = serde_json::from_str(json).ok()?;
     let s = |x: &serde_json::Value, k: &str| x[k].as_str().unwrap_or("").to_string();
-    Some(v.as_array()?.iter().map(|x| Fix { appid: s(x, "appid"), name: s(x, "name"), title: s(x, "title"), about: s(x, "about"), tip: s(x, "tip"), state: s(x, "state"), screen: s(x, "screen"), launch: s(x, "launch") }).collect())
+    Some(
+        v.as_array()?
+            .iter()
+            .map(|x| Fix {
+                appid: s(x, "appid"),
+                name: s(x, "name"),
+                title: s(x, "title"),
+                about: s(x, "about"),
+                tip: s(x, "tip"),
+                state: s(x, "state"),
+                screen: s(x, "screen"),
+                launch: s(x, "launch"),
+            })
+            .collect(),
+    )
 }
 
 /// What a fix's row says about its state.
@@ -113,12 +131,17 @@ pub fn framegen_conf_path() -> PathBuf {
 
 /// The launcher's own folder (XDG_CONFIG_HOME, else ~/.config), not Yggdrasil's.
 fn config_base() -> PathBuf {
-    std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join(".config"))
+    std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join(".config"))
 }
 
 /// The choices as they are: Kairos's games.conf, or the one from before the rename while there is no new one.
 pub fn framegen_conf_read() -> String {
-    std::fs::read_to_string(framegen_conf_path()).or_else(|_| std::fs::read_to_string(config_base().join("labyrinth-framegen/games.conf"))).unwrap_or_default()
+    std::fs::read_to_string(framegen_conf_path())
+        .or_else(|_| std::fs::read_to_string(config_base().join("labyrinth-framegen/games.conf")))
+        .unwrap_or_default()
 }
 
 /// A game's choice in games.conf: 0 (off or not listed), 2, 3 or 4.
@@ -173,7 +196,8 @@ pub fn manifest_game(acf: &str) -> Option<(String, String)> {
     };
     let (id, name) = (field("appid")?, field("name")?);
     // Steam's own tools are not games
-    let tool = ["Proton", "Steam Linux Runtime", "Steamworks Common", "SteamVR"].iter().any(|t| name.starts_with(t)) || name.contains("Redistributable");
+    let tool = ["Proton", "Steam Linux Runtime", "Steamworks Common", "SteamVR"].iter().any(|t| name.starts_with(t))
+        || name.contains("Redistributable");
     (!tool && !id.is_empty() && !name.is_empty()).then_some((id, name))
 }
 
@@ -203,13 +227,18 @@ pub fn steam_games(home: &Path) -> Vec<(String, String)> {
 /// `yggdrasil-gpu-run list --json`.
 pub fn parse_cards(json: &str) -> Option<Vec<Card>> {
     let v: serde_json::Value = serde_json::from_str(json).ok()?;
-    Some(v.as_array()?.iter().map(|c| Card {
-        number: c["number"].as_u64().unwrap_or(0) as u32,
-        name: c["name"].as_str().unwrap_or("").to_string(),
-        driver: c["driver"].as_str().unwrap_or("").to_string(),
-        boot: c["boot"].as_bool().unwrap_or(false),
-        screens: c["screens"].as_u64().unwrap_or(0) as u32,
-    }).collect())
+    Some(
+        v.as_array()?
+            .iter()
+            .map(|c| Card {
+                number: c["number"].as_u64().unwrap_or(0) as u32,
+                name: c["name"].as_str().unwrap_or("").to_string(),
+                driver: c["driver"].as_str().unwrap_or("").to_string(),
+                boot: c["boot"].as_bool().unwrap_or(false),
+                screens: c["screens"].as_u64().unwrap_or(0) as u32,
+            })
+            .collect(),
+    )
 }
 
 /// What a card's row says under its name.
@@ -286,7 +315,13 @@ pub fn load() -> Info {
         lsfg: Path::new(LSFG_LAYERS[0]).is_file() || home.join(LSFG_LAYERS[1]).is_file(),
         lossless: lossless_installed(&home),
         steam: !steam_roots(&home).is_empty(),
-        fixes: std::process::Command::new(GAME_FIX).args(["list", "--json"]).output().ok().filter(|o| o.status.success()).and_then(|o| parse_fixes(&String::from_utf8_lossy(&o.stdout))).unwrap_or_default(),
+        fixes: std::process::Command::new(GAME_FIX)
+            .args(["list", "--json"])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| parse_fixes(&String::from_utf8_lossy(&o.stdout)))
+            .unwrap_or_default(),
         framegen: FRAMEGEN_LAYERS.iter().any(|p| Path::new(p).is_file()),
         games: steam_games(&home),
         framegen_conf: framegen_conf_read(),
@@ -366,8 +401,12 @@ impl State {
                     ui::row(ui, pal, i == 0, &f.name, Some(&sub), |ui| {
                         if !f.launch.is_empty() {
                             let option = fix_launch(&f.launch, info.framegen);
-                            let label = if self.copied_launch.as_deref() == Some(f.appid.as_str()) { "Copied" } else { "Copy launch option" };
-                            if ui::quiet(ui, pal, label).on_hover_text(format!("For Steam: Properties > Launch options\n{option}")).clicked() {
+                            let label =
+                                if self.copied_launch.as_deref() == Some(f.appid.as_str()) { "Copied" } else { "Copy launch option" };
+                            if ui::quiet(ui, pal, label)
+                                .on_hover_text(format!("For Steam: Properties > Launch options\n{option}"))
+                                .clicked()
+                            {
                                 ui.ctx().copy_text(option);
                                 self.copied_launch = Some(f.appid.clone());
                             }
@@ -379,7 +418,11 @@ impl State {
                                 }
                             }
                             "not applied" => {
-                                let tip = if f.screen.is_empty() { String::new() } else { format!("For your {} screen; the game's files are backed up first", f.screen.replace('x', "\u{d7}")) };
+                                let tip = if f.screen.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!("For your {} screen; the game's files are backed up first", f.screen.replace('x', "\u{d7}"))
+                                };
                                 if ui::action(ui, pal, "Apply").on_hover_text(tip).clicked() {
                                     run = Some(("apply", f.appid.clone()));
                                 }
@@ -402,26 +445,46 @@ impl State {
                 ui.colored_label(egui::Color32::from_rgb(200, 90, 60), m);
             }
             ui.add_space(4.0);
-            ui.label(RichText::new("Fixes are made per game. A game's own menu may undo one if you change the same setting there.").color(pal.dim).size(12.5));
+            ui.label(
+                RichText::new("Fixes are made per game. A game's own menu may undo one if you change the same setting there.")
+                    .color(pal.dim)
+                    .size(12.5),
+            );
         }
 
         ui::group(ui, pal, Some("Frame generation (preview)"), |ui| {
             if !info.framegen {
-                ui::row(ui, pal, true, "Frame generation", Some("Kairos, Labyrinth's own: more frames on the screen than the game draws, for Vulkan and Proton games. From Agora."), |ui| {
-                    if ui::action(ui, pal, "Get it in Agora").clicked() {
-                        let _ = std::process::Command::new("agora").env("AGORA_PAGE", format!("detail:{FRAMEGEN_AGORA}")).spawn();
-                        self.info = None;
-                    }
-                });
+                ui::row(
+                    ui,
+                    pal,
+                    true,
+                    "Frame generation",
+                    Some(
+                        "Kairos, Labyrinth's own: more frames on the screen than the game draws, for Vulkan and Proton games. From Agora.",
+                    ),
+                    |ui| {
+                        if ui::action(ui, pal, "Get it in Agora").clicked() {
+                            let _ = std::process::Command::new("agora").env("AGORA_PAGE", format!("detail:{FRAMEGEN_AGORA}")).spawn();
+                            self.info = None;
+                        }
+                    },
+                );
                 return;
             }
             let label = if self.copied == Some(u32::MAX) { "Copied" } else { "Copy launch option" };
-            ui::row(ui, pal, true, "In Steam, once per game", Some("Properties > Launch options: kairos %command%. Then choose below; no further Steam changes."), |ui| {
-                if ui::action(ui, pal, label).on_hover_text(FRAMEGEN_OPTION).clicked() {
-                    ui.ctx().copy_text(FRAMEGEN_OPTION.to_string());
-                    self.copied = Some(u32::MAX);
-                }
-            });
+            ui::row(
+                ui,
+                pal,
+                true,
+                "In Steam, once per game",
+                Some("Properties > Launch options: kairos %command%. Then choose below; no further Steam changes."),
+                |ui| {
+                    if ui::action(ui, pal, label).on_hover_text(FRAMEGEN_OPTION).clicked() {
+                        ui.ctx().copy_text(FRAMEGEN_OPTION.to_string());
+                        self.copied = Some(u32::MAX);
+                    }
+                },
+            );
             if info.games.is_empty() {
                 ui::row(ui, pal, false, "No Steam games found", None, |_| {});
             }
@@ -449,16 +512,30 @@ impl State {
         ui.label(RichText::new("The game is held to your refresh rate divided by the multiplier (at 180 Hz and 3x: the game at 60, the screen at 180). It adds about one game frame of delay. A choice takes effect the next time the game starts.").color(pal.dim).size(12.5));
 
         ui::group(ui, pal, Some("Lossless Scaling frame generation (lsfg-vk)"), |ui| {
-            ui::row(ui, pal, true, "lsfg-vk", Some(if info.lsfg { "Installed: Lossless Scaling's frame generation for Linux games" } else { "Brings Lossless Scaling's frame generation to Linux games. From Agora." }), |ui| {
-                if info.lsfg {
-                    if ui::action(ui, pal, "Choose games").on_hover_text("lsfg-vk's own settings: which games, and how many frames").clicked() {
-                        crate::sys::spawn("lsfg-vk-ui", &[]);
+            ui::row(
+                ui,
+                pal,
+                true,
+                "lsfg-vk",
+                Some(if info.lsfg {
+                    "Installed: Lossless Scaling's frame generation for Linux games"
+                } else {
+                    "Brings Lossless Scaling's frame generation to Linux games. From Agora."
+                }),
+                |ui| {
+                    if info.lsfg {
+                        if ui::action(ui, pal, "Choose games")
+                            .on_hover_text("lsfg-vk's own settings: which games, and how many frames")
+                            .clicked()
+                        {
+                            crate::sys::spawn("lsfg-vk-ui", &[]);
+                        }
+                    } else if ui::action(ui, pal, "Get it in Agora").clicked() {
+                        let _ = std::process::Command::new("agora").env("AGORA_PAGE", format!("detail:{AGORA_APP}")).spawn();
+                        self.info = None;
                     }
-                } else if ui::action(ui, pal, "Get it in Agora").clicked() {
-                    let _ = std::process::Command::new("agora").env("AGORA_PAGE", format!("detail:{AGORA_APP}")).spawn();
-                    self.info = None;
-                }
-            });
+                },
+            );
             let sub = if info.lossless {
                 "Installed in Steam: lsfg-vk uses its files"
             } else if info.steam {
@@ -572,7 +649,11 @@ mod tests {
         let other = home.join("Games");
         std::fs::create_dir_all(root.join("steamapps")).unwrap();
         std::fs::create_dir_all(other.join("steamapps")).unwrap();
-        std::fs::write(root.join("steamapps/libraryfolders.vdf"), format!("\"libraryfolders\"\n{{\n\t\"1\"\n\t{{\n\t\t\"path\"\t\t\"{}\"\n\t}}\n}}\n", other.display())).unwrap();
+        std::fs::write(
+            root.join("steamapps/libraryfolders.vdf"),
+            format!("\"libraryfolders\"\n{{\n\t\"1\"\n\t{{\n\t\t\"path\"\t\t\"{}\"\n\t}}\n}}\n", other.display()),
+        )
+        .unwrap();
         assert!(!lossless_installed(&home));
         std::fs::write(other.join("steamapps/appmanifest_993090.acf"), "\"AppState\" {}").unwrap();
         assert!(lossless_installed(&home), "found in the second library");

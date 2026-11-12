@@ -74,7 +74,11 @@ fn paste_after_close() {
     let script = r#"sleep 0.25
 if hyprctl -j activewindow 2>/dev/null | grep -qiE '"class": *"[^"]*(kitty|foot|alacritty|ghostty|wezterm|konsole|terminal|minos)'; then m="CTRL SHIFT"; else m="CTRL"; fi
 hyprctl dispatch sendshortcut "$m, V, activewindow" >/dev/null 2>&1"#;
-    let _ = std::process::Command::new("sh").args(["-c", script]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).spawn();
+    let _ = std::process::Command::new("sh")
+        .args(["-c", script])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .spawn();
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -108,7 +112,18 @@ impl App {
     fn new() -> App {
         let mut snippets = snippets::load();
         snippets::sort(&mut snippets);
-        let mut a = App { tab: Tab::History, query: String::new(), sel: 0, history: vec![], history_on: None, listed: Instant::now(), snippets, editor: None, note: String::new(), close: false };
+        let mut a = App {
+            tab: Tab::History,
+            query: String::new(),
+            sel: 0,
+            history: vec![],
+            history_on: None,
+            listed: Instant::now(),
+            snippets,
+            editor: None,
+            note: String::new(),
+            close: false,
+        };
         a.refresh();
         a
     }
@@ -137,11 +152,15 @@ impl App {
     /// What is shown on the current tab: indices into history or snippets.
     fn shown(&self) -> Vec<usize> {
         match self.tab {
-            Tab::History => (0..self.history.len()).filter(|&i| {
-                let e = &self.history[i];
-                matches(if e.image.is_some() { "image picture" } else { &e.text }, &self.query)
-            }).collect(),
-            Tab::Snippets => (0..self.snippets.len()).filter(|&i| matches(&format!("{} {}", self.snippets[i].title, self.snippets[i].text), &self.query)).collect(),
+            Tab::History => (0..self.history.len())
+                .filter(|&i| {
+                    let e = &self.history[i];
+                    matches(if e.image.is_some() { "image picture" } else { &e.text }, &self.query)
+                })
+                .collect(),
+            Tab::Snippets => (0..self.snippets.len())
+                .filter(|&i| matches(&format!("{} {}", self.snippets[i].title, self.snippets[i].text), &self.query))
+                .collect(),
         }
     }
 
@@ -209,7 +228,9 @@ impl App {
     /// Ctrl+E: edit a snippet, or start a new one from a copied text.
     fn edit(&mut self, i: Option<usize>) {
         self.editor = Some(match (self.tab, i) {
-            (Tab::Snippets, Some(i)) if i < self.snippets.len() => Editor { index: Some(i), title: self.snippets[i].title.clone(), text: self.snippets[i].text.clone() },
+            (Tab::Snippets, Some(i)) if i < self.snippets.len() => {
+                Editor { index: Some(i), title: self.snippets[i].title.clone(), text: self.snippets[i].text.clone() }
+            }
             (Tab::History, Some(i)) => {
                 let t = self.history.get(i).map(|e| e.text.clone()).unwrap_or_default();
                 Editor { index: None, title: snippets::title_from(&t), text: t }
@@ -229,7 +250,13 @@ impl App {
         }
         ui.add_space(6.0);
         egui::ScrollArea::vertical().max_height(ui.available_height() - 44.0).show(ui, |ui| {
-            ui.add(egui::TextEdit::multiline(&mut ed.text).hint_text("Text").desired_width(f32::INFINITY).desired_rows(12).font(egui::TextStyle::Monospace));
+            ui.add(
+                egui::TextEdit::multiline(&mut ed.text)
+                    .hint_text("Text")
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(12)
+                    .font(egui::TextStyle::Monospace),
+            );
         });
         ui.add_space(6.0);
         let mut save = ctx.input_mut(|i| i.consume_key(Modifiers::CTRL, Key::S));
@@ -293,142 +320,157 @@ impl eframe::App for App {
             self.refresh();
         }
 
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(pal.bg).inner_margin(Margin { left: 12, right: 10, top: 6, bottom: 12 })).show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Clipboard").strong().color(pal.text));
-                ui.add_space(10.0);
-                for (t, name) in [(Tab::History, "History"), (Tab::Snippets, "Snippets")] {
-                    let txt = RichText::new(name).color(if self.tab == t { pal.text } else { pal.dim });
-                    if ui.add(egui::Button::new(txt).selected(self.tab == t).frame(self.tab == t)).clicked() && self.editor.is_none() {
-                        self.tab = t;
-                        self.sel = 0;
-                    }
-                }
-                chrome::drag_area(ui, ui.available_width() - chrome::controls_width());
-                chrome::window_controls(ui, &pal);
-            });
-            ui.add_space(6.0);
-            if self.editor.is_some() {
-                self.editor_ui(ui, &pal);
-                return;
-            }
-            if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            }
-            if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Tab)) {
-                self.tab = if self.tab == Tab::History { Tab::Snippets } else { Tab::History };
-                self.sel = 0;
-            }
-            let resp = ui.add(egui::TextEdit::singleline(&mut self.query).hint_text(if self.tab == Tab::History { "Search what you copied" } else { "Search snippets" }).desired_width(f32::INFINITY).margin(vec2(10.0, 8.0)));
-            if !resp.has_focus() {
-                resp.request_focus();
-            }
-            if resp.changed() {
-                self.sel = 0;
-            }
-            let shown = self.shown();
-            self.sel = self.sel.min(shown.len().saturating_sub(1));
-            let (down, up, enter, shift_enter, del, pin, edit, new) = ctx.input_mut(|i| {
-                (
-                    i.consume_key(Modifiers::NONE, Key::ArrowDown),
-                    i.consume_key(Modifiers::NONE, Key::ArrowUp),
-                    i.consume_key(Modifiers::NONE, Key::Enter),
-                    i.consume_key(Modifiers::SHIFT, Key::Enter),
-                    // Delete with an empty search line removes the entry; while typing it edits the search
-                    self.query.is_empty() && i.consume_key(Modifiers::NONE, Key::Delete) || i.consume_key(Modifiers::CTRL, Key::Delete),
-                    i.consume_key(Modifiers::CTRL, Key::P),
-                    i.consume_key(Modifiers::CTRL, Key::E),
-                    i.consume_key(Modifiers::CTRL, Key::N),
-                )
-            });
-            if down && self.sel + 1 < shown.len() {
-                self.sel += 1;
-            }
-            if up {
-                self.sel = self.sel.saturating_sub(1);
-            }
-            let cur = shown.get(self.sel).copied();
-            let mut picked: Option<(usize, bool)> = None;
-            if let Some(i) = cur {
-                if enter || shift_enter {
-                    picked = Some((i, shift_enter));
-                }
-                if del {
-                    self.delete(i);
-                }
-                if pin {
-                    self.pin(i);
-                }
-            }
-            if edit {
-                self.edit(cur);
-            }
-            if new {
-                self.tab = Tab::Snippets;
-                self.edit(None);
-            }
-            ui.add_space(8.0);
-            let footer_h = 28.0;
-            let t = now();
-            egui::ScrollArea::vertical().max_height(ui.available_height() - footer_h).auto_shrink([false, false]).show(ui, |ui| {
-                if shown.is_empty() {
-                    ui.add_space(20.0);
-                    let msg = match (self.tab, self.history_on) {
-                        (Tab::History, None) => "The clipboard service is not running (systemctl --user enable --now yggdrasil-clipboard).",
-                        (Tab::History, Some(false)) => "Clipboard history is off. Turn it on in Settings > Appearance.",
-                        (Tab::History, _) if self.history.is_empty() => "Nothing copied yet.",
-                        (Tab::Snippets, _) if self.snippets.is_empty() => "No snippets yet. Ctrl+N writes one; Ctrl+P keeps a copied text as one.",
-                        _ => "Nothing matches.",
-                    };
-                    ui.vertical_centered(|ui| ui.label(RichText::new(msg).color(pal.dim)));
-                }
-                for (n, &i) in shown.iter().enumerate() {
-                    let r = match self.tab {
-                        Tab::History => {
-                            let e = &self.history[i];
-                            let (title, meta) = match e.image {
-                                Some((w, h)) => (format!("Picture {w} × {h}"), "image".to_string()),
-                                None => summary(&e.text),
-                            };
-                            row(ui, &pal, &title, &format!("{meta} · {}", age(e.at, t)), false, n == self.sel)
-                        }
-                        Tab::Snippets => {
-                            let s = &self.snippets[i];
-                            let (first, meta) = summary(&s.text);
-                            row(ui, &pal, if s.title.is_empty() { &first } else { &s.title }, &meta, s.pinned, n == self.sel)
-                        }
-                    };
-                    if n == self.sel && (down || up) {
-                        r.scroll_to_me(None);
-                    }
-                    if r.clicked() {
-                        picked = Some((i, false));
-                    }
-                }
-            });
-            if let Some((i, paste)) = picked {
-                self.pick(i, paste);
-            }
-            ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(pal.bg).inner_margin(Margin { left: 12, right: 10, top: 6, bottom: 12 }))
+            .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    let hint = if !self.note.is_empty() {
-                        RichText::new(self.note.as_str()).color(pal.amber)
-                    } else {
-                        let paste = if can_paste() { " · Shift+Enter pastes" } else { "" };
-                        RichText::new(format!("Enter copies{paste} · Tab switches · Ctrl+P pin · Ctrl+E edit · Ctrl+N new · Del removes")).color(pal.dim).size(11.0)
-                    };
-                    ui.label(hint);
-                    if self.tab == Tab::History && !self.history.is_empty() {
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if ui.small_button("Clear").clicked() {
-                                ask(serde_json::json!({"op": "clear"}));
-                                self.refresh();
+                    ui.label(RichText::new("Clipboard").strong().color(pal.text));
+                    ui.add_space(10.0);
+                    for (t, name) in [(Tab::History, "History"), (Tab::Snippets, "Snippets")] {
+                        let txt = RichText::new(name).color(if self.tab == t { pal.text } else { pal.dim });
+                        if ui.add(egui::Button::new(txt).selected(self.tab == t).frame(self.tab == t)).clicked() && self.editor.is_none() {
+                            self.tab = t;
+                            self.sel = 0;
+                        }
+                    }
+                    chrome::drag_area(ui, ui.available_width() - chrome::controls_width());
+                    chrome::window_controls(ui, &pal);
+                });
+                ui.add_space(6.0);
+                if self.editor.is_some() {
+                    self.editor_ui(ui, &pal);
+                    return;
+                }
+                if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Tab)) {
+                    self.tab = if self.tab == Tab::History { Tab::Snippets } else { Tab::History };
+                    self.sel = 0;
+                }
+                let resp = ui.add(
+                    egui::TextEdit::singleline(&mut self.query)
+                        .hint_text(if self.tab == Tab::History { "Search what you copied" } else { "Search snippets" })
+                        .desired_width(f32::INFINITY)
+                        .margin(vec2(10.0, 8.0)),
+                );
+                if !resp.has_focus() {
+                    resp.request_focus();
+                }
+                if resp.changed() {
+                    self.sel = 0;
+                }
+                let shown = self.shown();
+                self.sel = self.sel.min(shown.len().saturating_sub(1));
+                let (down, up, enter, shift_enter, del, pin, edit, new) = ctx.input_mut(|i| {
+                    (
+                        i.consume_key(Modifiers::NONE, Key::ArrowDown),
+                        i.consume_key(Modifiers::NONE, Key::ArrowUp),
+                        i.consume_key(Modifiers::NONE, Key::Enter),
+                        i.consume_key(Modifiers::SHIFT, Key::Enter),
+                        // Delete with an empty search line removes the entry; while typing it edits the search
+                        self.query.is_empty() && i.consume_key(Modifiers::NONE, Key::Delete) || i.consume_key(Modifiers::CTRL, Key::Delete),
+                        i.consume_key(Modifiers::CTRL, Key::P),
+                        i.consume_key(Modifiers::CTRL, Key::E),
+                        i.consume_key(Modifiers::CTRL, Key::N),
+                    )
+                });
+                if down && self.sel + 1 < shown.len() {
+                    self.sel += 1;
+                }
+                if up {
+                    self.sel = self.sel.saturating_sub(1);
+                }
+                let cur = shown.get(self.sel).copied();
+                let mut picked: Option<(usize, bool)> = None;
+                if let Some(i) = cur {
+                    if enter || shift_enter {
+                        picked = Some((i, shift_enter));
+                    }
+                    if del {
+                        self.delete(i);
+                    }
+                    if pin {
+                        self.pin(i);
+                    }
+                }
+                if edit {
+                    self.edit(cur);
+                }
+                if new {
+                    self.tab = Tab::Snippets;
+                    self.edit(None);
+                }
+                ui.add_space(8.0);
+                let footer_h = 28.0;
+                let t = now();
+                egui::ScrollArea::vertical().max_height(ui.available_height() - footer_h).auto_shrink([false, false]).show(ui, |ui| {
+                    if shown.is_empty() {
+                        ui.add_space(20.0);
+                        let msg = match (self.tab, self.history_on) {
+                            (Tab::History, None) => {
+                                "The clipboard service is not running (systemctl --user enable --now yggdrasil-clipboard)."
                             }
-                        });
+                            (Tab::History, Some(false)) => "Clipboard history is off. Turn it on in Settings > Appearance.",
+                            (Tab::History, _) if self.history.is_empty() => "Nothing copied yet.",
+                            (Tab::Snippets, _) if self.snippets.is_empty() => {
+                                "No snippets yet. Ctrl+N writes one; Ctrl+P keeps a copied text as one."
+                            }
+                            _ => "Nothing matches.",
+                        };
+                        ui.vertical_centered(|ui| ui.label(RichText::new(msg).color(pal.dim)));
+                    }
+                    for (n, &i) in shown.iter().enumerate() {
+                        let r = match self.tab {
+                            Tab::History => {
+                                let e = &self.history[i];
+                                let (title, meta) = match e.image {
+                                    Some((w, h)) => (format!("Picture {w} × {h}"), "image".to_string()),
+                                    None => summary(&e.text),
+                                };
+                                row(ui, &pal, &title, &format!("{meta} · {}", age(e.at, t)), false, n == self.sel)
+                            }
+                            Tab::Snippets => {
+                                let s = &self.snippets[i];
+                                let (first, meta) = summary(&s.text);
+                                row(ui, &pal, if s.title.is_empty() { &first } else { &s.title }, &meta, s.pinned, n == self.sel)
+                            }
+                        };
+                        if n == self.sel && (down || up) {
+                            r.scroll_to_me(None);
+                        }
+                        if r.clicked() {
+                            picked = Some((i, false));
+                        }
                     }
                 });
+                if let Some((i, paste)) = picked {
+                    self.pick(i, paste);
+                }
+                ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
+                    ui.horizontal(|ui| {
+                        let hint = if !self.note.is_empty() {
+                            RichText::new(self.note.as_str()).color(pal.amber)
+                        } else {
+                            let paste = if can_paste() { " · Shift+Enter pastes" } else { "" };
+                            RichText::new(format!(
+                                "Enter copies{paste} · Tab switches · Ctrl+P pin · Ctrl+E edit · Ctrl+N new · Del removes"
+                            ))
+                            .color(pal.dim)
+                            .size(11.0)
+                        };
+                        ui.label(hint);
+                        if self.tab == Tab::History && !self.history.is_empty() {
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                if ui.small_button("Clear").clicked() {
+                                    ask(serde_json::json!({"op": "clear"}));
+                                    self.refresh();
+                                }
+                            });
+                        }
+                    });
+                });
             });
-        });
         chrome::outline(&ctx, &pal);
     }
 }

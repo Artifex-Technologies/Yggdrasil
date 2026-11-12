@@ -24,12 +24,22 @@ const TEXT_CHARS: usize = 24000;
 pub enum Body {
     None,
     /// RGBA pixels, already scaled down.
-    Image { width: u32, height: u32, rgba: Vec<u8> },
-    Text { text: String, truncated: bool },
+    Image {
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+    },
+    Text {
+        text: String,
+        truncated: bool,
+    },
     /// A short list (folder or archive contents).
     Lines(Vec<String>),
     Message(String),
-    Drive { total: u64, free: u64 },
+    Drive {
+        total: u64,
+        free: u64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -80,7 +90,10 @@ pub fn kind_of(p: &Path, is_dir: bool) -> Kind {
         Kind::Pdf
     } else if archive::is_archive_name(p) {
         Kind::Archive
-    } else if TEXT.contains(&e.as_str()) || p.file_name().is_some_and(|n| matches!(n.to_string_lossy().as_ref(), "Makefile" | "PKGBUILD" | "Dockerfile" | "LICENSE" | "README")) {
+    } else if TEXT.contains(&e.as_str())
+        || p.file_name()
+            .is_some_and(|n| matches!(n.to_string_lossy().as_ref(), "Makefile" | "PKGBUILD" | "Dockerfile" | "LICENSE" | "README"))
+    {
         Kind::Text
     } else {
         Kind::Other
@@ -182,7 +195,11 @@ fn image_body(rgba: Option<(u32, u32, Vec<u8>)>, fallback: &str) -> Body {
 
 fn fmt_duration(d: Duration) -> String {
     let s = d.as_secs();
-    if s >= 3600 { format!("{}:{:02}:{:02}", s / 3600, s % 3600 / 60, s % 60) } else { format!("{}:{:02}", s / 60, s % 60) }
+    if s >= 3600 {
+        format!("{}:{:02}:{:02}", s / 3600, s % 3600 / 60, s % 60)
+    } else {
+        format!("{}:{:02}", s / 60, s % 60)
+    }
 }
 
 fn audio(p: &Path, details: &mut Vec<(String, String)>, max_px: u32) -> Body {
@@ -324,7 +341,11 @@ pub fn build(path: &Path, max_px: u32) -> PreviewData {
             if let Ok(rd) = std::fs::read_dir(path) {
                 for e in rd.flatten().take(5000) {
                     let is_d = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
-                    if is_d { dirs += 1 } else { files += 1 }
+                    if is_d {
+                        dirs += 1
+                    } else {
+                        files += 1
+                    }
                     if names.len() < 400 {
                         names.push((is_d, e.file_name().to_string_lossy().into_owned()));
                     }
@@ -398,7 +419,10 @@ pub fn summarize(paths: &[PathBuf]) -> PreviewData {
     PreviewData {
         title: format!("{} items selected", paths.len()),
         subtitle: format!("{dirs} folders, {files} files"),
-        details: vec![("Total size".into(), listing::human_size(bytes)), ("Folders not counted".into(), "sizes of folders are not added".into())],
+        details: vec![
+            ("Total size".into(), listing::human_size(bytes)),
+            ("Folders not counted".into(), "sizes of folders are not added".into()),
+        ],
         body: Body::None,
     }
 }

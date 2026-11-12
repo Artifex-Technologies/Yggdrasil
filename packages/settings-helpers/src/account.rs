@@ -21,8 +21,8 @@ use crate::py::{self, Crash, R};
 const DOC: &str = include_str!("doc/account.txt");
 
 const RESERVED: &[&str] = &[
-    "root", "nobody", "daemon", "bin", "sys", "sync", "games", "man", "lp", "mail", "news", "uucp", "proxy", "www-data", "backup", "list", "irc",
-    "gnats", "sddm", "polkitd", "systemd",
+    "root", "nobody", "daemon", "bin", "sys", "sync", "games", "man", "lp", "mail", "news", "uucp", "proxy", "www-data", "backup", "list",
+    "irc", "gnats", "sddm", "polkitd", "systemd",
 ];
 const DESKTOP_GROUPS: &[&str] = &["users", "audio", "video", "network", "storage", "lp"];
 /// Groups Settings may switch per account, with what they allow (in this order). Only those that exist on the system are
@@ -153,7 +153,8 @@ fn accounts_in(env: &Env) -> R<Vec<Account>> {
                 continue;
             }
             // isdigit() takes a superscript two, int() does not: the script stopped there
-            let uid = pycompat::int(p[2]).ok_or_else(|| Crash(format!("ValueError: invalid literal for int() with base 10: {}", pycompat::repr(p[2]))))?;
+            let uid = pycompat::int(p[2])
+                .ok_or_else(|| Crash(format!("ValueError: invalid literal for int() with base 10: {}", pycompat::repr(p[2]))))?;
             if !(1000..60000).contains(&uid) {
                 continue;
             }
@@ -194,19 +195,22 @@ fn accounts_in(env: &Env) -> R<Vec<Account>> {
 /// The optional groups this system has, with what each allows.
 fn optional_groups(env: &Env) -> R<Vec<(String, String)>> {
     let names: Vec<&str> = OPTIONAL_GROUPS.iter().map(|g| g.0).collect();
-    Ok(existing_groups(env, &names)?.into_iter().map(|g| {
-        let about = OPTIONAL_GROUPS.iter().find(|x| x.0 == g).unwrap().1.to_string();
-        (g, about)
-    }).collect())
+    Ok(existing_groups(env, &names)?
+        .into_iter()
+        .map(|g| {
+            let about = OPTIONAL_GROUPS.iter().find(|x| x.0 == g).unwrap().1.to_string();
+            (g, about)
+        })
+        .collect())
 }
 
 /// PKEXEC_UID (else SUDO_UID) when it is a number.
 fn caller_uid() -> R<Option<i128>> {
     let v = [std::env::var("PKEXEC_UID").ok(), std::env::var("SUDO_UID").ok()].into_iter().flatten().find(|v| !v.is_empty());
     match v {
-        Some(v) if pycompat::isdigit(&v) => {
-            pycompat::int(&v).map(Some).ok_or_else(|| Crash(format!("ValueError: invalid literal for int() with base 10: {}", pycompat::repr(&v))))
-        }
+        Some(v) if pycompat::isdigit(&v) => pycompat::int(&v)
+            .map(Some)
+            .ok_or_else(|| Crash(format!("ValueError: invalid literal for int() with base 10: {}", pycompat::repr(&v)))),
         _ => Ok(None),
     }
 }
@@ -230,7 +234,10 @@ fn need_root(env: &Env) -> bool {
 /// ^[a-z][a-z0-9_-]{0,30}$ (without the final newline Python's $ let through)
 fn name_pattern(name: &str) -> bool {
     let b = name.as_bytes();
-    !b.is_empty() && b.len() <= 31 && b[0].is_ascii_lowercase() && b[1..].iter().all(|&c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_' || c == b'-')
+    !b.is_empty()
+        && b.len() <= 31
+        && b[0].is_ascii_lowercase()
+        && b[1..].iter().all(|&c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_' || c == b'-')
 }
 
 fn valid_name(env: &Env, name: &str) -> R<bool> {
@@ -257,7 +264,11 @@ fn changeable(env: &Env, name: &str) -> R<Option<Account>> {
 
 fn err_or(r: &py::Output, default: &str) -> String {
     let e = pycompat::strip(&r.stderr);
-    if e.is_empty() { default.to_string() } else { e.to_string() }
+    if e.is_empty() {
+        default.to_string()
+    } else {
+        e.to_string()
+    }
 }
 
 fn read_password() -> R<String> {
@@ -270,7 +281,10 @@ fn cmd_add(env: &Env, argv: &[String]) -> R<i32> {
         return Ok(1);
     }
     if argv.is_empty() || !valid_name(env, &argv[0])? {
-        return fail("the user name must be 1 to 31 lowercase letters, digits, - or _, starting with a letter, and not a system or reserved name", 2);
+        return fail(
+            "the user name must be 1 to 31 lowercase letters, digits, - or _, starting with a letter, and not a system or reserved name",
+            2,
+        );
     }
     let name = &argv[0];
     let admin = argv.iter().any(|a| a == "--admin");
@@ -279,7 +293,8 @@ fn cmd_add(env: &Env, argv: &[String]) -> R<i32> {
         full = argv.get(i + 1).cloned().unwrap_or_default();
     }
     let full = clean_full_name(&full);
-    if find(&accounts_in(env)?, name).is_some() || !pycompat::strip(&py::run(&["getent", "passwd", name.as_str()], None)?.stdout).is_empty() {
+    if find(&accounts_in(env)?, name).is_some() || !pycompat::strip(&py::run(&["getent", "passwd", name.as_str()], None)?.stdout).is_empty()
+    {
         return fail(&format!("an account called {name} already exists"), 1);
     }
     let pw = read_password()?;
@@ -498,7 +513,11 @@ fn cmd_sudo(env: &Env, argv: &[String]) -> R<i32> {
         let r = py::run(&["visudo", "-cf", tmp.as_str()], None)?;
         if r.code != 0 {
             fs::remove_file(&tmp).map_err(|e| Crash(py::oserror(&e, Some(&tmp))))?;
-            let why = if pycompat::strip(&r.stderr).is_empty() { pycompat::strip(&r.stdout).to_string() } else { pycompat::strip(&r.stderr).to_string() };
+            let why = if pycompat::strip(&r.stderr).is_empty() {
+                pycompat::strip(&r.stdout).to_string()
+            } else {
+                pycompat::strip(&r.stderr).to_string()
+            };
             return fail(&format!("the rule did not pass sudo's check: {why}"), 1);
         }
     }

@@ -42,7 +42,10 @@ impl Settings {
     fn read_all(&self, namespaces: Vec<String>) -> HashMap<String, HashMap<String, OwnedValue>> {
         let mut out = HashMap::new();
         if wanted(&namespaces, NAMESPACE) {
-            out.insert(NAMESPACE.to_string(), values(&yggdrasil_conf::appearance::load()).into_iter().map(|(k, v)| (k.to_string(), v)).collect());
+            out.insert(
+                NAMESPACE.to_string(),
+                values(&yggdrasil_conf::appearance::load()).into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+            );
         }
         out
     }

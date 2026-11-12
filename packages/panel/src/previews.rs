@@ -171,7 +171,9 @@ pub fn layout(w: f32, h: f32, anchor_x: f32, n: usize) -> (Rect, Vec<Rect>) {
     let ch = rows as f32 * (TILE_H + PAD) + PAD;
     let cx = (anchor_x - cw / 2.0).clamp(8.0, (w - cw - 8.0).max(8.0));
     let cy = (h - ch - 4.0).max(3.0);
-    let tiles = (0..n).map(|k| (cx + PAD + (k % per_row) as f32 * TILE_W, cy + PAD + (k / per_row) as f32 * (TILE_H + PAD), TILE_W - 6.0, TILE_H)).collect();
+    let tiles = (0..n)
+        .map(|k| (cx + PAD + (k % per_row) as f32 * TILE_W, cy + PAD + (k / per_row) as f32 * (TILE_H + PAD), TILE_W - 6.0, TILE_H))
+        .collect();
     ((cx, cy, cw, ch), tiles)
 }
 
@@ -182,7 +184,17 @@ pub fn cross_rect(tile: Rect) -> Rect {
 
 /// Draws the card of `app_id`'s windows and returns it with what each part does when clicked.
 #[allow(clippy::too_many_arguments)]
-pub fn paint(pix: &mut Pixmap, s: f32, anchor_x: f32, app_id: &str, model: &Model, thumbs: &std::collections::HashMap<String, Pixmap>, pointer: (f32, f32), fonts: &Fonts, icons: &mut Icons) -> (Rect, Vec<(Rect, RowAct)>) {
+pub fn paint(
+    pix: &mut Pixmap,
+    s: f32,
+    anchor_x: f32,
+    app_id: &str,
+    model: &Model,
+    thumbs: &std::collections::HashMap<String, Pixmap>,
+    pointer: (f32, f32),
+    fonts: &Fonts,
+    icons: &mut Icons,
+) -> (Rect, Vec<(Rect, RowAct)>) {
     let (w, h) = (pix.width() as f32 / s, pix.height() as f32 / s);
     let dark = model.dark;
     let (bg, border, text, dim, hover, well) = if dark {
@@ -219,7 +231,15 @@ pub fn paint(pix: &mut Pixmap, s: f32, anchor_x: f32, app_id: &str, model: &Mode
         let name = label(&win.app_id, &item.name, &win.title);
         let room = tile.2 - 6.0 - 18.0 - 8.0 - if hot { 32.0 } else { 6.0 };
         let shown = crate::fylgja::fit(&fonts.regular, 12.5 * s, &name, room * s);
-        paint::draw_text(pix, &fonts.regular, 12.5 * s, (tile.0 + 30.0) * s, (tile.1 + HEAD_H / 2.0) * s, if win.minimized() { dim } else { text }, &shown);
+        paint::draw_text(
+            pix,
+            &fonts.regular,
+            12.5 * s,
+            (tile.0 + 30.0) * s,
+            (tile.1 + HEAD_H / 2.0) * s,
+            if win.minimized() { dim } else { text },
+            &shown,
+        );
         hits.push((tile, RowAct::Window(wi)));
         if hot {
             let xr = cross_rect(tile);
@@ -228,7 +248,15 @@ pub fn paint(pix: &mut Pixmap, s: f32, anchor_x: f32, app_id: &str, model: &Mode
                 paint::fill_rounded(pix, xr.0 * s, xr.1 * s, xr.2 * s, xr.3 * s, 6.0 * s, (232, 72, 84, 255));
             }
             let tw = paint::text_width(&fonts.regular, 18.0 * s, "\u{d7}");
-            paint::draw_text(pix, &fonts.regular, 18.0 * s, (xr.0 + xr.2 / 2.0) * s - tw / 2.0, (xr.1 + xr.3 / 2.0) * s, if on_x { (255, 255, 255, 255) } else { text }, "\u{d7}");
+            paint::draw_text(
+                pix,
+                &fonts.regular,
+                18.0 * s,
+                (xr.0 + xr.2 / 2.0) * s - tw / 2.0,
+                (xr.1 + xr.3 / 2.0) * s,
+                if on_x { (255, 255, 255, 255) } else { text },
+                "\u{d7}",
+            );
             hits.push((xr, RowAct::CloseWin(wi)));
         }
         // the picture, centred in its box: the app's icon until it arrives (and for a window the compositor does not draw)
@@ -253,8 +281,24 @@ pub fn paint(pix: &mut Pixmap, s: f32, anchor_x: f32, app_id: &str, model: &Mode
         if win.minimized() {
             let note = "Minimized";
             let nw = paint::text_width(&fonts.regular, 11.0 * s, note) / s;
-            paint::fill_rounded(pix, (bx + THUMB_W - nw - 14.0) * s, (by + THUMB_H - 22.0) * s, (nw + 10.0) * s, 18.0 * s, 9.0 * s, (0, 0, 0, 150));
-            paint::draw_text(pix, &fonts.regular, 11.0 * s, (bx + THUMB_W - nw - 9.0) * s, (by + THUMB_H - 13.0) * s, (230, 230, 236, 255), note);
+            paint::fill_rounded(
+                pix,
+                (bx + THUMB_W - nw - 14.0) * s,
+                (by + THUMB_H - 22.0) * s,
+                (nw + 10.0) * s,
+                18.0 * s,
+                9.0 * s,
+                (0, 0, 0, 150),
+            );
+            paint::draw_text(
+                pix,
+                &fonts.regular,
+                11.0 * s,
+                (bx + THUMB_W - nw - 9.0) * s,
+                (by + THUMB_H - 13.0) * s,
+                (230, 230, 236, 255),
+                note,
+            );
         }
     }
     (card, hits)
@@ -267,7 +311,14 @@ mod tests {
     #[test]
     fn titles_become_what_the_window_shows() {
         // seen on this machine
-        assert_eq!(label("vivaldi-stable", "Vivaldi", "Artifex-Technologies/Yggdrasil: Yggdrasil: a desktop environment in Rust for Labyrinth OS. - Vivaldi"), "Artifex-Technologies/Yggdrasil: Yggdrasil: a desktop environment in Rust for Labyrinth OS.");
+        assert_eq!(
+            label(
+                "vivaldi-stable",
+                "Vivaldi",
+                "Artifex-Technologies/Yggdrasil: Yggdrasil: a desktop environment in Rust for Labyrinth OS. - Vivaldi"
+            ),
+            "Artifex-Technologies/Yggdrasil: Yggdrasil: a desktop environment in Rust for Labyrinth OS."
+        );
         assert_eq!(label("com.microsoft.VSCode", "Visual Studio Code", "Welcome - Labyrinth_OS - Visual Studio Code"), "Labyrinth_OS");
         // other shapes
         assert_eq!(label("code", "Visual Studio Code", "● main.rs — Yggdrasil — Visual Studio Code"), "Yggdrasil");

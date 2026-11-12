@@ -229,13 +229,24 @@ struct End {
 
 enum Life {
     Off,
-    Running { token: String, th: JoinHandle<End>, stop: Arc<Stopper> },
+    Running {
+        token: String,
+        th: JoinHandle<End>,
+        stop: Arc<Stopper>,
+    },
     /// failed; starts again at `until`
-    Waiting { token: String, until: f64 },
+    Waiting {
+        token: String,
+        until: f64,
+    },
     /// its loop ended by itself with exit code 0 (gpufan on "auto"), or (a dry run) it ran its rounds
-    Ended { token: String },
+    Ended {
+        token: String,
+    },
     /// failed too often (its start limit), or panicked: stays as it is until it is switched on again
-    Failed { token: String },
+    Failed {
+        token: String,
+    },
 }
 
 struct Slot {
@@ -340,7 +351,10 @@ impl Service {
             slot.starts.pop_front();
         }
         if slot.starts.len() >= r.burst {
-            self.say(&format!("{name} failed {} times in {} s: left off, at its failure stop, until it is switched on again", r.burst, r.interval));
+            self.say(&format!(
+                "{name} failed {} times in {} s: left off, at its failure stop, until it is switched on again",
+                r.burst, r.interval
+            ));
             self.stop_unit(i);
             return Life::Failed { token };
         }
@@ -382,7 +396,8 @@ impl Service {
 
     fn stop_units(&mut self) {
         self.unit_stops.retain(|unit| {
-            let state = Ctx::system().ask("systemctl", &["is-active", unit]).map(|(_, out)| crate::py::strip(&out).to_string()).unwrap_or_default();
+            let state =
+                Ctx::system().ask("systemctl", &["is-active", unit]).map(|(_, out)| crate::py::strip(&out).to_string()).unwrap_or_default();
             match state.as_str() {
                 "activating" | "reloading" => true,
                 "active" => {
@@ -485,7 +500,10 @@ impl Service {
                 Life::Ended { token } => ("ended", Some(token)),
                 Life::Failed { token } => ("failed", Some(token)),
             };
-            let o = Obj::new().with("state", state.into()).with("token", token.map(|t| t.as_str()).into()).with("exit", s.exit.map(i64::from).into());
+            let o = Obj::new()
+                .with("state", state.into())
+                .with("token", token.map(|t| t.as_str()).into())
+                .with("exit", s.exit.map(i64::from).into());
             parts.set(s.part.name(), o.with("starts", (s.starts.len() as i64).into()).into());
         }
         json::dumps(&Obj::new().with("pid", (std::process::id() as i64).into()).with("parts", parts.into()).into())
@@ -552,7 +570,10 @@ impl Service {
                 break;
             }
             // a dry run with --steps ends once every part has run its rounds
-            if self.base.dry && self.base.steps.is_some() && !self.slots.iter().any(|s| matches!(s.life, Life::Running { .. } | Life::Waiting { .. })) {
+            if self.base.dry
+                && self.base.steps.is_some()
+                && !self.slots.iter().any(|s| matches!(s.life, Life::Running { .. } | Life::Waiting { .. }))
+            {
                 break;
             }
             // an old unit waiting to be stopped is looked at often, until it has started

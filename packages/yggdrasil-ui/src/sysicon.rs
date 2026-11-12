@@ -118,7 +118,10 @@ pub fn find(name: &str) -> Option<PathBuf> {
                     }
                 }
                 // the other layout (hicolor and most app-installed icons): size first, then the context
-                for sub in ["scalable", "512x512", "384x384", "256x256", "192x192", "144x144", "128x128", "96x96", "72x72", "64x64", "48x48", "36x36", "32x32"] {
+                for sub in [
+                    "scalable", "512x512", "384x384", "256x256", "192x192", "144x144", "128x128", "96x96", "72x72", "64x64", "48x48",
+                    "36x36", "32x32",
+                ] {
                     for e in exts {
                         let p = t.join(sub).join(ctx).join(format!("{name}.{e}"));
                         if p.is_file() {
@@ -178,7 +181,8 @@ pub fn paint(painter: &Painter, rect: Rect, names: &[&str]) -> bool {
         let key = (name.to_string(), px);
         if !c.tex.contains_key(&key) {
             let path = c.found.entry(name.to_string()).or_insert_with(|| find(name)).clone();
-            let tex = path.and_then(|p| render(&p, px)).map(|img| ctx.load_texture(format!("sysicon-{name}-{px}"), img, TextureOptions::LINEAR));
+            let tex =
+                path.and_then(|p| render(&p, px)).map(|img| ctx.load_texture(format!("sysicon-{name}-{px}"), img, TextureOptions::LINEAR));
             c.tex.insert(key.clone(), tex);
         }
         if let Some(Some(t)) = c.tex.get(&key) {
@@ -207,7 +211,11 @@ pub fn folder_names(dir_name: &str) -> Vec<&'static str> {
         "templates" => "folder-templates",
         _ => "",
     };
-    if special.is_empty() { vec!["folder"] } else { vec![special, "folder"] }
+    if special.is_empty() {
+        vec!["folder"]
+    } else {
+        vec![special, "folder"]
+    }
 }
 
 /// Icon names for a file, from its extension: the most specific type first, then its family, then plain text. Each type has an
@@ -219,7 +227,8 @@ pub fn file_names(file_name: &str) -> Vec<&'static str> {
         "txt" | "text" => ("text-plain", "text-x-generic"),
         "pdf" => ("application-pdf", ""),
         "svg" | "svgz" => ("image-svg+xml", "image-x-generic"),
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "tiff" | "tif" | "heic" | "heif" | "avif" | "ico" | "raw" | "cr2" | "nef" | "xcf" | "psd" | "kra" => ("image-x-generic", ""),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "tiff" | "tif" | "heic" | "heif" | "avif" | "ico" | "raw" | "cr2" | "nef"
+        | "xcf" | "psd" | "kra" => ("image-x-generic", ""),
         "mp3" | "flac" | "wav" | "ogg" | "m4a" | "opus" | "aac" | "wma" | "mid" | "midi" => ("audio-x-generic", ""),
         "mp4" | "mkv" | "mov" | "avi" | "webm" | "m4v" | "wmv" | "flv" | "mpg" | "mpeg" => ("video-x-generic", ""),
         "zip" | "7z" | "rar" => ("application-zip", "application-x-archive"),
@@ -240,12 +249,16 @@ pub fn file_names(file_name: &str) -> Vec<&'static str> {
         "ts" | "tsx" => ("text-x-typescript", "text-x-script"),
         "lua" => ("text-x-lua", "text-x-script"),
         "sh" | "bash" | "zsh" | "fish" | "ps1" | "bat" | "cmd" => ("application-x-shellscript", "text-x-script"),
-        "rb" | "php" | "pl" | "swift" | "cs" | "dart" | "zig" | "nim" | "hs" | "ex" | "exs" | "r" | "scala" | "vue" | "svelte" => ("text-x-script", ""),
+        "rb" | "php" | "pl" | "swift" | "cs" | "dart" | "zig" | "nim" | "hs" | "ex" | "exs" | "r" | "scala" | "vue" | "svelte" => {
+            ("text-x-script", "")
+        }
         "html" | "htm" | "xhtml" => ("text-html", ""),
         "css" | "scss" | "sass" | "less" => ("text-css", ""),
         "json" | "jsonc" | "json5" | "geojson" => ("application-json", ""),
         "xml" | "plist" | "xsd" | "xsl" => ("application-xml", ""),
-        "toml" | "yaml" | "yml" | "ini" | "conf" | "cfg" | "env" | "desktop" | "service" | "properties" => ("text-x-config", "text-x-generic"),
+        "toml" | "yaml" | "yml" | "ini" | "conf" | "cfg" | "env" | "desktop" | "service" | "properties" => {
+            ("text-x-config", "text-x-generic")
+        }
         "log" => ("text-x-log", "text-x-generic"),
         "patch" | "diff" => ("text-x-patch", "text-x-generic"),
         "ttf" | "otf" | "woff" | "woff2" => ("font-x-generic", ""),
@@ -280,7 +293,6 @@ mod tests {
         assert_ne!(fingerprint(), before);
         let _ = std::fs::remove_dir_all(&tmp);
     }
-
 
     #[test]
     fn names_follow_the_extension_and_folder() {

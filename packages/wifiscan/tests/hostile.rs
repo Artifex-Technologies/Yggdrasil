@@ -8,8 +8,24 @@ use yggdrasil_wifiscan::{craft, group, ie, nl80211, oui, parse_fixture, Ap, Bss}
 fn beacons() -> Vec<Vec<u8>> {
     use craft::{Beacon, Sec};
     let mut v = vec![Beacon::wifi6().build()];
-    for (s, six, eht) in [(Sec::Open, false, false), (Sec::Wpa3, true, true), (Sec::WpaMixed, false, false), (Sec::Enterprise, false, false), (Sec::Owe, true, false)] {
-        v.push(Beacon { security: s, six_ghz: six, eht, channel: if six { 37 } else { 6 }, width: if six { 160 } else { 40 }, ..Beacon::wifi6() }.build());
+    for (s, six, eht) in [
+        (Sec::Open, false, false),
+        (Sec::Wpa3, true, true),
+        (Sec::WpaMixed, false, false),
+        (Sec::Enterprise, false, false),
+        (Sec::Owe, true, false),
+    ] {
+        v.push(
+            Beacon {
+                security: s,
+                six_ghz: six,
+                eht,
+                channel: if six { 37 } else { 6 },
+                width: if six { 160 } else { 40 },
+                ..Beacon::wifi6()
+            }
+            .build(),
+        );
     }
     v
 }

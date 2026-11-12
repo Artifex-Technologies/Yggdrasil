@@ -4,10 +4,10 @@
 
 use crate::ui;
 use eframe::egui::{self, vec2, RichText};
-use yggdrasil_ui::theme::Palette;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::mpsc::{channel, Receiver};
+use yggdrasil_ui::theme::Palette;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -28,7 +28,20 @@ pub struct Cfg {
 
 impl Default for Cfg {
     fn default() -> Self {
-        Cfg { enabled: false, hash: String::new(), count: 1, window_secs: 60, expires: 0, silent_login: true, decoy: false, in_prompts: false, extra: "none".into(), commands: vec![], wipe_keys: true, shutdown: true }
+        Cfg {
+            enabled: false,
+            hash: String::new(),
+            count: 1,
+            window_secs: 60,
+            expires: 0,
+            silent_login: true,
+            decoy: false,
+            in_prompts: false,
+            extra: "none".into(),
+            commands: vec![],
+            wipe_keys: true,
+            shutdown: true,
+        }
     }
 }
 
@@ -59,7 +72,13 @@ pub struct State {
     rx: Option<Receiver<(String, Value)>>,
 }
 
-const EXTRAS: [(&str, &str); 5] = [("none", "None"), ("commands", "Run commands"), ("wipe_keys", "Wipe keys"), ("factory_reset", "Factory reset"), ("wipe_system", "Wipe system")];
+const EXTRAS: [(&str, &str); 5] = [
+    ("none", "None"),
+    ("commands", "Run commands"),
+    ("wipe_keys", "Wipe keys"),
+    ("factory_reset", "Factory reset"),
+    ("wipe_system", "Wipe system"),
+];
 
 /// The root helper, when the security integration names one and it is installed.
 pub fn helper() -> Option<std::path::PathBuf> {
@@ -71,7 +90,14 @@ fn call(cmd: &'static str, req: Value) -> Receiver<(String, Value)> {
     std::thread::spawn(move || {
         use std::io::Write;
         let out = (|| -> Result<Value, String> {
-            let mut child = std::process::Command::new("pkexec").arg(helper().ok_or("the distress helper is not installed")?).arg(cmd).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).spawn().map_err(|_| "pkexec is not available".to_string())?;
+            let mut child = std::process::Command::new("pkexec")
+                .arg(helper().ok_or("the distress helper is not installed")?)
+                .arg(cmd)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .map_err(|_| "pkexec is not available".to_string())?;
             child.stdin.take().ok_or("no input")?.write_all(req.to_string().as_bytes()).map_err(|e| e.to_string())?;
             let o = child.wait_with_output().map_err(|e| e.to_string())?;
             serde_json::from_slice(&o.stdout).map_err(|_| "The distress password helper is not installed or did not answer".to_string())
@@ -91,13 +117,27 @@ fn wipe(s: &mut String) {
 impl State {
     /// `yggdrasil-settings security:distress-demo` (or `-warn`): the page filled with sample settings, never reaching the helper.
     pub fn demo(with_warning: bool) -> State {
-        let cfg = Cfg { enabled: true, hash: "set".into(), count: 3, window_secs: 90, expires: 0, silent_login: true, extra: "wipe_keys".into(), wipe_keys: true, shutdown: true, ..Cfg::default() };
+        let cfg = Cfg {
+            enabled: true,
+            hash: "set".into(),
+            count: 3,
+            window_secs: 90,
+            expires: 0,
+            silent_login: true,
+            extra: "wipe_keys".into(),
+            wipe_keys: true,
+            shutdown: true,
+            ..Cfg::default()
+        };
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
         State {
             unlocked: Some(String::new()),
             saved: cfg.clone(),
             cfg,
-            events: vec![json!({"time": now - 3 * 86400, "kind": "fired", "detail": "the distress password was used for demo at a password prompt"}), json!({"time": now - 9 * 86400, "kind": "saved", "detail": "distress password on (extra: WipeKeys)"})],
+            events: vec![
+                json!({"time": now - 3 * 86400, "kind": "fired", "detail": "the distress password was used for demo at a password prompt"}),
+                json!({"time": now - 9 * 86400, "kind": "saved", "detail": "distress password on (extra: WipeKeys)"}),
+            ],
             confirming_save: with_warning,
             demo: true,
             ..State::default()
@@ -148,7 +188,14 @@ impl State {
                         self.confirming_save = false;
                         self.message = "Saved".into();
                     }
-                    "plan" => self.plan = Some(v["steps"].as_array().map(|a| a.iter().filter_map(|s| s.as_str().map(String::from)).collect()).unwrap_or_default()),
+                    "plan" => {
+                        self.plan = Some(
+                            v["steps"]
+                                .as_array()
+                                .map(|a| a.iter().filter_map(|s| s.as_str().map(String::from)).collect())
+                                .unwrap_or_default(),
+                        )
+                    }
                     _ => {}
                 }
             }
@@ -177,7 +224,8 @@ impl State {
             return self.gate_page(ui, pal);
         }
         let mut dirty = self.cfg != self.saved || self.valid != 0 || !self.new_pw.is_empty();
-        dirty |= self.commands_text.lines().map(str::to_string).collect::<Vec<_>>() != self.saved.commands && !(self.commands_text.is_empty() && self.saved.commands.is_empty());
+        dirty |= self.commands_text.lines().map(str::to_string).collect::<Vec<_>>() != self.saved.commands
+            && !(self.commands_text.is_empty() && self.saved.commands.is_empty());
 
         ui::group(ui, pal, None, |ui| {
             ui::row(ui, pal, true, "Use a distress password", Some("A second password. Typed where your real one is asked for, it does something else instead. Nothing here is saved until you press Save"), |ui| {
@@ -236,7 +284,13 @@ impl State {
                 ui::field(ui, pal, &mut self.second_pw, "Your account password, once more", 260.0, true);
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
-                    if ui.add_enabled(!self.busy && !self.second_pw.is_empty(), egui::Button::new(RichText::new("I understand. Save").color(pal.on_accent())).fill(pal.red)).clicked() {
+                    if ui
+                        .add_enabled(
+                            !self.busy && !self.second_pw.is_empty(),
+                            egui::Button::new(RichText::new("I understand. Save").color(pal.on_accent())).fill(pal.red),
+                        )
+                        .clicked()
+                    {
                         self.send_save();
                     }
                     if ui::quiet(ui, pal, "Cancel").clicked() {
@@ -249,7 +303,13 @@ impl State {
         } else if self.unlocked.is_some() && !self.confirming_enable {
             ui.add_space(10.0);
             ui.horizontal(|ui| {
-                if ui.add_enabled(dirty && !self.busy, egui::Button::new(RichText::new("Save").color(pal.on_accent())).fill(pal.accent).min_size(vec2(90.0, 30.0))).clicked() {
+                if ui
+                    .add_enabled(
+                        dirty && !self.busy,
+                        egui::Button::new(RichText::new("Save").color(pal.on_accent())).fill(pal.accent).min_size(vec2(90.0, 30.0)),
+                    )
+                    .clicked()
+                {
                     if has_extra {
                         self.confirming_save = true;
                     } else {
@@ -306,7 +366,13 @@ impl State {
             ui.label(RichText::new("Type your account password to open this page.").size(13.0));
             ui.add_space(6.0);
             let r = ui::field(ui, pal, &mut self.gate, "Your account password", 260.0, true);
-            let go = ui.add_enabled(!self.busy && !self.gate.is_empty(), egui::Button::new(RichText::new("Open").color(pal.on_accent())).fill(pal.accent).min_size(vec2(90.0, 30.0))).clicked() || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && !self.gate.is_empty());
+            let go = ui
+                .add_enabled(
+                    !self.busy && !self.gate.is_empty(),
+                    egui::Button::new(RichText::new("Open").color(pal.on_accent())).fill(pal.accent).min_size(vec2(90.0, 30.0)),
+                )
+                .clicked()
+                || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && !self.gate.is_empty());
             if go && !self.busy {
                 let req = json!({"password": self.gate});
                 self.start("open", req);
@@ -334,13 +400,20 @@ impl State {
         });
         ui.add_space(8.0);
         ui::group(ui, pal, Some("When it counts"), |ui| {
-            ui::row(ui, pal, true, "How many times", Some("Typed once, or several times within a time. Fewer than that looks exactly like a wrong password"), |ui| {
-                let mut multi = self.cfg.count > 1;
-                if ui::segmented(ui, pal, &["Once", "Several times"], multi as usize).is_some() {
-                    multi = !multi;
-                    self.cfg.count = if multi { 3 } else { 1 };
-                }
-            });
+            ui::row(
+                ui,
+                pal,
+                true,
+                "How many times",
+                Some("Typed once, or several times within a time. Fewer than that looks exactly like a wrong password"),
+                |ui| {
+                    let mut multi = self.cfg.count > 1;
+                    if ui::segmented(ui, pal, &["Once", "Several times"], multi as usize).is_some() {
+                        multi = !multi;
+                        self.cfg.count = if multi { 3 } else { 1 };
+                    }
+                },
+            );
             if self.cfg.count > 1 {
                 ui::row(ui, pal, false, "Entries needed", None, |ui| {
                     let mut v = self.cfg.count as f32;
@@ -356,18 +429,32 @@ impl State {
                 });
             }
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
-            let cur = if self.saved.expires == 0 { "Now: forever".to_string() } else if self.saved.expires > now { format!("Now: another {}", crate::security::ago(now - (self.saved.expires - now), now).replace(" ago", "")) } else { "Now: it has expired".to_string() };
+            let cur = if self.saved.expires == 0 {
+                "Now: forever".to_string()
+            } else if self.saved.expires > now {
+                format!("Now: another {}", crate::security::ago(now - (self.saved.expires - now), now).replace(" ago", ""))
+            } else {
+                "Now: it has expired".to_string()
+            };
             ui::row(ui, pal, false, "How long it works", Some(&cur), |ui| {
-                egui::ComboBox::from_id_salt("distress-valid").selected_text(["Keep as it is", "Forever", "One day", "One week", "One month"][self.valid]).show_ui(ui, |ui| {
-                    for (i, t) in ["Keep as it is", "Forever", "One day", "One week", "One month"].iter().enumerate() {
-                        ui.selectable_value(&mut self.valid, i, *t);
-                    }
-                });
+                egui::ComboBox::from_id_salt("distress-valid")
+                    .selected_text(["Keep as it is", "Forever", "One day", "One week", "One month"][self.valid])
+                    .show_ui(ui, |ui| {
+                        for (i, t) in ["Keep as it is", "Forever", "One day", "One week", "One month"].iter().enumerate() {
+                            ui.selectable_value(&mut self.valid, i, *t);
+                        }
+                    });
             });
         });
         ui.add_space(8.0);
         ui::group(ui, pal, Some("Section 1 · Saving needs no extra password"), |ui| {
-            let mut pick = if self.cfg.silent_login { 1 } else if self.cfg.decoy { 2 } else { 0 };
+            let mut pick = if self.cfg.silent_login {
+                1
+            } else if self.cfg.decoy {
+                2
+            } else {
+                0
+            };
             ui::row(ui, pal, true, "What it does", Some("Silent login: you are let in as normal while a hidden alert is raised. Decoy session: your real account is locked and a decoy one opens"), |ui| {
                 if let Some(i) = ui::segmented(ui, pal, &["Nothing", "Silent login", "Decoy session"], pick) {
                     pick = i;
@@ -386,16 +473,23 @@ impl State {
         ui::group(ui, pal, Some("Section 2 · Saving asks for your password again"), |ui| {
             let cur = EXTRAS.iter().position(|(k, _)| *k == self.cfg.extra).unwrap_or(0);
             let labels: Vec<&str> = EXTRAS.iter().map(|(_, l)| *l).collect();
-            ui::row(ui, pal, true, "Also do this", Some("Works with Section 1, or on its own. With Nothing chosen above, this is all it does"), |ui| {
-                egui::ComboBox::from_id_salt("distress-extra").selected_text(labels[cur]).show_ui(ui, |ui| {
-                    for (i, (k, l)) in EXTRAS.iter().enumerate() {
-                        if ui.selectable_label(i == cur, *l).clicked() {
-                            self.cfg.extra = k.to_string();
-                            self.plan = None;
+            ui::row(
+                ui,
+                pal,
+                true,
+                "Also do this",
+                Some("Works with Section 1, or on its own. With Nothing chosen above, this is all it does"),
+                |ui| {
+                    egui::ComboBox::from_id_salt("distress-extra").selected_text(labels[cur]).show_ui(ui, |ui| {
+                        for (i, (k, l)) in EXTRAS.iter().enumerate() {
+                            if ui.selectable_label(i == cur, *l).clicked() {
+                                self.cfg.extra = k.to_string();
+                                self.plan = None;
+                            }
                         }
-                    }
-                });
-            });
+                    });
+                },
+            );
             match self.cfg.extra.as_str() {
                 "commands" => {
                     ui::row(ui, pal, false, "Commands", Some("One per line, run in order as the administrator"), |_| {});
@@ -403,15 +497,29 @@ impl State {
                     ui.add_space(6.0);
                 }
                 "wipe_keys" => {
-                    ui::row(ui, pal, false, "Wipe the keys", Some("Erase the disk encryption keys and your SSH, GPG and keyring files"), |ui| {
-                        ui::switch(ui, pal, &mut self.cfg.wipe_keys);
-                    });
+                    ui::row(
+                        ui,
+                        pal,
+                        false,
+                        "Wipe the keys",
+                        Some("Erase the disk encryption keys and your SSH, GPG and keyring files"),
+                        |ui| {
+                            ui::switch(ui, pal, &mut self.cfg.wipe_keys);
+                        },
+                    );
                     ui::row(ui, pal, false, "Shut down", None, |ui| {
                         ui::switch(ui, pal, &mut self.cfg.shutdown);
                     });
                 }
                 "factory_reset" => {
-                    ui::row(ui, pal, false, "Factory reset", Some("Every account and its files are removed, settings are reset and the computer restarts into first-time setup"), |_| {});
+                    ui::row(
+                        ui,
+                        pal,
+                        false,
+                        "Factory reset",
+                        Some("Every account and its files are removed, settings are reset and the computer restarts into first-time setup"),
+                        |_| {},
+                    );
                 }
                 "wipe_system" => {
                     ui::row(ui, pal, false, "Wipe the whole system", Some("The partition tables and encryption keys of every internal disk are destroyed and the computer powers off. No operating system is left"), |_| {});
@@ -448,7 +556,14 @@ impl State {
             }
             for (i, e) in self.events.iter().take(30).enumerate() {
                 let d = e["detail"].as_str().unwrap_or("");
-                ui::row(ui, pal, i == 0, d, Some(&format!("{} · {}", e["kind"].as_str().unwrap_or(""), crate::security::ago(e["time"].as_i64().unwrap_or(0), now))), |_| {});
+                ui::row(
+                    ui,
+                    pal,
+                    i == 0,
+                    d,
+                    Some(&format!("{} · {}", e["kind"].as_str().unwrap_or(""), crate::security::ago(e["time"].as_i64().unwrap_or(0), now))),
+                    |_| {},
+                );
             }
         });
     }

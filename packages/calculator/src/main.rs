@@ -11,9 +11,9 @@ use std::path::PathBuf;
 
 use eframe::egui::{self, pos2, vec2, Align, Align2, Color32, CornerRadius, FontId, Layout, Margin, Rect, RichText, Sense, UiBuilder};
 use eval::{eval, format_number, group_thousands, Angle, EvalError};
-use yggdrasil_ui::theme::{self, Palette};
-use yggdrasil_ui::chrome;
 use serde::{Deserialize, Serialize};
+use yggdrasil_ui::chrome;
+use yggdrasil_ui::theme::{self, Palette};
 
 const HISTORY_LIMIT: usize = 200;
 /// Window widths (logical px) at which the layout grows.
@@ -62,21 +62,81 @@ const fn k(label: &'static str, act: Act, style: Style) -> Key {
 }
 
 const STANDARD: [[Key; 4]; 6] = [
-    [k("(", Act::Ins("("), Style::Func), k(")", Act::Ins(")"), Style::Func), k("x²", Act::Ins("^2"), Style::Func), k("√", Act::Ins("sqrt("), Style::Func)],
-    [k("C", Act::Clear, Style::Func), k("DEL", Act::Back, Style::Func), k("%", Act::Ins("%"), Style::Func), k("÷", Act::Ins("÷"), Style::Op)],
-    [k("7", Act::Ins("7"), Style::Digit), k("8", Act::Ins("8"), Style::Digit), k("9", Act::Ins("9"), Style::Digit), k("×", Act::Ins("×"), Style::Op)],
-    [k("4", Act::Ins("4"), Style::Digit), k("5", Act::Ins("5"), Style::Digit), k("6", Act::Ins("6"), Style::Digit), k("−", Act::Ins("−"), Style::Op)],
-    [k("1", Act::Ins("1"), Style::Digit), k("2", Act::Ins("2"), Style::Digit), k("3", Act::Ins("3"), Style::Digit), k("+", Act::Ins("+"), Style::Op)],
-    [k("±", Act::Negate, Style::Func), k("0", Act::Ins("0"), Style::Digit), k(".", Act::Ins("."), Style::Digit), k("=", Act::Eval, Style::Equals)],
+    [
+        k("(", Act::Ins("("), Style::Func),
+        k(")", Act::Ins(")"), Style::Func),
+        k("x²", Act::Ins("^2"), Style::Func),
+        k("√", Act::Ins("sqrt("), Style::Func),
+    ],
+    [
+        k("C", Act::Clear, Style::Func),
+        k("DEL", Act::Back, Style::Func),
+        k("%", Act::Ins("%"), Style::Func),
+        k("÷", Act::Ins("÷"), Style::Op),
+    ],
+    [
+        k("7", Act::Ins("7"), Style::Digit),
+        k("8", Act::Ins("8"), Style::Digit),
+        k("9", Act::Ins("9"), Style::Digit),
+        k("×", Act::Ins("×"), Style::Op),
+    ],
+    [
+        k("4", Act::Ins("4"), Style::Digit),
+        k("5", Act::Ins("5"), Style::Digit),
+        k("6", Act::Ins("6"), Style::Digit),
+        k("−", Act::Ins("−"), Style::Op),
+    ],
+    [
+        k("1", Act::Ins("1"), Style::Digit),
+        k("2", Act::Ins("2"), Style::Digit),
+        k("3", Act::Ins("3"), Style::Digit),
+        k("+", Act::Ins("+"), Style::Op),
+    ],
+    [
+        k("±", Act::Negate, Style::Func),
+        k("0", Act::Ins("0"), Style::Digit),
+        k(".", Act::Ins("."), Style::Digit),
+        k("=", Act::Eval, Style::Equals),
+    ],
 ];
 
 const SCIENTIFIC: [[Key; 4]; 6] = [
-    [k("π", Act::Ins("π"), Style::Func), k("e", Act::Ins("e"), Style::Func), k("x^y", Act::Ins("^"), Style::Func), k("n!", Act::Ins("!"), Style::Func)],
-    [k("sin", Act::Ins("sin("), Style::Func), k("cos", Act::Ins("cos("), Style::Func), k("tan", Act::Ins("tan("), Style::Func), k("1/x", Act::Ins("1/("), Style::Func)],
-    [k("asin", Act::Ins("asin("), Style::Func), k("acos", Act::Ins("acos("), Style::Func), k("atan", Act::Ins("atan("), Style::Func), k("|x|", Act::Ins("abs("), Style::Func)],
-    [k("ln", Act::Ins("ln("), Style::Func), k("log", Act::Ins("log("), Style::Func), k("e^x", Act::Ins("exp("), Style::Func), k("10^x", Act::Ins("10^("), Style::Func)],
-    [k("sinh", Act::Ins("sinh("), Style::Func), k("cosh", Act::Ins("cosh("), Style::Func), k("tanh", Act::Ins("tanh("), Style::Func), k("cbrt", Act::Ins("cbrt("), Style::Func)],
-    [k("MC", Act::MemClear, Style::Func), k("MR", Act::MemRecall, Style::Func), k("M+", Act::MemAdd, Style::Func), k("M−", Act::MemSub, Style::Func)],
+    [
+        k("π", Act::Ins("π"), Style::Func),
+        k("e", Act::Ins("e"), Style::Func),
+        k("x^y", Act::Ins("^"), Style::Func),
+        k("n!", Act::Ins("!"), Style::Func),
+    ],
+    [
+        k("sin", Act::Ins("sin("), Style::Func),
+        k("cos", Act::Ins("cos("), Style::Func),
+        k("tan", Act::Ins("tan("), Style::Func),
+        k("1/x", Act::Ins("1/("), Style::Func),
+    ],
+    [
+        k("asin", Act::Ins("asin("), Style::Func),
+        k("acos", Act::Ins("acos("), Style::Func),
+        k("atan", Act::Ins("atan("), Style::Func),
+        k("|x|", Act::Ins("abs("), Style::Func),
+    ],
+    [
+        k("ln", Act::Ins("ln("), Style::Func),
+        k("log", Act::Ins("log("), Style::Func),
+        k("e^x", Act::Ins("exp("), Style::Func),
+        k("10^x", Act::Ins("10^("), Style::Func),
+    ],
+    [
+        k("sinh", Act::Ins("sinh("), Style::Func),
+        k("cosh", Act::Ins("cosh("), Style::Func),
+        k("tanh", Act::Ins("tanh("), Style::Func),
+        k("cbrt", Act::Ins("cbrt("), Style::Func),
+    ],
+    [
+        k("MC", Act::MemClear, Style::Func),
+        k("MR", Act::MemRecall, Style::Func),
+        k("M+", Act::MemAdd, Style::Func),
+        k("M−", Act::MemSub, Style::Func),
+    ],
 ];
 
 struct Calc {
@@ -131,7 +191,16 @@ fn has_double_dot(expr: &str) -> bool {
 
 impl Calc {
     fn new() -> Calc {
-        Calc { expr: String::new(), angle: Angle::Degrees, history: load_history(), memory: 0.0, after_eval: false, show_history_narrow: false, error: None, focus_display: true }
+        Calc {
+            expr: String::new(),
+            angle: Angle::Degrees,
+            history: load_history(),
+            memory: 0.0,
+            after_eval: false,
+            show_history_narrow: false,
+            error: None,
+            focus_display: true,
+        }
     }
 
     fn live_result(&self) -> Result<f64, EvalError> {
@@ -232,8 +301,22 @@ fn key_button(ui: &mut egui::Ui, pal: &Palette, rect: Rect, key: Key, angle: Ang
         fill
     };
     ui.painter().rect_filled(rect.shrink(2.0), CornerRadius::same(10), fill);
-    let size = if key.style == Style::Digit { 20.0 } else if key.label.chars().count() > 2 { 14.0 } else { 18.0 };
-    let label = if key.act == Act::ToggleAngle { if angle == Angle::Degrees { "DEG" } else { "RAD" } } else { key.label };
+    let size = if key.style == Style::Digit {
+        20.0
+    } else if key.label.chars().count() > 2 {
+        14.0
+    } else {
+        18.0
+    };
+    let label = if key.act == Act::ToggleAngle {
+        if angle == Angle::Degrees {
+            "DEG"
+        } else {
+            "RAD"
+        }
+    } else {
+        key.label
+    };
     match label.split_once('^') {
         // "x^y" is drawn as x with a small raised y; the font has no superscript letters.
         Some((base, sup)) => {
@@ -311,134 +394,164 @@ impl eframe::App for Calc {
         let show_sci = width >= SHOW_SCIENTIFIC_AT;
         let showing_history = show_hist_pane || self.show_history_narrow;
 
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(pal.bg).inner_margin(Margin { left: 10, right: 8, top: 6, bottom: 10 })).show(ui, |ui| {
-            // Top row: the history button, window buttons at the right.
-            ui.horizontal(|ui| {
-                if !show_hist_pane && clock_icon(ui, &pal, self.show_history_narrow).clicked() {
-                    self.show_history_narrow = !self.show_history_narrow;
-                }
-                if self.memory != 0.0 {
-                    ui.label(RichText::new("M").color(pal.accent).strong());
-                }
-                chrome::drag_area(ui, ui.available_width() - chrome::controls_width());
-                chrome::window_controls(ui, &pal);
-            });
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(pal.bg).inner_margin(Margin { left: 10, right: 8, top: 6, bottom: 10 }))
+            .show(ui, |ui| {
+                // Top row: the history button, window buttons at the right.
+                ui.horizontal(|ui| {
+                    if !show_hist_pane && clock_icon(ui, &pal, self.show_history_narrow).clicked() {
+                        self.show_history_narrow = !self.show_history_narrow;
+                    }
+                    if self.memory != 0.0 {
+                        ui.label(RichText::new("M").color(pal.accent).strong());
+                    }
+                    chrome::drag_area(ui, ui.available_width() - chrome::controls_width());
+                    chrome::window_controls(ui, &pal);
+                });
 
-            let body = ui.available_rect_before_wrap();
-            let hist_w = if show_hist_pane { HISTORY_W } else { 0.0 };
-            let main_w = body.width() - hist_w - if show_hist_pane { 10.0 } else { 0.0 };
-            let main = Rect::from_min_size(body.min, vec2(main_w, body.height()));
+                let body = ui.available_rect_before_wrap();
+                let hist_w = if show_hist_pane { HISTORY_W } else { 0.0 };
+                let main_w = body.width() - hist_w - if show_hist_pane { 10.0 } else { 0.0 };
+                let main = Rect::from_min_size(body.min, vec2(main_w, body.height()));
 
-            // Display: the expression (editable, right-aligned) and the live result under it.
-            let display_h = 118.0;
-            let display = Rect::from_min_size(main.min, vec2(main.width(), display_h));
-            let mut disp_ui = ui.new_child(UiBuilder::new().max_rect(display).layout(Layout::top_down(Align::Max)));
-            let font = FontId::proportional(if self.expr.chars().count() > 22 { 20.0 } else { 28.0 });
-            let before = self.expr.clone();
-            let edit = egui::TextEdit::singleline(&mut self.expr).font(font).horizontal_align(Align::RIGHT).frame(egui::Frame::new()).desired_width(f32::INFINITY).margin(Margin::symmetric(8, 4));
-            let r = disp_ui.add(edit);
-            if r.changed() && has_double_dot(&self.expr) {
-                self.expr = before; // typed or pasted a second decimal point in one number: undo it
-            } else if r.changed() {
-                self.error = None;
-                self.after_eval = false;
-            }
-            if self.focus_display {
-                r.request_focus();
-                self.focus_display = false;
-            }
-            let live = if let Some(e) = &self.error {
-                RichText::new(e).size(15.0).color(pal.red)
-            } else {
-                match self.live_result() {
-                    Ok(v) if !self.after_eval => RichText::new(group_thousands(&format_number(v))).size(34.0).strong(),
-                    Ok(v) => RichText::new(group_thousands(&format_number(v))).size(34.0).strong(),
-                    Err(_) => RichText::new(if self.expr.is_empty() { "0" } else { "" }).size(34.0).strong().color(pal.dim),
+                // Display: the expression (editable, right-aligned) and the live result under it.
+                let display_h = 118.0;
+                let display = Rect::from_min_size(main.min, vec2(main.width(), display_h));
+                let mut disp_ui = ui.new_child(UiBuilder::new().max_rect(display).layout(Layout::top_down(Align::Max)));
+                let font = FontId::proportional(if self.expr.chars().count() > 22 { 20.0 } else { 28.0 });
+                let before = self.expr.clone();
+                let edit = egui::TextEdit::singleline(&mut self.expr)
+                    .font(font)
+                    .horizontal_align(Align::RIGHT)
+                    .frame(egui::Frame::new())
+                    .desired_width(f32::INFINITY)
+                    .margin(Margin::symmetric(8, 4));
+                let r = disp_ui.add(edit);
+                if r.changed() && has_double_dot(&self.expr) {
+                    self.expr = before; // typed or pasted a second decimal point in one number: undo it
+                } else if r.changed() {
+                    self.error = None;
+                    self.after_eval = false;
                 }
-            };
-            disp_ui.add_space(2.0);
-            disp_ui.label(live);
+                if self.focus_display {
+                    r.request_focus();
+                    self.focus_display = false;
+                }
+                let live = if let Some(e) = &self.error {
+                    RichText::new(e).size(15.0).color(pal.red)
+                } else {
+                    match self.live_result() {
+                        Ok(v) if !self.after_eval => RichText::new(group_thousands(&format_number(v))).size(34.0).strong(),
+                        Ok(v) => RichText::new(group_thousands(&format_number(v))).size(34.0).strong(),
+                        Err(_) => RichText::new(if self.expr.is_empty() { "0" } else { "" }).size(34.0).strong().color(pal.dim),
+                    }
+                };
+                disp_ui.add_space(2.0);
+                disp_ui.label(live);
 
-            // Keypads.
-            let keys = Rect::from_min_max(pos2(main.left(), main.top() + display_h + 4.0), main.max);
-            let gap = 8.0;
-            let (std_rect, sci_rect) = if show_sci {
-                let half = (keys.width() - gap) / 2.0;
-                (Rect::from_min_size(pos2(keys.left() + half + gap, keys.top()), vec2(half, keys.height())), Some(Rect::from_min_size(keys.min, vec2(half, keys.height()))))
-            } else {
-                (keys, None)
-            };
-            let mut action = None;
-            if show_hist_pane || !self.show_history_narrow {
-                if let Some(a) = pad(ui, &pal, std_rect, &STANDARD, self.angle) {
-                    action = Some(a);
-                }
-                if let Some(sr) = sci_rect {
-                    // The scientific pad's last row is the memory keys; the angle toggle sits above it.
-                    let mut rows = SCIENTIFIC;
-                    rows[0][2] = k("DEG", Act::ToggleAngle, Style::Func);
-                    rows[0][3] = k("n!", Act::Ins("!"), Style::Func);
-                    rows[1][3] = k("x^y", Act::Ins("^"), Style::Func);
-                    if let Some(a) = pad(ui, &pal, sr, &rows, self.angle) {
+                // Keypads.
+                let keys = Rect::from_min_max(pos2(main.left(), main.top() + display_h + 4.0), main.max);
+                let gap = 8.0;
+                let (std_rect, sci_rect) = if show_sci {
+                    let half = (keys.width() - gap) / 2.0;
+                    (
+                        Rect::from_min_size(pos2(keys.left() + half + gap, keys.top()), vec2(half, keys.height())),
+                        Some(Rect::from_min_size(keys.min, vec2(half, keys.height()))),
+                    )
+                } else {
+                    (keys, None)
+                };
+                let mut action = None;
+                if show_hist_pane || !self.show_history_narrow {
+                    if let Some(a) = pad(ui, &pal, std_rect, &STANDARD, self.angle) {
                         action = Some(a);
                     }
-                }
-            }
-            // History: beside the keys when wide, in place of them when narrow.
-            let mut reuse: Option<String> = None;
-            let mut clear_history = false;
-            let hist_rect = if show_hist_pane {
-                Some(Rect::from_min_max(pos2(main.right() + 10.0, body.top()), body.max))
-            } else if self.show_history_narrow {
-                Some(Rect::from_min_max(pos2(main.left(), main.top() + display_h + 4.0), main.max))
-            } else {
-                None
-            };
-            if let (true, Some(hr)) = (showing_history, hist_rect) {
-                let mut hui = ui.new_child(UiBuilder::new().max_rect(hr).layout(Layout::top_down(Align::Min)));
-                egui::Frame::new().fill(pal.field).corner_radius(CornerRadius::same(12)).inner_margin(Margin::symmetric(10, 8)).show(&mut hui, |ui| {
-                    ui.set_min_size(hr.size() - vec2(20.0, 16.0));
-                    ui.set_max_size(hr.size() - vec2(20.0, 16.0));
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("History").strong());
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if !self.history.is_empty() && ui.add(egui::Button::new(RichText::new("Clear").color(pal.dim)).frame(false)).clicked() {
-                                clear_history = true;
-                            }
-                        });
-                    });
-                    ui.add_space(4.0);
-                    if self.history.is_empty() {
-                        ui.label(RichText::new("Nothing calculated yet").color(pal.dim));
+                    if let Some(sr) = sci_rect {
+                        // The scientific pad's last row is the memory keys; the angle toggle sits above it.
+                        let mut rows = SCIENTIFIC;
+                        rows[0][2] = k("DEG", Act::ToggleAngle, Style::Func);
+                        rows[0][3] = k("n!", Act::Ins("!"), Style::Func);
+                        rows[1][3] = k("x^y", Act::Ins("^"), Style::Func);
+                        if let Some(a) = pad(ui, &pal, sr, &rows, self.angle) {
+                            action = Some(a);
+                        }
                     }
-                    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                        for e in &self.history {
-                            ui.with_layout(Layout::top_down(Align::Max), |ui| {
-                                if ui.add(egui::Label::new(RichText::new(&e.expr).size(13.0).color(pal.dim)).sense(Sense::click()).truncate()).on_hover_text("Use this expression").clicked() {
-                                    reuse = Some(e.expr.clone());
-                                }
-                                if ui.add(egui::Label::new(RichText::new(group_thousands(&e.result)).size(20.0).strong()).sense(Sense::click())).on_hover_text("Use this result").clicked() {
-                                    reuse = Some(e.result.clone());
+                }
+                // History: beside the keys when wide, in place of them when narrow.
+                let mut reuse: Option<String> = None;
+                let mut clear_history = false;
+                let hist_rect = if show_hist_pane {
+                    Some(Rect::from_min_max(pos2(main.right() + 10.0, body.top()), body.max))
+                } else if self.show_history_narrow {
+                    Some(Rect::from_min_max(pos2(main.left(), main.top() + display_h + 4.0), main.max))
+                } else {
+                    None
+                };
+                if let (true, Some(hr)) = (showing_history, hist_rect) {
+                    let mut hui = ui.new_child(UiBuilder::new().max_rect(hr).layout(Layout::top_down(Align::Min)));
+                    egui::Frame::new().fill(pal.field).corner_radius(CornerRadius::same(12)).inner_margin(Margin::symmetric(10, 8)).show(
+                        &mut hui,
+                        |ui| {
+                            ui.set_min_size(hr.size() - vec2(20.0, 16.0));
+                            ui.set_max_size(hr.size() - vec2(20.0, 16.0));
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new("History").strong());
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    if !self.history.is_empty()
+                                        && ui.add(egui::Button::new(RichText::new("Clear").color(pal.dim)).frame(false)).clicked()
+                                    {
+                                        clear_history = true;
+                                    }
+                                });
+                            });
+                            ui.add_space(4.0);
+                            if self.history.is_empty() {
+                                ui.label(RichText::new("Nothing calculated yet").color(pal.dim));
+                            }
+                            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                                for e in &self.history {
+                                    ui.with_layout(Layout::top_down(Align::Max), |ui| {
+                                        if ui
+                                            .add(
+                                                egui::Label::new(RichText::new(&e.expr).size(13.0).color(pal.dim))
+                                                    .sense(Sense::click())
+                                                    .truncate(),
+                                            )
+                                            .on_hover_text("Use this expression")
+                                            .clicked()
+                                        {
+                                            reuse = Some(e.expr.clone());
+                                        }
+                                        if ui
+                                            .add(
+                                                egui::Label::new(RichText::new(group_thousands(&e.result)).size(20.0).strong())
+                                                    .sense(Sense::click()),
+                                            )
+                                            .on_hover_text("Use this result")
+                                            .clicked()
+                                        {
+                                            reuse = Some(e.result.clone());
+                                        }
+                                    });
+                                    ui.add_space(6.0);
                                 }
                             });
-                            ui.add_space(6.0);
-                        }
-                    });
-                });
-            }
-            if clear_history {
-                self.history.clear();
-                save_history(&self.history);
-            }
-            if let Some(t) = reuse {
-                self.expr = t;
-                self.after_eval = true;
-                self.focus_display = true;
-            }
-            if let Some(a) = action {
-                self.act(a);
-            }
-        });
+                        },
+                    );
+                }
+                if clear_history {
+                    self.history.clear();
+                    save_history(&self.history);
+                }
+                if let Some(t) = reuse {
+                    self.expr = t;
+                    self.after_eval = true;
+                    self.focus_display = true;
+                }
+                if let Some(a) = action {
+                    self.act(a);
+                }
+            });
         chrome::outline(&ctx, &pal);
     }
 }
@@ -462,7 +575,16 @@ mod tests {
     use super::*;
 
     fn calc() -> Calc {
-        Calc { expr: String::new(), angle: Angle::Degrees, history: vec![], memory: 0.0, after_eval: false, show_history_narrow: false, error: None, focus_display: false }
+        Calc {
+            expr: String::new(),
+            angle: Angle::Degrees,
+            history: vec![],
+            memory: 0.0,
+            after_eval: false,
+            show_history_narrow: false,
+            error: None,
+            focus_display: false,
+        }
     }
 
     #[test]

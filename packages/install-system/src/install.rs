@@ -24,12 +24,7 @@ pub const STEPS: [&str; 9] = [
 ];
 const MIN_ROOT: i128 = 20 * GIB;
 const MIN_ESP: i128 = 260 * MIB;
-const SUBVOLUMES: [(&str, &str); 4] = [
-    ("@", ""),
-    ("@home", "home"),
-    ("@cache", "var/cache"),
-    ("@log", "var/log"),
-];
+const SUBVOLUMES: [(&str, &str); 4] = [("@", ""), ("@home", "home"), ("@cache", "var/cache"), ("@log", "var/log")];
 const INSIDE_PATH: &str = "PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/sbin";
 
 /// The live system's own places the program looks at (other than through programs): fixed on a live medium, elsewhere in
@@ -48,10 +43,7 @@ pub struct Host {
 impl Host {
     pub fn real() -> Host {
         Host {
-            integration_dirs: crate::conf::INTEGRATION_DIRS
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
+            integration_dirs: crate::conf::INTEGRATION_DIRS.iter().map(|s| s.to_string()).collect(),
             os_release: "/etc/os-release".into(),
             zoneinfo: "/usr/share/zoneinfo".into(),
             efi: "/sys/firmware/efi".into(),
@@ -86,11 +78,7 @@ fn floor_div(a: i128, b: i128) -> R<i128> {
         return crash("integer division or modulo by zero");
     }
     let q = a / b;
-    Ok(if a % b != 0 && ((a < 0) != (b < 0)) {
-        q - 1
-    } else {
-        q
-    })
+    Ok(if a % b != 0 && ((a < 0) != (b < 0)) { q - 1 } else { q })
 }
 
 /// text[:-n] by characters
@@ -102,37 +90,23 @@ fn drop_last(text: &str, n: usize) -> String {
 /// Byte positions where a line starts (re.M's ^).
 fn line_starts(text: &str) -> Vec<usize> {
     let mut v = vec![0];
-    v.extend(
-        text.match_indices('\n')
-            .map(|(i, _)| i + 1)
-            .filter(|i| *i <= text.len()),
-    );
+    v.extend(text.match_indices('\n').map(|(i, _)| i + 1).filter(|i| *i <= text.len()));
     v
 }
 
 /// The end of a run of whitespace (Python's \s*) from byte i.
 fn skip_space(text: &str, i: usize) -> usize {
-    i + text[i..]
-        .chars()
-        .take_while(|c| pycompat::isspace(*c))
-        .map(char::len_utf8)
-        .sum::<usize>()
+    i + text[i..].chars().take_while(|c| pycompat::isspace(*c)).map(char::len_utf8).sum::<usize>()
 }
 
 /// The whitespace character (\s) at byte i, if there is one: its length.
 fn space_at(text: &str, i: usize) -> Option<usize> {
-    text[i..]
-        .chars()
-        .next()
-        .filter(|c| pycompat::isspace(*c))
-        .map(char::len_utf8)
+    text[i..].chars().next().filter(|c| pycompat::isspace(*c)).map(char::len_utf8)
 }
 
 /// re.search(rf"^{loc}\s", text, re.M)
 fn has_locale_line(text: &str, loc: &str) -> bool {
-    line_starts(text)
-        .into_iter()
-        .any(|i| text[i..].starts_with(loc) && space_at(text, i + loc.len()).is_some())
+    line_starts(text).into_iter().any(|i| text[i..].starts_with(loc) && space_at(text, i + loc.len()).is_some())
 }
 
 /// ^#\s*(LOC\s) at line start i: where the group starts and where the match ends.
@@ -202,53 +176,33 @@ fn keymap_file_under(top: &str, name: &str) -> bool {
             found = true;
         }
     }
-    found
-        || dirs
-            .iter()
-            .any(|d| keymap_file_under(&d.to_string_lossy(), name))
+    found || dirs.iter().any(|d| keymap_file_under(&d.to_string_lossy(), name))
 }
 
 /// The text console's keymap for an X11 layout and variant ("gb" -> "uk", "us"+"dvorak" -> "dvorak"): from systemd's own
 /// table (the first row that fits, as localectl does), else a console keymap of the same name, else "us".
 pub fn console_keymap(layout: &str, variant: &str, root: &str) -> R<String> {
-    let rows: Vec<Vec<String>> =
-        match std::fs::read(format!("{root}/usr/share/systemd/kbd-model-map")) {
-            Ok(bytes) => {
-                let text = py::universal(&py::decode(&bytes)?);
-                text.split_inclusive('\n')
-                    .filter(|l| !pycompat::strip(l).is_empty() && !l.starts_with('#'))
-                    .map(|l| pycompat::split(l).into_iter().map(str::to_string).collect())
-                    .collect()
-            }
-            Err(_) => vec![],
-        };
-    let row = |v: &str| {
-        rows.iter()
-            .find(|r| r.len() >= 4 && r[1] == layout && r[3] == v)
-            .map(|r| r[0].clone())
+    let rows: Vec<Vec<String>> = match std::fs::read(format!("{root}/usr/share/systemd/kbd-model-map")) {
+        Ok(bytes) => {
+            let text = py::universal(&py::decode(&bytes)?);
+            text.split_inclusive('\n')
+                .filter(|l| !pycompat::strip(l).is_empty() && !l.starts_with('#'))
+                .map(|l| pycompat::split(l).into_iter().map(str::to_string).collect())
+                .collect()
+        }
+        Err(_) => vec![],
     };
+    let row = |v: &str| rows.iter().find(|r| r.len() >= 4 && r[1] == layout && r[3] == v).map(|r| r[0].clone());
     let keymaps = format!("{root}/usr/share/kbd/keymaps");
     let keymap_file = |n: &str| keymap_file_under(&keymaps, n).then(|| n.to_string());
     // the exact pair, then a console keymap named after the variant (colemak), then the layout's own
     let found = [
-        if variant.is_empty() {
-            None
-        } else {
-            row(variant)
-        },
-        if variant.is_empty() {
-            None
-        } else {
-            keymap_file(variant)
-        },
+        if variant.is_empty() { None } else { row(variant) },
+        if variant.is_empty() { None } else { keymap_file(variant) },
         row("-"),
         keymap_file(layout),
     ];
-    Ok(found
-        .into_iter()
-        .flatten()
-        .find(|f| !f.is_empty())
-        .unwrap_or_else(|| "us".into()))
+    Ok(found.into_iter().flatten().find(|f| !f.is_empty()).unwrap_or_else(|| "us".into()))
 }
 
 /// A partition's use in the install: its device (a node sfdisk named, or the plan's own), mount point and file system to make.
@@ -261,14 +215,8 @@ const MKFS: [(&str, &[&str]); 5] = [
     ("vfat", &["mkfs.vfat", "-F", "32", "-n"]),
     ("swap", &["mkswap", "-L"]),
 ];
-const LABELS: [(&str, &str); 6] = [
-    ("/home", "Home"),
-    ("/boot/efi", "EFI"),
-    ("swap", "swap"),
-    ("/var", "Var"),
-    ("/srv", "Srv"),
-    ("/opt", "Opt"),
-];
+const LABELS: [(&str, &str); 6] =
+    [("/home", "Home"), ("/boot/efi", "EFI"), ("swap", "swap"), ("/var", "Var"), ("/srv", "Srv"), ("/opt", "Opt")];
 
 impl Ctx<'_> {
     /// print(f"{kind} {text}".rstrip(), flush=True)
@@ -286,21 +234,10 @@ impl Ctx<'_> {
         let r = self.sys.run(argv, stdin)?;
         if check && r.code != 0 {
             // the program, not the chroot and search path around it
-            let shown: &[String] = if argv.first().map(String::as_str) == Some("chroot") {
-                argv.get(4..).unwrap_or(&[])
-            } else {
-                argv
-            };
+            let shown: &[String] = if argv.first().map(String::as_str) == Some("chroot") { argv.get(4..).unwrap_or(&[]) } else { argv };
             let head = shown[..shown.len().min(3)].join(" ");
-            let said = if r.stderr.is_empty() {
-                &r.stdout
-            } else {
-                &r.stderr
-            };
-            return stop(format!(
-                "{head} failed: {}",
-                tail_chars(pycompat::strip(said), 400)
-            ));
+            let said = if r.stderr.is_empty() { &r.stdout } else { &r.stderr };
+            return stop(format!("{head} failed: {}", tail_chars(pycompat::strip(said), 400)));
         }
         Ok(r)
     }
@@ -339,33 +276,20 @@ impl Ctx<'_> {
             return stop(format!("this computer started without UEFI; {name} installs on UEFI computers only (turn off Legacy/CSM)"));
         }
         if !py::isfile(&self.os.sfs) {
-            return stop(format!(
-                "the system to copy was not found ({}); start the installer from the {name} USB",
-                self.os.sfs
-            ));
+            return stop(format!("the system to copy was not found ({}); start the installer from the {name} USB", self.os.sfs));
         }
         let disk = p.at("disk").as_str().unwrap_or("").to_string();
-        let choice = self
-            .disks()?
-            .into_iter()
-            .find(|d| d.path.as_str() == Some(disk.as_str()));
+        let choice = self.disks()?.into_iter().find(|d| d.path.as_str() == Some(disk.as_str()));
         let Some(choice) = choice else {
-            return stop(format!(
-                "{disk} cannot be installed onto (not a disk, read-only, or the {name} USB itself)"
-            ));
+            return stop(format!("{disk} cannot be installed onto (not a disk, read-only, or the {name} USB itself)"));
         };
         if !choice.big_enough {
-            return stop(format!(
-                "{disk} is too small: {name} needs at least {} GB",
-                floor_div(self.os.min_bytes, GIB)?
-            ));
+            return stop(format!("{disk} is too small: {name} needs at least {} GB", floor_div(self.os.min_bytes, GIB)?));
         }
         if p.at("mode").as_str() == Some("erase") {
             let mounted = self.capture(&["lsblk", "-nr", "-o", "MOUNTPOINTS", &disk], true)?;
             if !pycompat::split(&mounted).is_empty() {
-                return stop(format!(
-                    "something on {disk} is in use (mounted); close it first"
-                ));
+                return stop(format!("something on {disk} is in use (mounted); close it first"));
             }
         } else if let Some(problem) = manual_fits(p, &choice)? {
             return stop(problem);
@@ -376,22 +300,8 @@ impl Ctx<'_> {
     fn partition(&mut self, disk: &str) -> R<(String, String)> {
         self.run(&strings(&["wipefs", "-a", disk]), None, true)?;
         // GPT: 1 GiB EFI system partition, the rest for the system
-        let layout = format!(
-            "label: gpt\nsize=1GiB, type=uefi, name=EFI\ntype=linux, name={}\n",
-            self.os.name.replace(' ', "_")
-        );
-        self.run(
-            &strings(&[
-                "sfdisk",
-                "--wipe",
-                "always",
-                "--wipe-partitions",
-                "always",
-                disk,
-            ]),
-            Some(&layout),
-            true,
-        )?;
+        let layout = format!("label: gpt\nsize=1GiB, type=uefi, name=EFI\ntype=linux, name={}\n", self.os.name.replace(' ', "_"));
+        self.run(&strings(&["sfdisk", "--wipe", "always", "--wipe-partitions", "always", disk]), Some(&layout), true)?;
         self.settle()?;
         Ok((part(disk, 1), part(disk, 2)))
     }
@@ -400,11 +310,7 @@ impl Ctx<'_> {
     fn sfdisk_table(&mut self, disk: &str) -> R<Py> {
         let text = self.capture(&["sfdisk", "-J", disk], true)?;
         let v = loads(&text, OTHER_NESTING).or_else(|_| {
-            crash(if text.is_empty() {
-                "Expecting value: line 1 column 1 (char 0)"
-            } else {
-                "sfdisk's output is not JSON"
-            })
+            crash(if text.is_empty() { "Expecting value: line 1 column 1 (char 0)" } else { "sfdisk's output is not JSON" })
         })?;
         Ok(index(&v, "partitiontable")?.clone())
     }
@@ -414,11 +320,7 @@ impl Ctx<'_> {
         let disk = p.at("disk").as_str().unwrap_or("").to_string();
         if p.at("new_table").truthy() {
             self.run(&strings(&["wipefs", "-a", &disk]), None, true)?;
-            self.run(
-                &strings(&["sfdisk", "--wipe", "always", &disk]),
-                Some("label: gpt\n"),
-                true,
-            )?;
+            self.run(&strings(&["sfdisk", "--wipe", "always", &disk]), Some("label: gpt\n"), true)?;
         } else {
             // a number given twice is deleted once
             let mut numbers: Vec<Int> = p
@@ -426,24 +328,12 @@ impl Ctx<'_> {
                 .as_list()
                 .unwrap_or(&[])
                 .iter()
-                .filter_map(|n| {
-                    if let Py::Int(i) = n {
-                        Some(i.clone())
-                    } else {
-                        None
-                    }
-                })
+                .filter_map(|n| if let Py::Int(i) = n { Some(i.clone()) } else { None })
                 .collect();
-            numbers.sort_by(|a, b| {
-                (b.value, b.text.len(), &b.text).cmp(&(a.value, a.text.len(), &a.text))
-            });
+            numbers.sort_by(|a, b| (b.value, b.text.len(), &b.text).cmp(&(a.value, a.text.len(), &a.text)));
             numbers.dedup();
             for n in numbers {
-                self.run(
-                    &strings(&["sfdisk", "--delete", &disk, &n.text]),
-                    None,
-                    true,
-                )?;
+                self.run(&strings(&["sfdisk", "--delete", &disk, &n.text]), None, true)?;
             }
         }
         self.settle()?;
@@ -458,11 +348,7 @@ impl Ctx<'_> {
                 _ => "linux",
             };
             let size = floor_div(c.at("size").whole().unwrap_or(0), ss)?;
-            self.run(
-                &strings(&["sfdisk", "--append", &disk]),
-                Some(&format!("start={start}, size={size}, type={kind}\n")),
-                true,
-            )?;
+            self.run(&strings(&["sfdisk", "--append", &disk]), Some(&format!("start={start}, size={size}, type={kind}\n")), true)?;
             self.settle()?;
             let table = self.sfdisk_table(&disk)?;
             let mut node = None;
@@ -480,26 +366,15 @@ impl Ctx<'_> {
         // an existing partition chosen as the EFI partition and formatted gets the EFI type, so firmware looks there
         for u in p.at("use").as_list().unwrap_or(&[]) {
             let partname = index(u, "part")?.as_str().unwrap_or("").to_string();
-            if index(u, "mount")?.as_str() == Some("/boot/efi")
-                && index(u, "format")?.truthy()
-                && !partname.starts_with("new:")
-            {
+            if index(u, "mount")?.as_str() == Some("/boot/efi") && index(u, "format")?.truthy() && !partname.starts_with("new:") {
                 let digits: String = {
-                    let rev: Vec<char> = partname
-                        .chars()
-                        .rev()
-                        .take_while(|c| pycompat::decimal(*c).is_some())
-                        .collect();
+                    let rev: Vec<char> = partname.chars().rev().take_while(|c| pycompat::decimal(*c).is_some()).collect();
                     rev.into_iter().rev().collect()
                 };
                 if digits.is_empty() {
                     return crash("'NoneType' object has no attribute 'group'");
                 }
-                self.run(
-                    &strings(&["sfdisk", "--part-type", &disk, &digits, "uefi"]),
-                    None,
-                    false,
-                )?;
+                self.run(&strings(&["sfdisk", "--part-type", &disk, &digits, "uefi"]), None, false)?;
             }
         }
         self.settle()?;
@@ -527,19 +402,12 @@ impl Ctx<'_> {
             true,
         )?;
         let mapper = self.os.mapper.clone();
-        self.run(
-            &strings(&["cryptsetup", "open", "--key-file=-", dev, &mapper]),
-            Some(password),
-            true,
-        )?;
+        self.run(&strings(&["cryptsetup", "open", "--key-file=-", dev, &mapper]), Some(password), true)?;
         Ok(format!("/dev/mapper/{mapper}"))
     }
 
     fn uuid_of(&mut self, dev: &str) -> R<String> {
-        Ok(
-            pycompat::strip(&self.capture(&["blkid", "-s", "UUID", "-o", "value", dev], true)?)
-                .to_string(),
-        )
+        Ok(pycompat::strip(&self.capture(&["blkid", "-s", "UUID", "-o", "value", dev], true)?).to_string())
     }
 
     /// uses: (device, mount point, file system to make or None to keep). Formats, mounts / first and the rest under it. A new
@@ -548,18 +416,8 @@ impl Ctx<'_> {
         let default_label: String = self.os.name.replace(' ', "_").chars().take(16).collect();
         for (dev, mount, fmt) in uses {
             if let Some(fmt) = fmt.as_deref().filter(|f| !f.is_empty()) {
-                let mut argv = strings(
-                    MKFS.iter()
-                        .find(|(k, _)| *k == fmt)
-                        .map(|(_, a)| *a)
-                        .unwrap_or(&[]),
-                );
-                argv.push(
-                    LABELS
-                        .iter()
-                        .find(|(m, _)| m == mount)
-                        .map_or(default_label.clone(), |(_, l)| l.to_string()),
-                );
+                let mut argv = strings(MKFS.iter().find(|(k, _)| *k == fmt).map(|(_, a)| *a).unwrap_or(&[]));
+                argv.push(LABELS.iter().find(|(m, _)| m == mount).map_or(default_label.clone(), |(_, l)| l.to_string()));
                 argv.push(arg(dev)?);
                 self.run(&argv, None, true)?;
             }
@@ -571,18 +429,10 @@ impl Ctx<'_> {
         py::makedirs(&target)?;
         let mut fstab = vec![];
         if root_fs.as_deref() == Some("btrfs") {
-            let subs: Vec<(&str, &str)> = SUBVOLUMES
-                .iter()
-                .copied()
-                .filter(|(_, w)| !(*w == "home" && own_home))
-                .collect();
+            let subs: Vec<(&str, &str)> = SUBVOLUMES.iter().copied().filter(|(_, w)| !(*w == "home" && own_home)).collect();
             self.run(&strings(&["mount", &root_dev, &target]), None, true)?;
             for (sub, _) in &subs {
-                self.run(
-                    &strings(&["btrfs", "subvolume", "create", &format!("{target}/{sub}")]),
-                    None,
-                    true,
-                )?;
+                self.run(&strings(&["btrfs", "subvolume", "create", &format!("{target}/{sub}")]), None, true)?;
             }
             self.run(&strings(&["umount", &target]), None, true)?;
             let opts = "compress=zstd:1,noatime";
@@ -590,31 +440,15 @@ impl Ctx<'_> {
             for (sub, place) in &subs {
                 let dst = py::join(&target, place);
                 py::makedirs(&dst)?;
-                self.run(
-                    &strings(&[
-                        "mount",
-                        "-o",
-                        &format!("{opts},subvol={sub}"),
-                        &root_dev,
-                        &dst,
-                    ]),
-                    None,
-                    true,
-                )?;
+                self.run(&strings(&["mount", "-o", &format!("{opts},subvol={sub}"), &root_dev, &dst]), None, true)?;
                 fstab.push(format!("UUID={ru} /{place} btrfs {opts},subvol=/{sub} 0 0"));
             }
         } else {
             self.run(&strings(&["mount", &root_dev, &target]), None, true)?;
             let u = self.uuid_of(&root_dev)?;
-            fstab.push(format!(
-                "UUID={u} / {} noatime 0 1",
-                root_fs.unwrap_or_default()
-            ));
+            fstab.push(format!("UUID={u} / {} noatime 0 1", root_fs.unwrap_or_default()));
         }
-        let mut rest: Vec<&Use> = uses
-            .iter()
-            .filter(|u| u.1 != "/" && u.1 != "swap")
-            .collect();
+        let mut rest: Vec<&Use> = uses.iter().filter(|u| u.1 != "/" && u.1 != "swap").collect();
         rest.sort_by_key(|u| u.1.matches('/').count());
         for (dev, mount, fmt) in rest {
             let dev = arg(dev)?;
@@ -623,10 +457,7 @@ impl Ctx<'_> {
             self.run(&strings(&["mount", &dev, &dst]), None, true)?;
             let fs = match fmt.as_deref().filter(|f| !f.is_empty()) {
                 Some(f) => f.to_string(),
-                None => pycompat::strip(
-                    &self.capture(&["blkid", "-s", "TYPE", "-o", "value", &dev], true)?,
-                )
-                .to_string(),
+                None => pycompat::strip(&self.capture(&["blkid", "-s", "TYPE", "-o", "value", &dev], true)?).to_string(),
             };
             let opts = if mount == "/boot/efi" {
                 "umask=0077"
@@ -636,10 +467,7 @@ impl Ctx<'_> {
                 "noatime"
             };
             let u = self.uuid_of(&dev)?;
-            fstab.push(format!(
-                "UUID={u} {mount} {fs} {opts} 0 {}",
-                if fs == "btrfs" { 0 } else { 2 }
-            ));
+            fstab.push(format!("UUID={u} {mount} {fs} {opts} 0 {}", if fs == "btrfs" { 0 } else { 2 }));
         }
         for (dev, mount, _) in uses {
             if mount == "swap" {
@@ -652,24 +480,13 @@ impl Ctx<'_> {
 
     /// unsquashfs, with its percentage turned into INFO lines every 10%.
     fn copy_system(&mut self) -> R<()> {
-        let argv = strings(&[
-            "unsquashfs",
-            "-f",
-            "-percentage",
-            "-d",
-            &self.os.target,
-            &self.os.sfs,
-        ]);
+        let argv = strings(&["unsquashfs", "-f", "-percentage", "-d", &self.os.target, &self.os.sfs]);
         let mut last: i128 = -10;
         let (code, err) = self.sys.stream(&argv, &mut |line: &str| {
             let line = pycompat::strip(line);
             if pycompat::isdigit(line) {
-                let n = pycompat::int(line).ok_or_else(|| {
-                    Fail::Crash(format!(
-                        "invalid literal for int() with base 10: {}",
-                        pycompat::repr(line)
-                    ))
-                })?;
+                let n = pycompat::int(line)
+                    .ok_or_else(|| Fail::Crash(format!("invalid literal for int() with base 10: {}", pycompat::repr(line))))?;
                 if n >= last + 10 {
                     last = n;
                     return Ok(Some(format!("INFO copied {last}%")));
@@ -678,10 +495,7 @@ impl Ctx<'_> {
             Ok(None)
         })?;
         if code != 0 {
-            return stop(format!(
-                "copying the system failed: {}",
-                tail_chars(pycompat::strip(&err), 400)
-            ));
+            return stop(format!("copying the system failed: {}", tail_chars(pycompat::strip(&err), 400)));
         }
         Ok(())
     }
@@ -711,11 +525,7 @@ impl Ctx<'_> {
         }
         if py::isdir(&format!("{}/efivars", self.host.efi)) {
             let efivars = self.t("/sys/firmware/efi/efivars");
-            self.run(
-                &strings(&["mount", "-t", "efivarfs", "efivarfs", &efivars]),
-                None,
-                false,
-            )?;
+            self.run(&strings(&["mount", "-t", "efivarfs", "efivarfs", &efivars]), None, false)?;
         }
         Ok(())
     }
@@ -733,55 +543,34 @@ impl Ctx<'_> {
             Some(c) if py::exists(&self.t(&c)) => {
                 self.inside(&[c], None, true)?;
             }
-            _ => self.say("WARN", "this system names no clean-up program for the live medium's settings (\"cleanup\" in its installer integration)")?,
+            _ => self.say(
+                "WARN",
+                "this system names no clean-up program for the live medium's settings (\"cleanup\" in its installer integration)",
+            )?,
         }
         // a new machine id at first start (the medium's must not be shared)
         write_text(&self.t("/etc/machine-id"), "")?;
         // language
         let loc = p.at("locale").as_str().unwrap_or("").to_string();
         let gen = self.t("/etc/locale.gen");
-        let text = if py::exists(&gen) {
-            read_text(&gen)?
-        } else {
-            String::new()
-        };
+        let text = if py::exists(&gen) { read_text(&gen)? } else { String::new() };
         if !has_locale_line(&text, &loc) {
             let charset = loc.split('.').nth(1).unwrap_or("UTF-8").to_string();
-            let commented = line_starts(&text)
-                .into_iter()
-                .any(|i| commented_locale(&text, i, &loc).is_some());
-            let text = if commented {
-                uncomment_locale(&text, &loc)
-            } else {
-                format!("{text}{loc} {charset}\n")
-            };
+            let commented = line_starts(&text).into_iter().any(|i| commented_locale(&text, i, &loc).is_some());
+            let text = if commented { uncomment_locale(&text, &loc) } else { format!("{text}{loc} {charset}\n") };
             write_text(&gen, &text)?;
         }
         self.inside(&strings(&["locale-gen"]), None, false)?;
         write_text(&self.t("/etc/locale.conf"), &format!("LANG={loc}\n"))?;
         // keyboard: the text console (its own keymap names), and the desktop (X11's setting, which Yggdrasil's session reads)
         let layout = p.at("keymap").as_str().unwrap_or("").to_string();
-        let variant = if p.at("keymap_variant").truthy() {
-            p.at("keymap_variant").as_str().unwrap_or("").to_string()
-        } else {
-            String::new()
-        };
+        let variant =
+            if p.at("keymap_variant").truthy() { p.at("keymap_variant").as_str().unwrap_or("").to_string() } else { String::new() };
         let console = console_keymap(&layout, &variant, &self.os.target)?;
-        let v_line = if variant.is_empty() {
-            String::new()
-        } else {
-            format!("XKBVARIANT={variant}\n")
-        };
-        write_text(
-            &self.t("/etc/vconsole.conf"),
-            &format!("KEYMAP={console}\nXKBLAYOUT={layout}\n{v_line}"),
-        )?;
+        let v_line = if variant.is_empty() { String::new() } else { format!("XKBVARIANT={variant}\n") };
+        write_text(&self.t("/etc/vconsole.conf"), &format!("KEYMAP={console}\nXKBLAYOUT={layout}\n{v_line}"))?;
         py::makedirs(&self.t("/etc/X11/xorg.conf.d"))?;
-        let v_opt = if variant.is_empty() {
-            String::new()
-        } else {
-            format!("    Option \"XkbVariant\" \"{variant}\"\n")
-        };
+        let v_opt = if variant.is_empty() { String::new() } else { format!("    Option \"XkbVariant\" \"{variant}\"\n") };
         write_text(
             &self.t("/etc/X11/xorg.conf.d/00-keyboard.conf"),
             &format!("Section \"InputClass\"\n    Identifier \"system-keyboard\"\n    MatchIsKeyboard \"on\"\n    Option \"XkbLayout\" \"{layout}\"\n{v_opt}EndSection\n"),
@@ -791,21 +580,12 @@ impl Ctx<'_> {
         if py::lexists(&lt) {
             py::remove(&lt)?;
         }
-        py::symlink(
-            &format!(
-                "/usr/share/zoneinfo/{}",
-                p.at("timezone").as_str().unwrap_or("")
-            ),
-            &lt,
-        )?;
+        py::symlink(&format!("/usr/share/zoneinfo/{}", p.at("timezone").as_str().unwrap_or("")), &lt)?;
         self.inside(&strings(&["hwclock", "--systohc", "--utc"]), None, false)?;
         // the computer's name
         let host = p.at("hostname").as_str().unwrap_or("").to_string();
         write_text(&self.t("/etc/hostname"), &format!("{host}\n"))?;
-        write_text(
-            &self.t("/etc/hosts"),
-            &format!("127.0.0.1 localhost\n::1 localhost\n127.0.1.1 {host}.localdomain {host}\n"),
-        )?;
+        write_text(&self.t("/etc/hosts"), &format!("127.0.0.1 localhost\n::1 localhost\n127.0.1.1 {host}.localdomain {host}\n"))?;
         // the account: an administrator through sudo (wheel); root stays locked
         let u = p.at("user");
         let login = u.at("login").as_str().unwrap_or("").to_string();
@@ -816,27 +596,9 @@ impl Ctx<'_> {
             }
         }
         let name = u.get("name").and_then(Py::as_str).unwrap_or("").to_string();
-        self.inside(
-            &strings(&[
-                "useradd",
-                "-m",
-                "-G",
-                &groups.join(","),
-                "-s",
-                "/bin/bash",
-                "-c",
-                &name,
-                &login,
-            ]),
-            None,
-            true,
-        )?;
+        self.inside(&strings(&["useradd", "-m", "-G", &groups.join(","), "-s", "/bin/bash", "-c", &name, &login]), None, true)?;
         let password = u.at("password").as_str().unwrap_or("");
-        self.inside(
-            &strings(&["chpasswd"]),
-            Some(&format!("{login}:{password}\n")),
-            true,
-        )?;
+        self.inside(&strings(&["chpasswd"]), Some(&format!("{login}:{password}\n")), true)?;
         self.inside(&strings(&["passwd", "-l", "root"]), None, false)?;
         py::makedirs(&self.t("/etc/sudoers.d"))?;
         let sudoers = self.t(&format!("/etc/sudoers.d/10-{}-wheel", self.os.id));
@@ -846,11 +608,7 @@ impl Ctx<'_> {
         if !py::exists(&self.t("/usr/lib/systemd/system/greetd.service")) {
             return stop("the system has no login screen (greetd is missing)");
         }
-        self.inside(
-            &strings(&["systemctl", "enable", "-f", "greetd.service"]),
-            None,
-            true,
-        )?;
+        self.inside(&strings(&["systemctl", "enable", "-f", "greetd.service"]), None, true)?;
         Ok(())
     }
 
@@ -928,12 +686,7 @@ impl Ctx<'_> {
         let Some(chosen) = p.get("browsers") else {
             return Ok(());
         };
-        let chosen: Vec<String> = chosen
-            .as_list()
-            .unwrap_or(&[])
-            .iter()
-            .filter_map(|b| b.as_str().map(str::to_string))
-            .collect();
+        let chosen: Vec<String> = chosen.as_list().unwrap_or(&[]).iter().filter_map(|b| b.as_str().map(str::to_string)).collect();
         let catalog = catalog::entries(self.os.browsers_file.as_deref(), "browsers");
         let plan = catalog::browser_plan(&catalog, &chosen);
         let mut have = vec![];
@@ -943,16 +696,10 @@ impl Ctx<'_> {
             }
         }
         if !have.is_empty() {
-            self.say(
-                "INFO",
-                &format!("removing the browsers not chosen: {}", have.join(", ")),
-            )?;
+            self.say("INFO", &format!("removing the browsers not chosen: {}", have.join(", ")))?;
             let kept = self.remove_packages(&have)?;
             if !kept.is_empty() {
-                self.say(
-                    "INFO",
-                    &format!("kept, as other programs need them: {}", kept.join(", ")),
-                )?;
+                self.say("INFO", &format!("kept, as other programs need them: {}", kept.join(", ")))?;
             }
         }
         let mut missing = vec![];
@@ -980,9 +727,22 @@ impl Ctx<'_> {
                     }
                 }
                 for app in &flat {
-                    me.inside(&strings(&["flatpak", "remote-add", "--system", "--if-not-exists", "flathub", "https://dl.flathub.org/repo/flathub.flatpakrepo"]), None, false)?;
+                    me.inside(
+                        &strings(&[
+                            "flatpak",
+                            "remote-add",
+                            "--system",
+                            "--if-not-exists",
+                            "flathub",
+                            "https://dl.flathub.org/repo/flathub.flatpakrepo",
+                        ]),
+                        None,
+                        false,
+                    )?;
                     me.say("INFO", &format!("installing {app} from Flathub"))?;
-                    if me.inside(&strings(&["flatpak", "install", "--system", "-y", "--noninteractive", "flathub", app]), None, false)?.code != 0 {
+                    if me.inside(&strings(&["flatpak", "install", "--system", "-y", "--noninteractive", "flathub", app]), None, false)?.code
+                        != 0
+                    {
                         me.say("WARN", &format!("could not install {app} from Flathub (no internet?); Agora can install it later"))?;
                     }
                 }
@@ -995,10 +755,7 @@ impl Ctx<'_> {
             order.push(p.at("default_browser").as_str().unwrap_or("").to_string());
         }
         order.extend(chosen.iter().cloned());
-        let dirs = [
-            self.t("/usr/share/applications"),
-            self.t("/var/lib/flatpak/exports/share/applications"),
-        ];
+        let dirs = [self.t("/usr/share/applications"), self.t("/var/lib/flatpak/exports/share/applications")];
         let mut default: Option<String> = None;
         for bid in &order {
             let b = catalog.iter().find(|x| catalog::id(x) == *bid);
@@ -1018,31 +775,18 @@ impl Ctx<'_> {
         } else if let Some(d) = &default {
             self.say("INFO", &format!("default browser: {d}"))?;
             let mf = self.t("/etc/xdg/mimeapps.list");
-            let text = if py::exists(&mf) {
-                read_text(&mf)?
-            } else {
-                String::new()
-            };
+            let text = if py::exists(&mf) { read_text(&mf)? } else { String::new() };
             write_text(&mf, &catalog::mimeapps_with_browser(&text, d))?;
         } else {
-            self.say(
-                "WARN",
-                "none of the chosen browsers could be installed; Agora can install one later",
-            )?;
+            self.say("WARN", "none of the chosen browsers could be installed; Agora can install one later")?;
         }
         let dock = self.t("/etc/yggdrasil/dock");
         if py::exists(&dock) {
-            let ids: HashSet<String> = catalog
-                .iter()
-                .flat_map(|b| texts(b.at("desktop")))
-                .map(|d| drop_last(&d, ".desktop".len()))
-                .collect();
+            let ids: HashSet<String> =
+                catalog.iter().flat_map(|b| texts(b.at("desktop"))).map(|d| drop_last(&d, ".desktop".len())).collect();
             let text = read_text(&dock)?;
             let default_id = default.as_deref().map(|d| drop_last(d, ".desktop".len()));
-            write_text(
-                &dock,
-                &catalog::dock_with_browser(&text, &ids, default_id.as_deref()),
-            )?;
+            write_text(&dock, &catalog::dock_with_browser(&text, &ids, default_id.as_deref()))?;
         }
         Ok(())
     }
@@ -1055,18 +799,10 @@ impl Ctx<'_> {
         let Some(chosen) = p.get("extras") else {
             return Ok(());
         };
-        let chosen: Vec<String> = chosen
-            .as_list()
-            .unwrap_or(&[])
-            .iter()
-            .filter_map(|e| e.as_str().map(str::to_string))
-            .collect();
+        let chosen: Vec<String> = chosen.as_list().unwrap_or(&[]).iter().filter_map(|e| e.as_str().map(str::to_string)).collect();
         let catalog = catalog::entries(self.os.extras_file.as_deref(), "extras");
         let comps = catalog::components(self.os.components_file.as_deref());
-        let names: Vec<String> = comps
-            .values()
-            .flat_map(catalog::component_packages)
-            .collect();
+        let names: Vec<String> = comps.values().flat_map(catalog::component_packages).collect();
         let mut installed = HashSet::new();
         for x in &names {
             if self.inside_code(&["pacman", "-Q", x])? == 0 {
@@ -1075,16 +811,10 @@ impl Ctx<'_> {
         }
         let plan = catalog::extras_plan(&catalog, &chosen, &comps, &installed);
         if !plan.remove.is_empty() {
-            self.say(
-                "INFO",
-                &format!("removing what was not chosen: {}", plan.remove.join(", ")),
-            )?;
+            self.say("INFO", &format!("removing what was not chosen: {}", plan.remove.join(", ")))?;
             let kept = self.remove_packages(&plan.remove)?;
             if !kept.is_empty() {
-                self.say(
-                    "INFO",
-                    &format!("kept, as other programs need them: {}", kept.join(", ")),
-                )?;
+                self.say("INFO", &format!("kept, as other programs need them: {}", kept.join(", ")))?;
             }
         }
         let login = p.at("user").at("login").as_str().unwrap_or("").to_string();
@@ -1101,45 +831,27 @@ impl Ctx<'_> {
             }
             let groups = texts(c.at("add_groups"));
             if !groups.is_empty() && !login.is_empty() {
-                self.inside(
-                    &strings(&["usermod", "-aG", &groups.join(","), &login]),
-                    None,
-                    false,
-                )?;
+                self.inside(&strings(&["usermod", "-aG", &groups.join(","), &login]), None, false)?;
             }
         }
-        let names_of = |ids: &[String]| {
-            ids.iter()
-                .map(|c| catalog::component_name(&comps, c))
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
+        let names_of = |ids: &[String]| ids.iter().map(|c| catalog::component_name(&comps, c)).collect::<Vec<_>>().join(", ");
         if !plan.keep.is_empty() {
             self.say("INFO", &format!("kept: {}", names_of(&plan.keep)))?;
         }
         match (&self.os.first_login_file.clone(), plan.queue.is_empty()) {
             (_, true) => {}
-            (None, false) => self.say(
-                "INFO",
-                &format!(
-                    "not on the installer, to install from Agora: {}",
-                    names_of(&plan.queue)
-                ),
-            )?,
+            (None, false) => self.say("INFO", &format!("not on the installer, to install from Agora: {}", names_of(&plan.queue)))?,
             (Some(file), false) => {
                 let f = self.t(file);
                 py::makedirs(&py::dirname(&f))?;
-                let list = dict(vec![
-                    ("user", s(&login)),
-                    (
-                        "components",
-                        Py::List(plan.queue.iter().map(|c| s(c)).collect()),
-                    ),
-                ]);
+                let list = dict(vec![("user", s(&login)), ("components", Py::List(plan.queue.iter().map(|c| s(c)).collect()))]);
                 write_text(&f, &list.dumps())?;
                 // the user's first login removes it once everything is installed
                 self.inside(&strings(&["chown", &login, file]), None, false)?;
-                self.say("INFO", &format!("not on the installer, installed at the first login (needs the internet): {}", names_of(&plan.queue)))?;
+                self.say(
+                    "INFO",
+                    &format!("not on the installer, installed at the first login (needs the internet): {}", names_of(&plan.queue)),
+                )?;
             }
         }
         Ok(())
@@ -1161,21 +873,14 @@ impl Ctx<'_> {
             Err(_) => return Ok(true),
         };
         let text = py::universal(&py::decode(&bytes)?);
-        let hooks = pycompat::splitlines(&text)
-            .into_iter()
-            .find(|l| pycompat::strip(l).starts_with("HOOKS="))
-            .unwrap_or("");
+        let hooks = pycompat::splitlines(&text).into_iter().find(|l| pycompat::strip(l).starts_with("HOOKS=")).unwrap_or("");
         Ok(format!(" {} ", hooks.replace(['(', ')'], " ")).contains(" systemd "))
     }
 
     fn initramfs(&mut self, encrypted: bool) -> R<()> {
         py::makedirs(&self.t("/etc/mkinitcpio.conf.d"))?;
         if encrypted {
-            let hook = if self.systemd_initramfs()? {
-                "sd-encrypt"
-            } else {
-                "encrypt"
-            };
+            let hook = if self.systemd_initramfs()? { "sd-encrypt" } else { "encrypt" };
             let conf = format!(
                 "# Written by yggdrasil-install-system: the system disk is encrypted. \"{hook}\" opens it (before resume and filesystems)
 # with the key file inside this image, so the password is asked once, by GRUB.
@@ -1191,13 +896,7 @@ fi
 FILES+=(/crypto_keyfile.bin)
 "
             );
-            write_text(
-                &self.t(&format!(
-                    "/etc/mkinitcpio.conf.d/{}-encrypt.conf",
-                    self.os.id
-                )),
-                &conf,
-            )?;
+            write_text(&self.t(&format!("/etc/mkinitcpio.conf.d/{}-encrypt.conf", self.os.id)), &conf)?;
         }
         self.inside(&strings(&["mkinitcpio", "-P"]), None, true)?;
         // the image holds the key: only root may read it
@@ -1212,11 +911,7 @@ FILES+=(/crypto_keyfile.bin)
 
     fn bootloader(&mut self, encrypted: bool, crypt_uuid: &str, fallback: bool) -> R<()> {
         let path = self.t("/etc/default/grub");
-        let mut text = if py::exists(&path) {
-            read_text(&path)?
-        } else {
-            String::new()
-        };
+        let mut text = if py::exists(&path) { read_text(&path)? } else { String::new() };
         let mut options = self.os.kernel_options.clone();
         let mapper = self.os.mapper.clone();
         if encrypted {
@@ -1235,10 +930,7 @@ FILES+=(/crypto_keyfile.bin)
             }
         }
         let mut values = self.os.grub_defaults.clone();
-        values.push((
-            "GRUB_CMDLINE_LINUX_DEFAULT".into(),
-            format!("'{}'", options.join(" ")),
-        ));
+        values.push(("GRUB_CMDLINE_LINUX_DEFAULT".into(), format!("'{}'", options.join(" "))));
         if encrypted {
             values.push(("GRUB_ENABLE_CRYPTODISK".into(), "y".into()));
         }
@@ -1247,50 +939,18 @@ FILES+=(/crypto_keyfile.bin)
         }
         write_text(&path, &text)?;
         let id = format!("--bootloader-id={}", self.os.name.replace(' ', "_"));
-        self.inside(
-            &strings(&[
-                "grub-install",
-                "--target=x86_64-efi",
-                "--efi-directory=/boot/efi",
-                &id,
-                "--recheck",
-            ]),
-            None,
-            true,
-        )?;
+        self.inside(&strings(&["grub-install", "--target=x86_64-efi", "--efi-directory=/boot/efi", &id, "--recheck"]), None, true)?;
         // a second copy at the firmware's fallback path, for computers that forget boot entries; not on an EFI partition that
         // was there before (Windows' own): its fallback is another system's
         if fallback {
-            self.inside(
-                &strings(&[
-                    "grub-install",
-                    "--target=x86_64-efi",
-                    "--efi-directory=/boot/efi",
-                    "--removable",
-                ]),
-                None,
-                false,
-            )?;
+            self.inside(&strings(&["grub-install", "--target=x86_64-efi", "--efi-directory=/boot/efi", "--removable"]), None, false)?;
         }
         // the plain menu first (the theme's installer keeps a copy of it to fall back on), then the OS's own look, if it has one
-        self.inside(
-            &strings(&["grub-mkconfig", "-o", "/boot/grub/grub.cfg"]),
-            None,
-            true,
-        )?;
-        if let Some(theme) = self
-            .os
-            .boot_theme
-            .clone()
-            .filter(|t| py::exists(&self.t(t)))
-        {
+        self.inside(&strings(&["grub-mkconfig", "-o", "/boot/grub/grub.cfg"]), None, true)?;
+        if let Some(theme) = self.os.boot_theme.clone().filter(|t| py::exists(&self.t(t))) {
             let r = self.inside(&[theme], None, false)?;
             if r.code != 0 {
-                let said = if r.stderr.is_empty() {
-                    &r.stdout
-                } else {
-                    &r.stderr
-                };
+                let said = if r.stderr.is_empty() { &r.stdout } else { &r.stderr };
                 let name = self.os.name.clone();
                 self.say(
                     "WARN",
@@ -1309,19 +969,10 @@ FILES+=(/crypto_keyfile.bin)
     /// that cannot be done nothing is unmounted, and false is returned (a restart unmounts it).
     pub fn unmount_all(&mut self) -> R<bool> {
         let target = self.os.target.clone();
-        if self.bound
-            && self
-                .run(&strings(&["mount", "--make-rslave", &target]), None, false)?
-                .code
-                != 0
-        {
+        if self.bound && self.run(&strings(&["mount", "--make-rslave", &target]), None, false)?.code != 0 {
             return Ok(false);
         }
-        if self
-            .run(&strings(&["umount", "-R", &target]), None, false)?
-            .code
-            != 0
-        {
+        if self.run(&strings(&["umount", "-R", &target]), None, false)?.code != 0 {
             self.run(&strings(&["umount", "-R", "-l", &target]), None, false)?;
         }
         let mapper = self.os.mapper.clone();
@@ -1335,40 +986,21 @@ FILES+=(/crypto_keyfile.bin)
         self.step(2)?;
         let disk = p.at("disk").as_str().unwrap_or("").to_string();
         let (mut plan, root_part): (Vec<Use>, Py) = if p.at("mode").as_str() == Some("erase") {
-            self.say(
-                "INFO",
-                &format!("installing onto {disk}; everything on it is erased"),
-            )?;
+            self.say("INFO", &format!("installing onto {disk}; everything on it is erased"))?;
             let (esp, root_part) = self.partition(&disk)?;
-            (
-                vec![
-                    (s(&esp), "/boot/efi".into(), Some("vfat".into())),
-                    (s(&root_part), "/".into(), Some("btrfs".into())),
-                ],
-                s(&root_part),
-            )
+            (vec![(s(&esp), "/boot/efi".into(), Some("vfat".into())), (s(&root_part), "/".into(), Some("btrfs".into()))], s(&root_part))
         } else {
-            self.say(
-                "INFO",
-                &format!("installing onto the partitions chosen on {disk}"),
-            )?;
+            self.say("INFO", &format!("installing onto the partitions chosen on {disk}"))?;
             let made = self.manual_partition(p)?;
             let mut plan = vec![];
             for u in iterate(index(p, "use")?)? {
                 let partname = index(&u, "part")?.clone();
-                let dev = made
-                    .iter()
-                    .find(|(k, _)| Some(k.as_str()) == partname.as_str())
-                    .map_or(partname.clone(), |(_, v)| v.clone());
+                let dev = made.iter().find(|(k, _)| Some(k.as_str()) == partname.as_str()).map_or(partname.clone(), |(_, v)| v.clone());
                 let mount = index(&u, "mount")?.as_str().unwrap_or("").to_string();
                 let fmt = index(&u, "format")?.as_str().map(str::to_string);
                 plan.push((dev, mount, fmt));
             }
-            let root_part = plan
-                .iter()
-                .find(|u| u.1 == "/")
-                .map(|u| u.0.clone())
-                .unwrap_or(Py::None);
+            let root_part = plan.iter().find(|u| u.1 == "/").map(|u| u.0.clone()).unwrap_or(Py::None);
             (plan, root_part)
         };
         self.step(3)?;
@@ -1398,14 +1030,7 @@ FILES+=(/crypto_keyfile.bin)
         if encrypted {
             let key = self.encryption_setup()?;
             self.run(
-                &strings(&[
-                    "cryptsetup",
-                    "luksAddKey",
-                    "--batch-mode",
-                    "--key-file=-",
-                    &arg(&root_part)?,
-                    &key,
-                ]),
+                &strings(&["cryptsetup", "luksAddKey", "--batch-mode", "--key-file=-", &arg(&root_part)?, &key]),
                 Some(&password),
                 true,
             )?;
@@ -1414,10 +1039,7 @@ FILES+=(/crypto_keyfile.bin)
         self.initramfs(encrypted)?;
         self.step(8)?;
         // the firmware's fallback copy only on an EFI partition made for this system (erased or formatted now)
-        let esp_formatted = plan
-            .iter()
-            .find(|u| u.1 == "/boot/efi")
-            .is_some_and(|u| u.2.is_some());
+        let esp_formatted = plan.iter().find(|u| u.1 == "/boot/efi").is_some_and(|u| u.2.is_some());
         let crypt_uuid = self.uuid_of(&arg(&root_part)?)?;
         self.uuid_of(&arg(&root)?)?;
         self.bootloader(encrypted, &crypt_uuid, esp_formatted)?;
@@ -1431,23 +1053,13 @@ FILES+=(/crypto_keyfile.bin)
                 }
             }
             if r.code != 0 {
-                let said = if r.stdout.is_empty() {
-                    &r.stderr
-                } else {
-                    &r.stdout
-                };
-                return stop(format!(
-                    "the last checks of the new system failed: {}",
-                    tail_chars(pycompat::strip(said), 400)
-                ));
+                let said = if r.stdout.is_empty() { &r.stderr } else { &r.stdout };
+                return stop(format!("the last checks of the new system failed: {}", tail_chars(pycompat::strip(said), 400)));
             }
         }
         if !self.unmount_all()? {
             let target = self.os.target.clone();
-            self.say(
-                "WARN",
-                &format!("the new system stays mounted at {target} until the computer restarts"),
-            )?;
+            self.say("WARN", &format!("the new system stays mounted at {target} until the computer restarts"))?;
         }
         self.say("DONE", "")
     }
@@ -1467,80 +1079,38 @@ pub fn manual_fits(p: &Py, d: &Disk) -> R<Option<String>> {
     let mut deleted: Vec<Int> = if new_table {
         d.partitions.iter().map(|q| q.number.clone()).collect()
     } else {
-        p.at("delete")
-            .as_list()
-            .unwrap_or(&[])
-            .iter()
-            .filter_map(|n| {
-                if let Py::Int(i) = n {
-                    Some(i.clone())
-                } else {
-                    None
-                }
-            })
-            .collect()
+        p.at("delete").as_list().unwrap_or(&[]).iter().filter_map(|n| if let Py::Int(i) = n { Some(i.clone()) } else { None }).collect()
     };
     deleted.sort_by(|a, b| (a.value, a.text.len(), &a.text).cmp(&(b.value, b.text.len(), &b.text)));
     deleted.dedup();
-    let is_deleted = |n: i128| {
-        deleted
-            .iter()
-            .any(|x| x.value == n && x.value.abs() < crate::pyjson::CLAMP)
-    };
+    let is_deleted = |n: i128| deleted.iter().any(|x| x.value == n && x.value.abs() < crate::pyjson::CLAMP);
     if !new_table && !d.table.truthy() {
-        return Ok(Some(
-            "the disk has no partition table: start with a new one".into(),
-        ));
+        return Ok(Some("the disk has no partition table: start with a new one".into()));
     }
     for n in &deleted {
         match by_num(n.value).filter(|_| n.value.abs() < crate::pyjson::CLAMP) {
             None => return Ok(Some(format!("there is no partition {} to delete", n.text))),
-            Some(q) if q.mounted => {
-                return Ok(Some(format!("{} is in use (mounted)", q.path.py_str())))
-            }
+            Some(q) if q.mounted => return Ok(Some(format!("{} is in use (mounted)", q.path.py_str()))),
             Some(_) => {}
         }
     }
-    let kept: Vec<(i128, i128)> = d
-        .partitions
-        .iter()
-        .filter(|q| !is_deleted(q.number.value))
-        .map(|q| (q.start.value, q.size.value))
-        .collect();
+    let kept: Vec<(i128, i128)> =
+        d.partitions.iter().filter(|q| !is_deleted(q.number.value)).map(|q| (q.start.value, q.size.value)).collect();
     let gaps = free_space(&kept, MIB, d.size.value - MIB);
     let mut taken: Vec<(i128, i128)> = vec![];
     let creates = p.at("create").as_list().unwrap_or(&[]);
     for c in creates {
-        let (start, size) = (
-            c.at("start").whole().unwrap_or(0),
-            c.at("size").whole().unwrap_or(0),
-        );
-        let inside_gap = gaps
-            .iter()
-            .any(|g| g.0 <= start && start + size <= g.0 + g.1);
-        let overlaps = taken
-            .iter()
-            .any(|t| start < t.0 + t.1 && t.0 < start + size);
+        let (start, size) = (c.at("start").whole().unwrap_or(0), c.at("size").whole().unwrap_or(0));
+        let inside_gap = gaps.iter().any(|g| g.0 <= start && start + size <= g.0 + g.1);
+        let overlaps = taken.iter().any(|t| start < t.0 + t.1 && t.0 < start + size);
         if !inside_gap || overlaps || start.rem_euclid(MIB) != 0 {
-            return Ok(Some(
-                "a new partition does not fit in the free space".into(),
-            ));
+            return Ok(Some("a new partition does not fit in the free space".into()));
         }
         taken.push((start, size));
     }
-    let mut sizes: Vec<(String, i128)> = creates
-        .iter()
-        .map(|c| {
-            (
-                format!("new:{}", c.at("id").as_str().unwrap_or("")),
-                c.at("size").whole().unwrap_or(0),
-            )
-        })
-        .collect();
-    let set_size = |sizes: &mut Vec<(String, i128)>, k: &str, v: i128| match sizes
-        .iter_mut()
-        .find(|(key, _)| key == k)
-    {
+    let mut sizes: Vec<(String, i128)> =
+        creates.iter().map(|c| (format!("new:{}", c.at("id").as_str().unwrap_or("")), c.at("size").whole().unwrap_or(0))).collect();
+    let set_size = |sizes: &mut Vec<(String, i128)>, k: &str, v: i128| match sizes.iter_mut().find(|(key, _)| key == k) {
         Some(slot) => slot.1 = v,
         None => sizes.push((k.to_string(), v)),
     };
@@ -1548,16 +1118,9 @@ pub fn manual_fits(p: &Py, d: &Disk) -> R<Option<String>> {
         let partname = index(u, "part")?.as_str().unwrap_or("").to_string();
         let mount = index(u, "mount")?.as_str().unwrap_or("").to_string();
         if !partname.starts_with("new:") {
-            let q = d
-                .partitions
-                .iter()
-                .rev()
-                .find(|q| q.path.as_str() == Some(partname.as_str()));
+            let q = d.partitions.iter().rev().find(|q| q.path.as_str() == Some(partname.as_str()));
             let Some(q) = q.filter(|q| !is_deleted(q.number.value)) else {
-                return Ok(Some(format!(
-                    "{partname} is not a partition on {} (or it is being deleted)",
-                    d.path.py_str()
-                )));
+                return Ok(Some(format!("{partname} is not a partition on {} (or it is being deleted)", d.path.py_str())));
             };
             if q.mounted {
                 return Ok(Some(format!("{partname} is in use (mounted)")));
@@ -1567,24 +1130,16 @@ pub fn manual_fits(p: &Py, d: &Disk) -> R<Option<String>> {
                 return Ok(Some(format!("{partname} has no FAT file system to use as the EFI partition as it is: format it")));
             }
             if keep && mount != "/boot/efi" && !q.fstype.truthy() {
-                return Ok(Some(format!(
-                    "{partname} has no file system to keep: format it"
-                )));
+                return Ok(Some(format!("{partname} has no file system to keep: format it")));
             }
             set_size(&mut sizes, &partname, q.size.value);
         }
-        let size = sizes
-            .iter()
-            .find(|(k, _)| *k == partname)
-            .map_or(0, |(_, v)| *v);
+        let size = sizes.iter().find(|(k, _)| *k == partname).map_or(0, |(_, v)| *v);
         if mount == "/" && size < MIN_ROOT {
             return Ok(Some(format!("/ needs at least {} GB", MIN_ROOT / GIB)));
         }
         if mount == "/boot/efi" && size < MIN_ESP {
-            return Ok(Some(format!(
-                "the EFI partition needs at least {} MB",
-                MIN_ESP / MIB
-            )));
+            return Ok(Some(format!("the EFI partition needs at least {} MB", MIN_ESP / MIB)));
         }
     }
     Ok(None)
@@ -1596,32 +1151,17 @@ mod tests {
 
     #[test]
     fn grub_settings_replace_the_first_line_or_are_added() {
-        let text =
-            "GRUB_DEFAULT=saved\n#GRUB_TIMEOUT=5\nGRUB_CMDLINE_LINUX_DEFAULT=\"loglevel=3\"\n";
+        let text = "GRUB_DEFAULT=saved\n#GRUB_TIMEOUT=5\nGRUB_CMDLINE_LINUX_DEFAULT=\"loglevel=3\"\n";
         let t = grub_set(text, "GRUB_TIMEOUT", "GRUB_TIMEOUT=2");
-        assert_eq!(
-            t,
-            "GRUB_DEFAULT=saved\nGRUB_TIMEOUT=2\nGRUB_CMDLINE_LINUX_DEFAULT=\"loglevel=3\"\n"
-        );
+        assert_eq!(t, "GRUB_DEFAULT=saved\nGRUB_TIMEOUT=2\nGRUB_CMDLINE_LINUX_DEFAULT=\"loglevel=3\"\n");
         assert_eq!(
             grub_set(&t, "GRUB_DEFAULT", "GRUB_DEFAULT=0"),
             "GRUB_DEFAULT=0\nGRUB_TIMEOUT=2\nGRUB_CMDLINE_LINUX_DEFAULT=\"loglevel=3\"\n"
         );
         assert_eq!(grub_set("X=1\n", "GRUB_X", "GRUB_X=y"), "X=1\nGRUB_X=y\n");
-        assert_eq!(
-            grub_set("X=1", "GRUB_X", "GRUB_X=y"),
-            "X=1GRUB_X=y\n",
-            "as the script did: no line break added first"
-        );
-        assert_eq!(
-            grub_set("#\n  GRUB_X=1\nY\n", "GRUB_X", "GRUB_X=2"),
-            "GRUB_X=2\nY\n",
-            "\\s* crosses line breaks"
-        );
-        assert_eq!(
-            grub_set("GRUB_DEFAULTS=1\n", "GRUB_DEFAULT", "GRUB_DEFAULT=0"),
-            "GRUB_DEFAULTS=1\nGRUB_DEFAULT=0\n"
-        );
+        assert_eq!(grub_set("X=1", "GRUB_X", "GRUB_X=y"), "X=1GRUB_X=y\n", "as the script did: no line break added first");
+        assert_eq!(grub_set("#\n  GRUB_X=1\nY\n", "GRUB_X", "GRUB_X=2"), "GRUB_X=2\nY\n", "\\s* crosses line breaks");
+        assert_eq!(grub_set("GRUB_DEFAULTS=1\n", "GRUB_DEFAULT", "GRUB_DEFAULT=0"), "GRUB_DEFAULTS=1\nGRUB_DEFAULT=0\n");
     }
 
     #[test]
@@ -1630,20 +1170,9 @@ mod tests {
         assert!(has_locale_line(text, "de_DE.UTF-8"));
         assert!(!has_locale_line(text, "en_US.UTF-8"));
         assert!(!has_locale_line(text, "de_DE"));
-        assert_eq!(
-            uncomment_locale(text, "en_US.UTF-8"),
-            "en_US.UTF-8 UTF-8\n#en_US ISO-8859-1\nde_DE.UTF-8 UTF-8\n"
-        );
-        assert_eq!(
-            uncomment_locale("#\nen_GB.UTF-8 UTF-8\n", "en_GB.UTF-8"),
-            "en_GB.UTF-8 UTF-8\n",
-            "\\s* crosses line breaks"
-        );
-        assert_eq!(
-            uncomment_locale("#a x\n#a\n#a y\n", "a"),
-            "a x\na\na y\n",
-            "as re.sub does it"
-        );
+        assert_eq!(uncomment_locale(text, "en_US.UTF-8"), "en_US.UTF-8 UTF-8\n#en_US ISO-8859-1\nde_DE.UTF-8 UTF-8\n");
+        assert_eq!(uncomment_locale("#\nen_GB.UTF-8 UTF-8\n", "en_GB.UTF-8"), "en_GB.UTF-8 UTF-8\n", "\\s* crosses line breaks");
+        assert_eq!(uncomment_locale("#a x\n#a\n#a y\n", "a"), "a x\na\na y\n", "as re.sub does it");
     }
 
     #[test]

@@ -75,7 +75,11 @@ pub fn parse_multi(text: &str) -> Result<Forecast, String> {
             temp_c: vec![],
             precip_prob: vec![],
         });
-        if var == "t" { s.temp_c = nums(val) } else { s.precip_prob = nums(val) }
+        if var == "t" {
+            s.temp_c = nums(val)
+        } else {
+            s.precip_prob = nums(val)
+        }
     }
     let models: Vec<Series> = by_source.into_values().filter(|s| !s.temp_c.is_empty()).collect();
     if models.is_empty() {
@@ -92,12 +96,8 @@ pub type Ensemble = (Vec<String>, Vec<Vec<Option<f64>>>);
 pub fn parse_ensemble(text: &str) -> Result<Ensemble, String> {
     let r = raw(text)?;
     let times = times_of(&r)?;
-    let members: Vec<Vec<Option<f64>>> = r
-        .hourly
-        .iter()
-        .filter(|(k, _)| *k == "temperature_2m" || k.starts_with("temperature_2m_member"))
-        .map(|(_, v)| nums(v))
-        .collect();
+    let members: Vec<Vec<Option<f64>>> =
+        r.hourly.iter().filter(|(k, _)| *k == "temperature_2m" || k.starts_with("temperature_2m_member")).map(|(_, v)| nums(v)).collect();
     if members.is_empty() {
         return Err("reply contains no ensemble members".into());
     }
@@ -189,7 +189,8 @@ mod tests {
 
     #[test]
     fn single_model_reply_has_unsuffixed_keys() {
-        let t = r#"{"utc_offset_seconds":0,"hourly":{"time":["2026-01-01T00:00"],"temperature_2m":[3.5],"precipitation_probability":[10]}}"#;
+        let t =
+            r#"{"utc_offset_seconds":0,"hourly":{"time":["2026-01-01T00:00"],"temperature_2m":[3.5],"precipitation_probability":[10]}}"#;
         let f = parse_multi(t).unwrap();
         assert_eq!(f.models[0].source, "best_match");
         assert_eq!(f.models[0].temp_c, vec![Some(3.5)]);

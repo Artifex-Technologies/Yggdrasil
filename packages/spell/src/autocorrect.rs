@@ -144,7 +144,8 @@ mod tests {
     }
 
     fn suggest(w: &str) -> Vec<String> {
-        let mut s: Vec<String> = words().into_iter().filter(|c| distance(&w.to_lowercase(), &c.to_lowercase()) <= 2).map(String::from).collect();
+        let mut s: Vec<String> =
+            words().into_iter().filter(|c| distance(&w.to_lowercase(), &c.to_lowercase()) <= 2).map(String::from).collect();
         s.sort_by_key(|c| distance(&w.to_lowercase(), &c.to_lowercase()));
         s
     }
@@ -160,7 +161,10 @@ mod tests {
     #[test]
     fn a_certain_typo_is_fixed_when_the_word_ends() {
         let none = HashSet::new();
-        assert_eq!(fix("I said teh ", check, suggest, &none).unwrap(), Fix { delete: 4, insert: "the ".into(), typed: "teh".into(), fixed: "the".into() });
+        assert_eq!(
+            fix("I said teh ", check, suggest, &none).unwrap(),
+            Fix { delete: 4, insert: "the ".into(), typed: "teh".into(), fixed: "the".into() }
+        );
         assert_eq!(fix("helo,", check, suggest, &none).unwrap().insert, "hello,");
         assert_eq!(fix("Recieve ", check, suggest, &none).unwrap().insert, "Receive ", "the capital is kept");
         assert!(fix("I said teh", check, suggest, &none).is_none(), "nothing until the word is finished");
@@ -170,7 +174,10 @@ mod tests {
     #[test]
     fn anything_uncertain_is_left_alone() {
         let none = HashSet::new();
-        assert!(fix("car ", |w| w == "x", |_| vec!["cart".into(), "cat".into(), "card".into()], &none).is_none(), "several one edit away, none a swap: no guessing");
+        assert!(
+            fix("car ", |w| w == "x", |_| vec!["cart".into(), "cat".into(), "card".into()], &none).is_none(),
+            "several one edit away, none a swap: no guessing"
+        );
         assert!(fix("TEH ", check, suggest, &none).is_none(), "CAPS are left alone");
         assert!(fix("tEh ", check, suggest, &none).is_none(), "odd capitals are left alone");
         assert!(fix("xyzzy ", check, suggest, &none).is_none(), "no near suggestion");

@@ -91,7 +91,11 @@ pub fn held_act(confirm: bool, id: &str) -> Result<(), String> {
 pub fn parse_contained(text: &str) -> String {
     let v: Value = serde_json::from_str(text).unwrap_or(Value::Null);
     let reason = v["reason"].as_str().unwrap_or("no reason given").to_string();
-    if v["level"].as_str() == Some("emergency") { format!("{reason} (the emergency step ran)") } else { reason }
+    if v["level"].as_str() == Some("emergency") {
+        format!("{reason} (the emergency step ran)")
+    } else {
+        reason
+    }
 }
 
 /// Puts the approved files back and lifts the lock: the `release` command, through pkexec (it asks for the password).
@@ -113,7 +117,20 @@ pub struct Quarantined {
 /// The JSON of the quarantine command's `list --json`: [{"id", "original", "signature", "when"}].
 pub fn parse_quarantine(json: &str) -> Vec<Quarantined> {
     let v: Value = serde_json::from_str(json).unwrap_or(Value::Null);
-    v.as_array().map(|a| a.iter().filter_map(|i| Some(Quarantined { id: i["id"].as_str()?.to_string(), original: i["original"].as_str()?.to_string(), signature: i["signature"].as_str().unwrap_or("").to_string(), when: i["when"].as_str().unwrap_or("").to_string() })).collect()).unwrap_or_default()
+    v.as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|i| {
+                    Some(Quarantined {
+                        id: i["id"].as_str()?.to_string(),
+                        original: i["original"].as_str()?.to_string(),
+                        signature: i["signature"].as_str().unwrap_or("").to_string(),
+                        when: i["when"].as_str().unwrap_or("").to_string(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The monitor's name, or "Security" when it gives none.
@@ -188,9 +205,15 @@ pub fn parse_alerts(body: &str) -> Vec<Alert> {
                 severity: a.get("severity")?.as_str()?.to_string(),
                 summary: a.get("summary").and_then(|s| s.as_str()).unwrap_or("").to_string(),
                 process: field("process"),
-                remote: if field("remote_addr").is_empty() { String::new() } else { format!("{}:{}", field("remote_addr"), field("remote_port")) },
+                remote: if field("remote_addr").is_empty() {
+                    String::new()
+                } else {
+                    format!("{}:{}", field("remote_addr"), field("remote_port"))
+                },
                 explain: a.get("explain").and_then(|x| {
-                    let part = |k: &str| x.get(k).and_then(|v| v.as_str()).map(|v| v.chars().filter(|c| !c.is_control()).take(400).collect::<String>());
+                    let part = |k: &str| {
+                        x.get(k).and_then(|v| v.as_str()).map(|v| v.chars().filter(|c| !c.is_control()).take(400).collect::<String>())
+                    };
                     Some([part("what")?, part("serious")?, part("done")?, part("do")?])
                 }),
             })
@@ -205,10 +228,18 @@ pub fn overview() -> Overview {
     let Some(i) = security() else { return Overview::default() };
     let run = |cmd: &str, args: &[&str]| crate::sys::run(cmd, args);
     let api = i.loopback("api");
-    let get = |path: &str, secs: &str| api.as_ref().and_then(|a| run("curl", &["-s", "-m", secs, "--proto", "=http", &format!("http://{a}{path}")]));
+    let get = |path: &str, secs: &str| {
+        api.as_ref().and_then(|a| run("curl", &["-s", "-m", secs, "--proto", "=http", &format!("http://{a}{path}")]))
+    };
     let running = get("/healthz", "3").is_some_and(|h| h.contains("ok"));
     let alerts = if running { get("/v1/alerts?n=300", "5").map(|b| parse_alerts(&b)).unwrap_or_default() } else { vec![] };
-    let mtime = |p: &str| std::fs::metadata(p).ok().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64);
+    let mtime = |p: &str| {
+        std::fs::metadata(p)
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs() as i64)
+    };
     let signatures = ["/var/lib/clamav/daily.cld", "/var/lib/clamav/daily.cvd"].iter().find_map(|p| mtime(p));
     let clamav = run("which", &["clamscan"]).map(|s| !s.trim().is_empty()).unwrap_or(false);
     let has_quarantine = i.command("quarantine").is_some();
@@ -217,7 +248,21 @@ pub fn overview() -> Overview {
     let has_held = i.command("held_release").is_some();
     let held = if running && has_held { get("/v1/quarantine", "5").map(|b| parse_held(&b)).unwrap_or_default() } else { vec![] };
     let contained = i.get("contained").and_then(|p| std::fs::read_to_string(p).ok()).map(|t| parse_contained(&t));
-    Overview { name: monitor_name(i), running, alerts, signatures, clamav, has_quarantine, quarantine, has_scan: i.command("scan").is_some(), controls, contained, has_release: i.command("release").is_some(), held, has_held }
+    Overview {
+        name: monitor_name(i),
+        running,
+        alerts,
+        signatures,
+        clamav,
+        has_quarantine,
+        quarantine,
+        has_scan: i.command("scan").is_some(),
+        controls,
+        contained,
+        has_release: i.command("release").is_some(),
+        held,
+        has_held,
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -238,7 +283,9 @@ pub fn parse_scan(stdout: &str, stderr: &str, code: i32) -> ScanReport {
 
 /// Scans a folder with the monitor's scan command (the folder is its last argument). Runs as the user, so it can read the user's own files.
 pub fn scan_folder(folder: &str) -> ScanReport {
-    let Some(cmd) = security().and_then(|i| i.command("scan")) else { return ScanReport { error: "there is no scanner".into(), ..Default::default() } };
+    let Some(cmd) = security().and_then(|i| i.command("scan")) else {
+        return ScanReport { error: "there is no scanner".into(), ..Default::default() };
+    };
     let out = std::process::Command::new(&cmd[0]).args(&cmd[1..]).arg(folder).stdin(std::process::Stdio::null()).output();
     match out {
         Ok(o) => parse_scan(&String::from_utf8_lossy(&o.stdout), &String::from_utf8_lossy(&o.stderr), o.status.code().unwrap_or(2)),
@@ -268,7 +315,9 @@ mod tests {
 
     #[test]
     fn quarantine_list() {
-        let q = parse_quarantine(r#"[{"id":"abc123def456","original":"/home/u/Downloads/a.exe","signature":"Win.Trojan.X","when":"2026-10-16 10:00:00"}]"#);
+        let q = parse_quarantine(
+            r#"[{"id":"abc123def456","original":"/home/u/Downloads/a.exe","signature":"Win.Trojan.X","when":"2026-10-16 10:00:00"}]"#,
+        );
         assert_eq!(q.len(), 1);
         assert_eq!((q[0].id.as_str(), q[0].signature.as_str()), ("abc123def456", "Win.Trojan.X"));
         assert!(parse_quarantine("nonsense").is_empty());
@@ -351,7 +400,12 @@ pub fn parse_sudo(journal: &str) -> Vec<LogEntry> {
                 let user = tail.split("USER=").nth(1).and_then(|s| s.split(" ;").next()).unwrap_or("root");
                 let bad = tail.contains("incorrect password");
                 let title = if bad { format!("Wrong password: {}", cmd.trim()) } else { cmd.trim().to_string() };
-                out.push(LogEntry { time, title, detail: format!("{} as {}", who.trim(), user.trim()), failed: bad || tail.contains("NOT in sudoers") });
+                out.push(LogEntry {
+                    time,
+                    title,
+                    detail: format!("{} as {}", who.trim(), user.trim()),
+                    failed: bad || tail.contains("NOT in sudoers"),
+                });
                 continue;
             }
             if tail.contains("NOT in sudoers") {
@@ -368,7 +422,9 @@ pub fn parse_sudo(journal: &str) -> Vec<LogEntry> {
 
 /// Sudo history from the journal of the last 30 days.
 pub fn sudo_history() -> Vec<LogEntry> {
-    crate::sys::run("journalctl", &["--no-pager", "-o", "short-unix", "--since", "-30d", "_COMM=sudo"]).map(|j| parse_sudo(&j)).unwrap_or_default()
+    crate::sys::run("journalctl", &["--no-pager", "-o", "short-unix", "--since", "-30d", "_COMM=sudo"])
+        .map(|j| parse_sudo(&j))
+        .unwrap_or_default()
 }
 
 /// Failed sign-in attempts (lock screen, login, polkit) from the journal; "Login", "lock" and "polkit" lines.
@@ -390,7 +446,12 @@ pub fn parse_failed_logins(journal: &str) -> Vec<LogEntry> {
             "sshd" => "SSH",
             other => other,
         };
-        out.push(LogEntry { time, title: format!("Wrong password at {place}"), detail: if user.is_empty() { prog.to_string() } else { format!("user {user}") }, failed: true });
+        out.push(LogEntry {
+            time,
+            title: format!("Wrong password at {place}"),
+            detail: if user.is_empty() { prog.to_string() } else { format!("user {user}") },
+            failed: true,
+        });
     }
     out.reverse();
     out
@@ -415,7 +476,12 @@ pub fn login_history() -> (Vec<LogEntry>, Vec<LogEntry>) {
             ok.push(LogEntry { time: 0, title: format!("{} on {}", p[0], p[1]), detail: format!("{when} · {ended}"), failed: false });
         }
     }
-    let bad = crate::sys::run("journalctl", &["--no-pager", "-o", "short-unix", "--since", "-30d", "-g", "authentication failure|FAILED LOGIN|Failed password"]).map(|j| parse_failed_logins(&j)).unwrap_or_default();
+    let bad = crate::sys::run(
+        "journalctl",
+        &["--no-pager", "-o", "short-unix", "--since", "-30d", "-g", "authentication failure|FAILED LOGIN|Failed password"],
+    )
+    .map(|j| parse_failed_logins(&j))
+    .unwrap_or_default();
     (ok, bad)
 }
 
@@ -425,7 +491,8 @@ mod log_tests {
 
     #[test]
     fn sudo_lines() {
-        let j = "1792281112.048605 host sudo[3504705]: claude-agent : PWD=/x ; USER=root ; TSID=00005E ; COMMAND=/usr/bin/install -m755 a b\n\
+        let j =
+            "1792281112.048605 host sudo[3504705]: claude-agent : PWD=/x ; USER=root ; TSID=00005E ; COMMAND=/usr/bin/install -m755 a b\n\
                  1792165618.051855 host sudo[1339003]:  alex : 1 incorrect password attempt ; PWD=/x ; USER=root ; COMMAND=/usr/bin/ls\n\
                  1792281112.9 host sudo[3]: pam_unix(sudo:session): session closed for user root\n";
         let e = parse_sudo(j);

@@ -40,60 +40,127 @@ pub struct BtAgent {
 impl BtAgent {
     fn release(&self) {}
 
-    async fn request_pin_code(&self, device: OwnedObjectPath, #[zbus(header)] hdr: zbus::message::Header<'_>, #[zbus(connection)] conn: &zbus::Connection) -> Result<String, BtError> {
+    async fn request_pin_code(
+        &self,
+        device: OwnedObjectPath,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
+        #[zbus(connection)] conn: &zbus::Connection,
+    ) -> Result<String, BtError> {
         check(conn, &hdr).await?;
         let name = device_name(conn, &device).await;
         let slot = self.child.clone();
-        let pin = blocking::unblock(move || ask_text(&slot, &format!("Pairing with “{name}”"), "Type the PIN shown on the device, or the one in its manual (often 0000).", "PIN")).await;
+        let pin = blocking::unblock(move || {
+            ask_text(
+                &slot,
+                &format!("Pairing with “{name}”"),
+                "Type the PIN shown on the device, or the one in its manual (often 0000).",
+                "PIN",
+            )
+        })
+        .await;
         pin.filter(|p| valid_pin(p)).ok_or_else(|| BtError::Rejected("no PIN".into()))
     }
 
-    async fn display_pin_code(&self, device: OwnedObjectPath, pincode: String, #[zbus(header)] hdr: zbus::message::Header<'_>, #[zbus(connection)] conn: &zbus::Connection) -> Result<(), BtError> {
+    async fn display_pin_code(
+        &self,
+        device: OwnedObjectPath,
+        pincode: String,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
+        #[zbus(connection)] conn: &zbus::Connection,
+    ) -> Result<(), BtError> {
         check(conn, &hdr).await?;
         let name = device_name(conn, &device).await;
         let slot = self.child.clone();
-        blocking::unblock(move || show(&slot, &format!("Pairing with “{name}”"), &format!("Type {pincode} on “{name}”, then Enter."))).await;
+        blocking::unblock(move || show(&slot, &format!("Pairing with “{name}”"), &format!("Type {pincode} on “{name}”, then Enter.")))
+            .await;
         Ok(())
     }
 
-    async fn request_passkey(&self, device: OwnedObjectPath, #[zbus(header)] hdr: zbus::message::Header<'_>, #[zbus(connection)] conn: &zbus::Connection) -> Result<u32, BtError> {
+    async fn request_passkey(
+        &self,
+        device: OwnedObjectPath,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
+        #[zbus(connection)] conn: &zbus::Connection,
+    ) -> Result<u32, BtError> {
         check(conn, &hdr).await?;
         let name = device_name(conn, &device).await;
         let slot = self.child.clone();
-        let t = blocking::unblock(move || ask_text(&slot, &format!("Pairing with “{name}”"), "Type the six-digit code shown on the device.", "Code")).await;
+        let t = blocking::unblock(move || {
+            ask_text(&slot, &format!("Pairing with “{name}”"), "Type the six-digit code shown on the device.", "Code")
+        })
+        .await;
         t.and_then(|t| t.trim().parse::<u32>().ok()).filter(|n| *n <= 999_999).ok_or_else(|| BtError::Rejected("no code".into()))
     }
 
-    async fn display_passkey(&self, device: OwnedObjectPath, passkey: u32, entered: u16, #[zbus(header)] hdr: zbus::message::Header<'_>, #[zbus(connection)] conn: &zbus::Connection) -> Result<(), BtError> {
+    async fn display_passkey(
+        &self,
+        device: OwnedObjectPath,
+        passkey: u32,
+        entered: u16,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
+        #[zbus(connection)] conn: &zbus::Connection,
+    ) -> Result<(), BtError> {
         check(conn, &hdr).await?;
         // called again for every key typed on the device; the box is shown once
         if entered == 0 {
             let name = device_name(conn, &device).await;
             let slot = self.child.clone();
             let code = passkey_text(passkey);
-            blocking::unblock(move || show(&slot, &format!("Pairing with “{name}”"), &format!("Type {code} on “{name}”, then Enter."))).await;
+            blocking::unblock(move || show(&slot, &format!("Pairing with “{name}”"), &format!("Type {code} on “{name}”, then Enter.")))
+                .await;
         }
         Ok(())
     }
 
-    async fn request_confirmation(&self, device: OwnedObjectPath, passkey: u32, #[zbus(header)] hdr: zbus::message::Header<'_>, #[zbus(connection)] conn: &zbus::Connection) -> Result<(), BtError> {
+    async fn request_confirmation(
+        &self,
+        device: OwnedObjectPath,
+        passkey: u32,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
+        #[zbus(connection)] conn: &zbus::Connection,
+    ) -> Result<(), BtError> {
         check(conn, &hdr).await?;
         let name = device_name(conn, &device).await;
         let slot = self.child.clone();
         let code = passkey_text(passkey);
-        let yes = blocking::unblock(move || confirm(&slot, &format!("Pair with “{name}”?"), &format!("Check that “{name}” shows {code}."), "Pair")).await;
-        if yes { Ok(()) } else { Err(BtError::Rejected("not confirmed".into())) }
+        let yes = blocking::unblock(move || {
+            confirm(&slot, &format!("Pair with “{name}”?"), &format!("Check that “{name}” shows {code}."), "Pair")
+        })
+        .await;
+        if yes {
+            Ok(())
+        } else {
+            Err(BtError::Rejected("not confirmed".into()))
+        }
     }
 
-    async fn request_authorization(&self, device: OwnedObjectPath, #[zbus(header)] hdr: zbus::message::Header<'_>, #[zbus(connection)] conn: &zbus::Connection) -> Result<(), BtError> {
+    async fn request_authorization(
+        &self,
+        device: OwnedObjectPath,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
+        #[zbus(connection)] conn: &zbus::Connection,
+    ) -> Result<(), BtError> {
         check(conn, &hdr).await?;
         let name = device_name(conn, &device).await;
         let slot = self.child.clone();
-        let yes = blocking::unblock(move || confirm(&slot, &format!("Pair with “{name}”?"), &format!("“{name}” wants to pair with this computer."), "Pair")).await;
-        if yes { Ok(()) } else { Err(BtError::Rejected("not allowed".into())) }
+        let yes = blocking::unblock(move || {
+            confirm(&slot, &format!("Pair with “{name}”?"), &format!("“{name}” wants to pair with this computer."), "Pair")
+        })
+        .await;
+        if yes {
+            Ok(())
+        } else {
+            Err(BtError::Rejected("not allowed".into()))
+        }
     }
 
-    async fn authorize_service(&self, device: OwnedObjectPath, _uuid: String, #[zbus(header)] hdr: zbus::message::Header<'_>, #[zbus(connection)] conn: &zbus::Connection) -> Result<(), BtError> {
+    async fn authorize_service(
+        &self,
+        device: OwnedObjectPath,
+        _uuid: String,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
+        #[zbus(connection)] conn: &zbus::Connection,
+    ) -> Result<(), BtError> {
         check(conn, &hdr).await?;
         // a device you paired (or marked trusted) may use its services; anything else is asked about
         if device_flag(conn, &device, "Paired").await || device_flag(conn, &device, "Trusted").await {
@@ -101,8 +168,20 @@ impl BtAgent {
         }
         let name = device_name(conn, &device).await;
         let slot = self.child.clone();
-        let yes = blocking::unblock(move || confirm(&slot, &format!("Allow “{name}”?"), &format!("“{name}”, which is not paired, wants to connect to this computer."), "Allow")).await;
-        if yes { Ok(()) } else { Err(BtError::Rejected("not allowed".into())) }
+        let yes = blocking::unblock(move || {
+            confirm(
+                &slot,
+                &format!("Allow “{name}”?"),
+                &format!("“{name}”, which is not paired, wants to connect to this computer."),
+                "Allow",
+            )
+        })
+        .await;
+        if yes {
+            Ok(())
+        } else {
+            Err(BtError::Rejected("not allowed".into()))
+        }
     }
 
     fn cancel(&self) {
@@ -120,7 +199,11 @@ async fn check(conn: &zbus::Connection, hdr: &zbus::message::Header<'_>) -> Resu
         let owner = dbus.get_name_owner(zbus::names::BusName::try_from(BLUEZ).ok()?).await.ok()?;
         Some(owner.as_str() == sender.as_str())
     };
-    if ok.await == Some(true) { Ok(()) } else { Err(BtError::Rejected("only BlueZ may ask".into())) }
+    if ok.await == Some(true) {
+        Ok(())
+    } else {
+        Err(BtError::Rejected("only BlueZ may ask".into()))
+    }
 }
 
 async fn device_prop(conn: &zbus::Connection, device: &OwnedObjectPath, prop: &str) -> Option<zbus::zvariant::OwnedValue> {
@@ -131,7 +214,11 @@ async fn device_prop(conn: &zbus::Connection, device: &OwnedObjectPath, prop: &s
 async fn device_name(conn: &zbus::Connection, device: &OwnedObjectPath) -> String {
     let n = device_prop(conn, device, "Alias").await.and_then(|v| String::try_from(v).ok()).unwrap_or_default();
     let n: String = n.chars().filter(|c| !c.is_control()).take(60).collect();
-    if n.trim().is_empty() { "a Bluetooth device".into() } else { n }
+    if n.trim().is_empty() {
+        "a Bluetooth device".into()
+    } else {
+        n
+    }
 }
 
 async fn device_flag(conn: &zbus::Connection, device: &OwnedObjectPath, prop: &str) -> bool {

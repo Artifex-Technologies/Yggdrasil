@@ -55,7 +55,13 @@ extern "C" {
     fn libvlc_video_get_spu(p: *mut libvlc_media_player_t) -> c_int;
     fn libvlc_video_set_spu(p: *mut libvlc_media_player_t, id: c_int) -> c_int;
     fn libvlc_track_description_list_release(t: *mut TrackDescription);
-    fn libvlc_video_set_callbacks(p: *mut libvlc_media_player_t, lock: LockCb, unlock: Option<UnlockCb>, display: Option<DisplayCb>, opaque: *mut c_void);
+    fn libvlc_video_set_callbacks(
+        p: *mut libvlc_media_player_t,
+        lock: LockCb,
+        unlock: Option<UnlockCb>,
+        display: Option<DisplayCb>,
+        opaque: *mut c_void,
+    );
     fn libvlc_video_set_format_callbacks(p: *mut libvlc_media_player_t, setup: FormatCb, cleanup: Option<CleanupCb>);
 }
 
@@ -99,7 +105,14 @@ pub fn picture_size(w: u32, h: u32) -> (u32, u32) {
     (3840, nh.max(2) & !1)
 }
 
-unsafe extern "C" fn format_cb(opaque: *mut *mut c_void, chroma: *mut c_char, w: *mut c_uint, h: *mut c_uint, pitches: *mut c_uint, lines: *mut c_uint) -> c_uint {
+unsafe extern "C" fn format_cb(
+    opaque: *mut *mut c_void,
+    chroma: *mut c_char,
+    w: *mut c_uint,
+    h: *mut c_uint,
+    pitches: *mut c_uint,
+    lines: *mut c_uint,
+) -> c_uint {
     let p = &mut *(*opaque as *mut Pictures);
     let (nw, nh) = picture_size(*w, *h);
     // "RV32": four bytes a pixel, blue green red and an unused byte (converted to RGBA when shown)
@@ -164,7 +177,14 @@ impl Player {
     }
 
     /// The same, asking with the User-Agent and Referer the site issued the streams for (yt-dlp reports them).
-    pub fn open_stream_with(url: &str, audio: Option<&str>, start: Option<f64>, user_agent: Option<&str>, referer: Option<&str>, wake: Box<dyn Fn() + Send + Sync>) -> Result<Player, String> {
+    pub fn open_stream_with(
+        url: &str,
+        audio: Option<&str>,
+        start: Option<f64>,
+        user_agent: Option<&str>,
+        referer: Option<&str>,
+        wake: Box<dyn Fn() + Send + Sync>,
+    ) -> Result<Player, String> {
         // YouTube's streams go through the relay (yt-dlp fetches `ytdlp:` sources; see relay.rs)
         let mut relayed = vec![];
         let mut through = |u: &str| match crate::relay::local_token(u) {
@@ -185,15 +205,20 @@ impl Player {
                 opts.push(CString::new(format!(":{k}={v}")).map_err(|_| "a header has a zero byte".to_string())?);
             }
         }
-        let made = Self::with_media(wake, |inst| unsafe {
-            let m = libvlc_media_new_location(inst, curl.as_ptr());
-            if !m.is_null() {
-                for o in &opts {
-                    libvlc_media_add_option(m, o.as_ptr());
+        let made = Self::with_media(
+            wake,
+            |inst| unsafe {
+                let m = libvlc_media_new_location(inst, curl.as_ptr());
+                if !m.is_null() {
+                    for o in &opts {
+                        libvlc_media_add_option(m, o.as_ptr());
+                    }
                 }
-            }
-            m
-        }, audio, start);
+                m
+            },
+            audio,
+            start,
+        );
         match made {
             Ok(mut p) => {
                 p.relayed = relayed;
@@ -206,10 +231,18 @@ impl Player {
         }
     }
 
-    fn with_media(wake: Box<dyn Fn() + Send + Sync>, media: impl FnOnce(*mut libvlc_instance_t) -> *mut libvlc_media_t, audio: Option<&str>, start: Option<f64>) -> Result<Player, String> {
+    fn with_media(
+        wake: Box<dyn Fn() + Send + Sync>,
+        media: impl FnOnce(*mut libvlc_instance_t) -> *mut libvlc_media_t,
+        audio: Option<&str>,
+        start: Option<f64>,
+    ) -> Result<Player, String> {
         // YGGDRASIL_PLAYER_DEBUG=1: VLC says what it does (on standard error)
         let talk = if std::env::var_os("YGGDRASIL_PLAYER_DEBUG").is_some() { "--verbose=2" } else { "--quiet" };
-        let args: Vec<CString> = ["--no-video-title-show", "--no-osd", "--no-snapshot-preview", talk, "--no-stats"].iter().map(|a| CString::new(*a).unwrap()).collect();
+        let args: Vec<CString> = ["--no-video-title-show", "--no-osd", "--no-snapshot-preview", talk, "--no-stats"]
+            .iter()
+            .map(|a| CString::new(*a).unwrap())
+            .collect();
         let argv: Vec<*const c_char> = args.iter().map(|a| a.as_ptr()).collect();
         let caudio = match audio {
             Some(a) => Some(CString::new(a).map_err(|_| "the address has a zero byte".to_string())?),
@@ -239,7 +272,13 @@ impl Player {
                 libvlc_release(inst);
                 return Err("VLC could not make a player".into());
             }
-            let pics = Box::into_raw(Box::new(Pictures { back: vec![], w: 0, h: 0, shown: Mutex::new(Frame { w: 0, h: 0, rgba: vec![], fresh: false }), wake }));
+            let pics = Box::into_raw(Box::new(Pictures {
+                back: vec![],
+                w: 0,
+                h: 0,
+                shown: Mutex::new(Frame { w: 0, h: 0, rgba: vec![], fresh: false }),
+                wake,
+            }));
             libvlc_video_set_format_callbacks(mp, format_cb, None);
             libvlc_video_set_callbacks(mp, lock_cb, None, Some(display_cb), pics as *mut c_void);
             Ok(Player { inst, mp, pics, relayed: vec![] })

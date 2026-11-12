@@ -34,7 +34,16 @@ impl App {
     pub fn new(ctx: &egui::Context) -> App {
         theme::apply(ctx, theme::system_dark(), theme::system_accent());
         let (tx, rx) = channel();
-        App { screen: Screen::Form, previous: String::new(), current: String::new(), error: String::new(), info: String::new(), busy: false, tx, rx }
+        App {
+            screen: Screen::Form,
+            previous: String::new(),
+            current: String::new(),
+            error: String::new(),
+            info: String::new(),
+            busy: false,
+            tx,
+            rx,
+        }
     }
 
     fn user() -> String {
@@ -63,7 +72,13 @@ impl App {
                     return Ok(format!("A new, empty keyring is ready. The old one was kept as {moved}."));
                 }
                 let kr = secret::Keyring::open().map_err(|_| "The keyring service is not running.".to_string())?;
-                kr.change_password(&prev, &cur).map_err(|e| if e.contains("previous") { "That is not the previous password the keyring uses.".to_string() } else { e })?;
+                kr.change_password(&prev, &cur).map_err(|e| {
+                    if e.contains("previous") {
+                        "That is not the previous password the keyring uses.".to_string()
+                    } else {
+                        e
+                    }
+                })?;
                 Ok("Done. Your keyring now uses your current login password.".into())
             })();
             prev.zeroize();
@@ -140,7 +155,9 @@ impl eframe::App for App {
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     let ready = !self.busy && !self.previous.is_empty() && !self.current.is_empty();
-                    if ui.add_enabled(ready, egui::Button::new(if self.busy { "Working…" } else { "Update keyring" })).clicked() || (enter && ready) {
+                    if ui.add_enabled(ready, egui::Button::new(if self.busy { "Working…" } else { "Update keyring" })).clicked()
+                        || (enter && ready)
+                    {
                         self.run(&ctx, false);
                     }
                     if ui.button("I don't remember it").clicked() {

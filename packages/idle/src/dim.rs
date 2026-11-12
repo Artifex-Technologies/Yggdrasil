@@ -81,7 +81,21 @@ impl Dimmer {
         }
         std::io::Write::write_all(&mut &file, &px).ok()?;
         let pool = shm.create_pool(std::os::fd::AsFd::as_fd(&file), 256 * 4, qh, ());
-        Some(Dimmer { compositor, layer_shell, viewporter, pool, bufs: vec![None; 256], overlays: vec![], next_id: 1, alpha: 0.0, target: 0.0, from: 0.0, started: Instant::now(), dur: FADE_IN, shown: false })
+        Some(Dimmer {
+            compositor,
+            layer_shell,
+            viewporter,
+            pool,
+            bufs: vec![None; 256],
+            overlays: vec![],
+            next_id: 1,
+            alpha: 0.0,
+            target: 0.0,
+            from: 0.0,
+            started: Instant::now(),
+            dur: FADE_IN,
+            shown: false,
+        })
     }
 
     pub fn is_shown(&self) -> bool {
@@ -96,7 +110,8 @@ impl Dimmer {
     /// Fade the screens down to `alpha` opacity.
     pub fn show(&mut self, globals: &GlobalList, qh: &QueueHandle<App>, alpha: f32) {
         if self.overlays.is_empty() {
-            let outputs: Vec<(u32, u32)> = globals.contents().with_list(|l| l.iter().filter(|g| g.interface == "wl_output").map(|g| (g.name, g.version)).collect());
+            let outputs: Vec<(u32, u32)> =
+                globals.contents().with_list(|l| l.iter().filter(|g| g.interface == "wl_output").map(|g| (g.name, g.version)).collect());
             for (name, version) in outputs {
                 let out = globals.registry().bind::<wl_output::WlOutput, _, _>(name, version.clamp(1, 4), qh, ());
                 let wl = self.compositor.create_surface(qh, ());
@@ -179,7 +194,14 @@ impl Dimmer {
 }
 
 impl Dispatch<ZwlrLayerSurfaceV1, u32> for App {
-    fn event(app: &mut Self, layer: &ZwlrLayerSurfaceV1, event: zwlr_layer_surface_v1::Event, id: &u32, _: &Connection, qh: &QueueHandle<Self>) {
+    fn event(
+        app: &mut Self,
+        layer: &ZwlrLayerSurfaceV1,
+        event: zwlr_layer_surface_v1::Event,
+        id: &u32,
+        _: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
         match event {
             zwlr_layer_surface_v1::Event::Configure { serial, width, height } => {
                 layer.ack_configure(serial);

@@ -36,10 +36,18 @@ impl Palette {
     pub fn on_accent(&self) -> Color32 {
         let l = |c: u8| {
             let v = c as f32 / 255.0;
-            if v <= 0.03928 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+            if v <= 0.03928 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
         };
         let lum = 0.2126 * l(self.accent.r()) + 0.7152 * l(self.accent.g()) + 0.0722 * l(self.accent.b());
-        if lum > 0.45 { Color32::from_rgb(24, 20, 36) } else { Color32::WHITE }
+        if lum > 0.45 {
+            Color32::from_rgb(24, 20, 36)
+        } else {
+            Color32::WHITE
+        }
     }
 }
 
@@ -94,7 +102,10 @@ fn base_palette(dark: bool) -> Palette {
             border: Color32::from_rgb(38, 40, 52),
             text: Color32::from_rgb(232, 233, 238),
             dim: Color32::from_rgb(140, 143, 157),
-            accent: { let a = yggdrasil_conf::integrations::default_accent(); Color32::from_rgb(a[0], a[1], a[2]) },
+            accent: {
+                let a = yggdrasil_conf::integrations::default_accent();
+                Color32::from_rgb(a[0], a[1], a[2])
+            },
             tab_active: Color32::from_rgb(72, 44, 128),
             hover: Color32::from_rgb(32, 34, 44),
             select: Color32::from_rgb(52, 40, 92),
@@ -179,7 +190,9 @@ pub fn apply_opacity(ctx: &egui::Context, dark: bool, accent: Option<[u8; 3]>, p
         v.selection.stroke = egui::Stroke::new(1.0, p.accent);
         v.override_text_color = Some(p.text);
         let r = CornerRadius::same(7);
-        for w in [&mut v.widgets.noninteractive, &mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active, &mut v.widgets.open] {
+        for w in
+            [&mut v.widgets.noninteractive, &mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active, &mut v.widgets.open]
+        {
             w.corner_radius = r;
         }
         v.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, p.border);

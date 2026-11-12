@@ -116,7 +116,9 @@ pub fn parse_answer(text: &str) -> Result<(f64, f64, Option<f64>), String> {
         return Err(format!("beaconDB: {m}"));
     }
     match (v["location"]["lat"].as_f64(), v["location"]["lng"].as_f64()) {
-        (Some(lat), Some(lon)) if (-90.0..=90.0).contains(&lat) && (-180.0..=180.0).contains(&lon) => Ok((lat, lon, v["accuracy"].as_f64())),
+        (Some(lat), Some(lon)) if (-90.0..=90.0).contains(&lat) && (-180.0..=180.0).contains(&lon) => {
+            Ok((lat, lon, v["accuracy"].as_f64()))
+        }
         _ => Err("beaconDB did not know where these networks are".into()),
     }
 }
@@ -135,7 +137,8 @@ pub fn from_wifi() -> Result<Found, String> {
         .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
         .unwrap_or_default();
     let body = request_body(&parse_nmcli(&scan)).to_string();
-    let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(15))).http_status_as_error(false).build().into();
+    let agent: ureq::Agent =
+        ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(15))).http_status_as_error(false).build().into();
     let mut resp = agent
         .post(BEACONDB_URL)
         .header("User-Agent", &ua())
@@ -145,14 +148,22 @@ pub fn from_wifi() -> Result<Found, String> {
     let text = resp.body_mut().read_to_string().map_err(|e| e.to_string())?;
     let (lat, lon, acc) = parse_answer(&text)?;
     let (lat, lon) = (round2(lat), round2(lon));
-    let name = from_timezone().ok().filter(|t| km((t.lat, t.lon), (lat, lon)) <= NAME_KM).map(|t| t.name).unwrap_or_else(|| "Current location".into());
+    let name = from_timezone()
+        .ok()
+        .filter(|t| km((t.lat, t.lon), (lat, lon)) <= NAME_KM)
+        .map(|t| t.name)
+        .unwrap_or_else(|| "Current location".into());
     Ok(Found { name, lat, lon, accuracy_m: acc })
 }
 
 /// Places named like `query` (Open-Meteo's geocoding: only the typed name is sent).
 pub fn search_places(query: &str) -> Result<Vec<crate::openmeteo::Place>, String> {
     let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(12))).build().into();
-    let mut resp = agent.get(&crate::openmeteo::geocode_url(query)).header("User-Agent", &ua()).call().map_err(|e| format!("the place search could not be reached: {e}"))?;
+    let mut resp = agent
+        .get(&crate::openmeteo::geocode_url(query))
+        .header("User-Agent", &ua())
+        .call()
+        .map_err(|e| format!("the place search could not be reached: {e}"))?;
     crate::openmeteo::parse_places(&resp.body_mut().read_to_string().map_err(|e| e.to_string())?)
 }
 

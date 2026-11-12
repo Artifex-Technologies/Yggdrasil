@@ -115,7 +115,11 @@ pub fn settings_map(text: &str) -> HashMap<String, String> {
 
 fn unset(v: &str) -> &str {
     let v = v.trim();
-    if v == "--" { "" } else { v }
+    if v == "--" {
+        ""
+    } else {
+        v
+    }
 }
 
 /// The first value of a list nmcli writes with commas.
@@ -228,8 +232,16 @@ fn with_prefix(a: &str, v6: bool) -> Result<String, String> {
         return Err(format!("“{addr}” is not an IPv{} address", if v6 { 6 } else { 4 }));
     }
     let p: u8 = match prefix {
-        Some(p) => p.parse().ok().filter(|&n: &u8| n >= 1 && n <= max).ok_or_else(|| format!("“/{p}” is not a prefix length (1 to {max})"))?,
-        None => if v6 { 64 } else { 24 },
+        Some(p) => {
+            p.parse().ok().filter(|&n: &u8| n >= 1 && n <= max).ok_or_else(|| format!("“/{p}” is not a prefix length (1 to {max})"))?
+        }
+        None => {
+            if v6 {
+                64
+            } else {
+                24
+            }
+        }
     };
     Ok(format!("{addr}/{p}"))
 }
@@ -260,7 +272,10 @@ pub fn changes(old: &Profile, new: &Profile) -> Result<Vec<(String, String)>, St
                     }
                     let addr = with_prefix(&b.address, six)?;
                     let router = b.router.trim();
-                    if !router.is_empty() && !matches!(router.parse::<IpAddr>(), Ok(IpAddr::V6(_)) if six) && !matches!(router.parse::<IpAddr>(), Ok(IpAddr::V4(_)) if !six) {
+                    if !router.is_empty()
+                        && !matches!(router.parse::<IpAddr>(), Ok(IpAddr::V6(_)) if six)
+                        && !matches!(router.parse::<IpAddr>(), Ok(IpAddr::V4(_)) if !six)
+                    {
                         return Err(format!("“{router}” is not the router's IPv{} address", if six { 6 } else { 4 }));
                     }
                     set(&format!("{v}.method"), "manual".into());
@@ -310,7 +325,12 @@ pub fn changes(old: &Profile, new: &Profile) -> Result<Vec<(String, String)>, St
             }
             ProxyMode::Manual => {
                 let s = new.proxy_server.trim();
-                let ok = s.rsplit_once(':').is_some_and(|(h, p)| !h.is_empty() && !h.contains(char::is_whitespace) && !h.contains(['"', '\'', ';']) && p.parse::<u16>().is_ok_and(|n| n > 0));
+                let ok = s.rsplit_once(':').is_some_and(|(h, p)| {
+                    !h.is_empty()
+                        && !h.contains(char::is_whitespace)
+                        && !h.contains(['"', '\'', ';'])
+                        && p.parse::<u16>().is_ok_and(|n| n > 0)
+                });
                 if !ok {
                     return Err("type the proxy as server:port (proxy.example.com:8080)".into());
                 }
@@ -329,7 +349,13 @@ pub fn load(uuid: &str) -> Option<Profile> {
 }
 
 pub fn live(device: &str) -> Live {
-    parse_live(&sys::run("nmcli", &["-t", "-f", "IP4.ADDRESS,IP4.GATEWAY,IP4.DNS,IP6.ADDRESS,IP6.DNS,GENERAL.HWADDR,DHCP4", "device", "show", device]).unwrap_or_default())
+    parse_live(
+        &sys::run(
+            "nmcli",
+            &["-t", "-f", "IP4.ADDRESS,IP4.GATEWAY,IP4.DNS,IP6.ADDRESS,IP6.DNS,GENERAL.HWADDR,DHCP4", "device", "show", device],
+        )
+        .unwrap_or_default(),
+    )
 }
 
 /// Writes the changes; they are used from the next time the computer joins the network.
@@ -375,13 +401,23 @@ ipv4.gateway:--\nipv6.method:auto\nipv6.dns:\nipv6.addresses:\nipv6.gateway:--\n
         assert_eq!(p.v4, Ip { method: IpMethod::Auto, address: String::new(), router: String::new(), dns: String::new() });
         assert_eq!(p.proxy, ProxyMode::Off);
         // typed-in addresses, servers, IPv6 off, and a proxy of ours read back as Manual
-        let m = HOME.replace("ipv4.method:auto", "ipv4.method:manual").replace("ipv4.addresses:", "ipv4.addresses:192.168.1.20/24")
-            .replace("ipv4.gateway:--", "ipv4.gateway:192.168.1.1").replace("ipv4.dns:", "ipv4.dns:1.1.1.1,9.9.9.9")
-            .replace("ipv6.method:auto", "ipv6.method:disabled").replace("connection.autoconnect:yes", "connection.autoconnect:no")
+        let m = HOME
+            .replace("ipv4.method:auto", "ipv4.method:manual")
+            .replace("ipv4.addresses:", "ipv4.addresses:192.168.1.20/24")
+            .replace("ipv4.gateway:--", "ipv4.gateway:192.168.1.1")
+            .replace("ipv4.dns:", "ipv4.dns:1.1.1.1,9.9.9.9")
+            .replace("ipv6.method:auto", "ipv6.method:disabled")
+            .replace("connection.autoconnect:yes", "connection.autoconnect:no")
             .replace("proxy.method:none", "proxy.method:auto")
-            .replace("proxy.pac-script:", "proxy.pac-script:function FindProxyForURL(url, host) { return \"PROXY proxy.lan\\:3128; DIRECT\"; }");
+            .replace(
+                "proxy.pac-script:",
+                "proxy.pac-script:function FindProxyForURL(url, host) { return \"PROXY proxy.lan\\:3128; DIRECT\"; }",
+            );
         let p = parse(&settings_map(&m));
-        assert_eq!((p.v4.method, p.v4.address.as_str(), p.v4.router.as_str(), p.v4.dns.as_str()), (IpMethod::Manual, "192.168.1.20/24", "192.168.1.1", "1.1.1.1, 9.9.9.9"));
+        assert_eq!(
+            (p.v4.method, p.v4.address.as_str(), p.v4.router.as_str(), p.v4.dns.as_str()),
+            (IpMethod::Manual, "192.168.1.20/24", "192.168.1.1", "1.1.1.1, 9.9.9.9")
+        );
         assert_eq!(p.v6.method, IpMethod::Off);
         assert!(!p.auto_join);
         assert_eq!((p.proxy, p.proxy_server.as_str()), (ProxyMode::Manual, "proxy.lan:3128"));
@@ -393,7 +429,8 @@ ipv4.gateway:--\nipv6.method:auto\nipv6.dns:\nipv6.addresses:\nipv6.gateway:--\n
         assert!(changes(&old, &old).unwrap().is_empty(), "nothing changed, nothing written");
         let mut new = old.clone();
         new.auto_join = false;
-        new.v4 = Ip { method: IpMethod::Manual, address: "192.168.1.20".into(), router: "192.168.1.1".into(), dns: "1.1.1.1 9.9.9.9".into() };
+        new.v4 =
+            Ip { method: IpMethod::Manual, address: "192.168.1.20".into(), router: "192.168.1.1".into(), dns: "1.1.1.1 9.9.9.9".into() };
         new.v6.method = IpMethod::Off;
         new.proxy = ProxyMode::Manual;
         new.proxy_server = "proxy.lan:3128".into();
@@ -419,24 +456,37 @@ ipv4.gateway:--\nipv6.method:auto\nipv6.dns:\nipv6.addresses:\nipv6.gateway:--\n
             f(&mut p);
             changes(&old, &p).unwrap_err()
         };
-        assert!(bad(&|p| p.v4 = Ip { method: IpMethod::Manual, address: "192.168.1.300".into(), ..p.v4.clone() }).contains("not an IPv4 address"));
+        assert!(bad(&|p| p.v4 = Ip { method: IpMethod::Manual, address: "192.168.1.300".into(), ..p.v4.clone() })
+            .contains("not an IPv4 address"));
         assert!(bad(&|p| p.v4 = Ip { method: IpMethod::Manual, address: "10.0.0.2/33".into(), ..p.v4.clone() }).contains("prefix length"));
         assert!(bad(&|p| p.v4 = Ip { method: IpMethod::Manual, ..p.v4.clone() }).contains("type the IPv4 address"));
         assert!(bad(&|p| p.v4.dns = "2606:4700::1111".into()).contains("not an IPv4 DNS server"));
         assert!(bad(&|p| p.v6.dns = "dns.google".into()).contains("not an IPv6 DNS server"));
-        assert!(bad(&|p| { p.proxy = ProxyMode::Manual; p.proxy_server = "proxy; DIRECT\"".into() }).contains("server:port"));
-        assert!(bad(&|p| { p.proxy = ProxyMode::Auto; p.pac_url = "wpad.dat".into() }).contains("http://"));
+        assert!(bad(&|p| {
+            p.proxy = ProxyMode::Manual;
+            p.proxy_server = "proxy; DIRECT\"".into()
+        })
+        .contains("server:port"));
+        assert!(bad(&|p| {
+            p.proxy = ProxyMode::Auto;
+            p.pac_url = "wpad.dat".into()
+        })
+        .contains("http://"));
         assert!(bad(&|p| p.mac = MacMode::Custom("01:00:00:00:00:00".into())).contains("hardware address"));
     }
 
     #[test]
     fn what_a_connected_network_gave_is_read() {
-        let t = "GENERAL.HWADDR:AA\\:BB\\:CC\\:DD\\:EE\\:FF\nIP4.ADDRESS[1]:192.168.1.20/24\nIP4.GATEWAY:192.168.1.1\nIP4.DNS[1]:192.168.1.1\n\
+        let t =
+            "GENERAL.HWADDR:AA\\:BB\\:CC\\:DD\\:EE\\:FF\nIP4.ADDRESS[1]:192.168.1.20/24\nIP4.GATEWAY:192.168.1.1\nIP4.DNS[1]:192.168.1.1\n\
 IP6.ADDRESS[1]:2001\\:db8\\:\\:20/64\nIP6.ADDRESS[2]:fe80\\:\\:1/64\nIP6.DNS[1]:--\n\
 DHCP4.OPTION[1]:dhcp_lease_time = 43200\nDHCP4.OPTION[2]:dhcp_server_identifier = 192.168.1.1\nDHCP4.OPTION[3]:expiry = 1794100000\n\
 DHCP4.OPTION[4]:domain_name = lan\nDHCP4.OPTION[5]:requested_routers = 1\n";
         let l = parse_live(t);
-        assert_eq!((l.lease_secs, l.dhcp_server.as_str(), l.lease_ends, l.domain.as_str()), (Some(43200), "192.168.1.1", Some(1_794_100_000), "lan"));
+        assert_eq!(
+            (l.lease_secs, l.dhcp_server.as_str(), l.lease_ends, l.domain.as_str()),
+            (Some(43200), "192.168.1.1", Some(1_794_100_000), "lan")
+        );
         assert_eq!(subnet("192.168.1.20/24").as_deref(), Some("192.168.1.0/24"));
         assert_eq!(subnet("10.20.30.40/8").as_deref(), Some("10.0.0.0/8"));
         assert_eq!((subnet("10.0.0.1"), subnet("10.0.0.1/40"), subnet("x/24")), (None, None, None));

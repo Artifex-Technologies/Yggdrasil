@@ -37,7 +37,11 @@ fn dirname(p: &str) -> String {
         Some(i) => {
             let head = &p[..i + 1];
             let t = head.trim_end_matches('/');
-            if t.is_empty() { head.to_string() } else { t.to_string() }
+            if t.is_empty() {
+                head.to_string()
+            } else {
+                t.to_string()
+            }
         }
     }
 }
@@ -66,7 +70,9 @@ pub fn data() -> String {
 /// open(path, encoding="utf-8").read() in universal-newline mode: None on an OSError, a Crash when it is not UTF-8.
 fn read_text(path: &str) -> R<Option<String>> {
     match fs::read(path) {
-        Ok(b) => String::from_utf8(b).map(|t| Some(t.replace("\r\n", "\n").replace('\r', "\n"))).map_err(|e| Crash(format!("UnicodeDecodeError: {path}: {e}"))),
+        Ok(b) => String::from_utf8(b)
+            .map(|t| Some(t.replace("\r\n", "\n").replace('\r', "\n")))
+            .map_err(|e| Crash(format!("UnicodeDecodeError: {path}: {e}"))),
         Err(_) => Ok(None),
     }
 }
@@ -97,7 +103,11 @@ pub fn ini_update(path: &str, updates: &Updates) -> R<()> {
             blocks.push(cur);
             let inner: String = {
                 let cs: Vec<char> = s.chars().collect();
-                if cs.len() >= 2 { cs[1..cs.len() - 1].iter().collect() } else { String::new() }
+                if cs.len() >= 2 {
+                    cs[1..cs.len() - 1].iter().collect()
+                } else {
+                    String::new()
+                }
             };
             cur = (Some(inner), vec![line.clone()]);
         } else {
@@ -112,7 +122,11 @@ pub fn ini_update(path: &str, updates: &Updates) -> R<()> {
         let mut pending: Vec<(String, String)> = kv.clone();
         let mut out: Vec<String> = vec![];
         for line in &blk.1 {
-            let k = if line.contains('=') && !pycompat::strip(line).starts_with('#') { Some(pycompat::strip(line.split('=').next().unwrap()).to_string()) } else { None };
+            let k = if line.contains('=') && !pycompat::strip(line).starts_with('#') {
+                Some(pycompat::strip(line.split('=').next().unwrap()).to_string())
+            } else {
+                None
+            };
             match k.and_then(|k| pending.iter().position(|(n, _)| *n == k)) {
                 Some(i) => {
                     let (k, v) = pending.remove(i);
@@ -168,7 +182,10 @@ pub fn which(cmd: &str) -> bool {
 /// Runs a program quietly, at most 20 seconds; whatever happens is fine.
 pub fn run(cmd: &[&str]) {
     use std::process::{Command, Stdio};
-    let Ok(mut child) = Command::new(cmd[0]).args(&cmd[1..]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() else { return };
+    let Ok(mut child) = Command::new(cmd[0]).args(&cmd[1..]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn()
+    else {
+        return;
+    };
     if !matches!(pycompat::process::wait_timeout(&mut child, std::time::Duration::from_secs(20)), Ok(Some(_))) {
         let _ = child.kill();
         let _ = child.wait();
@@ -322,7 +339,11 @@ pub fn scheme_sections(text: &str) -> Updates {
         if line.starts_with('[') && line.ends_with(']') {
             let name: String = {
                 let cs: Vec<char> = line.chars().collect();
-                if cs.len() >= 2 { cs[1..cs.len() - 1].iter().collect() } else { String::new() }
+                if cs.len() >= 2 {
+                    cs[1..cs.len() - 1].iter().collect()
+                } else {
+                    String::new()
+                }
             };
             cur = Some(match out.iter().position(|(n, _)| *n == name) {
                 Some(i) => i,

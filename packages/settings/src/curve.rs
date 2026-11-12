@@ -59,7 +59,13 @@ pub fn editor(ui: &mut egui::Ui, pal: &Palette, curve: &mut [[i64; 2]], drag: &m
     painter.text(pos2(plot.right() - 4.0, y(m.min as f32) + 2.0), egui::Align2::RIGHT_TOP, m.min_label, small.clone(), pal.dim);
     let hot = Rect::from_min_max(pos2(x(m.hot as f32), plot.top()), plot.right_bottom());
     painter.rect_filled(hot, 0.0, pal.red.gamma_multiply(0.12));
-    painter.text(pos2(plot.right() - 4.0, plot.top() + 14.0), egui::Align2::RIGHT_TOP, format!("full speed from {} °C", m.hot), small.clone(), pal.dim);
+    painter.text(
+        pos2(plot.right() - 4.0, plot.top() + 14.0),
+        egui::Align2::RIGHT_TOP,
+        format!("full speed from {} °C", m.hot),
+        small.clone(),
+        pal.dim,
+    );
     // the curve, carried flat to both edges as the fan services read it
     let pts: Vec<egui::Pos2> = curve.iter().map(|p| pos2(x(p[0] as f32), y(p[1].max(m.min) as f32))).collect();
     let mut line = vec![pos2(plot.left(), pts[0].y)];
@@ -70,11 +76,24 @@ pub fn editor(ui: &mut egui::Ui, pal: &Palette, curve: &mut [[i64; 2]], drag: &m
         let at = pos2(x(temp.clamp(T_LO, T_HI)), y(fan.clamp(0.0, 100.0)));
         painter.vline(at.x, plot.y_range(), Stroke::new(1.0, pal.dim.gamma_multiply(0.6)));
         painter.circle(at, 4.5, pal.text, Stroke::new(2.0, pal.field));
-        painter.text(pos2(at.x + 6.0, plot.top() + 14.0), egui::Align2::LEFT_TOP, format!("now {temp:.0} °C, {fan:.0} %"), small.clone(), pal.text);
+        painter.text(
+            pos2(at.x + 6.0, plot.top() + 14.0),
+            egui::Align2::LEFT_TOP,
+            format!("now {temp:.0} °C, {fan:.0} %"),
+            small.clone(),
+            pal.text,
+        );
     }
     let pointer = resp.interact_pointer_pos().or(resp.hover_pos());
     if resp.drag_started() {
-        *drag = pointer.and_then(|p| pts.iter().enumerate().map(|(i, q)| (i, q.distance(p))).filter(|(_, d)| *d < 16.0).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(i, _)| i));
+        *drag = pointer.and_then(|p| {
+            pts.iter()
+                .enumerate()
+                .map(|(i, q)| (i, q.distance(p)))
+                .filter(|(_, d)| *d < 16.0)
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(i, _)| i)
+        });
     }
     if let (Some(i), Some(p), true) = (*drag, pointer, resp.dragged()) {
         let t = (T_LO + (p.x - plot.left()) / plot.width() * (T_HI - T_LO)).round() as i64;
@@ -94,7 +113,13 @@ pub fn editor(ui: &mut egui::Ui, pal: &Palette, curve: &mut [[i64; 2]], drag: &m
     if let Some(i) = drag.or(near) {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
         let c = curve[i];
-        painter.text(pts[i] + vec2(10.0, -10.0), egui::Align2::LEFT_BOTTOM, format!("{} °C → {} %", c[0], c[1].max(m.min)), egui::FontId::proportional(12.0), pal.text);
+        painter.text(
+            pts[i] + vec2(10.0, -10.0),
+            egui::Align2::LEFT_BOTTOM,
+            format!("{} °C → {} %", c[0], c[1].max(m.min)),
+            egui::FontId::proportional(12.0),
+            pal.text,
+        );
     }
     edited
 }

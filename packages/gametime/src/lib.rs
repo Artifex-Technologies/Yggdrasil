@@ -154,10 +154,7 @@ fn read_capped(path: &Path, cap: u64) -> Option<Vec<u8>> {
 /// Looks through a /proc tree for a running game. `skip_pid` is the caller's own process. Processes with no command line
 /// (kernel threads, and zombies whose program has already ended) are passed over. Lowest process number first.
 pub fn find_game(proc_root: &Path, names: &[String], skip_pid: u32) -> Option<Game> {
-    let mut pids: Vec<u32> = fs::read_dir(proc_root)
-        .ok()?
-        .filter_map(|e| e.ok()?.file_name().to_str()?.parse().ok())
-        .collect();
+    let mut pids: Vec<u32> = fs::read_dir(proc_root).ok()?.filter_map(|e| e.ok()?.file_name().to_str()?.parse().ok()).collect();
     pids.sort_unstable();
     for pid in pids {
         if pid == skip_pid {
@@ -377,19 +374,26 @@ mod tests {
 
     #[test]
     fn steams_reaper_with_an_app_id_is_a_game() {
-        let argv = s(&["/home/player/.local/share/Steam/ubuntu12_32/reaper", "SteamLaunch", "AppId=1091500", "--",
-            "/home/player/.local/share/Steam/ubuntu12_32/steam-launch-wrapper", "--", "/game/bin"]);
+        let argv = s(&[
+            "/home/player/.local/share/Steam/ubuntu12_32/reaper",
+            "SteamLaunch",
+            "AppId=1091500",
+            "--",
+            "/home/player/.local/share/Steam/ubuntu12_32/steam-launch-wrapper",
+            "--",
+            "/game/bin",
+        ]);
         assert_eq!(classify_argv(&argv, &[]), Some((Kind::Steam, "1091500".into())));
     }
 
     #[test]
     fn a_reaper_that_launched_nothing_is_not_a_game() {
         for argv in [
-            &["reaper", "SteamLaunch"][..],                                   // no AppId
-            &["reaper", "AppId=10"][..],                                      // no SteamLaunch
-            &["reaper", "SteamLaunch", "AppId=x10"][..],                      // not a number
-            &["reaper", "SteamLaunch", "AppId="][..],                         // empty
-            &["reaper", "--", "game", "SteamLaunch", "AppId=10"][..],         // only the game's own arguments say so
+            &["reaper", "SteamLaunch"][..],                           // no AppId
+            &["reaper", "AppId=10"][..],                              // no SteamLaunch
+            &["reaper", "SteamLaunch", "AppId=x10"][..],              // not a number
+            &["reaper", "SteamLaunch", "AppId="][..],                 // empty
+            &["reaper", "--", "game", "SteamLaunch", "AppId=10"][..], // only the game's own arguments say so
         ] {
             assert_eq!(classify_argv(&s(argv), &[]), None, "{argv:?}");
         }
@@ -419,7 +423,10 @@ mod tests {
 
     #[test]
     fn gamescope_by_program_or_kernel_name() {
-        assert_eq!(classify_argv(&s(&["/usr/bin/gamescope", "-W", "3440", "--", "%command%"]), &[]), Some((Kind::Gamescope, String::new())));
+        assert_eq!(
+            classify_argv(&s(&["/usr/bin/gamescope", "-W", "3440", "--", "%command%"]), &[]),
+            Some((Kind::Gamescope, String::new()))
+        );
         assert_eq!(classify_comm("gamescope", &[]), Some((Kind::Gamescope, String::new())));
         // its helper and a renamed copy are something else
         assert_eq!(classify_argv(&s(&["gamescopereaper", "--"]), &[]), None);
@@ -433,7 +440,10 @@ mod tests {
         let python_path = s(&["/usr/bin/python3.14", "/app/share/lutris/bin/lutris-wrapper", "Celeste", "0", "0"]);
         assert_eq!(classify_argv(&python_path, &[]), Some((Kind::Lutris, "Celeste".into())));
         assert_eq!(classify_argv(&s(&["lutris-wrapper: Diablo II"]), &[]), Some((Kind::Lutris, "Diablo II".into())));
-        assert_eq!(classify_argv(&s(&["/usr/share/lutris/bin/lutris-wrapper", "Hades", "0", "0"]), &[]), Some((Kind::Lutris, "Hades".into())));
+        assert_eq!(
+            classify_argv(&s(&["/usr/share/lutris/bin/lutris-wrapper", "Hades", "0", "0"]), &[]),
+            Some((Kind::Lutris, "Hades".into()))
+        );
         assert_eq!(classify_comm("lutris-wrapper:", &[]), Some((Kind::Lutris, String::new())));
         // Lutris itself, open with no game, is not a game
         assert_eq!(classify_argv(&s(&["python3", "/usr/bin/lutris"]), &[]), None);
@@ -442,7 +452,8 @@ mod tests {
 
     #[test]
     fn names_from_the_settings_file() {
-        let conf = "# programs that count as a game\ngames = eldenring.exe, Cyberpunk2077.exe\ngames=heroic # Heroic's launcher\nother = x\n";
+        let conf =
+            "# programs that count as a game\ngames = eldenring.exe, Cyberpunk2077.exe\ngames=heroic # Heroic's launcher\nother = x\n";
         let names = game_names(conf);
         assert_eq!(names, s(&["eldenring.exe", "Cyberpunk2077.exe", "heroic"]));
         // by argv[0], Unix or Windows path, any case
@@ -489,7 +500,10 @@ mod tests {
     #[test]
     fn a_game_found_by_its_kernel_name_only() {
         // Wine: argv[0] is the loader, the kernel name is the game's
-        let t = Tree::new("wine", &[(300, &["/usr/bin/wine64-preloader", "/usr/bin/wine64"], "eldenring.exe"), (301, &["/usr/bin/gamescope"], "gamescope")]);
+        let t = Tree::new(
+            "wine",
+            &[(300, &["/usr/bin/wine64-preloader", "/usr/bin/wine64"], "eldenring.exe"), (301, &["/usr/bin/gamescope"], "gamescope")],
+        );
         let g = find_game(&t.0, &s(&["eldenring.exe"]), NOBODY).unwrap();
         assert_eq!((g.kind, g.pid), (Kind::Named, 300), "lowest process number first");
         assert_eq!(g.reason(), format!("eldenring.exe is running (process 300; a game named in {CONFIG})"));
@@ -502,8 +516,18 @@ mod tests {
         for ok in ["fstrim.service", "clamav-freshclam-once.service", "user@1000.service", "foo\\x2dbar.service", "a:b.service"] {
             assert!(valid_unit(ok), "{ok}");
         }
-        for bad in ["", ".service", "fstrim", "fstrim.timer", "-x.service", "a b.service", "../x.service", "x;rm.service",
-            "a\n.service", "x/y.service"] {
+        for bad in [
+            "",
+            ".service",
+            "fstrim",
+            "fstrim.timer",
+            "-x.service",
+            "a b.service",
+            "../x.service",
+            "x;rm.service",
+            "a\n.service",
+            "x/y.service",
+        ] {
             assert!(!valid_unit(bad), "{bad:?}");
         }
         assert!(!valid_unit(&format!("{}.service", "a".repeat(250))));

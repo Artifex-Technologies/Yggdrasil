@@ -310,7 +310,11 @@ pub fn security(p: &Parsed, capability: u16) -> Security {
         } else if any(&AKM_SAE) {
             SecKind::Wpa3Personal
         } else if any(&AKM_PSK) {
-            if wpa1 { SecKind::WpaWpa2Personal } else { SecKind::Wpa2Personal }
+            if wpa1 {
+                SecKind::WpaWpa2Personal
+            } else {
+                SecKind::Wpa2Personal
+            }
         } else if any(&AKM_8021X) {
             match pmf {
                 Pmf::Required => SecKind::Wpa3Enterprise,
@@ -321,7 +325,11 @@ pub fn security(p: &Parsed, capability: u16) -> Security {
         } else if rsn_akm.contains(&18) {
             SecKind::Owe
         } else if wpa1 && !wpa_akm.is_empty() {
-            if wpa_akm.contains(&2) { SecKind::WpaWpa2Personal } else { SecKind::WpaWpa2Enterprise }
+            if wpa_akm.contains(&2) {
+                SecKind::WpaWpa2Personal
+            } else {
+                SecKind::WpaWpa2Enterprise
+            }
         } else {
             SecKind::Other
         }
@@ -424,7 +432,11 @@ impl Ap {
         if i.eht {
             Generation::Wifi7
         } else if i.he {
-            if b == Band::G6 { Generation::Wifi6E } else { Generation::Wifi6 }
+            if b == Band::G6 {
+                Generation::Wifi6E
+            } else {
+                Generation::Wifi6
+            }
         } else if i.vht && b != Band::G2_4 {
             Generation::Wifi5
         } else if i.ht {
@@ -570,7 +582,10 @@ mod tests {
 
     #[test]
     fn channels_and_bands() {
-        assert_eq!((channel(2412), channel(2484), channel(5180), channel(5955), channel(5935)), (Some(1), Some(14), Some(36), Some(1), Some(2)));
+        assert_eq!(
+            (channel(2412), channel(2484), channel(5180), channel(5955), channel(5935)),
+            (Some(1), Some(14), Some(36), Some(1), Some(2))
+        );
         assert_eq!((band(2437), band(5745), band(6115)), (Band::G2_4, Band::G5, Band::G6));
         assert_eq!((quality(-40), quality(-70), quality(-100), quality(-20), quality(-120)), (100, 50, 0, 100, 0));
     }

@@ -43,11 +43,7 @@ pub struct Atoms {
 
 /// What a `_NET_WM_STATE` list says (maximized needs both directions, as EWMH has it).
 pub fn read(window: u32, states: &[u32], a: &Atoms) -> Asked {
-    Asked {
-        window,
-        fullscreen: states.contains(&a.fullscreen),
-        maximized: states.contains(&a.max_vert) && states.contains(&a.max_horz),
-    }
+    Asked { window, fullscreen: states.contains(&a.fullscreen), maximized: states.contains(&a.max_vert) && states.contains(&a.max_horz) }
 }
 
 enum Job {

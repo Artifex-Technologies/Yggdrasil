@@ -15,12 +15,23 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use wayland_client::globals::{registry_queue_init, GlobalListContents};
-use wayland_client::protocol::{wl_buffer::WlBuffer, wl_compositor::WlCompositor, wl_output, wl_output::WlOutput, wl_registry::WlRegistry, wl_shm, wl_shm::WlShm, wl_shm_pool::WlShmPool, wl_surface::WlSurface};
+use wayland_client::protocol::{
+    wl_buffer::WlBuffer, wl_compositor::WlCompositor, wl_output, wl_output::WlOutput, wl_registry::WlRegistry, wl_shm, wl_shm::WlShm,
+    wl_shm_pool::WlShmPool, wl_surface::WlSurface,
+};
 use wayland_client::{delegate_noop, Connection, Dispatch, EventQueue, QueueHandle};
-use wayland_protocols::wp::fractional_scale::v1::client::{wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1, wp_fractional_scale_v1, wp_fractional_scale_v1::WpFractionalScaleV1};
-use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_surface::XdgSurface, xdg_toplevel, xdg_toplevel::XdgToplevel, xdg_wm_base, xdg_wm_base::XdgWmBase};
-use wayland_protocols::xdg::xdg_output::zv1::client::{zxdg_output_manager_v1::ZxdgOutputManagerV1, zxdg_output_v1, zxdg_output_v1::ZxdgOutputV1};
-use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_shell_v1::ZwlrLayerShellV1, zwlr_layer_surface_v1, zwlr_layer_surface_v1::ZwlrLayerSurfaceV1};
+use wayland_protocols::wp::fractional_scale::v1::client::{
+    wp_fractional_scale_manager_v1::WpFractionalScaleManagerV1, wp_fractional_scale_v1, wp_fractional_scale_v1::WpFractionalScaleV1,
+};
+use wayland_protocols::xdg::shell::client::{
+    xdg_surface, xdg_surface::XdgSurface, xdg_toplevel, xdg_toplevel::XdgToplevel, xdg_wm_base, xdg_wm_base::XdgWmBase,
+};
+use wayland_protocols::xdg::xdg_output::zv1::client::{
+    zxdg_output_manager_v1::ZxdgOutputManagerV1, zxdg_output_v1, zxdg_output_v1::ZxdgOutputV1,
+};
+use wayland_protocols_wlr::layer_shell::v1::client::{
+    zwlr_layer_shell_v1, zwlr_layer_shell_v1::ZwlrLayerShellV1, zwlr_layer_surface_v1, zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
+};
 
 // ------------------------------------------------------------------ the compositor
 
@@ -200,9 +211,20 @@ impl Client {
     fn layer(&mut self, height: u32) -> (WlSurface, ZwlrLayerSurfaceV1) {
         let surface = self.compositor.create_surface(&self.qh, ());
         let _fs = self.fractional.get_fractional_scale(&surface, &self.qh, ());
-        let ls = self.layer_shell.get_layer_surface(&surface, Some(&self.wl_outputs[0]), zwlr_layer_shell_v1::Layer::Top, "test-bar".into(), &self.qh, ());
+        let ls = self.layer_shell.get_layer_surface(
+            &surface,
+            Some(&self.wl_outputs[0]),
+            zwlr_layer_shell_v1::Layer::Top,
+            "test-bar".into(),
+            &self.qh,
+            (),
+        );
         use zwlr_layer_surface_v1::Anchor;
-        let anchor = if height == 0 { Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right } else { Anchor::Top | Anchor::Left | Anchor::Right };
+        let anchor = if height == 0 {
+            Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right
+        } else {
+            Anchor::Top | Anchor::Left | Anchor::Right
+        };
         ls.set_anchor(anchor);
         ls.set_size(0, height);
         surface.commit();
@@ -212,7 +234,15 @@ impl Client {
 }
 
 impl Dispatch<WlRegistry, GlobalListContents> for State {
-    fn event(_: &mut Self, _: &WlRegistry, _: wayland_client::protocol::wl_registry::Event, _: &GlobalListContents, _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &WlRegistry,
+        _: wayland_client::protocol::wl_registry::Event,
+        _: &GlobalListContents,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 
 impl Dispatch<WlOutput, usize> for State {
@@ -383,7 +413,10 @@ fn a_panel_and_a_window_are_mapped_and_drawn() {
     let layers = comp.ctl("layers").unwrap();
     assert!(layers.iter().any(|l| l == "HEADLESS-1\ttest-bar\tTop\t0,0\t800x40"), "the bar is mapped: {layers:?}");
     let windows = comp.ctl("windows").unwrap();
-    let win = windows.iter().find(|l| l.starts_with("org.yggdrasil.test\tHeadless test\t")).unwrap_or_else(|| panic!("the window is mapped: {windows:?}"));
+    let win = windows
+        .iter()
+        .find(|l| l.starts_with("org.yggdrasil.test\tHeadless test\t"))
+        .unwrap_or_else(|| panic!("the window is mapped: {windows:?}"));
     let parts: Vec<&str> = win.split('\t').collect();
     let (x, y) = pair(parts[2], ',');
     assert_eq!(pair(parts[3], 'x'), (200, 150));

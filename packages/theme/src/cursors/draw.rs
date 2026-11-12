@@ -167,20 +167,8 @@ struct Edge {
 fn add_edge(x0: i32, y0: i32, x1: i32, y1: i32) -> Edge {
     let (xmin, xmax) = if x0 <= x1 { (x0, x1) } else { (x1, x0) };
     let (ymin, ymax) = if y0 <= y1 { (y0, y1) } else { (y1, y0) };
-    let dx = if y0 == y1 {
-        0.0
-    } else {
-        (x1 - x0) as f32 / (y1 - y0) as f32
-    };
-    Edge {
-        x0,
-        y0,
-        xmin,
-        ymin,
-        xmax,
-        ymax,
-        dx,
-    }
+    let dx = if y0 == y1 { 0.0 } else { (x1 - x0) as f32 / (y1 - y0) as f32 };
+    Edge { x0, y0, xmin, ymin, xmax, ymax, dx }
 }
 
 /// polygon_generic without blending: the scan line fill
@@ -232,17 +220,9 @@ fn polygon_generic(im: &mut Img, e: &[Edge], ink: &Ink) {
                                 let adjacent_other = at(other, ymin + offset);
                                 let n = xx.len();
                                 if xx[n - 1] > adjacent + 1.0 && xx[n - 1] > adjacent_other + 1.0 {
-                                    xx[n - 1] = ((adjacent as f64).max(adjacent_other as f64)
-                                        as f32)
-                                        .round()
-                                        + 1.0;
-                                } else if xx[n - 1] < adjacent - 1.0
-                                    && xx[n - 1] < adjacent_other - 1.0
-                                {
-                                    xx[n - 1] = ((adjacent as f64).min(adjacent_other as f64)
-                                        as f32)
-                                        .round()
-                                        - 1.0;
+                                    xx[n - 1] = ((adjacent as f64).max(adjacent_other as f64) as f32).round() + 1.0;
+                                } else if xx[n - 1] < adjacent - 1.0 && xx[n - 1] < adjacent_other - 1.0 {
+                                    xx[n - 1] = ((adjacent as f64).min(adjacent_other as f64) as f32).round() - 1.0;
                                 }
                                 break;
                             }
@@ -277,12 +257,7 @@ pub fn wide_line(im: &mut Img, x0: i32, y0: i32, x1: i32, y1: i32, ink: &Ink, wi
     let dxmax = round_down_d(ratio_max * dy as f64);
     let dymin = round_down_d(ratio_min * dx as f64);
     let dymax = round_down_d(ratio_max * dx as f64);
-    let v = [
-        (x0 - dxmin, y0 + dymax),
-        (x1 - dxmin, y1 + dymax),
-        (x1 + dxmax, y1 - dymin),
-        (x0 + dxmax, y0 - dymin),
-    ];
+    let v = [(x0 - dxmin, y0 + dymax), (x1 - dxmin, y1 + dymax), (x1 + dxmax, y1 - dymin), (x0 + dxmax, y0 - dymin)];
     let e = [
         add_edge(v[0].0, v[0].1, v[1].0, v[1].1),
         add_edge(v[1].0, v[1].1, v[2].0, v[2].1),
@@ -363,33 +338,11 @@ struct Quarter {
 impl Quarter {
     fn new(a: i32, b: i32) -> Quarter {
         if a < 0 || b < 0 {
-            return Quarter {
-                a,
-                b,
-                cx: 0,
-                cy: 0,
-                ex: 0,
-                ey: 0,
-                a2: 0,
-                b2: 0,
-                a2b2: 0,
-                finished: true,
-            };
+            return Quarter { a, b, cx: 0, cy: 0, ex: 0, ey: 0, a2: 0, b2: 0, a2b2: 0, finished: true };
         }
         let a2 = a as i64 * a as i64;
         let b2 = b as i64 * b as i64;
-        Quarter {
-            a,
-            b,
-            cx: a,
-            cy: b % 2,
-            ex: a % 2,
-            ey: b,
-            a2,
-            b2,
-            a2b2: a2 * b2,
-            finished: false,
-        }
+        Quarter { a, b, cx: a, cy: b % 2, ex: a % 2, ey: b, a2, b2, a2b2: a2 * b2, finished: false }
     }
 
     fn delta(&self, x: i64, y: i64) -> i64 {
@@ -445,16 +398,7 @@ impl Ellipse {
         let leftmost = a % 2;
         let first = if w < 1 { None } else { st_o.next() };
         match first {
-            None => Ellipse {
-                st_o,
-                st_i: Quarter::new(-1, -1),
-                py: 0,
-                pl: 0,
-                pr: 0,
-                buf: vec![],
-                finished: true,
-                leftmost,
-            },
+            None => Ellipse { st_o, st_i: Quarter::new(-1, -1), py: 0, pl: 0, pr: 0, buf: vec![], finished: true, leftmost },
             Some((pr, py)) => Ellipse {
                 st_o,
                 st_i: Quarter::new(a - 2 * (w - 1), b - 2 * (w - 1)),
@@ -573,10 +517,7 @@ impl Clip {
                 let mut out: Vec<(i32, i8)> = vec![];
                 while i < l1.len() || j < l2.len() {
                     let t;
-                    if j >= l2.len()
-                        || (i < l1.len()
-                            && (l1[i].0 < l2[j].0 || (l1[i].0 == l2[j].0 && l1[i].1 > l2[j].1)))
-                    {
+                    if j >= l2.len() || (i < l1.len() && (l1[i].0 < l2[j].0 || (l1[i].0 == l2[j].0 && l1[i].1 > l2[j].1))) {
                         t = l1[i];
                         k1 += t.1 as i32;
                         i += 1;
@@ -587,8 +528,7 @@ impl Clip {
                     }
                     let tail = out.last().map(|e| e.1);
                     let keep = if or {
-                        (t.1 == 1 && (tail.is_none() || tail == Some(-1)))
-                            || (t.1 == -1 && k1 == 0 && k2 == 0)
+                        (t.1 == 1 && (tail.is_none() || tail == Some(-1))) || (t.1 == -1 && k1 == 0 && k2 == 0)
                     } else {
                         (t.1 == 1 && (tail.is_none() || tail == Some(-1)) && k1 > 0 && k2 > 0)
                             || (t.1 == -1 && tail == Some(1) && (k1 == 0 || k2 == 0))
@@ -609,17 +549,9 @@ fn normalize_angles(al: &mut f32, ar: &mut f32) {
         *al = 0.0;
         *ar = 360.0;
     } else {
-        let x = if *al < 0.0 {
-            360.0 - ((-*al) as f64 % 360.0)
-        } else {
-            *al as f64
-        };
+        let x = if *al < 0.0 { 360.0 - ((-*al) as f64 % 360.0) } else { *al as f64 };
         *al = (x % 360.0) as f32;
-        let y = if *ar < *al {
-            360.0 - ((*al - *ar) as f64 % 360.0)
-        } else {
-            (*ar - *al) as f64
-        };
+        let y = if *ar < *al { 360.0 - ((*al - *ar) as f64 % 360.0) } else { (*ar - *al) as f64 };
         *ar = (*al as f64 + y % 360.0) as f32;
     }
 }
@@ -643,16 +575,8 @@ fn arc_clip(a: i32, b: i32, al: f32, ar: f32) -> Option<Clip> {
         return None;
     }
     let (af, bf) = (a as f64, b as f64);
-    let lc = Clip::Half(
-        (-a) as f64 * rad(al, 180.0).sin(),
-        bf * rad(al, 180.0).cos(),
-        (a * a - b * b) as f64 * rad(al, 90.0).sin() / 2.0,
-    );
-    let rc = Clip::Half(
-        af * rad(ar, 180.0).sin(),
-        (-b) as f64 * rad(ar, 180.0).cos(),
-        (b * b - a * a) as f64 * rad(ar, 90.0).sin() / 2.0,
-    );
+    let lc = Clip::Half((-a) as f64 * rad(al, 180.0).sin(), bf * rad(al, 180.0).cos(), (a * a - b * b) as f64 * rad(al, 90.0).sin() / 2.0);
+    let rc = Clip::Half(af * rad(ar, 180.0).sin(), (-b) as f64 * rad(ar, 180.0).cos(), (b * b - a * a) as f64 * rad(ar, 90.0).sin() / 2.0);
     let small = ar - al < 180.0;
     let combine = |l: Clip, r: Clip| {
         if small {
@@ -664,16 +588,8 @@ fn arc_clip(a: i32, b: i32, al: f32, ar: f32) -> Option<Clip> {
     if al as f64 % 180.0 == 0.0 || ar as f64 % 180.0 == 0.0 {
         Some(combine(lc, rc))
     } else if ((al / 180.0) as i32 + (ar / 180.0) as i32) % 2 == 1 {
-        let lb = if (al / 180.0) as i32 % 2 == 0 {
-            1.0
-        } else {
-            -1.0
-        };
-        let rb = if (ar / 180.0) as i32 % 2 == 0 {
-            1.0
-        } else {
-            -1.0
-        };
+        let lb = if (al / 180.0) as i32 % 2 == 0 { 1.0 } else { -1.0 };
+        let rb = if (ar / 180.0) as i32 % 2 == 0 { 1.0 } else { -1.0 };
         Some(Clip::Or(
             Box::new(Clip::And(Box::new(Clip::Half(0.0, lb, 0.0)), Box::new(lc))),
             Box::new(Clip::And(Box::new(Clip::Half(0.0, rb, 0.0)), Box::new(rc))),
@@ -692,16 +608,9 @@ fn pie_clip(a: i32, b: i32, al: f32, ar: f32) -> Clip {
     let yr = b as f64 * rad(ar, 180.0).sin();
     let lc = Clip::Half(-yl, xl, 0.0);
     let rc = Clip::Half(yr, -xr, 0.0);
-    let root = if ar - al < 180.0 {
-        Clip::And(Box::new(lc), Box::new(rc))
-    } else {
-        Clip::Or(Box::new(lc), Box::new(rc))
-    };
+    let root = if ar - al < 180.0 { Clip::And(Box::new(lc), Box::new(rc)) } else { Clip::Or(Box::new(lc), Box::new(rc)) };
     if ar - al < 90.0 {
-        Clip::And(
-            Box::new(root),
-            Box::new(Clip::Half((xl + xr) / 2.0, (yl + yr) / 2.0, 0.0)),
-        )
+        Clip::And(Box::new(root), Box::new(Clip::Half((xl + xr) / 2.0, (yl + yr) / 2.0, 0.0)))
     } else {
         root
     }
@@ -709,16 +618,7 @@ fn pie_clip(a: i32, b: i32, al: f32, ar: f32) -> Clip {
 
 /// ellipseNew: an ellipse in the box, filled or an outline `width` wide
 #[allow(clippy::too_many_arguments)] // the C function's arguments
-fn ellipse_new(
-    im: &mut Img,
-    x0: i32,
-    y0: i32,
-    x1: i32,
-    y1: i32,
-    ink: &Ink,
-    fill: bool,
-    mut width: i32,
-) {
+fn ellipse_new(im: &mut Img, x0: i32, y0: i32, x1: i32, y1: i32, ink: &Ink, fill: bool, mut width: i32) {
     let a = x1 - x0;
     let b = y1 - y0;
     if a < 0 || b < 0 {
@@ -735,16 +635,7 @@ fn ellipse_new(
 
 /// clipEllipseNew: an ellipse's rows through a clip tree
 #[allow(clippy::too_many_arguments)] // the C function's arguments
-fn clip_ellipse_new(
-    im: &mut Img,
-    x0: i32,
-    y0: i32,
-    x1: i32,
-    y1: i32,
-    ink: &Ink,
-    width: i32,
-    clip: Option<Clip>,
-) {
+fn clip_ellipse_new(im: &mut Img, x0: i32, y0: i32, x1: i32, y1: i32, ink: &Ink, width: i32, clip: Option<Clip>) {
     let a = x1 - x0;
     let b = y1 - y0;
     if a < 0 || b < 0 {
@@ -757,44 +648,20 @@ fn clip_ellipse_new(
             None => vec![(xa, 1), (xb, -1)],
         };
         for pair in events.chunks(2) {
-            im.hline(
-                x0 + (pair[0].0 + a) / 2,
-                y0 + (y + b) / 2,
-                x0 + (pair[1].0 + a) / 2,
-                ink,
-            );
+            im.hline(x0 + (pair[0].0 + a) / 2, y0 + (y + b) / 2, x0 + (pair[1].0 + a) / 2, ink);
         }
     }
 }
 
 /// ImagingDrawEllipse
 #[allow(clippy::too_many_arguments)] // the C function's arguments
-pub fn ellipse(
-    im: &mut Img,
-    x0: i32,
-    y0: i32,
-    x1: i32,
-    y1: i32,
-    ink: &Ink,
-    fill: bool,
-    width: i32,
-) {
+pub fn ellipse(im: &mut Img, x0: i32, y0: i32, x1: i32, y1: i32, ink: &Ink, fill: bool, width: i32) {
     ellipse_new(im, x0, y0, x1, y1, ink, fill, width);
 }
 
 /// ImagingDrawArc
 #[allow(clippy::too_many_arguments)] // the C function's arguments
-pub fn arc(
-    im: &mut Img,
-    x0: i32,
-    y0: i32,
-    x1: i32,
-    y1: i32,
-    mut start: f32,
-    mut end: f32,
-    ink: &Ink,
-    width: i32,
-) {
+pub fn arc(im: &mut Img, x0: i32, y0: i32, x1: i32, y1: i32, mut start: f32, mut end: f32, ink: &Ink, width: i32) {
     normalize_angles(&mut start, &mut end);
     if start + 360.0 == end {
         ellipse_new(im, x0, y0, x1, y1, ink, false, width);
@@ -812,16 +679,7 @@ pub fn arc(
 
 /// ImagingDrawPieslice with fill
 #[allow(clippy::too_many_arguments)] // the C function's arguments
-pub fn pieslice_fill(
-    im: &mut Img,
-    x0: i32,
-    y0: i32,
-    x1: i32,
-    y1: i32,
-    mut start: f32,
-    mut end: f32,
-    ink: &Ink,
-) {
+pub fn pieslice_fill(im: &mut Img, x0: i32, y0: i32, x1: i32, y1: i32, mut start: f32, mut end: f32, ink: &Ink) {
     normalize_angles(&mut start, &mut end);
     if start + 360.0 == end {
         ellipse_new(im, x0, y0, x1, y1, ink, true, 0);
@@ -834,16 +692,7 @@ pub fn pieslice_fill(
     if a < 0 || b < 0 {
         return;
     }
-    clip_ellipse_new(
-        im,
-        x0,
-        y0,
-        x1,
-        y1,
-        ink,
-        x1 + y1 - x0 - y0,
-        Some(pie_clip(a, b, start, end)),
-    );
+    clip_ellipse_new(im, x0, y0, x1, y1, ink, x1 + y1 - x0 - y0, Some(pie_clip(a, b, start, end)));
 }
 
 // ---------------------------------------------------------------- ImageDraw (Python): the calls the cursors make
@@ -875,12 +724,7 @@ pub fn d_ellipse_fill(im: &mut Img, b: [f64; 4], ink: &Ink) -> Result<(), DrawEr
 }
 
 /// ImageDraw.ellipse(box, outline=ink, width=width)
-pub fn d_ellipse_outline(
-    im: &mut Img,
-    b: [f64; 4],
-    ink: &Ink,
-    width: i32,
-) -> Result<(), DrawError> {
+pub fn d_ellipse_outline(im: &mut Img, b: [f64; 4], ink: &Ink, width: i32) -> Result<(), DrawError> {
     check_box(b)?;
     if width != 0 {
         ellipse(im, t(b[0]), t(b[1]), t(b[2]), t(b[3]), ink, false, width);
@@ -889,51 +733,19 @@ pub fn d_ellipse_outline(
 }
 
 /// ImageDraw.pieslice(box, start, end, fill=ink)
-pub fn d_pieslice_fill(
-    im: &mut Img,
-    b: [f64; 4],
-    start: f64,
-    end: f64,
-    ink: &Ink,
-) -> Result<(), DrawError> {
+pub fn d_pieslice_fill(im: &mut Img, b: [f64; 4], start: f64, end: f64, ink: &Ink) -> Result<(), DrawError> {
     check_box(b)?;
-    pieslice_fill(
-        im,
-        t(b[0]),
-        t(b[1]),
-        t(b[2]),
-        t(b[3]),
-        start as f32,
-        end as f32,
-        ink,
-    );
+    pieslice_fill(im, t(b[0]), t(b[1]), t(b[2]), t(b[3]), start as f32, end as f32, ink);
     Ok(())
 }
 
 /// ImageDraw.arc(box, start, end, fill=ink, width=width)
-pub fn d_arc(
-    im: &mut Img,
-    b: [f64; 4],
-    start: f64,
-    end: f64,
-    ink: &Ink,
-    width: i32,
-) -> Result<(), DrawError> {
+pub fn d_arc(im: &mut Img, b: [f64; 4], start: f64, end: f64, ink: &Ink, width: i32) -> Result<(), DrawError> {
     if width == 0 {
         return Ok(());
     }
     check_box(b)?;
-    arc(
-        im,
-        t(b[0]),
-        t(b[1]),
-        t(b[2]),
-        t(b[3]),
-        start as f32,
-        end as f32,
-        ink,
-        width,
-    );
+    arc(im, t(b[0]), t(b[1]), t(b[2]), t(b[3]), start as f32, end as f32, ink, width);
     Ok(())
 }
 
@@ -979,13 +791,7 @@ fn pymod(x: f64, m: f64) -> f64 {
 }
 
 /// ImageDraw.line(points, fill=ink, width=width, joint=None or "curve")
-pub fn d_line(
-    im: &mut Img,
-    pts: &[(f64, f64)],
-    ink: &Ink,
-    width: i32,
-    curve: bool,
-) -> Result<(), DrawError> {
+pub fn d_line(im: &mut Img, pts: &[(f64, f64)], ink: &Ink, width: i32, curve: bool) -> Result<(), DrawError> {
     if width == 0 {
         return Ok(());
     }
@@ -996,9 +802,7 @@ pub fn d_line(
     let w = width as f64;
     for i in 1..pts.len().saturating_sub(1) {
         let point = pts[i];
-        let angle = |start: (f64, f64), end: (f64, f64)| {
-            pymod((end.0 - start.0).atan2(start.1 - end.1).to_degrees(), 360.0)
-        };
+        let angle = |start: (f64, f64), end: (f64, f64)| pymod((end.0 - start.0).atan2(start.1 - end.1).to_degrees(), 360.0);
         let angles = [angle(pts[i - 1], point), angle(point, pts[i + 1])];
         if angles[0] == angles[1] {
             // a straight line, no joint
@@ -1008,39 +812,18 @@ pub fn d_line(
             let a = angle - 90.0;
             let distance = w / 2.0 - 1.0;
             let step = |p: f64, pd: f64| p + if pd > 0.0 { pd.floor() } else { pd.ceil() };
-            (
-                step(c.0, distance * a.to_radians().cos()),
-                step(c.1, distance * a.to_radians().sin()),
-            )
+            (step(c.0, distance * a.to_radians().cos()), step(c.1, distance * a.to_radians().sin()))
         };
-        let flipped = (angles[1] > angles[0] && angles[1] - 180.0 > angles[0])
-            || (angles[1] < angles[0] && angles[1] + 180.0 > angles[0]);
-        let coords = [
-            point.0 - w / 2.0 + 1.0,
-            point.1 - w / 2.0 + 1.0,
-            point.0 + w / 2.0 - 1.0,
-            point.1 + w / 2.0 - 1.0,
-        ];
-        let (start, end) = if flipped {
-            (angles[1] + 90.0, angles[0] + 90.0)
-        } else {
-            (angles[0] - 90.0, angles[1] - 90.0)
-        };
+        let flipped = (angles[1] > angles[0] && angles[1] - 180.0 > angles[0]) || (angles[1] < angles[0] && angles[1] + 180.0 > angles[0]);
+        let coords = [point.0 - w / 2.0 + 1.0, point.1 - w / 2.0 + 1.0, point.0 + w / 2.0 - 1.0, point.1 + w / 2.0 - 1.0];
+        let (start, end) = if flipped { (angles[1] + 90.0, angles[0] + 90.0) } else { (angles[0] - 90.0, angles[1] - 90.0) };
         d_pieslice_fill(im, coords, start - 90.0, end - 90.0, ink)?;
         if width > 8 {
             // cover the gaps between the line and the joint
             let gap = if flipped {
-                [
-                    coord_at_angle(point, angles[0] + 90.0),
-                    point,
-                    coord_at_angle(point, angles[1] + 90.0),
-                ]
+                [coord_at_angle(point, angles[0] + 90.0), point, coord_at_angle(point, angles[1] + 90.0)]
             } else {
-                [
-                    coord_at_angle(point, angles[0] - 90.0),
-                    point,
-                    coord_at_angle(point, angles[1] - 90.0),
-                ]
+                [coord_at_angle(point, angles[0] - 90.0), point, coord_at_angle(point, angles[1] - 90.0)]
             };
             d_line(im, &gap, ink, 3, false)?;
         }
@@ -1054,12 +837,7 @@ fn pyround(x: f64) -> f64 {
 }
 
 /// ImageDraw.rounded_rectangle(box, radius, fill=ink) with all four corners
-pub fn d_rounded_rectangle_fill(
-    im: &mut Img,
-    b: [f64; 4],
-    radius: f64,
-    ink: &Ink,
-) -> Result<(), DrawError> {
+pub fn d_rounded_rectangle_fill(im: &mut Img, b: [f64; 4], radius: f64, ink: &Ink) -> Result<(), DrawError> {
     let [fx0, fy0, fx1, fy1] = b;
     if fx1 < fx0 {
         return Err(DrawError("x1 must be greater than or equal to x0"));
@@ -1089,15 +867,9 @@ pub fn d_rounded_rectangle_fill(
     }
     let r = (d / 2.0).floor();
     let parts: Vec<([f64; 4], f64, f64)> = if full_x {
-        vec![
-            ([x0, y0, x0 + d, y0 + d], 180.0, 360.0),
-            ([x0, y1 - d, x0 + d, y1], 0.0, 180.0),
-        ]
+        vec![([x0, y0, x0 + d, y0 + d], 180.0, 360.0), ([x0, y1 - d, x0 + d, y1], 0.0, 180.0)]
     } else if full_y {
-        vec![
-            ([x0, y0, x0 + d, y0 + d], 90.0, 270.0),
-            ([x1 - d, y0, x1, y0 + d], 270.0, 90.0),
-        ]
+        vec![([x0, y0, x0 + d, y0 + d], 90.0, 270.0), ([x1 - d, y0, x1, y0 + d], 270.0, 90.0)]
     } else {
         vec![
             ([x0, y0, x0 + d, y0 + d], 180.0, 270.0),

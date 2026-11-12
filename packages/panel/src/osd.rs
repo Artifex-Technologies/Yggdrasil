@@ -25,7 +25,6 @@ pub struct OsdState {
 pub const WIDTH: u32 = 280;
 pub const HEIGHT: u32 = 52;
 
-
 /// The icon for what is shown.
 pub fn icon_for(st: &OsdState) -> &'static str {
     match st.kind {
@@ -61,7 +60,8 @@ pub fn paint(pix: &mut Pixmap, s: f32, st: &OsdState, fonts: &Fonts, icons: &mut
 }
 
 fn read_volume() -> Option<(u32, bool)> {
-    let out = Command::new("wpctl").args(["get-volume", "@DEFAULT_AUDIO_SINK@"]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+    let out =
+        Command::new("wpctl").args(["get-volume", "@DEFAULT_AUDIO_SINK@"]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
     crate::fylgja::parse_wpctl(&String::from_utf8_lossy(&out.stdout))
 }
 
@@ -73,7 +73,9 @@ pub fn spawn_watchers(tx: calloop::channel::Sender<OsdState>) {
         // gone for good until the panel restarted (seen 2026-10-26: no pactl child, no volume pop-up)
         let mut last = read_volume();
         loop {
-            let Ok(mut child) = Command::new("pactl").arg("subscribe").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() else {
+            let Ok(mut child) =
+                Command::new("pactl").arg("subscribe").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn()
+            else {
                 std::thread::sleep(std::time::Duration::from_secs(5));
                 continue;
             };

@@ -70,7 +70,11 @@ mod tests {
         assert!(scan.len() >= 6);
         for b in &scan {
             // locally administered addresses, or the documentation-style ones below: none from a real place
-            assert!(yggdrasil_wifiscan::oui::is_local(&b.bssid) || b.bssid[3..5] == [0xd0, 0xc5], "{}", yggdrasil_wifiscan::mac_text(&b.bssid));
+            assert!(
+                yggdrasil_wifiscan::oui::is_local(&b.bssid) || b.bssid[3..5] == [0xd0, 0xc5],
+                "{}",
+                yggdrasil_wifiscan::mac_text(&b.bssid)
+            );
         }
     }
 }

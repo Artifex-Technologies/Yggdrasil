@@ -33,9 +33,11 @@ fn away() -> bool {
 fn send(name: &str, sound: bool, seed: i64) {
     let msgs = messages(name);
     let Some((head, body)) = msgs.get(seed.rem_euclid(msgs.len().max(1) as i64) as usize) else { return };
-    let _ = Command::new("notify-send").args(["-a", "Health", "-u", "low", "-i", ICON, head, body]).stdin(Stdio::null()).spawn().map(|mut c| {
-        std::thread::spawn(move || c.wait());
-    });
+    let _ = Command::new("notify-send").args(["-a", "Health", "-u", "low", "-i", ICON, head, body]).stdin(Stdio::null()).spawn().map(
+        |mut c| {
+            std::thread::spawn(move || c.wait());
+        },
+    );
     if sound && std::path::Path::new(SOUND).is_file() {
         let _ = Command::new("paplay").arg(SOUND).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map(|mut c| {
             std::thread::spawn(move || c.wait());

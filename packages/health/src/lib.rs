@@ -342,7 +342,11 @@ fn hm(min: i64) -> String {
 /// The step an interval moves by: 5 minutes up to an hour, 15 above.
 fn interval_step(every: i64, up: bool) -> i64 {
     let e = if up { every } else { every - 1 };
-    if e < 60 { 5 } else { 15 }
+    if e < 60 {
+        5
+    } else {
+        15
+    }
 }
 
 /// What the top bar pill shows, with its card (Yggdrasil's bar-item JSON; the card's controls run `yggdrasil-health press ID`).
@@ -409,7 +413,9 @@ pub fn card(cfg: &Config, st: &State, clock: &Clock) -> Vec<serde_json::Value> {
         c.push(json!({"section": "INTERVALS"}));
         for n in on_intervals {
             let every = cfg.stream(n).every.unwrap_or(0) as i64;
-            c.push(json!({"stepper": {"label": label(n), "value": span(every), "minus": format!("int:{n}:-"), "plus": format!("int:{n}:+")}}));
+            c.push(
+                json!({"stepper": {"label": label(n), "value": span(every), "minus": format!("int:{n}:-"), "plus": format!("int:{n}:+")}}),
+            );
         }
     }
     let on_clock: Vec<_> = STREAMS.iter().filter(|n| cfg.stream(n).enabled && cfg.stream(n).at.is_some()).collect();

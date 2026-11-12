@@ -128,7 +128,11 @@ pub fn autostart_in(system: &Path, user: &Path, desktops: &[String]) -> Vec<Item
             let id = p.file_name().unwrap().to_string_lossy().to_string();
             let (enabled, note) = autostart_state(&m, desktops);
             let base = by_id.remove(&id);
-            let name = m.get("Name").cloned().or_else(|| base.as_ref().map(|b| b.name.clone())).unwrap_or_else(|| id.trim_end_matches(".desktop").to_string());
+            let name = m
+                .get("Name")
+                .cloned()
+                .or_else(|| base.as_ref().map(|b| b.name.clone()))
+                .unwrap_or_else(|| id.trim_end_matches(".desktop").to_string());
             by_id.insert(
                 id.clone(),
                 Item {
@@ -171,10 +175,19 @@ pub fn list() -> Vec<Item> {
             }
         }
     }
-    let off: Vec<String> = std::fs::read_to_string(remembered_file()).unwrap_or_default().lines().map(str::to_string).filter(|n| !on.contains(n)).collect();
+    let off: Vec<String> =
+        std::fs::read_to_string(remembered_file()).unwrap_or_default().lines().map(str::to_string).filter(|n| !on.contains(n)).collect();
     for (n, enabled) in on.into_iter().map(|n| (n, true)).chain(off.into_iter().map(|n| (n, false))) {
         let d = unit_description(&n);
-        v.push(Item { name: if d.is_empty() { n.trim_end_matches(".service").to_string() } else { d.clone() }, comment: n.clone(), id: n, icon: String::new(), enabled, note: String::new(), source: Some(Source::Service) });
+        v.push(Item {
+            name: if d.is_empty() { n.trim_end_matches(".service").to_string() } else { d.clone() },
+            comment: n.clone(),
+            id: n,
+            icon: String::new(),
+            enabled,
+            note: String::new(),
+            source: Some(Source::Service),
+        });
     }
     v
 }
@@ -183,12 +196,17 @@ pub fn list() -> Vec<Item> {
 pub fn set(item: &Item, on: bool) -> Result<(), String> {
     match item.source {
         Some(Source::Service) => {
-            let out = std::process::Command::new("systemctl").args(["--user", if on { "enable" } else { "disable" }, &item.id]).stdin(std::process::Stdio::null()).output().map_err(|e| e.to_string())?;
+            let out = std::process::Command::new("systemctl")
+                .args(["--user", if on { "enable" } else { "disable" }, &item.id])
+                .stdin(std::process::Stdio::null())
+                .output()
+                .map_err(|e| e.to_string())?;
             if !out.status.success() {
                 return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
             }
             let f = remembered_file();
-            let mut names: Vec<String> = std::fs::read_to_string(&f).unwrap_or_default().lines().map(str::to_string).filter(|n| n != &item.id).collect();
+            let mut names: Vec<String> =
+                std::fs::read_to_string(&f).unwrap_or_default().lines().map(str::to_string).filter(|n| n != &item.id).collect();
             if !on {
                 names.push(item.id.clone());
             }

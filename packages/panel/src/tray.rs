@@ -99,7 +99,13 @@ pub fn fetch(conn: &Connection, key: &str) -> Option<TrayItem> {
         theme_path: text(&props, "IconThemePath"),
         pixmap,
         status: if props.contains_key("Status") { text(&props, "Status") } else { "Active".into() },
-        menu_path: props.get("Menu").and_then(|v| v.try_clone().ok()).and_then(|v| zbus::zvariant::OwnedObjectPath::try_from(v).ok()).map(|p| p.to_string()).filter(|p| p != "/").unwrap_or_default(),
+        menu_path: props
+            .get("Menu")
+            .and_then(|v| v.try_clone().ok())
+            .and_then(|v| zbus::zvariant::OwnedObjectPath::try_from(v).ok())
+            .map(|p| p.to_string())
+            .filter(|p| p != "/")
+            .unwrap_or_default(),
     })
 }
 
@@ -161,7 +167,11 @@ pub fn spawn(tx: calloop::channel::Sender<TrayMsg>) {
         let c2 = conn.clone();
         let tx2 = tx.clone();
         std::thread::spawn(move || {
-            let Ok(rule) = MatchRule::builder().msg_type(zbus::message::Type::Signal).interface("org.kde.StatusNotifierWatcher").map(|b| b.build()) else { return };
+            let Ok(rule) =
+                MatchRule::builder().msg_type(zbus::message::Type::Signal).interface("org.kde.StatusNotifierWatcher").map(|b| b.build())
+            else {
+                return;
+            };
             let Ok(iter) = MessageIterator::for_match_rule(rule, &c2, None) else { return };
             for msg in iter.flatten() {
                 let hdr = msg.header();
@@ -182,7 +192,11 @@ pub fn spawn(tx: calloop::channel::Sender<TrayMsg>) {
         });
         // an item changed its icon, title or status: read it again (the signal's sender tells which one)
         let known: std::sync::Arc<std::sync::Mutex<HashMap<String, String>>> = Default::default();
-        let Ok(rule) = MatchRule::builder().msg_type(zbus::message::Type::Signal).interface("org.kde.StatusNotifierItem").map(|b| b.build()) else { return };
+        let Ok(rule) =
+            MatchRule::builder().msg_type(zbus::message::Type::Signal).interface("org.kde.StatusNotifierItem").map(|b| b.build())
+        else {
+            return;
+        };
         let Ok(iter) = MessageIterator::for_match_rule(rule, &conn, None) else { return };
         let _ = &known;
         for msg in iter.flatten() {
@@ -209,7 +223,15 @@ pub fn icon_pixmap(it: &TrayItem, icons: &mut crate::paint::Icons, px: u32) -> O
     let named = (!it.icon_name.is_empty()).then(|| icons.get(&it.icon_name, px).cloned()).flatten();
     named
         .or_else(|| if it.theme_path.is_empty() || it.icon_name.is_empty() { None } else { icon_in(&it.theme_path, &it.icon_name, px) })
-        .or_else(|| it.pixmap.as_ref().and_then(|p| if p.width() == px && p.height() == px { Some(p.clone()) } else { crate::paint::area_resize(p, px, px) }))
+        .or_else(|| {
+            it.pixmap.as_ref().and_then(|p| {
+                if p.width() == px && p.height() == px {
+                    Some(p.clone())
+                } else {
+                    crate::paint::area_resize(p, px, px)
+                }
+            })
+        })
 }
 
 /// An icon the item ships in its own theme folder (`IconThemePath`): NAME.png or NAME.svg, scaled to `px`.
@@ -292,7 +314,14 @@ fn menu_from_value(v: &zbus::zvariant::Value) -> Option<MenuItem> {
             }
         }
     }
-    Some(MenuItem { id, label: clean_label(&text("label")), enabled: flag("enabled", true), separator: text("type") == "separator", checked: if toggle == "checkmark" || toggle == "radio" { Some(state == 1) } else { None }, children })
+    Some(MenuItem {
+        id,
+        label: clean_label(&text("label")),
+        enabled: flag("enabled", true),
+        separator: text("type") == "separator",
+        checked: if toggle == "checkmark" || toggle == "radio" { Some(state == 1) } else { None },
+        children,
+    })
 }
 
 /// Reads an item's menu: the entries under the root.
@@ -343,8 +372,14 @@ mod tests {
 
     #[test]
     fn registration_strings_split_into_bus_and_path() {
-        assert_eq!(split_service(":1.53/org/ayatana/NotificationItem/indicator_solaar"), (":1.53".into(), "/org/ayatana/NotificationItem/indicator_solaar".into()));
-        assert_eq!(split_service("org.kde.StatusNotifierItem-12-1"), ("org.kde.StatusNotifierItem-12-1".into(), "/StatusNotifierItem".into()));
+        assert_eq!(
+            split_service(":1.53/org/ayatana/NotificationItem/indicator_solaar"),
+            (":1.53".into(), "/org/ayatana/NotificationItem/indicator_solaar".into())
+        );
+        assert_eq!(
+            split_service("org.kde.StatusNotifierItem-12-1"),
+            ("org.kde.StatusNotifierItem-12-1".into(), "/StatusNotifierItem".into())
+        );
         assert_eq!(split_service(":1.9/StatusNotifierItem"), (":1.9".into(), "/StatusNotifierItem".into()));
     }
 
@@ -389,8 +424,16 @@ mod tests {
             vec![
                 node(1, vec![("label", Value::from("_Play"))], vec![]),
                 node(2, vec![("type", Value::from("separator"))], vec![]),
-                node(3, vec![("label", Value::from("Repeat")), ("toggle-type", Value::from("checkmark")), ("toggle-state", Value::from(1i32))], vec![]),
-                node(4, vec![("label", Value::from("More")), ("enabled", Value::from(false))], vec![node(5, vec![("label", Value::from("Inner"))], vec![])]),
+                node(
+                    3,
+                    vec![("label", Value::from("Repeat")), ("toggle-type", Value::from("checkmark")), ("toggle-state", Value::from(1i32))],
+                    vec![],
+                ),
+                node(
+                    4,
+                    vec![("label", Value::from("More")), ("enabled", Value::from(false))],
+                    vec![node(5, vec![("label", Value::from("Inner"))], vec![])],
+                ),
                 node(6, vec![("label", Value::from("Hidden")), ("visible", Value::from(false))], vec![]),
             ],
         );
@@ -405,7 +448,18 @@ mod tests {
 
     #[test]
     fn passive_items_are_hidden() {
-        let mut it = TrayItem { key: "k".into(), bus: "b".into(), path: "/p".into(), id: String::new(), title: String::new(), icon_name: String::new(), theme_path: String::new(), pixmap: None, status: "Active".into(), menu_path: String::new() };
+        let mut it = TrayItem {
+            key: "k".into(),
+            bus: "b".into(),
+            path: "/p".into(),
+            id: String::new(),
+            title: String::new(),
+            icon_name: String::new(),
+            theme_path: String::new(),
+            pixmap: None,
+            status: "Active".into(),
+            menu_path: String::new(),
+        };
         assert!(it.shown());
         it.status = "Passive".into();
         assert!(!it.shown());

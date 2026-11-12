@@ -25,11 +25,7 @@ pub struct Dir(pub PathBuf);
 impl Dir {
     pub fn new() -> Dir {
         static N: AtomicUsize = AtomicUsize::new(0);
-        let p = std::env::temp_dir().join(format!(
-            "install-system-it-{}-{}",
-            std::process::id(),
-            N.fetch_add(1, Ordering::SeqCst)
-        ));
+        let p = std::env::temp_dir().join(format!("install-system-it-{}-{}", std::process::id(), N.fetch_add(1, Ordering::SeqCst)));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         Dir(p)
@@ -80,12 +76,7 @@ pub fn part_name(disk: &str, n: u32) -> String {
 
 impl Disk {
     pub fn empty(path: &str, size: i128) -> Disk {
-        Disk {
-            path: path.into(),
-            size,
-            table: String::new(),
-            parts: vec![],
-        }
+        Disk { path: path.into(), size, table: String::new(), parts: vec![] }
     }
 
     /// 500 GB with Windows: its EFI partition (1), its reserved partition (2), Windows (3), and 200 GB free at the end.
@@ -102,11 +93,7 @@ impl Disk {
             path: path.into(),
             size: 500 * GB,
             table: "gpt".into(),
-            parts: vec![
-                p(1, 1, 300, "vfat", true),
-                p(2, 301, 16, "", false),
-                p(3, 317, 299 * 1024, "ntfs", false),
-            ],
+            parts: vec![p(1, 1, 300, "vfat", true), p(2, 301, 16, "", false), p(3, 317, 299 * 1024, "ntfs", false)],
         }
     }
 }
@@ -137,7 +124,10 @@ pub struct Fake {
 pub fn medium() -> Vec<(String, String)> {
     [
         ("etc/locale.gen", "#en_US.UTF-8 UTF-8\n#de_DE.UTF-8 UTF-8\n"),
-        ("etc/default/grub", "GRUB_DEFAULT=saved\nGRUB_TIMEOUT=5\nGRUB_CMDLINE_LINUX_DEFAULT=\"loglevel=3 quiet\"\n#GRUB_ENABLE_CRYPTODISK=y\n"),
+        (
+            "etc/default/grub",
+            "GRUB_DEFAULT=saved\nGRUB_TIMEOUT=5\nGRUB_CMDLINE_LINUX_DEFAULT=\"loglevel=3 quiet\"\n#GRUB_ENABLE_CRYPTODISK=y\n",
+        ),
         ("etc/mkinitcpio.conf", "HOOKS=(base systemd autodetect modconf kms keyboard sd-vconsole block filesystems fsck)\n"),
         ("etc/xdg/mimeapps.list", "[Default Applications]\ntext/html=vivaldi-stable.desktop\n"),
         ("boot/initramfs-linux.img", "image\n"),
@@ -153,11 +143,7 @@ pub fn medium() -> Vec<(String, String)> {
 }
 
 fn out(code: i32, stdout: &str, stderr: &str) -> Output {
-    Output {
-        code,
-        stdout: stdout.into(),
-        stderr: stderr.into(),
-    }
+    Output { code, stdout: stdout.into(), stderr: stderr.into() }
 }
 
 impl Fake {
@@ -167,24 +153,12 @@ impl Fake {
             out: vec![],
             err: vec![],
             euid: 0,
-            accounts: ["root", "nobody", "taken"]
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
-            disks: vec![
-                Disk::empty("/dev/vdz", 500 * GB),
-                Disk::empty("/dev/sdy", 16 * GB),
-            ],
+            accounts: ["root", "nobody", "taken"].iter().map(|s| s.to_string()).collect(),
+            disks: vec![Disk::empty("/dev/vdz", 500 * GB), Disk::empty("/dev/sdy", 16 * GB)],
             live: Some(("/dev/sdy1".into(), "sdy".into())),
             fs: HashMap::new(),
-            installed: ["vivaldi", "firefox"]
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
-            groups: ["users", "wheel", "audio"]
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
+            installed: ["vivaldi", "firefox"].iter().map(|s| s.to_string()).collect(),
+            groups: ["users", "wheel", "audio"].iter().map(|s| s.to_string()).collect(),
             fail: vec![],
             target: target.into(),
             medium: medium(),
@@ -229,39 +203,21 @@ impl Fake {
                     .iter()
                     .map(|q| {
                         let path = part_name(&d.path, q.n);
-                        let fstype = self
-                            .fs
-                            .get(&path)
-                            .cloned()
-                            .unwrap_or_else(|| q.fstype.clone());
+                        let fstype = self.fs.get(&path).cloned().unwrap_or_else(|| q.fstype.clone());
                         dict(vec![
                             ("path", s(&path)),
                             ("start", int(q.start)),
                             ("size", int(q.sectors * 512)),
-                            (
-                                "fstype",
-                                if fstype.is_empty() {
-                                    Py::None
-                                } else {
-                                    s(&fstype)
-                                },
-                            ),
+                            ("fstype", if fstype.is_empty() { Py::None } else { s(&fstype) }),
                             ("label", Py::None),
                             ("partlabel", Py::None),
                             (
                                 "parttype",
-                                s(if q.efi {
-                                    "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
-                                } else {
-                                    "0fc63daf-8483-4772-8e79-3d69d8477de4"
-                                }),
+                                s(if q.efi { "c12a7328-f81f-11d2-ba4b-00a0c93ec93b" } else { "0fc63daf-8483-4772-8e79-3d69d8477de4" }),
                             ),
                             ("partn", int(q.n as i128)),
                             ("pttype", s(&d.table)),
-                            (
-                                "mountpoints",
-                                Py::List(vec![if q.mounted { s("/x") } else { Py::None }]),
-                            ),
+                            ("mountpoints", Py::List(vec![if q.mounted { s("/x") } else { Py::None }])),
                             ("type", s("part")),
                         ])
                     })
@@ -270,57 +226,25 @@ impl Fake {
                     ("path", s(&d.path)),
                     ("start", Py::None),
                     ("size", int(d.size)),
-                    (
-                        "pttype",
-                        if d.table.is_empty() {
-                            Py::None
-                        } else {
-                            s(&d.table)
-                        },
-                    ),
+                    ("pttype", if d.table.is_empty() { Py::None } else { s(&d.table) }),
                     ("type", s("disk")),
                     ("children", Py::List(children)),
                 ]);
-                out(
-                    0,
-                    &dict(vec![("blockdevices", Py::List(vec![top]))]).dumps(),
-                    "",
-                )
+                out(0, &dict(vec![("blockdevices", Py::List(vec![top]))]).dumps(), "")
             }
             ["-nr", "-o", "MOUNTPOINTS", disk] => {
                 let Some(d) = self.disks.iter().find(|d| d.path == *disk) else {
                     return out(32, "", "not a block device\n");
                 };
-                out(
-                    0,
-                    &(String::from("\n")
-                        + &d.parts
-                            .iter()
-                            .map(|q| if q.mounted { "/x\n" } else { "\n" })
-                            .collect::<String>()),
-                    "",
-                )
+                out(0, &(String::from("\n") + &d.parts.iter().map(|q| if q.mounted { "/x\n" } else { "\n" }).collect::<String>()), "")
             }
-            ["-no", "PKNAME", src] => out(
-                0,
-                &self
-                    .live
-                    .clone()
-                    .filter(|(s, _)| s == src)
-                    .map(|(_, p)| p + "\n")
-                    .unwrap_or_default(),
-                "",
-            ),
+            ["-no", "PKNAME", src] => out(0, &self.live.clone().filter(|(s, _)| s == src).map(|(_, p)| p + "\n").unwrap_or_default(), ""),
             _ => out(1, "", "lsblk: unexpected\n"),
         }
     }
 
     fn sfdisk(&mut self, a: &[String], stdin: Option<&str>) -> Output {
-        let disk = a
-            .iter()
-            .find(|x| x.starts_with("/dev/"))
-            .cloned()
-            .unwrap_or_default();
+        let disk = a.iter().find(|x| x.starts_with("/dev/")).cloned().unwrap_or_default();
         let Some(d) = self.disk(&disk) else {
             return out(1, "", "no such disk\n");
         };
@@ -330,23 +254,13 @@ impl Fake {
                 let parts = d
                     .parts
                     .iter()
-                    .map(|q| {
-                        dict(vec![
-                            ("node", s(&part_name(&d.path, q.n))),
-                            ("start", int(q.start)),
-                            ("size", int(q.sectors)),
-                        ])
-                    })
+                    .map(|q| dict(vec![("node", s(&part_name(&d.path, q.n))), ("start", int(q.start)), ("size", int(q.sectors))]))
                     .collect();
                 out(
                     0,
                     &dict(vec![(
                         "partitiontable",
-                        dict(vec![
-                            ("label", s("gpt")),
-                            ("sectorsize", int(512)),
-                            ("partitions", Py::List(parts)),
-                        ]),
+                        dict(vec![("label", s("gpt")), ("sectorsize", int(512)), ("partitions", Py::List(parts))]),
                     )])
                     .dumps(),
                     "",
@@ -388,14 +302,7 @@ impl Fake {
                 d.parts.clear();
                 if a.iter().any(|x| x == "--wipe-partitions") {
                     let esp = GB / 512;
-                    d.parts.push(Partition {
-                        n: 1,
-                        start: 2048,
-                        sectors: esp,
-                        fstype: String::new(),
-                        efi: true,
-                        mounted: false,
-                    });
+                    d.parts.push(Partition { n: 1, start: 2048, sectors: esp, fstype: String::new(), efi: true, mounted: false });
                     d.parts.push(Partition {
                         n: 2,
                         start: 2048 + esp,
@@ -417,10 +324,7 @@ impl Fake {
             std::fs::create_dir_all(Path::new(&p).parent().unwrap()).unwrap();
             std::fs::write(p, text).unwrap();
         }
-        let _ = std::os::unix::fs::symlink(
-            "../run/systemd/resolve/stub-resolv.conf",
-            format!("{}/etc/resolv.conf", self.target),
-        );
+        let _ = std::os::unix::fs::symlink("../run/systemd/resolve/stub-resolv.conf", format!("{}/etc/resolv.conf", self.target));
     }
 
     fn inside(&mut self, a: &[String]) -> Output {
@@ -450,12 +354,7 @@ impl Fake {
 
     /// The calls of one program (by name, or the program run inside the new system).
     pub fn program_calls(&self, name: &str) -> Vec<&(Vec<String>, Option<String>)> {
-        self.calls
-            .iter()
-            .filter(|(a, _)| {
-                a[0] == name || (a[0] == "chroot" && a.get(4).map(String::as_str) == Some(name))
-            })
-            .collect()
+        self.calls.iter().filter(|(a, _)| a[0] == name || (a[0] == "chroot" && a.get(4).map(String::as_str) == Some(name))).collect()
     }
 }
 
@@ -464,11 +363,7 @@ impl System for Fake {
         self.calls.push((argv.to_vec(), stdin.map(str::to_string)));
         let failing = self.fail_at == Some(self.calls.len() - 1);
         self.failed.push(failing);
-        let own = if argv[0] == "chroot" {
-            &argv[4..]
-        } else {
-            argv
-        };
+        let own = if argv[0] == "chroot" { &argv[4..] } else { argv };
         if failing || self.fail.iter().any(|f| own.starts_with(f)) {
             *self.failed.last_mut().unwrap() = true;
             return Ok(out(1, "", "failed (made up)\n"));
@@ -491,22 +386,14 @@ impl System for Fake {
             "blkid" => {
                 let dev = argv.last().unwrap().clone();
                 if argv[2] == "TYPE" {
-                    out(
-                        0,
-                        &format!(
-                            "{}\n",
-                            self.fs.get(&dev).cloned().unwrap_or_else(|| "ext4".into())
-                        ),
-                        "",
-                    )
+                    out(0, &format!("{}\n", self.fs.get(&dev).cloned().unwrap_or_else(|| "ext4".into())), "")
                 } else {
                     out(0, &format!("UUID-OF-{}\n", dev.replace('/', "_")), "")
                 }
             }
             p if p.starts_with("mkfs.") || p == "mkswap" => {
                 let kind = if p == "mkswap" { "swap" } else { &p[5..] };
-                self.fs
-                    .insert(argv.last().unwrap().clone(), kind.to_string());
+                self.fs.insert(argv.last().unwrap().clone(), kind.to_string());
                 out(0, "", "")
             }
             "chroot" => self.inside(&argv[4..]),
@@ -514,11 +401,7 @@ impl System for Fake {
         })
     }
 
-    fn stream(
-        &mut self,
-        argv: &[String],
-        line: &mut dyn FnMut(&str) -> R<Option<String>>,
-    ) -> R<(i32, String)> {
+    fn stream(&mut self, argv: &[String], line: &mut dyn FnMut(&str) -> R<Option<String>>) -> R<(i32, String)> {
         self.calls.push((argv.to_vec(), None));
         let failing = self.fail_at == Some(self.calls.len() - 1);
         self.failed.push(failing);
@@ -574,22 +457,15 @@ impl Live {
             "share/integrations/example-installer.conf",
             "kind = installer\nname = Example\ncleanup = /usr/local/bin/example-install-cleanup\nfinish = /usr/local/bin/example-install-finish\nbrowsers = BROWSERS\nextras = EXTRAS\ncomponents = COMPONENTS\n",
         );
-        let conf =
-            std::fs::read_to_string(dir.path("share/integrations/example-installer.conf")).unwrap();
+        let conf = std::fs::read_to_string(dir.path("share/integrations/example-installer.conf")).unwrap();
         let conf = conf
             .replace("BROWSERS", &dir.path("os/browsers.json"))
             .replace("EXTRAS", &dir.path("os/extras.json"))
             .replace("COMPONENTS", &dir.path("os/components.json"));
         dir.write("share/integrations/example-installer.conf", &conf);
         dir.write("os/browsers.json", r#"{"browsers": [{"id": "vivaldi", "packages": ["vivaldi"], "desktop": ["vivaldi-stable.desktop"]}, {"id": "firefox", "packages": ["firefox"], "desktop": ["firefox.desktop"]}]}"#);
-        dir.write(
-            "os/extras.json",
-            r#"{"extras": [{"id": "monitor", "components": ["monitor"]}]}"#,
-        );
-        dir.write(
-            "os/components.json",
-            r#"{"components": [{"id": "monitor", "packages": ["monitor-git"]}]}"#,
-        );
+        dir.write("os/extras.json", r#"{"extras": [{"id": "monitor", "components": ["monitor"]}]}"#);
+        dir.write("os/components.json", r#"{"components": [{"id": "monitor", "packages": ["monitor-git"]}]}"#);
         dir.write("os-release", "NAME=\"Example OS\"\nID=example\n");
         dir.write("zoneinfo/UTC", "TZif");
         dir.write("zoneinfo/Europe/Lisbon", "TZif");
@@ -604,10 +480,7 @@ impl Live {
             efi: dir.path("firmware/efi"),
             resolv_conf: dir.path("resolv.conf"),
         };
-        let env = Env {
-            sfs: Some(dir.path("medium/airootfs.sfs")),
-            target: Some(dir.path("target")),
-        };
+        let env = Env { sfs: Some(dir.path("medium/airootfs.sfs")), target: Some(dir.path("target")) };
         Live { dir, host, env }
     }
 
@@ -622,18 +495,11 @@ impl Live {
     /// Runs the program: (exit code, the made-up computer afterwards).
     pub fn run(&self, fake: &mut Fake, args: &[&str], plan: &str) -> i32 {
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
-        install_system::main_with(
-            &args,
-            &mut plan.as_bytes(),
-            &self.env,
-            self.host.clone(),
-            fake,
-        )
+        install_system::main_with(&args, &mut plan.as_bytes(), &self.env, self.host.clone(), fake)
     }
 
     pub fn read(&self, rest: &str) -> String {
-        std::fs::read_to_string(format!("{}/{rest}", self.target()))
-            .unwrap_or_else(|e| panic!("{rest}: {e}"))
+        std::fs::read_to_string(format!("{}/{rest}", self.target())).unwrap_or_else(|e| panic!("{rest}: {e}"))
     }
 }
 
@@ -667,14 +533,8 @@ pub fn manual_plan(extra: &[(&str, &str)]) -> String {
         ("mode", r#""manual""#),
         ("new_table", "false"),
         ("delete", "[]"),
-        (
-            "create",
-            r#"[{"id": "r", "start": 322122547200, "size": 161061273600, "kind": "linux"}]"#,
-        ),
-        (
-            "use",
-            r#"[{"part": "/dev/vdz1", "mount": "/boot/efi", "format": null}, {"part": "new:r", "mount": "/", "format": "btrfs"}]"#,
-        ),
+        ("create", r#"[{"id": "r", "start": 322122547200, "size": 161061273600, "kind": "linux"}]"#),
+        ("use", r#"[{"part": "/dev/vdz1", "mount": "/boot/efi", "format": null}, {"part": "new:r", "mount": "/", "format": "btrfs"}]"#),
     ];
     changes.extend_from_slice(extra);
     plan_with(&changes)

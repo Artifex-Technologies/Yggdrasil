@@ -3,50 +3,54 @@
 
 use std::time::Duration;
 
-use smithay::backend::input::{AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, InputEvent, KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent};
+use crate::deco::{self, Bar, Hit, Key as BarKey};
+use crate::draw::Fonts;
+use crate::grabs::{MoveGrab, ResizeGrab};
+use crate::shortcuts::{self, Action, Binding, Mods};
+use crate::switcher;
+use crate::tiling::{self, Profile};
+use crate::toplevels::Toplevels;
+use smithay::backend::input::{
+    AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, InputEvent, KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent,
+};
+use smithay::backend::renderer::element::memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement};
 use smithay::backend::renderer::element::surface::{render_elements_from_surface_tree, WaylandSurfaceRenderElement};
 use smithay::backend::renderer::element::Kind;
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::backend::renderer::pixman::PixmanRenderer;
 use smithay::backend::renderer::utils::on_commit_buffer_handler;
 use smithay::backend::winit::WinitInput;
+use smithay::delegate_xdg_decoration;
 use smithay::desktop::{layer_map_for_output, LayerSurface, PopupKind, PopupManager, Space, Window, WindowSurfaceType};
 use smithay::input::keyboard::{FilterResult, KeyboardHandle};
+use smithay::input::pointer::Focus;
 use smithay::input::pointer::{AxisFrame, ButtonEvent, CursorImageStatus, MotionEvent, PointerHandle};
 use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::output::Output;
 use smithay::reexports::calloop::{LoopHandle, LoopSignal};
+use smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode as DecoMode;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
+use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::ResizeEdge;
 use smithay::reexports::wayland_server::backend::{ClientData, ClientId, DisconnectReason};
 use smithay::reexports::wayland_server::protocol::{wl_buffer, wl_output::WlOutput, wl_seat, wl_surface::WlSurface};
 use smithay::reexports::wayland_server::{Client, DisplayHandle, Resource};
+use smithay::utils::Rectangle;
+use smithay::utils::{IsAlive, Scale};
 use smithay::utils::{Logical, Point, Serial, SERIAL_COUNTER};
 use smithay::wayland::buffer::BufferHandler;
-use smithay::wayland::compositor::{get_parent, is_sync_subsurface, with_states, CompositorClientState, CompositorHandler, CompositorState};
+use smithay::wayland::compositor::{
+    get_parent, is_sync_subsurface, with_states, CompositorClientState, CompositorHandler, CompositorState,
+};
 use smithay::wayland::idle_notify::{IdleNotifierHandler, IdleNotifierState};
 use smithay::wayland::output::{OutputHandler, OutputManagerState};
+use smithay::wayland::seat::WaylandFocus;
 use smithay::wayland::selection::data_device::{ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler};
 use smithay::wayland::selection::SelectionHandler;
 use smithay::wayland::session_lock::{LockSurface, SessionLockHandler, SessionLockManagerState, SessionLocker};
 use smithay::wayland::shell::wlr_layer::{Layer, LayerSurface as WlrLayerSurface, WlrLayerShellHandler, WlrLayerShellState};
-use smithay::wayland::shell::xdg::{PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState};
-use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::ResizeEdge;
-use smithay::input::pointer::Focus;
-use smithay::utils::Rectangle;
-use crate::grabs::{MoveGrab, ResizeGrab};
-use crate::shortcuts::{self, Action, Binding, Mods};
-use crate::switcher;
-use crate::tiling::{self, Profile};
-use crate::toplevels::Toplevels;
-use crate::deco::{self, Bar, Hit, Key as BarKey};
-use crate::draw::Fonts;
-use smithay::backend::renderer::element::memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement};
-use smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode as DecoMode;
-use smithay::utils::{IsAlive, Scale};
-use smithay::wayland::seat::WaylandFocus;
-use smithay::xwayland::X11Surface;
 use smithay::wayland::shell::xdg::decoration::{XdgDecorationHandler, XdgDecorationState};
-use smithay::delegate_xdg_decoration;
+use smithay::wayland::shell::xdg::{PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState};
+use smithay::xwayland::X11Surface;
 use std::collections::HashMap;
 
 smithay::render_elements! {
@@ -67,8 +71,12 @@ smithay::render_elements! {
 
 /// A renderer the scene can be drawn with: the GPU one of the nested window (GLES) and the software one of the headless
 /// backend (pixman). They differ only in how a window that must be drawn opaque is drawn.
-pub trait Draw: smithay::backend::renderer::Renderer + smithay::backend::renderer::ImportAll + smithay::backend::renderer::ImportMem + Sized {
-    type Elem: smithay::backend::renderer::element::RenderElement<Self> + From<WaylandSurfaceRenderElement<Self>> + From<MemoryRenderBufferRenderElement<Self>>;
+pub trait Draw:
+    smithay::backend::renderer::Renderer + smithay::backend::renderer::ImportAll + smithay::backend::renderer::ImportMem + Sized
+{
+    type Elem: smithay::backend::renderer::element::RenderElement<Self>
+        + From<WaylandSurfaceRenderElement<Self>>
+        + From<MemoryRenderBufferRenderElement<Self>>;
     /// A window's elements; `opaque` when its alpha channel must be ignored (a full screen X11 window, a game).
     fn window_elements(app: &mut App, renderer: &mut Self, els: Vec<WaylandSurfaceRenderElement<Self>>, opaque: bool) -> Vec<Self::Elem>;
 }
@@ -77,7 +85,9 @@ impl Draw for GlesRenderer {
     type Elem = Elem;
     fn window_elements(app: &mut App, renderer: &mut Self, els: Vec<WaylandSurfaceRenderElement<Self>>, opaque: bool) -> Vec<Elem> {
         match opaque.then(|| app.opaque_shader(renderer)).flatten() {
-            Some(program) => els.into_iter().map(|inner| Elem::Opaque(crate::xwayland::OpaqueElement { inner, program: program.clone() })).collect(),
+            Some(program) => {
+                els.into_iter().map(|inner| Elem::Opaque(crate::xwayland::OpaqueElement { inner, program: program.clone() })).collect()
+            }
             None => els.into_iter().map(Elem::from).collect(),
         }
     }
@@ -105,7 +115,10 @@ use smithay::backend::input::KeyState;
 use smithay::input::keyboard::ModifiersState;
 use smithay::wayland::shm::{ShmHandler, ShmState};
 use smithay::wayland::viewporter::ViewporterState;
-use smithay::{delegate_compositor, delegate_data_device, delegate_idle_notify, delegate_layer_shell, delegate_output, delegate_seat, delegate_session_lock, delegate_shm, delegate_viewporter, delegate_xdg_shell};
+use smithay::{
+    delegate_compositor, delegate_data_device, delegate_idle_notify, delegate_layer_shell, delegate_output, delegate_seat,
+    delegate_session_lock, delegate_shm, delegate_viewporter, delegate_xdg_shell,
+};
 
 /// How the renderer takes in a program's GPU picture (true when it could).
 pub type DmabufImport = Box<dyn FnMut(&smithay::backend::allocator::dmabuf::Dmabuf) -> bool>;
@@ -280,7 +293,15 @@ impl smithay::input::keyboard::KeyboardTarget<App> for KbFocus {
             KbFocus::X11(x) => smithay::input::keyboard::KeyboardTarget::leave(x, seat, data, serial),
         }
     }
-    fn key(&self, seat: &Seat<App>, data: &mut App, key: smithay::input::keyboard::KeysymHandle<'_>, state: KeyState, serial: Serial, time: u32) {
+    fn key(
+        &self,
+        seat: &Seat<App>,
+        data: &mut App,
+        key: smithay::input::keyboard::KeysymHandle<'_>,
+        state: KeyState,
+        serial: Serial,
+        time: u32,
+    ) {
         match self {
             KbFocus::Wl(s) => smithay::input::keyboard::KeyboardTarget::key(s, seat, data, key, state, serial, time),
             KbFocus::X11(x) => smithay::input::keyboard::KeyboardTarget::key(x, seat, data, key, state, serial, time),
@@ -329,7 +350,15 @@ pub fn title_app(w: &Window) -> (String, String) {
 }
 
 fn xdg_title_app(s: &WlSurface) -> (String, String) {
-    with_states(s, |st| st.data_map.get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>().map(|d| { let d = d.lock().unwrap(); (d.title.clone().unwrap_or_default(), d.app_id.clone().unwrap_or_default()) }).unwrap_or_default())
+    with_states(s, |st| {
+        st.data_map
+            .get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>()
+            .map(|d| {
+                let d = d.lock().unwrap();
+                (d.title.clone().unwrap_or_default(), d.app_id.clone().unwrap_or_default())
+            })
+            .unwrap_or_default()
+    })
 }
 
 /// Tell an X11 window where it is and how big (X11 programs place their menus from it). Wayland windows are left alone.
@@ -340,7 +369,13 @@ pub fn x11_place(w: &Window, loc: Point<i32, Logical>, size: smithay::utils::Siz
 }
 
 impl App {
-    pub fn new(dh: &DisplayHandle, output: Output, handle: LoopHandle<'static, App>, loop_signal: LoopSignal, ping: smithay::reexports::calloop::ping::Ping) -> App {
+    pub fn new(
+        dh: &DisplayHandle,
+        output: Output,
+        handle: LoopHandle<'static, App>,
+        loop_signal: LoopSignal,
+        ping: smithay::reexports::calloop::ping::Ping,
+    ) -> App {
         let mut seat_state = SeatState::new();
         let mut seat = seat_state.new_wl_seat(dh, "seat0");
         let keyboard = seat.add_keyboard(Default::default(), 300, 40).expect("keyboard");
@@ -457,7 +492,10 @@ impl App {
 
     /// Is this window laid out by tiling (the workspace showing tiles, and it is not floating, maximized or full screen)?
     pub fn is_tiled(&self, w: &Window, s: &WlSurface) -> bool {
-        self.ws_profile(self.current_ws) == Some(Profile::Tiling) && !self.floating.contains(s) && !win_has(w, xdg_toplevel::State::Maximized) && !win_has(w, xdg_toplevel::State::Fullscreen)
+        self.ws_profile(self.current_ws) == Some(Profile::Tiling)
+            && !self.floating.contains(s)
+            && !win_has(w, xdg_toplevel::State::Maximized)
+            && !win_has(w, xdg_toplevel::State::Fullscreen)
     }
 
     pub fn window_of(&self, surface: &ToplevelSurface) -> Option<Window> {
@@ -512,7 +550,12 @@ impl App {
         let back = surface.as_ref().and_then(|surface| self.saved.iter().position(|(s, _)| s == surface)).map(|i| self.saved.remove(i).1);
         if let Some(t) = window.toplevel() {
             t.with_pending_state(|s| {
-                for st in [xdg_toplevel::State::Maximized, xdg_toplevel::State::Fullscreen, xdg_toplevel::State::TiledLeft, xdg_toplevel::State::TiledRight] {
+                for st in [
+                    xdg_toplevel::State::Maximized,
+                    xdg_toplevel::State::Fullscreen,
+                    xdg_toplevel::State::TiledLeft,
+                    xdg_toplevel::State::TiledRight,
+                ] {
                     s.states.unset(st);
                 }
                 s.size = back.map(|r| r.size);
@@ -588,7 +631,12 @@ impl App {
 
     /// The window of a surface, wherever it is (shown, minimized or on another workspace).
     pub fn window_for(&self, surface: &WlSurface) -> Option<Window> {
-        self.space.elements().chain(self.minimized.iter()).chain(self.parked.iter().map(|(w, _, _)| w)).find(|w| is_window_of(w, surface)).cloned()
+        self.space
+            .elements()
+            .chain(self.minimized.iter())
+            .chain(self.parked.iter().map(|(w, _, _)| w))
+            .find(|w| is_window_of(w, surface))
+            .cloned()
     }
 
     /// The window of a surface on the workspace now showing.
@@ -832,7 +880,11 @@ impl App {
             }
             Action::Restore => {
                 if let Some(s) = current {
-                    if has(self, &s, S::Maximized) || has(self, &s, S::Fullscreen) || has(self, &s, S::TiledLeft) || has(self, &s, S::TiledRight) {
+                    if has(self, &s, S::Maximized)
+                        || has(self, &s, S::Fullscreen)
+                        || has(self, &s, S::TiledLeft)
+                        || has(self, &s, S::TiledRight)
+                    {
                         if let Some(w) = self.window_for(&s) {
                             self.restore_window(&w);
                         }
@@ -855,7 +907,11 @@ impl App {
                 let Some(t) = current.and_then(|s| self.window_for(&s)) else { return };
                 let zone = layer_map_for_output(&self.output).non_exclusive_zone();
                 let half = zone.size.w / 2;
-                let (area, st) = if action == Action::SnapLeft { (Rectangle::new(zone.loc, (half, zone.size.h).into()), S::TiledLeft) } else { (Rectangle::new((zone.loc.x + half, zone.loc.y).into(), (zone.size.w - half, zone.size.h).into()), S::TiledRight) };
+                let (area, st) = if action == Action::SnapLeft {
+                    (Rectangle::new(zone.loc, (half, zone.size.h).into()), S::TiledLeft)
+                } else {
+                    (Rectangle::new((zone.loc.x + half, zone.loc.y).into(), (zone.size.w - half, zone.size.h).into()), S::TiledRight)
+                };
                 self.fit_window(&t, area, st);
             }
             Action::NextWindow => self.cycle(1),
@@ -990,7 +1046,12 @@ impl App {
 
     /// Every window that exists, wherever it is (shown, minimized or on another workspace).
     pub fn all_windows(&self) -> Vec<(Window, bool)> {
-        self.space.elements().map(|w| (w.clone(), false)).chain(self.minimized.iter().map(|w| (w.clone(), true))).chain(self.parked.iter().map(|(w, _, _)| (w.clone(), false))).collect()
+        self.space
+            .elements()
+            .map(|w| (w.clone(), false))
+            .chain(self.minimized.iter().map(|w| (w.clone(), true)))
+            .chain(self.parked.iter().map(|(w, _, _)| (w.clone(), false)))
+            .collect()
     }
 
     /// Alt+Tab: open the switcher (or move on in it). The window used last comes first.
@@ -1079,7 +1140,10 @@ impl App {
         }
         let loc = self.space.element_location(w)?;
         let size = w.geometry().size;
-        Some(Rectangle::new((loc.x + size.w - deco::PILL_W - deco::MARGIN_X, loc.y + deco::MARGIN_Y).into(), (deco::PILL_W, deco::PILL_H).into()))
+        Some(Rectangle::new(
+            (loc.x + size.w - deco::PILL_W - deco::MARGIN_X, loc.y + deco::MARGIN_Y).into(),
+            (deco::PILL_W, deco::PILL_H).into(),
+        ))
     }
 
     /// The window controls under the point (looking from the top window down; a window in front hides the controls of one behind it).
@@ -1188,7 +1252,8 @@ impl App {
                 self.set_maximized(&surface, on);
             }
             Hit::Drag => {
-                let double = matches!(&self.last_click, Some((t, s)) if s == &surface && t.elapsed() < std::time::Duration::from_millis(400));
+                let double =
+                    matches!(&self.last_click, Some((t, s)) if s == &surface && t.elapsed() < std::time::Duration::from_millis(400));
                 self.last_click = Some((std::time::Instant::now(), surface.clone()));
                 if double {
                     let on = !self.has_state(&surface, xdg_toplevel::State::Maximized);
@@ -1220,7 +1285,11 @@ impl App {
             for layer in layers {
                 for l in map.layers_on(*layer).rev() {
                     let Some(geo) = map.layer_geometry(l) else { continue };
-                    out.extend(l.render_elements::<WaylandSurfaceRenderElement<R>>(renderer, geo.loc.to_physical_precise_round(scale), scale, 1.0).into_iter().map(R::Elem::from));
+                    out.extend(
+                        l.render_elements::<WaylandSurfaceRenderElement<R>>(renderer, geo.loc.to_physical_precise_round(scale), scale, 1.0)
+                            .into_iter()
+                            .map(R::Elem::from),
+                    );
                 }
             }
         };
@@ -1247,7 +1316,8 @@ impl App {
                 }
             }
             if let Some((list, index)) = self.switcher.clone() {
-                let entries: Vec<(String, String)> = list.iter().map(|s| self.window_for(s).map(|w| title_app(&w)).unwrap_or_else(|| xdg_title_app(s))).collect();
+                let entries: Vec<(String, String)> =
+                    list.iter().map(|s| self.window_for(s).map(|w| title_app(&w)).unwrap_or_else(|| xdg_title_app(s))).collect();
                 if self.switcher_art.as_ref().map(|(k, _)| k != &(entries.clone(), index)).unwrap_or(true) {
                     if let Some(f) = &self.fonts {
                         self.switcher_art = Some(((entries.clone(), index), switcher::make(f, &entries, index, accent())));
@@ -1265,7 +1335,11 @@ impl App {
         // X11 menus and tooltips, last shown in front, over everything but the switcher and the profile question
         for x in self.overlays.iter().rev() {
             let loc = x.geometry().loc - origin;
-            out.extend(x.render_elements::<WaylandSurfaceRenderElement<R>>(renderer, loc.to_physical_precise_round(scale), scale, 1.0).into_iter().map(R::Elem::from));
+            out.extend(
+                x.render_elements::<WaylandSurfaceRenderElement<R>>(renderer, loc.to_physical_precise_round(scale), scale, 1.0)
+                    .into_iter()
+                    .map(R::Elem::from),
+            );
         }
         // A full screen window in front (a game, a video) covers the top bar and the dock: the Top layer then goes behind the
         // windows. The Overlay layer (the lock's own picture, alerts that must be seen) stays in front.
@@ -1277,22 +1351,38 @@ impl App {
             let geo = w.geometry();
             // the controls sit on top of the program's own picture, so they come first in a front-to-back list
             if let (Some(r), Some(surface)) = (self.bar_rect(&w), surface_of(&w)) {
-                let key = BarKey { active: self.focused_surface().as_ref() == Some(&surface), hover: self.bar_hover.as_ref().filter(|(s, _)| s == &surface).map(|(_, h)| *h) };
+                let key = BarKey {
+                    active: self.focused_surface().as_ref() == Some(&surface),
+                    hover: self.bar_hover.as_ref().filter(|(s, _)| s == &surface).map(|(_, h)| *h),
+                };
                 if self.bars.get(&surface).map(|b| b.key != key).unwrap_or(true) {
                     self.bars.insert(surface.clone(), deco::make(key));
                 }
                 if let Some(bar) = self.bars.get(&surface) {
-                    if let Ok(el) = MemoryRenderBufferRenderElement::from_buffer(renderer, at(r.loc), &bar.buffer, None, None, None, Kind::Unspecified) {
+                    if let Ok(el) =
+                        MemoryRenderBufferRenderElement::from_buffer(renderer, at(r.loc), &bar.buffer, None, None, None, Kind::Unspecified)
+                    {
                         out.push(R::Elem::from(el));
                     }
                 }
             }
-            let els = w.render_elements::<WaylandSurfaceRenderElement<R>>(renderer, (loc - geo.loc - origin).to_physical_precise_round(scale), scale, 1.0);
+            let els = w.render_elements::<WaylandSurfaceRenderElement<R>>(
+                renderer,
+                (loc - geo.loc - origin).to_physical_precise_round(scale),
+                scale,
+                1.0,
+            );
             // a full screen X11 window, a game, or a program in opaque.conf is drawn opaque: see OPAQUE_SHADER in xwayland.rs
-            let opaque = w.x11_surface().is_some_and(|x| x.is_fullscreen() || crate::xwayland::is_game(x) || crate::xwayland::listed(x, &self.opaque_apps));
+            let opaque = w
+                .x11_surface()
+                .is_some_and(|x| x.is_fullscreen() || crate::xwayland::is_game(x) || crate::xwayland::listed(x, &self.opaque_apps));
             out.extend(R::window_elements(self, renderer, els, opaque));
         }
-        layer_els(renderer,if full_front { &[Layer::Top, Layer::Bottom, Layer::Background][..] } else { &[Layer::Bottom, Layer::Background][..] }, &mut out);
+        layer_els(
+            renderer,
+            if full_front { &[Layer::Top, Layer::Bottom, Layer::Background][..] } else { &[Layer::Bottom, Layer::Background][..] },
+            &mut out,
+        );
         out
     }
 
@@ -1463,7 +1553,9 @@ impl App {
         };
         if let Some(l) = layer_hit {
             use smithay::wayland::shell::wlr_layer::{KeyboardInteractivity, LayerSurfaceCachedState};
-            let wants = with_states(l.wl_surface(), |st| st.cached_state.get::<LayerSurfaceCachedState>().current().keyboard_interactivity != KeyboardInteractivity::None);
+            let wants = with_states(l.wl_surface(), |st| {
+                st.cached_state.get::<LayerSurfaceCachedState>().current().keyboard_interactivity != KeyboardInteractivity::None
+            });
             if wants {
                 let kb = self.keyboard.clone();
                 kb.set_focus(self, Some(KbFocus::Wl(l.wl_surface().clone())), serial);
@@ -1523,7 +1615,11 @@ impl App {
             }
             InputEvent::PointerButton { event } => {
                 let serial = SERIAL_COUNTER.next_serial();
-                if event.state() == ButtonState::Pressed && !pointer.is_grabbed() && !self.locked && (self.press_on_decoration(serial, event.button_code()) || self.super_drag(serial, event.button_code())) {
+                if event.state() == ButtonState::Pressed
+                    && !pointer.is_grabbed()
+                    && !self.locked
+                    && (self.press_on_decoration(serial, event.button_code()) || self.super_drag(serial, event.button_code()))
+                {
                     return;
                 }
                 if event.state() == ButtonState::Pressed && !pointer.is_grabbed() {
@@ -1586,13 +1682,22 @@ impl CompositorHandler for App {
             let mut map = layer_map_for_output(&o);
             if let Some(layer) = map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL).cloned() {
                 map.arrange();
-                let sent = with_states(layer.wl_surface(), |st| st.data_map.get::<LayerSurfaceData>().map(|d| d.lock().unwrap().initial_configure_sent).unwrap_or(false));
+                let sent = with_states(layer.wl_surface(), |st| {
+                    st.data_map.get::<LayerSurfaceData>().map(|d| d.lock().unwrap().initial_configure_sent).unwrap_or(false)
+                });
                 if !sent {
                     // the first configure, with the output's scale told before it (a program then draws its first picture sharp)
                     let s = o.current_scale();
                     layer.with_surfaces(|surface, states| {
-                        smithay::wayland::fractional_scale::with_fractional_scale(states, |fs| fs.set_preferred_scale(s.fractional_scale()));
-                        smithay::wayland::compositor::send_surface_state(surface, states, s.integer_scale(), smithay::utils::Transform::Normal);
+                        smithay::wayland::fractional_scale::with_fractional_scale(states, |fs| {
+                            fs.set_preferred_scale(s.fractional_scale())
+                        });
+                        smithay::wayland::compositor::send_surface_state(
+                            surface,
+                            states,
+                            s.integer_scale(),
+                            smithay::utils::Transform::Normal,
+                        );
                     });
                     layer.layer_surface().send_configure();
                 }
@@ -1619,7 +1724,12 @@ impl smithay::wayland::dmabuf::DmabufHandler for App {
     fn dmabuf_state(&mut self) -> &mut smithay::wayland::dmabuf::DmabufState {
         &mut self.dmabuf_state
     }
-    fn dmabuf_imported(&mut self, _global: &smithay::wayland::dmabuf::DmabufGlobal, dmabuf: smithay::backend::allocator::dmabuf::Dmabuf, notifier: smithay::wayland::dmabuf::ImportNotifier) {
+    fn dmabuf_imported(
+        &mut self,
+        _global: &smithay::wayland::dmabuf::DmabufGlobal,
+        dmabuf: smithay::backend::allocator::dmabuf::Dmabuf,
+        notifier: smithay::wayland::dmabuf::ImportNotifier,
+    ) {
         let ok = self.dmabuf_import.as_mut().is_some_and(|f| f(&dmabuf));
         if ok {
             let _ = notifier.successful::<App>();
@@ -1672,7 +1782,12 @@ impl smithay::wayland::xdg_activation::XdgActivationHandler for App {
     fn activation_state(&mut self) -> &mut smithay::wayland::xdg_activation::XdgActivationState {
         &mut self.activation_state
     }
-    fn request_activation(&mut self, token: smithay::wayland::xdg_activation::XdgActivationToken, data: smithay::wayland::xdg_activation::XdgActivationTokenData, surface: WlSurface) {
+    fn request_activation(
+        &mut self,
+        token: smithay::wayland::xdg_activation::XdgActivationToken,
+        data: smithay::wayland::xdg_activation::XdgActivationTokenData,
+        surface: WlSurface,
+    ) {
         let fresh = data.timestamp.elapsed() < std::time::Duration::from_secs(10);
         if fresh && data.serial.is_some() {
             self.activate_surface(&surface);
@@ -1714,7 +1829,12 @@ impl SelectionHandler for App {
     type SelectionUserData = ();
 
     /// A Wayland program copied something (or the clipboard emptied): X11 programs are offered it too.
-    fn new_selection(&mut self, ty: smithay::wayland::selection::SelectionTarget, source: Option<smithay::wayland::selection::SelectionSource>, _seat: Seat<Self>) {
+    fn new_selection(
+        &mut self,
+        ty: smithay::wayland::selection::SelectionTarget,
+        source: Option<smithay::wayland::selection::SelectionSource>,
+        _seat: Seat<Self>,
+    ) {
         if let Some(wm) = self.xwm.as_mut() {
             if let Err(e) = wm.new_selection(ty, source.map(|s| s.mime_types())) {
                 eprintln!("yggdrasil-compositor: X11 programs could not be offered the clipboard: {e}");
@@ -1723,7 +1843,14 @@ impl SelectionHandler for App {
     }
 
     /// A Wayland program pastes what an X11 program copied (the X11 one is asked through the window manager).
-    fn send_selection(&mut self, ty: smithay::wayland::selection::SelectionTarget, mime_type: String, fd: std::os::fd::OwnedFd, _seat: Seat<Self>, _: &()) {
+    fn send_selection(
+        &mut self,
+        ty: smithay::wayland::selection::SelectionTarget,
+        mime_type: String,
+        fd: std::os::fd::OwnedFd,
+        _seat: Seat<Self>,
+        _: &(),
+    ) {
         let handle = self.loop_handle.clone();
         if let Some(wm) = self.xwm.as_mut() {
             if let Err(e) = wm.send_selection(ty, mime_type, fd, handle) {
@@ -1773,14 +1900,18 @@ impl XdgShellHandler for App {
             eprintln!("move request, serial {:?}, grab ok: {}", serial, self.pointer.has_grab(serial));
         }
         let pointer = self.pointer.clone();
-        let (Some(start), Some(window)) = (pointer.grab_start_data().filter(|_| pointer.has_grab(serial)), self.window_of(&surface)) else { return };
+        let (Some(start), Some(window)) = (pointer.grab_start_data().filter(|_| pointer.has_grab(serial)), self.window_of(&surface)) else {
+            return;
+        };
         let origin = self.space.element_location(&window).unwrap_or_default();
         pointer.set_grab(self, MoveGrab { start, window, origin }, serial, Focus::Clear);
     }
 
     fn resize_request(&mut self, surface: ToplevelSurface, _seat: wl_seat::WlSeat, serial: Serial, edges: ResizeEdge) {
         let pointer = self.pointer.clone();
-        let (Some(start), Some(window)) = (pointer.grab_start_data().filter(|_| pointer.has_grab(serial)), self.window_of(&surface)) else { return };
+        let (Some(start), Some(window)) = (pointer.grab_start_data().filter(|_| pointer.has_grab(serial)), self.window_of(&surface)) else {
+            return;
+        };
         let origin = self.space.element_location(&window).unwrap_or_default();
         let size = window.geometry().size;
         pointer.set_grab(self, ResizeGrab { start, window, edges, origin, size }, serial, Focus::Clear);

@@ -99,8 +99,18 @@ fn test_round_trip() {
 fn test_finds_ports_and_temperature() {
     let d = TempDir::new();
     let c = ctx(d.path());
-    d.files("hwmon5", &[("name", "corsaircpro"), ("fan1_label", "fan1 4pin"), ("fan1_input", "3846"), ("fan6_label", "fan6 4pin"),
-                        ("fan6_input", "1399"), ("pwm1", ""), ("pwm6", "")]);
+    d.files(
+        "hwmon5",
+        &[
+            ("name", "corsaircpro"),
+            ("fan1_label", "fan1 4pin"),
+            ("fan1_input", "3846"),
+            ("fan6_label", "fan6 4pin"),
+            ("fan6_input", "1399"),
+            ("pwm1", ""),
+            ("pwm6", ""),
+        ],
+    );
     d.files("hwmon3", &[("name", "coretemp"), ("temp1_label", "Package id 0"), ("temp1_input", "53000")]);
     let cp = find_cpro(&c, d.path()).unwrap();
     assert!(cp.ends_with("hwmon5"));
@@ -160,8 +170,10 @@ impl Env for Fake {
 
 #[test]
 fn test_runs_then_full_speed_on_a_sensor_failure() {
-    let mut f = Fake::new(cfg(r#"{"ports": {"1": {"name": "pump", "role": "pump", "fixed": 100}, "6": {"role": "fan"}}}"#),
-                          vec![(45, 35), (45, 35), (84, 35)]);
+    let mut f = Fake::new(
+        cfg(r#"{"ports": {"1": {"name": "pump", "role": "pump", "fixed": 100}, "6": {"role": "fan"}}}"#),
+        vec![(45, 35), (45, 35), (84, 35)],
+    );
     assert_eq!(run(&mut f), 1);
     let w = |n: &str, p| (n.to_string(), p);
     assert!(f.writes.contains(&w("1", 100)));
@@ -213,7 +225,8 @@ const QUIET: &str = "[[55, 35], [70, 40], [85, 80], [92, 100]]";
 
 #[test]
 fn test_a_follower_gets_the_leaders_curves() {
-    let c = cfg(&format!(r#"{{"ports": {{"5": {{"role": "fan", "cpu": {QUIET}, "gpu": {QUIET}}}, "6": {{"role": "fan", "follow": "5"}}}}}}"#));
+    let c =
+        cfg(&format!(r#"{{"ports": {{"5": {{"role": "fan", "cpu": {QUIET}, "gpu": {QUIET}}}, "6": {{"role": "fan", "follow": "5"}}}}}}"#));
     let (cpu, _, follow) = curve_of(c.port("6").unwrap());
     assert_eq!(follow.as_deref(), Some("5"));
     assert_eq!(cpu, vec![[55, 35], [70, 40], [85, 80], [92, 100]]);
@@ -265,7 +278,8 @@ fn an_unusable_setting_fails_safe() {
     assert_eq!(clean(&parse(r#"{"ports": null}"#).unwrap()), Ok(Cfg::default()));
     let d = TempDir::new();
     let c = ctx(d.path());
-    let cp = d.files("sys/class/hwmon/hwmon5", &[("name", "corsaircpro"), ("fan1_label", "fan1 4pin"), ("fan1_input", "3846"), ("pwm1", "100")]);
+    let cp =
+        d.files("sys/class/hwmon/hwmon5", &[("name", "corsaircpro"), ("fan1_label", "fan1 4pin"), ("fan1_input", "3846"), ("pwm1", "100")]);
     d.files("etc/yggdrasil", &[("case-fans.json", r#"{"ports": [1]}"#)]);
     assert_eq!(cmd_reset(&c, true), 0);
     assert_eq!(std::fs::read_to_string(cp.join("pwm1")).unwrap(), "255", "a failed stop still puts the port at 100 %");

@@ -33,7 +33,9 @@ fn sysfs() -> String {
 /// open(path).read().strip(), or the default on an OSError. None: not UTF-8 (the script stopped there).
 fn read(path: &str, default: &str) -> Result<String, py::Crash> {
     match std::fs::read(path) {
-        Ok(b) => String::from_utf8(b).map(|t| pycompat::strip(&py::universal(&t)).to_string()).map_err(|e| py::Crash(format!("UnicodeDecodeError: {path}: {e}"))),
+        Ok(b) => String::from_utf8(b)
+            .map(|t| pycompat::strip(&py::universal(&t)).to_string())
+            .map_err(|e| py::Crash(format!("UnicodeDecodeError: {path}: {e}"))),
         Err(_) => Ok(default.to_string()),
     }
 }
@@ -338,7 +340,8 @@ fn execvpe(file: &str, args: &[OsString], env: &[(OsString, OsString)], named: b
         let code = try_one(file);
         return Ok(shown(code, pycompat::repr(file)));
     }
-    let path = env.iter().find(|(k, _)| k == "PATH").map(|(_, v)| v.to_string_lossy().into_owned()).unwrap_or_else(|| "/bin:/usr/bin".into());
+    let path =
+        env.iter().find(|(k, _)| k == "PATH").map(|(_, v)| v.to_string_lossy().into_owned()).unwrap_or_else(|| "/bin:/usr/bin".into());
     let mut saved: Option<(i32, String)> = None;
     let mut last = (libc::ENOENT, String::new());
     for dir in path.split(':') {
@@ -401,7 +404,9 @@ fn dispatch(argv: &[String], raw: &[OsString]) -> Result<i32, py::Crash> {
             let mut multiplier: i128 = 2;
             if rest.len() >= 2 && rest[0] == "--multiplier" && pycompat::isdigit(&rest[1]) {
                 // isdigit() takes a superscript two, int() does not: the script stopped there
-                let m = pycompat::int(&rest[1]).ok_or_else(|| py::Crash(format!("ValueError: invalid literal for int() with base 10: {}", pycompat::repr(&rest[1]))))?;
+                let m = pycompat::int(&rest[1]).ok_or_else(|| {
+                    py::Crash(format!("ValueError: invalid literal for int() with base 10: {}", pycompat::repr(&rest[1])))
+                })?;
                 if (2..=20).contains(&m) {
                     multiplier = m;
                     rest = &rest[2..];

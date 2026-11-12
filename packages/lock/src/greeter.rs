@@ -79,7 +79,15 @@ struct App {
 }
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for App {
-    fn event(_: &mut Self, _: &wl_registry::WlRegistry, _: wl_registry::Event, _: &GlobalListContents, _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_registry::WlRegistry,
+        _: wl_registry::Event,
+        _: &GlobalListContents,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 delegate_noop!(App: WlCompositor);
 delegate_noop!(App: ignore WlShm);
@@ -152,7 +160,9 @@ impl Dispatch<WlKeyboard, ()> for App {
             wl_keyboard::Event::Keymap { format: WEnum::Value(wl_keyboard::KeymapFormat::XkbV1), fd, size } => {
                 let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
                 // SAFETY: the compositor hands over a read-only descriptor of exactly `size` bytes.
-                if let Ok(Some(km)) = unsafe { xkb::Keymap::new_from_fd(&ctx, fd, size as usize, xkb::KEYMAP_FORMAT_TEXT_V1, xkb::KEYMAP_COMPILE_NO_FLAGS) } {
+                if let Ok(Some(km)) =
+                    unsafe { xkb::Keymap::new_from_fd(&ctx, fd, size as usize, xkb::KEYMAP_FORMAT_TEXT_V1, xkb::KEYMAP_COMPILE_NO_FLAGS) }
+                {
                     app.xkb = Some(xkb::State::new(&km));
                 }
             }
@@ -264,7 +274,11 @@ impl App {
         }
         let (time, date) = design::clock_text();
         let user = &self.users[self.sel];
-        let hint = if self.lock_state.message.is_empty() && self.lock_state.dots() == 0 { hint_text(&self.sessions, self.sess_sel, self.users.len()) } else { String::new() };
+        let hint = if self.lock_state.message.is_empty() && self.lock_state.dots() == 0 {
+            hint_text(&self.sessions, self.sess_sel, self.users.len())
+        } else {
+            String::new()
+        };
         let message = if hint.is_empty() { self.lock_state.message.as_str() } else { hint.as_str() };
         let scene = design::Scene {
             fonts: &self.fonts,
@@ -309,7 +323,12 @@ impl App {
 /// `key = value` lines of /etc/yggdrasil/greeter.conf (`GREETER_CONF` overrides the path, for tests).
 fn conf(key: &str) -> Option<String> {
     let path = std::env::var("GREETER_CONF").unwrap_or_else(|_| "/etc/yggdrasil/greeter.conf".into());
-    std::fs::read_to_string(path).ok()?.lines().filter_map(|l| l.split('#').next()?.split_once('=')).find(|(k, _)| k.trim() == key).map(|(_, v)| v.trim().to_string())
+    std::fs::read_to_string(path)
+        .ok()?
+        .lines()
+        .filter_map(|l| l.split('#').next()?.split_once('='))
+        .find(|(k, _)| k.trim() == key)
+        .map(|(_, v)| v.trim().to_string())
 }
 
 /// Normal accounts a person can sign in to: user ids from 1000, with a real shell. `YGGDRASIL_GREETER_USERS=a,b` names them for tests.
@@ -320,7 +339,11 @@ fn list_users() -> Vec<String> {
     let mut out = vec![];
     for l in std::fs::read_to_string("/etc/passwd").unwrap_or_default().lines() {
         let p: Vec<&str> = l.split(':').collect();
-        if p.len() > 6 && p[2].parse::<u32>().map(|u| (1000..60000).contains(&u)).unwrap_or(false) && !p[6].ends_with("nologin") && !p[6].ends_with("false") {
+        if p.len() > 6
+            && p[2].parse::<u32>().map(|u| (1000..60000).contains(&u)).unwrap_or(false)
+            && !p[6].ends_with("nologin")
+            && !p[6].ends_with("false")
+        {
             out.push(p[0].to_string());
         }
     }
@@ -329,7 +352,11 @@ fn list_users() -> Vec<String> {
 
 /// The account picture the desktop keeps where every program can read it (AccountsService), else none.
 fn avatar_of(user: &str) -> Option<Pixmap> {
-    ["/var/lib/AccountsService/icons/", "/usr/share/yggdrasil/avatars/"].iter().map(|d| std::path::PathBuf::from(d).join(user)).find(|p| p.is_file()).and_then(|p| design::load_picture(&p))
+    ["/var/lib/AccountsService/icons/", "/usr/share/yggdrasil/avatars/"]
+        .iter()
+        .map(|d| std::path::PathBuf::from(d).join(user))
+        .find(|p| p.is_file())
+        .and_then(|p| design::load_picture(&p))
 }
 
 fn die(msg: &str) -> ! {
@@ -408,7 +435,9 @@ fn session_name(text: &str) -> Option<String> {
 /// The sessions to offer: every file in `dir` but the compositor bake-off's and bare Hyprland's (without Yggdrasil it is a black
 /// screen with no way out); the configured one first. A configured command that is not a file is offered as itself.
 pub fn sessions_in(dir: &std::path::Path, chosen: Option<&str>) -> Vec<Session> {
-    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "desktop")).collect()).unwrap_or_default();
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+        .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "desktop")).collect())
+        .unwrap_or_default();
     files.sort();
     let mut out: Vec<(String, Session)> = vec![];
     for p in files {
@@ -452,11 +481,20 @@ pub fn session_for(chosen: Option<&str>, dir: &std::path::Path) -> (Vec<String>,
         }
         return (c.split_whitespace().map(String::from).collect(), vec!["XDG_SESSION_TYPE=wayland".to_string()]);
     }
-    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "desktop")).collect()).unwrap_or_default();
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+        .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "desktop")).collect())
+        .unwrap_or_default();
     files.sort();
     // no session files at all: Yggdrasil's own session
     files.into_iter().find_map(from_file).unwrap_or_else(|| {
-        (vec!["yggdrasil-session".to_string()], vec!["XDG_SESSION_TYPE=wayland".to_string(), "XDG_CURRENT_DESKTOP=Yggdrasil".to_string(), "XDG_SESSION_DESKTOP=Yggdrasil".to_string()])
+        (
+            vec!["yggdrasil-session".to_string()],
+            vec![
+                "XDG_SESSION_TYPE=wayland".to_string(),
+                "XDG_CURRENT_DESKTOP=Yggdrasil".to_string(),
+                "XDG_SESSION_DESKTOP=Yggdrasil".to_string(),
+            ],
+        )
     })
 }
 
@@ -474,7 +512,11 @@ fn main() {
     if users.is_empty() {
         die("no accounts to sign in to");
     }
-    let wallpaper = conf("wallpaper").map(std::path::PathBuf::from).filter(|p| p.is_file()).or_else(yggdrasil_conf::integrations::default_wallpaper).and_then(|p| design::load_picture(&p));
+    let wallpaper = conf("wallpaper")
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.is_file())
+        .or_else(yggdrasil_conf::integrations::default_wallpaper)
+        .and_then(|p| design::load_picture(&p));
     let sessions = sessions_in(std::path::Path::new(SESSIONS), conf("session").as_deref());
 
     let surface = compositor.create_surface(&qh, ());
@@ -514,7 +556,14 @@ fn main() {
     let _ = &app.conn;
     let mut event_loop: EventLoop<App> = EventLoop::try_new().unwrap_or_else(|_| die("no event loop"));
     WaylandSource::new(conn.clone(), queue).insert(event_loop.handle()).unwrap_or_else(|_| die("cannot watch the Wayland connection"));
-    event_loop.handle().insert_source(rx, |e, _, app| if let ChanEvent::Msg(r) = e { app.answered(r) }).unwrap_or_else(|_| die("no channel"));
+    event_loop
+        .handle()
+        .insert_source(rx, |e, _, app| {
+            if let ChanEvent::Msg(r) = e {
+                app.answered(r)
+            }
+        })
+        .unwrap_or_else(|_| die("no channel"));
     event_loop
         .handle()
         .insert_source(Timer::from_duration(Duration::from_secs(1)), |_, _, app| {
@@ -547,8 +596,13 @@ mod session_tests {
     fn sessions_offered_configured_first_without_the_bakeoff() {
         let d = std::env::temp_dir().join(format!("ygg-session-list-{}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();
-        std::fs::write(d.join("plasma.desktop"), "[Desktop Entry]\nName=Plasma (Wayland)\nExec=startplasma-wayland\nDesktopNames=KDE\n").unwrap();
-        std::fs::write(d.join("yggdrasil.desktop"), "[Desktop Entry]\nName=Yggdrasil\nExec=/usr/bin/yggdrasil-session\nDesktopNames=Yggdrasil\n").unwrap();
+        std::fs::write(d.join("plasma.desktop"), "[Desktop Entry]\nName=Plasma (Wayland)\nExec=startplasma-wayland\nDesktopNames=KDE\n")
+            .unwrap();
+        std::fs::write(
+            d.join("yggdrasil.desktop"),
+            "[Desktop Entry]\nName=Yggdrasil\nExec=/usr/bin/yggdrasil-session\nDesktopNames=Yggdrasil\n",
+        )
+        .unwrap();
         std::fs::write(d.join("bakeoff-kwin.desktop"), "[Desktop Entry]\nName=Bake-off\nExec=x\n").unwrap();
         std::fs::write(d.join("hyprland.desktop"), "[Desktop Entry]\nName=Hyprland\nExec=Hyprland\n").unwrap();
         let l = super::sessions_in(&d, Some("yggdrasil"));

@@ -39,9 +39,9 @@ pub struct Viz {
 /// The three curve colours.
 pub fn palette(index: u8) -> [Rgba; 3] {
     match index {
-        1 => [(32, 133, 252, 255), (94, 252, 169, 255), (253, 71, 103, 255)],     // Siri
-        2 => [(150, 100, 240, 255), (196, 150, 255, 255), (236, 222, 255, 255)],  // accent: the default purple (124,84,214), lighter and lighter
-        _ => [(214, 120, 52, 255), (255, 178, 92, 255), (255, 226, 176, 255)],    // copper, like the ribbon the owner chose
+        1 => [(32, 133, 252, 255), (94, 252, 169, 255), (253, 71, 103, 255)], // Siri
+        2 => [(150, 100, 240, 255), (196, 150, 255, 255), (236, 222, 255, 255)], // accent: the default purple (124,84,214), lighter and lighter
+        _ => [(214, 120, 52, 255), (255, 178, 92, 255), (255, 226, 176, 255)],   // copper, like the ribbon the owner chose
     }
 }
 
@@ -141,10 +141,16 @@ pub fn level_of(bytes: &[u8]) -> f32 {
     if n == 0 {
         return 0.0;
     }
-    let sum: f64 = bytes.chunks_exact(2).map(|c| { let v = i16::from_le_bytes([c[0], c[1]]) as f64 / 32768.0; v * v }).sum();
+    let sum: f64 = bytes
+        .chunks_exact(2)
+        .map(|c| {
+            let v = i16::from_le_bytes([c[0], c[1]]) as f64 / 32768.0;
+            v * v
+        })
+        .sum();
     let rms = (sum / n as f64).sqrt() as f32;
-    let db = 20.0 * rms.max(1e-5).log10();       // about -100 .. 0
-    ((db + 55.0) / 40.0).clamp(0.0, 1.0)          // -55 dB is silence, -15 dB is loud
+    let db = 20.0 * rms.max(1e-5).log10(); // about -100 .. 0
+    ((db + 55.0) / 40.0).clamp(0.0, 1.0) // -55 dB is silence, -15 dB is loud
 }
 
 /// The loudness of speech at `ms` after it started, from the envelope the speaking script wrote (one byte, 0..100, per 50 ms).
@@ -158,7 +164,11 @@ pub fn envelope_at(env: &[u8], ms: u64) -> Option<f32> {
 
 /// Eases the shown level: quick to rise, slow to fall.
 pub fn smooth(prev: f32, raw: f32) -> f32 {
-    if raw > prev { prev + (raw - prev) * 0.6 } else { prev + (raw - prev) * 0.15 }
+    if raw > prev {
+        prev + (raw - prev) * 0.6
+    } else {
+        prev + (raw - prev) * 0.15
+    }
 }
 
 #[cfg(test)]
@@ -212,9 +222,15 @@ mod tests {
     #[test]
     fn render_pictures() {
         let Some(dir) = std::env::var_os("YGGDRASIL_VIZ_PNG") else { return };
-        for (name, level, shown, pal, phase) in [("copper-loud", 0.9, 1.0, 0u8, 2.0f32), ("copper-quiet", 0.25, 1.0, 0, 5.0), ("siri-loud", 0.9, 1.0, 1, 2.0), ("accent-mid", 0.55, 1.0, 2, 3.5), ("growing", 0.5, 0.7, 0, 1.0)] {
+        for (name, level, shown, pal, phase) in [
+            ("copper-loud", 0.9, 1.0, 0u8, 2.0f32),
+            ("copper-quiet", 0.25, 1.0, 0, 5.0),
+            ("siri-loud", 0.9, 1.0, 1, 2.0),
+            ("accent-mid", 0.55, 1.0, 2, 3.5),
+            ("growing", 0.5, 0.7, 0, 1.0),
+        ] {
             let mut pix = Pixmap::new(840, 208).unwrap(); // 2x
-            // a desktop-ish backdrop so the black island reads as it will
+                                                          // a desktop-ish backdrop so the black island reads as it will
             pix.fill(tiny_skia::Color::from_rgba8(70, 50, 120, 255));
             paint(&mut pix, 2.0, &Viz { mode: Mode::Speaking, level, phase, shown }, palette(pal));
             pix.save_png(std::path::Path::new(&dir).join(format!("{name}.png"))).unwrap();

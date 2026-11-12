@@ -33,9 +33,7 @@ pub fn parse_metar(text: &str) -> Result<Vec<Station>, String> {
     let raw: Vec<Raw> = serde_json::from_str(text).map_err(|e| format!("cannot parse METAR reply: {e}"))?;
     Ok(raw
         .into_iter()
-        .filter_map(|r| {
-            Some(Station { id: r.icao_id, name: r.name, lat: r.lat?, lon: r.lon?, obs_epoch: r.obs_time, temp_c: r.temp? })
-        })
+        .filter_map(|r| Some(Station { id: r.icao_id, name: r.name, lat: r.lat?, lon: r.lon?, obs_epoch: r.obs_time, temp_c: r.temp? }))
         .collect())
 }
 

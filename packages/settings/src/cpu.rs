@@ -54,7 +54,8 @@ pub fn load_between(a: (u64, u64), b: (u64, u64)) -> f32 {
 /// The package's temperature and the hottest core's, from coretemp's (label, degrees) pairs.
 pub fn temps(pairs: &[(String, f32)]) -> (Option<f32>, Option<f32>) {
     let package = pairs.iter().find(|(l, _)| l.starts_with("Package")).map(|p| p.1);
-    let hottest = pairs.iter().filter(|(l, _)| l.starts_with("Core")).map(|p| p.1).fold(None, |m: Option<f32>, t| Some(m.map_or(t, |m| m.max(t))));
+    let hottest =
+        pairs.iter().filter(|(l, _)| l.starts_with("Core")).map(|p| p.1).fold(None, |m: Option<f32>, t| Some(m.map_or(t, |m| m.max(t))));
     (package.or(hottest), hottest)
 }
 
@@ -69,7 +70,10 @@ fn coretemp() -> Vec<(String, f32)> {
         if read(&format!("{}/name", p.display())).is_some_and(|n| n.trim() == "coretemp") {
             let mut out = vec![];
             for i in 1..=64 {
-                let (Some(l), Some(v)) = (read(&format!("{}/temp{i}_label", p.display())), read(&format!("{}/temp{i}_input", p.display()))) else { continue };
+                let (Some(l), Some(v)) = (read(&format!("{}/temp{i}_label", p.display())), read(&format!("{}/temp{i}_input", p.display())))
+                else {
+                    continue;
+                };
                 if let Ok(milli) = v.trim().parse::<f32>() {
                     out.push((l.trim().to_string(), milli / 1000.0));
                 }
@@ -86,7 +90,9 @@ fn clocks() -> (f32, f32) {
         for d in dirs.flatten() {
             let name = d.file_name().to_string_lossy().to_string();
             if name.strip_prefix("cpu").is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit())) {
-                if let Some(khz) = read(&format!("{}/cpufreq/scaling_cur_freq", d.path().display())).and_then(|s| s.trim().parse::<f32>().ok()) {
+                if let Some(khz) =
+                    read(&format!("{}/cpufreq/scaling_cur_freq", d.path().display())).and_then(|s| s.trim().parse::<f32>().ok())
+                {
                     all.push(khz / 1000.0);
                 }
             }
@@ -133,7 +139,14 @@ impl Reader {
                 last = stat;
                 let (package, hottest) = temps(&coretemp());
                 let (avg_mhz, max_mhz) = clocks();
-                let s = Sample { temp: package.unwrap_or(0.0), hottest: hottest.unwrap_or(0.0), avg_mhz, max_mhz, load, power: package_power() };
+                let s = Sample {
+                    temp: package.unwrap_or(0.0),
+                    hottest: hottest.unwrap_or(0.0),
+                    avg_mhz,
+                    max_mhz,
+                    load,
+                    power: package_power(),
+                };
                 if tx.send(Msg::Sample(s)).is_err() {
                     break;
                 }
@@ -170,7 +183,20 @@ impl Panel {
     pub fn new(ctx: &egui::Context) -> Panel {
         let (tx, rx) = channel();
         let reader = Reader::start(tx.clone(), ctx.clone());
-        let mut p = Panel { tx, rx, _reader: reader, history: VecDeque::new(), limits: None, active: String::new(), tune: None, edit: None, by_cores: false, status: String::new(), busy: false, loaded: None };
+        let mut p = Panel {
+            tx,
+            rx,
+            _reader: reader,
+            history: VecDeque::new(),
+            limits: None,
+            active: String::new(),
+            tune: None,
+            edit: None,
+            by_cores: false,
+            status: String::new(),
+            busy: false,
+            loaded: None,
+        };
         p.load(ctx);
         p
     }
@@ -180,7 +206,10 @@ impl Panel {
         let (tx, ctx) = (self.tx.clone(), ctx.clone());
         std::thread::spawn(move || {
             let text = sys::run("/usr/lib/yggdrasil/powerlimit", &["get"]).unwrap_or_default();
-            let active = serde_json::from_str::<serde_json::Value>(&text).ok().and_then(|v| v["active"].as_str().map(String::from)).unwrap_or_default();
+            let active = serde_json::from_str::<serde_json::Value>(&text)
+                .ok()
+                .and_then(|v| v["active"].as_str().map(String::from))
+                .unwrap_or_default();
             let _ = tx.send(Msg::Loaded(sys::parse_power_limits(&text), active, tune::get()));
             ctx.request_repaint();
         });
@@ -251,8 +280,32 @@ impl Panel {
         let top = self.tune.as_ref().map(|t| t.ratio_range.1 as f32 * 100.0).unwrap_or(5000.0).max(now.max_mhz);
         let pmax = self.tune.as_ref().and_then(|t| t.pl.1).unwrap_or(150) as f32;
         ui::group(ui, pal, Some("Now"), |ui| {
-            readout::metric(ui, pal, true, "Temperature", &format!("{:.0} °C", now.temp), &format!("hottest core {:.0}", now.hottest), &h, |s| s.temp, 20.0, 100.0, " °C");
-            readout::metric(ui, pal, false, "Clock (average)", &format!("{:.1} GHz", now.avg_mhz / 1000.0), &format!("fastest {:.1}", now.max_mhz / 1000.0), &h, |s| s.avg_mhz, 0.0, top, " MHz");
+            readout::metric(
+                ui,
+                pal,
+                true,
+                "Temperature",
+                &format!("{:.0} °C", now.temp),
+                &format!("hottest core {:.0}", now.hottest),
+                &h,
+                |s| s.temp,
+                20.0,
+                100.0,
+                " °C",
+            );
+            readout::metric(
+                ui,
+                pal,
+                false,
+                "Clock (average)",
+                &format!("{:.1} GHz", now.avg_mhz / 1000.0),
+                &format!("fastest {:.1}", now.max_mhz / 1000.0),
+                &h,
+                |s| s.avg_mhz,
+                0.0,
+                top,
+                " MHz",
+            );
             readout::metric(ui, pal, false, "Load", &format!("{:.0} %", now.load), "", &h, |s| s.load, 0.0, 100.0, " %");
             if let Some(w) = now.power {
                 readout::metric(ui, pal, false, "Power", &format!("{w:.0} W"), "", &h, |s| s.power.unwrap_or(0.0), 0.0, pmax.max(w), " W");
@@ -265,7 +318,13 @@ impl Panel {
         let mut turbo: Option<bool> = None;
         let mut power: Option<String> = None;
         let mode = self.active.clone();
-        let name = match mode.as_str() { "performance" => "Performance".to_string(), "balanced" => "Balanced".into(), "power-saver" => "Power saver".into(), "" => "This".into(), o => o.to_string() };
+        let name = match mode.as_str() {
+            "performance" => "Performance".to_string(),
+            "balanced" => "Balanced".into(),
+            "power-saver" => "Power saver".into(),
+            "" => "This".into(),
+            o => o.to_string(),
+        };
         let busy = self.busy;
         let t = self.tune.clone();
         ui::group(ui, pal, Some("Limits"), |ui| {
@@ -273,15 +332,24 @@ impl Panel {
             if let Some(l) = &self.limits {
                 let mine = l.modes.get(&mode).and_then(|m| m.0);
                 let mut c = mine.unwrap_or(100) as f32;
-                readout::slider_row(ui, pal, true, &format!("Speed cap · {name} mode"), "The most it may clock in this mode, as a share of its top speed", |ui| {
-                    let r = ui::slider_range(ui, pal, &mut c, 20.0..=100.0, " %");
-                    if !busy && (r.drag_stopped() || (r.changed() && !r.dragged())) {
-                        cap = Some(if c as i64 >= 100 { None } else { Some(c as i64) });
-                    }
-                    if mine.is_some() && ui::icon_button(ui, pal, crate::icons::Icon::Restart, "Back to the default", !busy, false).clicked() {
-                        cap = Some(None);
-                    }
-                });
+                readout::slider_row(
+                    ui,
+                    pal,
+                    true,
+                    &format!("Speed cap · {name} mode"),
+                    "The most it may clock in this mode, as a share of its top speed",
+                    |ui| {
+                        let r = ui::slider_range(ui, pal, &mut c, 20.0..=100.0, " %");
+                        if !busy && (r.drag_stopped() || (r.changed() && !r.dragged())) {
+                            cap = Some(if c as i64 >= 100 { None } else { Some(c as i64) });
+                        }
+                        if mine.is_some()
+                            && ui::icon_button(ui, pal, crate::icons::Icon::Restart, "Back to the default", !busy, false).clicked()
+                        {
+                            cap = Some(None);
+                        }
+                    },
+                );
                 first = false;
             }
             let Some(t) = &t else { return };
@@ -294,7 +362,10 @@ impl Panel {
                 });
                 first = false;
             }
-            for (i, key, title, what) in [(0, "pl1", "Long-term power", "What it may draw for as long as it likes"), (1, "pl2", "Short-term power", "What it may draw in bursts")] {
+            for (i, key, title, what) in [
+                (0, "pl1", "Long-term power", "What it may draw for as long as it likes"),
+                (1, "pl2", "Short-term power", "What it may draw in bursts"),
+            ] {
                 let now = if i == 0 { t.pl.0 } else { t.pl.1 };
                 let stock = if i == 0 { t.stock_pl.0 } else { t.stock_pl.1 };
                 let Some(w0) = now else { continue };
@@ -305,7 +376,9 @@ impl Panel {
                     if !busy && (r.drag_stopped() || (r.changed() && !r.dragged())) && w as i64 != w0 {
                         power = Some(format!("{key}={}", w as i64));
                     }
-                    if stock.is_some_and(|s| s != w0) && ui::icon_button(ui, pal, crate::icons::Icon::Restart, "Back to the BIOS's value", !busy, false).clicked() {
+                    if stock.is_some_and(|s| s != w0)
+                        && ui::icon_button(ui, pal, crate::icons::Icon::Restart, "Back to the BIOS's value", !busy, false).clicked()
+                    {
                         power = Some(format!("{key}=default"));
                     }
                 });
@@ -326,16 +399,23 @@ impl Panel {
         let Some(t) = self.tune.clone() else { return };
         if !t.service {
             ui::group(ui, pal, Some("Multipliers"), |ui| {
-                ui::row(ui, pal, true, "The tuning service is not running", Some("It applies the multipliers and guards against a freeze (yggdrasil-tune)"), |ui| {
-                    if ui.add_enabled(!self.busy, egui::Button::new("Start it")).clicked() {
-                        self.busy = true;
-                        let (tx, c) = (self.tx.clone(), ctx.clone());
-                        std::thread::spawn(move || {
-                            let _ = tx.send(Msg::Done(sys::act("pkexec", &["systemctl", "enable", "--now", "yggdrasil-tune.service"])));
-                            c.request_repaint();
-                        });
-                    }
-                });
+                ui::row(
+                    ui,
+                    pal,
+                    true,
+                    "The tuning service is not running",
+                    Some("It applies the multipliers and guards against a freeze (yggdrasil-tune)"),
+                    |ui| {
+                        if ui.add_enabled(!self.busy, egui::Button::new("Start it")).clicked() {
+                            self.busy = true;
+                            let (tx, c) = (self.tx.clone(), ctx.clone());
+                            std::thread::spawn(move || {
+                                let _ = tx.send(Msg::Done(sys::act("pkexec", &["systemctl", "enable", "--now", "yggdrasil-tune.service"])));
+                                c.request_repaint();
+                            });
+                        }
+                    },
+                );
             });
             return;
         }
@@ -346,11 +426,18 @@ impl Panel {
         let mut act = None;
         ui::group(ui, pal, Some("Multipliers"), |ui| {
             let mut all = edit[7] as f32;
-            readout::slider_row(ui, pal, true, "All cores", &format!("Every core at up to {} ({}× 100 MHz)", ghz(edit[7]), edit[7]), |ui| {
-                if ui::slider_range(ui, pal, &mut all, lo as f32..=hi as f32, "×").changed() {
-                    edit.iter_mut().for_each(|r| *r = all as i64);
-                }
-            });
+            readout::slider_row(
+                ui,
+                pal,
+                true,
+                "All cores",
+                &format!("Every core at up to {} ({}× 100 MHz)", ghz(edit[7]), edit[7]),
+                |ui| {
+                    if ui::slider_range(ui, pal, &mut all, lo as f32..=hi as f32, "×").changed() {
+                        edit.iter_mut().for_each(|r| *r = all as i64);
+                    }
+                },
+            );
             ui::row(ui, pal, false, "By how many cores are busy", Some("Turbo goes higher when fewer cores are busy"), |ui| {
                 ui::switch(ui, pal, &mut self.by_cores);
             });
@@ -369,12 +456,19 @@ impl Panel {
             let kept = t.kept_ratios.as_ref().is_some_and(|k| Some(k) != t.stock_ratios.as_ref());
             act = tune::guard_rows(ui, pal, t.cpu_off.as_deref(), trying, *edit != now, kept, self.busy);
         });
-        let own = t.stock_ratios.as_ref().map(|s| format!("The processor's own: {} with 1-2 cores, {} with all.", ghz(s[0]), ghz(s[7]))).unwrap_or_default();
+        let own = t
+            .stock_ratios
+            .as_ref()
+            .map(|s| format!("The processor's own: {} with 1-2 cores, {} with all.", ghz(s[0]), ghz(s[7])))
+            .unwrap_or_default();
         ui.label(RichText::new(format!("{own} Higher needs more voltage than the BIOS may give: go up in small steps. Multipliers above its own can freeze the computer; the crash guard then starts it with your previous values.")).size(11.5).color(pal.dim));
         if let Some(a) = act {
             let mut args = a.args("cpu");
             if a == Act::Try {
-                args.push(format!("ratios={}", self.edit.as_ref().map(|e| e.iter().map(|r| r.to_string()).collect::<Vec<_>>().join(",")).unwrap_or_default()));
+                args.push(format!(
+                    "ratios={}",
+                    self.edit.as_ref().map(|e| e.iter().map(|r| r.to_string()).collect::<Vec<_>>().join(",")).unwrap_or_default()
+                ));
             }
             self.act(ctx, "/usr/lib/yggdrasil/tune", args);
         }

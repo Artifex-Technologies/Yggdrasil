@@ -56,7 +56,9 @@ pub struct About {
 
 /// The file of the icon named by LOGO in /etc/os-release (the standard icon folders), if there is one.
 pub fn os_logo(os_release: &str) -> String {
-    let Some(name) = os_release.lines().find_map(|l| l.strip_prefix("LOGO=")).map(|v| v.trim().trim_matches('"').to_string()) else { return String::new() };
+    let Some(name) = os_release.lines().find_map(|l| l.strip_prefix("LOGO=")).map(|v| v.trim().trim_matches('"').to_string()) else {
+        return String::new();
+    };
     if name.is_empty() || name.contains('/') {
         return String::new();
     }
@@ -191,7 +193,8 @@ pub fn wifi_list(text: &str) -> Vec<Wifi> {
         if f.len() < 4 || f[1].is_empty() {
             continue;
         }
-        let w = Wifi { in_use: f[0] == "*", ssid: f[1].clone(), signal: f[2].parse().unwrap_or(0), secured: !f[3].is_empty() && f[3] != "--" };
+        let w =
+            Wifi { in_use: f[0] == "*", ssid: f[1].clone(), signal: f[2].parse().unwrap_or(0), secured: !f[3].is_empty() && f[3] != "--" };
         let keep = match best.get(&w.ssid) {
             Some(old) => w.in_use || (!old.in_use && w.signal > old.signal),
             None => true,
@@ -255,7 +258,10 @@ impl Network {
         if ssid.is_empty() {
             return None;
         }
-        self.air.iter().find(|a| !a.hidden() && a.ssid == ssid.as_bytes()).or_else(|| self.air.iter().find(|a| !a.hidden() && a.name() == ssid))
+        self.air
+            .iter()
+            .find(|a| !a.hidden() && a.ssid == ssid.as_bytes())
+            .or_else(|| self.air.iter().find(|a| !a.hidden() && a.name() == ssid))
     }
 
     /// Who made an access point ("" when not known: a made-up address, or not in the list).
@@ -321,7 +327,13 @@ impl MacMode {
             "stable" | "stable-ssid" => MacMode::Private,
             "random" => MacMode::Random,
             "permanent" | "preserve" => MacMode::Real,
-            "" | "--" => if wifi { MacMode::Private } else { MacMode::Real },
+            "" | "--" => {
+                if wifi {
+                    MacMode::Private
+                } else {
+                    MacMode::Real
+                }
+            }
             a if valid_mac(a) => MacMode::Custom(a.to_uppercase()),
             _ => MacMode::Private,
         }
@@ -340,7 +352,9 @@ impl MacMode {
 /// A usable address to type in: six pairs of hex digits, and not a group (multicast) address.
 pub fn valid_mac(a: &str) -> bool {
     let parts: Vec<&str> = a.split(':').collect();
-    parts.len() == 6 && parts.iter().all(|p| p.len() == 2 && p.chars().all(|c| c.is_ascii_hexdigit())) && u8::from_str_radix(parts[0], 16).map(|b| b & 1 == 0).unwrap_or(false)
+    parts.len() == 6
+        && parts.iter().all(|p| p.len() == 2 && p.chars().all(|c| c.is_ascii_hexdigit()))
+        && u8::from_str_radix(parts[0], 16).map(|b| b & 1 == 0).unwrap_or(false)
 }
 
 /// A random address of the kind phones use: locally administered and not a group address, so it cannot clash with a real
@@ -404,7 +418,8 @@ pub fn network() -> Network {
     // the makers of the access points (made-up addresses have none) and of the vendor extras they announce
     let seen_before = n.saved.iter().flat_map(|p| p.seen_bssids.iter()).filter_map(|b| yggdrasil_wifiscan::parse_mac(b));
     let heard = n.air.iter().flat_map(|a| a.aps.iter()).map(|a| a.bss.bssid);
-    let mut want: Vec<[u8; 3]> = heard.chain(seen_before).filter(|m| !yggdrasil_wifiscan::oui::is_local(m)).map(|m| [m[0], m[1], m[2]]).collect();
+    let mut want: Vec<[u8; 3]> =
+        heard.chain(seen_before).filter(|m| !yggdrasil_wifiscan::oui::is_local(m)).map(|m| [m[0], m[1], m[2]]).collect();
     want.extend(n.air.iter().flat_map(|a| a.aps.iter()).flat_map(|a| a.info.vendors.iter()).map(|v| v.oui));
     want.sort();
     want.dedup();
@@ -482,7 +497,8 @@ pub fn bt_list(text: &str) -> Vec<(String, String)> {
 /// Devices found nearby that are not paired yet (bluetoothctl lists both; nameless ones, shown only as their address, are left
 /// out: nothing to recognise them by).
 pub fn bt_nearby() -> Vec<(String, String)> {
-    let paired: Vec<String> = bt_list(&run("bluetoothctl", &["devices", "Paired"]).unwrap_or_default()).into_iter().map(|(m, _)| m).collect();
+    let paired: Vec<String> =
+        bt_list(&run("bluetoothctl", &["devices", "Paired"]).unwrap_or_default()).into_iter().map(|(m, _)| m).collect();
     bt_list(&run("bluetoothctl", &["devices"]).unwrap_or_default())
         .into_iter()
         .filter(|(m, n)| !paired.contains(m) && !n.is_empty() && n.replace('-', ":") != *m)
@@ -491,7 +507,13 @@ pub fn bt_nearby() -> Vec<(String, String)> {
 
 /// Looks for devices nearby for `secs` seconds (in the background; bt_nearby lists what turned up).
 pub fn bt_scan(secs: u32) {
-    if let Ok(mut c) = Command::new("bluetoothctl").args(["--timeout", &secs.to_string(), "scan", "on"]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn() {
+    if let Ok(mut c) = Command::new("bluetoothctl")
+        .args(["--timeout", &secs.to_string(), "scan", "on"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
         std::thread::spawn(move || {
             let _ = c.wait();
         });
@@ -500,8 +522,14 @@ pub fn bt_scan(secs: u32) {
 
 /// The BlueZ object of a device: /org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF (the first adapter).
 pub fn bt_path(mac: &str) -> Option<String> {
-    let adapter = std::fs::read_dir("/sys/class/bluetooth").ok()?.flatten().map(|e| e.file_name().to_string_lossy().to_string()).filter(|n| n.starts_with("hci") && !n.contains(':')).min()?;
-    (mac.len() == 17 && mac.chars().all(|c| c.is_ascii_hexdigit() || c == ':')).then(|| format!("/org/bluez/{adapter}/dev_{}", mac.replace(':', "_")))
+    let adapter = std::fs::read_dir("/sys/class/bluetooth")
+        .ok()?
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| n.starts_with("hci") && !n.contains(':'))
+        .min()?;
+    (mac.len() == 17 && mac.chars().all(|c| c.is_ascii_hexdigit() || c == ':'))
+        .then(|| format!("/org/bluez/{adapter}/dev_{}", mac.replace(':', "_")))
 }
 
 /// Pairs with a device, trusts it (it may connect by itself later) and connects. A code to compare or type is asked by
@@ -516,7 +544,9 @@ pub fn bt_pair(mac: &str) -> Result<(), String> {
             Err(String::from_utf8_lossy(&o.stderr).trim().to_string())
         }
     };
-    ask(&["call", "org.bluez", &path, "org.bluez.Device1", "Pair"]).map_err(|e| if e.contains("AlreadyExists") { String::new() } else { format!("Pairing did not work: {e}") }).or_else(|e| if e.is_empty() { Ok(()) } else { Err(e) })?;
+    ask(&["call", "org.bluez", &path, "org.bluez.Device1", "Pair"])
+        .map_err(|e| if e.contains("AlreadyExists") { String::new() } else { format!("Pairing did not work: {e}") })
+        .or_else(|e| if e.is_empty() { Ok(()) } else { Err(e) })?;
     ask(&["set-property", "org.bluez", &path, "org.bluez.Device1", "Trusted", "b", "true"])?;
     ask(&["call", "org.bluez", &path, "org.bluez.Device1", "Connect"]).map_err(|e| format!("Paired, but it did not connect yet: {e}"))
 }
@@ -566,7 +596,14 @@ pub fn bluetooth() -> Bluetooth {
             BtDevice { mac, name, connected, kind, battery }
         })
         .partition(|d| d.kind == "input-gaming");
-    Bluetooth { present: powered.is_some(), powered: powered.unwrap_or(false), devices, pads: gamepads::list(), paired_pads, pad_settings: gamepads::Settings::load() }
+    Bluetooth {
+        present: powered.is_some(),
+        powered: powered.unwrap_or(false),
+        devices,
+        pads: gamepads::list(),
+        paired_pads,
+        pad_settings: gamepads::Settings::load(),
+    }
 }
 
 // ---------------------------------------------------------------- Sound (pactl, PipeWire)
@@ -737,7 +774,10 @@ pub fn hypr_monitors_lua(outs: &[Output]) -> String {
             t.push_str(&format!("hl.monitor({{ output = \"{}\", disabled = true }})\n", o.name));
             continue;
         }
-        t.push_str(&format!("hl.monitor({{ output = \"{}\", mode = \"{}\", position = \"{}x{}\", scale = {} }})\n", o.name, o.current, o.x, o.y, o.scale));
+        t.push_str(&format!(
+            "hl.monitor({{ output = \"{}\", mode = \"{}\", position = \"{}x{}\", scale = {} }})\n",
+            o.name, o.current, o.x, o.y, o.scale
+        ));
     }
     t
 }
@@ -838,7 +878,16 @@ pub fn appearance() -> Appearance {
         }
     }
     wallpapers.sort();
-    Appearance { icon_packs: icon_packs(), icon_theme: current_icon_theme(), cursors: cursor_themes(), cursor: current_cursor(), dark: look.dark, accent, wallpapers, panel: yggdrasil_conf::PanelConf::load() }
+    Appearance {
+        icon_packs: icon_packs(),
+        icon_theme: current_icon_theme(),
+        cursors: cursor_themes(),
+        cursor: current_cursor(),
+        dark: look.dark,
+        accent,
+        wallpapers,
+        panel: yggdrasil_conf::PanelConf::load(),
+    }
 }
 
 /// The largest picture in a Plasma wallpaper package's images folder (named like 3840x2160.png).
@@ -896,7 +945,10 @@ pub fn parse_power_limits(json: &str) -> Option<PowerLimits> {
         max: g.get("max").and_then(|x| x.as_i64()).unwrap_or(0),
         hold: g.get("hold").and_then(|x| x.as_i64()),
     });
-    let modes = v["limits"].as_object().map(|m| m.iter().map(|(k, l)| (k.clone(), (l["cpu"].as_i64(), l["gpu"].as_i64()))).collect()).unwrap_or_default();
+    let modes = v["limits"]
+        .as_object()
+        .map(|m| m.iter().map(|(k, l)| (k.clone(), (l["cpu"].as_i64(), l["gpu"].as_i64()))).collect())
+        .unwrap_or_default();
     Some(PowerLimits { gpu, modes })
 }
 
@@ -924,7 +976,14 @@ impl GpuUnlock {
 pub fn parse_gpu_unlock(json: &str) -> Option<GpuUnlock> {
     let v: serde_json::Value = serde_json::from_str(json).ok()?;
     let s = |k: &str| v[k].as_str().map(String::from);
-    Some(GpuUnlock { state: s("state")?, reason: s("reason").unwrap_or_default(), blocker: s("arm_blocker"), since: s("since"), ratio: v["ratio"].as_f64(), hold: v["power_hold"].as_bool().unwrap_or(false) })
+    Some(GpuUnlock {
+        state: s("state")?,
+        reason: s("reason").unwrap_or_default(),
+        blocker: s("arm_blocker"),
+        since: s("since"),
+        ratio: v["ratio"].as_f64(),
+        hold: v["power_hold"].as_bool().unwrap_or(false),
+    })
 }
 
 /// The helper's answer. A debug build reads it from $YGGDRASIL_GPUUNLOCK_FIXTURE instead, for tests and screenshots; release
@@ -961,7 +1020,8 @@ pub fn profiles(text: &str) -> (Vec<String>, String) {
     (names, active)
 }
 
-const PPD: [&str; 3] = ["org.freedesktop.UPower.PowerProfiles", "/org/freedesktop/UPower/PowerProfiles", "org.freedesktop.UPower.PowerProfiles"];
+const PPD: [&str; 3] =
+    ["org.freedesktop.UPower.PowerProfiles", "/org/freedesktop/UPower/PowerProfiles", "org.freedesktop.UPower.PowerProfiles"];
 
 /// The power modes and the active one, read from power-profiles-daemon over D-Bus. (`powerprofilesctl` is a Python program whose
 /// interpreter aborts at exit now and then, which left core dumps; it is only the fallback.)
@@ -982,20 +1042,19 @@ fn profiles_dbus() -> Option<(Vec<String>, String)> {
 
 /// Switches the power mode over D-Bus (the same permission check as powerprofilesctl).
 pub fn set_profile(name: &str) -> Result<(), String> {
-    act("busctl", &["set-property", PPD[0], PPD[1], PPD[2], "ActiveProfile", "s", name]).or_else(|_| act("powerprofilesctl", &["set", name]))
+    act("busctl", &["set-property", PPD[0], PPD[1], PPD[2], "ActiveProfile", "s", name])
+        .or_else(|_| act("powerprofilesctl", &["set", name]))
 }
 
 pub fn power() -> Power {
     let (profiles, active) = profiles_dbus().unwrap_or_else(|| profiles(&run("powerprofilesctl", &["list"]).unwrap_or_default()));
-    let limits = if yggdrasil_conf::PanelConf::load().developer { run("/usr/lib/yggdrasil/powerlimit", &["get"]).and_then(|s| parse_power_limits(&s)) } else { None };
+    let limits = if yggdrasil_conf::PanelConf::load().developer {
+        run("/usr/lib/yggdrasil/powerlimit", &["get"]).and_then(|s| parse_power_limits(&s))
+    } else {
+        None
+    };
     let unlock = if limits.as_ref().is_some_and(|l| l.gpu.is_some()) { gpu_unlock() } else { None };
-    Power {
-        profile: active,
-        profiles,
-        limits,
-        unlock,
-        idle: read_idle(),
-    }
+    Power { profile: active, profiles, limits, unlock, idle: read_idle() }
 }
 
 /// What to do as the user stays away, in minutes (0 = never), and whether this computer can sleep and hibernate.
@@ -1023,7 +1082,20 @@ pub struct Idle {
 
 impl Default for Idle {
     fn default() -> Self {
-        Idle { screensaver: 0, dim: 5, dim_level: 30, lights_off: true, blank: 0, screen_off: 0, lock: 0, sleep: 0, hibernate: 0, can_sleep: true, can_hibernate: true, sleep_note: String::new() }
+        Idle {
+            screensaver: 0,
+            dim: 5,
+            dim_level: 30,
+            lights_off: true,
+            blank: 0,
+            screen_off: 0,
+            lock: 0,
+            sleep: 0,
+            hibernate: 0,
+            can_sleep: true,
+            can_hibernate: true,
+            sleep_note: String::new(),
+        }
     }
 }
 
@@ -1065,7 +1137,9 @@ pub fn idle_text(i: &Idle) -> String {
 }
 
 fn can(what: &str) -> bool {
-    run("busctl", &["call", "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager", what]).map(|s| s.contains("\"yes\"") || s.contains("\"challenge\"")).unwrap_or(false)
+    run("busctl", &["call", "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager", what])
+        .map(|s| s.contains("\"yes\"") || s.contains("\"challenge\""))
+        .unwrap_or(false)
 }
 
 pub fn read_idle() -> Idle {
@@ -1123,7 +1197,20 @@ mod idle_tests {
 
     #[test]
     fn round_trip() {
-        let i = Idle { screensaver: 3, dim: 7, dim_level: 40, lights_off: false, blank: 20, screen_off: 15, lock: 10, sleep: 0, hibernate: 120, can_sleep: true, can_hibernate: true, sleep_note: String::new() };
+        let i = Idle {
+            screensaver: 3,
+            dim: 7,
+            dim_level: 40,
+            lights_off: false,
+            blank: 20,
+            screen_off: 15,
+            lock: 10,
+            sleep: 0,
+            hibernate: 120,
+            can_sleep: true,
+            can_hibernate: true,
+            sleep_note: String::new(),
+        };
         assert_eq!(parse_idle(&idle_text(&i)), i);
     }
 
@@ -1178,7 +1265,8 @@ pub fn components(json: &str, installed: &dyn Fn(&str) -> bool) -> Vec<Component
         .map(|a| {
             a.iter()
                 .map(|c| {
-                    let pkgs: Vec<&str> = c["packages"].as_array().map(|p| p.iter().filter_map(|x| x.as_str()).collect()).unwrap_or_default();
+                    let pkgs: Vec<&str> =
+                        c["packages"].as_array().map(|p| p.iter().filter_map(|x| x.as_str()).collect()).unwrap_or_default();
                     let pkgbuild = c["pkgbuild"].as_str();
                     let ok = if !pkgs.is_empty() { pkgs.iter().all(|p| installed(p)) } else { pkgbuild.map(installed).unwrap_or(false) };
                     Component {
@@ -1223,10 +1311,19 @@ mod tests {
     #[test]
     fn about_parsers() {
         assert_eq!(os_name("NAME=\"Some OS\"\nPRETTY_NAME=\"Some OS 1\"\n"), "Some OS 1");
-        let labyrinth = "NAME=\"Labyrinth OS\"\nPRETTY_NAME=\"Labyrinth OS\"\nID=labyrinth\nVERSION=\"1.0\"\nVERSION_ID=1.0.0\nBUILD_ID=rolling\n";
+        let labyrinth =
+            "NAME=\"Labyrinth OS\"\nPRETTY_NAME=\"Labyrinth OS\"\nID=labyrinth\nVERSION=\"1.0\"\nVERSION_ID=1.0.0\nBUILD_ID=rolling\n";
         assert_eq!(os_name(labyrinth), "Labyrinth OS 1.0", "the system version from VERSION");
-        assert_eq!(os_name("NAME=\"Labyrinth OS\"\nVERSION=\"1.1.1\"\nVERSION_ID=1.1.1\n"), "Labyrinth OS 1.1.1", "NAME when there is no PRETTY_NAME");
-        assert_eq!(os_name("NAME=\"Labyrinth OS\"\nPRETTY_NAME=\"Labyrinth OS\"\nID=labyrinth\n"), "Labyrinth OS", "an os-release without a version (before 1.0)");
+        assert_eq!(
+            os_name("NAME=\"Labyrinth OS\"\nVERSION=\"1.1.1\"\nVERSION_ID=1.1.1\n"),
+            "Labyrinth OS 1.1.1",
+            "NAME when there is no PRETTY_NAME"
+        );
+        assert_eq!(
+            os_name("NAME=\"Labyrinth OS\"\nPRETTY_NAME=\"Labyrinth OS\"\nID=labyrinth\n"),
+            "Labyrinth OS",
+            "an os-release without a version (before 1.0)"
+        );
         let fedora = "NAME=\"Fedora Linux\"\nVERSION=\"40 (Workstation Edition)\"\nVERSION_ID=40\nPRETTY_NAME=\"Fedora Linux 40 (Workstation Edition)\"\n";
         assert_eq!(os_name(fedora), "Fedora Linux 40 (Workstation Edition)", "a PRETTY_NAME that names its version is not repeated");
         assert_eq!(os_name("NAME=\"Arch Linux\"\nPRETTY_NAME=\"Arch Linux\"\nBUILD_ID=rolling\n"), "Arch Linux");
@@ -1235,7 +1332,10 @@ mod tests {
         assert_eq!(cpu_model(cpu), "Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz × 2");
         assert!((mem_gib("MemTotal:       65775396 kB\n") - 62.73).abs() < 0.01);
         let lspci = "00:02.0 \"VGA compatible controller\" \"Intel Corporation\" \"CoffeeLake-S GT2 [UHD Graphics 630]\" -r02 \"\" \"\"\n01:00.0 \"VGA compatible controller\" \"NVIDIA Corporation\" \"TU102 [GeForce RTX 2080 Ti Rev. A]\" -ra1 \"\" \"\"\n00:1f.3 \"Audio device\" \"Intel Corporation\" \"Cannon Lake PCH cAVS\" \"\" \"\"\n";
-        assert_eq!(gpus(lspci), vec!["Intel Corporation CoffeeLake-S GT2 [UHD Graphics 630]", "NVIDIA Corporation TU102 [GeForce RTX 2080 Ti Rev. A]"]);
+        assert_eq!(
+            gpus(lspci),
+            vec!["Intel Corporation CoffeeLake-S GT2 [UHD Graphics 630]", "NVIDIA Corporation TU102 [GeForce RTX 2080 Ti Rev. A]"]
+        );
         assert_eq!(disk("     1B-blocks         Avail\n1000000000000 400000000000\n"), (1_000_000_000_000, 400_000_000_000));
     }
 
@@ -1251,7 +1351,8 @@ mod tests {
 
     #[test]
     fn net_devices_parser() {
-        let d = net_devices("eth0:ethernet:connected:Wired connection 1\nlo:loopback:connected (externally):lo\nwlan0:wifi:disconnected:\n");
+        let d =
+            net_devices("eth0:ethernet:connected:Wired connection 1\nlo:loopback:connected (externally):lo\nwlan0:wifi:disconnected:\n");
         assert_eq!(d.len(), 2);
         assert_eq!(d[0].connection, "Wired connection 1");
         assert_eq!(d[1].kind, "wifi");
@@ -1272,7 +1373,8 @@ mod tests {
     #[test]
     fn bluetooth_parsers() {
         assert_eq!(bt_list("Device 11:22:33:44:55:66 MX Mechanical\nDevice AA:BB:CC:DD:EE:FF Razer Basilisk\n").len(), 2);
-        let (c, k, b) = bt_info("Device 11:22..\n\tName: MX Mechanical\n\tIcon: input-keyboard\n\tConnected: yes\n\tBattery Percentage: 0x5a (90)\n");
+        let (c, k, b) =
+            bt_info("Device 11:22..\n\tName: MX Mechanical\n\tIcon: input-keyboard\n\tConnected: yes\n\tBattery Percentage: 0x5a (90)\n");
         assert!(c);
         assert_eq!(k, "input-keyboard");
         assert_eq!(b, Some(90));
@@ -1292,7 +1394,8 @@ mod tests {
 
     #[test]
     fn power_profiles_parser() {
-        let (n, a) = profiles("  performance:\n    CpuDriver:\tintel_pstate\n\n* balanced:\n    CpuDriver:\tintel_pstate\n\n  power-saver:\n");
+        let (n, a) =
+            profiles("  performance:\n    CpuDriver:\tintel_pstate\n\n* balanced:\n    CpuDriver:\tintel_pstate\n\n  power-saver:\n");
         assert_eq!(n, vec!["performance", "balanced", "power-saver"]);
         assert_eq!(a, "balanced");
     }
@@ -1310,7 +1413,6 @@ mod tests {
         assert!(!c[1].installed);
     }
 }
-
 
 // ---------------------------------------------------------------- Icon packs
 
@@ -1370,7 +1472,9 @@ fn any_icons(theme: &std::path::Path, n: usize) -> Vec<std::path::PathBuf> {
     }
     dirs.sort();
     for d in dirs {
-        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&d).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.extension().map(|x| x == "png" || x == "svg").unwrap_or(false)).collect()).unwrap_or_default();
+        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&d)
+            .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.extension().map(|x| x == "png" || x == "svg").unwrap_or(false)).collect())
+            .unwrap_or_default();
         files.sort();
         for f in files {
             out.push(f);
@@ -1395,15 +1499,33 @@ pub fn icon_packs() -> Vec<IconPack> {
         for d in dirs {
             let id = d.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             let Ok(index) = std::fs::read_to_string(d.join("index.theme")) else { continue };
-            if theme_key(&index, "Hidden").map(|h| h.eq_ignore_ascii_case("true")).unwrap_or(false) || theme_key(&index, "Directories").is_none() {
+            if theme_key(&index, "Hidden").map(|h| h.eq_ignore_ascii_case("true")).unwrap_or(false)
+                || theme_key(&index, "Directories").is_none()
+            {
                 continue;
             }
             // KDE's, GNOME's and the toolkit's own packs are not choices: Yggdrasil's pack is Liki (they stay installed only because KDE programs need them)
             let lower = id.to_lowercase();
-            if matches!(id.as_str(), "default" | "hicolor" | "locolor") || lower.starts_with("breeze") || lower.starts_with("klassy") || lower.starts_with("adwaita") || lower == "highcontrast" {
+            if matches!(id.as_str(), "default" | "hicolor" | "locolor")
+                || lower.starts_with("breeze")
+                || lower.starts_with("klassy")
+                || lower.starts_with("adwaita")
+                || lower == "highcontrast"
+            {
                 continue;
             }
-            let samples = ["folder", "system-file-manager", "file-manager", "minos", "steam", "spotify", "vivaldi", "firefox", "preferences-system", "web-browser"];
+            let samples = [
+                "folder",
+                "system-file-manager",
+                "file-manager",
+                "minos",
+                "steam",
+                "spotify",
+                "vivaldi",
+                "firefox",
+                "preferences-system",
+                "web-browser",
+            ];
             if let Some(have) = out.iter_mut().find(|p| p.id == id) {
                 // the same pack is in the user's folder and the system's (the user's adds to it): borrow samples from the system copy
                 for n in samples {
@@ -1490,14 +1612,18 @@ pub fn ini_set(text: &str, group: &str, key: &str, value: &str) -> String {
 
 /// ~/.config (or $XDG_CONFIG_HOME).
 pub fn config_dir() -> std::path::PathBuf {
-    std::env::var_os("XDG_CONFIG_HOME").map(std::path::PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config"))
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .unwrap_or_else(|| std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config"))
 }
 
 /// Every pointer theme installed, Yggdrasil's own first, then the user's, then the system's. "default" (only a pointer to
 /// another theme) is left out.
 pub fn cursor_themes() -> Vec<CursorTheme> {
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
-    let roots = [(user_icons_dir(), true), (home.map(|h| h.join(".icons")), true), (Some(std::path::PathBuf::from("/usr/share/icons")), false)];
+    let roots =
+        [(user_icons_dir(), true), (home.map(|h| h.join(".icons")), true), (Some(std::path::PathBuf::from("/usr/share/icons")), false)];
     let mut out: Vec<CursorTheme> = vec![];
     for (root, user) in roots {
         let Some(root) = root else { continue };
@@ -1509,7 +1635,11 @@ pub fn cursor_themes() -> Vec<CursorTheme> {
             if id == "default" || id.starts_with('.') || out.iter().any(|c| c.id == id) {
                 continue;
             }
-            let name = std::fs::read_to_string(d.join("index.theme")).ok().and_then(|t| theme_key(&t, "Name")).filter(|n| !n.trim().is_empty()).unwrap_or_else(|| id.clone());
+            let name = std::fs::read_to_string(d.join("index.theme"))
+                .ok()
+                .and_then(|t| theme_key(&t, "Name"))
+                .filter(|n| !n.trim().is_empty())
+                .unwrap_or_else(|| id.clone());
             out.push(CursorTheme { id, name, user });
         }
     }
@@ -1526,7 +1656,11 @@ pub fn current_cursor() -> String {
 }
 
 fn cursor_in(text: &str) -> Option<String> {
-    text.lines().filter_map(|l| l.split('#').next()?.split_once('=')).find(|(k, _)| k.trim() == "cursor").map(|(_, v)| v.trim().to_string()).filter(|v| !v.is_empty())
+    text.lines()
+        .filter_map(|l| l.split('#').next()?.split_once('='))
+        .find(|(k, _)| k.trim() == "cursor")
+        .map(|(_, v)| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 #[cfg(test)]
@@ -1574,8 +1708,15 @@ pub fn set_icon_pack(id: &str) -> Result<(), String> {
         ini_write(&cfg.join(gtk).join("settings.ini"), "Settings", "gtk-icon-theme-name", id)?;
     }
     // GTK 4 and portal-aware programs read it from GNOME's settings store, when there is one
-    let _ = std::process::Command::new("gsettings").args(["set", "org.gnome.desktop.interface", "icon-theme", id]).stdin(std::process::Stdio::null()).status();
-    let _ = std::process::Command::new("ygg-theme").arg("apply").stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).status();
+    let _ = std::process::Command::new("gsettings")
+        .args(["set", "org.gnome.desktop.interface", "icon-theme", id])
+        .stdin(std::process::Stdio::null())
+        .status();
+    let _ = std::process::Command::new("ygg-theme")
+        .arg("apply")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .status();
     Ok(())
 }
 
@@ -1637,7 +1778,8 @@ pub fn install_icon_pack(src: &str) -> Result<Vec<String>, String> {
             act("liki-icon-import", &[&local.to_string_lossy(), "--out", &unpacked.to_string_lossy()])?;
         } else {
             // bsdtar reads zip and every tar flavour, and refuses paths that climb out of the folder
-            act("bsdtar", &["-xf", &local.to_string_lossy(), "-C", &unpacked.to_string_lossy()]).map_err(|e| format!("Could not open it as an archive: {e}"))?;
+            act("bsdtar", &["-xf", &local.to_string_lossy(), "-C", &unpacked.to_string_lossy()])
+                .map_err(|e| format!("Could not open it as an archive: {e}"))?;
         }
         // packs are the folders with an index.theme: at the top, or one level down (an archive of several packs)
         let mut found: Vec<std::path::PathBuf> = vec![];
@@ -1703,7 +1845,10 @@ mod limit_tests {
         assert!(parse_power_limits(r#"{"gpu":null,"limits":{}}"#).unwrap().gpu.is_none());
         assert!(parse_power_limits("nope").is_none());
         assert_eq!(l.gpu.as_ref().unwrap().hold, None);
-        let held = parse_power_limits(r#"{"gpu":{"name":"RTX","watts":260,"default":260,"min":130,"max":290,"hold":260},"limits":{"performance":{"gpu":290}}}"#).unwrap();
+        let held = parse_power_limits(
+            r#"{"gpu":{"name":"RTX","watts":260,"default":260,"min":130,"max":290,"hold":260},"limits":{"performance":{"gpu":290}}}"#,
+        )
+        .unwrap();
         assert_eq!(held.gpu.unwrap().hold, Some(260), "the slider stops at the held watts");
     }
 
@@ -1713,7 +1858,12 @@ mod limit_tests {
         let msi = parse_gpu_unlock(r#"{"gpu":{"name":"NVIDIA GeForce RTX 2080 Ti","device":"10de:1e07","subsystem":"1462:3711","vbios":"90.02.17.00.3E"},"secure_boot":false,"state":"unsupported","reason":"No tested entry for MSI 1462:3711 with VBIOS 90.02.17.00.3E (tested: ASUS 1043:866a, VBIOS 90.02.17.00.47)","arm_blocker":null,"last_attempt":null,"since":null,"ratio":null,"power_hold":false,"log":"/var/lib/yggdrasil/gpu-unlock/log"}"#).unwrap();
         assert!(!msi.offered());
         assert!(msi.reason.contains("1462:3711") && msi.reason.contains("90.02.17.00.3E"));
-        let state = |s: &str| parse_gpu_unlock(&format!(r#"{{"state":"{s}","reason":"r","arm_blocker":null,"since":"2026-10-27T09:12:00","ratio":2.0,"power_hold":true}}"#)).unwrap();
+        let state = |s: &str| {
+            parse_gpu_unlock(&format!(
+                r#"{{"state":"{s}","reason":"r","arm_blocker":null,"since":"2026-10-27T09:12:00","ratio":2.0,"power_hold":true}}"#
+            ))
+            .unwrap()
+        };
         assert!(!state("no-nvidia").offered());
         for s in ["supported", "armed", "unlocked", "failed", "throttled", "secure-boot"] {
             assert!(state(s).offered(), "{s}");

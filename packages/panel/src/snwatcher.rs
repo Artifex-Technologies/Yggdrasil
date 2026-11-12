@@ -42,7 +42,12 @@ struct Watcher {
 
 #[zbus::interface(name = "org.kde.StatusNotifierWatcher")]
 impl Watcher {
-    async fn register_status_notifier_item(&self, service: String, #[zbus(header)] hdr: zbus::message::Header<'_>, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>) {
+    async fn register_status_notifier_item(
+        &self,
+        service: String,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
+        #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
+    ) {
         let sender = hdr.sender().map(|s| s.to_string()).unwrap_or_default();
         let key = item_key(&sender, &service);
         if key.is_empty() {
@@ -113,7 +118,10 @@ pub fn spawn() {
         loop {
             let w = Watcher::default();
             // no replace_existing_names: kded's watcher is left alone until it goes away by itself
-            let built = zbus::blocking::connection::Builder::session().and_then(|b| b.name(NAME)).and_then(|b| b.serve_at(PATH, w.clone())).and_then(|b| b.build());
+            let built = zbus::blocking::connection::Builder::session()
+                .and_then(|b| b.name(NAME))
+                .and_then(|b| b.serve_at(PATH, w.clone()))
+                .and_then(|b| b.build());
             match built {
                 Ok(conn) => {
                     eprintln!("yggdrasil-panel: serving the tray registry");

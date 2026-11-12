@@ -54,11 +54,14 @@ fn opt_path(o: &Options, k: &str) -> Option<String> {
 
 /// Globs for a MIME type, from the system's shared-mime-info table (`weight:type:glob` lines).
 fn mime_globs(table: &str, mime: &str) -> Vec<String> {
-    table.lines().filter_map(|l| {
-        let mut p = l.splitn(3, ':');
-        let (_, m, g) = (p.next()?, p.next()?, p.next()?);
-        (m == mime && g.starts_with("*.")).then(|| g.to_string())
-    }).collect()
+    table
+        .lines()
+        .filter_map(|l| {
+            let mut p = l.splitn(3, ':');
+            let (_, m, g) = (p.next()?, p.next()?, p.next()?);
+            (m == mime && g.starts_with("*.")).then(|| g.to_string())
+        })
+        .collect()
 }
 
 /// The `--filter` arguments for the filters an application sent.
@@ -109,13 +112,20 @@ unsafe fn libc_kill(pid: i32) {
 
 /// Where the last folder of each program is kept: `key<TAB>folder` lines.
 fn folders_file() -> Option<std::path::PathBuf> {
-    let base = std::env::var_os("XDG_STATE_HOME").map(std::path::PathBuf::from).filter(|p| p.is_absolute()).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/state")))?;
+    let base = std::env::var_os("XDG_STATE_HOME")
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/state")))?;
     Some(base.join("yggdrasil/picker-folders"))
 }
 
 fn remembered(key: &str) -> Option<String> {
     let text = std::fs::read_to_string(folders_file()?).ok()?;
-    text.lines().filter_map(|l| l.split_once('\t')).find(|(k, _)| *k == key).map(|(_, f)| f.to_string()).filter(|f| std::path::Path::new(f).is_dir())
+    text.lines()
+        .filter_map(|l| l.split_once('\t'))
+        .find(|(k, _)| *k == key)
+        .map(|(_, f)| f.to_string())
+        .filter(|f| std::path::Path::new(f).is_dir())
 }
 
 fn remember(key: &str, folder: &str) {
@@ -168,7 +178,11 @@ fn pick(handle: &str, running: &Arc<Mutex<HashMap<String, u32>>>, args: Vec<Stri
         return None;
     }
     let paths: Vec<String> = String::from_utf8_lossy(&out.stdout).lines().filter(|l| !l.is_empty()).map(str::to_string).collect();
-    if paths.is_empty() { None } else { Some(paths) }
+    if paths.is_empty() {
+        None
+    } else {
+        Some(paths)
+    }
 }
 
 fn reply(paths: Option<Vec<String>>, filters: &Filters) -> (u32, Results) {
@@ -181,7 +195,16 @@ fn reply(paths: Option<Vec<String>>, filters: &Filters) -> (u32, Results) {
 }
 
 impl Chooser {
-    async fn run(&self, server: &zbus::object_server::ObjectServer, handle: OwnedObjectPath, app_id: &str, mode: &str, title: String, o: Options, extra: Vec<String>) -> (u32, Results) {
+    async fn run(
+        &self,
+        server: &zbus::object_server::ObjectServer,
+        handle: OwnedObjectPath,
+        app_id: &str,
+        mode: &str,
+        title: String,
+        o: Options,
+        extra: Vec<String>,
+    ) -> (u32, Results) {
         let key = program_key(app_id, &title);
         let _ = server.at(handle.as_str(), Request { handle: handle.to_string(), running: self.running.clone() }).await;
         let table = std::fs::read_to_string("/usr/share/mime/globs2").unwrap_or_default();
@@ -238,25 +261,56 @@ impl Chooser {
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.FileChooser")]
 impl Chooser {
-    async fn open_file(&self, #[zbus(object_server)] server: &zbus::object_server::ObjectServer, handle: OwnedObjectPath, app_id: String, _parent: String, title: String, options: Options) -> (u32, Results) {
+    async fn open_file(
+        &self,
+        #[zbus(object_server)] server: &zbus::object_server::ObjectServer,
+        handle: OwnedObjectPath,
+        app_id: String,
+        _parent: String,
+        title: String,
+        options: Options,
+    ) -> (u32, Results) {
         let mode = if opt_bool(&options, "directory") { "dir" } else { "open" };
         self.run(server, handle, &app_id, mode, title, options, vec![]).await
     }
 
-    async fn save_file(&self, #[zbus(object_server)] server: &zbus::object_server::ObjectServer, handle: OwnedObjectPath, app_id: String, _parent: String, title: String, options: Options) -> (u32, Results) {
+    async fn save_file(
+        &self,
+        #[zbus(object_server)] server: &zbus::object_server::ObjectServer,
+        handle: OwnedObjectPath,
+        app_id: String,
+        _parent: String,
+        title: String,
+        options: Options,
+    ) -> (u32, Results) {
         self.run(server, handle, &app_id, "save", title, options, vec![]).await
     }
 
     /// Save several files into one folder: pick the folder, answer with each file name inside it.
-    async fn save_files(&self, #[zbus(object_server)] server: &zbus::object_server::ObjectServer, handle: OwnedObjectPath, app_id: String, _parent: String, title: String, options: Options) -> (u32, Results) {
-        let names: Vec<String> = options.get("files").and_then(|v| Vec::<Vec<u8>>::try_from(v.clone()).ok()).unwrap_or_default().into_iter().map(bytes_text).collect();
+    async fn save_files(
+        &self,
+        #[zbus(object_server)] server: &zbus::object_server::ObjectServer,
+        handle: OwnedObjectPath,
+        app_id: String,
+        _parent: String,
+        title: String,
+        options: Options,
+    ) -> (u32, Results) {
+        let names: Vec<String> = options
+            .get("files")
+            .and_then(|v| Vec::<Vec<u8>>::try_from(v.clone()).ok())
+            .unwrap_or_default()
+            .into_iter()
+            .map(bytes_text)
+            .collect();
         let (code, mut r) = self.run(server, handle, &app_id, "dir", title, options, vec![]).await;
         if code != 0 {
             return (code, r);
         }
         let dirs: Vec<String> = r.get("uris").and_then(|v| Vec::<String>::try_from(v.clone()).ok()).unwrap_or_default();
         if let Some(d) = dirs.first() {
-            let uris: Vec<String> = names.iter().map(|n| format!("{}/{}", d.trim_end_matches('/'), uri(n).trim_start_matches("file://"))).collect();
+            let uris: Vec<String> =
+                names.iter().map(|n| format!("{}/{}", d.trim_end_matches('/'), uri(n).trim_start_matches("file://"))).collect();
             r.insert("uris".into(), Value::from(uris).try_into().unwrap());
         }
         (0, r)

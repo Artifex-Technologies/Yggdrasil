@@ -45,7 +45,8 @@ impl ToolsConf {
     }
 
     pub fn render(&self) -> String {
-        let mut s = format!("# Yggdrasil's tools (Settings > Keyboard Shortcuts)\nfind_mouse = {}\n", if self.find_mouse { "yes" } else { "no" });
+        let mut s =
+            format!("# Yggdrasil's tools (Settings > Keyboard Shortcuts)\nfind_mouse = {}\n", if self.find_mouse { "yes" } else { "no" });
         for l in &self.other {
             s.push_str(l);
             s.push('\n');

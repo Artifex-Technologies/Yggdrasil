@@ -48,7 +48,8 @@ pub fn proton_drive() -> Option<CloudPlace> {
     let first = cands.first()?.clone();
     // the mount's folder stays behind empty when the mount is down (a lapsed sign-in, no network): that is not a working Proton Drive,
     // and showing it as one hid the way to sign in again. Usable = a mount, or a folder with files in it (a synced copy).
-    let found = cands.into_iter().find(|p| p.is_dir() && (is_mount(p) || std::fs::read_dir(p).map(|mut d| d.next().is_some()).unwrap_or(false)));
+    let found =
+        cands.into_iter().find(|p| p.is_dir() && (is_mount(p) || std::fs::read_dir(p).map(|mut d| d.next().is_some()).unwrap_or(false)));
     Some(CloudPlace {
         label: "Proton Drive".into(),
         state: if found.is_some() { CloudState::Ready } else { CloudState::NotMounted },
@@ -66,10 +67,7 @@ pub fn favorites() -> Vec<Place> {
         ("Pictures", dirs::picture_dir()),
         ("Videos", dirs::video_dir()),
     ];
-    items
-        .into_iter()
-        .filter_map(|(label, p)| p.filter(|p| p.is_dir()).map(|path| Place { label: label.into(), path }))
-        .collect()
+    items.into_iter().filter_map(|(label, p)| p.filter(|p| p.is_dir()).map(|path| Place { label: label.into(), path })).collect()
 }
 
 /// The well-known folders that get their own picture in the sidebar (as Windows draws Desktop, Documents, Downloads ...).
@@ -143,7 +141,11 @@ fn display_name(host: &str, os_id: &str) -> String {
     let h = host.to_lowercase();
     let generic = ["", "localhost", "localhost.localdomain", "archiso"];
     let os_default = !os_id.is_empty() && (h == os_id || h == format!("{os_id}-os"));
-    if generic.contains(&h.as_str()) || os_default { THIS_PC.to_string() } else { host.to_string() }
+    if generic.contains(&h.as_str()) || os_default {
+        THIS_PC.to_string()
+    } else {
+        host.to_string()
+    }
 }
 
 pub fn this_pc() -> PathBuf {
@@ -176,8 +178,21 @@ pub struct RawDisk {
 
 /// Keep real, user-relevant drives; drop pseudo filesystems and system plumbing mounts.
 pub fn filter_drives(raw: Vec<RawDisk>) -> Vec<Drive> {
-    const PSEUDO_FS: &[&str] = &["tmpfs", "devtmpfs", "squashfs", "overlay", "efivarfs", "proc", "sysfs", "cgroup2", "ramfs", "fuse.portal"];
-    const SKIP_PREFIX: &[&str] = &["/boot", "/snap", "/run/user", "/var/lib/docker", "/var/lib/containers", "/nix/store", "/sys", "/proc", "/dev", "/mnt/wsl", "/usr/lib/wsl"];
+    const PSEUDO_FS: &[&str] =
+        &["tmpfs", "devtmpfs", "squashfs", "overlay", "efivarfs", "proc", "sysfs", "cgroup2", "ramfs", "fuse.portal"];
+    const SKIP_PREFIX: &[&str] = &[
+        "/boot",
+        "/snap",
+        "/run/user",
+        "/var/lib/docker",
+        "/var/lib/containers",
+        "/nix/store",
+        "/sys",
+        "/proc",
+        "/dev",
+        "/mnt/wsl",
+        "/usr/lib/wsl",
+    ];
     let mut out: Vec<Drive> = Vec::new();
     for d in raw {
         let m = d.mount.to_string_lossy().replace('\\', "/");
@@ -193,7 +208,11 @@ pub fn filter_drives(raw: Vec<RawDisk>) -> Vec<Drive> {
             "System (/)".to_string()
         } else if windows_style {
             let shown = m.trim_end_matches('/');
-            if vol.is_empty() { format!("Local Disk ({shown}\\)") } else { format!("{vol} ({shown}\\)") }
+            if vol.is_empty() {
+                format!("Local Disk ({shown}\\)")
+            } else {
+                format!("{vol} ({shown}\\)")
+            }
         } else if !vol.is_empty() && !vol.starts_with("/dev/") {
             vol.to_string()
         } else {
@@ -202,7 +221,11 @@ pub fn filter_drives(raw: Vec<RawDisk>) -> Vec<Drive> {
         out.push(Drive { label, path: d.mount, total: d.total, free: d.free, removable: d.removable });
     }
     // Root first, then by mount path (so C:, D:, E: stay in letter order).
-    out.sort_by(|a, b| (a.path != Path::new("/")).cmp(&(b.path != Path::new("/"))).then(a.path.to_string_lossy().to_lowercase().cmp(&b.path.to_string_lossy().to_lowercase())));
+    out.sort_by(|a, b| {
+        (a.path != Path::new("/"))
+            .cmp(&(b.path != Path::new("/")))
+            .then(a.path.to_string_lossy().to_lowercase().cmp(&b.path.to_string_lossy().to_lowercase()))
+    });
     out
 }
 
@@ -295,7 +318,10 @@ impl Disk {
 
     /// The system lives on it (/, /boot or /home): never formatted or ejected from here.
     pub fn holds_system(&self) -> bool {
-        self.parts.iter().flat_map(|p| &p.mounts).any(|m| m == Path::new("/") || m.starts_with("/boot") || m == Path::new("/home") || m.starts_with("/usr"))
+        self.parts
+            .iter()
+            .flat_map(|p| &p.mounts)
+            .any(|m| m == Path::new("/") || m.starts_with("/boot") || m == Path::new("/home") || m.starts_with("/usr"))
     }
 
     /// Where to go when it is clicked: the mount point of its one mounted partition, else the disk's own view.
@@ -342,7 +368,9 @@ pub fn parse_lsblk(json: &str, usage: &dyn Fn(&Path) -> Option<(u64, u64)>) -> V
     let mut disks = vec![];
     for d in v["blockdevices"].as_array().into_iter().flatten() {
         // Real disks only: no loop devices, optical drives or compressed RAM.
-        if str_of(&d["type"]) != "disk" || d["name"].as_str().is_none_or(|n| n.starts_with("zram") || n.starts_with("loop") || n.starts_with("sr")) {
+        if str_of(&d["type"]) != "disk"
+            || d["name"].as_str().is_none_or(|n| n.starts_with("zram") || n.starts_with("loop") || n.starts_with("sr"))
+        {
             continue;
         }
         let name = str_of(&d["name"]);
@@ -361,10 +389,24 @@ pub fn parse_lsblk(json: &str, usage: &dyn Fn(&Path) -> Option<(u64, u64)>) -> V
             mounts.sort_by_key(|m| (m.components().count(), m.clone()));
             mounts.dedup();
             let usage = mounts.iter().find_map(|m| usage(m));
-            let plabel = [str_of(&c["label"]), str_of(&c["partlabel"])].into_iter().find(|s| !s.is_empty()).unwrap_or_else(|| "Partition".to_string());
-            parts.push(Partition { name: pname.clone(), label: format!("{plabel} ({pname})"), volume: str_of(&c["label"]), fs: str_of(&c["fstype"]), size: num_of(&c["size"]), mounts, usage });
+            let plabel = [str_of(&c["label"]), str_of(&c["partlabel"])]
+                .into_iter()
+                .find(|s| !s.is_empty())
+                .unwrap_or_else(|| "Partition".to_string());
+            parts.push(Partition {
+                name: pname.clone(),
+                label: format!("{plabel} ({pname})"),
+                volume: str_of(&c["label"]),
+                fs: str_of(&c["fstype"]),
+                size: num_of(&c["size"]),
+                mounts,
+                usage,
+            });
         }
-        let removable = d["rm"].as_bool().unwrap_or(false) || d["hotplug"].as_bool().unwrap_or(false) || str_of(&d["tran"]) == "usb" || num_of(&d["rm"]) == 1;
+        let removable = d["rm"].as_bool().unwrap_or(false)
+            || d["hotplug"].as_bool().unwrap_or(false)
+            || str_of(&d["tran"]) == "usb"
+            || num_of(&d["rm"]) == 1;
         disks.push(Disk { name, label, size, parts, removable, model });
     }
     disks
@@ -372,7 +414,9 @@ pub fn parse_lsblk(json: &str, usage: &dyn Fn(&Path) -> Option<(u64, u64)>) -> V
 
 /// The disks in this computer, with their partitions and how full the mounted ones are.
 pub fn disks() -> Vec<Disk> {
-    let out = std::process::Command::new("lsblk").args(["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,FSTYPE,LABEL,PARTLABEL,MOUNTPOINTS,RM,HOTPLUG,TRAN"]).output();
+    let out = std::process::Command::new("lsblk")
+        .args(["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,FSTYPE,LABEL,PARTLABEL,MOUNTPOINTS,RM,HOTPLUG,TRAN"])
+        .output();
     let Ok(out) = out else { return vec![] };
     let sys = sysinfo::Disks::new_with_refreshed_list();
     let usage = |m: &Path| sys.list().iter().find(|d| d.mount_point() == m).map(|d| (d.total_space(), d.available_space()));
@@ -404,7 +448,11 @@ mod tests {
 
     #[test]
     fn disks_list_the_device_with_its_partitions() {
-        let usage = |m: &Path| match m.to_str() { Some("/") => Some((1000, 400)), Some("/boot/efi") => Some((100, 90)), _ => None };
+        let usage = |m: &Path| match m.to_str() {
+            Some("/") => Some((1000, 400)),
+            Some("/boot/efi") => Some((100, 90)),
+            _ => None,
+        };
         let d = parse_lsblk(LSBLK, &usage);
         assert_eq!(d.len(), 1, "zram and optical drives are not disks");
         assert_eq!(d[0].name, "vda");

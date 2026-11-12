@@ -46,15 +46,35 @@ pub struct Item {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Block {
-    Heading { level: u8, text: Vec<Inline>, slug: String },
+    Heading {
+        level: u8,
+        text: Vec<Inline>,
+        slug: String,
+    },
     Para(Vec<Inline>),
     /// A paragraph centred (from HTML's `align="center"`, the usual README logo).
     Center(Vec<Inline>),
-    Code { lang: String, text: String },
-    Quote { alert: Option<Alert>, blocks: Vec<Block> },
-    List { start: Option<u64>, items: Vec<Item> },
-    Table { align: Vec<Align>, head: Vec<Vec<Inline>>, rows: Vec<Vec<Vec<Inline>>> },
-    Footnote { label: String, blocks: Vec<Block> },
+    Code {
+        lang: String,
+        text: String,
+    },
+    Quote {
+        alert: Option<Alert>,
+        blocks: Vec<Block>,
+    },
+    List {
+        start: Option<u64>,
+        items: Vec<Item>,
+    },
+    Table {
+        align: Vec<Align>,
+        head: Vec<Vec<Inline>>,
+        rows: Vec<Vec<Vec<Inline>>>,
+    },
+    Footnote {
+        label: String,
+        blocks: Vec<Block>,
+    },
     Rule,
 }
 
@@ -99,7 +119,15 @@ pub fn parse(text: &str) -> Vec<Block> {
         | Options::ENABLE_FOOTNOTES
         | Options::ENABLE_GFM
         | Options::ENABLE_YAML_STYLE_METADATA_BLOCKS;
-    let mut b = Builder { stack: vec![Frame::Blocks { kind: Container::Root, blocks: vec![] }], bold: 0, italic: 0, strike: 0, links: vec![], image: None, slugs: HashMap::new() };
+    let mut b = Builder {
+        stack: vec![Frame::Blocks { kind: Container::Root, blocks: vec![] }],
+        bold: 0,
+        italic: 0,
+        strike: 0,
+        links: vec![],
+        image: None,
+        slugs: HashMap::new(),
+    };
     for ev in Parser::new_ext(text, opts) {
         b.event(ev);
     }
@@ -483,7 +511,8 @@ fn html_block(html: &str, slug_of: &mut dyn FnMut(&str) -> String) -> Vec<Block>
         text.push_str(&decode_entities(&s[..lt]));
         let Some(gt) = s[lt..].find('>') else { break };
         let tag = &s[lt..lt + gt + 1];
-        let name: String = tag[1..].trim_start_matches('/').chars().take_while(|c| c.is_ascii_alphanumeric()).collect::<String>().to_ascii_lowercase();
+        let name: String =
+            tag[1..].trim_start_matches('/').chars().take_while(|c| c.is_ascii_alphanumeric()).collect::<String>().to_ascii_lowercase();
         let closing = tag[1..].starts_with('/');
         if !closing && (name == "script" || name == "style") {
             // their contents are code, not text: skipped whole
@@ -543,7 +572,10 @@ mod tests {
         let b = parse("**bold [link](https://a.b)** and `code` ~~gone~~");
         let Block::Para(p) = &b[0] else { panic!() };
         assert_eq!(p[0], Inline::Text { text: "bold ".into(), style: Style { bold: true, ..Default::default() }, link: None });
-        assert_eq!(p[1], Inline::Text { text: "link".into(), style: Style { bold: true, ..Default::default() }, link: Some("https://a.b".into()) });
+        assert_eq!(
+            p[1],
+            Inline::Text { text: "link".into(), style: Style { bold: true, ..Default::default() }, link: Some("https://a.b".into()) }
+        );
         assert!(p.contains(&Inline::Text { text: "code".into(), style: Style { code: true, ..Default::default() }, link: None }));
         assert!(p.contains(&Inline::Text { text: "gone".into(), style: Style { strike: true, ..Default::default() }, link: None }));
     }

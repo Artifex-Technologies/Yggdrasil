@@ -48,7 +48,18 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Config { act: false, screensaver: 0, dim: 0, blank: 0, lock: 0, display_off: 0, suspend: 0, hibernate: 0, dim_level: 30, lights_off: true }
+        Config {
+            act: false,
+            screensaver: 0,
+            dim: 0,
+            blank: 0,
+            lock: 0,
+            display_off: 0,
+            suspend: 0,
+            hibernate: 0,
+            dim_level: 30,
+            lights_off: true,
+        }
     }
 }
 
@@ -80,10 +91,18 @@ impl Config {
 
     /// Every step that has a time, in the order it happens (ties keep the order screensaver, dim, black screen, lock, display-off, suspend).
     pub fn steps(&self) -> Vec<(u32, Step)> {
-        let mut v: Vec<(u32, Step)> = [(self.screensaver, Step::Screensaver), (self.dim, Step::Dim), (self.blank, Step::Blank), (self.lock, Step::Lock), (self.display_off, Step::DisplayOff), (self.suspend, Step::Suspend), (self.hibernate, Step::Hibernate)]
-            .into_iter()
-            .filter(|(s, _)| *s > 0)
-            .collect();
+        let mut v: Vec<(u32, Step)> = [
+            (self.screensaver, Step::Screensaver),
+            (self.dim, Step::Dim),
+            (self.blank, Step::Blank),
+            (self.lock, Step::Lock),
+            (self.display_off, Step::DisplayOff),
+            (self.suspend, Step::Suspend),
+            (self.hibernate, Step::Hibernate),
+        ]
+        .into_iter()
+        .filter(|(s, _)| *s > 0)
+        .collect();
         v.sort_by_key(|(s, _)| *s);
         v
     }
@@ -120,7 +139,10 @@ pub fn due_at(c: &Config, mark: u32) -> Vec<Step> {
 /// (a video player or browser asks for this while a video plays) or sleep. A held-back dim happens as soon as the inhibitor goes.
 /// From logind's list (what, who, why, mode, uid, pid): the locks that block idling or sleeping, as (who, what).
 pub fn blocking_inhibitors(list: Vec<(String, String, String, String, u32, u32)>) -> Vec<(String, String)> {
-    list.into_iter().filter(|(what, _, _, mode, _, _)| mode == "block" && (what.contains("idle") || what.contains("sleep"))).map(|(what, who, ..)| (who, what)).collect()
+    list.into_iter()
+        .filter(|(what, _, _, mode, _, _)| mode == "block" && (what.contains("idle") || what.contains("sleep")))
+        .map(|(what, who, ..)| (who, what))
+        .collect()
 }
 
 pub fn blocked_by_inhibitors(step: Step, what: &[&str]) -> bool {
@@ -146,14 +168,33 @@ mod tests {
     #[test]
     fn only_blocking_locks_hold_back_sleep() {
         let l = |what: &str, who: &str, mode: &str| (what.to_string(), who.to_string(), String::new(), mode.to_string(), 0, 0);
-        let got = blocking_inhibitors(vec![l("sleep", "NetworkManager", "delay"), l("sleep", "UPower", "delay"), l("idle:sleep", "VLC", "block"), l("shutdown", "x", "block")]);
+        let got = blocking_inhibitors(vec![
+            l("sleep", "NetworkManager", "delay"),
+            l("sleep", "UPower", "delay"),
+            l("idle:sleep", "VLC", "block"),
+            l("shutdown", "x", "block"),
+        ]);
         assert_eq!(got, vec![("VLC".to_string(), "idle:sleep".to_string())]);
     }
 
     #[test]
     fn parses_and_ignores_junk() {
         let c = Config::parse("# comment\nmode = act\ndim = 300  # five minutes\nlock = soon\nsuspend=1800\nbogus = 1\n");
-        assert_eq!(c, Config { act: true, screensaver: 0, dim: 300, blank: 0, lock: 0, display_off: 0, suspend: 1800, hibernate: 0, dim_level: 30, lights_off: true });
+        assert_eq!(
+            c,
+            Config {
+                act: true,
+                screensaver: 0,
+                dim: 300,
+                blank: 0,
+                lock: 0,
+                display_off: 0,
+                suspend: 1800,
+                hibernate: 0,
+                dim_level: 30,
+                lights_off: true
+            }
+        );
         let c = Config::parse("mode = act\nscreensaver = 180\ndim = 300\n");
         assert_eq!(c.steps(), vec![(180, Step::Screensaver), (300, Step::Dim)], "the screensaver first, then the dim over it");
         assert_eq!(Config::parse("dim_level = 5").dim_level, 10);

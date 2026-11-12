@@ -88,7 +88,8 @@ fn sample(dry_run: bool) -> i32 {
 
 fn report(json: bool) -> i32 {
     let st = load();
-    let mut rows: Vec<(&Series, Verdict)> = st.series.values().filter(|s| s.points.len() >= 2).filter_map(|s| judge(s).map(|v| (s, v))).collect();
+    let mut rows: Vec<(&Series, Verdict)> =
+        st.series.values().filter(|s| s.points.len() >= 2).filter_map(|s| judge(s).map(|v| (s, v))).collect();
     rows.sort_by(|a, b| b.1.per_hour_kb.total_cmp(&a.1.per_hour_kb));
     if json {
         let out: Vec<serde_json::Value> = rows
@@ -112,7 +113,14 @@ fn report(json: bool) -> i32 {
             Kind::Buffers => format!("{} (images in {})", s.name, s.holder),
         };
         let mark = if v.suspect { "  <- keeps growing" } else { "" };
-        println!("{:<34} {:>9} {:>9} {:>7.1} {:>11}{mark}", name, human(v.first_kb), human(v.last_kb), v.hours, human(v.per_hour_kb as u64));
+        println!(
+            "{:<34} {:>9} {:>9} {:>7.1} {:>11}{mark}",
+            name,
+            human(v.first_kb),
+            human(v.last_kb),
+            v.hours,
+            human(v.per_hour_kb as u64)
+        );
     }
     println!("\"then\" and \"now\" are the lowest readings of the first and last hour, so short peaks do not count.");
     0

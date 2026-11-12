@@ -26,8 +26,8 @@ fn query() -> String {
 }
 
 fn set_query(q: &str) {
-    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
     use std::io::Write;
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
     let Some(d) = state_dir() else { return };
     let _ = std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&d);
     let q: String = q.chars().filter(|c| !c.is_control()).take(100).collect();
@@ -73,7 +73,8 @@ pub fn build(codes: Result<Vec<Entry>, String>, q: &str, t: u64) -> Value {
                     .iter()
                     .take(SHOWN)
                     .map(|e| {
-                        let (title, who) = if e.issuer.is_empty() { (e.account.as_str(), "") } else { (e.issuer.as_str(), e.account.as_str()) };
+                        let (title, who) =
+                            if e.issuer.is_empty() { (e.account.as_str(), "") } else { (e.issuer.as_str(), e.account.as_str()) };
                         let next = format!("next in {} s", e.remaining.max(1));
                         let note = if who.is_empty() { next } else { format!("{who} · {next}") };
                         json!({"id": format!("copy:{}", key(&e.id)), "title": title, "note": note, "value": spaced(&e.code), "close": true})
@@ -90,7 +91,11 @@ pub fn build(codes: Result<Vec<Entry>, String>, q: &str, t: u64) -> Value {
                    "help": format!("A click copies the code; the clipboard clears in {CLEAR_AFTER} s.")})
         }
         Err(code) => {
-            let why = if code == "HELPER_MISSING" { "The helper (pa-helper) is not installed; reinstall the plugin from Agora." } else { explain(&code) };
+            let why = if code == "HELPER_MISSING" {
+                "The helper (pa-helper) is not installed; reinstall the plugin from Agora."
+            } else {
+                explain(&code)
+            };
             let mut buttons = vec![];
             if needs_the_app(&code) {
                 buttons.push(json!({"id": "open-app", "label": "Open Proton Authenticator", "close": true}));

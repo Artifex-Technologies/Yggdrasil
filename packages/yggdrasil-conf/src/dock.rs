@@ -9,7 +9,10 @@ pub fn path() -> PathBuf {
 }
 
 fn parse(text: &str) -> Vec<String> {
-    text.lines().map(|l| l.trim().trim_end_matches(".desktop").replace("finder", "minos")).filter(|l| !l.is_empty() && !l.starts_with('#')).collect()
+    text.lines()
+        .map(|l| l.trim().trim_end_matches(".desktop").replace("finder", "minos"))
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect()
 }
 
 /// The pinned apps, in order.

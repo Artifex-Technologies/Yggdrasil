@@ -65,7 +65,11 @@ pub struct State {
 impl State {
     /// The accent to draw with: the system's, if following it and there is one.
     pub fn accent(&self) -> Option<[u8; 3]> {
-        if self.follow_accent { self.system_accent } else { None }
+        if self.follow_accent {
+            self.system_accent
+        } else {
+            None
+        }
     }
 }
 
@@ -106,9 +110,7 @@ impl State {
     }
 
     pub fn load_from(path: &Path) -> State {
-        crate::compat::read_to_string(path)
-            .and_then(|t| serde_json::from_str(&t).ok())
-            .unwrap_or_default()
+        crate::compat::read_to_string(path).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
     }
 
     /// Write atomically (temp file then rename) so a crash cannot leave half a file.

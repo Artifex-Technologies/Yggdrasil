@@ -24,10 +24,7 @@ const MAX_DEPTH: usize = 500;
 
 /// json.loads(text); None where Python raises ValueError (JSONDecodeError).
 pub fn loads(text: &str) -> Option<Json> {
-    let mut p = P {
-        s: text.as_bytes(),
-        i: 0,
-    };
+    let mut p = P { s: text.as_bytes(), i: 0 };
     p.ws();
     let v = p.value(0)?;
     p.ws();
@@ -224,38 +221,17 @@ mod tests {
         let v = loads(r#" {"shape": "circle", "style": "dark", "name": "Liki", "x": NaN, "y": [1, -Infinity, 1e999]} "#).unwrap();
         assert_eq!(v.get("shape"), Some(&Json::Str("circle".into())));
         assert_eq!(v.get("x"), Some(&Json::Other));
-        assert_eq!(
-            loads(r#"{"name": "a", "name": "b"}"#).unwrap().get("name"),
-            Some(&Json::Str("b".into()))
-        );
-        assert_eq!(
-            loads(r#"{"name": "\ud800"}"#).unwrap().get("name"),
-            Some(&Json::Other)
-        );
-        assert_eq!(
-            loads(r#"{"name": "\ud83d\ude00"}"#).unwrap().get("name"),
-            Some(&Json::Str("\u{1f600}".into()))
-        );
+        assert_eq!(loads(r#"{"name": "a", "name": "b"}"#).unwrap().get("name"), Some(&Json::Str("b".into())));
+        assert_eq!(loads(r#"{"name": "\ud800"}"#).unwrap().get("name"), Some(&Json::Other));
+        assert_eq!(loads(r#"{"name": "\ud83d\ude00"}"#).unwrap().get("name"), Some(&Json::Str("\u{1f600}".into())));
         assert_eq!(loads(r#"["a"]"#), Some(Json::Other));
     }
 
     #[test]
     fn what_python_refuses_is_refused() {
-        for bad in [
-            "",
-            "{",
-            "{\"a\" 1}",
-            "{\"a\": 1,}",
-            "[1,]",
-            "01",
-            "1.",
-            "-",
-            "\u{feff}{}",
-            "{\"a\": \"\t\"}",
-            "{} x",
-            "{'a': 1}",
-            "\"\\x\"",
-        ] {
+        for bad in
+            ["", "{", "{\"a\" 1}", "{\"a\": 1,}", "[1,]", "01", "1.", "-", "\u{feff}{}", "{\"a\": \"\t\"}", "{} x", "{'a': 1}", "\"\\x\""]
+        {
             assert_eq!(loads(bad), None, "{bad:?}");
         }
     }

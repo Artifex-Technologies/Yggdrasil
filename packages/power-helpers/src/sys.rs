@@ -201,7 +201,9 @@ impl Ctx {
             .map(|rd| {
                 rd.filter_map(|e| e.ok())
                     .filter_map(|e| e.file_name().into_string().ok())
-                    .filter(|n| n.starts_with(prefix) && n.ends_with(suffix) && n.len() >= prefix.len() + suffix.len() && !n.starts_with('.'))
+                    .filter(|n| {
+                        n.starts_with(prefix) && n.ends_with(suffix) && n.len() >= prefix.len() + suffix.len() && !n.starts_with('.')
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -269,7 +271,9 @@ impl Ctx {
         }
         if self.fake_root() {
             let mut fc = self.fake_commands.borrow_mut();
-            if let Some(answer) = fc.get_or_insert_with(|| FakeCommands::load(&self.path("/commands.json"))).as_mut().and_then(|fc| fc.answer(&line)) {
+            if let Some(answer) =
+                fc.get_or_insert_with(|| FakeCommands::load(&self.path("/commands.json"))).as_mut().and_then(|fc| fc.answer(&line))
+            {
                 return answer;
             }
         }

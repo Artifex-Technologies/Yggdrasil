@@ -190,7 +190,10 @@ fn a_failure_stays_with_its_part_which_starts_again_until_its_limit() {
     switch(&d, "f", Some("t1"));
     until("f given up", || state(d.path(), "f").0 == "failed");
     assert_eq!((log.count("f run"), log.count("f failure stop")), (3, 3), "three starts (its limit), each with its failure stop");
-    assert_eq!((state(d.path(), "a").0.as_str(), log.count("a run"), log.count("a clean stop") + log.count("a failure stop")), ("running", 1, 0));
+    assert_eq!(
+        (state(d.path(), "a").0.as_str(), log.count("a run"), log.count("a clean stop") + log.count("a failure stop")),
+        ("running", 1, 0)
+    );
     // switched on anew: a fresh start limit
     switch(&d, "f", Some("t2"));
     until("f tried again", || log.count("f run") == 6);
@@ -247,11 +250,20 @@ fn a_dry_run_runs_the_named_parts_their_rounds_once() {
     let (d, log) = (TempDir::new(), Arc::new(Log::default()));
     let mut b = base(&d);
     (b.dry, b.steps) = (true, Some(3));
-    let mut svc = Service::new(vec![fake("a", Kind::Loop, &log), fake("f", Kind::Fail, &log), fake("x", Kind::Loop, &log)], b, Switches::Fixed(vec!["a".into(), "f".into()]), None).unwrap();
+    let mut svc = Service::new(
+        vec![fake("a", Kind::Loop, &log), fake("f", Kind::Fail, &log), fake("x", Kind::Loop, &log)],
+        b,
+        Switches::Fixed(vec!["a".into(), "f".into()]),
+        None,
+    )
+    .unwrap();
     svc.tick = 0.05;
     assert_eq!(svc.run(), 0);
     assert_eq!(log.lines().len(), 4);
-    assert_eq!((log.count("a run"), log.count("a clean stop"), log.count("f run"), log.count("f failure stop"), log.count("x run")), (1, 1, 1, 1, 0));
+    assert_eq!(
+        (log.count("a run"), log.count("a clean stop"), log.count("f run"), log.count("f failure stop"), log.count("x run")),
+        (1, 1, 1, 1, 0)
+    );
 }
 
 #[test]
@@ -288,8 +300,22 @@ fn adopt_restarts_only_the_units_that_still_run_an_old_helper() {
 #[test]
 fn stopped_makes_the_stop_of_each_part_still_switched_on() {
     let d = TempDir::new();
-    d.files("sys/class/hwmon/hwmon5", &[("name", "corsaircpro"), ("fan1_label", "fan1 4pin"), ("fan1_input", "3846"), ("fan6_label", "fan6 4pin"), ("fan6_input", "1399"), ("pwm1", ""), ("pwm6", "")]);
-    d.files("etc/yggdrasil", &[("case-fans.json", r#"{"ports": {"1": {"name": "pump", "role": "pump", "fixed": 100}, "6": {"role": "fan"}}}"#)]);
+    d.files(
+        "sys/class/hwmon/hwmon5",
+        &[
+            ("name", "corsaircpro"),
+            ("fan1_label", "fan1 4pin"),
+            ("fan1_input", "3846"),
+            ("fan6_label", "fan6 4pin"),
+            ("fan6_input", "1399"),
+            ("pwm1", ""),
+            ("pwm6", ""),
+        ],
+    );
+    d.files(
+        "etc/yggdrasil",
+        &[("case-fans.json", r#"{"ports": {"1": {"name": "pump", "role": "pump", "fixed": 100}, "6": {"role": "fan"}}}"#)],
+    );
     let c = ctx(d.path());
     let pwm = |n: u8| fs::read_to_string(d.path().join(format!("sys/class/hwmon/hwmon5/pwm{n}"))).unwrap();
     stopped(&c, true);

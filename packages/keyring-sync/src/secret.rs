@@ -54,7 +54,8 @@ impl Keyring {
 
     fn session(&self) -> Result<OwnedObjectPath, String> {
         let svc = Proxy::new(&self.conn, SERVICE, ROOT, "org.freedesktop.Secret.Service").map_err(|e| e.to_string())?;
-        let (_, session): (OwnedValue, OwnedObjectPath) = svc.call("OpenSession", &("plain", Value::from(""))).map_err(|e| e.to_string())?;
+        let (_, session): (OwnedValue, OwnedObjectPath) =
+            svc.call("OpenSession", &("plain", Value::from(""))).map_err(|e| e.to_string())?;
         Ok(session)
     }
 
@@ -102,17 +103,35 @@ impl Keyring {
 pub fn start_fresh(password: &str) -> Result<String, String> {
     use std::io::Write;
     use std::process::{Command, Stdio};
-    let dir = std::env::var_os("XDG_DATA_HOME").map(std::path::PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share"))).ok_or("no data folder")?.join("keyrings");
+    let dir = std::env::var_os("XDG_DATA_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share")))
+        .ok_or("no data folder")?
+        .join("keyrings");
     let old = dir.join("login.keyring");
-    let moved = dir.join(format!("login.keyring.old-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)));
+    let moved = dir.join(format!(
+        "login.keyring.old-{}",
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    ));
     if old.exists() {
         std::fs::rename(&old, &moved).map_err(|e| e.to_string())?;
     }
     let _ = Command::new("pkill").args(["-x", "gnome-keyring-d"]).status();
     std::thread::sleep(std::time::Duration::from_millis(800));
-    let mut child = Command::new("setsid").arg("gnome-keyring-daemon").arg("--login").stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|e| e.to_string())?;
+    let mut child = Command::new("setsid")
+        .arg("gnome-keyring-daemon")
+        .arg("--login")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| e.to_string())?;
     child.stdin.take().ok_or("no stdin")?.write_all(password.as_bytes()).map_err(|e| e.to_string())?;
     let _ = child.wait();
-    let _ = Command::new("setsid").args(["-f", "gnome-keyring-daemon", "--start", "--components=secrets"]).stdout(Stdio::null()).stderr(Stdio::null()).status();
+    let _ = Command::new("setsid")
+        .args(["-f", "gnome-keyring-daemon", "--start", "--components=secrets"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
     Ok(moved.display().to_string())
 }

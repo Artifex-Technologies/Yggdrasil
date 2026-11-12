@@ -72,7 +72,10 @@ fn names(slot: &str) -> String {
 }
 
 fn two() -> Sys {
-    sys(&[("card1", "0000:01:00.0", "0x10de", "0x1f07", "nvidia", true, &[true]), ("card2", "0000:03:00.0", "0x8086", "0xe20b", "xe", false, &[false, false])])
+    sys(&[
+        ("card1", "0000:01:00.0", "0x10de", "0x1f07", "nvidia", true, &[true]),
+        ("card2", "0000:03:00.0", "0x8086", "0xe20b", "xe", false, &[false, false]),
+    ])
 }
 
 fn cs(vk: Vec<VkDevice>) -> Vec<Card> {
@@ -89,14 +92,21 @@ fn get<'a>(env: &'a [(String, String)], k: &str) -> Option<&'a str> {
 
 #[test]
 fn test_vulkaninfo_is_read() {
-    assert_eq!(vk(), vec![(0x10DE, 0x1F07, "NVIDIA GeForce RTX 2070".to_string()), (0x8086, 0xE20B, "Intel(R) Arc(tm) B580 Graphics (BMG G21)".to_string())]);
+    assert_eq!(
+        vk(),
+        vec![
+            (0x10DE, 0x1F07, "NVIDIA GeForce RTX 2070".to_string()),
+            (0x8086, 0xE20B, "Intel(R) Arc(tm) B580 Graphics (BMG G21)".to_string())
+        ]
+    );
 }
 
 #[test]
 fn test_cards_are_numbered_in_pci_order_with_their_screens() {
     let _s = two();
     let c = cs(vk());
-    let got: Vec<(i64, &str, &str, bool, i64)> = c.iter().map(|c| (c.number, c.name.as_str(), c.driver.as_str(), c.boot, c.screens)).collect();
+    let got: Vec<(i64, &str, &str, bool, i64)> =
+        c.iter().map(|c| (c.number, c.name.as_str(), c.driver.as_str(), c.boot, c.screens)).collect();
     assert_eq!(got, vec![(1, "GeForce RTX 2070", "nvidia", true, 1), (2, "Arc B580", "xe", false, 0)]);
     assert_eq!(c[1].vulkan_name, "Intel(R) Arc(tm) B580 Graphics (BMG G21)");
 }
@@ -126,7 +136,10 @@ fn test_the_nvidia_card_is_picked_by_prime_offload() {
     let _s = two();
     let c = cs(vk());
     let env = environment(&c[0], &c);
-    assert_eq!((get(&env, "__NV_PRIME_RENDER_OFFLOAD"), get(&env, "__GLX_VENDOR_LIBRARY_NAME"), get(&env, "__VK_LAYER_NV_optimus")), (Some("1"), Some("nvidia"), Some("NVIDIA_only")));
+    assert_eq!(
+        (get(&env, "__NV_PRIME_RENDER_OFFLOAD"), get(&env, "__GLX_VENDOR_LIBRARY_NAME"), get(&env, "__VK_LAYER_NV_optimus")),
+        (Some("1"), Some("nvidia"), Some("NVIDIA_only"))
+    );
     assert_eq!(get(&env, "DXVK_FILTER_DEVICE_NAME"), Some("NVIDIA GeForce RTX 2070"));
     assert_eq!(get(&env, "DRI_PRIME"), None);
 }
@@ -189,7 +202,10 @@ fn card_numbers_are_read_as_int_read_them() {
 
 #[test]
 fn a_card_without_a_vendor_is_left_out_and_odd_names_are_not_cards() {
-    let _s = sys(&[("card0", "0000:01:00.0", "0x1002", "0x73bf", "amdgpu", true, &[true, true]), ("card10", "0000:0a:00.0", "0x8086", "0x56a0", "i915", false, &[])]);
+    let _s = sys(&[
+        ("card0", "0000:01:00.0", "0x1002", "0x73bf", "amdgpu", true, &[true, true]),
+        ("card10", "0000:0a:00.0", "0x8086", "0x56a0", "i915", false, &[]),
+    ]);
     let root = std::env::var("YGGDRASIL_SYSFS").unwrap();
     // a render node and a card whose device has no vendor file
     std::fs::create_dir_all(format!("{root}/class/drm/renderD128/device")).unwrap();
@@ -199,7 +215,10 @@ fn a_card_without_a_vendor_is_left_out_and_odd_names_are_not_cards() {
     assert_eq!(got, vec![(1, "0000:01:00.0", 2), (2, "0000:0a:00.0", 0)]);
     assert_eq!(c[1].name, "Intel card", "no lspci name: the vendor's");
     let env = environment(&c[0], &c);
-    assert_eq!(env, vec![("DRI_PRIME".to_string(), "pci-0000_01_00_0".to_string()), ("MESA_VK_DEVICE_SELECT".to_string(), "1002:73bf".to_string())]);
+    assert_eq!(
+        env,
+        vec![("DRI_PRIME".to_string(), "pci-0000_01_00_0".to_string()), ("MESA_VK_DEVICE_SELECT".to_string(), "1002:73bf".to_string())]
+    );
 }
 
 #[test]

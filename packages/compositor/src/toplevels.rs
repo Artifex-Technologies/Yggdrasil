@@ -79,7 +79,9 @@ impl App {
     fn new_handle(&mut self, mgr: &ZwlrForeignToplevelManagerV1, window: &Window, minimized: bool) {
         let (Some(client), Some(surface)) = (mgr.client(), state::surface_of(window)) else { return };
         let dh = self.display_handle.clone();
-        let Ok(handle) = client.create_resource::<ZwlrForeignToplevelHandleV1, WlSurface, App>(&dh, mgr.version(), surface.clone()) else { return };
+        let Ok(handle) = client.create_resource::<ZwlrForeignToplevelHandleV1, WlSurface, App>(&dh, mgr.version(), surface.clone()) else {
+            return;
+        };
         mgr.toplevel(&handle);
         let told = describe(self, window, minimized).unwrap_or_default();
         send(&handle, &Told::default(), &told);
@@ -126,7 +128,14 @@ impl App {
 }
 
 impl GlobalDispatch<ZwlrForeignToplevelManagerV1, ()> for App {
-    fn bind(state: &mut Self, _: &DisplayHandle, _: &Client, resource: New<ZwlrForeignToplevelManagerV1>, _: &(), init: &mut DataInit<'_, Self>) {
+    fn bind(
+        state: &mut Self,
+        _: &DisplayHandle,
+        _: &Client,
+        resource: New<ZwlrForeignToplevelManagerV1>,
+        _: &(),
+        init: &mut DataInit<'_, Self>,
+    ) {
         let mgr = init.init(resource, ());
         state.toplevels.managers.push(mgr.clone());
         let all: Vec<(Window, bool)> = state.all_windows();
@@ -137,7 +146,15 @@ impl GlobalDispatch<ZwlrForeignToplevelManagerV1, ()> for App {
 }
 
 impl Dispatch<ZwlrForeignToplevelManagerV1, ()> for App {
-    fn request(state: &mut Self, _: &Client, mgr: &ZwlrForeignToplevelManagerV1, request: zwlr_foreign_toplevel_manager_v1::Request, _: &(), _: &DisplayHandle, _: &mut DataInit<'_, Self>) {
+    fn request(
+        state: &mut Self,
+        _: &Client,
+        mgr: &ZwlrForeignToplevelManagerV1,
+        request: zwlr_foreign_toplevel_manager_v1::Request,
+        _: &(),
+        _: &DisplayHandle,
+        _: &mut DataInit<'_, Self>,
+    ) {
         if let zwlr_foreign_toplevel_manager_v1::Request::Stop = request {
             mgr.finished();
             state.toplevels.managers.retain(|m| m != mgr);
@@ -146,7 +163,15 @@ impl Dispatch<ZwlrForeignToplevelManagerV1, ()> for App {
 }
 
 impl Dispatch<ZwlrForeignToplevelHandleV1, WlSurface> for App {
-    fn request(state: &mut Self, _: &Client, handle: &ZwlrForeignToplevelHandleV1, request: zwlr_foreign_toplevel_handle_v1::Request, surface: &WlSurface, _: &DisplayHandle, _: &mut DataInit<'_, Self>) {
+    fn request(
+        state: &mut Self,
+        _: &Client,
+        handle: &ZwlrForeignToplevelHandleV1,
+        request: zwlr_foreign_toplevel_handle_v1::Request,
+        surface: &WlSurface,
+        _: &DisplayHandle,
+        _: &mut DataInit<'_, Self>,
+    ) {
         use zwlr_foreign_toplevel_handle_v1::Request as R;
         match request {
             R::Activate { .. } => state.activate_surface(surface),

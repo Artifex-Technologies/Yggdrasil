@@ -60,7 +60,11 @@ impl World {
         // a helper that stops before it reads leaves the pipe closed
         let _ = child.stdin.take().unwrap().write_all(stdin.as_bytes());
         let o = child.wait_with_output().unwrap();
-        Out { code: o.status.code().unwrap_or(-1), stdout: String::from_utf8_lossy(&o.stdout).into(), stderr: String::from_utf8_lossy(&o.stderr).into() }
+        Out {
+            code: o.status.code().unwrap_or(-1),
+            stdout: String::from_utf8_lossy(&o.stdout).into(),
+            stderr: String::from_utf8_lossy(&o.stderr).into(),
+        }
     }
 
     fn calls(&self) -> String {
@@ -110,7 +114,8 @@ fn accounts() -> World {
     let d = tmp();
     let calls = d.join("calls.log").to_string_lossy().into_owned();
     fs::write(d.join("passwd"), "root:x:0:0::/root:/bin/bash\nrobin:x:1000:1000:Robin,,,:/home/robin:/bin/bash\nclaude-agent:x:1001:1001::/home/claude-agent:/bin/bash\nsam:x:1002:1002:Sam Doe:/home/sam:/bin/bash\nnobody:x:65534:65534::/:/usr/bin/nologin\n").unwrap();
-    fs::write(d.join("group"), "wheel:x:998:robin,claude-agent\nusers:x:985:\naudio:x:996:\nvideo:x:983:\nstorage:x:100:\nlp:x:7:\n").unwrap();
+    fs::write(d.join("group"), "wheel:x:998:robin,claude-agent\nusers:x:985:\naudio:x:996:\nvideo:x:983:\nstorage:x:100:\nlp:x:7:\n")
+        .unwrap();
     for (name, body) in [
         ("useradd", format!("echo \"useradd $*\" >> {calls}")),
         ("userdel", format!("echo \"userdel $*\" >> {calls}")),
@@ -201,7 +206,8 @@ fn test_a_password_for_someone_else_never_on_the_command_line() {
 fn test_list_shows_login_accounts_and_who_is_admin() {
     let w = accounts();
     let a = w.listed();
-    let got: Vec<(String, bool)> = a.as_array().unwrap().iter().map(|x| (x["login"].as_str().unwrap().to_string(), x["admin"].as_bool().unwrap())).collect();
+    let got: Vec<(String, bool)> =
+        a.as_array().unwrap().iter().map(|x| (x["login"].as_str().unwrap().to_string(), x["admin"].as_bool().unwrap())).collect();
     assert_eq!(got, vec![("robin".into(), true), ("claude-agent".into(), true), ("sam".into(), false)]);
     assert_eq!(a[2]["full_name"], "Sam Doe");
 }
@@ -286,7 +292,24 @@ fn test_needs_root_when_not_testing() {
 #[test]
 fn names_built_to_slip_through_are_refused_before_any_tool_runs() {
     let w = accounts();
-    for bad in ["alex\n", "alex\nroot", "-ralex", "--admin", "al ex", "alex;id", "$(id)", "al\u{0435}x", "\u{fb01}x", "ALEX", "_alex", "alex/..", "a\0b", "claude-agentx", "Sarina", "x".repeat(32).as_str()] {
+    for bad in [
+        "alex\n",
+        "alex\nroot",
+        "-ralex",
+        "--admin",
+        "al ex",
+        "alex;id",
+        "$(id)",
+        "al\u{0435}x",
+        "\u{fb01}x",
+        "ALEX",
+        "_alex",
+        "alex/..",
+        "a\0b",
+        "claude-agentx",
+        "Sarina",
+        "x".repeat(32).as_str(),
+    ] {
         if bad.contains('\0') {
             continue; // a command line cannot carry it
         }
@@ -349,7 +372,15 @@ fn the_caller_id_must_be_a_plain_number() {
     let w = accounts();
     // robin is 1000: a caller id that is not a plain number counts as no caller at all (as in the script; pkexec and sudo
     // always set a plain one)
-    for (uid, can_remove_robin) in [("1000", false), ("01000", false), ("\u{0661}\u{0660}\u{0660}\u{0660}", false), ("1000\n", true), (" 1000", true), ("abc", true), ("", true)] {
+    for (uid, can_remove_robin) in [
+        ("1000", false),
+        ("01000", false),
+        ("\u{0661}\u{0660}\u{0660}\u{0660}", false),
+        ("1000\n", true),
+        (" 1000", true),
+        ("abc", true),
+        ("", true),
+    ] {
         // robin is an administrator; make sam one too so the last-administrator rule does not decide
         w.write("group", "wheel:x:998:robin,sam\nusers:x:985:\n");
         let r = w.run(&["remove", "robin"], "", &[("PKEXEC_UID", uid), ("SUDO_UID", "")], &[]);
@@ -370,7 +401,16 @@ fn groups_outside_the_list_and_odd_commands_are_refused() {
     for g in ["wheel", "disk", "input", "root", "libvirt,wheel", "../wheel", "-", "uucp\n"] {
         assert_eq!(w.run(&["group", "bob", g, "on"], "", &[], &[]).code, 2, "{g:?}");
     }
-    for args in [&["group", "bob", "uucp", "yes"][..], &["group", "bob", "uucp"], &["admin", "bob"], &["admin", "bob", "On"], &["sudo", "bob", "all"], &["login", "bob", "0"], &["frobnicate"], &["name", "bob"]] {
+    for args in [
+        &["group", "bob", "uucp", "yes"][..],
+        &["group", "bob", "uucp"],
+        &["admin", "bob"],
+        &["admin", "bob", "On"],
+        &["sudo", "bob", "all"],
+        &["login", "bob", "0"],
+        &["frobnicate"],
+        &["name", "bob"],
+    ] {
         assert_eq!(w.run(args, "", &[], &[]).code, 2, "{args:?}");
     }
     assert_eq!(w.calls(), "");

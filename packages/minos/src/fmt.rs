@@ -29,6 +29,7 @@ mod tests {
     fn formats_known_instants() {
         assert_eq!(datetime(UNIX_EPOCH), "1970-01-01 00:00");
         assert_eq!(datetime(UNIX_EPOCH + Duration::from_secs(1_791_638_519)), "2026-10-10 13:21");
-        assert_eq!(datetime(UNIX_EPOCH + Duration::from_secs(951_782_400)), "2000-02-29 00:00"); // leap day
+        assert_eq!(datetime(UNIX_EPOCH + Duration::from_secs(951_782_400)), "2000-02-29 00:00");
+        // leap day
     }
 }

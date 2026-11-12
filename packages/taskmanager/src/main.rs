@@ -168,12 +168,23 @@ fn sampler(shared: Arc<Shared>, ctx: egui::Context) {
         let forced = shared.refresh_now.swap(false, Ordering::Relaxed);
         let (svc_due, st_due, ses_due) = {
             let d = shared.data.lock().unwrap();
-            (tab == Tab::Services && (forced || stale(d.services_at, 5)), tab == Tab::Startup && (forced || stale(d.startup_at, 5)), tab == Tab::Users && (forced || stale(d.sessions_at, 5)))
+            (
+                tab == Tab::Services && (forced || stale(d.services_at, 5)),
+                tab == Tab::Startup && (forced || stale(d.startup_at, 5)),
+                tab == Tab::Users && (forced || stale(d.sessions_at, 5)),
+            )
         };
         let svcs = svc_due.then(services::list);
         let st = st_due.then(startup::list);
         let ses = ses_due.then(|| {
-            std::process::Command::new("loginctl").args(["list-sessions", "--output=json", "--no-pager"]).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).output().ok().map(|o| parse_sessions(&String::from_utf8_lossy(&o.stdout))).unwrap_or_default()
+            std::process::Command::new("loginctl")
+                .args(["list-sessions", "--output=json", "--no-pager"])
+                .stdin(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .output()
+                .ok()
+                .map(|o| parse_sessions(&String::from_utf8_lossy(&o.stdout)))
+                .unwrap_or_default()
         });
         {
             let mut d = shared.data.lock().unwrap();
@@ -376,7 +387,8 @@ fn header(ui: &mut egui::Ui, pal: &Palette, cols: &[Column], totals: &HashMap<Co
             if sort.0 == col.col {
                 sort.1 = !sort.1;
             } else {
-                *sort = (col.col, !matches!(col.col, Col::Name | Col::User | Col::Status | Col::Cmd | Col::Desc | Col::Kind | Col::Startup));
+                *sort =
+                    (col.col, !matches!(col.col, Col::Name | Col::User | Col::Status | Col::Cmd | Col::Desc | Col::Kind | Col::Startup));
             }
         }
         let align = if col.right { Align2::RIGHT_BOTTOM } else { Align2::LEFT_BOTTOM };
@@ -386,12 +398,22 @@ fn header(ui: &mut egui::Ui, pal: &Palette, cols: &[Column], totals: &HashMap<Co
             let ta = if col.right { Align2::RIGHT_TOP } else { Align2::LEFT_TOP };
             p.text(pos2(tx, cell.top() + 4.0), ta, t, FontId::proportional(15.0), pal.text);
         }
-        p.text(pos2(tx, cell.bottom() - 6.0), align, col.title, FontId::proportional(12.0), if sort.0 == col.col { pal.accent } else { pal.dim });
+        p.text(
+            pos2(tx, cell.bottom() - 6.0),
+            align,
+            col.title,
+            FontId::proportional(12.0),
+            if sort.0 == col.col { pal.accent } else { pal.dim },
+        );
         if sort.0 == col.col {
             // a small triangle: up when ascending
             let cx = if col.right { cell.left() + 10.0 } else { cell.right() - 10.0 };
             let cy = cell.bottom() - 12.0;
-            let pts = if sort.1 { vec![pos2(cx - 4.0, cy - 2.0), pos2(cx + 4.0, cy - 2.0), pos2(cx, cy + 3.0)] } else { vec![pos2(cx - 4.0, cy + 3.0), pos2(cx + 4.0, cy + 3.0), pos2(cx, cy - 2.0)] };
+            let pts = if sort.1 {
+                vec![pos2(cx - 4.0, cy - 2.0), pos2(cx + 4.0, cy - 2.0), pos2(cx, cy + 3.0)]
+            } else {
+                vec![pos2(cx - 4.0, cy + 3.0), pos2(cx + 4.0, cy + 3.0), pos2(cx, cy - 2.0)]
+            };
             ui.painter().add(egui::Shape::convex_polygon(pts, pal.accent, Stroke::NONE));
         }
         ui.painter().vline(cell.right(), cell.y_range(), Stroke::new(1.0, pal.border));
@@ -403,12 +425,20 @@ fn header(ui: &mut egui::Ui, pal: &Palette, cols: &[Column], totals: &HashMap<Co
 /// One cell of text, cut at the cell's edge.
 fn cell_text(ui: &egui::Ui, pal: &Palette, rect: Rect, text: &str, right: bool, color: Option<Color32>) {
     let p = ui.painter().with_clip_rect(rect.shrink2(vec2(4.0, 0.0)));
-    let (pos, al) = if right { (pos2(rect.right() - 8.0, rect.center().y), Align2::RIGHT_CENTER) } else { (pos2(rect.left() + 8.0, rect.center().y), Align2::LEFT_CENTER) };
+    let (pos, al) = if right {
+        (pos2(rect.right() - 8.0, rect.center().y), Align2::RIGHT_CENTER)
+    } else {
+        (pos2(rect.left() + 8.0, rect.center().y), Align2::LEFT_CENTER)
+    };
     p.text(pos, al, text, FontId::proportional(13.0), color.unwrap_or(pal.text));
 }
 
 fn triangle(ui: &egui::Ui, pal: &Palette, center: egui::Pos2, open: bool) {
-    let pts = if open { vec![pos2(center.x - 4.0, center.y - 2.0), pos2(center.x + 4.0, center.y - 2.0), pos2(center.x, center.y + 3.0)] } else { vec![pos2(center.x - 2.0, center.y - 4.0), pos2(center.x - 2.0, center.y + 4.0), pos2(center.x + 3.0, center.y)] };
+    let pts = if open {
+        vec![pos2(center.x - 4.0, center.y - 2.0), pos2(center.x + 4.0, center.y - 2.0), pos2(center.x, center.y + 3.0)]
+    } else {
+        vec![pos2(center.x - 2.0, center.y - 4.0), pos2(center.x - 2.0, center.y + 4.0), pos2(center.x + 3.0, center.y)]
+    };
     ui.painter().add(egui::Shape::convex_polygon(pts, pal.dim, Stroke::NONE));
 }
 
@@ -417,8 +447,15 @@ fn triangle(ui: &egui::Ui, pal: &Palette, center: egui::Pos2, open: bool) {
 #[derive(Clone, Debug, PartialEq)]
 enum Act {
     /// End (SIGTERM) or force (SIGKILL) these processes; `tree`: they are a whole tree.
-    Signal { pids: Vec<u32>, sig: i32, what: String },
-    Renice { pid: u32, nice: i64 },
+    Signal {
+        pids: Vec<u32>,
+        sig: i32,
+        what: String,
+    },
+    Renice {
+        pid: u32,
+        nice: i64,
+    },
     Service(services::Service, services::Action),
     Startup(startup::Item, bool),
     Focus(String),
@@ -475,7 +512,12 @@ struct App {
 
 impl App {
     fn new(cc: &eframe::CreationContext, tab: Tab) -> App {
-        let shared = Arc::new(Shared { data: Mutex::new(Data::default()), tab: AtomicU8::new(tab.code()), interval_ms: AtomicU64::new(Speed::Normal.ms()), refresh_now: AtomicBool::new(false) });
+        let shared = Arc::new(Shared {
+            data: Mutex::new(Data::default()),
+            tab: AtomicU8::new(tab.code()),
+            interval_ms: AtomicU64::new(Speed::Normal.ms()),
+            refresh_now: AtomicBool::new(false),
+        });
         let s = shared.clone();
         let ctx = cc.egui_ctx.clone();
         std::thread::Builder::new().name("sampler".into()).spawn(move || sampler(s, ctx)).expect("sampler thread");
@@ -519,7 +561,8 @@ impl App {
         if let Act::Signal { pids, sig, what } = &act {
             let by: HashMap<u32, &Proc> = procs.iter().map(|p| (p.pid, p)).collect();
             let foreign = pids.iter().any(|p| by.get(p).is_some_and(|p| p.uid != self.me));
-            let critical: Vec<String> = pids.iter().filter_map(|p| by.get(p)).filter(|p| procs::is_critical(p)).map(|p| p.name.clone()).collect();
+            let critical: Vec<String> =
+                pids.iter().filter_map(|p| by.get(p)).filter(|p| procs::is_critical(p)).map(|p| p.name.clone()).collect();
             if foreign || !critical.is_empty() || *sig == libc::SIGKILL || pids.len() > 1 && what.contains("tree") {
                 let mut text = String::new();
                 if !critical.is_empty() {
@@ -545,7 +588,15 @@ impl App {
                 let failed = procs::signal(&pids, sig);
                 if !failed.is_empty() {
                     // another account's: through polkit (pkexec asks for the password)
-                    let sig_name = if sig == libc::SIGKILL { "KILL" } else if sig == libc::SIGSTOP { "STOP" } else if sig == libc::SIGCONT { "CONT" } else { "TERM" };
+                    let sig_name = if sig == libc::SIGKILL {
+                        "KILL"
+                    } else if sig == libc::SIGSTOP {
+                        "STOP"
+                    } else if sig == libc::SIGCONT {
+                        "CONT"
+                    } else {
+                        "TERM"
+                    };
                     let mut args = vec!["kill".to_string(), "-s".into(), sig_name.into()];
                     args.extend(failed.iter().map(|p| p.to_string()));
                     self.spawn_checked("pkexec", args, format!("{what}: not allowed"));
@@ -557,7 +608,11 @@ impl App {
             Act::Renice { pid, nice } => {
                 let r = unsafe { libc::setpriority(libc::PRIO_PROCESS, pid as libc::id_t, nice as libc::c_int) };
                 if r != 0 {
-                    self.spawn_checked("pkexec", vec!["renice".into(), "-n".into(), nice.to_string(), "-p".into(), pid.to_string()], "Priority: not allowed".into());
+                    self.spawn_checked(
+                        "pkexec",
+                        vec!["renice".into(), "-n".into(), nice.to_string(), "-p".into(), pid.to_string()],
+                        "Priority: not allowed".into(),
+                    );
                 } else {
                     self.say(format!("Priority set to {}", priority(nice)));
                 }
@@ -566,7 +621,17 @@ impl App {
             Act::Service(s, a) => {
                 let results = self.results.clone();
                 let shared = self.shared.clone();
-                self.say(format!("{} {}...", match a { services::Action::Start => "Starting", services::Action::Stop => "Stopping", services::Action::Restart => "Restarting", services::Action::Enable => "Switching on", services::Action::Disable => "Switching off" }, s.name));
+                self.say(format!(
+                    "{} {}...",
+                    match a {
+                        services::Action::Start => "Starting",
+                        services::Action::Stop => "Stopping",
+                        services::Action::Restart => "Restarting",
+                        services::Action::Enable => "Switching on",
+                        services::Action::Disable => "Switching off",
+                    },
+                    s.name
+                ));
                 std::thread::spawn(move || {
                     if let Err(e) = services::run(&s, a) {
                         results.lock().unwrap().push(e);
@@ -576,7 +641,11 @@ impl App {
             }
             Act::Startup(item, on) => {
                 match startup::set(&item, on) {
-                    Ok(()) => self.say(format!("{} {}", item.name, if on { "starts when you sign in" } else { "no longer starts when you sign in" })),
+                    Ok(()) => self.say(format!(
+                        "{} {}",
+                        item.name,
+                        if on { "starts when you sign in" } else { "no longer starts when you sign in" }
+                    )),
                     Err(e) => self.say(e),
                 }
                 self.refresh();
@@ -585,7 +654,11 @@ impl App {
                 desk::focus_window(&addr);
             }
             Act::Open(target) => {
-                let _ = std::process::Command::new("xdg-open").arg(target).stdin(std::process::Stdio::null()).spawn().map(|mut c| std::thread::spawn(move || c.wait()));
+                let _ = std::process::Command::new("xdg-open")
+                    .arg(target)
+                    .stdin(std::process::Stdio::null())
+                    .spawn()
+                    .map(|mut c| std::thread::spawn(move || c.wait()));
             }
         }
     }
@@ -596,7 +669,12 @@ impl App {
         let shared = self.shared.clone();
         let prog = prog.to_string();
         std::thread::spawn(move || {
-            let ok = std::process::Command::new(&prog).args(&args).stdin(std::process::Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
+            let ok = std::process::Command::new(&prog)
+                .args(&args)
+                .stdin(std::process::Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
             if !ok {
                 results.lock().unwrap().push(fail);
             }
@@ -615,8 +693,14 @@ fn run_task(cmd: &str, admin: bool) -> Result<(), String> {
     if cmd.is_empty() {
         return Err("Type a program, folder or address.".into());
     }
-    let expanded = if let Some(rest) = cmd.strip_prefix('~') { format!("{}{rest}", std::env::var("HOME").unwrap_or_default()) } else { cmd.to_string() };
-    let is_place = std::path::Path::new(&expanded).exists() && !std::path::Path::new(&expanded).is_file() || cmd.starts_with("http://") || cmd.starts_with("https://");
+    let expanded = if let Some(rest) = cmd.strip_prefix('~') {
+        format!("{}{rest}", std::env::var("HOME").unwrap_or_default())
+    } else {
+        cmd.to_string()
+    };
+    let is_place = std::path::Path::new(&expanded).exists() && !std::path::Path::new(&expanded).is_file()
+        || cmd.starts_with("http://")
+        || cmd.starts_with("https://");
     let mut c = if is_place && !admin {
         let mut c = std::process::Command::new("xdg-open");
         c.arg(&expanded);
@@ -682,11 +766,21 @@ impl eframe::App for App {
                     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
                     if sel {
                         ui.painter().rect_filled(rect, CornerRadius::same(8), pal.select);
-                        ui.painter().rect_filled(Rect::from_min_size(rect.left_top() + vec2(0.0, 9.0), vec2(3.0, 16.0)), CornerRadius::same(2), pal.accent);
+                        ui.painter().rect_filled(
+                            Rect::from_min_size(rect.left_top() + vec2(0.0, 9.0), vec2(3.0, 16.0)),
+                            CornerRadius::same(2),
+                            pal.accent,
+                        );
                     } else if resp.hovered() {
                         ui.painter().rect_filled(rect, CornerRadius::same(8), pal.hover);
                     }
-                    ui.painter().text(rect.left_center() + vec2(14.0, 0.0), Align2::LEFT_CENTER, name, FontId::proportional(14.0), pal.text);
+                    ui.painter().text(
+                        rect.left_center() + vec2(14.0, 0.0),
+                        Align2::LEFT_CENTER,
+                        name,
+                        FontId::proportional(14.0),
+                        pal.text,
+                    );
                     if resp.clicked() {
                         self.tab = t;
                         self.shared.tab.store(t.code(), Ordering::Relaxed);
@@ -707,29 +801,35 @@ impl eframe::App for App {
                 });
             });
 
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(pal.bg).inner_margin(Margin { left: 12, right: 8, top: 6, bottom: 8 })).show(ui, |ui| {
-            // title row: search in the middle, window buttons at the right
-            ui.horizontal(|ui| {
-                let title = TABS.iter().find(|t| t.0 == self.tab).map(|t| t.1).unwrap_or("");
-                ui.label(RichText::new(title).size(18.0).strong());
-                ui.add_space(16.0);
-                if !matches!(self.tab, Tab::Performance) {
-                    ui.add(egui::TextEdit::singleline(&mut self.search).hint_text("Type a name, publisher or PID to search").desired_width(320.0));
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(pal.bg).inner_margin(Margin { left: 12, right: 8, top: 6, bottom: 8 }))
+            .show(ui, |ui| {
+                // title row: search in the middle, window buttons at the right
+                ui.horizontal(|ui| {
+                    let title = TABS.iter().find(|t| t.0 == self.tab).map(|t| t.1).unwrap_or("");
+                    ui.label(RichText::new(title).size(18.0).strong());
+                    ui.add_space(16.0);
+                    if !matches!(self.tab, Tab::Performance) {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.search)
+                                .hint_text("Type a name, publisher or PID to search")
+                                .desired_width(320.0),
+                        );
+                    }
+                    chrome::drag_area(ui, ui.available_width() - chrome::controls_width());
+                    chrome::window_controls(ui, &pal);
+                });
+                ui.add_space(4.0);
+                match self.tab {
+                    Tab::Processes => self.processes(ui, &pal, dark, &data, &mut acts),
+                    Tab::Performance => self.performance(ui, &pal, &data, &mut acts),
+                    Tab::History => self.history(ui, &pal, &data),
+                    Tab::Startup => self.startup(ui, &pal, &data, &mut acts),
+                    Tab::Users => self.users(ui, &pal, dark, &data),
+                    Tab::Details => self.details(ui, &pal, dark, &data, &mut acts),
+                    Tab::Services => self.services(ui, &pal, &data, &mut acts),
                 }
-                chrome::drag_area(ui, ui.available_width() - chrome::controls_width());
-                chrome::window_controls(ui, &pal);
             });
-            ui.add_space(4.0);
-            match self.tab {
-                Tab::Processes => self.processes(ui, &pal, dark, &data, &mut acts),
-                Tab::Performance => self.performance(ui, &pal, &data, &mut acts),
-                Tab::History => self.history(ui, &pal, &data),
-                Tab::Startup => self.startup(ui, &pal, &data, &mut acts),
-                Tab::Users => self.users(ui, &pal, dark, &data),
-                Tab::Details => self.details(ui, &pal, dark, &data, &mut acts),
-                Tab::Services => self.services(ui, &pal, &data, &mut acts),
-            }
-        });
 
         // the properties of a process
         if let Some(pid) = self.props {
@@ -742,7 +842,9 @@ impl eframe::App for App {
                 };
                 ui.label(RichText::new(format!("{} (PID {})", p.name, p.pid)).size(17.0).strong());
                 ui.add_space(8.0);
-                let cwd = std::fs::read_link(format!("/proc/{pid}/cwd")).map(|x| x.to_string_lossy().to_string()).unwrap_or_else(|_| "(not shown for another account's process)".into());
+                let cwd = std::fs::read_link(format!("/proc/{pid}/cwd"))
+                    .map(|x| x.to_string_lossy().to_string())
+                    .unwrap_or_else(|_| "(not shown for another account's process)".into());
                 let started = data.sys.uptime - p.started;
                 egui::Grid::new("props-grid").num_columns(2).spacing([16.0, 6.0]).show(ui, |ui| {
                     for (k, v) in [
@@ -826,7 +928,11 @@ impl eframe::App for App {
                 ui.add_space(6.0);
                 ui.label("Type the name of a program, folder or internet address, and it opens.");
                 ui.add_space(6.0);
-                let te = ui.add(egui::TextEdit::singleline(&mut run.cmd).desired_width(f32::INFINITY).hint_text("e.g. ghostty, ~/Documents or https://..."));
+                let te = ui.add(
+                    egui::TextEdit::singleline(&mut run.cmd)
+                        .desired_width(f32::INFINITY)
+                        .hint_text("e.g. ghostty, ~/Documents or https://..."),
+                );
                 if run.focus {
                     te.request_focus();
                     run.focus = false;
@@ -1075,7 +1181,13 @@ impl App {
         .into_iter()
         .collect();
         let _ = disk_total;
-        let cols = [c(Col::Name, "Name", 0.0, false), c(Col::Status, "Status", 110.0, false), c(Col::Cpu, "CPU", 80.0, true), c(Col::Mem, "Memory", 100.0, true), c(Col::Disk, "Disk", 90.0, true)];
+        let cols = [
+            c(Col::Name, "Name", 0.0, false),
+            c(Col::Status, "Status", 110.0, false),
+            c(Col::Cpu, "CPU", 80.0, true),
+            c(Col::Mem, "Memory", 100.0, true),
+            c(Col::Disk, "Disk", 90.0, true),
+        ];
         header(ui, pal, &cols, &totals, &mut self.proc_sort);
 
         let mut rows: Vec<Row> = vec![];
@@ -1084,7 +1196,11 @@ impl App {
                 .groups
                 .iter()
                 .filter(|g| g.kind() == kind)
-                .filter(|g| self.matches(&g.name) || self.matches(&g.root.to_string()) || g.pids.iter().any(|p| by_pid.get(p).is_some_and(|p| self.matches(&p.name) || self.matches(&p.pid.to_string()))))
+                .filter(|g| {
+                    self.matches(&g.name)
+                        || self.matches(&g.root.to_string())
+                        || g.pids.iter().any(|p| by_pid.get(p).is_some_and(|p| self.matches(&p.name) || self.matches(&p.pid.to_string())))
+                })
                 .collect();
             if gs.is_empty() {
                 continue;
@@ -1105,14 +1221,23 @@ impl App {
             for row in &rows[range] {
                 let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
                 let mut x = rect.left();
-                let cells: Vec<Rect> = w.iter().map(|cw| {
-                    let r = Rect::from_min_size(pos2(x, rect.top()), vec2(*cw, ROW_H));
-                    x += cw;
-                    r
-                }).collect();
+                let cells: Vec<Rect> = w
+                    .iter()
+                    .map(|cw| {
+                        let r = Rect::from_min_size(pos2(x, rect.top()), vec2(*cw, ROW_H));
+                        x += cw;
+                        r
+                    })
+                    .collect();
                 match row {
                     Row::Section(title, n) => {
-                        ui.painter().text(rect.left_center() + vec2(8.0, 2.0), Align2::LEFT_CENTER, format!("{title} ({n})"), FontId::proportional(13.5), pal.accent);
+                        ui.painter().text(
+                            rect.left_center() + vec2(8.0, 2.0),
+                            Align2::LEFT_CENTER,
+                            format!("{title} ({n})"),
+                            FontId::proportional(13.5),
+                            pal.accent,
+                        );
                     }
                     Row::Group(g) => {
                         let sel = self.sel_pid == Some(g.root);
@@ -1121,7 +1246,11 @@ impl App {
                         } else if resp.hovered() {
                             ui.painter().rect_filled(rect, CornerRadius::same(4), pal.hover);
                         }
-                        for (i, (v, scale)) in [(g.cpu as f64, 25.0f64), (g.mem as f64 / mem_total as f64 * 100.0, 25.0), (g.disk / 1_048_576.0, 20.0)].into_iter().enumerate() {
+                        for (i, (v, scale)) in
+                            [(g.cpu as f64, 25.0f64), (g.mem as f64 / mem_total as f64 * 100.0, 25.0), (g.disk / 1_048_576.0, 20.0)]
+                                .into_iter()
+                                .enumerate()
+                        {
                             let r = cells[2 + i];
                             ui.painter().rect_filled(r.shrink2(vec2(0.0, 1.0)), CornerRadius::ZERO, heat(pal, dark, (v / scale) as f32));
                         }
@@ -1178,11 +1307,26 @@ impl App {
                         } else if resp.hovered() {
                             ui.painter().rect_filled(rect, CornerRadius::same(4), pal.hover);
                         }
-                        for (i, (v, scale)) in [(p.cpu as f64, 25.0f64), (p.mem as f64 / mem_total as f64 * 100.0, 25.0), (p.disk / 1_048_576.0, 20.0)].into_iter().enumerate() {
-                            ui.painter().rect_filled(cells[2 + i].shrink2(vec2(0.0, 1.0)), CornerRadius::ZERO, heat(pal, dark, (v / scale) as f32));
+                        for (i, (v, scale)) in
+                            [(p.cpu as f64, 25.0f64), (p.mem as f64 / mem_total as f64 * 100.0, 25.0), (p.disk / 1_048_576.0, 20.0)]
+                                .into_iter()
+                                .enumerate()
+                        {
+                            ui.painter().rect_filled(
+                                cells[2 + i].shrink2(vec2(0.0, 1.0)),
+                                CornerRadius::ZERO,
+                                heat(pal, dark, (v / scale) as f32),
+                            );
                         }
                         let name_r = cells[0];
-                        cell_text(ui, pal, Rect::from_min_max(pos2(name_r.left() + 44.0, name_r.top()), name_r.max), &format!("{}  ({})", p.name, p.pid), false, Some(pal.dim));
+                        cell_text(
+                            ui,
+                            pal,
+                            Rect::from_min_max(pos2(name_r.left() + 44.0, name_r.top()), name_r.max),
+                            &format!("{}  ({})", p.name, p.pid),
+                            false,
+                            Some(pal.dim),
+                        );
                         cell_text(ui, pal, cells[1], if matches!(p.state, 'T' | 't') { "Suspended" } else { "" }, false, Some(pal.amber));
                         cell_text(ui, pal, cells[2], &format!("{:.1}%", p.cpu), true, None);
                         cell_text(ui, pal, cells[3], &mb(p.mem), true, None);
@@ -1226,7 +1370,12 @@ impl App {
             c(Col::Cmd, "Command line", 0.0, false),
         ];
         header(ui, pal, &cols, &HashMap::new(), &mut self.detail_sort);
-        let mut ps: Vec<&Proc> = data.procs.iter().filter(|p| !p.kernel).filter(|p| self.matches(&p.name) || self.matches(&p.pid.to_string()) || self.matches(&p.cmd) || self.matches(&p.user)).collect();
+        let mut ps: Vec<&Proc> = data
+            .procs
+            .iter()
+            .filter(|p| !p.kernel)
+            .filter(|p| self.matches(&p.name) || self.matches(&p.pid.to_string()) || self.matches(&p.cmd) || self.matches(&p.user))
+            .collect();
         sort_procs(&mut ps, self.detail_sort);
         let w = widths(&cols, ui.available_width());
         let mem_total = data.sys.mem.total.max(1);
@@ -1243,13 +1392,20 @@ impl App {
                     ui.painter().rect_filled(rect, CornerRadius::same(4), pal.hover);
                 }
                 let mut x = rect.left();
-                let cells: Vec<Rect> = w.iter().map(|cw| {
-                    let r = Rect::from_min_size(pos2(x, rect.top()), vec2(*cw, ROW_H));
-                    x += cw;
-                    r
-                }).collect();
+                let cells: Vec<Rect> = w
+                    .iter()
+                    .map(|cw| {
+                        let r = Rect::from_min_size(pos2(x, rect.top()), vec2(*cw, ROW_H));
+                        x += cw;
+                        r
+                    })
+                    .collect();
                 ui.painter().rect_filled(cells[4].shrink2(vec2(0.0, 1.0)), CornerRadius::ZERO, heat(pal, dark, p.cpu / 25.0));
-                ui.painter().rect_filled(cells[5].shrink2(vec2(0.0, 1.0)), CornerRadius::ZERO, heat(pal, dark, (p.mem as f64 / mem_total as f64 * 4.0) as f32));
+                ui.painter().rect_filled(
+                    cells[5].shrink2(vec2(0.0, 1.0)),
+                    CornerRadius::ZERO,
+                    heat(pal, dark, (p.mem as f64 / mem_total as f64 * 4.0) as f32),
+                );
                 cell_text(ui, pal, cells[0], &p.name, false, None);
                 cell_text(ui, pal, cells[1], &p.pid.to_string(), true, None);
                 cell_text(ui, pal, cells[2], p.state_text(), false, None);
@@ -1275,9 +1431,20 @@ impl App {
     }
 
     fn history(&mut self, ui: &mut egui::Ui, pal: &Palette, data: &Data) {
-        ui.label(RichText::new("What each app and your background programs have used since they started (Linux keeps nothing once a program closes).").color(pal.dim));
+        ui.label(
+            RichText::new(
+                "What each app and your background programs have used since they started (Linux keeps nothing once a program closes).",
+            )
+            .color(pal.dim),
+        );
         ui.add_space(6.0);
-        let cols = [c(Col::Name, "Name", 0.0, false), c(Col::Started, "Running for", 120.0, true), c(Col::CpuTime, "CPU time", 110.0, true), c(Col::Read, "Read from disk", 130.0, true), c(Col::Written, "Written to disk", 130.0, true)];
+        let cols = [
+            c(Col::Name, "Name", 0.0, false),
+            c(Col::Started, "Running for", 120.0, true),
+            c(Col::CpuTime, "CPU time", 110.0, true),
+            c(Col::Read, "Read from disk", 130.0, true),
+            c(Col::Written, "Written to disk", 130.0, true),
+        ];
         header(ui, pal, &cols, &HashMap::new(), &mut self.hist_sort);
         let mut gs: Vec<&Group> = data.groups.iter().filter(|g| g.kind() != Kind::System && self.matches(&g.name)).collect();
         sort_groups(&mut gs, self.hist_sort);
@@ -1292,11 +1459,14 @@ impl App {
                     ui.painter().rect_filled(rect, CornerRadius::same(4), pal.hover);
                 }
                 let mut x = rect.left();
-                let cells: Vec<Rect> = w.iter().map(|cw| {
-                    let r = Rect::from_min_size(pos2(x, rect.top()), vec2(*cw, ROW_H));
-                    x += cw;
-                    r
-                }).collect();
+                let cells: Vec<Rect> = w
+                    .iter()
+                    .map(|cw| {
+                        let r = Rect::from_min_size(pos2(x, rect.top()), vec2(*cw, ROW_H));
+                        x += cw;
+                        r
+                    })
+                    .collect();
                 let label = if g.kind() == Kind::App { g.name.clone() } else { format!("{}  (background)", g.name) };
                 cell_text(ui, pal, cells[0], &label, false, None);
                 cell_text(ui, pal, cells[1], &duration(data.sys.uptime - g.started), true, None);
@@ -1321,9 +1491,15 @@ impl App {
             ui.label(RichText::new("Reading...").color(pal.dim));
             return;
         }
-        let cols = [c(Col::Name, "Name", 260.0, false), c(Col::Desc, "Description", 0.0, false), c(Col::Kind, "Kind", 150.0, false), c(Col::Status, "Status", 190.0, false)];
+        let cols = [
+            c(Col::Name, "Name", 260.0, false),
+            c(Col::Desc, "Description", 0.0, false),
+            c(Col::Kind, "Kind", 150.0, false),
+            c(Col::Status, "Status", 190.0, false),
+        ];
         header(ui, pal, &cols, &HashMap::new(), &mut self.startup_sort);
-        let mut items: Vec<&startup::Item> = data.startup.iter().filter(|i| self.matches(&i.name) || self.matches(&i.comment) || self.matches(&i.id)).collect();
+        let mut items: Vec<&startup::Item> =
+            data.startup.iter().filter(|i| self.matches(&i.name) || self.matches(&i.comment) || self.matches(&i.id)).collect();
         items.sort_by(|a, b| {
             let o = match self.startup_sort.0 {
                 Col::Status => a.enabled.cmp(&b.enabled),
@@ -1331,7 +1507,11 @@ impl App {
                 Col::Desc => a.comment.cmp(&b.comment),
                 _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
             };
-            if self.startup_sort.1 { o.reverse() } else { o }
+            if self.startup_sort.1 {
+                o.reverse()
+            } else {
+                o
+            }
         });
         let w = widths(&cols, ui.available_width());
         egui::ScrollArea::vertical().auto_shrink([false, false]).show_rows(ui, ROW_H, items.len(), |ui, range| {
@@ -1343,19 +1523,35 @@ impl App {
                     ui.painter().rect_filled(rect, CornerRadius::same(4), pal.hover);
                 }
                 let mut x = rect.left();
-                let cells: Vec<Rect> = w.iter().map(|cw| {
-                    let r = Rect::from_min_size(pos2(x, rect.top()), vec2(*cw, ROW_H));
-                    x += cw;
-                    r
-                }).collect();
+                let cells: Vec<Rect> = w
+                    .iter()
+                    .map(|cw| {
+                        let r = Rect::from_min_size(pos2(x, rect.top()), vec2(*cw, ROW_H));
+                        x += cw;
+                        r
+                    })
+                    .collect();
                 let icon_r = Rect::from_center_size(pos2(cells[0].left() + 16.0, cells[0].center().y), vec2(16.0, 16.0));
                 if !it.icon.is_empty() || it.source == Some(startup::Source::Autostart) {
                     sysicon::paint_app(ui.painter(), icon_r, &[it.icon.as_str(), sysicon::DEFAULT_APP_ICON]);
                 }
                 cell_text(ui, pal, Rect::from_min_max(pos2(cells[0].left() + 22.0, cells[0].top()), cells[0].max), &it.name, false, None);
                 cell_text(ui, pal, cells[1], &it.comment, false, Some(pal.dim));
-                cell_text(ui, pal, cells[2], if it.source == Some(startup::Source::Service) { "Background service" } else { "App" }, false, None);
-                let status = if !it.note.is_empty() { format!("{} ({})", if it.enabled { "Enabled" } else { "Disabled" }, it.note) } else if it.enabled { "Enabled".into() } else { "Disabled".into() };
+                cell_text(
+                    ui,
+                    pal,
+                    cells[2],
+                    if it.source == Some(startup::Source::Service) { "Background service" } else { "App" },
+                    false,
+                    None,
+                );
+                let status = if !it.note.is_empty() {
+                    format!("{} ({})", if it.enabled { "Enabled" } else { "Disabled" }, it.note)
+                } else if it.enabled {
+                    "Enabled".into()
+                } else {
+                    "Disabled".into()
+                };
                 cell_text(ui, pal, cells[3], &status, false, Some(if it.enabled { pal.green } else { pal.dim }));
                 if resp.clicked() {
                     self.sel_startup = Some(it.id.clone());
@@ -1373,12 +1569,22 @@ impl App {
 
     fn users(&mut self, ui: &mut egui::Ui, pal: &Palette, dark: bool, data: &Data) {
         let mem_total = data.sys.mem.total.max(1);
-        let cols = [c(Col::Name, "User", 0.0, false), c(Col::Status, "Status", 120.0, false), c(Col::Cpu, "CPU", 80.0, true), c(Col::Mem, "Memory", 100.0, true), c(Col::Pid, "Processes", 100.0, true)];
+        let cols = [
+            c(Col::Name, "User", 0.0, false),
+            c(Col::Status, "Status", 120.0, false),
+            c(Col::Cpu, "CPU", 80.0, true),
+            c(Col::Mem, "Memory", 100.0, true),
+            c(Col::Pid, "Processes", 100.0, true),
+        ];
         let mut sort = (Col::Name, false);
         header(ui, pal, &cols, &HashMap::new(), &mut sort);
         let mut sessions = data.sessions.clone();
         if !sessions.iter().any(|s| s.uid == self.me) {
-            sessions.push(Session { uid: self.me, user: data.procs.iter().find(|p| p.uid == self.me).map(|p| p.user.clone()).unwrap_or_default(), state: "active".into() });
+            sessions.push(Session {
+                uid: self.me,
+                user: data.procs.iter().find(|p| p.uid == self.me).map(|p| p.user.clone()).unwrap_or_default(),
+                state: "active".into(),
+            });
         }
         let w = widths(&cols, ui.available_width());
         for s in sessions.iter().filter(|s| self.matches(&s.user)) {
@@ -1387,13 +1593,20 @@ impl App {
             let mem: u64 = mine.iter().map(|p| p.mem).sum();
             let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H + 4.0), Sense::hover());
             let mut x = rect.left();
-            let cells: Vec<Rect> = w.iter().map(|cw| {
-                let r = Rect::from_min_size(pos2(x, rect.top()), vec2(*cw, ROW_H + 4.0));
-                x += cw;
-                r
-            }).collect();
+            let cells: Vec<Rect> = w
+                .iter()
+                .map(|cw| {
+                    let r = Rect::from_min_size(pos2(x, rect.top()), vec2(*cw, ROW_H + 4.0));
+                    x += cw;
+                    r
+                })
+                .collect();
             ui.painter().rect_filled(cells[2].shrink2(vec2(0.0, 1.0)), CornerRadius::ZERO, heat(pal, dark, cpu / 25.0));
-            ui.painter().rect_filled(cells[3].shrink2(vec2(0.0, 1.0)), CornerRadius::ZERO, heat(pal, dark, (mem as f64 / mem_total as f64 * 4.0) as f32));
+            ui.painter().rect_filled(
+                cells[3].shrink2(vec2(0.0, 1.0)),
+                CornerRadius::ZERO,
+                heat(pal, dark, (mem as f64 / mem_total as f64 * 4.0) as f32),
+            );
             let you = if s.uid == self.me { "  (you)" } else { "" };
             cell_text(ui, pal, cells[0], &format!("{}{you}", s.user), false, None);
             let state = match s.state.as_str() {
@@ -1410,12 +1623,22 @@ impl App {
             for g in data.groups.iter().filter(|g| g.uid == s.uid && g.kind() == Kind::App) {
                 let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::hover());
                 let mut x = rect.left();
-                let cells: Vec<Rect> = w.iter().map(|cw| {
-                    let r = Rect::from_min_size(pos2(x, rect.top()), vec2(*cw, ROW_H));
-                    x += cw;
-                    r
-                }).collect();
-                cell_text(ui, pal, Rect::from_min_max(pos2(cells[0].left() + 24.0, cells[0].top()), cells[0].max), &g.name, false, Some(pal.dim));
+                let cells: Vec<Rect> = w
+                    .iter()
+                    .map(|cw| {
+                        let r = Rect::from_min_size(pos2(x, rect.top()), vec2(*cw, ROW_H));
+                        x += cw;
+                        r
+                    })
+                    .collect();
+                cell_text(
+                    ui,
+                    pal,
+                    Rect::from_min_max(pos2(cells[0].left() + 24.0, cells[0].top()), cells[0].max),
+                    &g.name,
+                    false,
+                    Some(pal.dim),
+                );
                 cell_text(ui, pal, cells[2], &format!("{:.1}%", g.cpu), true, Some(pal.dim));
                 cell_text(ui, pal, cells[3], &mb(g.mem), true, Some(pal.dim));
                 cell_text(ui, pal, cells[4], &g.pids.len().to_string(), true, Some(pal.dim));
@@ -1442,9 +1665,16 @@ impl App {
             ui.label(RichText::new("Reading...").color(pal.dim));
             return;
         }
-        let cols = [c(Col::Name, "Name", 280.0, false), c(Col::Desc, "Description", 0.0, false), c(Col::Status, "Status", 130.0, false), c(Col::Startup, "Starts", 120.0, false), c(Col::Kind, "Whose", 80.0, false)];
+        let cols = [
+            c(Col::Name, "Name", 280.0, false),
+            c(Col::Desc, "Description", 0.0, false),
+            c(Col::Status, "Status", 130.0, false),
+            c(Col::Startup, "Starts", 120.0, false),
+            c(Col::Kind, "Whose", 80.0, false),
+        ];
         header(ui, pal, &cols, &HashMap::new(), &mut self.svc_sort);
-        let mut v: Vec<&services::Service> = data.services.iter().filter(|s| self.matches(&s.display()) || self.matches(&s.description)).collect();
+        let mut v: Vec<&services::Service> =
+            data.services.iter().filter(|s| self.matches(&s.display()) || self.matches(&s.description)).collect();
         v.sort_by(|a, b| {
             let o = match self.svc_sort.0 {
                 Col::Desc => a.description.cmp(&b.description),
@@ -1453,7 +1683,11 @@ impl App {
                 Col::Kind => a.scope().cmp(&b.scope()),
                 _ => a.display().to_lowercase().cmp(&b.display().to_lowercase()),
             };
-            if self.svc_sort.1 { o.reverse() } else { o }
+            if self.svc_sort.1 {
+                o.reverse()
+            } else {
+                o
+            }
         });
         let w = widths(&cols, ui.available_width());
         egui::ScrollArea::vertical().auto_shrink([false, false]).show_rows(ui, ROW_H, v.len(), |ui, range| {
@@ -1468,11 +1702,14 @@ impl App {
                     ui.painter().rect_filled(rect, CornerRadius::same(4), pal.hover);
                 }
                 let mut x = rect.left();
-                let cells: Vec<Rect> = w.iter().map(|cw| {
-                    let r = Rect::from_min_size(pos2(x, rect.top()), vec2(*cw, ROW_H));
-                    x += cw;
-                    r
-                }).collect();
+                let cells: Vec<Rect> = w
+                    .iter()
+                    .map(|cw| {
+                        let r = Rect::from_min_size(pos2(x, rect.top()), vec2(*cw, ROW_H));
+                        x += cw;
+                        r
+                    })
+                    .collect();
                 cell_text(ui, pal, cells[0], &s.display(), false, None);
                 cell_text(ui, pal, cells[1], &s.description, false, Some(pal.dim));
                 let col = match s.status() {
@@ -1531,7 +1768,11 @@ fn graph(ui: &egui::Ui, pal: &Palette, rect: Rect, values: &VecDeque<f32>, max: 
     }
     let step = rect.width() / (HISTORY - 1) as f32;
     let start = HISTORY - values.len();
-    let pts: Vec<egui::Pos2> = values.iter().enumerate().map(|(i, v)| pos2(rect.left() + (start + i) as f32 * step, rect.bottom() - (v / max).clamp(0.0, 1.0) * rect.height())).collect();
+    let pts: Vec<egui::Pos2> = values
+        .iter()
+        .enumerate()
+        .map(|(i, v)| pos2(rect.left() + (start + i) as f32 * step, rect.bottom() - (v / max).clamp(0.0, 1.0) * rect.height()))
+        .collect();
     if fill {
         let mut mesh = egui::Mesh::default();
         let fc = color.gamma_multiply(0.25);
@@ -1589,8 +1830,22 @@ impl App {
         let h = &data.hist;
         let mem = &data.sys.mem;
         let mut items: Vec<PerfEntry> = vec![
-            (PerfItem::Cpu, "CPU".into(), format!("{:.0}%  {}", data.sys.cpu, data.sys.speed.map(|s| format!("{:.2} GHz", s as f32 / 1000.0)).unwrap_or_default()), cpu_col, &h.cpu, 100.0),
-            (PerfItem::Mem, "Memory".into(), format!("{}/{} ({:.0}%)", gib(mem.used()), gib(mem.total), mem.used() as f64 / mem.total.max(1) as f64 * 100.0), mem_col, &h.mem, 100.0),
+            (
+                PerfItem::Cpu,
+                "CPU".into(),
+                format!("{:.0}%  {}", data.sys.cpu, data.sys.speed.map(|s| format!("{:.2} GHz", s as f32 / 1000.0)).unwrap_or_default()),
+                cpu_col,
+                &h.cpu,
+                100.0,
+            ),
+            (
+                PerfItem::Mem,
+                "Memory".into(),
+                format!("{}/{} ({:.0}%)", gib(mem.used()), gib(mem.total), mem.used() as f64 / mem.total.max(1) as f64 * 100.0),
+                mem_col,
+                &h.mem,
+                100.0,
+            ),
         ];
         let empty = VecDeque::new();
         for (i, d) in data.sys.disks.iter().enumerate() {
@@ -1599,10 +1854,24 @@ impl App {
         }
         for (i, a) in data.sys.adapters.iter().enumerate() {
             let q = h.nets.get(&a.name).map(|e| &e.1).unwrap_or(&empty);
-            items.push((PerfItem::Net(i), a.kind.clone(), format!("{}  S: {} R: {}", a.name, bits(a.send_rate), bits(a.recv_rate)), net_col, q, rate_scale(peak(q))));
+            items.push((
+                PerfItem::Net(i),
+                a.kind.clone(),
+                format!("{}  S: {} R: {}", a.name, bits(a.send_rate), bits(a.recv_rate)),
+                net_col,
+                q,
+                rate_scale(peak(q)),
+            ));
         }
         if let Some(g) = &data.sys.gpu {
-            items.push((PerfItem::Gpu, "GPU 0".into(), format!("{}  {:.0}%", g.name.trim_start_matches("NVIDIA ").trim_start_matches("GeForce "), g.util), gpu_col, &h.gpu, 100.0));
+            items.push((
+                PerfItem::Gpu,
+                "GPU 0".into(),
+                format!("{}  {:.0}%", g.name.trim_start_matches("NVIDIA ").trim_start_matches("GeForce "), g.util),
+                gpu_col,
+                &h.gpu,
+                100.0,
+            ));
         } else if h.gpu.is_empty() {
             // the first look at the card comes with the next refresh
         }
@@ -1621,8 +1890,20 @@ impl App {
                     }
                     let g = Rect::from_min_size(rect.left_top() + vec2(8.0, 10.0), vec2(70.0, 42.0));
                     graph(ui, pal, g, q, *max, *col, true);
-                    ui.painter().text(pos2(g.right() + 10.0, rect.top() + 18.0), Align2::LEFT_CENTER, title, FontId::proportional(14.0), pal.text);
-                    ui.painter().with_clip_rect(rect).text(pos2(g.right() + 10.0, rect.top() + 40.0), Align2::LEFT_CENTER, sub, FontId::proportional(11.5), pal.dim);
+                    ui.painter().text(
+                        pos2(g.right() + 10.0, rect.top() + 18.0),
+                        Align2::LEFT_CENTER,
+                        title,
+                        FontId::proportional(14.0),
+                        pal.text,
+                    );
+                    ui.painter().with_clip_rect(rect).text(
+                        pos2(g.right() + 10.0, rect.top() + 40.0),
+                        Align2::LEFT_CENTER,
+                        sub,
+                        FontId::proportional(11.5),
+                        pal.dim,
+                    );
                     if resp.clicked() {
                         self.perf = *item;
                     }
@@ -1633,12 +1914,24 @@ impl App {
             });
         });
         ui.scope_builder(egui::UiBuilder::new().max_rect(main), |ui| {
-            egui::ScrollArea::vertical().id_salt("perf-main").show(ui, |ui| self.perf_detail(ui, pal, data, cpu_col, mem_col, disk_col, net_col, gpu_col));
+            egui::ScrollArea::vertical()
+                .id_salt("perf-main")
+                .show(ui, |ui| self.perf_detail(ui, pal, data, cpu_col, mem_col, disk_col, net_col, gpu_col));
         });
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn perf_detail(&mut self, ui: &mut egui::Ui, pal: &Palette, data: &Data, cpu_col: Color32, mem_col: Color32, disk_col: Color32, net_col: Color32, gpu_col: Color32) {
+    fn perf_detail(
+        &mut self,
+        ui: &mut egui::Ui,
+        pal: &Palette,
+        data: &Data,
+        cpu_col: Color32,
+        mem_col: Color32,
+        disk_col: Color32,
+        net_col: Color32,
+        gpu_col: Color32,
+    ) {
         let h = &data.hist;
         let w = ui.available_width();
         let title = |ui: &mut egui::Ui, left: &str, right: &str| {
@@ -1676,7 +1969,10 @@ impl App {
                     let ch = (cw * 0.55).clamp(40.0, 110.0);
                     let (area, _) = ui.allocate_exact_size(vec2(w, rows as f32 * (ch + 6.0)), Sense::hover());
                     for (i, q) in h.cores.iter().enumerate() {
-                        let r = Rect::from_min_size(area.left_top() + vec2((i % cols) as f32 * (cw + 6.0), (i / cols) as f32 * (ch + 6.0)), vec2(cw, ch));
+                        let r = Rect::from_min_size(
+                            area.left_top() + vec2((i % cols) as f32 * (cw + 6.0), (i / cols) as f32 * (ch + 6.0)),
+                            vec2(cw, ch),
+                        );
                         graph(ui, pal, r, q, 100.0, cpu_col, true);
                     }
                 } else {
@@ -1689,7 +1985,13 @@ impl App {
                 ui.columns(2, |cols| {
                     egui::Grid::new("cpu-live").num_columns(3).spacing([24.0, 10.0]).show(&mut cols[0], |ui| {
                         stat(ui, pal, "Utilization", &format!("{:.0}%", data.sys.cpu), true);
-                        stat(ui, pal, "Speed", &data.sys.speed.map(|s| format!("{:.2} GHz", s as f32 / 1000.0)).unwrap_or("-".into()), true);
+                        stat(
+                            ui,
+                            pal,
+                            "Speed",
+                            &data.sys.speed.map(|s| format!("{:.2} GHz", s as f32 / 1000.0)).unwrap_or("-".into()),
+                            true,
+                        );
                         ui.end_row();
                         stat(ui, pal, "Processes", &procs.to_string(), true);
                         stat(ui, pal, "Threads", &data.threads.to_string(), true);
@@ -1730,8 +2032,16 @@ impl App {
                 let used_w = bar.width() * m.used() as f32 / t;
                 let cached_w = bar.width() * (m.cached.min(m.available)) as f32 / t;
                 ui.painter().rect_stroke(bar, CornerRadius::ZERO, Stroke::new(1.0, mem_col), StrokeKind::Inside);
-                ui.painter().rect_filled(Rect::from_min_size(bar.min, vec2(used_w, bar.height())), CornerRadius::ZERO, mem_col.gamma_multiply(0.6));
-                ui.painter().rect_filled(Rect::from_min_size(bar.min + vec2(used_w, 0.0), vec2(cached_w, bar.height())), CornerRadius::ZERO, mem_col.gamma_multiply(0.2));
+                ui.painter().rect_filled(
+                    Rect::from_min_size(bar.min, vec2(used_w, bar.height())),
+                    CornerRadius::ZERO,
+                    mem_col.gamma_multiply(0.6),
+                );
+                ui.painter().rect_filled(
+                    Rect::from_min_size(bar.min + vec2(used_w, 0.0), vec2(cached_w, bar.height())),
+                    CornerRadius::ZERO,
+                    mem_col.gamma_multiply(0.2),
+                );
                 ui.add_space(10.0);
                 egui::Grid::new("mem").num_columns(3).spacing([28.0, 10.0]).show(ui, |ui| {
                     stat(ui, pal, "In use", &gib(m.used()), true);
@@ -1739,7 +2049,13 @@ impl App {
                     stat(ui, pal, "Cached", &gib(m.cached), true);
                     ui.end_row();
                     stat(ui, pal, "Committed", &format!("{}/{}", gib(m.committed), gib(m.commit_limit)), false);
-                    stat(ui, pal, "Swap in use", &format!("{}/{}", gib(m.swap_total.saturating_sub(m.swap_free)), gib(m.swap_total)), false);
+                    stat(
+                        ui,
+                        pal,
+                        "Swap in use",
+                        &format!("{}/{}", gib(m.swap_total.saturating_sub(m.swap_free)), gib(m.swap_total)),
+                        false,
+                    );
                     ui.end_row();
                 });
             }
@@ -1784,7 +2100,15 @@ impl App {
                 egui::Grid::new("net").num_columns(3).spacing([28.0, 10.0]).show(ui, |ui| {
                     stat(ui, pal, "Send", &bits(a.send_rate), true);
                     stat(ui, pal, "Receive", &bits(a.recv_rate), true);
-                    stat(ui, pal, "Link speed", &a.speed.map(|s| if s >= 1000 { format!("{:.1} Gbps", s as f32 / 1000.0) } else { format!("{s} Mbps") }).unwrap_or("-".into()), true);
+                    stat(
+                        ui,
+                        pal,
+                        "Link speed",
+                        &a.speed
+                            .map(|s| if s >= 1000 { format!("{:.1} Gbps", s as f32 / 1000.0) } else { format!("{s} Mbps") })
+                            .unwrap_or("-".into()),
+                        true,
+                    );
                     ui.end_row();
                 });
             }
@@ -1839,7 +2163,10 @@ fn already_open() -> bool {
 /// `--tab performance` (or processes, history, startup, users, details, services): the tab it opens on.
 fn start_tab(args: &[String]) -> Tab {
     let want = args.iter().position(|a| a == "--tab").and_then(|i| args.get(i + 1)).map(|s| s.to_lowercase()).unwrap_or_default();
-    TABS.iter().find(|(_, name)| name.to_lowercase().replace("app ", "").starts_with(&want) && !want.is_empty()).map(|t| t.0).unwrap_or(Tab::Processes)
+    TABS.iter()
+        .find(|(_, name)| name.to_lowercase().replace("app ", "").starts_with(&want) && !want.is_empty())
+        .map(|t| t.0)
+        .unwrap_or(Tab::Processes)
 }
 
 fn main() -> eframe::Result {
@@ -1894,7 +2221,9 @@ mod tests {
 
     #[test]
     fn sessions() {
-        let v = parse_sessions(r#"[{"session":"3","uid":1000,"user":"me","seat":"seat0","state":"active"},{"session":"4","uid":1000,"user":"me","state":"online"},{"session":"9","uid":1001,"user":"agent","state":"online"}]"#);
+        let v = parse_sessions(
+            r#"[{"session":"3","uid":1000,"user":"me","seat":"seat0","state":"active"},{"session":"4","uid":1000,"user":"me","state":"online"},{"session":"9","uid":1001,"user":"agent","state":"online"}]"#,
+        );
         assert_eq!(v.len(), 2);
         assert_eq!((v[0].user.as_str(), v[0].state.as_str()), ("me", "active"));
         assert!(parse_sessions("x").is_empty());

@@ -64,16 +64,7 @@ fn coeffs(in_size: i32, in0: f32, in1: f32, out_size: i32) -> (usize, Vec<(i32, 
         bounds.push((xmin, xmax));
     }
     let one = (1i64 << PRECISION_BITS) as f64;
-    let fixed = kk
-        .iter()
-        .map(|&v| {
-            if v < 0.0 {
-                (-0.5 + v * one) as i32
-            } else {
-                (0.5 + v * one) as i32
-            }
-        })
-        .collect();
+    let fixed = kk.iter().map(|&v| if v < 0.0 { (-0.5 + v * one) as i32 } else { (0.5 + v * one) as i32 }).collect();
     (ksize, bounds, fixed)
 }
 
@@ -86,11 +77,7 @@ fn resample4(src: &[u8], w: i32, h: i32, xsize: i32, ysize: i32) -> Vec<u8> {
     let need_h = xsize != w || (w as f32) != xsize as f32;
     let need_v = ysize != h || (h as f32) != ysize as f32;
     let horizontal_first = !((h - ysize) > 0 && (h - ysize) > (w - xsize) * 2);
-    let vert = if (need_h && horizontal_first) || need_v {
-        Some(coeffs(h, 0.0, h as f32, ysize))
-    } else {
-        None
-    };
+    let vert = if (need_h && horizontal_first) || need_v { Some(coeffs(h, 0.0, h as f32, ysize)) } else { None };
     let mut img = src.to_vec();
     let (mut cw, mut ch) = (w, h);
     let horizontal = |img: &[u8],
@@ -119,11 +106,7 @@ fn resample4(src: &[u8], w: i32, h: i32, xsize: i32, ysize: i32) -> Vec<u8> {
         }
         out
     };
-    let vertical = |img: &[u8],
-                    cw: i32,
-                    ysize: i32,
-                    (ksize, bounds, kk): &(usize, Vec<(i32, i32)>, Vec<i32>)|
-     -> Vec<u8> {
+    let vertical = |img: &[u8], cw: i32, ysize: i32, (ksize, bounds, kk): &(usize, Vec<(i32, i32)>, Vec<i32>)| -> Vec<u8> {
         let mut out = vec![0u8; cw as usize * ysize as usize * 4];
         for yy in 0..ysize as usize {
             let (ymin, ymax) = bounds[yy];
@@ -205,12 +188,7 @@ pub fn resize_lanczos(im: &Img, xsize: i32, ysize: i32) -> Img {
             }
         }
     }
-    Img {
-        w: xsize,
-        h: ysize,
-        ps: 4,
-        px: out,
-    }
+    Img { w: xsize, h: ysize, ps: 4, px: out }
 }
 
 /// Image.alpha_composite(im, dest): `src` over `dst` at (dx, dy), both RGBA, the part inside `dst`
@@ -227,12 +205,7 @@ pub fn alpha_composite(dst: &mut Img, src: &Img, dx: i32, dy: i32) {
             if s[3] == 0 {
                 continue;
             }
-            let d = [
-                dst.px[di] as u32,
-                dst.px[di + 1] as u32,
-                dst.px[di + 2] as u32,
-                dst.px[di + 3] as u32,
-            ];
+            let d = [dst.px[di] as u32, dst.px[di + 1] as u32, dst.px[di + 2] as u32, dst.px[di + 3] as u32];
             let sa = s[3] as u32;
             let blend = d[3] * (255 - sa);
             let outa255 = sa * 255 + blend;
@@ -280,11 +253,7 @@ fn crc32(data: &[u8]) -> u32 {
     for &b in data {
         crc ^= b as u32;
         for _ in 0..8 {
-            crc = if crc & 1 != 0 {
-                0xedb8_8320 ^ (crc >> 1)
-            } else {
-                crc >> 1
-            };
+            crc = if crc & 1 != 0 { 0xedb8_8320 ^ (crc >> 1) } else { crc >> 1 };
         }
     }
     !crc

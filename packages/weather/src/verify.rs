@@ -85,9 +85,7 @@ pub fn append_jsonl<T: Serialize>(path: &Path, items: &[T]) -> std::io::Result<(
 
 /// Unreadable lines are skipped, so one corrupt line cannot disable the history.
 pub fn read_jsonl<T: for<'de> Deserialize<'de>>(path: &Path) -> Vec<T> {
-    std::fs::read_to_string(path)
-        .map(|t| t.lines().filter_map(|l| serde_json::from_str(l).ok()).collect())
-        .unwrap_or_default()
+    std::fs::read_to_string(path).map(|t| t.lines().filter_map(|l| serde_json::from_str(l).ok()).collect()).unwrap_or_default()
 }
 
 #[cfg(test)]

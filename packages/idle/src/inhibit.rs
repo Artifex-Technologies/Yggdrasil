@@ -38,14 +38,25 @@ fn take_lock(who: &str, why: &str) -> zbus::Result<OwnedFd> {
 /// Program names and reasons come from other programs: plain text, short.
 pub fn clean(s: &str, max: usize) -> String {
     let t: String = s.chars().filter(|c| !c.is_control()).take(max).collect();
-    if t.trim().is_empty() { "an application".into() } else { t }
+    if t.trim().is_empty() {
+        "an application".into()
+    } else {
+        t
+    }
 }
 
 #[zbus::interface(name = "org.freedesktop.PowerManagement.Inhibit")]
 impl Inhibit {
-    async fn inhibit(&self, application: String, reason: String, #[zbus(header)] hdr: zbus::message::Header<'_>, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>) -> zbus::fdo::Result<u32> {
+    async fn inhibit(
+        &self,
+        application: String,
+        reason: String,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
+        #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
+    ) -> zbus::fdo::Result<u32> {
         let owner = hdr.sender().map(|s| s.to_string()).unwrap_or_default();
-        let lock = blocking::unblock(move || take_lock(&application, &reason)).await.map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
+        let lock =
+            blocking::unblock(move || take_lock(&application, &reason)).await.map_err(|e| zbus::fdo::Error::Failed(e.to_string()))?;
         let cookie = {
             let mut n = self.next.lock().unwrap();
             *n = n.wrapping_add(1).max(1);
@@ -63,7 +74,12 @@ impl Inhibit {
         Ok(cookie)
     }
 
-    async fn un_inhibit(&self, cookie: u32, #[zbus(header)] hdr: zbus::message::Header<'_>, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>) {
+    async fn un_inhibit(
+        &self,
+        cookie: u32,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
+        #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
+    ) {
         let sender = hdr.sender().map(|s| s.to_string()).unwrap_or_default();
         let now_empty = {
             let mut h = self.held.lock().unwrap();
@@ -102,7 +118,10 @@ impl Inhibit {
 pub fn spawn() {
     std::thread::spawn(|| loop {
         let i = Inhibit::default();
-        let built = zbus::blocking::connection::Builder::session().and_then(|b| b.name(NAME)).and_then(|b| b.serve_at(PATH, i.clone())).and_then(|b| b.build());
+        let built = zbus::blocking::connection::Builder::session()
+            .and_then(|b| b.name(NAME))
+            .and_then(|b| b.serve_at(PATH, i.clone()))
+            .and_then(|b| b.build());
         let Ok(conn) = built else {
             std::thread::sleep(Duration::from_secs(10));
             continue;
@@ -135,10 +154,16 @@ mod tests {
         let cookie: u32 = p.call("Inhibit", &("LiveTestPlayer", "Playing a video")).unwrap();
         let list = || -> Vec<(String, String, String, String, u32, u32)> {
             let sys = zbus::blocking::Connection::system().unwrap();
-            zbus::blocking::Proxy::new(&sys, "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager").unwrap().call("ListInhibitors", &()).unwrap()
+            zbus::blocking::Proxy::new(&sys, "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager")
+                .unwrap()
+                .call("ListInhibitors", &())
+                .unwrap()
         };
         let now = list();
-        assert!(now.iter().any(|l| l.1 == "LiveTestPlayer" && l.0.contains("idle") && l.0.contains("sleep") && l.3 == "block"), "a block lock on idle and sleep: {now:?}");
+        assert!(
+            now.iter().any(|l| l.1 == "LiveTestPlayer" && l.0.contains("idle") && l.0.contains("sleep") && l.3 == "block"),
+            "a block lock on idle and sleep: {now:?}"
+        );
         assert!(p.call::<_, _, bool>("HasInhibit", &()).unwrap());
         let _: () = p.call("UnInhibit", &(cookie,)).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(300));

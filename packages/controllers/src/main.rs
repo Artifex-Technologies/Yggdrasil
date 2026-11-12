@@ -28,7 +28,11 @@ fn bar_path() -> PathBuf {
 
 /// A controller's key between runs: its Bluetooth address or serial, else its name and event device.
 fn key(p: &Pad) -> String {
-    if p.uniq.is_empty() { format!("{}@{}", p.name, p.event.as_ref().map(|e| e.display().to_string()).unwrap_or_default()) } else { p.uniq.clone() }
+    if p.uniq.is_empty() {
+        format!("{}@{}", p.name, p.event.as_ref().map(|e| e.display().to_string()).unwrap_or_default())
+    } else {
+        p.uniq.clone()
+    }
 }
 
 /// What the top bar shows: the lowest battery, a line per controller, and the card's controls. No controller: no pill.
@@ -84,10 +88,15 @@ fn bar(pads: &[Pad], s: &Settings) -> Value {
     if pads.iter().any(|p| p.leds.has_lightbar() && p.leds.writable) {
         let current = s.lightbar.clone().unwrap_or_default();
         card.push(json!({"section": "Light bar"}));
-        let swatches: Vec<Value> = SWATCHES.iter().map(|(id, label, c)| json!({"id": format!("light:{id}"), "label": label, "accent": current == gamepads::color_hex(*c)})).collect();
+        let swatches: Vec<Value> = SWATCHES
+            .iter()
+            .map(|(id, label, c)| json!({"id": format!("light:{id}"), "label": label, "accent": current == gamepads::color_hex(*c)}))
+            .collect();
         card.push(json!({"buttons": swatches, "columns": 3}));
     } else if pads.iter().any(|p| p.leds.has_lightbar()) {
-        card.push(json!({"text": "The light bar can be set once Labyrinth's controller rule is installed (reinstall the plugin).", "dim": true}));
+        card.push(
+            json!({"text": "The light bar can be set once Labyrinth's controller rule is installed (reinstall the plugin).", "dim": true}),
+        );
     }
     card.push(json!({"buttons": [{"id": "settings", "label": "Bluetooth settings", "close": true}]}));
     json!({"text": text, "state": state, "lines": lines, "card": card})
@@ -110,9 +119,15 @@ fn write_bar(v: &Value) {
 }
 
 fn notify(title: &str, body: &str) {
-    let _ = Command::new("notify-send").args(["-a", "Controllers", "-i", "input-gaming", title, body]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map(|mut c| {
-        std::thread::spawn(move || c.wait());
-    });
+    let _ = Command::new("notify-send")
+        .args(["-a", "Controllers", "-i", "input-gaming", title, body])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map(|mut c| {
+            std::thread::spawn(move || c.wait());
+        });
 }
 
 fn press(id: &str) -> Result<(), String> {
@@ -278,7 +293,15 @@ mod tests {
     #[test]
     fn a_third_party_pad_in_xbox_mode_shows_just_the_icon() {
         // the owner's 8BitDo by USB in Xbox mode: xpad, no battery
-        let p = Pad { name: "Microsoft X-Box 360 pad".into(), model: Model::XboxCompatible, vendor: 0x045e, product: 0x028e, driver: "xpad".into(), leds: Leds::default(), ..pad(None, "", false) };
+        let p = Pad {
+            name: "Microsoft X-Box 360 pad".into(),
+            model: Model::XboxCompatible,
+            vendor: 0x045e,
+            product: 0x028e,
+            driver: "xpad".into(),
+            leds: Leds::default(),
+            ..pad(None, "", false)
+        };
         let v = bar(&[p], &Settings::default());
         assert_eq!((v["text"].as_str(), v["state"].as_str()), (Some(""), Some("ok")), "icon only: nothing to report");
         assert_eq!(v["lines"][0]["title"], "Xbox-compatible controller (third-party, e.g. 8BitDo)");

@@ -81,7 +81,11 @@ pub fn parse(json: &str) -> Option<Tune> {
         power_range: range(&v["ranges"]["power"], (35, 250)),
         turbo: v["turbo"].as_bool(),
         power_w: now["power_w"].as_f64(),
-        gpu: now["gpu"].as_object().map(|_| GpuClocks { core: now["gpu"]["core"].as_i64().unwrap_or(0), mem: now["gpu"]["mem"].as_i64().unwrap_or(0), cap: None }),
+        gpu: now["gpu"].as_object().map(|_| GpuClocks {
+            core: now["gpu"]["core"].as_i64().unwrap_or(0),
+            mem: now["gpu"]["mem"].as_i64().unwrap_or(0),
+            cap: None,
+        }),
         max_core: now["gpu"]["max_core"].as_i64(),
         kept_gpu: clocks(&v["kept"]["gpu"]),
         trial_gpu: clocks(&v["status"]["trial"]["gpu"]),

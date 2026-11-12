@@ -180,7 +180,36 @@ pub struct PanelConf {
 
 impl Default for PanelConf {
     fn default() -> Self {
-        PanelConf { dock_pos: DockPos::Bottom, dock_icon: 44, dock_gap: 4, start_theme: StartTheme::Windows, clock_24h: true, dock_opacity: 69, dock_color: ColorMode::Theme, bar_opacity: 69, bar_color: ColorMode::Theme, clipboard_history: true, search_subfolders: true, show_hidden: false, drive_status: true, developer: false, notify_toasts: true, notify_pane: false, notify_dnd: false, own_wallpaper: false, text_scale: 100, reduce_motion: false, assistant_speaks: true, voice_wave: 2, security_alerts: AlertLevel::Warning, minos_first_window: StartIn::Last, minos_more_windows: StartIn::Here, minos_new_tab: StartIn::Here, minos_transparent: false, minos_opacity: 85 }
+        PanelConf {
+            dock_pos: DockPos::Bottom,
+            dock_icon: 44,
+            dock_gap: 4,
+            start_theme: StartTheme::Windows,
+            clock_24h: true,
+            dock_opacity: 69,
+            dock_color: ColorMode::Theme,
+            bar_opacity: 69,
+            bar_color: ColorMode::Theme,
+            clipboard_history: true,
+            search_subfolders: true,
+            show_hidden: false,
+            drive_status: true,
+            developer: false,
+            notify_toasts: true,
+            notify_pane: false,
+            notify_dnd: false,
+            own_wallpaper: false,
+            text_scale: 100,
+            reduce_motion: false,
+            assistant_speaks: true,
+            voice_wave: 2,
+            security_alerts: AlertLevel::Warning,
+            minos_first_window: StartIn::Last,
+            minos_more_windows: StartIn::Here,
+            minos_new_tab: StartIn::Here,
+            minos_transparent: false,
+            minos_opacity: 85,
+        }
     }
 }
 
@@ -224,7 +253,15 @@ impl PanelConf {
                     }
                 }
                 "dock_icon" => c.dock_icon = num.unwrap_or(c.dock_icon).clamp(DOCK_ICON_MIN, DOCK_ICON_MAX),
-                "start_theme" => c.start_theme = if v == "folders" { StartTheme::Folders } else if v == "windows" { StartTheme::Windows } else { c.start_theme },
+                "start_theme" => {
+                    c.start_theme = if v == "folders" {
+                        StartTheme::Folders
+                    } else if v == "windows" {
+                        StartTheme::Windows
+                    } else {
+                        c.start_theme
+                    }
+                }
                 "clock_24h" => c.clock_24h = !matches!(v, "no" | "false" | "off" | "0"),
                 "dock_gap" => c.dock_gap = num.unwrap_or(c.dock_gap).min(DOCK_GAP_MAX),
                 "dock_opacity" => c.dock_opacity = num.unwrap_or(c.dock_opacity).min(100),
@@ -239,16 +276,28 @@ impl PanelConf {
                 "notify_toasts" => c.notify_toasts = !matches!(v, "no" | "false" | "off" | "0"),
                 "notify_pane" => c.notify_pane = matches!(v, "yes" | "true" | "on" | "1"),
                 "notify_dnd" => c.notify_dnd = matches!(v, "yes" | "true" | "on" | "1"),
-                "text_scale" => c.text_scale = v.trim_end_matches('%').parse::<u16>().map(|n| n.clamp(TEXT_SCALE_MIN, TEXT_SCALE_MAX)).unwrap_or(c.text_scale),
+                "text_scale" => {
+                    c.text_scale =
+                        v.trim_end_matches('%').parse::<u16>().map(|n| n.clamp(TEXT_SCALE_MIN, TEXT_SCALE_MAX)).unwrap_or(c.text_scale)
+                }
                 "voice_wave" | "sarina_wave" => c.voice_wave = v.parse::<u8>().map(|n| n.min(2)).unwrap_or(c.voice_wave),
                 "assistant_speaks" | "sarina_speaks" => c.assistant_speaks = !matches!(v, "no" | "false" | "off" | "0"),
                 "reduce_motion" => c.reduce_motion = matches!(v, "yes" | "true" | "on" | "1"),
                 "own_wallpaper" => c.own_wallpaper = matches!(v, "yes" | "true" | "on" | "1"),
-                "minos_first_window" => c.minos_first_window = StartIn::parse(v).filter(|x| *x != StartIn::Here).unwrap_or(c.minos_first_window),
-                "minos_more_windows" => c.minos_more_windows = StartIn::parse(v).filter(|x| *x != StartIn::Last).unwrap_or(c.minos_more_windows),
+                "minos_first_window" => {
+                    c.minos_first_window = StartIn::parse(v).filter(|x| *x != StartIn::Here).unwrap_or(c.minos_first_window)
+                }
+                "minos_more_windows" => {
+                    c.minos_more_windows = StartIn::parse(v).filter(|x| *x != StartIn::Last).unwrap_or(c.minos_more_windows)
+                }
                 "minos_transparent" => c.minos_transparent = matches!(v, "yes" | "true" | "on" | "1"),
-                "minos_opacity" => c.minos_opacity = v.trim_end_matches('%').parse::<u32>().map(|n| n.clamp(MINOS_OPACITY_MIN, 100)).unwrap_or(c.minos_opacity),
-                "minos_new_tab" => c.minos_new_tab = StartIn::parse(v).filter(|x| *x == StartIn::Home || *x == StartIn::Here).unwrap_or(c.minos_new_tab),
+                "minos_opacity" => {
+                    c.minos_opacity =
+                        v.trim_end_matches('%').parse::<u32>().map(|n| n.clamp(MINOS_OPACITY_MIN, 100)).unwrap_or(c.minos_opacity)
+                }
+                "minos_new_tab" => {
+                    c.minos_new_tab = StartIn::parse(v).filter(|x| *x == StartIn::Home || *x == StartIn::Here).unwrap_or(c.minos_new_tab)
+                }
                 "security_alerts" | "heimdall_alerts" => c.security_alerts = AlertLevel::parse(v).unwrap_or(c.security_alerts),
                 _ => {}
             }
@@ -330,13 +379,44 @@ mod tests {
 
     #[test]
     fn round_trips() {
-        let c = PanelConf { dock_pos: DockPos::Right, dock_icon: 60, dock_gap: 0, start_theme: StartTheme::Folders, clock_24h: false, dock_opacity: 0, dock_color: ColorMode::Neutral, bar_opacity: 100, bar_color: ColorMode::Neutral, clipboard_history: false, search_subfolders: false, show_hidden: true, drive_status: false, developer: true, notify_toasts: false, notify_pane: true, notify_dnd: true, own_wallpaper: true, text_scale: 150, reduce_motion: true, assistant_speaks: false, voice_wave: 2, security_alerts: AlertLevel::Critical, minos_first_window: StartIn::Home, minos_more_windows: StartIn::Home, minos_new_tab: StartIn::Home, minos_transparent: true, minos_opacity: 60 };
+        let c = PanelConf {
+            dock_pos: DockPos::Right,
+            dock_icon: 60,
+            dock_gap: 0,
+            start_theme: StartTheme::Folders,
+            clock_24h: false,
+            dock_opacity: 0,
+            dock_color: ColorMode::Neutral,
+            bar_opacity: 100,
+            bar_color: ColorMode::Neutral,
+            clipboard_history: false,
+            search_subfolders: false,
+            show_hidden: true,
+            drive_status: false,
+            developer: true,
+            notify_toasts: false,
+            notify_pane: true,
+            notify_dnd: true,
+            own_wallpaper: true,
+            text_scale: 150,
+            reduce_motion: true,
+            assistant_speaks: false,
+            voice_wave: 2,
+            security_alerts: AlertLevel::Critical,
+            minos_first_window: StartIn::Home,
+            minos_more_windows: StartIn::Home,
+            minos_new_tab: StartIn::Home,
+            minos_transparent: true,
+            minos_opacity: 60,
+        };
         assert_eq!(PanelConf::parse(&c.to_text()), c);
     }
 
     #[test]
     fn values_are_clamped_and_junk_is_ignored() {
-        let c = PanelConf::parse("dock_icon = 500\ndock_opacity = 250\nbar_opacity = 12%\ndock_color = rainbow\nnonsense\nfoo = bar\n# dock_icon = 40\n");
+        let c = PanelConf::parse(
+            "dock_icon = 500\ndock_opacity = 250\nbar_opacity = 12%\ndock_color = rainbow\nnonsense\nfoo = bar\n# dock_icon = 40\n",
+        );
         assert_eq!(c.dock_icon, DOCK_ICON_MAX);
         assert_eq!(c.dock_opacity, 100);
         assert_eq!(c.bar_opacity, 12);
@@ -380,4 +460,3 @@ pub fn set_wallpaper(path: &str) -> Result<(), String> {
     std::fs::write(&tmp, format!("{path}\n")).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, &p).map_err(|e| e.to_string())
 }
-

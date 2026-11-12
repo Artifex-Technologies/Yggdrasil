@@ -67,7 +67,25 @@ pub fn short_vendor(s: &str) -> String {
             .join(" ");
     }
     // company endings, in any case ("eero inc." -> "eero")
-    for cut in [" co.,ltd", " co., ltd", ",", " inc.", " inc", " corporation", " corporate", " corp.", " corp", " ltd.", " ltd", " llc", " gmbh", " limited", " technologies", " technology", " international"] {
+    for cut in [
+        " co.,ltd",
+        " co., ltd",
+        ",",
+        " inc.",
+        " inc",
+        " corporation",
+        " corporate",
+        " corp.",
+        " corp",
+        " ltd.",
+        " ltd",
+        " llc",
+        " gmbh",
+        " limited",
+        " technologies",
+        " technology",
+        " international",
+    ] {
         // (a lower-cased copy is searched only when it lines up byte for byte with the name)
         let lower = s.to_lowercase();
         let at = if lower.len() == s.len() { lower.find(cut) } else { s.find(cut) };

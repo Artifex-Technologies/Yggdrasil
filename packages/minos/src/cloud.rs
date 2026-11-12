@@ -75,9 +75,8 @@ impl Report {
 
 /// Compare two listings (directories ignored).
 pub fn verify(local: &[LsItem], remote: &[LsItem]) -> Report {
-    let index = |v: &[LsItem]| -> BTreeMap<String, LsItem> {
-        v.iter().filter(|i| !i.is_dir).map(|i| (i.path.clone(), i.clone())).collect()
-    };
+    let index =
+        |v: &[LsItem]| -> BTreeMap<String, LsItem> { v.iter().filter(|i| !i.is_dir).map(|i| (i.path.clone(), i.clone())).collect() };
     let (l, r) = (index(local), index(remote));
     let mut rep = Report::default();
     for (path, li) in &l {
@@ -90,10 +89,7 @@ pub fn verify(local: &[LsItem], remote: &[LsItem]) -> Report {
             rep.problems.push(Problem::SizeDiffers(path.clone()));
             continue;
         }
-        let common = li
-            .hashes
-            .iter()
-            .find(|(k, v)| ri.hashes.get(*k).is_some_and(|rv| !rv.is_empty() && !v.is_empty()));
+        let common = li.hashes.iter().find(|(k, v)| ri.hashes.get(*k).is_some_and(|rv| !rv.is_empty() && !v.is_empty()));
         match common {
             Some((k, v)) if ri.hashes.get(k).map(|s| s.eq_ignore_ascii_case(v)) == Some(true) => rep.verified_by_hash += 1,
             Some(_) => rep.problems.push(Problem::HashDiffers(path.clone())),
@@ -315,14 +311,18 @@ fn queue() -> Option<Vec<QueueItem>> {
 /// Ask rclone to retry a failed upload now (for a folder: every one inside it). Returns how many were retried.
 pub fn retry_sync(drive_root: &Path, path: &Path) -> Result<usize, String> {
     let rel = path.strip_prefix(drive_root).map_err(|_| "not inside Proton Drive".to_string())?.to_string_lossy().to_string();
-    let q = rc_call("vfs/queue", "{}").map(|b| parse_queue(&b)).ok_or("the Proton Drive mount has no control socket: restart it (systemctl --user restart proton-drive)")?;
+    let q = rc_call("vfs/queue", "{}")
+        .map(|b| parse_queue(&b))
+        .ok_or("the Proton Drive mount has no control socket: restart it (systemctl --user restart proton-drive)")?;
     let prefix = format!("{rel}/");
-    let items: Vec<&QueueItem> = q.iter().filter(|i| i.name == rel || i.name.starts_with(&prefix)).filter(|i| queue_state(i) == Avail::Failed).collect();
+    let items: Vec<&QueueItem> =
+        q.iter().filter(|i| i.name == rel || i.name.starts_with(&prefix)).filter(|i| queue_state(i) == Avail::Failed).collect();
     if items.is_empty() {
         return Err("nothing is waiting to upload there any more".into());
     }
     for item in &items {
-        rc_call("vfs/queue-set-expiry", &format!(r#"{{"id":{},"expiry":0}}"#, item.id)).ok_or_else(|| "rclone did not accept the retry".to_string())?;
+        rc_call("vfs/queue-set-expiry", &format!(r#"{{"id":{},"expiry":0}}"#, item.id))
+            .ok_or_else(|| "rclone did not accept the retry".to_string())?;
         if let Ok(mut r) = RETRYING.lock() {
             r.get_or_insert_with(Default::default).insert(item.name.clone(), (std::time::Instant::now(), item.tries));
         }
@@ -571,7 +571,13 @@ pub fn avail_from_meta(meta: Option<&str>, size: u64, on_disk: Option<u64>) -> A
         .unwrap_or_default();
     if ranges.is_empty() {
         // No range list: judge by how much of the file is really on disk (a sparse, partly downloaded file takes less).
-        return if size == 0 || on_disk >= size { Avail::Local } else if on_disk > 0 { Avail::Partial } else { Avail::Cloud };
+        return if size == 0 || on_disk >= size {
+            Avail::Local
+        } else if on_disk > 0 {
+            Avail::Partial
+        } else {
+            Avail::Cloud
+        };
     }
     ranges.sort();
     let mut covered = 0u64;
@@ -627,12 +633,21 @@ pub fn availability(drive_root: &Path, path: &Path, size: u64) -> Option<Avail> 
 
 /// Whether rclone already has a Proton Drive remote called `proton`.
 pub fn proton_configured() -> bool {
-    Command::new("rclone").arg("listremotes").output().map(|o| String::from_utf8_lossy(&o.stdout).lines().any(|l| l.trim() == "proton:")).unwrap_or(false)
+    Command::new("rclone")
+        .arg("listremotes")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).lines().any(|l| l.trim() == "proton:"))
+        .unwrap_or(false)
 }
 
 fn obscure(secret: &str) -> Result<String, String> {
     use std::io::Write;
-    let mut child = Command::new("rclone").args(["obscure", "-"]).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).spawn().map_err(|e| format!("cannot run rclone (is it installed?): {e}"))?;
+    let mut child = Command::new("rclone")
+        .args(["obscure", "-"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("cannot run rclone (is it installed?): {e}"))?;
     child.stdin.take().ok_or("no stdin")?.write_all(secret.as_bytes()).map_err(|e| e.to_string())?;
     let out = child.wait_with_output().map_err(|e| e.to_string())?;
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
@@ -643,7 +658,11 @@ fn obscure(secret: &str) -> Result<String, String> {
 pub fn connect_proton(user: &str, password: &str, mailbox: &str, twofa: &str) -> Result<(), String> {
     // a lapsed sign-in is renewed in place; a first one is created
     let verb = if proton_configured() { "update" } else { "create" };
-    let mut args: Vec<String> = if verb == "update" { ["config", "update", "proton", "username"].map(String::from).to_vec() } else { ["config", "create", "proton", "protondrive", "username"].map(String::from).to_vec() };
+    let mut args: Vec<String> = if verb == "update" {
+        ["config", "update", "proton", "username"].map(String::from).to_vec()
+    } else {
+        ["config", "create", "proton", "protondrive", "username"].map(String::from).to_vec()
+    };
     args.push(user.trim().to_string());
     args.push("password".into());
     args.push(obscure(password)?);
@@ -699,7 +718,17 @@ pub const SIGN_IN_AGAIN: &str = "SIGNIN:";
 
 /// The user name saved in rclone's `proton` remote, to prefill the form when the sign-in has lapsed.
 pub fn proton_username() -> String {
-    Command::new("rclone").args(["config", "show", "proton"]).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).lines().find_map(|l| l.strip_prefix("username = ").map(|v| v.trim().to_string())).unwrap_or_default()).unwrap_or_default()
+    Command::new("rclone")
+        .args(["config", "show", "proton"])
+        .output()
+        .ok()
+        .map(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .find_map(|l| l.strip_prefix("username = ").map(|v| v.trim().to_string()))
+                .unwrap_or_default()
+        })
+        .unwrap_or_default()
 }
 
 /// Waits for the Proton Drive folder to be a mount (the service can start and then fail at its login): whether it became one.
@@ -802,7 +831,9 @@ mod tests {
             ..Default::default()
         };
         let good = Report { files_compared: 3, verified_by_hash: 3, ..Default::default() };
-        let b = |p: &str, r: Option<Report>| badge_for(Path::new(p), &links, &r.map(|r| BTreeMap::from([("n".to_string(), r)])).unwrap_or_default());
+        let b = |p: &str, r: Option<Report>| {
+            badge_for(Path::new(p), &links, &r.map(|r| BTreeMap::from([("n".to_string(), r)])).unwrap_or_default())
+        };
         assert_eq!(b("/h/docs/sub/y.txt", Some(bad.clone())), Some(Badge::Problem));
         assert_eq!(b("/h/docs/sub", Some(bad.clone())), Some(Badge::Problem));
         assert_eq!(b("/h/docs/other.txt", Some(bad.clone())), Some(Badge::Synced));
@@ -838,7 +869,9 @@ mod tests {
 
     #[test]
     fn the_upload_queue_says_syncing_or_failed() {
-        let q = parse_queue(r#"{"queue":[{"name":"a.txt","id":1,"size":3,"expiry":57.9,"tries":0,"delay":60,"uploading":false},{"name":"d/b.txt","id":2,"size":2,"expiry":107.9,"tries":1,"delay":120,"uploading":false},{"name":"c","id":3,"tries":2,"uploading":true}]}"#);
+        let q = parse_queue(
+            r#"{"queue":[{"name":"a.txt","id":1,"size":3,"expiry":57.9,"tries":0,"delay":60,"uploading":false},{"name":"d/b.txt","id":2,"size":2,"expiry":107.9,"tries":1,"delay":120,"uploading":false},{"name":"c","id":3,"tries":2,"uploading":true}]}"#,
+        );
         assert_eq!(q.len(), 3);
         assert_eq!(queue_state(&q[0]), Avail::Syncing);
         assert_eq!(queue_state(&q[1]), Avail::Failed);

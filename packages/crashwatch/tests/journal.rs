@@ -55,7 +55,12 @@ fn write_journal(file: &Path, first_n: u64, entries: &[(&str, Vec<(&str, String)
 }
 
 fn crash(owner: u32, pid: u32, exe: &str, signal: &str, stored: Option<&str>) -> (&'static str, Vec<(&'static str, String)>) {
-    let mut f = vec![("COREDUMP_UID", owner.to_string()), ("COREDUMP_PID", pid.to_string()), ("COREDUMP_EXE", exe.to_string()), ("COREDUMP_SIGNAL", signal.to_string())];
+    let mut f = vec![
+        ("COREDUMP_UID", owner.to_string()),
+        ("COREDUMP_PID", pid.to_string()),
+        ("COREDUMP_EXE", exe.to_string()),
+        ("COREDUMP_SIGNAL", signal.to_string()),
+    ];
     if let Some(file) = stored {
         f.push(("COREDUMP_FILENAME", file.to_string()));
     }
@@ -125,9 +130,21 @@ fn crashes_without_a_stored_core_come_from_the_journal() {
             crash(me, 501, "/opt/Game/game.x86_64", "11", None),
             // another account's crash, and another message that names this user: nothing
             crash(me + 1, 502, "/usr/bin/theirs", "6", None),
-            ("0123456789abcdef0123456789abcdef", vec![("COREDUMP_UID", me.to_string()), ("COREDUMP_EXE", "/usr/bin/not-a-crash".to_string())]),
+            (
+                "0123456789abcdef0123456789abcdef",
+                vec![("COREDUMP_UID", me.to_string()), ("COREDUMP_EXE", "/usr/bin/not-a-crash".to_string())],
+            ),
             // the right message, written by some other program of this user (journald's _EXE is the writer): nothing
-            (COREDUMP, vec![("_EXE", "/usr/bin/python3.14".to_string()), ("COREDUMP_UID", me.to_string()), ("COREDUMP_PID", "504".to_string()), ("COREDUMP_EXE", "/usr/bin/forged".to_string()), ("COREDUMP_SIGNAL", "11".to_string())]),
+            (
+                COREDUMP,
+                vec![
+                    ("_EXE", "/usr/bin/python3.14".to_string()),
+                    ("COREDUMP_UID", me.to_string()),
+                    ("COREDUMP_PID", "504".to_string()),
+                    ("COREDUMP_EXE", "/usr/bin/forged".to_string()),
+                    ("COREDUMP_SIGNAL", "11".to_string()),
+                ],
+            ),
             // the same program again: quiet for ten minutes, as for cores
             crash(me, 503, "/opt/Game/game.x86_64", "6", None),
         ],
@@ -147,7 +164,8 @@ fn crashes_without_a_stored_core_come_from_the_journal() {
     assert_eq!(lines(&log, 2).len(), 2, "{:?}", lines(&log, 2));
 
     // journald's rotation: the full file renamed aside, a new one in its place, read from its first entry
-    std::fs::rename(&file, journal.join(format!("user-{me}@0123456789abcdef0123456789abcdef-0000000000000001-0006000000000000.journal"))).unwrap();
+    std::fs::rename(&file, journal.join(format!("user-{me}@0123456789abcdef0123456789abcdef-0000000000000001-0006000000000000.journal")))
+        .unwrap();
     let next = d.join(format!("user-{me}.journal"));
     write_journal(&next, 30, &[crash(me, 901, "/usr/bin/after-rotation", "4", None)]);
     std::fs::rename(&next, &file).unwrap();

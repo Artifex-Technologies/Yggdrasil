@@ -24,7 +24,9 @@ fn ap(mac: [u8; 6], freq: u32, dbm: i32, seen: u32, assoc: bool, privacy: bool, 
 
 fn main() {
     // a three-piece mesh, Wi-Fi 6, WPA2/WPA3; this computer is on the nearest one
-    let lantern = |ch: u8, w: u16| Beacon { ssid: b"Lantern Hall", channel: ch, width: w, wps: None, bss_load: Some((7, 51)), ..Beacon::wifi6() }.build();
+    let lantern = |ch: u8, w: u16| {
+        Beacon { ssid: b"Lantern Hall", channel: ch, width: w, wps: None, bss_load: Some((7, 51)), ..Beacon::wifi6() }.build()
+    };
     let eero = |last: u8| [0x08, 0xf0, 0x1e, 0xd0, 0xc5, last];
     // a library's Wi-Fi 5 router with WPS on, announcing its details
     let birchwood = Beacon {
@@ -78,7 +80,8 @@ fn main() {
         ..Beacon::wifi6()
     }
     .build();
-    let northgate = Beacon { ssid: b"Northgate Office", channel: 100, width: 160, security: Sec::Enterprise, wps: None, ..Beacon::wifi6() }.build();
+    let northgate =
+        Beacon { ssid: b"Northgate Office", channel: 100, width: 160, security: Sec::Enterprise, wps: None, ..Beacon::wifi6() }.build();
     let hidden = Beacon { ssid: b"", channel: 149, width: 80, security: Sec::Wpa2, wps: None, ..Beacon::wifi6() }.build();
     let list = vec![
         ap(eero(0x01), 5180, -48, 800, true, true, lantern(36, 80)),

@@ -56,10 +56,13 @@ pub fn parse(text: &str) -> Conf {
 pub fn text(c: &Conf) -> String {
     let name = |p: Profile| if p == Profile::Tiling { "tiling" } else { "standard" };
     let mut s = String::from("# Written by Settings > Appearance > Workspaces. The compositor reads it (and again when it changes).\n");
-    s.push_str(&format!("default = {}\n", match c.default {
-        Default::Ask => "ask",
-        Default::Fixed(p) => name(p),
-    }));
+    s.push_str(&format!(
+        "default = {}\n",
+        match c.default {
+            Default::Ask => "ask",
+            Default::Fixed(p) => name(p),
+        }
+    ));
     for (i, p) in c.per.iter().enumerate() {
         if let Some(p) = p {
             s.push_str(&format!("{} = {}\n", i + 1, name(*p)));

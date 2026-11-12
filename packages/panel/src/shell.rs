@@ -39,7 +39,13 @@ pub fn look(mode: ColorMode, opacity: u32, dark: bool) -> Look {
     // The edge line fades with the shelf, and is gone when the shelf is.
     let edge = alpha.min(40) / 2 + if alpha > 0 { 6 } else { 0 };
     if dark {
-        Look { bg: (r, g, b, alpha), border: (255, 255, 255, edge), text: (236, 230, 248, 255), dim: (178, 168, 200, 255), hover: (255, 255, 255, 34) }
+        Look {
+            bg: (r, g, b, alpha),
+            border: (255, 255, 255, edge),
+            text: (236, 230, 248, 255),
+            dim: (178, 168, 200, 255),
+            hover: (255, 255, 255, 34),
+        }
     } else {
         Look { bg: (r, g, b, alpha), border: (0, 0, 0, edge), text: (28, 22, 44, 255), dim: (96, 88, 120, 255), hover: (0, 0, 0, 30) }
     }
@@ -99,7 +105,6 @@ impl WinHandle {
             WinHandle::Wlr(h) => h.close(),
         }
     }
-
 }
 
 impl Drop for WinHandle {
@@ -243,7 +248,14 @@ pub fn dock_items(m: &Model) -> Vec<DockItem> {
     for id in &m.pinned {
         let app = m.apps.iter().find(|a| &a.id == id);
         let Some(app) = app else { continue };
-        items.push(DockItem { app_id: app.id.clone(), name: app.name.clone(), icon: app.icon.clone(), wins: vec![], pinned: true, active: false });
+        items.push(DockItem {
+            app_id: app.id.clone(),
+            name: app.name.clone(),
+            icon: app.icon.clone(),
+            wins: vec![],
+            pinned: true,
+            active: false,
+        });
     }
     for (i, w) in m.wins.iter().enumerate().filter(|(_, w)| w.listed()) {
         let app = apps::for_app_id(&m.apps, &w.app_id);
@@ -281,7 +293,9 @@ pub const TRASH_ID: &str = "yggdrasil:trash";
 
 /// The freedesktop trash folder that holds the files.
 pub fn trash_dir() -> Option<std::path::PathBuf> {
-    let base = std::env::var_os("XDG_DATA_HOME").map(std::path::PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share")))?;
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share")))?;
     Some(base.join("Trash/files"))
 }
 
@@ -302,14 +316,22 @@ pub fn dock_peeks(pos: DockPos, out: (f32, f32, f32, f32), reach: f32, (px, py):
         DockPos::Left => px - x,
         DockPos::Right => x + w - 1.0 - px,
     };
-    if showing { from_edge <= reach } else { from_edge <= 2.0 }
+    if showing {
+        from_edge <= reach
+    } else {
+        from_edge <= 2.0
+    }
 }
 
 /// The dock's size in logical pixels for the current items: wide on the bottom, tall on a side.
 pub fn dock_size(items: &[DockItem], icon: u32, pos: DockPos) -> (u32, u32) {
     let n = items.len().max(1) as f32;
     let len = (PAD_X * 2.0 + n * icon as f32 + (n - 1.0) * GAP).ceil() as u32;
-    if pos.vertical() { (dock_h(icon), len) } else { (len, dock_h(icon)) }
+    if pos.vertical() {
+        (dock_h(icon), len)
+    } else {
+        (len, dock_h(icon))
+    }
 }
 
 pub fn app_name_for_bar(m: &Model) -> String {
@@ -324,38 +346,48 @@ pub fn app_name_for_bar(m: &Model) -> String {
 /// Paints the notch's tab (or the open notch with Fylgja's section titles) and returns its click areas; `first` is the index
 /// its first click area will have (for the hover highlight).
 #[allow(clippy::too_many_arguments)]
-fn paint_notch(pix: &mut Pixmap, s: f32, m: &Model, fonts: &Fonts, hover: Option<usize>, first: usize, h: f32, py: f32, ph: f32) -> Vec<Hit> {
+fn paint_notch(
+    pix: &mut Pixmap,
+    s: f32,
+    m: &Model,
+    fonts: &Fonts,
+    hover: Option<usize>,
+    first: usize,
+    h: f32,
+    py: f32,
+    ph: f32,
+) -> Vec<Hit> {
     let w = pix.width() as f32;
     let mut hits: Vec<Hit> = vec![];
     let base = first;
-        let nw = if m.notch_open { m.notch_w * s } else { 150.0 * s };
-        let nx = (w - nw) / 2.0;
-        let cy_tab = h / 2.0;
-        // drawn from above the edge so the top corners are square and the bottom ones round
-        let th = if m.notch_open { h } else { py + ph };
-        paint::fill_rounded(pix, nx, -12.0 * s, nw, 12.0 * s + th, if m.notch_open { 0.0 } else { 10.0 * s }, (0, 0, 0, 255));
-        // Fylgja's section titles, always shown while the full notch is open; the current one is lit
-        if let Some(sel) = m.notch_tab {
-            let names = crate::fylgja::SECTIONS;
-            let widths: Vec<f32> = names.iter().map(|n| paint::text_width(&fonts.bold, 11.5 * s, n)).collect();
-            let total: f32 = widths.iter().sum();
-            let side = 22.0 * s;
-            let gap = ((nw - 2.0 * side - total) / (names.len() as f32 - 1.0)).max(6.0 * s);
-            let mut x = nx + side;
-            for (i, n) in names.iter().enumerate() {
-                let rect = (x - gap / 2.0, 0.0, widths[i] + gap, h);
-                if i == sel {
-                    paint::fill_rounded(pix, x - 9.0 * s, cy_tab - 10.0 * s, widths[i] + 18.0 * s, 20.0 * s, 10.0 * s, (255, 255, 255, 30));
-                } else if hover == Some(base + hits.len()) {
-                    paint::fill_rounded(pix, x - 9.0 * s, cy_tab - 10.0 * s, widths[i] + 18.0 * s, 20.0 * s, 10.0 * s, (255, 255, 255, 14));
-                }
-                let col = if i == sel { (255, 255, 255, 255) } else { (150, 150, 165, 255) };
-                paint::draw_text(pix, &fonts.bold, 11.5 * s, x, cy_tab, col, n);
-                hits.push(Hit { rect, action: Action::NotchSection(i) });
-                x += widths[i] + gap;
+    let nw = if m.notch_open { m.notch_w * s } else { 150.0 * s };
+    let nx = (w - nw) / 2.0;
+    let cy_tab = h / 2.0;
+    // drawn from above the edge so the top corners are square and the bottom ones round
+    let th = if m.notch_open { h } else { py + ph };
+    paint::fill_rounded(pix, nx, -12.0 * s, nw, 12.0 * s + th, if m.notch_open { 0.0 } else { 10.0 * s }, (0, 0, 0, 255));
+    // Fylgja's section titles, always shown while the full notch is open; the current one is lit
+    if let Some(sel) = m.notch_tab {
+        let names = crate::fylgja::SECTIONS;
+        let widths: Vec<f32> = names.iter().map(|n| paint::text_width(&fonts.bold, 11.5 * s, n)).collect();
+        let total: f32 = widths.iter().sum();
+        let side = 22.0 * s;
+        let gap = ((nw - 2.0 * side - total) / (names.len() as f32 - 1.0)).max(6.0 * s);
+        let mut x = nx + side;
+        for (i, n) in names.iter().enumerate() {
+            let rect = (x - gap / 2.0, 0.0, widths[i] + gap, h);
+            if i == sel {
+                paint::fill_rounded(pix, x - 9.0 * s, cy_tab - 10.0 * s, widths[i] + 18.0 * s, 20.0 * s, 10.0 * s, (255, 255, 255, 30));
+            } else if hover == Some(base + hits.len()) {
+                paint::fill_rounded(pix, x - 9.0 * s, cy_tab - 10.0 * s, widths[i] + 18.0 * s, 20.0 * s, 10.0 * s, (255, 255, 255, 14));
             }
+            let col = if i == sel { (255, 255, 255, 255) } else { (150, 150, 165, 255) };
+            paint::draw_text(pix, &fonts.bold, 11.5 * s, x, cy_tab, col, n);
+            hits.push(Hit { rect, action: Action::NotchSection(i) });
+            x += widths[i] + gap;
         }
-        hits.push(Hit { rect: (nx, 0.0, nw, h), action: Action::Notch });
+    }
+    hits.push(Hit { rect: (nx, 0.0, nw, h), action: Action::Notch });
     hits
 }
 
@@ -475,7 +507,15 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
         let bw = (paint::text_width(&fonts.bold, 11.5 * s, &label) + 16.0 * s).max(24.0 * s);
         rx -= bw;
         paint::fill_rounded(pix, rx, py, bw, ph, r, paint::accent(235));
-        paint::draw_text(pix, &fonts.bold, 11.5 * s, rx + (bw - paint::text_width(&fonts.bold, 11.5 * s, &label)) / 2.0, cy, (255, 255, 255, 255), &label);
+        paint::draw_text(
+            pix,
+            &fonts.bold,
+            11.5 * s,
+            rx + (bw - paint::text_width(&fonts.bold, 11.5 * s, &label)) / 2.0,
+            cy,
+            (255, 255, 255, 255),
+            &label,
+        );
         hits.push(Hit { rect: (rx, 0.0, bw, h), action: Action::Notifications });
         rx -= 6.0 * s;
     }
@@ -494,13 +534,21 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
             .filter(|a| !(a.off || (a.text.is_empty() && a.icon.is_empty())))
             .map(|a| {
                 let text = a.display(m.now_secs);
-                let icon_w = if a.icon.is_empty() { 0.0 } else if text.is_empty() { 14.0 * s } else { 20.0 * s };
+                let icon_w = if a.icon.is_empty() {
+                    0.0
+                } else if text.is_empty() {
+                    14.0 * s
+                } else {
+                    20.0 * s
+                };
                 paint::text_width(&fonts.regular, 12.0 * s, &text) + 26.0 * s + icon_w
             })
             .sum();
         let system_w = (if m.status.bt != crate::status::Bt::Missing { 2.0 } else { 1.0 }) * 34.0 * s;
         let shown: Vec<&crate::tray::TrayItem> = m.tray.iter().filter(|t| t.shown()).collect();
-        let room = |n: usize, chevron: bool| rx - n as f32 * (tw + 6.0 * s) - if chevron { 24.0 * s } else { 0.0 } - addons_w - system_w >= notch_right;
+        let room = |n: usize, chevron: bool| {
+            rx - n as f32 * (tw + 6.0 * s) - if chevron { 24.0 * s } else { 0.0 } - addons_w - system_w >= notch_right
+        };
         let any_passive = m.tray.iter().any(|t| !t.shown());
         let mut fit = shown.len().min(8);
         while fit > 0 && !room(fit, any_passive || fit < shown.len()) {
@@ -518,7 +566,8 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
             match drawn {
                 Some(pm) => paint::draw_pixmap(pix, &pm, ix, iy),
                 None => {
-                    let letter: String = it.title.chars().chain(it.id.chars()).next().map(|c| c.to_uppercase().collect()).unwrap_or_else(|| "?".into());
+                    let letter: String =
+                        it.title.chars().chain(it.id.chars()).next().map(|c| c.to_uppercase().collect()).unwrap_or_else(|| "?".into());
                     let lw = paint::text_width(&fonts.bold, 11.0 * s, &letter);
                     paint::draw_text(pix, &fonts.bold, 11.0 * s, rx + (tw - lw) / 2.0, cy, lk.text, &letter);
                 }
@@ -550,7 +599,13 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
         }
         let text = a.display(m.now_secs);
         let isz = (14.0 * s) as u32;
-        let icon_w = if a.icon.is_empty() { 0.0 } else if text.is_empty() { isz as f32 } else { isz as f32 + 6.0 * s };
+        let icon_w = if a.icon.is_empty() {
+            0.0
+        } else if text.is_empty() {
+            isz as f32
+        } else {
+            isz as f32 + 6.0 * s
+        };
         let aw = paint::text_width(&fonts.regular, 12.0 * s, &text) + 20.0 * s + icon_w;
         rx -= aw;
         pill(pix, rx, aw);
@@ -644,7 +699,13 @@ fn block_height(b: &crate::addons::Block, first: bool) -> f32 {
     use crate::addons::Block;
     match b {
         Block::Big { .. } => 108.0,
-        Block::Section(_) => if first { 24.0 } else { 40.0 },
+        Block::Section(_) => {
+            if first {
+                24.0
+            } else {
+                40.0
+            }
+        }
         Block::Buttons { items, columns } => {
             let rows = items.len().div_ceil(*columns);
             rows as f32 * 34.0 + (rows.saturating_sub(1)) as f32 * 8.0 + 10.0
@@ -659,10 +720,27 @@ fn block_height(b: &crate::addons::Block, first: bool) -> f32 {
 fn draw_clock(pix: &mut Pixmap, font: &ab_glyph::FontVec, size: f32, cx: f32, cy: f32, c: Rgba, text: &str, s: f32) {
     let cell = "0123456789".chars().map(|d| paint::text_width(font, size * s, &d.to_string())).fold(0.0, f32::max);
     let colon = paint::text_width(font, size * s, ":");
-    let total: f32 = text.chars().map(|ch| if ch.is_ascii_digit() { cell } else if ch == ':' { colon } else { paint::text_width(font, size * s, &ch.to_string()) }).sum();
+    let total: f32 = text
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_digit() {
+                cell
+            } else if ch == ':' {
+                colon
+            } else {
+                paint::text_width(font, size * s, &ch.to_string())
+            }
+        })
+        .sum();
     let mut x = cx * s - total / 2.0;
     for ch in text.chars() {
-        let w = if ch.is_ascii_digit() { cell } else if ch == ':' { colon } else { paint::text_width(font, size * s, &ch.to_string()) };
+        let w = if ch.is_ascii_digit() {
+            cell
+        } else if ch == ':' {
+            colon
+        } else {
+            paint::text_width(font, size * s, &ch.to_string())
+        };
         let gw = paint::text_width(font, size * s, &ch.to_string());
         paint::draw_text(pix, font, size * s, x + (w - gw) / 2.0, cy * s, c, &ch.to_string());
         x += w;
@@ -673,7 +751,16 @@ fn draw_clock(pix: &mut Pixmap, font: &ab_glyph::FontVec, size: f32, cx: f32, cy
 /// value, a meter when it has a percent, a note), the card's controls, then its help sentence. Returns the card's rectangle in
 /// logical pixels and what each control does.
 #[allow(clippy::too_many_arguments)]
-pub fn paint_addon(pix: &mut Pixmap, s: f32, m: &Model, idx: usize, fonts: &Fonts, icons: &mut Icons, pointer: Option<(f32, f32)>, field: Option<&str>) -> (Rect, Vec<(Rect, CardHit)>) {
+pub fn paint_addon(
+    pix: &mut Pixmap,
+    s: f32,
+    m: &Model,
+    idx: usize,
+    fonts: &Fonts,
+    icons: &mut Icons,
+    pointer: Option<(f32, f32)>,
+    field: Option<&str>,
+) -> (Rect, Vec<(Rect, CardHit)>) {
     use crate::addons::Block;
     let w = pix.width() as f32 / s;
     pix.fill(paint::color((0, 0, 0, 0)));
@@ -682,15 +769,27 @@ pub fn paint_addon(pix: &mut Pixmap, s: f32, m: &Model, idx: usize, fonts: &Font
     let cw = 340.0;
     let pad = 16.0;
     let titled = !matches!(a.card.first(), Some(Block::Big { .. })) || !a.lines.is_empty();
-    let line_h = |l: &crate::addons::Line| 22.0 + if l.percent.is_some() { 12.0 } else { 0.0 } + if l.note.is_empty() { 0.0 } else { 16.0 } + 8.0;
+    let line_h =
+        |l: &crate::addons::Line| 22.0 + if l.percent.is_some() { 12.0 } else { 0.0 } + if l.note.is_empty() { 0.0 } else { 16.0 } + 8.0;
     let help = wrap(&a.help, 46);
     let button_h = if a.settings.is_some() { 42.0 } else { 0.0 };
     let blocks_h: f32 = a.card.iter().enumerate().map(|(i, b)| block_height(b, i == 0 && a.lines.is_empty())).sum();
-    let ch = pad + if titled { 26.0 } else { 0.0 } + a.lines.iter().map(line_h).sum::<f32>() + blocks_h + help.len() as f32 * 16.0 + button_h + pad;
+    let ch = pad
+        + if titled { 26.0 } else { 0.0 }
+        + a.lines.iter().map(line_h).sum::<f32>()
+        + blocks_h
+        + help.len() as f32 * 16.0
+        + button_h
+        + pad;
     let (cx, cy) = (w - cw - 8.0, 8.0);
     let dark = m.dark;
-    let (bg, text, dim) = if dark { ((24, 24, 30, 245), (240, 240, 245, 255), (150, 150, 165, 255)) } else { ((250, 250, 252, 245), (20, 20, 28, 255), (100, 100, 115, 255)) };
-    let (soft, edge, hover_fill) = if dark { ((255, 255, 255, 12), (255, 255, 255, 34), (255, 255, 255, 34)) } else { ((0, 0, 0, 10), (0, 0, 0, 30), (0, 0, 0, 22)) };
+    let (bg, text, dim) = if dark {
+        ((24, 24, 30, 245), (240, 240, 245, 255), (150, 150, 165, 255))
+    } else {
+        ((250, 250, 252, 245), (20, 20, 28, 255), (100, 100, 115, 255))
+    };
+    let (soft, edge, hover_fill) =
+        if dark { ((255, 255, 255, 12), (255, 255, 255, 34), (255, 255, 255, 34)) } else { ((0, 0, 0, 10), (0, 0, 0, 30), (0, 0, 0, 22)) };
     let over = |r: Rect| pointer.is_some_and(|(px, py)| px >= r.0 && px < r.0 + r.2 && py >= r.1 && py < r.1 + r.3);
     paint::fill_rounded(pix, cx * s, cy * s, cw * s, ch * s, 14.0 * s, bg);
     let (x0, iw) = (cx + pad, cw - 2.0 * pad);
@@ -706,7 +805,15 @@ pub fn paint_addon(pix: &mut Pixmap, s: f32, m: &Model, idx: usize, fonts: &Font
         paint::draw_text(pix, &fonts.bold, 12.5 * s, (cx + cw - pad) * s - vw, (y + 6.0) * s, col, &l.value);
         y += 14.0;
         if let Some(p) = l.percent {
-            paint::fill_rounded(pix, x0 * s, (y + 6.0) * s, iw * s, 6.0 * s, 3.0 * s, if dark { (255, 255, 255, 30) } else { (0, 0, 0, 25) });
+            paint::fill_rounded(
+                pix,
+                x0 * s,
+                (y + 6.0) * s,
+                iw * s,
+                6.0 * s,
+                3.0 * s,
+                if dark { (255, 255, 255, 30) } else { (0, 0, 0, 25) },
+            );
             let fill = if l.alert { (240, 96, 96, 255) } else { paint::accent(255) };
             if p > 0.0 {
                 paint::fill_rounded(pix, x0 * s, (y + 6.0) * s, (iw * p / 100.0).max(6.0) * s, 6.0 * s, 3.0 * s, fill);
@@ -723,7 +830,13 @@ pub fn paint_addon(pix: &mut Pixmap, s: f32, m: &Model, idx: usize, fonts: &Font
     // a button: rounded, a faint edge, lighter under the pointer; accent ones filled
     let button = |pix: &mut Pixmap, icons: &mut Icons, r: Rect, label: &str, icon: &str, accent: bool| {
         let hov = over(r);
-        let fill = if accent { paint::accent(if hov { 255 } else { 220 }) } else if hov { hover_fill } else { soft };
+        let fill = if accent {
+            paint::accent(if hov { 255 } else { 220 })
+        } else if hov {
+            hover_fill
+        } else {
+            soft
+        };
         paint::fill_rounded(pix, r.0 * s, r.1 * s, r.2 * s, r.3 * s, 8.0 * s, fill);
         if !accent {
             paint::stroke_rounded(pix, r.0 * s, r.1 * s, r.2 * s, r.3 * s, 8.0 * s, 1.0 * s, edge);
@@ -756,7 +869,15 @@ pub fn paint_addon(pix: &mut Pixmap, s: f32, m: &Model, idx: usize, fonts: &Font
                         None => (*from as f32 / 100.0).clamp(0.0, 1.0),
                     };
                     let (bx, bw) = (x0 + 14.0, iw - 28.0);
-                    paint::fill_rounded(pix, bx * s, (y + 84.0) * s, bw * s, 4.0 * s, 2.0 * s, if dark { (255, 255, 255, 30) } else { (0, 0, 0, 25) });
+                    paint::fill_rounded(
+                        pix,
+                        bx * s,
+                        (y + 84.0) * s,
+                        bw * s,
+                        4.0 * s,
+                        2.0 * s,
+                        if dark { (255, 255, 255, 30) } else { (0, 0, 0, 25) },
+                    );
                     if frac > 0.0 {
                         paint::fill_rounded(pix, bx * s, (y + 84.0) * s, (bw * frac).max(4.0) * s, 4.0 * s, 2.0 * s, paint::accent(255));
                     }
@@ -803,7 +924,16 @@ pub fn paint_addon(pix: &mut Pixmap, s: f32, m: &Model, idx: usize, fonts: &Font
                 let r = (x0, y, iw, 34.0);
                 let typed = field.unwrap_or(value);
                 paint::fill_rounded(pix, r.0 * s, r.1 * s, r.2 * s, r.3 * s, 8.0 * s, soft);
-                paint::stroke_rounded(pix, r.0 * s, r.1 * s, r.2 * s, r.3 * s, 8.0 * s, 1.0 * s, if field.is_some() { paint::accent(255) } else { edge });
+                paint::stroke_rounded(
+                    pix,
+                    r.0 * s,
+                    r.1 * s,
+                    r.2 * s,
+                    r.3 * s,
+                    8.0 * s,
+                    1.0 * s,
+                    if field.is_some() { paint::accent(255) } else { edge },
+                );
                 let tx = (x0 + 10.0) * s;
                 let end = if typed.is_empty() {
                     paint::draw_text(pix, &fonts.regular, 12.5 * s, tx, (y + 17.0) * s, dim, hint);
@@ -847,7 +977,15 @@ pub fn paint_addon(pix: &mut Pixmap, s: f32, m: &Model, idx: usize, fonts: &Font
             }
             Block::Text { text: t, dim: d } => {
                 for (i, l) in wrap(t, 46).iter().enumerate() {
-                    paint::draw_text(pix, &fonts.regular, 12.0 * s, x0 * s, (y + 8.0 + i as f32 * 16.0) * s, if *d { dim } else { text }, l);
+                    paint::draw_text(
+                        pix,
+                        &fonts.regular,
+                        12.0 * s,
+                        x0 * s,
+                        (y + 8.0 + i as f32 * 16.0) * s,
+                        if *d { dim } else { text },
+                        l,
+                    );
                 }
             }
         }
@@ -929,7 +1067,13 @@ pub fn paint_calendar(pix: &mut Pixmap, s: f32, m: &Model, offset: i32, fonts: &
             }
             let label = day.to_string();
             let lw = paint::text_width(&fonts.bold, 15.0 * s, &label);
-            let color = if is_today && !dark { (255, 255, 255, 255) } else if *in_month { text } else { faint };
+            let color = if is_today && !dark {
+                (255, 255, 255, 255)
+            } else if *in_month {
+                text
+            } else {
+                faint
+            };
             paint::draw_text(pix, &fonts.bold, 15.0 * s, mid_x * s - lw / 2.0, mid_y * s, color, &label);
         }
     }
@@ -1034,9 +1178,25 @@ struct StartPal {
 /// The same palette as Minos and Settings: near-black with the accent.
 fn start_pal(dark: bool) -> StartPal {
     if dark {
-        StartPal { bg: (14, 15, 20, 250), border: (38, 39, 53, 255), field: (27, 28, 37, 255), text: (230, 231, 238, 255), dim: (154, 155, 171, 255), hover: (255, 255, 255, 20), select: (58, 42, 107, 255) }
+        StartPal {
+            bg: (14, 15, 20, 250),
+            border: (38, 39, 53, 255),
+            field: (27, 28, 37, 255),
+            text: (230, 231, 238, 255),
+            dim: (154, 155, 171, 255),
+            hover: (255, 255, 255, 20),
+            select: (58, 42, 107, 255),
+        }
     } else {
-        StartPal { bg: (248, 248, 251, 250), border: (214, 214, 224, 255), field: (234, 234, 242, 255), text: (28, 28, 38, 255), dim: (104, 104, 122, 255), hover: (0, 0, 0, 16), select: (218, 206, 246, 255) }
+        StartPal {
+            bg: (248, 248, 251, 250),
+            border: (214, 214, 224, 255),
+            field: (234, 234, 242, 255),
+            text: (28, 28, 38, 255),
+            dim: (104, 104, 122, 255),
+            hover: (0, 0, 0, 16),
+            select: (218, 206, 246, 255),
+        }
     }
 }
 
@@ -1055,13 +1215,24 @@ fn app_icon(pix: &mut Pixmap, s: f32, icons: &mut Icons, fonts: &Fonts, app: &Ap
 
 /// The start menu: search, the pinned apps, every app A to Z (the wheel scrolls it), your name and
 /// the power buttons. `pointer` lights the row under it.
-pub fn paint_start(pix: &mut Pixmap, s: f32, m: &Model, query: &str, select_all: bool, scroll: i32, pointer: (f32, f32), fonts: &Fonts, icons: &mut Icons) -> StartPaint {
+pub fn paint_start(
+    pix: &mut Pixmap,
+    s: f32,
+    m: &Model,
+    query: &str,
+    select_all: bool,
+    scroll: i32,
+    pointer: (f32, f32),
+    fonts: &Fonts,
+    icons: &mut Icons,
+) -> StartPaint {
     pix.fill(paint::color((0, 0, 0, 0)));
     let pal = start_pal(m.dark);
     let surf_h = pix.height() as f32 / s;
     let (cx, cy, cw) = (8.0, 3.0, 500.0);
     let ch = (surf_h - 12.0).min(600.0).max(240.0);
-    let rr = |pix: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, c: Rgba| paint::fill_rounded(pix, x * s, y * s, w * s, h * s, r * s, c);
+    let rr =
+        |pix: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, c: Rgba| paint::fill_rounded(pix, x * s, y * s, w * s, h * s, r * s, c);
     let inside = |r: (f32, f32, f32, f32)| pointer.0 >= r.0 && pointer.0 < r.0 + r.2 && pointer.1 >= r.1 && pointer.1 < r.1 + r.3;
     rr(pix, cx, cy, cw, ch, 14.0, pal.bg);
     paint::stroke_rounded(pix, (cx + 0.5) * s, (cy + 0.5) * s, (cw - 1.0) * s, (ch - 1.0) * s, 14.0 * s, s, pal.border);
@@ -1074,16 +1245,27 @@ pub fn paint_start(pix: &mut Pixmap, s: f32, m: &Model, query: &str, select_all:
     let fx = cx + 16.0;
     let fw = cw - 32.0;
     rr(pix, fx, cy + 16.0, fw, 40.0, 10.0, pal.field);
-    paint::stroke_rounded(pix, (fx + 0.5) * s, (cy + 16.5) * s, (fw - 1.0) * s, 39.0 * s, 10.0 * s, s, if query.is_empty() { pal.border } else { paint::accent(255) });
+    paint::stroke_rounded(
+        pix,
+        (fx + 0.5) * s,
+        (cy + 16.5) * s,
+        (fw - 1.0) * s,
+        39.0 * s,
+        10.0 * s,
+        s,
+        if query.is_empty() { pal.border } else { paint::accent(255) },
+    );
     if query.is_empty() {
         text(pix, &fonts.regular, 14.0, fx + 14.0, cy + 36.0, pal.dim, "Search apps");
     } else {
         let qw = paint::text_width(&fonts.regular, 14.0 * s, query) / s;
         if select_all {
-            rr(pix, fx + 12.0, cy + 25.0, qw + 4.0, 22.0, 4.0, paint::accent(120)); // everything typed is selected
+            rr(pix, fx + 12.0, cy + 25.0, qw + 4.0, 22.0, 4.0, paint::accent(120));
+            // everything typed is selected
         }
         text(pix, &fonts.regular, 14.0, fx + 14.0, cy + 36.0, pal.text, query);
-        rr(pix, fx + 14.0 + qw + 1.0, cy + 26.0, 1.5, 20.0, 0.5, paint::accent(255)); // the caret
+        rr(pix, fx + 14.0 + qw + 1.0, cy + 26.0, 1.5, 20.0, 0.5, paint::accent(255));
+        // the caret
     }
 
     let bottom = cy + ch - 62.0; // the power row starts here
@@ -1160,7 +1342,13 @@ pub fn paint_start(pix: &mut Pixmap, s: f32, m: &Model, query: &str, select_all:
     let iw = paint::text_width(&fonts.bold, 15.0 * s, &initial) / s;
     text(pix, &fonts.bold, 15.0, cx + 36.0 - iw / 2.0, my, (255, 255, 255, 255), &initial);
     text(pix, &fonts.regular, 13.5, cx + 60.0, my, pal.text, &m.user);
-    let buttons = [("Lock", PowerAct::Lock), ("Sleep", PowerAct::Sleep), ("Log out", PowerAct::Logout), ("Restart", PowerAct::Restart), ("Shut down", PowerAct::Shutdown)];
+    let buttons = [
+        ("Lock", PowerAct::Lock),
+        ("Sleep", PowerAct::Sleep),
+        ("Log out", PowerAct::Logout),
+        ("Restart", PowerAct::Restart),
+        ("Shut down", PowerAct::Shutdown),
+    ];
     let mut bx = cx + cw - 16.0;
     for (label, act) in buttons.iter().rev() {
         let bw = paint::text_width(&fonts.regular, 12.5 * s, label) / s + 22.0;
@@ -1182,8 +1370,18 @@ pub fn hibernate_ok(state: &str, cmdline: &str, meminfo: &str, swaps: &str) -> b
     if !state.split_whitespace().any(|w| w == "disk") || !cmdline.contains("resume=") {
         return false;
     }
-    let ram: u64 = meminfo.lines().find_map(|l| l.strip_prefix("MemTotal:")).and_then(|v| v.split_whitespace().next()).and_then(|v| v.parse().ok()).unwrap_or(0);
-    let swap: u64 = swaps.lines().skip(1).filter(|l| !l.starts_with("/dev/zram")).filter_map(|l| l.split_whitespace().nth(2)?.parse::<u64>().ok()).sum();
+    let ram: u64 = meminfo
+        .lines()
+        .find_map(|l| l.strip_prefix("MemTotal:"))
+        .and_then(|v| v.split_whitespace().next())
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let swap: u64 = swaps
+        .lines()
+        .skip(1)
+        .filter(|l| !l.starts_with("/dev/zram"))
+        .filter_map(|l| l.split_whitespace().nth(2)?.parse::<u64>().ok())
+        .sum();
     ram > 0 && swap >= ram
 }
 
@@ -1246,16 +1444,27 @@ pub struct FoldersView<'a> {
 
 /// The "Folders" start menu: narrow, favourites on top, then your apps in folders by kind (a folder opens
 /// to the side while the pointer is on it), and a power button that opens the power choices.
-pub fn paint_start_folders(pix: &mut Pixmap, s: f32, m: &Model, v: &FoldersView, pointer: (f32, f32), fonts: &Fonts, icons: &mut Icons) -> StartPaint {
+pub fn paint_start_folders(
+    pix: &mut Pixmap,
+    s: f32,
+    m: &Model,
+    v: &FoldersView,
+    pointer: (f32, f32),
+    fonts: &Fonts,
+    icons: &mut Icons,
+) -> StartPaint {
     use crate::apps;
     pix.fill(paint::color((0, 0, 0, 0)));
     let pal = start_pal(m.dark);
     let surf_h = pix.height() as f32 / s;
     let (cx, cy, cw) = (8.0, 3.0, 300.0);
     let ch = (surf_h - 12.0).min(640.0).max(240.0);
-    let rr = |pix: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, c: Rgba| paint::fill_rounded(pix, x * s, y * s, w * s, h * s, r * s, c);
+    let rr =
+        |pix: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, c: Rgba| paint::fill_rounded(pix, x * s, y * s, w * s, h * s, r * s, c);
     let inside = |r: (f32, f32, f32, f32)| pointer.0 >= r.0 && pointer.0 < r.0 + r.2 && pointer.1 >= r.1 && pointer.1 < r.1 + r.3;
-    let text = |pix: &mut Pixmap, font: &ab_glyph::FontVec, size: f32, x: f32, y: f32, c: Rgba, t: &str| paint::draw_text(pix, font, size * s, x * s, y * s, c, t);
+    let text = |pix: &mut Pixmap, font: &ab_glyph::FontVec, size: f32, x: f32, y: f32, c: Rgba, t: &str| {
+        paint::draw_text(pix, font, size * s, x * s, y * s, c, t)
+    };
     let card = |pix: &mut Pixmap, x: f32, y: f32, w: f32, h: f32| {
         paint::fill_rounded(pix, x * s, y * s, w * s, h * s, 14.0 * s, pal.bg);
         paint::stroke_rounded(pix, (x + 0.5) * s, (y + 0.5) * s, (w - 1.0) * s, (h - 1.0) * s, 14.0 * s, s, pal.border);
@@ -1267,13 +1476,23 @@ pub fn paint_start_folders(pix: &mut Pixmap, s: f32, m: &Model, v: &FoldersView,
     // search
     let (fx, fw) = (cx + 12.0, cw - 24.0);
     rr(pix, fx, cy + 12.0, fw, 36.0, 10.0, pal.field);
-    paint::stroke_rounded(pix, (fx + 0.5) * s, (cy + 12.5) * s, (fw - 1.0) * s, 35.0 * s, 10.0 * s, s, if v.query.is_empty() && v.focus != StartFocus::Search { pal.border } else { paint::accent(255) });
+    paint::stroke_rounded(
+        pix,
+        (fx + 0.5) * s,
+        (cy + 12.5) * s,
+        (fw - 1.0) * s,
+        35.0 * s,
+        10.0 * s,
+        s,
+        if v.query.is_empty() && v.focus != StartFocus::Search { pal.border } else { paint::accent(255) },
+    );
     if v.query.is_empty() {
         text(pix, &fonts.regular, 13.5, fx + 12.0, cy + 30.0, pal.dim, "Search apps");
     } else {
         let qw = paint::text_width(&fonts.regular, 13.5 * s, v.query) / s;
         if v.select_all {
-            rr(pix, fx + 10.0, cy + 19.0, qw + 4.0, 21.0, 4.0, paint::accent(120)); // everything typed is selected
+            rr(pix, fx + 10.0, cy + 19.0, qw + 4.0, 21.0, 4.0, paint::accent(120));
+            // everything typed is selected
         }
         text(pix, &fonts.regular, 13.5, fx + 12.0, cy + 30.0, pal.text, v.query);
         rr(pix, fx + 12.0 + qw + 1.0, cy + 21.0, 1.5, 18.0, 0.5, paint::accent(255));
@@ -1302,7 +1521,15 @@ pub fn paint_start_folders(pix: &mut Pixmap, s: f32, m: &Model, v: &FoldersView,
                 rr(pix, r.0, r.1, r.2, r.3 - 2.0, 8.0, pal.hover);
             }
             app_icon(pix, s, icons, fonts, a, r.0 + 8.0, r.1 + 6.0, 24.0);
-            text(pix, &fonts.regular, 13.5, r.0 + 42.0, r.1 + 18.0, pal.text, &fit_text(&fonts.regular, 13.5 * s, &a.name, (fw - 56.0) * s));
+            text(
+                pix,
+                &fonts.regular,
+                13.5,
+                r.0 + 42.0,
+                r.1 + 18.0,
+                pal.text,
+                &fit_text(&fonts.regular, 13.5 * s, &a.name, (fw - 56.0) * s),
+            );
             hits.push(StartHit { rect: r, act: StartAct::Launch(a.id.clone()) });
         }
     } else {
@@ -1319,7 +1546,17 @@ pub fn paint_start_folders(pix: &mut Pixmap, s: f32, m: &Model, v: &FoldersView,
         lines.extend((0..folders.len()).map(Line::Folder));
         // which keyboard-selectable item (favourites, then folders) each line is, if any
         let mut k = 0;
-        let sel_idx: Vec<Option<usize>> = lines.iter().map(|l| if matches!(l, Line::Head(_)) { None } else { k += 1; Some(k - 1) }).collect();
+        let sel_idx: Vec<Option<usize>> = lines
+            .iter()
+            .map(|l| {
+                if matches!(l, Line::Head(_)) {
+                    None
+                } else {
+                    k += 1;
+                    Some(k - 1)
+                }
+            })
+            .collect();
         let visible = (((bottom - 4.0) - top) / row_h).floor().max(1.0) as i32;
         max_scroll = (lines.len() as i32 - visible).max(0);
         let mut scroll = v.scroll.clamp(0, max_scroll);
@@ -1349,11 +1586,20 @@ pub fn paint_start_folders(pix: &mut Pixmap, s: f32, m: &Model, v: &FoldersView,
                         rr(pix, r.0, r.1, r.2, r.3 - 2.0, 8.0, pal.hover);
                     }
                     app_icon(pix, s, icons, fonts, a, r.0 + 8.0, r.1 + 5.0, 22.0);
-                    text(pix, &fonts.regular, 13.5, r.0 + 40.0, r.1 + 16.0, pal.text, &fit_text(&fonts.regular, 13.5 * s, &a.name, (fw - 54.0) * s));
+                    text(
+                        pix,
+                        &fonts.regular,
+                        13.5,
+                        r.0 + 40.0,
+                        r.1 + 16.0,
+                        pal.text,
+                        &fit_text(&fonts.regular, 13.5 * s, &a.name, (fw - 54.0) * s),
+                    );
                     hits.push(StartHit { rect: r, act: StartAct::Launch(a.id.clone()) });
                 }
                 Line::Folder(i) => {
-                    let open = v.cat == Some(*i) || (v.focus == StartFocus::List && sel_idx.get(scroll as usize + n).copied().flatten() == Some(v.sel));
+                    let open = v.cat == Some(*i)
+                        || (v.focus == StartFocus::List && sel_idx.get(scroll as usize + n).copied().flatten() == Some(v.sel));
                     if open {
                         rr(pix, r.0, r.1, r.2, r.3 - 2.0, 8.0, pal.select);
                         cat_y = Some(r.1);
@@ -1383,9 +1629,32 @@ pub fn paint_start_folders(pix: &mut Pixmap, s: f32, m: &Model, v: &FoldersView,
     text(pix, &fonts.bold, 14.0, cx + 30.0 - iw / 2.0, my, (255, 255, 255, 255), &initial);
     text(pix, &fonts.regular, 13.0, cx + 52.0, my, pal.text, &fit_text(&fonts.regular, 13.0 * s, &m.user, (cw - 120.0) * s));
     let pbtn = (cx + cw - 12.0 - 34.0, my - 17.0, 34.0, 34.0);
-    rr(pix, pbtn.0, pbtn.1, pbtn.2, pbtn.3, 9.0, if v.power_open { pal.select } else if inside(pbtn) { pal.hover } else { pal.field });
+    rr(
+        pix,
+        pbtn.0,
+        pbtn.1,
+        pbtn.2,
+        pbtn.3,
+        9.0,
+        if v.power_open {
+            pal.select
+        } else if inside(pbtn) {
+            pal.hover
+        } else {
+            pal.field
+        },
+    );
     if v.focus == StartFocus::Power {
-        paint::stroke_rounded(pix, (pbtn.0 + 0.5) * s, (pbtn.1 + 0.5) * s, (pbtn.2 - 1.0) * s, (pbtn.3 - 1.0) * s, 9.0 * s, s * 1.5, paint::accent(255));
+        paint::stroke_rounded(
+            pix,
+            (pbtn.0 + 0.5) * s,
+            (pbtn.1 + 0.5) * s,
+            (pbtn.2 - 1.0) * s,
+            (pbtn.3 - 1.0) * s,
+            9.0 * s,
+            s * 1.5,
+            paint::accent(255),
+        );
     }
     let isz = (16.0 * s) as u32;
     if let Some(ic) = icons.get_tinted("system-shutdown-symbolic", isz, pal.text) {
@@ -1424,7 +1693,15 @@ pub fn paint_start_folders(pix: &mut Pixmap, s: f32, m: &Model, v: &FoldersView,
                     rr(pix, r.0, r.1, r.2, r.3 - 2.0, 8.0, pal.hover);
                 }
                 app_icon(pix, s, icons, fonts, a, r.0 + 8.0, r.1 + 5.0, 22.0);
-                text(pix, &fonts.regular, 13.5, r.0 + 40.0, r.1 + 16.0, pal.text, &fit_text(&fonts.regular, 13.5 * s, &a.name, (r.2 - 52.0) * s));
+                text(
+                    pix,
+                    &fonts.regular,
+                    13.5,
+                    r.0 + 40.0,
+                    r.1 + 16.0,
+                    pal.text,
+                    &fit_text(&fonts.regular, 13.5 * s, &a.name, (r.2 - 52.0) * s),
+                );
                 hits.push(StartHit { rect: r, act: StartAct::Launch(a.id.clone()) });
             }
             max_scroll = max_scroll.max(0);
@@ -1531,7 +1808,8 @@ pub fn paint_dock(pix: &mut Pixmap, s: f32, m: &Model, fonts: &Fonts, icons: &mu
                 let lit = active.is_some_and(|a| a >= d.first && a <= d.last);
                 let c = if lit { lk.text } else { lk.dim };
                 let (a, b) = (mid - total / 2.0 + d.start, mid - total / 2.0 + d.end);
-                let (rx, ry, rw, rh) = if pos.vertical() { (edge - 4.0 * s, a, 8.0 * s, b - a) } else { (a, edge - 4.0 * s, b - a, 8.0 * s) };
+                let (rx, ry, rw, rh) =
+                    if pos.vertical() { (edge - 4.0 * s, a, 8.0 * s, b - a) } else { (a, edge - 4.0 * s, b - a, 8.0 * s) };
                 paint::fill_rounded(pix, rx, ry, rw, rh, rw.min(rh) / 2.0, c);
                 // a click on a merged oval goes to the next window it stands for
                 let target = match active {
@@ -1540,7 +1818,11 @@ pub fn paint_dock(pix: &mut Pixmap, s: f32, m: &Model, fonts: &Fonts, icons: &mu
                 };
                 let pad = (d.end - d.start).max(8.0 * s);
                 let cut = pad - (d.end - d.start);
-                let rect = if pos.vertical() { (edge - 6.0 * s, a - cut / 2.0, 12.0 * s, pad) } else { (a - cut / 2.0, edge - 6.0 * s, pad, 12.0 * s) };
+                let rect = if pos.vertical() {
+                    (edge - 6.0 * s, a - cut / 2.0, 12.0 * s, pad)
+                } else {
+                    (a - cut / 2.0, edge - 6.0 * s, pad, 12.0 * s)
+                };
                 if it.wins.len() > 1 {
                     hits.push(Hit { rect, action: Action::DockWin(it.app_id.clone(), it.wins[target]) });
                 }
@@ -1600,11 +1882,44 @@ mod tests {
     fn pane_draws() {
         let Some(fonts) = Fonts::load() else { return };
         let mut icons = Icons::new();
-        let mut m = Model { apps: vec![], pinned: vec![], wins: vec![], clock: String::new(), clock_secs: "05:03:11".into(), date: String::new(), today: (2026, 10, 16), user: String::new(), notch_open: false, fylgja: Default::default(), notch_w: 0.0, notch_tab: None, notifs: Default::default(), tray: vec![], addons: vec![], now_secs: 0, hibernate: false, conf: PanelConf::default(), dark: true, status: Default::default(), trash_full: false };
+        let mut m = Model {
+            apps: vec![],
+            pinned: vec![],
+            wins: vec![],
+            clock: String::new(),
+            clock_secs: "05:03:11".into(),
+            date: String::new(),
+            today: (2026, 10, 16),
+            user: String::new(),
+            notch_open: false,
+            fylgja: Default::default(),
+            notch_w: 0.0,
+            notch_tab: None,
+            notifs: Default::default(),
+            tray: vec![],
+            addons: vec![],
+            now_secs: 0,
+            hibernate: false,
+            conf: PanelConf::default(),
+            dark: true,
+            status: Default::default(),
+            trash_full: false,
+        };
         m.conf.notify_pane = true;
         let now = crate::notify::now_secs();
         for (id, app, sum, age) in [(1, "Mail", "Alice", 600), (2, "Mail", "Bob", 120), (3, "Heimdall", "Critical", 30)] {
-            m.notifs.add(crate::notify::Notif { id, app: app.into(), entry: String::new(), icon: String::new(), summary: sum.into(), body: "something happened".into(), urgency: 1, time: now - age, actions: vec![], link: String::new() });
+            m.notifs.add(crate::notify::Notif {
+                id,
+                app: app.into(),
+                entry: String::new(),
+                icon: String::new(),
+                summary: sum.into(),
+                body: "something happened".into(),
+                urgency: 1,
+                time: now - age,
+                actions: vec![],
+                link: String::new(),
+            });
         }
         let s = 1.0;
         let mut pix = Pixmap::new(1720, 1100).unwrap();
@@ -1612,7 +1927,8 @@ mod tests {
         let card = paint_calendar(&mut pix, s, &m, 0, &fonts, true);
         let (w, h) = (1720.0, 1100.0);
         let top = card.1 + card.3 + 10.0;
-        let hits = crate::notify::paint_list(&mut pix, s, (card.0, top, card.2, h - top - 10.0), &m.notifs, (0.0, 0.0), now, &fonts, &mut icons);
+        let hits =
+            crate::notify::paint_list(&mut pix, s, (card.0, top, card.2, h - top - 10.0), &m.notifs, (0.0, 0.0), now, &fonts, &mut icons);
         assert!(!hits.is_empty());
         assert_eq!(pane_rect(w, h).0, w - 388.0);
         if let Some(dir) = std::env::var_os("NOTIFY_PNG_DIR") {
@@ -1622,7 +1938,29 @@ mod tests {
 
     #[test]
     fn pinned_apps_come_first_and_missing_ones_are_skipped() {
-        let m = Model { apps: vec![app("minos", "Minos"), app("vivaldi-stable", "Vivaldi")], pinned: vec!["vivaldi-stable".into(), "ghost".into(), "minos".into()], wins: vec![], clock: String::new(), clock_secs: String::new(), date: String::new(), today: (2026, 1, 1), user: String::new(), notch_open: false, fylgja: Default::default(), notch_w: 0.0, notch_tab: None, notifs: Default::default(), tray: vec![], addons: vec![], now_secs: 0, hibernate: false, conf: PanelConf::default(), dark: true, status: Default::default(), trash_full: false };
+        let m = Model {
+            apps: vec![app("minos", "Minos"), app("vivaldi-stable", "Vivaldi")],
+            pinned: vec!["vivaldi-stable".into(), "ghost".into(), "minos".into()],
+            wins: vec![],
+            clock: String::new(),
+            clock_secs: String::new(),
+            date: String::new(),
+            today: (2026, 1, 1),
+            user: String::new(),
+            notch_open: false,
+            fylgja: Default::default(),
+            notch_w: 0.0,
+            notch_tab: None,
+            notifs: Default::default(),
+            tray: vec![],
+            addons: vec![],
+            now_secs: 0,
+            hibernate: false,
+            conf: PanelConf::default(),
+            dark: true,
+            status: Default::default(),
+            trash_full: false,
+        };
         let items = dock_items(&m);
         assert_eq!(items.iter().map(|i| i.app_id.as_str()).collect::<Vec<_>>(), vec!["vivaldi-stable", "minos", TRASH_ID]); // the trash is always last
         assert!(items.iter().all(|i| i.pinned && i.wins.is_empty()));
@@ -1630,7 +1968,11 @@ mod tests {
 
     #[test]
     fn dock_width_grows_with_items() {
-        let one = dock_size(&[DockItem { app_id: "a".into(), name: "A".into(), icon: "a".into(), wins: vec![], pinned: true, active: false }], 44, DockPos::Bottom);
+        let one = dock_size(
+            &[DockItem { app_id: "a".into(), name: "A".into(), icon: "a".into(), wins: vec![], pinned: true, active: false }],
+            44,
+            DockPos::Bottom,
+        );
         let it = |n: &str| DockItem { app_id: n.into(), name: n.into(), icon: n.into(), wins: vec![], pinned: true, active: false };
         let three = dock_size(&[it("a"), it("b"), it("c")], 44, DockPos::Bottom);
         let side = dock_size(&[it("a"), it("b"), it("c")], 44, DockPos::Left);
@@ -1638,7 +1980,8 @@ mod tests {
         assert!(three.0 > one.0);
         assert_eq!(one.1, dock_h(44));
         assert_eq!(three.0 - one.0, 2 * (44 + GAP as u32));
-        assert!(dock_size(&[it("a")], 64, DockPos::Bottom).0 > one.0 && dock_size(&[it("a")], 64, DockPos::Bottom).1 > one.1); // bigger icons, bigger dock
+        assert!(dock_size(&[it("a")], 64, DockPos::Bottom).0 > one.0 && dock_size(&[it("a")], 64, DockPos::Bottom).1 > one.1);
+        // bigger icons, bigger dock
     }
 
     #[test]
@@ -1650,6 +1993,7 @@ mod tests {
         assert_eq!(look(ColorMode::Theme, 100, true).bg.3, 255);
         let clear = look(ColorMode::Neutral, 0, true);
         assert_eq!((clear.bg.3, clear.border.3), (0, 0)); // invisible shelf, no edge line
-        assert!(look(ColorMode::Theme, 69, true).bg.2 > look(ColorMode::Neutral, 69, true).bg.2); // purple tint vs plain
+        assert!(look(ColorMode::Theme, 69, true).bg.2 > look(ColorMode::Neutral, 69, true).bg.2);
+        // purple tint vs plain
     }
 }

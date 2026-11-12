@@ -44,26 +44,18 @@ fn bad<T>(msg: impl Into<String>) -> Result<T, Bad> {
     Err(Bad(msg.into()))
 }
 
-const CP437: &str = "ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜ¢£¥₧ƒáíóúñÑªº¿⌐¬½¼¡«»░▒▓│┤╡╢╖╕╣║╗╝╜╛┐└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■\u{a0}";
+const CP437: &str =
+    "ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜ¢£¥₧ƒáíóúñÑªº¿⌐¬½¼¡«»░▒▓│┤╡╢╖╕╣║╗╝╜╛┐└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■\u{a0}";
 
 fn cp437(b: &[u8]) -> String {
     let high: Vec<char> = CP437.chars().collect();
-    b.iter()
-        .map(|&c| {
-            if c < 0x80 {
-                c as char
-            } else {
-                high[(c - 0x80) as usize]
-            }
-        })
-        .collect()
+    b.iter().map(|&c| if c < 0x80 { c as char } else { high[(c - 0x80) as usize] }).collect()
 }
 
 /// A name as bytes: UTF-8 when the flag says so (strictly: anything else is an error), else cp437.
 fn decode_name(b: &[u8], flags: u16) -> Result<String, Bad> {
     if flags & 0x800 != 0 {
-        String::from_utf8(b.to_vec())
-            .map_err(|e| Bad(format!("'utf-8' codec can't decode the name: {e}")))
+        String::from_utf8(b.to_vec()).map_err(|e| Bad(format!("'utf-8' codec can't decode the name: {e}")))
     } else {
         Ok(cp437(b))
     }
@@ -83,11 +75,7 @@ pub fn crc32(data: &[u8], mut crc: u32) -> u32 {
         for (i, slot) in t.iter_mut().enumerate() {
             let mut c = i as u32;
             for _ in 0..8 {
-                c = if c & 1 != 0 {
-                    0xedb8_8320 ^ (c >> 1)
-                } else {
-                    c >> 1
-                };
+                c = if c & 1 != 0 { 0xedb8_8320 ^ (c >> 1) } else { c >> 1 };
             }
             *slot = c;
         }
@@ -136,11 +124,7 @@ impl Zip {
 
     pub fn open(file: File) -> Result<Zip, Bad> {
         let size = file.metadata().map_err(|e| Bad(e.to_string()))?.len();
-        let mut z = Zip {
-            file,
-            size,
-            entries: vec![],
-        };
+        let mut z = Zip { file, size, entries: vec![] };
         z.contents()?;
         Ok(z)
     }
@@ -152,12 +136,7 @@ impl Zip {
         }
         let last = self.read(self.size as i128 - 22, 22)?;
         if last.len() == 22 && &last[..4] == b"PK\x05\x06" && last[20..] == [0, 0] {
-            return self
-                .end_record64(
-                    self.size as i128 - 22,
-                    (u32le(&last, 12) as u64, u32le(&last, 16) as u64),
-                )
-                .map(Some);
+            return self.end_record64(self.size as i128 - 22, (u32le(&last, 12) as u64, u32le(&last, 16) as u64)).map(Some);
         }
         let max_comment_start = self.size.saturating_sub(65535 + 22);
         let data = self.read(max_comment_start as i128, 65535 + 22)?;
@@ -168,19 +147,11 @@ impl Zip {
         if rec.len() != 22 {
             return Ok(None);
         }
-        self.end_record64(
-            max_comment_start as i128 + start as i128,
-            (u32le(rec, 12) as u64, u32le(rec, 16) as u64),
-        )
-        .map(Some)
+        self.end_record64(max_comment_start as i128 + start as i128, (u32le(rec, 12) as u64, u32le(rec, 16) as u64)).map(Some)
     }
 
     /// _EndRecData64: the ZIP64 end record, when its locator is there
-    fn end_record64(
-        &self,
-        offset: i128,
-        (size_cd, offset_cd): (u64, u64),
-    ) -> Result<(u64, u64, i128), Bad> {
+    fn end_record64(&self, offset: i128, (size_cd, offset_cd): (u64, u64)) -> Result<(u64, u64, i128), Bad> {
         let mut offset = offset - 20;
         if offset < 0 {
             return Ok((size_cd, offset_cd, offset + 20));
@@ -216,8 +187,7 @@ impl Zip {
             return bad("Zip64 end of central directory record not found");
         }
         let (sz, dirsize, diroffset) = (u64le(&data, 4), u64le(&data, 40), u64le(&data, 48));
-        if diroffset as i128 + dirsize as i128 != reloff as i128 || sz as i128 + 12 != 56 + extrasz
-        {
+        if diroffset as i128 + dirsize as i128 != reloff as i128 || sz as i128 + 12 != 56 + extrasz {
             return bad("Corrupt zip64 end of central directory record");
         }
         Ok((dirsize, diroffset, offset - extrasz))
@@ -250,11 +220,7 @@ impl Zip {
             if &cd[..4] != b"PK\x01\x02" {
                 return bad("Bad magic number for central directory");
             }
-            let (fn_len, extra_len, comment_len) = (
-                u16le(&cd, 28) as usize,
-                u16le(&cd, 30) as usize,
-                u16le(&cd, 32) as usize,
-            );
+            let (fn_len, extra_len, comment_len) = (u16le(&cd, 28) as usize, u16le(&cd, 30) as usize, u16le(&cd, 32) as usize);
             let name_bytes = take(&mut p, fn_len).to_vec();
             let flags = u16le(&cd, 8);
             let orig = decode_name(&name_bytes, flags)?;
@@ -262,10 +228,7 @@ impl Zip {
             take(&mut p, comment_len);
             let extract_version = cd[6];
             if extract_version > 63 {
-                return bad(format!(
-                    "zip file version {:.1}",
-                    extract_version as f64 / 10.0
-                ));
+                return bad(format!("zip file version {:.1}", extract_version as f64 / 10.0));
             }
             let mut e = Entry {
                 filename: sanitize(&orig),
@@ -309,12 +272,8 @@ impl Zip {
                         return bad("Corrupt unicode path extra field (0x7075)");
                     }
                     if d[0] == 1 && u32le(d, 1) == name_crc {
-                        let name = String::from_utf8(d[5..].to_vec()).map_err(|_| {
-                            Bad(
-                                "Corrupt unicode path extra field (0x7075): invalid utf-8 bytes"
-                                    .into(),
-                            )
-                        })?;
+                        let name = String::from_utf8(d[5..].to_vec())
+                            .map_err(|_| Bad("Corrupt unicode path extra field (0x7075): invalid utf-8 bytes".into()))?;
                         if !name.is_empty() {
                             e.filename = sanitize(&name);
                         }
@@ -428,12 +387,7 @@ impl Zip {
                     if room == 0 {
                         break;
                     }
-                    let r = inflate(
-                        &mut state,
-                        &data[consumed..],
-                        &mut buf[..room],
-                        MZFlush::None,
-                    );
+                    let r = inflate(&mut state, &data[consumed..], &mut buf[..room], MZFlush::None);
                     consumed += r.bytes_consumed;
                     produced.extend_from_slice(&buf[..r.bytes_written]);
                     match r.status {
@@ -447,11 +401,7 @@ impl Zip {
                     }
                 }
                 // after the end of the stream the rest is unused, not a tail to inflate later
-                tail = if stream_end {
-                    vec![]
-                } else {
-                    data[consumed..].to_vec()
-                };
+                tail = if stream_end { vec![] } else { data[consumed..].to_vec() };
                 eof = stream_end || (compress_left == 0 && tail.is_empty());
                 data = produced;
             } else {

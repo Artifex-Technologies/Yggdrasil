@@ -49,7 +49,15 @@ pub fn parse_clients(json: &str, monitor: i64, workspace: i64, placed: &str) -> 
             let address = c["address"].as_str()?.to_string();
             (address != placed).then(|| {
                 let order = c["focusHistoryID"].as_i64().unwrap_or(i64::MAX);
-                (order, Win { address, class: c["class"].as_str().unwrap_or("").to_string(), title: c["title"].as_str().unwrap_or("").to_string(), floating: c["floating"].as_bool().unwrap_or(true) })
+                (
+                    order,
+                    Win {
+                        address,
+                        class: c["class"].as_str().unwrap_or("").to_string(),
+                        title: c["title"].as_str().unwrap_or("").to_string(),
+                        floating: c["floating"].as_bool().unwrap_or(true),
+                    },
+                )
             })
         })
         .collect();
@@ -122,7 +130,16 @@ fn grid(area: Rect4, n: usize) -> (usize, usize, f32, f32) {
 /// Draws the empty zones (the one whose turn it is with the windows as tiles) over a dimmed screen. `to_surface` maps global
 /// pixels onto the surface. Returns each tile's rectangle and window index.
 #[allow(clippy::too_many_arguments)]
-pub fn paint(pix: &mut Pixmap, scale: f32, a: &Assist, origin: (f32, f32), apps_list: &[App], pointer: Option<(f32, f32)>, fonts: &Fonts, icons: &mut Icons) -> Vec<(Rect4, usize)> {
+pub fn paint(
+    pix: &mut Pixmap,
+    scale: f32,
+    a: &Assist,
+    origin: (f32, f32),
+    apps_list: &[App],
+    pointer: Option<(f32, f32)>,
+    fonts: &Fonts,
+    icons: &mut Icons,
+) -> Vec<(Rect4, usize)> {
     pix.fill(paint::color((0, 0, 0, 0)));
     let (w, h) = (pix.width() as f32, pix.height() as f32);
     paint::fill_rounded(pix, 0.0, 0.0, w, h, 0.0, (0, 0, 0, 110));
@@ -142,7 +159,15 @@ pub fn paint(pix: &mut Pixmap, scale: f32, a: &Assist, origin: (f32, f32), apps_
         paint::draw_text(pix, &fonts.bold, 14.0 * scale, (r.0 + 24.0) * scale, (r.1 + 26.0) * scale, (240, 240, 245, 255), head);
         let hint = "Click elsewhere or Esc to stop";
         let hw = paint::text_width(&fonts.regular, 11.5 * scale, hint) / scale;
-        paint::draw_text(pix, &fonts.regular, 11.5 * scale, (r.0 + r.2 - 24.0 - hw) * scale, (r.1 + 26.0) * scale, (160, 160, 175, 255), hint);
+        paint::draw_text(
+            pix,
+            &fonts.regular,
+            11.5 * scale,
+            (r.0 + r.2 - 24.0 - hw) * scale,
+            (r.1 + 26.0) * scale,
+            (160, 160, 175, 255),
+            hint,
+        );
         let (cols, rows_fit, gx, gy) = grid(r, a.wins.len());
         let first = a.scroll * cols;
         for (k, win) in a.wins.iter().enumerate().skip(first).take(cols * rows_fit) {
@@ -152,21 +177,47 @@ pub fn paint(pix: &mut Pixmap, scale: f32, a: &Assist, origin: (f32, f32), apps_
             let fill = if over || k == a.sel { (60, 56, 76, 245) } else { (36, 36, 44, 240) };
             paint::fill_rounded(pix, t.0 * scale, t.1 * scale, t.2 * scale, t.3 * scale, 10.0 * scale, fill);
             if k == a.sel {
-                paint::stroke_rounded(pix, t.0 * scale, t.1 * scale, t.2 * scale, t.3 * scale, 10.0 * scale, 2.0 * scale, paint::accent(255));
+                paint::stroke_rounded(
+                    pix,
+                    t.0 * scale,
+                    t.1 * scale,
+                    t.2 * scale,
+                    t.3 * scale,
+                    10.0 * scale,
+                    2.0 * scale,
+                    paint::accent(255),
+                );
             }
             let app = apps::for_app_id(apps_list, &win.class);
-            let (name, icon) = app.map(|a| (a.name.clone(), a.icon.clone())).unwrap_or_else(|| (win.class.clone(), win.class.to_lowercase()));
+            let (name, icon) =
+                app.map(|a| (a.name.clone(), a.icon.clone())).unwrap_or_else(|| (win.class.clone(), win.class.to_lowercase()));
             crate::notify::draw_app_icon(pix, scale, icons, fonts, &name, &icon, t.0 + (TILE_W - 52.0) / 2.0, t.1 + 18.0, 52.0, false);
             let label = if win.title.is_empty() { name.clone() } else { win.title.clone() };
             let line = crate::fylgja::fit(&fonts.regular, 12.0 * scale, &label, (TILE_W - 20.0) * scale);
             let lw = paint::text_width(&fonts.regular, 12.0 * scale, &line) / scale;
-            paint::draw_text(pix, &fonts.regular, 12.0 * scale, (t.0 + (TILE_W - lw) / 2.0) * scale, (t.1 + 96.0) * scale, (235, 235, 242, 255), &line);
+            paint::draw_text(
+                pix,
+                &fonts.regular,
+                12.0 * scale,
+                (t.0 + (TILE_W - lw) / 2.0) * scale,
+                (t.1 + 96.0) * scale,
+                (235, 235, 242, 255),
+                &line,
+            );
             hits.push((t, k));
         }
         let shown = cols * rows_fit;
         if a.wins.len() > first + shown || first > 0 {
             let more = format!("{} of {} · scroll for more", (a.wins.len() - first).min(shown), a.wins.len());
-            paint::draw_text(pix, &fonts.regular, 11.0 * scale, (r.0 + 24.0) * scale, (r.1 + r.3 - 16.0) * scale, (160, 160, 175, 255), &more);
+            paint::draw_text(
+                pix,
+                &fonts.regular,
+                11.0 * scale,
+                (r.0 + 24.0) * scale,
+                (r.1 + r.3 - 16.0) * scale,
+                (160, 160, 175, 255),
+                &more,
+            );
         }
     }
     hits
@@ -185,9 +236,11 @@ mod tests {
     use super::*;
 
     fn assist(n: usize) -> Assist {
-        let monitor = Monitor { name: "DP-1".into(), x: 0, y: 0, width: 3440, height: 1440, scale: 1.0, transform: 0, reserved: [0, 28, 0, 70] };
+        let monitor =
+            Monitor { name: "DP-1".into(), x: 0, y: 0, width: 3440, height: 1440, scale: 1.0, transform: 0, reserved: [0, 28, 0, 70] };
         let layout = zones::builtin().into_iter().find(|l| l.zones.len() == 3).unwrap();
-        let wins = (0..n).map(|i| Win { address: format!("0x{i}"), class: "foot".into(), title: format!("w{i}"), floating: i % 2 == 0 }).collect();
+        let wins =
+            (0..n).map(|i| Win { address: format!("0x{i}"), class: "foot".into(), title: format!("w{i}"), floating: i % 2 == 0 }).collect();
         Assist { monitor, layout, gap: 8, empty: vec![1, 2], wins, sel: 0, scroll: 0 }
     }
 

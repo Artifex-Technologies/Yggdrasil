@@ -150,7 +150,8 @@ fn attr<'a>(text: &'a str, name: &str) -> Option<&'a str> {
 /// ipptool's verbose answer to Get-Printer-Attributes: the supplies (marker-names, marker-levels, marker-colors).
 pub fn parse_markers(text: &str) -> Vec<Marker> {
     let names: Vec<String> = attr(text, "marker-names").map(|v| v.split(',').map(|s| s.trim().to_string()).collect()).unwrap_or_default();
-    let levels: Vec<i32> = attr(text, "marker-levels").map(|v| v.split(',').filter_map(|s| s.trim().parse().ok()).collect()).unwrap_or_default();
+    let levels: Vec<i32> =
+        attr(text, "marker-levels").map(|v| v.split(',').filter_map(|s| s.trim().parse().ok()).collect()).unwrap_or_default();
     let colors: Vec<String> = attr(text, "marker-colors").map(|v| v.split(',').map(|s| s.trim().to_string()).collect()).unwrap_or_default();
     names
         .iter()
@@ -170,7 +171,8 @@ pub fn parse_found(text: &str, known: &BTreeMap<String, String>) -> Vec<(String,
         if known.values().any(|u| u == uri) || out.iter().any(|(_, u): &(String, String)| u == uri) {
             continue;
         }
-        let host = uri.split("://").nth(1).unwrap_or("").split(['/', ':']).next().unwrap_or("").trim_end_matches(".local").replace("%20", " ");
+        let host =
+            uri.split("://").nth(1).unwrap_or("").split(['/', ':']).next().unwrap_or("").trim_end_matches(".local").replace("%20", " ");
         out.push((if host.is_empty() { uri.to_string() } else { host }, uri.to_string()));
     }
     out
@@ -180,7 +182,11 @@ pub fn parse_found(text: &str, known: &BTreeMap<String, String>) -> Vec<(String,
 pub fn queue_name(shown: &str) -> String {
     let n: String = shown.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
     let n = n.trim_matches('_').to_string();
-    if n.is_empty() { "Printer".into() } else { n.chars().take(60).collect() }
+    if n.is_empty() {
+        "Printer".into()
+    } else {
+        n.chars().take(60).collect()
+    }
 }
 
 fn valid_queue(name: &str) -> bool {
@@ -194,7 +200,8 @@ fn markers_of(name: &str) -> Vec<Marker> {
     if std::fs::write(&path, MARKERS_TEST).is_err() {
         return vec![];
     }
-    let out = run("ipptool", &["-tv", "-T", "4", &format!("ipp://localhost/printers/{name}"), path.to_str().unwrap_or("")]).unwrap_or_default();
+    let out =
+        run("ipptool", &["-tv", "-T", "4", &format!("ipp://localhost/printers/{name}"), path.to_str().unwrap_or("")]).unwrap_or_default();
     let _ = std::fs::remove_file(&path);
     parse_markers(&out)
 }

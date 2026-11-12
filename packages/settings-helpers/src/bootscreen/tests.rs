@@ -51,7 +51,9 @@ fn bash(script: &str) -> String {
 
 #[test]
 fn test_the_nvidia_dropin_adds_its_modules_once() {
-    for (mods, want) in [("", "nvidia nvidia_modeset nvidia_uvm nvidia_drm"), ("btrfs nvidia", "btrfs nvidia nvidia_modeset nvidia_uvm nvidia_drm")] {
+    for (mods, want) in
+        [("", "nvidia nvidia_modeset nvidia_uvm nvidia_drm"), ("btrfs nvidia", "btrfs nvidia nvidia_modeset nvidia_uvm nvidia_drm")]
+    {
         let script = format!("MODULES=({mods})\n{NVIDIA_DROPIN_TEXT}\n{NVIDIA_DROPIN_TEXT}\necho \"${{MODULES[*]}}\"\n");
         assert_eq!(bash(&script), want);
     }
@@ -60,7 +62,10 @@ fn test_the_nvidia_dropin_adds_its_modules_once() {
 #[test]
 fn test_the_dropin_puts_plymouth_after_kms() {
     for (hooks, want) in [
-        ("base udev autodetect microcode kms modconf block filesystems", "base udev autodetect microcode kms plymouth modconf block filesystems"),
+        (
+            "base udev autodetect microcode kms modconf block filesystems",
+            "base udev autodetect microcode kms plymouth modconf block filesystems",
+        ),
         ("base udev autodetect block filesystems", "base udev plymouth autodetect block filesystems"),
         ("base udev plymouth kms block", "base udev plymouth kms block"),
     ] {
@@ -141,7 +146,10 @@ fn grub_lines_as_the_script_wrote_them() {
     assert_eq!(with_splash("GRUB_CMDLINE_LINUX_DEFAULT='"), "GRUB_CMDLINE_LINUX_DEFAULT='splash'");
     assert_eq!(with_splash("GRUB_CMDLINE_LINUX_DEFAULT=\"a  b\tc\""), "GRUB_CMDLINE_LINUX_DEFAULT=\"a b c splash\"");
     assert_eq!(with_splash("GRUB_CMDLINE_LINUX_DEFAULT='splash quiet'"), "GRUB_CMDLINE_LINUX_DEFAULT='splash quiet'");
-    assert_eq!(grub_splash("# GRUB_CMDLINE_LINUX_DEFAULT=x\n GRUB_CMDLINE_LINUX_DEFAULT=y"), "# GRUB_CMDLINE_LINUX_DEFAULT=x\n GRUB_CMDLINE_LINUX_DEFAULT=y");
+    assert_eq!(
+        grub_splash("# GRUB_CMDLINE_LINUX_DEFAULT=x\n GRUB_CMDLINE_LINUX_DEFAULT=y"),
+        "# GRUB_CMDLINE_LINUX_DEFAULT=x\n GRUB_CMDLINE_LINUX_DEFAULT=y"
+    );
 }
 
 #[test]

@@ -1,13 +1,17 @@
 //! Turn the consensus into what the bar and terminal show.
 
 use crate::consensus::Hour;
-use crate::observe::Station;
 use crate::nowcast::Outlook;
+use crate::observe::Station;
 use crate::timeutil::{format_local, now_epoch};
 use serde_json::json;
 
 pub fn to_units(c: f64, units: &str) -> f64 {
-    if units == "us" { c * 9.0 / 5.0 + 32.0 } else { c }
+    if units == "us" {
+        c * 9.0 / 5.0 + 32.0
+    } else {
+        c
+    }
 }
 
 fn deg(c: f64, units: &str) -> String {
@@ -52,13 +56,7 @@ pub fn bar_json(i: &BarInput) -> String {
     let text = format!("{} {}", icon(h.precip_prob, hod), deg(h.mean, i.units));
 
     let mut tip = vec![i.place.to_string()];
-    tip.push(format!(
-        "Now: {} (models {} to {}, {} of them)",
-        deg(h.mean, i.units),
-        deg(h.low, i.units),
-        deg(h.high, i.units),
-        h.n_models
-    ));
+    tip.push(format!("Now: {} (models {} to {}, {} of them)", deg(h.mean, i.units), deg(h.low, i.units), deg(h.high, i.units), h.n_models));
     // Only the WIDTH of the ensemble is shown: it is a different model run than the three
     // above, so its absolute range can sit off to one side of their average.
     if let Some((p10, _, p90)) = h.ensemble {
@@ -72,9 +70,20 @@ pub fn bar_json(i: &BarInput) -> String {
     if let Some((s, km)) = i.observed {
         tip.push(format!("Measured at {} ({:.0} km away): {}", s.id, km, deg(s.temp_c, i.units)));
     }
-    tip.push(if i.weighted { "Models weighted by measured accuracy".into() } else { "Models weighted equally (not enough measured history yet)".into() });
+    tip.push(if i.weighted {
+        "Models weighted by measured accuracy".into()
+    } else {
+        "Models weighted equally (not enough measured history yet)".into()
+    });
     // Next few hours.
-    let later: Vec<String> = i.hours.iter().skip(idx + 3).step_by(3).take(4).map(|x| format!("{} {}", &x.time[11..13.min(x.time.len())], deg(x.mean, i.units))).collect();
+    let later: Vec<String> = i
+        .hours
+        .iter()
+        .skip(idx + 3)
+        .step_by(3)
+        .take(4)
+        .map(|x| format!("{} {}", &x.time[11..13.min(x.time.len())], deg(x.mean, i.units)))
+        .collect();
     if !later.is_empty() {
         tip.push(format!("Later: {}", later.join("  ")));
     }
@@ -86,15 +95,33 @@ pub fn bar_json(i: &BarInput) -> String {
 /// The bar's icon for a WMO weather code (Open-Meteo's `weather_code`), by day or night.
 pub fn sky_icon(code: i64, day: bool) -> &'static str {
     match code {
-        0 => if day { "weather-clear-symbolic" } else { "weather-clear-night-symbolic" },
-        1 | 2 => if day { "weather-few-clouds-symbolic" } else { "weather-few-clouds-night-symbolic" },
+        0 => {
+            if day {
+                "weather-clear-symbolic"
+            } else {
+                "weather-clear-night-symbolic"
+            }
+        }
+        1 | 2 => {
+            if day {
+                "weather-few-clouds-symbolic"
+            } else {
+                "weather-few-clouds-night-symbolic"
+            }
+        }
         3 => "weather-overcast-symbolic",
         45 | 48 => "weather-fog-symbolic",
         51..=57 => "weather-showers-scattered-symbolic",
         61..=67 | 80..=82 => "weather-showers-symbolic",
         71..=77 | 85 | 86 => "weather-snow-symbolic",
         95..=99 => "weather-storm-symbolic",
-        _ => if day { "weather-few-clouds-symbolic" } else { "weather-few-clouds-night-symbolic" },
+        _ => {
+            if day {
+                "weather-few-clouds-symbolic"
+            } else {
+                "weather-few-clouds-night-symbolic"
+            }
+        }
     }
 }
 
@@ -166,7 +193,11 @@ pub fn panel_json(i: Option<&BarInput>, o: Option<&Outlook>, sky: Option<(i64, b
 }
 
 fn short(mm_h: f64) -> String {
-    if mm_h < 1.0 { format!("{mm_h:.2}") } else { format!("{mm_h:.1}") }
+    if mm_h < 1.0 {
+        format!("{mm_h:.2}")
+    } else {
+        format!("{mm_h:.1}")
+    }
 }
 
 #[cfg(test)]
@@ -176,7 +207,16 @@ mod tests {
     use crate::timeutil::parse_local;
 
     fn hour(time: &str, mean: f64) -> Hour {
-        Hour { time: time.into(), mean, low: mean - 1.0, high: mean + 1.0, n_models: 3, ensemble: Some((mean - 2.0, mean, mean + 2.0)), precip_prob: Some(10.0), confidence: Confidence::High }
+        Hour {
+            time: time.into(),
+            mean,
+            low: mean - 1.0,
+            high: mean + 1.0,
+            n_models: 3,
+            ensemble: Some((mean - 2.0, mean, mean + 2.0)),
+            precip_prob: Some(10.0),
+            confidence: Confidence::High,
+        }
     }
 
     #[test]
@@ -212,7 +252,15 @@ mod tests {
         let key = format_local(now, 0);
         let hs = vec![hour(&format!("{}:00", &key[..13]), 18.4), hour(&format!("{}:00", &key[..13]), 19.0)];
         let s = Station { id: "KXYZ".into(), name: "x".into(), lat: 0.0, lon: 0.0, obs_epoch: 0, temp_c: 17.8 };
-        let input = BarInput { hours: &hs, utc_offset_s: 0, units: "metric", place: "Test, Place", how: "chosen", observed: Some((&s, 12.3)), weighted: false };
+        let input = BarInput {
+            hours: &hs,
+            utc_offset_s: 0,
+            units: "metric",
+            place: "Test, Place",
+            how: "chosen",
+            observed: Some((&s, 12.3)),
+            weighted: false,
+        };
         let v: serde_json::Value = serde_json::from_str(&bar_json(&input)).unwrap();
         assert!(v["text"].as_str().unwrap().contains("18\u{00B0}"));
         let tip = v["tooltip"].as_str().unwrap();
@@ -220,7 +268,10 @@ mod tests {
         assert!(tip.contains("weighted equally"));
         assert!(tip.contains("Ensemble spread: about \u{00B1}2\u{00B0}")); // (p90 - p10) / 2
         let input = BarInput { weighted: true, ..input };
-        assert!(serde_json::from_str::<serde_json::Value>(&bar_json(&input)).unwrap()["tooltip"].as_str().unwrap().contains("measured accuracy"));
+        assert!(serde_json::from_str::<serde_json::Value>(&bar_json(&input)).unwrap()["tooltip"]
+            .as_str()
+            .unwrap()
+            .contains("measured accuracy"));
     }
 
     #[test]
@@ -237,7 +288,15 @@ mod tests {
         let now = parse_local("2026-10-25T14:05", -4 * 3600).unwrap();
         let o = crate::nowcast::outlook(&steps, now).unwrap();
         let hs = vec![hour("2026-10-25T14:00", 12.2)];
-        let input = BarInput { hours: &hs, utc_offset_s: -4 * 3600, units: "metric", place: "New York", how: "chosen", observed: None, weighted: false };
+        let input = BarInput {
+            hours: &hs,
+            utc_offset_s: -4 * 3600,
+            units: "metric",
+            place: "New York",
+            how: "chosen",
+            observed: None,
+            weighted: false,
+        };
         let v = panel_json(Some(&input), Some(&o), None, now);
         assert_eq!(v["text"], "12\u{00B0} \u{00B7} rain in 25 min");
         assert_eq!(v["state"], "warn");
@@ -246,7 +305,11 @@ mod tests {
         assert_eq!(lines.last().unwrap()["value"], "New York");
         // nothing at all: no pill
         let none = panel_json(None, None, None, now);
-        assert_eq!((none["text"].as_str(), none["state"].as_str(), none["icon"].is_string()), (Some(""), Some("ok"), true), "no data: the icon alone, so the card still opens");
+        assert_eq!(
+            (none["text"].as_str(), none["state"].as_str(), none["icon"].is_string()),
+            (Some(""), Some("ok"), true),
+            "no data: the icon alone, so the card still opens"
+        );
         // only the temperature (the nowcast failed)
         assert_eq!(panel_json(Some(&input), None, None, now)["text"], "12\u{00B0}");
     }
@@ -263,6 +326,9 @@ mod tests {
         assert_eq!(sky_icon(75, true), "weather-snow-symbolic");
         assert_eq!(sky_icon(95, false), "weather-storm-symbolic");
         assert_eq!(panel_json(None, None, Some((3, true)), 0)["icon"], "weather-overcast-symbolic");
-        assert_eq!(crate::openmeteo::parse_current(r#"{"current":{"time":"2026-10-25T14:00","weather_code":61,"is_day":0}}"#), Some((61, false)));
+        assert_eq!(
+            crate::openmeteo::parse_current(r#"{"current":{"time":"2026-10-25T14:00","weather_code":61,"is_day":0}}"#),
+            Some((61, false))
+        );
     }
 }

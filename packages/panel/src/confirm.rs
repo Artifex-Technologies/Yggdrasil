@@ -62,7 +62,15 @@ pub fn paint(pix: &mut Pixmap, s: f32, c: &Confirm, hover: Option<usize>, fonts:
     let (title, line, now) = words(c.act, c.left());
     paint::draw_text(pix, &fonts.bold, 19.0 * s, 26.0 * s, 40.0 * s, (240, 240, 245, 255), title);
     paint::draw_text(pix, &fonts.regular, 13.5 * s, 26.0 * s, 72.0 * s, (210, 210, 220, 255), &line);
-    paint::draw_text(pix, &fonts.regular, 12.0 * s, 26.0 * s, 96.0 * s, (150, 150, 165, 255), "Open programs are asked to close first, so they can save.");
+    paint::draw_text(
+        pix,
+        &fonts.regular,
+        12.0 * s,
+        26.0 * s,
+        96.0 * s,
+        (150, 150, 165, 255),
+        "Open programs are asked to close first, so they can save.",
+    );
     // the time left, as a thin bar
     let frac = (c.until.saturating_duration_since(Instant::now()).as_secs_f32() / SECONDS as f32).clamp(0.0, 1.0);
     paint::fill_rounded(pix, 26.0 * s, 114.0 * s, (w - 52.0) * s, 4.0 * s, 2.0 * s, (255, 255, 255, 26));
@@ -76,7 +84,15 @@ pub fn paint(pix: &mut Pixmap, s: f32, c: &Confirm, hover: Option<usize>, fonts:
     let cancel_r = (now_r.0 - 10.0 - cancel_w, by, cancel_w, bh);
     let phys = |r: (f32, f32, f32, f32)| (r.0 * s, r.1 * s, r.2 * s, r.3 * s);
     let hits = vec![Hit { rect: phys(cancel_r), action: Action::ConfirmCancel }, Hit { rect: phys(now_r), action: Action::ConfirmNow }];
-    paint::fill_rounded(pix, cancel_r.0 * s, by * s, cancel_w * s, bh * s, 10.0 * s, if hover == Some(0) { (255, 255, 255, 40) } else { (255, 255, 255, 18) });
+    paint::fill_rounded(
+        pix,
+        cancel_r.0 * s,
+        by * s,
+        cancel_w * s,
+        bh * s,
+        10.0 * s,
+        if hover == Some(0) { (255, 255, 255, 40) } else { (255, 255, 255, 18) },
+    );
     paint::draw_text(pix, &fonts.regular, 13.0 * s, (cancel_r.0 + 18.0) * s, (by + bh / 2.0) * s, (235, 235, 240, 255), "Cancel");
     paint::fill_rounded(pix, now_r.0 * s, by * s, now_w * s, bh * s, 10.0 * s, paint::accent(if hover == Some(1) { 255 } else { 220 }));
     paint::draw_text(pix, &fonts.bold, 13.0 * s, (now_r.0 + 18.0) * s, (by + bh / 2.0) * s, (255, 255, 255, 255), now);

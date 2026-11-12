@@ -30,7 +30,10 @@ mod tests {
 
     #[test]
     fn maps_new_folder_to_old() {
-        assert_eq!(legacy_paths(Path::new("/c/minos/state.json")), vec![PathBuf::from("/c/finder/state.json"), PathBuf::from("/c/labyrinth-files/state.json")]);
+        assert_eq!(
+            legacy_paths(Path::new("/c/minos/state.json")),
+            vec![PathBuf::from("/c/finder/state.json"), PathBuf::from("/c/labyrinth-files/state.json")]
+        );
         assert!(legacy_paths(Path::new("/c/other/state.json")).is_empty());
         assert!(legacy_paths(Path::new("state.json")).is_empty());
     }

@@ -107,7 +107,13 @@ fn a_broken_file_counts_as_empty_and_odd_entries_as_the_script_read_them() {
     assert_eq!(fs::read_to_string(&p).unwrap(), r#"{"firefox": {"seconds": 30}}"#);
     // int() of what is there: a float is cut, text read as a number, true is 1; an empty entry starts again
     fs::write(&p, r#"{"firefox": {"seconds": 10.9, "last": 1.5}, "foo": {"seconds": " 7 "}, "spotify-launcher": 0, "org.gimp.GIMP": {"seconds": true}}"#).unwrap();
-    sample(30, &ids(), &units(&["app-firefox-1.scope", "lapp_foo_1.scope", "lapp_spotify_launcher_2.scope", "app-flatpak-org.gimp.GIMP-3.scope"]), &p).unwrap();
+    sample(
+        30,
+        &ids(),
+        &units(&["app-firefox-1.scope", "lapp_foo_1.scope", "lapp_spotify_launcher_2.scope", "app-flatpak-org.gimp.GIMP-3.scope"]),
+        &p,
+    )
+    .unwrap();
     assert_eq!(
         fs::read_to_string(&p).unwrap(),
         r#"{"firefox": {"seconds": 40, "last": 1.5}, "foo": {"seconds": 37}, "spotify-launcher": {"seconds": 30}, "org.gimp.GIMP": {"seconds": 31}}"#
@@ -135,7 +141,10 @@ fn the_file_is_written_as_python_writes_it() {
     let p = d.0.join("app-usage.json");
     fs::write(&p, "{\"caf\u{e9}\": {\"launches\": 2, \"last\": 1700000000}, \"firefox\": {}}").unwrap();
     sample(30, &ids(), &units(&["app-firefox-1.scope"]), &p).unwrap();
-    assert_eq!(fs::read_to_string(&p).unwrap(), "{\"caf\\u00e9\": {\"launches\": 2, \"last\": 1700000000}, \"firefox\": {\"seconds\": 30}}");
+    assert_eq!(
+        fs::read_to_string(&p).unwrap(),
+        "{\"caf\\u00e9\": {\"launches\": 2, \"last\": 1700000000}, \"firefox\": {\"seconds\": 30}}"
+    );
     assert!(!d.0.join("app-usage.json.tmp").exists());
 }
 
@@ -198,7 +207,14 @@ fn the_desktop_entries_are_read_again_when_old() {
 #[test]
 fn scopes_are_found_in_slices_at_any_depth() {
     let d = Tmp::new();
-    for p in ["init.scope", "app.slice/app-firefox-1.scope", "app.slice/lapp_foo.slice/lapp_foo_9.scope", "app.slice/x.service", "session.slice/a.slice/b.slice/app-foo-2.scope", "app.slice/app-firefox-1.scope/sub"] {
+    for p in [
+        "init.scope",
+        "app.slice/app-firefox-1.scope",
+        "app.slice/lapp_foo.slice/lapp_foo_9.scope",
+        "app.slice/x.service",
+        "session.slice/a.slice/b.slice/app-foo-2.scope",
+        "app.slice/app-firefox-1.scope/sub",
+    ] {
         fs::create_dir_all(d.0.join(p)).unwrap();
     }
     fs::write(d.0.join("app.slice/not-a-dir.scope"), "").unwrap();
@@ -206,6 +222,10 @@ fn scopes_are_found_in_slices_at_any_depth() {
     let found = scan(&d.0, |p| watched.push(p.strip_prefix(&d.0).unwrap().to_path_buf()));
     assert_eq!(found, set(&["init.scope", "app-firefox-1.scope", "lapp_foo_9.scope", "app-foo-2.scope"]));
     watched.sort();
-    let want: Vec<PathBuf> = ["", "app.slice", "app.slice/lapp_foo.slice", "session.slice", "session.slice/a.slice", "session.slice/a.slice/b.slice"].iter().map(PathBuf::from).collect();
+    let want: Vec<PathBuf> =
+        ["", "app.slice", "app.slice/lapp_foo.slice", "session.slice", "session.slice/a.slice", "session.slice/a.slice/b.slice"]
+            .iter()
+            .map(PathBuf::from)
+            .collect();
     assert_eq!(watched, want);
 }

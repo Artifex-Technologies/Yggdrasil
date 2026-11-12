@@ -24,11 +24,28 @@ pub const GROUPS: [&str; 8] = ["Windows", "Desktops", "Apps", "System", "Mouse",
 /// A key's name as written on the keyboard ("Esc", "←", "/"); empty for a modifier pressed on its own (Super for the start menu).
 pub fn key_name(key: &str) -> String {
     let named = match key.to_ascii_uppercase().as_str() {
-        "CODE:10" => "1", "CODE:11" => "2", "CODE:12" => "3", "CODE:13" => "4", "CODE:14" => "5",
-        "RETURN" => "Return", "ESCAPE" => "Esc", "PRINT" => "Print Screen", "SPACE" => "Space", "TAB" => "Tab",
-        "UP" => "↑", "DOWN" => "↓", "LEFT" => "←", "RIGHT" => "→", "SLASH" => "/", "GRAVE" => "`", "MINUS" => "−", "EQUAL" => "=",
+        "CODE:10" => "1",
+        "CODE:11" => "2",
+        "CODE:12" => "3",
+        "CODE:13" => "4",
+        "CODE:14" => "5",
+        "RETURN" => "Return",
+        "ESCAPE" => "Esc",
+        "PRINT" => "Print Screen",
+        "SPACE" => "Space",
+        "TAB" => "Tab",
+        "UP" => "↑",
+        "DOWN" => "↓",
+        "LEFT" => "←",
+        "RIGHT" => "→",
+        "SLASH" => "/",
+        "GRAVE" => "`",
+        "MINUS" => "−",
+        "EQUAL" => "=",
         "SUPER_L" | "SUPER_R" | "CONTROL_L" | "CONTROL_R" | "ALT_L" | "ALT_R" | "SHIFT_L" | "SHIFT_R" => return String::new(),
-        "MOUSE:272" => "Left drag", "MOUSE:273" => "Right drag", "MOUSE:274" => "Middle click",
+        "MOUSE:272" => "Left drag",
+        "MOUSE:273" => "Right drag",
+        "MOUSE:274" => "Middle click",
         _ => "",
     };
     if !named.is_empty() {
@@ -196,7 +213,10 @@ pub fn from_lua(text: &str) -> Vec<Shortcut> {
         if t.starts_with("cmd(\"") || t.starts_with("dsp(\"") || t.starts_with("hl.bind(\"") {
             let q = quoted(t, loop_range.as_deref().unwrap_or(""));
             let Some(combo) = q.first() else { continue };
-            let desc = t.find("desc = \"").and_then(|i| quoted(&t[i..], loop_range.as_deref().unwrap_or("")).into_iter().next()).unwrap_or_default();
+            let desc = t
+                .find("desc = \"")
+                .and_then(|i| quoted(&t[i..], loop_range.as_deref().unwrap_or("")).into_iter().next())
+                .unwrap_or_default();
             let (modmask, key) = parse_combo(combo);
             binds.push(Bind { modmask, key, desc, release: t.contains("release = true") });
             continue;
@@ -351,7 +371,8 @@ for key, what in pairs({
         let doc = root.join("docs/SHORTCUTS.md");
         let readme = root.join("README.md");
         let have_readme = std::fs::read_to_string(&readme).unwrap_or_default();
-        let want_readme = splice_readme(&have_readme, &readme_section(&list)).expect("README.md has the <!-- shortcuts:start --> and <!-- shortcuts:end --> markers");
+        let want_readme = splice_readme(&have_readme, &readme_section(&list))
+            .expect("README.md has the <!-- shortcuts:start --> and <!-- shortcuts:end --> markers");
         if std::env::var_os("YGGDRASIL_WRITE_DOCS").is_some() {
             std::fs::write(&doc, &want).unwrap();
             std::fs::write(&readme, &want_readme).unwrap();
@@ -359,7 +380,10 @@ for key, what in pairs({
         let have = std::fs::read_to_string(&doc).unwrap_or_default();
         assert!(have == want, "docs/SHORTCUTS.md is out of date: YGGDRASIL_WRITE_DOCS=1 cargo test in packages/yggdrasil-conf");
         let have_readme = std::fs::read_to_string(&readme).unwrap_or_default();
-        assert!(have_readme == want_readme, "README.md's shortcuts are out of date: YGGDRASIL_WRITE_DOCS=1 cargo test in packages/yggdrasil-conf");
+        assert!(
+            have_readme == want_readme,
+            "README.md's shortcuts are out of date: YGGDRASIL_WRITE_DOCS=1 cargo test in packages/yggdrasil-conf"
+        );
     }
 
     #[test]

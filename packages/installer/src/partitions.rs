@@ -147,7 +147,9 @@ impl Manual {
             _ => "linux",
         };
         let deleted: Vec<u32> = if self.new_table { vec![] } else { self.delete.clone() };
-        let alive = |key: &str| key.starts_with("new:") || parts.iter().any(|p| p.path == key && !self.new_table && !self.delete.contains(&p.number));
+        let alive = |key: &str| {
+            key.starts_with("new:") || parts.iter().any(|p| p.path == key && !self.new_table && !self.delete.contains(&p.number))
+        };
         serde_json::json!({
             "mode": "manual",
             "new_table": self.new_table,
@@ -201,7 +203,12 @@ impl Manual {
         }
         for n in &self.delete {
             if let Some(p) = parts.iter().find(|p| p.number == *n) {
-                out.push(format!("Delete {} ({}{})", p.path, size_text(p.size), if p.label.is_empty() { String::new() } else { format!(", {}", p.label) }));
+                out.push(format!(
+                    "Delete {} ({}{})",
+                    p.path,
+                    size_text(p.size),
+                    if p.label.is_empty() { String::new() } else { format!(", {}", p.label) }
+                ));
             }
         }
         for s in self.segments(disk_size, parts) {
@@ -272,7 +279,11 @@ fn content(p: &Part) -> String {
         x => x.to_string(),
     };
     let kind = if p.efi { "EFI system partition".to_string() } else { p.label.clone() };
-    if kind.is_empty() { fs } else { format!("{kind} ({fs})") }
+    if kind.is_empty() {
+        fs
+    } else {
+        format!("{kind} ({fs})")
+    }
 }
 
 /// The manual partitioning editor for one disk.
@@ -299,7 +310,12 @@ pub fn ui(ui: &mut egui::Ui, pal: &Palette, m: &mut Manual, disk_size: u64, part
         };
         ui.painter().rect_filled(r, 4.0, fill);
         let sel = m.selected.as_deref() == Some(&s.key());
-        ui.painter().rect_stroke(r, 4.0, Stroke::new(if sel { 2.0 } else { 1.0 }, if sel { pal.text } else { pal.border }), StrokeKind::Inside);
+        ui.painter().rect_stroke(
+            r,
+            4.0,
+            Stroke::new(if sel { 2.0 } else { 1.0 }, if sel { pal.text } else { pal.border }),
+            StrokeKind::Inside,
+        );
         x += sw;
     }
     ui.add_space(8.0);
@@ -313,7 +329,11 @@ pub fn ui(ui: &mut egui::Ui, pal: &Palette, m: &mut Manual, disk_size: u64, part
                 Seg::New(n) => (format!("New partition   {}", size_text(n.size)), "made when installing".to_string()),
                 Seg::Free { size, .. } => (format!("Free space   {}", size_text(*size)), "select to make a partition here".to_string()),
             };
-            let role = m.use_of(&key).filter(|u| !u.mount.is_empty()).map(|u| format!("as {}{}", u.mount, if u.format.is_some() { ", formatted" } else { ", kept" })).unwrap_or_default();
+            let role = m
+                .use_of(&key)
+                .filter(|u| !u.mount.is_empty())
+                .map(|u| format!("as {}{}", u.mount, if u.format.is_some() { ", formatted" } else { ", kept" }))
+                .unwrap_or_default();
             let on = m.selected.as_deref() == Some(&key);
             let (r, resp) = ui.allocate_exact_size(vec2(w, 40.0), Sense::click());
             if on {
@@ -321,9 +341,27 @@ pub fn ui(ui: &mut egui::Ui, pal: &Palette, m: &mut Manual, disk_size: u64, part
             } else if resp.hovered() {
                 ui.painter().rect_filled(r, 6.0, pal.hover);
             }
-            ui.painter().text(pos2(r.left() + 10.0, r.top() + 13.0), egui::Align2::LEFT_CENTER, title, egui::FontId::proportional(14.0), pal.text);
-            ui.painter().text(pos2(r.left() + 10.0, r.top() + 29.0), egui::Align2::LEFT_CENTER, sub, egui::FontId::proportional(12.0), pal.dim);
-            ui.painter().text(pos2(r.right() - 10.0, r.center().y), egui::Align2::RIGHT_CENTER, role, egui::FontId::proportional(13.0), pal.accent);
+            ui.painter().text(
+                pos2(r.left() + 10.0, r.top() + 13.0),
+                egui::Align2::LEFT_CENTER,
+                title,
+                egui::FontId::proportional(14.0),
+                pal.text,
+            );
+            ui.painter().text(
+                pos2(r.left() + 10.0, r.top() + 29.0),
+                egui::Align2::LEFT_CENTER,
+                sub,
+                egui::FontId::proportional(12.0),
+                pal.dim,
+            );
+            ui.painter().text(
+                pos2(r.right() - 10.0, r.center().y),
+                egui::Align2::RIGHT_CENTER,
+                role,
+                egui::FontId::proportional(13.0),
+                pal.accent,
+            );
             if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                 m.selected = Some(key.clone());
                 if let Seg::Free { size, .. } = s {
@@ -397,7 +435,10 @@ pub fn ui(ui: &mut egui::Ui, pal: &Palette, m: &mut Manual, disk_size: u64, part
                         fs = fs_options(&mount).first().unwrap_or(&"").to_string();
                     }
                     if !format && mount == "/boot/efi" {
-                        ui.label(RichText::new("Kept as it is: Labyrinth's boot menu is added beside what is there (Windows keeps its own)").color(pal.dim));
+                        ui.label(
+                            RichText::new("Kept as it is: Labyrinth's boot menu is added beside what is there (Windows keeps its own)")
+                                .color(pal.dim),
+                        );
                     }
                 }
                 let new_use = (!mount.is_empty()).then(|| Use { mount: mount.clone(), format: format.then(|| fs.clone()) });
@@ -412,7 +453,9 @@ pub fn ui(ui: &mut egui::Ui, pal: &Palette, m: &mut Manual, disk_size: u64, part
             }
         }
         None => {
-            ui.label(RichText::new("Choose a piece of the disk above to use it, delete it, or make a partition in free space.").color(pal.dim));
+            ui.label(
+                RichText::new("Choose a piece of the disk above to use it, delete it, or make a partition in free space.").color(pal.dim),
+            );
         }
     }
     ui.add_space(10.0);
@@ -478,7 +521,16 @@ mod tests {
     use super::*;
 
     fn windows_disk() -> (u64, Vec<Part>) {
-        let p = |n: u32, start: u64, size: u64, fs: &str, efi: bool| Part { path: format!("/dev/vda{n}"), number: n, start, size, fstype: fs.into(), label: String::new(), efi, mounted: false };
+        let p = |n: u32, start: u64, size: u64, fs: &str, efi: bool| Part {
+            path: format!("/dev/vda{n}"),
+            number: n,
+            start,
+            size,
+            fstype: fs.into(),
+            label: String::new(),
+            efi,
+            mounted: false,
+        };
         (500 * GB, vec![p(1, MIB, 300 * MIB, "vfat", true), p(2, 301 * MIB, 299 * GB, "ntfs", false)])
     }
 

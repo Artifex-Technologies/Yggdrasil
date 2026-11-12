@@ -21,12 +21,12 @@ mod draw;
 mod grabs;
 mod headless;
 mod shortcuts;
+mod state;
 mod switcher;
 mod tiling;
-mod state;
 mod toplevels;
-mod xwayland;
 mod x11asked;
+mod xwayland;
 
 use std::sync::Arc;
 
@@ -46,7 +46,11 @@ use state::{App, ClientState};
 /// linux-dmabuf: programs that draw with the GPU (games, browsers, anything on Vulkan or OpenGL) hand their pictures over as GPU
 /// buffers. The formats offered are the ones this renderer can read; with the GPU's render node known, programs are also told which
 /// GPU to render on (default feedback), which they need to pick the right one on a machine with two.
-fn gpu_buffers(app: &mut App, dh: &smithay::reexports::wayland_server::DisplayHandle, backend: &std::rc::Rc<std::cell::RefCell<winit::WinitGraphicsBackend<GlesRenderer>>>) {
+fn gpu_buffers(
+    app: &mut App,
+    dh: &smithay::reexports::wayland_server::DisplayHandle,
+    backend: &std::rc::Rc<std::cell::RefCell<winit::WinitGraphicsBackend<GlesRenderer>>>,
+) {
     use smithay::backend::egl::EGLDevice;
     use smithay::backend::renderer::{ImportDma, ImportEgl};
     use smithay::wayland::dmabuf::DmabufFeedbackBuilder;
@@ -56,7 +60,8 @@ fn gpu_buffers(app: &mut App, dh: &smithay::reexports::wayland_server::DisplayHa
         eprintln!("yggdrasil-compositor: the renderer reads no GPU buffer formats; programs will use shared memory");
         return;
     }
-    let node = EGLDevice::device_for_display(b.renderer().egl_context().display()).ok().and_then(|d| d.try_get_render_node().ok().flatten());
+    let node =
+        EGLDevice::device_for_display(b.renderer().egl_context().display()).ok().and_then(|d| d.try_get_render_node().ok().flatten());
     let feedback = node.and_then(|n| DmabufFeedbackBuilder::new(n.dev_id(), formats.iter().copied()).build().ok());
     match &feedback {
         Some(f) => {
@@ -116,7 +121,13 @@ fn split_args(args: &[String]) -> (Vec<String>, Vec<Vec<String>>) {
 
 /// What both backends share: the clients' display, the socket they connect to (printed as WAYLAND_DISPLAY=...), XWayland, the
 /// --run programs and the look at the config files.
-fn serve(event_loop: &EventLoop<'static, App>, display: Display<App>, app: &mut App, run: Vec<Vec<String>>, xwayland_default: bool) -> Result<(), Box<dyn std::error::Error>> {
+fn serve(
+    event_loop: &EventLoop<'static, App>,
+    display: Display<App>,
+    app: &mut App,
+    run: Vec<Vec<String>>,
+    xwayland_default: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     event_loop.handle().insert_source(Generic::new(display, Interest::READ, LoopMode::Level), |_, display, app| {
         // SAFETY: the display is not dropped while it is registered here.
         unsafe { display.get_mut().dispatch_clients(app).unwrap() };
@@ -146,10 +157,13 @@ fn serve(event_loop: &EventLoop<'static, App>, display: Display<App>, app: &mut 
     }
 
     // workspaces.conf and shortcuts.conf are read again when they change (Settings writes them)
-    event_loop.handle().insert_source(smithay::reexports::calloop::timer::Timer::from_duration(std::time::Duration::from_secs(2)), |_, _, app| {
-        app.reload_config();
-        smithay::reexports::calloop::timer::TimeoutAction::ToDuration(std::time::Duration::from_secs(2))
-    })?;
+    event_loop.handle().insert_source(
+        smithay::reexports::calloop::timer::Timer::from_duration(std::time::Duration::from_secs(2)),
+        |_, _, app| {
+            app.reload_config();
+            smithay::reexports::calloop::timer::TimeoutAction::ToDuration(std::time::Duration::from_secs(2))
+        },
+    )?;
     Ok(())
 }
 
@@ -191,14 +205,23 @@ fn run_headless(opts: &[String], run: Vec<Vec<String>>) -> Result<(), Box<dyn st
 }
 
 /// The nested backend: a window on the running desktop (winit), drawn with the GPU.
-fn run_nested(mut event_loop: EventLoop<'static, App>, display: Display<App>, ping: Ping, ping_source: PingSource, run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
+fn run_nested(
+    mut event_loop: EventLoop<'static, App>,
+    display: Display<App>,
+    ping: Ping,
+    ping_source: PingSource,
+    run: Vec<Vec<String>>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let dh = display.handle();
     let (backend, winit) = winit::init::<GlesRenderer>().map_err(|e| format!("cannot open a window: {e}"))?;
     backend.window().set_title("Yggdrasil compositor (nested)");
     let backend = std::rc::Rc::new(std::cell::RefCell::new(backend));
 
     let mode = Mode { size: backend.borrow().window_size(), refresh: 60_000 };
-    let output = Output::new("yggdrasil-1".into(), PhysicalProperties { size: (0, 0).into(), subpixel: Subpixel::Unknown, make: "Yggdrasil".into(), model: "nested window".into() });
+    let output = Output::new(
+        "yggdrasil-1".into(),
+        PhysicalProperties { size: (0, 0).into(), subpixel: Subpixel::Unknown, make: "Yggdrasil".into(), model: "nested window".into() },
+    );
     let _global = output.create_global::<App>(&dh);
     toplevels::create_global(&dh);
     output.change_current_state(Some(mode), Some(Transform::Flipped180), None, Some((0, 0).into()));
@@ -248,10 +271,16 @@ fn run_nested(mut event_loop: EventLoop<'static, App>, display: Display<App>, pi
                 let d = if app.locked {
                     // While the session is locked only the locker's own picture is drawn: nothing of the session shows.
                     let elements = app.lock_elements(renderer, &output);
-                    damage_tracker.render_output(renderer, &mut fb, age, &elements, [0.0f32, 0.0, 0.0, 1.0]).ok().and_then(|r| r.damage.cloned())
+                    damage_tracker
+                        .render_output(renderer, &mut fb, age, &elements, [0.0f32, 0.0, 0.0, 1.0])
+                        .ok()
+                        .and_then(|r| r.damage.cloned())
                 } else {
                     let elements = app.scene(renderer, &output);
-                    damage_tracker.render_output(renderer, &mut fb, age, &elements, [0.05f32, 0.05, 0.08, 1.0]).ok().and_then(|r| r.damage.cloned())
+                    damage_tracker
+                        .render_output(renderer, &mut fb, age, &elements, [0.05f32, 0.05, 0.08, 1.0])
+                        .ok()
+                        .and_then(|r| r.damage.cloned())
                 };
                 d
             };
@@ -283,7 +312,8 @@ mod tests {
 
     #[test]
     fn options_come_before_the_programs() {
-        let a: Vec<String> = ["--headless", "--size", "800x600", "--run", "foot", "-e", "true", "--run", "panel"].iter().map(|s| s.to_string()).collect();
+        let a: Vec<String> =
+            ["--headless", "--size", "800x600", "--run", "foot", "-e", "true", "--run", "panel"].iter().map(|s| s.to_string()).collect();
         let (opts, run) = split_args(&a);
         assert_eq!(opts, ["--headless", "--size", "800x600"]);
         assert_eq!(run, vec![vec!["foot", "-e", "true"], vec!["panel"]]);

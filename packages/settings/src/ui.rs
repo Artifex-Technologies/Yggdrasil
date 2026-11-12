@@ -29,28 +29,56 @@ pub fn group(ui: &mut egui::Ui, pal: &Palette, title: Option<&str>, add: impl Fn
 /// first and the text wraps in the space left, so narrow windows never overlap the two. Rows
 /// after the first in a group get a hairline above them.
 pub fn row(ui: &mut egui::Ui, pal: &Palette, first: bool, title: &str, subtitle: Option<&str>, control: impl FnOnce(&mut egui::Ui)) {
-    row_with(ui, pal, first, |ui| {
-        ui.add(egui::Label::new(RichText::new(title).size(14.0)).wrap());
-    }, subtitle, control);
+    row_with(
+        ui,
+        pal,
+        first,
+        |ui| {
+            ui.add(egui::Label::new(RichText::new(title).size(14.0)).wrap());
+        },
+        subtitle,
+        control,
+    );
 }
 
 /// A row whose title opens a page of its own (a › after it; underlined, with a hand, on hover); the control on the right works
 /// as in `row`. True when the title was clicked.
-pub fn link_row(ui: &mut egui::Ui, pal: &Palette, first: bool, title: &str, subtitle: Option<&str>, control: impl FnOnce(&mut egui::Ui)) -> bool {
+pub fn link_row(
+    ui: &mut egui::Ui,
+    pal: &Palette,
+    first: bool,
+    title: &str,
+    subtitle: Option<&str>,
+    control: impl FnOnce(&mut egui::Ui),
+) -> bool {
     let mut clicked = false;
-    row_with(ui, pal, first, |ui| {
-        let r = ui.add(egui::Label::new(RichText::new(format!("{title}  \u{203a}")).size(14.0)).sense(Sense::click()));
-        if r.hovered() {
-            ui.painter().hline(r.rect.x_range(), r.rect.bottom(), Stroke::new(1.0, pal.text));
-            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-        }
-        clicked = r.clicked();
-    }, subtitle, control);
+    row_with(
+        ui,
+        pal,
+        first,
+        |ui| {
+            let r = ui.add(egui::Label::new(RichText::new(format!("{title}  \u{203a}")).size(14.0)).sense(Sense::click()));
+            if r.hovered() {
+                ui.painter().hline(r.rect.x_range(), r.rect.bottom(), Stroke::new(1.0, pal.text));
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            clicked = r.clicked();
+        },
+        subtitle,
+        control,
+    );
     clicked
 }
 
 /// A row with anything as its title (a text box, for a name the person types), laid out as `row`.
-pub fn row_with(ui: &mut egui::Ui, pal: &Palette, first: bool, title: impl FnOnce(&mut egui::Ui), subtitle: Option<&str>, control: impl FnOnce(&mut egui::Ui)) {
+pub fn row_with(
+    ui: &mut egui::Ui,
+    pal: &Palette,
+    first: bool,
+    title: impl FnOnce(&mut egui::Ui),
+    subtitle: Option<&str>,
+    control: impl FnOnce(&mut egui::Ui),
+) {
     if !first {
         let r = ui.available_rect_before_wrap();
         ui.painter().hline(r.left()..=r.right(), r.top(), Stroke::new(1.0, pal.border));
@@ -74,7 +102,12 @@ pub fn row_with(ui: &mut egui::Ui, pal: &Palette, first: bool, title: impl FnOnc
 /// Wi-Fi strength as four rising bars (0-100), the lit ones in the text colour.
 pub fn signal_bars(ui: &mut egui::Ui, pal: &Palette, signal: u8) {
     let (rect, _) = ui.allocate_exact_size(vec2(22.0, 18.0), Sense::hover());
-    let lit = match signal { 0..=25 => 1, 26..=50 => 2, 51..=75 => 3, _ => 4 };
+    let lit = match signal {
+        0..=25 => 1,
+        26..=50 => 2,
+        51..=75 => 3,
+        _ => 4,
+    };
     for i in 0..4 {
         let h = 5.0 + 4.0 * i as f32;
         let x = rect.left() + 1.0 + 5.0 * i as f32;
@@ -96,7 +129,16 @@ pub enum NetClick {
 /// A Wi-Fi network's row, as on a phone: a check mark when this computer is on it, the name (and a line under it), then on the
 /// right a padlock when it is secured, the signal bars and an (i). The whole row is one button; the (i) is a button of its own.
 #[allow(clippy::too_many_arguments)]
-pub fn net_row(ui: &mut egui::Ui, pal: &Palette, first: bool, check: bool, title: &str, subtitle: Option<&str>, lock: bool, signal: Option<u8>) -> NetClick {
+pub fn net_row(
+    ui: &mut egui::Ui,
+    pal: &Palette,
+    first: bool,
+    check: bool,
+    title: &str,
+    subtitle: Option<&str>,
+    lock: bool,
+    signal: Option<u8>,
+) -> NetClick {
     let bg = ui.painter().add(egui::Shape::Noop);
     let id = ui.next_auto_id();
     let mut info = egui::Rect::NOTHING;
@@ -142,7 +184,11 @@ pub fn net_row(ui: &mut egui::Ui, pal: &Palette, first: bool, check: bool, title
     }
     crate::icons::paint(ui.painter(), info.shrink(3.0), crate::icons::Icon::Info, pal.accent);
     if resp.clicked() {
-        if resp.interact_pointer_pos().is_some_and(|p| info.expand(2.0).contains(p)) { NetClick::Info } else { NetClick::Row }
+        if resp.interact_pointer_pos().is_some_and(|p| info.expand(2.0).contains(p)) {
+            NetClick::Info
+        } else {
+            NetClick::Row
+        }
     } else {
         NetClick::None
     }
@@ -191,16 +237,31 @@ pub fn segmented(ui: &mut egui::Ui, pal: &Palette, options: &[&str], selected: u
 
 /// A flat button in the accent colour, for the main action of a row.
 pub fn action(ui: &mut egui::Ui, pal: &Palette, label: &str) -> egui::Response {
-    ui.add(egui::Button::new(RichText::new(label).color(pal.on_accent())).fill(pal.accent).corner_radius(CornerRadius::same(8)).min_size(vec2(80.0, 28.0)))
+    ui.add(
+        egui::Button::new(RichText::new(label).color(pal.on_accent()))
+            .fill(pal.accent)
+            .corner_radius(CornerRadius::same(8))
+            .min_size(vec2(80.0, 28.0)),
+    )
 }
 
 /// An icon-only button in a row: a hover plate, the shape, and a tooltip.
 pub fn icon_button(ui: &mut egui::Ui, pal: &Palette, icon: crate::icons::Icon, tip: &str, enabled: bool, danger: bool) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(30.0, 30.0), if enabled { Sense::click() } else { Sense::hover() });
     if enabled && resp.hovered() {
-        ui.painter().rect_filled(rect, CornerRadius::same(8), if danger { Color32::from_rgba_unmultiplied(220, 60, 70, 40) } else { pal.hover });
+        ui.painter().rect_filled(
+            rect,
+            CornerRadius::same(8),
+            if danger { Color32::from_rgba_unmultiplied(220, 60, 70, 40) } else { pal.hover },
+        );
     }
-    let c = if !enabled { pal.dim.gamma_multiply(0.4) } else if danger && resp.hovered() { Color32::from_rgb(235, 90, 100) } else { pal.text };
+    let c = if !enabled {
+        pal.dim.gamma_multiply(0.4)
+    } else if danger && resp.hovered() {
+        Color32::from_rgb(235, 90, 100)
+    } else {
+        pal.text
+    };
     crate::icons::paint(ui.painter(), rect.shrink(6.0), icon, c);
     resp.on_hover_text(tip)
 }
@@ -216,7 +277,13 @@ pub fn slider(ui: &mut egui::Ui, pal: &Palette, value: &mut f32) -> egui::Respon
 }
 
 /// The same for any range and unit.
-pub fn slider_range(ui: &mut egui::Ui, pal: &Palette, value: &mut f32, range: std::ops::RangeInclusive<f32>, suffix: &str) -> egui::Response {
+pub fn slider_range(
+    ui: &mut egui::Ui,
+    pal: &Palette,
+    value: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+    suffix: &str,
+) -> egui::Response {
     ui.scope(|ui| {
         ui.spacing_mut().slider_width = (ui.available_width() * 0.55).clamp(120.0, 260.0);
         let v = &mut ui.style_mut().visuals;
@@ -240,7 +307,14 @@ pub fn gib(bytes: u64) -> String {
 
 /// A row that opens a page: the whole row is the button, with a `>` at the end. `extra` draws anything between the text and the `>`.
 /// Returns true when it was clicked.
-pub fn nav_row(ui: &mut egui::Ui, pal: &Palette, first: bool, title: &str, subtitle: Option<&str>, extra: impl FnOnce(&mut egui::Ui)) -> bool {
+pub fn nav_row(
+    ui: &mut egui::Ui,
+    pal: &Palette,
+    first: bool,
+    title: &str,
+    subtitle: Option<&str>,
+    extra: impl FnOnce(&mut egui::Ui),
+) -> bool {
     let bg = ui.painter().add(egui::Shape::Noop);
     let id = ui.next_auto_id();
     let r = ui.scope(|ui| {
@@ -268,6 +342,8 @@ pub fn field(ui: &mut egui::Ui, pal: &Palette, text: &mut String, hint: &str, wi
         .stroke(Stroke::new(1.0, pal.border))
         .corner_radius(CornerRadius::same(8))
         .inner_margin(Margin::symmetric(8, 4))
-        .show(ui, |ui| ui.add(egui::TextEdit::singleline(text).password(secret).hint_text(hint).frame(egui::Frame::NONE).desired_width(width)))
+        .show(ui, |ui| {
+            ui.add(egui::TextEdit::singleline(text).password(secret).hint_text(hint).frame(egui::Frame::NONE).desired_width(width))
+        })
         .inner
 }

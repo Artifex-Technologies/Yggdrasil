@@ -32,7 +32,11 @@ impl<S: Read + Write> Greetd<S> {
 
     fn send(&mut self, v: Value) -> Result<(), String> {
         let body = v.to_string();
-        self.s.write_all(&(body.len() as u32).to_ne_bytes()).and_then(|_| self.s.write_all(body.as_bytes())).and_then(|_| self.s.flush()).map_err(|e| e.to_string())
+        self.s
+            .write_all(&(body.len() as u32).to_ne_bytes())
+            .and_then(|_| self.s.write_all(body.as_bytes()))
+            .and_then(|_| self.s.flush())
+            .map_err(|e| e.to_string())
     }
 
     fn recv(&mut self) -> Result<Value, String> {

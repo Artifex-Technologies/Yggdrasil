@@ -73,10 +73,24 @@ fn app_icon(ui: &mut egui::Ui, pal: &Palette, a: &AppInfo, size: f32) {
 
 fn sorted<'a>(apps: &'a [AppInfo], sort: usize, sizes: &HashMap<String, u64>, filter: &str, system: bool) -> Vec<&'a AppInfo> {
     let f = filter.trim().to_lowercase();
-    let mut v: Vec<&AppInfo> = apps.iter().filter(|a| (system || !a.system || !a.running.is_empty() || a.net != NetMode::Allow) && (f.is_empty() || a.name.to_lowercase().contains(&f) || a.id.to_lowercase().contains(&f))).collect();
+    let mut v: Vec<&AppInfo> = apps
+        .iter()
+        .filter(|a| {
+            (system || !a.system || !a.running.is_empty() || a.net != NetMode::Allow)
+                && (f.is_empty() || a.name.to_lowercase().contains(&f) || a.id.to_lowercase().contains(&f))
+        })
+        .collect();
     match sort {
-        0 => v.sort_by(|a, b| b.seconds.cmp(&a.seconds).then(b.launches.cmp(&a.launches)).then(b.last_used.cmp(&a.last_used)).then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))),
-        1 => v.sort_by(|a, b| sizes.get(&b.id).unwrap_or(&0).cmp(sizes.get(&a.id).unwrap_or(&0)).then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))),
+        0 => v.sort_by(|a, b| {
+            b.seconds
+                .cmp(&a.seconds)
+                .then(b.launches.cmp(&a.launches))
+                .then(b.last_used.cmp(&a.last_used))
+                .then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        }),
+        1 => v.sort_by(|a, b| {
+            sizes.get(&b.id).unwrap_or(&0).cmp(sizes.get(&a.id).unwrap_or(&0)).then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        }),
         _ => v.sort_by_key(|a| a.name.to_lowercase()),
     }
     v
@@ -128,7 +142,11 @@ impl App {
                 if resp.hovered() {
                     ui.painter().rect_filled(rect.shrink2(vec2(-6.0, 2.0)), CornerRadius::same(8), pal.hover.gamma_multiply(0.6));
                 }
-                let mut left = ui.new_child(UiBuilder::new().max_rect(Rect::from_min_size(rect.min + vec2(0.0, 10.0), vec2(rect.width() - 120.0, 36.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
+                let mut left = ui.new_child(
+                    UiBuilder::new()
+                        .max_rect(Rect::from_min_size(rect.min + vec2(0.0, 10.0), vec2(rect.width() - 120.0, 36.0)))
+                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                );
                 app_icon(&mut left, pal, a, 34.0);
                 left.add_space(8.0);
                 left.vertical(|ui| {
@@ -139,7 +157,11 @@ impl App {
                     if !a.running.is_empty() {
                         bits.push("Running".into());
                     }
-                    bits.push(if a.launches > 0 { format!("opened {} time{} here", a.launches, if a.launches == 1 { "" } else { "s" }) } else { "not opened from here yet".into() });
+                    bits.push(if a.launches > 0 {
+                        format!("opened {} time{} here", a.launches, if a.launches == 1 { "" } else { "s" })
+                    } else {
+                        "not opened from here yet".into()
+                    });
                     if a.seconds >= 60 {
                         bits.push(format!("used {}", span(a.seconds)));
                     }
@@ -156,7 +178,11 @@ impl App {
                     }
                     ui.add(egui::Label::new(RichText::new(bits.join(" · ")).size(12.0).color(pal.dim)).truncate());
                 });
-                let mut buttons = ui.new_child(UiBuilder::new().max_rect(Rect::from_min_size(pos2(rect.right() - 110.0, rect.top() + 13.0), vec2(110.0, 30.0))).layout(egui::Layout::right_to_left(egui::Align::Center)));
+                let mut buttons = ui.new_child(
+                    UiBuilder::new()
+                        .max_rect(Rect::from_min_size(pos2(rect.right() - 110.0, rect.top() + 13.0), vec2(110.0, 30.0)))
+                        .layout(egui::Layout::right_to_left(egui::Align::Center)),
+                );
                 if icon_button(&mut buttons, pal, Icon::Trash, "Remove", true, true).clicked() {
                     action = Some((a.id.clone(), "remove"));
                 }
@@ -219,47 +245,62 @@ impl App {
 
         let network_rules = appmgr::has_network_rules();
         if network_rules {
-        ui::group(ui, pal, Some("Network"), |ui| {
-            let allowed = a.net != NetMode::Block;
-            let top = ui.cursor().top();
-            let left = ui.min_rect().left();
-            ui::row(ui, pal, true, "Network", Some(if allowed { "Switch it off, or click its name, to cut this app off from the network" } else { "This app cannot send anything off this computer" }), |ui| {
-                let mut on = allowed;
-                if ui::switch(ui, pal, &mut on).changed() {
-                    net = Some(if on { NetMode::Allow } else { NetMode::Block });
-                }
-                if developer && allowed {
-                    // Developer options: limit it to one kind of connection
-                    let label = match a.net {
-                        NetMode::Ethernet => "Ethernet only",
-                        NetMode::Wifi => "Wi-Fi only",
-                        _ => "Any connection",
-                    };
-                    egui::ComboBox::from_id_salt("net-mode").selected_text(label).show_ui(ui, |ui| {
-                        for (m, l) in [(NetMode::Allow, "Any connection"), (NetMode::Ethernet, "Ethernet only"), (NetMode::Wifi, "Wi-Fi only")] {
-                            if ui.selectable_label(a.net == m, l).clicked() {
-                                net = Some(m);
-                            }
+            ui::group(ui, pal, Some("Network"), |ui| {
+                let allowed = a.net != NetMode::Block;
+                let top = ui.cursor().top();
+                let left = ui.min_rect().left();
+                ui::row(
+                    ui,
+                    pal,
+                    true,
+                    "Network",
+                    Some(if allowed {
+                        "Switch it off, or click its name, to cut this app off from the network"
+                    } else {
+                        "This app cannot send anything off this computer"
+                    }),
+                    |ui| {
+                        let mut on = allowed;
+                        if ui::switch(ui, pal, &mut on).changed() {
+                            net = Some(if on { NetMode::Allow } else { NetMode::Block });
                         }
-                    });
+                        if developer && allowed {
+                            // Developer options: limit it to one kind of connection
+                            let label = match a.net {
+                                NetMode::Ethernet => "Ethernet only",
+                                NetMode::Wifi => "Wi-Fi only",
+                                _ => "Any connection",
+                            };
+                            egui::ComboBox::from_id_salt("net-mode").selected_text(label).show_ui(ui, |ui| {
+                                for (m, l) in [
+                                    (NetMode::Allow, "Any connection"),
+                                    (NetMode::Ethernet, "Ethernet only"),
+                                    (NetMode::Wifi, "Wi-Fi only"),
+                                ] {
+                                    if ui.selectable_label(a.net == m, l).clicked() {
+                                        net = Some(m);
+                                    }
+                                }
+                            });
+                        }
+                    },
+                );
+                // clicking the name toggles it too (the part of the row left of the controls)
+                let name_area = Rect::from_min_max(pos2(left, top), pos2(left + (ui.available_width() - 260.0).max(120.0), top + 44.0));
+                if ui.interact(name_area, ui.id().with("net-name"), Sense::click()).clicked() {
+                    net = Some(if allowed { NetMode::Block } else { NetMode::Allow });
                 }
-            });
-            // clicking the name toggles it too (the part of the row left of the controls)
-            let name_area = Rect::from_min_max(pos2(left, top), pos2(left + (ui.available_width() - 260.0).max(120.0), top + 44.0));
-            if ui.interact(name_area, ui.id().with("net-name"), Sense::click()).clicked() {
-                net = Some(if allowed { NetMode::Block } else { NetMode::Allow });
-            }
-            if a.net != NetMode::Block {
-                ui::row(ui, pal, false, "Ask before connecting to a new place", Some("A notification asks Allow or Deny the first time the app reaches an address. Until you answer, that connection waits"), |ui| {
+                if a.net != NetMode::Block {
+                    ui::row(ui, pal, false, "Ask before connecting to a new place", Some("A notification asks Allow or Deny the first time the app reaches an address. Until you answer, that connection waits"), |ui| {
                     let mut on = a.net == NetMode::Ask;
                     if ui::switch(ui, pal, &mut on).changed() {
                         net = Some(if on { NetMode::Ask } else { NetMode::Allow });
                     }
                 });
-            }
-            ui.label(RichText::new("Applies to the app when it is opened from the dock, the start menu or here. Changing it asks for your password. A running app picks it up after a restart.").size(11.5).color(pal.dim));
-            ui.add_space(6.0);
-        });
+                }
+                ui.label(RichText::new("Applies to the app when it is opened from the dock, the start menu or here. Changing it asks for your password. A running app picks it up after a restart.").size(11.5).color(pal.dim));
+                ui.add_space(6.0);
+            });
         }
 
         if network_rules && a.net == NetMode::Ask {
@@ -272,11 +313,22 @@ impl App {
             let mut forget: Option<String> = None;
             ui::group(ui, pal, Some("Places you decided about"), |ui| {
                 if decisions.is_empty() {
-                    ui::row(ui, pal, true, "Nothing yet", Some("When the app first tries to reach somewhere new, a notification asks. Your answers are listed here"), |_| {});
+                    ui::row(
+                        ui,
+                        pal,
+                        true,
+                        "Nothing yet",
+                        Some("When the app first tries to reach somewhere new, a notification asks. Your answers are listed here"),
+                        |_| {},
+                    );
                 }
                 for (i, d) in decisions.iter().enumerate() {
                     let title = if d.name.is_empty() { d.ip.clone() } else { d.name.clone() };
-                    let sub = format!("{}{}", if d.allowed { "Allowed" } else { "Denied" }, if d.name.is_empty() { String::new() } else { format!(" · {}", d.ip) });
+                    let sub = format!(
+                        "{}{}",
+                        if d.allowed { "Allowed" } else { "Denied" },
+                        if d.name.is_empty() { String::new() } else { format!(" · {}", d.ip) }
+                    );
                     ui::row(ui, pal, i == 0, &title, Some(&sub), |ui| {
                         if ui::quiet(ui, pal, "Forget").clicked() {
                             forget = Some(d.ip.clone());
@@ -297,15 +349,32 @@ impl App {
                     startup = Some(on);
                 }
             });
-            ui::row(ui, pal, false, "Status", Some(&format!("Opened {} time{} from here, last {}. Used for {} in total", a.launches, if a.launches == 1 { "" } else { "s" }, ago(a.last_used), span(a.seconds))), |ui| {
-                if icon_button(ui, pal, Icon::Close, "Close", !a.running.is_empty(), false).clicked() {
-                    close = true;
-                }
-                if icon_button(ui, pal, Icon::Restart, "Restart", !a.running.is_empty(), false).clicked() {
-                    restart = true;
-                }
-                ui.label(RichText::new(if a.running.is_empty() { "Not running" } else { "Running" }).color(if a.running.is_empty() { pal.dim } else { pal.accent }));
-            });
+            ui::row(
+                ui,
+                pal,
+                false,
+                "Status",
+                Some(&format!(
+                    "Opened {} time{} from here, last {}. Used for {} in total",
+                    a.launches,
+                    if a.launches == 1 { "" } else { "s" },
+                    ago(a.last_used),
+                    span(a.seconds)
+                )),
+                |ui| {
+                    if icon_button(ui, pal, Icon::Close, "Close", !a.running.is_empty(), false).clicked() {
+                        close = true;
+                    }
+                    if icon_button(ui, pal, Icon::Restart, "Restart", !a.running.is_empty(), false).clicked() {
+                        restart = true;
+                    }
+                    ui.label(RichText::new(if a.running.is_empty() { "Not running" } else { "Running" }).color(if a.running.is_empty() {
+                        pal.dim
+                    } else {
+                        pal.accent
+                    }));
+                },
+            );
         });
 
         let dirs = appmgr::data_dirs(&a);
@@ -317,70 +386,95 @@ impl App {
                     clear_cache = true;
                 }
             });
-            ui::row(ui, pal, false, "Settings and data", Some(&format!("{} · the app's saved settings and files; clearing it is like a fresh install", human(data))), |ui| {
-                if ui::quiet(ui, pal, "Clear data...").clicked() {
-                    clear_data = true;
-                }
-            });
+            ui::row(
+                ui,
+                pal,
+                false,
+                "Settings and data",
+                Some(&format!("{} · the app's saved settings and files; clearing it is like a fresh install", human(data))),
+                |ui| {
+                    if ui::quiet(ui, pal, "Clear data...").clicked() {
+                        clear_data = true;
+                    }
+                },
+            );
         });
 
         let sandbox_ok = std::path::Path::new("/usr/bin/bwrap").exists();
         if appmgr::has_sandbox() {
-        ui::group(ui, pal, Some("Privacy sandbox (experimental)"), |ui| {
-            if !sandbox_ok {
-                ui.add_space(8.0);
-                ui.label(RichText::new("Needs bubblewrap (package bubblewrap).").color(pal.dim));
-                ui.add_space(8.0);
-                return;
-            }
-            let mut p = a.policy.clone();
-            let mut changed = false;
-            ui::row(ui, pal, true, "Run in a sandbox", Some("The app starts in a restricted view of your files and programs. Takes effect the next time it opens"), |ui| {
-                changed |= ui::switch(ui, pal, &mut p.sandbox).changed();
-            });
-            if p.sandbox {
-                ui::row(ui, pal, false, "Files it can see", Some("All of your files, or only the folders you add (and its own settings)"), |ui| {
-                    let sel = if p.files_all { 0 } else { 1 };
-                    if let Some(i) = ui::segmented(ui, pal, &["All files", "Chosen folders"], sel) {
-                        p.files_all = i == 0;
-                        changed = true;
-                    }
-                });
-                if !p.files_all {
-                    let mut remove_at: Option<usize> = None;
-                    for (i, f) in p.folders.iter().enumerate() {
-                        ui::row(ui, pal, false, f, None, |ui| {
-                            if icon_button(ui, pal, Icon::Close, "Stop sharing this folder", true, true).clicked() {
-                                remove_at = Some(i);
+            ui::group(ui, pal, Some("Privacy sandbox (experimental)"), |ui| {
+                if !sandbox_ok {
+                    ui.add_space(8.0);
+                    ui.label(RichText::new("Needs bubblewrap (package bubblewrap).").color(pal.dim));
+                    ui.add_space(8.0);
+                    return;
+                }
+                let mut p = a.policy.clone();
+                let mut changed = false;
+                ui::row(
+                    ui,
+                    pal,
+                    true,
+                    "Run in a sandbox",
+                    Some("The app starts in a restricted view of your files and programs. Takes effect the next time it opens"),
+                    |ui| {
+                        changed |= ui::switch(ui, pal, &mut p.sandbox).changed();
+                    },
+                );
+                if p.sandbox {
+                    ui::row(
+                        ui,
+                        pal,
+                        false,
+                        "Files it can see",
+                        Some("All of your files, or only the folders you add (and its own settings)"),
+                        |ui| {
+                            let sel = if p.files_all { 0 } else { 1 };
+                            if let Some(i) = ui::segmented(ui, pal, &["All files", "Chosen folders"], sel) {
+                                p.files_all = i == 0;
+                                changed = true;
+                            }
+                        },
+                    );
+                    if !p.files_all {
+                        let mut remove_at: Option<usize> = None;
+                        for (i, f) in p.folders.iter().enumerate() {
+                            ui::row(ui, pal, false, f, None, |ui| {
+                                if icon_button(ui, pal, Icon::Close, "Stop sharing this folder", true, true).clicked() {
+                                    remove_at = Some(i);
+                                }
+                            });
+                        }
+                        if let Some(i) = remove_at {
+                            p.folders.remove(i);
+                            changed = true;
+                        }
+                        ui::row(ui, pal, false, "Add a folder", Some("Type or paste its path, for example ~/Documents"), |ui| {
+                            let add = ui::action(ui, pal, "Add").clicked();
+                            ui.add(egui::TextEdit::singleline(&mut self.app_folder).hint_text("~/Documents").desired_width(200.0));
+                            if add && !self.app_folder.trim().is_empty() {
+                                let raw = self.app_folder.trim().to_string();
+                                let path = if let Some(rest) = raw.strip_prefix("~/") {
+                                    format!("{}/{rest}", std::env::var("HOME").unwrap_or_default())
+                                } else {
+                                    raw
+                                };
+                                if std::path::Path::new(&path).is_dir() && !p.folders.contains(&path) {
+                                    p.folders.push(path);
+                                    changed = true;
+                                }
+                                self.app_folder.clear();
                             }
                         });
                     }
-                    if let Some(i) = remove_at {
-                        p.folders.remove(i);
-                        changed = true;
-                    }
-                    ui::row(ui, pal, false, "Add a folder", Some("Type or paste its path, for example ~/Documents"), |ui| {
-                        let add = ui::action(ui, pal, "Add").clicked();
-                        ui.add(egui::TextEdit::singleline(&mut self.app_folder).hint_text("~/Documents").desired_width(200.0));
-                        if add && !self.app_folder.trim().is_empty() {
-                            let raw = self.app_folder.trim().to_string();
-                            let path = if let Some(rest) = raw.strip_prefix("~/") { format!("{}/{rest}", std::env::var("HOME").unwrap_or_default()) } else { raw };
-                            if std::path::Path::new(&path).is_dir() && !p.folders.contains(&path) {
-                                p.folders.push(path);
-                                changed = true;
-                            }
-                            self.app_folder.clear();
-                        }
+                    ui::row(ui, pal, false, "Can see other programs", Some("Off: it cannot see what else is running"), |ui| {
+                        changed |= ui::switch(ui, pal, &mut p.see_others).changed();
                     });
                 }
-                ui::row(ui, pal, false, "Can see other programs", Some("Off: it cannot see what else is running"), |ui| {
-                    changed |= ui::switch(ui, pal, &mut p.see_others).changed();
-                });
-            }
-            if changed {
-                policy = Some(p);
-            }
-        });
+                if changed {
+                    policy = Some(p);
+                }
+            });
         }
 
         ui::group(ui, pal, None, |ui| {

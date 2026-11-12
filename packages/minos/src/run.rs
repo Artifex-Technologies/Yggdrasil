@@ -36,7 +36,10 @@ pub fn command(file: &Path, terminal_env: Option<&str>, installed: &dyn Fn(&str)
     let (term, before) = preferred.or_else(|| TERMINALS.iter().find(|(name, _)| installed(name)))?;
     let mut cmd: Vec<String> = std::iter::once(term.to_string()).chain(before.iter().map(|s| s.to_string())).collect();
     // the file is an argument to sh, never part of the script text, so no name can change what runs
-    cmd.extend(["sh", "-c", "\"$1\"; code=$?; echo; echo \"Finished (exit code $code). Press Enter to close.\"; read -r _", "sh"].map(String::from));
+    cmd.extend(
+        ["sh", "-c", "\"$1\"; code=$?; echo; echo \"Finished (exit code $code). Press Enter to close.\"; read -r _", "sh"]
+            .map(String::from),
+    );
     cmd.push(file.to_string_lossy().into_owned());
     Some(cmd)
 }
@@ -52,7 +55,12 @@ pub fn run_in_terminal(file: &Path) -> Result<(), String> {
     }
     let cmd = command(file, std::env::var("TERMINAL").ok().as_deref(), &on_path).ok_or("no terminal program is installed")?;
     let dir = file.parent().unwrap_or(Path::new("/"));
-    std::process::Command::new(&cmd[0]).args(&cmd[1..]).current_dir(dir).spawn().map(|_| ()).map_err(|e| format!("could not start {}: {e}", cmd[0]))
+    std::process::Command::new(&cmd[0])
+        .args(&cmd[1..])
+        .current_dir(dir)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("could not start {}: {e}", cmd[0]))
 }
 
 /// Installs a package from the distribution's repositories in a terminal, where pacman asks for the password and shows what it
@@ -63,7 +71,12 @@ pub fn install_in_terminal(package: &str) -> Result<(), String> {
     }
     let (term, before) = TERMINALS.iter().find(|(name, _)| on_path(name)).ok_or("no terminal program is installed")?;
     let script = "echo \"Installing $1\"; sudo pacman -S --needed \"$1\"; code=$?; echo; echo \"Finished (exit code $code). Press Enter to close.\"; read -r _";
-    std::process::Command::new(term).args(*before).args(["sh", "-c", script, "sh", package]).spawn().map(|_| ()).map_err(|e| format!("could not start {term}: {e}"))
+    std::process::Command::new(term)
+        .args(*before)
+        .args(["sh", "-c", script, "sh", package])
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("could not start {term}: {e}"))
 }
 
 #[cfg(test)]

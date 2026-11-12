@@ -66,7 +66,8 @@ pub fn load_files(aff: &Path, dic: &Path) -> Result<spellbook::Dictionary, Strin
     let enc = encoding(&aff_raw);
     let (aff_text, dic_text) = (to_utf8(&aff_raw, &enc)?, to_utf8(&dic_raw, &enc)?);
     // the dictionary is UTF-8 from here on, so its SET line must say so
-    let aff_text: String = aff_text.lines().map(|l| if l.trim_start().starts_with("SET ") { "SET UTF-8" } else { l }).collect::<Vec<_>>().join("\n");
+    let aff_text: String =
+        aff_text.lines().map(|l| if l.trim_start().starts_with("SET ") { "SET UTF-8" } else { l }).collect::<Vec<_>>().join("\n");
     spellbook::Dictionary::new(&aff_text, &dic_text).map_err(|e| format!("{}: {e}", dic.display()))
 }
 
@@ -92,9 +93,13 @@ fn to_utf8(raw: &[u8], enc: &str) -> Result<String, String> {
         return Err(format!("unknown encoding {enc}"));
     }
     use std::io::Write;
-    let mut child = std::process::Command::new("iconv").args(["-f", &e, "-t", "UTF-8"])
-        .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null())
-        .spawn().map_err(|_| "iconv is not available".to_string())?;
+    let mut child = std::process::Command::new("iconv")
+        .args(["-f", &e, "-t", "UTF-8"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|_| "iconv is not available".to_string())?;
     let mut stdin = child.stdin.take().ok_or("iconv")?;
     let raw = raw.to_vec();
     let writer = std::thread::spawn(move || stdin.write_all(&raw));
@@ -143,27 +148,95 @@ pub const PACKAGES: &[Package] = &[
 
 /// Whether a package is installed (pacman's own database).
 pub fn package_installed(package: &str) -> bool {
-    std::path::Path::new("/var/lib/pacman/local").read_dir().map(|rd| {
-        rd.flatten().any(|e| e.file_name().to_string_lossy().rsplitn(3, '-').nth(2) == Some(package))
-    }).unwrap_or(false)
+    std::path::Path::new("/var/lib/pacman/local")
+        .read_dir()
+        .map(|rd| rd.flatten().any(|e| e.file_name().to_string_lossy().rsplitn(3, '-').nth(2) == Some(package)))
+        .unwrap_or(false)
 }
 
 const LANGS: &[(&str, &str)] = &[
-    ("en", "English"), ("de", "German"), ("el", "Greek"), ("es", "Spanish"), ("fr", "French"), ("he", "Hebrew"), ("hu", "Hungarian"),
-    ("it", "Italian"), ("nl", "Dutch"), ("pl", "Polish"), ("ro", "Romanian"), ("ru", "Russian"), ("pt", "Portuguese"), ("sv", "Swedish"),
-    ("da", "Danish"), ("nb", "Norwegian (Bokmål)"), ("nn", "Norwegian (Nynorsk)"), ("fi", "Finnish"), ("cs", "Czech"), ("sk", "Slovak"),
-    ("uk", "Ukrainian"), ("tr", "Turkish"), ("ca", "Catalan"), ("gl", "Galician"), ("eu", "Basque"), ("hr", "Croatian"), ("sl", "Slovenian"),
-    ("bg", "Bulgarian"), ("lt", "Lithuanian"), ("lv", "Latvian"), ("et", "Estonian"), ("ga", "Irish"), ("cy", "Welsh"), ("la", "Latin"),
+    ("en", "English"),
+    ("de", "German"),
+    ("el", "Greek"),
+    ("es", "Spanish"),
+    ("fr", "French"),
+    ("he", "Hebrew"),
+    ("hu", "Hungarian"),
+    ("it", "Italian"),
+    ("nl", "Dutch"),
+    ("pl", "Polish"),
+    ("ro", "Romanian"),
+    ("ru", "Russian"),
+    ("pt", "Portuguese"),
+    ("sv", "Swedish"),
+    ("da", "Danish"),
+    ("nb", "Norwegian (Bokmål)"),
+    ("nn", "Norwegian (Nynorsk)"),
+    ("fi", "Finnish"),
+    ("cs", "Czech"),
+    ("sk", "Slovak"),
+    ("uk", "Ukrainian"),
+    ("tr", "Turkish"),
+    ("ca", "Catalan"),
+    ("gl", "Galician"),
+    ("eu", "Basque"),
+    ("hr", "Croatian"),
+    ("sl", "Slovenian"),
+    ("bg", "Bulgarian"),
+    ("lt", "Lithuanian"),
+    ("lv", "Latvian"),
+    ("et", "Estonian"),
+    ("ga", "Irish"),
+    ("cy", "Welsh"),
+    ("la", "Latin"),
 ];
 
 const REGIONS: &[(&str, &str)] = &[
-    ("US", "United States"), ("GB", "United Kingdom"), ("CA", "Canada"), ("AU", "Australia"), ("NZ", "New Zealand"), ("IE", "Ireland"),
-    ("ZA", "South Africa"), ("IN", "India"), ("DE", "Germany"), ("AT", "Austria"), ("CH", "Switzerland"), ("LI", "Liechtenstein"),
-    ("LU", "Luxembourg"), ("BE", "Belgium"), ("FR", "France"), ("ES", "Spain"), ("MX", "Mexico"), ("AR", "Argentina"), ("CO", "Colombia"),
-    ("CL", "Chile"), ("PE", "Peru"), ("VE", "Venezuela"), ("BO", "Bolivia"), ("CR", "Costa Rica"), ("CU", "Cuba"), ("DO", "Dominican Republic"),
-    ("EC", "Ecuador"), ("GT", "Guatemala"), ("HN", "Honduras"), ("NI", "Nicaragua"), ("PA", "Panama"), ("PR", "Puerto Rico"), ("PY", "Paraguay"),
-    ("SV", "El Salvador"), ("UY", "Uruguay"), ("IT", "Italy"), ("NL", "Netherlands"), ("PT", "Portugal"), ("BR", "Brazil"), ("RU", "Russia"),
-    ("IL", "Israel"), ("HU", "Hungary"), ("PL", "Poland"), ("RO", "Romania"), ("GR", "Greece"),
+    ("US", "United States"),
+    ("GB", "United Kingdom"),
+    ("CA", "Canada"),
+    ("AU", "Australia"),
+    ("NZ", "New Zealand"),
+    ("IE", "Ireland"),
+    ("ZA", "South Africa"),
+    ("IN", "India"),
+    ("DE", "Germany"),
+    ("AT", "Austria"),
+    ("CH", "Switzerland"),
+    ("LI", "Liechtenstein"),
+    ("LU", "Luxembourg"),
+    ("BE", "Belgium"),
+    ("FR", "France"),
+    ("ES", "Spain"),
+    ("MX", "Mexico"),
+    ("AR", "Argentina"),
+    ("CO", "Colombia"),
+    ("CL", "Chile"),
+    ("PE", "Peru"),
+    ("VE", "Venezuela"),
+    ("BO", "Bolivia"),
+    ("CR", "Costa Rica"),
+    ("CU", "Cuba"),
+    ("DO", "Dominican Republic"),
+    ("EC", "Ecuador"),
+    ("GT", "Guatemala"),
+    ("HN", "Honduras"),
+    ("NI", "Nicaragua"),
+    ("PA", "Panama"),
+    ("PR", "Puerto Rico"),
+    ("PY", "Paraguay"),
+    ("SV", "El Salvador"),
+    ("UY", "Uruguay"),
+    ("IT", "Italy"),
+    ("NL", "Netherlands"),
+    ("PT", "Portugal"),
+    ("BR", "Brazil"),
+    ("RU", "Russia"),
+    ("IL", "Israel"),
+    ("HU", "Hungary"),
+    ("PL", "Poland"),
+    ("RO", "Romania"),
+    ("GR", "Greece"),
 ];
 
 /// A readable name for a dictionary code: `de_AT` is "German (Austria)", `en_US-large` "English (United States, more words)".
@@ -180,7 +253,11 @@ pub fn name(code: &str) -> String {
         Some(x) => parts.push(x.to_string()),
         None => {}
     }
-    if parts.is_empty() { lang_name } else { format!("{lang_name} ({})", parts.join(", ")) }
+    if parts.is_empty() {
+        lang_name
+    } else {
+        format!("{lang_name} ({})", parts.join(", "))
+    }
 }
 
 #[cfg(test)]

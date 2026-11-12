@@ -96,11 +96,19 @@ fn span(from: u32, to: u32) -> u32 {
 
 /// The fade in, shortened so it ends before the turn-off time; and the fade out, before the next turn-on.
 fn fade_in_len(s: &Settings) -> u32 {
-    if s.fade { s.minutes.min(span(s.on, s.off) - 1) } else { 0 }
+    if s.fade {
+        s.minutes.min(span(s.on, s.off) - 1)
+    } else {
+        0
+    }
 }
 
 fn fade_out_len(s: &Settings) -> u32 {
-    if s.fade { s.minutes.min(span(s.off, s.on) - 1) } else { 0 }
+    if s.fade {
+        s.minutes.min(span(s.off, s.on) - 1)
+    } else {
+        0
+    }
 }
 
 /// The two fades as the screen will go through them: (starts, ends, from K, to K), in minutes into the day; the fade in first.
@@ -114,7 +122,13 @@ pub fn kelvin_rgb(k: u32) -> (u8, u8, u8) {
     let t = k as f32 / 100.0;
     let r = if t <= 66.0 { 255.0 } else { 329.7 * (t - 60.0).powf(-0.1332) };
     let g = if t <= 66.0 { 99.47 * t.ln() - 161.12 } else { 288.12 * (t - 60.0).powf(-0.0755) };
-    let b = if t >= 66.0 { 255.0 } else if t <= 19.0 { 0.0 } else { 138.52 * (t - 10.0).ln() - 305.04 };
+    let b = if t >= 66.0 {
+        255.0
+    } else if t <= 19.0 {
+        0.0
+    } else {
+        138.52 * (t - 10.0).ln() - 305.04
+    };
     let c = |v: f32| v.clamp(0.0, 255.0) as u8;
     (c(r), c(g), c(b))
 }
@@ -177,7 +191,9 @@ pub fn build(s: &Settings) -> String {
 }
 
 fn conf_path() -> PathBuf {
-    let base = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".config"));
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".config"));
     base.join("hypr/hyprsunset.conf")
 }
 
@@ -247,7 +263,9 @@ fn lit_at(s: &Settings, secs_of_day: u32) -> bool {
 
 /// hyprsunset's socket: $XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.hyprsunset.sock.
 fn socket_path() -> PathBuf {
-    let run = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(format!("/run/user/{}", unsafe { libc::getuid() })));
+    let run = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(format!("/run/user/{}", unsafe { libc::getuid() })));
     match std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE") {
         Some(sig) => run.join("hypr").join(sig).join(".hyprsunset.sock"),
         None => run.join("hypr/.hyprsunset.sock"),
@@ -300,7 +318,9 @@ fn start() {
     use std::os::unix::process::CommandExt;
     // one that is already starting (from the notch or Settings, whichever looked first) is waited for, not doubled
     if pids().is_empty() {
-        if let Ok(mut child) = Command::new("hyprsunset").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).process_group(0).spawn() {
+        if let Ok(mut child) =
+            Command::new("hyprsunset").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).process_group(0).spawn()
+        {
             // reaped when it ends
             std::thread::spawn(move || {
                 let _ = child.wait();
@@ -398,7 +418,8 @@ impl Worker {
 
     fn flush(&mut self) {
         let Some(s) = self.unsaved.take() else { return };
-        let schedule_changed = (s.schedule, s.on, s.off, s.fade, s.minutes) != (self.cur.schedule, self.cur.on, self.cur.off, self.cur.fade, self.cur.minutes);
+        let schedule_changed =
+            (s.schedule, s.on, s.off, s.fade, s.minutes) != (self.cur.schedule, self.cur.on, self.cur.off, self.cur.fade, self.cur.minutes);
         let temp_changed = s.temp != self.cur.temp;
         self.cur = s;
         save(&self.cur);

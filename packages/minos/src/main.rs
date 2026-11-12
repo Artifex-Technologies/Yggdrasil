@@ -1,29 +1,29 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::Arc;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 mod dnd;
 mod icons;
 
 use eframe::egui::{self, pos2, vec2, Align, Align2, Color32, CornerRadius, FontId, Layout, Rect, RichText, Sense, UiBuilder};
-use icons::Icon;
-use yggdrasil_ui::sysicon;
-use yggdrasil_ui::{chrome, theme};
-use theme::{palette_for, Palette};
 use egui_extras::{Column, TableBuilder};
+use icons::Icon;
 use minos_core::archive::{self, Format};
 use minos_core::cloud::{self, Badge, Link, Report};
+use minos_core::devices;
 use minos_core::listing::{self, Entry, Sort, SortKey};
 use minos_core::places::{self, CloudPlace, CloudState};
 use minos_core::preview::{self, Body, PreviewData};
-use minos_core::devices;
 use minos_core::run;
 use minos_core::search::{display_relative, Search};
 use minos_core::state::{SavedTab, State, ViewMode, GALLERY_SIZES};
 use minos_core::{expand_address, fileops, History, Tab};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use theme::{palette_for, Palette};
+use yggdrasil_ui::sysicon;
+use yggdrasil_ui::{chrome, theme};
 
 /// A copy or move running on its own thread (see App::start_transfer).
 struct Transfer {
@@ -463,15 +463,16 @@ impl Pane {
 }
 
 fn is_image(p: &Path) -> bool {
-    matches!(
-        p.extension().map(|e| e.to_string_lossy().to_lowercase()).as_deref(),
-        Some("png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp")
-    )
+    matches!(p.extension().map(|e| e.to_string_lossy().to_lowercase()).as_deref(), Some("png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp"))
 }
 
 fn file_uri(p: &Path) -> String {
     let s = p.to_string_lossy().replace('\\', "/");
-    if s.starts_with('/') { format!("file://{s}") } else { format!("file:///{s}") }
+    if s.starts_with('/') {
+        format!("file://{s}")
+    } else {
+        format!("file:///{s}")
+    }
 }
 
 fn open_with_system(path: &Path) {
@@ -529,12 +530,18 @@ const RENAME_RESULT_ID: &str = "minos-rename-result";
 /// the new name, Esc, a click elsewhere or another window drops it (the outcome goes to the App through the egui data, see `ui`).
 fn inline_rename(ui: &mut egui::Ui, pal: &Palette, e: &Entry) -> bool {
     let ctx = ui.ctx().clone();
-    let Some(mut d) = ctx.data(|d| d.get_temp::<Option<RenameDlg>>(egui::Id::new(RENAME_ID))).flatten().filter(|d| d.path == e.path) else { return false };
+    let Some(mut d) = ctx.data(|d| d.get_temp::<Option<RenameDlg>>(egui::Id::new(RENAME_ID))).flatten().filter(|d| d.path == e.path) else {
+        return false;
+    };
     ctx.data_mut(|d| d.insert_temp(egui::Id::new("minos-rename-seen"), true));
     let id = egui::Id::new(("minos-rename-edit", e.path.clone()));
     if d.fresh {
         // select the name without its extension, like other file managers
-        let stem = if e.is_dir { d.text.chars().count() } else { std::path::Path::new(&d.text).file_stem().map(|s| s.to_string_lossy().chars().count()).unwrap_or(0).max(1) };
+        let stem = if e.is_dir {
+            d.text.chars().count()
+        } else {
+            std::path::Path::new(&d.text).file_stem().map(|s| s.to_string_lossy().chars().count()).unwrap_or(0).max(1)
+        };
         let mut state = egui::TextEdit::load_state(&ctx, id).unwrap_or_default();
         state.cursor.set_char_range(Some(egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(stem))));
         state.store(&ctx, id);
@@ -547,7 +554,8 @@ fn inline_rename(ui: &mut egui::Ui, pal: &Palette, e: &Entry) -> bool {
     if d.fresh {
         d.fresh = false;
     }
-    let (esc, enter, window_unfocused) = ui.input(|i| (i.key_pressed(egui::Key::Escape), i.key_pressed(egui::Key::Enter), i.viewport().focused == Some(false)));
+    let (esc, enter, window_unfocused) =
+        ui.input(|i| (i.key_pressed(egui::Key::Escape), i.key_pressed(egui::Key::Enter), i.viewport().focused == Some(false)));
     // Only Enter keeps the new name. Esc, a click anywhere else, or switching to another window drops it,
     // so a stray keypress can never rename something by accident.
     let result = if enter && r.lost_focus() {
@@ -639,9 +647,16 @@ fn entry_interact(
     }
     if e.is_dir {
         // folders on screen this frame, for drops that arrive from other windows
-        ctx.data_mut(|d| d.get_temp_mut_or_default::<Vec<(Rect, PathBuf)>>(egui::Id::new("minos-drop-rows")).push((r.interact_rect, e.path.clone())));
+        ctx.data_mut(|d| {
+            d.get_temp_mut_or_default::<Vec<(Rect, PathBuf)>>(egui::Id::new("minos-drop-rows")).push((r.interact_rect, e.path.clone()))
+        });
         if egui::DragAndDrop::has_payload_of_type::<DragPaths>(ctx) && r.contains_pointer() {
-            ctx.layer_painter(r.layer_id).rect_stroke(r.interact_rect, 6, egui::Stroke::new(2.0, accent_colour()), egui::StrokeKind::Inside);
+            ctx.layer_painter(r.layer_id).rect_stroke(
+                r.interact_rect,
+                6,
+                egui::Stroke::new(2.0, accent_colour()),
+                egui::StrokeKind::Inside,
+            );
         }
         if let Some(p) = r.dnd_release_payload::<DragPaths>() {
             actions.push(Action::Move(p.0.clone(), e.path.clone()));
@@ -817,7 +832,9 @@ fn paint_entry_icon(p: &egui::Painter, pal: &Palette, st: &State, e: &Entry, rec
         icons::paint(p, rect, icon, if icon == Icon::Archive { pal.amber } else { pal.file });
     }
     if rect.width() >= 40.0 {
-        if let Some(ext) = e.path.extension().map(|x| x.to_string_lossy().to_uppercase()).filter(|x| !x.is_empty() && x.chars().count() <= 5) {
+        if let Some(ext) =
+            e.path.extension().map(|x| x.to_string_lossy().to_uppercase()).filter(|x| !x.is_empty() && x.chars().count() <= 5)
+        {
             let font = egui::FontId::proportional((rect.width() * 0.16).clamp(8.0, 13.0));
             let g = p.layout_no_wrap(ext, font, Color32::WHITE);
             let pad = vec2(4.0, 1.5);
@@ -928,7 +945,95 @@ fn paint_avail(p: &egui::Painter, center: egui::Pos2, a: cloud::Avail, pal: &Pal
         }
         cloud::Avail::Partial | cloud::Avail::Cloud => {
             let blue = Color32::from_rgb(70, 130, 220);
-            const CLOUD: &[(f32, f32)] = &[(6.8, 1.0), (6.9, 1.3), (6.9, 1.6), (6.9, 2.0), (6.8, 2.3), (6.7, 2.6), (6.6, 2.9), (6.5, 3.1), (6.3, 3.4), (6.1, 3.6), (5.9, 3.9), (5.6, 4.1), (5.3, 4.2), (5.1, 4.4), (4.8, 4.5), (4.5, 4.5), (4.2, 4.6), (-3.8, 4.6), (-4.1, 4.6), (-4.4, 4.5), (-4.7, 4.5), (-5.0, 4.3), (-5.3, 4.2), (-5.6, 4.0), (-5.8, 3.8), (-6.0, 3.6), (-6.2, 3.4), (-6.4, 3.1), (-6.5, 2.8), (-6.7, 2.5), (-6.7, 2.2), (-6.8, 1.9), (-6.8, 1.6), (-6.8, 1.3), (-6.7, 1.0), (-6.7, 0.7), (-6.5, 0.4), (-6.4, 0.1), (-6.2, -0.2), (-6.0, -0.4), (-5.8, -0.6), (-5.6, -0.8), (-5.3, -1.0), (-5.0, -1.1), (-4.7, -1.2), (-4.4, -1.3), (-4.3, -1.7), (-4.2, -2.1), (-4.0, -2.5), (-3.9, -2.9), (-3.6, -3.2), (-3.4, -3.6), (-3.1, -3.9), (-2.8, -4.1), (-2.4, -4.4), (-2.0, -4.5), (-1.6, -4.7), (-1.2, -4.8), (-0.8, -4.9), (-0.4, -4.9), (0.0, -4.9), (0.4, -4.8), (0.8, -4.7), (1.2, -4.5), (1.6, -4.4), (1.9, -4.1), (2.3, -3.9), (2.6, -3.6), (2.8, -3.2), (3.1, -2.9), (3.2, -2.5), (3.4, -2.1), (3.5, -1.7), (3.9, -1.4), (4.2, -1.4), (4.5, -1.3), (4.8, -1.2), (5.1, -1.1), (5.4, -1.0), (5.7, -0.8), (5.9, -0.6), (6.1, -0.4), (6.3, -0.2), (6.5, 0.1), (6.6, 0.4), (6.8, 0.7), (6.8, 1.0)];
+            const CLOUD: &[(f32, f32)] = &[
+                (6.8, 1.0),
+                (6.9, 1.3),
+                (6.9, 1.6),
+                (6.9, 2.0),
+                (6.8, 2.3),
+                (6.7, 2.6),
+                (6.6, 2.9),
+                (6.5, 3.1),
+                (6.3, 3.4),
+                (6.1, 3.6),
+                (5.9, 3.9),
+                (5.6, 4.1),
+                (5.3, 4.2),
+                (5.1, 4.4),
+                (4.8, 4.5),
+                (4.5, 4.5),
+                (4.2, 4.6),
+                (-3.8, 4.6),
+                (-4.1, 4.6),
+                (-4.4, 4.5),
+                (-4.7, 4.5),
+                (-5.0, 4.3),
+                (-5.3, 4.2),
+                (-5.6, 4.0),
+                (-5.8, 3.8),
+                (-6.0, 3.6),
+                (-6.2, 3.4),
+                (-6.4, 3.1),
+                (-6.5, 2.8),
+                (-6.7, 2.5),
+                (-6.7, 2.2),
+                (-6.8, 1.9),
+                (-6.8, 1.6),
+                (-6.8, 1.3),
+                (-6.7, 1.0),
+                (-6.7, 0.7),
+                (-6.5, 0.4),
+                (-6.4, 0.1),
+                (-6.2, -0.2),
+                (-6.0, -0.4),
+                (-5.8, -0.6),
+                (-5.6, -0.8),
+                (-5.3, -1.0),
+                (-5.0, -1.1),
+                (-4.7, -1.2),
+                (-4.4, -1.3),
+                (-4.3, -1.7),
+                (-4.2, -2.1),
+                (-4.0, -2.5),
+                (-3.9, -2.9),
+                (-3.6, -3.2),
+                (-3.4, -3.6),
+                (-3.1, -3.9),
+                (-2.8, -4.1),
+                (-2.4, -4.4),
+                (-2.0, -4.5),
+                (-1.6, -4.7),
+                (-1.2, -4.8),
+                (-0.8, -4.9),
+                (-0.4, -4.9),
+                (0.0, -4.9),
+                (0.4, -4.8),
+                (0.8, -4.7),
+                (1.2, -4.5),
+                (1.6, -4.4),
+                (1.9, -4.1),
+                (2.3, -3.9),
+                (2.6, -3.6),
+                (2.8, -3.2),
+                (3.1, -2.9),
+                (3.2, -2.5),
+                (3.4, -2.1),
+                (3.5, -1.7),
+                (3.9, -1.4),
+                (4.2, -1.4),
+                (4.5, -1.3),
+                (4.8, -1.2),
+                (5.1, -1.1),
+                (5.4, -1.0),
+                (5.7, -0.8),
+                (5.9, -0.6),
+                (6.1, -0.4),
+                (6.3, -0.2),
+                (6.5, 0.1),
+                (6.6, 0.4),
+                (6.8, 0.7),
+                (6.8, 1.0),
+            ];
             let path: Vec<egui::Pos2> = CLOUD.iter().map(|&(x, y)| center + vec2(x, y) * 0.95 - vec2(0.0, 1.2)).collect();
             p.add(egui::Shape::closed_line(path, w(blue)));
         }
@@ -1009,8 +1114,20 @@ fn tab_strip(ui: &mut egui::Ui, pane: &Pane, pi: usize, pal: &Palette, actions: 
                 Color32::TRANSPARENT
             };
             ui.painter().rect_filled(rect, CornerRadius { nw: 10, ne: 10, sw: 0, se: 0 }, fill);
-            let icon = if places::is_this_pc(&dir) { Icon::Computer } else if places::is_virtual(&dir) { Icon::Drive } else { Icon::Folder };
-            let icon_col = if active { pal.text } else if places::is_virtual(&dir) { pal.dim } else { pal.folder };
+            let icon = if places::is_this_pc(&dir) {
+                Icon::Computer
+            } else if places::is_virtual(&dir) {
+                Icon::Drive
+            } else {
+                Icon::Folder
+            };
+            let icon_col = if active {
+                pal.text
+            } else if places::is_virtual(&dir) {
+                pal.dim
+            } else {
+                pal.folder
+            };
             let tab_rect = Rect::from_min_size(rect.min + vec2(10.0, 7.0), vec2(18.0, 18.0));
             let dir_name = dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
             let sys_names = if places::is_virtual(&dir) { vec![] } else { sysicon::folder_names(&dir_name) };
@@ -1204,12 +1321,15 @@ fn toolbar(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, pal: &Palette, st: &St
     let t = &mut pane.tabs[active];
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
-        if icon_button(ui, pal, Icon::Back, "Back (Alt+Left)", t.tab.history.can_back(), false).clicked() && t.tab.history.back().is_some() {
+        if icon_button(ui, pal, Icon::Back, "Back (Alt+Left)", t.tab.history.can_back(), false).clicked() && t.tab.history.back().is_some()
+        {
             t.search = None;
             t.results = None;
             t.reload(sort, hidden);
         }
-        if icon_button(ui, pal, Icon::Forward, "Forward (Alt+Right)", t.tab.history.can_forward(), false).clicked() && t.tab.history.forward().is_some() {
+        if icon_button(ui, pal, Icon::Forward, "Forward (Alt+Right)", t.tab.history.can_forward(), false).clicked()
+            && t.tab.history.forward().is_some()
+        {
             t.search = None;
             t.results = None;
             t.reload(sort, hidden);
@@ -1234,7 +1354,16 @@ fn toolbar(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, pal: &Palette, st: &St
             if icon_button(ui, pal, Icon::NewFile, "New file", !in_pc, false).clicked() {
                 actions.push(Action::NewFile(pi));
             }
-            if icon_button(ui, pal, if fav { Icon::StarFilled } else { Icon::Star }, if fav { "Remove from favorites" } else { "Add to favorites" }, !in_pc, fav).clicked() {
+            if icon_button(
+                ui,
+                pal,
+                if fav { Icon::StarFilled } else { Icon::Star },
+                if fav { "Remove from favorites" } else { "Add to favorites" },
+                !in_pc,
+                fav,
+            )
+            .clicked()
+            {
                 actions.push(Action::ToggleFav(dir.clone()));
             }
             if clip_has && !in_pc && icon_button(ui, pal, Icon::NewFile, "Paste (Ctrl+V)", true, false).clicked() {
@@ -1251,18 +1380,21 @@ fn toolbar(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, pal: &Palette, st: &St
         }
         if t.search_open {
             let ctx = ui.ctx().clone();
-            let area = egui::Area::new(egui::Id::new(("minos-search", pi))).order(egui::Order::Foreground).fixed_pos(pos2(magnifier.rect.right() - 250.0, magnifier.rect.bottom() + 4.0)).show(&ctx, |ui| {
-                egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    let te = ui.add(egui::TextEdit::singleline(&mut t.query).hint_text("Search").desired_width(230.0));
-                    if t.search_focus {
-                        te.request_focus();
-                        t.search_focus = false;
-                    }
-                    if te.changed() {
-                        t.restart_search(&ctx, hidden);
-                    }
+            let area = egui::Area::new(egui::Id::new(("minos-search", pi)))
+                .order(egui::Order::Foreground)
+                .fixed_pos(pos2(magnifier.rect.right() - 250.0, magnifier.rect.bottom() + 4.0))
+                .show(&ctx, |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        let te = ui.add(egui::TextEdit::singleline(&mut t.query).hint_text("Search").desired_width(230.0));
+                        if t.search_focus {
+                            te.request_focus();
+                            t.search_focus = false;
+                        }
+                        if te.changed() {
+                            t.restart_search(&ctx, hidden);
+                        }
+                    });
                 });
-            });
             let (esc, pressed) = ctx.input(|i| (i.key_pressed(egui::Key::Escape), i.pointer.any_pressed()));
             if esc {
                 t.search_open = false;
@@ -1318,7 +1450,11 @@ fn toolbar(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, pal: &Palette, st: &St
 
 fn header_cell(ui: &mut egui::Ui, pal: &Palette, label: &str, key: Option<SortKey>, sort: Sort, new_sort: &mut Sort) {
     ui.horizontal(|ui| {
-        let r = ui.add(egui::Label::new(RichText::new(label).strong().color(pal.text)).sense(if key.is_some() { Sense::click() } else { Sense::hover() }));
+        let r = ui.add(egui::Label::new(RichText::new(label).strong().color(pal.text)).sense(if key.is_some() {
+            Sense::click()
+        } else {
+            Sense::hover()
+        }));
         if let Some(k) = key {
             if sort.key == k {
                 let (rect, _) = ui.allocate_exact_size(vec2(12.0, 12.0), Sense::hover());
@@ -1342,7 +1478,16 @@ fn usage_bar(ui: &mut egui::Ui, pal: &Palette, total: u64, free: u64, width: f32
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &State, cloud_ctx: (&[Link], &BTreeMap<String, Report>), clip_has: bool, actions: &mut Vec<Action>) {
+fn draw_pane(
+    ui: &mut egui::Ui,
+    pane: &mut Pane,
+    pi: usize,
+    focused: bool,
+    st: &State,
+    cloud_ctx: (&[Link], &BTreeMap<String, Report>),
+    clip_has: bool,
+    actions: &mut Vec<Action>,
+) {
     // Whatever does not fit stays inside this pane instead of painting over its neighbour.
     ui.shrink_clip_rect(ui.max_rect());
     if ui.input(|i| i.pointer.any_pressed()) && ui.rect_contains_pointer(ui.max_rect()) {
@@ -1371,7 +1516,11 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
     let dir = t.dir();
     let TabView { entries, results, query, selected, anchor, .. } = t;
     let shown: &[Entry] = results.as_deref().unwrap_or(entries);
-    let order: Vec<usize> = if searching || in_pc { (0..shown.len()).collect() } else { listing::visible(shown, query, hidden).into_iter().filter(|&i| !pick_hides(&shown[i])).collect() };
+    let order: Vec<usize> = if searching || in_pc {
+        (0..shown.len()).collect()
+    } else {
+        listing::visible(shown, query, hidden).into_iter().filter(|&i| !pick_hides(&shown[i])).collect()
+    };
     let mut new_sort = sort;
     // a keyboard move asks for its row to be scrolled into view
     let want_row: Option<usize> = ui.ctx().data_mut(|d| {
@@ -1426,7 +1575,11 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
             // The row, not the name, takes the clicks and drags (see entry_interact below).
             let ectx = ui.ctx().clone();
             // A Status column (like Windows) in Proton Drive folders, when the pane is wide enough for the other columns too.
-            let status_col = st.drive_status && !in_pc && !in_archive && ui.available_width() >= 560.0 && places::proton_drive_candidates().iter().any(|r| dir.starts_with(r));
+            let status_col = st.drive_status
+                && !in_pc
+                && !in_archive
+                && ui.available_width() >= 560.0
+                && places::proton_drive_candidates().iter().any(|r| dir.starts_with(r));
             let name_cell = |ui: &mut egui::Ui, e: &Entry| {
                 ui.horizontal(|ui| {
                     let cut = is_cut(ui.ctx(), &e.path);
@@ -1450,7 +1603,9 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
                     }
                     if !inline_rename(ui, &pal, e) {
                         let lr = ui.add(egui::Label::new(name_text(e, st, &pal)).selectable(false));
-                        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new(("minos-name-rect", e.path.clone())), lr.rect.expand2(vec2(6.0, 4.0))));
+                        ui.ctx().data_mut(|d| {
+                            d.insert_temp(egui::Id::new(("minos-name-rect", e.path.clone())), lr.rect.expand2(vec2(6.0, 4.0)))
+                        });
                     }
                 });
             };
@@ -1486,7 +1641,13 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
                             row.col(|ui| {
                                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                                     if let Some((total, free)) = e.usage {
-                                        ui.add(egui::Label::new(RichText::new(format!("{} / {}", listing::human_size(free), listing::human_size(total))).color(pal.dim)).truncate());
+                                        ui.add(
+                                            egui::Label::new(
+                                                RichText::new(format!("{} / {}", listing::human_size(free), listing::human_size(total)))
+                                                    .color(pal.dim),
+                                            )
+                                            .truncate(),
+                                        );
                                     }
                                 });
                             });
@@ -1594,7 +1755,11 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
                         let cut = is_cut(ui.ctx(), &e.path);
                         if !e.is_dir && !in_archive && is_image(&e.path) && ui.is_rect_visible(rect) {
                             let alpha = if cut { (255.0 * CUT_OPACITY) as u8 } else { 255 };
-                            egui::Image::new(file_uri(&e.path)).fit_to_exact_size(img_rect.size()).corner_radius(6).tint(Color32::from_white_alpha(alpha)).paint_at(ui, img_rect);
+                            egui::Image::new(file_uri(&e.path))
+                                .fit_to_exact_size(img_rect.size())
+                                .corner_radius(6)
+                                .tint(Color32::from_white_alpha(alpha))
+                                .paint_at(ui, img_rect);
                         } else {
                             let mut painter = ui.painter().clone();
                             if cut {
@@ -1615,14 +1780,23 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
                         if shown_name.chars().count() > max_chars {
                             shown_name = shown_name.chars().take(max_chars.saturating_sub(1)).collect::<String>() + "...";
                         }
-                        let name_rect = Rect::from_min_max(pos2(rect.left() + 2.0, rect.bottom() - 28.0), pos2(rect.right() - 2.0, rect.bottom() - 4.0));
+                        let name_rect = Rect::from_min_max(
+                            pos2(rect.left() + 2.0, rect.bottom() - 28.0),
+                            pos2(rect.right() - 2.0, rect.bottom() - 4.0),
+                        );
                         ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new(("minos-name-rect", e.path.clone())), name_rect));
                         let mut editing = false;
                         ui.scope_builder(UiBuilder::new().max_rect(name_rect), |ui| {
                             editing = inline_rename(ui, &pal, e);
                         });
                         if !editing {
-                            ui.painter().text(pos2(rect.center().x, rect.bottom() - 16.0), Align2::CENTER_CENTER, shown_name, FontId::proportional(13.0), tint.unwrap_or(pal.text));
+                            ui.painter().text(
+                                pos2(rect.center().x, rect.bottom() - 16.0),
+                                Align2::CENTER_CENTER,
+                                shown_name,
+                                FontId::proportional(13.0),
+                                tint.unwrap_or(pal.text),
+                            );
                         }
                         let r = r.on_hover_text(&e.name);
                         if want_row == Some(pos) {
@@ -1661,7 +1835,6 @@ fn draw_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &
     });
 }
 
-
 /// What the preview pane is showing, and the worker that fills it in.
 struct PreviewState {
     /// The selection (or folder) the pane is for.
@@ -1693,7 +1866,12 @@ impl PreviewState {
     }
 
     fn mtime_key(p: &Path) -> u64 {
-        std::fs::metadata(p).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0)
+        std::fs::metadata(p)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
     }
 
     /// Start (or satisfy from cache) the preview for `want`.
@@ -1717,7 +1895,14 @@ impl PreviewState {
             if let Ok(m) = std::fs::metadata(&path) {
                 if m.is_file() && matches!(cloud::availability(&root, &path, m.len()), Some(cloud::Avail::Cloud | cloud::Avail::Partial)) {
                     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                    self.set(ctx, Arc::new(preview::message(&name, "Only in Proton Drive", "Open it, or right-click > Download to this computer, to see it here")));
+                    self.set(
+                        ctx,
+                        Arc::new(preview::message(
+                            &name,
+                            "Only in Proton Drive",
+                            "Open it, or right-click > Download to this computer, to see it here",
+                        )),
+                    );
                     return;
                 }
             }
@@ -1887,7 +2072,11 @@ struct App {
 impl App {
     fn new() -> Self {
         let t0 = Instant::now();
-        let lap = |what: &str| if std::env::var_os("MINOS_TIMING").is_some() { eprintln!("minos: {:>6.0} ms  {}", t0.elapsed().as_secs_f64() * 1000.0, what) };
+        let lap = |what: &str| {
+            if std::env::var_os("MINOS_TIMING").is_some() {
+                eprintln!("minos: {:>6.0} ms  {}", t0.elapsed().as_secs_f64() * 1000.0, what)
+            }
+        };
         let st_path = State::config_path();
         let mut st = st_path.as_deref().map(State::load_from).unwrap_or_default();
         st.show_hidden = yggdrasil_conf::PanelConf::load().show_hidden;
@@ -1905,7 +2094,8 @@ impl App {
         {
             let conf = yggdrasil_conf::PanelConf::load();
             let others = session::others();
-            let (mode, here) = if others.is_empty() { (conf.minos_first_window, None) } else { (conf.minos_more_windows, others.first().cloned()) };
+            let (mode, here) =
+                if others.is_empty() { (conf.minos_first_window, None) } else { (conf.minos_more_windows, others.first().cloned()) };
             match (mode, here) {
                 (yggdrasil_conf::StartIn::Last, _) => {}
                 (yggdrasil_conf::StartIn::Here, Some(dir)) if dir.is_dir() || places::is_virtual(&dir) => {
@@ -2062,15 +2252,23 @@ impl App {
         if let Some(at) = self.ext_hover {
             let pt = pos2(at.0, at.1);
             if let Some((rect, _)) = rows.iter().find(|(r, _)| r.contains(pt)) {
-                ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("minos-ext-hover")))
-                    .rect_stroke(*rect, 6, egui::Stroke::new(2.0, accent_colour()), egui::StrokeKind::Inside);
+                ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("minos-ext-hover"))).rect_stroke(
+                    *rect,
+                    6,
+                    egui::Stroke::new(2.0, accent_colour()),
+                    egui::StrokeKind::Inside,
+                );
             }
         }
         let width = ctx.content_rect().width();
         for (paths, at, moved) in dropped {
             let pt = pos2(at.0, at.1);
             let pane = if split && at.0 > width / 2.0 { 1 } else { focus };
-            let dest = rows.iter().find(|(r, _)| r.contains(pt)).map(|(_, p)| p.clone()).unwrap_or_else(|| self.panes[pane].tabs[self.panes[pane].active].dir());
+            let dest = rows
+                .iter()
+                .find(|(r, _)| r.contains(pt))
+                .map(|(_, p)| p.clone())
+                .unwrap_or_else(|| self.panes[pane].tabs[self.panes[pane].active].dir());
             if places::is_virtual(&dest) || archive::split(&dest).is_some() {
                 self.status = "Drop on a drive or a folder".into();
                 continue;
@@ -2100,7 +2298,12 @@ impl App {
         let c = ctx.clone();
         let n = paths.len();
         let prog = Arc::new(fileops::Progress::default());
-        let what = format!("{} {} to {}", if mv { "Moving" } else { "Copying" }, if n == 1 { paths[0].file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default() } else { format!("{n} items") }, dest.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_else(|| dest.display().to_string()));
+        let what = format!(
+            "{} {} to {}",
+            if mv { "Moving" } else { "Copying" },
+            if n == 1 { paths[0].file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default() } else { format!("{n} items") },
+            dest.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_else(|| dest.display().to_string())
+        );
         {
             let (srcs, p) = (paths.clone(), prog.clone());
             std::thread::spawn(move || fileops::scan(&srcs, &p));
@@ -2111,12 +2314,19 @@ impl App {
             let mut done = vec![];
             let mut stopped = false;
             for src in &paths {
-                let res = fileops::transfer(src, &dest, mv, &mut |a, b| {
-                    let (rt, rr) = channel();
-                    tx.send(TEvent::Conflict(a.to_path_buf(), b.to_path_buf(), rt)).ok()?;
-                    c.request_repaint();
-                    rr.recv().ok().flatten()
-                }, &mut stats, &wp);
+                let res = fileops::transfer(
+                    src,
+                    &dest,
+                    mv,
+                    &mut |a, b| {
+                        let (rt, rr) = channel();
+                        tx.send(TEvent::Conflict(a.to_path_buf(), b.to_path_buf(), rt)).ok()?;
+                        c.request_repaint();
+                        rr.recv().ok().flatten()
+                    },
+                    &mut stats,
+                    &wp,
+                );
                 match res {
                     Ok(new) => done.push((src.clone(), new)),
                     Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
@@ -2130,7 +2340,8 @@ impl App {
             c.request_repaint();
         });
         self.status = format!("{} {n} item(s)...", if mv { "Moving" } else { "Copying" });
-        self.transfer = Some(Transfer { rx, prog, what, started: Instant::now(), samples: Default::default(), ask: None, sticky: None, all: false });
+        self.transfer =
+            Some(Transfer { rx, prog, what, started: Instant::now(), samples: Default::default(), ask: None, sticky: None, all: false });
     }
 
     /// Take what the transfer thread reports, and show the "already exists" dialog while it waits for an answer.
@@ -2159,30 +2370,34 @@ impl App {
             let name = b.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             let folder = b.parent().map(|p| p.display().to_string()).unwrap_or_default();
             let mut all = tr.all;
-            egui::Window::new("File already exists").collapsible(false).resizable(false).anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0)).show(ctx, |ui| {
-                ui.label(RichText::new(&name).strong());
-                ui.label(format!("is already in {folder}"));
-                ui.add_space(6.0);
-                ui.label(format!("Already there:  {}", info(&b)));
-                ui.label(format!("Coming in:  {}", info(&a)));
-                ui.add_space(6.0);
-                ui.checkbox(&mut all, "Do this for all remaining files that already exist");
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Replace").clicked() {
-                        answer = Some(Some(fileops::Decision::Replace));
-                    }
-                    if ui.button("Skip").clicked() {
-                        answer = Some(Some(fileops::Decision::Skip));
-                    }
-                    if ui.button("Keep both").clicked() {
-                        answer = Some(Some(fileops::Decision::KeepBoth));
-                    }
-                    if ui.button("Stop").clicked() {
-                        answer = Some(None);
-                    }
+            egui::Window::new("File already exists")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0))
+                .show(ctx, |ui| {
+                    ui.label(RichText::new(&name).strong());
+                    ui.label(format!("is already in {folder}"));
+                    ui.add_space(6.0);
+                    ui.label(format!("Already there:  {}", info(&b)));
+                    ui.label(format!("Coming in:  {}", info(&a)));
+                    ui.add_space(6.0);
+                    ui.checkbox(&mut all, "Do this for all remaining files that already exist");
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Replace").clicked() {
+                            answer = Some(Some(fileops::Decision::Replace));
+                        }
+                        if ui.button("Skip").clicked() {
+                            answer = Some(Some(fileops::Decision::Skip));
+                        }
+                        if ui.button("Keep both").clicked() {
+                            answer = Some(Some(fileops::Decision::KeepBoth));
+                        }
+                        if ui.button("Stop").clicked() {
+                            answer = Some(None);
+                        }
+                    });
                 });
-            });
             tr.all = all;
             if let Some(ans) = answer {
                 if let Some((_, _, reply)) = tr.ask.take() {
@@ -2210,34 +2425,61 @@ impl App {
             let fspeed = fdone as f64 / now.max(0.5);
             let current = p.current.lock().map(|c| c.clone()).unwrap_or_default();
             let mut cancel = false;
-            egui::Window::new(&tr.what).id(egui::Id::new("minos-transfer")).collapsible(false).resizable(false).anchor(Align2::RIGHT_BOTTOM, vec2(-16.0, -16.0)).default_width(420.0).show(ctx, |ui| {
-                ui.set_min_width(400.0);
-                if total > 0 {
-                    let frac = (done as f32 / total as f32).clamp(0.0, 1.0);
-                    ui.add(egui::ProgressBar::new(frac).text(format!("{:.0}%{}", frac * 100.0, if scanning { " so far" } else { "" })).animate(scanning));
-                } else {
-                    ui.add(egui::ProgressBar::new(0.0).text("Counting files...").animate(true));
-                }
-                ui.add_space(4.0);
-                ui.label(RichText::new(format!("{} of {}{}", listing::human_size(done), listing::human_size(total), if scanning { " (still counting)" } else { "" })).strong());
-                let mut line = format!("{}/s", listing::human_size(speed as u64));
-                if fspeed > 0.0 {
-                    line += &format!("   {:.1} files/s", fspeed);
-                }
-                if !scanning && speed > 1.0 && total > done {
-                    let left = ((total - done) as f64 / speed) as u64;
-                    line += &format!("   about {} left", if left >= 3600 { format!("{} h {} min", left / 3600, left % 3600 / 60) } else if left >= 60 { format!("{} min", left / 60 + 1) } else { format!("{left} s") });
-                }
-                ui.label(line);
-                ui.label(format!("{fdone} of {ftotal} files{}", if scanning { "+" } else { "" }));
-                if !current.is_empty() {
-                    ui.add(egui::Label::new(RichText::new(format!("Now: {current}")).color(ui.visuals().weak_text_color())).truncate());
-                }
-                ui.add_space(4.0);
-                if ui.button("Cancel").clicked() {
-                    cancel = true;
-                }
-            });
+            egui::Window::new(&tr.what)
+                .id(egui::Id::new("minos-transfer"))
+                .collapsible(false)
+                .resizable(false)
+                .anchor(Align2::RIGHT_BOTTOM, vec2(-16.0, -16.0))
+                .default_width(420.0)
+                .show(ctx, |ui| {
+                    ui.set_min_width(400.0);
+                    if total > 0 {
+                        let frac = (done as f32 / total as f32).clamp(0.0, 1.0);
+                        ui.add(
+                            egui::ProgressBar::new(frac)
+                                .text(format!("{:.0}%{}", frac * 100.0, if scanning { " so far" } else { "" }))
+                                .animate(scanning),
+                        );
+                    } else {
+                        ui.add(egui::ProgressBar::new(0.0).text("Counting files...").animate(true));
+                    }
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(format!(
+                            "{} of {}{}",
+                            listing::human_size(done),
+                            listing::human_size(total),
+                            if scanning { " (still counting)" } else { "" }
+                        ))
+                        .strong(),
+                    );
+                    let mut line = format!("{}/s", listing::human_size(speed as u64));
+                    if fspeed > 0.0 {
+                        line += &format!("   {:.1} files/s", fspeed);
+                    }
+                    if !scanning && speed > 1.0 && total > done {
+                        let left = ((total - done) as f64 / speed) as u64;
+                        line += &format!(
+                            "   about {} left",
+                            if left >= 3600 {
+                                format!("{} h {} min", left / 3600, left % 3600 / 60)
+                            } else if left >= 60 {
+                                format!("{} min", left / 60 + 1)
+                            } else {
+                                format!("{left} s")
+                            }
+                        );
+                    }
+                    ui.label(line);
+                    ui.label(format!("{fdone} of {ftotal} files{}", if scanning { "+" } else { "" }));
+                    if !current.is_empty() {
+                        ui.add(egui::Label::new(RichText::new(format!("Now: {current}")).color(ui.visuals().weak_text_color())).truncate());
+                    }
+                    ui.add_space(4.0);
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                });
             if cancel {
                 p.cancel.store(true, Relaxed);
                 if let Some((_, _, reply)) = tr.ask.take() {
@@ -2275,7 +2517,11 @@ impl App {
                 parts.push(format!("{} failed: {}", stats.errors.len(), stats.errors[0]));
             }
             let head = if stopped { "Stopped" } else { "Done" };
-            self.status = if parts.is_empty() { format!("{head}: nothing to do in {}", dest.display()) } else { format!("{head}: {} ({})", parts.join(", "), dest.display()) };
+            self.status = if parts.is_empty() {
+                format!("{head}: nothing to do in {}", dest.display())
+            } else {
+                format!("{head}: {} ({})", parts.join(", "), dest.display())
+            };
             self.dirty = true;
             self.reload_all();
         }
@@ -2398,7 +2644,11 @@ impl App {
 
     fn sync_state(&mut self) {
         let (l, r) = (self.panes[0].saved(), self.panes[1].saved());
-        if l != self.st.tabs || r != self.st.right_tabs || self.panes[0].active != self.st.active || self.panes[1].active != self.st.right_active {
+        if l != self.st.tabs
+            || r != self.st.right_tabs
+            || self.panes[0].active != self.st.active
+            || self.panes[1].active != self.st.right_active
+        {
             self.st.tabs = l;
             self.st.right_tabs = r;
             self.st.active = self.panes[0].active;
@@ -2413,7 +2663,8 @@ impl App {
             if self.detached {
                 // the tabs saved for next time stay the main window's
                 let saved = State::load_from(p);
-                (st.tabs, st.active, st.split, st.right_tabs, st.right_active) = (saved.tabs, saved.active, saved.split, saved.right_tabs, saved.right_active);
+                (st.tabs, st.active, st.split, st.right_tabs, st.right_active) =
+                    (saved.tabs, saved.active, saved.split, saved.right_tabs, saved.right_active);
             }
             if let Err(e) = st.save_to(p) {
                 self.status = format!("Could not save settings: {e}");
@@ -2466,7 +2717,8 @@ impl App {
                         Ok(new) => {
                             self.status = "File created".into();
                             self.reload_all();
-                            self.rename = Some(RenameDlg { text: new.file_name().unwrap().to_string_lossy().into_owned(), path: new, fresh: true });
+                            self.rename =
+                                Some(RenameDlg { text: new.file_name().unwrap().to_string_lossy().into_owned(), path: new, fresh: true });
                         }
                         Err(e) => self.status = format!("New file failed: {e}"),
                     }
@@ -2539,7 +2791,8 @@ impl App {
                 Action::KeyOpen(p) => {
                     let t = self.panes[p].cur();
                     let sel: Vec<PathBuf> = t.selected.iter().cloned().collect();
-                    let dirs: Vec<&PathBuf> = sel.iter().filter(|s| s.is_dir() || places::is_virtual(s) || archive::split(s).is_some()).collect();
+                    let dirs: Vec<&PathBuf> =
+                        sel.iter().filter(|s| s.is_dir() || places::is_virtual(s) || archive::split(s).is_some()).collect();
                     if sel.len() == 1 && !dirs.is_empty() {
                         let sort = self.panes[p].sort;
                         self.panes[p].cur().navigate(sel[0].clone(), sort, hidden);
@@ -2621,8 +2874,15 @@ impl App {
                     let order = t.order(hidden);
                     let lower = buf.to_lowercase();
                     // typing the same letter again cycles through the names that start with it
-                    let start = t.cursor.as_ref().and_then(|c| order.iter().position(|&i| t.shown()[i].path == *c)).map(|c| if buf.chars().count() == 1 { c + 1 } else { c }).unwrap_or(0);
-                    let hit = (0..order.len()).map(|k| (start + k) % order.len()).find(|&k| t.shown()[order[k]].name.to_lowercase().starts_with(&lower));
+                    let start = t
+                        .cursor
+                        .as_ref()
+                        .and_then(|c| order.iter().position(|&i| t.shown()[i].path == *c))
+                        .map(|c| if buf.chars().count() == 1 { c + 1 } else { c })
+                        .unwrap_or(0);
+                    let hit = (0..order.len())
+                        .map(|k| (start + k) % order.len())
+                        .find(|&k| t.shown()[order[k]].name.to_lowercase().starts_with(&lower));
                     if let Some(k) = hit {
                         let path = t.shown()[order[k]].path.clone();
                         t.selected.clear();
@@ -2664,7 +2924,13 @@ impl App {
                     }
                 }
                 Action::FormatAsk(name) => {
-                    let label = self.disks.iter().find(|d| d.name == name).map(|d| d.display_name()).filter(|l| l != "USB Drive").unwrap_or_else(|| "USB".into());
+                    let label = self
+                        .disks
+                        .iter()
+                        .find(|d| d.name == name)
+                        .map(|d| d.display_name())
+                        .filter(|l| l != "USB Drive")
+                        .unwrap_or_else(|| "USB".into());
                     self.format_form = Some(FormatForm { disk: name, fs: 0, label, sure: false });
                 }
                 Action::Launch(program, package) => match devices::launch(&program, &package) {
@@ -2690,7 +2956,8 @@ impl App {
                 }
                 Action::RunInTerminal(p) => {
                     if let Err(e) = run::run_in_terminal(&p) {
-                        self.status = format!("Could not run {}: {e}", p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
+                        self.status =
+                            format!("Could not run {}: {e}", p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
                     }
                 }
                 Action::OpenFile(p) => match archive::split(&p) {
@@ -2726,9 +2993,11 @@ impl App {
                         let parent = arc.parent().map(Path::to_path_buf).unwrap_or_default();
                         // An archive that already has ONE top-level folder is extracted straight into this
                         // folder (no `name/name` doubling); anything else gets a folder named after it.
-                        let single_top = inner.is_empty() && archive::list_cached(&arc).map(|l| archive::top_level_names(&l).len() == 1).unwrap_or(false);
+                        let single_top = inner.is_empty()
+                            && archive::list_cached(&arc).map(|l| archive::top_level_names(&l).len() == 1).unwrap_or(false);
                         let dest = if single_top { parent.clone() } else { fileops::unique_path(&parent, &stem) };
-                        let r = if inner.is_empty() { archive::extract_all(&arc, &dest) } else { archive::extract_entry(&arc, &inner, &dest) };
+                        let r =
+                            if inner.is_empty() { archive::extract_all(&arc, &dest) } else { archive::extract_entry(&arc, &inner, &dest) };
                         msgs.push(match r {
                             Ok(()) => format!("Extracted to {}", dest.display()),
                             Err(e) => format!("{}: {e}", arc.display()),
@@ -2740,7 +3009,11 @@ impl App {
                 Action::Compress(paths, format) => {
                     let Some(first) = paths.first() else { continue };
                     let parent = first.parent().map(Path::to_path_buf).unwrap_or_default();
-                    let base = if paths.len() == 1 { first.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default() } else { "Archive".into() };
+                    let base = if paths.len() == 1 {
+                        first.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()
+                    } else {
+                        "Archive".into()
+                    };
                     let dest = fileops::unique_path(&parent, &format!("{base}.{}", format.ext()));
                     self.status = match archive::create(&dest, &paths, format) {
                         Ok(()) => format!("Created {}", dest.file_name().unwrap_or_default().to_string_lossy()),
@@ -2781,8 +3054,16 @@ impl App {
                     for src in &paths {
                         if let Some((arc, inner)) = archive::split(src).filter(|(_, inner)| !inner.is_empty()) {
                             // Copying out of an archive extracts (an archive file itself is copied as a file). (Cut is blocked above.)
-                            let is_dir = archive::list_cached(&arc).ok().and_then(|l| l.into_iter().find(|e| e.path == inner)).map(|e| e.is_dir).unwrap_or(false);
-                            let r = if is_dir { archive::extract_entry(&arc, &inner, &dest) } else { archive::extract_file_flat(&arc, &inner, &dest).map(|_| ()) };
+                            let is_dir = archive::list_cached(&arc)
+                                .ok()
+                                .and_then(|l| l.into_iter().find(|e| e.path == inner))
+                                .map(|e| e.is_dir)
+                                .unwrap_or(false);
+                            let r = if is_dir {
+                                archive::extract_entry(&arc, &inner, &dest)
+                            } else {
+                                archive::extract_file_flat(&arc, &inner, &dest).map(|_| ())
+                            };
                             if let Err(e) = r {
                                 errs.push(format!("{inner}: {e}"));
                             }
@@ -2813,7 +3094,13 @@ impl App {
                     }
                     // Like Windows: the same drive moves, another drive copies; Shift forces a move, Ctrl a copy.
                     let m = ctx.input(|i| i.modifiers);
-                    let mv = if m.shift { true } else if m.command { false } else { same_drive(paths.first(), &dest) };
+                    let mv = if m.shift {
+                        true
+                    } else if m.command {
+                        false
+                    } else {
+                        same_drive(paths.first(), &dest)
+                    };
                     self.start_transfer(ctx, paths, dest, mv);
                 }
                 Action::Rename(path) if archive::inside(&path) => {
@@ -2846,7 +3133,8 @@ impl App {
                         Ok(new) => {
                             self.status = "Folder created".into();
                             self.reload_all();
-                            self.rename = Some(RenameDlg { text: new.file_name().unwrap().to_string_lossy().into_owned(), path: new, fresh: true });
+                            self.rename =
+                                Some(RenameDlg { text: new.file_name().unwrap().to_string_lossy().into_owned(), path: new, fresh: true });
                         }
                         Err(e) => self.status = format!("New folder failed: {e}"),
                     }
@@ -2935,7 +3223,11 @@ impl App {
                                 say(format!("Downloading from Proton Drive: {done} of {total} files..."));
                             }
                         });
-                        say(if failed == 0 { "Downloaded: it is on this computer now".into() } else { format!("Downloaded, but {failed} files could not be read (see Proton Drive's connection)") });
+                        say(if failed == 0 {
+                            "Downloaded: it is on this computer now".into()
+                        } else {
+                            format!("Downloaded, but {failed} files could not be read (see Proton Drive's connection)")
+                        });
                     });
                 }
                 Action::Verify(name) => {
@@ -2968,10 +3260,15 @@ impl App {
                         std::thread::spawn(move || {
                             // the saved sign-in may have lapsed (a two-factor code or password no longer accepted): then ask again
                             // any failure here (the service refused to start, or never mounted) means: stop it, and ask for the sign-in
-                            let r = cloud::start_proton_mount().and_then(|_| cloud::wait_mounted(15).then_some(()).ok_or_else(String::new)).map_err(|_| {
-                                cloud::stop_proton_mount();
-                                format!("{}Proton Drive did not start with the saved sign-in. Please sign in again.", cloud::SIGN_IN_AGAIN)
-                            });
+                            let r = cloud::start_proton_mount()
+                                .and_then(|_| cloud::wait_mounted(15).then_some(()).ok_or_else(String::new))
+                                .map_err(|_| {
+                                    cloud::stop_proton_mount();
+                                    format!(
+                                        "{}Proton Drive did not start with the saved sign-in. Please sign in again.",
+                                        cloud::SIGN_IN_AGAIN
+                                    )
+                                });
                             let _ = tx.send(r);
                             c.request_repaint();
                         });
@@ -2992,7 +3289,16 @@ fn section_heading(ui: &mut egui::Ui, pal: &Palette, text: &str) {
 
 /// One row of the sidebar: icon, label, and optionally a usage bar underneath (drives).
 #[allow(clippy::too_many_arguments)]
-fn side_row(ui: &mut egui::Ui, pal: &Palette, icon: Icon, icon_color: Color32, sys: &[&str], label: &str, selected: bool, bar: Option<(f32, Color32)>) -> egui::Response {
+fn side_row(
+    ui: &mut egui::Ui,
+    pal: &Palette,
+    icon: Icon,
+    icon_color: Color32,
+    sys: &[&str],
+    label: &str,
+    selected: bool,
+    bar: Option<(f32, Color32)>,
+) -> egui::Response {
     side_row_with(ui, pal, icon, icon_color, sys, None, label, selected, bar, false)
 }
 
@@ -3024,7 +3330,13 @@ fn side_row_with(
     } else if sys.is_empty() || !sysicon::paint(ui.painter(), icon_rect, sys) {
         icons::paint(ui.painter(), Rect::from_min_size(row.min + vec2(8.0, 5.0), vec2(18.0, 18.0)), icon, icon_color);
     }
-    ui.painter().with_clip_rect(row.shrink2(vec2(4.0, 0.0))).text(pos2(row.left() + 34.0, row.center().y), Align2::LEFT_CENTER, label, FontId::proportional(13.5), pal.text);
+    ui.painter().with_clip_rect(row.shrink2(vec2(4.0, 0.0))).text(
+        pos2(row.left() + 34.0, row.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        FontId::proportional(13.5),
+        pal.text,
+    );
     if let Some((frac, color)) = bar {
         let track = Rect::from_min_size(pos2(row.left() + 8.0, row.bottom() + 1.0), vec2(rect.width() - 16.0, 5.0));
         ui.painter().rect_filled(track, CornerRadius::same(3), pal.border.gamma_multiply(0.7));
@@ -3038,7 +3350,18 @@ fn side_row_with(
 impl App {
     #[allow(clippy::too_many_arguments)]
     /// `fav`: the row is favorite number `fav` (drawn with its folder's own picture, draggable to a new place).
-    fn nav_row(&self, ui: &mut egui::Ui, pal: &Palette, icon: Icon, icon_color: Color32, label: &str, path: &Path, bar: Option<(f32, Color32)>, fav: Option<usize>, actions: &mut Vec<Action>) {
+    fn nav_row(
+        &self,
+        ui: &mut egui::Ui,
+        pal: &Palette,
+        icon: Icon,
+        icon_color: Color32,
+        label: &str,
+        path: &Path,
+        bar: Option<(f32, Color32)>,
+        fav: Option<usize>,
+        actions: &mut Vec<Action>,
+    ) {
         let selected = {
             let p = &self.panes[self.focus];
             p.tabs[p.active].dir() == path
@@ -3062,7 +3385,8 @@ impl App {
             let after = |r: &egui::Response| ui.input(|inp| inp.pointer.hover_pos()).is_some_and(|p| p.y > r.rect.center().y);
             if r.dnd_hover_payload::<DragFav>().is_some() {
                 let y = if after(&r) { r.rect.bottom() } else { r.rect.top() };
-                ui.painter().line_segment([pos2(r.rect.left() + 6.0, y), pos2(r.rect.right() - 6.0, y)], egui::Stroke::new(2.0, pal.accent));
+                ui.painter()
+                    .line_segment([pos2(r.rect.left() + 6.0, y), pos2(r.rect.right() - 6.0, y)], egui::Stroke::new(2.0, pal.accent));
             }
             if let Some(d) = r.dnd_release_payload::<DragFav>() {
                 actions.push(Action::ReorderFav(d.0, if after(&r) { i + 1 } else { i }));
@@ -3114,7 +3438,13 @@ impl App {
         }
         icons::paint(ui.painter(), Rect::from_min_size(rect.min + vec2(8.0, 7.0), vec2(18.0, 18.0)), Icon::Drive, pal.drive);
         let name_clip = Rect::from_min_max(rect.min, pos2(rect.right() - if d.removable { 32.0 } else { 6.0 }, rect.bottom()));
-        ui.painter().with_clip_rect(name_clip).text(pos2(rect.left() + 34.0, rect.top() + 16.0), Align2::LEFT_CENTER, d.display_name(), FontId::proportional(13.5), pal.text);
+        ui.painter().with_clip_rect(name_clip).text(
+            pos2(rect.left() + 34.0, rect.top() + 16.0),
+            Align2::LEFT_CENTER,
+            d.display_name(),
+            FontId::proportional(13.5),
+            pal.text,
+        );
         let usage = d.mounted_usage();
         let frac = usage.map(|(t, f)| listing::used_fraction(t, f)).unwrap_or(0.0);
         let track = Rect::from_min_size(pos2(rect.left() + 8.0, rect.top() + 30.0), vec2(rect.width() - 16.0, 6.0));
@@ -3127,7 +3457,13 @@ impl App {
             None if d.removable => format!("{}, click to open", listing::human_size(d.size)),
             None => listing::human_size(d.size),
         };
-        ui.painter().with_clip_rect(rect).text(pos2(rect.left() + 8.0, rect.top() + 45.0), Align2::LEFT_CENTER, line, FontId::proportional(11.5), pal.dim);
+        ui.painter().with_clip_rect(rect).text(
+            pos2(rect.left() + 8.0, rect.top() + 45.0),
+            Align2::LEFT_CENTER,
+            line,
+            FontId::proportional(11.5),
+            pal.dim,
+        );
         if d.removable {
             if over_eject {
                 ui.painter().rect_filled(eject_rect, CornerRadius::same(6), pal.hover.gamma_multiply(2.0));
@@ -3135,10 +3471,22 @@ impl App {
             // the eject symbol: a triangle over a bar
             let c = eject_rect.center();
             let col = if over_eject { pal.text } else { pal.dim };
-            ui.painter().add(egui::Shape::convex_polygon(vec![c + vec2(0.0, -7.0), c + vec2(6.0, 0.5), c + vec2(-6.0, 0.5)], col, egui::Stroke::NONE));
+            ui.painter().add(egui::Shape::convex_polygon(
+                vec![c + vec2(0.0, -7.0), c + vec2(6.0, 0.5), c + vec2(-6.0, 0.5)],
+                col,
+                egui::Stroke::NONE,
+            ));
             ui.painter().rect_filled(Rect::from_min_max(c + vec2(-6.0, 3.0), c + vec2(6.0, 5.5)), CornerRadius::same(1), col);
         }
-        let r = r.on_hover_text(format!("{}\n{}", if d.model.is_empty() { d.name.clone() } else { format!("{} ({})", d.model, d.name) }, if d.removable { "Right-click for eject, format, partition and bootable drive" } else { "" }).trim().to_string());
+        let r = r.on_hover_text(
+            format!(
+                "{}\n{}",
+                if d.model.is_empty() { d.name.clone() } else { format!("{} ({})", d.model, d.name) },
+                if d.removable { "Right-click for eject, format, partition and bootable drive" } else { "" }
+            )
+            .trim()
+            .to_string(),
+        );
         if r.clicked() {
             if over_eject {
                 actions.push(Action::Eject(d.name.clone()));
@@ -3179,7 +3527,14 @@ impl App {
                 ui.close();
             }
             let (prog, pkg) = devices::PARTITIONER;
-            if ui.button(if devices::installed(prog) { "Partition... (GParted)".to_string() } else { "Partition... (installs GParted)".to_string() }).clicked() {
+            if ui
+                .button(if devices::installed(prog) {
+                    "Partition... (GParted)".to_string()
+                } else {
+                    "Partition... (installs GParted)".to_string()
+                })
+                .clicked()
+            {
                 actions.push(Action::Launch(prog.into(), pkg.into()));
                 ui.close();
             }
@@ -3229,7 +3584,17 @@ impl App {
             if self.disks.is_empty() {
                 for d in &self.drives {
                     let frac = listing::used_fraction(d.total, d.free);
-                    self.nav_row(ui, pal, Icon::Drive, pal.drive, &d.label, &d.path, Some((frac, theme::usage_color(pal, frac))), None, actions);
+                    self.nav_row(
+                        ui,
+                        pal,
+                        Icon::Drive,
+                        pal.drive,
+                        &d.label,
+                        &d.path,
+                        Some((frac, theme::usage_color(pal, frac))),
+                        None,
+                        actions,
+                    );
                 }
             }
             for d in self.disks.iter().filter(|d| !d.removable) {
@@ -3253,9 +3618,24 @@ impl App {
                         if r.hovered() {
                             ui.painter().rect_filled(rect, CornerRadius::same(8), pal.hover);
                         }
-                        icons::paint(ui.painter(), Rect::from_min_size(rect.min + vec2(8.0, 5.0), vec2(18.0, 18.0)), Icon::Cloud, pal.dim.gamma_multiply(0.5));
-                        let label = if self.proton_busy { format!("{} (connecting...)", c.label) } else { format!("{} (click to connect)", c.label) };
-                        ui.painter().text(pos2(rect.left() + 34.0, rect.center().y), Align2::LEFT_CENTER, label, FontId::proportional(13.5), pal.dim.gamma_multiply(0.7));
+                        icons::paint(
+                            ui.painter(),
+                            Rect::from_min_size(rect.min + vec2(8.0, 5.0), vec2(18.0, 18.0)),
+                            Icon::Cloud,
+                            pal.dim.gamma_multiply(0.5),
+                        );
+                        let label = if self.proton_busy {
+                            format!("{} (connecting...)", c.label)
+                        } else {
+                            format!("{} (click to connect)", c.label)
+                        };
+                        ui.painter().text(
+                            pos2(rect.left() + 34.0, rect.center().y),
+                            Align2::LEFT_CENTER,
+                            label,
+                            FontId::proportional(13.5),
+                            pal.dim.gamma_multiply(0.7),
+                        );
                         if r.clicked() && !self.proton_busy {
                             actions.push(Action::ProtonConnect);
                         }
@@ -3408,7 +3788,8 @@ impl eframe::App for App {
             }
             self.cloud = places::proton_drive();
         }
-        if self.proton_busy || self.cloud.as_ref().map(|c| c.state == CloudState::NotMounted).unwrap_or(false) && cloud::proton_configured() {
+        if self.proton_busy || self.cloud.as_ref().map(|c| c.state == CloudState::NotMounted).unwrap_or(false) && cloud::proton_configured()
+        {
             // keep looking while the mount comes up
             self.cloud = places::proton_drive();
             ctx.request_repaint_after(Duration::from_secs(2));
@@ -3455,7 +3836,10 @@ impl eframe::App for App {
                         actions.push(Action::Forward(f));
                     }
                 }
-                for (k, key) in [Key::Num1, Key::Num2, Key::Num3, Key::Num4, Key::Num5, Key::Num6, Key::Num7, Key::Num8, Key::Num9].into_iter().enumerate() {
+                for (k, key) in [Key::Num1, Key::Num2, Key::Num3, Key::Num4, Key::Num5, Key::Num6, Key::Num7, Key::Num8, Key::Num9]
+                    .into_iter()
+                    .enumerate()
+                {
                     // Ctrl+1..8 pick that tab, Ctrl+9 the last, as in browsers
                     if i.consume_key(Modifiers::COMMAND, key) {
                         let to = if k == 8 { n - 1 } else { k };
@@ -3480,7 +3864,16 @@ impl eframe::App for App {
             let mut paste_req: Option<Option<String>> = None;
             ctx.input_mut(|i| {
                 use egui::{Key, Modifiers};
-                for (key, nav) in [(Key::ArrowUp, Nav::Up), (Key::ArrowDown, Nav::Down), (Key::ArrowLeft, Nav::Left), (Key::ArrowRight, Nav::Right), (Key::Home, Nav::Home), (Key::End, Nav::End), (Key::PageUp, Nav::PageUp), (Key::PageDown, Nav::PageDown)] {
+                for (key, nav) in [
+                    (Key::ArrowUp, Nav::Up),
+                    (Key::ArrowDown, Nav::Down),
+                    (Key::ArrowLeft, Nav::Left),
+                    (Key::ArrowRight, Nav::Right),
+                    (Key::Home, Nav::Home),
+                    (Key::End, Nav::End),
+                    (Key::PageUp, Nav::PageUp),
+                    (Key::PageDown, Nav::PageDown),
+                ] {
                     if i.consume_key(Modifiers::NONE, key) {
                         actions.push(Action::KeyNav(f, nav, false));
                     } else if i.consume_key(Modifiers::SHIFT, key) {
@@ -3495,7 +3888,8 @@ impl eframe::App for App {
                 }
                 // plain typing finds an entry by its first letters (not with Ctrl or Alt held)
                 if !i.modifiers.command && !i.modifiers.alt {
-                    let typed: String = i.events.iter().filter_map(|e| if let egui::Event::Text(t) = e { Some(t.as_str()) } else { None }).collect();
+                    let typed: String =
+                        i.events.iter().filter_map(|e| if let egui::Event::Text(t) = e { Some(t.as_str()) } else { None }).collect();
                     let typed: String = typed.chars().filter(|c| !c.is_control()).collect();
                     if !typed.is_empty() {
                         actions.push(Action::TypeFind(f, typed));
@@ -3586,43 +3980,41 @@ impl eframe::App for App {
         }
 
         // Above the sidebar too, so it runs the full width like a title bar.
-        egui::Panel::top("strip")
-            .frame(egui::Frame::new().fill(pal.strip).inner_margin(egui::Margin::symmetric(8, 4)))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    let menu = icon_button(ui, &pal, Icon::Menu, "Menu", true, false);
-                    egui::Popup::menu(&menu).show(|ui| {
-                        ui.separator();
-                        if ui.selectable_label(self.st.view == ViewMode::Details, "Details view").clicked() {
-                            actions.push(Action::SetView(ViewMode::Details));
+        egui::Panel::top("strip").frame(egui::Frame::new().fill(pal.strip).inner_margin(egui::Margin::symmetric(8, 4))).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let menu = icon_button(ui, &pal, Icon::Menu, "Menu", true, false);
+                egui::Popup::menu(&menu).show(|ui| {
+                    ui.separator();
+                    if ui.selectable_label(self.st.view == ViewMode::Details, "Details view").clicked() {
+                        actions.push(Action::SetView(ViewMode::Details));
+                    }
+                    if ui.selectable_label(self.st.view == ViewMode::Gallery, "Gallery view").clicked() {
+                        actions.push(Action::SetView(ViewMode::Gallery));
+                    }
+                    if self.st.view == ViewMode::Gallery {
+                        let mut s = self.st.gallery_size as u8;
+                        if ui.add(egui::Slider::new(&mut s, 0..=3).text("Thumbnail size")).changed() {
+                            self.st.gallery_size = s as usize;
+                            self.dirty = true;
                         }
-                        if ui.selectable_label(self.st.view == ViewMode::Gallery, "Gallery view").clicked() {
-                            actions.push(Action::SetView(ViewMode::Gallery));
-                        }
-                        if self.st.view == ViewMode::Gallery {
-                            let mut s = self.st.gallery_size as u8;
-                            if ui.add(egui::Slider::new(&mut s, 0..=3).text("Thumbnail size")).changed() {
-                                self.st.gallery_size = s as usize;
-                                self.dirty = true;
-                            }
-                        }
-                        ui.separator();
-                        let mut pv = self.st.preview;
-                        if ui.checkbox(&mut pv, "Preview pane (F3)").changed() {
-                            actions.push(Action::TogglePreview);
-                        }
-                        let mut sp = self.st.split;
-                        if ui.checkbox(&mut sp, "Split pane").changed() {
-                            actions.push(Action::ToggleSplit);
-                        }
-                    });
-                    ui.add_space(6.0);
-                    ui.label(RichText::new(&self.status).color(pal.dim));
-                    // The strip is the title bar: empty space moves the window, buttons at the end.
-                    chrome::drag_area(ui, ui.available_width() - chrome::controls_width());
-                    chrome::window_controls(ui, &pal);
+                    }
+                    ui.separator();
+                    let mut pv = self.st.preview;
+                    if ui.checkbox(&mut pv, "Preview pane (F3)").changed() {
+                        actions.push(Action::TogglePreview);
+                    }
+                    let mut sp = self.st.split;
+                    if ui.checkbox(&mut sp, "Split pane").changed() {
+                        actions.push(Action::ToggleSplit);
+                    }
                 });
+                ui.add_space(6.0);
+                ui.label(RichText::new(&self.status).color(pal.dim));
+                // The strip is the title bar: empty space moves the window, buttons at the end.
+                chrome::drag_area(ui, ui.available_width() - chrome::controls_width());
+                chrome::window_controls(ui, &pal);
             });
+        });
 
         egui::Panel::left("sidebar")
             .default_size(230.0)
@@ -3635,7 +4027,11 @@ impl eframe::App for App {
             let want: Vec<PathBuf> = {
                 let p = &self.panes[self.focus];
                 let t = &p.tabs[p.active];
-                if t.selected.is_empty() { vec![t.dir()] } else { t.selected.iter().cloned().collect() }
+                if t.selected.is_empty() {
+                    vec![t.dir()]
+                } else {
+                    t.selected.iter().cloned().collect()
+                }
             };
             if self.pv.key.as_ref() != Some(&want) {
                 self.pv.key = Some(want.clone());
@@ -3644,7 +4040,10 @@ impl eframe::App for App {
                     let p = &self.panes[self.focus];
                     let t = &p.tabs[p.active];
                     if want.len() == 1 && places::is_virtual(&t.dir()) {
-                        t.entries.iter().find(|e| e.path == want[0]).and_then(|e| e.usage.map(|(total, free)| preview::drive(&e.name, total, free)))
+                        t.entries
+                            .iter()
+                            .find(|e| e.path == want[0])
+                            .and_then(|e| e.usage.map(|(total, free)| preview::drive(&e.name, total, free)))
                     } else if want.len() == 1 && places::is_this_pc(&want[0]) {
                         Some(preview::message(&places::pc_name(), "Your drives", "Select a drive to see how full it is"))
                     } else {
@@ -3679,67 +4078,94 @@ impl eframe::App for App {
         let focus = self.focus;
         if let Some(pk) = self.picker.as_mut() {
             let cur = self.panes[focus].tabs[self.panes[focus].active].dir();
-            let sel: Vec<(PathBuf, bool)> = self.panes[focus].tabs[self.panes[focus].active].selected.iter().map(|p| (p.clone(), p.is_dir())).collect();
+            let sel: Vec<(PathBuf, bool)> =
+                self.panes[focus].tabs[self.panes[focus].active].selected.iter().map(|p| (p.clone(), p.is_dir())).collect();
             if let Ok(mut g) = PICK_GLOBS.lock() {
                 *g = pk.filters.get(pk.filter).map(|f| f.1.clone()).unwrap_or_default();
             }
             let mut choose: Option<Vec<PathBuf>> = None;
             let mut cancel = ctx.input(|i| i.key_pressed(egui::Key::Escape)) && !ctx.egui_wants_keyboard_input();
-            egui::Panel::bottom("picker").frame(egui::Frame::new().fill(pal.strip).inner_margin(egui::Margin::symmetric(14, 12))).show(ui, |ui| {
-                // like the Windows dialog: the name on top with the file type beside it, the buttons below on the right
-                let label_w = 78.0;
-                let filter_w = if pk.filters.is_empty() { 0.0 } else { 190.0 };
-                ui.horizontal(|ui| {
-                    ui.add_sized([label_w, 28.0], egui::Label::new(RichText::new(if pk.dir { "Folder:" } else { "File name:" }).size(14.0)));
-                    let field_w = (ui.available_width() - filter_w - if filter_w > 0.0 { 10.0 } else { 0.0 }).max(120.0);
-                    if pk.save {
-                        ui.add_sized([field_w, 28.0], egui::TextEdit::singleline(&mut pk.name).vertical_align(Align::Center));
-                    } else {
-                        let shown = if pk.dir {
-                            if sel.len() == 1 && sel[0].1 { sel[0].0.display().to_string() } else { cur.display().to_string() }
+            egui::Panel::bottom("picker").frame(egui::Frame::new().fill(pal.strip).inner_margin(egui::Margin::symmetric(14, 12))).show(
+                ui,
+                |ui| {
+                    // like the Windows dialog: the name on top with the file type beside it, the buttons below on the right
+                    let label_w = 78.0;
+                    let filter_w = if pk.filters.is_empty() { 0.0 } else { 190.0 };
+                    ui.horizontal(|ui| {
+                        ui.add_sized(
+                            [label_w, 28.0],
+                            egui::Label::new(RichText::new(if pk.dir { "Folder:" } else { "File name:" }).size(14.0)),
+                        );
+                        let field_w = (ui.available_width() - filter_w - if filter_w > 0.0 { 10.0 } else { 0.0 }).max(120.0);
+                        if pk.save {
+                            ui.add_sized([field_w, 28.0], egui::TextEdit::singleline(&mut pk.name).vertical_align(Align::Center));
                         } else {
-                            sel.iter().filter_map(|s| s.0.file_name()).map(|n| format!("\"{}\"", n.to_string_lossy())).collect::<Vec<_>>().join(" ")
-                        };
-                        let mut text = shown;
-                        ui.add_sized([field_w, 28.0], egui::TextEdit::singleline(&mut text).interactive(false).vertical_align(Align::Center));
-                    }
-                    if pk.filters.len() > 1 {
-                        egui::ComboBox::from_id_salt("pickfilter").width(filter_w - 20.0).selected_text(pk.filters[pk.filter].0.clone()).show_ui(ui, |ui| {
-                            for (k, f) in pk.filters.iter().enumerate() {
-                                ui.selectable_value(&mut pk.filter, k, f.0.clone());
-                            }
-                        });
-                    } else if let Some(f) = pk.filters.first() {
-                        ui.add_sized([filter_w, 28.0], egui::Label::new(RichText::new(f.0.clone()).color(pal.dim)));
-                    }
-                });
-                ui.add_space(10.0);
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let ok = if pk.save {
-                        !pk.name.trim().is_empty() && !pk.name.contains('/')
-                    } else if pk.dir {
-                        true
-                    } else {
-                        !sel.is_empty() && sel.iter().all(|s| !s.1) && (pk.multiple || sel.len() == 1)
-                    };
-                    let label = if pk.save && cur.join(pk.name.trim()).exists() { "Replace".to_string() } else { pk.button() };
-                    let size = vec2(110.0, 34.0);
-                    // the main button first (it sits on the far right), filled with the accent so it is easy to see
-                    let main = egui::Button::new(RichText::new(label).size(15.0).strong().color(Color32::WHITE)).fill(pal.accent).min_size(size);
-                    if ui.add_enabled(ok, main).clicked() {
-                        choose = Some(if pk.save {
-                            vec![cur.join(pk.name.trim())]
+                            let shown = if pk.dir {
+                                if sel.len() == 1 && sel[0].1 {
+                                    sel[0].0.display().to_string()
+                                } else {
+                                    cur.display().to_string()
+                                }
+                            } else {
+                                sel.iter()
+                                    .filter_map(|s| s.0.file_name())
+                                    .map(|n| format!("\"{}\"", n.to_string_lossy()))
+                                    .collect::<Vec<_>>()
+                                    .join(" ")
+                            };
+                            let mut text = shown;
+                            ui.add_sized(
+                                [field_w, 28.0],
+                                egui::TextEdit::singleline(&mut text).interactive(false).vertical_align(Align::Center),
+                            );
+                        }
+                        if pk.filters.len() > 1 {
+                            egui::ComboBox::from_id_salt("pickfilter")
+                                .width(filter_w - 20.0)
+                                .selected_text(pk.filters[pk.filter].0.clone())
+                                .show_ui(ui, |ui| {
+                                    for (k, f) in pk.filters.iter().enumerate() {
+                                        ui.selectable_value(&mut pk.filter, k, f.0.clone());
+                                    }
+                                });
+                        } else if let Some(f) = pk.filters.first() {
+                            ui.add_sized([filter_w, 28.0], egui::Label::new(RichText::new(f.0.clone()).color(pal.dim)));
+                        }
+                    });
+                    ui.add_space(10.0);
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let ok = if pk.save {
+                            !pk.name.trim().is_empty() && !pk.name.contains('/')
                         } else if pk.dir {
-                            if sel.len() == 1 && sel[0].1 { vec![sel[0].0.clone()] } else { vec![cur.clone()] }
+                            true
                         } else {
-                            sel.iter().map(|s| s.0.clone()).collect()
-                        });
-                    }
-                    if ui.add(egui::Button::new(RichText::new("Cancel").size(15.0)).min_size(size)).clicked() {
-                        cancel = true;
-                    }
-                });
-            });
+                            !sel.is_empty() && sel.iter().all(|s| !s.1) && (pk.multiple || sel.len() == 1)
+                        };
+                        let label = if pk.save && cur.join(pk.name.trim()).exists() { "Replace".to_string() } else { pk.button() };
+                        let size = vec2(110.0, 34.0);
+                        // the main button first (it sits on the far right), filled with the accent so it is easy to see
+                        let main = egui::Button::new(RichText::new(label).size(15.0).strong().color(Color32::WHITE))
+                            .fill(pal.accent)
+                            .min_size(size);
+                        if ui.add_enabled(ok, main).clicked() {
+                            choose = Some(if pk.save {
+                                vec![cur.join(pk.name.trim())]
+                            } else if pk.dir {
+                                if sel.len() == 1 && sel[0].1 {
+                                    vec![sel[0].0.clone()]
+                                } else {
+                                    vec![cur.clone()]
+                                }
+                            } else {
+                                sel.iter().map(|s| s.0.clone()).collect()
+                            });
+                        }
+                        if ui.add(egui::Button::new(RichText::new("Cancel").size(15.0)).min_size(size)).clicked() {
+                            cancel = true;
+                        }
+                    });
+                },
+            );
             if let Some(c) = choose {
                 finish_pick(&c);
             }
@@ -3825,7 +4251,13 @@ impl eframe::App for App {
                 ui.text_edit_singleline(&mut f[3]);
                 ui.label(RichText::new("Passed straight to rclone, which keeps a scrambled copy in its own config.").small());
                 ui.horizontal(|ui| {
-                    if ui.add_enabled(!busy && !f[0].is_empty() && !f[1].is_empty(), egui::Button::new(if busy { "Connecting..." } else { "Connect" })).clicked() {
+                    if ui
+                        .add_enabled(
+                            !busy && !f[0].is_empty() && !f[1].is_empty(),
+                            egui::Button::new(if busy { "Connecting..." } else { "Connect" }),
+                        )
+                        .clicked()
+                    {
                         proton_go = true;
                     }
                     if ui.add_enabled(!busy, egui::Button::new("Cancel")).clicked() {
@@ -3852,11 +4284,19 @@ impl eframe::App for App {
         self.pump_dnd(&ctx, _frame);
         if let Some(p) = egui::DragAndDrop::payload::<DragPaths>(&ctx) {
             if let Some(pos) = ctx.pointer_latest_pos() {
-                egui::Area::new("minos-drag-ghost".into()).order(egui::Order::Tooltip).fixed_pos(pos + vec2(14.0, 14.0)).interactable(false).show(&ctx, |ui| {
-                    egui::Frame::popup(ui.style()).show(ui, |ui| {
-                        ui.label(if p.0.len() == 1 { format!("Move {}", p.0[0].file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()) } else { format!("Move {} items", p.0.len()) });
+                egui::Area::new("minos-drag-ghost".into())
+                    .order(egui::Order::Tooltip)
+                    .fixed_pos(pos + vec2(14.0, 14.0))
+                    .interactable(false)
+                    .show(&ctx, |ui| {
+                        egui::Frame::popup(ui.style()).show(ui, |ui| {
+                            ui.label(if p.0.len() == 1 {
+                                format!("Move {}", p.0[0].file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())
+                            } else {
+                                format!("Move {} items", p.0.len())
+                            });
+                        });
                     });
-                });
             }
         }
 
@@ -3875,7 +4315,16 @@ impl eframe::App for App {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn ui_pane(ui: &mut egui::Ui, pane: &mut Pane, pi: usize, focused: bool, st: &State, cloud_ctx: (&[Link], &BTreeMap<String, Report>), clip_has: bool, actions: &mut Vec<Action>) {
+fn ui_pane(
+    ui: &mut egui::Ui,
+    pane: &mut Pane,
+    pi: usize,
+    focused: bool,
+    st: &State,
+    cloud_ctx: (&[Link], &BTreeMap<String, Report>),
+    clip_has: bool,
+    actions: &mut Vec<Action>,
+) {
     ui.push_id(pi, |ui| draw_pane(ui, pane, pi, focused, st, cloud_ctx, clip_has, actions));
 }
 
@@ -3906,18 +4355,41 @@ impl Picker {
     fn from_args(args: &[String]) -> Option<(Picker, Option<PathBuf>, String)> {
         let i = args.iter().position(|a| a == "--pick")?;
         let mode = args.get(i + 1).map(String::as_str).unwrap_or("open");
-        let mut p = Picker { save: mode == "save", dir: mode == "dir", multiple: false, name: String::new(), accept: String::new(), filters: vec![], filter: 0 };
+        let mut p = Picker {
+            save: mode == "save",
+            dir: mode == "dir",
+            multiple: false,
+            name: String::new(),
+            accept: String::new(),
+            filters: vec![],
+            filter: 0,
+        };
         let (mut folder, mut title) = (None, String::new());
         let mut k = i + 2;
         while k < args.len() {
             let val = args.get(k + 1).cloned().unwrap_or_default();
             match args[k].as_str() {
                 "--multiple" => p.multiple = true,
-                "--title" => { title = val; k += 1 }
-                "--name" => { p.name = val; k += 1 }
-                "--accept" => { p.accept = val; k += 1 }
-                "--folder" => { folder = Some(PathBuf::from(val)); k += 1 }
-                "--filter-index" => { p.filter = val.parse().unwrap_or(0); k += 1 }
+                "--title" => {
+                    title = val;
+                    k += 1
+                }
+                "--name" => {
+                    p.name = val;
+                    k += 1
+                }
+                "--accept" => {
+                    p.accept = val;
+                    k += 1
+                }
+                "--folder" => {
+                    folder = Some(PathBuf::from(val));
+                    k += 1
+                }
+                "--filter-index" => {
+                    p.filter = val.parse().unwrap_or(0);
+                    k += 1
+                }
                 "--filter" => {
                     let (label, globs) = val.split_once('|').unwrap_or((val.as_str(), ""));
                     p.filters.push((label.to_string(), globs.split(';').filter(|g| !g.is_empty()).map(str::to_string).collect()));
@@ -3932,7 +4404,15 @@ impl Picker {
     }
 
     fn button(&self) -> String {
-        if !self.accept.is_empty() { self.accept.replace('_', "") } else if self.save { "Save".into() } else if self.dir { "Select".into() } else { "Open".into() }
+        if !self.accept.is_empty() {
+            self.accept.replace('_', "")
+        } else if self.save {
+            "Save".into()
+        } else if self.dir {
+            "Select".into()
+        } else {
+            "Open".into()
+        }
     }
 }
 
@@ -4039,7 +4519,8 @@ fn main() -> eframe::Result {
                 app.panes[0].active = 0;
                 app.st.split = false;
                 app.detached = true;
-            } else if let Some(p) = std::env::args().nth(1).filter(|a| !a.starts_with("--")).map(|a| start_path(&a)).filter(|p| p.is_dir()) {
+            } else if let Some(p) = std::env::args().nth(1).filter(|a| !a.starts_with("--")).map(|a| start_path(&a)).filter(|p| p.is_dir())
+            {
                 let (sort, hidden) = (app.panes[0].sort, app.st.show_hidden);
                 app.panes[0].tabs.push(TabView::new(p, false, sort, hidden));
                 app.panes[0].active = app.panes[0].tabs.len() - 1;

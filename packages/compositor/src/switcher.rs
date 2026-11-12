@@ -56,14 +56,51 @@ pub fn make(fonts: &Fonts, entries: &[(String, String)], index: usize, accent: (
         let x = (PAD + slot as i32 * (CARD_W + GAP)) as f32;
         let y = PAD as f32;
         let chosen = i == index;
-        fill_rounded(&mut pix, x, y, CARD_W as f32, CARD_H as f32, 12.0, if chosen { (accent.0, accent.1, accent.2, 255) } else { (40, 40, 54, 255) });
+        fill_rounded(
+            &mut pix,
+            x,
+            y,
+            CARD_W as f32,
+            CARD_H as f32,
+            12.0,
+            if chosen { (accent.0, accent.1, accent.2, 255) } else { (40, 40, 54, 255) },
+        );
         // the first letter in a circle stands in for an icon
-        let letter = app_id.chars().chain(title.chars()).find(|c| c.is_alphanumeric()).map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| "?".into());
+        let letter = app_id
+            .chars()
+            .chain(title.chars())
+            .find(|c| c.is_alphanumeric())
+            .map(|c| c.to_uppercase().to_string())
+            .unwrap_or_else(|| "?".into());
         fill_circle(&mut pix, x + 30.0, y + 32.0, 18.0, if chosen { (255, 255, 255, 60) } else { (accent.0, accent.1, accent.2, 255) });
-        draw_text(&mut pix, &fonts.bold, 18.0, x + 30.0 - text_width(&fonts.bold, 18.0, &letter) / 2.0, y + 32.0, (255, 255, 255, 255), &letter);
-        draw_text(&mut pix, &fonts.regular, 13.0, x + 14.0, y + 70.0, (255, 255, 255, 255), &clip(fonts, 13.0, title, CARD_W as f32 - 28.0));
+        draw_text(
+            &mut pix,
+            &fonts.bold,
+            18.0,
+            x + 30.0 - text_width(&fonts.bold, 18.0, &letter) / 2.0,
+            y + 32.0,
+            (255, 255, 255, 255),
+            &letter,
+        );
+        draw_text(
+            &mut pix,
+            &fonts.regular,
+            13.0,
+            x + 14.0,
+            y + 70.0,
+            (255, 255, 255, 255),
+            &clip(fonts, 13.0, title, CARD_W as f32 - 28.0),
+        );
         if !app_id.is_empty() {
-            draw_text(&mut pix, &fonts.regular, 11.0, x + 62.0, y + 32.0, (255, 255, 255, if chosen { 200 } else { 130 }), &clip(fonts, 11.0, app_id, CARD_W as f32 - 76.0));
+            draw_text(
+                &mut pix,
+                &fonts.regular,
+                11.0,
+                x + 62.0,
+                y + 32.0,
+                (255, 255, 255, if chosen { 200 } else { 130 }),
+                &clip(fonts, 11.0, app_id, CARD_W as f32 - 76.0),
+            );
         }
     }
     let mut data = Vec::with_capacity((w * h * 4) as usize);
@@ -86,15 +123,39 @@ pub fn make_chooser(fonts: &Fonts, workspace: usize, selected: usize, accent: (u
     let mut pix = Pixmap::new(w as u32, h as u32).expect("chooser size");
     fill_rounded(&mut pix, 0.0, 0.0, w as f32, h as f32, 18.0, (18, 18, 26, 240));
     fill_rounded(&mut pix, 0.0, 0.0, w as f32, 1.0, 0.0, (255, 255, 255, 20));
-    draw_text(&mut pix, &fonts.bold, 15.0, PAD as f32, 24.0, (240, 240, 248, 255), &format!("Workspace {}: how should windows behave here?", workspace + 1));
+    draw_text(
+        &mut pix,
+        &fonts.bold,
+        15.0,
+        PAD as f32,
+        24.0,
+        (240, 240, 248, 255),
+        &format!("Workspace {}: how should windows behave here?", workspace + 1),
+    );
     let cards = [("Standard", "Windows float. You move and size them."), ("Tiling", "Windows tile on their own, side by side.")];
     for (i, (name, about)) in cards.iter().enumerate() {
         let x = (PAD + i as i32 * (CHOOSER_W + GAP)) as f32;
         let y = (PAD + 22) as f32;
         let chosen = i == selected;
-        fill_rounded(&mut pix, x, y, CHOOSER_W as f32, CHOOSER_H as f32, 12.0, if chosen { (accent.0, accent.1, accent.2, 255) } else { (40, 40, 54, 255) });
+        fill_rounded(
+            &mut pix,
+            x,
+            y,
+            CHOOSER_W as f32,
+            CHOOSER_H as f32,
+            12.0,
+            if chosen { (accent.0, accent.1, accent.2, 255) } else { (40, 40, 54, 255) },
+        );
         draw_text(&mut pix, &fonts.bold, 17.0, x + 16.0, y + 30.0, (255, 255, 255, 255), name);
-        draw_text(&mut pix, &fonts.regular, 12.0, x + 16.0, y + 58.0, (255, 255, 255, if chosen { 230 } else { 150 }), &clip(fonts, 12.0, about, CHOOSER_W as f32 - 32.0));
+        draw_text(
+            &mut pix,
+            &fonts.regular,
+            12.0,
+            x + 16.0,
+            y + 58.0,
+            (255, 255, 255, if chosen { 230 } else { 150 }),
+            &clip(fonts, 12.0, about, CHOOSER_W as f32 - 32.0),
+        );
         // a little picture of the layout
         let (px, py) = (x + 16.0, y + 76.0);
         if i == 0 {
@@ -106,7 +167,15 @@ pub fn make_chooser(fonts: &Fonts, workspace: usize, selected: usize, accent: (u
             fill_rounded(&mut pix, px + 48.0, py + 22.0, 44.0, 18.0, 4.0, (255, 255, 255, 190));
         }
     }
-    draw_text(&mut pix, &fonts.regular, 11.0, PAD as f32, h as f32 - 12.0, (160, 160, 176, 255), "Left / Right to choose, Enter to confirm, Escape for standard");
+    draw_text(
+        &mut pix,
+        &fonts.regular,
+        11.0,
+        PAD as f32,
+        h as f32 - 12.0,
+        (160, 160, 176, 255),
+        "Left / Right to choose, Enter to confirm, Escape for standard",
+    );
     let mut data = Vec::with_capacity((w * h * 4) as usize);
     for p in pix.data().as_chunks::<4>().0 {
         data.extend_from_slice(&[p[2], p[1], p[0], p[3]]);

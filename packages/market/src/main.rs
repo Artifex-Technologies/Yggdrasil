@@ -10,13 +10,15 @@ mod install;
 mod vendor;
 
 use std::collections::{HashMap, HashSet};
-use std::time::{Duration, Instant};
 use std::sync::mpsc::{channel, Receiver, Sender};
+use std::time::{Duration, Instant};
 
 use catalog::{Catalog, Entry, Installed, Repo, Source};
-use eframe::egui::{self, pos2, vec2, Align, Align2, Color32, CornerRadius, FontId, Layout, Margin, Rect, RichText, Sense, Stroke, UiBuilder};
-use yggdrasil_ui::{chrome, sysicon, theme};
+use eframe::egui::{
+    self, pos2, vec2, Align, Align2, Color32, CornerRadius, FontId, Layout, Margin, Rect, RichText, Sense, Stroke, UiBuilder,
+};
 use theme::Palette;
+use yggdrasil_ui::{chrome, sysicon, theme};
 
 const TABS: [&str; 4] = ["Create", "Work", "Play", "Develop"];
 
@@ -287,7 +289,12 @@ impl App {
             });
         }
         if self.online == Some(true) {
-            let urls: Vec<String> = self.details.get(&e.id).and_then(|d| d.as_ref()).map(|d| d.screenshots.iter().take(6).map(|s| s.url.clone()).collect()).unwrap_or_default();
+            let urls: Vec<String> = self
+                .details
+                .get(&e.id)
+                .and_then(|d| d.as_ref())
+                .map(|d| d.screenshots.iter().take(6).map(|s| s.url.clone()).collect())
+                .unwrap_or_default();
             for url in urls {
                 if !self.images.contains_key(&url) && !self.img_loading.contains(&url) {
                     self.img_loading.insert(url.clone());
@@ -344,7 +351,10 @@ impl App {
         let r = rect.width() * 0.22;
         // the vendor's own icon first; the pack's only when there is none anywhere
         if let Some(path) = vendor::find(&names, &e.flathub, self.online == Some(true), ui.ctx()) {
-            egui::Image::new(format!("file://{}", path.display())).fit_to_exact_size(rect.size()).corner_radius(CornerRadius::same(r as u8)).paint_at(ui, rect);
+            egui::Image::new(format!("file://{}", path.display()))
+                .fit_to_exact_size(rect.size())
+                .corner_radius(CornerRadius::same(r as u8))
+                .paint_at(ui, rect);
         } else if let Some((svg, col, uri)) = brand::find(&[e.logo.as_str(), e.icon.as_str(), e.id.as_str()]) {
             // no icon of its own (a terminal program): its logo, white on the brand's colour
             p.rect_filled(rect, CornerRadius::same(r as u8), col);
@@ -352,7 +362,13 @@ impl App {
             egui::Image::from_bytes(uri, svg.into_bytes()).fit_to_exact_size(inner.size()).paint_at(ui, inner);
         } else if !sysicon::paint_app(p, rect, &names) {
             p.rect_filled(rect, CornerRadius::same(r as u8), tint(&e.id, 0.55, 0.78));
-            p.text(rect.center(), Align2::CENTER_CENTER, e.name.chars().next().unwrap_or('?').to_uppercase().to_string(), FontId::proportional(rect.height() * 0.5), Color32::WHITE);
+            p.text(
+                rect.center(),
+                Align2::CENTER_CENTER,
+                e.name.chars().next().unwrap_or('?').to_uppercase().to_string(),
+                FontId::proportional(rect.height() * 0.5),
+                Color32::WHITE,
+            );
         }
     }
 
@@ -447,31 +463,70 @@ impl App {
         if self.is_running("*update*") {
             return;
         }
-        let dummy = Entry { id: "*update*".into(), name: "Updates".into(), subtitle: String::new(), description: String::new(), category: String::new(), subcategory: String::new(), source: Source::Pacman(vec![]), icon: String::new(), reviewed: true, note: String::new(), tags: vec![], from: String::new(), launch: String::new(), appstream: String::new(), flathub: String::new(), editions: vec![], preinstalled: false, repo: String::new(), logo: String::new(), recommends: vec![] };
+        let dummy = Entry {
+            id: "*update*".into(),
+            name: "Updates".into(),
+            subtitle: String::new(),
+            description: String::new(),
+            category: String::new(),
+            subcategory: String::new(),
+            source: Source::Pacman(vec![]),
+            icon: String::new(),
+            reviewed: true,
+            note: String::new(),
+            tags: vec![],
+            from: String::new(),
+            launch: String::new(),
+            appstream: String::new(),
+            flathub: String::new(),
+            editions: vec![],
+            preinstalled: false,
+            repo: String::new(),
+            logo: String::new(),
+            recommends: vec![],
+        };
         if let Some((prog, args)) = install::command(&dummy, install::Op::UpdateAll) {
             self.start_job(ctx, "*update*", "All updates", install::Op::UpdateAll, prog, args, install::Undo::default());
         }
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn start_job(&mut self, ctx: &egui::Context, id: &str, name: &str, op: install::Op, prog: String, args: Vec<String>, undo: install::Undo) {
+    fn start_job(
+        &mut self,
+        ctx: &egui::Context,
+        id: &str,
+        name: &str,
+        op: install::Op,
+        prog: String,
+        args: Vec<String>,
+        undo: install::Undo,
+    ) {
         let (tx, ctx_a, ctx_b, id2, name2) = (self.tx.clone(), ctx.clone(), ctx.clone(), id.to_string(), name.to_string());
-        let job = install::start(id, name, op, prog, args, undo, move || ctx_a.request_repaint(), move |status| {
-            // tell the desktop, and the window (so it looks at what is installed again)
-            let text = match &status {
-                install::Status::Done => format!("{name2} {}", op.done()),
-                install::Status::Failed(why) => format!("{name2}: {why}"),
-                install::Status::Cancelled => format!("{name2}: cancelled, nothing was kept"),
-                install::Status::Running => String::new(),
-            };
-            // only a finished install goes in the history: not a cancelled or failed one, and not a removal or an update
-            if status == install::Status::Done && matches!(op, install::Op::Install | install::Op::Reinstall) {
-                history::record(&id2, &name2, op.done());
-            }
-            let _ = std::process::Command::new("notify-send").args(["-a", "Agora", "-i", "agora", &text]).status();
-            let _ = tx.send(Msg::Finished(id2));
-            ctx_b.request_repaint();
-        });
+        let job = install::start(
+            id,
+            name,
+            op,
+            prog,
+            args,
+            undo,
+            move || ctx_a.request_repaint(),
+            move |status| {
+                // tell the desktop, and the window (so it looks at what is installed again)
+                let text = match &status {
+                    install::Status::Done => format!("{name2} {}", op.done()),
+                    install::Status::Failed(why) => format!("{name2}: {why}"),
+                    install::Status::Cancelled => format!("{name2}: cancelled, nothing was kept"),
+                    install::Status::Running => String::new(),
+                };
+                // only a finished install goes in the history: not a cancelled or failed one, and not a removal or an update
+                if status == install::Status::Done && matches!(op, install::Op::Install | install::Op::Reinstall) {
+                    history::record(&id2, &name2, op.done());
+                }
+                let _ = std::process::Command::new("notify-send").args(["-a", "Agora", "-i", "agora", &text]).status();
+                let _ = tx.send(Msg::Finished(id2));
+                ctx_b.request_repaint();
+            },
+        );
         self.jobs.push(job);
         // hide the earlier finished jobs of the same entry
         let keep = self.jobs.len() - 1;
@@ -503,15 +558,28 @@ impl App {
                 ui.label(RichText::new(head).strong());
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if j.status == install::Status::Running && !j.cancel_requested && j.op != install::Op::UpdateAll {
-                        if ui.add(egui::Label::new(RichText::new("Cancel").size(12.5).color(self.pal.red)).sense(Sense::click())).clicked() {
-                            if let Some(h) = self.jobs.iter().find(|h| h.lock().map(|g| g.id == j.id && g.status == install::Status::Running).unwrap_or(false)) {
+                        if ui.add(egui::Label::new(RichText::new("Cancel").size(12.5).color(self.pal.red)).sense(Sense::click())).clicked()
+                        {
+                            if let Some(h) = self
+                                .jobs
+                                .iter()
+                                .find(|h| h.lock().map(|g| g.id == j.id && g.status == install::Status::Running).unwrap_or(false))
+                            {
                                 install::request_cancel(h);
                             }
                         }
                         ui.add_space(10.0);
                     }
                     let open = self.show_log.contains(&j.id);
-                    if ui.add(egui::Label::new(RichText::new(if open { "Hide details" } else { "Show details" }).size(12.5).color(self.pal.accent)).sense(Sense::click())).clicked() {
+                    if ui
+                        .add(
+                            egui::Label::new(
+                                RichText::new(if open { "Hide details" } else { "Show details" }).size(12.5).color(self.pal.accent),
+                            )
+                            .sense(Sense::click()),
+                        )
+                        .clicked()
+                    {
                         if open {
                             self.show_log.remove(&j.id);
                         } else {
@@ -533,7 +601,11 @@ impl App {
             ui.painter().rect_filled(r, CornerRadius::same(4), self.pal.border.gamma_multiply(0.8));
             let b = self.shown_frac(ui.ctx(), j);
             if b > 0.0 {
-                ui.painter().rect_filled(Rect::from_min_max(r.min, pos2(r.left() + r.width() * b.max(0.015), r.bottom())), CornerRadius::same(4), tone);
+                ui.painter().rect_filled(
+                    Rect::from_min_max(r.min, pos2(r.left() + r.width() * b.max(0.015), r.bottom())),
+                    CornerRadius::same(4),
+                    tone,
+                );
             }
             if self.show_log.contains(&j.id) {
                 ui.add_space(6.0);
@@ -565,13 +637,24 @@ impl App {
     fn page_history(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         self.heading(ui, "History");
         if self.installs.is_empty() {
-            ui.label(RichText::new("Apps you install through Agora appear here once the installation has finished. Cancelled installs are not listed.").color(self.pal.dim));
+            ui.label(
+                RichText::new(
+                    "Apps you install through Agora appear here once the installation has finished. Cancelled installs are not listed.",
+                )
+                .color(self.pal.dim),
+            );
             return;
         }
         ui.horizontal(|ui| {
-            ui.label(RichText::new(format!("{} app{}", self.installs.len(), if self.installs.len() == 1 { "" } else { "s" })).color(self.pal.dim));
+            ui.label(
+                RichText::new(format!("{} app{}", self.installs.len(), if self.installs.len() == 1 { "" } else { "s" }))
+                    .color(self.pal.dim),
+            );
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.add(egui::Label::new(RichText::new("Clear history").size(12.5).color(self.pal.accent)).sense(Sense::click())).clicked() {
+                if ui
+                    .add(egui::Label::new(RichText::new("Clear history").size(12.5).color(self.pal.accent)).sense(Sense::click()))
+                    .clicked()
+                {
                     history::forget(None);
                     self.installs = history::load();
                 }
@@ -590,17 +673,36 @@ impl App {
                 let e = self.apps[i].clone();
                 self.icon(ui, Rect::from_min_size(rect.min + vec2(6.0, 8.0), vec2(48.0, 48.0)), &e);
             } else {
-                ui.painter().rect_filled(Rect::from_min_size(rect.min + vec2(6.0, 8.0), vec2(48.0, 48.0)), CornerRadius::same(11), tint(&it.id, 0.55, 0.78));
+                ui.painter().rect_filled(
+                    Rect::from_min_size(rect.min + vec2(6.0, 8.0), vec2(48.0, 48.0)),
+                    CornerRadius::same(11),
+                    tint(&it.id, 0.55, 0.78),
+                );
             }
-            ui.painter().text(pos2(rect.left() + 64.0, rect.top() + 22.0), Align2::LEFT_CENTER, &it.name, FontId::proportional(14.5), self.pal.text);
-            ui.painter().text(pos2(rect.left() + 64.0, rect.top() + 42.0), Align2::LEFT_CENTER, format!("{} on {}", it.what[..1].to_uppercase() + &it.what[1..], it.when), FontId::proportional(12.0), self.pal.dim);
+            ui.painter().text(
+                pos2(rect.left() + 64.0, rect.top() + 22.0),
+                Align2::LEFT_CENTER,
+                &it.name,
+                FontId::proportional(14.5),
+                self.pal.text,
+            );
+            ui.painter().text(
+                pos2(rect.left() + 64.0, rect.top() + 42.0),
+                Align2::LEFT_CENTER,
+                format!("{} on {}", it.what[..1].to_uppercase() + &it.what[1..], it.when),
+                FontId::proportional(12.0),
+                self.pal.dim,
+            );
             // its button: Open if it is still installed, Get to install it again
             if let Some(i) = idx {
                 let e = self.apps[i].clone();
                 let mut asked = None;
-                ui.scope_builder(UiBuilder::new().max_rect(Rect::from_min_size(pos2(rect.right() - 82.0, rect.top() + 19.0), vec2(76.0, 28.0))), |ui| {
-                    asked = self.pill(ui, &e, false);
-                });
+                ui.scope_builder(
+                    UiBuilder::new().max_rect(Rect::from_min_size(pos2(rect.right() - 82.0, rect.top() + 19.0), vec2(76.0, 28.0))),
+                    |ui| {
+                        asked = self.pill(ui, &e, false);
+                    },
+                );
                 if let Some(a) = asked {
                     self.do_pill(ctx, i, a);
                 } else if resp.clicked() {
@@ -661,9 +763,12 @@ impl App {
             ui.painter().circle_filled(pos2(rect.right() - 92.0, rect.top() + 12.0), 3.0, self.pal.amber);
         }
         let mut asked = None;
-        ui.scope_builder(UiBuilder::new().max_rect(Rect::from_min_size(pos2(rect.right() - 82.0, rect.top() + 19.0), vec2(76.0, 28.0))), |ui| {
-            asked = self.pill(ui, &e, false);
-        });
+        ui.scope_builder(
+            UiBuilder::new().max_rect(Rect::from_min_size(pos2(rect.right() - 82.0, rect.top() + 19.0), vec2(76.0, 28.0))),
+            |ui| {
+                asked = self.pill(ui, &e, false);
+            },
+        );
         if let Some(a) = asked {
             self.do_pill(ctx, idx, a);
         } else if resp.clicked() {
@@ -691,11 +796,23 @@ impl App {
         let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
         // a screenshot of the app behind the card, when there is one (and the internet was allowed): dimmed from the left,
         // where the text is, so it stays readable. Otherwise a colour gradient.
-        let shot = self.details.get(&e.id).cloned().flatten().and_then(|d| d.screenshots.first().map(|s| s.url.clone())).and_then(|u| self.images.get(&u).cloned().flatten());
-        let tex = shot.and_then(|path| ui.ctx().try_load_texture(&format!("file://{}", path.display()), egui::TextureOptions::LINEAR, egui::SizeHint::default()).ok()).and_then(|poll| match poll {
-            egui::load::TexturePoll::Ready { texture } => Some(texture),
-            _ => None,
-        });
+        let shot = self
+            .details
+            .get(&e.id)
+            .cloned()
+            .flatten()
+            .and_then(|d| d.screenshots.first().map(|s| s.url.clone()))
+            .and_then(|u| self.images.get(&u).cloned().flatten());
+        let tex = shot
+            .and_then(|path| {
+                ui.ctx()
+                    .try_load_texture(&format!("file://{}", path.display()), egui::TextureOptions::LINEAR, egui::SizeHint::default())
+                    .ok()
+            })
+            .and_then(|poll| match poll {
+                egui::load::TexturePoll::Ready { texture } => Some(texture),
+                _ => None,
+            });
         if let Some(t) = &tex {
             let (ta, ca) = (t.size.x / t.size.y, rect.width() / rect.height());
             let uv = if ta > ca {
@@ -720,7 +837,12 @@ impl App {
         }
         if tex.is_none() {
             // one flat colour (no light from the top): the sideways shading below is the only shading
-            let base = self.catalogs.first().and_then(|c| c.tile_colors.get(&e.id)).map(|&(r, g, b)| Color32::from_rgb(r, g, b)).unwrap_or_else(|| tint(&e.id, 0.62, 0.64));
+            let base = self
+                .catalogs
+                .first()
+                .and_then(|c| c.tile_colors.get(&e.id))
+                .map(|&(r, g, b)| Color32::from_rgb(r, g, b))
+                .unwrap_or_else(|| tint(&e.id, 0.62, 0.64));
             ui.painter().rect_filled(rect, CornerRadius::same(14), base);
         }
         if tex.is_none() {
@@ -733,9 +855,21 @@ impl App {
         }
         let p = ui.painter();
         p.text(rect.left_top() + vec2(22.0, 24.0), Align2::LEFT_CENTER, kicker, FontId::proportional(11.5), Color32::from_white_alpha(200));
-        p.text(rect.left_top() + vec2(22.0, if big { 58.0 } else { 50.0 }), Align2::LEFT_CENTER, &e.name, FontId::proportional(if big { 32.0 } else { 22.0 }), Color32::WHITE);
+        p.text(
+            rect.left_top() + vec2(22.0, if big { 58.0 } else { 50.0 }),
+            Align2::LEFT_CENTER,
+            &e.name,
+            FontId::proportional(if big { 32.0 } else { 22.0 }),
+            Color32::WHITE,
+        );
         let t = fit(ui, tagline, if big { 17.0 } else { 14.0 }, size.x - 44.0 - if big { 90.0 } else { 62.0 }, false);
-        ui.painter().text(rect.left_top() + vec2(22.0, if big { 92.0 } else { 78.0 }), Align2::LEFT_CENTER, t, FontId::proportional(if big { 17.0 } else { 14.0 }), Color32::from_white_alpha(230));
+        ui.painter().text(
+            rect.left_top() + vec2(22.0, if big { 92.0 } else { 78.0 }),
+            Align2::LEFT_CENTER,
+            t,
+            FontId::proportional(if big { 17.0 } else { 14.0 }),
+            Color32::from_white_alpha(230),
+        );
         let isz = if big { 72.0 } else { 52.0 };
         self.icon(ui, Rect::from_min_size(rect.right_bottom() - vec2(isz + 20.0, isz + 18.0), vec2(isz, isz)), &e);
         if resp.clicked() {
@@ -755,7 +889,8 @@ impl App {
             ui.label(RichText::new(text).size(19.0).strong());
             if let Some(p) = see_all {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui.add(egui::Label::new(RichText::new("See All").size(13.0).color(self.pal.accent)).sense(Sense::click())).clicked() {
+                    if ui.add(egui::Label::new(RichText::new("See All").size(13.0).color(self.pal.accent)).sense(Sense::click())).clicked()
+                    {
                         self.go(p);
                     }
                 });
@@ -796,7 +931,8 @@ impl App {
             }
         }
         for tab in TABS {
-            let list: Vec<usize> = (0..self.apps.len()).filter(|&i| self.apps[i].category == tab && self.apps[i].from == catalog::os_name()).take(6).collect();
+            let list: Vec<usize> =
+                (0..self.apps.len()).filter(|&i| self.apps[i].category == tab && self.apps[i].from == catalog::os_name()).take(6).collect();
             if list.is_empty() {
                 continue;
             }
@@ -812,7 +948,8 @@ impl App {
             ui.label(RichText::new("Nothing here yet.").color(self.pal.dim));
         }
         for sub in subs {
-            let list: Vec<usize> = (0..self.apps.len()).filter(|&i| self.apps[i].category == tab && self.apps[i].subcategory == sub).take(8).collect();
+            let list: Vec<usize> =
+                (0..self.apps.len()).filter(|&i| self.apps[i].category == tab && self.apps[i].subcategory == sub).take(8).collect();
             self.section(ui, &sub, Some(Page::Sub(tab.to_string(), sub.clone())));
             self.grid(ui, ctx, &list);
         }
@@ -843,8 +980,20 @@ impl App {
                     let fill = if resp.hovered() { self.pal.hover } else { self.pal.field };
                     ui.painter().rect_filled(rect, CornerRadius::same(10), fill);
                     ui.painter().circle_filled(rect.left_center() + vec2(22.0, 0.0), 9.0, tint(&sub, 0.55, 0.85));
-                    ui.painter().text(rect.left_center() + vec2(42.0, -8.0), Align2::LEFT_CENTER, &sub, FontId::proportional(13.5), self.pal.text);
-                    ui.painter().text(rect.left_center() + vec2(42.0, 10.0), Align2::LEFT_CENTER, format!("{n} app{}", if n == 1 { "" } else { "s" }), FontId::proportional(11.5), self.pal.dim);
+                    ui.painter().text(
+                        rect.left_center() + vec2(42.0, -8.0),
+                        Align2::LEFT_CENTER,
+                        &sub,
+                        FontId::proportional(13.5),
+                        self.pal.text,
+                    );
+                    ui.painter().text(
+                        rect.left_center() + vec2(42.0, 10.0),
+                        Align2::LEFT_CENTER,
+                        format!("{n} app{}", if n == 1 { "" } else { "s" }),
+                        FontId::proportional(11.5),
+                        self.pal.dim,
+                    );
                     if resp.clicked() {
                         self.go(Page::Sub(cat.clone(), sub.clone()));
                     }
@@ -880,11 +1029,22 @@ impl App {
                 format!("{n} package{} can be updated.", if n == 1 { "" } else { "s" })
             };
             ui.label(RichText::new(text).color(self.pal.dim));
-            if !self.checking && ui.add(egui::Label::new(RichText::new("Check again").size(12.5).color(self.pal.accent)).sense(Sense::click())).clicked() {
+            if !self.checking
+                && ui.add(egui::Label::new(RichText::new("Check again").size(12.5).color(self.pal.accent)).sense(Sense::click())).clicked()
+            {
                 self.check_updates(ctx);
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if n > 0 && !self.is_running("*update*") && ui.add(egui::Button::new(RichText::new("Update everything").color(self.pal.on_accent())).fill(self.pal.accent).min_size(vec2(150.0, 30.0))).clicked() {
+                if n > 0
+                    && !self.is_running("*update*")
+                    && ui
+                        .add(
+                            egui::Button::new(RichText::new("Update everything").color(self.pal.on_accent()))
+                                .fill(self.pal.accent)
+                                .min_size(vec2(150.0, 30.0)),
+                        )
+                        .clicked()
+                {
                     self.run_update_all(ctx);
                 }
             });
@@ -924,9 +1084,16 @@ impl App {
         ui.painter().text(rect.left_top() + vec2(130.0, 24.0), Align2::LEFT_CENTER, &e.name, FontId::proportional(28.0), self.pal.text);
         ui.painter().text(rect.left_top() + vec2(130.0, 54.0), Align2::LEFT_CENTER, &e.subtitle, FontId::proportional(14.0), self.pal.dim);
         let os = catalog::os_name();
-        let (badge, bcol) = if e.reviewed { (format!("Reviewed by {os}"), self.pal.green) } else { (format!("Not reviewed by {os}"), self.pal.amber) };
+        let (badge, bcol) =
+            if e.reviewed { (format!("Reviewed by {os}"), self.pal.green) } else { (format!("Not reviewed by {os}"), self.pal.amber) };
         ui.painter().circle_filled(rect.left_top() + vec2(136.0, 82.0), 4.0, bcol);
-        ui.painter().text(rect.left_top() + vec2(148.0, 82.0), Align2::LEFT_CENTER, format!("{badge}  \u{b7}  from {}", e.from), FontId::proportional(12.5), self.pal.dim);
+        ui.painter().text(
+            rect.left_top() + vec2(148.0, 82.0),
+            Align2::LEFT_CENTER,
+            format!("{badge}  \u{b7}  from {}", e.from),
+            FontId::proportional(12.5),
+            self.pal.dim,
+        );
         let mut asked = None;
         ui.scope_builder(UiBuilder::new().max_rect(Rect::from_min_size(rect.left_top() + vec2(130.0, 92.0), vec2(110.0, 30.0))), |ui| {
             asked = self.pill(ui, &e, true);
@@ -936,14 +1103,22 @@ impl App {
         }
         // the open source code, one click away
         if !e.repo.is_empty() {
-            ui.scope_builder(UiBuilder::new().max_rect(Rect::from_min_size(pos2(rect.right() - 150.0, rect.top() + 92.0), vec2(150.0, 30.0))), |ui| {
-                let (r, resp) = ui.allocate_exact_size(vec2(150.0, 30.0), Sense::click());
-                ui.painter().rect_stroke(r, CornerRadius::same(255), Stroke::new(1.0, if resp.hovered() { self.pal.accent } else { self.pal.border }), egui::StrokeKind::Inside);
-                ui.painter().text(r.center(), Align2::CENTER_CENTER, "SOURCE CODE", FontId::proportional(13.0), self.pal.accent);
-                if resp.on_hover_text(&e.repo).clicked() {
-                    let _ = std::process::Command::new("xdg-open").arg(&e.repo).spawn();
-                }
-            });
+            ui.scope_builder(
+                UiBuilder::new().max_rect(Rect::from_min_size(pos2(rect.right() - 150.0, rect.top() + 92.0), vec2(150.0, 30.0))),
+                |ui| {
+                    let (r, resp) = ui.allocate_exact_size(vec2(150.0, 30.0), Sense::click());
+                    ui.painter().rect_stroke(
+                        r,
+                        CornerRadius::same(255),
+                        Stroke::new(1.0, if resp.hovered() { self.pal.accent } else { self.pal.border }),
+                        egui::StrokeKind::Inside,
+                    );
+                    ui.painter().text(r.center(), Align2::CENTER_CENTER, "SOURCE CODE", FontId::proportional(13.0), self.pal.accent);
+                    if resp.on_hover_text(&e.repo).clicked() {
+                        let _ = std::process::Command::new("xdg-open").arg(&e.repo).spawn();
+                    }
+                },
+            );
         }
         let installed = self.installed.has(&e);
         let can_remove = installed && !e.preinstalled && catalog::remove_script(&e).is_some();
@@ -981,7 +1156,13 @@ impl App {
             ui.scope_builder(UiBuilder::new().max_rect(Rect::from_min_size(rect.left_top() + vec2(x, 92.0), vec2(124.0, 30.0))), |ui| {
                 let (r, resp) = ui.allocate_exact_size(vec2(124.0, 30.0), Sense::click());
                 ui.painter().rect_filled(r, CornerRadius::same(255), if resp.hovered() { self.pal.hover } else { self.pal.field });
-                ui.painter().text(r.center(), Align2::CENTER_CENTER, if pinned { "UNPIN" } else { "PIN TO DOCK" }, FontId::proportional(14.0), self.pal.accent);
+                ui.painter().text(
+                    r.center(),
+                    Align2::CENTER_CENTER,
+                    if pinned { "UNPIN" } else { "PIN TO DOCK" },
+                    FontId::proportional(14.0),
+                    self.pal.accent,
+                );
                 if resp.on_hover_text(if pinned { "Take it off the dock" } else { "Keep it on the dock" }).clicked() {
                     yggdrasil_conf::dock::set_pinned(&id, !pinned);
                 }
@@ -1012,7 +1193,8 @@ impl App {
                 Some(true) => {
                     if let Some(d) = &info {
                         // only the pictures that came (or are still coming); with none at all there is no Screenshots section
-                        let shots: Vec<details::Shot> = d.screenshots.iter().take(6).filter(|s| !matches!(self.images.get(&s.url), Some(None))).cloned().collect();
+                        let shots: Vec<details::Shot> =
+                            d.screenshots.iter().take(6).filter(|s| !matches!(self.images.get(&s.url), Some(None))).cloned().collect();
                         if !shots.is_empty() {
                             self.section(ui, "Screenshots", None);
                             egui::ScrollArea::horizontal().id_salt("shots").auto_shrink([false, true]).show(ui, |ui| {
@@ -1021,12 +1203,22 @@ impl App {
                                         ui.vertical(|ui| {
                                             match self.images.get(&s.url).cloned().flatten() {
                                                 Some(path) => {
-                                                    ui.add(egui::Image::new(format!("file://{}", path.display())).fit_to_exact_size(vec2(400.0, 250.0)).corner_radius(10));
+                                                    ui.add(
+                                                        egui::Image::new(format!("file://{}", path.display()))
+                                                            .fit_to_exact_size(vec2(400.0, 250.0))
+                                                            .corner_radius(10),
+                                                    );
                                                 }
                                                 None => {
                                                     let (r, _) = ui.allocate_exact_size(vec2(400.0, 250.0), Sense::hover());
                                                     ui.painter().rect_filled(r, CornerRadius::same(10), self.pal.field);
-                                                    ui.painter().text(r.center(), Align2::CENTER_CENTER, if self.img_loading.contains(&s.url) { "Loading..." } else { "No picture" }, FontId::proportional(13.0), self.pal.dim);
+                                                    ui.painter().text(
+                                                        r.center(),
+                                                        Align2::CENTER_CENTER,
+                                                        if self.img_loading.contains(&s.url) { "Loading..." } else { "No picture" },
+                                                        FontId::proportional(13.0),
+                                                        self.pal.dim,
+                                                    );
                                                 }
                                             }
                                             if !s.caption.is_empty() {
@@ -1088,7 +1280,12 @@ impl App {
             Source::Component(c) => format!("{} component: {c}", catalog::os_name()),
             Source::Plugin { repo } => format!("Plugin repository: {repo}"),
         };
-        for (k, v) in [("Source", src), ("Source code", e.repo.clone()), ("Category", format!("{} \u{203a} {}", e.category, e.subcategory)), ("Catalog", e.from.clone())] {
+        for (k, v) in [
+            ("Source", src),
+            ("Source code", e.repo.clone()),
+            ("Category", format!("{} \u{203a} {}", e.category, e.subcategory)),
+            ("Catalog", e.from.clone()),
+        ] {
             if v.is_empty() {
                 continue;
             }
@@ -1105,13 +1302,27 @@ impl App {
         }
         if let Some(script) = catalog::install_script(&e) {
             ui.add_space(6.0);
-            ui.label(RichText::new(if e.reviewed { format!("Installing runs: {script}") } else { format!("Installing runs, in a terminal: {script}") }).size(12.0).color(self.pal.dim));
+            ui.label(
+                RichText::new(if e.reviewed {
+                    format!("Installing runs: {script}")
+                } else {
+                    format!("Installing runs, in a terminal: {script}")
+                })
+                .size(12.0)
+                .color(self.pal.dim),
+            );
         }
     }
 
     fn page_sources(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         self.heading(ui, "Sources");
-        ui.label(RichText::new(format!("Where apps come from. {}'s own catalog comes with the system and is reviewed. Anything you add is not.", catalog::os_name())).color(self.pal.dim));
+        ui.label(
+            RichText::new(format!(
+                "Where apps come from. {}'s own catalog comes with the system and is reviewed. Anything you add is not.",
+                catalog::os_name()
+            ))
+            .color(self.pal.dim),
+        );
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             let mut on = self.online == Some(true);
@@ -1119,7 +1330,13 @@ impl App {
                 self.set_online(on);
             }
         });
-        ui.label(RichText::new("Fetched from Flathub and the app's own site when you open an app. Off, nothing leaves this computer when you browse.").size(12.0).color(self.pal.dim));
+        ui.label(
+            RichText::new(
+                "Fetched from Flathub and the app's own site when you open an app. Off, nothing leaves this computer when you browse.",
+            )
+            .size(12.0)
+            .color(self.pal.dim),
+        );
         self.section(ui, "Your sources", None);
         let mut changed = false;
         let mut remove: Option<usize> = None;
@@ -1146,7 +1363,15 @@ impl App {
                     }
                     ui.vertical(|ui| {
                         ui.label(RichText::new(&self.repos[i].name).strong());
-                        ui.label(RichText::new(format!("{}  \u{b7}  {}", if self.repos[i].kind == "omarchy" { "Omarchy plugin registry" } else { "Catalog" }, self.repos[i].url)).size(11.5).color(self.pal.dim));
+                        ui.label(
+                            RichText::new(format!(
+                                "{}  \u{b7}  {}",
+                                if self.repos[i].kind == "omarchy" { "Omarchy plugin registry" } else { "Catalog" },
+                                self.repos[i].url
+                            ))
+                            .size(11.5)
+                            .color(self.pal.dim),
+                        );
                         if !self.repo_status.get(i).map(|s| s.is_empty()).unwrap_or(true) {
                             ui.label(RichText::new(&self.repo_status[i]).size(11.5).color(self.pal.amber));
                         }
@@ -1182,20 +1407,28 @@ impl App {
         });
         ui.horizontal(|ui| {
             ui.add_sized([60.0, 24.0], egui::Label::new("Type"));
-            egui::ComboBox::from_id_salt("addkind").selected_text(["Catalog (a JSON file)", "Omarchy plugin registry"][self.add_kind]).show_ui(ui, |ui| {
-                ui.selectable_value(&mut self.add_kind, 0, "Catalog (a JSON file)");
-                ui.selectable_value(&mut self.add_kind, 1, "Omarchy plugin registry");
-            });
+            egui::ComboBox::from_id_salt("addkind")
+                .selected_text(["Catalog (a JSON file)", "Omarchy plugin registry"][self.add_kind])
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut self.add_kind, 0, "Catalog (a JSON file)");
+                    ui.selectable_value(&mut self.add_kind, 1, "Omarchy plugin registry");
+                });
         });
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             let ok = self.add_url.trim().starts_with("https://") && !self.add_name.trim().is_empty();
             if ui.add_enabled(ok, egui::Button::new("Add source").min_size(vec2(110.0, 28.0))).clicked() {
-                self.pending_add = Some(Repo { name: self.add_name.trim().to_string(), url: self.add_url.trim().to_string(), kind: if self.add_kind == 1 { "omarchy".into() } else { "catalog".into() }, enabled: true });
+                self.pending_add = Some(Repo {
+                    name: self.add_name.trim().to_string(),
+                    url: self.add_url.trim().to_string(),
+                    kind: if self.add_kind == 1 { "omarchy".into() } else { "catalog".into() },
+                    enabled: true,
+                });
                 self.add_confirm = false;
             }
             if ui.button("Add the Omarchy plugin market").clicked() {
-                self.pending_add = Some(Repo { name: "Omarchy plugins".into(), url: catalog::OMARCHY_URL.into(), kind: "omarchy".into(), enabled: true });
+                self.pending_add =
+                    Some(Repo { name: "Omarchy plugins".into(), url: catalog::OMARCHY_URL.into(), kind: "omarchy".into(), enabled: true });
                 self.add_confirm = false;
             }
         });
@@ -1249,10 +1482,19 @@ impl App {
         let terms: Vec<&str> = q.split_whitespace().collect();
         let mut hits: Vec<(i32, usize)> = vec![];
         for (i, a) in self.apps.iter().enumerate() {
-            let hay = format!("{} {} {} {} {} {}", a.name, a.subtitle, a.description, a.category, a.subcategory, a.tags.join(" ")).to_lowercase();
+            let hay =
+                format!("{} {} {} {} {} {}", a.name, a.subtitle, a.description, a.category, a.subcategory, a.tags.join(" ")).to_lowercase();
             if terms.iter().all(|t| hay.contains(t)) {
                 let name = a.name.to_lowercase();
-                let score = if name == q { 0 } else if name.starts_with(&q) { 1 } else if name.contains(&q) { 2 } else { 3 };
+                let score = if name == q {
+                    0
+                } else if name.starts_with(&q) {
+                    1
+                } else if name.contains(&q) {
+                    2
+                } else {
+                    3
+                };
                 hits.push((score, i));
             }
         }
@@ -1266,7 +1508,12 @@ impl App {
 fn gradient_rounded(painter: &egui::Painter, rect: Rect, radius: f32, color_at: impl Fn(egui::Pos2) -> Color32) {
     let mut pts: Vec<egui::Pos2> = vec![];
     let r = radius.min(rect.width() / 2.0).min(rect.height() / 2.0);
-    let corners = [(rect.right() - r, rect.top() + r, -90.0f32), (rect.right() - r, rect.bottom() - r, 0.0), (rect.left() + r, rect.bottom() - r, 90.0), (rect.left() + r, rect.top() + r, 180.0)];
+    let corners = [
+        (rect.right() - r, rect.top() + r, -90.0f32),
+        (rect.right() - r, rect.bottom() - r, 0.0),
+        (rect.left() + r, rect.bottom() - r, 90.0),
+        (rect.left() + r, rect.top() + r, 180.0),
+    ];
     for (cx, cy, start) in corners {
         for k in 0..=8 {
             let a = (start + 90.0 * k as f32 / 8.0).to_radians();
@@ -1315,7 +1562,10 @@ impl eframe::App for App {
         self.pal = theme::palette_for(dark, accent);
         let pal = self.pal;
         // look for updates every half hour while the window is open (and again soon after an install)
-        if !self.checking && self.last_check.map(|t| t.elapsed() > Duration::from_secs(1800)).unwrap_or(true) && self.jobs.iter().all(|j| j.lock().map(|g| g.status != install::Status::Running).unwrap_or(true)) {
+        if !self.checking
+            && self.last_check.map(|t| t.elapsed() > Duration::from_secs(1800)).unwrap_or(true)
+            && self.jobs.iter().all(|j| j.lock().map(|g| g.status != install::Status::Running).unwrap_or(true))
+        {
             self.check_updates(&ctx);
         }
 
@@ -1326,7 +1576,9 @@ impl eframe::App for App {
             .frame(egui::Frame::new().fill(pal.sidebar).inner_margin(Margin::symmetric(10, 10)))
             .show(ui, |ui| {
                 ui.add_space(2.0);
-                let r = ui.add(egui::TextEdit::singleline(&mut self.search).hint_text("Search").desired_width(f32::INFINITY).margin(vec2(8.0, 6.0)));
+                let r = ui.add(
+                    egui::TextEdit::singleline(&mut self.search).hint_text("Search").desired_width(f32::INFINITY).margin(vec2(8.0, 6.0)),
+                );
                 if r.changed() {
                     if self.search.trim().is_empty() {
                         if self.page == Page::Search {
@@ -1347,7 +1599,15 @@ impl eframe::App for App {
                     ("Develop", Page::Tab("Develop"), None),
                     ("Categories", Page::Categories, None),
                     ("Updates", Page::Updates, if n_up > 0 { Some(n_up) } else { None }),
-                    ("Activity", Page::Activity, { let n = self.jobs.iter().filter(|j| j.lock().map(|j| j.status == install::Status::Running).unwrap_or(false)).count(); if n > 0 { Some(n) } else { None } }),
+                    ("Activity", Page::Activity, {
+                        let n =
+                            self.jobs.iter().filter(|j| j.lock().map(|j| j.status == install::Status::Running).unwrap_or(false)).count();
+                        if n > 0 {
+                            Some(n)
+                        } else {
+                            None
+                        }
+                    }),
                 ];
                 for (label, page, badge) in items {
                     let sel = self.page == page || (matches!(page, Page::Tab(t) if matches!(&self.page, Page::Sub(c, _) if c == t)));
@@ -1357,11 +1617,23 @@ impl eframe::App for App {
                     } else if resp.hovered() {
                         ui.painter().rect_filled(rect, CornerRadius::same(8), pal.hover);
                     }
-                    ui.painter().text(rect.left_center() + vec2(14.0, 0.0), Align2::LEFT_CENTER, label, FontId::proportional(14.0), if sel { pal.accent } else { pal.text });
+                    ui.painter().text(
+                        rect.left_center() + vec2(14.0, 0.0),
+                        Align2::LEFT_CENTER,
+                        label,
+                        FontId::proportional(14.0),
+                        if sel { pal.accent } else { pal.text },
+                    );
                     if let Some(n) = badge {
                         let c = rect.right_center() - vec2(20.0, 0.0);
                         ui.painter().circle_filled(c, 10.0, pal.accent.gamma_multiply(0.9));
-                        ui.painter().text(c, Align2::CENTER_CENTER, n.to_string().chars().take(3).collect::<String>(), FontId::proportional(10.5), pal.on_accent());
+                        ui.painter().text(
+                            c,
+                            Align2::CENTER_CENTER,
+                            n.to_string().chars().take(3).collect::<String>(),
+                            FontId::proportional(10.5),
+                            pal.on_accent(),
+                        );
                     }
                     if resp.clicked() {
                         self.search.clear();
@@ -1376,7 +1648,13 @@ impl eframe::App for App {
                     } else if resp.hovered() {
                         ui.painter().rect_filled(rect, CornerRadius::same(8), pal.hover);
                     }
-                    ui.painter().text(rect.left_center() + vec2(14.0, 0.0), Align2::LEFT_CENTER, "Sources", FontId::proportional(14.0), pal.dim);
+                    ui.painter().text(
+                        rect.left_center() + vec2(14.0, 0.0),
+                        Align2::LEFT_CENTER,
+                        "Sources",
+                        FontId::proportional(14.0),
+                        pal.dim,
+                    );
                     if resp.clicked() {
                         self.go(Page::Sources);
                     }
@@ -1387,47 +1665,56 @@ impl eframe::App for App {
                     } else if resp.hovered() {
                         ui.painter().rect_filled(rect, CornerRadius::same(8), pal.hover);
                     }
-                    ui.painter().text(rect.left_center() + vec2(14.0, 0.0), Align2::LEFT_CENTER, "History", FontId::proportional(14.0), pal.dim);
+                    ui.painter().text(
+                        rect.left_center() + vec2(14.0, 0.0),
+                        Align2::LEFT_CENTER,
+                        "History",
+                        FontId::proportional(14.0),
+                        pal.dim,
+                    );
                     if resp.clicked() {
                         self.go(Page::History);
                     }
                 });
             });
 
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(pal.bg).inner_margin(Margin { left: 28, right: 12, top: 6, bottom: 18 })).show(ui, |ui| {
-            ui.horizontal(|ui| {
-                let can_back = !self.history.is_empty();
-                if ui.add_enabled(can_back, egui::Button::new("\u{2039}").min_size(vec2(30.0, 24.0))).clicked() {
-                    if let Some(p) = self.history.pop() {
-                        self.page = p;
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(pal.bg).inner_margin(Margin { left: 28, right: 12, top: 6, bottom: 18 }))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let can_back = !self.history.is_empty();
+                    if ui.add_enabled(can_back, egui::Button::new("\u{2039}").min_size(vec2(30.0, 24.0))).clicked() {
+                        if let Some(p) = self.history.pop() {
+                            self.page = p;
+                        }
                     }
-                }
-                chrome::drag_area(ui, ui.available_width() - chrome::controls_width());
-                chrome::window_controls(ui, &pal);
+                    chrome::drag_area(ui, ui.available_width() - chrome::controls_width());
+                    chrome::window_controls(ui, &pal);
+                });
+                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                    ui.set_max_width((ui.available_width() - 20.0).min(1100.0));
+                    match self.page.clone() {
+                        Page::Discover => self.page_discover(ui, &ctx),
+                        Page::Tab(t) => self.page_tab(ui, &ctx, t),
+                        Page::Categories => self.page_categories(ui),
+                        Page::Sub(cat, sub) => {
+                            let list: Vec<usize> =
+                                (0..self.apps.len()).filter(|&i| self.apps[i].category == cat && self.apps[i].subcategory == sub).collect();
+                            self.page_list(ui, &ctx, &sub, list);
+                        }
+                        Page::Updates => self.page_updates(ui, &ctx),
+                        Page::Activity => self.page_activity(ui),
+                        Page::History => self.page_history(ui, &ctx),
+                        Page::Detail(i) => self.page_detail(ui, &ctx, i),
+                        Page::Sources => self.page_sources(ui, &ctx),
+                        Page::Search => {
+                            let list = self.search_results();
+                            let title = format!("Results for \u{201c}{}\u{201d}", self.search.trim());
+                            self.page_list(ui, &ctx, &title, list);
+                        }
+                    }
+                });
             });
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                ui.set_max_width((ui.available_width() - 20.0).min(1100.0));
-                match self.page.clone() {
-                    Page::Discover => self.page_discover(ui, &ctx),
-                    Page::Tab(t) => self.page_tab(ui, &ctx, t),
-                    Page::Categories => self.page_categories(ui),
-                    Page::Sub(cat, sub) => {
-                        let list: Vec<usize> = (0..self.apps.len()).filter(|&i| self.apps[i].category == cat && self.apps[i].subcategory == sub).collect();
-                        self.page_list(ui, &ctx, &sub, list);
-                    }
-                    Page::Updates => self.page_updates(ui, &ctx),
-                    Page::Activity => self.page_activity(ui),
-                    Page::History => self.page_history(ui, &ctx),
-                    Page::Detail(i) => self.page_detail(ui, &ctx, i),
-                    Page::Sources => self.page_sources(ui, &ctx),
-                    Page::Search => {
-                        let list = self.search_results();
-                        let title = format!("Results for \u{201c}{}\u{201d}", self.search.trim());
-                        self.page_list(ui, &ctx, &title, list);
-                    }
-                }
-            });
-        });
         self.confirm_dialog(&ctx);
         chrome::outline(&ctx, &pal);
         if !self.busy.is_empty() {
@@ -1441,7 +1728,12 @@ impl eframe::App for App {
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1180.0, 760.0]).with_min_inner_size([760.0, 480.0]).with_title("Agora").with_app_id("agora").with_decorations(false),
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([1180.0, 760.0])
+            .with_min_inner_size([760.0, 480.0])
+            .with_title("Agora")
+            .with_app_id("agora")
+            .with_decorations(false),
         ..Default::default()
     };
     eframe::run_native(
@@ -1459,7 +1751,9 @@ fn desktop_id(e: &Entry) -> Option<String> {
     let id = if e.launch.is_empty() { e.id.clone() } else { e.launch.clone() };
     let id = id.trim_end_matches(".desktop").to_string();
     let data = std::env::var("XDG_DATA_DIRS").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/usr/local/share:/usr/share".into());
-    let home = std::env::var_os("XDG_DATA_HOME").map(std::path::PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share")));
+    let home = std::env::var_os("XDG_DATA_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share")));
     let mut dirs: Vec<std::path::PathBuf> = data.split(':').filter(|d| !d.is_empty()).map(std::path::PathBuf::from).collect();
     dirs.extend(home);
     dirs.push("/var/lib/flatpak/exports/share".into());

@@ -15,10 +15,7 @@ pub fn unique_path(dir: &Path, name: &str) -> PathBuf {
         Some(i) if i > 0 => (&name[..i], &name[i..]),
         _ => (name, ""),
     };
-    (2..)
-        .map(|n| dir.join(format!("{stem} ({n}){ext}")))
-        .find(|p| !p.exists())
-        .expect("unbounded range")
+    (2..).map(|n| dir.join(format!("{stem} ({n}){ext}"))).find(|p| !p.exists()).expect("unbounded range")
 }
 
 fn copy_recursive(src: &Path, dst: &Path) -> io::Result<()> {
@@ -223,7 +220,14 @@ fn put_over(src: &Path, dst: &Path, mv: bool, prog: &Progress) -> io::Result<()>
 /// files are added, and a file that is already there (and not the same) is put to `ask`, which answers
 /// `None` to stop the whole transfer. Nothing is overwritten without a `Replace`. With `mv`, a source file
 /// is removed only after it has been put in place. Returns where the item ended up.
-pub fn transfer(src: &Path, dest_dir: &Path, mv: bool, ask: &mut dyn FnMut(&Path, &Path) -> Option<Decision>, stats: &mut Stats, prog: &Progress) -> io::Result<PathBuf> {
+pub fn transfer(
+    src: &Path,
+    dest_dir: &Path,
+    mv: bool,
+    ask: &mut dyn FnMut(&Path, &Path) -> Option<Decision>,
+    stats: &mut Stats,
+    prog: &Progress,
+) -> io::Result<PathBuf> {
     refuse_root(src)?;
     if src.is_dir() && dest_dir.starts_with(src) {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "cannot copy or move a folder into itself"));
@@ -244,7 +248,14 @@ pub fn transfer(src: &Path, dest_dir: &Path, mv: bool, ask: &mut dyn FnMut(&Path
     Ok(target)
 }
 
-fn merge(src: &Path, dst: &Path, mv: bool, ask: &mut dyn FnMut(&Path, &Path) -> Option<Decision>, stats: &mut Stats, prog: &Progress) -> io::Result<()> {
+fn merge(
+    src: &Path,
+    dst: &Path,
+    mv: bool,
+    ask: &mut dyn FnMut(&Path, &Path) -> Option<Decision>,
+    stats: &mut Stats,
+    prog: &Progress,
+) -> io::Result<()> {
     let sm = std::fs::symlink_metadata(src)?;
     let parent = dst.parent().unwrap_or(Path::new("/"));
     let name = dst.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -450,7 +461,10 @@ mod tests {
     #[test]
     fn transfer_merges_and_asks_before_overwriting() {
         let d = tmp("merge");
-        for (dir, files) in [("src/Sarina", vec![("a.txt", "same"), ("b.txt", "NEW b"), ("sub/c.txt", "c")]), ("dest/Sarina", vec![("b.txt", "old b"), ("keep.txt", "mine")])] {
+        for (dir, files) in [
+            ("src/Sarina", vec![("a.txt", "same"), ("b.txt", "NEW b"), ("sub/c.txt", "c")]),
+            ("dest/Sarina", vec![("b.txt", "old b"), ("keep.txt", "mine")]),
+        ] {
             for (f, body) in files {
                 let p = d.join(dir).join(f);
                 std::fs::create_dir_all(p.parent().unwrap()).unwrap();
@@ -460,10 +474,17 @@ mod tests {
         let mut asked = vec![];
         let mut stats = Stats::default();
         // answer Skip: the existing b.txt must survive
-        let out = transfer(&d.join("src/Sarina"), &d.join("dest"), false, &mut |s, t| {
-            asked.push((s.to_path_buf(), t.to_path_buf()));
-            Some(Decision::Skip)
-        }, &mut stats, &Progress::default())
+        let out = transfer(
+            &d.join("src/Sarina"),
+            &d.join("dest"),
+            false,
+            &mut |s, t| {
+                asked.push((s.to_path_buf(), t.to_path_buf()));
+                Some(Decision::Skip)
+            },
+            &mut stats,
+            &Progress::default(),
+        )
         .unwrap();
         assert_eq!(out, d.join("dest/Sarina"));
         assert_eq!(std::fs::read_to_string(d.join("dest/Sarina/b.txt")).unwrap(), "old b");
@@ -476,14 +497,16 @@ mod tests {
 
         // the same again: a.txt and c.txt are now identical, so only b.txt is asked about; Replace swaps it
         let mut stats = Stats::default();
-        transfer(&d.join("src/Sarina"), &d.join("dest"), false, &mut |_, _| Some(Decision::Replace), &mut stats, &Progress::default()).unwrap();
+        transfer(&d.join("src/Sarina"), &d.join("dest"), false, &mut |_, _| Some(Decision::Replace), &mut stats, &Progress::default())
+            .unwrap();
         assert_eq!(std::fs::read_to_string(d.join("dest/Sarina/b.txt")).unwrap(), "NEW b");
         assert_eq!((stats.replaced, stats.same), (1, 2));
 
         // KeepBoth keeps the old one and numbers the new
         std::fs::write(d.join("src/Sarina/b.txt"), "third b").unwrap();
         let mut stats = Stats::default();
-        transfer(&d.join("src/Sarina"), &d.join("dest"), false, &mut |_, _| Some(Decision::KeepBoth), &mut stats, &Progress::default()).unwrap();
+        transfer(&d.join("src/Sarina"), &d.join("dest"), false, &mut |_, _| Some(Decision::KeepBoth), &mut stats, &Progress::default())
+            .unwrap();
         assert_eq!(std::fs::read_to_string(d.join("dest/Sarina/b.txt")).unwrap(), "NEW b");
         assert_eq!(std::fs::read_to_string(d.join("dest/Sarina/b (2).txt")).unwrap(), "third b");
     }

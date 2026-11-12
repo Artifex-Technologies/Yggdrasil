@@ -169,7 +169,11 @@ impl Game {
                 self.notes[j] &= !(1 << d);
             }
         }
-        if self.solved() { Outcome::Solved } else { Outcome::Placed }
+        if self.solved() {
+            Outcome::Solved
+        } else {
+            Outcome::Placed
+        }
     }
 
     /// Turns pencil note `d` in cell `i` on or off (only in an empty cell).

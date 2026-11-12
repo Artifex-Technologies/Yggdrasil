@@ -8,7 +8,10 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use accesskit::{Action as AkAction, ActionHandler, ActionRequest, ActivationHandler, DeactivationHandler, Live, Node, NodeId, Role, Tree, TreeId, TreeUpdate};
+use accesskit::{
+    Action as AkAction, ActionHandler, ActionRequest, ActivationHandler, DeactivationHandler, Live, Node, NodeId, Role, Tree, TreeId,
+    TreeUpdate,
+};
 
 use crate::shell::{self, Action, Hit, Model};
 
@@ -35,7 +38,9 @@ pub fn describe(a: &Action, m: &Model) -> Option<(Role, String, String)> {
         Action::Workspace(i) => button(format!("Desktop {}", i + 1)),
         Action::NewWorkspace => button("New desktop".into()),
         Action::Notch => button("Fylgja".into()),
-        Action::NotchSection(i) => button(crate::fylgja::SECTIONS.get(*i).map(|s| format!("Fylgja, {s}")).unwrap_or_else(|| "Fylgja section".into())),
+        Action::NotchSection(i) => {
+            button(crate::fylgja::SECTIONS.get(*i).map(|s| format!("Fylgja, {s}")).unwrap_or_else(|| "Fylgja section".into()))
+        }
         Action::Network => button("Network".into()),
         Action::ConfirmNow => button("Go ahead now".into()),
         Action::ConfirmCancel => button("Cancel".into()),
@@ -47,12 +52,22 @@ pub fn describe(a: &Action, m: &Model) -> Option<(Role, String, String)> {
         Action::Dock(id) => {
             let items = shell::dock_items(m);
             let it = items.iter().find(|i| &i.app_id == id)?;
-            let state = if it.active { ", focused" } else if !it.wins.is_empty() { ", running" } else { "" };
+            let state = if it.active {
+                ", focused"
+            } else if !it.wins.is_empty() {
+                ", running"
+            } else {
+                ""
+            };
             button(format!("{}{}", it.name, state))
         }
         Action::DockWin(_, wi) => {
             let w = m.wins.get(*wi)?;
-            button(format!("Window: {}{}", if w.title.is_empty() { &w.app_id } else { &w.title }, if w.active() { ", focused" } else { "" }))
+            button(format!(
+                "Window: {}{}",
+                if w.title.is_empty() { &w.app_id } else { &w.title },
+                if w.active() { ", focused" } else { "" }
+            ))
         }
         Action::ToastOpen(id) => {
             let n = m.notifs.get(*id)?;
@@ -208,7 +223,14 @@ impl A11y {
     pub fn sync(&mut self, m: &Model, parts: &[(Part, Vec<Hit>)]) {
         let (update, actions) = tree(m, parts);
         // what a reader can see: names, descriptions and structure. Skip the update when none of it changed.
-        let key = format!("{:?}", update.nodes.iter().map(|(i, n)| (i.0, n.label().map(str::to_owned), n.description().map(str::to_owned), n.children().len())).collect::<Vec<_>>());
+        let key = format!(
+            "{:?}",
+            update
+                .nodes
+                .iter()
+                .map(|(i, n)| (i.0, n.label().map(str::to_owned), n.description().map(str::to_owned), n.children().len()))
+                .collect::<Vec<_>>()
+        );
         if key == self.last_key {
             return;
         }

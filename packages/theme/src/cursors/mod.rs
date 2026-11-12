@@ -6,10 +6,7 @@ pub mod draw;
 pub mod resample;
 pub mod text;
 
-use draw::{
-    d_arc, d_ellipse_fill, d_ellipse_outline, d_line, d_polygon_fill, d_rounded_rectangle_fill,
-    DrawError, Img, Ink,
-};
+use draw::{d_arc, d_ellipse_fill, d_ellipse_outline, d_line, d_polygon_fill, d_rounded_rectangle_fill, DrawError, Img, Ink};
 use std::path::Path;
 
 pub const DOC: &str = "ygg-cursors: draws Yggdrasil's mouse cursors and writes them as an X cursor theme (also used by Wayland programs).
@@ -92,11 +89,7 @@ type Pt = (f64, f64);
 
 impl Canvas {
     fn new(size: i32) -> Canvas {
-        Canvas {
-            size,
-            k: size as f64 / 32.0 * SS as f64,
-            img: Img::new(size * SS, size * SS, 4, [0, 0, 0, 0]),
-        }
+        Canvas { size, k: size as f64 / 32.0 * SS as f64, img: Img::new(size * SS, size * SS, 4, [0, 0, 0, 0]) }
     }
 
     fn p(&self, pts: &[Pt]) -> Vec<Pt> {
@@ -158,24 +151,13 @@ impl Canvas {
         let [x0, y0, x1, y1] = b.map(|v| v * self.k);
         if let Some(o) = outline {
             let g = w / 2.0 * self.k;
-            d_rounded_rectangle_fill(
-                &mut self.img,
-                [x0 - g, y0 - g, x1 + g, y1 + g],
-                r * self.k + g,
-                &o,
-            )?;
+            d_rounded_rectangle_fill(&mut self.img, [x0 - g, y0 - g, x1 + g, y1 + g], r * self.k + g, &o)?;
         }
         d_rounded_rectangle_fill(&mut self.img, [x0, y0, x1, y1], r * self.k, &fill)
     }
 
     fn text(&mut self, xy: Pt, s: &str, px: f64, fill: Ink) {
-        text::draw_text_mm(
-            &mut self.img,
-            (xy.0 * self.k, xy.1 * self.k),
-            s,
-            px * self.k,
-            &fill,
-        );
+        text::draw_text_mm(&mut self.img, (xy.0 * self.k, xy.1 * self.k), s, px * self.k, &fill);
     }
 
     fn done(self) -> Img {
@@ -183,15 +165,7 @@ impl Canvas {
     }
 }
 
-const ARROW: [Pt; 7] = [
-    (5.0, 3.0),
-    (5.0, 25.5),
-    (10.8, 20.0),
-    (14.6, 28.5),
-    (18.4, 26.8),
-    (14.6, 18.5),
-    (22.5, 18.5),
-];
+const ARROW: [Pt; 7] = [(5.0, 3.0), (5.0, 25.5), (10.8, 20.0), (14.6, 28.5), (18.4, 26.8), (14.6, 18.5), (22.5, 18.5)];
 const HAND: [Pt; 23] = [
     (10.0, 5.0),
     (10.8, 3.0),
@@ -224,14 +198,8 @@ fn arrow(c: &mut Canvas) -> R<()> {
 
 /// A filled triangle with its point at `tip`, pointing along `a` (radians).
 fn arrow_head(c: &mut Canvas, tip: Pt, a: f64, n: f64) -> R<()> {
-    let left = (
-        tip.0 - n * a.cos() + n * 0.85 * a.sin(),
-        tip.1 - n * a.sin() - n * 0.85 * a.cos(),
-    );
-    let right = (
-        tip.0 - n * a.cos() - n * 0.85 * a.sin(),
-        tip.1 - n * a.sin() + n * 0.85 * a.cos(),
-    );
+    let left = (tip.0 - n * a.cos() + n * 0.85 * a.sin(), tip.1 - n * a.sin() - n * 0.85 * a.cos());
+    let right = (tip.0 - n * a.cos() - n * 0.85 * a.sin(), tip.1 - n * a.sin() + n * 0.85 * a.cos());
     c.poly(&[tip, left, right], WHITE, Some(DARK), 1.6)
 }
 
@@ -244,12 +212,7 @@ fn double_arrow(c: &mut Canvas, ang: f64) -> R<Pt> {
     let b = (cx + ux * l, cy + uy * l);
     c.line(&[a, b], 2.4, WHITE, Some(DARK), OUT)?;
     arrow_head(c, (b.0 + ux * 1.2, b.1 + uy * 1.2), ang, 5.2)?;
-    arrow_head(
-        c,
-        (a.0 - ux * 1.2, a.1 - uy * 1.2),
-        ang + std::f64::consts::PI,
-        5.2,
-    )?;
+    arrow_head(c, (a.0 - ux * 1.2, a.1 - uy * 1.2), ang + std::f64::consts::PI, 5.2)?;
     Ok((16.0, 16.0))
 }
 
@@ -271,24 +234,12 @@ fn palm(c: &mut Canvas, closed: bool) -> R<()> {
     if closed {
         c.rrect([8.5, 14.5, 25.5, 27.5], 5.0, WHITE, Some(DARK), OUT)?;
         for i in 0..4 {
-            c.circle(
-                (11.2 + i as f64 * 4.4, 14.8),
-                2.6,
-                Some(WHITE),
-                Some(DARK),
-                OUT,
-            )?;
+            c.circle((11.2 + i as f64 * 4.4, 14.8), 2.6, Some(WHITE), Some(DARK), OUT)?;
         }
         c.rrect([8.8, 15.0, 25.2, 27.0], 4.6, WHITE, None, OUT)
     } else {
         for (i, top) in [5.5, 3.5, 4.5, 7.5].into_iter().enumerate() {
-            c.rrect(
-                [9.4 + i as f64 * 3.9, top, 12.6 + i as f64 * 3.9, 20.0],
-                1.6,
-                WHITE,
-                Some(DARK),
-                OUT,
-            )?;
+            c.rrect([9.4 + i as f64 * 3.9, top, 12.6 + i as f64 * 3.9, 20.0], 1.6, WHITE, Some(DARK), OUT)?;
         }
         c.rrect([6.0, 14.0, 12.5, 21.0], 2.6, WHITE, Some(DARK), OUT)?;
         c.rrect([8.5, 14.5, 25.5, 27.5], 5.0, WHITE, Some(DARK), OUT)?;
@@ -301,53 +252,22 @@ fn ring(c: &mut Canvas, cx: f64, cy: f64, r: f64, f: i32, w: f64) -> R<()> {
     let frames = 12;
     let k = c.k;
     let disc = |c: &mut Canvas, rad: f64, fill: Ink| {
-        d_ellipse_fill(
-            &mut c.img,
-            [
-                (cx - rad) * k,
-                (cy - rad) * k,
-                (cx + rad) * k,
-                (cy + rad) * k,
-            ],
-            &fill,
-        )
+        d_ellipse_fill(&mut c.img, [(cx - rad) * k, (cy - rad) * k, (cx + rad) * k, (cy + rad) * k], &fill)
     };
     disc(c, r + w / 2.0 + OUT / 2.0, DARK)?;
     disc(c, r + w / 2.0, WHITE)?;
     disc(c, r - w / 2.0, DARK)?;
     let mut hole = Img::new(c.img.w, c.img.h, 1, [0; 4]);
     let rad = r - w / 2.0 - OUT / 2.0;
-    d_ellipse_fill(
-        &mut hole,
-        [
-            (cx - rad) * k,
-            (cy - rad) * k,
-            (cx + rad) * k,
-            (cy + rad) * k,
-        ],
-        &[255, 0, 0, 0],
-    )?;
+    d_ellipse_fill(&mut hole, [(cx - rad) * k, (cy - rad) * k, (cx + rad) * k, (cy + rad) * k], &[255, 0, 0, 0])?;
     fill_mask(&mut c.img, &[0, 0, 0, 0], &hole, 0, 0);
     let a0 = (f * 360) as f64 / frames as f64 - 90.0;
-    d_arc(
-        &mut c.img,
-        [(cx - r) * k, (cy - r) * k, (cx + r) * k, (cy + r) * k],
-        a0,
-        a0 + 100.0,
-        &PURPLE,
-        (w * k) as i32,
-    )
+    d_arc(&mut c.img, [(cx - r) * k, (cy - r) * k, (cx + r) * k, (cy + r) * k], a0, a0 + 100.0, &PURPLE, (w * k) as i32)
 }
 
 fn shape_zoom(c: &mut Canvas, plus: bool) -> R<Pt> {
     c.line(&[(18.5, 18.5), (27.0, 27.0)], 3.6, WHITE, Some(DARK), OUT)?;
-    c.circle(
-        (13.0, 13.0),
-        8.2,
-        Some([255, 255, 255, 120]),
-        Some(DARK),
-        2.2,
-    )?;
+    c.circle((13.0, 13.0), 8.2, Some([255, 255, 255, 120]), Some(DARK), 2.2)?;
     c.line(&[(9.5, 13.0), (16.5, 13.0)], 1.8, DARK, None, OUT)?;
     if plus {
         c.line(&[(13.0, 9.5), (13.0, 16.5)], 1.8, DARK, None, OUT)?;
@@ -386,32 +306,18 @@ fn draw_shape(c: &mut Canvas, shape: &str, f: i32) -> R<Pt> {
             Ok((16.0, 16.0))
         }
         "no" => {
-            c.circle(
-                (16.0, 16.0),
-                10.0,
-                Some([255, 255, 255, 235]),
-                Some(DARK),
-                2.2,
-            )?;
+            c.circle((16.0, 16.0), 10.0, Some([255, 255, 255, 235]), Some(DARK), 2.2)?;
             c.circle((16.0, 16.0), 8.4, None, None, OUT)?;
             let k = c.k;
             d_ellipse_outline(
                 &mut c.img,
-                [
-                    16.0 * k - 8.2 * k,
-                    16.0 * k - 8.2 * k,
-                    16.0 * k + 8.2 * k,
-                    16.0 * k + 8.2 * k,
-                ],
+                [16.0 * k - 8.2 * k, 16.0 * k - 8.2 * k, 16.0 * k + 8.2 * k, 16.0 * k + 8.2 * k],
                 &RED,
                 (2.8 * k) as i32,
             )?;
             d_line(
                 &mut c.img,
-                &[
-                    (16.0 * k - 5.8 * k, 16.0 * k - 5.8 * k),
-                    (16.0 * k + 5.8 * k, 16.0 * k + 5.8 * k),
-                ],
+                &[(16.0 * k - 5.8 * k, 16.0 * k - 5.8 * k), (16.0 * k + 5.8 * k, 16.0 * k + 5.8 * k)],
                 &RED,
                 (2.8 * k) as i32,
                 false,
@@ -498,49 +404,18 @@ pub const SHAPES: [(&str, i32, &[&str]); 22] = [
     ),
     ("text", 1, &["text", "xterm", "ibeam"]),
     ("vtext", 1, &["vertical-text"]),
-    (
-        "pointer",
-        1,
-        &["pointer", "hand1", "hand2", "pointing_hand", "link"],
-    ),
+    ("pointer", 1, &["pointer", "hand1", "hand2", "pointing_hand", "link"]),
     ("grab", 1, &["grab", "openhand", "hand"]),
     ("grabbing", 1, &["grabbing", "closedhand", "dnd-grab"]),
-    (
-        "cross",
-        1,
-        &[
-            "crosshair",
-            "cross",
-            "tcross",
-            "color-picker",
-            "pencil",
-            "target",
-        ],
-    ),
-    (
-        "no",
-        1,
-        &[
-            "not-allowed",
-            "forbidden",
-            "crossed_circle",
-            "no-drop",
-            "dnd-no-drop",
-            "circle",
-            "pirate",
-        ],
-    ),
+    ("cross", 1, &["crosshair", "cross", "tcross", "color-picker", "pencil", "target"]),
+    ("no", 1, &["not-allowed", "forbidden", "crossed_circle", "no-drop", "dnd-no-drop", "circle", "pirate"]),
     ("wait", 12, &["wait", "watch"]),
     ("progress", 12, &["progress", "left_ptr_watch", "half-busy"]),
     ("move", 1, &["move", "fleur", "all-scroll", "size_all"]),
     ("copy", 1, &["copy", "dnd-copy"]),
     ("alias", 1, &["alias", "dnd-link"]),
     ("menu", 1, &["context-menu"]),
-    (
-        "help",
-        1,
-        &["help", "question_arrow", "whats_this", "left_ptr_help"],
-    ),
+    ("help", 1, &["help", "question_arrow", "whats_this", "left_ptr_help"]),
     ("cell", 1, &["cell", "plus"]),
     ("zoomin", 1, &["zoom-in"]),
     ("zoomout", 1, &["zoom-out"]),
@@ -578,32 +453,8 @@ pub const SHAPES: [(&str, i32, &[&str]); 22] = [
             "base_arrow_down",
         ],
     ),
-    (
-        "nwse",
-        1,
-        &[
-            "nwse-resize",
-            "size_fdiag",
-            "bd_double_arrow",
-            "nw-resize",
-            "se-resize",
-            "top_left_corner",
-            "bottom_right_corner",
-        ],
-    ),
-    (
-        "nesw",
-        1,
-        &[
-            "nesw-resize",
-            "size_bdiag",
-            "fd_double_arrow",
-            "ne-resize",
-            "sw-resize",
-            "top_right_corner",
-            "bottom_left_corner",
-        ],
-    ),
+    ("nwse", 1, &["nwse-resize", "size_fdiag", "bd_double_arrow", "nw-resize", "se-resize", "top_left_corner", "bottom_right_corner"]),
+    ("nesw", 1, &["nesw-resize", "size_bdiag", "fd_double_arrow", "ne-resize", "sw-resize", "top_right_corner", "bottom_left_corner"]),
 ];
 
 /// One frame of a shape at a size: the picture and the hotspot in pixels.
@@ -623,25 +474,12 @@ pub fn xcursor(frames_by_size: &[(i32, Vec<Frame>)], delay: u32) -> Vec<u8> {
     for (size, frames) in frames_by_size {
         for (img, hot) in frames {
             let mut data = Vec::with_capacity(36 + img.px.len());
-            for v in [
-                36,
-                0xFFFD0002,
-                *size as u32,
-                1,
-                img.w as u32,
-                img.h as u32,
-                hot.0,
-                hot.1,
-                delay,
-            ] {
+            for v in [36, 0xFFFD0002, *size as u32, 1, img.w as u32, img.h as u32, hot.0, hot.1, delay] {
                 data.extend(v.to_le_bytes());
             }
             for p in img.px.chunks(4) {
                 let (r, g, b, a) = (p[0] as u32, p[1] as u32, p[2] as u32, p[3] as u32);
-                data.extend(
-                    ((a << 24) | ((r * a / 255) << 16) | ((g * a / 255) << 8) | (b * a / 255))
-                        .to_le_bytes(),
-                );
+                data.extend(((a << 24) | ((r * a / 255) << 16) | ((g * a / 255) << 8) | (b * a / 255)).to_le_bytes());
             }
             chunks.push((*size as u32, data));
         }
@@ -713,7 +551,9 @@ pub fn main(argv0: &str, args: &[String]) -> i32 {
         sheet.push(by_size.swap_remove(2).1.swap_remove(0).0);
     }
     let index = out.join("index.theme");
-    if let Err(e) = std::fs::write(&index, "[Icon Theme]\nName=Yggdrasil\nComment=Yggdrasil's mouse cursors: white shapes with a dark purple outline\n") {
+    if let Err(e) =
+        std::fs::write(&index, "[Icon Theme]\nName=Yggdrasil\nComment=Yggdrasil's mouse cursors: white shapes with a dark purple outline\n")
+    {
         fail(format!("{}: {e}", index.display()));
     }
     if preview {
@@ -731,10 +571,6 @@ pub fn main(argv0: &str, args: &[String]) -> i32 {
         }
     }
     let names: usize = SHAPES.iter().map(|s| s.2.len()).sum();
-    println!(
-        "{names} cursor names, {} shapes, in {}",
-        SHAPES.len(),
-        cur.display()
-    );
+    println!("{names} cursor names, {} shapes, in {}", SHAPES.len(), cur.display());
     0
 }

@@ -32,7 +32,8 @@ enum Page {
     Done,
 }
 
-const PAGES: [Page; 8] = [Page::Welcome, Page::Keyboard, Page::TimeZone, Page::Disk, Page::Account, Page::Browsers, Page::Extras, Page::Summary];
+const PAGES: [Page; 8] =
+    [Page::Welcome, Page::Keyboard, Page::TimeZone, Page::Disk, Page::Account, Page::Browsers, Page::Extras, Page::Summary];
 
 /// A browser the operating system offers to install (its installer integration's `browsers` file).
 #[derive(Clone, Debug, PartialEq)]
@@ -61,7 +62,9 @@ struct Extra {
 /// The vendor ids (lowercase hex) of the USB devices plugged in now.
 fn usb_vendors() -> Vec<String> {
     let mut v: Vec<String> = std::fs::read_dir("/sys/bus/usb/devices")
-        .map(|rd| rd.flatten().filter_map(|e| std::fs::read_to_string(e.path().join("idVendor")).ok()).map(|s| s.trim().to_lowercase()).collect())
+        .map(|rd| {
+            rd.flatten().filter_map(|e| std::fs::read_to_string(e.path().join("idVendor")).ok()).map(|s| s.trim().to_lowercase()).collect()
+        })
         .unwrap_or_default();
     v.sort();
     v.dedup();
@@ -79,9 +82,19 @@ fn parse_extras(text: &str, exists: &dyn Fn(&str) -> bool, usb: &[String]) -> (S
             a.iter()
                 .filter_map(|e| {
                     let id = e["id"].as_str()?.to_string();
-                    let plugged = e["chosen_if_usb"].as_array().is_some_and(|ids| ids.iter().filter_map(|x| x.as_str()).any(|x| usb.iter().any(|u| u.eq_ignore_ascii_case(x))));
-                    let chosen = e["chosen"].as_bool().unwrap_or(false) || e["chosen_if_exists"].as_str().is_some_and(|p| p.starts_with('/') && exists(p)) || plugged;
-                    Some(Extra { name: e["name"].as_str().unwrap_or(&id).to_string(), note: e["note"].as_str().unwrap_or("").to_string(), group: e["group"].as_str().unwrap_or("").to_string(), chosen, id })
+                    let plugged = e["chosen_if_usb"]
+                        .as_array()
+                        .is_some_and(|ids| ids.iter().filter_map(|x| x.as_str()).any(|x| usb.iter().any(|u| u.eq_ignore_ascii_case(x))));
+                    let chosen = e["chosen"].as_bool().unwrap_or(false)
+                        || e["chosen_if_exists"].as_str().is_some_and(|p| p.starts_with('/') && exists(p))
+                        || plugged;
+                    Some(Extra {
+                        name: e["name"].as_str().unwrap_or(&id).to_string(),
+                        note: e["note"].as_str().unwrap_or("").to_string(),
+                        group: e["group"].as_str().unwrap_or("").to_string(),
+                        chosen,
+                        id,
+                    })
                 })
                 .collect()
         })
@@ -99,7 +112,12 @@ fn parse_browsers(text: &str) -> Vec<Browser> {
             a.iter()
                 .filter_map(|b| {
                     let id = b["id"].as_str()?.to_string();
-                    Some(Browser { name: b["name"].as_str().unwrap_or(&id).to_string(), note: b["note"].as_str().unwrap_or("").to_string(), chosen: b["chosen"].as_bool().unwrap_or(false), id })
+                    Some(Browser {
+                        name: b["name"].as_str().unwrap_or(&id).to_string(),
+                        note: b["note"].as_str().unwrap_or("").to_string(),
+                        chosen: b["chosen"].as_bool().unwrap_or(false),
+                        id,
+                    })
                 })
                 .collect()
         })
@@ -152,7 +170,9 @@ fn login_from(name: &str) -> String {
 
 fn login_ok(l: &str) -> bool {
     let mut c = l.chars();
-    matches!(c.next(), Some('a'..='z' | '_')) && l.len() <= 32 && c.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+    matches!(c.next(), Some('a'..='z' | '_'))
+        && l.len() <= 32
+        && c.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
 }
 
 fn hostname_ok(h: &str) -> bool {
@@ -169,15 +189,30 @@ fn size_text(b: u64) -> String {
 }
 
 fn run_lines(cmd: &str, args: &[&str]) -> Vec<String> {
-    Command::new(cmd).args(args).output().map(|o| String::from_utf8_lossy(&o.stdout).lines().map(str::to_string).collect()).unwrap_or_default()
+    Command::new(cmd)
+        .args(args)
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).lines().map(str::to_string).collect())
+        .unwrap_or_default()
 }
 
 /// Readable names for the common languages (the rest show their code).
 const COMMON: [(&str, &str); 16] = [
-    ("en_US.UTF-8", "English (United States)"), ("en_GB.UTF-8", "English (United Kingdom)"), ("en_CA.UTF-8", "English (Canada)"),
-    ("en_AU.UTF-8", "English (Australia)"), ("de_DE.UTF-8", "Deutsch"), ("fr_FR.UTF-8", "Français"), ("es_ES.UTF-8", "Español (España)"),
-    ("es_MX.UTF-8", "Español (México)"), ("it_IT.UTF-8", "Italiano"), ("nl_NL.UTF-8", "Nederlands"), ("pt_BR.UTF-8", "Português (Brasil)"),
-    ("pt_PT.UTF-8", "Português (Portugal)"), ("sv_SE.UTF-8", "Svenska"), ("pl_PL.UTF-8", "Polski"), ("ja_JP.UTF-8", "日本語"),
+    ("en_US.UTF-8", "English (United States)"),
+    ("en_GB.UTF-8", "English (United Kingdom)"),
+    ("en_CA.UTF-8", "English (Canada)"),
+    ("en_AU.UTF-8", "English (Australia)"),
+    ("de_DE.UTF-8", "Deutsch"),
+    ("fr_FR.UTF-8", "Français"),
+    ("es_ES.UTF-8", "Español (España)"),
+    ("es_MX.UTF-8", "Español (México)"),
+    ("it_IT.UTF-8", "Italiano"),
+    ("nl_NL.UTF-8", "Nederlands"),
+    ("pt_BR.UTF-8", "Português (Brasil)"),
+    ("pt_PT.UTF-8", "Português (Portugal)"),
+    ("sv_SE.UTF-8", "Svenska"),
+    ("pl_PL.UTF-8", "Polski"),
+    ("ja_JP.UTF-8", "日本語"),
     ("zh_CN.UTF-8", "中文 (简体)"),
 ];
 
@@ -220,7 +255,10 @@ fn boot_layout_note(layout: &str, variant: &str) -> Option<String> {
 fn keymaps() -> Vec<String> {
     let mut v = run_lines("localectl", &["list-x11-keymap-layouts"]);
     if v.is_empty() {
-        v = ["us", "gb", "de", "fr", "es", "it", "se", "no", "dk", "fi", "nl", "pt", "br", "ca", "ch", "pl", "cz", "ru", "jp"].iter().map(|s| s.to_string()).collect();
+        v = ["us", "gb", "de", "fr", "es", "it", "se", "no", "dk", "fi", "nl", "pt", "br", "ca", "ch", "pl", "cz", "ru", "jp"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
     }
     v
 }
@@ -259,7 +297,11 @@ impl KbChoice {
         format!("{}|{}", self.layout, self.variant)
     }
     fn label(&self) -> String {
-        if self.variant.is_empty() { format!("{}   ({})", self.name, self.layout) } else { format!("{}   ({}, {})", self.name, self.layout, self.variant) }
+        if self.variant.is_empty() {
+            format!("{}   ({})", self.name, self.layout)
+        } else {
+            format!("{}   ({}, {})", self.name, self.layout, self.variant)
+        }
     }
 }
 
@@ -267,8 +309,10 @@ impl KbChoice {
 fn layout_kind(code: &str) -> KbType {
     const AZERTY: [&str; 2] = ["fr", "be"];
     const QWERTZ: [&str; 11] = ["de", "at", "ch", "cz", "sk", "hu", "si", "hr", "ba", "li", "lu"];
-    const OTHER_SCRIPTS: [&str; 37] = ["ru", "ua", "by", "bg", "mk", "rs", "mn", "kz", "kg", "tj", "uz", "gr", "il", "ara", "eg", "iq", "sy", "ir", "af", "pk", "in", "bd",
-        "np", "lk", "th", "la", "kh", "mm", "bt", "ge", "am", "et", "er", "mv", "ma", "jo", "tm"];
+    const OTHER_SCRIPTS: [&str; 37] = [
+        "ru", "ua", "by", "bg", "mk", "rs", "mn", "kz", "kg", "tj", "uz", "gr", "il", "ara", "eg", "iq", "sy", "ir", "af", "pk", "in",
+        "bd", "np", "lk", "th", "la", "kh", "mm", "bt", "ge", "am", "et", "er", "mv", "ma", "jo", "tm",
+    ];
     if AZERTY.contains(&code) {
         KbType::Azerty
     } else if QWERTZ.contains(&code) {
@@ -289,7 +333,13 @@ fn keyboard_choices(lst: &str, available: &[String]) -> Vec<KbChoice> {
     let ok = |l: &str| available.is_empty() || available.iter().any(|a| a == l);
     for line in lst.lines() {
         if let Some(h) = line.strip_prefix("! ") {
-            section = if h.trim() == "layout" { "layout" } else if h.trim() == "variant" { "variant" } else { "" };
+            section = if h.trim() == "layout" {
+                "layout"
+            } else if h.trim() == "variant" {
+                "variant"
+            } else {
+                ""
+            };
             continue;
         }
         let Some((code, rest)) = line.trim().split_once(char::is_whitespace) else { continue };
@@ -328,7 +378,11 @@ fn try_keyboard(c: &KbChoice) {
         return;
     }
     let lua = format!("hl.config({{ input = {{ kb_layout = {:?}, kb_variant = {:?} }} }})", c.layout, c.variant);
-    let _ = std::process::Command::new("hyprctl").args(["eval", &lua]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
+    let _ = std::process::Command::new("hyprctl")
+        .args(["eval", &lua])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
 }
 
 /// The time zones a person would pick: Region/City ones and UTC (not the old aliases such as "W-SU", "Zulu" or "US/Pacific").
@@ -354,7 +408,10 @@ fn zone_label(z: &str) -> String {
 
 /// The live system's own time zone (what the medium was set to), as the first guess. No location service is asked.
 fn current_timezone() -> String {
-    std::fs::read_link("/etc/localtime").ok().and_then(|p| p.to_string_lossy().split("zoneinfo/").nth(1).map(str::to_string)).unwrap_or_else(|| "UTC".into())
+    std::fs::read_link("/etc/localtime")
+        .ok()
+        .and_then(|p| p.to_string_lossy().split("zoneinfo/").nth(1).map(str::to_string))
+        .unwrap_or_else(|| "UTC".into())
 }
 
 fn os_name() -> String {
@@ -441,7 +498,15 @@ fn demo_disks() -> Vec<Disk> {
                 part(4, 317 * MIB + 400 * GIB, 750 * MIB, "ntfs", "Recovery", false),
             ],
         },
-        Disk { path: "/dev/sda".into(), size: 512_110_190_592, model: "Sample SSD 512GB".into(), removable: false, big_enough: true, table: String::new(), parts: vec![] },
+        Disk {
+            path: "/dev/sda".into(),
+            size: 512_110_190_592,
+            model: "Sample SSD 512GB".into(),
+            removable: false,
+            big_enough: true,
+            table: String::new(),
+            parts: vec![],
+        },
     ]
 }
 
@@ -491,7 +556,14 @@ impl App {
         let mut app = App {
             page: Page::Welcome,
             command,
-            hostname: os.to_lowercase().split_whitespace().next().unwrap_or("computer").chars().filter(|c| c.is_ascii_alphanumeric()).collect(),
+            hostname: os
+                .to_lowercase()
+                .split_whitespace()
+                .next()
+                .unwrap_or("computer")
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric())
+                .collect(),
             os,
             locales: locales(),
             locale: "en_US.UTF-8".into(),
@@ -548,7 +620,11 @@ impl App {
 
     /// The pages shown: the Browsers page only when the OS offers browsers, the optional parts' page only when it offers some.
     fn pages(&self) -> Vec<Page> {
-        PAGES.iter().copied().filter(|p| (*p != Page::Browsers || !self.browsers.is_empty()) && (*p != Page::Extras || !self.extras.is_empty())).collect()
+        PAGES
+            .iter()
+            .copied()
+            .filter(|p| (*p != Page::Browsers || !self.browsers.is_empty()) && (*p != Page::Extras || !self.extras.is_empty()))
+            .collect()
     }
 
     fn set_extras(&mut self, (title, intro, list): (String, String, Vec<Extra>)) {
@@ -645,7 +721,9 @@ impl App {
             Page::Disk => {
                 if self.disk.is_none() {
                     Some("Choose a disk".into())
-                } else if let Some(p) = self.chosen_disk().filter(|_| self.manual_mode).and_then(|d| self.manual.problem(d.size, &d.parts, &d.table)) {
+                } else if let Some(p) =
+                    self.chosen_disk().filter(|_| self.manual_mode).and_then(|d| self.manual.problem(d.size, &d.parts, &d.table))
+                {
                     Some(p)
                 } else if self.encrypt && self.crypt_pw.chars().count() < 8 {
                     Some("The encryption password needs at least 8 characters".into())
@@ -795,13 +873,25 @@ impl App {
     }
 }
 
-fn pick_list(ui: &mut egui::Ui, pal: &Palette, id: &str, items: &[String], chosen: &mut String, height: f32, label: impl Fn(&str) -> String) {
+fn pick_list(
+    ui: &mut egui::Ui,
+    pal: &Palette,
+    id: &str,
+    items: &[String],
+    chosen: &mut String,
+    height: f32,
+    label: impl Fn(&str) -> String,
+) {
     let seen = egui::Id::new(("pick-list-shown", id));
     let first = !ui.ctx().data(|d| d.get_temp::<bool>(seen).unwrap_or(false));
     egui::ScrollArea::vertical().id_salt(id).max_height(height).show(ui, |ui| {
         for it in items {
             let on = it == chosen;
-            let r = ui.add(egui::Button::new(RichText::new(label(it)).color(if on { pal.on_accent() } else { pal.text })).fill(if on { pal.accent } else { egui::Color32::TRANSPARENT }).min_size(vec2(360.0, 26.0)));
+            let r = ui.add(
+                egui::Button::new(RichText::new(label(it)).color(if on { pal.on_accent() } else { pal.text }))
+                    .fill(if on { pal.accent } else { egui::Color32::TRANSPARENT })
+                    .min_size(vec2(360.0, 26.0)),
+            );
             if r.clicked() {
                 *chosen = it.clone();
             }
@@ -1211,7 +1301,9 @@ mod tests {
     #[test]
     fn only_region_city_zones_are_offered_and_read_as_places() {
         assert!(super::real_zone("America/Denver") && super::real_zone("UTC"));
-        assert!(!super::real_zone("W-SU") && !super::real_zone("Zulu") && !super::real_zone("US/Pacific") && !super::real_zone("Etc/GMT+5"));
+        assert!(
+            !super::real_zone("W-SU") && !super::real_zone("Zulu") && !super::real_zone("US/Pacific") && !super::real_zone("Etc/GMT+5")
+        );
         assert_eq!(super::zone_label("America/Argentina/Buenos_Aires"), "Buenos Aires (America, Argentina)");
         assert_eq!(super::zone_label("Europe/Berlin"), "Berlin (Europe)");
         assert_eq!(super::zone_label("UTC"), "UTC");
@@ -1221,7 +1313,9 @@ mod tests {
 
     #[test]
     fn browsers_come_from_the_os_and_the_default_stays_chosen() {
-        let list = parse_browsers(r#"{"browsers":[{"id":"vivaldi","name":"Vivaldi","note":"n","chosen":true,"packages":["vivaldi"]},{"id":"firefox","name":"Firefox"},{"name":"no id"},{"id":"opera","name":"Opera","flatpak":"com.opera.Opera"}]}"#);
+        let list = parse_browsers(
+            r#"{"browsers":[{"id":"vivaldi","name":"Vivaldi","note":"n","chosen":true,"packages":["vivaldi"]},{"id":"firefox","name":"Firefox"},{"name":"no id"},{"id":"opera","name":"Opera","flatpak":"com.opera.Opera"}]}"#,
+        );
         assert_eq!(list.iter().map(|b| b.id.as_str()).collect::<Vec<_>>(), ["vivaldi", "firefox", "opera"]);
         assert!(parse_browsers("not json").is_empty());
         let mut app = App::new();
@@ -1247,7 +1341,11 @@ mod tests {
         let text = r#"{"title":"AI and security","intro":"Optional.","extras":[{"id":"sarina","name":"Sarina","note":"n","chosen_if_exists":"/usr/bin/sarina","components":["sarina"]},{"id":"heimdall","name":"Heimdall","chosen_if_exists":"/usr/bin/heimdalld"},{"name":"no id"},{"id":"x","chosen_if_exists":"relative/path"}]}"#;
         let (title, intro, list) = parse_extras(text, &|p| p == "/usr/bin/heimdalld" || p == "relative/path", &[]);
         assert_eq!((title.as_str(), intro.as_str()), ("AI and security", "Optional."));
-        assert_eq!(list.iter().map(|e| (e.id.as_str(), e.chosen)).collect::<Vec<_>>(), [("sarina", false), ("heimdall", true), ("x", false)], "only an absolute path counts");
+        assert_eq!(
+            list.iter().map(|e| (e.id.as_str(), e.chosen)).collect::<Vec<_>>(),
+            [("sarina", false), ("heimdall", true), ("x", false)],
+            "only an absolute path counts"
+        );
         let mut app = App::new();
         app.set_extras((title, intro, list));
         assert_eq!(app.chosen_extras, ["heimdall"]);
@@ -1265,7 +1363,11 @@ mod tests {
     fn device_software_starts_chosen_when_such_a_device_is_plugged_in() {
         let text = r#"{"extras":[{"id":"razer","group":"Devices","name":"Razer","chosen_if_usb":["1532"]},{"id":"logitech","group":"Devices","name":"Logitech","chosen_if_usb":["046D"]},{"id":"hp","group":"Devices","name":"HP","chosen_if_usb":["03f0"]}]}"#;
         let (_, _, list) = parse_extras(text, &|_| false, &["1532".to_string(), "046d".to_string()]);
-        assert_eq!(list.iter().map(|e| (e.id.as_str(), e.chosen)).collect::<Vec<_>>(), [("razer", true), ("logitech", true), ("hp", false)], "vendor ids compare without case");
+        assert_eq!(
+            list.iter().map(|e| (e.id.as_str(), e.chosen)).collect::<Vec<_>>(),
+            [("razer", true), ("logitech", true), ("hp", false)],
+            "vendor ids compare without case"
+        );
         assert!(list.iter().all(|e| e.group == "Devices"));
         let (_, _, none) = parse_extras(text, &|_| false, &[]);
         assert!(none.iter().all(|e| !e.chosen), "nothing plugged in: nothing ticked");

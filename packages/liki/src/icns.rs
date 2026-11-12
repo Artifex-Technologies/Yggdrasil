@@ -34,8 +34,7 @@ pub fn biggest_png(data: &[u8]) -> Result<&[u8], String> {
         }
         pos += size;
     }
-    best.map(|(_, c)| c)
-        .ok_or_else(|| "no PNG data inside".into())
+    best.map(|(_, c)| c).ok_or_else(|| "no PNG data inside".into())
 }
 
 /// liki-icns IN OUT; the exit code. The .icns is read and checked before the output file is opened, so a file that is not
@@ -91,22 +90,14 @@ mod tests {
         let a = png(128, 128, b"a");
         let b = png(512, 512, b"b");
         let c = png(512, 512, b"c");
-        let file = icns(&[
-            (b"ic07", a),
-            (b"ARGB", vec![1, 2, 3]),
-            (b"ic09", b.clone()),
-            (b"ic10", c),
-        ]);
+        let file = icns(&[(b"ic07", a), (b"ARGB", vec![1, 2, 3]), (b"ic09", b.clone()), (b"ic10", c)]);
         assert_eq!(biggest_png(&file).unwrap(), &b[..]);
     }
 
     #[test]
     fn junk_is_refused() {
         assert_eq!(biggest_png(b"nope").unwrap_err(), "not an .icns file");
-        assert_eq!(
-            biggest_png(&icns(&[(b"ARGB", vec![0; 40])])).unwrap_err(),
-            "no PNG data inside"
-        );
+        assert_eq!(biggest_png(&icns(&[(b"ARGB", vec![0; 40])])).unwrap_err(), "no PNG data inside");
         assert!(biggest_png(&icns(&[(b"ic07", PNG_SIGNATURE.to_vec())])).is_err());
         // a length below 8 ends the list; one past the end is cut at the end
         let mut f = icns(&[(b"ic07", png(16, 16, b""))]);

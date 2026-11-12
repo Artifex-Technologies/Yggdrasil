@@ -124,7 +124,10 @@ fn test_marking_install_reasons_passes() {
     let y = yay();
     assert_eq!(code(&y.go(&["-D", "--asdeps", "--config", "/etc/pacman.conf", "--", "somelib"])), 0);
     // exactly what yay sends after installing what it built
-    assert_eq!(code(&y.go(&["-D", "-q", "--asexplicit", "--noconfirm", "--config", "/etc/pacman.conf", "--", "deckcraft-bin", "gridcraft-bin"])), 0);
+    assert_eq!(
+        code(&y.go(&["-D", "-q", "--asexplicit", "--noconfirm", "--config", "/etc/pacman.conf", "--", "deckcraft-bin", "gridcraft-bin"])),
+        0
+    );
     assert_eq!(code(&y.go(&["-D", "--", "somelib"])), 2, "-D without --asdeps/--asexplicit");
 }
 
@@ -248,7 +251,8 @@ fn a_cancel_stops_pacman_and_undoes_the_install() {
     assert_eq!(String::from_utf8_lossy(&o.stdout), "Removing what this install added: newpkg\n");
     let calls = fs::read_to_string(w.join("calls")).unwrap();
     assert_eq!(calls, "pacman -S --noconfirm newpkg\npacman -Rns --noconfirm newpkg\n");
-    let mut left: Vec<String> = fs::read_dir(w.join("cache")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    let mut left: Vec<String> =
+        fs::read_dir(w.join("cache")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
     left.sort();
     assert_eq!(left, vec!["old-1-1-x86_64.pkg.tar.zst".to_string()], "only this run's downloads go");
     let _ = fs::remove_dir_all(&w);

@@ -75,7 +75,11 @@ pub fn bridges(languages: &[String]) -> Vec<Bridge> {
 pub fn bridges_in(home: &Path, config: &Path, languages: &[String]) -> Vec<Bridge> {
     let mut out = vec![];
     for code in languages {
-        out.push(Bridge { app: format!("GTK apps ({code})"), path: config.join("enchant").join(format!("{code}.dic")), format: Format::Lines });
+        out.push(Bridge {
+            app: format!("GTK apps ({code})"),
+            path: config.join("enchant").join(format!("{code}.dic")),
+            format: Format::Lines,
+        });
     }
     for root in [home.join(".mozilla/firefox"), config.join("mozilla/firefox")] {
         for p in subdirs(&root) {
@@ -95,7 +99,9 @@ pub fn bridges_in(home: &Path, config: &Path, languages: &[String]) -> Vec<Bridg
 }
 
 fn subdirs(dir: &Path) -> Vec<PathBuf> {
-    let mut v: Vec<PathBuf> = std::fs::read_dir(dir).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_dir() && !p.is_symlink()).collect()).unwrap_or_default();
+    let mut v: Vec<PathBuf> = std::fs::read_dir(dir)
+        .map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.is_dir() && !p.is_symlink()).collect())
+        .unwrap_or_default();
     v.sort();
     v
 }
@@ -107,14 +113,29 @@ fn collect_chromium(config: &Path, dir: &Path, depth: usize, out: &mut Vec<PathB
     for p in subdirs(dir) {
         let name = p.file_name().unwrap_or_default().to_string_lossy().to_string();
         // big folders that are never a browser profile
-        if depth == 0 && matches!(name.as_str(), "yggdrasil" | "enchant" | "mozilla" | "systemd" | "pulse" | "dconf" | "gtk-3.0" | "gtk-4.0") {
+        if depth == 0
+            && matches!(name.as_str(), "yggdrasil" | "enchant" | "mozilla" | "systemd" | "pulse" | "dconf" | "gtk-3.0" | "gtk-4.0")
+        {
             continue;
         }
         let local_state = p.join("Local State").is_file() || p.parent().is_some_and(|q| q.join("Local State").is_file());
         if p.join("Preferences").is_file() && local_state {
             out.push(p.clone());
         }
-        if !name.starts_with('.') && !matches!(name.as_str(), "Cache" | "Code Cache" | "GPUCache" | "Service Worker" | "IndexedDB" | "Local Storage" | "blob_storage" | "extensions" | "Extensions") {
+        if !name.starts_with('.')
+            && !matches!(
+                name.as_str(),
+                "Cache"
+                    | "Code Cache"
+                    | "GPUCache"
+                    | "Service Worker"
+                    | "IndexedDB"
+                    | "Local Storage"
+                    | "blob_storage"
+                    | "extensions"
+                    | "Extensions"
+            )
+        {
             collect_chromium(config, &p, depth + 1, out);
         }
     }
@@ -171,7 +192,8 @@ pub fn sync(list: &mut WordList, bridges: &[Bridge], packs: &PackWords) -> Repor
         let b = &bridges[i];
         // keep what the app has (unless removed in Yggdrasil, or a pack's word while that pack is off), add everything the user
         // has and every word of the packs that are on
-        let want: BTreeSet<String> = words.into_iter()
+        let want: BTreeSet<String> = words
+            .into_iter()
             .filter(|w| !list.is_removed(w) && (!packs.all.contains(w) || packs.on.contains(w) || all.contains(w)))
             .chain(all.iter().cloned())
             .chain(packs.on.iter().cloned())
@@ -241,8 +263,10 @@ fn sync_locked() -> Result<(Report, usize, usize), String> {
 
 /// MD5 (RFC 1321), only for Chromium's checksum line; nothing here relies on it for security.
 pub fn md5_hex(data: &[u8]) -> String {
-    const S: [u32; 64] = [7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
-        4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21];
+    const S: [u32; 64] = [
+        7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 4, 11, 16, 23,
+        4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
+    ];
     let k: Vec<u32> = (0..64).map(|i| ((i as f64 + 1.0).sin().abs() * 4294967296.0) as u32).collect();
     let mut msg = data.to_vec();
     let bits = (data.len() as u64).wrapping_mul(8);
@@ -312,7 +336,13 @@ mod tests {
     fn finds_browsers_electron_apps_firefox_and_gtk() {
         let home = tmp("home");
         let cfg = home.join(".config");
-        for (dir, local_state_in) in [("vivaldi/Default", "vivaldi"), ("vivaldi/Profile 1", "vivaldi"), ("Code", "Code"), ("obsidian", "obsidian"), ("BraveSoftware/Brave-Browser/Default", "BraveSoftware/Brave-Browser")] {
+        for (dir, local_state_in) in [
+            ("vivaldi/Default", "vivaldi"),
+            ("vivaldi/Profile 1", "vivaldi"),
+            ("Code", "Code"),
+            ("obsidian", "obsidian"),
+            ("BraveSoftware/Brave-Browser/Default", "BraveSoftware/Brave-Browser"),
+        ] {
             std::fs::create_dir_all(cfg.join(dir)).unwrap();
             std::fs::write(cfg.join(dir).join("Preferences"), "{}").unwrap();
             std::fs::write(cfg.join(local_state_in).join("Local State"), "{}").unwrap();
@@ -337,7 +367,10 @@ mod tests {
         let r = sync(&mut list, &bridges, &PackWords::default());
         assert_eq!(r.added, [("Fylgja".to_string(), "Vivaldi".to_string())]);
         assert!(gtk.read().contains("Fylgja"), "Vivaldi's word reached the GTK apps");
-        assert!(sync(&mut list, &bridges, &PackWords::default()).written.is_empty(), "a second sync changes nothing (no loop with the watcher)");
+        assert!(
+            sync(&mut list, &bridges, &PackWords::default()).written.is_empty(),
+            "a second sync changes nothing (no loop with the watcher)"
+        );
         list.remove("Fylgja");
         sync(&mut list, &bridges, &PackWords::default());
         assert!(!gtk.read().contains("Fylgja") && !viv.read().contains("Fylgja"), "removed everywhere");

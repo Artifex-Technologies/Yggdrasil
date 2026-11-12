@@ -175,7 +175,12 @@ mod tests {
 
     #[test]
     fn the_file_reads_back() {
-        let r = NotifyRules { quiet: true, quiet_from: 21 * 60 + 30, quiet_to: 6 * 60, muted: ["discord".to_string(), "spotify".to_string()].into() };
+        let r = NotifyRules {
+            quiet: true,
+            quiet_from: 21 * 60 + 30,
+            quiet_to: 6 * 60,
+            muted: ["discord".to_string(), "spotify".to_string()].into(),
+        };
         assert_eq!(NotifyRules::parse(&r.to_text()), r);
         assert_eq!(NotifyRules::parse("quiet_from = 25:00\nquiet_to = x\n"), NotifyRules::default(), "bad times keep the defaults");
         assert_eq!((parse_time("7:05"), parse_time("24:00"), show_time(7 * 60 + 5)), (Some(425), None, "07:05".to_string()));

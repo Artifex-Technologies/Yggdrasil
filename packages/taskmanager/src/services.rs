@@ -101,7 +101,17 @@ pub fn parse(units: &str, files: &str, scope: Scope) -> Vec<Service> {
             if name.contains("@.") {
                 continue; // a template: its instances are listed by name when they exist
             }
-            out.insert(name.to_string(), Service { name: name.to_string(), file_state: f.get("state").and_then(|x| x.as_str()).unwrap_or("").to_string(), scope: Some(scope), active: "inactive".into(), sub: "dead".into(), ..Default::default() });
+            out.insert(
+                name.to_string(),
+                Service {
+                    name: name.to_string(),
+                    file_state: f.get("state").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                    scope: Some(scope),
+                    active: "inactive".into(),
+                    sub: "dead".into(),
+                    ..Default::default()
+                },
+            );
         }
     }
     if let Ok(Value::Array(v)) = serde_json::from_str::<Value>(units) {
@@ -111,7 +121,8 @@ pub fn parse(units: &str, files: &str, scope: Scope) -> Vec<Service> {
             if load == "not-found" && !out.contains_key(name) {
                 continue; // named somewhere, installed nowhere
             }
-            let s = out.entry(name.to_string()).or_insert_with(|| Service { name: name.to_string(), scope: Some(scope), ..Default::default() });
+            let s =
+                out.entry(name.to_string()).or_insert_with(|| Service { name: name.to_string(), scope: Some(scope), ..Default::default() });
             let g = |k: &str| u.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
             s.active = g("active");
             s.sub = g("sub");
@@ -208,7 +219,11 @@ mod tests {
         let ssh = &v[3];
         assert_eq!((ssh.status(), ssh.startup(), ssh.description.as_str()), ("Running", "Automatic", "OpenSSH Daemon"));
         assert_eq!((v[0].status(), v[0].startup()), ("Stopped", "Manual"));
-        assert_eq!((v[2].status(), v[2].startup(), v[2].description.as_str()), ("Done (ran once)", "When needed", ""), "a description that is only the name is dropped");
+        assert_eq!(
+            (v[2].status(), v[2].startup(), v[2].description.as_str()),
+            ("Done (ran once)", "When needed", ""),
+            "a description that is only the name is dropped"
+        );
         assert!(parse("not json", "[]", Scope::User).is_empty());
         assert_eq!(unescape(r"app-yggdrasil\x2dpanel@autostart"), "app-yggdrasil-panel@autostart");
         assert_eq!(unescape(r"odd\x"), r"odd\x");

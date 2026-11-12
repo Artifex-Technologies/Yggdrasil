@@ -25,7 +25,8 @@ pub fn parse_core_name(name: &str) -> Option<CoreName> {
     let mut f = rest.rsplitn(5, '.');
     let (usec, pid, boot, uid, comm) = (f.next()?, f.next()?, f.next()?, f.next()?, f.next()?);
     let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
-    if comm.is_empty() || !digits(usec) || !digits(pid) || !digits(uid) || boot.len() != 32 || !boot.bytes().all(|b| b.is_ascii_hexdigit()) {
+    if comm.is_empty() || !digits(usec) || !digits(pid) || !digits(uid) || boot.len() != 32 || !boot.bytes().all(|b| b.is_ascii_hexdigit())
+    {
         return None;
     }
     Some(CoreName { comm: unescape(comm), uid: uid.parse().ok()?, pid: pid.parse().ok()? })
@@ -119,9 +120,37 @@ pub fn program_name(exe: &str) -> &str {
 /// A signal number as its name (`11` is SIGSEGV); any other number as "signal N", anything else as "a signal".
 pub fn signal_name(n: &str) -> String {
     const NAMES: [&str; 31] = [
-        "SIGHUP", "SIGINT", "SIGQUIT", "SIGILL", "SIGTRAP", "SIGABRT", "SIGBUS", "SIGFPE", "SIGKILL", "SIGUSR1", "SIGSEGV", "SIGUSR2",
-        "SIGPIPE", "SIGALRM", "SIGTERM", "SIGSTKFLT", "SIGCHLD", "SIGCONT", "SIGSTOP", "SIGTSTP", "SIGTTIN", "SIGTTOU", "SIGURG",
-        "SIGXCPU", "SIGXFSZ", "SIGVTALRM", "SIGPROF", "SIGWINCH", "SIGIO", "SIGPWR", "SIGSYS",
+        "SIGHUP",
+        "SIGINT",
+        "SIGQUIT",
+        "SIGILL",
+        "SIGTRAP",
+        "SIGABRT",
+        "SIGBUS",
+        "SIGFPE",
+        "SIGKILL",
+        "SIGUSR1",
+        "SIGSEGV",
+        "SIGUSR2",
+        "SIGPIPE",
+        "SIGALRM",
+        "SIGTERM",
+        "SIGSTKFLT",
+        "SIGCHLD",
+        "SIGCONT",
+        "SIGSTOP",
+        "SIGTSTP",
+        "SIGTTIN",
+        "SIGTTOU",
+        "SIGURG",
+        "SIGXCPU",
+        "SIGXFSZ",
+        "SIGVTALRM",
+        "SIGPROF",
+        "SIGWINCH",
+        "SIGIO",
+        "SIGPWR",
+        "SIGSYS",
     ];
     match n.trim().parse::<usize>() {
         Ok(i) if (1..=31).contains(&i) => NAMES[i - 1].to_string(),
@@ -158,10 +187,10 @@ mod tests {
     #[test]
     fn other_files_are_not_cores() {
         for bad in [
-            format!(".#core.crashy.1000.{BOOT}.1.2.zst"),             // systemd's temporary name, renamed when done
-            format!("core.crashy.1000.{BOOT}.1"),                     // a field missing
-            format!("core..1000.{BOOT}.1.2.zst"),                     // no program name
-            format!("core.crashy.root.{BOOT}.1.2.zst"),               // uid is not a number
+            format!(".#core.crashy.1000.{BOOT}.1.2.zst"), // systemd's temporary name, renamed when done
+            format!("core.crashy.1000.{BOOT}.1"),         // a field missing
+            format!("core..1000.{BOOT}.1.2.zst"),         // no program name
+            format!("core.crashy.root.{BOOT}.1.2.zst"),   // uid is not a number
             "core.crashy.1000.notabootid.1.2.zst".to_string(),
             format!("core.crashy.1000.{BOOT}.1.x2.zst"),
             "notes.txt".to_string(),
@@ -213,7 +242,13 @@ mod tests {
     #[test]
     fn crashes_from_the_journal() {
         // a core that was not stored (Storage=none): the entry has no COREDUMP_FILENAME
-        let e = fields(&[("COREDUMP_UID", "1000"), ("COREDUMP_PID", "4242"), ("COREDUMP_EXE", "/opt/Game/game.x86_64"), ("COREDUMP_SIGNAL", "11"), ("COREDUMP_COMM", "game.x86_64")]);
+        let e = fields(&[
+            ("COREDUMP_UID", "1000"),
+            ("COREDUMP_PID", "4242"),
+            ("COREDUMP_EXE", "/opt/Game/game.x86_64"),
+            ("COREDUMP_SIGNAL", "11"),
+            ("COREDUMP_COMM", "game.x86_64"),
+        ]);
         assert_eq!(crash_of_entry(1000, &e), Some((Some(4242), Crash { exe: "/opt/Game/game.x86_64".into(), signal: "SIGSEGV".into() })));
         assert_eq!(crash_of_entry(1001, &e), None, "another user's crash");
         assert_eq!(crash_of_entry(1000, fields(&[("COREDUMP_PID", "1"), ("COREDUMP_EXE", "/x")])), None, "no owner: not shown");

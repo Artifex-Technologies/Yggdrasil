@@ -21,7 +21,20 @@ fn path() -> PathBuf {
 
 pub fn load() -> Vec<Item> {
     let v: Value = std::fs::read_to_string(path()).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null);
-    v.as_array().map(|a| a.iter().map(|x| Item { id: s(x, "id"), name: s(x, "name"), what: s(x, "what"), when: s(x, "when"), at: x.get("at").and_then(|n| n.as_i64()).unwrap_or(0) }).filter(|i| !i.id.is_empty()).collect()).unwrap_or_default()
+    v.as_array()
+        .map(|a| {
+            a.iter()
+                .map(|x| Item {
+                    id: s(x, "id"),
+                    name: s(x, "name"),
+                    what: s(x, "what"),
+                    when: s(x, "when"),
+                    at: x.get("at").and_then(|n| n.as_i64()).unwrap_or(0),
+                })
+                .filter(|i| !i.id.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn s(v: &Value, k: &str) -> String {
@@ -40,7 +53,11 @@ fn save(items: &[Item]) {
 /// Add a finished install to the top of the history (an app installed again moves up instead of appearing twice).
 pub fn record(id: &str, name: &str, what: &str) {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
-    let when = std::process::Command::new("date").arg("+%b %-d, %Y").output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+    let when = std::process::Command::new("date")
+        .arg("+%b %-d, %Y")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
     let mut items = load();
     items.retain(|i| i.id != id);
     items.insert(0, Item { id: id.to_string(), name: name.to_string(), what: what.to_string(), when, at: now });

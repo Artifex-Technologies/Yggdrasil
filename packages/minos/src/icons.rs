@@ -4,7 +4,7 @@
 //!
 //! Each icon is laid out in a unit square and scaled to the rectangle it is given.
 
-use eframe::egui::{Color32, CornerRadius, Painter, Pos2, Rect, Shape, Stroke, StrokeKind, vec2};
+use eframe::egui::{vec2, Color32, CornerRadius, Painter, Pos2, Rect, Shape, Stroke, StrokeKind};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Icon {
@@ -98,7 +98,16 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
             let tip = (0.5 + 0.3 * a.cos(), 0.5 + 0.3 * a.sin());
             let (dx, dy) = (-a.sin(), a.cos()); // the way the circle runs at its end
             let (len, wide) = (0.16, 0.12);
-            line(p, &f, &[(tip.0 - dx * len - dy * wide, tip.1 - dy * len + dx * wide), tip, (tip.0 - dx * len + dy * wide, tip.1 - dy * len - dx * wide)], color);
+            line(
+                p,
+                &f,
+                &[
+                    (tip.0 - dx * len - dy * wide, tip.1 - dy * len + dx * wide),
+                    tip,
+                    (tip.0 - dx * len + dy * wide, tip.1 - dy * len - dx * wide),
+                ],
+                color,
+            );
         }
         Icon::NewFolder => {
             p.rect_stroke(f.rect(0.1, 0.3, 0.9, 0.82), CornerRadius::same(2), s, StrokeKind::Inside);
@@ -209,7 +218,12 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
                 let x = if k % 2 == 0 { 0.46 } else { 0.5 };
                 p.rect_filled(f.rect(x, y, x + 0.08, y + 0.07), CornerRadius::ZERO, dark);
             }
-            p.rect_stroke(f.rect(0.43, 0.66, 0.57, 0.84), CornerRadius::same(2), Stroke::new((f.size * 0.06).max(1.0), dark), StrokeKind::Inside);
+            p.rect_stroke(
+                f.rect(0.43, 0.66, 0.57, 0.84),
+                CornerRadius::same(2),
+                Stroke::new((f.size * 0.06).max(1.0), dark),
+                StrokeKind::Inside,
+            );
         }
         Icon::Preview => {
             p.rect_stroke(f.rect(0.1, 0.18, 0.9, 0.82), CornerRadius::same(3), s, StrokeKind::Inside);
@@ -244,7 +258,10 @@ pub fn paint_special(p: &Painter, rect: Rect, which: minos_core::places::Special
         }
         Special::Documents => {
             poly(&[(0.2, 0.06), (0.62, 0.06), (0.82, 0.26), (0.82, 0.94), (0.2, 0.94)], Color32::from_rgb(246, 248, 251));
-            p.add(Shape::closed_line([(0.2, 0.06), (0.62, 0.06), (0.82, 0.26), (0.82, 0.94), (0.2, 0.94)].iter().map(|&(x, y)| f.p(x, y)).collect(), rim));
+            p.add(Shape::closed_line(
+                [(0.2, 0.06), (0.62, 0.06), (0.82, 0.26), (0.82, 0.94), (0.2, 0.94)].iter().map(|&(x, y)| f.p(x, y)).collect(),
+                rim,
+            ));
             poly(&[(0.62, 0.06), (0.82, 0.26), (0.62, 0.26)], Color32::from_rgb(200, 206, 216));
             for (y, w) in [(0.42, 0.7), (0.54, 0.7), (0.66, 0.7), (0.78, 0.56)] {
                 p.line_segment([f.p(0.3, y), f.p(w, y)], Stroke::new((f.size * 0.05).max(1.0), blue));

@@ -84,7 +84,11 @@ fn main() -> ExitCode {
                     }
                 }
             }
-            if all_ok { ExitCode::SUCCESS } else { ExitCode::from(1) }
+            if all_ok {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(1)
+            }
         }
         _ => {
             eprintln!("usage: minos-cloud link NAME LOCAL REMOTE | links | verify [NAME] | unlink NAME");

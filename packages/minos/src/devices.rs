@@ -11,7 +11,11 @@ use std::process::Command;
 pub fn signature() -> String {
     let mut s = String::new();
     if let Ok(rd) = std::fs::read_dir("/sys/block") {
-        let mut names: Vec<String> = rd.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| !n.starts_with("loop") && !n.starts_with("zram") && !n.starts_with("ram")).collect();
+        let mut names: Vec<String> = rd
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| !n.starts_with("loop") && !n.starts_with("zram") && !n.starts_with("ram"))
+            .collect();
         names.sort();
         for n in names {
             let size = std::fs::read_to_string(format!("/sys/block/{n}/size")).unwrap_or_default();
@@ -42,12 +46,19 @@ fn run(cmd: &str, args: &[&str]) -> Result<String, String> {
 pub fn mount(part: &str) -> Result<PathBuf, String> {
     let out = run("udisksctl", &["mount", "--no-user-interaction", "-b", &format!("/dev/{part}")])?;
     // "Mounted /dev/sda1 at /run/media/me/STICK"
-    out.trim().rsplit_once(" at ").map(|(_, p)| PathBuf::from(p.trim_end_matches('.'))).ok_or_else(|| format!("udisksctl said: {}", out.trim()))
+    out.trim()
+        .rsplit_once(" at ")
+        .map(|(_, p)| PathBuf::from(p.trim_end_matches('.')))
+        .ok_or_else(|| format!("udisksctl said: {}", out.trim()))
 }
 
 /// The partitions of a removable disk that have a filesystem and are not mounted: opened when it is plugged in.
 pub fn unmounted_parts(d: &Disk) -> Vec<String> {
-    d.parts.iter().filter(|p| p.mounts.is_empty() && !p.fs.is_empty() && p.fs != "swap" && !p.fs.contains("LVM") && !p.fs.contains("crypto")).map(|p| p.name.clone()).collect()
+    d.parts
+        .iter()
+        .filter(|p| p.mounts.is_empty() && !p.fs.is_empty() && p.fs != "swap" && !p.fs.contains("LVM") && !p.fs.contains("crypto"))
+        .map(|p| p.name.clone())
+        .collect()
 }
 
 fn refuse_system(d: &Disk) -> Result<(), String> {
@@ -60,7 +71,11 @@ fn refuse_system(d: &Disk) -> Result<(), String> {
 fn unmount_all(d: &Disk) -> Result<(), String> {
     for p in d.parts.iter().filter(|p| !p.mounts.is_empty()) {
         run("udisksctl", &["unmount", "--no-user-interaction", "-b", &format!("/dev/{}", p.name)]).map_err(|e| {
-            if e.contains("busy") || e.contains("target is busy") { format!("{} is still in use (a file open from it, or a terminal in it); close that first", p.label) } else { e }
+            if e.contains("busy") || e.contains("target is busy") {
+                format!("{} is still in use (a file open from it, or a terminal in it); close that first", p.label)
+            } else {
+                e
+            }
         })?;
     }
     Ok(())
@@ -128,11 +143,29 @@ pub fn format(d: &Disk, fs: usize, label: &str) -> Result<(), String> {
     unmount_all(d)?;
     let obj = format!("/org/freedesktop/UDisks2/block_devices/{}", d.name);
     let label = clean_label(fs, label);
-    run("busctl", &["call", "--timeout=120", "org.freedesktop.UDisks2", &obj, "org.freedesktop.UDisks2.Block", "Format", "sa{sv}", "dos", "0"])?;
+    run(
+        "busctl",
+        &["call", "--timeout=120", "org.freedesktop.UDisks2", &obj, "org.freedesktop.UDisks2.Block", "Format", "sa{sv}", "dos", "0"],
+    )?;
     // "--": the label and mkfs arguments may start with "-"
-    let mut args: Vec<String> = ["call", "--timeout=600", "--", "org.freedesktop.UDisks2", &obj, "org.freedesktop.UDisks2.PartitionTable", "CreatePartitionAndFormat", "ttssa{sv}sa{sv}", "1048576", "0", mbr, "", "0", kind]
-        .map(String::from)
-        .to_vec();
+    let mut args: Vec<String> = [
+        "call",
+        "--timeout=600",
+        "--",
+        "org.freedesktop.UDisks2",
+        &obj,
+        "org.freedesktop.UDisks2.PartitionTable",
+        "CreatePartitionAndFormat",
+        "ttssa{sv}sa{sv}",
+        "1048576",
+        "0",
+        mbr,
+        "",
+        "0",
+        kind,
+    ]
+    .map(String::from)
+    .to_vec();
     args.extend(format_options(kind, &label));
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     run("busctl", &args)?;
@@ -141,8 +174,18 @@ pub fn format(d: &Disk, fs: usize, label: &str) -> Result<(), String> {
 
 /// A tool Minos can start for a drive: (shown name, program, package, what it does).
 pub const BOOTABLE: [(&str, &str, &str, &str); 2] = [
-    ("Write an ISO (Impression)", "impression", "impression", "Writes one Linux or other ISO image to the drive, like Rufus' default mode."),
-    ("Multi-ISO boot drive (Ventoy)", "ventoygui", "ventoy-bin", "Installs Ventoy once; then copy any number of ISOs (Windows ones too) onto the drive and pick one at boot."),
+    (
+        "Write an ISO (Impression)",
+        "impression",
+        "impression",
+        "Writes one Linux or other ISO image to the drive, like Rufus' default mode.",
+    ),
+    (
+        "Multi-ISO boot drive (Ventoy)",
+        "ventoygui",
+        "ventoy-bin",
+        "Installs Ventoy once; then copy any number of ISOs (Windows ones too) onto the drive and pick one at boot.",
+    ),
 ];
 pub const PARTITIONER: (&str, &str) = ("gparted", "gparted");
 
@@ -155,7 +198,13 @@ pub fn launch(program: &str, package: &str) -> Result<(), String> {
     if !installed(program) {
         return Err(package.to_string());
     }
-    Command::new(program).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn().map(|_| ()).map_err(|e| format!("could not start {program}: {e}"))
+    Command::new(program)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("could not start {program}: {e}"))
 }
 
 #[cfg(test)]
@@ -165,7 +214,22 @@ mod tests {
 
     fn disk(removable: bool, mount: &str) -> Disk {
         let mounts = if mount.is_empty() { vec![] } else { vec![PathBuf::from(mount)] };
-        Disk { name: "sda".into(), label: "UDisk (sda)".into(), size: 4 << 30, removable, model: "UDisk".into(), parts: vec![Partition { name: "sda1".into(), label: "Partition (sda1)".into(), volume: String::new(), fs: "vfat".into(), size: 4 << 30, mounts, usage: None }] }
+        Disk {
+            name: "sda".into(),
+            label: "UDisk (sda)".into(),
+            size: 4 << 30,
+            removable,
+            model: "UDisk".into(),
+            parts: vec![Partition {
+                name: "sda1".into(),
+                label: "Partition (sda1)".into(),
+                volume: String::new(),
+                fs: "vfat".into(),
+                size: 4 << 30,
+                mounts,
+                usage: None,
+            }],
+        }
     }
 
     #[test]

@@ -14,28 +14,16 @@ fn scratch(name: &str) -> PathBuf {
 
 fn run(bin: &str, dir: &Path, args: &[&str], env: &[(&str, &str)]) -> (i32, String, String) {
     let mut c = Command::new(bin);
-    c.args(args)
-        .env_clear()
-        .env("HOME", dir.join("home"))
-        .env("PATH", dir.join("bin"))
-        .env("LANG", "C.UTF-8")
-        .current_dir(dir);
+    c.args(args).env_clear().env("HOME", dir.join("home")).env("PATH", dir.join("bin")).env("LANG", "C.UTF-8").current_dir(dir);
     for (k, v) in env {
         c.env(k, v);
     }
     let o = c.output().unwrap();
-    (
-        o.status.code().unwrap_or(-1),
-        String::from_utf8_lossy(&o.stdout).into_owned(),
-        String::from_utf8_lossy(&o.stderr).into_owned(),
-    )
+    (o.status.code().unwrap_or(-1), String::from_utf8_lossy(&o.stdout).into_owned(), String::from_utf8_lossy(&o.stderr).into_owned())
 }
 
 fn brand_icons() -> String {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("share/brand-icons")
-        .to_string_lossy()
-        .into_owned()
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("share/brand-icons").to_string_lossy().into_owned()
 }
 
 // ---------------------------------------------------------------- liki-build
@@ -51,10 +39,7 @@ fn the_package_build_writes_the_natives_only() {
         &[("LIKI_BRAND_ICONS", &brand_icons())],
     );
     assert_eq!(code, 0);
-    assert!(
-        stdout.starts_with("Liki: ") && stdout.contains("icons (glyph, brand) in"),
-        "{stdout}"
-    );
+    assert!(stdout.starts_with("Liki: ") && stdout.contains("icons (glyph, brand) in"), "{stdout}");
     for f in [
         "apps/scalable/application-default-icon.svg",
         "places/scalable/folder.svg",
@@ -65,7 +50,10 @@ fn the_package_build_writes_the_natives_only() {
         assert!(out.join(f).is_file(), "{f}");
     }
     let index = std::fs::read_to_string(out.join("index.theme")).unwrap();
-    assert!(index.starts_with("[Icon Theme]\nName=Liki\n") && index.contains("Directories=apps/scalable,places/scalable,mimetypes/scalable,devices/scalable,status/scalable\n"));
+    assert!(
+        index.starts_with("[Icon Theme]\nName=Liki\n")
+            && index.contains("Directories=apps/scalable,places/scalable,mimetypes/scalable,devices/scalable,status/scalable\n")
+    );
     // --out: nothing remembered
     assert!(!d.join("home/.config/labyrinth/brand-pack.json").exists());
     // the accent colours Yggdrasil's own glyphs
@@ -78,68 +66,30 @@ fn a_build_for_the_user_draws_logos_remembers_and_rebuilds() {
     let d = scratch("user");
     let apps = d.join("home/.local/share/applications");
     std::fs::create_dir_all(&apps).unwrap();
-    std::fs::write(
-        apps.join("ff.desktop"),
-        "[Desktop Entry]\nName=Firefox\nIcon=firefox\n",
-    )
-    .unwrap();
+    std::fs::write(apps.join("ff.desktop"), "[Desktop Entry]\nName=Firefox\nIcon=firefox\n").unwrap();
     // an icon name with a "/" is left out (it used to be written outside the pack, or to stop the build)
-    std::fs::write(
-        apps.join("evil.desktop"),
-        "[Desktop Entry]\nName=Firefox\nIcon=../../../evil/firefox\n",
-    )
-    .unwrap();
+    std::fs::write(apps.join("evil.desktop"), "[Desktop Entry]\nName=Firefox\nIcon=../../../evil/firefox\n").unwrap();
     std::fs::create_dir_all(d.join("home/.config/yggdrasil")).unwrap();
-    std::fs::write(
-        d.join("home/.config/yggdrasil/appearance.conf"),
-        "accent = 200, 100, 50\n",
-    )
-    .unwrap();
+    std::fs::write(d.join("home/.config/yggdrasil/appearance.conf"), "accent = 200, 100, 50\n").unwrap();
     let env = [("LIKI_BRAND_ICONS", brand_icons())];
     let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    let (code, _, _) = run(
-        env!("CARGO_BIN_EXE_liki-build"),
-        &d,
-        &["--shape", "circle", "--style", "dark"],
-        &env,
-    );
+    let (code, _, _) = run(env!("CARGO_BIN_EXE_liki-build"), &d, &["--shape", "circle", "--style", "dark"], &env);
     assert_eq!(code, 0);
     let pack = d.join("home/.local/share/icons/Liki");
     let ff = std::fs::read_to_string(pack.join("apps/scalable/firefox.svg")).unwrap();
-    assert!(
-        ff.contains("<circle cx=\"512\" cy=\"512\" r=\"480\" fill=\"#1b1b22\"/>")
-            && ff.contains("fill=\"#ff7139\""),
-        "{ff}"
-    );
+    assert!(ff.contains("<circle cx=\"512\" cy=\"512\" r=\"480\" fill=\"#1b1b22\"/>") && ff.contains("fill=\"#ff7139\""), "{ff}");
     assert!(!d.join("evil").exists() && !d.join("home/.local/share/evil").exists());
-    assert!(
-        std::fs::read_to_string(pack.join("apps/scalable/minos.svg"))
-            .unwrap()
-            .contains("#c86432")
-    );
+    assert!(std::fs::read_to_string(pack.join("apps/scalable/minos.svg")).unwrap().contains("#c86432"));
     let conf = d.join("home/.config/labyrinth/brand-pack.json");
-    assert_eq!(
-        std::fs::read_to_string(&conf).unwrap(),
-        r#"{"shape": "circle", "style": "dark", "name": "Liki"}"#
-    );
+    assert_eq!(std::fs::read_to_string(&conf).unwrap(), r#"{"shape": "circle", "style": "dark", "name": "Liki"}"#);
     // --rebuild repeats it; a damaged file leaves the given values (and the pack) alone
-    std::fs::write(
-        &conf,
-        r#"{"shape": "triangle", "style": "purple", "name": "../x"}"#,
-    )
-    .unwrap();
+    std::fs::write(&conf, r#"{"shape": "triangle", "style": "purple", "name": "../x"}"#).unwrap();
     let (code, stdout, _) = run(env!("CARGO_BIN_EXE_liki-build"), &d, &["--rebuild"], &env);
     assert_eq!(code, 0);
-    assert!(
-        stdout.starts_with("Liki: ") && stdout.contains("(glyph, purple)"),
-        "{stdout}"
-    );
+    assert!(stdout.starts_with("Liki: ") && stdout.contains("(glyph, purple)"), "{stdout}");
     std::fs::write(&conf, "[1]").unwrap();
     let (code, stdout, _) = run(env!("CARGO_BIN_EXE_liki-build"), &d, &["--rebuild"], &env);
-    assert_eq!(
-        (code, stdout.as_str()),
-        (0, "No earlier build to repeat.\n")
-    );
+    assert_eq!((code, stdout.as_str()), (0, "No earlier build to repeat.\n"));
 }
 
 #[test]
@@ -148,12 +98,8 @@ fn a_bracket_in_the_name_leaves_other_packs_alone() {
     let other = d.join("home/.local/share/icons/Liki1/apps/scalable");
     std::fs::create_dir_all(&other).unwrap();
     std::fs::write(other.join("keep.svg"), "<svg/>").unwrap();
-    let (code, _, _) = run(
-        env!("CARGO_BIN_EXE_liki-build"),
-        &d,
-        &["--name", "Liki[12]", "--natives-only"],
-        &[("LIKI_BRAND_ICONS", &brand_icons())],
-    );
+    let (code, _, _) =
+        run(env!("CARGO_BIN_EXE_liki-build"), &d, &["--name", "Liki[12]", "--natives-only"], &[("LIKI_BRAND_ICONS", &brand_icons())]);
     assert_eq!(code, 0);
     assert!(other.join("keep.svg").exists());
 }
@@ -169,26 +115,13 @@ fn the_command_line_is_argparses() {
     );
     let (code, _, err) = run(env!("CARGO_BIN_EXE_liki-build"), &d, &["--n", "x"], &[]);
     assert_eq!(code, 2);
-    assert!(
-        err.ends_with(
-            "liki-build: error: ambiguous option: --n could match --name, --natives-only\n"
-        ),
-        "{err}"
-    );
-    let (code, out, _) = run(
-        env!("CARGO_BIN_EXE_liki-build"),
-        &d,
-        &["-h"],
-        &[("COLUMNS", "200")],
-    );
+    assert!(err.ends_with("liki-build: error: ambiguous option: --n could match --name, --natives-only\n"), "{err}");
+    let (code, out, _) = run(env!("CARGO_BIN_EXE_liki-build"), &d, &["-h"], &[("COLUMNS", "200")]);
     assert_eq!(code, 0);
     assert!(out.starts_with("usage: liki-build [-h] [--shape {glyph,squircle,rounded,circle,hexagon}] [--style {brand,dark,purple}] [--name NAME] [--out OUT] [--natives-only] [--rebuild]\n\nBuild an icon pack of app logos.\n\noptions:\n"), "{out}");
     let (code, _, err) = run(env!("CARGO_BIN_EXE_liki-icon-import"), &d, &[], &[]);
     assert_eq!(code, 2);
-    assert!(
-        err.ends_with("liki-icon-import: error: the following arguments are required: pack\n"),
-        "{err}"
-    );
+    assert!(err.ends_with("liki-icon-import: error: the following arguments are required: pack\n"), "{err}");
 }
 
 // ---------------------------------------------------------------- liki-icns
@@ -217,35 +150,14 @@ fn icns(chunks: &[(&[u8; 4], Vec<u8>)]) -> Vec<u8> {
 #[test]
 fn icns_gives_the_biggest_png_and_leaves_nothing_on_failure() {
     let d = scratch("icns");
-    std::fs::write(
-        d.join("a.icns"),
-        icns(&[
-            (b"ic07", png(128, 128)),
-            (b"ic09", png(512, 512)),
-            (b"ic08", png(256, 256)),
-        ]),
-    )
-    .unwrap();
-    let (code, _, _) = run(
-        env!("CARGO_BIN_EXE_liki-icns"),
-        &d,
-        &["a.icns", "a.png"],
-        &[],
-    );
+    std::fs::write(d.join("a.icns"), icns(&[(b"ic07", png(128, 128)), (b"ic09", png(512, 512)), (b"ic08", png(256, 256))])).unwrap();
+    let (code, _, _) = run(env!("CARGO_BIN_EXE_liki-icns"), &d, &["a.icns", "a.png"], &[]);
     assert_eq!(code, 0);
     assert_eq!(std::fs::read(d.join("a.png")).unwrap(), png(512, 512));
     std::fs::write(d.join("b.icns"), b"nope").unwrap();
-    let (code, _, err) = run(
-        env!("CARGO_BIN_EXE_liki-icns"),
-        &d,
-        &["b.icns", "b.png"],
-        &[],
-    );
+    let (code, _, err) = run(env!("CARGO_BIN_EXE_liki-icns"), &d, &["b.icns", "b.png"], &[]);
     assert_eq!((code, err.lines().count()), (1, 1));
-    assert!(
-        !d.join("b.png").exists(),
-        "an empty picture was left behind"
-    );
+    assert!(!d.join("b.png").exists(), "an empty picture was left behind");
     let (code, _, err) = run(env!("CARGO_BIN_EXE_liki-icns"), &d, &["one"], &[]);
     assert_eq!(code, 1);
     assert!(err.starts_with("Extract the biggest PNG from a macOS .icns file"));
@@ -253,11 +165,7 @@ fn icns_gives_the_biggest_png_and_leaves_nothing_on_failure() {
 
 #[test]
 fn broken_icns_files_never_panic() {
-    let good = icns(&[
-        (b"ic07", png(128, 128)),
-        (b"ARGB", vec![7; 40]),
-        (b"ic09", png(512, 512)),
-    ]);
+    let good = icns(&[(b"ic07", png(128, 128)), (b"ARGB", vec![7; 40]), (b"ic09", png(512, 512))]);
     let mut seed = 0x9e37_79b9u32;
     let mut next = || {
         seed ^= seed << 13;
@@ -286,11 +194,7 @@ fn zip(entries: &[(&str, &[u8], bool)]) -> Vec<u8> {
     let mut out = vec![];
     let mut central = vec![];
     for (name, data, deflate) in entries {
-        let comp = if *deflate {
-            miniz_oxide::deflate::compress_to_vec(data, 6)
-        } else {
-            data.to_vec()
-        };
+        let comp = if *deflate { miniz_oxide::deflate::compress_to_vec(data, 6) } else { data.to_vec() };
         let crc = liki::import::zip::crc32(data, 0);
         let offset = out.len() as u32;
         let method: u16 = if *deflate { 8 } else { 0 };
@@ -334,11 +238,7 @@ fn a_pack_becomes_a_theme_for_the_installed_programs() {
     let d = scratch("import");
     let apps = d.join("home/.local/share/applications");
     std::fs::create_dir_all(&apps).unwrap();
-    std::fs::write(
-        apps.join("vlc.desktop"),
-        "[Desktop Entry]\nName=VLC\nIcon=vlc\n",
-    )
-    .unwrap();
+    std::fs::write(apps.join("vlc.desktop"), "[Desktop Entry]\nName=VLC\nIcon=vlc\n").unwrap();
     let big = png(192, 192);
     let pack = zip(&[
         ("assets/appfilter.xml", APPFILTER.as_bytes(), true),
@@ -347,22 +247,11 @@ fn a_pack_becomes_a_theme_for_the_installed_programs() {
     ]);
     std::fs::write(d.join("Test Pack v1.2.3 (Patched).apk"), pack).unwrap();
     let out = d.join("themes");
-    let (code, stdout, err) = run(
-        env!("CARGO_BIN_EXE_liki-icon-import"),
-        &d,
-        &[
-            "Test Pack v1.2.3 (Patched).apk",
-            "--out",
-            out.to_str().unwrap(),
-        ],
-        &[],
-    );
+    let (code, stdout, err) =
+        run(env!("CARGO_BIN_EXE_liki-icon-import"), &d, &["Test Pack v1.2.3 (Patched).apk", "--out", out.to_str().unwrap()], &[]);
     assert_eq!(code, 0, "{err}");
     assert!(stdout.starts_with("The pack lists 2 app(s), 1 of them with a usable PNG picture (1 PNG pictures in all).\n"), "{stdout}");
-    assert_eq!(
-        std::fs::read(out.join("Test Pack/192x192/apps/vlc.png")).unwrap(),
-        big
-    );
+    assert_eq!(std::fs::read(out.join("Test Pack/192x192/apps/vlc.png")).unwrap(), big);
     let index = std::fs::read_to_string(out.join("Test Pack/index.theme")).unwrap();
     assert!(index.contains("Directories=192x192/apps\n") && index.contains("Inherits=hicolor\n"));
 }
@@ -371,40 +260,13 @@ fn a_pack_becomes_a_theme_for_the_installed_programs() {
 fn junk_is_refused() {
     let d = scratch("junk");
     std::fs::write(d.join("x.apk"), zip(&[("readme.txt", b"no icons", false)])).unwrap();
-    let (code, _, err) = run(
-        env!("CARGO_BIN_EXE_liki-icon-import"),
-        &d,
-        &["x.apk", "--out", "o"],
-        &[],
-    );
-    assert_eq!(
-        (code, err.as_str()),
-        (
-            1,
-            "No PNG pictures found in that file (is it an Android icon pack?).\n"
-        )
-    );
+    let (code, _, err) = run(env!("CARGO_BIN_EXE_liki-icon-import"), &d, &["x.apk", "--out", "o"], &[]);
+    assert_eq!((code, err.as_str()), (1, "No PNG pictures found in that file (is it an Android icon pack?).\n"));
     std::fs::write(d.join("y.apk"), b"not a zip").unwrap();
-    let (code, _, err) = run(
-        env!("CARGO_BIN_EXE_liki-icon-import"),
-        &d,
-        &["y.apk", "--out", "o"],
-        &[],
-    );
-    assert_eq!(
-        (code, err.as_str()),
-        (1, "error: that is not a zip/apk file\n")
-    );
-    let (code, _, err) = run(
-        env!("CARGO_BIN_EXE_liki-icon-import"),
-        &d,
-        &["missing.apk"],
-        &[],
-    );
-    assert_eq!(
-        (code, err.as_str()),
-        (2, "error: no such file: missing.apk\n")
-    );
+    let (code, _, err) = run(env!("CARGO_BIN_EXE_liki-icon-import"), &d, &["y.apk", "--out", "o"], &[]);
+    assert_eq!((code, err.as_str()), (1, "error: that is not a zip/apk file\n"));
+    let (code, _, err) = run(env!("CARGO_BIN_EXE_liki-icon-import"), &d, &["missing.apk"], &[]);
+    assert_eq!((code, err.as_str()), (2, "error: no such file: missing.apk\n"));
 }
 
 #[test]
@@ -448,16 +310,13 @@ fn broken_archives_never_panic_and_never_read_past_a_members_size() {
 
 #[test]
 fn plain_xml_parses_or_fails_as_expat_decides() {
-    let ok = liki::import::xml::parse(br#"<?xml version="1.0"?><!DOCTYPE r [<!ENTITY f "firefox">]><r xmlns:a="u"><item a:drawable="x" drawable="&f;"/></r>"#).unwrap();
+    let ok = liki::import::xml::parse(
+        br#"<?xml version="1.0"?><!DOCTYPE r [<!ENTITY f "firefox">]><r xmlns:a="u"><item a:drawable="x" drawable="&f;"/></r>"#,
+    )
+    .unwrap();
     assert_eq!(
         ok[1],
-        (
-            "item".to_string(),
-            vec![
-                ("{u}drawable".to_string(), "x".to_string()),
-                ("drawable".to_string(), "firefox".to_string())
-            ]
-        )
+        ("item".to_string(), vec![("{u}drawable".to_string(), "x".to_string()), ("drawable".to_string(), "firefox".to_string())])
     );
     assert!(liki::import::xml::parse(b"<r><item drawable='x'></r>").is_err());
     assert!(liki::import::xml::parse(br#"<!DOCTYPE r SYSTEM "x.dtd"><r>&undefined;</r>"#).is_err());

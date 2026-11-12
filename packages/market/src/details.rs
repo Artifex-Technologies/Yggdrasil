@@ -63,10 +63,29 @@ fn paragraphs(node: roxmltree::Node) -> String {
     let mut out: Vec<String> = vec![];
     for ch in node.children().filter(|c| c.is_element()) {
         match ch.tag_name().name() {
-            "p" => out.push(ch.descendants().filter(|d| d.is_text()).map(|t| t.text().unwrap_or("")).collect::<Vec<_>>().join("").split_whitespace().collect::<Vec<_>>().join(" ")),
+            "p" => out.push(
+                ch.descendants()
+                    .filter(|d| d.is_text())
+                    .map(|t| t.text().unwrap_or(""))
+                    .collect::<Vec<_>>()
+                    .join("")
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            ),
             "ul" | "ol" => {
                 for li in ch.children().filter(|c| c.has_tag_name("li")) {
-                    out.push(format!("\u{2022} {}", li.descendants().filter(|d| d.is_text()).map(|t| t.text().unwrap_or("")).collect::<Vec<_>>().join("").split_whitespace().collect::<Vec<_>>().join(" ")));
+                    out.push(format!(
+                        "\u{2022} {}",
+                        li.descendants()
+                            .filter(|d| d.is_text())
+                            .map(|t| t.text().unwrap_or(""))
+                            .collect::<Vec<_>>()
+                            .join("")
+                            .split_whitespace()
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    ));
                 }
             }
             _ => {}
@@ -82,22 +101,48 @@ pub fn parse_xml(xml: &str, from: &str) -> Option<Details> {
     let comp = doc.descendants().find(|n| n.has_tag_name("component"))?;
     let text_of = |name: &str| comp.children().find(|c| c.has_tag_name(name)).and_then(|c| c.text()).unwrap_or("").trim().to_string();
     let description = comp.children().find(|c| c.has_tag_name("description")).map(paragraphs).unwrap_or_default();
-    let homepage = comp.children().filter(|c| c.has_tag_name("url")).find(|c| c.attribute("type") == Some("homepage")).and_then(|c| c.text()).unwrap_or("").trim().to_string();
-    let developer = comp.children().find(|c| c.has_tag_name("developer")).and_then(|d| d.children().find(|n| n.has_tag_name("name"))).and_then(|n| n.text()).or_else(|| comp.children().find(|c| c.has_tag_name("developer_name")).and_then(|c| c.text())).unwrap_or("").trim().to_string();
+    let homepage = comp
+        .children()
+        .filter(|c| c.has_tag_name("url"))
+        .find(|c| c.attribute("type") == Some("homepage"))
+        .and_then(|c| c.text())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let developer = comp
+        .children()
+        .find(|c| c.has_tag_name("developer"))
+        .and_then(|d| d.children().find(|n| n.has_tag_name("name")))
+        .and_then(|n| n.text())
+        .or_else(|| comp.children().find(|c| c.has_tag_name("developer_name")).and_then(|c| c.text()))
+        .unwrap_or("")
+        .trim()
+        .to_string();
     let mut shots = vec![];
     if let Some(ss) = comp.children().find(|c| c.has_tag_name("screenshots")) {
         for sh in ss.children().filter(|c| c.has_tag_name("screenshot")) {
             let caption = sh.children().find(|c| c.has_tag_name("caption")).and_then(|c| c.text()).unwrap_or("").trim().to_string();
             // the biggest-looking source image is large; any thumbnail is fine for this window: prefer a thumbnail ~ 600-800 px wide, else the source
             let imgs: Vec<_> = sh.children().filter(|c| c.has_tag_name("image")).collect();
-            let thumb = imgs.iter().filter(|i| i.attribute("type") == Some("thumbnail")).min_by_key(|i| (i.attribute("width").and_then(|w| w.parse::<i32>().ok()).unwrap_or(0) - 752).abs());
+            let thumb = imgs
+                .iter()
+                .filter(|i| i.attribute("type") == Some("thumbnail"))
+                .min_by_key(|i| (i.attribute("width").and_then(|w| w.parse::<i32>().ok()).unwrap_or(0) - 752).abs());
             let pick = thumb.or_else(|| imgs.iter().find(|i| i.attribute("type") != Some("thumbnail"))).or(imgs.first());
             if let Some(url) = pick.and_then(|i| i.text()).map(|t| t.trim().to_string()).filter(|u| u.starts_with("https://")) {
                 shots.push(Shot { url, caption });
             }
         }
     }
-    Some(Details { summary: text_of("summary"), description, screenshots: shots, homepage, license: text_of("project_license"), developer, from: from.to_string() })
+    Some(Details {
+        summary: text_of("summary"),
+        description,
+        screenshots: shots,
+        homepage,
+        license: text_of("project_license"),
+        developer,
+        from: from.to_string(),
+    })
 }
 
 /// The installed app's own AppStream data (no network).
@@ -115,7 +160,8 @@ pub fn local(appstream_id: &str) -> Option<Details> {
 
 /// HTML from Flathub's description as plain paragraphs.
 pub fn html_to_text(html: &str) -> String {
-    let mut s = html.replace("</p>", "\n\n").replace("<li>", "\n\u{2022} ").replace("</li>", "").replace("<br>", "\n").replace("<br/>", "\n");
+    let mut s =
+        html.replace("</p>", "\n\n").replace("<li>", "\n\u{2022} ").replace("</li>", "").replace("<br>", "\n").replace("<br/>", "\n");
     let mut out = String::new();
     let mut in_tag = false;
     for c in s.drain(..) {
@@ -126,8 +172,20 @@ pub fn html_to_text(html: &str) -> String {
             _ => {}
         }
     }
-    let out = out.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'").replace("&nbsp;", " ");
-    let paras: Vec<String> = out.split("\n\n").map(|p| p.lines().map(|l| l.split_whitespace().collect::<Vec<_>>().join(" ")).filter(|l| !l.is_empty()).collect::<Vec<_>>().join("\n")).filter(|p| !p.is_empty()).collect();
+    let out = out
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&nbsp;", " ");
+    let paras: Vec<String> = out
+        .split("\n\n")
+        .map(|p| {
+            p.lines().map(|l| l.split_whitespace().collect::<Vec<_>>().join(" ")).filter(|l| !l.is_empty()).collect::<Vec<_>>().join("\n")
+        })
+        .filter(|p| !p.is_empty())
+        .collect();
     paras.join("\n\n")
 }
 
@@ -137,7 +195,11 @@ pub fn parse_flathub(json_text: &str) -> Option<Details> {
     let mut shots = vec![];
     for sh in v.get("screenshots").and_then(|x| x.as_array()).cloned().unwrap_or_default() {
         let sizes = sh.get("sizes").and_then(|x| x.as_array()).cloned().unwrap_or_default();
-        let w = |z: &Value| z.get("width").and_then(|w| w.as_str().map(|s| s.parse::<i32>().unwrap_or(0)).or_else(|| w.as_i64().map(|n| n as i32))).unwrap_or(0);
+        let w = |z: &Value| {
+            z.get("width")
+                .and_then(|w| w.as_str().map(|s| s.parse::<i32>().unwrap_or(0)).or_else(|| w.as_i64().map(|n| n as i32)))
+                .unwrap_or(0)
+        };
         // the size closest to 750 px wide: sharp in this window without a huge download
         let pick = sizes.iter().min_by_key(|z| (w(z) - 752).abs());
         if let Some(url) = pick.and_then(|z| z.get("src")).and_then(|u| u.as_str()).filter(|u| u.starts_with("https://")) {
@@ -146,8 +208,20 @@ pub fn parse_flathub(json_text: &str) -> Option<Details> {
     }
     let homepage = v.get("urls").and_then(|u| u.get("homepage")).and_then(|h| h.as_str()).unwrap_or("").to_string();
     // Flathub's own packaging notes ("This flatpak is community maintained ...") are about the Flatpak, not the app
-    let description = html_to_text(&s("description")).split("\n\n").filter(|p| !p.to_lowercase().contains("this flatpak")).collect::<Vec<_>>().join("\n\n");
-    Some(Details { summary: s("summary"), description, screenshots: shots, homepage, license: s("project_license"), developer: s("developer_name"), from: "Flathub".into() })
+    let description = html_to_text(&s("description"))
+        .split("\n\n")
+        .filter(|p| !p.to_lowercase().contains("this flatpak"))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    Some(Details {
+        summary: s("summary"),
+        description,
+        screenshots: shots,
+        homepage,
+        license: s("project_license"),
+        developer: s("developer_name"),
+        from: "Flathub".into(),
+    })
 }
 
 fn details_cache(id: &str) -> PathBuf {
@@ -167,7 +241,18 @@ fn from_json(v: &Value) -> Details {
         license: s("license"),
         developer: s("developer"),
         from: s("from"),
-        screenshots: v.get("shots").and_then(|x| x.as_array()).map(|a| a.iter().map(|x| Shot { url: x.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string(), caption: x.get("caption").and_then(|u| u.as_str()).unwrap_or("").to_string() }).collect()).unwrap_or_default(),
+        screenshots: v
+            .get("shots")
+            .and_then(|x| x.as_array())
+            .map(|a| {
+                a.iter()
+                    .map(|x| Shot {
+                        url: x.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string(),
+                        caption: x.get("caption").and_then(|u| u.as_str()).unwrap_or("").to_string(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
 }
 
@@ -182,8 +267,24 @@ pub fn load(entry_id: &str, appstream: &str, flathub: &str, online: bool) -> Opt
     }
     let found = if !appstream.is_empty() { local(appstream) } else { None }.or_else(|| {
         if online && !flathub.is_empty() && safe_id(flathub) {
-            let out = std::process::Command::new("curl").args(["-fsSL", "--proto", "=https", "--max-time", "30", "--max-filesize", "3000000", &format!("https://flathub.org/api/v2/appstream/{flathub}")]).output().ok()?;
-            if out.status.success() { parse_flathub(&String::from_utf8_lossy(&out.stdout)) } else { None }
+            let out = std::process::Command::new("curl")
+                .args([
+                    "-fsSL",
+                    "--proto",
+                    "=https",
+                    "--max-time",
+                    "30",
+                    "--max-filesize",
+                    "3000000",
+                    &format!("https://flathub.org/api/v2/appstream/{flathub}"),
+                ])
+                .output()
+                .ok()?;
+            if out.status.success() {
+                parse_flathub(&String::from_utf8_lossy(&out.stdout))
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -220,7 +321,11 @@ pub fn fetch_image(url: &str) -> Option<PathBuf> {
         return Some(path);
     }
     let tmp = dir.join(format!("{h:016x}.part"));
-    let ok = std::process::Command::new("curl").args(["-fsSL", "--proto", "=https", "--max-time", "40", "--max-filesize", "8000000", "-o", &tmp.to_string_lossy(), url]).status().map(|s| s.success()).unwrap_or(false);
+    let ok = std::process::Command::new("curl")
+        .args(["-fsSL", "--proto", "=https", "--max-time", "40", "--max-filesize", "8000000", "-o", &tmp.to_string_lossy(), url])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
     if ok && std::fs::rename(&tmp, &path).is_ok() {
         Some(path)
     } else {

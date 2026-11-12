@@ -50,7 +50,11 @@ impl SpellConf {
     }
 
     pub fn render(&self) -> String {
-        let mut s = format!("# Spell checking (Settings > Keyboard > Spelling and languages)\nenabled = {}\nlanguages = {}\n", if self.enabled { "yes" } else { "no" }, self.languages.join(", "));
+        let mut s = format!(
+            "# Spell checking (Settings > Keyboard > Spelling and languages)\nenabled = {}\nlanguages = {}\n",
+            if self.enabled { "yes" } else { "no" },
+            self.languages.join(", ")
+        );
         if let Some(p) = &self.packs {
             s.push_str(&format!("packs = {}\n", p.join(", ")));
         }
@@ -110,7 +114,10 @@ impl SpellConf {
 
 /// A list of plain ids (dictionary codes, pack ids): anything else is dropped.
 fn ids(v: &str) -> Vec<String> {
-    v.split([',', ' ']).filter(|s| !s.is_empty() && s.chars().all(|ch| ch.is_ascii_alphanumeric() || "_-".contains(ch))).map(str::to_string).collect()
+    v.split([',', ' '])
+        .filter(|s| !s.is_empty() && s.chars().all(|ch| ch.is_ascii_alphanumeric() || "_-".contains(ch)))
+        .map(str::to_string)
+        .collect()
 }
 
 #[cfg(test)]

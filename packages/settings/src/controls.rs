@@ -36,7 +36,8 @@ pub fn load(controls: Vec<Control>) -> Vec<State> {
                     _ => return None,
                 },
                 ControlKind::Choice => {
-                    let options: Vec<String> = run(&control.command, &["list"])?.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
+                    let options: Vec<String> =
+                        run(&control.command, &["list"])?.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
                     if options.is_empty() {
                         return None;
                     }
@@ -88,7 +89,13 @@ mod tests {
         let ch = script("ch", r#"case "$1" in list) printf 'amy\njenny\n';; get) echo jenny;; set) [ "$2" = amy ];; esac"#);
         let bad = script("bad", "exit 3");
         let weird = script("weird", "echo maybe");
-        let s = load(vec![control(ControlKind::Switch, &sw), control(ControlKind::Choice, &ch), control(ControlKind::Switch, &bad), control(ControlKind::Switch, &weird), control(ControlKind::Action, &bad)]);
+        let s = load(vec![
+            control(ControlKind::Switch, &sw),
+            control(ControlKind::Choice, &ch),
+            control(ControlKind::Switch, &bad),
+            control(ControlKind::Switch, &weird),
+            control(ControlKind::Action, &bad),
+        ]);
         assert_eq!(s.len(), 3, "a failing or unclear switch is hidden; a button is always shown");
         assert!(matches!(s[0].value, Value::Switch(true)));
         assert!(matches!(&s[1].value, Value::Choice { options, current } if options == &["amy", "jenny"] && current == "jenny"));

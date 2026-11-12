@@ -14,7 +14,11 @@ pub const MAX_IMAGES: usize = 5;
 pub enum Kind {
     Text(String),
     /// A PNG and its size in pixels.
-    Image { png: Vec<u8>, w: u32, h: u32 },
+    Image {
+        png: Vec<u8>,
+        w: u32,
+        h: u32,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]

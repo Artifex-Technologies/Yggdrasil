@@ -19,9 +19,9 @@ use crate::tune::{self, Act, GpuClocks, Tune};
 use crate::{sys, ui};
 
 const FIELDS: &str = "temperature.gpu,power.draw,power.limit,clocks.gr,clocks.mem,clocks.max.gr,clocks.max.mem,utilization.gpu,memory.used,memory.total,fan.speed,clocks_event_reasons.active";
-use crate::readout::{self, KEEP};
 #[cfg(test)]
 use crate::curve::move_point;
+use crate::readout::{self, KEEP};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Sample {
@@ -186,7 +186,23 @@ impl Panel {
     pub fn new(ctx: &egui::Context) -> Panel {
         let (tx, rx) = channel();
         let reader = Reader::start(tx.clone(), ctx.clone());
-        let mut p = Panel { tx, rx, reader, history: VecDeque::new(), limits: None, active: String::new(), fans: None, curve: vec![], curve_edited: false, drag: None, tune: None, clk_edit: None, status: String::new(), busy: false, loaded: None };
+        let mut p = Panel {
+            tx,
+            rx,
+            reader,
+            history: VecDeque::new(),
+            limits: None,
+            active: String::new(),
+            fans: None,
+            curve: vec![],
+            curve_edited: false,
+            drag: None,
+            tune: None,
+            clk_edit: None,
+            status: String::new(),
+            busy: false,
+            loaded: None,
+        };
         p.load(ctx);
         p
     }
@@ -197,10 +213,17 @@ impl Panel {
         let (tx, ctx) = (self.tx.clone(), ctx.clone());
         std::thread::spawn(move || {
             let text = sys::run("/usr/lib/yggdrasil/powerlimit", &["get"]).unwrap_or_default();
-            let active = serde_json::from_str::<serde_json::Value>(&text).ok().and_then(|v| v["active"].as_str().map(String::from)).unwrap_or_default();
+            let active = serde_json::from_str::<serde_json::Value>(&text)
+                .ok()
+                .and_then(|v| v["active"].as_str().map(String::from))
+                .unwrap_or_default();
             let _ = tx.send(Msg::Limits(sys::parse_power_limits(&text), active));
             // a debug build may read the fans' answer from $YGGDRASIL_GPUFAN_FIXTURE (screenshots of each mode); release builds never do
-            let fixture = if cfg!(debug_assertions) { std::env::var("YGGDRASIL_GPUFAN_FIXTURE").ok().and_then(|f| std::fs::read_to_string(f).ok()) } else { None };
+            let fixture = if cfg!(debug_assertions) {
+                std::env::var("YGGDRASIL_GPUFAN_FIXTURE").ok().and_then(|f| std::fs::read_to_string(f).ok())
+            } else {
+                None
+            };
             let fans = fixture.or_else(|| sys::run("/usr/lib/yggdrasil/gpufan", &["get"]));
             let _ = tx.send(Msg::Fans(fans.and_then(|s| parse_fans(&s))));
             let _ = tx.send(Msg::Tune(tune::get()));
@@ -286,17 +309,68 @@ impl Panel {
         let gib = |mib: f32| mib / 1024.0;
         ui::group(ui, pal, Some("Now"), |ui| {
             readout::metric(ui, pal, true, "Temperature", &format!("{:.0} °C", now.temp), "", &h, |s| s.temp, 20.0, 100.0, " °C");
-            readout::metric(ui, pal, false, "Power", &format!("{:.0} W", now.power), &format!("of {:.0}", now.limit), &h, |s| s.power, 0.0, now.limit.max(1.0), " W");
-            readout::metric(ui, pal, false, "Core clock", &format!("{:.0} MHz", now.core), "", &h, |s| s.core, 0.0, now.core_max.max(1.0), " MHz");
-            readout::metric(ui, pal, false, "Memory clock", &format!("{:.0} MHz", now.mem), "", &h, |s| s.mem, 0.0, now.mem_max.max(1.0), " MHz");
+            readout::metric(
+                ui,
+                pal,
+                false,
+                "Power",
+                &format!("{:.0} W", now.power),
+                &format!("of {:.0}", now.limit),
+                &h,
+                |s| s.power,
+                0.0,
+                now.limit.max(1.0),
+                " W",
+            );
+            readout::metric(
+                ui,
+                pal,
+                false,
+                "Core clock",
+                &format!("{:.0} MHz", now.core),
+                "",
+                &h,
+                |s| s.core,
+                0.0,
+                now.core_max.max(1.0),
+                " MHz",
+            );
+            readout::metric(
+                ui,
+                pal,
+                false,
+                "Memory clock",
+                &format!("{:.0} MHz", now.mem),
+                "",
+                &h,
+                |s| s.mem,
+                0.0,
+                now.mem_max.max(1.0),
+                " MHz",
+            );
             readout::metric(ui, pal, false, "Load", &format!("{:.0} %", now.load), "", &h, |s| s.load, 0.0, 100.0, " %");
-            readout::metric(ui, pal, false, "Video memory", &format!("{:.1} GiB", gib(now.vram)), &format!("of {:.0}", gib(now.vram_total)), &h, |s| s.vram / 1024.0, 0.0, gib(now.vram_total).max(1.0), " GiB");
+            readout::metric(
+                ui,
+                pal,
+                false,
+                "Video memory",
+                &format!("{:.1} GiB", gib(now.vram)),
+                &format!("of {:.0}", gib(now.vram_total)),
+                &h,
+                |s| s.vram / 1024.0,
+                0.0,
+                gib(now.vram_total).max(1.0),
+                " GiB",
+            );
             readout::metric(ui, pal, false, "Fans", &format!("{:.0} %", now.fan), "", &h, |s| s.fan, 0.0, 100.0, " %");
             let why = reasons(now.reasons);
             let (text, hot) = match now.reasons {
                 0 => ("Nothing is holding the clocks back".to_string(), false),
                 0x1 => ("Idle: the clocks are low because there is nothing for the card to do".to_string(), false),
-                bits => (format!("Held back by {}", why.iter().copied().filter(|w| *w != "nothing to do").collect::<Vec<_>>().join(", ")), bits & 0x68 != 0),
+                bits => (
+                    format!("Held back by {}", why.iter().copied().filter(|w| *w != "nothing to do").collect::<Vec<_>>().join(", ")),
+                    bits & 0x68 != 0,
+                ),
             };
             ui::row(ui, pal, false, "Clocks", Some(&text), |ui| {
                 if hot {
@@ -310,7 +384,13 @@ impl Panel {
         let Some(l) = self.limits.clone() else { return };
         let Some(g) = l.gpu else { return };
         let mode = self.active.clone();
-        let name = match mode.as_str() { "performance" => "Performance".to_string(), "balanced" => "Balanced".into(), "power-saver" => "Power saver".into(), "" => "This".into(), o => o.to_string() };
+        let name = match mode.as_str() {
+            "performance" => "Performance".to_string(),
+            "balanced" => "Balanced".into(),
+            "power-saver" => "Power saver".into(),
+            "" => "This".into(),
+            o => o.to_string(),
+        };
         let mine = l.modes.get(&mode).and_then(|m| m.1);
         let top = g.hold.unwrap_or(g.max).max(g.min);
         let mut w = mine.unwrap_or(g.default).min(top) as f32;
@@ -325,7 +405,9 @@ impl Panel {
                 if !self.busy && (r.drag_stopped() || (r.changed() && !r.dragged())) {
                     set = Some(if w as i64 == g.default { None } else { Some(w as i64) });
                 }
-                if mine.is_some() && ui::icon_button(ui, pal, crate::icons::Icon::Restart, "Back to the default", !self.busy, false).clicked() {
+                if mine.is_some()
+                    && ui::icon_button(ui, pal, crate::icons::Icon::Restart, "Back to the default", !self.busy, false).clicked()
+                {
                     set = Some(None);
                 }
             });
@@ -380,7 +462,11 @@ impl Panel {
             let mut args = a.args("gpu");
             if a == Act::Try {
                 let e = self.clk_edit.unwrap_or_default();
-                args.extend([format!("core={}", e.core), format!("mem={}", e.mem), format!("cap={}", e.cap.map(|c| c.to_string()).unwrap_or_else(|| "none".into()))]);
+                args.extend([
+                    format!("core={}", e.core),
+                    format!("mem={}", e.mem),
+                    format!("cap={}", e.cap.map(|c| c.to_string()).unwrap_or_else(|| "none".into())),
+                ]);
             }
             self.act(ctx, "/usr/lib/yggdrasil/tune", args);
         }
@@ -394,7 +480,11 @@ impl Panel {
         let now = self.history.back().copied();
         let mut change: Option<String> = None;
         ui::group(ui, pal, Some("Fans"), |ui| {
-            let sel = match f.mode.as_str() { "fixed" => 1, "curve" => 2, _ => 0 };
+            let sel = match f.mode.as_str() {
+                "fixed" => 1,
+                "curve" => 2,
+                _ => 0,
+            };
             let sub = match f.mode.as_str() {
                 "fixed" => format!("Held at {} % by Yggdrasil", f.fixed.max(f.min)),
                 "curve" => match now {
@@ -406,7 +496,11 @@ impl Panel {
             ui::row(ui, pal, true, "Control", Some(&sub), |ui| {
                 if let Some(i) = ui::segmented(ui, pal, &["Card", "Fixed", "Curve"], sel) {
                     if i != sel && !self.busy {
-                        change = Some(match i { 1 => format!("fixed={}", f.fixed), 2 => curve_arg(&f.curve), _ => "auto".into() });
+                        change = Some(match i {
+                            1 => format!("fixed={}", f.fixed),
+                            2 => curve_arg(&f.curve),
+                            _ => "auto".into(),
+                        });
                     }
                 }
             });
@@ -444,7 +538,8 @@ impl Panel {
 
     /// The curve (curve.rs), with the card's lowest speed and its temperature and fan speed now.
     fn curve_editor(&mut self, ui: &mut egui::Ui, pal: &Palette, f: &Fans, now: Option<Sample>) {
-        let marks = crate::curve::Marks { min: f.min, min_label: "below the card's lowest speed", hot: f.hot, now: now.map(|s| (s.temp, s.fan)) };
+        let marks =
+            crate::curve::Marks { min: f.min, min_label: "below the card's lowest speed", hot: f.hot, now: now.map(|s| (s.temp, s.fan)) };
         if crate::curve::editor(ui, pal, &mut self.curve, &mut self.drag, &marks) {
             self.curve_edited = true;
         }
@@ -478,7 +573,8 @@ mod tests {
         let f = parse_fans(r#"{"mode": "curve", "fixed": 60, "curve": [[40, 30], [60, 45], [75, 75], [85, 100]], "fans": [24, 0], "min": 24, "max": 100, "temp": 25, "running": true, "hot": 85}"#).unwrap();
         assert_eq!((f.mode.as_str(), f.min, f.hot, f.running, f.ok), ("curve", 24, 85, true, true));
         assert_eq!(f.curve, vec![[40, 30], [60, 45], [75, 75], [85, 100]]);
-        let none = parse_fans(r#"{"mode": "auto", "fixed": 60, "curve": [[40, 30], [85, 100]], "fans": null, "error": "no card"}"#).unwrap();
+        let none =
+            parse_fans(r#"{"mode": "auto", "fixed": 60, "curve": [[40, 30], [85, 100]], "fans": null, "error": "no card"}"#).unwrap();
         assert!(!none.ok, "no card: no fan controls");
         assert!(parse_fans("nope").is_none());
     }

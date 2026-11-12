@@ -123,7 +123,16 @@ fn distress_helper() -> Option<std::path::PathBuf> {
 
 fn distress(helper: &std::path::Path, password: &str) -> bool {
     use std::io::Write;
-    let Ok(mut child) = std::process::Command::new("pkexec").arg(helper).arg("check").stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).spawn() else { return false };
+    let Ok(mut child) = std::process::Command::new("pkexec")
+        .arg(helper)
+        .arg("check")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
     let body = format!("{{\"password\":{}}}", json_string(password));
     if let Some(mut i) = child.stdin.take() {
         let _ = i.write_all(body.as_bytes());

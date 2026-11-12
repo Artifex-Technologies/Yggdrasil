@@ -11,14 +11,10 @@ pub type Element = (String, Vec<(String, String)>);
 pub struct Unparsable;
 
 fn u16_at(d: &[u8], p: usize) -> Option<u16> {
-    Some(u16::from_le_bytes(
-        d.get(p..p.checked_add(2)?)?.try_into().ok()?,
-    ))
+    Some(u16::from_le_bytes(d.get(p..p.checked_add(2)?)?.try_into().ok()?))
 }
 fn u32_at(d: &[u8], p: usize) -> Option<u32> {
-    Some(u32::from_le_bytes(
-        d.get(p..p.checked_add(4)?)?.try_into().ok()?,
-    ))
+    Some(u32::from_le_bytes(d.get(p..p.checked_add(4)?)?.try_into().ok()?))
 }
 fn i32_at(d: &[u8], p: usize) -> Option<i32> {
     u32_at(d, p).map(|v| v as i32)
@@ -29,12 +25,7 @@ fn i32_at(d: &[u8], p: usize) -> Option<i32> {
 /// last byte otherwise is one more.
 pub fn utf16le_lossy(b: &[u8]) -> String {
     let mut out = String::new();
-    let units: Vec<u16> = b
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .map(|c| u16::from_le_bytes(*c))
-        .collect();
+    let units: Vec<u16> = b.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes(*c)).collect();
     let odd = b.len() % 2 == 1;
     let mut i = 0;
     while i < units.len() {
@@ -50,12 +41,7 @@ pub fn utf16le_lossy(b: &[u8]) -> String {
             out.push('\u{fffd}');
             return out;
         } else if (0xdc00..0xe000).contains(&units[i + 1]) {
-            out.push(
-                char::from_u32(
-                    0x10000 + (((u as u32) - 0xd800) << 10) + (units[i + 1] as u32 - 0xdc00),
-                )
-                .unwrap(),
-            );
+            out.push(char::from_u32(0x10000 + (((u as u32) - 0xd800) << 10) + (units[i + 1] as u32 - 0xdc00)).unwrap());
             i += 2;
         } else {
             out.push('\u{fffd}');
@@ -96,11 +82,7 @@ pub fn parse(data: &[u8]) -> Result<Vec<Element>, Unparsable> {
             let utf8 = flags & 0x100 != 0;
             let offs_at = pos + hsize;
             // struct.unpack_from("<%dI" % count) needs all of them
-            if count
-                .checked_mul(4)
-                .and_then(|n| n.checked_add(offs_at))
-                .is_none_or(|end| end > data.len())
-            {
+            if count.checked_mul(4).and_then(|n| n.checked_add(offs_at)).is_none_or(|end| end > data.len()) {
                 return Err(e());
             }
             let base = pos + str_start;
@@ -203,18 +185,13 @@ mod tests {
     #[test]
     fn junk_never_panics() {
         // every prefix and many corruptions of a small document
-        let mut doc = vec![
-            3u8, 0, 8, 0, 200, 0, 0, 0, 1, 0, 28, 0, 60, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0,
-            0, 36, 0, 0, 0, 0, 0, 0, 0,
-        ];
+        let mut doc =
+            vec![3u8, 0, 8, 0, 200, 0, 0, 0, 1, 0, 28, 0, 60, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 36, 0, 0, 0, 0, 0, 0, 0];
         doc.extend([0, 0, 0, 0, 4, 0, 0, 0, 1, 1, 0x61, 0, 1, 1, 0x62, 0]);
         doc.extend([
-            2, 1, 16, 0, 56, 0, 0, 0, 1, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0,
-            0, 20, 0, 20, 0, 1, 0, 0, 0, 0, 0,
+            2, 1, 16, 0, 56, 0, 0, 0, 1, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 20, 0, 20, 0, 1, 0, 0, 0, 0, 0,
         ]);
-        doc.extend([
-            255, 255, 255, 255, 1, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 3, 0, 0, 0, 0,
-        ]);
+        doc.extend([255, 255, 255, 255, 1, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 3, 0, 0, 0, 0]);
         let mut seed = 0x1234_5678u32;
         for len in 0..doc.len() {
             let _ = parse(&doc[..len]);

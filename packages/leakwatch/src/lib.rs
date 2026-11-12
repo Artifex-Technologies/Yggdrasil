@@ -126,7 +126,14 @@ pub fn scan(root: &Path) -> Vec<Reading> {
         if COMPOSITORS.contains(&name.as_str()) {
             if let Ok(smaps) = std::fs::read_to_string(p.join("smaps")) {
                 for (prog, kb) in parse_smaps_memfd(&smaps) {
-                    out.push(Reading { key: format!("b:{pid}:{start}:{prog}"), name: prog, kind: Kind::Buffers, pid, holder: name.clone(), kb });
+                    out.push(Reading {
+                        key: format!("b:{pid}:{start}:{prog}"),
+                        name: prog,
+                        kind: Kind::Buffers,
+                        pid,
+                        holder: name.clone(),
+                        kb,
+                    });
                 }
             }
         }
@@ -146,7 +153,17 @@ impl State {
             match self.series.get_mut(&r.key) {
                 Some(s) => s.points.push((now, r.kb)),
                 None if r.kb >= floor => {
-                    self.series.insert(r.key.clone(), Series { name: r.name.clone(), kind: r.kind, pid: r.pid, holder: r.holder.clone(), points: vec![(now, r.kb)], warned: None });
+                    self.series.insert(
+                        r.key.clone(),
+                        Series {
+                            name: r.name.clone(),
+                            kind: r.kind,
+                            pid: r.pid,
+                            holder: r.holder.clone(),
+                            points: vec![(now, r.kb)],
+                            warned: None,
+                        },
+                    );
                 }
                 None => {}
             }
@@ -248,7 +265,8 @@ pub fn ignored(conf: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
-    const STATUS: &str = "Name:\tyggdrasil-panel\nUmask:\t0022\nState:\tS (sleeping)\nVmRSS:\t  121360 kB\nRssAnon:\t   40000 kB\nVmSwap:\t     512 kB\n";
+    const STATUS: &str =
+        "Name:\tyggdrasil-panel\nUmask:\t0022\nState:\tS (sleeping)\nVmRSS:\t  121360 kB\nRssAnon:\t   40000 kB\nVmSwap:\t     512 kB\n";
 
     #[test]
     fn status_gives_name_and_rss_plus_swap() {
@@ -331,7 +349,14 @@ Rss:      300 kB
     #[test]
     fn record_follows_big_ones_drops_the_gone_and_restarts_fresh() {
         let mut st = State::default();
-        st.record(0, &[reading("p:1:10", Kind::Process, 30 * 1024), reading("p:2:10", Kind::Process, 1024), reading("b:9:1:panel", Kind::Buffers, 9 * 1024)]);
+        st.record(
+            0,
+            &[
+                reading("p:1:10", Kind::Process, 30 * 1024),
+                reading("p:2:10", Kind::Process, 1024),
+                reading("b:9:1:panel", Kind::Buffers, 9 * 1024),
+            ],
+        );
         assert!(st.series.contains_key("p:1:10") && st.series.contains_key("b:9:1:panel"));
         assert!(!st.series.contains_key("p:2:10"), "small programs are not followed");
         // pid 1 restarted (new start time): the old history goes, the new one starts
@@ -349,7 +374,12 @@ Rss:      300 kB
         let _ = std::fs::remove_dir_all(&root);
         for (pid, status, stat, smaps) in [
             ("100", STATUS, "100 (yggdrasil-panel) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 555 0 0", None),
-            ("200", "Name:\tHyprland\nVmRSS:\t500000 kB\n", "200 (Hyprland) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 777 0 0", Some("7f-80 rw-s 0 00:01 1 /memfd:yggdrasil-panel (deleted)\nRss:\t9000 kB\n")),
+            (
+                "200",
+                "Name:\tHyprland\nVmRSS:\t500000 kB\n",
+                "200 (Hyprland) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 777 0 0",
+                Some("7f-80 rw-s 0 00:01 1 /memfd:yggdrasil-panel (deleted)\nRss:\t9000 kB\n"),
+            ),
             ("self", STATUS, "", None),
         ] {
             let d = root.join(pid);
@@ -381,7 +411,10 @@ Rss:      300 kB
 
     #[test]
     fn ignore_lines() {
-        assert_eq!(ignored("# comment\nignore = vivaldi-bin, code\nignore=ollama # big model\nother = x"), vec!["vivaldi-bin", "code", "ollama"]);
+        assert_eq!(
+            ignored("# comment\nignore = vivaldi-bin, code\nignore=ollama # big model\nother = x"),
+            vec!["vivaldi-bin", "code", "ollama"]
+        );
     }
 
     #[test]

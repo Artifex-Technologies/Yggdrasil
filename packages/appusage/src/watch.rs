@@ -183,7 +183,13 @@ impl Inotify {
     /// Folders made, removed or moved in `dir` (adding a folder already watched does nothing new).
     pub fn watch(&self, dir: &Path) {
         if let Ok(c) = CString::new(dir.as_os_str().as_bytes()) {
-            unsafe { libc::inotify_add_watch(self.fd, c.as_ptr(), libc::IN_CREATE | libc::IN_DELETE | libc::IN_MOVED_FROM | libc::IN_MOVED_TO | libc::IN_ONLYDIR) };
+            unsafe {
+                libc::inotify_add_watch(
+                    self.fd,
+                    c.as_ptr(),
+                    libc::IN_CREATE | libc::IN_DELETE | libc::IN_MOVED_FROM | libc::IN_MOVED_TO | libc::IN_ONLYDIR,
+                )
+            };
         }
     }
 
@@ -219,7 +225,12 @@ fn signal_fd() -> i32 {
 }
 
 fn flush_interval() -> Duration {
-    std::env::var("LABYRINTH_APPUSAGE_FLUSH").ok().and_then(|v| v.parse::<f64>().ok()).filter(|s| *s > 0.0).map(Duration::from_secs_f64).unwrap_or(FLUSH)
+    std::env::var("LABYRINTH_APPUSAGE_FLUSH")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .filter(|s| *s > 0.0)
+        .map(Duration::from_secs_f64)
+        .unwrap_or(FLUSH)
 }
 
 fn write_down(t: &mut Tracker, path: &Path, now: Instant) {

@@ -165,7 +165,10 @@ mod tests {
         assert!(q.ends_with("Do not change anything."));
 
         let l = looking_notice("game", &a);
-        assert_eq!((l.summary.as_str(), l.body.as_str()), ("Sarina is looking at the game crash", "Sarina's answer shows here in a moment."));
+        assert_eq!(
+            (l.summary.as_str(), l.body.as_str()),
+            ("Sarina is looking at the game crash", "Sarina's answer shows here in a moment.")
+        );
         assert_eq!(answer_text("  It ran out of memory.\n", "warning", "Sarina"), "It ran out of memory.");
         assert_eq!(answer_text(" \n", "sarina: model server not running\n", "Sarina"), "sarina: model server not running");
         assert_eq!(answer_text("", "", "Sarina"), "Sarina had nothing to say about it.");

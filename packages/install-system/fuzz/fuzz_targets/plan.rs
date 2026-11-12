@@ -17,17 +17,9 @@ struct Nothing {
 impl System for Nothing {
     fn run(&mut self, _argv: &[String], _stdin: Option<&str>) -> R<Output> {
         self.calls += 1;
-        Ok(Output {
-            code: 1,
-            stdout: String::new(),
-            stderr: "not run\n".into(),
-        })
+        Ok(Output { code: 1, stdout: String::new(), stderr: "not run\n".into() })
     }
-    fn stream(
-        &mut self,
-        _argv: &[String],
-        _line: &mut dyn FnMut(&str) -> R<Option<String>>,
-    ) -> R<(i32, String)> {
+    fn stream(&mut self, _argv: &[String], _line: &mut dyn FnMut(&str) -> R<Option<String>>) -> R<(i32, String)> {
         self.calls += 1;
         Ok((1, String::new()))
     }
@@ -55,10 +47,7 @@ fuzz_target!(|data: &[u8]| {
         let _ = install_system::plan::check_plan(
             &plan,
             &os,
-            &mut install_system::plan::Ask {
-                zoneinfo: "/usr/share/zoneinfo",
-                account_exists: &mut exists,
-            },
+            &mut install_system::plan::Ask { zoneinfo: "/usr/share/zoneinfo", account_exists: &mut exists },
         );
         let _ = plan.dumps();
         let _ = plan.py_str();
@@ -71,17 +60,10 @@ fuzz_target!(|data: &[u8]| {
         efi: "/nonexistent".into(),
         resolv_conf: "/nonexistent".into(),
     };
-    let env = install_system::Env {
-        sfs: Some("/nonexistent".into()),
-        target: Some("/nonexistent/target".into()),
-    };
+    let env = install_system::Env { sfs: Some("/nonexistent".into()), target: Some("/nonexistent/target".into()) };
     let mut sys = Nothing::default();
     let code = install_system::main_with(&[], &mut &data[..], &env, host, &mut sys);
     assert!([1, 2].contains(&code), "{code}");
     assert!(code != 2 || sys.calls == 0, "a refused plan ran a program");
-    assert!(
-        sys.last == "DONE" || sys.last.starts_with("ERROR "),
-        "{}",
-        sys.last
-    );
+    assert!(sys.last == "DONE" || sys.last.starts_with("ERROR "), "{}", sys.last);
 });

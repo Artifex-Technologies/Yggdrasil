@@ -198,7 +198,17 @@ impl App {
                     let maker = n.maker(&ap.bss.bssid);
                     let sub = [maker, ap.band().label()].iter().filter(|s| !s.is_empty()).copied().collect::<Vec<_>>().join(" · ");
                     // nothing to join without its name: the row opens its page too
-                    if ui::net_row(ui, pal, other.is_empty() && i == 0, false, "Hidden network", Some(&sub), ap.security().kind.secured(), Some(ap.quality())) != ui::NetClick::None {
+                    if ui::net_row(
+                        ui,
+                        pal,
+                        other.is_empty() && i == 0,
+                        false,
+                        "Hidden network",
+                        Some(&sub),
+                        ap.security().kind.secured(),
+                        Some(ap.quality()),
+                    ) != ui::NetClick::None
+                    {
                         air_open = Some(AirKey { ssid: String::new(), bssid: Some(ap.bss.bssid) });
                     }
                 }
@@ -303,7 +313,8 @@ impl App {
         };
         let listed = n.networks.iter().find(|w| !k.ssid.is_empty() && w.ssid == k.ssid);
         let title = if k.ssid.is_empty() { "Hidden network".to_string() } else { k.ssid.clone() };
-        let state = if listed.is_some() || net.is_some() { "Wi-Fi · Not saved · in range" } else { "Wi-Fi · Not saved · not heard now" };
+        let state =
+            if listed.is_some() || net.is_some() { "Wi-Fi · Not saved · in range" } else { "Wi-Fi · Not saved · not heard now" };
         if header(ui, pal, "Wi-Fi & Network", &title, state) {
             self.wifi_air = None;
             return;
@@ -374,7 +385,11 @@ impl App {
                 fact(ui, pal, &mut first, "DNS servers", &l.dns.join("\n"), None);
                 if let Some(secs) = l.lease_secs {
                     let from = if l.dhcp_server.is_empty() { String::new() } else { format!(" from {}", l.dhcp_server) };
-                    let ends = l.lease_ends.filter(|e| *e > now).map(|e| format!(", renewed by itself (ends in {})", span((e - now) as u64))).unwrap_or_default();
+                    let ends = l
+                        .lease_ends
+                        .filter(|e| *e > now)
+                        .map(|e| format!(", renewed by itself (ends in {})", span((e - now) as u64)))
+                        .unwrap_or_default();
                     fact(ui, pal, &mut first, "Lease", &format!("{}{from}{ends}", span(secs)), None);
                 }
                 fact(ui, pal, &mut first, "Domain", &l.domain, None);
@@ -417,7 +432,14 @@ impl App {
                 ui::group(ui, pal, Some("This Network"), |ui| {
                     go = ui::nav_row(ui, pal, true, "Devices on this network", Some(&sub), |_| {});
                     if saved.wifi && wifihealth::available() {
-                        check = ui::nav_row(ui, pal, false, "Wi-Fi checks", Some("Why is it slow? Signal, channel, other devices, the internet"), |_| {});
+                        check = ui::nav_row(
+                            ui,
+                            pal,
+                            false,
+                            "Wi-Fi checks",
+                            Some("Why is it slow? Signal, channel, other devices, the internet"),
+                            |_| {},
+                        );
                     }
                 });
                 if go {
@@ -433,7 +455,14 @@ impl App {
             } else if saved.wifi && wifihealth::available() {
                 let mut check = false;
                 ui::group(ui, pal, Some("This Network"), |ui| {
-                    check = ui::nav_row(ui, pal, true, "Wi-Fi checks", Some("Why is it slow? Signal, channel, other devices, the internet"), |_| {});
+                    check = ui::nav_row(
+                        ui,
+                        pal,
+                        true,
+                        "Wi-Fi checks",
+                        Some("Why is it slow? Signal, channel, other devices, the internet"),
+                        |_| {},
+                    );
                 });
                 if check {
                     self.wifi_check_open = true;
@@ -443,7 +472,11 @@ impl App {
             }
         }
         ui::group(ui, pal, None, |ui| {
-            let (t, sub) = if saved.wifi { ("Auto-Join", "Join this network by itself when it is in range") } else { ("Connect automatically", "When the cable is plugged in") };
+            let (t, sub) = if saved.wifi {
+                ("Auto-Join", "Join this network by itself when it is in range")
+            } else {
+                ("Connect automatically", "When the cable is plugged in")
+            };
             ui::row(ui, pal, true, t, Some(sub), |ui| {
                 ui::switch(ui, pal, &mut d.auto_join);
             });
@@ -463,7 +496,14 @@ impl App {
             let (idx, sub) = match &d.mac {
                 sys::MacMode::Private => (0, "A random hardware address of its own for this network, the same every time"),
                 sys::MacMode::Random => (1, "A new random hardware address every time it joins"),
-                sys::MacMode::Real => (2, if saved.wifi { "This computer's real hardware address (used only on networks you trust)" } else { "This computer's real hardware address" }),
+                sys::MacMode::Real => (
+                    2,
+                    if saved.wifi {
+                        "This computer's real hardware address (used only on networks you trust)"
+                    } else {
+                        "This computer's real hardware address"
+                    },
+                ),
                 sys::MacMode::Custom(_) => (3, "A hardware address you type in"),
             };
             ui::row(ui, pal, true, "Address", Some(sub), |ui| {
@@ -515,9 +555,20 @@ impl App {
                     });
                 }
                 if ip.method != netconf::IpMethod::Off {
-                    ui::row(ui, pal, false, "DNS servers", Some(if six { "Separated by commas, like 2606:4700:4700::1111" } else { "Separated by commas, like 1.1.1.1, 9.9.9.9" }), |ui| {
-                        ui::field(ui, pal, &mut ip.dns, "From the router", 200.0, false);
-                    });
+                    ui::row(
+                        ui,
+                        pal,
+                        false,
+                        "DNS servers",
+                        Some(if six {
+                            "Separated by commas, like 2606:4700:4700::1111"
+                        } else {
+                            "Separated by commas, like 1.1.1.1, 9.9.9.9"
+                        }),
+                        |ui| {
+                            ui::field(ui, pal, &mut ip.dns, "From the router", 200.0, false);
+                        },
+                    );
                 }
             });
             ui.add_space(8.0);
@@ -559,7 +610,14 @@ impl App {
                     undo = true;
                 }
             });
-            ui.label(RichText::new(if live.is_some() { "Saved changes are used the next time it connects, or now with Save and reconnect." } else { "Saved changes are used the next time it connects." }).color(pal.dim));
+            ui.label(
+                RichText::new(if live.is_some() {
+                    "Saved changes are used the next time it connects, or now with Save and reconnect."
+                } else {
+                    "Saved changes are used the next time it connects."
+                })
+                .color(pal.dim),
+            );
         }
         ui.add_space(14.0);
         ui.horizontal(|ui| {
@@ -586,7 +644,11 @@ impl App {
                     let id = uuid.to_string();
                     self.change(ctx, move || {
                         netconf::save(&id, &pairs)?;
-                        if rejoin { netconf::rejoin(&id) } else { Ok(()) }
+                        if rejoin {
+                            netconf::rejoin(&id)
+                        } else {
+                            Ok(())
+                        }
                     });
                 }
                 Err(e) => self.status = e,
@@ -675,8 +737,12 @@ fn air_sections(ui: &mut egui::Ui, pal: &Palette, n: &sys::Network, a: &scan::Ne
         fact(ui, pal, &mut first, "Wi-Fi generation", a.generation().label(), gen_sub);
         let (wps, wps_sub) = match &info.wps {
             None => ("Off".to_string(), "Not announced"),
-            Some(w) if w.selected_registrar => ("On, pairing now".to_string(), "Someone started a WPS pairing on the router (the button or a PIN) and it is open now"),
-            Some(w) if w.locked => ("On, locked".to_string(), "Joining by button or PIN; the router has locked PIN pairing after failed tries"),
+            Some(w) if w.selected_registrar => {
+                ("On, pairing now".to_string(), "Someone started a WPS pairing on the router (the button or a PIN) and it is open now")
+            }
+            Some(w) if w.locked => {
+                ("On, locked".to_string(), "Joining by button or PIN; the router has locked PIN pairing after failed tries")
+            }
             Some(w) => (
                 if w.state == Some(1) { "On, not set up".to_string() } else { "On".to_string() },
                 "Joining by button or PIN. A PIN is a known weak spot on many routers; it can be turned off in the router's settings",
@@ -706,7 +772,14 @@ fn air_sections(ui: &mut egui::Ui, pal: &Palette, n: &sys::Network, a: &scan::Ne
         }
         if let Some(l) = info.bss_load {
             let busy = (u32::from(l.utilization) * 100 + 127) / 255;
-            fact(ui, pal, &mut first, "Load", &format!("{} devices · channel busy {busy} %", l.stations), Some("On the access point this describes"));
+            fact(
+                ui,
+                pal,
+                &mut first,
+                "Load",
+                &format!("{} devices · channel busy {busy} %", l.stations),
+                Some("On the access point this describes"),
+            );
         }
         let first_heard = a.aps.iter().filter_map(|ap| n.memory.heard(&scan::mac_text(&ap.bss.bssid)).map(|h| h.0)).min();
         if let Some(t) = first_heard {
@@ -720,7 +793,9 @@ fn air_sections(ui: &mut egui::Ui, pal: &Palette, n: &sys::Network, a: &scan::Ne
     if a.mixed_security() {
         note(ui, pal, "Not every access point with this name uses the same security. A guest radio can explain it; otherwise one of them could be pretending to be this network.");
     }
-    if let Some(w) = info.wps.as_ref().filter(|w| [&w.manufacturer, &w.model, &w.model_number, &w.serial, &w.device_name].iter().any(|s| !s.is_empty())) {
+    if let Some(w) =
+        info.wps.as_ref().filter(|w| [&w.manufacturer, &w.model, &w.model_number, &w.serial, &w.device_name].iter().any(|s| !s.is_empty()))
+    {
         ui::group(ui, pal, Some("Device details it broadcasts"), |ui| {
             let mut first = true;
             fact(ui, pal, &mut first, "Manufacturer", &w.manufacturer, None);
@@ -743,7 +818,13 @@ fn air_sections(ui: &mut egui::Ui, pal: &Palette, n: &sys::Network, a: &scan::Ne
             fact(ui, pal, &mut first, "Device type", kind, None);
         });
         ui.add_space(2.0);
-        ui.label(RichText::new("The router announces these to everyone nearby, through WPS. Turning WPS off in the router's settings usually stops it.").size(12.0).color(pal.dim));
+        ui.label(
+            RichText::new(
+                "The router announces these to everyone nearby, through WPS. Turning WPS off in the router's settings usually stops it.",
+            )
+            .size(12.0)
+            .color(pal.dim),
+        );
     }
     let mixed = a.mixed_security();
     let count = a.aps.len();
@@ -785,7 +866,13 @@ fn air_sections(ui: &mut egui::Ui, pal: &Palette, n: &sys::Network, a: &scan::Ne
             Some(s) => s.to_string(),
             None => match n.makers.get(&v.oui) {
                 Some(m) => format!("{m}'s own"),
-                None => format!("{:02X}-{:02X}-{:02X}{}", v.oui[0], v.oui[1], v.oui[2], v.kind.map(|k| format!(" type {k}")).unwrap_or_default()),
+                None => format!(
+                    "{:02X}-{:02X}-{:02X}{}",
+                    v.oui[0],
+                    v.oui[1],
+                    v.oui[2],
+                    v.kind.map(|k| format!(" type {k}")).unwrap_or_default()
+                ),
             },
         };
         if !extras.contains(&name) {
@@ -822,7 +909,14 @@ mod tests {
             .collect();
         let live = sys::active_profiles(&out("nmcli -t -f UUID,DEVICE connection show --active"))
             .into_iter()
-            .map(|(u, d)| (u, netconf::parse_live(&out(&format!("nmcli -t -f IP4.ADDRESS,IP4.GATEWAY,IP4.DNS,IP6.ADDRESS,IP6.DNS,GENERAL.HWADDR,DHCP4 device show {d}")))))
+            .map(|(u, d)| {
+                (
+                    u,
+                    netconf::parse_live(&out(&format!(
+                        "nmcli -t -f IP4.ADDRESS,IP4.GATEWAY,IP4.DNS,IP6.ADDRESS,IP6.DNS,GENERAL.HWADDR,DHCP4 device show {d}"
+                    ))),
+                )
+            })
             .collect();
         sys::Network {
             wifi_on: true,

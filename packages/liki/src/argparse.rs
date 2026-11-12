@@ -14,10 +14,7 @@ pub enum Kind {
     /// store_true
     Switch,
     /// one value (nargs=None), optionally from a list of choices, with a default
-    Value {
-        choices: Option<&'static [&'static str]>,
-        default: Option<&'static str>,
-    },
+    Value { choices: Option<&'static [&'static str]>, default: Option<&'static str> },
 }
 
 pub struct Arg {
@@ -51,10 +48,7 @@ impl Values {
         }
     }
     pub fn flag(&self, dest: &str) -> bool {
-        matches!(
-            self.0.iter().find(|(d, _)| *d == dest).map(|(_, v)| v),
-            Some(Val::Bool(true))
-        )
+        matches!(self.0.iter().find(|(d, _)| *d == dest).map(|(_, v)| v), Some(Val::Bool(true)))
     }
 }
 
@@ -67,44 +61,22 @@ type Take<'a> = dyn FnMut(&Parser, usize, &[String], &mut Vec<usize>) -> Result<
 impl Parser {
     /// A parser with -h/--help first, as argparse adds it.
     pub fn new(prog: String, description: &'static str, mut args: Vec<Arg>) -> Parser {
-        args.insert(
-            0,
-            Arg {
-                flags: &["-h", "--help"],
-                dest: "help",
-                kind: Kind::Help,
-                help: Some("show this help message and exit"),
-            },
-        );
-        Parser {
-            prog,
-            description,
-            args,
-        }
+        args.insert(0, Arg { flags: &["-h", "--help"], dest: "help", kind: Kind::Help, help: Some("show this help message and exit") });
+        Parser { prog, description, args }
     }
 
     /// The program's name as argparse takes it: the last part of how it was started.
     pub fn prog_from_argv0() -> String {
-        let a0 = std::env::args_os()
-            .next()
-            .map(|a| a.to_string_lossy().into_owned())
-            .unwrap_or_default();
+        let a0 = std::env::args_os().next().map(|a| a.to_string_lossy().into_owned()).unwrap_or_default();
         crate::py::basename(&a0).to_string()
     }
 
     fn option_strings(&self) -> Vec<(&'static str, usize)> {
-        self.args
-            .iter()
-            .enumerate()
-            .flat_map(|(i, a)| a.flags.iter().map(move |f| (*f, i)))
-            .collect()
+        self.args.iter().enumerate().flat_map(|(i, a)| a.flags.iter().map(move |f| (*f, i))).collect()
     }
 
     fn lookup(&self, s: &str) -> Option<usize> {
-        self.option_strings()
-            .into_iter()
-            .find(|(f, _)| *f == s)
-            .map(|(_, i)| i)
+        self.option_strings().into_iter().find(|(f, _)| *f == s).map(|(_, i)| i)
     }
 
     fn parse_optional(&self, arg: &str) -> Option<Vec<Tuple>> {
@@ -119,12 +91,7 @@ impl Parser {
         }
         if let Some((opt, explicit)) = arg.split_once('=') {
             if let Some(i) = self.lookup(opt) {
-                return Some(vec![(
-                    Some(i),
-                    opt.to_string(),
-                    Some("=".into()),
-                    Some(explicit.to_string()),
-                )]);
+                return Some(vec![(Some(i), opt.to_string(), Some("=".into()), Some(explicit.to_string()))]);
             }
         }
         let tuples = self.option_tuples(arg);
@@ -164,12 +131,7 @@ impl Parser {
             let short_explicit: String = s.chars().skip(2).collect();
             for (f, i) in self.option_strings() {
                 if f == short {
-                    out.push((
-                        Some(i),
-                        f.to_string(),
-                        Some(String::new()),
-                        Some(short_explicit.clone()),
-                    ));
+                    out.push((Some(i), f.to_string(), Some(String::new()), Some(short_explicit.clone())));
                 } else if f.starts_with(prefix) {
                     out.push((Some(i), f.to_string(), sep.clone(), explicit.clone()));
                 }
@@ -218,9 +180,7 @@ impl Parser {
             .map(|a| {
                 let v = match a.kind {
                     Kind::Switch => Val::Bool(false),
-                    Kind::Value {
-                        default: Some(d), ..
-                    } => Val::Str(d.to_string()),
+                    Kind::Value { default: Some(d), .. } => Val::Str(d.to_string()),
                     _ => Val::None,
                 };
                 (a.dest, v)
@@ -246,77 +206,66 @@ impl Parser {
         let pat: Vec<char> = pattern.chars().collect();
         let mut seen: Vec<usize> = vec![];
         let mut extras: Vec<String> = vec![];
-        let mut positionals: Vec<usize> = (0..self.args.len())
-            .filter(|&i| self.args[i].flags.is_empty())
-            .collect();
+        let mut positionals: Vec<usize> = (0..self.args.len()).filter(|&i| self.args[i].flags.is_empty()).collect();
 
-        let mut take =
-            |this: &Parser, i: usize, vals: &[String], seen: &mut Vec<usize>| -> Result<(), Stop> {
-                seen.push(i);
-                let a = &this.args[i];
-                match a.kind {
-                    Kind::Help => Err(Stop::Help),
-                    Kind::Switch => {
-                        set(&mut values, a.dest, Val::Bool(true));
-                        Ok(())
-                    }
-                    Kind::Value { choices, .. } => {
-                        let v = vals[0].clone();
-                        if let Some(ch) = choices {
-                            if !ch.contains(&v.as_str()) {
-                                let list: Vec<String> =
-                                    ch.iter().map(|c| pycompat::repr(c)).collect();
-                                return Err(Stop::Error(format!(
-                                    "argument {}: invalid choice: {} (choose from {})",
-                                    this.name(i),
-                                    pycompat::repr(&v),
-                                    list.join(", ")
-                                )));
-                            }
+        let mut take = |this: &Parser, i: usize, vals: &[String], seen: &mut Vec<usize>| -> Result<(), Stop> {
+            seen.push(i);
+            let a = &this.args[i];
+            match a.kind {
+                Kind::Help => Err(Stop::Help),
+                Kind::Switch => {
+                    set(&mut values, a.dest, Val::Bool(true));
+                    Ok(())
+                }
+                Kind::Value { choices, .. } => {
+                    let v = vals[0].clone();
+                    if let Some(ch) = choices {
+                        if !ch.contains(&v.as_str()) {
+                            let list: Vec<String> = ch.iter().map(|c| pycompat::repr(c)).collect();
+                            return Err(Stop::Error(format!(
+                                "argument {}: invalid choice: {} (choose from {})",
+                                this.name(i),
+                                pycompat::repr(&v),
+                                list.join(", ")
+                            )));
                         }
-                        set(&mut values, a.dest, Val::Str(v));
-                        Ok(())
                     }
-                }
-            };
-
-        // a positional takes -*A-* (the "--" itself is dropped)
-        let consume_positionals = |start: usize,
-                                   positionals: &mut Vec<usize>,
-                                   seen: &mut Vec<usize>,
-                                   take: &mut Take|
-         -> Result<usize, Stop> {
-            let Some(&p) = positionals.first() else {
-                return Ok(start);
-            };
-            let mut j = start;
-            while j < pat.len() && pat[j] == '-' {
-                j += 1;
-            }
-            if j >= pat.len() || pat[j] != 'A' {
-                return Ok(start);
-            }
-            j += 1;
-            while j < pat.len() && pat[j] == '-' {
-                j += 1;
-            }
-            let mut vals: Vec<String> = args[start..j].to_vec();
-            if pat[start..j].contains(&'-') {
-                if let Some(k) = vals.iter().position(|v| v == "--") {
-                    vals.remove(k);
+                    set(&mut values, a.dest, Val::Str(v));
+                    Ok(())
                 }
             }
-            take(self, p, &vals, seen)?;
-            positionals.remove(0);
-            Ok(j)
         };
 
+        // a positional takes -*A-* (the "--" itself is dropped)
+        let consume_positionals =
+            |start: usize, positionals: &mut Vec<usize>, seen: &mut Vec<usize>, take: &mut Take| -> Result<usize, Stop> {
+                let Some(&p) = positionals.first() else {
+                    return Ok(start);
+                };
+                let mut j = start;
+                while j < pat.len() && pat[j] == '-' {
+                    j += 1;
+                }
+                if j >= pat.len() || pat[j] != 'A' {
+                    return Ok(start);
+                }
+                j += 1;
+                while j < pat.len() && pat[j] == '-' {
+                    j += 1;
+                }
+                let mut vals: Vec<String> = args[start..j].to_vec();
+                if pat[start..j].contains(&'-') {
+                    if let Some(k) = vals.iter().position(|v| v == "--") {
+                        vals.remove(k);
+                    }
+                }
+                take(self, p, &vals, seen)?;
+                positionals.remove(0);
+                Ok(j)
+            };
+
         let mut start = 0usize;
-        let max_option = options
-            .keys()
-            .next_back()
-            .map(|&m| m as isize)
-            .unwrap_or(-1);
+        let max_option = options.keys().next_back().map(|&m| m as isize).unwrap_or(-1);
         while (start as isize) <= max_option {
             let mut next = start;
             while (next as isize) <= max_option && !options.contains_key(&next) {
@@ -334,33 +283,17 @@ impl Parser {
                 extras.extend(args[start..next].iter().cloned());
                 start = next;
             }
-            start = self.consume_optional(
-                start,
-                args,
-                &pat,
-                &options,
-                &mut extras,
-                &mut seen,
-                &mut take,
-            )?;
+            start = self.consume_optional(start, args, &pat, &options, &mut extras, &mut seen, &mut take)?;
         }
         let stop = consume_positionals(start, &mut positionals, &mut seen, &mut take)?;
         extras.extend(args[stop..].iter().cloned());
-        let missing: Vec<String> = (0..self.args.len())
-            .filter(|&i| self.args[i].flags.is_empty() && !seen.contains(&i))
-            .map(|i| self.name(i))
-            .collect();
+        let missing: Vec<String> =
+            (0..self.args.len()).filter(|&i| self.args[i].flags.is_empty() && !seen.contains(&i)).map(|i| self.name(i)).collect();
         if !missing.is_empty() {
-            return Err(Stop::Error(format!(
-                "the following arguments are required: {}",
-                missing.join(", ")
-            )));
+            return Err(Stop::Error(format!("the following arguments are required: {}", missing.join(", "))));
         }
         if !extras.is_empty() {
-            return Err(Stop::Error(format!(
-                "unrecognized arguments: {}",
-                extras.join(" ")
-            )));
+            return Err(Stop::Error(format!("unrecognized arguments: {}", extras.join(" "))));
         }
         Ok(Values(values))
     }
@@ -379,11 +312,7 @@ impl Parser {
         let tuples = &options[&start];
         if tuples.len() > 1 {
             let names: Vec<&str> = tuples.iter().map(|t| t.1.as_str()).collect();
-            return Err(Stop::Error(format!(
-                "ambiguous option: {} could match {}",
-                args[start],
-                names.join(", ")
-            )));
+            return Err(Stop::Error(format!("ambiguous option: {} could match {}", args[start], names.join(", "))));
         }
         let (mut action, mut option_string, mut sep, mut explicit) = tuples[0].clone();
         let mut todo: Vec<(usize, Vec<String>)> = vec![];
@@ -398,11 +327,7 @@ impl Parser {
                 let second_is_dash = option_string.chars().nth(1) == Some('-');
                 if count == 0 && !second_is_dash && !ex.is_empty() {
                     if sep.as_deref().is_some_and(|s| !s.is_empty()) || ex.starts_with('-') {
-                        return Err(Stop::Error(format!(
-                            "argument {}: ignored explicit argument {}",
-                            self.name(a),
-                            pycompat::repr(&ex)
-                        )));
+                        return Err(Stop::Error(format!("argument {}: ignored explicit argument {}", self.name(a), pycompat::repr(&ex))));
                     }
                     todo.push((a, vec![]));
                     let first = ex.chars().next().unwrap();
@@ -430,20 +355,13 @@ impl Parser {
                     todo.push((a, vec![ex]));
                     break;
                 } else {
-                    return Err(Stop::Error(format!(
-                        "argument {}: ignored explicit argument {}",
-                        self.name(a),
-                        pycompat::repr(&ex)
-                    )));
+                    return Err(Stop::Error(format!("argument {}: ignored explicit argument {}", self.name(a), pycompat::repr(&ex))));
                 }
             } else {
                 let s = start + 1;
                 let count = if self.takes_value(a) {
                     if pat.get(s) != Some(&'A') {
-                        return Err(Stop::Error(format!(
-                            "argument {}: expected one argument",
-                            self.name(a)
-                        )));
+                        return Err(Stop::Error(format!("argument {}: expected one argument", self.name(a))));
                     }
                     1
                 } else {
@@ -474,31 +392,15 @@ impl Parser {
         root.push_str(&f.usage(self));
         root.push_str(&f.text(self.description));
         // the longest invocation (indented by 2 inside a section) sets the help column
-        let max_len = self
-            .args
-            .iter()
-            .enumerate()
-            .map(|(i, _)| f.invocation(self, i).1.chars().count() + 2)
-            .max()
-            .unwrap_or(0);
-        let positionals: Vec<usize> = (0..self.args.len())
-            .filter(|&i| self.args[i].flags.is_empty())
-            .collect();
-        let optionals: Vec<usize> = (0..self.args.len())
-            .filter(|&i| !self.args[i].flags.is_empty())
-            .collect();
-        for (heading, items) in [
-            ("positional arguments", positionals),
-            ("options", optionals),
-        ] {
+        let max_len = self.args.iter().enumerate().map(|(i, _)| f.invocation(self, i).1.chars().count() + 2).max().unwrap_or(0);
+        let positionals: Vec<usize> = (0..self.args.len()).filter(|&i| self.args[i].flags.is_empty()).collect();
+        let optionals: Vec<usize> = (0..self.args.len()).filter(|&i| !self.args[i].flags.is_empty()).collect();
+        for (heading, items) in [("positional arguments", positionals), ("options", optionals)] {
             if items.is_empty() {
                 continue;
             }
             let body: String = items.iter().map(|&i| f.action(self, i, max_len)).collect();
-            root.push_str(&format!(
-                "\n{}{}:{}\n{}\n",
-                f.t.heading, heading, f.t.reset, body
-            ));
+            root.push_str(&format!("\n{}{}:{}\n{}\n", f.t.heading, heading, f.t.reset, body));
         }
         finish(&format!("\n{root}\n"))
     }
@@ -581,17 +483,7 @@ const PLAIN: Theme = Theme {
 
 fn decolor(s: &str) -> String {
     let mut out = s.to_string();
-    for code in [
-        "\x1b[1;34m",
-        "\x1b[1;35m",
-        "\x1b[36m",
-        "\x1b[32m",
-        "\x1b[33m",
-        "\x1b[1;36m",
-        "\x1b[1;32m",
-        "\x1b[1;33m",
-        "\x1b[0m",
-    ] {
+    for code in ["\x1b[1;34m", "\x1b[1;35m", "\x1b[36m", "\x1b[32m", "\x1b[33m", "\x1b[1;36m", "\x1b[1;32m", "\x1b[1;33m", "\x1b[0m"] {
         out = out.replace(code, "");
     }
     out
@@ -603,10 +495,7 @@ fn len(s: &str) -> i64 {
 
 /// shutil.get_terminal_size().columns
 fn terminal_columns() -> i64 {
-    if let Some(n) = std::env::var("COLUMNS")
-        .ok()
-        .and_then(|v| pycompat::int(&v))
-    {
+    if let Some(n) = std::env::var("COLUMNS").ok().and_then(|v| pycompat::int(&v)) {
         if n > 0 {
             return n.min(i64::MAX as i128) as i64;
         }
@@ -659,9 +548,7 @@ impl Fmt {
 
     fn metavar(a: &Arg) -> String {
         match a.kind {
-            Kind::Value {
-                choices: Some(ch), ..
-            } => format!("{{{}}}", ch.join(",")),
+            Kind::Value { choices: Some(ch), .. } => format!("{{{}}}", ch.join(",")),
             _ if a.flags.is_empty() => a.dest.to_string(),
             _ => a.dest.to_uppercase(),
         }
@@ -675,38 +562,20 @@ impl Fmt {
         let mut pos_parts = vec![];
         for a in &p.args {
             if a.flags.is_empty() {
-                pos_parts.push(format!(
-                    "{}{}{}",
-                    t.summary_action,
-                    Self::metavar(a),
-                    t.reset
-                ));
+                pos_parts.push(format!("{}{}{}", t.summary_action, Self::metavar(a), t.reset));
                 continue;
             }
             let o = a.flags[0];
-            let colour = if o.chars().count() > 2 {
-                t.summary_long_option
-            } else {
-                t.summary_short_option
-            };
+            let colour = if o.chars().count() > 2 { t.summary_long_option } else { t.summary_short_option };
             let part = match a.kind {
-                Kind::Value { .. } => format!(
-                    "{colour}{o} {}{}{}",
-                    t.summary_label,
-                    Self::metavar(a),
-                    t.reset
-                ),
+                Kind::Value { .. } => format!("{colour}{o} {}{}{}", t.summary_label, Self::metavar(a), t.reset),
                 _ => format!("{colour}{o}{}", t.reset),
             };
             opt_parts.push(format!("[{part}]"));
         }
         let prog = self.prog.clone();
         let parts: Vec<String> = opt_parts.iter().chain(pos_parts.iter()).cloned().collect();
-        let mut usage = std::iter::once(prog.clone())
-            .chain(parts.iter().cloned())
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>()
-            .join(" ");
+        let mut usage = std::iter::once(prog.clone()).chain(parts.iter().cloned()).filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" ");
         let text_width = self.width;
         if prefix.len() as i64 + len(&usage) > text_width {
             let get_lines = |parts: &[String], indent: &str, prefix: Option<&str>| -> Vec<String> {
@@ -739,17 +608,13 @@ impl Fmt {
             let lines: Vec<String>;
             if (prefix.len() as i64 + prog_len) as f64 <= 0.75 * text_width as f64 {
                 let indent = " ".repeat((prefix.len() as i64 + prog_len + 1) as usize);
-                let first: Vec<String> = std::iter::once(prog.clone())
-                    .chain(opt_parts.iter().cloned())
-                    .collect();
+                let first: Vec<String> = std::iter::once(prog.clone()).chain(opt_parts.iter().cloned()).collect();
                 if !opt_parts.is_empty() {
                     let mut l = get_lines(&first, &indent, Some(prefix));
                     l.extend(get_lines(&pos_parts, &indent, None));
                     lines = l;
                 } else if !pos_parts.is_empty() {
-                    let first: Vec<String> = std::iter::once(prog.clone())
-                        .chain(pos_parts.iter().cloned())
-                        .collect();
+                    let first: Vec<String> = std::iter::once(prog.clone()).chain(pos_parts.iter().cloned()).collect();
                     lines = get_lines(&first, &indent, Some(prefix));
                 } else {
                     lines = vec![prog.clone()];
@@ -768,14 +633,8 @@ impl Fmt {
             }
             usage = lines.join("\n");
         }
-        let rest = usage
-            .strip_prefix(prog.as_str())
-            .unwrap_or(&usage)
-            .to_string();
-        format!(
-            "{}{prefix}{}{}{prog}{}{rest}\n\n",
-            t.usage, t.reset, t.prog, t.reset
-        )
+        let rest = usage.strip_prefix(prog.as_str()).unwrap_or(&usage).to_string();
+        format!("{}{prefix}{}{}{prog}{}{rest}\n\n", t.usage, t.reset, t.prog, t.reset)
     }
 
     /// _format_text: the description, filled to the width
@@ -808,10 +667,7 @@ impl Fmt {
         match a.kind {
             Kind::Value { .. } => {
                 let m = Self::metavar(a);
-                (
-                    format!("{} {}{m}{}", coloured.join(", "), t.label, t.reset),
-                    format!("{plain} {m}"),
-                )
+                (format!("{} {}{m}{}", coloured.join(", "), t.label, t.reset), format!("{plain} {m}"))
             }
             _ => (coloured.join(", "), plain),
         }
@@ -832,11 +688,7 @@ impl Fmt {
             }
             Some(_) if header.chars().count() as i64 <= action_width => {
                 let pad = action_width as usize - header.chars().count();
-                out.push_str(&format!(
-                    "{}{header_c}{}  ",
-                    " ".repeat(indent as usize),
-                    " ".repeat(pad)
-                ));
+                out.push_str(&format!("{}{header_c}{}  ", " ".repeat(indent as usize), " ".repeat(pad)));
                 0
             }
             Some(_) => {
@@ -847,11 +699,7 @@ impl Fmt {
         let help = help.unwrap();
         if !help.trim().is_empty() {
             let lines = wrap(&normalise(help), help_width);
-            out.push_str(&format!(
-                "{}{}\n",
-                " ".repeat(indent_first as usize),
-                lines[0]
-            ));
+            out.push_str(&format!("{}{}\n", " ".repeat(indent_first as usize), lines[0]));
             for l in &lines[1..] {
                 out.push_str(&format!("{}{l}\n", " ".repeat(help_position as usize)));
             }
@@ -864,10 +712,7 @@ impl Fmt {
 
 /// re.sub(r'\s+', ' ', text, flags=re.ASCII).strip()
 fn normalise(text: &str) -> String {
-    text.split([' ', '\t', '\n', '\r', '\x0b', '\x0c'])
-        .filter(|w| !w.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ")
+    text.split([' ', '\t', '\n', '\r', '\x0b', '\x0c']).filter(|w| !w.is_empty()).collect::<Vec<_>>().join(" ")
 }
 
 /// textwrap.wrap(text, width) for text of words and single spaces without hyphens

@@ -17,7 +17,9 @@ fn os() -> Option<&'static yggdrasil_conf::integrations::Integration> {
 /// Whose reviewed catalog this is ("Reviewed by ..."): the integration's `name`, else the system's name from /etc/os-release.
 pub fn os_name() -> &'static str {
     static NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    NAME.get_or_init(|| os().and_then(|i| i.get("name")).map(str::to_string).or_else(|| os_release("NAME")).unwrap_or_else(|| "this system".into()))
+    NAME.get_or_init(|| {
+        os().and_then(|i| i.get("name")).map(str::to_string).or_else(|| os_release("NAME")).unwrap_or_else(|| "this system".into())
+    })
 }
 
 /// The operating system's own catalog file (its text), if it declares one.
@@ -32,7 +34,9 @@ pub fn component_command() -> Option<Vec<String>> {
 
 fn os_release(key: &str) -> Option<String> {
     let text = std::fs::read_to_string("/etc/os-release").ok()?;
-    text.lines().find_map(|l| l.strip_prefix(key)?.strip_prefix('=').map(|v| v.trim().trim_matches('"').to_string())).filter(|v| !v.is_empty())
+    text.lines()
+        .find_map(|l| l.strip_prefix(key)?.strip_prefix('=').map(|v| v.trim().trim_matches('"').to_string()))
+        .filter(|v| !v.is_empty())
 }
 
 /// Which edition of the OS this is: the integration's `edition`, else ID from /etc/os-release (AGORA_EDITION tries another). Apps a
@@ -60,7 +64,9 @@ pub enum Source {
     /// One of the operating system's optional components (its `component` command).
     Component(String),
     /// An Omarchy shell plugin: listed, not installable here yet.
-    Plugin { repo: String },
+    Plugin {
+        repo: String,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -168,7 +174,11 @@ pub fn parse_catalog(text: &str, from: &str, trusted: bool) -> Result<Catalog, S
             source,
         });
     }
-    let featured = v.get("featured").and_then(|f| f.as_array()).map(|f| f.iter().map(|x| (s(x, "id"), s(x, "tagline"), s(x, "kicker"))).collect()).unwrap_or_default();
+    let featured = v
+        .get("featured")
+        .and_then(|f| f.as_array())
+        .map(|f| f.iter().map(|x| (s(x, "id"), s(x, "tagline"), s(x, "kicker"))).collect())
+        .unwrap_or_default();
     let mut tile_colors = std::collections::HashMap::new();
     if let Some(o) = v.get("tile_colors").and_then(|t| t.as_object()) {
         for (k, c) in o {
@@ -208,11 +218,24 @@ pub fn parse_omarchy(text: &str, from: &str) -> Result<Catalog, String> {
                 subtitle: {
                     let owner = pid.rsplit_once('.').map(|x| x.0).unwrap_or("");
                     let base = if cat.is_empty() { "Omarchy plugin".to_string() } else { format!("Omarchy plugin: {cat}") };
-                    if owner.is_empty() { base } else { format!("{base}  \u{b7}  {owner}") }
+                    if owner.is_empty() {
+                        base
+                    } else {
+                        format!("{base}  \u{b7}  {owner}")
+                    }
                 },
-                description: format!("{} Source: {repo}", if tags.is_empty() { String::new() } else { format!("Tags: {}.", tags.join(", ")) }),
+                description: format!(
+                    "{} Source: {repo}",
+                    if tags.is_empty() { String::new() } else { format!("Tags: {}.", tags.join(", ")) }
+                ),
                 category: if games { "Play".into() } else { "Plugins".into() },
-                subcategory: if games { "Plugin games".into() } else if cat.is_empty() { "Other".into() } else { cat },
+                subcategory: if games {
+                    "Plugin games".into()
+                } else if cat.is_empty() {
+                    "Other".into()
+                } else {
+                    cat
+                },
                 source: Source::Plugin { repo: repo.clone() },
                 icon: String::new(),
                 reviewed: false,
@@ -258,7 +281,17 @@ pub fn load_repos() -> Vec<Repo> {
     let text = std::fs::read_to_string(config_dir().join("repos.json")).unwrap_or_default();
     let v: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
     v.as_array()
-        .map(|a| a.iter().map(|r| Repo { name: s(r, "name"), url: s(r, "url"), kind: if s(r, "kind") == "omarchy" { "omarchy".into() } else { "catalog".into() }, enabled: r.get("enabled").and_then(|e| e.as_bool()).unwrap_or(true) }).filter(|r| r.url.starts_with("https://")).collect())
+        .map(|a| {
+            a.iter()
+                .map(|r| Repo {
+                    name: s(r, "name"),
+                    url: s(r, "url"),
+                    kind: if s(r, "kind") == "omarchy" { "omarchy".into() } else { "catalog".into() },
+                    enabled: r.get("enabled").and_then(|e| e.as_bool()).unwrap_or(true),
+                })
+                .filter(|r| r.url.starts_with("https://"))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -283,7 +316,10 @@ pub fn fetch(url: &str) -> Result<String, String> {
     if !url.starts_with("https://") {
         return Err("only https:// addresses are accepted".into());
     }
-    let out = std::process::Command::new("curl").args(["-fsSL", "--proto", "=https", "--max-time", "60", "--max-filesize", "40000000", url]).output().map_err(|e| format!("curl: {e}"))?;
+    let out = std::process::Command::new("curl")
+        .args(["-fsSL", "--proto", "=https", "--max-time", "60", "--max-filesize", "40000000", url])
+        .output()
+        .map_err(|e| format!("curl: {e}"))?;
     if !out.status.success() {
         return Err("could not download it".into());
     }
@@ -302,7 +338,11 @@ pub fn cached(url: &str) -> Option<String> {
 }
 
 pub fn load_repo(r: &Repo, text: &str) -> Result<Catalog, String> {
-    if r.kind == "omarchy" { parse_omarchy(text, &r.name) } else { parse_catalog(text, &r.name, false) }
+    if r.kind == "omarchy" {
+        parse_omarchy(text, &r.name)
+    } else {
+        parse_catalog(text, &r.name, false)
+    }
 }
 
 // ------------------------------------------------------------------ installed state
@@ -323,18 +363,27 @@ fn run(cmd: &str, args: &[&str]) -> String {
 
 pub fn read_installed() -> Installed {
     let pacman: HashSet<String> = run("pacman", &["-Qq"]).split_whitespace().map(str::to_string).collect();
-    let flatpak: HashSet<String> = run("flatpak", &["list", "--app", "--columns=application"]).split_whitespace().map(str::to_string).collect();
+    let flatpak: HashSet<String> =
+        run("flatpak", &["list", "--app", "--columns=application"]).split_whitespace().map(str::to_string).collect();
     let comps = os().and_then(|i| i.path("components")).and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
     let v: Value = serde_json::from_str(&comps).unwrap_or(Value::Null);
-    let components = v.get("components").and_then(|c| c.as_array()).map(|c| c.iter().map(|x| {
-        // everything the component installs: repository packages, AUR packages, its own build
-        let mut p = strings(&x["packages"]);
-        p.extend(strings(&x["aur"]));
-        if let Some(b) = x.get("pkgbuild").and_then(|b| b.as_str()) {
-            p.push(b.to_string());
-        }
-        (s(x, "id"), p)
-    }).collect()).unwrap_or_default();
+    let components = v
+        .get("components")
+        .and_then(|c| c.as_array())
+        .map(|c| {
+            c.iter()
+                .map(|x| {
+                    // everything the component installs: repository packages, AUR packages, its own build
+                    let mut p = strings(&x["packages"]);
+                    p.extend(strings(&x["aur"]));
+                    if let Some(b) = x.get("pkgbuild").and_then(|b| b.as_str()) {
+                        p.push(b.to_string());
+                    }
+                    (s(x, "id"), p)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     // updates are looked for separately (they need the network): see check_updates
     Installed { pacman, flatpak, components, updates: vec![] }
 }
@@ -344,7 +393,12 @@ impl Installed {
         match &e.source {
             Source::Pacman(p) | Source::Aur(p) => p.iter().all(|x| self.pacman.contains(x)),
             Source::Flatpak(a) => self.flatpak.contains(a),
-            Source::Component(id) => self.components.iter().find(|c| &c.0 == id).map(|c| !c.1.is_empty() && c.1.iter().all(|p| self.pacman.contains(p))).unwrap_or(false),
+            Source::Component(id) => self
+                .components
+                .iter()
+                .find(|c| &c.0 == id)
+                .map(|c| !c.1.is_empty() && c.1.iter().all(|p| self.pacman.contains(p)))
+                .unwrap_or(false),
             Source::Plugin { .. } => false,
         }
     }
@@ -353,7 +407,9 @@ impl Installed {
         match &e.source {
             Source::Pacman(p) | Source::Aur(p) => p.iter().any(|x| self.updates.contains(x)),
             // a component's packages: Labyrinth's own builds update from its repository, Proton's and Microsoft's apps from the AUR
-            Source::Component(id) => self.components.iter().find(|c| &c.0 == id).is_some_and(|c| c.1.iter().any(|x| self.updates.contains(x))),
+            Source::Component(id) => {
+                self.components.iter().find(|c| &c.0 == id).is_some_and(|c| c.1.iter().any(|x| self.updates.contains(x)))
+            }
             _ => false,
         }
     }
@@ -390,7 +446,11 @@ pub struct Update {
 /// Programs the operating system builds from its own build files: they may share a name with unrelated AUR packages, so they are never
 /// updated from the AUR. From the integration's `own_builds` folder (one folder per package) and its catalog's `local_builds` list.
 pub fn local_builds() -> Vec<String> {
-    let mut v: Vec<String> = os().and_then(|i| i.path("own_builds")).and_then(|d| std::fs::read_dir(d).ok()).map(|rd| rd.flatten().filter_map(|e| e.file_name().to_str().map(str::to_string)).collect()).unwrap_or_default();
+    let mut v: Vec<String> = os()
+        .and_then(|i| i.path("own_builds"))
+        .and_then(|d| std::fs::read_dir(d).ok())
+        .map(|rd| rd.flatten().filter_map(|e| e.file_name().to_str().map(str::to_string)).collect())
+        .unwrap_or_default();
     v.extend(local_builds_in(&os_catalog().unwrap_or_default()));
     v.sort();
     v.dedup();
@@ -410,8 +470,13 @@ pub fn aur_ignore(foreign: &[String], aur_allowed: &[String], local: &[String]) 
 
 /// The packages installed from outside the repositories (pacman -Qmq).
 pub fn foreign_packages() -> Vec<String> {
-    std::process::Command::new("pacman").arg("-Qmq").output().ok().filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).split_whitespace().map(str::to_string).collect()).unwrap_or_default()
+    std::process::Command::new("pacman")
+        .arg("-Qmq")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).split_whitespace().map(str::to_string).collect())
+        .unwrap_or_default()
 }
 
 /// Packages whose updates may come from the AUR: the operating system catalog's AUR apps and its `aur_updates_ok`, and what
@@ -436,13 +501,17 @@ pub fn aur_allowed() -> Vec<String> {
 }
 
 fn aur_record() -> Option<std::path::PathBuf> {
-    let base = std::env::var_os("XDG_STATE_HOME").map(std::path::PathBuf::from)
+    let base = std::env::var_os("XDG_STATE_HOME")
+        .map(std::path::PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/state")))?;
     Some(base.join("agora/aur-installed"))
 }
 
 fn remembered_aur() -> Vec<String> {
-    aur_record().and_then(|p| std::fs::read_to_string(p).ok()).map(|t| t.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect()).unwrap_or_default()
+    aur_record()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|t| t.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect())
+        .unwrap_or_default()
 }
 
 /// Remembers packages installed from the AUR through Agora, so a full update may take their updates from the AUR.
@@ -466,11 +535,13 @@ fn local_builds_in(catalog: &str) -> Vec<String> {
 }
 
 fn parse_updates(text: &str, aur: bool) -> Vec<Update> {
-    text.lines().filter_map(|l| {
-        let mut it = l.split_whitespace();
-        let (name, old, arrow, new) = (it.next()?, it.next()?, it.next()?, it.next()?);
-        (arrow == "->").then(|| Update { name: name.to_string(), old: old.to_string(), new: new.to_string(), aur })
-    }).collect()
+    text.lines()
+        .filter_map(|l| {
+            let mut it = l.split_whitespace();
+            let (name, old, arrow, new) = (it.next()?, it.next()?, it.next()?, it.next()?);
+            (arrow == "->").then(|| Update { name: name.to_string(), old: old.to_string(), new: new.to_string(), aur })
+        })
+        .collect()
 }
 
 fn newer(new: &str, old: &str) -> bool {
@@ -485,7 +556,8 @@ pub fn check_updates() -> Vec<Update> {
     let run_dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/tmp")).join("agora");
     let tmp = run_dir.join(format!("updates-db-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
-    let made = std::fs::create_dir_all(tmp.join("sync")).is_ok() && std::os::unix::fs::symlink("/var/lib/pacman/local", tmp.join("local")).is_ok();
+    let made =
+        std::fs::create_dir_all(tmp.join("sync")).is_ok() && std::os::unix::fs::symlink("/var/lib/pacman/local", tmp.join("local")).is_ok();
     if made {
         if let Ok(rd) = std::fs::read_dir("/var/lib/pacman/sync") {
             for e in rd.flatten() {
@@ -495,11 +567,21 @@ pub fn check_updates() -> Vec<Update> {
         let db = tmp.to_string_lossy().into_owned();
         // A copy of pacman.conf that does not check signatures: without root the keyring cannot be read, so repositories that
         // require signed databases (CachyOS's) would fail. This only lists names and versions; the real update still checks everything.
-        let conf: String = std::fs::read_to_string("/etc/pacman.conf").unwrap_or_default().lines().filter(|l| !l.trim_start().starts_with("SigLevel") && !l.trim_start().starts_with("LocalFileSigLevel")).map(|l| if l.trim() == "[options]" { "[options]\nSigLevel = Never".to_string() } else { l.to_string() }).collect::<Vec<_>>().join("\n");
+        let conf: String = std::fs::read_to_string("/etc/pacman.conf")
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("SigLevel") && !l.trim_start().starts_with("LocalFileSigLevel"))
+            .map(|l| if l.trim() == "[options]" { "[options]\nSigLevel = Never".to_string() } else { l.to_string() })
+            .collect::<Vec<_>>()
+            .join("\n");
         let conf_path = tmp.join("pacman.conf");
         let _ = std::fs::write(&conf_path, conf);
         let cf = conf_path.to_string_lossy().into_owned();
-        let _ = std::process::Command::new("fakeroot").args(["--", "pacman", "-Sy", "--config", &cf, "--dbpath", &db, "--logfile", "/dev/null"]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
+        let _ = std::process::Command::new("fakeroot")
+            .args(["--", "pacman", "-Sy", "--config", &cf, "--dbpath", &db, "--logfile", "/dev/null"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
         out = parse_updates(&run("pacman", &["-Qu", "--config", &cf, "--dbpath", &db]), false);
     } else {
         out = parse_updates(&run("pacman", &["-Qu"]), false);
@@ -517,7 +599,8 @@ pub fn check_updates() -> Vec<Update> {
 
 /// Distinct sub-categories of a category, sorted.
 pub fn subcategories(apps: &[Entry], category: &str) -> Vec<String> {
-    let set: BTreeSet<String> = apps.iter().filter(|a| a.category == category && !a.subcategory.is_empty()).map(|a| a.subcategory.clone()).collect();
+    let set: BTreeSet<String> =
+        apps.iter().filter(|a| a.category == category && !a.subcategory.is_empty()).map(|a| a.subcategory.clone()).collect();
     set.into_iter().collect()
 }
 
@@ -541,7 +624,12 @@ mod tests {
     fn a_component_shows_an_update_when_one_of_its_packages_has_one() {
         let mut e = parse_catalog(SAMPLE, "Sample", true).unwrap().apps[0].clone();
         e.source = Source::Component("limbo".into());
-        let mut i = Installed { pacman: HashSet::new(), flatpak: HashSet::new(), components: vec![("limbo".into(), vec!["limbo-git".into()]), ("mail".into(), vec!["proton-mail-bin".into()])], updates: vec![] };
+        let mut i = Installed {
+            pacman: HashSet::new(),
+            flatpak: HashSet::new(),
+            components: vec![("limbo".into(), vec!["limbo-git".into()]), ("mail".into(), vec!["proton-mail-bin".into()])],
+            updates: vec![],
+        };
         assert!(!i.update_for(&e));
         i.updates = vec!["limbo-git".into()];
         assert!(i.update_for(&e), "Labyrinth's own build, newer in its repository");
@@ -602,7 +690,9 @@ mod tests {
         let foreign = v(&["yggdrasil-settings", "heimdall-git", "yay", "spotify", "my-hand-built-thing"]);
         let allowed = v(&["yay", "spotify"]);
         let local = v(&["labyrinth-branding"]);
-        assert_eq!(aur_ignore(&foreign, &allowed, &local), v(&["heimdall-git", "labyrinth-branding", "my-hand-built-thing", "yggdrasil-settings"]));
+        assert_eq!(
+            aur_ignore(&foreign, &allowed, &local),
+            v(&["heimdall-git", "labyrinth-branding", "my-hand-built-thing", "yggdrasil-settings"])
+        );
     }
 }
-

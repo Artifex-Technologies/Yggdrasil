@@ -38,10 +38,7 @@ const GOLDEN_PREVIEW: u64 = 0x0f92c22e0548e5ae;
 /// own rendering, so their hashes hold for the FreeType they were made with (2.15.0)
 fn freetype_version() -> Option<(i32, i32, i32)> {
     unsafe {
-        let h = libc::dlopen(
-            c"libfreetype.so.6".as_ptr(),
-            libc::RTLD_NOW | libc::RTLD_LOCAL,
-        );
+        let h = libc::dlopen(c"libfreetype.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
         if h.is_null() {
             return None;
         }
@@ -50,14 +47,9 @@ fn freetype_version() -> Option<(i32, i32, i32)> {
         if init.is_null() || version.is_null() {
             return None;
         }
-        let init: unsafe extern "C" fn(*mut *mut libc::c_void) -> libc::c_int =
-            std::mem::transmute(init);
-        let version: unsafe extern "C" fn(
-            *mut libc::c_void,
-            *mut libc::c_int,
-            *mut libc::c_int,
-            *mut libc::c_int,
-        ) = std::mem::transmute(version);
+        let init: unsafe extern "C" fn(*mut *mut libc::c_void) -> libc::c_int = std::mem::transmute(init);
+        let version: unsafe extern "C" fn(*mut libc::c_void, *mut libc::c_int, *mut libc::c_int, *mut libc::c_int) =
+            std::mem::transmute(version);
         let mut lib = std::ptr::null_mut();
         if init(&mut lib) != 0 {
             return None;
@@ -89,13 +81,7 @@ fn draw(name: &str, preview: bool) -> PathBuf {
     }
     let o = c.output().unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
-    assert_eq!(
-        String::from_utf8_lossy(&o.stdout),
-        format!(
-            "96 cursor names, 22 shapes, in {}\n",
-            d.join("out/cursors").display()
-        )
-    );
+    assert_eq!(String::from_utf8_lossy(&o.stdout), format!("96 cursor names, 22 shapes, in {}\n", d.join("out/cursors").display()));
     d.join("out")
 }
 
@@ -126,20 +112,14 @@ fn the_theme_is_the_one_pillow_drew() {
     let out = draw("golden", true);
     let same_freetype = freetype_version() == Some((2, 15, 0));
     if !same_freetype {
-        eprintln!(
-            "FreeType {:?}, not 2.15.0: the help cursor and the preview are not compared",
-            freetype_version()
-        );
+        eprintln!("FreeType {:?}, not 2.15.0: the help cursor and the preview are not compared", freetype_version());
     }
     for (name, want) in GOLDEN {
         if name == "help" && !same_freetype {
             continue;
         }
         let got = fnv(&std::fs::read(out.join("cursors").join(name)).unwrap());
-        assert_eq!(
-            got, want,
-            "{name}: not the cursor Python's ygg-cursors drew"
-        );
+        assert_eq!(got, want, "{name}: not the cursor Python's ygg-cursors drew");
     }
     // the preview: a PNG of our own (filter 0 rows), its pixels Pillow's
     if !same_freetype {
@@ -156,10 +136,7 @@ fn the_theme_is_the_one_pillow_drew() {
         i += 12 + len;
     }
     let raw = miniz_oxide::inflate::decompress_to_vec_zlib(&z).unwrap();
-    let pixels: Vec<u8> = raw
-        .chunks(768 * 4 + 1)
-        .flat_map(|row| row[1..].to_vec())
-        .collect();
+    let pixels: Vec<u8> = raw.chunks(768 * 4 + 1).flat_map(|row| row[1..].to_vec()).collect();
     assert_eq!(pixels.len(), 768 * 288 * 4);
     assert_eq!(fnv(&pixels), GOLDEN_PREVIEW);
 }
@@ -196,32 +173,20 @@ fn the_names_programs_ask_for_exist_and_are_well_formed() {
     ] {
         assert!(std::fs::symlink_metadata(cur.join(n)).is_ok(), "{n}");
     }
-    assert_eq!(
-        std::fs::read_link(cur.join("hand2")).unwrap(),
-        PathBuf::from("pointer")
-    );
+    assert_eq!(std::fs::read_link(cur.join("hand2")).unwrap(), PathBuf::from("pointer"));
     let (sizes, _) = chunks(&cur.join("left_ptr"));
-    assert_eq!(
-        sizes.into_iter().collect::<Vec<_>>(),
-        vec![24, 32, 48, 64, 96]
-    );
+    assert_eq!(sizes.into_iter().collect::<Vec<_>>(), vec![24, 32, 48, 64, 96]);
     // the busy cursor is animated: 12 frames in each of the 5 sizes, 80 ms each
     let (_, heads) = chunks(&cur.join("wait"));
     assert_eq!(heads.len(), 60);
     assert!(heads.iter().all(|h| h[8] == 80));
-    assert!(std::fs::read_to_string(out.join("index.theme"))
-        .unwrap()
-        .contains("Name=Yggdrasil"));
+    assert!(std::fs::read_to_string(out.join("index.theme")).unwrap().contains("Name=Yggdrasil"));
     assert_eq!(std::fs::read_dir(&cur).unwrap().count(), 96);
 }
 
 #[test]
 fn without_a_folder_it_prints_how_to_use_it() {
-    let o = Command::new(env!("CARGO_BIN_EXE_ygg-cursors"))
-        .arg("--preview")
-        .output()
-        .unwrap();
+    let o = Command::new(env!("CARGO_BIN_EXE_ygg-cursors")).arg("--preview").output().unwrap();
     assert_eq!(o.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&o.stdout)
-        .starts_with("ygg-cursors: draws Yggdrasil's mouse cursors"));
+    assert!(String::from_utf8_lossy(&o.stdout).starts_with("ygg-cursors: draws Yggdrasil's mouse cursors"));
 }

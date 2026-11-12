@@ -155,7 +155,11 @@ fn drive(card: &mut FakeCard, c: Cfg, steps: usize) -> i32 {
 fn test_follows_the_curve_settles_and_gives_back() {
     let mut card = FakeCard::new(&[40, 60, 75, 73, 71, 70], None);
     assert_eq!(drive(&mut card, cfg("curve", 60, &[[40, 30], [60, 45], [75, 75], [85, 100]]), 6), 0);
-    assert_eq!(card.speeds(0), [30, 45, 75, 67], "up at once; at 73 C it stays at 75 %; at 71 C (3 cooler) it comes down to 67 %, and at 70 C it stays there");
+    assert_eq!(
+        card.speeds(0),
+        [30, 45, 75, 67],
+        "up at once; at 73 C it stays at 75 %; at 71 C (3 cooler) it comes down to 67 %, and at 70 C it stays there"
+    );
     assert_eq!(card.defaults_sorted(), [0, 1], "both fans back to the card at the end");
 }
 
@@ -191,8 +195,16 @@ fn the_fake_card_of_a_fake_root_and_a_dry_run() {
     let mut nv = Nvml::open(&c).unwrap();
     assert_eq!((nv.fans(), nv.minmax(), nv.speed(1)), (Ok(2), Ok((30, 100)), Ok(41)));
     assert_eq!((nv.temp(), nv.temp()), (Ok(50), Ok(51)));
-    assert_eq!(nv.temp(), Err(NvmlError("nvmlDeviceGetTemperature failed (NVML error 15)".into())), "the readings ran out: the card is lost");
+    assert_eq!(
+        nv.temp(),
+        Err(NvmlError("nvmlDeviceGetTemperature failed (NVML error 15)".into())),
+        "the readings ran out: the card is lost"
+    );
     let gone = TempDir::new();
-    assert_eq!(Nvml::open(&ctx(gone.path())).err(),
-               Some(NvmlError("libnvidia-ml is not available (libnvidia-ml.so.1: cannot open shared object file: No such file or directory)".into())));
+    assert_eq!(
+        Nvml::open(&ctx(gone.path())).err(),
+        Some(NvmlError(
+            "libnvidia-ml is not available (libnvidia-ml.so.1: cannot open shared object file: No such file or directory)".into()
+        ))
+    );
 }

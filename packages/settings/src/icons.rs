@@ -35,10 +35,12 @@ pub enum Icon {
 }
 
 fn arc(c: Pos2, r: f32, from: f32, to: f32) -> Vec<Pos2> {
-    (0..=16).map(|i| {
-        let a = (from + (to - from) * i as f32 / 16.0).to_radians();
-        pos2(c.x + r * a.cos(), c.y - r * a.sin())
-    }).collect()
+    (0..=16)
+        .map(|i| {
+            let a = (from + (to - from) * i as f32 / 16.0).to_radians();
+            pos2(c.x + r * a.cos(), c.y - r * a.sin())
+        })
+        .collect()
 }
 
 pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
@@ -69,7 +71,11 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
             p.line_segment([at(0.32, 0.86), at(0.68, 0.86)], s);
         }
         Icon::Sound => {
-            p.add(Shape::convex_polygon(vec![at(0.14, 0.4), at(0.3, 0.4), at(0.5, 0.22), at(0.5, 0.78), at(0.3, 0.6), at(0.14, 0.6)], Color32::TRANSPARENT, s));
+            p.add(Shape::convex_polygon(
+                vec![at(0.14, 0.4), at(0.3, 0.4), at(0.5, 0.22), at(0.5, 0.78), at(0.3, 0.6), at(0.14, 0.6)],
+                Color32::TRANSPARENT,
+                s,
+            ));
             p.add(Shape::line(arc(at(0.52, 0.5), 0.18 * w, -50.0, 50.0), s));
             p.add(Shape::line(arc(at(0.52, 0.5), 0.32 * w, -50.0, 50.0), s));
         }
@@ -108,7 +114,12 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
         }
         Icon::Apps => {
             for (x, y) in [(0.3, 0.3), (0.7, 0.3), (0.3, 0.7), (0.7, 0.7)] {
-                p.rect_stroke(Rect::from_center_size(at(x, y), eframe::egui::vec2(0.26 * w, 0.26 * w)), 2.0, s, eframe::egui::StrokeKind::Inside);
+                p.rect_stroke(
+                    Rect::from_center_size(at(x, y), eframe::egui::vec2(0.26 * w, 0.26 * w)),
+                    2.0,
+                    s,
+                    eframe::egui::StrokeKind::Inside,
+                );
             }
         }
         Icon::Keyboard => {

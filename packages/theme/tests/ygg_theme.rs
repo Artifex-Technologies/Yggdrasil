@@ -17,7 +17,8 @@ impl Drop for Home {
 
 fn home() -> Home {
     static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let d = std::env::temp_dir().join(format!("ygg-theme-home-{}-{}", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::SeqCst)));
+    let d =
+        std::env::temp_dir().join(format!("ygg-theme-home-{}-{}", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::SeqCst)));
     let _ = fs::remove_dir_all(&d);
     fs::create_dir_all(&d).unwrap();
     Home(d)
@@ -76,7 +77,11 @@ fn test_apply_writes_everything_and_keeps_the_users_own_css() {
     assert!(h.0.join(".local/share/color-schemes/YggdrasilDark.colors").is_file());
     let g3 = h.read(".config/gtk-3.0/settings.ini");
     let g = |k: &str| section(&g3, "[Settings]", k).unwrap();
-    assert_eq!((g("gtk-theme-name"), g("gtk-icon-theme-name"), g("gtk-cursor-theme-name")), ("Yggdrasil-dark".into(), "Liki".into(), "Yggdrasil".into()), "dark mode is a GTK theme of its own");
+    assert_eq!(
+        (g("gtk-theme-name"), g("gtk-icon-theme-name"), g("gtk-cursor-theme-name")),
+        ("Yggdrasil-dark".into(), "Liki".into(), "Yggdrasil".into()),
+        "dark mode is a GTK theme of its own"
+    );
     let css = h.read(".config/gtk-4.0/gtk.css");
     assert!(css.contains("rgb(12,34,56)"));
     assert!(css.contains("border-radius: 3px"));

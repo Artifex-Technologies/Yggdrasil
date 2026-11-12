@@ -28,10 +28,25 @@ use calloop_wayland_source::WaylandSource;
 use memmap2::MmapMut;
 use tiny_skia::{Pixmap, PixmapMut, PixmapPaint, Transform};
 use wayland_client::globals::{registry_queue_init, GlobalListContents};
-use wayland_client::protocol::{wl_buffer::{self, WlBuffer}, wl_callback::{self, WlCallback}, wl_compositor::WlCompositor, wl_output::WlOutput, wl_region::WlRegion, wl_registry, wl_shm::{self, WlShm}, wl_shm_pool::WlShmPool, wl_surface::WlSurface};
+use wayland_client::protocol::{
+    wl_buffer::{self, WlBuffer},
+    wl_callback::{self, WlCallback},
+    wl_compositor::WlCompositor,
+    wl_output::WlOutput,
+    wl_region::WlRegion,
+    wl_registry,
+    wl_shm::{self, WlShm},
+    wl_shm_pool::WlShmPool,
+    wl_surface::WlSurface,
+};
 use wayland_client::{delegate_noop, Connection, Dispatch, QueueHandle};
-use wayland_protocols::wp::alpha_modifier::v1::client::{wp_alpha_modifier_surface_v1::WpAlphaModifierSurfaceV1, wp_alpha_modifier_v1::WpAlphaModifierV1};
-use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1::{self, ZwlrLayerShellV1}, zwlr_layer_surface_v1::{self, Anchor, KeyboardInteractivity, ZwlrLayerSurfaceV1}};
+use wayland_protocols::wp::alpha_modifier::v1::client::{
+    wp_alpha_modifier_surface_v1::WpAlphaModifierSurfaceV1, wp_alpha_modifier_v1::WpAlphaModifierV1,
+};
+use wayland_protocols_wlr::layer_shell::v1::client::{
+    zwlr_layer_shell_v1::{self, ZwlrLayerShellV1},
+    zwlr_layer_surface_v1::{self, Anchor, KeyboardInteractivity, ZwlrLayerSurfaceV1},
+};
 
 const CELL_W: f32 = 18.0;
 const CELL_H: f32 = 24.0;
@@ -55,7 +70,9 @@ enum Mode {
 
 /// ~/.config/yggdrasil/splash.conf, as `key = value` lines.
 fn mode_from(text: &str) -> Mode {
-    let get = |k: &str| text.lines().filter_map(|l| l.split('#').next()?.split_once('=')).find(|(a, _)| a.trim() == k).map(|(_, v)| v.trim().to_string());
+    let get = |k: &str| {
+        text.lines().filter_map(|l| l.split('#').next()?.split_once('=')).find(|(a, _)| a.trim() == k).map(|(_, v)| v.trim().to_string())
+    };
     match get("mode").as_deref() {
         Some("off") | Some("nothing") => Mode::Off,
         Some("messages") => Mode::Messages,
@@ -75,7 +92,12 @@ fn mode() -> Mode {
 fn logo() -> Option<Pixmap> {
     for f in std::fs::read_dir("/usr/share/yggdrasil/integrations").ok()?.flatten() {
         let text = std::fs::read_to_string(f.path()).unwrap_or_default();
-        let get = |k: &str| text.lines().filter_map(|l| l.split('#').next()?.split_once('=')).find(|(a, _)| a.trim() == k).map(|(_, v)| v.trim().to_string());
+        let get = |k: &str| {
+            text.lines()
+                .filter_map(|l| l.split('#').next()?.split_once('='))
+                .find(|(a, _)| a.trim() == k)
+                .map(|(_, v)| v.trim().to_string())
+        };
         if get("kind").as_deref() == Some("branding") {
             if let Some(p) = get("splash_logo") {
                 return design::load_picture(std::path::Path::new(&p));
@@ -302,7 +324,15 @@ struct App {
 }
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for App {
-    fn event(_: &mut Self, _: &wl_registry::WlRegistry, _: wl_registry::Event, _: &GlobalListContents, _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_registry::WlRegistry,
+        _: wl_registry::Event,
+        _: &GlobalListContents,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 delegate_noop!(App: WlCompositor);
 delegate_noop!(App: ignore WlShm);
@@ -373,7 +403,11 @@ impl App {
         let file = std::fs::File::from(fd);
         let Ok(map) = (unsafe { MmapMut::map_mut(&file) }) else { return };
         let pool = self.shm.create_pool(file.as_fd(), (one * 2) as i32, qh, ());
-        let bufs = (0..2).map(|k| Buf(pool.create_buffer((k * one) as i32, w as i32, h as i32, stride as i32, wl_shm::Format::Argb8888, qh, (i, k)), false)).collect();
+        let bufs = (0..2)
+            .map(|k| {
+                Buf(pool.create_buffer((k * one) as i32, w as i32, h as i32, stride as i32, wl_shm::Format::Argb8888, qh, (i, k)), false)
+            })
+            .collect();
         pool.destroy();
         let glyphs = GLYPHS.chars().count();
         let n = (w as f32 / CELL_W) as usize + 1;
@@ -474,7 +508,14 @@ impl App {
                         let k = (w as f32 * 0.9 / p.width() as f32).min(h as f32 * 0.9 / p.height() as f32).min(1.0);
                         let (pw, ph) = (p.width() as f32 * k, p.height() as f32 * k);
                         let paint = PixmapPaint { quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
-                        pix.draw_pixmap(0, 0, p.as_ref(), &paint, Transform::from_row(k, 0.0, 0.0, k, (w as f32 - pw) / 2.0, (h as f32 - ph) / 2.0), None);
+                        pix.draw_pixmap(
+                            0,
+                            0,
+                            p.as_ref(),
+                            &paint,
+                            Transform::from_row(k, 0.0, 0.0, k, (w as f32 - pw) / 2.0, (h as f32 - ph) / 2.0),
+                            None,
+                        );
                     }
                 }
             }
@@ -507,7 +548,11 @@ impl App {
                 }
                 if let Some(l) = &self.logo {
                     // as the screensaver the logo fades away between 4 and 6 seconds: nothing stands still to mark the screen
-                    let k = if self.screensaver { (256.0 * (1.0 - ((self.started.elapsed().as_secs_f32() - 4.0) / 2.0).clamp(0.0, 1.0))) as u32 } else { 256 };
+                    let k = if self.screensaver {
+                        (256.0 * (1.0 - ((self.started.elapsed().as_secs_f32() - 4.0) / 2.0).clamp(0.0, 1.0))) as u32
+                    } else {
+                        256
+                    };
                     blit_faded(bytes, w, h, l, ((w - l.width().min(w)) / 2) as i32, ((h - l.height().min(h)) / 2) as i32, k);
                 }
             }
@@ -545,7 +590,8 @@ impl App {
 
 /// One request to Hyprland's control socket.
 fn hypr(request: &str) -> Option<String> {
-    let dir = std::path::PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR")?).join("hypr").join(std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE")?);
+    let dir =
+        std::path::PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR")?).join("hypr").join(std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE")?);
     let mut s = std::os::unix::net::UnixStream::connect(dir.join(".socket.sock")).ok()?;
     s.set_read_timeout(Some(Duration::from_millis(500))).ok()?;
     s.write_all(request.as_bytes()).ok()?;
@@ -572,7 +618,11 @@ fn main() {
         return;
     };
     let qh = queue.handle();
-    let (Ok(compositor), Ok(shm), Ok(layer_shell)) = (globals.bind::<WlCompositor, _, _>(&qh, 1..=6, ()), globals.bind::<WlShm, _, _>(&qh, 1..=1, ()), globals.bind::<ZwlrLayerShellV1, _, _>(&qh, 1..=4, ())) else {
+    let (Ok(compositor), Ok(shm), Ok(layer_shell)) = (
+        globals.bind::<WlCompositor, _, _>(&qh, 1..=6, ()),
+        globals.bind::<WlShm, _, _>(&qh, 1..=1, ()),
+        globals.bind::<ZwlrLayerShellV1, _, _>(&qh, 1..=4, ()),
+    ) else {
         eprintln!("yggdrasil-splash: the compositor has no layer shell");
         return;
     };
@@ -612,7 +662,14 @@ fn main() {
         let output = globals.registry().bind::<WlOutput, _, _>(name, 1, &qh, ());
         let surface = app.compositor.create_surface(&qh, ());
         let idx = app.screens.len();
-        let layer = app.layer_shell.get_layer_surface(&surface, Some(&output), zwlr_layer_shell_v1::Layer::Overlay, "yggdrasil-splash".into(), &qh, idx);
+        let layer = app.layer_shell.get_layer_surface(
+            &surface,
+            Some(&output),
+            zwlr_layer_shell_v1::Layer::Overlay,
+            "yggdrasil-splash".into(),
+            &qh,
+            idx,
+        );
         layer.set_anchor(Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right);
         layer.set_exclusive_zone(-1);
         let alpha = alpha_mgr.as_ref().map(|m| m.get_surface(&surface, &qh, ()));
@@ -626,7 +683,19 @@ fn main() {
             region.destroy();
         }
         surface.commit();
-        app.screens.push(Screen { surface, layer, size: (0, 0), configured: false, bufs: vec![], map: None, pix: None, cols: vec![], alpha, wants_frame: true, last: None });
+        app.screens.push(Screen {
+            surface,
+            layer,
+            size: (0, 0),
+            configured: false,
+            bufs: vec![],
+            map: None,
+            pix: None,
+            cols: vec![],
+            alpha,
+            wants_frame: true,
+            last: None,
+        });
     }
     let Ok(mut event_loop) = EventLoop::<App>::try_new() else { return };
     if WaylandSource::new(conn.clone(), queue).insert(event_loop.handle()).is_err() {
@@ -646,13 +715,20 @@ fn main() {
     }
     // the fade starts once it is (or when it takes too long); frames themselves come from the compositor's frame callbacks
     let _ = event_loop.handle().insert_source(Timer::from_duration(Duration::from_millis(20)), |_, _, app: &mut App| {
-        if !app.screensaver && app.fading.is_none() && (app.started.elapsed() > LONGEST || app.ready.load(std::sync::atomic::Ordering::Acquire)) {
+        if !app.screensaver
+            && app.fading.is_none()
+            && (app.started.elapsed() > LONGEST || app.ready.load(std::sync::atomic::Ordering::Acquire))
+        {
             app.fading = Some(Instant::now());
         }
         if app.fading.map(|t| t.elapsed() > FADE).unwrap_or(false) {
             if !app.done {
                 let frames = app.screens.iter().filter(|s| s.last.is_some()).count();
-                eprintln!("yggdrasil-splash: shown on {frames} of {} screens for {} ms", app.screens.len(), app.started.elapsed().as_millis());
+                eprintln!(
+                    "yggdrasil-splash: shown on {frames} of {} screens for {} ms",
+                    app.screens.len(),
+                    app.started.elapsed().as_millis()
+                );
             }
             app.done = true;
         }
@@ -675,7 +751,14 @@ fn main() {
         v.sort_by(|a, b| a.total_cmp(b));
         if !v.is_empty() {
             let pct = |p: f32| v[((v.len() - 1) as f32 * p) as usize];
-            eprintln!("frames {}  ms between: median {:.1}  95% {:.1}  99% {:.1}  max {:.1}", v.len(), pct(0.5), pct(0.95), pct(0.99), v[v.len() - 1]);
+            eprintln!(
+                "frames {}  ms between: median {:.1}  95% {:.1}  99% {:.1}  max {:.1}",
+                v.len(),
+                pct(0.5),
+                pct(0.95),
+                pct(0.99),
+                v[v.len() - 1]
+            );
         }
     }
     for s in &app.screens {

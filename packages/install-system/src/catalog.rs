@@ -30,11 +30,9 @@ pub fn entries(path: Option<&str>, key: &str) -> Vec<Py> {
         return vec![];
     };
     match data.get(key) {
-        Some(Py::List(items)) => items
-            .iter()
-            .filter(|x| x.as_dict().is_some() && x.at("id").as_str().is_some_and(|i| !i.is_empty()))
-            .cloned()
-            .collect(),
+        Some(Py::List(items)) => {
+            items.iter().filter(|x| x.as_dict().is_some() && x.at("id").as_str().is_some_and(|i| !i.is_empty())).cloned().collect()
+        }
         _ => vec![],
     }
 }
@@ -47,10 +45,7 @@ pub fn id(entry: &Py) -> String {
 /// The text items of a list in one of the OS's files (a list is expected there; anything else is no list).
 pub fn texts(v: &Py) -> Vec<String> {
     match v {
-        Py::List(l) => l
-            .iter()
-            .filter_map(|x| x.as_str().map(str::to_string))
-            .collect(),
+        Py::List(l) => l.iter().filter_map(|x| x.as_str().map(str::to_string)).collect(),
         _ => vec![],
     }
 }
@@ -80,16 +75,8 @@ pub fn browser_plan(catalog: &[Py], chosen: &[String]) -> BrowserPlan {
         }
     }
     let keep: HashSet<&String> = install.iter().collect();
-    let remove = remove
-        .iter()
-        .filter(|x| !keep.contains(x))
-        .cloned()
-        .collect();
-    BrowserPlan {
-        remove,
-        install,
-        flatpaks,
-    }
+    let remove = remove.iter().filter(|x| !keep.contains(x)).cloned().collect();
+    BrowserPlan { remove, install, flatpaks }
 }
 
 fn lstrip(s: &str) -> &str {
@@ -98,14 +85,8 @@ fn lstrip(s: &str) -> &str {
 
 /// /etc/xdg/mimeapps.list with `desktop` opening web links and pages (the keys added under [Default Applications] if missing).
 pub fn mimeapps_with_browser(text: &str, desktop: &str) -> String {
-    let mut lines: Vec<String> = pycompat::splitlines(text)
-        .into_iter()
-        .map(str::to_string)
-        .collect();
-    if !lines
-        .iter()
-        .any(|l| pycompat::strip(l) == "[Default Applications]")
-    {
+    let mut lines: Vec<String> = pycompat::splitlines(text).into_iter().map(str::to_string).collect();
+    if !lines.iter().any(|l| pycompat::strip(l) == "[Default Applications]") {
         lines.push("[Default Applications]".into());
     }
     let mut seen: HashSet<&str> = HashSet::new();
@@ -120,10 +101,7 @@ pub fn mimeapps_with_browser(text: &str, desktop: &str) -> String {
             _ => out.push(l.clone()),
         }
     }
-    let at = out
-        .iter()
-        .position(|l| pycompat::strip(l) == "[Default Applications]")
-        .map_or(0, |i| i + 1);
+    let at = out.iter().position(|l| pycompat::strip(l) == "[Default Applications]").map_or(0, |i| i + 1);
     for k in BROWSER_MIME.iter().filter(|k| !seen.contains(*k)).rev() {
         out.insert(at, format!("{k}={desktop}"));
     }
@@ -132,11 +110,7 @@ pub fn mimeapps_with_browser(text: &str, desktop: &str) -> String {
 
 /// The dock's pinned apps with the browser pinned there (any of `browser_ids`) replaced by the default one, or taken out when
 /// there is none; other browsers pinned are taken out.
-pub fn dock_with_browser(
-    text: &str,
-    browser_ids: &HashSet<String>,
-    default_id: Option<&str>,
-) -> String {
+pub fn dock_with_browser(text: &str, browser_ids: &HashSet<String>, default_id: Option<&str>) -> String {
     let mut out: Vec<&str> = vec![];
     let mut placed = false;
     for l in pycompat::splitlines(text) {
@@ -174,11 +148,7 @@ pub fn component_packages(c: &Py) -> Vec<String> {
 
 /// A component's name for messages (its id when it has none in text).
 pub fn component_name(comps: &Dict, cid: &str) -> String {
-    comps
-        .get(cid)
-        .and_then(|c| c.at("name").as_str())
-        .unwrap_or(cid)
-        .to_string()
+    comps.get(cid).and_then(|c| c.at("name").as_str()).unwrap_or(cid).to_string()
 }
 
 /// What choosing optional parts means for the new system.
@@ -192,12 +162,7 @@ pub struct ExtrasPlan {
     pub queue: Vec<String>,
 }
 
-pub fn extras_plan(
-    catalog: &[Py],
-    chosen: &[String],
-    comps: &Dict,
-    installed: &HashSet<String>,
-) -> ExtrasPlan {
+pub fn extras_plan(catalog: &[Py], chosen: &[String], comps: &Dict, installed: &HashSet<String>) -> ExtrasPlan {
     let (mut keep, mut queue, mut drop) = (vec![], vec![], vec![]);
     for e in catalog {
         for cid in texts(e.at("components")) {
@@ -213,11 +178,8 @@ pub fn extras_plan(
             }
         }
     }
-    let wanted: HashSet<String> = keep
-        .iter()
-        .chain(queue.iter())
-        .flat_map(|cid| comps.get(cid).map(component_packages).unwrap_or_default())
-        .collect();
+    let wanted: HashSet<String> =
+        keep.iter().chain(queue.iter()).flat_map(|cid| comps.get(cid).map(component_packages).unwrap_or_default()).collect();
     let mut remove: Vec<String> = vec![];
     for cid in &drop {
         for x in comps.get(cid).map(component_packages).unwrap_or_default() {
@@ -226,11 +188,7 @@ pub fn extras_plan(
             }
         }
     }
-    ExtrasPlan {
-        remove,
-        keep,
-        queue,
-    }
+    ExtrasPlan { remove, keep, queue }
 }
 
 #[cfg(test)]
@@ -270,22 +228,11 @@ mod tests {
         assert_eq!(ids(&cat), ["vivaldi", "firefox", "librewolf", "opera-gx"]);
         assert!(entries(Some("/nonexistent.json"), "browsers").is_empty());
         assert!(entries(None, "browsers").is_empty());
-        assert!(
-            entries(Some(&written(&d, "l.json", r#"[{"id": "x"}]"#)), "browsers").is_empty(),
-            "not an object at the top"
-        );
-        assert!(entries(
-            Some(&written(&d, "o.json", r#"{"browsers": {"id": "x"}}"#)),
-            "browsers"
-        )
-        .is_empty());
+        assert!(entries(Some(&written(&d, "l.json", r#"[{"id": "x"}]"#)), "browsers").is_empty(), "not an object at the top");
+        assert!(entries(Some(&written(&d, "o.json", r#"{"browsers": {"id": "x"}}"#)), "browsers").is_empty());
         assert_eq!(
             ids(&entries(
-                Some(&written(
-                    &d,
-                    "n.json",
-                    r#"{"browsers": [{"id": 5}, {"id": ["x"]}, {"id": ""}, {"id": "ok"}]}"#
-                )),
+                Some(&written(&d, "n.json", r#"{"browsers": [{"id": 5}, {"id": ["x"]}, {"id": ""}, {"id": "ok"}]}"#)),
                 "browsers"
             )),
             ["ok"]
@@ -310,14 +257,7 @@ mod tests {
             )),
             "browsers",
         );
-        assert_eq!(
-            browser_plan(&odd, &sv(&["a"])),
-            BrowserPlan {
-                remove: sv(&["b"]),
-                install: vec![],
-                flatpaks: vec![]
-            }
-        );
+        assert_eq!(browser_plan(&odd, &sv(&["a"])), BrowserPlan { remove: sv(&["b"]), install: vec![], flatpaks: vec![] });
     }
 
     #[test]
@@ -325,25 +265,14 @@ mod tests {
         let mime = "# comment\n[Default Applications]\nx-scheme-handler/http=vivaldi-stable.desktop\ntext/html=vivaldi-stable.desktop\nvideo/mp4=yggdrasil-player.desktop\n";
         let out = mimeapps_with_browser(mime, "librewolf.desktop");
         assert!(out.contains("x-scheme-handler/http=librewolf.desktop"));
-        assert!(
-            out.contains("x-scheme-handler/https=librewolf.desktop"),
-            "a missing key is added"
-        );
+        assert!(out.contains("x-scheme-handler/https=librewolf.desktop"), "a missing key is added");
         assert!(out.contains("video/mp4=yggdrasil-player.desktop"));
         assert!(!out.contains("vivaldi"));
         assert!(mimeapps_with_browser("", "x.desktop").contains("text/html=x.desktop"));
         let dock = "# pins\nminos\nvivaldi-stable\nfirefox\nsteam\n";
-        let ids: HashSet<String> = sv(&["vivaldi-stable", "firefox", "librewolf"])
-            .into_iter()
-            .collect();
-        assert_eq!(
-            dock_with_browser(dock, &ids, Some("librewolf")),
-            "# pins\nminos\nlibrewolf\nsteam\n"
-        );
-        assert_eq!(
-            dock_with_browser(dock, &ids, None),
-            "# pins\nminos\nsteam\n"
-        );
+        let ids: HashSet<String> = sv(&["vivaldi-stable", "firefox", "librewolf"]).into_iter().collect();
+        assert_eq!(dock_with_browser(dock, &ids, Some("librewolf")), "# pins\nminos\nlibrewolf\nsteam\n");
+        assert_eq!(dock_with_browser(dock, &ids, None), "# pins\nminos\nsteam\n");
     }
 
     #[test]
@@ -352,27 +281,12 @@ mod tests {
         let cat = entries(Some(&written(&d, "e.json", EXTRAS)), "extras");
         let comps = components(Some(&written(&d, "c.json", COMPONENTS)));
         let set = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<HashSet<String>>();
-        let p = extras_plan(
-            &cat,
-            &sv(&["monitor"]),
-            &comps,
-            &set(&["assistant-git", "monitor-git", "clamav"]),
-        );
-        assert_eq!(
-            (p.remove, p.keep, p.queue),
-            (sv(&["assistant-git"]), sv(&["monitor"]), vec![])
-        );
+        let p = extras_plan(&cat, &sv(&["monitor"]), &comps, &set(&["assistant-git", "monitor-git", "clamav"]));
+        assert_eq!((p.remove, p.keep, p.queue), (sv(&["assistant-git"]), sv(&["monitor"]), vec![]));
         let p = extras_plan(&cat, &sv(&["assistant", "monitor"]), &comps, &set(&[]));
-        assert_eq!(
-            (p.remove, p.keep, p.queue),
-            (vec![], vec![], sv(&["assistant", "monitor"]))
-        );
+        assert_eq!((p.remove, p.keep, p.queue), (vec![], vec![], sv(&["assistant", "monitor"])));
         let p = extras_plan(&cat, &[], &comps, &set(&["monitor-git"]));
-        assert_eq!(
-            (p.remove, p.keep, p.queue),
-            (sv(&["monitor-git"]), vec![], vec![]),
-            "what the medium lacks is not removed"
-        );
+        assert_eq!((p.remove, p.keep, p.queue), (sv(&["monitor-git"]), vec![], vec![]), "what the medium lacks is not removed");
         let odd = components(Some(&written(
             &d,
             "odd.json",

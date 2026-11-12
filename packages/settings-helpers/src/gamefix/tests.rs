@@ -27,7 +27,10 @@ fn setup() -> Lib {
     let sa = home.p(".local/share/Steam/steamapps");
     fs::create_dir_all(&sa).unwrap();
     for (appid, name, folder) in [("47780", "Dead Space 2", "Dead Space 2"), ("377160", "Fallout 4", "Fallout 4")] {
-        write(&format!("{sa}/appmanifest_{appid}.acf"), &format!("\"AppState\"\n{{\n\t\"appid\"\t\t\"{appid}\"\n\t\"name\"\t\t\"{name}\"\n\t\"installdir\"\t\t\"{folder}\"\n}}\n"));
+        write(
+            &format!("{sa}/appmanifest_{appid}.acf"),
+            &format!("\"AppState\"\n{{\n\t\"appid\"\t\t\"{appid}\"\n\t\"name\"\t\t\"{name}\"\n\t\"installdir\"\t\t\"{folder}\"\n}}\n"),
+        );
         fs::create_dir_all(format!("{sa}/common/{folder}")).unwrap();
         fs::create_dir_all(format!("{sa}/compatdata/{appid}/pfx/drive_c/users/steamuser")).unwrap();
     }
@@ -106,7 +109,11 @@ fn test_an_existing_file_keeps_its_other_lines_and_comes_back() {
     assert!(text.contains("Window.VSync = False\r\n"), "a missing key is added");
     l.apply("47780");
     l.undo("47780");
-    assert_eq!(read(&l.ds2_file()), "Audio.Output = 2\r\nWindow.Width = 1024\r\n", "undo gives the file back as it was, even after two applies");
+    assert_eq!(
+        read(&l.ds2_file()),
+        "Audio.Output = 2\r\nWindow.Width = 1024\r\n",
+        "undo gives the file back as it was, even after two applies"
+    );
 }
 
 #[test]
@@ -206,7 +213,12 @@ fn a_second_library_and_a_link_to_the_same_one() {
     std::os::unix::fs::symlink(&other, l.home.p("link")).unwrap();
     write(
         &format!("{}/libraryfolders.vdf", l.sa),
-        &format!("\"libraryfolders\"\n{{\n \"0\" {{ \"path\" \"{}\" }}\n \"1\" {{ \"path\" \"{}\" }}\n \"2\" {{ \"path\"\t\"{}\" }}\n}}\n", other, l.home.p("link"), other.replace('/', "\\\\/")),
+        &format!(
+            "\"libraryfolders\"\n{{\n \"0\" {{ \"path\" \"{}\" }}\n \"1\" {{ \"path\" \"{}\" }}\n \"2\" {{ \"path\"\t\"{}\" }}\n}}\n",
+            other,
+            l.home.p("link"),
+            other.replace('/', "\\\\/")
+        ),
     );
     let games = installed(&l.home.p("")).unwrap();
     assert_eq!(games["1"].steamapps, format!("{other}/steamapps"), "the first path to the library is the one kept");

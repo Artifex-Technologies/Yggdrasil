@@ -69,9 +69,12 @@ fn clean_mime(m: &str) -> Option<String> {
 /// A stream for yt-dlp to fetch: format `format` of the video page `page`, `length` bytes long, of type `mime`.
 /// Returns `None` for a page that is not https or a format name that is not a plain one.
 pub fn ytdlp_source(format: &str, length: u64, mime: &str, page: &str) -> Option<String> {
-    let fine = format.starts_with(|c: char| c.is_ascii_alphanumeric()) && format.len() <= 32 && format.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    let fine = format.starts_with(|c: char| c.is_ascii_alphanumeric())
+        && format.len() <= 32
+        && format.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
     let mime = clean_mime(mime).unwrap_or_else(|| "application/octet-stream".into());
-    (fine && length > 0 && page.starts_with("https://") && !page.contains(char::is_whitespace)).then(|| format!("ytdlp:{format}:{length}:{mime}:{page}"))
+    (fine && length > 0 && page.starts_with("https://") && !page.contains(char::is_whitespace))
+        .then(|| format!("ytdlp:{format}:{length}:{mime}:{page}"))
 }
 
 /// The parts of a `ytdlp:` source: format, length, type, page.
@@ -131,7 +134,11 @@ fn drop_source(s: &Source) {
 
 /// Where downloads for playing go: a folder per player process, so a second player does not delete the first one's files.
 fn folder() -> PathBuf {
-    let cache = std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from).filter(|p| p.is_absolute()).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache"))).unwrap_or_else(std::env::temp_dir);
+    let cache = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
+        .unwrap_or_else(std::env::temp_dir);
     cache.join("yggdrasil-player").join("streams")
 }
 
@@ -139,7 +146,8 @@ fn folder() -> PathBuf {
 fn tidy(root: &std::path::Path) {
     let Ok(rd) = std::fs::read_dir(root) else { return };
     for e in rd.flatten() {
-        let alive = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()).map(|pid| std::path::Path::new(&format!("/proc/{pid}")).exists());
+        let alive =
+            e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()).map(|pid| std::path::Path::new(&format!("/proc/{pid}")).exists());
         if alive == Some(false) {
             let _ = std::fs::remove_dir_all(e.path());
         }
@@ -164,7 +172,19 @@ fn fetch(format: &str, page: &str) -> Option<Source> {
         cmd.args(["--pdeathsig", "TERM", "--", "yt-dlp"]);
     }
     let mut child = cmd
-        .args(["--ignore-config", "--no-warnings", "--quiet", "--no-progress", "--no-part", "--no-continue", "--no-playlist", "--no-cache-dir", "-f", format, "-o"])
+        .args([
+            "--ignore-config",
+            "--no-warnings",
+            "--quiet",
+            "--no-progress",
+            "--no-part",
+            "--no-continue",
+            "--no-playlist",
+            "--no-cache-dir",
+            "-f",
+            format,
+            "-o",
+        ])
         .arg(&path)
         .arg("--")
         .arg(page)
@@ -187,7 +207,8 @@ fn token() -> String {
     let mut b = [0u8; 16];
     if std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut b)).is_err() {
         // never without randomness: the time and the process id, mixed (only reached without /dev/urandom)
-        let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0) ^ ((std::process::id() as u128) << 64);
+        let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)
+            ^ ((std::process::id() as u128) << 64);
         b = t.to_le_bytes();
     }
     b.iter().map(|x| format!("{x:02x}")).collect()
@@ -246,7 +267,9 @@ fn serve(mut conn: TcpStream, table: &Mutex<HashMap<String, Stream>>) -> std::io
         return Ok(());
     };
     let Some((start, end)) = requested(range.as_deref(), s.length) else {
-        conn.write_all(format!("HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */{}\r\nConnection: close\r\n\r\n", s.length).as_bytes())?;
+        conn.write_all(
+            format!("HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */{}\r\nConnection: close\r\n\r\n", s.length).as_bytes(),
+        )?;
         return Ok(());
     };
     let status = if range.is_some() { "206 Partial Content" } else { "200 OK" };
@@ -268,7 +291,9 @@ fn from_file(conn: &mut TcpStream, path: &std::path::Path, done: &AtomicBool, st
     let mut f = loop {
         match std::fs::File::open(path) {
             Ok(f) => break f,
-            Err(_) if !done.load(Ordering::SeqCst) && waited.elapsed() < Duration::from_secs(60) => std::thread::sleep(Duration::from_millis(50)),
+            Err(_) if !done.load(Ordering::SeqCst) && waited.elapsed() < Duration::from_secs(60) => {
+                std::thread::sleep(Duration::from_millis(50))
+            }
             Err(e) => return Err(e),
         }
     };
@@ -378,7 +403,11 @@ mod tests {
         c.write_all(format!("HEAD {path} HTTP/1.1\r\nRange: bytes=100-\r\n\r\n").as_bytes()).unwrap();
         let mut answer = String::new();
         let _ = c.read_to_string(&mut answer);
-        assert!(answer.starts_with("HTTP/1.1 206") && answer.contains("Content-Range: bytes 100-999/1000") && answer.contains("Content-Type: video/mp4"));
+        assert!(
+            answer.starts_with("HTTP/1.1 206")
+                && answer.contains("Content-Range: bytes 100-999/1000")
+                && answer.contains("Content-Type: video/mp4")
+        );
     }
 
     #[test]

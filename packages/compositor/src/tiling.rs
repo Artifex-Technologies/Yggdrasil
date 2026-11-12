@@ -83,7 +83,10 @@ pub fn config_path() -> std::path::PathBuf {
 /// left, splitting left/right, then top/bottom, and so on; the last takes the rest.
 pub fn dwindle(zone: Rectangle<i32, Logical>, n: usize, gap: i32) -> Vec<Rectangle<i32, Logical>> {
     let mut out = Vec::with_capacity(n);
-    let mut area = Rectangle::new((zone.loc.x + gap, zone.loc.y + gap).into(), ((zone.size.w - 2 * gap).max(1), (zone.size.h - 2 * gap).max(1)).into());
+    let mut area = Rectangle::new(
+        (zone.loc.x + gap, zone.loc.y + gap).into(),
+        ((zone.size.w - 2 * gap).max(1), (zone.size.h - 2 * gap).max(1)).into(),
+    );
     for i in 0..n {
         if i == n - 1 {
             out.push(area);

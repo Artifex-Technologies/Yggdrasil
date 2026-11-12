@@ -331,7 +331,13 @@ fn test_limits_checked_and_saved() {
     *b.hw.texts.borrow_mut() = Some(BTreeMap::new());
     let written = || b.hw.texts.borrow().clone().unwrap();
     assert_eq!(b.t().cmd_set("power", &Base::args(&["pl1=120", "pl2=160"])), Ok(0));
-    assert_eq!(written(), BTreeMap::from([("constraint_0_power_limit_uw".into(), "120000000".into()), ("constraint_1_power_limit_uw".into(), "160000000".into())]));
+    assert_eq!(
+        written(),
+        BTreeMap::from([
+            ("constraint_0_power_limit_uw".into(), "120000000".into()),
+            ("constraint_1_power_limit_uw".into(), "160000000".into())
+        ])
+    );
     let c = b.t().conf();
     assert_eq!((c.pl1, c.pl2), (Some(120), Some(160)));
     assert_eq!(b.t().cmd_set("power", &Base::args(&["pl2=100"])), Ok(2), "short-term below long-term");
@@ -353,9 +359,14 @@ fn test_turbo() {
 
 #[test]
 fn kmsg_records_give_the_message_after_the_semicolon() {
-    let rec = b"4,1532,123456789,-;NVRM: Xid (PCI:0000:01:00): 13, pid=4242, Graphics Exception\n SUBSYSTEM=pci\n DEVICE=+pci:0000:01:00.0\n";
+    let rec =
+        b"4,1532,123456789,-;NVRM: Xid (PCI:0000:01:00): 13, pid=4242, Graphics Exception\n SUBSYSTEM=pci\n DEVICE=+pci:0000:01:00.0\n";
     assert_eq!(kmsg_message(rec).as_deref(), Some("NVRM: Xid (PCI:0000:01:00): 13, pid=4242, Graphics Exception"));
-    assert_eq!(kmsg_message(b"6,1,2,-;a\\x5cb \\x1b[0m; c\n").as_deref(), Some("a\\b \x1b[0m; c"), "the kernel's \\xNN escapes undone; a later ';' is text");
+    assert_eq!(
+        kmsg_message(b"6,1,2,-;a\\x5cb \\x1b[0m; c\n").as_deref(),
+        Some("a\\b \x1b[0m; c"),
+        "the kernel's \\xNN escapes undone; a later ';' is text"
+    );
     assert_eq!(kmsg_message(b"6,99,5,c,caller=T42;usb 1-3: new device\n").as_deref(), Some("usb 1-3: new device"), "extra prefix fields");
     assert_eq!(kmsg_message(b"no prefix\n"), None);
 }
@@ -364,7 +375,8 @@ fn kmsg_records_give_the_message_after_the_semicolon() {
 fn a_kmsg_record_reaches_the_xid_reaction() {
     let b = Base::new();
     b.t().cmd_try("gpu", &Base::args(&["core=150", "mem=900", "cap=none"])).unwrap();
-    let line = kmsg_message(b"3,8812,99887766,-;NVRM: Xid (PCI:0000:01:00): 79, pid=1, GPU has fallen off the bus.\n SUBSYSTEM=pci\n").unwrap();
+    let line =
+        kmsg_message(b"3,8812,99887766,-;NVRM: Xid (PCI:0000:01:00): 79, pid=1, GPU has fallen off the bus.\n SUBSYSTEM=pci\n").unwrap();
     assert_eq!(b.t().on_kernel_line(&line), Ok(true));
     assert_eq!(b.hw.gpu.borrow().last(), Some(&GPU_DEFAULT));
     assert!(b.t().status().at("gpu_off").str().unwrap().contains("(NVRM: Xid (PCI:0000:01:00): 79, pid=1, GPU has fallen off the bus.)"));

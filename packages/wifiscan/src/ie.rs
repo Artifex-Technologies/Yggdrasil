@@ -185,7 +185,13 @@ pub fn vht_width(b: &[u8]) -> Option<Operation> {
         1 if c1 == 0 => (80, false),
         1 => {
             let d = c1.abs_diff(c0);
-            if d == 8 { (160, false) } else if d > 16 { (160, true) } else { (80, false) }
+            if d == 8 {
+                (160, false)
+            } else if d > 16 {
+                (160, true)
+            } else {
+                (80, false)
+            }
         }
         2 => (160, false),
         3 => (160, true),

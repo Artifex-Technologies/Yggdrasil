@@ -58,8 +58,10 @@ fn run_question(cmd: &[String], question: &str) -> Result<(String, String), Stri
         .map_err(|e| e.to_string())?;
     let (done_tx, done_rx) = mpsc::channel();
     let mut bufs = vec![];
-    let pipes: [Option<Box<dyn Read + Send>>; 2] =
-        [child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>), child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>)];
+    let pipes: [Option<Box<dyn Read + Send>>; 2] = [
+        child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>),
+        child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>),
+    ];
     for pipe in pipes.into_iter().flatten() {
         let buf = Arc::new(Mutex::new(Vec::new()));
         bufs.push(buf.clone());

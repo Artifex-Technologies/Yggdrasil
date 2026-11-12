@@ -136,8 +136,7 @@ unsafe impl Sync for Library {}
 struct FreeType {
     library: Library,
     new_face: unsafe extern "C" fn(*mut c_void, *const c_char, c_long, *mut Face) -> c_int,
-    new_memory_face:
-        unsafe extern "C" fn(*mut c_void, *const u8, c_long, c_long, *mut Face) -> c_int,
+    new_memory_face: unsafe extern "C" fn(*mut c_void, *const u8, c_long, c_long, *mut Face) -> c_int,
     request_size: unsafe extern "C" fn(Face, *mut SizeRequest) -> c_int,
     get_char_index: unsafe extern "C" fn(Face, u64) -> c_uint,
     load_glyph: unsafe extern "C" fn(Face, c_uint, i32) -> c_int,
@@ -165,10 +164,7 @@ unsafe fn sym<T>(h: *mut c_void, name: &CStr) -> Option<T> {
 fn freetype() -> Option<&'static FreeType> {
     static FT: std::sync::OnceLock<Option<FreeType>> = std::sync::OnceLock::new();
     FT.get_or_init(|| unsafe {
-        let h = libc::dlopen(
-            c"libfreetype.so.6".as_ptr(),
-            libc::RTLD_NOW | libc::RTLD_LOCAL,
-        );
+        let h = libc::dlopen(c"libfreetype.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
         if h.is_null() {
             return None;
         }
@@ -241,30 +237,15 @@ fn open_font(path: Option<&[u8]>, size: f32, raqm_wanted: bool) -> Option<Font> 
                 let c = std::ffi::CString::new(p).ok()?;
                 (ft.new_face)(ft.library.0, c.as_ptr(), 0, &mut face)
             }
-            None => (ft.new_memory_face)(
-                ft.library.0,
-                AILERON.as_ptr(),
-                AILERON.len() as c_long,
-                0,
-                &mut face,
-            ),
+            None => (ft.new_memory_face)(ft.library.0, AILERON.as_ptr(), AILERON.len() as c_long, 0, &mut face),
         }
     };
     if err != 0 {
         return None;
     }
     let width = (size * 64.0) as c_long;
-    let mut req = SizeRequest {
-        kind: 0,
-        width,
-        height: width,
-        hori_resolution: 0,
-        vert_resolution: 0,
-    };
-    let font = Font {
-        face,
-        raqm: raqm_wanted && raqm().is_some(),
-    };
+    let mut req = SizeRequest { kind: 0, width, height: width, hori_resolution: 0, vert_resolution: 0 };
+    let font = Font { face, raqm: raqm_wanted && raqm().is_some() };
     if unsafe { (ft.request_size)(face, &mut req) } != 0 {
         return None;
     }
@@ -287,15 +268,8 @@ fn search_font_dirs(path: &str) -> Option<std::path::PathBuf> {
     let env = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
     let home = std::env::var("HOME").unwrap_or_default();
     let mut dirs: Vec<PathBuf> =
-        vec![PathBuf::from(env("XDG_DATA_HOME").unwrap_or_else(|| {
-            format!("{}/.local/share", home.trim_end_matches('/'))
-        }))];
-    dirs.extend(
-        env("XDG_DATA_DIRS")
-            .unwrap_or_else(|| "/usr/local/share:/usr/share".into())
-            .split(':')
-            .map(PathBuf::from),
-    );
+        vec![PathBuf::from(env("XDG_DATA_HOME").unwrap_or_else(|| format!("{}/.local/share", home.trim_end_matches('/'))))];
+    dirs.extend(env("XDG_DATA_DIRS").unwrap_or_else(|| "/usr/local/share:/usr/share".into()).split(':').map(PathBuf::from));
     let mut first_other: Option<PathBuf> = None;
     fn walk(d: &Path, visit: &mut dyn FnMut(&Path, &str) -> bool) -> bool {
         let Ok(rd) = std::fs::read_dir(d) else {
@@ -362,9 +336,7 @@ fn cursor_font(px: f64) -> Option<Font> {
         match open_font(Some(path.as_bytes()), size, true) {
             Some(f) => return Some(f),
             None => {
-                if let Some(f) = search_font_dirs(&path)
-                    .and_then(|p| open_font(Some(p.as_os_str().as_encoded_bytes()), size, true))
-                {
+                if let Some(f) = search_font_dirs(&path).and_then(|p| open_font(Some(p.as_os_str().as_encoded_bytes()), size, true)) {
                     return Some(f);
                 }
             }
@@ -421,13 +393,7 @@ fn layout(font: &Font, text: &str) -> Vec<Glyph> {
             .map(|c| unsafe {
                 let index = (ft.get_char_index)(font.face, c as u64);
                 (ft.load_glyph)(font.face, index, 0);
-                Glyph {
-                    index,
-                    x_advance: (*(*font.face).glyph).metrics[4] as i64,
-                    y_advance: 0,
-                    x_offset: 0,
-                    y_offset: 0,
-                }
+                Glyph { index, x_advance: (*(*font.face).glyph).metrics[4] as i64, y_advance: 0, x_offset: 0, y_offset: 0 }
             })
             .collect()
     }
@@ -451,12 +417,7 @@ pub fn draw_text_mm(im: &mut Img, xy: (f64, f64), text: &str, px: f64, ink: &Ink
         let gy = pixel(g.y_offset);
         position += g.x_advance;
         x_max = x_max.max(pixel(position));
-        let mut bbox = BBox {
-            x_min: 0,
-            y_min: 0,
-            x_max: 0,
-            y_max: 0,
-        };
+        let mut bbox = BBox { x_min: 0, y_min: 0, x_max: 0, y_max: 0 };
         unsafe {
             if (ft.load_glyph)(face, g.index, 0) != 0 {
                 return;
@@ -477,10 +438,7 @@ pub fn draw_text_mm(im: &mut Img, xy: (f64, f64), text: &str, px: f64, ink: &Ink
         (0, 0)
     } else {
         let m = unsafe { &(*(*face).size).metrics };
-        (
-            pixel(position / 2),
-            pixel((m.ascender as i64 + m.descender as i64) / 2),
-        )
+        (pixel(position / 2), pixel((m.ascender as i64 + m.descender as i64) / 2))
     };
     // ImageDraw.text: the whole part of the position, the fraction passed on as the start
     let (x, y) = (xy.0 as i64, xy.1 as i64);
@@ -543,11 +501,7 @@ pub fn draw_text_mm(im: &mut Img, xy: (f64, f64), text: &str, px: f64, ink: &Ink
                             if src > 0 {
                                 let i = (yy * mask.w as i64 + xx + k) as usize;
                                 let t = mask.px[i] as u32;
-                                mask.px[i] = if t > 0 {
-                                    (src + muldiv255(t, 255 - src)).min(255) as u8
-                                } else {
-                                    src as u8
-                                };
+                                mask.px[i] = if t > 0 { (src + muldiv255(t, 255 - src)).min(255) as u8 } else { src as u8 };
                             }
                         }
                     }

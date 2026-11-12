@@ -37,7 +37,17 @@ struct Server {
 #[zbus::interface(name = "org.freedesktop.Notifications")]
 impl Server {
     #[allow(clippy::too_many_arguments)]
-    fn notify(&self, app: String, replaces: u32, icon: String, summary: String, body: String, actions: Vec<String>, _hints: HashMap<String, OwnedValue>, timeout: i32) -> u32 {
+    fn notify(
+        &self,
+        app: String,
+        replaces: u32,
+        icon: String,
+        summary: String,
+        body: String,
+        actions: Vec<String>,
+        _hints: HashMap<String, OwnedValue>,
+        timeout: i32,
+    ) -> u32 {
         let id = if replaces != 0 { replaces } else { self.next.fetch_add(1, Ordering::SeqCst) };
         self.calls.lock().unwrap().push(Call { app, replaces, icon, summary, body, actions, timeout, id });
         id
@@ -115,7 +125,8 @@ fn notices_on_a_private_bus() {
         conn.emit_signal(None::<&str>, "/org/freedesktop/Notifications", "org.freedesktop.Notifications", member, body).unwrap()
     };
     let closed = |id: u32| {
-        conn.emit_signal(None::<&str>, "/org/freedesktop/Notifications", "org.freedesktop.Notifications", "NotificationClosed", &(id, 2u32)).unwrap()
+        conn.emit_signal(None::<&str>, "/org/freedesktop/Notifications", "org.freedesktop.Notifications", "NotificationClosed", &(id, 2u32))
+            .unwrap()
     };
 
     let d = std::env::temp_dir().join(format!("crashwatch-live-{}", std::process::id()));
@@ -174,7 +185,11 @@ fn notices_on_a_private_bus() {
     assert_eq!((answer.app.as_str(), answer.timeout), ("Sarina", 0));
     let got = std::fs::read_to_string(&asked).unwrap();
     let got: Vec<&str> = got.lines().collect();
-    assert_eq!(got, vec![home.to_str().unwrap(), "--voice", "The program game.x86_64 just crashed (SIGABRT). Look into it."], "asked in the home folder");
+    assert_eq!(
+        got,
+        vec![home.to_str().unwrap(), "--voice", "The program game.x86_64 just crashed (SIGABRT). Look into it."],
+        "asked in the home folder"
+    );
 
     // 4. the whole way: a core appears, the watcher starts the notice
     let cores = d.join("coredump");

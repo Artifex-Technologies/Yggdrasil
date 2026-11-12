@@ -205,7 +205,11 @@ pub fn card(st: &State, now: i64) -> serde_json::Value {
             let until = t.until.unwrap_or(now);
             ("{countdown}".to_string(), format!("{} timer", describe(t.duration)), json!([until - total(t), until]))
         }
-        Some(t) => (clock(t.remaining(now)), format!("{} · paused", describe(t.duration)), json!(((total(t) - t.remaining(now)) * 100 / total(t)).clamp(0, 100))),
+        Some(t) => (
+            clock(t.remaining(now)),
+            format!("{} · paused", describe(t.duration)),
+            json!(((total(t) - t.remaining(now)) * 100 / total(t)).clamp(0, 100)),
+        ),
         None => (clock(st.custom), "Ready".to_string(), json!(0)),
     };
     let mut big_block = json!({"big": big, "caption": caption, "progress": progress});
@@ -218,7 +222,8 @@ pub fn card(st: &State, now: i64) -> serde_json::Value {
         Some(_) => ("resume", "Resume"),
         None => ("start-custom", "Start"),
     };
-    let presets: Vec<serde_json::Value> = PRESETS.iter().map(|s| json!({"id": format!("preset:{}", s / 60), "label": describe(*s), "icon": ICON})).collect();
+    let presets: Vec<serde_json::Value> =
+        PRESETS.iter().map(|s| json!({"id": format!("preset:{}", s / 60), "label": describe(*s), "icon": ICON})).collect();
     json!([
         big_block,
         {"buttons": [{"id": pause_id, "label": pause_label}, {"id": "add", "label": "+1 min"}, {"id": "reset", "label": "Reset"}], "columns": 3},
@@ -232,7 +237,11 @@ pub fn card(st: &State, now: i64) -> serde_json::Value {
 
 /// The timer the card shows (one at a time): a finished one, else the running one, else a paused one.
 pub fn current(st: &State) -> Option<&Timer> {
-    st.timers.iter().find(|t| t.done).or_else(|| st.timers.iter().filter(|t| t.running()).min_by_key(|t| t.until)).or_else(|| st.timers.iter().find(|t| t.paused()))
+    st.timers
+        .iter()
+        .find(|t| t.done)
+        .or_else(|| st.timers.iter().filter(|t| t.running()).min_by_key(|t| t.until))
+        .or_else(|| st.timers.iter().find(|t| t.paused()))
 }
 
 /// "25m", "1h30m", "1m30s": a length as the card's stepper shows it (parse_duration reads it back).
@@ -254,9 +263,10 @@ pub fn compact(secs: i64) -> String {
 // ---------------------------------------------------------------- files
 
 pub fn dir() -> PathBuf {
-    let base = std::env::var_os("XDG_STATE_HOME").filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| {
-        PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/state")
-    });
+    let base = std::env::var_os("XDG_STATE_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/state"));
     base.join("yggdrasil/timer")
 }
 
@@ -367,7 +377,11 @@ pub fn expire(st: &mut State, now: i64) -> Vec<Timer> {
 pub fn step(secs: i64, up: bool) -> i64 {
     let m = (secs + 59) / 60;
     let next = if up {
-        if m < 10 { m + 1 } else { (m / 5 + 1) * 5 }
+        if m < 10 {
+            m + 1
+        } else {
+            (m / 5 + 1) * 5
+        }
     } else if m <= 10 {
         m - 1
     } else {
@@ -416,7 +430,11 @@ pub fn press(st: &mut State, id: &str, now: i64) -> bool {
 // ---------------------------------------------------------------- alarms
 
 fn me() -> String {
-    std::env::current_exe().ok().map(|p| p.to_string_lossy().into_owned()).filter(|p| !p.contains(" (deleted)")).unwrap_or_else(|| "/usr/bin/yggdrasil-timer".into())
+    std::env::current_exe()
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned())
+        .filter(|p| !p.contains(" (deleted)"))
+        .unwrap_or_else(|| "/usr/bin/yggdrasil-timer".into())
 }
 
 fn quiet(cmd: &mut Command) -> bool {
@@ -460,7 +478,11 @@ pub const ICON: &str = "/usr/share/yggdrasil/icons/timer-symbolic.svg";
 
 /// The alert: a notification, and a sound when the system has one.
 pub fn alert(t: &Timer) {
-    let body = if t.label.trim().is_empty() { format!("{} is up.", describe(t.duration)) } else { format!("{} ({}) is up.", t.label.trim(), describe(t.duration)) };
+    let body = if t.label.trim().is_empty() {
+        format!("{} is up.", describe(t.duration))
+    } else {
+        format!("{} ({}) is up.", t.label.trim(), describe(t.duration))
+    };
     let icon = if Path::new(ICON).is_file() { ICON } else { "alarm-symbolic" };
     quiet(Command::new("notify-send").args(["-a", "Timer", "-i", icon, "-u", "critical", "Time's up", &body]));
     if quiet(Command::new("canberra-gtk-play").args(["-i", "alarm-clock-elapsed", "-d", "Timer"])) {
@@ -550,7 +572,10 @@ mod tests {
         assert!(!press(&mut st, "rm -rf", 0), "an id the card never shows");
         assert!(!press(&mut st, "preset:7", 0), "only the card's presets");
         // the custom length steps a minute below 10, five above
-        assert_eq!((step(1500, true), step(1500, false), step(600, true), step(600, false), step(60, false), step(420, true)), (1800, 1200, 900, 540, 60, 480));
+        assert_eq!(
+            (step(1500, true), step(1500, false), step(600, true), step(600, false), step(60, false), step(420, true)),
+            (1800, 1200, 900, 540, 60, 480)
+        );
         press(&mut st, "custom:-", 0);
         assert_eq!(st.custom, 1200);
         press(&mut st, "preset:5", 1000);
@@ -583,7 +608,10 @@ mod tests {
         assert_eq!(c[6]["buttons"][0]["label"], "Start (25 min)");
         press(&mut st, "preset:10", 1000);
         let c = card(&st, 1100);
-        assert_eq!((c[0]["big"].as_str(), c[0]["progress"].clone(), c[0]["until"].clone()), (Some("{countdown}"), json!([1000, 1600]), json!(1600)));
+        assert_eq!(
+            (c[0]["big"].as_str(), c[0]["progress"].clone(), c[0]["until"].clone()),
+            (Some("{countdown}"), json!([1000, 1600]), json!(1600))
+        );
         assert_eq!(c[1]["buttons"][0]["id"], "pause");
         press(&mut st, "pause", 1300);
         let c = card(&st, 1400);

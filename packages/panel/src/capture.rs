@@ -17,7 +17,8 @@ use wayland_protocols::ext::foreign_toplevel_list::v1::client::{
     ext_foreign_toplevel_list_v1::{self, ExtForeignToplevelListV1},
 };
 use wayland_protocols::ext::image_capture_source::v1::client::{
-    ext_foreign_toplevel_image_capture_source_manager_v1::ExtForeignToplevelImageCaptureSourceManagerV1, ext_image_capture_source_v1::ExtImageCaptureSourceV1,
+    ext_foreign_toplevel_image_capture_source_manager_v1::ExtForeignToplevelImageCaptureSourceManagerV1,
+    ext_image_capture_source_v1::ExtImageCaptureSourceV1,
 };
 use wayland_protocols::ext::image_copy_capture::v1::client::{
     ext_image_copy_capture_frame_v1::{self, ExtImageCopyCaptureFrameV1},
@@ -83,7 +84,9 @@ pub fn available() -> bool {
     let Ok(conn) = Connection::connect_to_env() else { return false };
     let Ok((globals, _q)) = registry_queue_init::<Cap>(&conn) else { return false };
     let names: Vec<String> = globals.contents().clone_list().into_iter().map(|g| g.interface).collect();
-    ["ext_foreign_toplevel_list_v1", "ext_foreign_toplevel_image_capture_source_manager_v1", "ext_image_copy_capture_manager_v1"].iter().all(|n| names.iter().any(|x| x == n))
+    ["ext_foreign_toplevel_list_v1", "ext_foreign_toplevel_image_capture_source_manager_v1", "ext_image_copy_capture_manager_v1"]
+        .iter()
+        .all(|n| names.iter().any(|x| x == n))
 }
 
 /// Pictures of the wanted windows, each shrunk to fit `box_w` x `box_h` pixels (aspect kept); `got` is called for each one as it
@@ -94,8 +97,10 @@ pub fn capture(wants: &[Want], box_w: u32, box_h: u32, mut got: impl FnMut(Strin
     let qh = queue.handle();
     let shm: WlShm = globals.bind(&qh, 1..=1, ()).map_err(|e| e.to_string())?;
     let list: ExtForeignToplevelListV1 = globals.bind(&qh, 1..=1, ()).map_err(|_| "no ext_foreign_toplevel_list_v1".to_string())?;
-    let sources: ExtForeignToplevelImageCaptureSourceManagerV1 = globals.bind(&qh, 1..=1, ()).map_err(|_| "no toplevel capture source manager".to_string())?;
-    let copier: ExtImageCopyCaptureManagerV1 = globals.bind(&qh, 1..=1, ()).map_err(|_| "no ext_image_copy_capture_manager_v1".to_string())?;
+    let sources: ExtForeignToplevelImageCaptureSourceManagerV1 =
+        globals.bind(&qh, 1..=1, ()).map_err(|_| "no toplevel capture source manager".to_string())?;
+    let copier: ExtImageCopyCaptureManagerV1 =
+        globals.bind(&qh, 1..=1, ()).map_err(|_| "no ext_image_copy_capture_manager_v1".to_string())?;
     let mut st = Cap::default();
     // the compositor lists every window, each followed by its title and app id
     queue.roundtrip(&mut st).map_err(|e| e.to_string())?;
@@ -235,11 +240,26 @@ fn to_thumb(data: &[u8], w: u32, h: u32, stride: u32, opaque: bool, box_w: u32, 
 }
 
 impl Dispatch<WlRegistry, GlobalListContents> for Cap {
-    fn event(_: &mut Self, _: &WlRegistry, _: wayland_client::protocol::wl_registry::Event, _: &GlobalListContents, _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &WlRegistry,
+        _: wayland_client::protocol::wl_registry::Event,
+        _: &GlobalListContents,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 
 impl Dispatch<ExtForeignToplevelListV1, ()> for Cap {
-    fn event(st: &mut Self, _: &ExtForeignToplevelListV1, event: ext_foreign_toplevel_list_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+    fn event(
+        st: &mut Self,
+        _: &ExtForeignToplevelListV1,
+        event: ext_foreign_toplevel_list_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
         if let ext_foreign_toplevel_list_v1::Event::Toplevel { toplevel } = event {
             if st.listed {
                 // a window that opened during the round: not asked for
@@ -256,7 +276,14 @@ impl Dispatch<ExtForeignToplevelListV1, ()> for Cap {
 }
 
 impl Dispatch<ExtForeignToplevelHandleV1, ()> for Cap {
-    fn event(st: &mut Self, h: &ExtForeignToplevelHandleV1, event: ext_foreign_toplevel_handle_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+    fn event(
+        st: &mut Self,
+        h: &ExtForeignToplevelHandleV1,
+        event: ext_foreign_toplevel_handle_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
         let Some(t) = st.tops.iter_mut().find(|t| t.handle.as_ref().map(|x| x.id()) == Some(h.id())) else { return };
         match event {
             ext_foreign_toplevel_handle_v1::Event::Title { title } => t.title = title,
@@ -268,7 +295,14 @@ impl Dispatch<ExtForeignToplevelHandleV1, ()> for Cap {
 }
 
 impl Dispatch<ExtImageCopyCaptureSessionV1, ()> for Cap {
-    fn event(st: &mut Self, _: &ExtImageCopyCaptureSessionV1, event: ext_image_copy_capture_session_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+    fn event(
+        st: &mut Self,
+        _: &ExtImageCopyCaptureSessionV1,
+        event: ext_image_copy_capture_session_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
         match event {
             ext_image_copy_capture_session_v1::Event::BufferSize { width, height } => st.size = Some((width, height)),
             ext_image_copy_capture_session_v1::Event::ShmFormat { format: WEnum::Value(f) } => st.formats.push(f),
@@ -280,7 +314,14 @@ impl Dispatch<ExtImageCopyCaptureSessionV1, ()> for Cap {
 }
 
 impl Dispatch<ExtImageCopyCaptureFrameV1, ()> for Cap {
-    fn event(st: &mut Self, _: &ExtImageCopyCaptureFrameV1, event: ext_image_copy_capture_frame_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+    fn event(
+        st: &mut Self,
+        _: &ExtImageCopyCaptureFrameV1,
+        event: ext_image_copy_capture_frame_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
         match event {
             ext_image_copy_capture_frame_v1::Event::Ready => st.frame = Some(true),
             ext_image_copy_capture_frame_v1::Event::Failed { .. } => st.frame = Some(false),
@@ -340,7 +381,12 @@ mod tests {
         assert!(available(), "the compositor has no window capture");
         let out = std::process::Command::new("hyprctl").args(["-j", "clients"]).output().unwrap();
         let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-        let wants: Vec<Want> = v.as_array().unwrap().iter().map(|c| want(c["address"].as_str().unwrap(), c["class"].as_str().unwrap(), c["title"].as_str().unwrap())).collect();
+        let wants: Vec<Want> = v
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| want(c["address"].as_str().unwrap(), c["class"].as_str().unwrap(), c["title"].as_str().unwrap()))
+            .collect();
         let mut got = vec![];
         let t = Instant::now();
         capture(&wants, 440, 280, |k, p| got.push((k, p))).unwrap();

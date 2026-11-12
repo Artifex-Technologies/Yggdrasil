@@ -88,7 +88,11 @@ pub fn intensity(mm_h: f64) -> &'static str {
 
 /// "20 min", "1 h 05 min".
 pub fn minutes(m: i64) -> String {
-    if m < 60 { format!("{m} min") } else { format!("{} h {:02} min", m / 60, m % 60) }
+    if m < 60 {
+        format!("{m} min")
+    } else {
+        format!("{} h {:02} min", m / 60, m % 60)
+    }
 }
 
 /// What `watch` remembers between runs so one shower is announced once.

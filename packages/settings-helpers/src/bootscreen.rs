@@ -165,7 +165,10 @@ pub fn with_splash(line: &str) -> String {
 
 /// GRUB's settings with "splash" in GRUB_CMDLINE_LINUX_DEFAULT.
 pub fn grub_splash(text: &str) -> String {
-    text.split('\n').map(|l| if l.starts_with("GRUB_CMDLINE_LINUX_DEFAULT=") { with_splash(l) } else { l.to_string() }).collect::<Vec<_>>().join("\n")
+    text.split('\n')
+        .map(|l| if l.starts_with("GRUB_CMDLINE_LINUX_DEFAULT=") { with_splash(l) } else { l.to_string() })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn current_theme() -> R<String> {
@@ -201,7 +204,9 @@ pub fn ready(p: &Paths) -> R<bool> {
     };
     let splash = match fs::read(&p.grub_default) {
         Ok(b) => {
-            let grub = String::from_utf8(b).map(|t| py::universal(&t)).map_err(|e| Crash(format!("UnicodeDecodeError: {}: {e}", p.grub_default)))?;
+            let grub = String::from_utf8(b)
+                .map(|t| py::universal(&t))
+                .map_err(|e| Crash(format!("UnicodeDecodeError: {}: {e}", p.grub_default)))?;
             pycompat::splitlines(&grub).iter().any(|l| {
                 l.starts_with("GRUB_CMDLINE_LINUX_DEFAULT=") && {
                     let v = l.split_once('=').map(|x| x.1).unwrap_or("");
@@ -260,7 +265,8 @@ pub fn make_picture_theme(p: &Paths, src: &str) -> R<()> {
     let d = py::join(&p.themes, PICTURE_THEME);
     fs::create_dir_all(&d).map_err(|e| Crash(py::oserror(&e, Some(&d))))?;
     let unidentified = || Crash(format!("PIL.UnidentifiedImageError: cannot identify image file {}", pycompat::repr(src)));
-    let reader = image::ImageReader::open(src).map_err(|e| Crash(py::oserror(&e, Some(src))))?.with_guessed_format().map_err(|_| unidentified())?;
+    let reader =
+        image::ImageReader::open(src).map_err(|e| Crash(py::oserror(&e, Some(src))))?.with_guessed_format().map_err(|_| unidentified())?;
     match reader.format() {
         Some(image::ImageFormat::Png) | Some(image::ImageFormat::Jpeg) | Some(image::ImageFormat::WebP) => {}
         _ => return Err(unidentified()),
@@ -313,10 +319,8 @@ pub fn copy2(src: &str, dst: &str) -> R<()> {
     fs::copy(src, dst).map_err(|e| Crash(py::oserror(&e, Some(src))))?;
     let m = fs::metadata(src).map_err(|e| Crash(py::oserror(&e, Some(src))))?;
     use std::os::unix::fs::MetadataExt;
-    let times = [
-        libc::timespec { tv_sec: m.atime(), tv_nsec: m.atime_nsec() },
-        libc::timespec { tv_sec: m.mtime(), tv_nsec: m.mtime_nsec() },
-    ];
+    let times =
+        [libc::timespec { tv_sec: m.atime(), tv_nsec: m.atime_nsec() }, libc::timespec { tv_sec: m.mtime(), tv_nsec: m.mtime_nsec() }];
     if let Ok(c) = std::ffi::CString::new(dst) {
         unsafe { libc::utimensat(libc::AT_FDCWD, c.as_ptr(), times.as_ptr(), 0) };
     }
@@ -371,7 +375,10 @@ fn set(p: &Paths, what: &str, arg: Option<&str>) -> R<i32> {
             let r = py::run(&["grub-mkconfig", "-o", "/boot/grub/grub.cfg"], None)?;
             if r.code != 0 {
                 copy2(&kept, g)?;
-                return exit_msg(&format!("GRUB could not be updated, nothing was changed: {}", py::last_chars(pycompat::strip(&r.stderr), 300)));
+                return exit_msg(&format!(
+                    "GRUB could not be updated, nothing was changed: {}",
+                    py::last_chars(pycompat::strip(&r.stderr), 300)
+                ));
             }
         }
     }

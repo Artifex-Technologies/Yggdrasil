@@ -34,7 +34,8 @@ pub fn shareable(w: &str) -> bool {
     let chars: Vec<char> = w.chars().collect();
     // letters only, with ' or - (or a typographic apostrophe) between letters
     let ok = chars.iter().enumerate().all(|(i, c)| {
-        c.is_alphabetic() || ("'-\u{2019}".contains(*c) && i > 0 && i + 1 < chars.len() && chars[i - 1].is_alphabetic() && chars[i + 1].is_alphabetic())
+        c.is_alphabetic()
+            || ("'-\u{2019}".contains(*c) && i > 0 && i + 1 < chars.len() && chars[i - 1].is_alphabetic() && chars[i + 1].is_alphabetic())
     });
     if !ok {
         return false;
@@ -81,7 +82,13 @@ pub fn offer(root: &Path, uid: u32, list: &crate::words::WordList, share: bool) 
 
 /// Words from a list file: one per line, # comments, only shareable ones.
 fn read_words(path: &Path) -> BTreeSet<String> {
-    std::fs::read_to_string(path).unwrap_or_default().lines().map(str::trim).filter(|l| !l.starts_with('#') && shareable(l)).map(str::to_string).collect()
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.starts_with('#') && shareable(l))
+        .map(str::to_string)
+        .collect()
 }
 
 /// What a merge decides.
@@ -212,7 +219,20 @@ mod tests {
         for w in ["Yggdrasil", "don't", "Heimdall's", "e-mail", "café", "Sarina"] {
             assert!(shareable(w), "{w}");
         }
-        for w in ["x86_64", "hunter2", "a", "ada@example.com", "https://x.org", "-dash", "end-", "www.example", "a.b", "Pa55word", "qzxkwrtpl", "two words"] {
+        for w in [
+            "x86_64",
+            "hunter2",
+            "a",
+            "ada@example.com",
+            "https://x.org",
+            "-dash",
+            "end-",
+            "www.example",
+            "a.b",
+            "Pa55word",
+            "qzxkwrtpl",
+            "two words",
+        ] {
             assert!(!shareable(w), "{w}");
         }
     }

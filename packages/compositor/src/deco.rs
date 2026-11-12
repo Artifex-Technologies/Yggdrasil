@@ -60,7 +60,13 @@ pub fn make(key: Key) -> Bar {
     // the grip: two columns of three dots
     for col in 0..2 {
         for row in 0..3 {
-            fill_circle(&mut pix, 9.0 + col as f32 * 6.0, h as f32 / 2.0 - 6.0 + row as f32 * 6.0, 1.4, (150, 150, 165, if key.hover == Some(Hit::Drag) { 255 } else { 170 }));
+            fill_circle(
+                &mut pix,
+                9.0 + col as f32 * 6.0,
+                h as f32 / 2.0 - 6.0 + row as f32 * 6.0,
+                1.4,
+                (150, 150, 165, if key.hover == Some(Hit::Drag) { 255 } else { 170 }),
+            );
         }
     }
     let colors = [(Hit::Close, (255, 95, 87, 255)), (Hit::Maximize, (39, 201, 63, 255)), (Hit::Minimize, (255, 189, 46, 255))];

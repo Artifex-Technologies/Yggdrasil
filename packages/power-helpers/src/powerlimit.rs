@@ -50,9 +50,12 @@ pub const EVERY_S: f64 = 3.0;
 pub const STATE_ENV: &str = "YGGDRASIL_POWERLIMIT_STATE";
 pub const CPUFREQ_ENV: &str = "YGGDRASIL_CPUFREQ";
 pub const HOLD_ENV: &str = "YGGDRASIL_POWERLIMIT_HOLD";
-const PROFILES: [(&str, &str); 2] =
-    [("org.freedesktop.UPower.PowerProfiles", "/org/freedesktop/UPower/PowerProfiles"), ("net.hadess.PowerProfiles", "/net/hadess/PowerProfiles")];
-const QUERY: [&str; 2] = ["--query-gpu=name,power.limit,power.default_limit,power.min_limit,power.max_limit", "--format=csv,noheader,nounits"];
+const PROFILES: [(&str, &str); 2] = [
+    ("org.freedesktop.UPower.PowerProfiles", "/org/freedesktop/UPower/PowerProfiles"),
+    ("net.hadess.PowerProfiles", "/net/hadess/PowerProfiles"),
+];
+const QUERY: [&str; 2] =
+    ["--query-gpu=name,power.limit,power.default_limit,power.min_limit,power.max_limit", "--format=csv,noheader,nounits"];
 
 fn env_or(ctx: &Ctx, var: &str, path: &str) -> PathBuf {
     std::env::var_os(var).map(PathBuf::from).unwrap_or_else(|| ctx.path(path))
@@ -134,7 +137,9 @@ pub fn apply_cpu(ctx: &Ctx, percent: Option<i64>, root: Option<&Path>) -> usize 
     let mut n = 0;
     for pol in ctx.names(&root, "policy", "") {
         let pol = root.join(pol);
-        let (Some(lo), Some(hi)) = (ctx.read_int(&pol.join("cpuinfo_min_freq")), ctx.read_int(&pol.join("cpuinfo_max_freq"))) else { continue };
+        let (Some(lo), Some(hi)) = (ctx.read_int(&pol.join("cpuinfo_min_freq")), ctx.read_int(&pol.join("cpuinfo_max_freq"))) else {
+            continue;
+        };
         let want = match percent {
             None => hi,
             Some(p) => cpu_target_khz(p, lo, hi),

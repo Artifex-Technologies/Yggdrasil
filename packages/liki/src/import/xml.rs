@@ -36,33 +36,23 @@ fn expat() -> Option<&'static Expat> {
             (!p.is_null()).then_some(p)
         };
         Some(Expat {
-            create_ns: std::mem::transmute::<
-                *mut c_void,
-                unsafe extern "C" fn(*const c_char, c_char) -> XmlParser,
-            >(sym(c"XML_ParserCreateNS")?),
-            set_user_data: std::mem::transmute::<
-                *mut c_void,
-                unsafe extern "C" fn(XmlParser, *mut c_void),
-            >(sym(c"XML_SetUserData")?),
-            set_element_handler: std::mem::transmute::<
-                *mut c_void,
-                unsafe extern "C" fn(XmlParser, StartHandler, EndHandler),
-            >(sym(c"XML_SetElementHandler")?),
-            set_character_data_handler: std::mem::transmute::<
-                *mut c_void,
-                unsafe extern "C" fn(XmlParser, DataHandler),
-            >(sym(c"XML_SetCharacterDataHandler")?),
-            set_default_handler_expand: std::mem::transmute::<
-                *mut c_void,
-                unsafe extern "C" fn(XmlParser, DataHandler),
-            >(sym(c"XML_SetDefaultHandlerExpand")?),
-            parse: std::mem::transmute::<
-                *mut c_void,
-                unsafe extern "C" fn(XmlParser, *const c_char, c_int, c_int) -> c_int,
-            >(sym(c"XML_Parse")?),
-            free: std::mem::transmute::<*mut c_void, unsafe extern "C" fn(XmlParser)>(sym(
-                c"XML_ParserFree",
+            create_ns: std::mem::transmute::<*mut c_void, unsafe extern "C" fn(*const c_char, c_char) -> XmlParser>(sym(
+                c"XML_ParserCreateNS",
             )?),
+            set_user_data: std::mem::transmute::<*mut c_void, unsafe extern "C" fn(XmlParser, *mut c_void)>(sym(c"XML_SetUserData")?),
+            set_element_handler: std::mem::transmute::<*mut c_void, unsafe extern "C" fn(XmlParser, StartHandler, EndHandler)>(sym(
+                c"XML_SetElementHandler",
+            )?),
+            set_character_data_handler: std::mem::transmute::<*mut c_void, unsafe extern "C" fn(XmlParser, DataHandler)>(sym(
+                c"XML_SetCharacterDataHandler",
+            )?),
+            set_default_handler_expand: std::mem::transmute::<*mut c_void, unsafe extern "C" fn(XmlParser, DataHandler)>(sym(
+                c"XML_SetDefaultHandlerExpand",
+            )?),
+            parse: std::mem::transmute::<*mut c_void, unsafe extern "C" fn(XmlParser, *const c_char, c_int, c_int) -> c_int>(sym(
+                c"XML_Parse",
+            )?),
+            free: std::mem::transmute::<*mut c_void, unsafe extern "C" fn(XmlParser)>(sym(c"XML_ParserFree")?),
         })
     })
     .as_ref()
@@ -112,15 +102,9 @@ unsafe extern "C" fn on_default(user: *mut c_void, s: *const c_char, len: c_int)
 /// ParseError.
 pub fn parse(data: &[u8]) -> Result<Vec<Element>, Unparsable> {
     let Some(x) = expat() else {
-        crate::crash(
-            "liki-icon-import",
-            "libexpat.so.1 could not be opened (it reads plain appfilter.xml files)",
-        );
+        crate::crash("liki-icon-import", "libexpat.so.1 could not be opened (it reads plain appfilter.xml files)");
     };
-    let mut collect = Collect {
-        elements: vec![],
-        error: false,
-    };
+    let mut collect = Collect { elements: vec![], error: false };
     let ok = unsafe {
         let p = (x.create_ns)(std::ptr::null(), b'}' as c_char);
         if p.is_null() {
@@ -133,11 +117,7 @@ pub fn parse(data: &[u8]) -> Result<Vec<Element>, Unparsable> {
         // feed(data) then close(), as ElementTree.fromstring does
         let len = c_int::try_from(data.len()).unwrap_or(c_int::MAX);
         let first = (x.parse)(p, data.as_ptr() as *const c_char, len, 0);
-        let last = if first == 1 {
-            (x.parse)(p, std::ptr::null(), 0, 1)
-        } else {
-            0
-        };
+        let last = if first == 1 { (x.parse)(p, std::ptr::null(), 0, 1) } else { 0 };
         (x.free)(p);
         first == 1 && last == 1
     };

@@ -179,7 +179,10 @@ impl Beacon<'_> {
         let six = self.six_ghz;
         let two = !six && self.channel <= 14;
         let mut v = element(ie::id::SSID, self.ssid);
-        v.extend(element(ie::id::RATES, if two { &[0x82, 0x84, 0x8b, 0x96, 0x0c, 0x12, 0x18, 0x24][..] } else { &[0x8c, 0x12, 0x98, 0x24, 0xb0, 0x48, 0x60, 0x6c][..] }));
+        v.extend(element(
+            ie::id::RATES,
+            if two { &[0x82, 0x84, 0x8b, 0x96, 0x0c, 0x12, 0x18, 0x24][..] } else { &[0x8c, 0x12, 0x98, 0x24, 0xb0, 0x48, 0x60, 0x6c][..] },
+        ));
         if two {
             v.extend(element(ie::id::DS_PARAMS, &[self.channel]));
         }
@@ -196,7 +199,9 @@ impl Beacon<'_> {
         let ccmp_psk = |a: &[u8], caps: u16| element(ie::id::RSN, &rsn_body(&a.iter().map(|&t| akm(t)).collect::<Vec<_>>(), Some(caps)));
         match self.security {
             Sec::Open => {}
-            Sec::OpenWithOweTwin => v.extend(element(ie::id::VENDOR, &[0x50, 0x6f, 0x9a, 0x1c, 0x02, 0, 0, 0, 0, 1, 4, b't', b'w', b'i', b'n'])),
+            Sec::OpenWithOweTwin => {
+                v.extend(element(ie::id::VENDOR, &[0x50, 0x6f, 0x9a, 0x1c, 0x02, 0, 0, 0, 0, 1, 4, b't', b'w', b'i', b'n']))
+            }
             Sec::Owe => v.extend(ccmp_psk(&[18], 0x00c0)),
             Sec::Wpa2 => v.extend(ccmp_psk(&[2], 0x000c)),
             Sec::WpaMixed => {
@@ -217,7 +222,10 @@ impl Beacon<'_> {
             v.extend(element(ie::id::RM_CAPS, &[0x73, 0, 0, 0, 0]));
         }
         if self.ht {
-            v.extend(element(ie::id::HT_CAPS, &[0xef, 0x09, 0x1b, 0xff, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]));
+            v.extend(element(
+                ie::id::HT_CAPS,
+                &[0xef, 0x09, 0x1b, 0xff, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            ));
             let info = if self.width >= 40 { 0x05 } else { 0x00 };
             let mut b = vec![self.channel, info];
             b.extend_from_slice(&[0; 20]);
@@ -238,7 +246,10 @@ impl Beacon<'_> {
             v.extend(element(ie::id::VHT_OPERATION, &[w, c0, c1, 0xfc, 0xff]));
         }
         if self.he {
-            v.extend(ext_element(ie::id::EXT_HE_CAPS, &[0x0d, 0x1a, 0x08, 0, 0, 0, 0x22, 0x20, 0x02, 0xc0, 0x0f, 0x03, 0x95, 0x18, 0, 0xcc, 0, 0xfa, 0xff, 0xfa, 0xff]));
+            v.extend(ext_element(
+                ie::id::EXT_HE_CAPS,
+                &[0x0d, 0x1a, 0x08, 0, 0, 0, 0x22, 0x20, 0x02, 0xc0, 0x0f, 0x03, 0x95, 0x18, 0, 0xcc, 0, 0xfa, 0xff, 0xfa, 0xff],
+            ));
             if six {
                 let w = match self.width {
                     20 => 0,
@@ -246,7 +257,10 @@ impl Beacon<'_> {
                     80 => 2,
                     _ => 3,
                 };
-                v.extend(ext_element(ie::id::EXT_HE_OPERATION, &[0, 0, 0x02, 0x01, 0xfc, 0xff, self.channel, w, self.channel.saturating_add(2), self.channel.saturating_add(10), 6]));
+                v.extend(ext_element(
+                    ie::id::EXT_HE_OPERATION,
+                    &[0, 0, 0x02, 0x01, 0xfc, 0xff, self.channel, w, self.channel.saturating_add(2), self.channel.saturating_add(10), 6],
+                ));
             } else {
                 v.extend(ext_element(ie::id::EXT_HE_OPERATION, &[0xf4, 0x01, 0x00, 0x01, 0xfc, 0xff]));
             }
@@ -260,7 +274,10 @@ impl Beacon<'_> {
                 160 => 3,
                 _ => 4,
             };
-            v.extend(ext_element(ie::id::EXT_EHT_OPERATION, &[0x01, 0x44, 0x44, 0x44, 0x44, w, self.channel.saturating_add(14), self.channel.saturating_add(30)]));
+            v.extend(ext_element(
+                ie::id::EXT_EHT_OPERATION,
+                &[0x01, 0x44, 0x44, 0x44, 0x44, w, self.channel.saturating_add(14), self.channel.saturating_add(30)],
+            ));
         }
         for x in &self.vendors {
             let mut b = x.to_vec();

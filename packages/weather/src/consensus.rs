@@ -68,9 +68,8 @@ pub type EnsembleRef<'a> = (&'a [String], &'a [Vec<Option<f64>>]);
 /// `weights` maps a model name to its weight (missing = 1.0). `ensemble` is
 /// (times, one temperature series per member), matched to the forecast by time string.
 pub fn consensus(f: &Forecast, ensemble: Option<EnsembleRef>, weights: &HashMap<String, f64>) -> Vec<Hour> {
-    let ens_index: HashMap<&str, usize> = ensemble
-        .map(|(t, _)| t.iter().enumerate().map(|(i, s)| (s.as_str(), i)).collect())
-        .unwrap_or_default();
+    let ens_index: HashMap<&str, usize> =
+        ensemble.map(|(t, _)| t.iter().enumerate().map(|(i, s)| (s.as_str(), i)).collect()).unwrap_or_default();
     let mut out = Vec::new();
     for (i, time) in f.times.iter().enumerate() {
         let mut vals: Vec<(f64, f64)> = vec![]; // (temp, weight)
@@ -88,7 +87,11 @@ pub fn consensus(f: &Forecast, ensemble: Option<EnsembleRef>, weights: &HashMap<
             continue;
         }
         let wsum: f64 = vals.iter().map(|v| v.1).sum();
-        let mean = if wsum > 0.0 { vals.iter().map(|v| v.0 * v.1).sum::<f64>() / wsum } else { vals.iter().map(|v| v.0).sum::<f64>() / vals.len() as f64 };
+        let mean = if wsum > 0.0 {
+            vals.iter().map(|v| v.0 * v.1).sum::<f64>() / wsum
+        } else {
+            vals.iter().map(|v| v.0).sum::<f64>() / vals.len() as f64
+        };
         let low = vals.iter().map(|v| v.0).fold(f64::INFINITY, f64::min);
         let high = vals.iter().map(|v| v.0).fold(f64::NEG_INFINITY, f64::max);
 
@@ -113,7 +116,16 @@ pub fn consensus(f: &Forecast, ensemble: Option<EnsembleRef>, weights: &HashMap<
         } else {
             Some(precip.iter().map(|v| v.0).sum::<f64>() / precip.len() as f64)
         };
-        out.push(Hour { time: time.clone(), mean, low, high, n_models: vals.len(), ensemble: ens, precip_prob, confidence: confidence(spread) });
+        out.push(Hour {
+            time: time.clone(),
+            mean,
+            low,
+            high,
+            n_models: vals.len(),
+            ensemble: ens,
+            precip_prob,
+            confidence: confidence(spread),
+        });
     }
     out
 }

@@ -111,7 +111,11 @@ pub fn launch(a: &AppInfo) -> Result<(), String> {
         }
     }
     let st = Command::new("gio").arg("launch").arg(&a.desktop).status().map_err(|e| format!("could not start it: {e}"))?;
-    if st.success() { Ok(()) } else { Err("could not start it".into()) }
+    if st.success() {
+        Ok(())
+    } else {
+        Err("could not start it".into())
+    }
 }
 
 /// Changes an app's network rule with the launcher's network command (asks for the password).
@@ -307,7 +311,10 @@ pub fn load_net_rules() -> HashMap<String, NetMode> {
     let Some(file) = rules().and_then(|r| r.path("network_rules")) else { return HashMap::new() };
     let v = read_json(&file);
     let uid = unsafe { libc_getuid() }.to_string();
-    v["rules"][&uid].as_object().map(|m| m.iter().filter_map(|(k, x)| x.as_str().map(|s| (k.clone(), NetMode::from_word(s)))).collect()).unwrap_or_default()
+    v["rules"][&uid]
+        .as_object()
+        .map(|m| m.iter().filter_map(|(k, x)| x.as_str().map(|s| (k.clone(), NetMode::from_word(s)))).collect())
+        .unwrap_or_default()
 }
 
 // getuid without a libc dependency
@@ -321,7 +328,15 @@ unsafe fn libc_getuid() -> u32 {
 pub fn load_usage() -> HashMap<String, (u64, u64, u64)> {
     let Some(file) = rules().and_then(|r| r.path("usage")) else { return HashMap::new() };
     let v = read_json(&file);
-    v.as_object().map(|m| m.iter().map(|(k, e)| (k.clone(), (e["launches"].as_u64().unwrap_or(0), e["last"].as_u64().unwrap_or(0), e["seconds"].as_u64().unwrap_or(0)))).collect()).unwrap_or_default()
+    v.as_object()
+        .map(|m| {
+            m.iter()
+                .map(|(k, e)| {
+                    (k.clone(), (e["launches"].as_u64().unwrap_or(0), e["last"].as_u64().unwrap_or(0), e["seconds"].as_u64().unwrap_or(0)))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Whether the app starts when you log in: your own autostart entry decides, else the system's.
@@ -346,7 +361,8 @@ pub fn set_startup(app: &AppInfo, on: bool) -> Result<(), String> {
     if on {
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let body = std::fs::read_to_string(&app.desktop).map_err(|e| e.to_string())?;
-        let mut out: Vec<String> = body.lines().filter(|l| !l.starts_with("Hidden=") && !l.starts_with("X-GNOME-Autostart-enabled=")).map(String::from).collect();
+        let mut out: Vec<String> =
+            body.lines().filter(|l| !l.starts_with("Hidden=") && !l.starts_with("X-GNOME-Autostart-enabled=")).map(String::from).collect();
         if let Some(i) = out.iter().position(|l| l.trim() == "[Desktop Entry]") {
             out.insert(i + 1, "X-GNOME-Autostart-enabled=true".into());
         }
@@ -380,7 +396,11 @@ pub fn list_apps(icon_theme: &str) -> Vec<AppInfo> {
             let Ok(text) = std::fs::read_to_string(&path) else { continue };
             let d = parse_desktop(&text);
             let truthy = |k: &str| d.get(k).map(|v| v.eq_ignore_ascii_case("true")).unwrap_or(false);
-            if d.get("Type").map(|t| t != "Application").unwrap_or(true) || truthy("NoDisplay") || truthy("Hidden") || !d.contains_key("Name") {
+            if d.get("Type").map(|t| t != "Application").unwrap_or(true)
+                || truthy("NoDisplay")
+                || truthy("Hidden")
+                || !d.contains_key("Name")
+            {
                 continue;
             }
             seen.insert(id.clone());
@@ -398,7 +418,15 @@ pub fn list_apps(icon_theme: &str) -> Vec<AppInfo> {
                 last_used,
                 seconds,
                 net: rules.get(&id).copied().unwrap_or_default(),
-                system: d.get("Categories").map(|c| c.split(';').any(|x| matches!(x, "Settings" | "DesktopSettings" | "HardwareSettings"))).unwrap_or(false) || id.starts_with("avahi") || id.starts_with("bssh") || id.starts_with("bvnc") || id.starts_with("qv4l2") || id.starts_with("qvidcap"),
+                system: d
+                    .get("Categories")
+                    .map(|c| c.split(';').any(|x| matches!(x, "Settings" | "DesktopSettings" | "HardwareSettings")))
+                    .unwrap_or(false)
+                    || id.starts_with("avahi")
+                    || id.starts_with("bssh")
+                    || id.starts_with("bvnc")
+                    || id.starts_with("qv4l2")
+                    || id.starts_with("qvidcap"),
                 startup: startup_enabled(&id),
                 policy: load_policy(&id),
                 id,
@@ -516,10 +544,11 @@ pub fn protected(pkg: &str) -> bool {
 }
 
 fn protected_with(pkg: &str, os_list: &str) -> bool {
-    let listed = os_list.lines().map(|l| l.split('#').next().unwrap_or("").trim()).filter(|l| !l.is_empty()).any(|l| match l.strip_suffix('*') {
-        Some(prefix) => pkg.starts_with(prefix),
-        None => pkg == l,
-    });
+    let listed =
+        os_list.lines().map(|l| l.split('#').next().unwrap_or("").trim()).filter(|l| !l.is_empty()).any(|l| match l.strip_suffix('*') {
+            Some(prefix) => pkg.starts_with(prefix),
+            None => pkg == l,
+        });
     listed
         || pkg.starts_with("yggdrasil-")
         || pkg.starts_with("liki-")
@@ -535,7 +564,10 @@ mod tests {
     fn ask_decisions_are_read_allowed_first() {
         let v: Value = serde_json::from_str(r#"{"type":"list","apps":{"pdfcraft":{"allow":{"9.9.9.9":"dns.example","1.1.1.1":""},"deny":{"5.5.5.5":""}},"x":{"allow":{},"deny":{}}}}"#).unwrap();
         let d = parse_decisions(&v, "pdfcraft");
-        assert_eq!(d.iter().map(|x| (x.ip.as_str(), x.allowed)).collect::<Vec<_>>(), vec![("1.1.1.1", true), ("9.9.9.9", true), ("5.5.5.5", false)]);
+        assert_eq!(
+            d.iter().map(|x| (x.ip.as_str(), x.allowed)).collect::<Vec<_>>(),
+            vec![("1.1.1.1", true), ("9.9.9.9", true), ("5.5.5.5", false)]
+        );
         assert_eq!(d[1].name, "dns.example");
         assert!(parse_decisions(&v, "missing").is_empty());
         assert_eq!(NetMode::from_word("ask"), NetMode::Ask);
@@ -555,10 +587,18 @@ mod tests {
 
     #[test]
     fn running_scopes_are_matched_to_the_right_app() {
-        let units: Vec<String> = ["app-firefox-1234.scope", "app-firefox-nightly-99.scope", "lapp_spotify_launcher_5.scope", "app-com.microsoft.VSCode-1915.scope", "app-flatpak-org.gimp.GIMP-7.scope", "app-foo@abc123.scope", "session-3.scope"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        let units: Vec<String> = [
+            "app-firefox-1234.scope",
+            "app-firefox-nightly-99.scope",
+            "lapp_spotify_launcher_5.scope",
+            "app-com.microsoft.VSCode-1915.scope",
+            "app-flatpak-org.gimp.GIMP-7.scope",
+            "app-foo@abc123.scope",
+            "session-3.scope",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
         let of = |id: &str| units_of_with(Some("lapp_"), id, &units);
         assert_eq!(of("firefox"), vec!["app-firefox-1234.scope"]);
         assert_eq!(of("firefox-nightly"), vec!["app-firefox-nightly-99.scope"]);
@@ -631,11 +671,24 @@ mod tests {
 
     #[test]
     fn desktop_packages_are_protected() {
-        assert!(protected("yggdrasil-minos") && protected("liki-icon-theme") && protected("hyprland") && protected("greetd") && !protected("firefox"));
+        assert!(
+            protected("yggdrasil-minos")
+                && protected("liki-icon-theme")
+                && protected("hyprland")
+                && protected("greetd")
+                && !protected("firefox")
+        );
         assert!(super::protected_with("xdg-desktop-portal-hyprland", "") && super::protected_with("pipewire", ""));
-        assert!(!super::protected_with("plasma-desktop", "") && !super::protected_with("kwin", ""), "KDE is gone: its packages are ordinary ones");
+        assert!(
+            !super::protected_with("plasma-desktop", "") && !super::protected_with("kwin", ""),
+            "KDE is gone: its packages are ordinary ones"
+        );
         let os = "# the operating system's own\nlabyrinth-*\nsarina-git\n";
-        assert!(super::protected_with("labyrinth-ollama-tuning", os) && super::protected_with("sarina-git", os) && !super::protected_with("sarina", os));
+        assert!(
+            super::protected_with("labyrinth-ollama-tuning", os)
+                && super::protected_with("sarina-git", os)
+                && !super::protected_with("sarina", os)
+        );
         assert!(!super::protected_with("labyrinth-ollama-tuning", ""));
     }
 }

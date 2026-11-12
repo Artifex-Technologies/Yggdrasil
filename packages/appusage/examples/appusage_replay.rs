@@ -24,7 +24,8 @@ fn main() {
         let ids: BTreeSet<String> = strings(&case["ids"]).into_iter().collect();
         match case["mode"].as_str() {
             Some("match") => {
-                let out: Vec<Value> = strings(&case["units"]).iter().map(|u| match_unit(u, &ids).map(Value::from).unwrap_or(Value::Null)).collect();
+                let out: Vec<Value> =
+                    strings(&case["units"]).iter().map(|u| match_unit(u, &ids).map(Value::from).unwrap_or(Value::Null)).collect();
                 println!("{}", json::dumps(&Value::from(out)));
             }
             Some("sample") => {

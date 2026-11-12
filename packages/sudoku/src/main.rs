@@ -44,7 +44,11 @@ fn forget(name: &str) {
 
 fn clock(ms: u64) -> String {
     let s = ms / 1000;
-    if s >= 3600 { format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60) } else { format!("{}:{:02}", s / 60, s % 60) }
+    if s >= 3600 {
+        format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60)
+    } else {
+        format!("{}:{:02}", s / 60, s % 60)
+    }
 }
 
 /// A puzzle being made on its own thread (Extreme can take a moment), and what it is for.
@@ -60,10 +64,14 @@ struct Making {
 enum End {
     None,
     /// Classic solved: the time, and whether it was a best.
-    Solved { best: bool },
+    Solved {
+        best: bool,
+    },
     /// Survival: this board is cleared, the next one is ready to make.
     Cleared,
-    OutOfLives { best: bool },
+    OutOfLives {
+        best: bool,
+    },
 }
 
 struct App {
@@ -294,7 +302,11 @@ fn button(ui: &mut egui::Ui, label: &str, on: bool, enabled: bool) -> egui::Resp
 fn heart(p: &egui::Painter, c: egui::Pos2, r: f32, color: Color32) {
     p.circle_filled(pos2(c.x - r * 0.5, c.y - r * 0.2), r * 0.55, color);
     p.circle_filled(pos2(c.x + r * 0.5, c.y - r * 0.2), r * 0.55, color);
-    p.add(egui::Shape::convex_polygon(vec![pos2(c.x - r * 1.02, c.y - r * 0.05), pos2(c.x + r * 1.02, c.y - r * 0.05), pos2(c.x, c.y + r)], color, Stroke::NONE));
+    p.add(egui::Shape::convex_polygon(
+        vec![pos2(c.x - r * 1.02, c.y - r * 0.05), pos2(c.x + r * 1.02, c.y - r * 0.05), pos2(c.x, c.y + r)],
+        color,
+        Stroke::NONE,
+    ));
 }
 
 fn check(p: &egui::Painter, c: egui::Pos2, s: f32, color: Color32) {
@@ -347,7 +359,10 @@ impl App {
             if button(ui, "Hint", false, live).on_hover_text("Shift+H").clicked() {
                 self.hint();
             }
-            if button(ui, if self.paused { "Resume" } else { "Pause" }, self.paused, self.end == End::None).on_hover_text("P or Space").clicked() {
+            if button(ui, if self.paused { "Resume" } else { "Pause" }, self.paused, self.end == End::None)
+                .on_hover_text("P or Space")
+                .clicked()
+            {
                 self.paused = !self.paused;
             }
             if button(ui, "Menu", false, true).clicked() {
@@ -363,10 +378,17 @@ impl App {
         let p = ui.painter_at(rect.expand(2.0));
         p.rect_filled(rect, CornerRadius::same(8), pal.field);
         let cell = size / 9.0;
-        let at = |i: usize| Rect::from_min_size(pos2(rect.left() + (i % 9) as f32 * cell, rect.top() + (i / 9) as f32 * cell), vec2(cell, cell));
+        let at =
+            |i: usize| Rect::from_min_size(pos2(rect.left() + (i % 9) as f32 * cell, rect.top() + (i / 9) as f32 * cell), vec2(cell, cell));
         if self.paused {
             p.text(rect.center(), Align2::CENTER_CENTER, "Paused", FontId::proportional(26.0), pal.text);
-            p.text(rect.center() + vec2(0.0, 30.0), Align2::CENTER_CENTER, "P, Space or a click to go on", FontId::proportional(13.0), pal.dim);
+            p.text(
+                rect.center() + vec2(0.0, 30.0),
+                Align2::CENTER_CENTER,
+                "P, Space or a click to go on",
+                FontId::proportional(13.0),
+                pal.dim,
+            );
             if resp.clicked() {
                 self.paused = false;
             }
@@ -406,7 +428,13 @@ impl App {
             }
             let v = g.values[i];
             if v != 0 {
-                let color = if g.conflict(i) { pal.red } else if g.given(i) { pal.text } else { pal.accent };
+                let color = if g.conflict(i) {
+                    pal.red
+                } else if g.given(i) {
+                    pal.text
+                } else {
+                    pal.accent
+                };
                 let font = if g.given(i) { FontId::proportional(cell * 0.58) } else { FontId::proportional(cell * 0.54) };
                 p.text(rc.center(), Align2::CENTER_CENTER, v.to_string(), font, color);
             } else if g.notes[i] != 0 {
@@ -440,14 +468,38 @@ impl App {
                 let left = self.game.as_ref().map(|g| g.remaining(d)).unwrap_or(9);
                 let (r, resp) = ui.allocate_exact_size(vec2(w, h), Sense::click());
                 let on = self.brush == Some(d);
-                let fill = if on { pal.accent } else if resp.hovered() { pal.hover } else { pal.field };
+                let fill = if on {
+                    pal.accent
+                } else if resp.hovered() {
+                    pal.hover
+                } else {
+                    pal.field
+                };
                 ui.painter().rect_filled(r, CornerRadius::same(8), fill);
-                let ink = if on { pal.on_accent() } else if left == 0 { pal.dim } else { pal.text };
-                ui.painter().text(pos2(r.center().x, r.top() + h * 0.4), Align2::CENTER_CENTER, d.to_string(), FontId::proportional(22.0), ink);
+                let ink = if on {
+                    pal.on_accent()
+                } else if left == 0 {
+                    pal.dim
+                } else {
+                    pal.text
+                };
+                ui.painter().text(
+                    pos2(r.center().x, r.top() + h * 0.4),
+                    Align2::CENTER_CENTER,
+                    d.to_string(),
+                    FontId::proportional(22.0),
+                    ink,
+                );
                 if left == 0 {
                     check(ui.painter(), pos2(r.center().x, r.bottom() - 12.0), 8.0, if on { pal.on_accent() } else { pal.green });
                 } else {
-                    ui.painter().text(pos2(r.center().x, r.bottom() - 11.0), Align2::CENTER_CENTER, left.to_string(), FontId::proportional(11.0), if on { pal.on_accent() } else { pal.dim });
+                    ui.painter().text(
+                        pos2(r.center().x, r.bottom() - 11.0),
+                        Align2::CENTER_CENTER,
+                        left.to_string(),
+                        FontId::proportional(11.0),
+                        if on { pal.on_accent() } else { pal.dim },
+                    );
                 }
                 let resp = resp.on_hover_text("Click: put it in the selected cell. Right-click: brush (every cell you click gets it)");
                 if !self.playing() || self.paused {
@@ -472,13 +524,18 @@ impl App {
             End::None => return,
             End::Solved { best } => (
                 format!("Solved in {}", clock(g.elapsed_ms)),
-                if best { "A new best time for this difficulty".to_string() } else if g.hints > 0 { format!("With {} hint(s)", g.hints) } else { String::new() },
+                if best {
+                    "A new best time for this difficulty".to_string()
+                } else if g.hints > 0 {
+                    format!("With {} hint(s)", g.hints)
+                } else {
+                    String::new()
+                },
             ),
             End::Cleared => ("Board cleared".to_string(), format!("+{} lives · next: {}", game::BONUS_LIVES, g.difficulty.next().label())),
-            End::OutOfLives { best } => (
-                "Out of lives".to_string(),
-                format!("Boards cleared: {}{}", g.cleared, if best { " · a new best" } else { "" }),
-            ),
+            End::OutOfLives { best } => {
+                ("Out of lives".to_string(), format!("Boards cleared: {}{}", g.cleared, if best { " · a new best" } else { "" }))
+            }
         };
         let card = Rect::from_center_size(over.center(), vec2(over.width().min(320.0), 150.0));
         ui.painter().rect_filled(card, CornerRadius::same(12), pal.sidebar);
@@ -525,16 +582,27 @@ impl App {
             ui.label(RichText::new("CLASSIC").size(11.0).strong().color(pal.dim));
             ui.add_space(6.0);
             for d in [Difficulty::Easy, Difficulty::Medium, Difficulty::Hard] {
-                let best = self.stats.best.get(&d).map(|s| format!("best {}", clock(s * 1000))).unwrap_or_else(|| "no best time yet".into());
-                if ui.add(egui::Button::new(RichText::new(format!("{}   ·   {}", d.label(), best)).size(14.0)).min_size(vec2(260.0, 36.0))).clicked() {
+                let best =
+                    self.stats.best.get(&d).map(|s| format!("best {}", clock(s * 1000))).unwrap_or_else(|| "no best time yet".into());
+                if ui
+                    .add(egui::Button::new(RichText::new(format!("{}   ·   {}", d.label(), best)).size(14.0)).min_size(vec2(260.0, 36.0)))
+                    .clicked()
+                {
                     self.start(Mode::Classic, d, None);
                 }
             }
             ui.add_space(16.0);
             ui.label(RichText::new("SURVIVAL").size(11.0).strong().color(pal.dim));
             ui.add_space(6.0);
-            let best = if self.stats.survival_best > 0 { format!("best: {} boards", self.stats.survival_best) } else { "3 lives, Easy up to Extreme".into() };
-            if ui.add(egui::Button::new(RichText::new(format!("Survival challenge   ·   {best}")).size(14.0)).min_size(vec2(260.0, 36.0))).clicked() {
+            let best = if self.stats.survival_best > 0 {
+                format!("best: {} boards", self.stats.survival_best)
+            } else {
+                "3 lives, Easy up to Extreme".into()
+            };
+            if ui
+                .add(egui::Button::new(RichText::new(format!("Survival challenge   ·   {best}")).size(14.0)).min_size(vec2(260.0, 36.0)))
+                .clicked()
+            {
                 self.start(Mode::Survival, Difficulty::Easy, None);
             }
             ui.add_space(8.0);
@@ -585,52 +653,54 @@ impl eframe::App for App {
             self.flash = None;
         }
 
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(pal.bg).inner_margin(Margin { left: 14, right: 10, top: 6, bottom: 14 })).show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Sudoku").strong().color(pal.text));
-                chrome::drag_area(ui, ui.available_width() - chrome::controls_width());
-                chrome::window_controls(ui, &pal);
-            });
-            if let Some(m) = &self.making {
-                ui.add_space(120.0);
-                ui.vertical_centered(|ui| {
-                    ui.add(egui::Spinner::new().size(28.0));
-                    ui.add_space(10.0);
-                    ui.label(RichText::new(format!("Making a {} puzzle…", m.difficulty.label())).color(pal.dim));
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(pal.bg).inner_margin(Margin { left: 14, right: 10, top: 6, bottom: 14 }))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Sudoku").strong().color(pal.text));
+                    chrome::drag_area(ui, ui.available_width() - chrome::controls_width());
+                    chrome::window_controls(ui, &pal);
                 });
-                ctx.request_repaint_after(Duration::from_millis(100));
-                return;
-            }
-            if self.menu || self.game.is_none() {
-                self.menu_page(ui, &pal);
-                return;
-            }
-            self.header(ui, &pal);
-            ui.add_space(4.0);
-            self.toolbar(ui);
-            ui.add_space(8.0);
-            let avail = ui.available_size();
-            let size = avail.x.min(avail.y - 52.0 - 40.0).max(200.0);
-            let left = (avail.x - size) / 2.0;
-            let mut board_rect = Rect::NOTHING;
-            ui.horizontal(|ui| {
-                ui.add_space(left.max(0.0));
-                ui.vertical(|ui| {
-                    self.board(ui, &pal, size);
-                    board_rect = ui.min_rect();
-                    ui.add_space(10.0);
-                    self.numpad(ui, &pal, size);
-                    ui.add_space(6.0);
-                    let note = match (&self.flash, self.brush) {
-                        (Some((s, _)), _) => s.clone(),
-                        (None, Some(d)) => format!("Brush: {d} (right-click it again or Escape to stop)"),
-                        _ => String::new(),
-                    };
-                    ui.label(RichText::new(note).size(12.0).color(pal.dim));
+                if let Some(m) = &self.making {
+                    ui.add_space(120.0);
+                    ui.vertical_centered(|ui| {
+                        ui.add(egui::Spinner::new().size(28.0));
+                        ui.add_space(10.0);
+                        ui.label(RichText::new(format!("Making a {} puzzle…", m.difficulty.label())).color(pal.dim));
+                    });
+                    ctx.request_repaint_after(Duration::from_millis(100));
+                    return;
+                }
+                if self.menu || self.game.is_none() {
+                    self.menu_page(ui, &pal);
+                    return;
+                }
+                self.header(ui, &pal);
+                ui.add_space(4.0);
+                self.toolbar(ui);
+                ui.add_space(8.0);
+                let avail = ui.available_size();
+                let size = avail.x.min(avail.y - 52.0 - 40.0).max(200.0);
+                let left = (avail.x - size) / 2.0;
+                let mut board_rect = Rect::NOTHING;
+                ui.horizontal(|ui| {
+                    ui.add_space(left.max(0.0));
+                    ui.vertical(|ui| {
+                        self.board(ui, &pal, size);
+                        board_rect = ui.min_rect();
+                        ui.add_space(10.0);
+                        self.numpad(ui, &pal, size);
+                        ui.add_space(6.0);
+                        let note = match (&self.flash, self.brush) {
+                            (Some((s, _)), _) => s.clone(),
+                            (None, Some(d)) => format!("Brush: {d} (right-click it again or Escape to stop)"),
+                            _ => String::new(),
+                        };
+                        ui.label(RichText::new(note).size(12.0).color(pal.dim));
+                    });
                 });
+                self.end_card(ui, &pal, board_rect);
             });
-            self.end_card(ui, &pal, board_rect);
-        });
         chrome::outline(&ctx, &pal);
         if self.playing() {
             ctx.request_repaint_after(Duration::from_millis(500));

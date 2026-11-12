@@ -20,8 +20,8 @@ const MAX_PNG: u64 = 6 * 1024 * 1024;
 /// appfilter.xml (the largest packs' lists are a few MB; a bigger one is not read, as in the script since this fix)
 pub const MAX_APPFILTER: u64 = 32 * 1024 * 1024;
 const GENERIC: [&str; 18] = [
-    "com", "org", "net", "io", "android", "google", "apps", "app", "the", "activity", "main",
-    "launcher", "mobile", "free", "pro", "lite", "beta", "dev",
+    "com", "org", "net", "io", "android", "google", "apps", "app", "the", "activity", "main", "launcher", "mobile", "free", "pro", "lite",
+    "beta", "dev",
 ];
 const GENERIC_MORE: [&str; 2] = ["desktop", "stable"];
 
@@ -38,11 +38,7 @@ pub fn parse_appfilter(zf: &Zip) -> Result<Vec<(String, String)>, Bad> {
         names.insert(e.filename.to_lowercase(), e.filename.clone());
     }
     let mut items = vec![];
-    for path in [
-        "assets/appfilter.xml",
-        "res/xml/appfilter.xml",
-        "res/raw/appfilter.xml",
-    ] {
+    for path in ["assets/appfilter.xml", "res/xml/appfilter.xml", "res/raw/appfilter.xml"] {
         let Some(real) = names.get(path) else {
             continue;
         };
@@ -51,11 +47,7 @@ pub fn parse_appfilter(zf: &Zip) -> Result<Vec<(String, String)>, Bad> {
             continue;
         }
         let data = zf.read_member(entry)?;
-        let elems = if data.starts_with(b"\x03\x00") {
-            axml::parse(&data)
-        } else {
-            xml::parse(&data)
-        };
+        let elems = if data.starts_with(b"\x03\x00") { axml::parse(&data) } else { xml::parse(&data) };
         let Ok(elems) = elems else {
             continue;
         };
@@ -77,10 +69,7 @@ pub fn parse_appfilter(zf: &Zip) -> Result<Vec<(String, String)>, Bad> {
 /// Python's re.IGNORECASE match of one character against a lower-case ASCII letter (Unicode simple lower case, and
 /// the dotless i and long s that sre treats as i and s).
 fn ci(c: char, p: char) -> bool {
-    c.to_ascii_lowercase() == p
-        || (p == 'i' && (c == 'ı' || c == 'İ'))
-        || (p == 's' && c == 'ſ')
-        || (p == 'k' && c == '\u{212a}')
+    c.to_ascii_lowercase() == p || (p == 'i' && (c == 'ı' || c == 'İ')) || (p == 's' && c == 'ſ') || (p == 'k' && c == '\u{212a}')
 }
 
 fn ci_prefix<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
@@ -113,12 +102,7 @@ pub fn picture_path(name: &str) -> bool {
         return false;
     }
     let chars: Vec<char> = rest.chars().collect();
-    chars.len() >= 5
-        && chars[chars.len() - 4] == '.'
-        && chars[chars.len() - 3..]
-            .iter()
-            .zip("png".chars())
-            .all(|(&c, p)| ci(c, p))
+    chars.len() >= 5 && chars[chars.len() - 4] == '.' && chars[chars.len() - 3..].iter().zip("png".chars()).all(|(&c, p)| ci(c, p))
 }
 
 /// (width, height) of a PNG's header
@@ -126,10 +110,7 @@ fn png_size(b: &[u8]) -> Option<(u32, u32)> {
     if !b.starts_with(b"\x89PNG\r\n\x1a\n") || b.len() < 24 {
         return None;
     }
-    Some((
-        u32::from_be_bytes(b[16..20].try_into().unwrap()),
-        u32::from_be_bytes(b[20..24].try_into().unwrap()),
-    ))
+    Some((u32::from_be_bytes(b[16..20].try_into().unwrap()), u32::from_be_bytes(b[20..24].try_into().unwrap())))
 }
 
 /// name -> (width, bytes): the biggest square picture of each name (the first of equal ones), at least 32 pixels.
@@ -156,10 +137,7 @@ pub fn collect_pngs(zf: &Zip) -> Result<BTreeMap<String, (u32, Vec<u8>)>, Bad> {
             continue;
         }
         let base = py::basename(n);
-        let name: String = base
-            .chars()
-            .take(base.chars().count().saturating_sub(4))
-            .collect();
+        let name: String = base.chars().take(base.chars().count().saturating_sub(4)).collect();
         if best.get(&name).is_none_or(|(bw, _)| w > *bw) {
             best.insert(name, (w, b));
         }
@@ -192,34 +170,16 @@ pub fn installed_apps() -> Vec<(String, BTreeSet<String>)> {
                 continue;
             };
             let sect = text.split("\n[").next().unwrap();
-            let (icon, name, ex, wm) = (
-                field(sect, "Icon"),
-                field(sect, "Name"),
-                field(sect, "Exec"),
-                field(sect, "StartupWMClass"),
-            );
-            if icon.is_empty()
-                || icon.starts_with('/')
-                || (field(sect, "NoDisplay").to_lowercase() == "true" && name.is_empty())
-            {
+            let (icon, name, ex, wm) = (field(sect, "Icon"), field(sect, "Name"), field(sect, "Exec"), field(sect, "StartupWMClass"));
+            if icon.is_empty() || icon.starts_with('/') || (field(sect, "NoDisplay").to_lowercase() == "true" && name.is_empty()) {
                 continue;
             }
-            let file_name = f
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            let stem: String = file_name
-                .chars()
-                .take(file_name.chars().count().saturating_sub(8))
-                .collect();
+            let file_name = f.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let stem: String = file_name.chars().take(file_name.chars().count().saturating_sub(8)).collect();
             let mut keys: BTreeSet<String> = BTreeSet::new();
             keys.insert(norm(&icon));
             keys.insert(norm(&name));
-            keys.insert(if ex.is_empty() {
-                String::new()
-            } else {
-                norm(py::basename(pycompat::split(&ex)[0]))
-            });
+            keys.insert(if ex.is_empty() { String::new() } else { norm(py::basename(pycompat::split(&ex)[0])) });
             keys.insert(norm(&wm));
             keys.insert(norm(&stem));
             // reverse-DNS icon names: the last part is the program's own name
@@ -290,9 +250,7 @@ pub fn match_(
         if !pngs.contains_key(drawable) {
             continue;
         }
-        by_name
-            .entry(norm(drawable))
-            .or_insert_with(|| drawable.clone());
+        by_name.entry(norm(drawable)).or_insert_with(|| drawable.clone());
         let own = norm(drawable);
         for k in android_keys(comp, drawable) {
             if k != own {
@@ -305,24 +263,14 @@ pub fn match_(
         let own = norm(icon);
         let mut order: Vec<&String> = keys.iter().collect();
         order.sort_by(|a, b| {
-            (**a != own, std::cmp::Reverse(a.chars().count()), *a).cmp(&(
-                **b != own,
-                std::cmp::Reverse(b.chars().count()),
-                *b,
-            ))
+            (**a != own, std::cmp::Reverse(a.chars().count()), *a).cmp(&(**b != own, std::cmp::Reverse(b.chars().count()), *b))
         });
-        let pick = order
-            .iter()
-            .find(|k| k.chars().count() >= 3 && by_name.contains_key(**k))
-            .map(|k| by_name[*k].clone())
-            .or_else(|| {
-                order
-                    .iter()
-                    .find(|k| {
-                        k.chars().count() >= 4 && by_pkg.get(**k).is_some_and(|s| s.len() == 1)
-                    })
-                    .map(|k| by_pkg[*k].iter().next().unwrap().clone())
-            });
+        let pick = order.iter().find(|k| k.chars().count() >= 3 && by_name.contains_key(**k)).map(|k| by_name[*k].clone()).or_else(|| {
+            order
+                .iter()
+                .find(|k| k.chars().count() >= 4 && by_pkg.get(**k).is_some_and(|s| s.len() == 1))
+                .map(|k| by_pkg[*k].iter().next().unwrap().clone())
+        });
         if let Some(p) = pick {
             chosen.push((icon.clone(), p));
         }
@@ -337,9 +285,7 @@ pub fn safe_icon_name(n: &str) -> bool {
     !b.is_empty()
         && b.len() <= 121
         && b[0].is_ascii_alphanumeric()
-        && b[1..]
-            .iter()
-            .all(|c| c.is_ascii_alphanumeric() || b"._+-".contains(c))
+        && b[1..].iter().all(|c| c.is_ascii_alphanumeric() || b"._+-".contains(c))
 }
 
 /// The theme's name from the pack's file name: no extension, no (...) or [...], no version numbers, only letters, digits,
@@ -363,11 +309,7 @@ pub fn default_name(path: &str) -> String {
             _ => None,
         };
         if let Some(close) = close {
-            if let Some(j) = chars[i + 1..]
-                .iter()
-                .position(|&c| c == close || c == '\n')
-                .map(|j| i + 1 + j)
-                .filter(|&j| chars[j] == close)
+            if let Some(j) = chars[i + 1..].iter().position(|&c| c == close || c == '\n').map(|j| i + 1 + j).filter(|&j| chars[j] == close)
             {
                 s.push(' ');
                 i = j + 1;
@@ -379,16 +321,7 @@ pub fn default_name(path: &str) -> String {
     }
     // re.sub(r"\bv?\d+(\.\d+)+\b", " ", s): versions such as v1.8.1
     let s = strip_versions(&s);
-    let s: String = s
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == ' ' || c == '-' {
-                c
-            } else {
-                ' '
-            }
-        })
-        .collect();
+    let s: String = s.chars().map(|c| if c.is_ascii_alphanumeric() || c == ' ' || c == '-' { c } else { ' ' }).collect();
     let words = pycompat::split(&s);
     if words.is_empty() {
         "Imported icons".into()
@@ -426,11 +359,7 @@ fn strip_versions(s: &str) -> String {
     let mut i = 0;
     while i < c.len() {
         if boundary(i) {
-            let m = if c[i] == 'v' {
-                match_at(i + 1).or_else(|| match_at(i))
-            } else {
-                match_at(i)
-            };
+            let m = if c[i] == 'v' { match_at(i + 1).or_else(|| match_at(i)) } else { match_at(i) };
             if let Some(e) = m {
                 out.push(' ');
                 i = e;
@@ -445,49 +374,27 @@ fn strip_versions(s: &str) -> String {
 
 /// Turn the pack into a theme at OUT_ROOT/NAME; (theme folder, programs matched, programs looked at), or the message the
 /// script stopped with (exit code 1), or Bad for a file that cannot be read as a zip.
-pub fn build(
-    pack: &Path,
-    name: &str,
-    out_root: &Path,
-) -> Result<Result<(PathBuf, usize, usize), String>, Bad> {
-    let file = std::fs::File::open(pack)
-        .unwrap_or_else(|e| crate::crash("liki-icon-import", format!("{}: {e}", pack.display())));
+pub fn build(pack: &Path, name: &str, out_root: &Path) -> Result<Result<(PathBuf, usize, usize), String>, Bad> {
+    let file = std::fs::File::open(pack).unwrap_or_else(|e| crate::crash("liki-icon-import", format!("{}: {e}", pack.display())));
     let zf = Zip::open(file)?;
     let items = parse_appfilter(&zf)?;
     let pngs = collect_pngs(&zf)?;
     drop(zf);
     if pngs.is_empty() {
-        return Ok(Err(
-            "No PNG pictures found in that file (is it an Android icon pack?).".into(),
-        ));
+        return Ok(Err("No PNG pictures found in that file (is it an Android icon pack?).".into()));
     }
     if items.is_empty() {
-        return Ok(Err(
-            "That file has no appfilter.xml, so there is no list of which app gets which picture."
-                .into(),
-        ));
+        return Ok(Err("That file has no appfilter.xml, so there is no list of which app gets which picture.".into()));
     }
     let apps = installed_apps();
     let chosen = match_(&items, &pngs, &apps);
     let with_png = items.iter().filter(|(_, d)| pngs.contains_key(d)).count();
-    println!(
-        "The pack lists {} app(s), {} of them with a usable PNG picture ({} PNG pictures in all).",
-        items.len(),
-        with_png,
-        pngs.len()
-    );
-    println!(
-        "{} installed program(s) looked at, {} matched.",
-        apps.len(),
-        chosen.len()
-    );
+    println!("The pack lists {} app(s), {} of them with a usable PNG picture ({} PNG pictures in all).", items.len(), with_png, pngs.len());
+    println!("{} installed program(s) looked at, {} matched.", apps.len(), chosen.len());
     let theme = join(out_root, name);
     if theme.is_dir() && join(&theme, "index.theme").is_file() {
         // a fresh import replaces the old one (shutil.rmtree, which refuses a link)
-        if std::fs::symlink_metadata(&theme)
-            .map(|m| m.file_type().is_symlink())
-            .unwrap_or(false)
-        {
+        if std::fs::symlink_metadata(&theme).map(|m| m.file_type().is_symlink()).unwrap_or(false) {
             crate::crash("liki-icon-import", "Cannot call rmtree on a symbolic link");
         }
         if let Err(e) = std::fs::remove_dir_all(&theme) {
@@ -523,10 +430,7 @@ pub fn build(
         )));
     }
     let dirs: Vec<String> = sizes.iter().map(|s| format!("{s}x{s}/apps")).collect();
-    let parts: String = sizes
-        .iter()
-        .map(|s| format!("\n[{s}x{s}/apps]\nSize={s}\nType=Threshold\nContext=Applications\n"))
-        .collect();
+    let parts: String = sizes.iter().map(|s| format!("\n[{s}x{s}/apps]\nSize={s}\nType=Threshold\nContext=Applications\n")).collect();
     let index = join(&theme, "index.theme");
     let text = format!(
         "[Icon Theme]\nName={name}\nComment=Imported from an Android icon pack ({} of {} installed programs matched)\nInherits=hicolor\nDirectories={}\n{parts}",
@@ -545,33 +449,9 @@ pub fn parser() -> Parser {
         Parser::prog_from_argv0(),
         "Turn an Android icon pack into a Linux icon theme.",
         vec![
-            Arg {
-                flags: &[],
-                dest: "pack",
-                kind: Kind::Value {
-                    choices: None,
-                    default: None,
-                },
-                help: None,
-            },
-            Arg {
-                flags: &["--name"],
-                dest: "name",
-                kind: Kind::Value {
-                    choices: None,
-                    default: None,
-                },
-                help: None,
-            },
-            Arg {
-                flags: &["--out"],
-                dest: "out",
-                kind: Kind::Value {
-                    choices: None,
-                    default: None,
-                },
-                help: None,
-            },
+            Arg { flags: &[], dest: "pack", kind: Kind::Value { choices: None, default: None }, help: None },
+            Arg { flags: &["--name"], dest: "name", kind: Kind::Value { choices: None, default: None }, help: None },
+            Arg { flags: &["--out"], dest: "out", kind: Kind::Value { choices: None, default: None }, help: None },
         ],
     )
 }
@@ -587,21 +467,12 @@ pub fn main(argv: &[String]) -> i32 {
         eprintln!("error: no such file: {pack}");
         return 2;
     }
-    let name = a
-        .str("name")
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| default_name(&pack));
+    let name = a.str("name").filter(|s| !s.is_empty()).map(str::to_string).unwrap_or_else(|| default_name(&pack));
     let out = a
         .str("out")
         .filter(|s| !s.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            join(
-                &py::env_or("XDG_DATA_HOME", || py::expanduser("/.local/share")),
-                "icons",
-            )
-        });
+        .unwrap_or_else(|| join(&py::env_or("XDG_DATA_HOME", || py::expanduser("/.local/share")), "icons"));
     match build(Path::new(&pack), &name, &out) {
         Err(_) => {
             eprintln!("error: that is not a zip/apk file");
@@ -614,10 +485,7 @@ pub fn main(argv: &[String]) -> i32 {
             1
         }
         Ok(Ok((theme, n, total))) => {
-            println!(
-                "{name}: {n} of {total} installed programs matched, written to {}",
-                theme.display()
-            );
+            println!("{name}: {n} of {total} installed programs matched, written to {}", theme.display());
             println!("Choose it in Settings > Appearance > Icons (use the 'Use' button); programs without a match keep their usual icon.");
             0
         }
@@ -630,10 +498,7 @@ mod tests {
 
     #[test]
     fn default_name_drops_versions_and_tags() {
-        assert_eq!(
-            default_name("/x/Camo Dark v1.8.1 (Patched).apk"),
-            "Camo Dark"
-        );
+        assert_eq!(default_name("/x/Camo Dark v1.8.1 (Patched).apk"), "Camo Dark");
         assert_eq!(default_name("/x/Pack_2.0[mod].zip"), "Pack 2 0");
         assert_eq!(default_name("/x/.apk"), "apk");
         assert_eq!(default_name("/x/(only).apk"), "Imported icons");
@@ -657,82 +522,40 @@ mod tests {
     #[test]
     fn matching_uses_package_and_picture_names() {
         let items = vec![
-            (
-                "ComponentInfo{org.mozilla.firefox/x.Y}".to_string(),
-                "ic_browser".to_string(),
-            ),
-            (
-                "ComponentInfo{com.spotify.music/z.A}".to_string(),
-                "spotify".to_string(),
-            ),
+            ("ComponentInfo{org.mozilla.firefox/x.Y}".to_string(), "ic_browser".to_string()),
+            ("ComponentInfo{com.spotify.music/z.A}".to_string(), "spotify".to_string()),
         ];
-        let pngs: BTreeMap<String, (u32, Vec<u8>)> = [
-            ("ic_browser".to_string(), (192, vec![])),
-            ("spotify".to_string(), (192, vec![])),
-        ]
-        .into_iter()
-        .collect();
-        let set = |v: &[&str]| {
-            v.iter()
-                .map(|s| s.to_string())
-                .collect::<BTreeSet<String>>()
-        };
+        let pngs: BTreeMap<String, (u32, Vec<u8>)> =
+            [("ic_browser".to_string(), (192, vec![])), ("spotify".to_string(), (192, vec![]))].into_iter().collect();
+        let set = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<BTreeSet<String>>();
         let apps = vec![
-            (
-                "firefox".to_string(),
-                set(&["firefox", "firefoxwebbrowser"]),
-            ),
-            (
-                "spotify-client".to_string(),
-                set(&["spotifyclient", "spotify"]),
-            ),
+            ("firefox".to_string(), set(&["firefox", "firefoxwebbrowser"])),
+            ("spotify-client".to_string(), set(&["spotifyclient", "spotify"])),
             ("unrelated".to_string(), set(&["unrelated"])),
         ];
         assert_eq!(
             match_(&items, &pngs, &apps),
-            vec![
-                ("firefox".into(), "ic_browser".into()),
-                ("spotify-client".into(), "spotify".into())
-            ]
+            vec![("firefox".into(), "ic_browser".into()), ("spotify-client".into(), "spotify".into())]
         );
     }
 
     #[test]
     fn generic_names_are_not_guessed() {
         let items = vec![
-            (
-                "ComponentInfo{com.android.settings/x.A}".to_string(),
-                "ic_phone".to_string(),
-            ),
-            (
-                "ComponentInfo{com.samsung.settings/x.A}".to_string(),
-                "ic_other".to_string(),
-            ),
+            ("ComponentInfo{com.android.settings/x.A}".to_string(), "ic_phone".to_string()),
+            ("ComponentInfo{com.samsung.settings/x.A}".to_string(), "ic_other".to_string()),
         ];
-        let pngs: BTreeMap<String, (u32, Vec<u8>)> = [
-            ("ic_phone".to_string(), (192, vec![])),
-            ("ic_other".to_string(), (192, vec![])),
-        ]
-        .into_iter()
-        .collect();
-        let apps = vec![(
-            "preferences-system".to_string(),
-            ["settings".to_string()].into_iter().collect(),
-        )];
+        let pngs: BTreeMap<String, (u32, Vec<u8>)> =
+            [("ic_phone".to_string(), (192, vec![])), ("ic_other".to_string(), (192, vec![]))].into_iter().collect();
+        let apps = vec![("preferences-system".to_string(), ["settings".to_string()].into_iter().collect())];
         assert!(match_(&items, &pngs, &apps).is_empty());
     }
 
     #[test]
     fn components_are_read_as_the_pattern_reads_them() {
-        assert_eq!(
-            component_info("ComponentInfo{a.b/c.D}"),
-            Some(("a.b", "c.D"))
-        );
+        assert_eq!(component_info("ComponentInfo{a.b/c.D}"), Some(("a.b", "c.D")));
         assert_eq!(component_info("ComponentInfo{a.b}"), Some(("a.b", "")));
-        assert_eq!(
-            component_info("x ComponentInfo{/x} ComponentInfo{p/q/r}"),
-            Some(("p", "q/r"))
-        );
+        assert_eq!(component_info("x ComponentInfo{/x} ComponentInfo{p/q/r}"), Some(("p", "q/r")));
         assert_eq!(component_info("ComponentInfo{a/b"), None);
         assert!(!safe_icon_name("../evil"));
         assert!(safe_icon_name("org.gnome.Nautilus"));

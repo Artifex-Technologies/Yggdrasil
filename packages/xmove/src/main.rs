@@ -30,7 +30,8 @@ fn ask(direction: u32) -> Ask {
 
 /// One request to Hyprland's control socket (what hyprctl does, without starting a program 100 times a second).
 fn hypr(request: &str) -> Option<String> {
-    let dir = std::path::PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR")?).join("hypr").join(std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE")?);
+    let dir =
+        std::path::PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR")?).join("hypr").join(std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE")?);
     let mut s = UnixStream::connect(dir.join(".socket.sock")).ok()?;
     s.set_read_timeout(Some(Duration::from_secs(1))).ok()?;
     s.write_all(request.as_bytes()).ok()?;
@@ -108,7 +109,8 @@ fn watch() -> Result<(), String> {
     let root = conn.setup().roots[screen].root;
     let atom = conn.intern_atom(false, b"_NET_WM_MOVERESIZE").map_err(|e| e.to_string())?.reply().map_err(|e| e.to_string())?.atom;
     // the request is sent to the root window for SubstructureRedirect | SubstructureNotify; anyone may select the second
-    conn.change_window_attributes(root, &ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_NOTIFY)).map_err(|e| e.to_string())?;
+    conn.change_window_attributes(root, &ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_NOTIFY))
+        .map_err(|e| e.to_string())?;
     conn.flush().map_err(|e| e.to_string())?;
     eprintln!("yggdrasil-xmove: X11 windows can be dragged by their own title bar");
     loop {

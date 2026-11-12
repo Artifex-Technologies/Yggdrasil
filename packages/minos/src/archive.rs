@@ -20,8 +20,8 @@ use crate::listing::Entry;
 /// Extensions treated as archives. Office files (docx, xlsx) are zip inside but are documents to
 /// their users, so they are not listed.
 pub const EXTENSIONS: &[&str] = &[
-    "zip", "7z", "rar", "tar", "gz", "tgz", "bz2", "tbz2", "xz", "txz", "zst", "tzst", "lzma", "iso", "cab", "arj", "lzh", "wim",
-    "cpio", "rpm", "deb", "jar", "apk", "z", "cbz", "cbr",
+    "zip", "7z", "rar", "tar", "gz", "tgz", "bz2", "tbz2", "xz", "txz", "zst", "tzst", "lzma", "iso", "cab", "arj", "lzh", "wim", "cpio",
+    "rpm", "deb", "jar", "apk", "z", "cbz", "cbr",
 ];
 
 pub fn is_archive_name(p: &Path) -> bool {
@@ -38,7 +38,14 @@ pub fn split(path: &Path) -> Option<(PathBuf, String)> {
     for a in path.ancestors() {
         if is_archive_file(a) {
             let rel = path.strip_prefix(a).ok()?;
-            let inner = rel.components().filter_map(|c| match c { Component::Normal(s) => Some(s.to_string_lossy().into_owned()), _ => None }).collect::<Vec<_>>().join("/");
+            let inner = rel
+                .components()
+                .filter_map(|c| match c {
+                    Component::Normal(s) => Some(s.to_string_lossy().into_owned()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("/");
             return Some((a.to_path_buf(), inner));
         }
     }
@@ -231,7 +238,10 @@ pub fn list(archive: &Path) -> Result<Vec<ArcEntry>, String> {
 
 /// A name inside an archive is safe to extract by itself if it is relative and has no `..`.
 pub fn safe_inner(inner: &str) -> bool {
-    !inner.is_empty() && !inner.starts_with('/') && !inner.starts_with('\\') && !inner.split(['/', '\\']).any(|c| c == ".." || c.contains(':'))
+    !inner.is_empty()
+        && !inner.starts_with('/')
+        && !inner.starts_with('\\')
+        && !inner.split(['/', '\\']).any(|c| c == ".." || c.contains(':'))
 }
 
 fn out_dir(dest: &Path) -> std::ffi::OsString {

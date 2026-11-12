@@ -36,7 +36,9 @@ fn store_core(dir: &Path, comm: &str, owner: u32, pid: u32, exe: &str, signal: &
     let name = format!("core.{comm}.{owner}.{BOOT}.{pid}.1794175822000000.zst");
     let temp = dir.join(format!(".#{name}"));
     std::fs::write(&temp, b"not a core").unwrap();
-    let ok = set_xattr(&temp, "user.coredump.exe", exe) && set_xattr(&temp, "user.coredump.signal", signal) && set_xattr(&temp, "user.coredump.uid", &owner.to_string());
+    let ok = set_xattr(&temp, "user.coredump.exe", exe)
+        && set_xattr(&temp, "user.coredump.signal", signal)
+        && set_xattr(&temp, "user.coredump.uid", &owner.to_string());
     std::fs::rename(&temp, dir.join(name)).unwrap();
     ok
 }
@@ -111,10 +113,7 @@ fn own_crashes_once_per_program() {
     let f = cores.join(format!("core.vivaldi-bin.{me}.{BOOT}.104.1794175822000000.zst"));
     std::fs::write(&f, b"x").unwrap();
     // (inotify reported the name before the attributes were set: the short name from the file name is used)
-    assert_eq!(
-        lines(&log, 2),
-        vec!["/home/me/Games/game.x86_64|SIGSEGV".to_string(), "vivaldi-bin|a signal".to_string()]
-    );
+    assert_eq!(lines(&log, 2), vec!["/home/me/Games/game.x86_64|SIGSEGV".to_string(), "vivaldi-bin|a signal".to_string()]);
     // files that are not cores, and folders: nothing
     std::fs::write(cores.join("notes.txt"), b"x").unwrap();
     std::fs::create_dir(cores.join(format!("core.dir.{me}.{BOOT}.1.2"))).unwrap();

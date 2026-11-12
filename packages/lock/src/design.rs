@@ -35,7 +35,11 @@ impl Design {
 /// The chosen design (Split unless lock.conf says otherwise).
 pub fn chosen() -> Design {
     let text = std::fs::read_to_string(yggdrasil_conf::dirs::config().join("lock.conf")).unwrap_or_default();
-    text.lines().filter_map(|l| l.split_once('=')).find(|(k, _)| k.trim() == "design").and_then(|(_, v)| Design::parse(v)).unwrap_or(Design::Split)
+    text.lines()
+        .filter_map(|l| l.split_once('='))
+        .find(|(k, _)| k.trim() == "design")
+        .and_then(|(_, v)| Design::parse(v))
+        .unwrap_or(Design::Split)
 }
 
 /// Everything a design needs to draw one frame.
@@ -61,7 +65,15 @@ const TEXT: Rgba = (240, 236, 250, 255);
 const DIM: Rgba = (190, 184, 208, 255);
 
 fn gradient(pix: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, from: (Point, Color), to: (Point, Color)) {
-    let Some(shader) = LinearGradient::new(from.0, to.0, vec![GradientStop::new(0.0, from.1), GradientStop::new(1.0, to.1)], SpreadMode::Pad, Transform::identity()) else { return };
+    let Some(shader) = LinearGradient::new(
+        from.0,
+        to.0,
+        vec![GradientStop::new(0.0, from.1), GradientStop::new(1.0, to.1)],
+        SpreadMode::Pad,
+        Transform::identity(),
+    ) else {
+        return;
+    };
     let paint = Paint { shader, ..Paint::default() };
     if let Some(r) = Rect::from_xywh(x, y, w, h) {
         pix.fill_rect(r, &paint, Transform::identity(), None);
@@ -70,8 +82,24 @@ fn gradient(pix: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, from: (Point, Colo
 
 fn shade_top_bottom(pix: &mut Pixmap, top: u8, bottom: u8) {
     let (w, h) = (pix.width() as f32, pix.height() as f32);
-    gradient(pix, 0.0, 0.0, w, h * 0.35, (Point::from_xy(0.0, 0.0), Color::from_rgba8(0, 0, 0, top)), (Point::from_xy(0.0, h * 0.35), Color::from_rgba8(0, 0, 0, 0)));
-    gradient(pix, 0.0, h * 0.55, w, h * 0.45, (Point::from_xy(0.0, h * 0.55), Color::from_rgba8(0, 0, 0, 0)), (Point::from_xy(0.0, h), Color::from_rgba8(0, 0, 0, bottom)));
+    gradient(
+        pix,
+        0.0,
+        0.0,
+        w,
+        h * 0.35,
+        (Point::from_xy(0.0, 0.0), Color::from_rgba8(0, 0, 0, top)),
+        (Point::from_xy(0.0, h * 0.35), Color::from_rgba8(0, 0, 0, 0)),
+    );
+    gradient(
+        pix,
+        0.0,
+        h * 0.55,
+        w,
+        h * 0.45,
+        (Point::from_xy(0.0, h * 0.55), Color::from_rgba8(0, 0, 0, 0)),
+        (Point::from_xy(0.0, h), Color::from_rgba8(0, 0, 0, bottom)),
+    );
 }
 
 fn background(pix: &mut Pixmap, s: &Scene, dim: u8) {
@@ -80,7 +108,12 @@ fn background(pix: &mut Pixmap, s: &Scene, dim: u8) {
         pix.draw_pixmap(0, 0, w.as_ref(), &PixmapPaint::default(), Transform::identity(), None);
     }
     if dim > 0 {
-        pix.fill_rect(Rect::from_xywh(0.0, 0.0, pix.width() as f32, pix.height() as f32).unwrap(), &flat(0, 0, 0, dim), Transform::identity(), None);
+        pix.fill_rect(
+            Rect::from_xywh(0.0, 0.0, pix.width() as f32, pix.height() as f32).unwrap(),
+            &flat(0, 0, 0, dim),
+            Transform::identity(),
+            None,
+        );
     }
 }
 
@@ -109,7 +142,14 @@ fn avatar(pix: &mut Pixmap, s: &Scene, cx: f32, cy: f32, r: f32) {
                     pb.push_circle(r, r, r);
                     if let Some(path) = pb.finish() {
                         mask.fill_path(&path, tiny_skia::FillRule::Winding, true, Transform::identity());
-                        pix.draw_pixmap((cx - r) as i32, (cy - r) as i32, round.as_ref(), &PixmapPaint::default(), Transform::identity(), Some(&mask));
+                        pix.draw_pixmap(
+                            (cx - r) as i32,
+                            (cy - r) as i32,
+                            round.as_ref(),
+                            &PixmapPaint::default(),
+                            Transform::identity(),
+                            Some(&mask),
+                        );
                     }
                 }
             }
@@ -167,7 +207,15 @@ fn split(pix: &mut Pixmap, s: &Scene) {
     // the clock, bottom left
     let big = (h * 0.13).max(48.0);
     draw::draw_text(pix, &s.fonts.bold, big, 72.0 * h / 1080.0 + 8.0, h - 64.0 * h / 1080.0 - big * 0.9, TEXT, &s.time);
-    draw::draw_text(pix, &s.fonts.regular, (h * 0.028).max(16.0), 76.0 * h / 1080.0 + 8.0, h - 64.0 * h / 1080.0 - big * 0.25 + 4.0, (230, 226, 240, 220), &s.date);
+    draw::draw_text(
+        pix,
+        &s.fonts.regular,
+        (h * 0.028).max(16.0),
+        76.0 * h / 1080.0 + 8.0,
+        h - 64.0 * h / 1080.0 - big * 0.25 + 4.0,
+        (230, 226, 240, 220),
+        &s.date,
+    );
     // the panel: the wallpaper blurred and darkened, a dark wash over it, a thin edge on its left
     let pw = (w * 0.34).clamp(420.0, 560.0).min(w);
     let px = w - pw;
@@ -238,7 +286,15 @@ fn poster(pix: &mut Pixmap, s: &Scene) {
     let hw = draw::text_width(&s.fonts.bold, size, hh);
     let mwid = draw::text_width(&s.fonts.bold, size, mm);
     draw::draw_text(pix, &s.fonts.bold, size, w - 90.0 - hw.max(mwid) + (hw.max(mwid) - hw), h * 0.30, TEXT, hh);
-    draw::draw_text(pix, &s.fonts.bold, size, w - 90.0 - hw.max(mwid) + (hw.max(mwid) - mwid), h * 0.30 + size * 0.95, (s.accent.0, s.accent.1, s.accent.2, 255), mm);
+    draw::draw_text(
+        pix,
+        &s.fonts.bold,
+        size,
+        w - 90.0 - hw.max(mwid) + (hw.max(mwid) - mwid),
+        h * 0.30 + size * 0.95,
+        (s.accent.0, s.accent.1, s.accent.2, 255),
+        mm,
+    );
     draw::draw_text(pix, &s.fonts.regular, (h * 0.022).max(14.0), 72.0, h - 150.0, DIM, &s.date);
     field(pix, s, 72.0, h - 110.0, 340.0, 46.0);
     message(pix, s, 72.0, h - 40.0);

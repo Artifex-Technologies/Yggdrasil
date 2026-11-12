@@ -260,12 +260,9 @@ pub fn list_at(root: &Path) -> Vec<Pad> {
         // the device the input hangs off: for a HID controller its HID device, which also holds its battery and LEDs
         let parent = std::fs::canonicalize(input.join("device")).unwrap_or_default();
         let hid = if parent.as_os_str().is_empty() { None } else { Some(parent) };
-        let driver = hid
-            .as_ref()
-            .and_then(|h| std::fs::read_link(h.join("driver")).ok())
-            .map(|d| name_of(&d))
-            .unwrap_or_default();
-        let event = children(&input).into_iter().find(|c| name_of(c).starts_with("event")).map(|e| PathBuf::from("/dev/input").join(name_of(&e)));
+        let driver = hid.as_ref().and_then(|h| std::fs::read_link(h.join("driver")).ok()).map(|d| name_of(&d)).unwrap_or_default();
+        let event =
+            children(&input).into_iter().find(|c| name_of(c).starts_with("event")).map(|e| PathBuf::from("/dev/input").join(name_of(&e)));
         let battery = hid.as_ref().and_then(|h| battery_in(&h.join("power_supply")));
         let leds = hid.as_ref().map(|h| leds_in(&h.join("leds"))).unwrap_or_default();
         let mut model = Model::detect(vendor, product, &name);
@@ -338,7 +335,12 @@ fn leds_in(dir: &Path) -> Leds {
     if let [Some(r), Some(g), Some(b)] = rgb {
         l.rgb = Some([r, g, b]);
     }
-    let any = l.lightbar.as_ref().map(|p| p.join("brightness")).or_else(|| l.rgb.as_ref().map(|r| r[0].join("brightness"))).or_else(|| l.players.first().map(|p| p.join("brightness")));
+    let any = l
+        .lightbar
+        .as_ref()
+        .map(|p| p.join("brightness"))
+        .or_else(|| l.rgb.as_ref().map(|r| r[0].join("brightness")))
+        .or_else(|| l.players.first().map(|p| p.join("brightness")));
     l.writable = any.is_some_and(|p| writable(&p));
     l
 }
@@ -352,7 +354,16 @@ pub fn set_lightbar(pad: &Pad, rgb: [u8; 3]) -> Result<(), String> {
     if let Some(led) = &pad.leds.lightbar {
         write(&led.join("multi_intensity"), &format!("{} {} {}", rgb[0], rgb[1], rgb[2]))?;
         let max = read(&led.join("max_brightness"));
-        return write(&led.join("brightness"), if rgb == [0, 0, 0] { "0" } else if max.is_empty() { "255" } else { &max });
+        return write(
+            &led.join("brightness"),
+            if rgb == [0, 0, 0] {
+                "0"
+            } else if max.is_empty() {
+                "255"
+            } else {
+                &max
+            },
+        );
     }
     if let Some(leds) = &pad.leds.rgb {
         for (led, v) in leds.iter().zip(rgb) {
@@ -405,7 +416,12 @@ pub fn color_hex(c: [u8; 3]) -> String {
 // ---------------------------------------------------------------- Bluetooth (bluetoothctl)
 
 fn bluetoothctl(args: &[&str]) -> Option<String> {
-    let out = std::process::Command::new("bluetoothctl").args(args).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).output().ok()?;
+    let out = std::process::Command::new("bluetoothctl")
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
     out.status.success().then(|| String::from_utf8_lossy(&out.stdout).to_string())
 }
 
@@ -622,7 +638,11 @@ mod tests {
         assert!(ds4.leds.has_lightbar());
         assert!(ds4.leds.writable, "the test's own files are writable");
         let xbox = &pads[1];
-        assert_eq!((xbox.model, xbox.connection, xbox.battery.is_none(), xbox.mac()), (Model::Xbox, Connection::Usb, true, None), "a genuine Microsoft pad");
+        assert_eq!(
+            (xbox.model, xbox.connection, xbox.battery.is_none(), xbox.mac()),
+            (Model::Xbox, Connection::Usb, true, None),
+            "a genuine Microsoft pad"
+        );
         let third = &pads[2];
         assert_eq!((third.model, third.driver.as_str(), third.battery.is_none()), (Model::XboxCompatible, "xpad", true), "{third:#?}");
         assert_eq!(third.title(), "Xbox-compatible controller (third-party, e.g. 8BitDo)");

@@ -52,7 +52,8 @@ impl Lease {
 
     /// The same addresses and servers (the time aside).
     fn same(&self, o: &Lease) -> bool {
-        (&self.v4, &self.subnet, &self.router, &self.dns, &self.v6, self.lease_secs, &self.dhcp_server) == (&o.v4, &o.subnet, &o.router, &o.dns, &o.v6, o.lease_secs, &o.dhcp_server)
+        (&self.v4, &self.subnet, &self.router, &self.dns, &self.v6, self.lease_secs, &self.dhcp_server)
+            == (&o.v4, &o.subnet, &o.router, &o.dns, &o.v6, o.lease_secs, &o.dhcp_server)
     }
 }
 
@@ -118,9 +119,10 @@ impl Memory {
 }
 
 pub fn path() -> PathBuf {
-    let base = std::env::var_os("XDG_STATE_HOME").map(PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| {
-        PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/state")
-    });
+    let base = std::env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/state"));
     base.join("yggdrasil/wifi-memory.json")
 }
 
@@ -161,7 +163,13 @@ mod tests {
     #[test]
     fn leases_kept_while_saved_and_old_sightings_dropped() {
         let mut m = Memory::default();
-        let l = Lease { time: 10_000, v4: vec!["192.168.1.20/24".into()], subnet: "192.168.1.0/24".into(), router: "192.168.1.1".into(), ..Default::default() };
+        let l = Lease {
+            time: 10_000,
+            v4: vec!["192.168.1.20/24".into()],
+            subnet: "192.168.1.0/24".into(),
+            router: "192.168.1.1".into(),
+            ..Default::default()
+        };
         assert!(m.note_lease("u1", l.clone()));
         assert!(!m.note_lease("u1", Lease { time: 10_100, ..l.clone() }), "the same lease a minute later");
         assert!(m.note_lease("u1", Lease { time: 10_100, router: "192.168.1.254".into(), ..l.clone() }), "a new router");

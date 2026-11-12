@@ -46,15 +46,30 @@ fn s(settings: &Settings, group: &str, key: &str) -> String {
 
 /// The network's name: the Wi-Fi SSID when there is one, else the connection's name.
 fn network_name(c: &Settings) -> String {
-    let ssid = c.get("802-11-wireless").and_then(|g| g.get("ssid")).and_then(|v| Vec::<u8>::try_from(v.try_clone().ok()?).ok()).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
-    if ssid.is_empty() { s(c, "connection", "id") } else { ssid }
+    let ssid = c
+        .get("802-11-wireless")
+        .and_then(|g| g.get("ssid"))
+        .and_then(|v| Vec::<u8>::try_from(v.try_clone().ok()?).ok())
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .unwrap_or_default();
+    if ssid.is_empty() {
+        s(c, "connection", "id")
+    } else {
+        ssid
+    }
 }
 
 /// Works out what to ask for (None: nothing this agent can answer).
 pub fn plan(c: &Settings, setting: &str, hints: &[String], flags: u32) -> Option<Ask> {
     let name = network_name(c);
     let again = flags & REQUEST_NEW != 0;
-    let summary = |what: &str| if again { format!("The password for “{name}” was not accepted. Enter it again to connect.") } else { format!("Enter the {what} for “{name}”.") };
+    let summary = |what: &str| {
+        if again {
+            format!("The password for “{name}” was not accepted. Enter it again to connect.")
+        } else {
+            format!("Enter the {what} for “{name}”.")
+        }
+    };
     let one = |key: &str, label: &str| vec![(key.to_string(), label.to_string(), false)];
     match setting {
         "802-11-wireless-security" => {
@@ -63,7 +78,12 @@ pub fn plan(c: &Settings, setting: &str, hints: &[String], flags: u32) -> Option
                 "wpa-eap" | "wpa-eap-suite-b-192" => return None, // asked for under 802-1x
                 _ => "psk",
             };
-            Some(Ask { title: "Wi-Fi password needed".into(), summary: summary("Wi-Fi password"), fields: one(key, "Password"), vpn: false })
+            Some(Ask {
+                title: "Wi-Fi password needed".into(),
+                summary: summary("Wi-Fi password"),
+                fields: one(key, "Password"),
+                vpn: false,
+            })
         }
         "802-1x" => {
             let mut fields = vec![];
@@ -76,11 +96,22 @@ pub fn plan(c: &Settings, setting: &str, hints: &[String], flags: u32) -> Option
         "vpn" => {
             // the VPN plugin names what it needs in the hints (often just "password"); without hints, the usual one
             let keys: Vec<&str> = hints.iter().map(|h| h.as_str()).filter(|h| !h.starts_with("x-vpn-message:")).collect();
-            let fields = if keys.is_empty() { one("password", "Password") } else { keys.iter().map(|k| (k.to_string(), label_for(k), false)).collect() };
+            let fields = if keys.is_empty() {
+                one("password", "Password")
+            } else {
+                keys.iter().map(|k| (k.to_string(), label_for(k), false)).collect()
+            };
             Some(Ask { title: "VPN password needed".into(), summary: summary("VPN password"), fields, vpn: true })
         }
-        "gsm" | "cdma" => Some(Ask { title: "Mobile network password".into(), summary: summary("password"), fields: one("password", "Password"), vpn: false }),
-        "pppoe" => Some(Ask { title: "Connection password".into(), summary: summary("password"), fields: one("password", "Password"), vpn: false }),
+        "gsm" | "cdma" => Some(Ask {
+            title: "Mobile network password".into(),
+            summary: summary("password"),
+            fields: one("password", "Password"),
+            vpn: false,
+        }),
+        "pppoe" => {
+            Some(Ask { title: "Connection password".into(), summary: summary("password"), fields: one("password", "Password"), vpn: false })
+        }
         _ => None,
     }
 }
@@ -115,7 +146,16 @@ pub struct NetAgent {
 impl NetAgent {
     // NetworkManager's GetSecrets: the arguments are the D-Bus method's own
     #[allow(clippy::too_many_arguments)]
-    async fn get_secrets(&self, connection: Settings, _connection_path: zbus::zvariant::OwnedObjectPath, setting_name: String, hints: Vec<String>, flags: u32, #[zbus(header)] hdr: zbus::message::Header<'_>, #[zbus(connection)] conn: &zbus::Connection) -> Result<Settings, AgentError> {
+    async fn get_secrets(
+        &self,
+        connection: Settings,
+        _connection_path: zbus::zvariant::OwnedObjectPath,
+        setting_name: String,
+        hints: Vec<String>,
+        flags: u32,
+        #[zbus(header)] hdr: zbus::message::Header<'_>,
+        #[zbus(connection)] conn: &zbus::Connection,
+    ) -> Result<Settings, AgentError> {
         if !from_network_manager(conn, &hdr).await {
             return Err(AgentError::PermissionDenied("only NetworkManager may ask".into()));
         }
@@ -160,7 +200,9 @@ async fn from_network_manager(conn: &zbus::Connection, hdr: &zbus::message::Head
 /// Opens the box in its network form and collects one answer per field; None when cancelled.
 fn ask_in_box(ask: &Ask, slot: &Arc<Mutex<Option<u32>>>) -> Option<Vec<String>> {
     let mut bridge = Bridge::open(slot).ok()?;
-    bridge.send(serde_json::json!({"t": "begin", "kind": "network", "title": ask.title, "message": ask.summary, "action_id": "", "user": ""}));
+    bridge.send(
+        serde_json::json!({"t": "begin", "kind": "network", "title": ask.title, "message": ask.summary, "action_id": "", "user": ""}),
+    );
     let mut out = vec![];
     for (_, label, echo) in &ask.fields {
         match crate::helper::Ui::prompt(&mut bridge, label, *echo) {
@@ -179,7 +221,13 @@ fn ask_in_box(ask: &Ask, slot: &Arc<Mutex<Option<u32>>>) -> Option<Vec<String>> 
 pub fn register() -> Result<Connection, String> {
     let conn = Connection::system().map_err(|e| e.to_string())?;
     conn.object_server().at(OBJECT_PATH, NetAgent { child: Arc::new(Mutex::new(None)) }).map_err(|e| e.to_string())?;
-    let p = zbus::blocking::Proxy::new(&conn, NM, "/org/freedesktop/NetworkManager/AgentManager", "org.freedesktop.NetworkManager.AgentManager").map_err(|e| e.to_string())?;
+    let p = zbus::blocking::Proxy::new(
+        &conn,
+        NM,
+        "/org/freedesktop/NetworkManager/AgentManager",
+        "org.freedesktop.NetworkManager.AgentManager",
+    )
+    .map_err(|e| e.to_string())?;
     p.call::<_, _, ()>("Register", &("org.yggdrasil.agent",)).map_err(|e| e.to_string())?;
     Ok(conn)
 }
@@ -198,7 +246,11 @@ mod tests {
 
     #[test]
     fn wifi_asks_for_the_psk_and_names_the_network() {
-        let c = conn(&[("connection", "id", Value::from("Home")), ("802-11-wireless", "ssid", Value::from(b"Cafe".to_vec())), ("802-11-wireless-security", "key-mgmt", Value::from("wpa-psk"))]);
+        let c = conn(&[
+            ("connection", "id", Value::from("Home")),
+            ("802-11-wireless", "ssid", Value::from(b"Cafe".to_vec())),
+            ("802-11-wireless-security", "key-mgmt", Value::from("wpa-psk")),
+        ]);
         let a = plan(&c, "802-11-wireless-security", &[], ALLOW_INTERACTION).unwrap();
         assert_eq!(a.fields, vec![("psk".to_string(), "Password".to_string(), false)]);
         assert!(a.summary.contains("“Cafe”"), "{}", a.summary);

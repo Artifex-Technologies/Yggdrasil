@@ -55,7 +55,21 @@ pub fn system_data() -> PathBuf {
 
 /// The desktop's own files in the old `labyrinth` folders, by folder: (config, data, state, cache).
 const OLD: [(&str, &[&str]); 4] = [
-    ("XDG_CONFIG_HOME", &["panel.conf", "idle.conf", "lock.conf", "dock", "wallpaper", "workspaces.conf", "shortcuts.conf", "tools.conf", "weather.json", "market"]),
+    (
+        "XDG_CONFIG_HOME",
+        &[
+            "panel.conf",
+            "idle.conf",
+            "lock.conf",
+            "dock",
+            "wallpaper",
+            "workspaces.conf",
+            "shortcuts.conf",
+            "tools.conf",
+            "weather.json",
+            "market",
+        ],
+    ),
     ("XDG_DATA_HOME", &["calculator-history.json", "weather", "market", "fylgja", "wallpapers"]),
     ("XDG_STATE_HOME", &["notifications.json", "idle.log", "colors.txt"]),
     ("XDG_CACHE_HOME", &["lock-previews", "market", "fylgja"]),

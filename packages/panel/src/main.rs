@@ -9,37 +9,37 @@
 mod a11y;
 mod addons;
 mod apps;
-mod capture;
-mod previews;
-mod paint;
+mod assist;
+mod assistant;
 mod calendar;
+mod capture;
+mod cheatsheet;
+mod confirm;
 mod convo;
 mod devices;
-mod fylgja;
-mod notify;
-mod cheatsheet;
 mod finder;
-mod osd;
-mod stats;
-mod assistant;
-mod voicewave;
-mod confirm;
+mod fylgja;
 mod hypr;
+mod notify;
+mod osd;
+mod paint;
+mod previews;
 mod shell;
-mod status;
 mod snwatcher;
+mod stats;
+mod status;
 mod tray;
 mod trayui;
+mod voicewave;
 mod zones;
-mod assist;
 
-use std::time::Instant;
 use std::collections::HashMap;
 use std::os::fd::AsFd;
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::process::Command;
 use std::time::Duration;
+use std::time::Instant;
 
 use calloop::timer::{TimeoutAction, Timer};
 use calloop::EventLoop;
@@ -49,17 +49,16 @@ use resvg::tiny_skia::Pixmap;
 use wayland_client::globals::{registry_queue_init, GlobalList, GlobalListContents};
 use wayland_client::protocol::wl_buffer::{self, WlBuffer};
 use wayland_client::protocol::wl_compositor::WlCompositor;
-use wayland_client::protocol::wl_output::{self, WlOutput};
 use wayland_client::protocol::wl_keyboard::{self, WlKeyboard};
-use xkbcommon::xkb;
+use wayland_client::protocol::wl_output::{self, WlOutput};
 use wayland_client::protocol::wl_pointer::{self, WlPointer};
-use wayland_client::protocol::wl_touch::{self, WlTouch};
 use wayland_client::protocol::wl_region::WlRegion;
 use wayland_client::protocol::wl_registry::{self, WlRegistry};
 use wayland_client::protocol::wl_seat::{self, WlSeat};
 use wayland_client::protocol::wl_shm::{self, WlShm};
 use wayland_client::protocol::wl_shm_pool::WlShmPool;
 use wayland_client::protocol::wl_surface::{self, WlSurface};
+use wayland_client::protocol::wl_touch::{self, WlTouch};
 use wayland_client::{delegate_noop, Connection, Dispatch, Proxy, QueueHandle, WEnum};
 use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::{Shape, WpCursorShapeDeviceV1};
 use wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1;
@@ -77,13 +76,16 @@ use wayland_protocols_wlr::foreign_toplevel::v1::client::{
 };
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::{Layer, ZwlrLayerShellV1};
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::{self, Anchor, KeyboardInteractivity, ZwlrLayerSurfaceV1};
+use xkbcommon::xkb;
 
-use yggdrasil_conf::{nightlight, DockPos, PanelConf, StartTheme};
 use shell::{Action, Hit, Model, Win};
+use yggdrasil_conf::{nightlight, DockPos, PanelConf, StartTheme};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Kind {
-    Bar { slim: bool },
+    Bar {
+        slim: bool,
+    },
     /// A strip along the dock's screen edge, as wide as the screen (or as tall): the dock is drawn in it
     /// and only the dock itself takes clicks. Like the bar the strip spans its edge and reserves its
     /// thickness, so windows keep clear of the dock.
@@ -208,7 +210,9 @@ struct Popup {
 
 enum PopupKind {
     /// The calendar, this many months from the current one.
-    Calendar { offset: i32 },
+    Calendar {
+        offset: i32,
+    },
     Start(StartState),
     /// The tray: an app's menu, or the hidden icons.
     Tray(trayui::TrayPop),
@@ -553,7 +557,11 @@ fn user_name() -> String {
         }
         let gecos = std::ffi::CStr::from_ptr((*pw).pw_gecos).to_string_lossy().to_string();
         let first = gecos.split(',').next().unwrap_or("").trim().to_string();
-        if first.is_empty() { std::ffi::CStr::from_ptr((*pw).pw_name).to_string_lossy().to_string() } else { first }
+        if first.is_empty() {
+            std::ffi::CStr::from_ptr((*pw).pw_name).to_string_lossy().to_string()
+        } else {
+            first
+        }
     }
 }
 
@@ -587,7 +595,13 @@ fn hypr_layout(json: &serde_json::Value) -> Option<Layout> {
             let scale = m["scale"].as_f64().unwrap_or(1.0).max(0.5);
             let (w, h) = (m["width"].as_f64()?, m["height"].as_f64()?);
             let (w, h) = if m["transform"].as_i64().unwrap_or(0) % 2 == 1 { (h, w) } else { (w, h) };
-            Some((m["name"].as_str()?.to_string(), m["x"].as_i64()? as i32, m["y"].as_i64()? as i32, (w / scale).round() as u32, (h / scale).round() as u32))
+            Some((
+                m["name"].as_str()?.to_string(),
+                m["x"].as_i64()? as i32,
+                m["y"].as_i64()? as i32,
+                (w / scale).round() as u32,
+                (h / scale).round() as u32,
+            ))
         })
         .collect();
     sizes.sort_by_key(|s| (s.1, s.2));
@@ -657,7 +671,12 @@ fn new_buffer(shm: &WlShm, qh: &QueueHandle<State>, w: u32, h: u32) -> Option<Bu
 
 fn run(cmd: &[&str]) {
     let Some((p, a)) = cmd.split_first() else { return };
-    let _ = std::process::Command::new(p).args(a).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
+    let _ = std::process::Command::new(p)
+        .args(a)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
 }
 
 impl State {
@@ -685,7 +704,9 @@ impl State {
     /// else from Hyprland's list of monitors.
     fn area_of(&self, output: u32) -> Option<(i32, i32, u32, u32)> {
         let o = self.outputs.get(&output)?;
-        o.logical.filter(|(_, _, w, h)| *w > 0 && *h > 0).or_else(|| self.layout.sizes.iter().find(|(n, ..)| *n == o.name).map(|(_, x, y, w, h)| (*x, *y, *w, *h)))
+        o.logical
+            .filter(|(_, _, w, h)| *w > 0 && *h > 0)
+            .or_else(|| self.layout.sizes.iter().find(|(n, ..)| *n == o.name).map(|(_, x, y, w, h)| (*x, *y, *w, *h)))
     }
 
     fn dock_output(&self) -> Option<u32> {
@@ -705,12 +726,24 @@ impl State {
         if !yggdrasil_conf::own_session() {
             return vec![];
         }
-        let full: Vec<&Win> = self.model.wins.iter().filter(|w| w.flags & shell::ST_ACTIVE != 0 && w.flags & shell::ST_FULLSCREEN != 0 && w.flags & shell::ST_MINIMIZED == 0).collect();
-        let mut keys: Vec<u32> = full.iter().flat_map(|w| w.outputs.iter()).filter_map(|wl| self.outputs.iter().find(|(_, o)| o.wl == *wl).map(|(k, _)| *k)).collect();
+        let full: Vec<&Win> = self
+            .model
+            .wins
+            .iter()
+            .filter(|w| w.flags & shell::ST_ACTIVE != 0 && w.flags & shell::ST_FULLSCREEN != 0 && w.flags & shell::ST_MINIMIZED == 0)
+            .collect();
+        let mut keys: Vec<u32> = full
+            .iter()
+            .flat_map(|w| w.outputs.iter())
+            .filter_map(|wl| self.outputs.iter().find(|(_, o)| o.wl == *wl).map(|(k, _)| *k))
+            .collect();
         // Hyprland does not say which screen a window is on (no output_enter): the focused window is on the focused screen
         if full.iter().any(|w| w.outputs.is_empty()) && std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some() {
-            let json: serde_json::Value = serde_json::from_str(&command_output("hyprctl", &["-j", "monitors"])).unwrap_or(serde_json::Value::Null);
-            if let Some(name) = json.as_array().and_then(|a| a.iter().find(|m| m["focused"].as_bool() == Some(true))).and_then(|m| m["name"].as_str()) {
+            let json: serde_json::Value =
+                serde_json::from_str(&command_output("hyprctl", &["-j", "monitors"])).unwrap_or(serde_json::Value::Null);
+            if let Some(name) =
+                json.as_array().and_then(|a| a.iter().find(|m| m["focused"].as_bool() == Some(true))).and_then(|m| m["name"].as_str())
+            {
                 keys.extend(self.outputs.iter().filter(|(_, o)| o.name == name).map(|(k, _)| *k));
             }
         }
@@ -736,7 +769,13 @@ impl State {
         let icon = self.model.conf.dock_icon;
         let reach = shell::dock_h(icon) as f32 + self.model.conf.dock_gap as f32 + 24.0;
         let peeking = self.dock_peek.is_some();
-        let want = shell::dock_peeks(self.model.conf.dock_pos, (x as f32, y as f32, w as f32, h as f32), reach, (cursor.0 as f32, cursor.1 as f32), peeking);
+        let want = shell::dock_peeks(
+            self.model.conf.dock_pos,
+            (x as f32, y as f32, w as f32, h as f32),
+            reach,
+            (cursor.0 as f32, cursor.1 as f32),
+            peeking,
+        );
         match (peeking, want) {
             (false, true) => {
                 self.dock_peek = Some((out, None));
@@ -768,7 +807,8 @@ impl State {
 
     /// Make the surfaces match the screens and the layout: a bar on each, the dock on one.
     fn build_surfaces(&mut self) {
-        let ready: Vec<(u32, String)> = self.outputs.iter().filter(|(_, o)| o.ready && !o.name.is_empty()).map(|(k, o)| (*k, o.name.clone())).collect();
+        let ready: Vec<(u32, String)> =
+            self.outputs.iter().filter(|(_, o)| o.ready && !o.name.is_empty()).map(|(k, o)| (*k, o.name.clone())).collect();
         if ready.is_empty() || self.outputs.values().any(|o| !o.ready) && self.surfs.is_empty() && ready.len() < self.outputs.len() {
             return;
         }
@@ -824,7 +864,24 @@ impl State {
         wl.set_input_region(Some(&region));
         region.destroy();
         wl.commit();
-        self.surfs.push(Surf { id, kind: Kind::Wallpaper, output, wl, layer: Some(layer), w: 0, h: 0, want: (0, 0), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
+        self.surfs.push(Surf {
+            id,
+            kind: Kind::Wallpaper,
+            output,
+            wl,
+            layer: Some(layer),
+            w: 0,
+            h: 0,
+            want: (0, 0),
+            gap: 0,
+            configured: false,
+            bufs: vec![],
+            hits: vec![],
+            hover: None,
+            frac: None,
+            fscale: 0.0,
+            stamp: None,
+        });
     }
 
     fn add_surface(&mut self, output: u32, kind: Kind) {
@@ -839,7 +896,24 @@ impl State {
         layer.set_exclusive_zone(shell::BAR_H as i32);
         layer.set_keyboard_interactivity(KeyboardInteractivity::None);
         wl.commit();
-        self.surfs.push(Surf { id, kind, output, wl, layer: Some(layer), w: size.0, h: size.1, want: size, gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
+        self.surfs.push(Surf {
+            id,
+            kind,
+            output,
+            wl,
+            layer: Some(layer),
+            w: size.0,
+            h: size.1,
+            want: size,
+            gap: 0,
+            configured: false,
+            bufs: vec![],
+            hits: vec![],
+            hover: None,
+            frac: None,
+            fscale: 0.0,
+            stamp: None,
+        });
     }
 
     /// The dock: a layer-shell surface anchored to the dock's edge (centred along it)
@@ -855,7 +929,24 @@ impl State {
         let layer = self.layer_shell.get_layer_surface(&wl, Some(&out.wl), level, "yggdrasil-dock".into(), &self.qh, id);
         self.configure_layer_dock(&layer, want);
         wl.commit();
-        self.surfs.push(Surf { id, kind: Kind::Dock, output, wl, layer: Some(layer), w: want.0, h: want.1, want, gap: self.model.conf.dock_gap as i32, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
+        self.surfs.push(Surf {
+            id,
+            kind: Kind::Dock,
+            output,
+            wl,
+            layer: Some(layer),
+            w: want.0,
+            h: want.1,
+            want,
+            gap: self.model.conf.dock_gap as i32,
+            configured: false,
+            bufs: vec![],
+            hits: vec![],
+            hover: None,
+            frac: None,
+            fscale: 0.0,
+            stamp: None,
+        });
     }
 
     /// The edge, size, reserved room and distance from the edge of a layer-shell dock.
@@ -897,7 +988,11 @@ impl State {
         // room, and lifts one that is taller up by the overhang. So ask for exactly that room: then the
         // menus start just under the bar, where Fylgja's section titles stay in view.
         let full_h = self.area_of(output).map(|(_, _, _, h)| h).unwrap_or(0);
-        let strut = if self.model.conf.dock_pos == DockPos::Bottom && Some(output) == self.dock_output() { shell::dock_h(self.model.conf.dock_icon) + self.model.conf.dock_gap } else { 0 };
+        let strut = if self.model.conf.dock_pos == DockPos::Bottom && Some(output) == self.dock_output() {
+            shell::dock_h(self.model.conf.dock_icon) + self.model.conf.dock_gap
+        } else {
+            0
+        };
         let h = if full_h > 0 { full_h.saturating_sub(shell::BAR_H + strut) } else { 0 };
         layer.set_anchor(Anchor::Top | Anchor::Left | Anchor::Right);
         layer.set_size(0, h);
@@ -905,9 +1000,32 @@ impl State {
         // the protocol, and with -1 it sat over the bar, where the notch's card hid Fylgja's section titles.
         layer.set_exclusive_zone(0);
         // The start menu takes the keyboard at once, so you can type as soon as it opens.
-        layer.set_keyboard_interactivity(if matches!(&kind, PopupKind::Start(_) | PopupKind::Assist(_)) || matches!(&kind, PopupKind::Fylgja(f) if f.pinned) { KeyboardInteractivity::Exclusive } else { KeyboardInteractivity::OnDemand });
+        layer.set_keyboard_interactivity(
+            if matches!(&kind, PopupKind::Start(_) | PopupKind::Assist(_)) || matches!(&kind, PopupKind::Fylgja(f) if f.pinned) {
+                KeyboardInteractivity::Exclusive
+            } else {
+                KeyboardInteractivity::OnDemand
+            },
+        );
         wl.commit();
-        self.surfs.push(Surf { id, kind: Kind::Popup, output, wl, layer: Some(layer), w: 0, h: 0, want: (0, 0), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
+        self.surfs.push(Surf {
+            id,
+            kind: Kind::Popup,
+            output,
+            wl,
+            layer: Some(layer),
+            w: 0,
+            h: 0,
+            want: (0, 0),
+            gap: 0,
+            configured: false,
+            bufs: vec![],
+            hits: vec![],
+            hover: None,
+            frac: None,
+            fscale: 0.0,
+            stamp: None,
+        });
         if matches!(kind, PopupKind::Fylgja(_)) {
             self.fy_active.store(true, Ordering::Relaxed);
             fylgja::spawn_poller(self.fy_active.clone(), self.fy_shared.clone());
@@ -944,7 +1062,15 @@ impl State {
             return false;
         }
         self.click_output = Some(self.tab_output);
-        self.toggle_popup(PopupKind::Fylgja(fylgja::FyState { section: 0, open: true, pinned: false, voice_ui: false, picker: false, mixer: false, night: false }));
+        self.toggle_popup(PopupKind::Fylgja(fylgja::FyState {
+            section: 0,
+            open: true,
+            pinned: false,
+            voice_ui: false,
+            picker: false,
+            mixer: false,
+            night: false,
+        }));
         true
     }
 
@@ -962,7 +1088,15 @@ impl State {
         self.close_popup();
         if !was_open {
             let section = section.min(fylgja::SECTIONS.len() - 1);
-            self.toggle_popup(PopupKind::Fylgja(fylgja::FyState { section, open: true, pinned: true, voice_ui: false, picker: false, mixer: false, night: false }));
+            self.toggle_popup(PopupKind::Fylgja(fylgja::FyState {
+                section,
+                open: true,
+                pinned: true,
+                voice_ui: false,
+                picker: false,
+                mixer: false,
+                night: false,
+            }));
         }
     }
 
@@ -1010,7 +1144,10 @@ impl State {
                     self.forget_conversation();
                 }
                 if self.conv_id.is_none() {
-                    self.conv_id = Some(format!("{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)));
+                    self.conv_id = Some(format!(
+                        "{}",
+                        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)
+                    ));
                 }
                 self.vad_mode = false;
                 self.conv = false;
@@ -1109,7 +1246,15 @@ impl State {
             self.vad_mode = false;
         }
         let name = assistant::name();
-        let _ = Command::new("notify-send").args(["-a", name, "-i", "audio-input-microphone", name, why]).stdin(std::process::Stdio::null()).spawn().map(|mut c| std::thread::spawn(move || { let _ = c.wait(); }));
+        let _ = Command::new("notify-send")
+            .args(["-a", name, "-i", "audio-input-microphone", name, why])
+            .stdin(std::process::Stdio::null())
+            .spawn()
+            .map(|mut c| {
+                std::thread::spawn(move || {
+                    let _ = c.wait();
+                })
+            });
         if self.model.conf.assistant_speaks {
             self.start_speech(why.split(['.', '!', '?']).next().unwrap_or(why));
         }
@@ -1129,7 +1274,15 @@ impl State {
             self.start_speech(&text);
         } else {
             let name = assistant::name();
-            let _ = Command::new("notify-send").args(["-a", name, "-i", "dialog-information", name, &text]).stdin(std::process::Stdio::null()).spawn().map(|mut c| std::thread::spawn(move || { let _ = c.wait(); }));
+            let _ = Command::new("notify-send")
+                .args(["-a", name, "-i", "dialog-information", name, &text])
+                .stdin(std::process::Stdio::null())
+                .spawn()
+                .map(|mut c| {
+                    std::thread::spawn(move || {
+                        let _ = c.wait();
+                    })
+                });
         }
     }
 
@@ -1180,8 +1333,17 @@ impl State {
     fn conversation_faded(&mut self, why: &str) {
         self.end_conversation();
         let name = assistant::name();
-        let body = format!("{why} Tap {} to pick up again.", crate::assistant::get().map(|a| a.shortcut()).unwrap_or_else(|| "Super+S".into()));
-        let _ = Command::new("notify-send").args(["-a", name, "-i", "audio-input-microphone", name, &body]).stdin(std::process::Stdio::null()).spawn().map(|mut c| std::thread::spawn(move || { let _ = c.wait(); }));
+        let body =
+            format!("{why} Tap {} to pick up again.", crate::assistant::get().map(|a| a.shortcut()).unwrap_or_else(|| "Super+S".into()));
+        let _ = Command::new("notify-send")
+            .args(["-a", name, "-i", "audio-input-microphone", name, &body])
+            .stdin(std::process::Stdio::null())
+            .spawn()
+            .map(|mut c| {
+                std::thread::spawn(move || {
+                    let _ = c.wait();
+                })
+            });
     }
 
     /// Under KWin the voice island's surface is made once, when the bars are, and stays (empty and see-through) until it is needed:
@@ -1196,7 +1358,11 @@ impl State {
         if self.surfs.iter().any(|s| s.kind == Kind::Voice) {
             return;
         }
-        let Some(output) = self.surfs.iter().find(|s| matches!(s.kind, Kind::Bar { slim: false })).map(|s| s.output).or_else(|| self.dock_output()) else { return };
+        let Some(output) =
+            self.surfs.iter().find(|s| matches!(s.kind, Kind::Bar { slim: false })).map(|s| s.output).or_else(|| self.dock_output())
+        else {
+            return;
+        };
         let Some(out) = self.outputs.get(&output) else { return };
         let id = self.next_surf;
         self.next_surf += 1;
@@ -1213,7 +1379,24 @@ impl State {
         wl.set_input_region(Some(&region));
         region.destroy();
         wl.commit();
-        self.surfs.push(Surf { id, kind: Kind::Voice, output, wl, layer: Some(layer), w: voicewave::WIDTH, h: voicewave::HEIGHT, want: (voicewave::WIDTH, voicewave::HEIGHT), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
+        self.surfs.push(Surf {
+            id,
+            kind: Kind::Voice,
+            output,
+            wl,
+            layer: Some(layer),
+            w: voicewave::WIDTH,
+            h: voicewave::HEIGHT,
+            want: (voicewave::WIDTH, voicewave::HEIGHT),
+            gap: 0,
+            configured: false,
+            bufs: vec![],
+            hits: vec![],
+            hover: None,
+            frac: None,
+            fscale: 0.0,
+            stamp: None,
+        });
     }
 
     /// Makes the island appear (if it is not) and starts its animation ticker.
@@ -1299,7 +1482,11 @@ impl State {
     fn speech_level(&mut self) -> f32 {
         let Some(since) = self.speech_since else { return 0.0 };
         let Some(dir) = assistant::get().and_then(|a| a.runtime_dir()) else { return 0.0 };
-        let alive = std::fs::read_to_string(dir.join("speaking.pid")).ok().and_then(|t| t.trim().parse::<u32>().ok()).map(|p| std::path::Path::new(&format!("/proc/{p}")).exists()).unwrap_or(false);
+        let alive = std::fs::read_to_string(dir.join("speaking.pid"))
+            .ok()
+            .and_then(|t| t.trim().parse::<u32>().ok())
+            .map(|p| std::path::Path::new(&format!("/proc/{p}")).exists())
+            .unwrap_or(false);
         if alive {
             self.speech_seen = true;
         } else if self.speech_seen || since.elapsed() > Duration::from_secs(45) {
@@ -1422,7 +1609,24 @@ impl State {
             region.destroy();
         }
         wl.commit();
-        self.surfs.push(Surf { id, kind, output, wl, layer: Some(layer), w: 0, h: 0, want: (0, 0), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
+        self.surfs.push(Surf {
+            id,
+            kind,
+            output,
+            wl,
+            layer: Some(layer),
+            w: 0,
+            h: 0,
+            want: (0, 0),
+            gap: 0,
+            configured: false,
+            bufs: vec![],
+            hits: vec![],
+            hover: None,
+            frac: None,
+            fscale: 0.0,
+            stamp: None,
+        });
     }
 
     /// Shows the volume or brightness pop-up (or updates it) and starts its hide timer.
@@ -1458,7 +1662,24 @@ impl State {
             wl.set_input_region(Some(&region));
             region.destroy();
             wl.commit();
-            self.surfs.push(Surf { id, kind: Kind::Osd, output, wl, layer: Some(layer), w: osd::WIDTH, h: osd::HEIGHT, want: (osd::WIDTH, osd::HEIGHT), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
+            self.surfs.push(Surf {
+                id,
+                kind: Kind::Osd,
+                output,
+                wl,
+                layer: Some(layer),
+                w: osd::WIDTH,
+                h: osd::HEIGHT,
+                want: (osd::WIDTH, osd::HEIGHT),
+                gap: 0,
+                configured: false,
+                bufs: vec![],
+                hits: vec![],
+                hover: None,
+                frac: None,
+                fscale: 0.0,
+                stamp: None,
+            });
         }
         self.dirty = true;
     }
@@ -1495,7 +1716,24 @@ impl State {
         layer.set_exclusive_zone(-1);
         layer.set_keyboard_interactivity(KeyboardInteractivity::Exclusive);
         wl.commit();
-        self.surfs.push(Surf { id, kind: Kind::Confirm, output, wl, layer: Some(layer), w: confirm::WIDTH, h: confirm::HEIGHT, want: (confirm::WIDTH, confirm::HEIGHT), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
+        self.surfs.push(Surf {
+            id,
+            kind: Kind::Confirm,
+            output,
+            wl,
+            layer: Some(layer),
+            w: confirm::WIDTH,
+            h: confirm::HEIGHT,
+            want: (confirm::WIDTH, confirm::HEIGHT),
+            gap: 0,
+            configured: false,
+            bufs: vec![],
+            hits: vec![],
+            hover: None,
+            frac: None,
+            fscale: 0.0,
+            stamp: None,
+        });
     }
 
     /// The countdown ended: `go` does it (yggdrasil-logout closes the programs first), else nothing happens.
@@ -1621,7 +1859,24 @@ impl State {
             layer.set_margin(0, 16, 16, 0);
             layer.set_keyboard_interactivity(KeyboardInteractivity::None);
             wl.commit();
-            self.surfs.push(Surf { id, kind: Kind::Toast, output, wl, layer: Some(layer), w, h, want: (w, h), gap: 0, configured: false, bufs: vec![], hits: vec![], hover: None, frac: None, fscale: 0.0, stamp: None });
+            self.surfs.push(Surf {
+                id,
+                kind: Kind::Toast,
+                output,
+                wl,
+                layer: Some(layer),
+                w,
+                h,
+                want: (w, h),
+                gap: 0,
+                configured: false,
+                bufs: vec![],
+                hits: vec![],
+                hover: None,
+                frac: None,
+                fscale: 0.0,
+                stamp: None,
+            });
         }
     }
 
@@ -1645,7 +1900,8 @@ impl State {
     fn focus_or_launch(&mut self, n: &notify::Notif) {
         let apps = &self.model.apps;
         let name = n.app.to_lowercase();
-        let app = apps::for_app_id(apps, &n.entry).or_else(|| apps.iter().find(|a| a.name.to_lowercase() == name || a.id.to_lowercase() == name));
+        let app =
+            apps::for_app_id(apps, &n.entry).or_else(|| apps.iter().find(|a| a.name.to_lowercase() == name || a.id.to_lowercase() == name));
         let win = self.model.wins.iter().find(|w| {
             let by_app = app.map(|a| apps::for_app_id(apps, &w.app_id).map(|x| x.id == a.id).unwrap_or(false)).unwrap_or(false);
             by_app || (!w.app_id.is_empty() && w.app_id.to_lowercase() == name)
@@ -1718,7 +1974,9 @@ impl State {
                 self.close_popup();
             }
             RowAct::Sub(id) => {
-                if let Some(Popup { kind: PopupKind::Tray(trayui::TrayPop { mode: trayui::TrayMode::Menu { path, .. }, .. }), .. }) = &mut self.popup {
+                if let Some(Popup { kind: PopupKind::Tray(trayui::TrayPop { mode: trayui::TrayMode::Menu { path, .. }, .. }), .. }) =
+                    &mut self.popup
+                {
                     path.push(id);
                 }
                 self.dirty = true;
@@ -1743,7 +2001,9 @@ impl State {
                 self.close_popup();
             }
             RowAct::Back => {
-                if let Some(Popup { kind: PopupKind::Tray(trayui::TrayPop { mode: trayui::TrayMode::Menu { path, .. }, .. }), .. }) = &mut self.popup {
+                if let Some(Popup { kind: PopupKind::Tray(trayui::TrayPop { mode: trayui::TrayMode::Menu { path, .. }, .. }), .. }) =
+                    &mut self.popup
+                {
                     path.pop();
                 }
                 self.dirty = true;
@@ -1834,15 +2094,23 @@ impl State {
     fn sync_notch(&mut self) {
         let slide = self.fy_slide();
         let (open, w) = match &self.popup {
-            Some(Popup { kind: PopupKind::Fylgja(st), .. }) if fylgja::visible(&self.model, st) => (true, 150.0 + (fylgja::card_size(&self.model, st).0 - 150.0) * slide),
+            Some(Popup { kind: PopupKind::Fylgja(st), .. }) if fylgja::visible(&self.model, st) => {
+                (true, 150.0 + (fylgja::card_size(&self.model, st).0 - 150.0) * slide)
+            }
             _ => (false, 0.0),
         };
         let tab = match &self.popup {
-            Some(Popup { kind: PopupKind::Fylgja(st), .. }) if st.open && !(st.voice_ui && self.model.fylgja.voice != fylgja::Voice::Idle) => Some(st.section),
+            Some(Popup { kind: PopupKind::Fylgja(st), .. })
+                if st.open && !(st.voice_ui && self.model.fylgja.voice != fylgja::Voice::Idle) =>
+            {
+                Some(st.section)
+            }
             _ => None,
         };
         // looking at the notification list reads it
-        if tab == Some(fylgja::NOTIFS) || (self.model.conf.notify_pane && matches!(self.popup, Some(Popup { kind: PopupKind::Calendar { .. }, .. }))) {
+        if tab == Some(fylgja::NOTIFS)
+            || (self.model.conf.notify_pane && matches!(self.popup, Some(Popup { kind: PopupKind::Calendar { .. }, .. })))
+        {
             if self.model.notifs.unread_count() > 0 {
                 self.model.notifs.mark_read();
                 self.dirty = true;
@@ -1868,7 +2136,14 @@ impl State {
         let items = shell::dock_items(&self.model);
         let running = items.iter().find(|i| i.app_id == app_id).map(|i| !i.wins.is_empty()).unwrap_or(false);
         let pinned = self.model.pinned.iter().any(|p| p == app_id);
-        let mk = |id: i32, label: &str| tray::MenuItem { id, label: label.into(), enabled: true, separator: false, checked: None, children: vec![] };
+        let mk = |id: i32, label: &str| tray::MenuItem {
+            id,
+            label: label.into(),
+            enabled: true,
+            separator: false,
+            checked: None,
+            children: vec![],
+        };
         let mut menu = vec![mk(1, if running { "New window" } else { "Open" })];
         if running {
             menu.push(mk(2, "Close"));
@@ -1876,7 +2151,10 @@ impl State {
         menu.push(tray::MenuItem { id: 0, label: String::new(), enabled: false, separator: true, checked: None, children: vec![] });
         menu.push(mk(3, if pinned { "Remove from dock" } else { "Keep in dock" }));
         self.click_output = Some(output);
-        self.toggle_popup(PopupKind::Tray(trayui::TrayPop { anchor_x: x, mode: trayui::TrayMode::Menu { key: format!("dock:{app_id}"), items: menu, path: vec![] } }));
+        self.toggle_popup(PopupKind::Tray(trayui::TrayPop {
+            anchor_x: x,
+            mode: trayui::TrayMode::Menu { key: format!("dock:{app_id}"), items: menu, path: vec![] },
+        }));
         self.dirty = true;
     }
 
@@ -1886,10 +2164,20 @@ impl State {
             self.close_popup();
         }
         let many = self.model.status.desktops.len() > 1;
-        let mk = |id: i32, label: &str, enabled: bool| tray::MenuItem { id, label: label.into(), enabled, separator: false, checked: None, children: vec![] };
+        let mk = |id: i32, label: &str, enabled: bool| tray::MenuItem {
+            id,
+            label: label.into(),
+            enabled,
+            separator: false,
+            checked: None,
+            children: vec![],
+        };
         let items = vec![mk(1, &format!("Switch to desktop {}", index + 1), true), mk(2, &format!("Remove desktop {}", index + 1), many)];
         self.click_output = Some(output);
-        self.toggle_popup(PopupKind::Tray(trayui::TrayPop { anchor_x: x, mode: trayui::TrayMode::Menu { key: format!("ws:{index}"), items, path: vec![] } }));
+        self.toggle_popup(PopupKind::Tray(trayui::TrayPop {
+            anchor_x: x,
+            mode: trayui::TrayMode::Menu { key: format!("ws:{index}"), items, path: vec![] },
+        }));
         self.dirty = true;
     }
 
@@ -1941,7 +2229,13 @@ impl State {
         let scale = self.outputs.get(&output).map(|o| o.scale).unwrap_or(1).max(1) as f32;
         let (bw, bh) = previews::thumb_box();
         let (bw, bh) = ((bw * scale.max(1.0)) as u32, (bh * scale.max(1.0)) as u32);
-        let wants: Vec<capture::Want> = item.wins.iter().filter_map(|&i| self.model.wins.get(i)).filter(|w| w.uuid.starts_with("wlr-")).map(|w| capture::Want { key: w.uuid.clone(), app_id: w.app_id.clone(), title: w.title.clone() }).collect();
+        let wants: Vec<capture::Want> = item
+            .wins
+            .iter()
+            .filter_map(|&i| self.model.wins.get(i))
+            .filter(|w| w.uuid.starts_with("wlr-"))
+            .map(|w| capture::Want { key: w.uuid.clone(), app_id: w.app_id.clone(), title: w.title.clone() })
+            .collect();
         let tx = self.thumb_tx.clone();
         self.click_output = Some(output);
         self.toggle_popup(PopupKind::Tray(trayui::TrayPop { anchor_x: x, mode: trayui::TrayMode::Windows { app_id: app_id.to_string() } }));
@@ -2124,7 +2418,14 @@ impl State {
             }
             FAct::Prev | FAct::PlayPause | FAct::Next => {
                 if let Some(m) = self.model.fylgja.snap.media.clone() {
-                    fylgja::media_control(&m.bus, match hit.act { FAct::Prev => "Previous", FAct::Next => "Next", _ => "PlayPause" });
+                    fylgja::media_control(
+                        &m.bus,
+                        match hit.act {
+                            FAct::Prev => "Previous",
+                            FAct::Next => "Next",
+                            _ => "PlayPause",
+                        },
+                    );
                 }
             }
             FAct::Slide(who) => {
@@ -2244,7 +2545,12 @@ impl State {
     /// The Folders theme: a folder opens to the side while the pointer is on it, and closes when it is on something else.
     fn start_hover(&mut self) {
         let (px, py) = self.pointer_pos;
-        let over = self.start_hits.iter().rev().find(|h| px >= h.rect.0 && px < h.rect.0 + h.rect.2 && py >= h.rect.1 && py < h.rect.1 + h.rect.3).map(|h| h.act.clone());
+        let over = self
+            .start_hits
+            .iter()
+            .rev()
+            .find(|h| px >= h.rect.0 && px < h.rect.0 + h.rect.2 && py >= h.rect.1 && py < h.rect.1 + h.rect.3)
+            .map(|h| h.act.clone());
         let Some(Popup { kind: PopupKind::Start(st), .. }) = &mut self.popup else { return };
         match over {
             Some(shell::StartAct::Folder(i)) if st.cat != Some(i) => {
@@ -2359,7 +2665,10 @@ impl State {
 
     /// The session says the drag ended (its Lua saw the window stop following the pointer, or the button come up).
     fn zones_drop(&mut self) {
-        zones::note(&format!("the session says dropped (sheet open: {})", matches!(self.popup, Some(Popup { kind: PopupKind::Zones(_), .. }))));
+        zones::note(&format!(
+            "the session says dropped (sheet open: {})",
+            matches!(self.popup, Some(Popup { kind: PopupKind::Zones(_), .. }))
+        ));
         if let Some(Popup { kind: PopupKind::Zones(z), .. }) = &mut self.popup {
             if z.mode == zones::Mode::Drag {
                 if let Some(drop) = z.watch.told() {
@@ -2435,7 +2744,8 @@ impl State {
 
     /// Snap Assist's keys: arrows and Tab move between tiles, Enter places, Escape stops (handled before this).
     fn assist_key(&mut self, key: u32) {
-        let cols = self.assist_hits.first().map(|(r0, _)| self.assist_hits.iter().filter(|(r, _)| r.1 == r0.1).count()).unwrap_or(1).max(1) as i32;
+        let cols =
+            self.assist_hits.first().map(|(r0, _)| self.assist_hits.iter().filter(|(r, _)| r.1 == r0.1).count()).unwrap_or(1).max(1) as i32;
         let Some(Popup { kind: PopupKind::Assist(a), .. }) = &mut self.popup else { return };
         match key {
             28 | 96 => {
@@ -2474,19 +2784,29 @@ impl State {
 
     /// What the card's field `id` holds now (as the add-on last printed it).
     fn addon_field_value(&self, i: usize, id: &str) -> String {
-        self.model.addons.get(i).and_then(|a| a.card.iter().find_map(|b| match b {
-            addons::Block::Field { id: f, value, .. } if f == id => Some(value.clone()),
-            _ => None,
-        })).unwrap_or_default()
+        self.model
+            .addons
+            .get(i)
+            .and_then(|a| {
+                a.card.iter().find_map(|b| match b {
+                    addons::Block::Field { id: f, value, .. } if f == id => Some(value.clone()),
+                    _ => None,
+                })
+            })
+            .unwrap_or_default()
     }
 
     /// Typing while an add-on's card is open goes to its text field (the first one, if none was clicked); each change is passed
     /// to the add-on, Enter presses the field's `submit`.
     fn addon_key(&mut self, i: usize, key: u32) {
-        let Some(first) = self.model.addons.get(i).and_then(|a| a.card.iter().find_map(|b| match b {
-            addons::Block::Field { id, .. } => Some(id.clone()),
-            _ => None,
-        })) else { return };
+        let Some(first) = self.model.addons.get(i).and_then(|a| {
+            a.card.iter().find_map(|b| match b {
+                addons::Block::Field { id, .. } => Some(id.clone()),
+                _ => None,
+            })
+        }) else {
+            return;
+        };
         if self.addon_field.is_none() {
             let value = self.addon_field_value(i, &first);
             self.addon_field = Some((first, value));
@@ -2495,12 +2815,19 @@ impl State {
         let Some((id, mut text)) = self.addon_field.clone() else { return };
         match key {
             28 | 96 => {
-                let submit = self.model.addons.get(i).and_then(|a| a.card.iter().find_map(|b| match b {
-                    addons::Block::Field { id: f, submit, .. } if *f == id && !submit.is_empty() => Some(submit.clone()),
-                    _ => None,
-                }));
+                let submit = self.model.addons.get(i).and_then(|a| {
+                    a.card.iter().find_map(|b| match b {
+                        addons::Block::Field { id: f, submit, .. } if *f == id && !submit.is_empty() => Some(submit.clone()),
+                        _ => None,
+                    })
+                });
                 if let Some(sub) = submit {
-                    let close = self.model.addons.get(i).map(|a| a.card.iter().any(|b| matches!(b, addons::Block::List(rows) if rows.iter().any(|r| r.close)))).unwrap_or(false);
+                    let close = self
+                        .model
+                        .addons
+                        .get(i)
+                        .map(|a| a.card.iter().any(|b| matches!(b, addons::Block::List(rows) if rows.iter().any(|r| r.close))))
+                        .unwrap_or(false);
                     self.addon_press(i, &sub, None, close);
                 }
                 return;
@@ -2555,7 +2882,9 @@ impl State {
         let folder_apps = |m: &shell::Model, i: usize| apps::folders(&m.apps).get(i).map(|(_, l)| l.len()).unwrap_or(0);
         let power = shell::power_items(&self.model);
         let results: Vec<String> = match &self.popup {
-            Some(Popup { kind: PopupKind::Start(st), .. }) => shell::search_apps(&self.model.apps, &st.query).iter().map(|a| a.id.clone()).collect(),
+            Some(Popup { kind: PopupKind::Start(st), .. }) => {
+                shell::search_apps(&self.model.apps, &st.query).iter().map(|a| a.id.clone()).collect()
+            }
             _ => return,
         };
         let Some(Popup { kind: PopupKind::Start(st), .. }) = &mut self.popup else { return };
@@ -2640,7 +2969,11 @@ impl State {
                     st.focus = F::Sub;
                 }
                 F::Sub => {
-                    act = st.cat.and_then(|c| apps::folders(&self.model.apps).get(c).and_then(|(_, l)| l.get(st.sub_sel).map(|a| shell::StartAct::Launch(a.id.clone()))));
+                    act = st.cat.and_then(|c| {
+                        apps::folders(&self.model.apps)
+                            .get(c)
+                            .and_then(|(_, l)| l.get(st.sub_sel).map(|a| shell::StartAct::Launch(a.id.clone())))
+                    });
                 }
                 F::Power => act = power.get(st.power_sel).map(|(_, a)| shell::StartAct::Power(*a)),
             },
@@ -2820,7 +3153,12 @@ impl State {
                 let region = self.compositor.create_region(&self.qh, ());
                 for h in &hits {
                     if matches!(h.action, Action::ToastOpen(_)) {
-                        region.add((h.rect.0 / s) as i32, (h.rect.1 / s) as i32, (h.rect.2 / s).ceil() as i32, (h.rect.3 / s).ceil() as i32);
+                        region.add(
+                            (h.rect.0 / s) as i32,
+                            (h.rect.1 / s) as i32,
+                            (h.rect.2 / s).ceil() as i32,
+                            (h.rect.3 / s).ceil() as i32,
+                        );
                     }
                 }
                 self.surfs[i].wl.set_input_region(Some(&region));
@@ -2831,25 +3169,72 @@ impl State {
                 match &self.popup {
                     Some(Popup { kind: PopupKind::Start(st), .. }) => {
                         let sp = if self.model.conf.start_theme == StartTheme::Folders {
-                            let view = shell::FoldersView { query: &st.query, select_all: st.all, scroll: st.scroll, focus: st.focus, sel: st.sel, sub_sel: st.sub_sel, power_sel: st.power_sel, cat: st.cat, sub_scroll: st.sub_scroll, power_open: st.power_open };
-                            let sp = shell::paint_start_folders(&mut pix, s, &self.model, &view, self.pointer_pos, &self.assets.fonts, &mut self.assets.icons);
+                            let view = shell::FoldersView {
+                                query: &st.query,
+                                select_all: st.all,
+                                scroll: st.scroll,
+                                focus: st.focus,
+                                sel: st.sel,
+                                sub_sel: st.sub_sel,
+                                power_sel: st.power_sel,
+                                cat: st.cat,
+                                sub_scroll: st.sub_scroll,
+                                power_open: st.power_open,
+                            };
+                            let sp = shell::paint_start_folders(
+                                &mut pix,
+                                s,
+                                &self.model,
+                                &view,
+                                self.pointer_pos,
+                                &self.assets.fonts,
+                                &mut self.assets.icons,
+                            );
                             start_scroll = Some((sp.scroll, sp.sub_scroll));
                             sp
                         } else {
-                            shell::paint_start(&mut pix, s, &self.model, &st.query, st.all, st.scroll, self.pointer_pos, &self.assets.fonts, &mut self.assets.icons)
+                            shell::paint_start(
+                                &mut pix,
+                                s,
+                                &self.model,
+                                &st.query,
+                                st.all,
+                                st.scroll,
+                                self.pointer_pos,
+                                &self.assets.fonts,
+                                &mut self.assets.icons,
+                            )
                         };
                         self.popup_card = sp.card;
                         self.start_hits = sp.hits;
                         self.start_max = sp.max_scroll;
                     }
                     Some(Popup { kind: PopupKind::Fylgja(st), .. }) => {
-                        let (card, hits) = fylgja::paint(&mut pix, s, &self.model, st, slide, self.pointer_pos, &self.assets.fonts, &mut self.assets.icons);
+                        let (card, hits) = fylgja::paint(
+                            &mut pix,
+                            s,
+                            &self.model,
+                            st,
+                            slide,
+                            self.pointer_pos,
+                            &self.assets.fonts,
+                            &mut self.assets.icons,
+                        );
                         self.popup_card = card;
                         self.fy_hits = hits;
                     }
                     Some(Popup { kind: PopupKind::Tray(pop), .. }) => {
                         let pop = pop.clone();
-                        let (card, hits) = trayui::paint(&mut pix, s, &pop, &self.model, &self.thumbs, self.pointer_pos, &self.assets.fonts, &mut self.assets.icons);
+                        let (card, hits) = trayui::paint(
+                            &mut pix,
+                            s,
+                            &pop,
+                            &self.model,
+                            &self.thumbs,
+                            self.pointer_pos,
+                            &self.assets.fonts,
+                            &mut self.assets.icons,
+                        );
                         self.popup_card = card;
                         self.tray_hits = hits;
                     }
@@ -2872,14 +3257,29 @@ impl State {
                         let (mx, my, _, _) = a.monitor.logical();
                         let origin = (mx as f32, (my + a.monitor.reserved[1]) as f32);
                         let pointer = Some(self.pointer_pos);
-                        self.assist_area = a.empty.first().and_then(|z| a.zone_rect(*z)).map(|r| (r.0 as f32 - origin.0, r.1 as f32 - origin.1, r.2 as f32, r.3 as f32)).unwrap_or_default();
-                        self.assist_hits = assist::paint(&mut pix, s, a, origin, &self.model.apps, pointer, &self.assets.fonts, &mut self.assets.icons);
+                        self.assist_area = a
+                            .empty
+                            .first()
+                            .and_then(|z| a.zone_rect(*z))
+                            .map(|r| (r.0 as f32 - origin.0, r.1 as f32 - origin.1, r.2 as f32, r.3 as f32))
+                            .unwrap_or_default();
+                        self.assist_hits =
+                            assist::paint(&mut pix, s, a, origin, &self.model.apps, pointer, &self.assets.fonts, &mut self.assets.icons);
                         // the whole surface: a click anywhere that is not a tile stops
                         self.popup_card = (0.0, 0.0, pix.width() as f32 / s, pix.height() as f32 / s);
                     }
                     Some(Popup { kind: PopupKind::Addon(i), .. }) => {
                         let field = self.addon_field.as_ref().map(|(_, t)| t.as_str());
-                        (self.popup_card, self.addon_hits) = shell::paint_addon(&mut pix, s, &self.model, *i, &self.assets.fonts, &mut self.assets.icons, Some(self.pointer_pos), field);
+                        (self.popup_card, self.addon_hits) = shell::paint_addon(
+                            &mut pix,
+                            s,
+                            &self.model,
+                            *i,
+                            &self.assets.fonts,
+                            &mut self.assets.icons,
+                            Some(self.pointer_pos),
+                            field,
+                        );
                     }
                     Some(Popup { kind: PopupKind::Calendar { offset }, .. }) => {
                         let pane = self.model.conf.notify_pane;
@@ -2890,7 +3290,16 @@ impl State {
                             self.popup_card = shell::pane_rect(w, h);
                             let top = card.1 + card.3 + 10.0;
                             let area = (card.0, top, card.2, h - top - 10.0);
-                            self.pane_hits = notify::paint_list(&mut pix, s, area, &self.model.notifs, self.pointer_pos, notify::now_secs(), &self.assets.fonts, &mut self.assets.icons);
+                            self.pane_hits = notify::paint_list(
+                                &mut pix,
+                                s,
+                                area,
+                                &self.model.notifs,
+                                self.pointer_pos,
+                                notify::now_secs(),
+                                &self.assets.fonts,
+                                &mut self.assets.icons,
+                            );
                             self.pane_top = top;
                         } else {
                             self.popup_card = card;
@@ -3006,7 +3415,10 @@ impl State {
             }
             Action::NewWorkspace => {
                 // count the desktops now (not from the last refresh), so the new one always goes after the last
-                let (desktops, _) = status::parse_desktops(&command_output("hyprctl", &["-j", "workspaces"]), &command_output("hyprctl", &["-j", "activeworkspace"]));
+                let (desktops, _) = status::parse_desktops(
+                    &command_output("hyprctl", &["-j", "workspaces"]),
+                    &command_output("hyprctl", &["-j", "activeworkspace"]),
+                );
                 let last = desktops.iter().filter_map(|d| d.id.parse::<usize>().ok()).max().unwrap_or(0);
                 if last < status::MAX_DESKTOPS {
                     hypr::show_desktop(&(last + 1).to_string());
@@ -3056,7 +3468,14 @@ impl State {
             // Minos, on the trash folder.
             if let Some(dir) = shell::trash_dir() {
                 let _ = std::fs::create_dir_all(&dir);
-                let _ = std::process::Command::new("setsid").arg("-f").arg("minos").arg(dir).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
+                let _ = std::process::Command::new("setsid")
+                    .arg("-f")
+                    .arg("minos")
+                    .arg(dir)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn();
             }
             return;
         }
@@ -3123,7 +3542,9 @@ impl State {
         match self.dock_item_at(i, new) {
             Some((id, along)) if id != shell::TRASH_ID => {
                 let open_for = match &self.popup {
-                    Some(Popup { kind: PopupKind::Tray(trayui::TrayPop { mode: trayui::TrayMode::Windows { app_id }, .. }), .. }) => Some(app_id.clone()),
+                    Some(Popup { kind: PopupKind::Tray(trayui::TrayPop { mode: trayui::TrayMode::Windows { app_id }, .. }), .. }) => {
+                        Some(app_id.clone())
+                    }
                     _ => None,
                 };
                 match open_for {
@@ -3157,7 +3578,10 @@ impl State {
         }
         // Fylgja opens when the pointer has rested on the notch's tab for a moment, and closes when it leaves
         if matches!(self.surfs[i].kind, Kind::Bar { .. }) {
-            let on_tab = new.and_then(|h| self.surfs[i].hits.get(h)).map(|h| h.action == Action::Notch || matches!(h.action, Action::NotchSection(_))).unwrap_or(false);
+            let on_tab = new
+                .and_then(|h| self.surfs[i].hits.get(h))
+                .map(|h| h.action == Action::Notch || matches!(h.action, Action::NotchSection(_)))
+                .unwrap_or(false);
             let out = self.surfs[i].output;
             self.tab_hover = on_tab;
             if on_tab {
@@ -3185,7 +3609,14 @@ impl State {
 // ------------------------------------------------------------------ Wayland dispatch
 
 impl Dispatch<WlRegistry, GlobalListContents> for State {
-    fn event(state: &mut Self, registry: &WlRegistry, event: wl_registry::Event, _: &GlobalListContents, _: &Connection, qh: &QueueHandle<Self>) {
+    fn event(
+        state: &mut Self,
+        registry: &WlRegistry,
+        event: wl_registry::Event,
+        _: &GlobalListContents,
+        _: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
         match event {
             wl_registry::Event::Global { name, interface, version } if interface == "wl_output" => {
                 let wl = registry.bind::<WlOutput, _, _>(name, version.min(4), qh, name);
@@ -3271,7 +3702,14 @@ impl Dispatch<WlBuffer, Arc<AtomicBool>> for State {
 }
 
 impl Dispatch<ZwlrLayerSurfaceV1, usize> for State {
-    fn event(state: &mut Self, layer: &ZwlrLayerSurfaceV1, event: zwlr_layer_surface_v1::Event, id: &usize, _: &Connection, _: &QueueHandle<Self>) {
+    fn event(
+        state: &mut Self,
+        layer: &ZwlrLayerSurfaceV1,
+        event: zwlr_layer_surface_v1::Event,
+        id: &usize,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
         match event {
             zwlr_layer_surface_v1::Event::Configure { serial, width, height } => {
                 layer.ack_configure(serial);
@@ -3357,7 +3795,9 @@ impl Dispatch<WlKeyboard, ()> for State {
             wl_keyboard::Event::Keymap { format: WEnum::Value(wl_keyboard::KeymapFormat::XkbV1), fd, size } => {
                 let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
                 // SAFETY: the compositor hands us a read-only descriptor of exactly `size` bytes.
-                if let Ok(Some(km)) = unsafe { xkb::Keymap::new_from_fd(&ctx, fd, size as usize, xkb::KEYMAP_FORMAT_TEXT_V1, xkb::KEYMAP_COMPILE_NO_FLAGS) } {
+                if let Ok(Some(km)) =
+                    unsafe { xkb::Keymap::new_from_fd(&ctx, fd, size as usize, xkb::KEYMAP_FORMAT_TEXT_V1, xkb::KEYMAP_COMPILE_NO_FLAGS) }
+                {
                     state.xkb = Some(xkb::State::new(&km));
                 }
             }
@@ -3375,7 +3815,11 @@ impl Dispatch<WlKeyboard, ()> for State {
                 // holding Backspace, an arrow or a letter in the start menu repeats it
                 let in_start = matches!(state.popup, Some(Popup { kind: PopupKind::Start(_), .. }));
                 let repeats = state.xkb.as_ref().map(|x| x.get_keymap().key_repeats(xkb::Keycode::new(key + 8))).unwrap_or(false);
-                state.repeat = if in_start && repeats && state.repeat_rate > 0 { Some((key, Instant::now() + Duration::from_millis(state.repeat_delay as u64))) } else { None };
+                state.repeat = if in_start && repeats && state.repeat_rate > 0 {
+                    Some((key, Instant::now() + Duration::from_millis(state.repeat_delay as u64)))
+                } else {
+                    None
+                };
             }
             wl_keyboard::Event::Key { key, state: WEnum::Value(wl_keyboard::KeyState::Released), .. } => {
                 if state.repeat.map(|r| r.0) == Some(key) {
@@ -3404,18 +3848,32 @@ impl Dispatch<WlTouch, ()> for State {
                 }
                 state.touch_id = Some(id);
                 pointer_event(state, wl_pointer::Event::Enter { serial, surface, surface_x: x, surface_y: y });
-                pointer_event(state, wl_pointer::Event::Button { serial, time, button: 272, state: WEnum::Value(wl_pointer::ButtonState::Pressed) });
+                pointer_event(
+                    state,
+                    wl_pointer::Event::Button { serial, time, button: 272, state: WEnum::Value(wl_pointer::ButtonState::Pressed) },
+                );
             }
             wl_touch::Event::Motion { time, id, x, y } if state.touch_id == Some(id) => {
                 pointer_event(state, wl_pointer::Event::Motion { time, surface_x: x, surface_y: y });
             }
             wl_touch::Event::Up { serial, time, id } if state.touch_id == Some(id) => {
                 state.touch_id = None;
-                pointer_event(state, wl_pointer::Event::Button { serial, time, button: 272, state: WEnum::Value(wl_pointer::ButtonState::Released) });
+                pointer_event(
+                    state,
+                    wl_pointer::Event::Button { serial, time, button: 272, state: WEnum::Value(wl_pointer::ButtonState::Released) },
+                );
             }
             wl_touch::Event::Cancel => {
                 if state.touch_id.take().is_some() {
-                    pointer_event(state, wl_pointer::Event::Button { serial: 0, time: 0, button: 272, state: WEnum::Value(wl_pointer::ButtonState::Released) });
+                    pointer_event(
+                        state,
+                        wl_pointer::Event::Button {
+                            serial: 0,
+                            time: 0,
+                            button: 272,
+                            state: WEnum::Value(wl_pointer::ButtonState::Released),
+                        },
+                    );
                 }
             }
             _ => {}
@@ -3483,7 +3941,9 @@ fn pointer_event(state: &mut State, event: wl_pointer::Event) {
                 }
                 state.hover_at(surface_x as f32, surface_y as f32)
             }
-            wl_pointer::Event::AxisSource { axis_source } => state.axis_wheel = matches!(axis_source, WEnum::Value(wl_pointer::AxisSource::Wheel)),
+            wl_pointer::Event::AxisSource { axis_source } => {
+                state.axis_wheel = matches!(axis_source, WEnum::Value(wl_pointer::AxisSource::Wheel))
+            }
             // a wheel click: one step
             wl_pointer::Event::AxisDiscrete { discrete, .. } => {
                 if state.popup.is_some() {
@@ -3525,7 +3985,12 @@ fn pointer_event(state: &mut State, event: wl_pointer::Event) {
                 // 274 = BTN_MIDDLE: a middle click on a window's tile in the dock's window list closes that window (as on Windows)
                 if button == 274 && state.windows_popup_open() {
                     let (px, py) = state.pointer_pos;
-                    let hit = state.tray_hits.iter().rev().find(|(r, _)| px >= r.0 && px < r.0 + r.2 && py >= r.1 && py < r.1 + r.3).map(|(_, a)| a.clone());
+                    let hit = state
+                        .tray_hits
+                        .iter()
+                        .rev()
+                        .find(|(r, _)| px >= r.0 && px < r.0 + r.2 && py >= r.1 && py < r.1 + r.3)
+                        .map(|(_, a)| a.clone());
                     if let Some(trayui::RowAct::Window(i)) = hit {
                         state.tray_row(trayui::RowAct::CloseWin(i));
                     }
@@ -3541,7 +4006,12 @@ fn pointer_event(state: &mut State, event: wl_pointer::Event) {
                             state.close_popup();
                         } else if matches!(state.popup, Some(Popup { kind: PopupKind::Fylgja(_), .. })) {
                             // the last drawn is on top (the buttons over the card)
-                            let hit = state.fy_hits.iter().rev().find(|h| px >= h.rect.0 && px < h.rect.0 + h.rect.2 && py >= h.rect.1 && py < h.rect.1 + h.rect.3).cloned();
+                            let hit = state
+                                .fy_hits
+                                .iter()
+                                .rev()
+                                .find(|h| px >= h.rect.0 && px < h.rect.0 + h.rect.2 && py >= h.rect.1 && py < h.rect.1 + h.rect.3)
+                                .cloned();
                             if let Some(hit) = hit {
                                 if let fylgja::FAct::Slide(who) = &hit.act {
                                     // pressing on a slider sets the level at once and then follows the pointer
@@ -3554,7 +4024,12 @@ fn pointer_event(state: &mut State, event: wl_pointer::Event) {
                             }
                         } else if matches!(state.popup, Some(Popup { kind: PopupKind::Start(_), .. })) {
                             // the last drawn is on top (the power choices over the list)
-                            let hit = state.start_hits.iter().rev().find(|h| px >= h.rect.0 && px < h.rect.0 + h.rect.2 && py >= h.rect.1 && py < h.rect.1 + h.rect.3).map(|h| h.act.clone());
+                            let hit = state
+                                .start_hits
+                                .iter()
+                                .rev()
+                                .find(|h| px >= h.rect.0 && px < h.rect.0 + h.rect.2 && py >= h.rect.1 && py < h.rect.1 + h.rect.3)
+                                .map(|h| h.act.clone());
                             if let Some(act) = hit {
                                 state.start_act(act);
                             } else if let Some(Popup { kind: PopupKind::Start(st), .. }) = &mut state.popup {
@@ -3562,7 +4037,12 @@ fn pointer_event(state: &mut State, event: wl_pointer::Event) {
                                 state.dirty = true;
                             }
                         } else if matches!(state.popup, Some(Popup { kind: PopupKind::Tray(_), .. })) {
-                            let hit = state.tray_hits.iter().rev().find(|(r, _)| px >= r.0 && px < r.0 + r.2 && py >= r.1 && py < r.1 + r.3).map(|(_, a)| a.clone());
+                            let hit = state
+                                .tray_hits
+                                .iter()
+                                .rev()
+                                .find(|(r, _)| px >= r.0 && px < r.0 + r.2 && py >= r.1 && py < r.1 + r.3)
+                                .map(|(_, a)| a.clone());
                             if let Some(a) = hit {
                                 state.tray_row(a);
                             }
@@ -3578,13 +4058,23 @@ fn pointer_event(state: &mut State, event: wl_pointer::Event) {
                             }
                         } else if matches!(state.popup, Some(Popup { kind: PopupKind::Assist(_), .. })) {
                             // Snap Assist: a tile fills the zone; anywhere else stops
-                            match state.assist_hits.iter().find(|(r, _)| px >= r.0 && px < r.0 + r.2 && py >= r.1 && py < r.1 + r.3).map(|(_, w)| *w) {
+                            match state
+                                .assist_hits
+                                .iter()
+                                .find(|(r, _)| px >= r.0 && px < r.0 + r.2 && py >= r.1 && py < r.1 + r.3)
+                                .map(|(_, w)| *w)
+                            {
                                 Some(w) => state.assist_take(w),
                                 None => state.close_popup(),
                             }
                         } else if let Some(Popup { kind: PopupKind::Addon(i), .. }) = state.popup {
                             // the card's controls: a press goes to the add-on, a click in its text field puts typing there
-                            let hit = state.addon_hits.iter().rev().find(|(r, _)| px >= r.0 && px < r.0 + r.2 && py >= r.1 && py < r.1 + r.3).map(|(_, h)| h.clone());
+                            let hit = state
+                                .addon_hits
+                                .iter()
+                                .rev()
+                                .find(|(r, _)| px >= r.0 && px < r.0 + r.2 && py >= r.1 && py < r.1 + r.3)
+                                .map(|(_, h)| h.clone());
                             match hit {
                                 Some(shell::CardHit::Press { id, close }) => state.addon_press(i, &id, None, close),
                                 Some(shell::CardHit::Field(id)) => {
@@ -3596,14 +4086,20 @@ fn pointer_event(state: &mut State, event: wl_pointer::Event) {
                                 }
                                 Some(shell::CardHit::Settings) => {
                                     if let Some(cmd) = state.model.addons.get(i).and_then(|a| a.settings.clone()) {
-                                        let _ = std::process::Command::new(&cmd[0]).args(&cmd[1..]).stdin(std::process::Stdio::null()).spawn();
+                                        let _ =
+                                            std::process::Command::new(&cmd[0]).args(&cmd[1..]).stdin(std::process::Stdio::null()).spawn();
                                     }
                                     state.close_popup();
                                 }
                                 None => {}
                             }
                         } else if state.model.conf.notify_pane && py >= state.pane_top {
-                            let hit = state.pane_hits.iter().rev().find(|(r, _)| px >= r.0 && px < r.0 + r.2 && py >= r.1 && py < r.1 + r.3).map(|(_, a)| a.clone());
+                            let hit = state
+                                .pane_hits
+                                .iter()
+                                .rev()
+                                .find(|(r, _)| px >= r.0 && px < r.0 + r.2 && py >= r.1 && py < r.1 + r.3)
+                                .map(|(_, a)| a.clone());
                             if let Some(a) = hit {
                                 state.notif_act(a);
                             }
@@ -3663,11 +4159,28 @@ fn pointer_event(state: &mut State, event: wl_pointer::Event) {
 }
 
 impl Dispatch<ZwlrForeignToplevelManagerV1, ()> for State {
-    fn event(state: &mut Self, _: &ZwlrForeignToplevelManagerV1, event: zwlr_foreign_toplevel_manager_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+    fn event(
+        state: &mut Self,
+        _: &ZwlrForeignToplevelManagerV1,
+        event: zwlr_foreign_toplevel_manager_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
         if let zwlr_foreign_toplevel_manager_v1::Event::Toplevel { toplevel } = event {
             state.next_key += 1;
             let key = state.next_key;
-            state.model.wins.push(Win { key, uuid: format!("wlr-{key}"), title: String::new(), app_id: String::new(), flags: 0, ready: false, menu: None, proxy: shell::WinHandle::Wlr(toplevel), outputs: vec![] });
+            state.model.wins.push(Win {
+                key,
+                uuid: format!("wlr-{key}"),
+                title: String::new(),
+                app_id: String::new(),
+                flags: 0,
+                ready: false,
+                menu: None,
+                proxy: shell::WinHandle::Wlr(toplevel),
+                outputs: vec![],
+            });
         }
     }
 
@@ -3677,7 +4190,14 @@ impl Dispatch<ZwlrForeignToplevelManagerV1, ()> for State {
 }
 
 impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for State {
-    fn event(state: &mut Self, h: &ZwlrForeignToplevelHandleV1, event: zwlr_foreign_toplevel_handle_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+    fn event(
+        state: &mut Self,
+        h: &ZwlrForeignToplevelHandleV1,
+        event: zwlr_foreign_toplevel_handle_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
         use zwlr_foreign_toplevel_handle_v1::Event as E;
         let Some(pos) = state.model.wins.iter().position(|w| matches!(&w.proxy, shell::WinHandle::Wlr(x) if x == h)) else { return };
         match event {
@@ -3714,7 +4234,14 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for State {
 }
 
 impl Dispatch<WpFractionalScaleV1, usize> for State {
-    fn event(state: &mut Self, _: &WpFractionalScaleV1, event: wp_fractional_scale_v1::Event, id: &usize, _: &Connection, _: &QueueHandle<Self>) {
+    fn event(
+        state: &mut Self,
+        _: &WpFractionalScaleV1,
+        event: wp_fractional_scale_v1::Event,
+        id: &usize,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
         if let wp_fractional_scale_v1::Event::PreferredScale { scale } = event {
             if let Some(s) = state.surfs.iter_mut().find(|s| s.id == *id) {
                 s.fscale = scale as f32 / 120.0;
@@ -3728,10 +4255,26 @@ delegate_noop!(State: WpViewporter);
 delegate_noop!(State: WpViewport);
 
 impl Dispatch<WpCursorShapeManagerV1, ()> for State {
-    fn event(_: &mut Self, _: &WpCursorShapeManagerV1, _: <WpCursorShapeManagerV1 as Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &WpCursorShapeManagerV1,
+        _: <WpCursorShapeManagerV1 as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<WpCursorShapeDeviceV1, ()> for State {
-    fn event(_: &mut Self, _: &WpCursorShapeDeviceV1, _: <WpCursorShapeDeviceV1 as Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &WpCursorShapeDeviceV1,
+        _: <WpCursorShapeDeviceV1 as Proxy>::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 delegate_noop!(State: WlCompositor);
 delegate_noop!(State: ignore WlShm);
@@ -3741,7 +4284,8 @@ delegate_noop!(State: ZwlrLayerShellV1);
 // ------------------------------------------------------------------ main
 
 fn bind_outputs(globals: &GlobalList, state: &mut State, qh: &QueueHandle<State>) {
-    let existing: Vec<(u32, u32)> = globals.contents().clone_list().iter().filter(|g| g.interface == "wl_output").map(|g| (g.name, g.version)).collect();
+    let existing: Vec<(u32, u32)> =
+        globals.contents().clone_list().iter().filter(|g| g.interface == "wl_output").map(|g| (g.name, g.version)).collect();
     for (name, version) in existing {
         let wl = globals.registry().bind::<WlOutput, _, _>(name, version.min(4), qh, name);
         let xdg = state.xdg_output_mgr.as_ref().map(|m| m.get_xdg_output(&wl, qh, name));
@@ -3783,7 +4327,9 @@ fn main() {
     // the window list: the standard protocol (Hyprland, Sway, labwc ...)
     let wlr_wm: Option<ZwlrForeignToplevelManagerV1> = globals.bind(&qh, 1..=3, ()).ok();
     if wlr_wm.is_none() {
-        eprintln!("yggdrasil-panel: the compositor offers no window list (wlr-foreign-toplevel-management); the dock will only launch apps");
+        eprintln!(
+            "yggdrasil-panel: the compositor offers no window list (wlr-foreign-toplevel-management); the dock will only launch apps"
+        );
     }
 
     let (tab_tx, tab_rx) = calloop::channel::channel::<u64>();
@@ -3805,7 +4351,29 @@ fn main() {
         frac_mgr,
         viewporter,
         shm,
-        model: Model { apps: apps::load_all(), pinned: apps::pinned(), wins: vec![], clock: clock_text(PanelConf::load().clock_24h), clock_secs: secs_text(PanelConf::load().clock_24h), date: date_text(), today: today_ymd(), user: user_name(), hibernate: shell::can_hibernate(), conf: PanelConf::load(), dark: system_dark(), status: Default::default(), trash_full: shell::trash_has_files(), notch_open: false, fylgja: Default::default(), notch_w: 0.0, notch_tab: None, notifs: notify::Store::load(notify::state_path()), tray: vec![], addons: vec![], now_secs: 0 },
+        model: Model {
+            apps: apps::load_all(),
+            pinned: apps::pinned(),
+            wins: vec![],
+            clock: clock_text(PanelConf::load().clock_24h),
+            clock_secs: secs_text(PanelConf::load().clock_24h),
+            date: date_text(),
+            today: today_ymd(),
+            user: user_name(),
+            hibernate: shell::can_hibernate(),
+            conf: PanelConf::load(),
+            dark: system_dark(),
+            status: Default::default(),
+            trash_full: shell::trash_has_files(),
+            notch_open: false,
+            fylgja: Default::default(),
+            notch_w: 0.0,
+            notch_tab: None,
+            notifs: notify::Store::load(notify::state_path()),
+            tray: vec![],
+            addons: vec![],
+            now_secs: 0,
+        },
         a11y: None,
         assets: Assets { fonts, icons: paint::Icons::new() },
         surfs: vec![],
@@ -3925,7 +4493,10 @@ fn main() {
     // The D-Bus service runs on its own thread and hands requests to the event loop through a channel.
     let (bus_tx, bus_rx) = calloop::channel::channel::<BusMsg>();
     std::thread::spawn(move || {
-        let conn = zbus::blocking::connection::Builder::session().and_then(|b| b.name("org.yggdrasil.Panel")).and_then(|b| b.serve_at("/Panel", PanelBus(bus_tx))).and_then(|b| b.build());
+        let conn = zbus::blocking::connection::Builder::session()
+            .and_then(|b| b.name("org.yggdrasil.Panel"))
+            .and_then(|b| b.serve_at("/Panel", PanelBus(bus_tx)))
+            .and_then(|b| b.build());
         match conn {
             Ok(_conn) => {
                 // the connection serves org.yggdrasil.Panel for as long as the panel runs (the Super key reaches it as
@@ -3986,10 +4557,7 @@ fn main() {
             }
         })
         .expect("osd channel");
-    event_loop
-        .handle()
-        .insert_source(finder_tick_rx, |_, _, st| st.tick_finder())
-        .expect("find-my-mouse channel");
+    event_loop.handle().insert_source(finder_tick_rx, |_, _, st| st.tick_finder()).expect("find-my-mouse channel");
     event_loop
         .handle()
         .insert_source(osd_hide_rx, |event, _, st| {
@@ -4043,7 +4611,9 @@ fn main() {
                     },
                     tray::TrayMsg::Remove(k) => st.model.tray.retain(|t| t.key != k),
                     tray::TrayMsg::Clear => st.model.tray.clear(),
-                    tray::TrayMsg::Menu(key, items, x) => st.open_tray_popup(trayui::TrayPop { anchor_x: x, mode: trayui::TrayMode::Menu { key, items, path: vec![] } }),
+                    tray::TrayMsg::Menu(key, items, x) => {
+                        st.open_tray_popup(trayui::TrayPop { anchor_x: x, mode: trayui::TrayMode::Menu { key, items, path: vec![] } })
+                    }
                 }
                 st.dirty = true;
             }
@@ -4104,7 +4674,13 @@ fn main() {
             if dragging {
                 st.zones_follow();
             }
-            TimeoutAction::ToDuration(Duration::from_millis(if st.repeat.is_some() { 20 } else if dragging { 30 } else { 60 }))
+            TimeoutAction::ToDuration(Duration::from_millis(if st.repeat.is_some() {
+                20
+            } else if dragging {
+                30
+            } else {
+                60
+            }))
         })
         .expect("key repeat timer");
     // a finished window picture: keep it and redraw the list
@@ -4267,7 +4843,8 @@ fn main() {
             let secs = secs_text(h24);
             if secs != st.model.clock_secs {
                 st.model.clock_secs = secs;
-                if matches!(st.popup, Some(Popup { kind: PopupKind::Calendar { .. }, .. }) | Some(Popup { kind: PopupKind::Fylgja(_), .. })) {
+                if matches!(st.popup, Some(Popup { kind: PopupKind::Calendar { .. }, .. }) | Some(Popup { kind: PopupKind::Fylgja(_), .. }))
+                {
                     st.dirty = true;
                 }
             }
@@ -4279,7 +4856,9 @@ fn main() {
                         let _ = std::fs::remove_file(path);
                     }
                     st.rec_since = None;
-                    st.voice_failed("No microphone could be recorded. Check that one is plugged in and not muted, and that this app may use it.");
+                    st.voice_failed(
+                        "No microphone could be recorded. Check that one is plugged in and not muted, and that this app may use it.",
+                    );
                 } else if !st.vad_mode && since.elapsed().as_secs() >= 90 {
                     // a held question no longer than 90 s: past that the key-up was missed, so what was said is sent rather than recorded for ever
                     st.send_recording();
@@ -4295,7 +4874,9 @@ fn main() {
                     st.dirty = true;
                 }
                 // the small card with nothing playing has nothing to show: put it away
-                let nothing = matches!(&st.popup, Some(Popup { kind: PopupKind::Fylgja(f), .. }) if !f.open && !f.pinned && !f.voice_ui) && st.model.fylgja.snap.ready && st.model.fylgja.snap.media.is_none();
+                let nothing = matches!(&st.popup, Some(Popup { kind: PopupKind::Fylgja(f), .. }) if !f.open && !f.pinned && !f.voice_ui)
+                    && st.model.fylgja.snap.ready
+                    && st.model.fylgja.snap.media.is_none();
                 if nothing {
                     st.peek_blocked = Some(std::time::Instant::now());
                     st.close_popup();
@@ -4310,7 +4891,8 @@ fn main() {
                 // the cover of what is playing, loaded when the song changes
                 let want = st.model.fylgja.snap.media.as_ref().and_then(|m| m.art.clone());
                 if want != st.art_for {
-                    let scale = st.surfs.iter().find(|x| x.kind == Kind::Popup).map(|x| st.scale_of(x)).unwrap_or(1.0).ceil().max(1.0) as u32;
+                    let scale =
+                        st.surfs.iter().find(|x| x.kind == Kind::Popup).map(|x| st.scale_of(x)).unwrap_or(1.0).ceil().max(1.0) as u32;
                     st.model.fylgja.art = want.as_deref().and_then(|p| fylgja::load_image(p, 58 * scale, 58 * scale, 8.0 * scale as f32));
                     st.art_for = want;
                     st.dirty = true;
@@ -4346,7 +4928,9 @@ fn main() {
                 st.dirty = true;
             }
             // Minos's icon is redrawn in the new accent colour: take it up when its file changes
-            let stamp = std::env::var_os("HOME").and_then(|h| std::fs::metadata(std::path::PathBuf::from(h).join(".local/share/icons/Liki/apps/scalable/minos.svg")).ok()?.modified().ok());
+            let stamp = std::env::var_os("HOME").and_then(|h| {
+                std::fs::metadata(std::path::PathBuf::from(h).join(".local/share/icons/Liki/apps/scalable/minos.svg")).ok()?.modified().ok()
+            });
             let pack = paint::selected_icon_theme();
             if pack != st.icon_pack {
                 st.icon_pack = pack.clone();
@@ -4435,8 +5019,6 @@ mod layout_tests {
         assert_eq!(l.primary, "DP-1", "the screen at the top left");
         assert_eq!(l.sizes[1], ("DP-3".to_string(), 3440, 0, 2560, 2880));
     }
-
-
 }
 
 /// Wayland objects are destroyed when the panel lets go of them, in the order the protocols ask for. No compositor: the panel's side
@@ -4524,13 +5106,34 @@ mod cleanup_tests {
         let viewport = viewporter.get_viewport(&wl, &w.qh, ());
         let bufs = vec![new_buffer(&shm, &w.qh, 4, 4).unwrap(), new_buffer(&shm, &w.qh, 8, 8).unwrap()];
         let buf_proxies: Vec<WlBuffer> = bufs.iter().map(|b| b.buffer.clone()).collect();
-        let s = Surf { id: 0, kind: Kind::Toast, output: 0, wl: wl.clone(), layer: Some(layer.clone()), w: 4, h: 4, want: (4, 4), gap: 0, configured: true, bufs, hits: vec![], hover: None, frac: Some((frac.clone(), viewport.clone())), fscale: 1.0, stamp: None };
+        let s = Surf {
+            id: 0,
+            kind: Kind::Toast,
+            output: 0,
+            wl: wl.clone(),
+            layer: Some(layer.clone()),
+            w: 4,
+            h: 4,
+            want: (4, 4),
+            gap: 0,
+            configured: true,
+            bufs,
+            hits: vec![],
+            hover: None,
+            frac: Some((frac.clone(), viewport.clone())),
+            fscale: 1.0,
+            stamp: None,
+        };
         // taken out of the list without destroy(): the Drop does it all the same
         let mut list = vec![s];
         list.clear();
         let sent = w.sent();
         let surface = at(&sent, &wl, "destroy");
-        for (role, what) in [(at(&sent, &frac, "destroy"), "fractional scale"), (at(&sent, &viewport, "destroy"), "viewport"), (at(&sent, &layer, "destroy"), "layer surface")] {
+        for (role, what) in [
+            (at(&sent, &frac, "destroy"), "fractional scale"),
+            (at(&sent, &viewport, "destroy"), "viewport"),
+            (at(&sent, &layer, "destroy"), "layer surface"),
+        ] {
             assert!(role < surface, "the {what} goes before its surface");
         }
         for b in &buf_proxies {
@@ -4568,11 +5171,23 @@ mod cleanup_tests {
         assert_eq!(pick(&[(10, 10, true)]), Pick { drop: vec![], then: Then::New }, "the one on the screen is not drawn over");
         // a size change: free buffers of the old size go, the one still on the screen stays until it comes back
         assert_eq!(pick(&[(5, 5, false), (5, 5, true)]), Pick { drop: vec![0], then: Then::New });
-        assert_eq!(pick(&[(5, 5, false), (10, 10, true), (10, 10, false)]), Pick { drop: vec![0], then: Then::Reuse(1) }, "counted after the drop");
-        assert_eq!(pick(&[(10, 10, false), (5, 5, false)]), Pick { drop: vec![1], then: Then::Reuse(0) }, "an old size goes even when one is free");
+        assert_eq!(
+            pick(&[(5, 5, false), (10, 10, true), (10, 10, false)]),
+            Pick { drop: vec![0], then: Then::Reuse(1) },
+            "counted after the drop"
+        );
+        assert_eq!(
+            pick(&[(10, 10, false), (5, 5, false)]),
+            Pick { drop: vec![1], then: Then::Reuse(0) },
+            "an old size goes even when one is free"
+        );
         // a compositor that holds every buffer: no fifth one, wait for one to come back
         assert_eq!(pick(&[(10, 10, true); MAX_BUFS]), Pick { drop: vec![], then: Then::Wait });
         assert_eq!(pick(&[(5, 5, true), (5, 5, true), (5, 5, true), (5, 5, false)]), Pick { drop: vec![3], then: Then::New });
-        assert_eq!(pick(&[(5, 5, true), (5, 5, true), (10, 10, true), (10, 10, true)]), Pick { drop: vec![], then: Then::Wait }, "held ones are never let go");
+        assert_eq!(
+            pick(&[(5, 5, true), (5, 5, true), (10, 10, true), (10, 10, true)]),
+            Pick { drop: vec![], then: Then::Wait },
+            "held ones are never let go"
+        );
     }
 }

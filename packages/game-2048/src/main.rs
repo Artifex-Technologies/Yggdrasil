@@ -137,7 +137,15 @@ struct App {
 impl App {
     fn new() -> App {
         let saved = load();
-        let mut app = App { game: Game::new(saved.settings.size, saved.settings.mode, &today()), saved, undo: Undo::default(), view: View::Play, anim: None, drag_from: None, stats_all: false };
+        let mut app = App {
+            game: Game::new(saved.settings.size, saved.settings.mode, &today()),
+            saved,
+            undo: Undo::default(),
+            view: View::Play,
+            anim: None,
+            drag_from: None,
+            stats_all: false,
+        };
         app.open_slot();
         app
     }
@@ -255,7 +263,12 @@ impl App {
         if ctrl {
             return;
         }
-        for (keys, d) in [([Key::ArrowUp, Key::W, Key::K], Dir::Up), ([Key::ArrowRight, Key::D, Key::L], Dir::Right), ([Key::ArrowDown, Key::S, Key::J], Dir::Down), ([Key::ArrowLeft, Key::A, Key::H], Dir::Left)] {
+        for (keys, d) in [
+            ([Key::ArrowUp, Key::W, Key::K], Dir::Up),
+            ([Key::ArrowRight, Key::D, Key::L], Dir::Right),
+            ([Key::ArrowDown, Key::S, Key::J], Dir::Down),
+            ([Key::ArrowLeft, Key::A, Key::H], Dir::Left),
+        ] {
             if keys.iter().any(|&k| pressed(k)) {
                 self.play(d);
                 return;
@@ -282,13 +295,18 @@ fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
 fn tile_colors(level: u32, colors: Colors, pal: &Palette) -> (Color32, Color32) {
     match colors {
         Colors::Original => {
-            const BG: [u32; 11] = [0xeee4da, 0xede0c8, 0xf2b179, 0xf59563, 0xf67c5f, 0xf65e3b, 0xedcf72, 0xedcc61, 0xedc850, 0xedc53f, 0xedc22e];
+            const BG: [u32; 11] =
+                [0xeee4da, 0xede0c8, 0xf2b179, 0xf59563, 0xf67c5f, 0xf65e3b, 0xedcf72, 0xedcc61, 0xedc850, 0xedc53f, 0xedc22e];
             let bg = BG.get(level.saturating_sub(1) as usize).map(|&h| hex(h)).unwrap_or(hex(0x3c3a32));
             (bg, if level <= 2 { hex(0x776e65) } else { hex(0xf9f6f2) })
         }
         Colors::Accent => {
             let t = (level as f32 / 11.0).min(1.0);
-            let bg = if level > 11 { mix(pal.accent, Color32::BLACK, ((level - 11) as f32 * 0.12).min(0.5)) } else { mix(pal.field, pal.accent, 0.12 + 0.88 * t) };
+            let bg = if level > 11 {
+                mix(pal.accent, Color32::BLACK, ((level - 11) as f32 * 0.12).min(0.5))
+            } else {
+                mix(pal.field, pal.accent, 0.12 + 0.88 * t)
+            };
             (bg, if t > 0.4 { Color32::WHITE } else { pal.text })
         }
     }
@@ -312,7 +330,14 @@ impl App {
         let r = Rect::from_center_size(center, vec2(cell, cell) * scale);
         p.rect_filled(r, CornerRadius::same((cell * 0.08) as u8), bg);
         let digits = value.to_string().len();
-        let size = cell * scale * match digits { 1 | 2 => 0.45, 3 => 0.38, 4 => 0.30, _ => 0.24 };
+        let size = cell
+            * scale
+            * match digits {
+                1 | 2 => 0.45,
+                3 => 0.38,
+                4 => 0.30,
+                _ => 0.24,
+            };
         p.text(r.center(), Align2::CENTER_CENTER, value.to_string(), FontId::proportional(size), fg);
     }
 
@@ -329,7 +354,11 @@ impl App {
         p.rect_filled(rect, CornerRadius::same(10), bg);
         for x in 0..n {
             for y in 0..n {
-                p.rect_filled(Rect::from_center_size(at(x as f32, y as f32), vec2(cell, cell)), CornerRadius::same((cell * 0.08) as u8), empty);
+                p.rect_filled(
+                    Rect::from_center_size(at(x as f32, y as f32), vec2(cell, cell)),
+                    CornerRadius::same((cell * 0.08) as u8),
+                    empty,
+                );
             }
         }
         let t = self.anim.as_ref().map(|a| a.t0.elapsed().as_secs_f32()).unwrap_or(f32::MAX);
@@ -441,14 +470,30 @@ impl App {
             if let (Some(a), Some(b)) = (self.drag_from.take(), ui.ctx().input(|i| i.pointer.latest_pos())) {
                 let d = b - a;
                 if d.length() > 30.0 {
-                    self.play(if d.x.abs() > d.y.abs() { if d.x > 0.0 { Dir::Right } else { Dir::Left } } else if d.y > 0.0 { Dir::Down } else { Dir::Up });
+                    self.play(if d.x.abs() > d.y.abs() {
+                        if d.x > 0.0 {
+                            Dir::Right
+                        } else {
+                            Dir::Left
+                        }
+                    } else if d.y > 0.0 {
+                        Dir::Down
+                    } else {
+                        Dir::Up
+                    });
                 }
             }
         }
         let board = self.board(ui, area, pal);
         self.veil(ui, board, pal);
         let hint = Rect::from_min_max(egui::pos2(avail.min.x, avail.max.y - 20.0), avail.max);
-        ui.painter().text(hint.center(), Align2::CENTER_CENTER, format!("Arrows, WASD or hjkl to move · U undo · N new game · goal {}", self.game.goal), FontId::proportional(11.5), pal.dim);
+        ui.painter().text(
+            hint.center(),
+            Align2::CENTER_CENTER,
+            format!("Arrows, WASD or hjkl to move · U undo · N new game · goal {}", self.game.goal),
+            FontId::proportional(11.5),
+            pal.dim,
+        );
         ui.allocate_rect(avail, Sense::hover());
     }
 
@@ -461,17 +506,30 @@ impl App {
         ui.add_space(10.0);
         let s = if self.stats_all {
             // a Fibonacci tile is not comparable with the others, so it is left out of the overall best tile
-            self.saved.stats.iter().fold(Stats::default(), |a, (k, s)| Stats { games: a.games + s.games, wins: a.wins + s.wins, best_tile: if k.starts_with("Fibonacci") { a.best_tile } else { a.best_tile.max(s.best_tile) }, best_score: a.best_score.max(s.best_score) })
+            self.saved.stats.iter().fold(Stats::default(), |a, (k, s)| Stats {
+                games: a.games + s.games,
+                wins: a.wins + s.wins,
+                best_tile: if k.starts_with("Fibonacci") { a.best_tile } else { a.best_tile.max(s.best_tile) },
+                best_score: a.best_score.max(s.best_score),
+            })
         } else {
             self.saved.stats.get(&key(self.game.mode, self.game.size)).copied().unwrap_or_default()
         };
-        let rows = [("Games played", s.games.to_string()), ("Games won", s.wins.to_string()), ("Win rate", if s.games == 0 { "-".into() } else { format!("{}%", s.wins * 100 / s.games.max(1)) }), ("Best tile", s.best_tile.to_string()), ("Best score", s.best_score.to_string())];
+        let rows = [
+            ("Games played", s.games.to_string()),
+            ("Games won", s.wins.to_string()),
+            ("Win rate", if s.games == 0 { "-".into() } else { format!("{}%", s.wins * 100 / s.games.max(1)) }),
+            ("Best tile", s.best_tile.to_string()),
+            ("Best score", s.best_score.to_string()),
+        ];
         egui::Frame::new().fill(pal.field).corner_radius(CornerRadius::same(10)).inner_margin(Margin::same(14)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             for (k, v) in rows {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(k).color(pal.dim));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| ui.label(RichText::new(v).strong().color(pal.text)));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(RichText::new(v).strong().color(pal.text))
+                    });
                 });
                 ui.add_space(4.0);
             }
@@ -511,42 +569,44 @@ impl eframe::App for App {
         } else if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.view = View::Play;
         }
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(pal.bg).inner_margin(Margin { left: 14, right: 8, top: 6, bottom: 12 })).show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("2048").size(18.0).strong().color(pal.text));
-                chrome::drag_area(ui, ui.available_width() - chrome::controls_width());
-                chrome::window_controls(ui, &pal);
-            });
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                let (mut mode, mut size) = (self.saved.settings.mode, self.saved.settings.size);
-                egui::ComboBox::from_id_salt("mode").selected_text(mode.label()).show_ui(ui, |ui| {
-                    for m in Mode::ALL {
-                        ui.selectable_value(&mut mode, m, m.label());
-                    }
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(pal.bg).inner_margin(Margin { left: 14, right: 8, top: 6, bottom: 12 }))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("2048").size(18.0).strong().color(pal.text));
+                    chrome::drag_area(ui, ui.available_width() - chrome::controls_width());
+                    chrome::window_controls(ui, &pal);
                 });
-                egui::ComboBox::from_id_salt("size").selected_text(format!("{size}x{size}")).width(70.0).show_ui(ui, |ui| {
-                    for n in game::MIN_SIZE..=game::MAX_SIZE {
-                        ui.selectable_value(&mut size, n, format!("{n}x{n}"));
-                    }
-                });
-                self.choose(mode, size);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    for (v, label) in [(View::Settings, "Settings"), (View::Stats, "Stats")] {
-                        let on = self.view == v;
-                        if ui.selectable_label(on, label).clicked() {
-                            self.view = if on { View::Play } else { v };
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    let (mut mode, mut size) = (self.saved.settings.mode, self.saved.settings.size);
+                    egui::ComboBox::from_id_salt("mode").selected_text(mode.label()).show_ui(ui, |ui| {
+                        for m in Mode::ALL {
+                            ui.selectable_value(&mut mode, m, m.label());
                         }
-                    }
+                    });
+                    egui::ComboBox::from_id_salt("size").selected_text(format!("{size}x{size}")).width(70.0).show_ui(ui, |ui| {
+                        for n in game::MIN_SIZE..=game::MAX_SIZE {
+                            ui.selectable_value(&mut size, n, format!("{n}x{n}"));
+                        }
+                    });
+                    self.choose(mode, size);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        for (v, label) in [(View::Settings, "Settings"), (View::Stats, "Stats")] {
+                            let on = self.view == v;
+                            if ui.selectable_label(on, label).clicked() {
+                                self.view = if on { View::Play } else { v };
+                            }
+                        }
+                    });
                 });
+                ui.add_space(8.0);
+                match self.view {
+                    View::Play => self.page_play(ui, &pal),
+                    View::Stats => self.page_stats(ui, &pal),
+                    View::Settings => self.page_settings(ui, &pal),
+                }
             });
-            ui.add_space(8.0);
-            match self.view {
-                View::Play => self.page_play(ui, &pal),
-                View::Stats => self.page_stats(ui, &pal),
-                View::Settings => self.page_settings(ui, &pal),
-            }
-        });
         chrome::outline(&ctx, &pal);
     }
 }

@@ -55,7 +55,8 @@ pub struct OutputSpec {
 
 /// The backend was asked for: `--headless`, `--backend headless` or `--backend=headless`.
 pub fn wanted(opts: &[String]) -> bool {
-    opts.iter().any(|a| a == "--headless" || a == "--backend=headless") || opts.windows(2).any(|w| w[0] == "--backend" && w[1] == "headless")
+    opts.iter().any(|a| a == "--headless" || a == "--backend=headless")
+        || opts.windows(2).any(|w| w[0] == "--backend" && w[1] == "headless")
 }
 
 /// "1600x900" (both at least 1, at most 16384).
@@ -123,7 +124,9 @@ pub fn outputs_from(opts: &[String]) -> Result<Vec<OutputSpec>, String> {
 
 /// Refuse the shared runtime folder, and clear everything that leads to the running desktop (before any thread or child exists).
 pub fn check_env() -> Result<PathBuf, String> {
-    let dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).ok_or("--headless needs XDG_RUNTIME_DIR: give it a private folder of its own (mode 0700)")?;
+    let dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .ok_or("--headless needs XDG_RUNTIME_DIR: give it a private folder of its own (mode 0700)")?;
     use std::os::unix::fs::MetadataExt;
     let uid = std::fs::metadata("/proc/self").map(|m| m.uid()).unwrap_or(u32::MAX);
     runtime_ok(&dir, uid, std::env::var_os("YGGDRASIL_COMPOSITOR_SHARED_RUNTIME").is_some())?;
@@ -139,7 +142,8 @@ pub fn check_env() -> Result<PathBuf, String> {
 /// The desktop's own runtime folder (/run/user/UID, however it is spelled) is not for tests, unless asked for.
 fn runtime_ok(dir: &Path, uid: u32, allow_shared: bool) -> Result<(), String> {
     let plain: PathBuf = dir.components().collect();
-    let shared = plain == Path::new(&format!("/run/user/{uid}")) || std::fs::canonicalize(dir).is_ok_and(|d| d == Path::new(&format!("/run/user/{uid}")));
+    let shared = plain == Path::new(&format!("/run/user/{uid}"))
+        || std::fs::canonicalize(dir).is_ok_and(|d| d == Path::new(&format!("/run/user/{uid}")));
     if shared && !allow_shared {
         return Err(format!("--headless will not use the desktop's own runtime folder {}: give it a private XDG_RUNTIME_DIR (or set YGGDRASIL_COMPOSITOR_SHARED_RUNTIME=1)", dir.display()));
     }
@@ -153,7 +157,10 @@ pub fn make_outputs(dh: &DisplayHandle, specs: &[OutputSpec]) -> Vec<Output> {
         .iter()
         .enumerate()
         .map(|(i, s)| {
-            let o = Output::new(format!("HEADLESS-{}", i + 1), PhysicalProperties { size: (0, 0).into(), subpixel: Subpixel::Unknown, make: "Yggdrasil".into(), model: "headless".into() });
+            let o = Output::new(
+                format!("HEADLESS-{}", i + 1),
+                PhysicalProperties { size: (0, 0).into(), subpixel: Subpixel::Unknown, make: "Yggdrasil".into(), model: "headless".into() },
+            );
             let _ = o.create_global::<App>(dh);
             let mode = Mode { size: (s.w, s.h).into(), refresh: 60_000 };
             o.change_current_state(Some(mode), Some(Transform::Normal), Some(Scale::Fractional(s.scale)), Some((x, 0).into()));
@@ -187,7 +194,9 @@ const FRAME: Duration = Duration::from_millis(16);
 
 fn new_image(renderer: &mut PixmanRenderer, o: &Output) -> Result<Image<'static, 'static>, String> {
     let size = o.current_mode().map(|m| m.size).unwrap_or((1, 1).into());
-    renderer.create_buffer(Fourcc::Xrgb8888, (size.w, size.h).into()).map_err(|e| format!("cannot make a {}x{} picture: {e}", size.w, size.h))
+    renderer
+        .create_buffer(Fourcc::Xrgb8888, (size.w, size.h).into())
+        .map_err(|e| format!("cannot make a {}x{} picture: {e}", size.w, size.h))
 }
 
 impl Headless {
@@ -195,7 +204,12 @@ impl Headless {
         let mut renderer = PixmanRenderer::new().map_err(|e| format!("the software renderer did not start: {e}"))?;
         let mut screens = vec![];
         for o in outputs {
-            screens.push(Screen { output: o.clone(), image: new_image(&mut renderer, o)?, damage: OutputDamageTracker::from_output(o), drawn: false });
+            screens.push(Screen {
+                output: o.clone(),
+                image: new_image(&mut renderer, o)?,
+                damage: OutputDamageTracker::from_output(o),
+                drawn: false,
+            });
         }
         Ok(Headless { renderer, screens, pending: false, last: Instant::now() - FRAME, start: Instant::now() })
     }
@@ -274,7 +288,13 @@ fn write_png(image: &Image<'static, 'static>, path: &Path) -> Result<(), String>
 }
 
 /// Run the headless backend until `quit` (or the loop is stopped). The outputs are already mapped in the space.
-pub fn run(mut event_loop: EventLoop<'static, App>, mut app: App, outputs: Vec<Output>, ping_source: smithay::reexports::calloop::ping::PingSource, runtime: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(
+    mut event_loop: EventLoop<'static, App>,
+    mut app: App,
+    outputs: Vec<Output>,
+    ping_source: smithay::reexports::calloop::ping::PingSource,
+    runtime: PathBuf,
+) -> Result<(), Box<dyn std::error::Error>> {
     let h = Rc::new(RefCell::new(Headless::new(&outputs)?));
     let handle = event_loop.handle();
 
@@ -352,7 +372,17 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String
                 let m = o.current_mode().map(|m| m.size).unwrap_or_default();
                 let l = state::logical_size(o);
                 let at = o.current_location();
-                format!("{} {}x{} scale={} at={},{} logical={}x{}", o.name(), m.w, m.h, o.current_scale().fractional_scale(), at.x, at.y, l.w, l.h)
+                format!(
+                    "{} {}x{} scale={} at={},{} logical={}x{}",
+                    o.name(),
+                    m.w,
+                    m.h,
+                    o.current_scale().fractional_scale(),
+                    at.x,
+                    at.y,
+                    l.w,
+                    l.h
+                )
             })
             .collect()),
         ["resize", name, size] => {
@@ -398,7 +428,16 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String
                 let map = layer_map_for_output(&s.output);
                 for l in map.layers() {
                     let geo = map.layer_geometry(l).unwrap_or_default();
-                    lines.push(format!("{}\t{}\t{:?}\t{},{}\t{}x{}", s.output.name(), l.namespace(), l.layer(), geo.loc.x, geo.loc.y, geo.size.w, geo.size.h));
+                    lines.push(format!(
+                        "{}\t{}\t{:?}\t{},{}\t{}x{}",
+                        s.output.name(),
+                        l.namespace(),
+                        l.layer(),
+                        geo.loc.x,
+                        geo.loc.y,
+                        geo.size.w,
+                        geo.size.h
+                    ));
                 }
             }
             Ok(lines)
@@ -408,7 +447,10 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String
             Ok(vec![])
         }
         [] => Err("no command".into()),
-        _ => Err(format!("unknown command {:?} (outputs, resize NAME WxH, scale NAME S, screenshot NAME FILE, windows, layers, quit)", words.join(" "))),
+        _ => Err(format!(
+            "unknown command {:?} (outputs, resize NAME WxH, scale NAME S, screenshot NAME FILE, windows, layers, quit)",
+            words.join(" ")
+        )),
     }
 }
 
@@ -422,7 +464,14 @@ pub fn ctl(args: &[String]) -> i32 {
     };
     let path = path.or_else(|| std::env::var_os("YGGDRASIL_COMPOSITOR_CTL").map(PathBuf::from)).or_else(|| {
         let dir = std::env::var_os("XDG_RUNTIME_DIR")?;
-        let found: Vec<PathBuf> = std::fs::read_dir(dir).ok()?.flatten().map(|e| e.path()).filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("yggdrasil-compositor-") && n.ends_with(".ctl"))).collect();
+        let found: Vec<PathBuf> = std::fs::read_dir(dir)
+            .ok()?
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("yggdrasil-compositor-") && n.ends_with(".ctl"))
+            })
+            .collect();
         (found.len() == 1).then(|| found[0].clone())
     });
     let Some(path) = path else {

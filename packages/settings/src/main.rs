@@ -5,35 +5,35 @@
 //! Reading the system can be slow (Wi-Fi scans, Bluetooth), so every page loads on a background
 //! thread and every change runs on one too; the window never freezes.
 
-mod controls;
-mod printers;
 mod appmgr;
-mod defaults;
 mod apps_ui;
+mod controls;
 mod cpu;
-mod gpu;
 mod curve;
-mod fans;
-mod limbo_ui;
-mod icons;
-mod readout;
-mod tune;
-mod restore;
-mod spelling;
-mod distress;
-mod games;
-mod security;
-mod workspaces;
-mod zones_ui;
-mod netconf;
+mod defaults;
 mod devices;
-mod wifihealth;
-mod wifimem;
-mod wifi_ui;
+mod distress;
+mod fans;
 mod fixture;
+mod games;
+mod gpu;
+mod icons;
+mod limbo_ui;
+mod netconf;
+mod printers;
+mod readout;
+mod restore;
+mod security;
+mod spelling;
 mod sys;
+mod tune;
 mod ui;
 mod users;
+mod wifi_ui;
+mod wifihealth;
+mod wifimem;
+mod workspaces;
+mod zones_ui;
 
 /// Tests that change HOME or XDG_* (process-wide) take this lock, so they run one at a time.
 #[cfg(test)]
@@ -44,9 +44,9 @@ use std::time::Duration;
 
 use eframe::egui::{self, vec2, CornerRadius, Margin, RichText, Sense};
 use icons::Icon;
-use yggdrasil_ui::{chrome, theme};
 use theme::Palette;
 use yggdrasil_conf::nightlight;
+use yggdrasil_ui::{chrome, theme};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Page {
@@ -117,15 +117,39 @@ const PAGES: [(Page, &str, Icon, &str, &str); 19] = [
     (Page::Bluetooth, "Bluetooth", Icon::Bluetooth, "Connections", "headphones controller pair"),
     (Page::Displays, "Displays", Icon::Display, "Devices", "monitor screen resolution refresh night light scale"),
     (Page::Sound, "Sound", Icon::Sound, "Devices", "audio volume speaker microphone output input"),
-    (Page::Keyboard, "Keyboard", Icon::Keyboard, "Devices", "shortcuts keys hotkeys typing spelling spell check languages dictionary words find my mouse color picker"),
+    (
+        Page::Keyboard,
+        "Keyboard",
+        Icon::Keyboard,
+        "Devices",
+        "shortcuts keys hotkeys typing spelling spell check languages dictionary words find my mouse color picker",
+    ),
     (Page::Printers, "Printers", Icon::Printer, "Devices", "print scanner"),
     (Page::Power, "Power", Icon::Power, "Devices", "battery sleep suspend graphics card gpu processor cpu fans pump cooling"),
-    (Page::Appearance, "Appearance", Icon::Appearance, "Personal", "theme dark light accent wallpaper icons top bar notifications lock screen workspaces boot"),
+    (
+        Page::Appearance,
+        "Appearance",
+        Icon::Appearance,
+        "Personal",
+        "theme dark light accent wallpaper icons top bar notifications lock screen workspaces boot",
+    ),
     (Page::Assistant, "Assistant", Icon::Sound, "Personal", "voice"),
     (Page::Apps, "Apps", Icon::Apps, "Apps", "installed optional software uninstall minos"),
     (Page::DefaultApps, "Default apps", Icon::Apps, "Apps", "browser mail music video open with"),
-    (Page::Games, "Games", Icon::Gamepad, "Apps", "gaming steam proton graphics card gpu second card frame generation lossless scaling lsfg launch options"),
-    (Page::Security, "Security", Icon::Shield, "Privacy & security", "password login sudo monitor distress limbo sandbox virtual machine guest windows license"),
+    (
+        Page::Games,
+        "Games",
+        Icon::Gamepad,
+        "Apps",
+        "gaming steam proton graphics card gpu second card frame generation lossless scaling lsfg launch options",
+    ),
+    (
+        Page::Security,
+        "Security",
+        Icon::Shield,
+        "Privacy & security",
+        "password login sudo monitor distress limbo sandbox virtual machine guest windows license",
+    ),
     (Page::Firewall, "Firewall", Icon::Shield, "Privacy & security", "ports network block"),
     (Page::Restore, "Restore points", Icon::Restart, "Privacy & security", "snapshot backup rollback undo"),
     (Page::Users, "Users", Icon::User, "System", "account people"),
@@ -501,7 +525,9 @@ impl App {
                     Msg::Apps(sys::apps())
                 }
                 Page::DefaultApps => Msg::Defaults(defaults::load()),
-                Page::Assistant => Msg::Assistant(controls::load(yggdrasil_conf::integrations::first("assistant").map(|i| i.controls()).unwrap_or_default())),
+                Page::Assistant => Msg::Assistant(controls::load(
+                    yggdrasil_conf::integrations::first("assistant").map(|i| i.controls()).unwrap_or_default(),
+                )),
                 Page::Printers => Msg::Printers(printers::load()),
                 Page::Keyboard | Page::Developer | Page::Games => return,
             };
@@ -643,7 +669,9 @@ fn start_page() -> Page {
     if arg == "shortcuts" {
         return Page::Keyboard;
     }
-    PAGES.iter().find(|(p, name, ..)| format!("{p:?}").to_lowercase() == arg || name.to_lowercase().starts_with(&arg) && !arg.is_empty())
+    PAGES
+        .iter()
+        .find(|(p, name, ..)| format!("{p:?}").to_lowercase() == arg || name.to_lowercase().starts_with(&arg) && !arg.is_empty())
         .map(|(p, ..)| *p)
         .unwrap_or(Page::Network)
 }
@@ -657,8 +685,10 @@ impl eframe::App for App {
         // panel, a command) shows up without closing Settings. Not while something is being dragged or typed, not
         // for pages that are slow to read (Wi-Fi scans, Bluetooth discovery, the package list), and not when
         // the window is in the background.
-        let refreshable = matches!(self.page, Page::About | Page::Displays | Page::Sound | Page::Appearance | Page::Firewall | Page::DateTime | Page::Security)
-            || self.page == Page::Power && !self.power_gpu && !self.power_cpu && !self.power_fans;
+        let refreshable = matches!(
+            self.page,
+            Page::About | Page::Displays | Page::Sound | Page::Appearance | Page::Firewall | Page::DateTime | Page::Security
+        ) || self.page == Page::Power && !self.power_gpu && !self.power_cpu && !self.power_fans;
         // a sub-page's panel (and its once-a-second reader) lives only while it is shown
         if !(self.page == Page::Power && self.power_gpu) {
             self.gpu_panel = None;
@@ -673,7 +703,10 @@ impl eframe::App for App {
             self.limbo_panel = None;
         }
         if refreshable {
-            let idle = self.loading.is_none() && !ctx.input(|i| i.pointer.any_down()) && ctx.memory(|m| m.focused().is_none()) && ctx.input(|i| i.viewport().focused != Some(false));
+            let idle = self.loading.is_none()
+                && !ctx.input(|i| i.pointer.any_down())
+                && ctx.memory(|m| m.focused().is_none())
+                && ctx.input(|i| i.viewport().focused != Some(false));
             if idle && self.refreshed.elapsed() >= std::time::Duration::from_secs(4) {
                 let page = self.page;
                 self.load(page, &ctx);
@@ -692,7 +725,10 @@ impl eframe::App for App {
             ctx.request_repaint_after(std::time::Duration::from_secs(5));
         } else if self.page == Page::Apps && self.app_tab == 0 && self.app_confirm.is_none() {
             // the app list: running or not, new launches, and changes made from the command line
-            let idle = self.loading.is_none() && !ctx.input(|i| i.pointer.any_down()) && ctx.memory(|m| m.focused().is_none()) && ctx.input(|i| i.viewport().focused != Some(false));
+            let idle = self.loading.is_none()
+                && !ctx.input(|i| i.pointer.any_down())
+                && ctx.memory(|m| m.focused().is_none())
+                && ctx.input(|i| i.viewport().focused != Some(false));
             if idle && self.refreshed.elapsed() >= std::time::Duration::from_secs(4) {
                 self.refreshed = std::time::Instant::now();
                 let (tx, c) = (self.tx.clone(), ctx.clone());
@@ -719,7 +755,12 @@ impl eframe::App for App {
             .frame(egui::Frame::new().fill(pal.sidebar).inner_margin(Margin::symmetric(10, 10)))
             .show(ui, |ui| {
                 ui.add_space(4.0);
-                ui.add(egui::TextEdit::singleline(&mut self.search).hint_text("Search settings").desired_width(f32::INFINITY).margin(vec2(8.0, 6.0)));
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.search)
+                        .hint_text("Search settings")
+                        .desired_width(f32::INFINITY)
+                        .margin(vec2(8.0, 6.0)),
+                );
                 ui.add_space(8.0);
                 let q = self.search.to_lowercase();
                 let developer_on = yggdrasil_conf::PanelConf::load().developer;
@@ -727,9 +768,15 @@ impl eframe::App for App {
                 egui::ScrollArea::vertical().id_salt("pages-list").auto_shrink([false, false]).show(ui, |ui| {
                     let mut last_group = "";
                     for (p, name, icon, group, words) in PAGES {
-                        let assistant_name = if p == Page::Assistant { yggdrasil_conf::integrations::first("assistant").and_then(|i| i.get("name").map(str::to_string)) } else { None };
+                        let assistant_name = if p == Page::Assistant {
+                            yggdrasil_conf::integrations::first("assistant").and_then(|i| i.get("name").map(str::to_string))
+                        } else {
+                            None
+                        };
                         let name: &str = assistant_name.as_deref().unwrap_or(name);
-                        if p == Page::Developer && !developer_on || p == Page::Assistant && yggdrasil_conf::integrations::first("assistant").is_none() {
+                        if p == Page::Developer && !developer_on
+                            || p == Page::Assistant && yggdrasil_conf::integrations::first("assistant").is_none()
+                        {
                             continue;
                         }
                         if !q.is_empty() && !name.to_lowercase().contains(&q) && !words.contains(&q) {
@@ -752,7 +799,13 @@ impl eframe::App for App {
                         // Sarina gets the S of her own icon; another assistant keeps the general one
                         let icon = if assistant_name.as_deref() == Some("Sarina") { Icon::Constellation } else { icon };
                         icons::paint(ui.painter(), icon_rect, icon, if sel { pal.accent } else { pal.text });
-                        ui.painter().text(egui::pos2(rect.left() + 40.0, rect.center().y), egui::Align2::LEFT_CENTER, name, egui::FontId::proportional(14.0), pal.text);
+                        ui.painter().text(
+                            egui::pos2(rect.left() + 40.0, rect.center().y),
+                            egui::Align2::LEFT_CENTER,
+                            name,
+                            egui::FontId::proportional(14.0),
+                            pal.text,
+                        );
                         if resp.clicked() && p == Page::Appearance {
                             self.app_sub = AppSub::Main;
                         }
@@ -849,13 +902,15 @@ fn load_installed(tx: &std::sync::mpsc::Sender<Msg>) -> Vec<appmgr::AppInfo> {
     let apps = appmgr::list_apps(&theme);
     let (tx, list) = (tx.clone(), apps.clone());
     std::thread::spawn(move || {
-        let sizes = list.iter().map(|a| (a.id.clone(), appmgr::data_dirs(a).iter().map(|(p, _)| appmgr::dir_size(p)).sum::<u64>())).collect();
+        let sizes =
+            list.iter().map(|a| (a.id.clone(), appmgr::data_dirs(a).iter().map(|(p, _)| appmgr::dir_size(p)).sum::<u64>())).collect();
         let _ = tx.send(Msg::AppSizes(sizes));
     });
     apps
 }
 
-const BRAND_SHAPES: [(&str, &str); 5] = [("glyph", "Logo only"), ("squircle", "Squircle"), ("rounded", "Rounded square"), ("circle", "Circle"), ("hexagon", "Hexagon")];
+const BRAND_SHAPES: [(&str, &str); 5] =
+    [("glyph", "Logo only"), ("squircle", "Squircle"), ("rounded", "Rounded square"), ("circle", "Circle"), ("hexagon", "Hexagon")];
 const BRAND_STYLES: [(&str, &str); 3] = [("brand", "Brand colors"), ("dark", "Dark tile"), ("purple", "Accent colour")];
 
 fn loading(ui: &mut egui::Ui) {
@@ -882,11 +937,18 @@ impl App {
                 Dflt::Fixed(Profile::Tiling) => 1,
                 Dflt::Ask => 2,
             };
-            ui::row(ui, pal, true, "Every workspace starts as", Some("Ask each time shows a question when you open an empty workspace"), |ui| {
-                if let Some(i) = ui::segmented(ui, pal, &["Standard", "Tiling", "Ask each time"], sel) {
-                    c.default = [Dflt::Fixed(Profile::Standard), Dflt::Fixed(Profile::Tiling), Dflt::Ask][i];
-                }
-            });
+            ui::row(
+                ui,
+                pal,
+                true,
+                "Every workspace starts as",
+                Some("Ask each time shows a question when you open an empty workspace"),
+                |ui| {
+                    if let Some(i) = ui::segmented(ui, pal, &["Standard", "Tiling", "Ask each time"], sel) {
+                        c.default = [Dflt::Fixed(Profile::Standard), Dflt::Fixed(Profile::Tiling), Dflt::Ask][i];
+                    }
+                },
+            );
         });
         ui::group(ui, pal, Some("Each workspace"), |ui| {
             for n in 0..4 {
@@ -907,7 +969,11 @@ impl App {
             }
         });
         ui.add_space(8.0);
-        ui.label(RichText::new("Super+T floats or tiles the focused window on a tiling workspace. Super+Ctrl+1 to 4 switch workspaces.").size(12.0).color(pal.dim));
+        ui.label(
+            RichText::new("Super+T floats or tiles the focused window on a tiling workspace. Super+Ctrl+1 to 4 switch workspaces.")
+                .size(12.0)
+                .color(pal.dim),
+        );
         if c != self.ws_conf {
             self.ws_conf = c.clone();
             self.change(ctx, move || workspaces::save(&c));
@@ -926,12 +992,23 @@ impl App {
         }
         let info = self.boot_info.as_ref().map(|(_, v)| v.clone()).unwrap_or_default();
         if info.is_null() && busy {
-            ui::group(ui, pal, None, |ui| ui::row(ui, pal, true, "Changing the boot screen", Some("The start-up image is rebuilt, which takes about a minute..."), |_| {}));
+            ui::group(ui, pal, None, |ui| {
+                ui::row(
+                    ui,
+                    pal,
+                    true,
+                    "Changing the boot screen",
+                    Some("The start-up image is rebuilt, which takes about a minute..."),
+                    |_| {},
+                )
+            });
             ctx.request_repaint_after(std::time::Duration::from_millis(500));
             return;
         }
         if info.is_null() {
-            ui::group(ui, pal, None, |ui| ui::row(ui, pal, true, "The boot screen cannot be changed here", Some("Plymouth is not installed"), |_| {}));
+            ui::group(ui, pal, None, |ui| {
+                ui::row(ui, pal, true, "The boot screen cannot be changed here", Some("Plymouth is not installed"), |_| {})
+            });
             // the screen after signing in is Yggdrasil's own: it needs no Plymouth
             self.splash_section(ui, pal);
             return;
@@ -947,16 +1024,23 @@ impl App {
         ui::group(ui, pal, None, |ui| {
             // until Plymouth is switched on nothing is chosen yet: any of the three switches it on
             let shown = if ready { idx } else { usize::MAX };
-            ui::row(ui, pal, true, "While the computer starts", Some(match shown {
-                1 => "The start-up messages, as text",
-                2 => "Your own picture",
-                0 => "The animation",
-                _ => "Not set up yet: pick one",
-            }), |ui| {
-                if !busy {
-                    pick = ui::segmented(ui, pal, &["Animation", "Messages", "Your picture"], shown);
-                }
-            });
+            ui::row(
+                ui,
+                pal,
+                true,
+                "While the computer starts",
+                Some(match shown {
+                    1 => "The start-up messages, as text",
+                    2 => "Your own picture",
+                    0 => "The animation",
+                    _ => "Not set up yet: pick one",
+                }),
+                |ui| {
+                    if !busy {
+                        pick = ui::segmented(ui, pal, &["Animation", "Messages", "Your picture"], shown);
+                    }
+                },
+            );
             let preview = format!("/usr/share/plymouth/themes/{anim}/preview.png");
             if std::path::Path::new(&preview).is_file() {
                 ui.add_space(6.0);
@@ -981,7 +1065,11 @@ impl App {
         };
         ui.label(RichText::new(note).color(pal.dim));
         // the same choice once more: brings a newer Settings' boot set-up into the start-up image (e.g. NVIDIA's early start)
-        if ready && !busy && idx != 2 && ui::quiet(ui, pal, "Apply again").on_hover_text("Rebuild the start-up image with this choice (about a minute)").clicked() {
+        if ready
+            && !busy
+            && idx != 2
+            && ui::quiet(ui, pal, "Apply again").on_hover_text("Rebuild the start-up image with this choice (about a minute)").clicked()
+        {
             pick = Some(idx);
         }
         if let Some(k) = pick {
@@ -1031,21 +1119,28 @@ impl App {
         let mut write: Option<(&str, String)> = None;
         ui.add_space(10.0);
         ui::group(ui, pal, Some("After signing in"), |ui| {
-            ui::row(ui, pal, true, "Until the desktop is ready", Some(match idx {
-                1 => "What is starting, as text",
-                2 => "Your own picture",
-                3 => "Nothing: a black screen",
-                _ => "The animation",
-            }), |ui| {
-                if let Some(k) = ui::segmented(ui, pal, &["Animation", "Messages", "Your picture", "Nothing"], idx) {
-                    let mode = ["animation", "messages", "picture", "off"][k];
-                    if k == 2 && !std::path::Path::new(self.splash_pic.trim()).is_file() {
-                        self.status = "Type the path of a picture first, then Use this picture".into();
-                    } else {
-                        write = Some((mode, self.splash_pic.trim().to_string()));
+            ui::row(
+                ui,
+                pal,
+                true,
+                "Until the desktop is ready",
+                Some(match idx {
+                    1 => "What is starting, as text",
+                    2 => "Your own picture",
+                    3 => "Nothing: a black screen",
+                    _ => "The animation",
+                }),
+                |ui| {
+                    if let Some(k) = ui::segmented(ui, pal, &["Animation", "Messages", "Your picture", "Nothing"], idx) {
+                        let mode = ["animation", "messages", "picture", "off"][k];
+                        if k == 2 && !std::path::Path::new(self.splash_pic.trim()).is_file() {
+                            self.status = "Type the path of a picture first, then Use this picture".into();
+                        } else {
+                            write = Some((mode, self.splash_pic.trim().to_string()));
+                        }
                     }
-                }
-            });
+                },
+            );
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 ui::field(ui, pal, &mut self.splash_pic, "Your picture: /home/you/Pictures/start.png", 340.0, false);
@@ -1056,8 +1151,12 @@ impl App {
             });
         });
         if let Some((mode, pic)) = write {
-            let body = format!("# What shows between signing in and the desktop (Settings > Appearance > Boot screen)\nmode = {mode}\npicture = {pic}\n");
-            self.status = match std::fs::create_dir_all(file.parent().unwrap_or(std::path::Path::new("/"))).and_then(|_| std::fs::write(&file, body)) {
+            let body = format!(
+                "# What shows between signing in and the desktop (Settings > Appearance > Boot screen)\nmode = {mode}\npicture = {pic}\n"
+            );
+            self.status = match std::fs::create_dir_all(file.parent().unwrap_or(std::path::Path::new("/")))
+                .and_then(|_| std::fs::write(&file, body))
+            {
                 Ok(()) => "Shows the next time you sign in".into(),
                 Err(e) => format!("Could not save it: {e}"),
             };
@@ -1073,7 +1172,12 @@ impl App {
         ];
         let cache = yggdrasil_conf::dirs::cache().join("lock-previews");
         let conf = yggdrasil_conf::dirs::config().join("lock.conf");
-        let current = std::fs::read_to_string(&conf).ok().and_then(|t| t.lines().filter_map(|l| l.split_once('=')).find(|(k, _)| k.trim() == "design").map(|(_, v)| v.trim().to_string())).unwrap_or_else(|| "split".into());
+        let current = std::fs::read_to_string(&conf)
+            .ok()
+            .and_then(|t| {
+                t.lines().filter_map(|l| l.split_once('=')).find(|(k, _)| k.trim() == "design").map(|(_, v)| v.trim().to_string())
+            })
+            .unwrap_or_else(|| "split".into());
         if !self.lock_previews_started {
             self.lock_previews_started = true;
             let (dir, ctx2) = (cache.clone(), ctx.clone());
@@ -1081,7 +1185,10 @@ impl App {
                 let _ = std::fs::create_dir_all(&dir);
                 for (id, _, _) in DESIGNS {
                     let out = dir.join(format!("{id}.png"));
-                    let _ = std::process::Command::new("yggdrasil-lock").args(["--preview", id, "--size", "1920x1080", "--typed", "6", "--out"]).arg(&out).status();
+                    let _ = std::process::Command::new("yggdrasil-lock")
+                        .args(["--preview", id, "--size", "1920x1080", "--typed", "6", "--out"])
+                        .arg(&out)
+                        .status();
                     ctx2.forget_image(&format!("file://{}", out.display()));
                 }
                 ctx2.request_repaint();
@@ -1146,7 +1253,13 @@ impl App {
                 let (rect, r) = ui.allocate_exact_size(vec2(96.0, 96.0), Sense::click());
                 ui.painter().circle_filled(rect.center(), 46.0, pal.accent);
                 let initial = a.os.chars().next().unwrap_or('L').to_uppercase().to_string();
-                ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, initial, egui::FontId::proportional(44.0), egui::Color32::WHITE);
+                ui.painter().text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    initial,
+                    egui::FontId::proportional(44.0),
+                    egui::Color32::WHITE,
+                );
                 r
             } else {
                 ui.add(egui::Image::new(format!("file://{}", a.logo)).fit_to_exact_size(vec2(96.0, 96.0)).sense(Sense::click()))
@@ -1199,14 +1312,26 @@ impl App {
             });
         }
         ui::group(ui, pal, None, |ui| {
-            ui::row(ui, pal, true, "Device name", None, |ui| { ui.label(&a.hostname); });
-            ui::row(ui, pal, false, "Processor", None, |ui| { ui.label(&a.cpu); });
-            ui::row(ui, pal, false, "Memory", None, |ui| { ui.label(format!("{:.0} GB", a.memory_gib)); });
+            ui::row(ui, pal, true, "Device name", None, |ui| {
+                ui.label(&a.hostname);
+            });
+            ui::row(ui, pal, false, "Processor", None, |ui| {
+                ui.label(&a.cpu);
+            });
+            ui::row(ui, pal, false, "Memory", None, |ui| {
+                ui.label(format!("{:.0} GB", a.memory_gib));
+            });
             for (i, g) in a.gpus.iter().enumerate() {
-                ui::row(ui, pal, false, if i == 0 { "Graphics" } else { "" }, None, |ui| { ui.label(g); });
+                ui::row(ui, pal, false, if i == 0 { "Graphics" } else { "" }, None, |ui| {
+                    ui.label(g);
+                });
             }
-            ui::row(ui, pal, false, "Disk", None, |ui| { ui.label(format!("{} free of {}", ui::gib(a.disk_free), ui::gib(a.disk_total))); });
-            ui::row(ui, pal, false, "Kernel", None, |ui| { ui.label(&a.kernel); });
+            ui::row(ui, pal, false, "Disk", None, |ui| {
+                ui.label(format!("{} free of {}", ui::gib(a.disk_free), ui::gib(a.disk_total)));
+            });
+            ui::row(ui, pal, false, "Kernel", None, |ui| {
+                ui.label(&a.kernel);
+            });
         });
     }
 
@@ -1265,7 +1390,8 @@ impl App {
                 for (i, d) in list.iter().enumerate() {
                     let name = devices::shown_name(d, &self.lan_names);
                     // the router and this computer are already named for what they are
-                    let mut sub = if matches!(d.kind.as_str(), "router" | "this") { vec![] } else { vec![devices::kind_name(&d.kind).to_string()] };
+                    let mut sub =
+                        if matches!(d.kind.as_str(), "router" | "this") { vec![] } else { vec![devices::kind_name(&d.kind).to_string()] };
                     if !d.vendor.is_empty() && !name.contains(&d.vendor) {
                         sub.push(d.vendor.clone());
                     }
@@ -1361,7 +1487,14 @@ impl App {
             });
             if r.connected {
                 let l = &r.link;
-                ui.label(RichText::new(format!("{} · {} channel {} ({} MHz) · {} dBm · {:.0} Mbps down / {:.0} up link rate", l.ssid, l.band, l.channel, l.width, l.signal_dbm, l.rx_mbps, l.tx_mbps)).size(12.0).color(pal.dim));
+                ui.label(
+                    RichText::new(format!(
+                        "{} · {} channel {} ({} MHz) · {} dBm · {:.0} Mbps down / {:.0} up link rate",
+                        l.ssid, l.band, l.channel, l.width, l.signal_dbm, l.rx_mbps, l.tx_mbps
+                    ))
+                    .size(12.0)
+                    .color(pal.dim),
+                );
             }
         });
         ui.add_space(8.0);
@@ -1492,20 +1625,24 @@ impl App {
     fn wifi_dialog(&mut self, ctx: &egui::Context, pal: &Palette) {
         let mut done: Option<bool> = None;
         if let Some((ssid, pw)) = &mut self.wifi_password {
-            egui::Window::new(format!("Connect to “{ssid}”")).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0)).show(ctx, |ui| {
-                ui.label("Password");
-                let r = ui.add(egui::TextEdit::singleline(pw).password(true).desired_width(280.0));
-                r.request_focus();
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    if ui::action(ui, pal, "Connect").clicked() || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
-                        done = Some(true);
-                    }
-                    if ui::quiet(ui, pal, "Cancel").clicked() {
-                        done = Some(false);
-                    }
+            egui::Window::new(format!("Connect to “{ssid}”"))
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0))
+                .show(ctx, |ui| {
+                    ui.label("Password");
+                    let r = ui.add(egui::TextEdit::singleline(pw).password(true).desired_width(280.0));
+                    r.request_focus();
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        if ui::action(ui, pal, "Connect").clicked() || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
+                            done = Some(true);
+                        }
+                        if ui::quiet(ui, pal, "Cancel").clicked() {
+                            done = Some(false);
+                        }
+                    });
                 });
-            });
         }
         if let Some(ok) = done {
             if let Some((ssid, pw)) = self.wifi_password.take() {
@@ -1576,7 +1713,14 @@ impl App {
     /// options open below it: light bar colour, player light, a rumble test, disconnect and forget. The lights chosen are kept in
     /// ~/.config/yggdrasil/controllers.json, which the Controllers plugin reads to put them back on every connection.
     fn bt_controllers(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context, b: &sys::Bluetooth) {
-        const COLOURS: [(&str, [u8; 3]); 6] = [("Purple", [124, 84, 214]), ("Blue", [40, 110, 255]), ("Red", [255, 40, 40]), ("Green", [34, 197, 94]), ("White", [255, 255, 255]), ("Off", [0, 0, 0])];
+        const COLOURS: [(&str, [u8; 3]); 6] = [
+            ("Purple", [124, 84, 214]),
+            ("Blue", [40, 110, 255]),
+            ("Red", [255, 40, 40]),
+            ("Green", [34, 197, 94]),
+            ("White", [255, 255, 255]),
+            ("Off", [0, 0, 0]),
+        ];
         enum Do {
             Select(String),
             Light(gamepads::Pad, [u8; 3]),
@@ -1586,10 +1730,18 @@ impl App {
         }
         let mut todo: Option<Do> = None;
         // the paired Bluetooth controllers that are off (the connected ones are listed from the kernel, with their battery)
-        let off: Vec<&sys::BtDevice> = b.paired_pads.iter().filter(|d| !b.pads.iter().any(|p| p.mac() == Some(d.mac.to_lowercase().as_str()))).collect();
+        let off: Vec<&sys::BtDevice> =
+            b.paired_pads.iter().filter(|d| !b.pads.iter().any(|p| p.mac() == Some(d.mac.to_lowercase().as_str()))).collect();
         ui::group(ui, pal, Some("Controllers"), |ui| {
             if b.pads.is_empty() && off.is_empty() {
-                ui::row(ui, pal, true, "No controllers yet", Some("Use “Add a controller” to pair one, or plug one in with a cable"), |_| {});
+                ui::row(
+                    ui,
+                    pal,
+                    true,
+                    "No controllers yet",
+                    Some("Use “Add a controller” to pair one, or plug one in with a cable"),
+                    |_| {},
+                );
             }
             for (i, p) in b.pads.iter().enumerate() {
                 let key = p.uniq.clone();
@@ -1606,7 +1758,13 @@ impl App {
                         let charging = p.battery.as_ref().is_some_and(|bat| bat.charging());
                         let (r, _) = ui.allocate_exact_size(egui::vec2(90.0, 8.0), egui::Sense::hover());
                         ui.painter().rect_filled(r, 4.0, pal.field);
-                        let col = if charging || pct > 40 { pal.green } else if pct > 20 { pal.amber } else { pal.red };
+                        let col = if charging || pct > 40 {
+                            pal.green
+                        } else if pct > 20 {
+                            pal.amber
+                        } else {
+                            pal.red
+                        };
                         let mut fill = r;
                         fill.set_width((r.width() * pct as f32 / 100.0).max(8.0));
                         ui.painter().rect_filled(fill, 4.0, col);
@@ -1617,21 +1775,28 @@ impl App {
                 }
                 if p.leds.has_lightbar() {
                     let current = b.pad_settings.lightbar_for(p);
-                    ui::row(ui, pal, false, "Light bar", if p.leds.writable { None } else { Some("Install Controller support from Agora to change the lights") }, |ui| {
-                        ui.add_enabled_ui(p.leds.writable, |ui| {
-                            for (name, rgb) in COLOURS.iter().rev() {
-                                let (r, resp) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::click());
-                                let c = if *rgb == [0, 0, 0] { pal.field } else { egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]) };
-                                ui.painter().circle_filled(r.center(), 10.0, c);
-                                if current == Some(*rgb) || resp.hovered() {
-                                    ui.painter().circle_stroke(r.center(), 11.5, egui::Stroke::new(2.0, pal.text));
+                    ui::row(
+                        ui,
+                        pal,
+                        false,
+                        "Light bar",
+                        if p.leds.writable { None } else { Some("Install Controller support from Agora to change the lights") },
+                        |ui| {
+                            ui.add_enabled_ui(p.leds.writable, |ui| {
+                                for (name, rgb) in COLOURS.iter().rev() {
+                                    let (r, resp) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::click());
+                                    let c = if *rgb == [0, 0, 0] { pal.field } else { egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]) };
+                                    ui.painter().circle_filled(r.center(), 10.0, c);
+                                    if current == Some(*rgb) || resp.hovered() {
+                                        ui.painter().circle_stroke(r.center(), 11.5, egui::Stroke::new(2.0, pal.text));
+                                    }
+                                    if resp.on_hover_text(*name).clicked() {
+                                        todo = Some(Do::Light(p.clone(), *rgb));
+                                    }
                                 }
-                                if resp.on_hover_text(*name).clicked() {
-                                    todo = Some(Do::Light(p.clone(), *rgb));
-                                }
-                            }
-                        });
-                    });
+                            });
+                        },
+                    );
                 }
                 if !p.leds.players.is_empty() {
                     let now = b.pad_settings.player_for(p).unwrap_or(0) as usize;
@@ -1651,10 +1816,17 @@ impl App {
                         _ => "Basic buttons only; Xbox mode (Start + X when pairing) works best",
                     };
                     ui::row(ui, pal, false, &format!("Mode: {mode}"), Some(note), |_| {});
-                    let fw_note = if p.model == gamepads::Model::XboxCompatible { "If it is an 8BitDo: use a Chromium-based browser such as Vivaldi; connect the controller by USB" } else { "Use a Chromium-based browser such as Vivaldi; connect the controller by USB" };
+                    let fw_note = if p.model == gamepads::Model::XboxCompatible {
+                        "If it is an 8BitDo: use a Chromium-based browser such as Vivaldi; connect the controller by USB"
+                    } else {
+                        "Use a Chromium-based browser such as Vivaldi; connect the controller by USB"
+                    };
                     ui::row(ui, pal, false, "Firmware updates", Some(fw_note), |ui| {
                         if ui::quiet(ui, pal, "Open 8BitDo's updater").clicked() {
-                            let _ = std::process::Command::new("xdg-open").arg("https://web.8bitdo.com").stdin(std::process::Stdio::null()).spawn();
+                            let _ = std::process::Command::new("xdg-open")
+                                .arg("https://web.8bitdo.com")
+                                .stdin(std::process::Stdio::null())
+                                .spawn();
                         }
                     });
                 }
@@ -1688,11 +1860,18 @@ impl App {
                 });
             }
             if !std::path::Path::new("/usr/bin/yggdrasil-controllers").exists() {
-                ui::row(ui, pal, false, "Controller support", Some("Battery in the top bar, and your lights kept between connections"), |ui| {
-                    if ui::quiet(ui, pal, "Get it in Agora").clicked() {
-                        sys::spawn("agora", &[]);
-                    }
-                });
+                ui::row(
+                    ui,
+                    pal,
+                    false,
+                    "Controller support",
+                    Some("Battery in the top bar, and your lights kept between connections"),
+                    |ui| {
+                        if ui::quiet(ui, pal, "Get it in Agora").clicked() {
+                            sys::spawn("agora", &[]);
+                        }
+                    },
+                );
             }
         });
         match todo {
@@ -1735,7 +1914,14 @@ impl App {
     /// Add a device.
     fn pad_add_flow(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         use gamepads::Model;
-        const KINDS: [(&str, Model); 6] = [("PlayStation 4", Model::DualShock4), ("PlayStation 5", Model::DualSense), ("Xbox", Model::Xbox), ("Switch Pro", Model::SwitchPro), ("8BitDo", Model::EightBitDo), ("Other", Model::Other)];
+        const KINDS: [(&str, Model); 6] = [
+            ("PlayStation 4", Model::DualShock4),
+            ("PlayStation 5", Model::DualSense),
+            ("Xbox", Model::Xbox),
+            ("Switch Pro", Model::SwitchPro),
+            ("8BitDo", Model::EightBitDo),
+            ("Other", Model::Other),
+        ];
         match self.pad_add {
             None => {
                 if ui::action(ui, pal, "Add a controller…").clicked() {
@@ -1767,7 +1953,14 @@ impl App {
                 ui::group(ui, pal, Some("Pairing mode"), |ui| {
                     ui::row(ui, pal, true, m.pairing_hint(), Some("Then pick it below when it turns up"), |_| {});
                     if m == Model::Xbox || m == Model::EightBitDo {
-                        ui::row(ui, pal, false, "Xbox controllers (and 8BitDo in Xbox mode) work best with Xbox controller support from Agora (xpadneo)", None, |_| {});
+                        ui::row(
+                            ui,
+                            pal,
+                            false,
+                            "Xbox controllers (and 8BitDo in Xbox mode) work best with Xbox controller support from Agora (xpadneo)",
+                            None,
+                            |_| {},
+                        );
                     }
                 });
                 ui.add_space(6.0);
@@ -1807,7 +2000,14 @@ impl App {
                 });
             }
             if self.bt_found.1.is_empty() {
-                ui.label(RichText::new(if searching { "Nothing yet. Put the device in pairing mode." } else { "Nothing found. Is the device in pairing mode?" }).color(pal.dim));
+                ui.label(
+                    RichText::new(if searching {
+                        "Nothing yet. Put the device in pairing mode."
+                    } else {
+                        "Nothing found. Is the device in pairing mode?"
+                    })
+                    .color(pal.dim),
+                );
             }
         });
         ui.horizontal(|ui| {
@@ -1846,33 +2046,41 @@ impl App {
             let title = if o.primary { format!("{} · Main display", o.name) } else { o.name.clone() };
             ui::group(ui, pal, Some(&title), |ui| {
                 ui::row(ui, pal, true, "Resolution", None, |ui| {
-                    egui::ComboBox::from_id_salt(format!("res-{}", o.name)).selected_text(format!("{} × {}", cur.width, cur.height)).show_ui(ui, |ui| {
-                        for (w, h) in o.resolutions() {
-                            if ui.selectable_label(w == cur.width && h == cur.height, format!("{w} × {h}")).clicked() {
-                                if let Some(m) = o.rates(w, h).first() {
+                    egui::ComboBox::from_id_salt(format!("res-{}", o.name))
+                        .selected_text(format!("{} × {}", cur.width, cur.height))
+                        .show_ui(ui, |ui| {
+                            for (w, h) in o.resolutions() {
+                                if ui.selectable_label(w == cur.width && h == cur.height, format!("{w} × {h}")).clicked() {
+                                    if let Some(m) = o.rates(w, h).first() {
+                                        cmd = Some(vec![format!("output.{}.mode.{}", o.name, m.id)]);
+                                    }
+                                }
+                            }
+                        });
+                });
+                ui::row(ui, pal, false, "Refresh rate", None, |ui| {
+                    egui::ComboBox::from_id_salt(format!("hz-{}", o.name)).selected_text(format!("{:.0} Hz", cur.refresh)).show_ui(
+                        ui,
+                        |ui| {
+                            for m in o.rates(cur.width, cur.height) {
+                                if ui.selectable_label(m.id == cur.id, format!("{:.2} Hz", m.refresh)).clicked() {
                                     cmd = Some(vec![format!("output.{}.mode.{}", o.name, m.id)]);
                                 }
                             }
-                        }
-                    });
-                });
-                ui::row(ui, pal, false, "Refresh rate", None, |ui| {
-                    egui::ComboBox::from_id_salt(format!("hz-{}", o.name)).selected_text(format!("{:.0} Hz", cur.refresh)).show_ui(ui, |ui| {
-                        for m in o.rates(cur.width, cur.height) {
-                            if ui.selectable_label(m.id == cur.id, format!("{:.2} Hz", m.refresh)).clicked() {
-                                cmd = Some(vec![format!("output.{}.mode.{}", o.name, m.id)]);
-                            }
-                        }
-                    });
+                        },
+                    );
                 });
                 ui::row(ui, pal, false, "Scale", Some("Makes text and windows larger"), |ui| {
-                    egui::ComboBox::from_id_salt(format!("scale-{}", o.name)).selected_text(format!("{:.0} %", o.scale * 100.0)).show_ui(ui, |ui| {
-                        for s in [1.0, 1.25, 1.5, 1.75, 2.0] {
-                            if ui.selectable_label((s - o.scale).abs() < 0.01, format!("{:.0} %", s * 100.0)).clicked() {
-                                cmd = Some(vec![format!("output.{}.scale.{}", o.name, s)]);
+                    egui::ComboBox::from_id_salt(format!("scale-{}", o.name)).selected_text(format!("{:.0} %", o.scale * 100.0)).show_ui(
+                        ui,
+                        |ui| {
+                            for s in [1.0, 1.25, 1.5, 1.75, 2.0] {
+                                if ui.selectable_label((s - o.scale).abs() < 0.01, format!("{:.0} %", s * 100.0)).clicked() {
+                                    cmd = Some(vec![format!("output.{}.scale.{}", o.name, s)]);
+                                }
                             }
-                        }
-                    });
+                        },
+                    );
                 });
                 if !o.primary && !hypr {
                     ui::row(ui, pal, false, "Main display", Some("The top bar and dock live here"), |ui| {
@@ -1882,11 +2090,18 @@ impl App {
                     });
                 }
                 let mut is_tiling = d.tiling.split(',').any(|t| t.trim() == o.name);
-                ui::row(ui, pal, false, "Tiling screen", Some("Windows tile automatically, Omarchy-style, with their own workspaces"), |ui| {
-                    if ui::switch(ui, pal, &mut is_tiling).changed() {
-                        tiling = Some((o.name.clone(), is_tiling));
-                    }
-                });
+                ui::row(
+                    ui,
+                    pal,
+                    false,
+                    "Tiling screen",
+                    Some("Windows tile automatically, Omarchy-style, with their own workspaces"),
+                    |ui| {
+                        if ui::switch(ui, pal, &mut is_tiling).changed() {
+                            tiling = Some((o.name.clone(), is_tiling));
+                        }
+                    },
+                );
             });
         }
         if d.outputs.is_empty() {
@@ -1924,7 +2139,11 @@ impl App {
                     toggled = Some(*on);
                 }
             });
-            let sub = if n.schedule { format!("On from {} to {}", fmt_time(n.on), fmt_time(n.off)) } else { "Off: it stays as you switch it".to_string() };
+            let sub = if n.schedule {
+                format!("On from {} to {}", fmt_time(n.on), fmt_time(n.off))
+            } else {
+                "Off: it stays as you switch it".to_string()
+            };
             ui::row(ui, pal, false, "Schedule", Some(&sub), |ui| {
                 ui::switch(ui, pal, &mut n.schedule);
             });
@@ -1955,7 +2174,9 @@ impl App {
             if let Some(ramps) = nightlight::ramps(n) {
                 for (i, (from_t, to_t, from_k, to_k)) in ramps.into_iter().enumerate() {
                     let title = if i == 0 { "Fading in" } else { "Fading out" };
-                    ui::row(ui, pal, false, title, Some(&format!("{} to {}", fmt_time(from_t), fmt_time(to_t))), |ui| ramp_bar(ui, pal, from_k, to_k));
+                    ui::row(ui, pal, false, title, Some(&format!("{} to {}", fmt_time(from_t), fmt_time(to_t))), |ui| {
+                        ramp_bar(ui, pal, from_k, to_k)
+                    });
                 }
             }
         });
@@ -1977,7 +2198,9 @@ impl App {
     fn page_sound(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         let Some(s) = self.data.sound.clone() else { return loading(ui) };
         let mut cmds: Vec<Vec<String>> = vec![];
-        for (title, devices, default, kind) in [("Output", &s.outputs, &s.default_output, "sink"), ("Input", &s.inputs, &s.default_input, "source")] {
+        for (title, devices, default, kind) in
+            [("Output", &s.outputs, &s.default_output, "sink"), ("Input", &s.inputs, &s.default_input, "source")]
+        {
             ui::group(ui, pal, Some(title), |ui| {
                 if devices.is_empty() {
                     ui::row(ui, pal, true, "No devices", None, |_| {});
@@ -1985,13 +2208,16 @@ impl App {
                 }
                 let cur = devices.iter().find(|d| &d.name == default).or(devices.first()).unwrap();
                 ui::row(ui, pal, true, "Device", None, |ui| {
-                    egui::ComboBox::from_id_salt(format!("dev-{kind}")).selected_text(&cur.description).width((ui.available_width() * 0.6).clamp(160.0, 320.0)).show_ui(ui, |ui| {
-                        for d in devices {
-                            if ui.selectable_label(d.name == cur.name, &d.description).clicked() {
-                                cmds.push(vec![format!("set-default-{kind}"), d.name.clone()]);
+                    egui::ComboBox::from_id_salt(format!("dev-{kind}"))
+                        .selected_text(&cur.description)
+                        .width((ui.available_width() * 0.6).clamp(160.0, 320.0))
+                        .show_ui(ui, |ui| {
+                            for d in devices {
+                                if ui.selectable_label(d.name == cur.name, &d.description).clicked() {
+                                    cmds.push(vec![format!("set-default-{kind}"), d.name.clone()]);
+                                }
                             }
-                        }
-                    });
+                        });
                 });
                 let mut vol = cur.volume as f32;
                 ui::row(ui, pal, false, "Volume", None, |ui| {
@@ -2052,46 +2278,60 @@ impl App {
             ui.add_space(6.0);
         }
         if self.app_sub == AppSub::Main {
-        ui::group(ui, pal, Some("Style"), |ui| {
-            ui::row(ui, pal, true, "Look", None, |ui| {
-                if let Some(i) = ui::segmented(ui, pal, &["Light", "Dark"], if a.dark { 1 } else { 0 }) {
-                    style = Some(i == 1);
-                }
-            });
-            ui::row(ui, pal, false, "Accent color", Some("Selections, switches, the active window border"), |ui| {
-                for (name, rgb) in sys::ACCENTS.iter().rev() {
-                    let (rect, resp) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::click());
-                    let c = egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
-                    ui.painter().circle_filled(rect.center(), 10.0, c);
-                    if a.accent == Some(*rgb) || (a.accent.is_none() && *rgb == yggdrasil_conf::integrations::default_accent()) {
-                        ui.painter().circle_stroke(rect.center(), 12.5, egui::Stroke::new(2.0, pal.text));
+            ui::group(ui, pal, Some("Style"), |ui| {
+                ui::row(ui, pal, true, "Look", None, |ui| {
+                    if let Some(i) = ui::segmented(ui, pal, &["Light", "Dark"], if a.dark { 1 } else { 0 }) {
+                        style = Some(i == 1);
                     }
-                    if resp.on_hover_text(*name).clicked() {
-                        accent = Some(*rgb);
+                });
+                ui::row(ui, pal, false, "Accent color", Some("Selections, switches, the active window border"), |ui| {
+                    for (name, rgb) in sys::ACCENTS.iter().rev() {
+                        let (rect, resp) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::click());
+                        let c = egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
+                        ui.painter().circle_filled(rect.center(), 10.0, c);
+                        if a.accent == Some(*rgb) || (a.accent.is_none() && *rgb == yggdrasil_conf::integrations::default_accent()) {
+                            ui.painter().circle_stroke(rect.center(), 12.5, egui::Stroke::new(2.0, pal.text));
+                        }
+                        if resp.on_hover_text(*name).clicked() {
+                            accent = Some(*rgb);
+                        }
                     }
-                }
+                });
             });
-        });
         }
         if self.app_sub == AppSub::Main {
             ui::group(ui, pal, None, |ui| {
-                if ui::nav_row(ui, pal, true, "Top bar and dock", Some("The bar, the dock, the start menu and the notch: how they look and what they do"), |_| {}) {
-                        self.app_sub = AppSub::Bar;
+                if ui::nav_row(
+                    ui,
+                    pal,
+                    true,
+                    "Top bar and dock",
+                    Some("The bar, the dock, the start menu and the notch: how they look and what they do"),
+                    |_| {},
+                ) {
+                    self.app_sub = AppSub::Bar;
                 }
                 if ui::nav_row(ui, pal, false, "Icons", Some("Icon packs and the mouse pointer"), |_| {}) {
-                        self.app_sub = AppSub::Icons;
+                    self.app_sub = AppSub::Icons;
                 }
                 if ui::nav_row(ui, pal, false, "Notifications", Some("Pop-ups, the Notification Center and Do not disturb"), |_| {}) {
-                        self.app_sub = AppSub::Notifs;
+                    self.app_sub = AppSub::Notifs;
                 }
                 if ui::nav_row(ui, pal, false, "Wallpaper", Some("The desktop picture"), |_| {}) {
-                        self.app_sub = AppSub::Wallpaper;
+                    self.app_sub = AppSub::Wallpaper;
                 }
                 if ui::nav_row(ui, pal, false, "Lock screen", Some("How the screen looks while it is locked"), |_| {}) {
-                        self.app_sub = AppSub::Lock;
-                        self.lock_previews_started = false;
+                    self.app_sub = AppSub::Lock;
+                    self.lock_previews_started = false;
                 }
-                if ui::nav_row(ui, pal, false, "Workspaces", Some("How windows behave on each workspace: float, or tile on their own"), |_| {}) {
+                if ui::nav_row(
+                    ui,
+                    pal,
+                    false,
+                    "Workspaces",
+                    Some("How windows behave on each workspace: float, or tile on their own"),
+                    |_| {},
+                ) {
                     self.app_sub = AppSub::Workspaces;
                     self.ws_conf = workspaces::load();
                 }
@@ -2100,38 +2340,52 @@ impl App {
                     self.boot_info = None;
                 }
                 if ui::nav_row(ui, pal, false, "Minos", Some("The file manager: make its window see-through"), |_| {}) {
-                        self.app_sub = AppSub::Minos;
+                    self.app_sub = AppSub::Minos;
                 }
             });
         }
         if self.app_sub == AppSub::Minos {
-        ui::group(ui, pal, Some("Window"), |ui| {
-            ui::row(ui, pal, true, "See-through window", Some("Lets the desktop show through Minos. Applies to open windows within a second, no restart"), |ui| {
-                minos_live |= ui::switch(ui, pal, &mut conf.minos_transparent).changed();
-            });
-            ui::row(ui, pal, false, "Transparency", Some("How solid the window is. The sample next to it shows the result"), |ui| {
-                ui.add_enabled_ui(conf.minos_transparent, |ui| {
-                    let mut v = conf.minos_opacity as f32;
-                    if ui::slider_range(ui, pal, &mut v, yggdrasil_conf::MINOS_OPACITY_MIN as f32..=100.0, " %").changed() {
-                        conf.minos_opacity = v as u32;
-                        minos_live = true;
+            ui::group(ui, pal, Some("Window"), |ui| {
+                ui::row(
+                    ui,
+                    pal,
+                    true,
+                    "See-through window",
+                    Some("Lets the desktop show through Minos. Applies to open windows within a second, no restart"),
+                    |ui| {
+                        minos_live |= ui::switch(ui, pal, &mut conf.minos_transparent).changed();
+                    },
+                );
+                ui::row(ui, pal, false, "Transparency", Some("How solid the window is. The sample next to it shows the result"), |ui| {
+                    ui.add_enabled_ui(conf.minos_transparent, |ui| {
+                        let mut v = conf.minos_opacity as f32;
+                        if ui::slider_range(ui, pal, &mut v, yggdrasil_conf::MINOS_OPACITY_MIN as f32..=100.0, " %").changed() {
+                            conf.minos_opacity = v as u32;
+                            minos_live = true;
+                        }
+                    });
+                    // a small sample window over a busy backdrop, so the effect is visible without opening Minos
+                    let (rect, _) = ui.allocate_exact_size(egui::vec2(120.0, 70.0), egui::Sense::hover());
+                    let pt = ui.painter_at(rect);
+                    pt.rect_filled(rect, 8.0, egui::Color32::from_rgb(92, 56, 170));
+                    for (i, c) in [
+                        egui::Color32::from_rgb(235, 120, 180),
+                        egui::Color32::from_rgb(90, 190, 230),
+                        egui::Color32::from_rgb(250, 210, 90),
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    {
+                        pt.circle_filled(rect.left_top() + egui::vec2(24.0 + i as f32 * 34.0, 22.0 + (i % 2) as f32 * 26.0), 15.0, c);
                     }
+                    let shown = if conf.minos_transparent { conf.minos_opacity } else { 100 };
+                    let dark = theme::palette(true).translucent(shown);
+                    let win = rect.shrink2(egui::vec2(14.0, 10.0));
+                    pt.rect_filled(win, 6.0, dark.bg);
+                    pt.rect_filled(egui::Rect::from_min_size(win.min, egui::vec2(win.width() * 0.3, win.height())), 6.0, dark.sidebar);
+                    pt.rect_stroke(win, 6.0, egui::Stroke::new(1.0, dark.border), egui::StrokeKind::Inside);
                 });
-                // a small sample window over a busy backdrop, so the effect is visible without opening Minos
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(120.0, 70.0), egui::Sense::hover());
-                let pt = ui.painter_at(rect);
-                pt.rect_filled(rect, 8.0, egui::Color32::from_rgb(92, 56, 170));
-                for (i, c) in [egui::Color32::from_rgb(235, 120, 180), egui::Color32::from_rgb(90, 190, 230), egui::Color32::from_rgb(250, 210, 90)].into_iter().enumerate() {
-                    pt.circle_filled(rect.left_top() + egui::vec2(24.0 + i as f32 * 34.0, 22.0 + (i % 2) as f32 * 26.0), 15.0, c);
-                }
-                let shown = if conf.minos_transparent { conf.minos_opacity } else { 100 };
-                let dark = theme::palette(true).translucent(shown);
-                let win = rect.shrink2(egui::vec2(14.0, 10.0));
-                pt.rect_filled(win, 6.0, dark.bg);
-                pt.rect_filled(egui::Rect::from_min_size(win.min, egui::vec2(win.width() * 0.3, win.height())), 6.0, dark.sidebar);
-                pt.rect_stroke(win, 6.0, egui::Stroke::new(1.0, dark.border), egui::StrokeKind::Inside);
             });
-        });
         }
         if self.app_sub == AppSub::Lock {
             self.lock_page(ui, pal, ctx);
@@ -2143,25 +2397,25 @@ impl App {
             self.boot_page(ui, pal, ctx);
         }
         if self.app_sub == AppSub::Icons {
-        ui::group(ui, pal, Some("Icons"), |ui| {
-            for (i, pack) in a.icon_packs.iter().enumerate() {
-                let current = pack.id == a.icon_theme;
-                let sub = if pack.user { "Installed by you" } else { "Comes with the system" };
-                ui::row(ui, pal, i == 0, &pack.name, Some(sub), |ui| {
-                    if current {
-                        ui.label(RichText::new("In use").color(pal.accent));
-                    } else if ui::action(ui, pal, "Use").clicked() {
-                        icon_use = Some(pack.id.clone());
-                    }
-                    if pack.user && !current && ui::quiet(ui, pal, "Remove").clicked() {
-                        icon_remove = Some(pack.id.clone());
-                    }
-                    for p in pack.preview.iter().rev() {
-                        ui.add(egui::Image::new(format!("file://{}", p.display())).fit_to_exact_size(vec2(28.0, 28.0)));
-                    }
-                });
-            }
-            ui::row(ui, pal, a.icon_packs.is_empty(), "Liki", Some("Yggdrasil's own icon pack: app logos from Simple Icons in the shape and colours you pick. An app with no logo gets the default app icon. Make it, then choose it above"), |ui| {
+            ui::group(ui, pal, Some("Icons"), |ui| {
+                for (i, pack) in a.icon_packs.iter().enumerate() {
+                    let current = pack.id == a.icon_theme;
+                    let sub = if pack.user { "Installed by you" } else { "Comes with the system" };
+                    ui::row(ui, pal, i == 0, &pack.name, Some(sub), |ui| {
+                        if current {
+                            ui.label(RichText::new("In use").color(pal.accent));
+                        } else if ui::action(ui, pal, "Use").clicked() {
+                            icon_use = Some(pack.id.clone());
+                        }
+                        if pack.user && !current && ui::quiet(ui, pal, "Remove").clicked() {
+                            icon_remove = Some(pack.id.clone());
+                        }
+                        for p in pack.preview.iter().rev() {
+                            ui.add(egui::Image::new(format!("file://{}", p.display())).fit_to_exact_size(vec2(28.0, 28.0)));
+                        }
+                    });
+                }
+                ui::row(ui, pal, a.icon_packs.is_empty(), "Liki", Some("Yggdrasil's own icon pack: app logos from Simple Icons in the shape and colours you pick. An app with no logo gets the default app icon. Make it, then choose it above"), |ui| {
                 if ui::action(ui, pal, "Make").clicked() {
                     brand_build = true;
                 }
@@ -2180,184 +2434,219 @@ impl App {
                     }
                 });
             });
-            ui::row(ui, pal, false, "Install an icon pack", Some("A folder, an archive (.tar.gz, .tar.xz, .zip), an Android icon pack (.apk) or an https link. It goes in your own icons folder; nothing needs a password. An .apk is only read, never run, and gives icons to the programs installed here"), |ui| {
+                ui::row(ui, pal, false, "Install an icon pack", Some("A folder, an archive (.tar.gz, .tar.xz, .zip), an Android icon pack (.apk) or an https link. It goes in your own icons folder; nothing needs a password. An .apk is only read, never run, and gives icons to the programs installed here"), |ui| {
                 if ui::action(ui, pal, "Install").clicked() && !self.icon_src.trim().is_empty() {
                     icon_install = Some(self.icon_src.trim().to_string());
                 }
                 ui.add(egui::TextEdit::singleline(&mut self.icon_src).hint_text("~/Downloads/pack.tar.gz, pack.apk or https://...").desired_width((ui.available_width() - 10.0).clamp(160.0, 340.0)));
             });
-        });
-        ui::group(ui, pal, Some("Pointer"), |ui| {
-            for (i, c) in a.cursors.iter().enumerate() {
-                let current = c.id == a.cursor;
-                let sub = if c.id == sys::DEFAULT_CURSOR { "Yggdrasil's own" } else if c.user { "Installed by you" } else { "Comes with the system" };
-                ui::row(ui, pal, i == 0, &c.name, Some(sub), |ui| {
-                    if current {
-                        ui.label(RichText::new("In use").color(pal.accent));
-                    } else if ui::action(ui, pal, "Use").clicked() {
-                        cursor_use = Some(c.id.clone());
-                    }
-                });
-            }
-            if a.cursors.len() < 2 {
-                ui.label(RichText::new("Other pointer themes appear here once installed (a folder with a cursors folder in ~/.local/share/icons, or a package).").size(12.5).color(pal.dim));
-            }
-        });
+            });
+            ui::group(ui, pal, Some("Pointer"), |ui| {
+                for (i, c) in a.cursors.iter().enumerate() {
+                    let current = c.id == a.cursor;
+                    let sub = if c.id == sys::DEFAULT_CURSOR {
+                        "Yggdrasil's own"
+                    } else if c.user {
+                        "Installed by you"
+                    } else {
+                        "Comes with the system"
+                    };
+                    ui::row(ui, pal, i == 0, &c.name, Some(sub), |ui| {
+                        if current {
+                            ui.label(RichText::new("In use").color(pal.accent));
+                        } else if ui::action(ui, pal, "Use").clicked() {
+                            cursor_use = Some(c.id.clone());
+                        }
+                    });
+                }
+                if a.cursors.len() < 2 {
+                    ui.label(RichText::new("Other pointer themes appear here once installed (a folder with a cursors folder in ~/.local/share/icons, or a package).").size(12.5).color(pal.dim));
+                }
+            });
         }
         let modes = ["Match theme", "Dark / light"];
         let mode_index = |m: yggdrasil_conf::ColorMode| if m == yggdrasil_conf::ColorMode::Theme { 0 } else { 1 };
         let mode_of = |i: usize| if i == 0 { yggdrasil_conf::ColorMode::Theme } else { yggdrasil_conf::ColorMode::Neutral };
         if self.app_sub == AppSub::Bar {
-        ui::group(ui, pal, Some("Dock"), |ui| {
-            let positions = ["Bottom", "Left", "Right"];
-            let pos_index = match conf.dock_pos {
-                yggdrasil_conf::DockPos::Bottom => 0,
-                yggdrasil_conf::DockPos::Left => 1,
-                yggdrasil_conf::DockPos::Right => 2,
-            };
-            ui::row(ui, pal, true, "Position", Some("Which edge of the screen; left and right are vertical"), |ui| {
-                if let Some(i) = ui::segmented(ui, pal, &positions, pos_index) {
-                    conf.dock_pos = [yggdrasil_conf::DockPos::Bottom, yggdrasil_conf::DockPos::Left, yggdrasil_conf::DockPos::Right][i];
-                    conf_changed = true;
-                }
+            ui::group(ui, pal, Some("Dock"), |ui| {
+                let positions = ["Bottom", "Left", "Right"];
+                let pos_index = match conf.dock_pos {
+                    yggdrasil_conf::DockPos::Bottom => 0,
+                    yggdrasil_conf::DockPos::Left => 1,
+                    yggdrasil_conf::DockPos::Right => 2,
+                };
+                ui::row(ui, pal, true, "Position", Some("Which edge of the screen; left and right are vertical"), |ui| {
+                    if let Some(i) = ui::segmented(ui, pal, &positions, pos_index) {
+                        conf.dock_pos = [yggdrasil_conf::DockPos::Bottom, yggdrasil_conf::DockPos::Left, yggdrasil_conf::DockPos::Right][i];
+                        conf_changed = true;
+                    }
+                });
+                let mut gap = conf.dock_gap as f32;
+                ui::row(
+                    ui,
+                    pal,
+                    false,
+                    "Distance from edge",
+                    Some("How far the dock floats off the screen edge; 0 puts it right on the edge"),
+                    |ui| {
+                        let r = ui::slider_range(ui, pal, &mut gap, 0.0..=yggdrasil_conf::DOCK_GAP_MAX as f32, " px");
+                        if r.drag_stopped() || (r.changed() && !r.dragged()) {
+                            conf.dock_gap = gap as u32;
+                            conf_changed = true;
+                        }
+                    },
+                );
+                let mut size = conf.dock_icon as f32;
+                ui::row(ui, pal, false, "Size", Some("Icon size"), |ui| {
+                    let r = ui::slider_range(
+                        ui,
+                        pal,
+                        &mut size,
+                        yggdrasil_conf::DOCK_ICON_MIN as f32..=yggdrasil_conf::DOCK_ICON_MAX as f32,
+                        " px",
+                    );
+                    if r.drag_stopped() || (r.changed() && !r.dragged()) {
+                        conf.dock_icon = size as u32;
+                        conf_changed = true;
+                    }
+                });
+                let mut opacity = conf.dock_opacity as f32;
+                ui::row(ui, pal, false, "Background", Some("Opacity of the dock's shelf; 0% leaves just the icons"), |ui| {
+                    let r = ui::slider(ui, pal, &mut opacity);
+                    if r.drag_stopped() || (r.changed() && !r.dragged()) {
+                        conf.dock_opacity = opacity as u32;
+                        conf_changed = true;
+                    }
+                });
+                ui::row(ui, pal, false, "Color", Some("Match the theme's purple, or follow only dark and light"), |ui| {
+                    if let Some(i) = ui::segmented(ui, pal, &modes, mode_index(conf.dock_color)) {
+                        conf.dock_color = mode_of(i);
+                        conf_changed = true;
+                    }
+                });
             });
-            let mut gap = conf.dock_gap as f32;
-            ui::row(ui, pal, false, "Distance from edge", Some("How far the dock floats off the screen edge; 0 puts it right on the edge"), |ui| {
-                let r = ui::slider_range(ui, pal, &mut gap, 0.0..=yggdrasil_conf::DOCK_GAP_MAX as f32, " px");
-                if r.drag_stopped() || (r.changed() && !r.dragged()) {
-                    conf.dock_gap = gap as u32;
-                    conf_changed = true;
-                }
-            });
-            let mut size = conf.dock_icon as f32;
-            ui::row(ui, pal, false, "Size", Some("Icon size"), |ui| {
-                let r = ui::slider_range(ui, pal, &mut size, yggdrasil_conf::DOCK_ICON_MIN as f32..=yggdrasil_conf::DOCK_ICON_MAX as f32, " px");
-                if r.drag_stopped() || (r.changed() && !r.dragged()) {
-                    conf.dock_icon = size as u32;
-                    conf_changed = true;
-                }
-            });
-            let mut opacity = conf.dock_opacity as f32;
-            ui::row(ui, pal, false, "Background", Some("Opacity of the dock's shelf; 0% leaves just the icons"), |ui| {
-                let r = ui::slider(ui, pal, &mut opacity);
-                if r.drag_stopped() || (r.changed() && !r.dragged()) {
-                    conf.dock_opacity = opacity as u32;
-                    conf_changed = true;
-                }
-            });
-            ui::row(ui, pal, false, "Color", Some("Match the theme's purple, or follow only dark and light"), |ui| {
-                if let Some(i) = ui::segmented(ui, pal, &modes, mode_index(conf.dock_color)) {
-                    conf.dock_color = mode_of(i);
-                    conf_changed = true;
-                }
-            });
-        });
         }
         if self.app_sub == AppSub::Bar {
-        ui::group(ui, pal, Some("Top bar"), |ui| {
-            let mut opacity = conf.bar_opacity as f32;
-            ui::row(ui, pal, true, "Background", Some("Opacity of the bar; 0% leaves just its text"), |ui| {
-                let r = ui::slider(ui, pal, &mut opacity);
-                if r.drag_stopped() || (r.changed() && !r.dragged()) {
-                    conf.bar_opacity = opacity as u32;
-                    conf_changed = true;
-                }
+            ui::group(ui, pal, Some("Top bar"), |ui| {
+                let mut opacity = conf.bar_opacity as f32;
+                ui::row(ui, pal, true, "Background", Some("Opacity of the bar; 0% leaves just its text"), |ui| {
+                    let r = ui::slider(ui, pal, &mut opacity);
+                    if r.drag_stopped() || (r.changed() && !r.dragged()) {
+                        conf.bar_opacity = opacity as u32;
+                        conf_changed = true;
+                    }
+                });
+                ui::row(ui, pal, false, "Color", Some("Match the theme's purple, or follow only dark and light"), |ui| {
+                    if let Some(i) = ui::segmented(ui, pal, &modes, mode_index(conf.bar_color)) {
+                        conf.bar_color = mode_of(i);
+                        conf_changed = true;
+                    }
+                });
             });
-            ui::row(ui, pal, false, "Color", Some("Match the theme's purple, or follow only dark and light"), |ui| {
-                if let Some(i) = ui::segmented(ui, pal, &modes, mode_index(conf.bar_color)) {
-                    conf.bar_color = mode_of(i);
-                    conf_changed = true;
-                }
-            });
-        });
         }
         if self.app_sub == AppSub::Bar {
-        ui::group(ui, pal, Some("Start menu"), |ui| {
-            let themes = ["Windows", "Folders"];
-            let current = if conf.start_theme == yggdrasil_conf::StartTheme::Folders { 1 } else { 0 };
-            ui::row(ui, pal, true, "Theme", Some("Windows: pinned apps and every app in a list. Folders: narrow, apps in folders by kind, and a power button"), |ui| {
-                if let Some(i) = ui::segmented(ui, pal, &themes, current) {
-                    conf.start_theme = if i == 1 { yggdrasil_conf::StartTheme::Folders } else { yggdrasil_conf::StartTheme::Windows };
-                    conf_changed = true;
-                }
+            ui::group(ui, pal, Some("Start menu"), |ui| {
+                let themes = ["Windows", "Folders"];
+                let current = if conf.start_theme == yggdrasil_conf::StartTheme::Folders { 1 } else { 0 };
+                ui::row(
+                    ui,
+                    pal,
+                    true,
+                    "Theme",
+                    Some("Windows: pinned apps and every app in a list. Folders: narrow, apps in folders by kind, and a power button"),
+                    |ui| {
+                        if let Some(i) = ui::segmented(ui, pal, &themes, current) {
+                            conf.start_theme =
+                                if i == 1 { yggdrasil_conf::StartTheme::Folders } else { yggdrasil_conf::StartTheme::Windows };
+                            conf_changed = true;
+                        }
+                    },
+                );
             });
-        });
         }
         if self.app_sub == AppSub::Main {
-        ui::group(ui, pal, Some("Accessibility"), |ui| {
-            let sizes = ["100%", "125%", "150%", "200%"];
-            let cur = match conf.text_scale { 0..=112 => 0, 113..=137 => 1, 138..=174 => 2, _ => 3 };
-            ui::row(ui, pal, true, "Text and control size", Some("Makes everything in the desktop's own apps (Settings, Minos, the admin password box, Calculator) larger. The top bar, dock and start menu follow the screen scale in Displays for now"), |ui| {
+            ui::group(ui, pal, Some("Accessibility"), |ui| {
+                let sizes = ["100%", "125%", "150%", "200%"];
+                let cur = match conf.text_scale {
+                    0..=112 => 0,
+                    113..=137 => 1,
+                    138..=174 => 2,
+                    _ => 3,
+                };
+                ui::row(ui, pal, true, "Text and control size", Some("Makes everything in the desktop's own apps (Settings, Minos, the admin password box, Calculator) larger. The top bar, dock and start menu follow the screen scale in Displays for now"), |ui| {
                 if let Some(i) = ui::segmented(ui, pal, &sizes, cur) {
                     conf.text_scale = [100, 125, 150, 200][i];
                     conf_changed = true;
                 }
             });
-            ui::row(ui, pal, false, "Reduce motion", Some("No fades or slides in the desktop's own apps"), |ui| {
-                if ui::switch(ui, pal, &mut conf.reduce_motion).changed() {
-                    conf_changed = true;
-                }
+                ui::row(ui, pal, false, "Reduce motion", Some("No fades or slides in the desktop's own apps"), |ui| {
+                    if ui::switch(ui, pal, &mut conf.reduce_motion).changed() {
+                        conf_changed = true;
+                    }
+                });
             });
-        });
         }
         if self.app_sub == AppSub::Bar {
-        ui::group(ui, pal, Some("Clipboard"), |ui| {
-            ui::row(ui, pal, true, "Clipboard history", Some("Keeps what you copy (texts, and a few pictures) in memory only, to copy again from the Clipboard window (Super+V). It is forgotten when you log out or turn this off, and password managers are skipped. Snippets in that window are kept either way"), |ui| {
+            ui::group(ui, pal, Some("Clipboard"), |ui| {
+                ui::row(ui, pal, true, "Clipboard history", Some("Keeps what you copy (texts, and a few pictures) in memory only, to copy again from the Clipboard window (Super+V). It is forgotten when you log out or turn this off, and password managers are skipped. Snippets in that window are kept either way"), |ui| {
                 if ui::switch(ui, pal, &mut conf.clipboard_history).changed() {
                     conf_changed = true;
                 }
             });
-        });
+            });
         }
         if self.app_sub == AppSub::Notifs {
-        ui::group(ui, pal, Some("Notifications"), |ui| {
-            ui::row(ui, pal, true, "Pop-ups", Some("A new notification slides in at the bottom right for a few seconds. They are all kept in the Notification Center either way"), |ui| {
+            ui::group(ui, pal, Some("Notifications"), |ui| {
+                ui::row(ui, pal, true, "Pop-ups", Some("A new notification slides in at the bottom right for a few seconds. They are all kept in the Notification Center either way"), |ui| {
                 if ui::switch(ui, pal, &mut conf.notify_toasts).changed() {
                     conf_changed = true;
                 }
             });
-            ui::row(ui, pal, false, "Do not disturb", Some("No pop-ups (critical alerts still show). Also a button at the bottom of the notification list. Everything is still kept"), |ui| {
+                ui::row(ui, pal, false, "Do not disturb", Some("No pop-ups (critical alerts still show). Also a button at the bottom of the notification list. Everything is still kept"), |ui| {
                 if ui::switch(ui, pal, &mut conf.notify_dnd).changed() {
                     conf_changed = true;
                 }
             });
-            ui::row(ui, pal, false, "Notification Center pane", Some("Off: notifications are in Fylgja's Notifications section. On: a pane down the right edge, opened with the calendar (click the date)"), |ui| {
+                ui::row(ui, pal, false, "Notification Center pane", Some("Off: notifications are in Fylgja's Notifications section. On: a pane down the right edge, opened with the calendar (click the date)"), |ui| {
                 if ui::switch(ui, pal, &mut conf.notify_pane).changed() {
                     conf_changed = true;
                 }
             });
-            let levels = ["Off", "Critical", "Warnings", "Everything"];
-            let cur = match conf.security_alerts {
-                yggdrasil_conf::AlertLevel::Off => 0,
-                yggdrasil_conf::AlertLevel::Critical => 1,
-                yggdrasil_conf::AlertLevel::Warning => 2,
-                yggdrasil_conf::AlertLevel::Info => 3,
-            };
-            if let Some(monitor) = yggdrasil_conf::integrations::security().map(security::monitor_name) {
-                ui::row(ui, pal, false, &format!("{monitor} alerts"), Some(&format!("Which of {monitor}'s security alerts show up as notifications. Everything includes each new place a program connects to")), |ui| {
+                let levels = ["Off", "Critical", "Warnings", "Everything"];
+                let cur = match conf.security_alerts {
+                    yggdrasil_conf::AlertLevel::Off => 0,
+                    yggdrasil_conf::AlertLevel::Critical => 1,
+                    yggdrasil_conf::AlertLevel::Warning => 2,
+                    yggdrasil_conf::AlertLevel::Info => 3,
+                };
+                if let Some(monitor) = yggdrasil_conf::integrations::security().map(security::monitor_name) {
+                    ui::row(ui, pal, false, &format!("{monitor} alerts"), Some(&format!("Which of {monitor}'s security alerts show up as notifications. Everything includes each new place a program connects to")), |ui| {
                     if let Some(i) = ui::segmented(ui, pal, &levels, cur) {
                         conf.security_alerts = [yggdrasil_conf::AlertLevel::Off, yggdrasil_conf::AlertLevel::Critical, yggdrasil_conf::AlertLevel::Warning, yggdrasil_conf::AlertLevel::Info][i];
                         conf_changed = true;
                     }
                 });
-            }
-        });
-        notify_rules(ui, pal);
-        }
-        if self.app_sub == AppSub::Wallpaper {
-        ui::group(ui, pal, Some("Wallpaper"), |ui| {
-            ui.add_space(6.0);
-            ui.horizontal_wrapped(|ui| {
-                for p in &a.wallpapers {
-                    let uri = format!("file://{}", p.display());
-                    let img = egui::Image::new(uri).fit_to_exact_size(vec2(160.0, 90.0)).corner_radius(CornerRadius::same(8)).sense(Sense::click());
-                    if ui.add(img).on_hover_text(p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()).clicked() {
-                        wallpaper = Some(p.display().to_string());
-                    }
                 }
             });
-            ui.add_space(6.0);
-        });
+            notify_rules(ui, pal);
+        }
+        if self.app_sub == AppSub::Wallpaper {
+            ui::group(ui, pal, Some("Wallpaper"), |ui| {
+                ui.add_space(6.0);
+                ui.horizontal_wrapped(|ui| {
+                    for p in &a.wallpapers {
+                        let uri = format!("file://{}", p.display());
+                        let img = egui::Image::new(uri)
+                            .fit_to_exact_size(vec2(160.0, 90.0))
+                            .corner_radius(CornerRadius::same(8))
+                            .sense(Sense::click());
+                        if ui.add(img).on_hover_text(p.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()).clicked() {
+                            wallpaper = Some(p.display().to_string());
+                        }
+                    }
+                });
+                ui.add_space(6.0);
+            });
         }
         if minos_live {
             // saved at once (a tiny file), so the slider and the sample follow the drag and Minos follows within a second
@@ -2437,7 +2726,9 @@ impl App {
                     self.power_cpu = false;
                 }
                 ui.label(RichText::new(if kind == readout::Kind::Gpu { "Graphics card" } else { "Processor" }).size(18.0).strong());
-                if ui::icon_button(ui, pal, Icon::PopOut, "Open in its own window (it stays open after Settings is closed)", true, false).clicked() {
+                if ui::icon_button(ui, pal, Icon::PopOut, "Open in its own window (it stays open after Settings is closed)", true, false)
+                    .clicked()
+                {
                     readout::pop_out(kind);
                 }
             });
@@ -2458,7 +2749,12 @@ impl App {
         let mut open_cpu = false;
         if !p.profiles.is_empty() {
             ui::group(ui, pal, Some("Power mode"), |ui| {
-                let name = |x: &str| match x { "performance" => "Performance".to_string(), "balanced" => "Balanced".into(), "power-saver" => "Power saver".into(), o => o.to_string() };
+                let name = |x: &str| match x {
+                    "performance" => "Performance".to_string(),
+                    "balanced" => "Balanced".into(),
+                    "power-saver" => "Power saver".into(),
+                    o => o.to_string(),
+                };
                 let labels: Vec<String> = p.profiles.iter().map(|x| name(x)).collect();
                 let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
                 let sel = p.profiles.iter().position(|x| *x == p.profile).unwrap_or(0);
@@ -2474,20 +2770,29 @@ impl App {
                 let mut c = cpu.unwrap_or(100) as f32;
                 // the row fills from the right: the slider first, so both sliders line up and the reset button sits to their left
                 // the titles open the Processor and Graphics card pages (readout, limits, tuning; and their pop-out windows)
-                open_cpu = ui::link_row(ui, pal, false, "Processor", Some(&format!("The most it may clock {in_mode}, as a share of its top speed")), |ui| {
-                    let r = ui::slider_range(ui, pal, &mut c, 20.0..=100.0, " %");
-                    if r.drag_stopped() || (r.changed() && !r.dragged()) {
-                        limit = Some((mode.clone(), "cpu", if c as i64 >= 100 { None } else { Some(c as i64) }));
-                    }
-                    if cpu.is_some() && ui::icon_button(ui, pal, Icon::Restart, "Back to the default", true, false).clicked() {
-                        limit = Some((mode.clone(), "cpu", None));
-                    }
-                });
+                open_cpu = ui::link_row(
+                    ui,
+                    pal,
+                    false,
+                    "Processor",
+                    Some(&format!("The most it may clock {in_mode}, as a share of its top speed")),
+                    |ui| {
+                        let r = ui::slider_range(ui, pal, &mut c, 20.0..=100.0, " %");
+                        if r.drag_stopped() || (r.changed() && !r.dragged()) {
+                            limit = Some((mode.clone(), "cpu", if c as i64 >= 100 { None } else { Some(c as i64) }));
+                        }
+                        if cpu.is_some() && ui::icon_button(ui, pal, Icon::Restart, "Back to the default", true, false).clicked() {
+                            limit = Some((mode.clone(), "cpu", None));
+                        }
+                    },
+                );
                 let Some(g) = &l.gpu else { return };
                 let top = g.hold.unwrap_or(g.max).max(g.min);
                 let mut w = gpu.unwrap_or(g.default).min(top) as f32;
                 let sub = match (g.hold, gpu) {
-                    (Some(h), Some(mine)) if mine > h => format!("{}: held at {h} W while the unlock is tried; your {mine} W comes back after", g.name),
+                    (Some(h), Some(mine)) if mine > h => {
+                        format!("{}: held at {h} W while the unlock is tried; your {mine} W comes back after", g.name)
+                    }
                     (Some(h), _) => format!("{}: at most {h} W while the unlock is tried", g.name),
                     _ => format!("{}: the most power it may draw {in_mode} ({}-{} W, default {} W)", g.name, g.min, g.max, g.default),
                 };
@@ -2523,27 +2828,59 @@ impl App {
                     });
                 }
                 if g.hold.is_some() && !p.unlock.as_ref().is_some_and(|u| u.state == "armed") {
-                    ui::row(ui, pal, false, "Power hold", Some(&format!("Every mode stays at or below {} W since the unlock was tried. End it when the measurements are done.", g.hold.unwrap_or(g.default))), |ui| {
-                        if ui::quiet(ui, pal, "End the hold…").clicked() {
-                            unlock = Some("release");
-                        }
-                    });
+                    ui::row(
+                        ui,
+                        pal,
+                        false,
+                        "Power hold",
+                        Some(&format!(
+                            "Every mode stays at or below {} W since the unlock was tried. End it when the measurements are done.",
+                            g.hold.unwrap_or(g.default)
+                        )),
+                        |ui| {
+                            if ui::quiet(ui, pal, "End the hold…").clicked() {
+                                unlock = Some("release");
+                            }
+                        },
+                    );
                 }
             });
             if p.limits.is_some() {
-                ui.label(RichText::new("These limits only hold things back; nothing here overclocks. Changing one asks for your password.").size(11.5).color(pal.dim));
+                ui.label(
+                    RichText::new("These limits only hold things back; nothing here overclocks. Changing one asks for your password.")
+                        .size(11.5)
+                        .color(pal.dim),
+                );
             }
         }
         if fans::installed() {
             let mut open = false;
             ui::group(ui, pal, None, |ui| {
-                open = ui::link_row(ui, pal, true, "Cooling", Some("The case fans and pumps, from the processor's and the graphics card's temperatures"), |_| {});
+                open = ui::link_row(
+                    ui,
+                    pal,
+                    true,
+                    "Cooling",
+                    Some("The case fans and pumps, from the processor's and the graphics card's temperatures"),
+                    |_| {},
+                );
             });
             if open {
                 self.power_fans = true;
             }
         }
-        let choices: [(i64, &str); 10] = [(0, "Never"), (1, "1 minute"), (2, "2 minutes"), (5, "5 minutes"), (10, "10 minutes"), (15, "15 minutes"), (30, "30 minutes"), (60, "1 hour"), (120, "2 hours"), (240, "4 hours")];
+        let choices: [(i64, &str); 10] = [
+            (0, "Never"),
+            (1, "1 minute"),
+            (2, "2 minutes"),
+            (5, "5 minutes"),
+            (10, "10 minutes"),
+            (15, "15 minutes"),
+            (30, "30 minutes"),
+            (60, "1 hour"),
+            (120, "2 hours"),
+            (240, "4 hours"),
+        ];
         let label = |m: i64| choices.iter().find(|c| c.0 == m).map(|c| c.1.to_string()).unwrap_or(format!("{m} minutes"));
         let mut idle = p.idle.clone();
         let mut idle_changed = false;
@@ -2558,26 +2895,30 @@ impl App {
                 ("hib", "Hibernate after", p.idle.hibernate, p.idle.can_hibernate),
             ];
             for (n, (key, title, cur, ok)) in rows.into_iter().enumerate() {
-                let note = if p.idle.sleep_note.is_empty() { "Not available on this computer".to_string() } else { p.idle.sleep_note.clone() };
+                let note =
+                    if p.idle.sleep_note.is_empty() { "Not available on this computer".to_string() } else { p.idle.sleep_note.clone() };
                 let sub = if ok { None } else { Some(note.as_str()) };
                 ui::row(ui, pal, n == 0, title, sub, |ui| {
                     ui.add_enabled_ui(ok, |ui| {
-                        egui::ComboBox::from_id_salt(key).selected_text(if ok { label(cur) } else { "Not available".to_string() }).show_ui(ui, |ui| {
-                            for (m, l) in choices {
-                                if ui.selectable_label(m == cur, l).clicked() {
-                                    match key {
-                                        "saver" => idle.screensaver = m,
-                                        "dim" => idle.dim = m,
-                                        "black" => idle.blank = m,
-                                        "off" => idle.screen_off = m,
-                                        "lock" => idle.lock = m,
-                                        "sleep" => idle.sleep = m,
-                                        _ => idle.hibernate = m,
+                        egui::ComboBox::from_id_salt(key).selected_text(if ok { label(cur) } else { "Not available".to_string() }).show_ui(
+                            ui,
+                            |ui| {
+                                for (m, l) in choices {
+                                    if ui.selectable_label(m == cur, l).clicked() {
+                                        match key {
+                                            "saver" => idle.screensaver = m,
+                                            "dim" => idle.dim = m,
+                                            "black" => idle.blank = m,
+                                            "off" => idle.screen_off = m,
+                                            "lock" => idle.lock = m,
+                                            "sleep" => idle.sleep = m,
+                                            _ => idle.hibernate = m,
+                                        }
+                                        idle_changed = true;
                                     }
-                                    idle_changed = true;
                                 }
-                            }
-                        });
+                            },
+                        );
                     });
                 });
             }
@@ -2669,23 +3010,53 @@ impl App {
         let day = |a: &&security::Alert| now - a.time < 86400;
         let count = |sev: &str| o.alerts.iter().filter(day).filter(|a| a.severity == sev).count();
         ui::group(ui, pal, Some(&o.name), |ui| {
-            let (title, sub) = if o.running { ("Watching".to_string(), format!("Last 24 hours: {} critical, {} warnings, {} notes", count("critical"), count("warning"), count("info"))) } else { ("Not running".to_string(), format!("{} does not answer on this computer", o.name)) };
+            let (title, sub) = if o.running {
+                (
+                    "Watching".to_string(),
+                    format!("Last 24 hours: {} critical, {} warnings, {} notes", count("critical"), count("warning"), count("info")),
+                )
+            } else {
+                ("Not running".to_string(), format!("{} does not answer on this computer", o.name))
+            };
             ui::row(ui, pal, true, &title, Some(&sub), |ui| {
                 let (rect, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
-                ui.painter().circle_filled(rect.center(), 6.0, if !o.running || count("critical") > 0 { pal.red } else if count("warning") > 0 { pal.amber } else { pal.green });
+                ui.painter().circle_filled(
+                    rect.center(),
+                    6.0,
+                    if !o.running || count("critical") > 0 {
+                        pal.red
+                    } else if count("warning") > 0 {
+                        pal.amber
+                    } else {
+                        pal.green
+                    },
+                );
             });
         });
         let mut release = false;
         if let Some(why) = &o.contained {
             ui.add_space(8.0);
             ui::group(ui, pal, Some("The assistant is contained"), |ui| {
-                ui::row(ui, pal, true, "Stopped and locked out", Some(&format!("{why}. It stays stopped, also after a restart, until you release it")), |ui| {
-                    if o.has_release && ui::quiet(ui, pal, "Restore and release…").clicked() {
-                        release = true;
-                    }
-                });
+                ui::row(
+                    ui,
+                    pal,
+                    true,
+                    "Stopped and locked out",
+                    Some(&format!("{why}. It stays stopped, also after a restart, until you release it")),
+                    |ui| {
+                        if o.has_release && ui::quiet(ui, pal, "Restore and release…").clicked() {
+                            release = true;
+                        }
+                    },
+                );
             });
-            ui.label(RichText::new("Releasing first puts back the approved versions of its files, then lets it start again. It asks for your password.").size(11.5).color(pal.dim));
+            ui.label(
+                RichText::new(
+                    "Releasing first puts back the approved versions of its files, then lets it start again. It asks for your password.",
+                )
+                .size(11.5)
+                .color(pal.dim),
+            );
         }
         if release {
             self.change(ctx, security::release);
@@ -2697,14 +3068,21 @@ impl App {
                 for h in &o.held {
                     let name = h.original.rsplit('/').next().unwrap_or(&h.original).to_string();
                     let before = if h.seen_before { "it was on this computer before" } else { "never seen before it was held" };
-                    ui::row(ui, pal, false, &name, Some(&format!("{} · {} · {} · {}", h.reason, before, security::ago(h.held_at, now), h.original)), |ui| {
-                        if ui::quiet(ui, pal, "It's malware").clicked() {
-                            held_act = Some((true, h.id.clone()));
-                        }
-                        if ui::quiet(ui, pal, "Release").clicked() {
-                            held_act = Some((false, h.id.clone()));
-                        }
-                    });
+                    ui::row(
+                        ui,
+                        pal,
+                        false,
+                        &name,
+                        Some(&format!("{} · {} · {} · {}", h.reason, before, security::ago(h.held_at, now), h.original)),
+                        |ui| {
+                            if ui::quiet(ui, pal, "It's malware").clicked() {
+                                held_act = Some((true, h.id.clone()));
+                            }
+                            if ui::quiet(ui, pal, "Release").clicked() {
+                                held_act = Some((false, h.id.clone()));
+                            }
+                        },
+                    );
                 }
             });
             ui.label(RichText::new("Release puts the file back exactly as it was. It's malware keeps it held and teaches it to the scans, so every copy is caught. Both ask for your password; Sarina's daily review says what she thinks of each file.").size(11.5).color(pal.dim));
@@ -2752,7 +3130,9 @@ impl App {
                 }
                 if let (true, Some([what, serious, done, todo])) = (open, a.explain.as_ref()) {
                     egui::Frame::new().inner_margin(egui::Margin { left: 14, right: 14, top: 2, bottom: 10 }).show(ui, |ui| {
-                        for (label, body) in [("What happened", what), ("How serious", serious), ("What was done", done), ("What to do", todo)] {
+                        for (label, body) in
+                            [("What happened", what), ("How serious", serious), ("What was done", done), ("What to do", todo)]
+                        {
                             ui.label(egui::RichText::new(label).strong().size(12.5).color(pal.text));
                             ui.add(egui::Label::new(egui::RichText::new(body).size(12.5).color(pal.dim)).wrap());
                             ui.add_space(4.0);
@@ -2762,7 +3142,8 @@ impl App {
             }
         });
         ui.add_space(8.0);
-        let conns: Vec<&security::Alert> = o.alerts.iter().filter(|a| a.detector == "connection-watch" && !a.process.is_empty()).take(12).collect();
+        let conns: Vec<&security::Alert> =
+            o.alerts.iter().filter(|a| a.detector == "connection-watch" && !a.process.is_empty()).take(12).collect();
         ui::group(ui, pal, Some("Who connected where (new destinations)"), |ui| {
             if conns.is_empty() {
                 ui::row(ui, pal, true, "Nothing new", Some("Each program is listed the first time it talks to an address"), |_| {});
@@ -2780,49 +3161,56 @@ impl App {
         let mut restore_id: Option<String> = None;
         let mut delete_id: Option<String> = None;
         if o.has_quarantine {
-        ui.add_space(8.0);
-        ui::group(ui, pal, Some("Quarantine"), |ui| {
-            if o.quarantine.is_empty() {
-                ui::row(ui, pal, true, "Nothing in quarantine", None, |_| {});
-            }
-            for q in &o.quarantine {
-                let name = q.original.rsplit('/').next().unwrap_or(&q.original).to_string();
-                ui::row(ui, pal, false, &name, Some(&format!("{} · {} · from {}", q.signature, q.when, q.original)), |ui| {
-                    if ui::quiet(ui, pal, "Delete").clicked() {
-                        delete_id = Some(q.id.clone());
-                    }
-                    if ui::quiet(ui, pal, "Restore").clicked() {
-                        restore_id = Some(q.id.clone());
-                    }
-                });
-            }
-        });
-        }
-        if o.has_scan {
-        ui.add_space(8.0);
-        ui::group(ui, pal, Some("Malware scan"), |ui| {
-            let sub = match (o.clamav, o.signatures) {
-                (false, _) => "ClamAV is not installed (sudo pacman -S clamav)".to_string(),
-                (true, Some(t)) => format!("ClamAV, signatures from {}", security::ago(t, now)),
-                (true, None) => "ClamAV is installed; signatures are not downloaded yet (sudo freshclam)".to_string(),
-            };
-            ui::row(ui, pal, true, "Scan the Downloads folder", Some(&sub), |ui| {
-                if ui.add_enabled(o.clamav && !self.scan_busy, egui::Button::new(if self.scan_busy { "Scanning…" } else { "Scan now" })).clicked() {
-                    scan = Some(format!("{}/Downloads", std::env::var("HOME").unwrap_or_default()));
+            ui.add_space(8.0);
+            ui::group(ui, pal, Some("Quarantine"), |ui| {
+                if o.quarantine.is_empty() {
+                    ui::row(ui, pal, true, "Nothing in quarantine", None, |_| {});
+                }
+                for q in &o.quarantine {
+                    let name = q.original.rsplit('/').next().unwrap_or(&q.original).to_string();
+                    ui::row(ui, pal, false, &name, Some(&format!("{} · {} · from {}", q.signature, q.when, q.original)), |ui| {
+                        if ui::quiet(ui, pal, "Delete").clicked() {
+                            delete_id = Some(q.id.clone());
+                        }
+                        if ui::quiet(ui, pal, "Restore").clicked() {
+                            restore_id = Some(q.id.clone());
+                        }
+                    });
                 }
             });
-            if let Some(r) = &self.scan_report {
-                if !r.error.is_empty() {
-                    ui::row(ui, pal, false, "The scan did not run", Some(&r.error), |_| {});
-                } else {
-                    let title = if r.infected.is_empty() { "No malware found".to_string() } else { format!("{} infected file(s)", r.infected.len()) };
-                    ui::row(ui, pal, false, &title, Some(&r.summary), |_| {});
-                    for f in &r.infected {
-                        ui::row(ui, pal, false, f, Some("Nothing was moved or deleted: decide what to do with it"), |_| {});
+        }
+        if o.has_scan {
+            ui.add_space(8.0);
+            ui::group(ui, pal, Some("Malware scan"), |ui| {
+                let sub = match (o.clamav, o.signatures) {
+                    (false, _) => "ClamAV is not installed (sudo pacman -S clamav)".to_string(),
+                    (true, Some(t)) => format!("ClamAV, signatures from {}", security::ago(t, now)),
+                    (true, None) => "ClamAV is installed; signatures are not downloaded yet (sudo freshclam)".to_string(),
+                };
+                ui::row(ui, pal, true, "Scan the Downloads folder", Some(&sub), |ui| {
+                    if ui
+                        .add_enabled(o.clamav && !self.scan_busy, egui::Button::new(if self.scan_busy { "Scanning…" } else { "Scan now" }))
+                        .clicked()
+                    {
+                        scan = Some(format!("{}/Downloads", std::env::var("HOME").unwrap_or_default()));
+                    }
+                });
+                if let Some(r) = &self.scan_report {
+                    if !r.error.is_empty() {
+                        ui::row(ui, pal, false, "The scan did not run", Some(&r.error), |_| {});
+                    } else {
+                        let title = if r.infected.is_empty() {
+                            "No malware found".to_string()
+                        } else {
+                            format!("{} infected file(s)", r.infected.len())
+                        };
+                        ui::row(ui, pal, false, &title, Some(&r.summary), |_| {});
+                        for f in &r.infected {
+                            ui::row(ui, pal, false, f, Some("Nothing was moved or deleted: decide what to do with it"), |_| {});
+                        }
                     }
                 }
-            }
-        });
+            });
         }
         if let Some(id) = restore_id {
             self.change(ctx, move || security::quarantine_restore(&id));
@@ -2878,38 +3266,73 @@ impl App {
         let recent = |sev: &str| o.alerts.iter().filter(|a| now - a.time < 86400 && a.severity == sev).count();
         let mut open: Option<SecSub> = None;
         if !o.name.is_empty() {
-        ui::group(ui, pal, None, |ui| {
-            let sub = if o.running { format!("Watching · last 24 hours: {} critical, {} warnings", recent("critical"), recent("warning")) } else { "Not running".to_string() };
-            if ui::nav_row(ui, pal, true, &o.name, Some(&sub), |ui| {
-                let (rect, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
-                ui.painter().circle_filled(rect.center(), 6.0, if !o.running || recent("critical") > 0 { pal.red } else if recent("warning") > 0 { pal.amber } else { pal.green });
-            }) {
-                open = Some(SecSub::Monitor);
-            }
-        });
-        ui.add_space(8.0);
+            ui::group(ui, pal, None, |ui| {
+                let sub = if o.running {
+                    format!("Watching · last 24 hours: {} critical, {} warnings", recent("critical"), recent("warning"))
+                } else {
+                    "Not running".to_string()
+                };
+                if ui::nav_row(ui, pal, true, &o.name, Some(&sub), |ui| {
+                    let (rect, _) = ui.allocate_exact_size(vec2(14.0, 14.0), Sense::hover());
+                    ui.painter().circle_filled(
+                        rect.center(),
+                        6.0,
+                        if !o.running || recent("critical") > 0 {
+                            pal.red
+                        } else if recent("warning") > 0 {
+                            pal.amber
+                        } else {
+                            pal.green
+                        },
+                    );
+                }) {
+                    open = Some(SecSub::Monitor);
+                }
+            });
+            ui.add_space(8.0);
         }
         ui::group(ui, pal, Some("Password log"), |ui| {
-            if ui::nav_row(ui, pal, true, "Login history", Some("Who signed in, and every failed attempt at the lock screen, login or administrator question"), |_| {}) {
-                    open = Some(SecSub::Logins);
+            if ui::nav_row(
+                ui,
+                pal,
+                true,
+                "Login history",
+                Some("Who signed in, and every failed attempt at the lock screen, login or administrator question"),
+                |_| {},
+            ) {
+                open = Some(SecSub::Logins);
             }
             if ui::nav_row(ui, pal, false, "Sudo history", Some("What sudo was used for, by whom, and failed attempts"), |_| {}) {
-                    open = Some(SecSub::Sudo);
+                open = Some(SecSub::Sudo);
             }
         });
         ui.add_space(8.0);
         // the distress password: only where the security integration names its helper and the helper is installed
         if distress::helper().is_some() {
-        ui::group(ui, pal, Some("Protection"), |ui| {
-            if ui::nav_row(ui, pal, true, "Distress password", Some("A second password that quietly does something else when it is typed. Needs your password to open"), |_| {}) {
-                open = Some(SecSub::Distress);
-            }
-        });
+            ui::group(ui, pal, Some("Protection"), |ui| {
+                if ui::nav_row(
+                    ui,
+                    pal,
+                    true,
+                    "Distress password",
+                    Some("A second password that quietly does something else when it is typed. Needs your password to open"),
+                    |_| {},
+                ) {
+                    open = Some(SecSub::Distress);
+                }
+            });
         }
         if limbo_ui::installed() {
             ui.add_space(8.0);
             ui::group(ui, pal, Some("Sandboxes"), |ui| {
-                if ui::nav_row(ui, pal, true, "Limbo", Some("Disposable guests for testing updates and looking at suspicious files: their space, and who may start them"), |_| {}) {
+                if ui::nav_row(
+                    ui,
+                    pal,
+                    true,
+                    "Limbo",
+                    Some("Disposable guests for testing updates and looking at suspicious files: their space, and who may start them"),
+                    |_| {},
+                ) {
                     open = Some(SecSub::Limbo);
                 }
             });
@@ -2983,7 +3406,16 @@ impl App {
         let mut todo: Option<Do> = None;
         if st.printers.is_empty() {
             ui::group(ui, pal, None, |ui| {
-                ui::row(ui, pal, true, "No printers yet", Some("Printers on your network appear below. A USB printer appears here or below once it is plugged in and switched on"), |_| {});
+                ui::row(
+                    ui,
+                    pal,
+                    true,
+                    "No printers yet",
+                    Some(
+                        "Printers on your network appear below. A USB printer appears here or below once it is plugged in and switched on",
+                    ),
+                    |_| {},
+                );
             });
         }
         for p in &st.printers {
@@ -2994,7 +3426,11 @@ impl App {
                     "stopped" => "Stopped",
                     _ => "Ready",
                 };
-                let sub = if p.message.is_empty() { format!("{state}{}", if p.default { " · default printer" } else { "" }) } else { format!("{state} · {}", p.message) };
+                let sub = if p.message.is_empty() {
+                    format!("{state}{}", if p.default { " · default printer" } else { "" })
+                } else {
+                    format!("{state} · {}", p.message)
+                };
                 ui::row(ui, pal, true, state, Some(&sub), |ui| {
                     if ui::quiet(ui, pal, "Remove…").clicked() {
                         todo = Some(Do::Remove(p.name.clone()));
@@ -3014,22 +3450,43 @@ impl App {
                             ui.painter().rect_filled(rect, CornerRadius::same(5), pal.hover);
                             let mut fill = rect;
                             fill.set_width(rect.width() * l as f32 / 100.0);
-                            let c = u32::from_str_radix(m.color.trim_start_matches('#'), 16).ok().filter(|_| m.color.len() == 7).map(|v| egui::Color32::from_rgb((v >> 16) as u8, (v >> 8) as u8, v as u8)).unwrap_or(pal.accent);
+                            let c = u32::from_str_radix(m.color.trim_start_matches('#'), 16)
+                                .ok()
+                                .filter(|_| m.color.len() == 7)
+                                .map(|v| egui::Color32::from_rgb((v >> 16) as u8, (v >> 8) as u8, v as u8))
+                                .unwrap_or(pal.accent);
                             let c = if c == egui::Color32::BLACK { pal.text } else { c };
                             ui.painter().rect_filled(fill, CornerRadius::same(5), if l <= 10 { pal.red } else { c });
                         }
                     });
                 }
                 // the everyday settings first; the rest are in CUPS's own pages (localhost:631)
-                for o in p.options.iter().filter(|o| matches!(o.key.as_str(), "PageSize" | "Duplex" | "sides" | "print-quality" | "ColorModel" | "print-color-mode" | "MediaType" | "InputSlot" | "cupsPrintQuality" | "Resolution")) {
+                for o in p.options.iter().filter(|o| {
+                    matches!(
+                        o.key.as_str(),
+                        "PageSize"
+                            | "Duplex"
+                            | "sides"
+                            | "print-quality"
+                            | "ColorModel"
+                            | "print-color-mode"
+                            | "MediaType"
+                            | "InputSlot"
+                            | "cupsPrintQuality"
+                            | "Resolution"
+                    )
+                }) {
                     ui::row(ui, pal, false, &o.label, None, |ui| {
-                        egui::ComboBox::from_id_salt(("printer-opt", &p.name, &o.key)).selected_text(o.current.clone()).width(180.0).show_ui(ui, |ui| {
-                            for v in &o.values {
-                                if ui.selectable_label(*v == o.current, v).clicked() && *v != o.current {
-                                    todo = Some(Do::Opt(p.name.clone(), o.key.clone(), v.clone()));
+                        egui::ComboBox::from_id_salt(("printer-opt", &p.name, &o.key))
+                            .selected_text(o.current.clone())
+                            .width(180.0)
+                            .show_ui(ui, |ui| {
+                                for v in &o.values {
+                                    if ui.selectable_label(*v == o.current, v).clicked() && *v != o.current {
+                                        todo = Some(Do::Opt(p.name.clone(), o.key.clone(), v.clone()));
+                                    }
                                 }
-                            }
-                        });
+                            });
                     });
                 }
             });
@@ -3049,7 +3506,14 @@ impl App {
         ui.add_space(12.0);
         ui::group(ui, pal, Some("Found on your network"), |ui| {
             if st.found.is_empty() {
-                ui::row(ui, pal, true, "Nothing new found", Some("Printers that are on and on the same network show up here within a few seconds. Most need no driver"), |_| {});
+                ui::row(
+                    ui,
+                    pal,
+                    true,
+                    "Nothing new found",
+                    Some("Printers that are on and on the same network show up here within a few seconds. Most need no driver"),
+                    |_| {},
+                );
             }
             for (i, (name, uri)) in st.found.iter().enumerate() {
                 ui::row(ui, pal, i == 0, name, Some(uri), |ui| {
@@ -3060,7 +3524,13 @@ impl App {
             }
         });
         ui.add_space(6.0);
-        ui.label(egui::RichText::new("Everything else a printer offers (its driver, sharing, cleaning) is on CUPS's own page: http://localhost:631").size(12.0).color(pal.dim));
+        ui.label(
+            egui::RichText::new(
+                "Everything else a printer offers (its driver, sharing, cleaning) is on CUPS's own page: http://localhost:631",
+            )
+            .size(12.0)
+            .color(pal.dim),
+        );
         if let Some(d) = todo {
             match d {
                 Do::Default(n) => self.change(ctx, move || printers::set_default(&n)),
@@ -3076,22 +3546,40 @@ impl App {
     /// The assistant the operating system provides: Yggdrasil's own part (answers read aloud, the wave), then the controls the
     /// assistant declares in its integration file.
     fn page_assistant(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
-        let name = yggdrasil_conf::integrations::first("assistant").and_then(|i| i.get("name").map(str::to_string)).unwrap_or_else(|| "The assistant".into());
+        let name = yggdrasil_conf::integrations::first("assistant")
+            .and_then(|i| i.get("name").map(str::to_string))
+            .unwrap_or_else(|| "The assistant".into());
         let mut conf = yggdrasil_conf::PanelConf::load();
         let mut conf_changed = false;
         ui::group(ui, pal, Some("Speaking"), |ui| {
-            ui::row(ui, pal, true, "Say answers aloud", Some(&format!("After you ask {name} by voice (Super+S), the answer is said aloud. Starting to speak again, or Esc, stops it")), |ui| {
-                if ui::switch(ui, pal, &mut conf.assistant_speaks).changed() {
-                    conf_changed = true;
-                }
-            });
+            ui::row(
+                ui,
+                pal,
+                true,
+                "Say answers aloud",
+                Some(&format!(
+                    "After you ask {name} by voice (Super+S), the answer is said aloud. Starting to speak again, or Esc, stops it"
+                )),
+                |ui| {
+                    if ui::switch(ui, pal, &mut conf.assistant_speaks).changed() {
+                        conf_changed = true;
+                    }
+                },
+            );
             let waves = ["Copper", "Siri", "Accent"];
-            ui::row(ui, pal, false, "Wave colors", Some("The glowing wave that grows out of the notch while you talk and while the answer is spoken"), |ui| {
-                if let Some(i) = ui::segmented(ui, pal, &waves, conf.voice_wave.min(2) as usize) {
-                    conf.voice_wave = i as u8;
-                    conf_changed = true;
-                }
-            });
+            ui::row(
+                ui,
+                pal,
+                false,
+                "Wave colors",
+                Some("The glowing wave that grows out of the notch while you talk and while the answer is spoken"),
+                |ui| {
+                    if let Some(i) = ui::segmented(ui, pal, &waves, conf.voice_wave.min(2) as usize) {
+                        conf.voice_wave = i as u8;
+                        conf_changed = true;
+                    }
+                },
+            );
         });
         if conf_changed {
             self.change(ctx, move || conf.save());
@@ -3120,14 +3608,17 @@ impl App {
                         }
                     }
                     controls::Value::Choice { options, current } => {
-                        egui::ComboBox::from_id_salt(("choice", c.id.clone())).selected_text(current.as_str()).width(220.0).show_ui(ui, |ui| {
-                            for o in options {
-                                if ui.selectable_label(o == current, o).clicked() {
-                                    let (c, o) = (c.clone(), o.clone());
-                                    todo = Some(Box::new(move || controls::set_choice(&c, &o)));
+                        egui::ComboBox::from_id_salt(("choice", c.id.clone())).selected_text(current.as_str()).width(220.0).show_ui(
+                            ui,
+                            |ui| {
+                                for o in options {
+                                    if ui.selectable_label(o == current, o).clicked() {
+                                        let (c, o) = (c.clone(), o.clone());
+                                        todo = Some(Box::new(move || controls::set_choice(&c, &o)));
+                                    }
                                 }
-                            }
-                        });
+                            },
+                        );
                     }
                     controls::Value::Action => {
                         if ui::quiet(ui, pal, "Run").clicked() {
@@ -3149,7 +3640,13 @@ impl App {
         ui::group(ui, pal, Some("Open files with"), |ui| {
             for (n, r) in rows.iter().enumerate() {
                 let k = &defaults::KINDS[r.kind];
-                let shown = r.choices.iter().find(|c| c.id == r.current).map(|c| c.name.clone()).unwrap_or_else(|| if r.current.is_empty() { "Not set".into() } else { r.current.trim_end_matches(".desktop").to_string() });
+                let shown = r.choices.iter().find(|c| c.id == r.current).map(|c| c.name.clone()).unwrap_or_else(|| {
+                    if r.current.is_empty() {
+                        "Not set".into()
+                    } else {
+                        r.current.trim_end_matches(".desktop").to_string()
+                    }
+                });
                 ui::row(ui, pal, n == 0, k.name, Some(k.what), |ui| {
                     egui::ComboBox::from_id_salt(("default-app", r.kind)).selected_text(shown).width(200.0).show_ui(ui, |ui| {
                         if r.choices.is_empty() {
@@ -3180,9 +3677,16 @@ impl App {
             restore::State::NoPermission => {
                 let mut allow = false;
                 ui::group(ui, pal, None, |ui| {
-                    ui::row(ui, pal, true, "Restore points exist, but you are not allowed to see them yet", Some("One administrator question lets you list, create and delete them here"), |ui| {
-                        allow = ui::quiet(ui, pal, "Allow me…").clicked();
-                    });
+                    ui::row(
+                        ui,
+                        pal,
+                        true,
+                        "Restore points exist, but you are not allowed to see them yet",
+                        Some("One administrator question lets you list, create and delete them here"),
+                        |ui| {
+                            allow = ui::quiet(ui, pal, "Allow me…").clicked();
+                        },
+                    );
                 });
                 if allow {
                     self.change(ctx, restore::allow_me);
@@ -3232,7 +3736,15 @@ impl App {
     }
 
     /// Every account on this computer, to choose one; then adding one.
-    fn accounts_section(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context, me: &str, all: &[users::Account], selected: &str) {
+    fn accounts_section(
+        &mut self,
+        ui: &mut egui::Ui,
+        pal: &Palette,
+        ctx: &egui::Context,
+        me: &str,
+        all: &[users::Account],
+        selected: &str,
+    ) {
         let mut pick: Option<String> = None;
         let mut open_form = false;
         ui::group(ui, pal, Some("Accounts"), |ui| {
@@ -3244,11 +3756,18 @@ impl App {
                     pick = Some(a.login.clone());
                 }
             }
-            ui::row(ui, pal, order.is_empty(), "Add an account", Some("Standard users cannot change the system; administrators can"), |ui| {
-                if ui.button(if self.acct_form.open { "Cancel" } else { "Add account…" }).clicked() {
-                    open_form = true;
-                }
-            });
+            ui::row(
+                ui,
+                pal,
+                order.is_empty(),
+                "Add an account",
+                Some("Standard users cannot change the system; administrators can"),
+                |ui| {
+                    if ui.button(if self.acct_form.open { "Cancel" } else { "Add account…" }).clicked() {
+                        open_form = true;
+                    }
+                },
+            );
             if self.acct_form.open {
                 ui.add_space(6.0);
                 ui.label(RichText::new("Full name").color(pal.dim));
@@ -3289,7 +3808,11 @@ impl App {
                 if !self.acct_form.pw2.is_empty() && self.acct_form.pw2 != self.acct_form.pw {
                     ui.label(RichText::new("The two passwords do not match.").small().color(pal.red));
                 }
-                ui.label(RichText::new("They can change it after they log in. It also becomes the password of their keyring.").small().color(pal.dim));
+                ui.label(
+                    RichText::new("They can change it after they log in. It also becomes the password of their keyring.")
+                        .small()
+                        .color(pal.dim),
+                );
                 ui.add_space(8.0);
                 let f = &self.acct_form;
                 let ready = !self.acct_busy && users::valid_login(&f.login) && !taken && f.pw.chars().count() >= 8 && f.pw == f.pw2;
@@ -3357,7 +3880,11 @@ impl App {
                 match editing.clone() {
                     Some(mut text) => {
                         if ui.add_enabled(!busy && !text.trim().is_empty(), egui::Button::new("Save")).clicked() {
-                            actions.push((vec!["name".into(), sel.login.clone(), text.trim().to_string()], None, format!("{} renamed.", sel.login)));
+                            actions.push((
+                                vec!["name".into(), sel.login.clone(), text.trim().to_string()],
+                                None,
+                                format!("{} renamed.", sel.login),
+                            ));
                         }
                         if ui.button("Cancel").clicked() {
                             edit_name = Some(None);
@@ -3381,89 +3908,107 @@ impl App {
         }
 
         if mine {
-        let mut start = false;
-        ui::group(ui, pal, Some("Password"), |ui| {
-            ui::row(ui, pal, true, "Login password", Some("Also the password of your keyring (saved passwords and keys for your apps): they change together"), |ui| {
-                if ui.button(if self.pw_open { "Cancel" } else { "Change…" }).clicked() {
-                    self.pw_open = !self.pw_open;
-                    self.pw_msg = None;
+            let mut start = false;
+            ui::group(ui, pal, Some("Password"), |ui| {
+                ui::row(
+                    ui,
+                    pal,
+                    true,
+                    "Login password",
+                    Some("Also the password of your keyring (saved passwords and keys for your apps): they change together"),
+                    |ui| {
+                        if ui.button(if self.pw_open { "Cancel" } else { "Change…" }).clicked() {
+                            self.pw_open = !self.pw_open;
+                            self.pw_msg = None;
+                        }
+                    },
+                );
+                if self.pw_open {
+                    ui.add_space(6.0);
+                    ui.label(RichText::new("Current password").color(pal.dim));
+                    ui.add(egui::TextEdit::singleline(&mut self.pw_cur).password(true).desired_width(f32::INFINITY));
+                    ui.add_space(4.0);
+                    ui.label(RichText::new("New password").color(pal.dim));
+                    ui.add(egui::TextEdit::singleline(&mut self.pw_new).password(true).desired_width(f32::INFINITY));
+                    let (word, frac) = users::strength(&self.pw_new);
+                    if !word.is_empty() {
+                        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width().min(320.0), 6.0), Sense::hover());
+                        ui.painter().rect_filled(rect, 3.0, pal.field);
+                        let mut fill = rect;
+                        fill.set_width(rect.width() * frac);
+                        ui.painter().rect_filled(fill, 3.0, theme::usage_color(pal, 1.0 - frac));
+                        ui.label(RichText::new(word).small().color(pal.dim));
+                    }
+                    ui.add_space(4.0);
+                    ui.label(RichText::new("New password again").color(pal.dim));
+                    ui.add(egui::TextEdit::singleline(&mut self.pw_confirm).password(true).desired_width(f32::INFINITY));
+                    ui.add_space(8.0);
+                    let mismatch = !self.pw_confirm.is_empty() && self.pw_confirm != self.pw_new;
+                    if mismatch {
+                        ui.label(RichText::new("The two new passwords do not match.").color(pal.red));
+                    }
+                    let ready = !self.pw_busy
+                        && !self.pw_cur.is_empty()
+                        && self.pw_new.chars().count() >= 8
+                        && self.pw_new == self.pw_confirm
+                        && self.pw_new != self.pw_cur;
+                    if ui.add_enabled(ready, egui::Button::new(if self.pw_busy { "Changing…" } else { "Change password" })).clicked() {
+                        start = true;
+                    }
+                    if self.pw_new == self.pw_cur && !self.pw_new.is_empty() {
+                        ui.label(RichText::new("The new password must be different from the current one.").small().color(pal.dim));
+                    }
+                    ui.add_space(6.0);
+                }
+                if let Some((m, ok)) = &self.pw_msg {
+                    ui.label(RichText::new(m.as_str()).color(if *ok { pal.green } else { pal.red }));
+                    ui.add_space(6.0);
                 }
             });
-            if self.pw_open {
-                ui.add_space(6.0);
-                ui.label(RichText::new("Current password").color(pal.dim));
-                ui.add(egui::TextEdit::singleline(&mut self.pw_cur).password(true).desired_width(f32::INFINITY));
-                ui.add_space(4.0);
-                ui.label(RichText::new("New password").color(pal.dim));
-                ui.add(egui::TextEdit::singleline(&mut self.pw_new).password(true).desired_width(f32::INFINITY));
-                let (word, frac) = users::strength(&self.pw_new);
-                if !word.is_empty() {
-                    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width().min(320.0), 6.0), Sense::hover());
-                    ui.painter().rect_filled(rect, 3.0, pal.field);
-                    let mut fill = rect;
-                    fill.set_width(rect.width() * frac);
-                    ui.painter().rect_filled(fill, 3.0, theme::usage_color(pal, 1.0 - frac));
-                    ui.label(RichText::new(word).small().color(pal.dim));
-                }
-                ui.add_space(4.0);
-                ui.label(RichText::new("New password again").color(pal.dim));
-                ui.add(egui::TextEdit::singleline(&mut self.pw_confirm).password(true).desired_width(f32::INFINITY));
-                ui.add_space(8.0);
-                let mismatch = !self.pw_confirm.is_empty() && self.pw_confirm != self.pw_new;
-                if mismatch {
-                    ui.label(RichText::new("The two new passwords do not match.").color(pal.red));
-                }
-                let ready = !self.pw_busy && !self.pw_cur.is_empty() && self.pw_new.chars().count() >= 8 && self.pw_new == self.pw_confirm && self.pw_new != self.pw_cur;
-                if ui.add_enabled(ready, egui::Button::new(if self.pw_busy { "Changing…" } else { "Change password" })).clicked() {
-                    start = true;
-                }
-                if self.pw_new == self.pw_cur && !self.pw_new.is_empty() {
-                    ui.label(RichText::new("The new password must be different from the current one.").small().color(pal.dim));
-                }
-                ui.add_space(6.0);
+            if start {
+                self.pw_busy = true;
+                self.pw_msg = None;
+                let (cur, new) = (std::mem::take(&mut self.pw_cur), std::mem::take(&mut self.pw_new));
+                self.pw_confirm.clear();
+                let (tx, ctx2) = (self.tx.clone(), ctx.clone());
+                std::thread::spawn(move || {
+                    let r = users::change_password(&cur, &new);
+                    let _ = tx.send(Msg::Password(r));
+                    ctx2.request_repaint();
+                });
             }
-            if let Some((m, ok)) = &self.pw_msg {
-                ui.label(RichText::new(m.as_str()).color(if *ok { pal.green } else { pal.red }));
-                ui.add_space(6.0);
-            }
-        });
-        if start {
-            self.pw_busy = true;
-            self.pw_msg = None;
-            let (cur, new) = (std::mem::take(&mut self.pw_cur), std::mem::take(&mut self.pw_new));
-            self.pw_confirm.clear();
-            let (tx, ctx2) = (self.tx.clone(), ctx.clone());
-            std::thread::spawn(move || {
-                let r = users::change_password(&cur, &new);
-                let _ = tx.send(Msg::Password(r));
-                ctx2.request_repaint();
+            ui.add_space(8.0);
+            let (state, hint, fixable) = match keyring.as_str() {
+                "unlocked" => ("Unlocked", "Saved passwords and keys are available to your apps", false),
+                "locked" => ("Locked", "Still locked with a previous password: it needs one question answered", true),
+                "noservice" => ("Not running", "The keyring service is not running", false),
+                "nokeyring" => ("None yet", "It is created the next time you log in", false),
+                _ => ("Unknown", "The keyring check is not installed", false),
+            };
+            ui::group(ui, pal, Some("Keyring"), |ui| {
+                ui::row(ui, pal, true, state, Some(hint), |ui| {
+                    if fixable && ui.button("Fix…").clicked() {
+                        sys::spawn("yggdrasil-keyring-sync", &[]);
+                    }
+                });
             });
-        }
-        ui.add_space(8.0);
-        let (state, hint, fixable) = match keyring.as_str() {
-            "unlocked" => ("Unlocked", "Saved passwords and keys are available to your apps", false),
-            "locked" => ("Locked", "Still locked with a previous password: it needs one question answered", true),
-            "noservice" => ("Not running", "The keyring service is not running", false),
-            "nokeyring" => ("None yet", "It is created the next time you log in", false),
-            _ => ("Unknown", "The keyring check is not installed", false),
-        };
-        ui::group(ui, pal, Some("Keyring"), |ui| {
-            ui::row(ui, pal, true, state, Some(hint), |ui| {
-                if fixable && ui.button("Fix…").clicked() {
-                    sys::spawn("yggdrasil-keyring-sync", &[]);
-                }
-            });
-        });
         } else if !sel.protected {
             // someone else's password: set a new one (an administrator may; their keyring keeps the old one)
             let mut set_pw: Option<String> = None;
             ui.add_space(8.0);
             ui::group(ui, pal, Some("Password"), |ui| {
-                ui::row(ui, pal, true, "Set a new password", Some("For when they forgot theirs. Their keyring keeps the old password: it asks for it once at their next sign-in"), |ui| {
-                    if ui.button(if self.other_pw.0 { "Cancel" } else { "Set…" }).clicked() {
-                        self.other_pw = (!self.other_pw.0, String::new(), String::new());
-                    }
-                });
+                ui::row(
+                    ui,
+                    pal,
+                    true,
+                    "Set a new password",
+                    Some("For when they forgot theirs. Their keyring keeps the old password: it asks for it once at their next sign-in"),
+                    |ui| {
+                        if ui.button(if self.other_pw.0 { "Cancel" } else { "Set…" }).clicked() {
+                            self.other_pw = (!self.other_pw.0, String::new(), String::new());
+                        }
+                    },
+                );
                 if self.other_pw.0 {
                     ui.add_space(6.0);
                     ui.label(RichText::new("New password").color(pal.dim));
@@ -3494,11 +4039,19 @@ impl App {
             let groups = self.data.opt_groups.clone();
             ui::group(ui, pal, Some("Access"), |ui| {
                 let mut admin = sel.admin;
-                let sub = if mine && sel.admin { "You cannot remove your own administrator rights (another administrator can)" } else { "Can install software and change the system (with sudo)" };
+                let sub = if mine && sel.admin {
+                    "You cannot remove your own administrator rights (another administrator can)"
+                } else {
+                    "Can install software and change the system (with sudo)"
+                };
                 ui::row(ui, pal, true, "Administrator", Some(sub), |ui| {
                     ui.add_enabled_ui(!busy && !(mine && sel.admin), |ui| {
                         if ui::switch(ui, pal, &mut admin).changed() {
-                            actions.push((vec!["admin".into(), sel.login.clone(), if admin { "on" } else { "off" }.into()], None, format!("{} is now {}.", sel.login, if admin { "an administrator" } else { "a standard user" })));
+                            actions.push((
+                                vec!["admin".into(), sel.login.clone(), if admin { "on" } else { "off" }.into()],
+                                None,
+                                format!("{} is now {}.", sel.login, if admin { "an administrator" } else { "a standard user" }),
+                            ));
                         }
                     });
                 });
@@ -3512,27 +4065,46 @@ impl App {
                     ui::row(ui, pal, false, "Sudo asks for the password", Some(sub), |ui| {
                         ui.add_enabled_ui(!busy, |ui| {
                             if ui::switch(ui, pal, &mut asks).changed() {
-                                actions.push((vec!["sudo".into(), sel.login.clone(), if asks { "password" } else { "nopassword" }.into()], None, format!("sudo {} {} for the password.", if asks { "asks" } else { "no longer asks" }, sel.login)));
+                                actions.push((
+                                    vec!["sudo".into(), sel.login.clone(), if asks { "password" } else { "nopassword" }.into()],
+                                    None,
+                                    format!("sudo {} {} for the password.", if asks { "asks" } else { "no longer asks" }, sel.login),
+                                ));
                             }
                         });
                     });
                 }
                 if !mine {
                     let mut can = sel.can_login;
-                    ui::row(ui, pal, false, "Can sign in", Some(if can { "The account can sign in" } else { "Signing in is switched off; the account and its files stay" }), |ui| {
-                        ui.add_enabled_ui(!busy, |ui| {
-                            if ui::switch(ui, pal, &mut can).changed() {
-                                actions.push((vec!["login".into(), sel.login.clone(), if can { "on" } else { "off" }.into()], None, format!("{} {}.", sel.login, if can { "can sign in again" } else { "can no longer sign in" })));
-                            }
-                        });
-                    });
+                    ui::row(
+                        ui,
+                        pal,
+                        false,
+                        "Can sign in",
+                        Some(if can { "The account can sign in" } else { "Signing in is switched off; the account and its files stay" }),
+                        |ui| {
+                            ui.add_enabled_ui(!busy, |ui| {
+                                if ui::switch(ui, pal, &mut can).changed() {
+                                    actions.push((
+                                        vec!["login".into(), sel.login.clone(), if can { "on" } else { "off" }.into()],
+                                        None,
+                                        format!("{} {}.", sel.login, if can { "can sign in again" } else { "can no longer sign in" }),
+                                    ));
+                                }
+                            });
+                        },
+                    );
                 }
                 for (g, what) in &groups {
                     let mut on = sel.groups.contains(g);
                     ui::row(ui, pal, false, what, Some(&format!("Group {g}; takes effect at the next sign-in")), |ui| {
                         ui.add_enabled_ui(!busy, |ui| {
                             if ui::switch(ui, pal, &mut on).changed() {
-                                actions.push((vec!["group".into(), sel.login.clone(), g.clone(), if on { "on" } else { "off" }.into()], None, format!("{} {} {g}.", sel.login, if on { "joined" } else { "left" })));
+                                actions.push((
+                                    vec!["group".into(), sel.login.clone(), g.clone(), if on { "on" } else { "off" }.into()],
+                                    None,
+                                    format!("{} {} {g}.", sel.login, if on { "joined" } else { "left" }),
+                                ));
                             }
                         });
                     });
@@ -3543,11 +4115,18 @@ impl App {
         if !mine && !sel.protected {
             ui.add_space(8.0);
             ui::group(ui, pal, None, |ui| {
-                ui::row(ui, pal, true, "Remove this account", Some("They will no longer be able to sign in; you choose whether their files go too"), |ui| {
-                    if ui.add_enabled(!busy, egui::Button::new("Remove…")).clicked() {
-                        self.acct_remove = Some((sel.login.clone(), false));
-                    }
-                });
+                ui::row(
+                    ui,
+                    pal,
+                    true,
+                    "Remove this account",
+                    Some("They will no longer be able to sign in; you choose whether their files go too"),
+                    |ui| {
+                        if ui.add_enabled(!busy, egui::Button::new("Remove…")).clicked() {
+                            self.acct_remove = Some((sel.login.clone(), false));
+                        }
+                    },
+                );
             });
         }
         for (args, stdin, ok) in actions {
@@ -3557,22 +4136,34 @@ impl App {
             let mut keep = true;
             let mut go = false;
             let mut home = delete_home;
-            egui::Window::new(format!("Remove {login}?")).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0)).show(ctx, |ui| {
-                ui.set_max_width(380.0);
-                ui.label("They will no longer be able to log in. This cannot be undone.");
-                ui.add_space(6.0);
-                ui.checkbox(&mut home, "Also delete their files (home folder)");
-                ui.label(RichText::new(if home { "Their documents, pictures and settings will be erased." } else { "Their files stay on the disk, in /home, until you delete them." }).small().color(pal.dim));
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Cancel").clicked() {
-                        keep = false;
-                    }
-                    if ui.button(if home { "Remove and delete files" } else { "Remove account" }).clicked() {
-                        go = true;
-                    }
+            egui::Window::new(format!("Remove {login}?"))
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0))
+                .show(ctx, |ui| {
+                    ui.set_max_width(380.0);
+                    ui.label("They will no longer be able to log in. This cannot be undone.");
+                    ui.add_space(6.0);
+                    ui.checkbox(&mut home, "Also delete their files (home folder)");
+                    ui.label(
+                        RichText::new(if home {
+                            "Their documents, pictures and settings will be erased."
+                        } else {
+                            "Their files stay on the disk, in /home, until you delete them."
+                        })
+                        .small()
+                        .color(pal.dim),
+                    );
+                    ui.add_space(10.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Cancel").clicked() {
+                            keep = false;
+                        }
+                        if ui.button(if home { "Remove and delete files" } else { "Remove account" }).clicked() {
+                            go = true;
+                        }
+                    });
                 });
-            });
             self.acct_remove = if keep && !go { Some((login.clone(), home)) } else { None };
             if go {
                 self.acct_busy = true;
@@ -3620,15 +4211,19 @@ impl App {
                 clock_changed = ui::switch(ui, pal, &mut clock.clock_24h).changed();
             });
             ui::row(ui, pal, false, "Time zone", Some(&t.timezone), |ui| {
-                egui::ComboBox::from_id_salt("zone").selected_text(&t.timezone).width((ui.available_width() * 0.55).clamp(160.0, 260.0)).height(360.0).show_ui(ui, |ui| {
-                    ui.add(egui::TextEdit::singleline(&mut self.zone_filter).hint_text("Search, e.g. Denver"));
-                    let q = self.zone_filter.to_lowercase();
-                    for z in t.zones.iter().filter(|z| q.is_empty() || z.to_lowercase().contains(&q)).take(400) {
-                        if ui.selectable_label(*z == t.timezone, z).clicked() {
-                            zone = Some(z.clone());
+                egui::ComboBox::from_id_salt("zone")
+                    .selected_text(&t.timezone)
+                    .width((ui.available_width() * 0.55).clamp(160.0, 260.0))
+                    .height(360.0)
+                    .show_ui(ui, |ui| {
+                        ui.add(egui::TextEdit::singleline(&mut self.zone_filter).hint_text("Search, e.g. Denver"));
+                        let q = self.zone_filter.to_lowercase();
+                        for z in t.zones.iter().filter(|z| q.is_empty() || z.to_lowercase().contains(&q)).take(400) {
+                            if ui.selectable_label(*z == t.timezone, z).clicked() {
+                                zone = Some(z.clone());
+                            }
                         }
-                    }
-                });
+                    });
             });
         });
         if ntp_changed {
@@ -3648,13 +4243,20 @@ impl App {
         let mut minos_changed = false;
         ui::group(ui, pal, Some("Minos: where it opens"), |ui| {
             use yggdrasil_conf::StartIn;
-            ui::row(ui, pal, true, "First new window", Some("The first Minos window you open: your home folder, or the tabs you had when you last closed it"), |ui| {
-                let cur = (minos.minos_first_window == StartIn::Last) as usize;
-                if let Some(i) = ui::segmented(ui, pal, &["Home", "Where you left off"], cur) {
-                    minos.minos_first_window = [StartIn::Home, StartIn::Last][i];
-                    minos_changed = true;
-                }
-            });
+            ui::row(
+                ui,
+                pal,
+                true,
+                "First new window",
+                Some("The first Minos window you open: your home folder, or the tabs you had when you last closed it"),
+                |ui| {
+                    let cur = (minos.minos_first_window == StartIn::Last) as usize;
+                    if let Some(i) = ui::segmented(ui, pal, &["Home", "Where you left off"], cur) {
+                        minos.minos_first_window = [StartIn::Home, StartIn::Last][i];
+                        minos_changed = true;
+                    }
+                },
+            );
             ui::row(ui, pal, false, "New window while one is open", Some("Home, or a copy of the folder the open window is in"), |ui| {
                 let cur = (minos.minos_more_windows == StartIn::Here) as usize;
                 if let Some(i) = ui::segmented(ui, pal, &["Home", "Copy of where I am"], cur) {
@@ -3671,15 +4273,29 @@ impl App {
             });
         });
         ui::group(ui, pal, Some("Minos"), |ui| {
-            ui::row(ui, pal, true, "Search inside subfolders", Some("Searching in Minos looks through every folder below the one you are in; off searches only that folder"), |ui| {
-                minos_changed |= ui::switch(ui, pal, &mut minos.search_subfolders).changed();
-            });
+            ui::row(
+                ui,
+                pal,
+                true,
+                "Search inside subfolders",
+                Some("Searching in Minos looks through every folder below the one you are in; off searches only that folder"),
+                |ui| {
+                    minos_changed |= ui::switch(ui, pal, &mut minos.search_subfolders).changed();
+                },
+            );
             ui::row(ui, pal, false, "Show hidden items", Some("Files and folders whose names start with a dot"), |ui| {
                 minos_changed |= ui::switch(ui, pal, &mut minos.show_hidden).changed();
             });
-            ui::row(ui, pal, false, "Show Proton Drive file status", Some("A mark on each Proton Drive file: kept on this computer, or only in the cloud"), |ui| {
-                minos_changed |= ui::switch(ui, pal, &mut minos.drive_status).changed();
-            });
+            ui::row(
+                ui,
+                pal,
+                false,
+                "Show Proton Drive file status",
+                Some("A mark on each Proton Drive file: kept on this computer, or only in the cloud"),
+                |ui| {
+                    minos_changed |= ui::switch(ui, pal, &mut minos.drive_status).changed();
+                },
+            );
         });
         if minos_changed {
             // saved right away (a tiny file), so the slider and the sample follow the drag
@@ -3694,7 +4310,9 @@ impl App {
             return;
         }
         let Some(cmd) = yggdrasil_conf::integrations::first("packages").and_then(|i| i.command("component")) else { return };
-        let os = yggdrasil_conf::integrations::first("packages").and_then(|i| i.get("name").map(str::to_string)).unwrap_or_else(|| "The system".into());
+        let os = yggdrasil_conf::integrations::first("packages")
+            .and_then(|i| i.get("name").map(str::to_string))
+            .unwrap_or_else(|| "The system".into());
         let run = |op: &str, id: &str| {
             let mut args: Vec<String> = vec!["-e".into()];
             args.extend(cmd.iter().cloned());
@@ -3704,7 +4322,8 @@ impl App {
         };
         ui::group(ui, pal, Some(&format!("{os}'s optional software")), |ui| {
             for (i, c) in apps.iter().enumerate() {
-                let sub: String = c.description.chars().take(110).collect::<String>() + if c.description.chars().count() > 110 { "…" } else { "" };
+                let sub: String =
+                    c.description.chars().take(110).collect::<String>() + if c.description.chars().count() > 110 { "…" } else { "" };
                 ui::row(ui, pal, i == 0, &c.name, Some(&sub), |ui| {
                     // Installing shows its progress (and asks for the password) in a terminal.
                     if c.installed {
@@ -3740,7 +4359,13 @@ fn account_row(ui: &mut egui::Ui, pal: &Palette, first: bool, a: &users::Account
     let initial = name.chars().next().map(|ch| ch.to_uppercase().to_string()).unwrap_or_default();
     p.text(c, egui::Align2::CENTER_CENTER, initial, egui::FontId::proportional(15.0), egui::Color32::WHITE);
     let x = rect.left() + 54.0;
-    p.text(egui::pos2(x, rect.center().y - 9.0), egui::Align2::LEFT_CENTER, if me { format!("{name}  (you)") } else { name }, egui::FontId::proportional(14.0), pal.text);
+    p.text(
+        egui::pos2(x, rect.center().y - 9.0),
+        egui::Align2::LEFT_CENTER,
+        if me { format!("{name}  (you)") } else { name },
+        egui::FontId::proportional(14.0),
+        pal.text,
+    );
     let mut kind = vec![a.login.clone(), if a.admin { "Administrator".into() } else { "Standard user".into() }];
     if a.protected {
         kind.push("kept by the system".into());
@@ -3773,7 +4398,11 @@ fn hypr_shortcuts() -> Vec<yggdrasil_conf::shortcuts::Shortcut> {
         .map(|b| Bind {
             modmask: b["modmask"].as_u64().unwrap_or(0) as u32,
             // a key given by its code (the number row: code:10 is 1) has no name, only the code
-            key: b["key"].as_str().filter(|k| !k.is_empty()).map(str::to_string).unwrap_or_else(|| format!("code:{}", b["keycode"].as_u64().unwrap_or(0))),
+            key: b["key"]
+                .as_str()
+                .filter(|k| !k.is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("code:{}", b["keycode"].as_u64().unwrap_or(0))),
             desc: b["description"].as_str().unwrap_or("").to_string(),
             release: b["release"].as_bool().unwrap_or(false),
         })
@@ -3816,7 +4445,14 @@ fn color_picker_section(ui: &mut egui::Ui, pal: &Palette) {
             });
         });
         let history = colorpicker::load_history();
-        ui::row(ui, pal, false, "Recent colours", Some(if history.is_empty() { "None picked yet" } else { "Click one to copy it again" }), |_| {});
+        ui::row(
+            ui,
+            pal,
+            false,
+            "Recent colours",
+            Some(if history.is_empty() { "None picked yet" } else { "Click one to copy it again" }),
+            |_| {},
+        );
         if !history.is_empty() {
             ui.horizontal_wrapped(|ui| {
                 for c in history {
@@ -3860,10 +4496,24 @@ impl App {
             return;
         }
         ui::group(ui, pal, None, |ui| {
-            if ui::nav_row(ui, pal, true, "Shortcuts", Some("Every key combination, grouped, with a search (Win + / shows them on a card)"), |_| {}) {
+            if ui::nav_row(
+                ui,
+                pal,
+                true,
+                "Shortcuts",
+                Some("Every key combination, grouped, with a search (Win + / shows them on a card)"),
+                |_| {},
+            ) {
                 self.key_sub = KeySub::Shortcuts;
             }
-            if ui::nav_row(ui, pal, false, "Spelling and languages", Some("The languages you type in, downloading more, and your own words shared by every app"), |_| {}) {
+            if ui::nav_row(
+                ui,
+                pal,
+                false,
+                "Spelling and languages",
+                Some("The languages you type in, downloading more, and your own words shared by every app"),
+                |_| {},
+            ) {
                 self.key_sub = KeySub::Spelling;
                 self.spell.reload();
             }
@@ -3899,7 +4549,8 @@ fn page_shortcuts(ui: &mut egui::Ui, pal: &Palette) {
         });
         ui.data_mut(|d| d.insert_temp(qid, query.clone()));
         let q = query.trim().to_lowercase();
-        let shown: Vec<&yggdrasil_conf::shortcuts::Shortcut> = list.iter().filter(|s| q.is_empty() || s.what.to_lowercase().contains(&q) || s.keys.to_lowercase().contains(&q)).collect();
+        let shown: Vec<&yggdrasil_conf::shortcuts::Shortcut> =
+            list.iter().filter(|s| q.is_empty() || s.what.to_lowercase().contains(&q) || s.keys.to_lowercase().contains(&q)).collect();
         for g in yggdrasil_conf::shortcuts::GROUPS {
             let rows: Vec<_> = shown.iter().filter(|s| s.group == g).collect();
             if rows.is_empty() {
@@ -3908,9 +4559,12 @@ fn page_shortcuts(ui: &mut egui::Ui, pal: &Palette) {
             ui::group(ui, pal, Some(g), |ui| {
                 for (i, s) in rows.iter().enumerate() {
                     ui::row(ui, pal, i == 0, &s.what, None, |ui| {
-                        egui::Frame::new().fill(pal.hover).corner_radius(CornerRadius::same(6)).inner_margin(Margin::symmetric(8, 3)).show(ui, |ui| {
-                            ui.label(RichText::new(&s.keys).monospace());
-                        });
+                        egui::Frame::new().fill(pal.hover).corner_radius(CornerRadius::same(6)).inner_margin(Margin::symmetric(8, 3)).show(
+                            ui,
+                            |ui| {
+                                ui.label(RichText::new(&s.keys).monospace());
+                            },
+                        );
                     });
                 }
             });
@@ -3921,36 +4575,70 @@ fn page_shortcuts(ui: &mut egui::Ui, pal: &Palette) {
             ui.label(RichText::new("No shortcut matches").color(pal.dim));
         }
         ui.add_space(8.0);
-        if ui::quiet(ui, pal, "Add your own shortcuts…").on_hover_text("Opens your own settings file for the session (~/.config/yggdrasil/hyprland.lua)").clicked() {
+        if ui::quiet(ui, pal, "Add your own shortcuts…")
+            .on_hover_text("Opens your own settings file for the session (~/.config/yggdrasil/hyprland.lua)")
+            .clicked()
+        {
             open_own_shortcuts();
         }
         return;
     }
     let groups: [(&str, &[(&str, &str)]); 3] = [
-        ("Everywhere", &[
-            ("Win", "Launcher"), ("Win + E", "Minos"), ("Win + R", "Run"), ("Win + I", "Settings"), ("Win + L", "Lock"),
-            ("Win + V", "Clipboard history"), ("Win + Shift + S", "Screenshot of a region"), ("Ctrl + Shift + Esc", "Task manager"), ("Win + Ctrl + Shift + W", "Remove the current desktop"),
-            ("Win + Return", "Terminal"), ("F12", "Drop-down terminal"), ("Win + F", "Full screen"),
-            ("Win + Shift + Alt + ← / →", "Window to the other monitor"), ("Alt + Tab", "Switch windows"),
-        ]),
-        ("Everyday screen", &[
-            ("Win + ← / →", "Snap left / right"), ("Win + ↑ / ↓", "Maximize / restore"), ("Win + Shift + ← / →", "Window to the other monitor"),
-            ("Win + 1…9", "Open dock app 1–9"), ("Win + W", "Overview"), ("Win + Space", "Dock and top bar over a full-screen app"),
-            ("Win + − / =", "Zoom out / in"),
-        ]),
-        ("Tiling screen", &[
-            ("Win + arrows", "Move focus"), ("Win + Shift + arrows", "Swap tiles"), ("Win + 1…9", "Switch workspace"),
-            ("Win + Shift + 1…9", "Send window to workspace"), ("Win + W", "Close window"), ("Win + Space", "Launcher"),
-            ("Win + T", "Float or tile the window"), ("Win + − / =", "Shrink / grow the tile"),
-        ]),
+        (
+            "Everywhere",
+            &[
+                ("Win", "Launcher"),
+                ("Win + E", "Minos"),
+                ("Win + R", "Run"),
+                ("Win + I", "Settings"),
+                ("Win + L", "Lock"),
+                ("Win + V", "Clipboard history"),
+                ("Win + Shift + S", "Screenshot of a region"),
+                ("Ctrl + Shift + Esc", "Task manager"),
+                ("Win + Ctrl + Shift + W", "Remove the current desktop"),
+                ("Win + Return", "Terminal"),
+                ("F12", "Drop-down terminal"),
+                ("Win + F", "Full screen"),
+                ("Win + Shift + Alt + ← / →", "Window to the other monitor"),
+                ("Alt + Tab", "Switch windows"),
+            ],
+        ),
+        (
+            "Everyday screen",
+            &[
+                ("Win + ← / →", "Snap left / right"),
+                ("Win + ↑ / ↓", "Maximize / restore"),
+                ("Win + Shift + ← / →", "Window to the other monitor"),
+                ("Win + 1…9", "Open dock app 1–9"),
+                ("Win + W", "Overview"),
+                ("Win + Space", "Dock and top bar over a full-screen app"),
+                ("Win + − / =", "Zoom out / in"),
+            ],
+        ),
+        (
+            "Tiling screen",
+            &[
+                ("Win + arrows", "Move focus"),
+                ("Win + Shift + arrows", "Swap tiles"),
+                ("Win + 1…9", "Switch workspace"),
+                ("Win + Shift + 1…9", "Send window to workspace"),
+                ("Win + W", "Close window"),
+                ("Win + Space", "Launcher"),
+                ("Win + T", "Float or tile the window"),
+                ("Win + − / =", "Shrink / grow the tile"),
+            ],
+        ),
     ];
     for (title, rows) in groups {
         ui::group(ui, pal, Some(title), |ui| {
             for (i, (keys, what)) in rows.iter().enumerate() {
                 ui::row(ui, pal, i == 0, what, None, |ui| {
-                    egui::Frame::new().fill(pal.hover).corner_radius(CornerRadius::same(6)).inner_margin(Margin::symmetric(8, 3)).show(ui, |ui| {
-                        ui.label(RichText::new(*keys).monospace());
-                    });
+                    egui::Frame::new().fill(pal.hover).corner_radius(CornerRadius::same(6)).inner_margin(Margin::symmetric(8, 3)).show(
+                        ui,
+                        |ui| {
+                            ui.label(RichText::new(*keys).monospace());
+                        },
+                    );
                 });
             }
         });
@@ -3967,7 +4655,11 @@ fn lan_summary(l: &devices::List, now: i64) -> String {
         _ => {}
     }
     let here = l.devices.iter().filter(|d| security::parse_time(&d.last_seen).is_some_and(|t| l.last_scan - t < 60)).count();
-    let fresh = l.devices.iter().filter(|d| security::parse_time(&d.first_seen).is_some_and(|t| now - t < 86_400 && t - first_scan(l) > 60)).count();
+    let fresh = l
+        .devices
+        .iter()
+        .filter(|d| security::parse_time(&d.first_seen).is_some_and(|t| now - t < 86_400 && t - first_scan(l) > 60))
+        .count();
     let mut s = format!("{here} here now");
     if fresh > 0 {
         s += &format!(" · {fresh} new today");
@@ -4028,7 +4720,11 @@ fn ramp_bar(ui: &mut egui::Ui, pal: &Palette, from: u32, to: u32) {
     for k in 0..slices {
         let (r, g, b) = nightlight::kelvin_rgb(nightlight::kelvin_between(from, to, k as f32 / (slices - 1) as f32));
         let x = rect.left() + w * k as f32;
-        ui.painter().rect_filled(egui::Rect::from_min_max(egui::pos2(x, rect.top()), egui::pos2(x + w + 0.5, rect.bottom())), 0.0, egui::Color32::from_rgb(r, g, b));
+        ui.painter().rect_filled(
+            egui::Rect::from_min_max(egui::pos2(x, rect.top()), egui::pos2(x + w + 0.5, rect.bottom())),
+            0.0,
+            egui::Color32::from_rgb(r, g, b),
+        );
     }
     ui.painter().rect_stroke(rect, CornerRadius::same(2), egui::Stroke::new(1.0, pal.border), egui::StrokeKind::Outside);
 }
@@ -4039,12 +4735,20 @@ fn notify_rules(ui: &mut egui::Ui, pal: &Palette) {
     let mut rules = NotifyRules::load();
     let before = rules.clone();
     let id = egui::Id::new("notify-quiet-times");
-    let (mut from, mut to) = ui.data_mut(|d| d.get_temp::<(String, String)>(id)).unwrap_or_else(|| (show_time(rules.quiet_from), show_time(rules.quiet_to)));
+    let (mut from, mut to) =
+        ui.data_mut(|d| d.get_temp::<(String, String)>(id)).unwrap_or_else(|| (show_time(rules.quiet_from), show_time(rules.quiet_to)));
     ui.add_space(8.0);
     ui::group(ui, pal, Some("Quiet hours"), |ui| {
-        ui::row(ui, pal, true, "Quiet hours", Some("Every day between these times no pop-ups, as with Do not disturb (critical alerts still show; everything is kept)"), |ui| {
-            ui::switch(ui, pal, &mut rules.quiet);
-        });
+        ui::row(
+            ui,
+            pal,
+            true,
+            "Quiet hours",
+            Some("Every day between these times no pop-ups, as with Do not disturb (critical alerts still show; everything is kept)"),
+            |ui| {
+                ui::switch(ui, pal, &mut rules.quiet);
+            },
+        );
         if rules.quiet {
             ui::row(ui, pal, false, "From and to", Some("24-hour times, e.g. 22:00 to 07:00 (past midnight is fine)"), |ui| {
                 let r2 = ui::field(ui, pal, &mut to, "07:00", 60.0, false);
@@ -4067,15 +4771,22 @@ fn notify_rules(ui: &mut egui::Ui, pal: &Palette) {
         }
         for (n, (key, name)) in apps.iter().enumerate() {
             let mut on = !rules.muted.contains(key);
-            ui::row(ui, pal, n == 0, name, Some(if on { "Pops up" } else { "Muted: kept in the Notification Center only (critical alerts still show)" }), |ui| {
-                if ui::switch(ui, pal, &mut on).changed() {
-                    if on {
-                        rules.muted.remove(key);
-                    } else {
-                        rules.muted.insert(key.clone());
+            ui::row(
+                ui,
+                pal,
+                n == 0,
+                name,
+                Some(if on { "Pops up" } else { "Muted: kept in the Notification Center only (critical alerts still show)" }),
+                |ui| {
+                    if ui::switch(ui, pal, &mut on).changed() {
+                        if on {
+                            rules.muted.remove(key);
+                        } else {
+                            rules.muted.insert(key.clone());
+                        }
                     }
-                }
-            });
+                },
+            );
         }
     });
     if rules != before {

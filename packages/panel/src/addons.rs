@@ -98,13 +98,33 @@ pub struct Row {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Block {
     /// A large clock-style line (may hold "{countdown}"), a caption, and a bar: from/to Unix times, or a fixed 0-100.
-    Big { text: String, caption: String, progress: Option<(f64, Option<f64>)> },
+    Big {
+        text: String,
+        caption: String,
+        progress: Option<(f64, Option<f64>)>,
+    },
     Section(String),
-    Buttons { items: Vec<Button>, columns: usize },
-    Stepper { label: String, value: String, minus: String, plus: String },
-    Field { id: String, hint: String, value: String, submit: String },
+    Buttons {
+        items: Vec<Button>,
+        columns: usize,
+    },
+    Stepper {
+        label: String,
+        value: String,
+        minus: String,
+        plus: String,
+    },
+    Field {
+        id: String,
+        hint: String,
+        value: String,
+        submit: String,
+    },
     List(Vec<Row>),
-    Text { text: String, dim: bool },
+    Text {
+        text: String,
+        dim: bool,
+    },
 }
 
 /// What one add-on last printed.
@@ -143,7 +163,8 @@ impl View {
         match self.until {
             Some(u) if text.contains("{countdown}") => {
                 let d = (u - now).max(0);
-                let t = if d >= 3600 { format!("{}:{:02}:{:02}", d / 3600, d / 60 % 60, d % 60) } else { format!("{}:{:02}", d / 60, d % 60) };
+                let t =
+                    if d >= 3600 { format!("{}:{:02}:{:02}", d / 3600, d / 60 % 60, d % 60) } else { format!("{}:{:02}", d / 60, d % 60) };
                 text.replace("{countdown}", &t)
             }
             _ => text.to_string(),
@@ -183,7 +204,15 @@ pub fn load() -> Vec<Addon> {
                 // a fixed label, or just the icon (a button that opens the add-on's window)
                 Feed::Text(clip(i.get("text").or(i.get("icon").map(|_| ""))?, 40))
             };
-            Some(Addon { id: i.id(), name, feed, open: i.command("open"), icon: i.get("icon").unwrap_or("").to_string(), settings: i.command("settings"), act: i.command("act") })
+            Some(Addon {
+                id: i.id(),
+                name,
+                feed,
+                open: i.command("open"),
+                icon: i.get("icon").unwrap_or("").to_string(),
+                settings: i.command("settings"),
+                act: i.command("act"),
+            })
         })
         .collect()
 }
@@ -217,18 +246,39 @@ pub fn parse(id: &str, name: &str, out: &str) -> View {
         })
         .unwrap_or_default();
     let card = v["card"].as_array().map(|a| a.iter().take(24).filter_map(block).collect()).unwrap_or_default();
-    View { id: id.into(), name: name.into(), text, level, lines, help: clip(v["help"].as_str().unwrap_or(""), 240), until: v["until"].as_i64(), off: v["state"].as_str() == Some("off"), icon: icon_name(v["icon"].as_str().unwrap_or("")), card, refresh_at: v["refresh_at"].as_i64(), ..Default::default() }
+    View {
+        id: id.into(),
+        name: name.into(),
+        text,
+        level,
+        lines,
+        help: clip(v["help"].as_str().unwrap_or(""), 240),
+        until: v["until"].as_i64(),
+        off: v["state"].as_str() == Some("off"),
+        icon: icon_name(v["icon"].as_str().unwrap_or("")),
+        card,
+        refresh_at: v["refresh_at"].as_i64(),
+        ..Default::default()
+    }
 }
 
 /// An id the card may give `act`: letters, digits and ._:+- only.
 fn act_id(v: &serde_json::Value) -> String {
     let s = v.as_str().unwrap_or("");
-    if !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_alphanumeric() || "._:+-".contains(c)) { s.to_string() } else { String::new() }
+    if !s.is_empty() && s.len() <= 64 && s.chars().all(|c| c.is_ascii_alphanumeric() || "._:+-".contains(c)) {
+        s.to_string()
+    } else {
+        String::new()
+    }
 }
 
 /// An icon for a card: a theme name, or a file the system installed (under /usr/share).
 fn card_icon(s: &str) -> String {
-    if s.starts_with("/usr/share/") && !s.contains("..") && s.len() <= 200 { s.to_string() } else { icon_name(s) }
+    if s.starts_with("/usr/share/") && !s.contains("..") && s.len() <= 200 {
+        s.to_string()
+    } else {
+        icon_name(s)
+    }
 }
 
 fn str_of(v: &serde_json::Value, n: usize) -> String {
@@ -251,22 +301,45 @@ fn block(b: &serde_json::Value) -> Option<Block> {
         let items: Vec<Button> = a
             .iter()
             .take(12)
-            .map(|x| Button { id: act_id(&x["id"]), label: str_of(&x["label"], 32), icon: card_icon(x["icon"].as_str().unwrap_or("")), accent: x["accent"].as_bool().unwrap_or(false), close: x["close"].as_bool().unwrap_or(false) })
+            .map(|x| Button {
+                id: act_id(&x["id"]),
+                label: str_of(&x["label"], 32),
+                icon: card_icon(x["icon"].as_str().unwrap_or("")),
+                accent: x["accent"].as_bool().unwrap_or(false),
+                close: x["close"].as_bool().unwrap_or(false),
+            })
             .collect();
         let columns = b["columns"].as_u64().map(|c| c as usize).unwrap_or(items.len()).clamp(1, 4);
         return (!items.is_empty()).then_some(Block::Buttons { items, columns });
     }
     if let Some(st) = b.get("stepper") {
-        return Some(Block::Stepper { label: str_of(&st["label"], 32), value: str_of(&st["value"], 16), minus: act_id(&st["minus"]), plus: act_id(&st["plus"]) });
+        return Some(Block::Stepper {
+            label: str_of(&st["label"], 32),
+            value: str_of(&st["value"], 16),
+            minus: act_id(&st["minus"]),
+            plus: act_id(&st["plus"]),
+        });
     }
     if let Some(f) = b.get("field") {
-        return Some(Block::Field { id: act_id(&f["id"]), hint: str_of(&f["hint"], 40), value: str_of(&f["value"], 80), submit: act_id(&f["submit"]) });
+        return Some(Block::Field {
+            id: act_id(&f["id"]),
+            hint: str_of(&f["hint"], 40),
+            value: str_of(&f["value"], 80),
+            submit: act_id(&f["submit"]),
+        });
     }
     if let Some(a) = b["list"].as_array() {
         let rows = a
             .iter()
             .take(10)
-            .map(|r| Row { id: act_id(&r["id"]), title: str_of(&r["title"], 40), note: str_of(&r["note"], 60), value: str_of(&r["value"], 20), on: r["on"].as_bool().unwrap_or(false), close: r["close"].as_bool().unwrap_or(false) })
+            .map(|r| Row {
+                id: act_id(&r["id"]),
+                title: str_of(&r["title"], 40),
+                note: str_of(&r["note"], 60),
+                value: str_of(&r["value"], 20),
+                on: r["on"].as_bool().unwrap_or(false),
+                close: r["close"].as_bool().unwrap_or(false),
+            })
             .collect();
         return Some(Block::List(rows));
     }
@@ -292,7 +365,11 @@ pub fn press(act: Vec<String>, id: String, text: Option<String>, now: Arc<Atomic
 
 /// An icon theme name the add-on asked for (letters, digits, - and _ only: a name, never a path).
 fn icon_name(s: &str) -> String {
-    if s.len() <= 64 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') { s.to_string() } else { String::new() }
+    if s.len() <= 64 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        s.to_string()
+    } else {
+        String::new()
+    }
 }
 
 fn file_stamp(p: &std::path::Path) -> Option<(std::time::SystemTime, u64)> {
@@ -303,7 +380,12 @@ fn file_stamp(p: &std::path::Path) -> Option<(std::time::SystemTime, u64)> {
 /// What an add-on shows now, read from its feed.
 fn read(a: &Addon) -> View {
     let mut view = match &a.feed {
-        Feed::Command { cmd, .. } => run(cmd).map(|o| parse(&a.id, &a.name, &o)).unwrap_or_else(|| View { id: a.id.clone(), name: a.name.clone(), help: "The add-on did not answer.".into(), ..Default::default() }),
+        Feed::Command { cmd, .. } => run(cmd).map(|o| parse(&a.id, &a.name, &o)).unwrap_or_else(|| View {
+            id: a.id.clone(),
+            name: a.name.clone(),
+            help: "The add-on did not answer.".into(),
+            ..Default::default()
+        }),
         Feed::File(p) => {
             let text = std::fs::File::open(p).ok().and_then(|f| {
                 let mut s = String::new();
@@ -374,7 +456,10 @@ pub fn spawn(shared: Arc<Mutex<Vec<View>>>, now: Arc<AtomicBool>) {
                 match &a.feed {
                     Feed::Command { interval, .. } => {
                         // interval 0: only when asked (the card opened, a press), once at the start for the pill
-                        if !forced && (Instant::now() < due[i] || (*interval == 0 && shared.lock().map(|v| v.iter().any(|x| x.id == a.id)).unwrap_or(false))) {
+                        if !forced
+                            && (Instant::now() < due[i]
+                                || (*interval == 0 && shared.lock().map(|v| v.iter().any(|x| x.id == a.id)).unwrap_or(false)))
+                        {
                             continue;
                         }
                         due[i] = Instant::now() + Duration::from_secs((*interval).max(60));
@@ -414,7 +499,11 @@ mod tests {
 
     #[test]
     fn output_is_read_and_cut() {
-        let v = parse("agent-usage", "Agent usage", r#"{"text":"Claude 31% · 16h","state":"alert","lines":[{"title":"Weekly","value":"31%","percent":131,"note":"resets in 16 h","alert":true}],"help":"From Claude Code's sign-in."}"#);
+        let v = parse(
+            "agent-usage",
+            "Agent usage",
+            r#"{"text":"Claude 31% · 16h","state":"alert","lines":[{"title":"Weekly","value":"31%","percent":131,"note":"resets in 16 h","alert":true}],"help":"From Claude Code's sign-in."}"#,
+        );
         assert_eq!(v.text, "Claude 31% · 16h");
         assert_eq!(v.level, Level::Alert);
         assert_eq!(v.lines[0].percent, Some(100.0));
@@ -438,7 +527,15 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("addon-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let f = dir.join("bar.json");
-        let a = Addon { id: "timer".into(), name: "Timer".into(), feed: Feed::File(f.clone()), open: Some(vec!["true".into()]), icon: "timer-symbolic".into(), settings: None, act: None };
+        let a = Addon {
+            id: "timer".into(),
+            name: "Timer".into(),
+            feed: Feed::File(f.clone()),
+            open: Some(vec!["true".into()]),
+            icon: "timer-symbolic".into(),
+            settings: None,
+            act: None,
+        };
         assert_eq!((read(&a).text.as_str(), read(&a).off), ("", false), "no file yet: no text, the icon still shows");
         std::fs::write(&f, r#"{"state":"off","text":"x"}"#).unwrap();
         assert!(read(&a).off);
@@ -504,7 +601,10 @@ mod tests {
 
     #[test]
     fn a_slow_or_noisy_command_is_cut_off() {
-        assert_eq!(run(&["sh".into(), "-c".into(), "echo '{\"text\":\"ok\"}'".into()]).as_deref().map(str::trim), Some("{\"text\":\"ok\"}"));
+        assert_eq!(
+            run(&["sh".into(), "-c".into(), "echo '{\"text\":\"ok\"}'".into()]).as_deref().map(str::trim),
+            Some("{\"text\":\"ok\"}")
+        );
         let big = run(&["sh".into(), "-c".into(), "head -c 200000 /dev/zero | tr '\\0' a".into()]).unwrap();
         assert_eq!(big.len(), 64 << 10);
     }

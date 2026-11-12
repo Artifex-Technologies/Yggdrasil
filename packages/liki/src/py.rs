@@ -79,11 +79,7 @@ pub fn join(a: &Path, b: impl AsRef<OsStr>) -> PathBuf {
 /// os.path.dirname(p)
 pub fn dirname(p: &OsStr) -> OsString {
     let b = p.as_bytes();
-    let i = b
-        .iter()
-        .rposition(|&c| c == b'/')
-        .map(|i| i + 1)
-        .unwrap_or(0);
+    let i = b.iter().rposition(|&c| c == b'/').map(|i| i + 1).unwrap_or(0);
     let mut head = &b[..i];
     if !head.is_empty() && head.iter().any(|&c| c != b'/') {
         while head.last() == Some(&b'/') {
@@ -124,23 +120,11 @@ fn passwd_home() -> Option<Vec<u8>> {
     let mut buf = vec![0 as libc::c_char; 16384];
     let mut pw: libc::passwd = unsafe { std::mem::zeroed() };
     let mut out: *mut libc::passwd = std::ptr::null_mut();
-    let r = unsafe {
-        libc::getpwuid_r(
-            libc::getuid(),
-            &mut pw,
-            buf.as_mut_ptr(),
-            buf.len(),
-            &mut out,
-        )
-    };
+    let r = unsafe { libc::getpwuid_r(libc::getuid(), &mut pw, buf.as_mut_ptr(), buf.len(), &mut out) };
     if r != 0 || out.is_null() || pw.pw_dir.is_null() {
         return None;
     }
-    Some(
-        unsafe { std::ffi::CStr::from_ptr(pw.pw_dir) }
-            .to_bytes()
-            .to_vec(),
-    )
+    Some(unsafe { std::ffi::CStr::from_ptr(pw.pw_dir) }.to_bytes().to_vec())
 }
 
 /// os.environ.get(name, default): a variable that is set, even to nothing, is used.
@@ -176,11 +160,7 @@ pub fn g(x: f64) -> String {
         return if x > 0.0 { "inf".into() } else { "-inf".into() };
     }
     if x == 0.0 {
-        return if x.is_sign_negative() {
-            "-0".into()
-        } else {
-            "0".into()
-        };
+        return if x.is_sign_negative() { "-0".into() } else { "0".into() };
     }
     // the exponent after rounding to six digits decides the form
     let e_form = format!("{x:.5e}");
@@ -241,11 +221,7 @@ pub fn float(text: &str) -> Option<f64> {
                 plain.push(b[*i] as char);
                 n += 1;
                 *i += 1;
-            } else if b[*i] == b'_'
-                && *i > start
-                && b[*i - 1].is_ascii_digit()
-                && b.get(*i + 1).is_some_and(|c| c.is_ascii_digit())
-            {
+            } else if b[*i] == b'_' && *i > start && b[*i - 1].is_ascii_digit() && b.get(*i + 1).is_some_and(|c| c.is_ascii_digit()) {
                 *i += 1;
             } else {
                 break;
@@ -291,10 +267,7 @@ pub fn max(a: f64, b: f64) -> f64 {
 
 /// str.lower() with only the letters and digits a-z 0-9 kept (the scripts' norm()).
 pub fn norm(s: &str) -> String {
-    s.to_lowercase()
-        .chars()
-        .filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
-        .collect()
+    s.to_lowercase().chars().filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit()).collect()
 }
 
 #[cfg(test)]
@@ -342,10 +315,7 @@ mod tests {
         assert_eq!(join(Path::new(""), "b"), PathBuf::from("b"));
         assert_eq!(join(Path::new("a"), "/b"), PathBuf::from("/b"));
         assert_eq!(join(Path::new("a"), "").as_os_str(), "a/");
-        assert_eq!(
-            dirname(OsStr::new("/usr/share/liki/brand-icons")),
-            "/usr/share/liki"
-        );
+        assert_eq!(dirname(OsStr::new("/usr/share/liki/brand-icons")), "/usr/share/liki");
         assert_eq!(dirname(OsStr::new("x/brand-icons/")), "x/brand-icons");
         assert_eq!(dirname(OsStr::new("///a")), "///");
         assert_eq!(dirname(OsStr::new("a")), "");

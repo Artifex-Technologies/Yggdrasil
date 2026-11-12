@@ -66,7 +66,14 @@ pub fn installed_in(dirs: &[PathBuf]) -> Vec<Pack> {
                 continue;
             }
             let text = std::fs::read_to_string(&p).unwrap_or_default();
-            let head = |k: &str| text.lines().take_while(|l| l.starts_with('#')).find_map(|l| l.strip_prefix('#').and_then(|l| l.trim().strip_prefix(k)).and_then(|r| r.strip_prefix(':')).map(|v| v.trim().to_string()));
+            let head = |k: &str| {
+                text.lines().take_while(|l| l.starts_with('#')).find_map(|l| {
+                    l.strip_prefix('#')
+                        .and_then(|l| l.trim().strip_prefix(k))
+                        .and_then(|r| r.strip_prefix(':'))
+                        .map(|v| v.trim().to_string())
+                })
+            };
             let count = text.lines().filter(|l| !l.starts_with('#') && !l.is_empty()).count();
             out.push(Pack {
                 name: head("name").unwrap_or_else(|| id.clone()),
@@ -97,10 +104,18 @@ pub fn words_for(on_ids: &[String]) -> PackWords {
     for p in installed() {
         // the packs come from case-insensitive lists: "Speedrun" means "speedrun" too. Hunspell (and the apps) accept any
         // capitalisation of a lowercase entry, so the lowercase form goes along; "GitHub" stays as it is written as well.
-        let words: Vec<String> = p.words().into_iter().flat_map(|x| {
-            let l = x.to_lowercase();
-            if l == x { vec![x] } else { vec![x, l] }
-        }).collect();
+        let words: Vec<String> = p
+            .words()
+            .into_iter()
+            .flat_map(|x| {
+                let l = x.to_lowercase();
+                if l == x {
+                    vec![x]
+                } else {
+                    vec![x, l]
+                }
+            })
+            .collect();
         if on_ids.contains(&p.id) {
             w.on.extend(words.iter().cloned());
         }
@@ -123,7 +138,11 @@ pub fn import(text: &str) -> BTreeSet<String> {
             let w = tok.trim_matches(|c| matches!(c, '*' | '+' | '~'));
             // code, not prose: camelCase identifiers (podAntiAffinity, hBrush); names like GitHub start with a capital
             let camel = w.chars().next().is_some_and(char::is_lowercase) && w.chars().any(char::is_uppercase);
-            if !camel && valid(w) && w.chars().all(|c| c.is_alphanumeric() || "'-._".contains(c)) && w.chars().next().is_some_and(char::is_alphanumeric) {
+            if !camel
+                && valid(w)
+                && w.chars().all(|c| c.is_alphanumeric() || "'-._".contains(c))
+                && w.chars().next().is_some_and(char::is_alphanumeric)
+            {
                 out.insert(w.trim_end_matches('.').to_string());
             }
         }
@@ -159,7 +178,9 @@ mod tests {
 
     #[test]
     fn misspellings_are_kept_out_but_names_are_not() {
-        let bad = misspellings(r#"{"dictionaryDefinitions":[{"name":"x","suggestWords":["splitted->split","synopsys->synopsis","sended->sent"]}]}"#);
+        let bad = misspellings(
+            r#"{"dictionaryDefinitions":[{"name":"x","suggestWords":["splitted->split","synopsys->synopsis","sended->sent"]}]}"#,
+        );
         assert_eq!(bad.len(), 3);
         let words: BTreeSet<String> = ["splitted", "Synopsys", "Kubernetes", "sended"].iter().map(|s| s.to_string()).collect();
         let (keep, drop) = without_misspellings(words, &bad);

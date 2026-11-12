@@ -39,7 +39,11 @@ impl Integration {
     /// A command: the program (an absolute path, or nothing) and its arguments, split on spaces. Run directly, never through a shell.
     pub fn command(&self, key: &str) -> Option<Vec<String>> {
         let parts: Vec<String> = self.get(key)?.split_whitespace().map(str::to_string).collect();
-        if parts.first().is_some_and(|p| p.starts_with('/')) { Some(parts) } else { None }
+        if parts.first().is_some_and(|p| p.starts_with('/')) {
+            Some(parts)
+        } else {
+            None
+        }
     }
 
     /// A local web address (`http://127.0.0.1:PORT`, `http://localhost:PORT` or `http://[::1]:PORT`) as `host:port`. Anything that
@@ -48,7 +52,8 @@ impl Integration {
         let rest = self.get(key)?.strip_prefix("http://")?.trim_end_matches('/');
         let (host, port) = rest.rsplit_once(':')?;
         let local = matches!(host, "127.0.0.1" | "localhost" | "[::1]");
-        (local && !port.is_empty() && port.chars().all(|c| c.is_ascii_digit())).then(|| format!("{}:{port}", if host == "localhost" { "127.0.0.1" } else { host }))
+        (local && !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()))
+            .then(|| format!("{}:{port}", if host == "localhost" { "127.0.0.1" } else { host }))
     }
 
     /// A path value (absolute only); `%h` becomes the home folder and `%u` the user's name.
@@ -174,11 +179,16 @@ mod tests {
         assert_eq!(api("http://127.0.0.1:8930"), Some("127.0.0.1:8930".into()));
         assert_eq!(api("http://localhost:8930/"), Some("127.0.0.1:8930".into()));
         assert_eq!(api("http://[::1]:80"), Some("[::1]:80".into()));
-        for bad in ["https://127.0.0.1:8930", "http://example.com:80", "http://127.0.0.1.evil.com:80", "http://127.0.0.1", "http://127.0.0.1:80/x"] {
+        for bad in
+            ["https://127.0.0.1:8930", "http://example.com:80", "http://127.0.0.1.evil.com:80", "http://127.0.0.1", "http://127.0.0.1:80/x"]
+        {
             assert_eq!(api(bad), None, "{bad}");
         }
         let only = all_in(&[a]);
-        assert_eq!(only.iter().find(|i| i.kind == "assistant").unwrap().command("ask"), Some(vec!["/usr/bin/ask".into(), "--voice".into()]));
+        assert_eq!(
+            only.iter().find(|i| i.kind == "assistant").unwrap().command("ask"),
+            Some(vec!["/usr/bin/ask".into(), "--voice".into()])
+        );
         let _ = std::fs::remove_dir_all(&d);
     }
 }

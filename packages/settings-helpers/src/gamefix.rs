@@ -39,7 +39,10 @@ fn read_replace(path: &str) -> Option<String> {
 // --- Steam -------------------------------------------------------------------------------------------------------------
 
 pub fn steam_roots(home: &str) -> Vec<String> {
-    [py::join(home, ".local/share/Steam"), py::join(home, ".steam/steam")].into_iter().filter(|r| isdir(&py::join(r, "steamapps"))).collect()
+    [py::join(home, ".local/share/Steam"), py::join(home, ".steam/steam")]
+        .into_iter()
+        .filter(|r| isdir(&py::join(r, "steamapps")))
+        .collect()
 }
 
 fn re(pattern: &str) -> regex::Regex {
@@ -177,7 +180,11 @@ fn run_timeout(argv: &[&str], secs: u64) -> Option<String> {
 fn int_of(v: &Value) -> Option<i128> {
     match v {
         Value::Bool(b) => Some(*b as i128),
-        Value::Number(n) => n.as_i64().map(|i| i as i128).or_else(|| n.as_u64().map(|u| u as i128)).or_else(|| n.as_f64().filter(|f| f.is_finite()).map(|f| f.trunc() as i128)),
+        Value::Number(n) => n
+            .as_i64()
+            .map(|i| i as i128)
+            .or_else(|| n.as_u64().map(|u| u as i128))
+            .or_else(|| n.as_f64().filter(|f| f.is_finite()).map(|f| f.trunc() as i128)),
         Value::String(s) => pycompat::int(s),
         _ => None,
     }
@@ -374,7 +381,11 @@ pub fn ini_find(lines: &[String], section: Option<&str>) -> R<Option<(usize, usi
             }
             let inner: String = {
                 let cs: Vec<char> = s.chars().collect();
-                if cs.len() >= 2 { cs[1..cs.len() - 1].iter().collect() } else { String::new() }
+                if cs.len() >= 2 {
+                    cs[1..cs.len() - 1].iter().collect()
+                } else {
+                    String::new()
+                }
             };
             let Some(section) = section else { return Err(Crash("AttributeError: 'NoneType' object has no attribute 'lower'".into())) };
             if lower(pycompat::strip(&inner)) == lower(section) {
@@ -576,7 +587,11 @@ pub fn apply(fix: &Value, games: &BTreeMap<String, Game>) -> Result<(), Stop> {
             let from_template = match template {
                 Some(t) => {
                     let tp = fill(as_str(t, "template")?, &values);
-                    if isfile(&tp) { Some(tp) } else { None }
+                    if isfile(&tp) {
+                        Some(tp)
+                    } else {
+                        None
+                    }
                 }
                 None => None,
             };
@@ -585,7 +600,9 @@ pub fn apply(fix: &Value, games: &BTreeMap<String, Game>) -> Result<(), Stop> {
                 None => {
                     let tl = match spec.get("template_lines") {
                         None => vec![],
-                        Some(Value::Array(a)) => a.iter().map(|l| as_str(l, "template line").map(|s| fill(s, &values))).collect::<R<Vec<_>>>()?,
+                        Some(Value::Array(a)) => {
+                            a.iter().map(|l| as_str(l, "template line").map(|s| fill(s, &values))).collect::<R<Vec<_>>>()?
+                        }
                         Some(_) => return Err(type_error("template_lines").into()),
                     };
                     lines = tl;

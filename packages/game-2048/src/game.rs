@@ -109,7 +109,11 @@ pub fn can_merge(mode: Mode, a: u32, b: u32) -> bool {
 }
 
 fn spawn_values(mode: Mode) -> [u32; 2] {
-    if mode == Mode::Fibonacci { [1, 2] } else { [2, 4] }
+    if mode == Mode::Fibonacci {
+        [1, 2]
+    } else {
+        [2, 4]
+    }
 }
 
 /// A random number generator small enough to save with the game (mulberry32), so a Daily game is the same for everyone and a
@@ -186,7 +190,19 @@ impl Game {
     pub fn new(size: usize, mode: Mode, day: &str) -> Game {
         let size = size.clamp(MIN_SIZE, MAX_SIZE);
         let rng = if mode == Mode::Daily { Rng::from_text(&format!("{day}/{size}")) } else { Rng::from_time() };
-        let mut g = Game { size, mode, goal: goal_for(size, mode), cells: vec![vec![0; size]; size], score: 0, moves: 0, over: false, won: false, keep_playing: false, day: if mode == Mode::Daily { day.into() } else { String::new() }, rng };
+        let mut g = Game {
+            size,
+            mode,
+            goal: goal_for(size, mode),
+            cells: vec![vec![0; size]; size],
+            score: 0,
+            moves: 0,
+            over: false,
+            won: false,
+            keep_playing: false,
+            day: if mode == Mode::Daily { day.into() } else { String::new() },
+            rng,
+        };
         // the opening two are random even in Evil, so it is not lost from the start
         g.spawn(true);
         g.spawn(true);
@@ -453,7 +469,12 @@ mod tests {
 
     #[test]
     fn fibonacci_neighbours_merge() {
-        assert!(can_merge(Mode::Fibonacci, 3, 5) && can_merge(Mode::Fibonacci, 5, 3) && can_merge(Mode::Fibonacci, 1, 1) && can_merge(Mode::Fibonacci, 1, 2));
+        assert!(
+            can_merge(Mode::Fibonacci, 3, 5)
+                && can_merge(Mode::Fibonacci, 5, 3)
+                && can_merge(Mode::Fibonacci, 1, 1)
+                && can_merge(Mode::Fibonacci, 1, 2)
+        );
         assert!(!can_merge(Mode::Fibonacci, 3, 3) && !can_merge(Mode::Fibonacci, 2, 5));
         assert!(!can_merge(Mode::Classic, 3, 5));
         let mut g = board(&[&[3, 5, 0], &[1, 1, 0], &[2, 2, 0]]);

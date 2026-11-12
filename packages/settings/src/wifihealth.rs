@@ -82,9 +82,11 @@ mod tests {
 
     #[test]
     fn reads_the_report() {
-        let r = parse(r#"{"connected":true,"summary":"A weak signal is the likely cause","verdict":"bad",
+        let r = parse(
+            r#"{"connected":true,"summary":"A weak signal is the likely cause","verdict":"bad",
             "link":{"ssid":"Home","band":"5 GHz","channel":157,"width":80,"signal_dbm":-80,"rx_mbps":6.5,"tx_mbps":13},
-            "findings":[{"check":"signal","status":"bad","title":"Weak signal","detail":"Move closer."}],"devices_here":4}"#)
+            "findings":[{"check":"signal","status":"bad","title":"Weak signal","detail":"Move closer."}],"devices_here":4}"#,
+        )
         .unwrap();
         assert!(r.connected);
         assert_eq!(r.link.channel, 157);

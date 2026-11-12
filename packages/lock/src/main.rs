@@ -83,7 +83,15 @@ struct App {
 }
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for App {
-    fn event(_: &mut Self, _: &wl_registry::WlRegistry, _: wl_registry::Event, _: &GlobalListContents, _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &wl_registry::WlRegistry,
+        _: wl_registry::Event,
+        _: &GlobalListContents,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 delegate_noop!(App: WlCompositor);
 delegate_noop!(App: ignore WlShm);
@@ -116,7 +124,10 @@ impl Dispatch<ExtSessionLockV1, ()> for App {
             }
             ext_session_lock_v1::Event::Finished => {
                 // refused (another locker is running) or ended by the compositor
-                eprintln!("yggdrasil-lock: the compositor ended the lock{}", if app.locked { "" } else { " (another locker may be running)" });
+                eprintln!(
+                    "yggdrasil-lock: the compositor ended the lock{}",
+                    if app.locked { "" } else { " (another locker may be running)" }
+                );
                 app.done = Some(1);
             }
             _ => {}
@@ -125,7 +136,14 @@ impl Dispatch<ExtSessionLockV1, ()> for App {
 }
 
 impl Dispatch<ExtSessionLockSurfaceV1, usize> for App {
-    fn event(app: &mut Self, ls: &ExtSessionLockSurfaceV1, e: ext_session_lock_surface_v1::Event, idx: &usize, _: &Connection, _: &QueueHandle<Self>) {
+    fn event(
+        app: &mut Self,
+        ls: &ExtSessionLockSurfaceV1,
+        e: ext_session_lock_surface_v1::Event,
+        idx: &usize,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
         if let ext_session_lock_surface_v1::Event::Configure { serial, width, height } = e {
             ls.ack_configure(serial);
             if let Some(s) = app.surfaces.get_mut(*idx) {
@@ -161,7 +179,9 @@ impl Dispatch<WlKeyboard, ()> for App {
             wl_keyboard::Event::Keymap { format: WEnum::Value(wl_keyboard::KeymapFormat::XkbV1), fd, size } => {
                 let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
                 // SAFETY: the compositor hands over a read-only descriptor of exactly `size` bytes.
-                if let Ok(Some(km)) = unsafe { xkb::Keymap::new_from_fd(&ctx, fd, size as usize, xkb::KEYMAP_FORMAT_TEXT_V1, xkb::KEYMAP_COMPILE_NO_FLAGS) } {
+                if let Ok(Some(km)) =
+                    unsafe { xkb::Keymap::new_from_fd(&ctx, fd, size as usize, xkb::KEYMAP_FORMAT_TEXT_V1, xkb::KEYMAP_COMPILE_NO_FLAGS) }
+                {
                     app.xkb = Some(xkb::State::new(&km));
                 }
             }
@@ -185,9 +205,9 @@ impl App {
         let kc = xkb::Keycode::new(code + 8);
         let sym = x.key_get_one_sym(kc);
         let k = match sym.raw() {
-            0xff0d | 0xff8d => Key::Enter,         // Return, KP_Enter
-            0xff08 => Key::Backspace,              // BackSpace
-            0xff1b => Key::Escape,                 // Escape
+            0xff0d | 0xff8d => Key::Enter, // Return, KP_Enter
+            0xff08 => Key::Backspace,      // BackSpace
+            0xff1b => Key::Escape,         // Escape
             _ => match x.key_get_utf8(kc).chars().next() {
                 Some(c) => Key::Char(c),
                 None => return,
@@ -303,15 +323,35 @@ fn preview(args: &[String]) -> ! {
     let get = |k: &str| args.iter().position(|a| a == k).and_then(|i| args.get(i + 1)).cloned();
     let Some(d) = get("--preview").and_then(|n| design::Design::parse(&n)) else { die("unknown design (split, classic, zen, poster)") };
     let out = get("--out").unwrap_or_else(|| die("--out FILE is needed"));
-    let (w, h) = get("--size").and_then(|s| s.split_once('x').map(|(a, b)| (a.parse().unwrap_or(1280), b.parse().unwrap_or(720)))).unwrap_or((1280u32, 720u32));
+    let (w, h) = get("--size")
+        .and_then(|s| s.split_once('x').map(|(a, b)| (a.parse().unwrap_or(1280), b.parse().unwrap_or(720))))
+        .unwrap_or((1280u32, 720u32));
     let fonts = draw::Fonts::load().unwrap_or_else(|| die("no fonts found"));
-    let wall = get("--wallpaper").map(std::path::PathBuf::from).or_else(design::wallpaper_path).and_then(|p| design::load_picture(&p)).and_then(|p| design::cover(&p, w, h));
+    let wall = get("--wallpaper")
+        .map(std::path::PathBuf::from)
+        .or_else(design::wallpaper_path)
+        .and_then(|p| design::load_picture(&p))
+        .and_then(|p| design::cover(&p, w, h));
     let blurred = wall.as_ref().and_then(design::blur);
     let avatar = design::avatar_path().and_then(|p| design::load_picture(&p));
     let (time, date) = design::clock_text();
     let user = get("--user").unwrap_or_else(user_name);
     let message = get("--message").unwrap_or_default();
-    let scene = design::Scene { fonts: &fonts, user: &user, dots: get("--typed").and_then(|n| n.parse().ok()).unwrap_or(0), waiting: false, message: &message, hint: false, time, date, greeting: design::greeting(design::current_hour()), wall: wall.as_ref(), blurred: blurred.as_ref(), avatar: avatar.as_ref(), accent: design::accent() };
+    let scene = design::Scene {
+        fonts: &fonts,
+        user: &user,
+        dots: get("--typed").and_then(|n| n.parse().ok()).unwrap_or(0),
+        waiting: false,
+        message: &message,
+        hint: false,
+        time,
+        date,
+        greeting: design::greeting(design::current_hour()),
+        wall: wall.as_ref(),
+        blurred: blurred.as_ref(),
+        avatar: avatar.as_ref(),
+        accent: design::accent(),
+    };
     let mut pix = Pixmap::new(w, h).unwrap_or_else(|| die("bad size"));
     design::paint(d, &mut pix, &scene);
     pix.save_png(&out).unwrap_or_else(|e| die(&format!("cannot write {out}: {e}")));
@@ -341,18 +381,46 @@ fn main() {
     let compositor: WlCompositor = globals.bind(&qh, 1..=6, ()).unwrap_or_else(|_| die("no wl_compositor"));
     let shm: WlShm = globals.bind(&qh, 1..=1, ()).unwrap_or_else(|_| die("no wl_shm"));
     let _seat: WlSeat = globals.bind(&qh, 1..=7, ()).unwrap_or_else(|_| die("no wl_seat"));
-    let manager: ExtSessionLockManagerV1 = globals.bind(&qh, 1..=1, ()).unwrap_or_else(|_| die("the compositor does not offer ext-session-lock-v1"));
-    let outputs: Vec<WlOutput> = globals.contents().with_list(|l| l.iter().filter(|g| g.interface == "wl_output").map(|g| globals.registry().bind::<WlOutput, _, _>(g.name, g.version.min(4), &qh, ())).collect());
+    let manager: ExtSessionLockManagerV1 =
+        globals.bind(&qh, 1..=1, ()).unwrap_or_else(|_| die("the compositor does not offer ext-session-lock-v1"));
+    let outputs: Vec<WlOutput> = globals.contents().with_list(|l| {
+        l.iter()
+            .filter(|g| g.interface == "wl_output")
+            .map(|g| globals.registry().bind::<WlOutput, _, _>(g.name, g.version.min(4), &qh, ()))
+            .collect()
+    });
     let fonts = draw::Fonts::load().unwrap_or_else(|| die("no fonts found (fc-match sans-serif)"));
 
     #[cfg(feature = "test-auth")]
     let authenticator: Box<dyn Authenticator> = Box::new(auth::Fake);
     #[cfg(not(feature = "test-auth"))]
-    let authenticator: Box<dyn Authenticator> = Box::new(auth::WithDistress { inner: auth::Pam { service: std::env::var("YGGDRASIL_LOCK_PAM").unwrap_or_else(|_| "login".into()) } });
+    let authenticator: Box<dyn Authenticator> = Box::new(auth::WithDistress {
+        inner: auth::Pam { service: std::env::var("YGGDRASIL_LOCK_PAM").unwrap_or_else(|_| "login".into()) },
+    });
 
     // Lock first, then cover every output with a lock surface (the compositor says "locked" once they are shown).
     let lock = manager.lock(&qh, ());
-    let mut app = App { qh: qh.clone(), conn: conn.clone(), shm, lock: lock.clone(), surfaces: vec![], locked: false, lock_state: Lock::default(), xkb: None, keyboard: None, auth: authenticator, user: user_name(), fonts, design: design::chosen(), wallpaper: design::wallpaper_path().and_then(|p| design::load_picture(&p)), avatar: design::avatar_path().and_then(|p| design::load_picture(&p)), walls: Default::default(), done: None, #[cfg(feature = "test-auth")] test_keys: std::env::var("YGGDRASIL_LOCK_TEST_KEYS").ok().map(|k| (Instant::now(), k)) };
+    let mut app = App {
+        qh: qh.clone(),
+        conn: conn.clone(),
+        shm,
+        lock: lock.clone(),
+        surfaces: vec![],
+        locked: false,
+        lock_state: Lock::default(),
+        xkb: None,
+        keyboard: None,
+        auth: authenticator,
+        user: user_name(),
+        fonts,
+        design: design::chosen(),
+        wallpaper: design::wallpaper_path().and_then(|p| design::load_picture(&p)),
+        avatar: design::avatar_path().and_then(|p| design::load_picture(&p)),
+        walls: Default::default(),
+        done: None,
+        #[cfg(feature = "test-auth")]
+        test_keys: std::env::var("YGGDRASIL_LOCK_TEST_KEYS").ok().map(|k| (Instant::now(), k)),
+    };
     for (i, out) in outputs.iter().enumerate() {
         let wl = compositor.create_surface(&qh, ());
         lock.get_lock_surface(&wl, out, &qh, i);
@@ -376,7 +444,13 @@ fn main() {
                 #[cfg(feature = "test-auth")]
                 if let Some((_, keys)) = app.test_keys.take() {
                     for c in keys.chars() {
-                        let k = if c == '\n' { Key::Enter } else if c == '\u{8}' { Key::Backspace } else { Key::Char(c) };
+                        let k = if c == '\n' {
+                            Key::Enter
+                        } else if c == '\u{8}' {
+                            Key::Backspace
+                        } else {
+                            Key::Char(c)
+                        };
                         app.apply_key(k);
                     }
                 }

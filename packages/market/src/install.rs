@@ -7,8 +7,8 @@ use std::io::{BufRead, BufReader, Read};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::time::Instant;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use crate::catalog::{Entry, Source};
 
@@ -91,13 +91,19 @@ pub fn command(e: &Entry, op: Op) -> Option<(String, Vec<String>)> {
         base
     };
     Some(match (&e.source, op) {
-        (Source::Pacman(p), Op::Install) => ("pkexec".into(), with(s(&[ROOT_HELPER, CANCEL, "pacman", "-S", "--needed", "--noconfirm"]), p)),
+        (Source::Pacman(p), Op::Install) => {
+            ("pkexec".into(), with(s(&[ROOT_HELPER, CANCEL, "pacman", "-S", "--needed", "--noconfirm"]), p))
+        }
         (Source::Pacman(p), Op::Reinstall) => ("pkexec".into(), with(s(&[ROOT_HELPER, CANCEL, "pacman", "-S", "--noconfirm"]), p)),
-        (Source::Pacman(p), Op::Remove) | (Source::Aur(p), Op::Remove) => ("pkexec".into(), with(s(&[ROOT_HELPER, CANCEL, "pacman", "-Rs", "--noconfirm"]), p)),
+        (Source::Pacman(p), Op::Remove) | (Source::Aur(p), Op::Remove) => {
+            ("pkexec".into(), with(s(&[ROOT_HELPER, CANCEL, "pacman", "-Rs", "--noconfirm"]), p))
+        }
         (Source::Aur(p), Op::Install) => ("yay".into(), with(s(&["-S", "--needed", "--noconfirm", "--sudo", SUDO_WRAPPER]), p)),
         (Source::Aur(p), Op::Reinstall) => ("yay".into(), with(s(&["-S", "--noconfirm", "--sudo", SUDO_WRAPPER]), p)),
         (Source::Flatpak(a), Op::Install) => ("flatpak".into(), s(&["install", "--user", "-y", "--noninteractive", "flathub", a])),
-        (Source::Flatpak(a), Op::Reinstall) => ("flatpak".into(), s(&["install", "--user", "-y", "--noninteractive", "--reinstall", "flathub", a])),
+        (Source::Flatpak(a), Op::Reinstall) => {
+            ("flatpak".into(), s(&["install", "--user", "-y", "--noninteractive", "--reinstall", "flathub", a]))
+        }
         (Source::Flatpak(a), Op::Remove) => ("flatpak".into(), s(&["uninstall", "--user", "-y", "--noninteractive", a])),
         (Source::Component(c), op) if op != Op::UpdateAll => {
             let mut cmd = crate::catalog::component_command()?;
@@ -110,7 +116,12 @@ pub fn command(e: &Entry, op: Op) -> Option<(String, Vec<String>)> {
             // step then comes from the same process, so the password box asks once (polkit keeps it a few minutes for the helper only).
             // Nothing from outside the repositories is taken from the AUR unless it is known to come from there: the operating
             // system's own builds and anything installed by hand keep what they are.
-            let skip = crate::catalog::aur_ignore(&crate::catalog::foreign_packages(), &crate::catalog::aur_allowed(), &crate::catalog::local_builds()).join(",");
+            let skip = crate::catalog::aur_ignore(
+                &crate::catalog::foreign_packages(),
+                &crate::catalog::aur_allowed(),
+                &crate::catalog::local_builds(),
+            )
+            .join(",");
             let mut a = s(&["-Syu", "--noconfirm", "--sudo", SUDO_WRAPPER]);
             if !skip.is_empty() {
                 a.extend(s(&["--ignore", &skip]));
@@ -149,7 +160,11 @@ pub fn read_line(job: &mut Job, raw: &str) {
     if line.is_empty() {
         return;
     }
-    let percent = line.split_whitespace().rev().find_map(|w| w.strip_suffix('%').and_then(|n| n.parse::<f32>().ok())).filter(|p| (0.0..=100.0).contains(p));
+    let percent = line
+        .split_whitespace()
+        .rev()
+        .find_map(|w| w.strip_suffix('%').and_then(|n| n.parse::<f32>().ok()))
+        .filter(|p| (0.0..=100.0).contains(p));
     // pacman: "Packages (3) a-1 b-2 c-3" says how many files may need downloading
     if let Some(rest) = line.strip_prefix("Packages (") {
         if let Some((n, _)) = rest.split_once(')') {
@@ -265,18 +280,53 @@ pub struct Undo {
 
 /// Run the command in the background; the returned job fills in as it goes. `repaint` is called on every change.
 #[allow(clippy::too_many_arguments)]
-pub fn start(id: &str, title: &str, op: Op, prog: String, args: Vec<String>, undo: Undo, repaint: impl Fn() + Send + Sync + 'static, done: impl FnOnce(Status) + Send + 'static) -> Shared {
+pub fn start(
+    id: &str,
+    title: &str,
+    op: Op,
+    prog: String,
+    args: Vec<String>,
+    undo: Undo,
+    repaint: impl Fn() + Send + Sync + 'static,
+    done: impl FnOnce(Status) + Send + 'static,
+) -> Shared {
     let _ = std::fs::create_dir_all(cancel_dir());
     let safe: String = id.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
     let cancel_file = cancel_dir().join(format!("{safe}-{}.cancel", std::process::id()));
     let _ = std::fs::remove_file(&cancel_file);
     let now = Instant::now();
-    let job = Arc::new(Mutex::new(Job { id: id.to_string(), title: title.to_string(), op, log: vec![], phase: format!("{}...", op.verb()), frac: None, status: Status::Running, dl: None, inst: None, dl_files: 1, dl_done: 0, dl_current: String::new(), started: now, moved: now, cancel_requested: false, cancel_file: cancel_file.clone(), pid: None }));
+    let job = Arc::new(Mutex::new(Job {
+        id: id.to_string(),
+        title: title.to_string(),
+        op,
+        log: vec![],
+        phase: format!("{}...", op.verb()),
+        frac: None,
+        status: Status::Running,
+        dl: None,
+        inst: None,
+        dl_files: 1,
+        dl_done: 0,
+        dl_current: String::new(),
+        started: now,
+        moved: now,
+        cancel_requested: false,
+        cancel_file: cancel_file.clone(),
+        pid: None,
+    }));
     let j = job.clone();
     let repaint = Arc::new(repaint);
     let args: Vec<String> = args.into_iter().map(|a| if a == CANCEL { cancel_file.to_string_lossy().into_owned() } else { a }).collect();
     std::thread::spawn(move || {
-        let child = Command::new(&prog).args(&args).env("AGORA_SUDO", SUDO_WRAPPER).env("AGORA_CANCEL_FILE", &cancel_file).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).process_group(0).spawn();
+        let child = Command::new(&prog)
+            .args(&args)
+            .env("AGORA_SUDO", SUDO_WRAPPER)
+            .env("AGORA_CANCEL_FILE", &cancel_file)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .process_group(0)
+            .spawn();
         let mut child = match child {
             Ok(c) => c,
             Err(e) => {
@@ -368,7 +418,25 @@ mod tests {
 
     fn job() -> Job {
         let now = Instant::now();
-        Job { id: "x".into(), title: "X".into(), op: Op::Install, log: vec![], phase: String::new(), frac: None, status: Status::Running, dl: None, inst: None, dl_files: 1, dl_done: 0, dl_current: String::new(), started: now, moved: now, cancel_requested: false, cancel_file: PathBuf::new(), pid: None }
+        Job {
+            id: "x".into(),
+            title: "X".into(),
+            op: Op::Install,
+            log: vec![],
+            phase: String::new(),
+            frac: None,
+            status: Status::Running,
+            dl: None,
+            inst: None,
+            dl_files: 1,
+            dl_done: 0,
+            dl_current: String::new(),
+            started: now,
+            moved: now,
+            cancel_requested: false,
+            cancel_file: PathBuf::new(),
+            pid: None,
+        }
     }
 
     #[test]
@@ -431,7 +499,16 @@ mod tests {
 
     #[test]
     fn a_job_reads_the_output_and_reports_the_end() {
-        let job = start("x", "X", Op::Install, "sh".into(), vec!["-c".into(), "echo '(1/2) installing a'; printf '(2/2) installing b\\r(2/2) done\\n'; exit 0".into()], Undo::default(), || {}, |_| {});
+        let job = start(
+            "x",
+            "X",
+            Op::Install,
+            "sh".into(),
+            vec!["-c".into(), "echo '(1/2) installing a'; printf '(2/2) installing b\\r(2/2) done\\n'; exit 0".into()],
+            Undo::default(),
+            || {},
+            |_| {},
+        );
         let j = wait(&job);
         assert_eq!(j.status, Status::Done);
         assert_eq!(j.frac, Some(1.0));
@@ -445,7 +522,8 @@ mod tests {
             Status::Failed(why) => assert!(why.starts_with("Cancelled")),
             other => panic!("{other:?}"),
         }
-        let job = start("y", "Y", Op::Install, "sh".into(), vec!["-c".into(), "echo oops >&2; exit 3".into()], Undo::default(), || {}, |_| {});
+        let job =
+            start("y", "Y", Op::Install, "sh".into(), vec!["-c".into(), "echo oops >&2; exit 3".into()], Undo::default(), || {}, |_| {});
         let j = wait(&job);
         assert!(matches!(j.status, Status::Failed(ref w) if w.contains("code 3")));
         assert!(j.log.iter().any(|l| l == "oops"), "errors are read too");
@@ -467,10 +545,16 @@ mod tests {
         let find = |id: &str| c.apps.iter().find(|a| a.id == id).unwrap().clone();
         let (p, a) = command(&find("krita"), Op::Install).unwrap();
         assert_eq!((p.as_str(), a.join(" ")), ("pkexec", format!("{ROOT_HELPER} {CANCEL} pacman -S --needed --noconfirm krita")));
-        assert_eq!(command(&find("krita"), Op::Reinstall).unwrap().1.join(" "), format!("{ROOT_HELPER} {CANCEL} pacman -S --noconfirm krita"));
+        assert_eq!(
+            command(&find("krita"), Op::Reinstall).unwrap().1.join(" "),
+            format!("{ROOT_HELPER} {CANCEL} pacman -S --noconfirm krita")
+        );
         let (p, a) = command(&find("pdfcraft"), Op::Install).unwrap();
         assert_eq!(p, "yay");
         assert!(a.contains(&"--noconfirm".to_string()) && a.contains(&"pdfcraft-bin".to_string()) && a.contains(&SUDO_WRAPPER.to_string()));
-        assert_eq!(command(&find("krita"), Op::Remove).unwrap().1.join(" "), format!("{ROOT_HELPER} {CANCEL} pacman -Rs --noconfirm krita"));
+        assert_eq!(
+            command(&find("krita"), Op::Remove).unwrap().1.join(" "),
+            format!("{ROOT_HELPER} {CANCEL} pacman -Rs --noconfirm krita")
+        );
     }
 }

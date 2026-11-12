@@ -77,8 +77,11 @@ pub fn parse_entry_for(id: &str, text: &str, path: &Path, desktops: &[String]) -
 /// exports among them) from the last to the first, then the user's own (XDG_DATA_HOME).
 pub fn app_dirs() -> Vec<PathBuf> {
     let data_dirs = std::env::var("XDG_DATA_DIRS").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/usr/local/share:/usr/share".into());
-    let mut dirs: Vec<PathBuf> = data_dirs.split(':').filter(|s| !s.is_empty()).rev().map(|d| PathBuf::from(d).join("applications")).collect();
-    let home = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
+    let mut dirs: Vec<PathBuf> =
+        data_dirs.split(':').filter(|s| !s.is_empty()).rev().map(|d| PathBuf::from(d).join("applications")).collect();
+    let home = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
     if let Some(h) = home {
         dirs.push(h.join("applications"));
     }
@@ -135,7 +138,11 @@ pub fn folder_of(a: &App) -> &'static str {
             return folder;
         }
     }
-    if a.categories.iter().any(|c| c == "Utility") { "Accessories" } else { "Other" }
+    if a.categories.iter().any(|c| c == "Utility") {
+        "Accessories"
+    } else {
+        "Other"
+    }
 }
 
 /// The folders to show: each with its apps A to Z; folders A to Z with "Other" last, empty ones left out.
@@ -235,7 +242,14 @@ pub fn launch(app: &App) {
     // (network, sandbox) and is counted for Settings > Apps.
     if let Some(mut cmd) = launcher().filter(|_| !app.id.is_empty()) {
         cmd.push(app.id.clone());
-        let started = std::process::Command::new(&cmd[0]).args(&cmd[1..]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
+        let started = std::process::Command::new(&cmd[0])
+            .args(&cmd[1..])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
         if started {
             return;
         }
@@ -248,7 +262,14 @@ pub fn launch(app: &App) {
         }
     }
     let Some((prog, args)) = cmd.split_first() else { return };
-    let _ = std::process::Command::new("setsid").arg("-f").arg(prog).args(args).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn();
+    let _ = std::process::Command::new("setsid")
+        .arg("-f")
+        .arg(prog)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
 }
 
 /// Terminals a command-line app can be started in: (program, the arguments that come before the command), as Minos knows them.
@@ -298,8 +319,20 @@ mod tests {
 
     #[test]
     fn apps_are_sorted_into_folders() {
-        let mk = |name: &str, cats: &str| App { id: name.into(), name: name.into(), categories: cats.split(';').filter(|c| !c.is_empty()).map(str::to_string).collect(), ..Default::default() };
-        let apps = vec![mk("Zed", "Development;TextEditor;"), mk("Browser", "Network;WebBrowser;"), mk("Amp", "AudioVideo;Audio;"), mk("Calc", "Utility;"), mk("Mystery", ""), mk("Chess", "Game;BoardGame;")];
+        let mk = |name: &str, cats: &str| App {
+            id: name.into(),
+            name: name.into(),
+            categories: cats.split(';').filter(|c| !c.is_empty()).map(str::to_string).collect(),
+            ..Default::default()
+        };
+        let apps = vec![
+            mk("Zed", "Development;TextEditor;"),
+            mk("Browser", "Network;WebBrowser;"),
+            mk("Amp", "AudioVideo;Audio;"),
+            mk("Calc", "Utility;"),
+            mk("Mystery", ""),
+            mk("Chess", "Game;BoardGame;"),
+        ];
         let f = folders(&apps);
         let names: Vec<&str> = f.iter().map(|(n, _)| *n).collect();
         assert_eq!(names, ["Accessories", "Development", "Games", "Internet", "Multimedia", "Other"]);
@@ -354,8 +387,15 @@ OnlyShowIn=KDE;GNOME;
             in_terminal(&cmd(&["nmap"]), None, &only(&["ghostty", "xterm"])).unwrap(),
             cmd(&["ghostty", "-e", "sh", "-c", "\"$@\"; echo; exec \"${SHELL:-/bin/sh}\"", "sh", "nmap"])
         );
-        assert_eq!(in_terminal(&cmd(&["nmap", "-h"]), Some("xterm"), &only(&["ghostty", "xterm"])).unwrap()[..2], cmd(&["xterm", "-e"])[..]);
-        assert_eq!(in_terminal(&cmd(&["htop"]), Some("weird-term"), &only(&["foot"])).unwrap()[0], "foot", "an unknown $TERMINAL is passed over");
+        assert_eq!(
+            in_terminal(&cmd(&["nmap", "-h"]), Some("xterm"), &only(&["ghostty", "xterm"])).unwrap()[..2],
+            cmd(&["xterm", "-e"])[..]
+        );
+        assert_eq!(
+            in_terminal(&cmd(&["htop"]), Some("weird-term"), &only(&["foot"])).unwrap()[0],
+            "foot",
+            "an unknown $TERMINAL is passed over"
+        );
         assert!(in_terminal(&cmd(&["nmap"]), None, &only(&[])).is_none(), "no terminal installed");
         assert!(in_terminal(&[], None, &only(&["ghostty"])).is_none());
         assert_eq!(command("env FOO=1 \"/opt/my app/run\" --flag %f"), vec!["env", "FOO=1", "/opt/my app/run", "--flag"]);
@@ -374,8 +414,20 @@ OnlyShowIn=KDE;GNOME;
         assert!(for_app_id(&apps, "nope").is_none());
         // a Steam game's window finds the shortcut Steam made for it, by its number (not by a longer number that starts the same)
         let games = vec![
-            App { id: "The Forest".into(), name: "The Forest".into(), exec: "steam steam://rungameid/242760".into(), icon: "steam_icon_242760".into(), ..Default::default() },
-            App { id: "Other".into(), name: "Other".into(), exec: "steam steam://rungameid/24276".into(), icon: "x".into(), ..Default::default() },
+            App {
+                id: "The Forest".into(),
+                name: "The Forest".into(),
+                exec: "steam steam://rungameid/242760".into(),
+                icon: "steam_icon_242760".into(),
+                ..Default::default()
+            },
+            App {
+                id: "Other".into(),
+                name: "Other".into(),
+                exec: "steam steam://rungameid/24276".into(),
+                icon: "x".into(),
+                ..Default::default()
+            },
         ];
         assert_eq!(for_app_id(&games, "steam_app_242760").unwrap().name, "The Forest");
         assert_eq!(for_app_id(&games, "steam_app_24276").unwrap().name, "Other");

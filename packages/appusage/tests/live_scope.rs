@@ -8,7 +8,13 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 fn user_manager() -> bool {
-    Command::new("systemctl").args(["--user", "is-system-running"]).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.code().is_some()).unwrap_or(false)
+    Command::new("systemctl")
+        .args(["--user", "is-system-running"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.code().is_some())
+        .unwrap_or(false)
         && Command::new("systemd-run").arg("--version").stdout(Stdio::null()).status().map(|s| s.success()).unwrap_or(false)
         && std::env::var_os("XDG_RUNTIME_DIR").is_some()
 }

@@ -91,7 +91,12 @@ impl Apps {
     pub fn load() -> Apps {
         let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
         let data = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).unwrap_or_else(|| home.join(".local/share"));
-        let mut dirs = vec![PathBuf::from("/usr/share/applications"), PathBuf::from("/var/lib/flatpak/exports/share/applications"), data.join("flatpak/exports/share/applications"), data.join("applications")];
+        let mut dirs = vec![
+            PathBuf::from("/usr/share/applications"),
+            PathBuf::from("/var/lib/flatpak/exports/share/applications"),
+            data.join("flatpak/exports/share/applications"),
+            data.join("applications"),
+        ];
         dirs.dedup();
         let mut a = Apps::default();
         for d in dirs {
@@ -128,7 +133,10 @@ impl Apps {
             return None;
         }
         let c = class.to_lowercase();
-        self.by_key.get(&c).or_else(|| self.by_key.get(c.rsplit('.').next().unwrap_or(&c))).or_else(|| self.by_key.get(c.trim_end_matches("-stable")))
+        self.by_key
+            .get(&c)
+            .or_else(|| self.by_key.get(c.rsplit('.').next().unwrap_or(&c)))
+            .or_else(|| self.by_key.get(c.trim_end_matches("-stable")))
     }
 
     /// The menu entry for a window class, or else for the program's file name.
@@ -170,12 +178,19 @@ mod tests {
     #[test]
     fn names_from_menu_entries() {
         let mut a = Apps::default();
-        a.add("code", "[Desktop Entry]\nType=Application\nName=Visual Studio Code\nExec=/usr/bin/code %F\nIcon=vscode\nStartupWMClass=Code\n");
+        a.add(
+            "code",
+            "[Desktop Entry]\nType=Application\nName=Visual Studio Code\nExec=/usr/bin/code %F\nIcon=vscode\nStartupWMClass=Code\n",
+        );
         a.add("com.mitchellh.ghostty", "[Desktop Entry]\nType=Application\nName=Ghostty\nExec=ghostty\nIcon=com.mitchellh.ghostty\n");
         a.add("vivaldi-stable", "[Desktop Entry]\nType=Application\nName=Vivaldi\nExec=/usr/bin/vivaldi-stable %U\n");
         a.add("link", "[Desktop Entry]\nType=Link\nName=Web\n");
         assert_eq!(a.name("Code", "", ""), "Visual Studio Code");
-        assert_eq!(a.name("com.microsoft.VSCode", "", "/usr/share/code/code"), "Visual Studio Code", "by the program when the class is unknown");
+        assert_eq!(
+            a.name("com.microsoft.VSCode", "", "/usr/share/code/code"),
+            "Visual Studio Code",
+            "by the program when the class is unknown"
+        );
         assert_eq!(a.name("com.mitchellh.ghostty", "", ""), "Ghostty");
         assert_eq!(a.name("vivaldi-stable", "", ""), "Vivaldi");
         assert_eq!(a.find("Code").unwrap().icon, "vscode");

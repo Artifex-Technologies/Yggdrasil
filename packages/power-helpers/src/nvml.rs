@@ -68,7 +68,11 @@ fn lib() -> Result<&'static Lib, String> {
     let h = unsafe { libc::dlopen(name.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
     if h.is_null() {
         let e = unsafe { libc::dlerror() };
-        let msg = if e.is_null() { "libnvidia-ml.so.1: cannot be opened".to_string() } else { unsafe { CStr::from_ptr(e) }.to_string_lossy().into_owned() };
+        let msg = if e.is_null() {
+            "libnvidia-ml.so.1: cannot be opened".to_string()
+        } else {
+            unsafe { CStr::from_ptr(e) }.to_string_lossy().into_owned()
+        };
         return Err(msg);
     }
     Ok(LIB.get_or_init(|| Lib(h as usize)))
@@ -126,7 +130,11 @@ impl Fake {
             core: o.at("core").int().unwrap_or(0) as i32,
             mem: o.at("mem").int().unwrap_or(0) as i32,
             max_core: u("max_core", 0),
-            fail: o.at("fail").obj().map(|f| f.iter().filter_map(|(k, v)| Some((k.to_string(), v.int()? as i32))).collect()).unwrap_or_default(),
+            fail: o
+                .at("fail")
+                .obj()
+                .map(|f| f.iter().filter_map(|(k, v)| Some((k.to_string(), v.int()? as i32))).collect())
+                .unwrap_or_default(),
         })
     }
 
@@ -153,7 +161,7 @@ unsafe impl Sync for Inner {}
 impl Drop for Inner {
     fn drop(&mut self) {
         if let Backend::Real { lib, .. } = &self.backend {
-            call!(lib, "nvmlShutdown", fn(), );
+            call!(lib, "nvmlShutdown", fn(),);
         }
     }
 }
@@ -351,7 +359,9 @@ impl Card {
             return self.dry_say("nvmlDeviceSetGpuLockedClocks", format!("nvmlDeviceSetGpuLockedClocks(0, {max_mhz})"));
         }
         match self.backend() {
-            Backend::Real { lib, dev } => Self::ok(call!(lib, "nvmlDeviceSetGpuLockedClocks", fn(*mut c_void, c_uint, c_uint), *dev, 0, max_mhz)),
+            Backend::Real { lib, dev } => {
+                Self::ok(call!(lib, "nvmlDeviceSetGpuLockedClocks", fn(*mut c_void, c_uint, c_uint), *dev, 0, max_mhz))
+            }
             Backend::Fake(_) => Ok(()),
         }
     }
@@ -371,14 +381,14 @@ impl Card {
 /// service lives on after a failed open).
 fn open_real() -> Result<Inner, OpenError> {
     let lib = lib().map_err(OpenError::Library)?;
-    let rc = crate::sys::without_stop_signals(|| call!(lib, "nvmlInit_v2", fn(), ));
+    let rc = crate::sys::without_stop_signals(|| call!(lib, "nvmlInit_v2", fn(),));
     if rc != SUCCESS {
         return Err(OpenError::Init(rc));
     }
     let mut dev: *mut c_void = std::ptr::null_mut();
     let rc = call!(lib, "nvmlDeviceGetHandleByIndex_v2", fn(c_uint, *mut *mut c_void), 0, &mut dev);
     if rc != SUCCESS {
-        call!(lib, "nvmlShutdown", fn(), );
+        call!(lib, "nvmlShutdown", fn(),);
         return Err(OpenError::Handle(rc));
     }
     Ok(Inner { backend: Backend::Real { lib, dev } })

@@ -61,7 +61,11 @@ pub struct License {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Shown {
-    Ready { status: Status, instances: Vec<Instance>, licenses: Vec<License> },
+    Ready {
+        status: Status,
+        instances: Vec<Instance>,
+        licenses: Vec<License>,
+    },
     /// Limbo answered with an error (code, the line to show)
     Error(String, String),
 }
@@ -115,7 +119,10 @@ pub fn parse(json: &str) -> Option<Shown> {
                     id: l["id"].as_str().unwrap_or("").to_string(),
                     name: l["name"].as_str().unwrap_or("").to_string(),
                     masked: l["masked"].as_str().unwrap_or("").to_string(),
-                    assigned: l["assigned"].as_array().map(|x| x.iter().filter_map(|g| g.as_str().map(String::from)).collect()).unwrap_or_default(),
+                    assigned: l["assigned"]
+                        .as_array()
+                        .map(|x| x.iter().filter_map(|g| g.as_str().map(String::from)).collect())
+                        .unwrap_or_default(),
                 })
                 .collect()
         })
@@ -168,7 +175,13 @@ pub fn describe(i: &Instance) -> String {
         "internet-only" => "internet, not your network",
         n => n,
     };
-    let mut s = format!("{os} · {state} · {} processor{} · {} memory · {net} · its own changes {}", i.cpus, if i.cpus == 1 { "" } else { "s" }, memory(i.memory_mb), size(i.own_bytes));
+    let mut s = format!(
+        "{os} · {state} · {} processor{} · {} memory · {net} · its own changes {}",
+        i.cpus,
+        if i.cpus == 1 { "" } else { "s" },
+        memory(i.memory_mb),
+        size(i.own_bytes)
+    );
     if i.pending {
         s.push_str(" · changes apply at its next start");
     }
@@ -216,7 +229,11 @@ fn show_json() -> String {
             return t;
         }
     }
-    Command::new(LIMBO).args(["settings", "show", "--json"]).output().map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default()
+    Command::new(LIMBO)
+        .args(["settings", "show", "--json"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default()
 }
 
 /// Runs `limbo ARGS --json` as the person, and through pkexec when Limbo asks for the password (or `root` says it must).
@@ -226,8 +243,13 @@ fn run(args: &[String], root: bool, stdin: Option<String>) -> Result<(), String>
         if pk {
             c.arg(LIMBO);
         }
-        c.args(args).arg("--json").stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() });
-        let mut child = c.spawn().map_err(|_| if pk { "pkexec is not available".to_string() } else { "Limbo is not installed".to_string() })?;
+        c.args(args).arg("--json").stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        });
+        let mut child =
+            c.spawn().map_err(|_| if pk { "pkexec is not available".to_string() } else { "Limbo is not installed".to_string() })?;
         if let (Some(text), Some(mut w)) = (&stdin, child.stdin.take()) {
             let _ = w.write_all(text.as_bytes());
         }
@@ -264,7 +286,11 @@ pub fn report_path(home: &std::path::Path, date: &str, exists: &dyn Fn(&std::pat
 /// `limbo report` for the last seven days, through pkexec (the audit log and the quarantine records are root's), kept as
 /// Markdown in the person's Documents and opened with their Markdown app.
 fn save_report() -> Result<std::path::PathBuf, String> {
-    let o = Command::new("pkexec").args([LIMBO, "report", "--since", "7d"]).stdin(Stdio::null()).output().map_err(|_| "pkexec is not available".to_string())?;
+    let o = Command::new("pkexec")
+        .args([LIMBO, "report", "--since", "7d"])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|_| "pkexec is not available".to_string())?;
     if !o.status.success() {
         if matches!(o.status.code(), Some(126) | Some(127)) {
             return Err("No report: the password was not given.".into());
@@ -273,7 +299,8 @@ fn save_report() -> Result<std::path::PathBuf, String> {
         return Err(format!("No report: {}", err.lines().next().unwrap_or("Limbo did not answer")));
     }
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from).ok_or("No home folder")?;
-    let date = Command::new("date").arg("+%Y-%m-%d").output().map(|d| String::from_utf8_lossy(&d.stdout).trim().to_string()).unwrap_or_default();
+    let date =
+        Command::new("date").arg("+%Y-%m-%d").output().map(|d| String::from_utf8_lossy(&d.stdout).trim().to_string()).unwrap_or_default();
     let path = report_path(&home, &date, &|p| p.exists());
     std::fs::write(&path, &o.stdout).map_err(|e| format!("Not saved: {e}"))?;
     let _ = Command::new("xdg-open").arg(&path).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
@@ -290,7 +317,19 @@ fn one_line(out: &str) -> String {
 impl Panel {
     pub fn new(ctx: &egui::Context) -> Panel {
         let (tx, rx) = channel();
-        let mut p = Panel { tx, rx, shown: None, busy: false, status: String::new(), loaded: None, lic_name: String::new(), lic_key: String::new(), adding: false, free_confirm: None, saved: None };
+        let mut p = Panel {
+            tx,
+            rx,
+            shown: None,
+            busy: false,
+            status: String::new(),
+            loaded: None,
+            lic_name: String::new(),
+            lic_key: String::new(),
+            adding: false,
+            free_confirm: None,
+            saved: None,
+        };
         p.load(ctx);
         p
     }
@@ -367,10 +406,22 @@ impl Panel {
             ui::row(ui, pal, true, "Limbo", Some(&format!("Version {}", status.version)), |ui| {
                 ui.label("Running");
             });
-            ui::row(ui, pal, false, "Hardware virtualization (KVM)", Some(if status.kvm { "Guests run at full speed" } else { "Not available: switch on VT-x or AMD-V in the firmware setup" }), |ui| {
-                ui.label(if status.kvm { "Available" } else { "Off" });
-            });
-            let sub = format!("Base images {} · guests' own changes {} · kept as evidence {}", size(status.images), size(status.guests), size(status.evidence));
+            ui::row(
+                ui,
+                pal,
+                false,
+                "Hardware virtualization (KVM)",
+                Some(if status.kvm { "Guests run at full speed" } else { "Not available: switch on VT-x or AMD-V in the firmware setup" }),
+                |ui| {
+                    ui.label(if status.kvm { "Available" } else { "Off" });
+                },
+            );
+            let sub = format!(
+                "Base images {} · guests' own changes {} · kept as evidence {}",
+                size(status.images),
+                size(status.guests),
+                size(status.evidence)
+            );
             ui::row(ui, pal, false, "Space used", Some(&sub), |ui| {
                 ui.label(size(status.total));
             });
@@ -407,7 +458,14 @@ impl Panel {
         let others: Vec<&Instance> = instances.iter().filter(|i| i.kind != "instance").collect();
         ui::group(ui, pal, Some("Guests"), |ui| {
             if mine.is_empty() {
-                ui::row(ui, pal, true, "No guests of your own yet", Some("An administrator adds one with: sudo limbo instance add MANIFEST"), |_| {});
+                ui::row(
+                    ui,
+                    pal,
+                    true,
+                    "No guests of your own yet",
+                    Some("An administrator adds one with: sudo limbo instance add MANIFEST"),
+                    |_| {},
+                );
             }
             for (n, i) in mine.iter().enumerate() {
                 ui::row(ui, pal, n == 0, &i.name, Some(&describe(i)), |ui| {
@@ -419,17 +477,37 @@ impl Panel {
                         "allowlist" => "Listed addresses",
                         _ => "Network",
                     };
-                    egui::ComboBox::from_id_salt(("limbo-net", &i.name)).selected_text(shown).width(130.0).show_ui(ui, |ui| {
-                        for (mode, label, hint) in [
-                            ("none", "No network", "Nothing in or out"),
-                            ("internet-only", "Internet only", "The internet, never this computer, the home network or other guests"),
-                        ] {
-                            if ui.add_enabled(!self.busy && !i.held, egui::Button::selectable(i.network == mode, label)).on_hover_text(hint).clicked() && i.network != mode {
-                                job = Some((vec!["instance".into(), "set".into(), i.name.clone(), "--network".into(), mode.into()], true, None));
+                    egui::ComboBox::from_id_salt(("limbo-net", &i.name))
+                        .selected_text(shown)
+                        .width(130.0)
+                        .show_ui(ui, |ui| {
+                            for (mode, label, hint) in [
+                                ("none", "No network", "Nothing in or out"),
+                                ("internet-only", "Internet only", "The internet, never this computer, the home network or other guests"),
+                            ] {
+                                if ui
+                                    .add_enabled(!self.busy && !i.held, egui::Button::selectable(i.network == mode, label))
+                                    .on_hover_text(hint)
+                                    .clicked()
+                                    && i.network != mode
+                                {
+                                    job = Some((
+                                        vec!["instance".into(), "set".into(), i.name.clone(), "--network".into(), mode.into()],
+                                        true,
+                                        None,
+                                    ));
+                                }
                             }
-                        }
-                        ui.label(RichText::new("Listed addresses only: limbo instance set NAME --network allowlist --allow ADDRESS:tcp:PORT").size(11.0).color(pal.dim));
-                    }).response.on_hover_text("What it may reach, from its next start (asks for your password)");
+                            ui.label(
+                                RichText::new(
+                                    "Listed addresses only: limbo instance set NAME --network allowlist --allow ADDRESS:tcp:PORT",
+                                )
+                                .size(11.0)
+                                .color(pal.dim),
+                            );
+                        })
+                        .response
+                        .on_hover_text("What it may reach, from its next start (asks for your password)");
                     if i.running {
                         if ui.add_enabled(can, egui::Button::new("Stop")).clicked() {
                             job = Some((vec!["instance".into(), "stop".into(), i.name.clone()], false, None));
@@ -457,22 +535,37 @@ impl Panel {
         ui.add_space(8.0);
         ui::group(ui, pal, Some("Windows licenses"), |ui| {
             if licenses.is_empty() {
-                ui::row(ui, pal, true, "None added", Some("Only for programs that need a real Windows guest; Wine never needs one"), |_| {});
+                ui::row(
+                    ui,
+                    pal,
+                    true,
+                    "None added",
+                    Some("Only for programs that need a real Windows guest; Wine never needs one"),
+                    |_| {},
+                );
             }
             for (n, l) in licenses.iter().enumerate() {
-                let sub = if l.assigned.is_empty() { l.masked.clone() } else { format!("{} · used by {}", l.masked, l.assigned.join(", ")) };
+                let sub =
+                    if l.assigned.is_empty() { l.masked.clone() } else { format!("{} · used by {}", l.masked, l.assigned.join(", ")) };
                 ui::row(ui, pal, n == 0, &l.name, Some(&sub), |ui| {
                     if ui.add_enabled(!self.busy, egui::Button::new("Remove")).clicked() {
                         job = Some((vec!["license".into(), "remove".into(), l.id.clone()], true, None));
                     }
                 });
             }
-            ui::row(ui, pal, false, "Add a license", Some("Kept where only the administrator can read it, shown masked, never logged or given to Sarina or Heimdall"), |ui| {
-                if ui::quiet(ui, pal, if self.adding { "Cancel" } else { "Add…" }).clicked() {
-                    self.adding = !self.adding;
-                    self.lic_key.clear();
-                }
-            });
+            ui::row(
+                ui,
+                pal,
+                false,
+                "Add a license",
+                Some("Kept where only the administrator can read it, shown masked, never logged or given to Sarina or Heimdall"),
+                |ui| {
+                    if ui::quiet(ui, pal, if self.adding { "Cancel" } else { "Add…" }).clicked() {
+                        self.adding = !self.adding;
+                        self.lic_key.clear();
+                    }
+                },
+            );
             if self.adding {
                 ui.horizontal(|ui| {
                     ui.add_space(12.0);
@@ -481,7 +574,11 @@ impl Panel {
                     let ok = !self.lic_name.trim().is_empty() && self.lic_key.trim().len() >= 29 && !self.busy;
                     if ui.add_enabled(ok, egui::Button::new("Add")).clicked() {
                         // the key goes on stdin, never on a command line (every account can read those)
-                        job = Some((vec!["license".into(), "add".into(), "--name".into(), self.lic_name.trim().to_string()], true, Some(format!("{}\n", self.lic_key.trim()))));
+                        job = Some((
+                            vec!["license".into(), "add".into(), "--name".into(), self.lic_name.trim().to_string()],
+                            true,
+                            Some(format!("{}\n", self.lic_key.trim())),
+                        ));
                         self.lic_key.clear();
                         self.adding = false;
                     }
@@ -492,18 +589,22 @@ impl Panel {
         ui.label(RichText::new("Held guests and quarantined files are on Heimdall's page (Settings > Security). Changes that need it ask for your password.").size(11.5).color(pal.dim));
         if let Some(name) = self.free_confirm.clone() {
             let mut close = false;
-            egui::Window::new(format!("Free the space of {name}?")).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0)).show(ctx, |ui| {
-                ui.label("Everything changed inside this guest since it was made is deleted: it starts again as new.");
-                ui.horizontal(|ui| {
-                    if ui.button("Free space").clicked() {
-                        job = Some((vec!["instance".into(), "free-space".into(), name.clone(), "--yes".into()], false, None));
-                        close = true;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        close = true;
-                    }
+            egui::Window::new(format!("Free the space of {name}?"))
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .show(ctx, |ui| {
+                    ui.label("Everything changed inside this guest since it was made is deleted: it starts again as new.");
+                    ui.horizontal(|ui| {
+                        if ui.button("Free space").clicked() {
+                            job = Some((vec!["instance".into(), "free-space".into(), name.clone(), "--yes".into()], false, None));
+                            close = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            close = true;
+                        }
+                    });
                 });
-            });
             if close {
                 self.free_confirm = None;
             }
@@ -549,7 +650,10 @@ mod tests {
         assert!(wants_password(e));
         assert!(!wants_password(r#"{"error": "x", "code": "not_owner"}"#));
         assert!(!wants_password("not json"));
-        assert_eq!(parse(e), Some(Shown::Error("password_required".into(), "password_required: Limbo changes need the password on this computer.".into())));
+        assert_eq!(
+            parse(e),
+            Some(Shown::Error("password_required".into(), "password_required: Limbo changes need the password on this computer.".into()))
+        );
     }
 
     #[test]
@@ -557,12 +661,19 @@ mod tests {
         use std::path::{Path, PathBuf};
         let home = Path::new("/home/ada");
         let taken = |list: &'static [&'static str]| move |p: &Path| list.iter().any(|x| Path::new(x) == p);
-        assert_eq!(report_path(home, "2026-11-07", &taken(&["/home/ada/Documents"])), PathBuf::from("/home/ada/Documents/Limbo report 2026-11-07.md"));
+        assert_eq!(
+            report_path(home, "2026-11-07", &taken(&["/home/ada/Documents"])),
+            PathBuf::from("/home/ada/Documents/Limbo report 2026-11-07.md")
+        );
         assert_eq!(
             report_path(home, "2026-11-07", &taken(&["/home/ada/Documents", "/home/ada/Documents/Limbo report 2026-11-07.md"])),
             PathBuf::from("/home/ada/Documents/Limbo report 2026-11-07 (2).md")
         );
-        assert_eq!(report_path(home, "2026-11-07", &taken(&[])), PathBuf::from("/home/ada/Limbo report 2026-11-07.md"), "no Documents folder");
+        assert_eq!(
+            report_path(home, "2026-11-07", &taken(&[])),
+            PathBuf::from("/home/ada/Limbo report 2026-11-07.md"),
+            "no Documents folder"
+        );
     }
 
     #[test]

@@ -58,10 +58,7 @@ pub struct Env {
 impl Env {
     pub fn from_process() -> Env {
         let var = |k: &str| std::env::var_os(k).map(|v| v.to_string_lossy().into_owned());
-        Env {
-            sfs: var("YGGDRASIL_INSTALL_SFS"),
-            target: var("YGGDRASIL_INSTALL_TARGET"),
-        }
+        Env { sfs: var("YGGDRASIL_INSTALL_SFS"), target: var("YGGDRASIL_INSTALL_TARGET") }
     }
 }
 
@@ -72,9 +69,7 @@ fn traceback(sys: &mut dyn System, e: Fail) -> i32 {
     let m = match e {
         Fail::Stop(m) | Fail::Crash(m) => m,
     };
-    sys.err(&format!(
-        "{PROG}: unexpected error (the Python script stopped here with a traceback): {m}"
-    ));
+    sys.err(&format!("{PROG}: unexpected error (the Python script stopped here with a traceback): {m}"));
     1
 }
 
@@ -87,38 +82,18 @@ pub fn read_plan(bytes: &[u8]) -> Result<Py, pyjson::NotJson> {
 
 /// The program: its arguments (without its own name), standard input, environment, the live system's places and the
 /// computer. Returns the exit code.
-pub fn main_with(
-    args: &[String],
-    stdin: &mut dyn Read,
-    env: &Env,
-    host: Host,
-    sys: &mut dyn System,
-) -> i32 {
-    let conf = conf::installer_integration(
-        &host
-            .integration_dirs
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>(),
-    );
+pub fn main_with(args: &[String], stdin: &mut dyn Read, env: &Env, host: Host, sys: &mut dyn System) -> i32 {
+    let conf = conf::installer_integration(&host.integration_dirs.iter().map(String::as_str).collect::<Vec<_>>());
     let release = conf::os_release(&host.os_release);
     let os = match conf::configure(&conf, &release, env.sfs.as_deref(), env.target.as_deref()) {
         Ok(os) => os,
         Err(e) => return traceback(sys, e),
     };
-    let mut ctx = Ctx {
-        os,
-        host,
-        sys,
-        bound: false,
-    };
+    let mut ctx = Ctx { os, host, sys, bound: false };
     let first = args.first().map(String::as_str);
     if first == Some("--disks") {
         return match ctx.disks() {
-            Ok(found) => match ctx
-                .sys
-                .out(&Py::List(found.iter().map(|d| d.to_py()).collect()).dumps())
-            {
+            Ok(found) => match ctx.sys.out(&Py::List(found.iter().map(|d| d.to_py()).collect()).dumps()) {
                 Ok(()) => 0,
                 Err(e) => traceback(ctx.sys, e),
             },
@@ -137,14 +112,7 @@ pub fn main_with(
     let problem = {
         let Ctx { os, host, sys, .. } = &mut ctx;
         let mut exists = |login: &str| sys.account_exists(login);
-        plan::check_plan(
-            &plan,
-            os,
-            &mut plan::Ask {
-                zoneinfo: &host.zoneinfo,
-                account_exists: &mut exists,
-            },
-        )
+        plan::check_plan(&plan, os, &mut plan::Ask { zoneinfo: &host.zoneinfo, account_exists: &mut exists })
     };
     if let Some(problem) = problem {
         return say(&mut ctx, "ERROR", &problem, 2);
@@ -162,11 +130,7 @@ pub fn main_with(
         Ok(Err(Fail::Crash(m))) => format!("unexpected: {m}"),
         Err(panic) => format!(
             "unexpected: {}",
-            panic
-                .downcast_ref::<String>()
-                .cloned()
-                .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
-                .unwrap_or_default()
+            panic.downcast_ref::<String>().cloned().or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default()
         ),
     };
     if let Err(e) = ctx.say("ERROR", &message) {

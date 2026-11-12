@@ -69,7 +69,11 @@ pub fn sort_entries(entries: &mut [Entry], sort: Sort) {
             SortKey::Size => a.size.cmp(&b.size).then(by_name),
             SortKey::Modified => a.modified.cmp(&b.modified).then(by_name),
         };
-        if sort.descending { ord.reverse() } else { ord }
+        if sort.descending {
+            ord.reverse()
+        } else {
+            ord
+        }
     });
 }
 
@@ -137,7 +141,11 @@ pub fn partition_entries(disk: &crate::places::Disk) -> Vec<Entry> {
         .iter()
         .map(|p| Entry {
             name: p.label.clone(),
-            path: p.mounts.first().cloned().unwrap_or_else(|| std::path::PathBuf::from(format!("{}{}", crate::places::PART_PREFIX, p.name))),
+            path: p
+                .mounts
+                .first()
+                .cloned()
+                .unwrap_or_else(|| std::path::PathBuf::from(format!("{}{}", crate::places::PART_PREFIX, p.name))),
             is_dir: true,
             size: p.size,
             modified: None,
@@ -149,7 +157,11 @@ pub fn partition_entries(disk: &crate::places::Disk) -> Vec<Entry> {
 
 /// Used fraction 0..=1 of a drive.
 pub fn used_fraction(total: u64, free: u64) -> f32 {
-    if total == 0 { 0.0 } else { (total.saturating_sub(free) as f64 / total as f64).clamp(0.0, 1.0) as f32 }
+    if total == 0 {
+        0.0
+    } else {
+        (total.saturating_sub(free) as f64 / total as f64).clamp(0.0, 1.0) as f32
+    }
 }
 
 pub fn human_size(bytes: u64) -> String {
@@ -160,7 +172,11 @@ pub fn human_size(bytes: u64) -> String {
         v /= 1024.0;
         u += 1;
     }
-    if u == 0 { format!("{bytes} B") } else { format!("{v:.1} {}", UNITS[u]) }
+    if u == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{v:.1} {}", UNITS[u])
+    }
 }
 
 #[cfg(test)]

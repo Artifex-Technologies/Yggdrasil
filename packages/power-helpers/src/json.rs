@@ -220,7 +220,9 @@ impl Json {
             Json::Float(f) => py::float_repr(*f),
             Json::Str(s) => py::repr(s),
             Json::Arr(a) => format!("[{}]", a.iter().map(Json::repr).collect::<Vec<_>>().join(", ")),
-            Json::Obj(o) => format!("{{{}}}", o.iter().map(|(k, v)| format!("{}: {}", py::repr(k), v.repr())).collect::<Vec<_>>().join(", ")),
+            Json::Obj(o) => {
+                format!("{{{}}}", o.iter().map(|(k, v)| format!("{}: {}", py::repr(k), v.repr())).collect::<Vec<_>>().join(", "))
+            }
         }
     }
 
@@ -674,7 +676,9 @@ mod tests {
         assert!(parse("[52, 1.0, true]").unwrap().py_eq(&parse("[52.0, 1, 1]").unwrap()));
         assert!(parse("{\"a\": 1, \"b\": 2}").unwrap().py_eq(&parse("{\"b\": 2, \"a\": 1}").unwrap()));
         assert!(!parse("[1]").unwrap().py_eq(&parse("[\"1\"]").unwrap()));
-        assert_eq!(parse("{\"ratios\": [51, 50], \"x\": null, \"y\": false, \"z\": \"it's\"}").unwrap().repr(),
-                   "{'ratios': [51, 50], 'x': None, 'y': False, 'z': \"it's\"}");
+        assert_eq!(
+            parse("{\"ratios\": [51, 50], \"x\": null, \"y\": false, \"z\": \"it's\"}").unwrap().repr(),
+            "{'ratios': [51, 50], 'x': None, 'y': False, 'z': \"it's\"}"
+        );
     }
 }

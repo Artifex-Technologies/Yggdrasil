@@ -227,7 +227,9 @@ pub fn is_alt(sym: u32) -> bool {
 
 /// Is this key one of the modifiers that hold the switcher open?
 pub fn is_held_modifier(sym: u32, hold: Mods) -> bool {
-    (hold.alt && is_alt(sym)) || (hold.ctrl && (sym == keysyms::KEY_Control_L || sym == keysyms::KEY_Control_R)) || (hold.logo && is_super(sym))
+    (hold.alt && is_alt(sym))
+        || (hold.ctrl && (sym == keysyms::KEY_Control_L || sym == keysyms::KEY_Control_R))
+        || (hold.logo && is_super(sym))
 }
 
 pub fn is_escape(sym: u32) -> bool {

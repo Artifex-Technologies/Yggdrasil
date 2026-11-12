@@ -19,7 +19,8 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-const ALLOWED_OPTS: &[&str] = &["-S", "-U", "-R", "-Rs", "-Rns", "-D", "-s", "-n", "-q", "-y", "-Syu", "--needed", "--noconfirm", "--asdeps", "--asexplicit"];
+const ALLOWED_OPTS: &[&str] =
+    &["-S", "-U", "-R", "-Rs", "-Rns", "-D", "-s", "-n", "-q", "-y", "-Syu", "--needed", "--noconfirm", "--asdeps", "--asexplicit"];
 const OPS: &[&str] = &["-S", "-U", "-R", "-Rs", "-Rns", "-Syu", "-D"];
 /// yay passes pacman's own settings file explicitly; no other one is accepted (another file could point pacman anywhere)
 const CONFIG: &str = "/etc/pacman.conf";

@@ -73,7 +73,11 @@ pub enum Speed {
     Idle,
     /// "Download" or "Upload", whichever is being measured.
     Running(&'static str),
-    Done { down_mbps: f32, up_mbps: f32, at: Instant },
+    Done {
+        down_mbps: f32,
+        up_mbps: f32,
+        at: Instant,
+    },
     Failed(String),
 }
 
@@ -91,7 +95,12 @@ pub fn clean_cpu_name(raw: &str) -> String {
 
 /// The first "model name" in /proc/cpuinfo.
 pub fn cpu_name_from(cpuinfo: &str) -> String {
-    cpuinfo.lines().find(|l| l.starts_with("model name")).and_then(|l| l.split_once(':')).map(|(_, v)| clean_cpu_name(v.trim())).unwrap_or_default()
+    cpuinfo
+        .lines()
+        .find(|l| l.starts_with("model name"))
+        .and_then(|l| l.split_once(':'))
+        .map(|(_, v)| clean_cpu_name(v.trim()))
+        .unwrap_or_default()
 }
 
 /// One `nvidia-smi --query-gpu=name,utilization.gpu,clocks.gr,memory.used,memory.total --format=csv,noheader,nounits` line.
@@ -100,7 +109,13 @@ pub fn parse_nvidia(line: &str) -> Option<Gpu> {
     if f.len() < 5 {
         return None;
     }
-    Some(Gpu { name: f[0].trim_start_matches("NVIDIA ").to_string(), percent: f[1].parse().ok()?, clock_mhz: f[2].parse().ok()?, vram_used_mb: f[3].parse().ok()?, vram_total_mb: f[4].parse().ok()? })
+    Some(Gpu {
+        name: f[0].trim_start_matches("NVIDIA ").to_string(),
+        percent: f[1].parse().ok()?,
+        clock_mhz: f[2].parse().ok()?,
+        vram_used_mb: f[3].parse().ok()?,
+        vram_total_mb: f[4].parse().ok()?,
+    })
 }
 
 /// Bytes received and sent over the real network interfaces, from /proc/net/dev.
@@ -172,7 +187,11 @@ pub fn fmt_uptime(s: u64) -> String {
 }
 
 pub fn fmt_mb(mb: u64) -> String {
-    if mb >= 1024 { format!("{:.1} GB", mb as f32 / 1024.0) } else { format!("{mb} MB") }
+    if mb >= 1024 {
+        format!("{:.1} GB", mb as f32 / 1024.0)
+    } else {
+        format!("{mb} MB")
+    }
 }
 
 /// "5 min ago" for the speed test's last result.
@@ -186,13 +205,23 @@ pub fn fmt_ago(secs: u64) -> String {
 
 /// Mbps from bytes moved over `secs` seconds.
 pub fn mbps(bytes: u64, secs: f32) -> f32 {
-    if secs <= 0.0 { 0.0 } else { bytes as f32 * 8.0 / 1_000_000.0 / secs }
+    if secs <= 0.0 {
+        0.0
+    } else {
+        bytes as f32 * 8.0 / 1_000_000.0 / secs
+    }
 }
 
 // ---------------------------------------------------------------- reading
 
 fn out(cmd: &str, args: &[&str]) -> String {
-    Command::new(cmd).args(args).stdin(Stdio::null()).stderr(Stdio::null()).output().map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default()
+    Command::new(cmd)
+        .args(args)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default()
 }
 
 fn cpu_ghz() -> f32 {
@@ -200,7 +229,9 @@ fn cpu_ghz() -> f32 {
     let mut n = 0u64;
     if let Ok(rd) = std::fs::read_dir("/sys/devices/system/cpu") {
         for e in rd.flatten() {
-            if let Some(khz) = std::fs::read_to_string(e.path().join("cpufreq/scaling_cur_freq")).ok().and_then(|t| t.trim().parse::<u64>().ok()) {
+            if let Some(khz) =
+                std::fs::read_to_string(e.path().join("cpufreq/scaling_cur_freq")).ok().and_then(|t| t.trim().parse::<u64>().ok())
+            {
                 sum += khz;
                 n += 1;
             }
@@ -210,7 +241,12 @@ fn cpu_ghz() -> f32 {
         return sum as f32 / n as f32 / 1_000_000.0;
     }
     let info = std::fs::read_to_string("/proc/cpuinfo").unwrap_or_default();
-    info.lines().find(|l| l.starts_with("cpu MHz")).and_then(|l| l.split_once(':')).and_then(|(_, v)| v.trim().parse::<f32>().ok()).map(|m| m / 1000.0).unwrap_or(0.0)
+    info.lines()
+        .find(|l| l.starts_with("cpu MHz"))
+        .and_then(|l| l.split_once(':'))
+        .and_then(|(_, v)| v.trim().parse::<f32>().ok())
+        .map(|m| m / 1000.0)
+        .unwrap_or(0.0)
 }
 
 fn amd_gpu() -> Option<Gpu> {
@@ -223,8 +259,17 @@ fn amd_gpu() -> Option<Gpu> {
         let read = |f: &str| std::fs::read_to_string(d.join(f)).ok().map(|t| t.trim().to_string());
         let Some(busy) = read("gpu_busy_percent").and_then(|b| b.parse::<u32>().ok()) else { continue };
         let mb = |f: &str| read(f).and_then(|b| b.parse::<u64>().ok()).map(|b| b / 1_048_576).unwrap_or(0);
-        let clock = read("pp_dpm_sclk").and_then(|t| t.lines().find(|l| l.contains('*')).and_then(|l| l.split_whitespace().nth(1).map(String::from))).and_then(|m| m.trim_end_matches("Mhz").trim_end_matches("MHz").parse::<u32>().ok()).unwrap_or(0);
-        return Some(Gpu { name: read("product_name").unwrap_or_else(|| "AMD Radeon".to_string()), percent: busy, clock_mhz: clock, vram_used_mb: mb("mem_info_vram_used"), vram_total_mb: mb("mem_info_vram_total") });
+        let clock = read("pp_dpm_sclk")
+            .and_then(|t| t.lines().find(|l| l.contains('*')).and_then(|l| l.split_whitespace().nth(1).map(String::from)))
+            .and_then(|m| m.trim_end_matches("Mhz").trim_end_matches("MHz").parse::<u32>().ok())
+            .unwrap_or(0);
+        return Some(Gpu {
+            name: read("product_name").unwrap_or_else(|| "AMD Radeon".to_string()),
+            percent: busy,
+            clock_mhz: clock,
+            vram_used_mb: mb("mem_info_vram_used"),
+            vram_total_mb: mb("mem_info_vram_total"),
+        });
     }
     None
 }
@@ -239,13 +284,18 @@ fn root_disk_name() -> String {
         return "Disk".to_string();
     }
     let model = out("lsblk", &["-dno", "MODEL", &format!("/dev/{base}")]).trim().to_string();
-    if model.is_empty() { format!("Disk ({base})") } else { format!("{model} ({base})") }
+    if model.is_empty() {
+        format!("Disk ({base})")
+    } else {
+        format!("{model} ({base})")
+    }
 }
 
 /// Reads the numbers once a second into `shared` while `active` is set; the heavy ones only while `wanted` is.
 pub fn spawn_poller(active: Arc<AtomicBool>, wanted: Arc<AtomicBool>, shared: Arc<Mutex<StatsSnap>>) {
     std::thread::spawn(move || {
-        let mut snap = StatsSnap { cpu_name: cpu_name_from(&std::fs::read_to_string("/proc/cpuinfo").unwrap_or_default()), ..Default::default() };
+        let mut snap =
+            StatsSnap { cpu_name: cpu_name_from(&std::fs::read_to_string("/proc/cpuinfo").unwrap_or_default()), ..Default::default() };
         let mut disk_name: Option<String> = None;
         let mut prev_cpu: Option<(u64, u64)> = None;
         let mut prev_procs: HashMap<u32, u64> = HashMap::new();
@@ -277,7 +327,10 @@ pub fn spawn_poller(active: Arc<AtomicBool>, wanted: Arc<AtomicBool>, shared: Ar
             if let Ok(rd) = std::fs::read_dir("/proc") {
                 for e in rd.flatten() {
                     let Some(pid) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
-                    let Some((name, ticks, rss)) = std::fs::read_to_string(e.path().join("stat")).ok().and_then(|l| parse_proc_stat(&l)) else { continue };
+                    let Some((name, ticks, rss)) = std::fs::read_to_string(e.path().join("stat")).ok().and_then(|l| parse_proc_stat(&l))
+                    else {
+                        continue;
+                    };
                     count += 1;
                     let delta = prev_procs.get(&pid).map(|p| ticks.saturating_sub(*p)).unwrap_or(0);
                     now.insert(pid, ticks);
@@ -288,7 +341,14 @@ pub fn spawn_poller(active: Arc<AtomicBool>, wanted: Arc<AtomicBool>, shared: Ar
             }
             prev_procs = now;
             snap.procs = count;
-            let apps: Vec<TopApp> = by_app.into_iter().map(|(comm, (d, mb))| TopApp { comm, cpu: if total_delta > 0 { d as f32 * 100.0 / total_delta as f32 } else { 0.0 }, rss_mb: mb }).collect();
+            let apps: Vec<TopApp> = by_app
+                .into_iter()
+                .map(|(comm, (d, mb))| TopApp {
+                    comm,
+                    cpu: if total_delta > 0 { d as f32 * 100.0 / total_delta as f32 } else { 0.0 },
+                    rss_mb: mb,
+                })
+                .collect();
             let mut by_cpu = apps.clone();
             by_cpu.sort_by(|a, b| b.cpu.partial_cmp(&a.cpu).unwrap_or(std::cmp::Ordering::Equal));
             snap.top_cpu = by_cpu.into_iter().take(4).collect();
@@ -303,7 +363,10 @@ pub fn spawn_poller(active: Arc<AtomicBool>, wanted: Arc<AtomicBool>, shared: Ar
             }
             // graphics card
             snap.gpu = if has_nvidia {
-                let o = out("nvidia-smi", &["--query-gpu=name,utilization.gpu,clocks.gr,memory.used,memory.total", "--format=csv,noheader,nounits"]);
+                let o = out(
+                    "nvidia-smi",
+                    &["--query-gpu=name,utilization.gpu,clocks.gr,memory.used,memory.total", "--format=csv,noheader,nounits"],
+                );
                 if o.trim().is_empty() {
                     has_nvidia = false;
                     amd_gpu()
@@ -329,7 +392,10 @@ pub fn spawn_poller(active: Arc<AtomicBool>, wanted: Arc<AtomicBool>, shared: Ar
                 snap.up_bps = (net.1.saturating_sub(p.1) as f32 / dt) as u64;
             }
             prev_net = Some((net, Instant::now()));
-            snap.uptime_s = std::fs::read_to_string("/proc/uptime").ok().and_then(|u| u.split_whitespace().next().and_then(|v| v.parse::<f32>().ok())).unwrap_or(0.0) as u64;
+            snap.uptime_s = std::fs::read_to_string("/proc/uptime")
+                .ok()
+                .and_then(|u| u.split_whitespace().next().and_then(|v| v.parse::<f32>().ok()))
+                .unwrap_or(0.0) as u64;
             snap.ready = true;
             if let Ok(mut g) = shared.lock() {
                 *g = snap.clone();
@@ -404,7 +470,8 @@ fn chip_w(text: &str) -> f32 {
 fn chip_texts(st: &StatsSnap) -> [Vec<String>; 3] {
     let gpu = match &st.gpu {
         Some(g) => {
-            let clock = if g.clock_mhz >= 1000 { format!("{:.1} GHz", g.clock_mhz as f32 / 1000.0) } else { format!("{} MHz", g.clock_mhz) };
+            let clock =
+                if g.clock_mhz >= 1000 { format!("{:.1} GHz", g.clock_mhz as f32 / 1000.0) } else { format!("{} MHz", g.clock_mhz) };
             vec![clock, format!("{:.1}/{:.0}GB", g.vram_used_mb as f32 / 1024.0, g.vram_total_mb as f32 / 1024.0)]
         }
         None => vec![],
@@ -454,7 +521,18 @@ fn chip(pix: &mut Pixmap, s: f32, fonts: &Fonts, x: f32, y: f32, text: &str) {
 
 /// A gauge tile: a ring with the percentage, then the name, two lines of detail and chips.
 #[allow(clippy::too_many_arguments)]
-fn gauge(pix: &mut Pixmap, s: f32, fonts: &Fonts, rect: (f32, f32, f32, f32), frac: f32, label_pct: &str, color: Rgba, title: &str, sub: &str, chips: &[String]) {
+fn gauge(
+    pix: &mut Pixmap,
+    s: f32,
+    fonts: &Fonts,
+    rect: (f32, f32, f32, f32),
+    frac: f32,
+    label_pct: &str,
+    color: Rgba,
+    title: &str,
+    sub: &str,
+    chips: &[String],
+) {
     let (x, y, w, h) = rect;
     paint::fill_rounded(pix, x * s, y * s, w * s, h * s, 14.0 * s, TILE);
     let (cx, cy, r) = (x + w / 2.0, y + (w - 58.0) / 2.0 + 29.0, 26.0);
@@ -489,7 +567,15 @@ fn small_tile(pix: &mut Pixmap, s: f32, fonts: &Fonts, rect: (f32, f32, f32, f32
     while size > 9.0 && paint::text_width(&fonts.bold, size * s, value) > (w - 16.0) * s {
         size -= 0.5;
     }
-    paint::draw_text(pix, &fonts.bold, 9.0 * s, (x + 10.0) * s, (y + 12.0) * s, DIM, &fit(&fonts.bold, 9.0 * s, &label.to_uppercase(), (w - 16.0) * s));
+    paint::draw_text(
+        pix,
+        &fonts.bold,
+        9.0 * s,
+        (x + 10.0) * s,
+        (y + 12.0) * s,
+        DIM,
+        &fit(&fonts.bold, 9.0 * s, &label.to_uppercase(), (w - 16.0) * s),
+    );
     paint::draw_text(pix, &fonts.bold, size * s, (x + 10.0) * s, (y + 29.0) * s, WHITE, &fit(&fonts.bold, size * s, value, (w - 16.0) * s));
 }
 
@@ -507,7 +593,16 @@ fn app_name<'a>(m: &'a Model, comm: &'a str) -> (&'a str, Option<&'a str>) {
 
 /// Draws the Stats section inside `card` and adds its clickable parts to `hits`.
 #[allow(clippy::too_many_arguments)]
-pub fn paint(pix: &mut Pixmap, s: f32, m: &Model, card: (f32, f32, f32, f32), pointer: (f32, f32), fonts: &Fonts, icons: &mut Icons, hits: &mut Vec<FHit>) {
+pub fn paint(
+    pix: &mut Pixmap,
+    s: f32,
+    m: &Model,
+    card: (f32, f32, f32, f32),
+    pointer: (f32, f32),
+    fonts: &Fonts,
+    icons: &mut Icons,
+    hits: &mut Vec<FHit>,
+) {
     let (cx, cy, cw, _ch) = card;
     let d = &m.fylgja;
     let st = &d.stats;
@@ -523,15 +618,48 @@ pub fn paint(pix: &mut Pixmap, s: f32, m: &Model, card: (f32, f32, f32, f32), po
     let chips = chip_texts(st);
 
     // processor
-    gauge(pix, s, fonts, (x0, y0, tw, th), st.cpu_percent as f32 / 100.0, &format!("{}%", st.cpu_percent), paint::accent(255), "CPU", &st.cpu_name, &chips[0]);
+    gauge(
+        pix,
+        s,
+        fonts,
+        (x0, y0, tw, th),
+        st.cpu_percent as f32 / 100.0,
+        &format!("{}%", st.cpu_percent),
+        paint::accent(255),
+        "CPU",
+        &st.cpu_name,
+        &chips[0],
+    );
     // graphics card
     match &st.gpu {
-        Some(g) => gauge(pix, s, fonts, (x0 + tw + 6.0, y0, tw, th), g.percent as f32 / 100.0, &format!("{}%", g.percent), LILAC, "GPU", &g.name, &chips[1]),
+        Some(g) => gauge(
+            pix,
+            s,
+            fonts,
+            (x0 + tw + 6.0, y0, tw, th),
+            g.percent as f32 / 100.0,
+            &format!("{}%", g.percent),
+            LILAC,
+            "GPU",
+            &g.name,
+            &chips[1],
+        ),
         None => gauge(pix, s, fonts, (x0 + tw + 6.0, y0, tw, th), 0.0, "–", LILAC, "GPU", "No graphics data", &[]),
     }
     // memory
     let pct = if st.mem_total_mb > 0 { st.mem_used_mb as f32 / st.mem_total_mb as f32 } else { 0.0 };
-    gauge(pix, s, fonts, (x0 + 2.0 * (tw + 6.0), y0, tw, th), pct, &format!("{}%", (pct * 100.0).round() as u32), GREEN, "RAM", &format!("{} / {}", fmt_mb(st.mem_used_mb), fmt_mb(st.mem_total_mb)), &chips[2]);
+    gauge(
+        pix,
+        s,
+        fonts,
+        (x0 + 2.0 * (tw + 6.0), y0, tw, th),
+        pct,
+        &format!("{}%", (pct * 100.0).round() as u32),
+        GREEN,
+        "RAM",
+        &format!("{} / {}", fmt_mb(st.mem_used_mb), fmt_mb(st.mem_total_mb)),
+        &chips[2],
+    );
     // under them: disk, network, uptime
     let by = y0 + th + 6.0;
     small_tile(pix, s, fonts, (x0, by, tw, 44.0), &st.disk_name, &format!("{} / {} GB", st.disk_used_gb, st.disk_total_gb));
@@ -543,7 +671,12 @@ pub fn paint(pix: &mut Pixmap, s: f32, m: &Model, card: (f32, f32, f32, f32), po
         let avail = tw - 20.0;
         let (mut down, mut up) = (fmt_rate_short(st.down_bps), fmt_rate_short(st.up_bps));
         let mut size = 10.5;
-        let width = |size: f32, a: &str, b: &str| paint::text_width(&fonts.bold, size * s, a) / s + paint::text_width(&fonts.bold, size * s, b) / s + 2.0 * ((size - 3.0).max(5.0) + 2.0) + 8.0;
+        let width = |size: f32, a: &str, b: &str| {
+            paint::text_width(&fonts.bold, size * s, a) / s
+                + paint::text_width(&fonts.bold, size * s, b) / s
+                + 2.0 * ((size - 3.0).max(5.0) + 2.0)
+                + 8.0
+        };
         while width(size, &down, &up) > avail && size > 8.0 {
             size -= 0.5;
         }
@@ -578,7 +711,15 @@ pub fn paint(pix: &mut Pixmap, s: f32, m: &Model, card: (f32, f32, f32, f32), po
     for (i, label) in ["CPU", "RAM"].iter().enumerate() {
         let lw = paint::text_width(&fonts.bold, 9.0 * s, label);
         let lit = (i == 1) == d.top_ram;
-        paint::draw_text(pix, &fonts.bold, 9.0 * s, (seg.0 + 35.0 * i as f32 + 17.5) * s - lw / 2.0, (seg.1 + 9.0) * s, if lit { WHITE } else { DIM }, label);
+        paint::draw_text(
+            pix,
+            &fonts.bold,
+            9.0 * s,
+            (seg.0 + 35.0 * i as f32 + 17.5) * s - lw / 2.0,
+            (seg.1 + 9.0) * s,
+            if lit { WHITE } else { DIM },
+            label,
+        );
     }
     hits.push(FHit { rect: seg, act: FAct::TopToggle });
     let list = if d.top_ram { &st.top_ram } else { &st.top_cpu };
@@ -600,10 +741,26 @@ pub fn paint(pix: &mut Pixmap, s: f32, m: &Model, card: (f32, f32, f32, f32), po
         let value = if d.top_ram { fmt_mb(a.rss_mb) } else { format!("{:.0}%", a.cpu) };
         let vw = paint::text_width(&fonts.regular, 9.5 * s, &value);
         paint::draw_text(pix, &fonts.regular, 9.5 * s, (rx + rw - 12.0) * s - vw, ry * s, DIM, &value);
-        paint::draw_text(pix, &fonts.bold, 10.0 * s, tx * s, ry * s, WHITE, &fit(&fonts.bold, 10.0 * s, name, (rx + rw - 12.0 - tx) * s - vw - 8.0 * s));
+        paint::draw_text(
+            pix,
+            &fonts.bold,
+            10.0 * s,
+            tx * s,
+            ry * s,
+            WHITE,
+            &fit(&fonts.bold, 10.0 * s, name, (rx + rw - 12.0 - tx) * s - vw - 8.0 * s),
+        );
         let frac = (if d.top_ram { a.rss_mb as f32 } else { a.cpu }) / maxv;
         paint::fill_rounded(pix, tx * s, (ry + 6.0) * s, (rx + rw - 12.0 - tx) * s, 2.0 * s, 1.0 * s, FAINT);
-        paint::fill_rounded(pix, tx * s, (ry + 6.0) * s, ((rx + rw - 12.0 - tx) * frac).max(2.0) * s, 2.0 * s, 1.0 * s, if d.top_ram { GREEN } else { paint::accent(255) });
+        paint::fill_rounded(
+            pix,
+            tx * s,
+            (ry + 6.0) * s,
+            ((rx + rw - 12.0 - tx) * frac).max(2.0) * s,
+            2.0 * s,
+            1.0 * s,
+            if d.top_ram { GREEN } else { paint::accent(255) },
+        );
     }
 
     // the speed test
@@ -626,7 +783,15 @@ pub fn paint(pix: &mut Pixmap, s: f32, m: &Model, card: (f32, f32, f32, f32), po
             paint::draw_text(pix, &fonts.regular, 9.0 * s, (rx + 92.0 + w2) * s, (sy + 34.0) * s, DIM, "Mbps up");
         }
         Speed::Failed(why) => {
-            paint::draw_text(pix, &fonts.regular, 9.5 * s, (rx + 12.0) * s, (sy + 33.0) * s, (232, 120, 120, 255), &fit(&fonts.regular, 9.5 * s, why, (rw - 24.0) * s));
+            paint::draw_text(
+                pix,
+                &fonts.regular,
+                9.5 * s,
+                (rx + 12.0) * s,
+                (sy + 33.0) * s,
+                (232, 120, 120, 255),
+                &fit(&fonts.regular, 9.5 * s, why, (rw - 24.0) * s),
+            );
         }
         Speed::Running(_) => {
             paint::draw_text(pix, &fonts.regular, 11.0 * s, (rx + 12.0) * s, (sy + 33.0) * s, WHITE, "Measuring…");
@@ -637,7 +802,21 @@ pub fn paint(pix: &mut Pixmap, s: f32, m: &Model, card: (f32, f32, f32, f32), po
     }
     let b = (rx + 12.0, sy + 50.0, rw - 24.0, 28.0);
     let running = matches!(speed, Speed::Running(_));
-    paint::fill_rounded(pix, b.0 * s, b.1 * s, b.2 * s, b.3 * s, 10.0 * s, if running { (60, 50, 90, 255) } else if over(pointer, b) { (150, 110, 232, 255) } else { paint::accent(255) });
+    paint::fill_rounded(
+        pix,
+        b.0 * s,
+        b.1 * s,
+        b.2 * s,
+        b.3 * s,
+        10.0 * s,
+        if running {
+            (60, 50, 90, 255)
+        } else if over(pointer, b) {
+            (150, 110, 232, 255)
+        } else {
+            paint::accent(255)
+        },
+    );
     let label = if running { "Testing…" } else { "Run speed test" };
     let lw = paint::text_width(&fonts.bold, 11.0 * s, label);
     paint::draw_text(pix, &fonts.bold, 11.0 * s, (b.0 + b.2 / 2.0) * s - lw / 2.0, (b.1 + b.3 / 2.0) * s, WHITE, label);
@@ -672,7 +851,10 @@ mod tests {
     #[test]
     fn readings() {
         let g = parse_nvidia("NVIDIA GeForce RTX 2080 Ti, 12, 1950, 1024, 11264\n").unwrap();
-        assert_eq!((g.name.as_str(), g.percent, g.clock_mhz, g.vram_used_mb, g.vram_total_mb), ("GeForce RTX 2080 Ti", 12, 1950, 1024, 11264));
+        assert_eq!(
+            (g.name.as_str(), g.percent, g.clock_mhz, g.vram_used_mb, g.vram_total_mb),
+            ("GeForce RTX 2080 Ti", 12, 1950, 1024, 11264)
+        );
         assert!(parse_nvidia("").is_none());
         assert!(parse_nvidia("No devices were found").is_none());
         let net = "Inter-|   Receive\n face |bytes packets errs drop fifo frame compressed multicast|bytes packets\n    lo: 1000 1 0 0 0 0 0 0 1000 1 0 0 0 0 0 0\n enp0s1: 5000 10 0 0 0 0 0 0 700 5 0 0 0 0 0 0\n veth1: 9999 1 0 0 0 0 0 0 9999 1 0 0 0 0 0 0\n";

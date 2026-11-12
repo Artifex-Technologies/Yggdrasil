@@ -337,7 +337,27 @@ fn constant(name: &str) -> Option<f64> {
 fn is_function(name: &str) -> bool {
     matches!(
         name,
-        "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "sinh" | "cosh" | "tanh" | "ln" | "log" | "lg" | "log2" | "sqrt" | "cbrt" | "abs" | "exp" | "fact" | "floor" | "ceil" | "round"
+        "sin"
+            | "cos"
+            | "tan"
+            | "asin"
+            | "acos"
+            | "atan"
+            | "sinh"
+            | "cosh"
+            | "tanh"
+            | "ln"
+            | "log"
+            | "lg"
+            | "log2"
+            | "sqrt"
+            | "cbrt"
+            | "abs"
+            | "exp"
+            | "fact"
+            | "floor"
+            | "ceil"
+            | "round"
     )
 }
 

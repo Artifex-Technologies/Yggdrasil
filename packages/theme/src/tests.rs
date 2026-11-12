@@ -101,7 +101,8 @@ impl Drop for Tmp {
 
 fn tmp() -> Tmp {
     static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let d = std::env::temp_dir().join(format!("ygg-theme-test-{}-{}", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::SeqCst)));
+    let d =
+        std::env::temp_dir().join(format!("ygg-theme-test-{}-{}", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::SeqCst)));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
     Tmp(d)
@@ -163,7 +164,10 @@ fn gtks_colours_become_yggdrasils() {
     assert_eq!(retint_color((21, 83, 158), true, (10, 200, 30)), (10, 200, 30));
     assert_eq!(retint_color((224, 27, 36), true, (10, 200, 30)), (224, 27, 36));
     let css = "a { color: #15539e; background: rgba(21, 83, 158, 0.5); border: #fff; x: #ffff; y: rgb(1,2,3); }";
-    assert_eq!(retint_css(css, true, (10, 200, 30)), "a { color: #0ac81e; background: rgba(10, 200, 30, 0.5); border: #ffffff; x: #ffff; y: rgb(1, 1, 1); }");
+    assert_eq!(
+        retint_css(css, true, (10, 200, 30)),
+        "a { color: #0ac81e; background: rgba(10, 200, 30, 0.5); border: #ffffff; x: #ffff; y: rgb(1, 1, 1); }"
+    );
 }
 
 #[test]

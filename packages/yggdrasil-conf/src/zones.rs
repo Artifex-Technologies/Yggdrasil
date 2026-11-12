@@ -29,11 +29,22 @@ pub fn builtin() -> Vec<Layout> {
         Layout { id: "two-thirds-left", name: "Wide left", zones: vec![(0.0, 0.0, 2.0 * T, 1.0), (2.0 * T, 0.0, T, 1.0)] },
         Layout { id: "two-thirds-right", name: "Wide right", zones: vec![(0.0, 0.0, T, 1.0), (T, 0.0, 2.0 * T, 1.0)] },
         Layout { id: "priority", name: "Priority", zones: vec![(0.0, 0.0, 0.25, 1.0), (0.25, 0.0, 0.5, 1.0), (0.75, 0.0, 0.25, 1.0)] },
-        Layout { id: "quarters", name: "Quarters", zones: vec![(0.0, 0.0, 0.5, 0.5), (0.5, 0.0, 0.5, 0.5), (0.0, 0.5, 0.5, 0.5), (0.5, 0.5, 0.5, 0.5)] },
+        Layout {
+            id: "quarters",
+            name: "Quarters",
+            zones: vec![(0.0, 0.0, 0.5, 0.5), (0.5, 0.0, 0.5, 0.5), (0.0, 0.5, 0.5, 0.5), (0.5, 0.5, 0.5, 0.5)],
+        },
         Layout {
             id: "grid",
             name: "Grid",
-            zones: vec![(0.0, 0.0, T, 0.5), (T, 0.0, T, 0.5), (2.0 * T, 0.0, T, 0.5), (0.0, 0.5, T, 0.5), (T, 0.5, T, 0.5), (2.0 * T, 0.5, T, 0.5)],
+            zones: vec![
+                (0.0, 0.0, T, 0.5),
+                (T, 0.0, T, 0.5),
+                (2.0 * T, 0.0, T, 0.5),
+                (0.0, 0.5, T, 0.5),
+                (T, 0.5, T, 0.5),
+                (2.0 * T, 0.5, T, 0.5),
+            ],
         },
         Layout { id: "rows", name: "Rows", zones: vec![(0.0, 0.0, 1.0, 0.5), (0.0, 0.5, 1.0, 0.5)] },
         Layout { id: "focus", name: "Focus", zones: vec![(0.15, 0.06, 0.7, 0.88)] },
@@ -50,7 +61,11 @@ pub struct ZonesConf {
 
 impl Default for ZonesConf {
     fn default() -> Self {
-        ZonesConf { enabled: true, layouts: ["halves", "thirds", "two-thirds-left", "quarters", "focus"].iter().map(|s| s.to_string()).collect(), gap: 8 }
+        ZonesConf {
+            enabled: true,
+            layouts: ["halves", "thirds", "two-thirds-left", "quarters", "focus"].iter().map(|s| s.to_string()).collect(),
+            gap: 8,
+        }
     }
 }
 

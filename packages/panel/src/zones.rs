@@ -79,7 +79,12 @@ impl DropWatch {
 
     /// The pointer and the window, read while following: Some(zone or none) once the window no longer follows the pointer (the
     /// drop, at the zone held last); otherwise remembers `hover` as where it is held.
-    pub fn follow(&mut self, cursor: (f64, f64), window_at: Option<(f64, f64)>, hover: Option<(usize, usize)>) -> Option<Option<(usize, usize)>> {
+    pub fn follow(
+        &mut self,
+        cursor: (f64, f64),
+        window_at: Option<(f64, f64)>,
+        hover: Option<(usize, usize)>,
+    ) -> Option<Option<(usize, usize)>> {
         if self.done {
             return None;
         }
@@ -250,7 +255,14 @@ pub fn keys_down(keys: &[&str], tag: &str) -> Option<bool> {
     let _ = std::fs::remove_file(&out);
     let test = keys.iter().map(|k| format!("hl.is_key_down('{k}')")).collect::<Vec<_>>().join(" or ");
     let lua = format!("local f = io.open('{out}', 'w') if f then f:write(tostring({test})) f:close() end");
-    let ok = Command::new("hyprctl").args(["eval", &lua]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().ok()?.success();
+    let ok = Command::new("hyprctl")
+        .args(["eval", &lua])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .ok()?
+        .success();
     if !ok {
         return None;
     }
@@ -273,7 +285,12 @@ fn near_notch(monitors: &[Monitor], (cx, cy): (f64, f64)) -> bool {
 /// A line in the drag trail (~/.local/state/yggdrasil/zones.log, shared with the session's Lua), to find why a drop is missed.
 pub fn note(msg: &str) {
     use std::io::Write;
-    let Some(dir) = std::env::var_os("XDG_STATE_HOME").map(std::path::PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/state"))) else { return };
+    let Some(dir) = std::env::var_os("XDG_STATE_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/state")))
+    else {
+        return;
+    };
     let path = dir.join("yggdrasil/zones.log");
     let big = std::fs::metadata(&path).map(|m| m.len() > 200_000).unwrap_or(false);
     let f = if big { std::fs::File::create(&path) } else { std::fs::OpenOptions::new().create(true).append(true).open(&path) };
@@ -371,7 +388,18 @@ pub fn begin(mode: Mode) -> Option<Session> {
         (Mode::Drag, Some((cx, cy)), Some((wx, wy))) => Some((cx - wx, cy - wy)),
         _ => None,
     };
-    Some(Session { mode, address, floating: win["floating"].as_bool().unwrap_or(true), monitor, layouts: conf.shown(), gap: conf.gap, hover: None, pointer: None, moved: std::time::Instant::now(), watch: DropWatch::new(grip) })
+    Some(Session {
+        mode,
+        address,
+        floating: win["floating"].as_bool().unwrap_or(true),
+        monitor,
+        layouts: conf.shown(),
+        gap: conf.gap,
+        hover: None,
+        pointer: None,
+        moved: std::time::Instant::now(),
+        watch: DropWatch::new(grip),
+    })
 }
 
 /// Where the zone goes on the screen, in global logical pixels.
@@ -434,7 +462,16 @@ pub fn paint(pix: &mut Pixmap, scale: f32, s: &Session, fonts: &Fonts, dark: boo
         if let Some((gx, gy, gw, gh)) = target(s, hit) {
             let (lx, ly) = to_surface(s, (gx as f64, gy as f64));
             paint::fill_rounded(pix, lx * scale, ly * scale, gw as f32 * scale, gh as f32 * scale, 12.0 * scale, paint::accent(70));
-            paint::stroke_rounded(pix, lx * scale, ly * scale, gw as f32 * scale, gh as f32 * scale, 12.0 * scale, 2.0 * scale, paint::accent(220));
+            paint::stroke_rounded(
+                pix,
+                lx * scale,
+                ly * scale,
+                gw as f32 * scale,
+                gh as f32 * scale,
+                12.0 * scale,
+                2.0 * scale,
+                paint::accent(220),
+            );
         }
     }
     paint::fill_rounded(pix, cx * scale, cy * scale, cw * scale, ch * scale, 16.0 * scale, bg);
@@ -449,7 +486,15 @@ pub fn paint(pix: &mut Pixmap, scale: f32, s: &Session, fonts: &Fonts, dark: boo
             let g = 3.0;
             let r = (tx + z.0 * THUMB_W + g, ty + z.1 * th + g, z.2 * THUMB_W - 2.0 * g, z.3 * th - 2.0 * g);
             let on = s.hover == Some((li, zi));
-            paint::fill_rounded(pix, r.0 * scale, r.1 * scale, r.2 * scale, r.3 * scale, 5.0 * scale, if on { paint::accent(255) } else { zone });
+            paint::fill_rounded(
+                pix,
+                r.0 * scale,
+                r.1 * scale,
+                r.2 * scale,
+                r.3 * scale,
+                5.0 * scale,
+                if on { paint::accent(255) } else { zone },
+            );
             if !on {
                 paint::stroke_rounded(pix, r.0 * scale, r.1 * scale, r.2 * scale, r.3 * scale, 5.0 * scale, 1.0 * scale, edge);
             }
@@ -474,8 +519,20 @@ mod tests {
     use super::*;
 
     fn session() -> Session {
-        let monitor = Monitor { name: "DP-1".into(), x: 0, y: 0, width: 3440, height: 1440, scale: 1.0, transform: 0, reserved: [0, 28, 0, 70] };
-        Session { mode: Mode::Drag, address: "0xabc".into(), floating: true, monitor, layouts: zones::builtin(), gap: 8, hover: None, pointer: None, moved: std::time::Instant::now(), watch: DropWatch::new(Some((40.0, 10.0))) }
+        let monitor =
+            Monitor { name: "DP-1".into(), x: 0, y: 0, width: 3440, height: 1440, scale: 1.0, transform: 0, reserved: [0, 28, 0, 70] };
+        Session {
+            mode: Mode::Drag,
+            address: "0xabc".into(),
+            floating: true,
+            monitor,
+            layouts: zones::builtin(),
+            gap: 8,
+            hover: None,
+            pointer: None,
+            moved: std::time::Instant::now(),
+            watch: DropWatch::new(Some((40.0, 10.0))),
+        }
     }
 
     #[test]

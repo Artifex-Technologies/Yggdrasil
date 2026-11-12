@@ -9,7 +9,10 @@
 
 mod md;
 
-use eframe::egui::{self, pos2, vec2, Align, Align2, Color32, CornerRadius, CursorIcon, FontFamily, FontId, Key, Label, Layout, Margin, Modifiers, Rect, RichText, Sense, Stroke, ViewportCommand};
+use eframe::egui::{
+    self, pos2, vec2, Align, Align2, Color32, CornerRadius, CursorIcon, FontFamily, FontId, Key, Label, Layout, Margin, Modifiers, Rect,
+    RichText, Sense, Stroke, ViewportCommand,
+};
 use md::{Alert, Block, Inline, Item, Style};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -362,7 +365,10 @@ fn load(path: &Path) -> Result<Doc, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("Cannot open {}: {e}", path.display()))?;
     let (text, mut readonly) = match String::from_utf8(bytes) {
         Ok(t) => (t, None),
-        Err(e) => (String::from_utf8_lossy(e.as_bytes()).into_owned(), Some("it is not plain text (UTF-8), so it is shown as well as it can be".to_string())),
+        Err(e) => (
+            String::from_utf8_lossy(e.as_bytes()).into_owned(),
+            Some("it is not plain text (UTF-8), so it is shown as well as it can be".to_string()),
+        ),
     };
     if readonly.is_none() && std::fs::OpenOptions::new().append(true).open(path).is_err() {
         readonly = Some("you cannot write to this file".to_string());
@@ -392,7 +398,13 @@ fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
 }
 
 fn open_external(target: &str) {
-    if let Ok(mut child) = std::process::Command::new("xdg-open").arg(target).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn() {
+    if let Ok(mut child) = std::process::Command::new("xdg-open")
+        .arg(target)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
         std::thread::spawn(move || {
             let _ = child.wait();
         });
@@ -420,7 +432,14 @@ fn pick_file() -> Option<PathBuf> {
     let mut opts: HashMap<&str, Value> = HashMap::new();
     opts.insert("handle_token", Value::from(token.as_str()));
     opts.insert("filters", Value::from(filters));
-    conn.call_method(Some("org.freedesktop.portal.Desktop"), "/org/freedesktop/portal/desktop", Some("org.freedesktop.portal.FileChooser"), "OpenFile", &("", "Open a Markdown or text file", opts)).ok()?;
+    conn.call_method(
+        Some("org.freedesktop.portal.Desktop"),
+        "/org/freedesktop/portal/desktop",
+        Some("org.freedesktop.portal.FileChooser"),
+        "OpenFile",
+        &("", "Open a Markdown or text file", opts),
+    )
+    .ok()?;
     let msg = answers.next()?;
     let (code, results): (u32, HashMap<String, OwnedValue>) = msg.body().deserialize().ok()?;
     if code != 0 {
@@ -438,7 +457,13 @@ fn install_fonts(ctx: &egui::Context) -> bool {
         let p = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
         (p.is_file() && matches!(ext(&p).as_str(), "ttf" | "otf")).then_some(p)
     }
-    let want = [("doc", "sans:regular"), ("doc-b", "sans:bold"), ("doc-i", "sans:italic"), ("doc-bi", "sans:bold:italic"), ("doc-mono", "monospace:regular")];
+    let want = [
+        ("doc", "sans:regular"),
+        ("doc-b", "sans:bold"),
+        ("doc-i", "sans:italic"),
+        ("doc-bi", "sans:bold:italic"),
+        ("doc-mono", "monospace:regular"),
+    ];
     let mut defs = egui::FontDefinitions::default();
     let prop = defs.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
     let mono = defs.families.get(&FontFamily::Monospace).cloned().unwrap_or_default();
@@ -578,7 +603,10 @@ fn inlines(ui: &mut egui::Ui, c: &mut Page, inl: &[Inline], size: f32, heading: 
                     }
                     match link {
                         Some(url) => {
-                            let r = ui.add(Label::new(rt.color(c.link()).underline()).sense(Sense::click())).on_hover_cursor(CursorIcon::PointingHand).on_hover_text(url.as_str());
+                            let r = ui
+                                .add(Label::new(rt.color(c.link()).underline()).sense(Sense::click()))
+                                .on_hover_cursor(CursorIcon::PointingHand)
+                                .on_hover_text(url.as_str());
                             if r.clicked() {
                                 *c.clicked = Some(url.clone());
                             }
@@ -603,7 +631,11 @@ fn picture(ui: &mut egui::Ui, c: &mut Page, url: &str, alt: &str, link: Option<&
     };
     match local {
         Some(p) => {
-            let img = egui::Image::new(format!("file://{}", p.display())).fit_to_original_size(1.0).max_width(c.width).max_height(720.0).corner_radius(6);
+            let img = egui::Image::new(format!("file://{}", p.display()))
+                .fit_to_original_size(1.0)
+                .max_width(c.width)
+                .max_height(720.0)
+                .corner_radius(6);
             let r = ui.add(img.sense(if link.is_some() { Sense::click() } else { Sense::hover() }));
             let r = if alt.is_empty() { r } else { r.on_hover_text(alt) };
             if let (Some(l), true) = (link, r.clicked()) {
@@ -615,7 +647,10 @@ fn picture(ui: &mut egui::Ui, c: &mut Page, url: &str, alt: &str, link: Option<&
             let label = if alt.trim().is_empty() { "picture" } else { alt.trim() };
             let rt = RichText::new(format!("[{label}]")).size(size * 0.9).color(if web { c.link() } else { c.pal.dim });
             if web {
-                let r = ui.add(Label::new(rt.underline()).sense(Sense::click())).on_hover_cursor(CursorIcon::PointingHand).on_hover_text(format!("A picture on the web (not loaded): {url}"));
+                let r = ui
+                    .add(Label::new(rt.underline()).sense(Sense::click()))
+                    .on_hover_cursor(CursorIcon::PointingHand)
+                    .on_hover_text(format!("A picture on the web (not loaded): {url}"));
                 if r.clicked() {
                     *c.clicked = Some(link.unwrap_or(url).to_string());
                 }
@@ -634,7 +669,11 @@ fn code_block(ui: &mut egui::Ui, c: &mut Page, lang: &str, text: &str) {
         ui.horizontal(|ui| {
             ui.label(RichText::new(lang).size(c.size * 0.72).color(c.pal.dim));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.add(egui::Button::new(RichText::new("Copy").size(c.size * 0.72).color(c.pal.dim)).frame(false)).on_hover_text("Copy this code").clicked() {
+                if ui
+                    .add(egui::Button::new(RichText::new("Copy").size(c.size * 0.72).color(c.pal.dim)).frame(false))
+                    .on_hover_text("Copy this code")
+                    .clicked()
+                {
                     ui.ctx().copy_text(text.to_string());
                     *c.copied = true;
                 }
@@ -688,7 +727,11 @@ fn list(ui: &mut egui::Ui, c: &mut Page, start: Option<u64>, items: &[Item]) {
                     if done {
                         p.rect_filled(b, CornerRadius::same(3), c.pal.accent);
                         let ink = Stroke::new(1.8, c.pal.on_accent());
-                        let (l, m, r) = (b.left_center() + vec2(b.width() * 0.2, 0.0), b.center_bottom() + vec2(-b.width() * 0.08, -b.height() * 0.25), b.right_top() + vec2(-b.width() * 0.2, b.height() * 0.25));
+                        let (l, m, r) = (
+                            b.left_center() + vec2(b.width() * 0.2, 0.0),
+                            b.center_bottom() + vec2(-b.width() * 0.08, -b.height() * 0.25),
+                            b.right_top() + vec2(-b.width() * 0.2, b.height() * 0.25),
+                        );
                         p.line_segment([l, m], ink);
                         p.line_segment([m, r], ink);
                     } else {
@@ -787,7 +830,8 @@ impl eframe::App for App {
             }
         }
         // a file dropped on the window
-        let dropped: Option<PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).find(|p| !p.as_os_str().is_empty()));
+        let dropped: Option<PathBuf> =
+            ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).find(|p| !p.as_os_str().is_empty()));
         if let Some(p) = dropped {
             self.request(&ctx, Pending::Open(p, None));
         }
@@ -871,7 +915,8 @@ impl eframe::App for App {
                     Some(d) => {
                         ui.label(RichText::new(d.name()).size(14.5).strong());
                         if d.dirty() {
-                            ui.label(RichText::new("●").size(10.0).color(pal.accent)).on_hover_text("Changed, not saved yet (Ctrl+S saves)");
+                            ui.label(RichText::new("●").size(10.0).color(pal.accent))
+                                .on_hover_text("Changed, not saved yet (Ctrl+S saves)");
                         }
                         if let Some(why) = &d.readonly {
                             ui.label(RichText::new("read only").size(12.0).color(pal.dim)).on_hover_text(format!("Cannot be saved: {why}"));
@@ -879,7 +924,9 @@ impl eframe::App for App {
                         let folder = d.path.parent().map(tidy_path).unwrap_or_default();
                         let room = (ui.available_width() - self.right_w - chrome::controls_width() - 40.0).clamp(0.0, 360.0);
                         if room > 40.0 {
-                            ui.allocate_ui(vec2(room, 20.0), |ui| ui.add(Label::new(RichText::new(folder).size(12.0).color(pal.dim)).truncate()));
+                            ui.allocate_ui(vec2(room, 20.0), |ui| {
+                                ui.add(Label::new(RichText::new(folder).size(12.0).color(pal.dim)).truncate())
+                            });
                         }
                     }
                     None => {
@@ -891,17 +938,26 @@ impl eframe::App for App {
                 if self.doc.is_some() {
                     egui::Frame::new().fill(pal.field).corner_radius(7).inner_margin(Margin::same(2)).show(ui, |ui| {
                         ui.spacing_mut().item_spacing.x = 2.0;
-                        ui.selectable_value(&mut self.view, View::Formatted, "Formatted").on_hover_text("The page as it is meant to look (Ctrl+E switches)");
-                        ui.selectable_value(&mut self.view, View::Source, "Source").on_hover_text("The text itself, which you can also edit (Ctrl+E switches)");
+                        ui.selectable_value(&mut self.view, View::Formatted, "Formatted")
+                            .on_hover_text("The page as it is meant to look (Ctrl+E switches)");
+                        ui.selectable_value(&mut self.view, View::Source, "Source")
+                            .on_hover_text("The text itself, which you can also edit (Ctrl+E switches)");
                     });
-                    if (self.zoom - 1.0).abs() > 0.01 && ui.button(format!("{:.0} %", self.zoom * 100.0)).on_hover_text("Back to 100 % (Ctrl+0)").clicked() {
+                    if (self.zoom - 1.0).abs() > 0.01
+                        && ui.button(format!("{:.0} %", self.zoom * 100.0)).on_hover_text("Back to 100 % (Ctrl+0)").clicked()
+                    {
                         self.zoom = 1.0;
                     }
                 }
                 if ui.button("Open…").on_hover_text("Open another file (Ctrl+O)").clicked() {
                     acts.push(Pending::Pick);
                 }
-                if self.dirty() && ui.add(egui::Button::new(RichText::new("Save").color(pal.on_accent())).fill(pal.accent)).on_hover_text("Ctrl+S").clicked() {
+                if self.dirty()
+                    && ui
+                        .add(egui::Button::new(RichText::new("Save").color(pal.on_accent())).fill(pal.accent))
+                        .on_hover_text("Ctrl+S")
+                        .clicked()
+                {
                     want_save = true;
                 }
                 self.right_w = (ui.cursor().left() - from).max(60.0);
@@ -984,14 +1040,29 @@ impl eframe::App for App {
                         sa = sa.vertical_scroll_offset(0.0);
                     }
                     sa.show(ui, |ui| {
-                        let font = FontId::new(13.5 * zoom, if self.fonts { FontFamily::Name("doc-mono".into()) } else { FontFamily::Monospace });
+                        let font =
+                            FontId::new(13.5 * zoom, if self.fonts { FontFamily::Name("doc-mono".into()) } else { FontFamily::Monospace });
                         let size = vec2(ui.available_width(), ui.available_height());
                         egui::Frame::new().inner_margin(Margin::symmetric(18, 14)).show(ui, |ui| {
                             if doc.readonly.is_some() {
                                 let mut view: &str = doc.text.as_str();
-                                ui.add(egui::TextEdit::multiline(&mut view).font(font).frame(egui::Frame::NONE).desired_width(f32::INFINITY).min_size(size - vec2(36.0, 28.0)));
+                                ui.add(
+                                    egui::TextEdit::multiline(&mut view)
+                                        .font(font)
+                                        .frame(egui::Frame::NONE)
+                                        .desired_width(f32::INFINITY)
+                                        .min_size(size - vec2(36.0, 28.0)),
+                                );
                             } else {
-                                let r = ui.add(egui::TextEdit::multiline(&mut doc.text).font(font).frame(egui::Frame::NONE).code_editor().lock_focus(true).desired_width(f32::INFINITY).min_size(size - vec2(36.0, 28.0)));
+                                let r = ui.add(
+                                    egui::TextEdit::multiline(&mut doc.text)
+                                        .font(font)
+                                        .frame(egui::Frame::NONE)
+                                        .code_editor()
+                                        .lock_focus(true)
+                                        .desired_width(f32::INFINITY)
+                                        .min_size(size - vec2(36.0, 28.0)),
+                                );
                                 if r.changed() {
                                     doc.gen += 1;
                                 }
@@ -1108,7 +1179,8 @@ fn empty_page(ui: &mut egui::Ui, pal: &Palette, acts: &mut Vec<Pending>) {
         ui.add_space(6.0);
         ui.label(RichText::new("or drop one on this window").color(pal.dim));
         ui.add_space(16.0);
-        if ui.add(egui::Button::new(RichText::new("Open…").color(pal.on_accent())).fill(pal.accent).min_size(vec2(110.0, 30.0))).clicked() {
+        if ui.add(egui::Button::new(RichText::new("Open…").color(pal.on_accent())).fill(pal.accent).min_size(vec2(110.0, 30.0))).clicked()
+        {
             acts.push(Pending::Pick);
         }
     });
@@ -1129,7 +1201,10 @@ fn parse_args(args: &[String]) -> Start {
     while let Some(a) = it.next() {
         match a.as_str() {
             "--source" => s.source = true,
-            "--zoom" => s.zoom = it.next().and_then(|z| z.trim_end_matches('%').parse::<f32>().ok()).map(|z| (z / 100.0).clamp(0.5, 3.0)).unwrap_or(1.0),
+            "--zoom" => {
+                s.zoom =
+                    it.next().and_then(|z| z.trim_end_matches('%').parse::<f32>().ok()).map(|z| (z / 100.0).clamp(0.5, 3.0)).unwrap_or(1.0)
+            }
             _ if s.path.is_none() => {
                 let raw = path_from_uri(a).map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|| a.clone());
                 let (p, anchor) = match raw.rsplit_once('#') {

@@ -15,6 +15,8 @@ use std::sync::{Arc, Mutex};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
 use wayland_backend::client::{Backend, ObjectId};
 use wayland_client::globals::{registry_queue_init, GlobalListContents};
+use wayland_client::protocol::wl_buffer::WlBuffer;
+use wayland_client::protocol::wl_compositor::WlCompositor;
 use wayland_client::protocol::wl_data_device::{self, WlDataDevice};
 use wayland_client::protocol::wl_data_device_manager::{DndAction, WlDataDeviceManager};
 use wayland_client::protocol::wl_data_offer::{self, WlDataOffer};
@@ -24,8 +26,6 @@ use wayland_client::protocol::wl_registry::WlRegistry;
 use wayland_client::protocol::wl_seat::{self, WlSeat};
 use wayland_client::protocol::wl_shm::{self, WlShm};
 use wayland_client::protocol::wl_shm_pool::WlShmPool;
-use wayland_client::protocol::wl_buffer::WlBuffer;
-use wayland_client::protocol::wl_compositor::WlCompositor;
 use wayland_client::protocol::wl_surface::WlSurface;
 use wayland_client::{delegate_noop, event_created_child, Connection, Dispatch, Proxy, QueueHandle, WEnum};
 
@@ -98,7 +98,19 @@ pub fn init(frame: &eframe::Frame, ctx: &eframe::egui::Context) -> Option<Dnd> {
     let down = Arc::new(AtomicBool::new(false));
     let out_paths = Arc::new(Mutex::new(vec![]));
     let icon = Arc::new(Mutex::new(None));
-    let mut st = St { ctx: ctx.clone(), tx, conn: conn.clone(), serial: serial.clone(), down: down.clone(), offers: HashMap::new(), entered: None, action: DndAction::empty(), pos: (0.0, 0.0), out_paths: out_paths.clone(), icon: icon.clone() };
+    let mut st = St {
+        ctx: ctx.clone(),
+        tx,
+        conn: conn.clone(),
+        serial: serial.clone(),
+        down: down.clone(),
+        offers: HashMap::new(),
+        entered: None,
+        action: DndAction::empty(),
+        pos: (0.0, 0.0),
+        out_paths: out_paths.clone(),
+        icon: icon.clone(),
+    };
     queue.roundtrip(&mut st).ok()?;
     std::thread::Builder::new()
         .name("minos-dnd".into())
@@ -230,7 +242,15 @@ pub fn parse_uri_list(text: &str) -> Vec<PathBuf> {
 }
 
 impl Dispatch<wayland_client::protocol::wl_registry::WlRegistry, GlobalListContents> for St {
-    fn event(_: &mut Self, _: &WlRegistry, _: wayland_client::protocol::wl_registry::Event, _: &GlobalListContents, _: &Connection, _: &QueueHandle<Self>) {}
+    fn event(
+        _: &mut Self,
+        _: &WlRegistry,
+        _: wayland_client::protocol::wl_registry::Event,
+        _: &GlobalListContents,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
 }
 impl Dispatch<WlSeat, ()> for St {
     fn event(_: &mut Self, _: &WlSeat, _: wl_seat::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
@@ -266,7 +286,7 @@ impl Dispatch<WlDataDevice, ()> for St {
             wl_data_device::Event::Enter { serial, x, y, id: Some(offer), .. } => {
                 let mimes = st.offers.remove(&offer.id()).map(|o| o.1).unwrap_or_default();
                 st.forget_offers(); // only the one entering is in use
-                // a drag that entered without leaving first: the old offer goes
+                                    // a drag that entered without leaving first: the old offer goes
                 if let Some((o, _)) = st.entered.take() {
                     o.destroy();
                 }
@@ -305,7 +325,8 @@ impl Dispatch<WlDataDevice, ()> for St {
                     offer.destroy();
                     return;
                 }
-                let (tx, ctx, conn, at, moved) = (st.tx.clone(), st.ctx.clone(), st.conn.clone(), st.pos, st.action.contains(DndAction::Move));
+                let (tx, ctx, conn, at, moved) =
+                    (st.tx.clone(), st.ctx.clone(), st.conn.clone(), st.pos, st.action.contains(DndAction::Move));
                 let Ok((mut rd, wr)) = std::os::unix::net::UnixStream::pair() else { return };
                 offer.receive(URI_LIST.into(), wr.as_fd());
                 let _ = conn.flush();
@@ -444,7 +465,19 @@ mod tests {
         conn.flush().unwrap();
         let _ = sent(&mut peer);
         let (tx, _rx) = channel();
-        let mut st = St { ctx: eframe::egui::Context::default(), tx, conn: conn.clone(), serial: Default::default(), down: Default::default(), offers: HashMap::new(), entered: None, action: DndAction::empty(), pos: (0.0, 0.0), out_paths: Default::default(), icon: Default::default() };
+        let mut st = St {
+            ctx: eframe::egui::Context::default(),
+            tx,
+            conn: conn.clone(),
+            serial: Default::default(),
+            down: Default::default(),
+            offers: HashMap::new(),
+            entered: None,
+            action: DndAction::empty(),
+            pos: (0.0, 0.0),
+            out_paths: Default::default(),
+            icon: Default::default(),
+        };
         // three copies made in other programs: each a new offer (ids the compositor picks), its type, then the selection
         let dev = device.id().protocol_id();
         let offers: Vec<u32> = (0..3).map(|k| 0xff00_0000 + k).collect();

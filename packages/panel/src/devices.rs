@@ -27,7 +27,10 @@ fn text(p: &HashMap<String, OwnedValue>, k: &str) -> String {
 
 /// A device path such as `/dev/sdb1` from udisks2's `Device` property (bytes with a trailing 0).
 fn device_path(p: &HashMap<String, OwnedValue>) -> String {
-    p.get("Device").and_then(|v| Vec::<u8>::try_from(v.try_clone().ok()?).ok()).map(|b| String::from_utf8_lossy(&b).trim_end_matches('\0').to_string()).unwrap_or_default()
+    p.get("Device")
+        .and_then(|v| Vec::<u8>::try_from(v.try_clone().ok()?).ok())
+        .map(|b| String::from_utf8_lossy(&b).trim_end_matches('\0').to_string())
+        .unwrap_or_default()
 }
 
 /// Is this a user's drive (something to tell them about)? Not a system disk, not a hidden device, and it has a file system.
@@ -77,7 +80,14 @@ fn announce(tx: &calloop::channel::Sender<NMsg>, d: &Drive, arrived: bool) {
 pub fn spawn(tx: calloop::channel::Sender<NMsg>) {
     std::thread::spawn(move || {
         let Ok(conn) = Connection::system() else { return };
-        let Ok(rule) = MatchRule::builder().msg_type(zbus::message::Type::Signal).sender("org.freedesktop.UDisks2").and_then(|b| b.interface("org.freedesktop.DBus.ObjectManager")).map(|b| b.build()) else { return };
+        let Ok(rule) = MatchRule::builder()
+            .msg_type(zbus::message::Type::Signal)
+            .sender("org.freedesktop.UDisks2")
+            .and_then(|b| b.interface("org.freedesktop.DBus.ObjectManager"))
+            .map(|b| b.build())
+        else {
+            return;
+        };
         let Ok(iter) = MessageIterator::for_match_rule(rule, &conn, None) else { return };
         // what is plugged in, by object path, so a removal can say which drive went
         let mut known: HashMap<String, Drive> = HashMap::new();
@@ -129,7 +139,10 @@ mod tests {
 
     #[test]
     fn a_usb_stick_is_announced_a_system_disk_is_not() {
-        assert_eq!(drive_from(&props(false, true)), Some(Drive { device: "/dev/sdb1".into(), label: "BACKUP".into(), size: 32_000_000_000 }));
+        assert_eq!(
+            drive_from(&props(false, true)),
+            Some(Drive { device: "/dev/sdb1".into(), label: "BACKUP".into(), size: 32_000_000_000 })
+        );
         assert_eq!(drive_from(&props(true, true)), None, "system disks are not announced");
         assert_eq!(drive_from(&props(false, false)), None, "no file system: nothing to open");
     }

@@ -31,7 +31,8 @@ fn reconcile(s: &Store) {
 fn ring(s: &Store, id: u64, generation: u32) -> ExitCode {
     let now = timers::now();
     let r = s.change(|st| {
-        let t = st.timers.iter_mut().find(|t| t.id == id && t.generation == generation && t.running() && t.until.unwrap_or(0) <= now + 2)?;
+        let t =
+            st.timers.iter_mut().find(|t| t.id == id && t.generation == generation && t.running() && t.until.unwrap_or(0) <= now + 2)?;
         t.done = true;
         Some(t.clone())
     });

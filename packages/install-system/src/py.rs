@@ -18,11 +18,7 @@ pub type R<T> = Result<T, Fail>;
 
 /// The C library's text for an error number (what Python puts in an OSError).
 pub fn strerror(code: i32) -> String {
-    unsafe {
-        std::ffi::CStr::from_ptr(libc::strerror(code))
-            .to_string_lossy()
-            .into_owned()
-    }
+    unsafe { std::ffi::CStr::from_ptr(libc::strerror(code)).to_string_lossy().into_owned() }
 }
 
 fn errno_text(e: &io::Error) -> String {
@@ -39,12 +35,7 @@ pub fn oserror(e: &io::Error, path: &str) -> Fail {
 
 /// str(OSError) for two files (os.symlink): "[Errno 17] File exists: 'src' -> 'dst'".
 pub fn oserror2(e: &io::Error, src: &str, dst: &str) -> Fail {
-    Fail::Crash(format!(
-        "{}: {} -> {}",
-        errno_text(e),
-        pycompat::repr(src),
-        pycompat::repr(dst)
-    ))
+    Fail::Crash(format!("{}: {} -> {}", errno_text(e), pycompat::repr(src), pycompat::repr(dst)))
 }
 
 /// Bytes decoded as Python's strict UTF-8 codec does, with its UnicodeDecodeError's words when they are not UTF-8.
@@ -57,24 +48,14 @@ pub fn decode(bytes: &[u8]) -> R<String> {
                 None => (bytes.len(), "unexpected end of data"),
                 Some(n) => {
                     let b = bytes[start];
-                    let reason = if (0x80..=0xc1).contains(&b) || b >= 0xf5 {
-                        "invalid start byte"
-                    } else {
-                        "invalid continuation byte"
-                    };
+                    let reason = if (0x80..=0xc1).contains(&b) || b >= 0xf5 { "invalid start byte" } else { "invalid continuation byte" };
                     (start + n, reason)
                 }
             };
             Err(Fail::Crash(if end - start == 1 {
-                format!(
-                    "'utf-8' codec can't decode byte 0x{:02x} in position {start}: {why}",
-                    bytes[start]
-                )
+                format!("'utf-8' codec can't decode byte 0x{:02x} in position {start}: {why}", bytes[start])
             } else {
-                format!(
-                    "'utf-8' codec can't decode bytes in position {start}-{}: {why}",
-                    end - 1
-                )
+                format!("'utf-8' codec can't decode bytes in position {start}-{}: {why}", end - 1)
             }))
         }
     }
@@ -156,14 +137,7 @@ pub fn split(p: &str) -> (String, String) {
     let i = p.rfind('/').map(|i| i + 1).unwrap_or(0);
     let (head, tail) = (&p[..i], &p[i..]);
     let trimmed = head.trim_end_matches('/');
-    (
-        if trimmed.is_empty() {
-            head.to_string()
-        } else {
-            trimmed.to_string()
-        },
-        tail.to_string(),
-    )
+    (if trimmed.is_empty() { head.to_string() } else { trimmed.to_string() }, tail.to_string())
 }
 
 /// os.path.dirname(p)
@@ -228,34 +202,13 @@ mod tests {
             Err(Fail::Crash(m)) => m,
             other => panic!("{other:?}"),
         };
-        assert_eq!(
-            m(b"abc\xff"),
-            "'utf-8' codec can't decode byte 0xff in position 3: invalid start byte"
-        );
-        assert_eq!(
-            m(b"\xe2\x28\xa1"),
-            "'utf-8' codec can't decode byte 0xe2 in position 0: invalid continuation byte"
-        );
-        assert_eq!(
-            m(b"a\xe2\x82\x28"),
-            "'utf-8' codec can't decode bytes in position 1-2: invalid continuation byte"
-        );
-        assert_eq!(
-            m(b"a\xe2\x82"),
-            "'utf-8' codec can't decode bytes in position 1-2: unexpected end of data"
-        );
-        assert_eq!(
-            m(b"a\xe2"),
-            "'utf-8' codec can't decode byte 0xe2 in position 1: unexpected end of data"
-        );
-        assert_eq!(
-            m(b"\xed\xa0\x80"),
-            "'utf-8' codec can't decode byte 0xed in position 0: invalid continuation byte"
-        );
-        assert_eq!(
-            m(b"\xc0\x80"),
-            "'utf-8' codec can't decode byte 0xc0 in position 0: invalid start byte"
-        );
+        assert_eq!(m(b"abc\xff"), "'utf-8' codec can't decode byte 0xff in position 3: invalid start byte");
+        assert_eq!(m(b"\xe2\x28\xa1"), "'utf-8' codec can't decode byte 0xe2 in position 0: invalid continuation byte");
+        assert_eq!(m(b"a\xe2\x82\x28"), "'utf-8' codec can't decode bytes in position 1-2: invalid continuation byte");
+        assert_eq!(m(b"a\xe2\x82"), "'utf-8' codec can't decode bytes in position 1-2: unexpected end of data");
+        assert_eq!(m(b"a\xe2"), "'utf-8' codec can't decode byte 0xe2 in position 1: unexpected end of data");
+        assert_eq!(m(b"\xed\xa0\x80"), "'utf-8' codec can't decode byte 0xed in position 0: invalid continuation byte");
+        assert_eq!(m(b"\xc0\x80"), "'utf-8' codec can't decode byte 0xc0 in position 0: invalid start byte");
     }
 
     #[test]

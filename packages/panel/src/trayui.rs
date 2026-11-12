@@ -58,14 +58,27 @@ pub fn current<'a>(items: &'a [MenuItem], path: &[i32]) -> &'a [MenuItem] {
 }
 
 /// Draws the card and returns its rectangle and the clickable rows (logical px; `s` is the scale).
-pub fn paint(pix: &mut Pixmap, s: f32, pop: &TrayPop, model: &Model, thumbs: &std::collections::HashMap<String, Pixmap>, pointer: (f32, f32), fonts: &Fonts, icons: &mut Icons) -> (Rect, Vec<(Rect, RowAct)>) {
+pub fn paint(
+    pix: &mut Pixmap,
+    s: f32,
+    pop: &TrayPop,
+    model: &Model,
+    thumbs: &std::collections::HashMap<String, Pixmap>,
+    pointer: (f32, f32),
+    fonts: &Fonts,
+    icons: &mut Icons,
+) -> (Rect, Vec<(Rect, RowAct)>) {
     pix.fill(paint::color((0, 0, 0, 0)));
     if let TrayMode::Windows { app_id } = &pop.mode {
         return crate::previews::paint(pix, s, pop.anchor_x, app_id, model, thumbs, pointer, fonts, icons);
     }
     let w = pix.width() as f32 / s;
     let dark = model.dark;
-    let (bg, border, text, dim) = if dark { ((18, 18, 24, 244), (255, 255, 255, 36), (240, 240, 246, 255), (140, 140, 156, 255)) } else { ((250, 250, 252, 246), (0, 0, 0, 30), (24, 24, 32, 255), (130, 130, 146, 255)) };
+    let (bg, border, text, dim) = if dark {
+        ((18, 18, 24, 244), (255, 255, 255, 36), (240, 240, 246, 255), (140, 140, 156, 255))
+    } else {
+        ((250, 250, 252, 246), (0, 0, 0, 30), (24, 24, 32, 255), (130, 130, 146, 255))
+    };
     // what to list
     struct Row {
         label: String,
@@ -85,23 +98,69 @@ pub fn paint(pix: &mut Pixmap, s: f32, pop: &TrayPop, model: &Model, thumbs: &st
         TrayMode::Overflow(_) => {
             for (i, it) in passive.iter().enumerate() {
                 let label = if !it.title.is_empty() { it.title.clone() } else { it.id.clone() };
-                rows.push(Row { label, sep: false, enabled: true, checked: None, sub: false, icon: Some(i), act: Some(RowAct::Activate(it.key.clone())) });
+                rows.push(Row {
+                    label,
+                    sep: false,
+                    enabled: true,
+                    checked: None,
+                    sub: false,
+                    icon: Some(i),
+                    act: Some(RowAct::Activate(it.key.clone())),
+                });
             }
             if rows.is_empty() {
-                rows.push(Row { label: "Nothing hidden".into(), sep: false, enabled: false, checked: None, sub: false, icon: None, act: None });
+                rows.push(Row {
+                    label: "Nothing hidden".into(),
+                    sep: false,
+                    enabled: false,
+                    checked: None,
+                    sub: false,
+                    icon: None,
+                    act: None,
+                });
             }
         }
         TrayMode::Windows { .. } => {}
         TrayMode::Menu { key, items, path } => {
             if !path.is_empty() {
-                rows.push(Row { label: "‹  Back".into(), sep: false, enabled: true, checked: None, sub: false, icon: None, act: Some(RowAct::Back) });
+                rows.push(Row {
+                    label: "‹  Back".into(),
+                    sep: false,
+                    enabled: true,
+                    checked: None,
+                    sub: false,
+                    icon: None,
+                    act: Some(RowAct::Back),
+                });
             }
             for m in current(items, path) {
-                let act = if m.separator || !m.enabled { None } else if !m.children.is_empty() { Some(RowAct::Sub(m.id)) } else { Some(RowAct::Choose(key.clone(), m.id)) };
-                rows.push(Row { label: m.label.clone(), sep: m.separator, enabled: m.enabled, checked: m.checked, sub: !m.children.is_empty(), icon: None, act });
+                let act = if m.separator || !m.enabled {
+                    None
+                } else if !m.children.is_empty() {
+                    Some(RowAct::Sub(m.id))
+                } else {
+                    Some(RowAct::Choose(key.clone(), m.id))
+                };
+                rows.push(Row {
+                    label: m.label.clone(),
+                    sep: m.separator,
+                    enabled: m.enabled,
+                    checked: m.checked,
+                    sub: !m.children.is_empty(),
+                    icon: None,
+                    act,
+                });
             }
             if rows.is_empty() {
-                rows.push(Row { label: "(empty menu)".into(), sep: false, enabled: false, checked: None, sub: false, icon: None, act: None });
+                rows.push(Row {
+                    label: "(empty menu)".into(),
+                    sep: false,
+                    enabled: false,
+                    checked: None,
+                    sub: false,
+                    icon: None,
+                    act: None,
+                });
             }
         }
     }
@@ -124,7 +183,8 @@ pub fn paint(pix: &mut Pixmap, s: f32, pop: &TrayPop, model: &Model, thumbs: &st
             continue;
         }
         let rect = (cx + 4.0, y, CARD_W - 8.0, ROW_H);
-        let hot = r.act.is_some() && pointer.0 >= rect.0 && pointer.0 < rect.0 + rect.2 && pointer.1 >= rect.1 && pointer.1 < rect.1 + rect.3;
+        let hot =
+            r.act.is_some() && pointer.0 >= rect.0 && pointer.0 < rect.0 + rect.2 && pointer.1 >= rect.1 && pointer.1 < rect.1 + rect.3;
         if hot {
             paint::fill_rounded(pix, rect.0 * s, rect.1 * s, rect.2 * s, rect.3 * s, 8.0 * s, (255, 255, 255, 26));
         }

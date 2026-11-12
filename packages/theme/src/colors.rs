@@ -149,10 +149,21 @@ pub fn scheme(dark: bool, accent: Rgb) -> String {
         ("View", block(p.view, p.alt, None, None, None)),
         ("Window", block(p.bg, p.alt, None, None, None)),
     ];
-    let mut out: Vec<String> = vec!["# Yggdrasil colour scheme (written by ygg-theme from the palette Yggdrasil's own programs use)".into(), String::new()];
+    let mut out: Vec<String> =
+        vec!["# Yggdrasil colour scheme (written by ygg-theme from the palette Yggdrasil's own programs use)".into(), String::new()];
     out.extend(
-        ["[ColorEffects:Disabled]", "Color=56,56,56", "ColorAmount=0", "ColorEffect=0", "ContrastAmount=0.65", "ContrastEffect=1", "IntensityAmount=0.1", "IntensityEffect=2", ""]
-            .map(String::from),
+        [
+            "[ColorEffects:Disabled]",
+            "Color=56,56,56",
+            "ColorAmount=0",
+            "ColorEffect=0",
+            "ContrastAmount=0.65",
+            "ContrastEffect=1",
+            "IntensityAmount=0.1",
+            "IntensityEffect=2",
+            "",
+        ]
+        .map(String::from),
     );
     out.extend(
         [
@@ -274,7 +285,8 @@ pub fn gtk_colors(dark: bool, accent: Rgb) -> String {
         ("wm_bg_a", p.strip),
         ("wm_bg_b", p.strip),
     ];
-    let mut lines = vec!["/* Yggdrasil colours (written by ygg-theme from the palette Yggdrasil's own programs use, with the accent) */".to_string()];
+    let mut lines =
+        vec!["/* Yggdrasil colours (written by ygg-theme from the palette Yggdrasil's own programs use, with the accent) */".to_string()];
     lines.extend(d.iter().map(|(k, v)| format!("@define-color {k} {};", css(*v))));
     lines.join("\n") + "\n"
 }
@@ -376,7 +388,10 @@ pub fn retint_css(text: &str, dark: bool, accent: Rgb) -> String {
         .replace_all(&text, |m: &regex::Captures| {
             let nums: Vec<String> = m[2].split(',').map(|x| pycompat::strip(x).to_string()).collect();
             // int(float(x)) of whole numbers (the pattern takes digits only for the first three)
-            let n3: Vec<i64> = nums[..3].iter().map(|x| x.parse::<f64>().map(|f| f.trunc() as i64).unwrap_or_else(|_| pycompat::int(x).unwrap_or(0) as i64)).collect();
+            let n3: Vec<i64> = nums[..3]
+                .iter()
+                .map(|x| x.parse::<f64>().map(|f| f.trunc() as i64).unwrap_or_else(|_| pycompat::int(x).unwrap_or(0) as i64))
+                .collect();
             let n = retint_color((n3[0], n3[1], n3[2]), dark, accent);
             let extra = if nums.len() > 3 { format!(", {}", nums[3]) } else { String::new() };
             format!("{}({}, {}, {}{extra})", &m[1], n.0, n.1, n.2)

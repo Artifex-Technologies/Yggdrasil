@@ -44,7 +44,9 @@ fn icon_dirs() -> Vec<PathBuf> {
             }
         }
     }
-    for root in ["/var/lib/flatpak/appstream"].into_iter().map(PathBuf::from).chain(home.iter().map(|h| h.join(".local/share/flatpak/appstream"))) {
+    for root in
+        ["/var/lib/flatpak/appstream"].into_iter().map(PathBuf::from).chain(home.iter().map(|h| h.join(".local/share/flatpak/appstream")))
+    {
         for remote in subdirs(&root) {
             for arch in subdirs(&remote) {
                 for size in ["128x128", "64x64"] {
@@ -127,7 +129,19 @@ pub fn find(names: &[&str], flathub: &str, online: bool, ctx: &egui::Context) ->
 
 /// Flathub's icon for an app, kept in the cache.
 fn fetch(id: &str) -> Option<PathBuf> {
-    let out = std::process::Command::new("curl").args(["-fsSL", "--proto", "=https", "--max-time", "20", "--max-filesize", "3000000", &format!("https://flathub.org/api/v2/appstream/{id}")]).output().ok()?;
+    let out = std::process::Command::new("curl")
+        .args([
+            "-fsSL",
+            "--proto",
+            "=https",
+            "--max-time",
+            "20",
+            "--max-filesize",
+            "3000000",
+            &format!("https://flathub.org/api/v2/appstream/{id}"),
+        ])
+        .output()
+        .ok()?;
     if !out.status.success() {
         return None;
     }
@@ -151,7 +165,10 @@ mod tests {
 
     #[test]
     fn the_icon_address_is_read_and_only_https_is_taken() {
-        assert_eq!(icon_url(r#"{"icon":"https://dl.flathub.org/media/a/icons/128x128/a.png"}"#).as_deref(), Some("https://dl.flathub.org/media/a/icons/128x128/a.png"));
+        assert_eq!(
+            icon_url(r#"{"icon":"https://dl.flathub.org/media/a/icons/128x128/a.png"}"#).as_deref(),
+            Some("https://dl.flathub.org/media/a/icons/128x128/a.png")
+        );
         assert_eq!(icon_url(r#"{"icon":"http://x/y.png"}"#), None);
         assert_eq!(icon_url(r#"{}"#), None);
         assert_eq!(icon_url("not json"), None);

@@ -14,11 +14,29 @@ pub const OBJECT_PATH: &str = "/org/yggdrasil/PolicyKit1/AuthenticationAgent";
 pub enum UiMsg {
     /// Start (or continue) a dialog for this request. `kind` is "admin" (polkit), "network" or "bluetooth"; `title` replaces the
     /// administrator heading for the other kinds.
-    Begin { kind: String, title: String, message: String, action_id: String, user: String, program: String, command_line: String },
-    Prompt { text: String, echo: bool, reply: Sender<Option<String>> },
+    Begin {
+        kind: String,
+        title: String,
+        message: String,
+        action_id: String,
+        user: String,
+        program: String,
+        command_line: String,
+    },
+    Prompt {
+        text: String,
+        echo: bool,
+        reply: Sender<Option<String>>,
+    },
     /// A yes-or-no question (Bluetooth pairing): `button` says yes, Cancel says no.
-    Confirm { button: String, reply: Sender<bool> },
-    Message { text: String, error: bool },
+    Confirm {
+        button: String,
+        reply: Sender<bool>,
+    },
+    Message {
+        text: String,
+        error: bool,
+    },
     /// The request is over (close the dialog).
     Done,
 }
@@ -43,7 +61,8 @@ pub fn user_name(uid: u32) -> Option<String> {
 
 /// Which identity to authenticate as: our own user when polkit offers it, else the first user it lists.
 pub fn choose_identity(identities: &[(String, HashMap<String, OwnedValue>)], own_uid: u32) -> Option<u32> {
-    let uids: Vec<u32> = identities.iter().filter(|(k, _)| k == "unix-user").filter_map(|(_, d)| d.get("uid").and_then(|v| u32::try_from(v).ok())).collect();
+    let uids: Vec<u32> =
+        identities.iter().filter(|(k, _)| k == "unix-user").filter_map(|(_, d)| d.get("uid").and_then(|v| u32::try_from(v).ok())).collect();
     if uids.contains(&own_uid) {
         Some(own_uid)
     } else {
@@ -66,8 +85,16 @@ impl Bridge {
         // the running program itself (/proc/self/exe), not its path: after a package update the path is a newer program (or, while
         // pacman replaces it, nothing), and a box opened from it must still speak this agent's protocol. It opened from the path
         // before, and an update left every administrator request failing without a password box.
-        let exe = if std::path::Path::new("/proc/self/exe").exists() { std::path::PathBuf::from("/proc/self/exe") } else { std::env::current_exe()? };
-        let mut child = std::process::Command::new(exe).arg("--dialog").stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).spawn()?;
+        let exe = if std::path::Path::new("/proc/self/exe").exists() {
+            std::path::PathBuf::from("/proc/self/exe")
+        } else {
+            std::env::current_exe()?
+        };
+        let mut child = std::process::Command::new(exe)
+            .arg("--dialog")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()?;
         *slot.lock().unwrap() = Some(child.id());
         let stdin = child.stdin.take().ok_or_else(|| std::io::Error::other("no stdin"))?;
         let stdout = std::io::BufReader::new(child.stdout.take().ok_or_else(|| std::io::Error::other("no stdout"))?);
@@ -118,7 +145,15 @@ impl Ui for Bridge {
 impl Agent {
     /// Runs on a thread of its own (the exchange with the password box blocks), so CancelAuthentication can be handled while it waits.
     #[allow(clippy::too_many_arguments)]
-    async fn begin_authentication(&self, action_id: String, message: String, _icon_name: String, details: HashMap<String, String>, cookie: String, identities: Vec<(String, HashMap<String, OwnedValue>)>) -> zbus::fdo::Result<()> {
+    async fn begin_authentication(
+        &self,
+        action_id: String,
+        message: String,
+        _icon_name: String,
+        details: HashMap<String, String>,
+        cookie: String,
+        identities: Vec<(String, HashMap<String, OwnedValue>)>,
+    ) -> zbus::fdo::Result<()> {
         let (me, slot) = (self.uid, self.child.clone());
         // for pkexec, polkit's details name the program that will run (resolved by pkexec itself) and its command line
         let program = details.get("program").cloned().unwrap_or_default();
@@ -135,7 +170,16 @@ impl Agent {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn authenticate(self_uid: u32, child_slot: std::sync::Arc<std::sync::Mutex<Option<u32>>>, action_id: String, message: String, program: String, command_line: String, cookie: String, identities: Vec<(String, HashMap<String, OwnedValue>)>) -> zbus::fdo::Result<()> {
+fn authenticate(
+    self_uid: u32,
+    child_slot: std::sync::Arc<std::sync::Mutex<Option<u32>>>,
+    action_id: String,
+    message: String,
+    program: String,
+    command_line: String,
+    cookie: String,
+    identities: Vec<(String, HashMap<String, OwnedValue>)>,
+) -> zbus::fdo::Result<()> {
     {
         let Some(uid) = choose_identity(&identities, self_uid) else {
             return Err(zbus::fdo::Error::Failed("no user to authenticate as".into()));
@@ -202,7 +246,9 @@ pub fn register(agent: Agent, subject: Subject) -> Result<Connection, String> {
         }
     };
     let _ = &mut details;
-    let proxy = Proxy::new(&conn, "org.freedesktop.PolicyKit1", "/org/freedesktop/PolicyKit1/Authority", "org.freedesktop.PolicyKit1.Authority").map_err(|e| e.to_string())?;
+    let proxy =
+        Proxy::new(&conn, "org.freedesktop.PolicyKit1", "/org/freedesktop/PolicyKit1/Authority", "org.freedesktop.PolicyKit1.Authority")
+            .map_err(|e| e.to_string())?;
     proxy.call::<_, _, ()>("RegisterAuthenticationAgent", &((kind, details), "en_US.UTF-8", OBJECT_PATH)).map_err(|e| e.to_string())?;
     Ok(conn)
 }

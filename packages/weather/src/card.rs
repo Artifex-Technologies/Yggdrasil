@@ -31,12 +31,16 @@ pub struct CardState {
 
 /// `YGGDRASIL_WEATHER_RUNTIME` overrides the folder (tests).
 pub fn state_path() -> Option<PathBuf> {
-    let dir = std::env::var_os("YGGDRASIL_WEATHER_RUNTIME").filter(|d| !d.is_empty()).map(PathBuf::from).or_else(|| Some(PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR")?).join("yggdrasil-weather")))?;
+    let dir = std::env::var_os("YGGDRASIL_WEATHER_RUNTIME")
+        .filter(|d| !d.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| Some(PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR")?).join("yggdrasil-weather")))?;
     Some(dir.join("card.json"))
 }
 
 pub fn load_state(now: i64) -> CardState {
-    let st: CardState = state_path().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    let st: CardState =
+        state_path().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
     if now - st.updated > STALE_S {
         CardState::default()
     } else {
@@ -74,7 +78,12 @@ pub fn blocks(cfg: Option<&Config>, st: &CardState) -> Value {
         json!({"field": {"id": "search", "hint": "Search for a city", "value": st.query, "submit": "search-go"}}),
     ];
     if !st.results.is_empty() {
-        let rows: Vec<Value> = st.results.iter().enumerate().map(|(i, p)| json!({"id": format!("pick:{i}"), "title": p.label(), "note": format!("{:.2}, {:.2}", p.latitude, p.longitude)})).collect();
+        let rows: Vec<Value> = st
+            .results
+            .iter()
+            .enumerate()
+            .map(|(i, p)| json!({"id": format!("pick:{i}"), "title": p.label(), "note": format!("{:.2}, {:.2}", p.latitude, p.longitude)}))
+            .collect();
         b.push(json!({"list": rows}));
     }
     let us = cfg.map(|c| c.units == "us").unwrap_or(false);
@@ -102,8 +111,23 @@ pub fn press(
     search: impl Fn(&str) -> Result<Vec<Place>, String>,
 ) -> Option<Config> {
     st.updated = now;
-    let base = current.clone().unwrap_or(Config { name: String::new(), lat: 0.0, lon: 0.0, units: "metric".into(), mode: "timezone".into(), detected_at: 0, chosen: None });
-    let at = |f: Found, mode: &str| Config { name: f.name, lat: f.lat, lon: f.lon, mode: mode.into(), detected_at: if mode == "auto" { now } else { 0 }, ..base.clone() };
+    let base = current.clone().unwrap_or(Config {
+        name: String::new(),
+        lat: 0.0,
+        lon: 0.0,
+        units: "metric".into(),
+        mode: "timezone".into(),
+        detected_at: 0,
+        chosen: None,
+    });
+    let at = |f: Found, mode: &str| Config {
+        name: f.name,
+        lat: f.lat,
+        lon: f.lon,
+        mode: mode.into(),
+        detected_at: if mode == "auto" { now } else { 0 },
+        ..base.clone()
+    };
     match id {
         "view:settings" => {
             st.view = "settings".into();
@@ -173,7 +197,15 @@ pub fn press(
                 st.status = format!("Using {}.", p.label());
                 st.results.clear();
                 let chosen = Chosen { name: p.label(), lat: p.latitude, lon: p.longitude };
-                return Some(Config { name: chosen.name.clone(), lat: chosen.lat, lon: chosen.lon, mode: "manual".into(), detected_at: 0, chosen: Some(chosen), ..base });
+                return Some(Config {
+                    name: chosen.name.clone(),
+                    lat: chosen.lat,
+                    lon: chosen.lon,
+                    mode: "manual".into(),
+                    detected_at: 0,
+                    chosen: Some(chosen),
+                    ..base
+                });
             }
             None
         }
@@ -197,7 +229,14 @@ mod tests {
         panic!("searched")
     }
     fn place(name: &str) -> Place {
-        Place { name: name.into(), latitude: 45.68, longitude: -111.04, country: "United States".into(), admin1: "Montana".into(), timezone: String::new() }
+        Place {
+            name: name.into(),
+            latitude: 45.68,
+            longitude: -111.04,
+            country: "United States".into(),
+            admin1: "Montana".into(),
+            timezone: String::new(),
+        }
     }
     fn cfg(mode: &str) -> Config {
         Config { name: "Denver".into(), lat: 39.74, lon: -104.98, units: "metric".into(), mode: mode.into(), detected_at: 0, chosen: None }

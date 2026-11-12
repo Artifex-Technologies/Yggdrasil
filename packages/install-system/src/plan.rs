@@ -38,9 +38,7 @@ pub fn login_ok(s: &str) -> bool {
     !b.is_empty()
         && b.len() <= 32
         && (b[0].is_ascii_lowercase() || b[0] == b'_')
-        && all(&s[1..], |c| {
-            c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_' || c == b'-'
-        })
+        && all(&s[1..], |c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_' || c == b'-')
 }
 
 /// [A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?
@@ -90,8 +88,7 @@ pub fn keymap_ok(s: &str) -> bool {
 
 /// /dev/[A-Za-z0-9/_-]+
 pub fn device_ok(s: &str) -> bool {
-    s.strip_prefix("/dev/")
-        .is_some_and(|rest| !rest.is_empty() && all(rest, |c| word(c) || c == b'/'))
+    s.strip_prefix("/dev/").is_some_and(|rest| !rest.is_empty() && all(rest, |c| word(c) || c == b'/'))
 }
 
 /// [A-Za-z0-9_-]{1,16}
@@ -141,16 +138,8 @@ pub fn check_plan(p: &Py, os: &Os, ask: &mut Ask) -> Option<String> {
         }
     }
     let empty_user = Py::Dict(Default::default());
-    let u = if p.at("user").as_dict().is_some() {
-        p.at("user")
-    } else {
-        &empty_user
-    };
-    let (login, password, name) = (
-        get(u, "login", &empty),
-        get(u, "password", &empty),
-        get(u, "name", &empty),
-    );
+    let u = if p.at("user").as_dict().is_some() { p.at("user") } else { &empty_user };
+    let (login, password, name) = (get(u, "login", &empty), get(u, "password", &empty), get(u, "name", &empty));
     let Some(login) = login.as_str().filter(|l| login_ok(l)) else {
         return Some("the account name must start with a small letter and use only small letters, digits, - and _".into());
     };
@@ -168,9 +157,7 @@ pub fn check_plan(p: &Py, os: &Os, ask: &mut Ask) -> Option<String> {
         return Some("the full name may not contain : or a line break".into());
     }
     if !fits(get(p, "hostname", &empty), hostname_ok) {
-        return Some(
-            "the computer's name may use letters, digits and - (not at the start or end)".into(),
-        );
+        return Some("the computer's name may use letters, digits and - (not at the start or end)".into());
     }
     if p.at("encrypt").truthy() {
         match get(p, "encrypt_password", &empty).as_str() {
@@ -185,10 +172,7 @@ pub fn check_plan(p: &Py, os: &Os, ask: &mut Ask) -> Option<String> {
     }
     let tz_ok = get(p, "timezone", &empty).as_str().is_some_and(|tz| {
         // (os.path.join drops the folder before an absolute name)
-        !tz.is_empty()
-            && !tz.starts_with('/')
-            && !tz.contains("..")
-            && py::isfile(&py::join(ask.zoneinfo, tz))
+        !tz.is_empty() && !tz.starts_with('/') && !tz.contains("..") && py::isfile(&py::join(ask.zoneinfo, tz))
     });
     if !tz_ok {
         return Some("unknown time zone".into());
@@ -203,14 +187,8 @@ pub fn check_plan(p: &Py, os: &Os, ask: &mut Ask) -> Option<String> {
         return Some("unknown keyboard variant".into());
     }
     if let Some(chosen) = p.get("browsers") {
-        let known: Vec<String> = catalog::entries(os.browsers_file.as_deref(), "browsers")
-            .into_iter()
-            .map(|b| catalog::id(&b))
-            .collect();
-        let fine = chosen.as_list().is_some_and(|l| {
-            l.iter()
-                .all(|b| b.as_str().is_some_and(|b| known.iter().any(|k| k == b)))
-        });
+        let known: Vec<String> = catalog::entries(os.browsers_file.as_deref(), "browsers").into_iter().map(|b| catalog::id(&b)).collect();
+        let fine = chosen.as_list().is_some_and(|l| l.iter().all(|b| b.as_str().is_some_and(|b| known.iter().any(|k| k == b))));
         if !fine {
             return Some("unknown browser chosen".into());
         }
@@ -220,14 +198,8 @@ pub fn check_plan(p: &Py, os: &Os, ask: &mut Ask) -> Option<String> {
         }
     }
     if let Some(chosen) = p.get("extras") {
-        let known: Vec<String> = catalog::entries(os.extras_file.as_deref(), "extras")
-            .into_iter()
-            .map(|e| catalog::id(&e))
-            .collect();
-        if !chosen.as_list().is_some_and(|l| {
-            l.iter()
-                .all(|e| e.as_str().is_some_and(|e| known.iter().any(|k| k == e)))
-        }) {
+        let known: Vec<String> = catalog::entries(os.extras_file.as_deref(), "extras").into_iter().map(|e| catalog::id(&e)).collect();
+        if !chosen.as_list().is_some_and(|l| l.iter().all(|e| e.as_str().is_some_and(|e| known.iter().any(|k| k == e)))) {
             return Some("unknown optional part chosen".into());
         }
     }
@@ -262,10 +234,7 @@ pub fn check_manual(p: &Py) -> Option<String> {
         };
         ids.push(id);
         let kind_ok = matches!(c.at("kind").as_str(), Some("linux" | "efi" | "swap"));
-        if !kind_ok
-            || c.at("start").whole().is_none()
-            || c.at("size").whole().is_none_or(|s| s < MIB)
-        {
+        if !kind_ok || c.at("start").whole().is_none() || c.at("size").whole().is_none_or(|s| s < MIB) {
             return Some("a new partition is not described properly".into());
         }
     }
@@ -275,10 +244,7 @@ pub fn check_manual(p: &Py) -> Option<String> {
     }
     let uses: Vec<&Py> = match p.at("use") {
         v if !v.truthy() => vec![],
-        Py::List(l) => l
-            .iter()
-            .map(|u| if u.as_dict().is_some() { u } else { &NONE })
-            .collect(),
+        Py::List(l) => l.iter().map(|u| if u.as_dict().is_some() { u } else { &NONE }).collect(),
         _ => vec![],
     };
     let empty = Py::Str(String::new());
@@ -289,11 +255,7 @@ pub fn check_manual(p: &Py) -> Option<String> {
             return Some(format!("{} cannot be chosen as a mount point", m.py_str()));
         };
         if *fmt != Py::None && !fmt.as_str().is_some_and(|f| formats.contains(&f)) {
-            return Some(format!(
-                "{} cannot be formatted as {}",
-                m.py_str(),
-                fmt.py_str()
-            ));
+            return Some(format!("{} cannot be formatted as {}", m.py_str(), fmt.py_str()));
         }
         if let Some(id) = part.strip_prefix("new:") {
             if !ids.contains(&id) {
@@ -306,10 +268,7 @@ pub fn check_manual(p: &Py) -> Option<String> {
             return Some("a partition is not named properly".into());
         }
     }
-    let mounts: Vec<&str> = uses
-        .iter()
-        .map(|u| u.at("mount").as_str().unwrap_or(""))
-        .collect();
+    let mounts: Vec<&str> = uses.iter().map(|u| u.at("mount").as_str().unwrap_or("")).collect();
     if mounts.iter().filter(|m| **m == "/").count() != 1 {
         return Some("choose exactly one partition for / (the system)".into());
     }
@@ -323,20 +282,10 @@ pub fn check_manual(p: &Py) -> Option<String> {
     if not_swap.len() != n {
         return Some("a mount point is chosen twice".into());
     }
-    if uses
-        .iter()
-        .find(|u| u.at("mount").as_str() == Some("/"))
-        .is_some_and(|u| *u.at("format") == Py::None)
-    {
-        return Some(
-            "the partition for / has to be formatted (the system is copied onto an empty one)"
-                .into(),
-        );
+    if uses.iter().find(|u| u.at("mount").as_str() == Some("/")).is_some_and(|u| *u.at("format") == Py::None) {
+        return Some("the partition for / has to be formatted (the system is copied onto an empty one)".into());
     }
-    let mut parts: Vec<&str> = uses
-        .iter()
-        .map(|u| u.at("part").as_str().unwrap_or(""))
-        .collect();
+    let mut parts: Vec<&str> = uses.iter().map(|u| u.at("part").as_str().unwrap_or("")).collect();
     parts.sort();
     parts.dedup();
     if parts.len() != uses.len() {
@@ -389,22 +338,12 @@ mod tests {
         ] {
             assert_eq!(locale_ok(s), want, "{s:?}");
         }
-        for (s, want) in [
-            ("/dev/vda", true),
-            ("/dev/", false),
-            ("/dev//x", true),
-            ("/dev/a.b", false),
-            ("dev/a", false),
-            ("/dev/a\n", false),
-        ] {
+        for (s, want) in
+            [("/dev/vda", true), ("/dev/", false), ("/dev//x", true), ("/dev/a.b", false), ("dev/a", false), ("/dev/a\n", false)]
+        {
             assert_eq!(device_ok(s), want, "{s:?}");
         }
-        assert!(
-            part_id_ok("a-_9")
-                && !part_id_ok("")
-                && !part_id_ok(&"a".repeat(17))
-                && !part_id_ok("a b")
-        );
+        assert!(part_id_ok("a-_9") && !part_id_ok("") && !part_id_ok(&"a".repeat(17)) && !part_id_ok("a b"));
         assert!(keymap_ok("us") && !keymap_ok("dvorak; rm") && !keymap_ok(""));
     }
 }

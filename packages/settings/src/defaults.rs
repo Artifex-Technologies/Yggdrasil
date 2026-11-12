@@ -15,13 +15,30 @@ pub struct Kind {
 
 pub const KINDS: &[Kind] = &[
     Kind { name: "Text and Markdown", what: "notes, .md and .txt files", mimes: &["text/markdown", "text/x-markdown", "text/plain"] },
-    Kind { name: "Documents", what: "Word, OpenDocument and RTF files", mimes: &["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/msword", "application/vnd.oasis.opendocument.text", "application/rtf"] },
+    Kind {
+        name: "Documents",
+        what: "Word, OpenDocument and RTF files",
+        mimes: &[
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/msword",
+            "application/vnd.oasis.opendocument.text",
+            "application/rtf",
+        ],
+    },
     Kind { name: "PDF", what: "PDF files", mimes: &["application/pdf"] },
     Kind { name: "Web browser", what: "links and web pages", mimes: &["x-scheme-handler/http", "x-scheme-handler/https", "text/html"] },
-    Kind { name: "Pictures", what: "PNG, JPEG, GIF, WebP and SVG", mimes: &["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"] },
+    Kind {
+        name: "Pictures",
+        what: "PNG, JPEG, GIF, WebP and SVG",
+        mimes: &["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"],
+    },
     Kind { name: "Music", what: "MP3, FLAC, Ogg and WAV", mimes: &["audio/mpeg", "audio/flac", "audio/ogg", "audio/x-wav"] },
     Kind { name: "Video", what: "MP4, Matroska and WebM", mimes: &["video/mp4", "video/x-matroska", "video/webm"] },
-    Kind { name: "Archives", what: "ZIP, tar, 7z and gzip", mimes: &["application/zip", "application/x-tar", "application/x-7z-compressed", "application/gzip"] },
+    Kind {
+        name: "Archives",
+        what: "ZIP, tar, 7z and gzip",
+        mimes: &["application/zip", "application/x-tar", "application/x-7z-compressed", "application/gzip"],
+    },
     Kind { name: "Folders", what: "opening a folder", mimes: &["inode/directory"] },
     Kind { name: "Email", what: "mailto: links", mimes: &["x-scheme-handler/mailto"] },
 ];
@@ -75,7 +92,11 @@ pub fn load() -> Vec<Row> {
         .iter()
         .enumerate()
         .map(|(i, k)| {
-            let mut choices: Vec<Choice> = progs.iter().filter(|(_, _, m)| k.mimes.iter().any(|x| m.iter().any(|y| y == x))).map(|(id, n, _)| Choice { id: id.clone(), name: n.clone() }).collect();
+            let mut choices: Vec<Choice> = progs
+                .iter()
+                .filter(|(_, _, m)| k.mimes.iter().any(|x| m.iter().any(|y| y == x)))
+                .map(|(id, n, _)| Choice { id: id.clone(), name: n.clone() })
+                .collect();
             choices.sort_by_key(|a| a.name.to_lowercase());
             Row { kind: i, current: current(k.mimes[0]), choices }
         })
@@ -111,4 +132,3 @@ mod tests {
         assert!(KINDS.iter().all(|k| !k.mimes.is_empty()));
     }
 }
-

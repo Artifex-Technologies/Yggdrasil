@@ -16,8 +16,12 @@ use smithay::reexports::calloop::LoopHandle;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::ResizeEdge;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Buffer as BufferCoords, Logical, Physical, Point, Rectangle, Scale, Transform, SERIAL_COUNTER};
-use smithay::wayland::selection::data_device::{clear_data_device_selection, current_data_device_selection_userdata, request_data_device_client_selection, set_data_device_selection};
-use smithay::wayland::selection::primary_selection::{clear_primary_selection, current_primary_selection_userdata, request_primary_client_selection, set_primary_selection};
+use smithay::wayland::selection::data_device::{
+    clear_data_device_selection, current_data_device_selection_userdata, request_data_device_client_selection, set_data_device_selection,
+};
+use smithay::wayland::selection::primary_selection::{
+    clear_primary_selection, current_primary_selection_userdata, request_primary_client_selection, set_primary_selection,
+};
 use smithay::wayland::selection::SelectionTarget;
 use smithay::wayland::xwayland_shell::{XWaylandShellHandler, XWaylandShellState};
 use smithay::xwayland::xwm::{Reorder, ResizeEdge as X11Edge, WmWindowProperty, XwmId};
@@ -31,13 +35,15 @@ use crate::state::{self, App, KbFocus};
 pub fn start(app: &mut App, handle: LoopHandle<'static, App>, then: Box<dyn FnOnce(&mut App)>) -> Result<(), Box<dyn std::error::Error>> {
     // XWayland's own messages are rarely useful; YGGDRASIL_COMPOSITOR_DEBUG shows them
     let out = || if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() { Stdio::inherit() } else { Stdio::null() };
-    let (xwayland, client) = XWayland::spawn(&app.display_handle, None, std::iter::empty::<(String, String)>(), true, out(), out(), |_| ())?;
+    let (xwayland, client) =
+        XWayland::spawn(&app.display_handle, None, std::iter::empty::<(String, String)>(), true, out(), out(), |_| ())?;
     let mut then = Some(then);
     let wm_handle = handle.clone();
     handle
         .insert_source(xwayland, move |event, _, app| {
             match event {
-                XWaylandEvent::Ready { x11_socket, display_number } => match X11Wm::start_wm(wm_handle.clone(), x11_socket, client.clone()) {
+                XWaylandEvent::Ready { x11_socket, display_number } => match X11Wm::start_wm(wm_handle.clone(), x11_socket, client.clone())
+                {
                     Ok(mut wm) => {
                         // games ask for the primary monitor to know where to go full screen
                         let _ = wm.set_randr_primary_output(Some(&app.output));
@@ -113,7 +119,10 @@ impl App {
     /// What an X11 window asked for before it was shown (x11asked.rs), now that the answer is in: full screen or maximized,
     /// unless it already is, or the person has placed it since.
     pub fn x11_asked(&mut self, a: crate::x11asked::Asked) {
-        let Some(w) = self.all_windows().into_iter().map(|(w, _)| w).find(|w| w.x11_surface().is_some_and(|x| x.window_id() == a.window)) else { return };
+        let Some(w) = self.all_windows().into_iter().map(|(w, _)| w).find(|w| w.x11_surface().is_some_and(|x| x.window_id() == a.window))
+        else {
+            return;
+        };
         let Some(x) = w.x11_surface() else { return };
         if a.fullscreen && !x.is_fullscreen() {
             self.fullscreen(&w);
@@ -145,7 +154,9 @@ impl App {
         for x in self.overlays.iter().rev() {
             let Some(s) = x.wl_surface() else { continue };
             let loc = x.geometry().loc;
-            if let Some((s, p)) = smithay::desktop::utils::under_from_surface_tree(&s, pos - loc.to_f64(), (0, 0), smithay::desktop::WindowSurfaceType::ALL) {
+            if let Some((s, p)) =
+                smithay::desktop::utils::under_from_surface_tree(&s, pos - loc.to_f64(), (0, 0), smithay::desktop::WindowSurfaceType::ALL)
+            {
                 return Some((s, (p + loc).to_f64()));
             }
         }
@@ -206,7 +217,8 @@ impl XwmHandler for App {
         let zone = smithay::desktop::layer_map_for_output(&self.output).non_exclusive_zone();
         let screen = crate::state::logical_size(&self.output);
         let game_full = is_game(&window) && screen.w > 0 && geo.size.w >= screen.w && geo.size.h >= screen.h;
-        let place = if game_full { Rectangle::new(self.cascade(), geo.size) } else { fit_in(zone, Rectangle::new(self.cascade(), geo.size)) };
+        let place =
+            if game_full { Rectangle::new(self.cascade(), geo.size) } else { fit_in(zone, Rectangle::new(self.cascade(), geo.size)) };
         let at = place.loc;
         let _ = window.configure(place);
         let w = Window::new_x11_window(window.clone());
@@ -254,7 +266,16 @@ impl XwmHandler for App {
     /// A program asks for another size or place. A window the compositor placed (tiled, maximized, full screen, snapped) is told
     /// its place again; any other may change its size but not move itself (the compositor places windows). Before it is shown,
     /// anything goes (its place is chosen when it is shown).
-    fn configure_request(&mut self, _xwm: XwmId, window: X11Surface, x: Option<i32>, y: Option<i32>, w: Option<u32>, h: Option<u32>, _reorder: Option<Reorder>) {
+    fn configure_request(
+        &mut self,
+        _xwm: XwmId,
+        window: X11Surface,
+        x: Option<i32>,
+        y: Option<i32>,
+        w: Option<u32>,
+        h: Option<u32>,
+        _reorder: Option<Reorder>,
+    ) {
         self.wake();
         let mut geo = window.geometry();
         match self.x11_window(&window) {
@@ -495,7 +516,14 @@ impl Element for OpaqueElement {
 }
 
 impl RenderElement<GlesRenderer> for OpaqueElement {
-    fn draw(&self, frame: &mut GlesFrame<'_, '_>, src: Rectangle<f64, BufferCoords>, dst: Rectangle<i32, Physical>, damage: &[Rectangle<i32, Physical>], opaque_regions: &[Rectangle<i32, Physical>]) -> Result<(), GlesError> {
+    fn draw(
+        &self,
+        frame: &mut GlesFrame<'_, '_>,
+        src: Rectangle<f64, BufferCoords>,
+        dst: Rectangle<i32, Physical>,
+        damage: &[Rectangle<i32, Physical>],
+        opaque_regions: &[Rectangle<i32, Physical>],
+    ) -> Result<(), GlesError> {
         frame.override_default_tex_program(self.program.clone(), vec![]);
         let r = RenderElement::<GlesRenderer>::draw(&self.inner, frame, src, dst, damage, opaque_regions);
         frame.clear_tex_program_override();
@@ -534,7 +562,10 @@ mod tests {
 
     #[test]
     fn the_opaque_list_reads() {
-        assert_eq!(parse_opaque("# games that leave junk in alpha\nMyGame\n  other  # comment\n\n"), vec!["mygame".to_string(), "other".to_string()]);
+        assert_eq!(
+            parse_opaque("# games that leave junk in alpha\nMyGame\n  other  # comment\n\n"),
+            vec!["mygame".to_string(), "other".to_string()]
+        );
         assert!(parse_opaque("").is_empty());
     }
 }

@@ -65,15 +65,7 @@ impl Disk {
                         .collect(),
                 ),
             ),
-            (
-                "free",
-                Py::List(
-                    self.free
-                        .iter()
-                        .map(|(a, b)| dict(vec![("start", int(*a)), ("size", int(*b))]))
-                        .collect(),
-                ),
-            ),
+            ("free", Py::List(self.free.iter().map(|(a, b)| dict(vec![("start", int(*a)), ("size", int(*b))])).collect())),
         ])
     }
 }
@@ -130,23 +122,14 @@ pub fn to_int(v: &Py) -> R<Int> {
             Ok(if t.abs() < 1e30 {
                 Int::new(t as i128)
             } else {
-                Int {
-                    text: format!("{t:.0}"),
-                    value: if t > 0.0 { CLAMP } else { -CLAMP },
-                }
+                Int { text: format!("{t:.0}"), value: if t > 0.0 { CLAMP } else { -CLAMP } }
             })
         }
         Py::Str(t) => match pycompat::int(t) {
             Some(n) => Ok(Int::new(n)),
-            None => crash(format!(
-                "invalid literal for int() with base 10: {}",
-                pycompat::repr(t)
-            )),
+            None => crash(format!("invalid literal for int() with base 10: {}", pycompat::repr(t))),
         },
-        _ => crash(format!(
-            "int() argument must be a string, a bytes-like object or a real number, not '{}'",
-            v.type_name()
-        )),
+        _ => crash(format!("int() argument must be a string, a bytes-like object or a real number, not '{}'", v.type_name())),
     }
 }
 
@@ -154,10 +137,7 @@ pub fn to_int(v: &Py) -> R<Int> {
 pub fn arg(v: &Py) -> R<String> {
     match v {
         Py::Str(t) => Ok(t.clone()),
-        _ => crash(format!(
-            "expected str, bytes or os.PathLike object, not {}",
-            v.type_name()
-        )),
+        _ => crash(format!("expected str, bytes or os.PathLike object, not {}", v.type_name())),
     }
 }
 
@@ -165,10 +145,7 @@ pub fn arg(v: &Py) -> R<String> {
 fn strip_text(v: &Py) -> R<String> {
     match v {
         Py::Str(t) => Ok(pycompat::strip(t).to_string()),
-        _ => crash(format!(
-            "'{}' object has no attribute 'strip'",
-            v.type_name()
-        )),
+        _ => crash(format!("'{}' object has no attribute 'strip'", v.type_name())),
     }
 }
 
@@ -202,50 +179,26 @@ pub fn part(disk: &str, n: u32) -> String {
 impl Ctx<'_> {
     /// The disk the live system runs from (never offered).
     pub fn live_disk(&mut self) -> R<Option<String>> {
-        let src = pycompat::strip(
-            &self.capture(&["findmnt", "-no", "SOURCE", "/run/archiso/bootmnt"], false)?,
-        )
-        .to_string();
+        let src = pycompat::strip(&self.capture(&["findmnt", "-no", "SOURCE", "/run/archiso/bootmnt"], false)?).to_string();
         if src.is_empty() {
             return Ok(None);
         }
-        let parent =
-            pycompat::strip(&self.capture(&["lsblk", "-no", "PKNAME", &src], false)?).to_string();
-        Ok(Some(if parent.is_empty() {
-            src
-        } else {
-            format!("/dev/{parent}")
-        }))
+        let parent = pycompat::strip(&self.capture(&["lsblk", "-no", "PKNAME", &src], false)?).to_string();
+        Ok(Some(if parent.is_empty() { src } else { format!("/dev/{parent}") }))
     }
 
     /// Whole disks it could install onto: not the live medium, not read-only, not a loop or zram device.
     pub fn disks(&mut self) -> R<Vec<Disk>> {
-        let text = self.capture(
-            &[
-                "lsblk",
-                "-J",
-                "-b",
-                "-d",
-                "-o",
-                "NAME,PATH,SIZE,MODEL,TRAN,RO,TYPE,RM",
-            ],
-            true,
-        )?;
+        let text = self.capture(&["lsblk", "-J", "-b", "-d", "-o", "NAME,PATH,SIZE,MODEL,TRAN,RO,TYPE,RM"], true)?;
         // (json's own words for an empty text; other broken output is described in words of our own)
         let out = loads(&text, OTHER_NESTING).or_else(|_| {
-            crash(if text.is_empty() {
-                "Expecting value: line 1 column 1 (char 0)".into()
-            } else {
-                "lsblk's output is not JSON".into()
-            })
+            crash(if text.is_empty() { "Expecting value: line 1 column 1 (char 0)".into() } else { "lsblk's output is not JSON".into() })
         })?;
         let live = self.live_disk()?;
         let mut found = vec![];
         let empty_list = Py::List(vec![]);
         for d in iterate(get(&out, "blockdevices")?.unwrap_or(&empty_list))? {
-            if get(&d, "type")?.and_then(Py::as_str) != Some("disk")
-                || get(&d, "ro")?.is_some_and(Py::truthy)
-            {
+            if get(&d, "type")?.and_then(Py::as_str) != Some("disk") || get(&d, "ro")?.is_some_and(Py::truthy) {
                 continue;
             }
             let path = index(&d, "path")?;
@@ -260,12 +213,7 @@ impl Ctx<'_> {
             match index(&d, "name")? {
                 Py::Str(n) if ["loop", "zram", "sr"].iter().any(|p| n.starts_with(p)) => continue,
                 Py::Str(_) => {}
-                other => {
-                    return crash(format!(
-                        "'{}' object has no attribute 'startswith'",
-                        other.type_name()
-                    ))
-                }
+                other => return crash(format!("'{}' object has no attribute 'startswith'", other.type_name())),
             }
             let zero = int(0);
             let size = to_int(get_or(&d, "size", &zero)?)?;
@@ -275,17 +223,7 @@ impl Ctx<'_> {
             let transport = get_or(&d, "tran", &empty)?.clone();
             let big_enough = size.value >= self.os.min_bytes;
             let (table, partitions, free) = self.disk_layout(path, size.value)?;
-            found.push(Disk {
-                path: path.clone(),
-                size,
-                model,
-                removable,
-                transport,
-                big_enough,
-                table,
-                partitions,
-                free,
-            });
+            found.push(Disk { path: path.clone(), size, model, removable, transport, big_enough, table, partitions, free });
         }
         Ok(found)
     }
@@ -296,39 +234,22 @@ impl Ctx<'_> {
         let d = arg(disk)?;
         // output that is not UTF-8 or not JSON is a ValueError, which the script caught: nothing on the disk then
         let text = match self.capture(
-            &[
-                "lsblk",
-                "-J",
-                "-b",
-                "-o",
-                "PATH,START,SIZE,FSTYPE,LABEL,PARTLABEL,PARTTYPE,PARTN,PTTYPE,MOUNTPOINTS,TYPE",
-                &d,
-            ],
+            &["lsblk", "-J", "-b", "-o", "PATH,START,SIZE,FSTYPE,LABEL,PARTLABEL,PARTTYPE,PARTN,PTTYPE,MOUNTPOINTS,TYPE", &d],
             false,
         ) {
-            Err(Fail::Crash(m)) if m.starts_with("'utf-8' codec can't decode") => {
-                Some(String::new())
-            }
+            Err(Fail::Crash(m)) if m.starts_with("'utf-8' codec can't decode") => Some(String::new()),
             Err(e) => return Err(e),
             Ok(t) if t.is_empty() => Some("{}".to_string()),
             Ok(t) => Some(t),
         };
-        let tree = match text
-            .filter(|t| !t.is_empty())
-            .map(|t| loads(&t, OTHER_NESTING))
-        {
-            Some(Ok(v)) => get(&v, "blockdevices")?
-                .cloned()
-                .unwrap_or(Py::List(vec![])),
+        let tree = match text.filter(|t| !t.is_empty()).map(|t| loads(&t, OTHER_NESTING)) {
+            Some(Ok(v)) => get(&v, "blockdevices")?.cloned().unwrap_or(Py::List(vec![])),
             _ => Py::List(vec![]),
         };
         let mut flat = vec![];
         fn walk(items: &Py, flat: &mut Vec<Py>) -> R<()> {
             for x in iterate(items)? {
-                let children = get(&x, "children")?
-                    .filter(|c| c.truthy())
-                    .cloned()
-                    .unwrap_or(Py::List(vec![]));
+                let children = get(&x, "children")?.filter(|c| c.truthy()).cloned().unwrap_or(Py::List(vec![]));
                 flat.push(x);
                 walk(&children, flat)?;
             }
@@ -346,9 +267,7 @@ impl Ctx<'_> {
         let mut parts = vec![];
         let zero = int(0);
         for x in &flat {
-            if get(x, "type")?.and_then(Py::as_str) != Some("part")
-                || matches!(get(x, "start")?, None | Some(Py::None))
-            {
+            if get(x, "type")?.and_then(Py::as_str) != Some("part") || matches!(get(x, "start")?, None | Some(Py::None)) {
                 continue;
             }
             let path = index(x, "path")?.clone();
@@ -362,14 +281,8 @@ impl Ctx<'_> {
             };
             let parttype = get_or(x, "parttype", &empty)?;
             let efi = match parttype {
-                Py::Str(t) => ["c12a7328-f81f-11d2-ba4b-00a0c93ec93b", "0xef"]
-                    .contains(&t.to_lowercase().as_str()),
-                other => {
-                    return crash(format!(
-                        "'{}' object has no attribute 'lower'",
-                        other.type_name()
-                    ))
-                }
+                Py::Str(t) => ["c12a7328-f81f-11d2-ba4b-00a0c93ec93b", "0xef"].contains(&t.to_lowercase().as_str()),
+                other => return crash(format!("'{}' object has no attribute 'lower'", other.type_name())),
             };
             let mut mounted = false;
             for m in iterate(get_or(x, "mountpoints", &Py::List(vec![]))?)? {
@@ -378,22 +291,10 @@ impl Ctx<'_> {
                     break;
                 }
             }
-            parts.push(Part {
-                path,
-                number,
-                start,
-                size,
-                fstype,
-                label,
-                efi,
-                mounted,
-            });
+            parts.push(Part { path, number, start, size, fstype, label, efi, mounted });
         }
         parts.sort_by_key(|q| q.start.value);
-        let used: Vec<(i128, i128)> = parts
-            .iter()
-            .map(|q| (q.start.value, q.size.value))
-            .collect();
+        let used: Vec<(i128, i128)> = parts.iter().map(|q| (q.start.value, q.size.value)).collect();
         let free = free_space(&used, MIB, size - MIB);
         Ok((table, parts, free))
     }
@@ -412,16 +313,8 @@ mod tests {
         assert!(gaps[0].0 >= 301 * MIB + 299 * gb);
         assert_eq!(gaps[0].0 % MIB, 0);
         assert_eq!(free_space(&[], MIB, 100 * MIB), vec![(MIB, 99 * MIB)]);
-        assert_eq!(
-            free_space(&[(2 * MIB, 10 * MIB)], MIB, 12 * MIB),
-            vec![],
-            "a 1 MiB sliver is not free space"
-        );
-        assert_eq!(
-            free_space(&[(5 * MIB + 7, 3)], MIB, 100 * MIB),
-            vec![(6 * MIB, 94 * MIB)],
-            "a gap starts on a MiB"
-        );
+        assert_eq!(free_space(&[(2 * MIB, 10 * MIB)], MIB, 12 * MIB), vec![], "a 1 MiB sliver is not free space");
+        assert_eq!(free_space(&[(5 * MIB + 7, 3)], MIB, 100 * MIB), vec![(6 * MIB, 94 * MIB)], "a gap starts on a MiB");
     }
 
     #[test]
@@ -436,18 +329,10 @@ mod tests {
         assert_eq!(to_int(&s(" 42 ")).unwrap().value, 42);
         assert_eq!(to_int(&Py::Float(-2.7)).unwrap().value, -2);
         assert_eq!(to_int(&Py::Bool(true)).unwrap().value, 1);
-        assert_eq!(
-            to_int(&s("x")),
-            Err(Fail::Crash(
-                "invalid literal for int() with base 10: 'x'".into()
-            ))
-        );
+        assert_eq!(to_int(&s("x")), Err(Fail::Crash("invalid literal for int() with base 10: 'x'".into())));
         assert_eq!(
             to_int(&Py::List(vec![])),
-            Err(Fail::Crash(
-                "int() argument must be a string, a bytes-like object or a real number, not 'list'"
-                    .into()
-            ))
+            Err(Fail::Crash("int() argument must be a string, a bytes-like object or a real number, not 'list'".into()))
         );
     }
 }

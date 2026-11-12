@@ -216,7 +216,10 @@ pub fn cpu_info() -> CpuInfo {
             for i in idx.flatten() {
                 let p = i.path();
                 let get = |f: &str| std::fs::read_to_string(p.join(f)).ok().map(|s| s.trim().to_string());
-                let (Some(level), Some(size), Some(shared), Some(kind)) = (get("level"), get("size"), get("shared_cpu_list"), get("type")) else { continue };
+                let (Some(level), Some(size), Some(shared), Some(kind)) = (get("level"), get("size"), get("shared_cpu_list"), get("type"))
+                else {
+                    continue;
+                };
                 if !seen.insert((level.clone(), kind.clone(), shared)) {
                     continue;
                 }
@@ -284,14 +287,25 @@ fn amd_gpu() -> Option<Gpu> {
         let base = format!("/sys/class/drm/card{i}/device");
         let Some(util) = sysfs(format!("{base}/gpu_busy_percent")).and_then(|s| s.parse::<f32>().ok()) else { continue };
         let num = |f: &str| sysfs(format!("{base}/{f}")).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
-        return Some(Gpu { name: "AMD graphics".into(), util, mem_used: num("mem_info_vram_used"), mem_total: num("mem_info_vram_total"), temp: None, power: None, clock: None });
+        return Some(Gpu {
+            name: "AMD graphics".into(),
+            util,
+            mem_used: num("mem_info_vram_used"),
+            mem_total: num("mem_info_vram_total"),
+            temp: None,
+            power: None,
+            clock: None,
+        });
     }
     None
 }
 
 fn nvidia_gpu() -> Option<Gpu> {
     let out = std::process::Command::new("nvidia-smi")
-        .args(["--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,clocks.gr", "--format=csv,noheader,nounits"])
+        .args([
+            "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,clocks.gr",
+            "--format=csv,noheader,nounits",
+        ])
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .output()
@@ -306,7 +320,8 @@ impl SysSampler {
         let dt = self.at.map(|t| now.duration_since(t).as_secs_f64()).unwrap_or(0.0);
         let mut snap = Snapshot::default();
         let cpu = read("/proc/stat").map(|s| parse_proc_stat(&s)).unwrap_or_default();
-        let pct = |(b, t): (u64, u64), (b0, t0): (u64, u64)| if t > t0 { (b.saturating_sub(b0)) as f32 / (t - t0) as f32 * 100.0 } else { 0.0 };
+        let pct =
+            |(b, t): (u64, u64), (b0, t0): (u64, u64)| if t > t0 { (b.saturating_sub(b0)) as f32 / (t - t0) as f32 * 100.0 } else { 0.0 };
         if cpu.len() == self.cpu_prev.len() && !cpu.is_empty() {
             snap.cpu = pct(cpu[0], self.cpu_prev[0]);
             snap.cores = cpu.iter().zip(&self.cpu_prev).skip(1).map(|(a, b)| pct(*a, *b)).collect();
@@ -319,7 +334,9 @@ impl SysSampler {
         snap.uptime = read("/proc/uptime").and_then(|s| s.split_whitespace().next()?.parse().ok()).unwrap_or(0.0);
 
         let disks = read("/proc/diskstats").map(|s| parse_diskstats(&s)).unwrap_or_default();
-        let mut names: Vec<String> = std::fs::read_dir("/sys/block").map(|d| d.flatten().map(|e| e.file_name().to_string_lossy().to_string()).filter(|n| shown_disk(n)).collect()).unwrap_or_default();
+        let mut names: Vec<String> = std::fs::read_dir("/sys/block")
+            .map(|d| d.flatten().map(|e| e.file_name().to_string_lossy().to_string()).filter(|n| shown_disk(n)).collect())
+            .unwrap_or_default();
         names.sort();
         for n in names {
             let Some(&(r, w, busy)) = disks.get(&n) else { continue };
@@ -327,7 +344,13 @@ impl SysSampler {
             d.model = sysfs(format!("/sys/block/{n}/device/model")).unwrap_or_default();
             d.size = sysfs(format!("/sys/block/{n}/size")).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0) * 512;
             let rot = sysfs(format!("/sys/block/{n}/queue/rotational")).as_deref() == Some("1");
-            d.kind = if n.starts_with("nvme") { "SSD (NVMe)".into() } else if rot { "HDD".into() } else { "SSD".into() };
+            d.kind = if n.starts_with("nvme") {
+                "SSD (NVMe)".into()
+            } else if rot {
+                "HDD".into()
+            } else {
+                "SSD".into()
+            };
             if let (Some(&(r0, w0, b0)), true) = (self.disk_prev.get(&n), dt > 0.0) {
                 d.read_rate = r.saturating_sub(r0) as f64 * 512.0 / dt;
                 d.write_rate = w.saturating_sub(w0) as f64 * 512.0 / dt;
@@ -347,8 +370,21 @@ impl SysSampler {
             }
             let (rx, tx) = net[n];
             let wireless = std::path::Path::new(&format!("/sys/class/net/{n}/wireless")).exists();
-            let tun = sysfs(format!("/sys/class/net/{n}/tun_flags")).is_some() || n.starts_with("tailscale") || n.starts_with("wg") || n.starts_with("tun");
-            let mut a = Adapter { name: n.clone(), kind: if wireless { "Wi-Fi".into() } else if tun { "VPN".into() } else { "Ethernet".into() }, ..Default::default() };
+            let tun = sysfs(format!("/sys/class/net/{n}/tun_flags")).is_some()
+                || n.starts_with("tailscale")
+                || n.starts_with("wg")
+                || n.starts_with("tun");
+            let mut a = Adapter {
+                name: n.clone(),
+                kind: if wireless {
+                    "Wi-Fi".into()
+                } else if tun {
+                    "VPN".into()
+                } else {
+                    "Ethernet".into()
+                },
+                ..Default::default()
+            };
             a.speed = sysfs(format!("/sys/class/net/{n}/speed")).and_then(|s| s.parse::<i64>().ok()).filter(|&s| s > 0).map(|s| s as u64);
             if let (Some(&(rx0, tx0)), true) = (self.net_prev.get(n), dt > 0.0) {
                 a.recv_rate = rx.saturating_sub(rx0) as f64 / dt;
@@ -394,7 +430,9 @@ mod tests {
 
     #[test]
     fn disks_and_adapters() {
-        let d = parse_diskstats(" 259       0 nvme0n1 1000 0 80000 500 2000 0 160000 900 0 1500 1400 0 0 0 0\n   7  0 loop0 1 0 2 0 0 0 0 0 0 0 0\n");
+        let d = parse_diskstats(
+            " 259       0 nvme0n1 1000 0 80000 500 2000 0 160000 900 0 1500 1400 0 0 0 0\n   7  0 loop0 1 0 2 0 0 0 0 0 0 0 0\n",
+        );
         assert_eq!(d["nvme0n1"], (80000, 160000, 1500));
         assert!(shown_disk("nvme0n1") && shown_disk("sda") && !shown_disk("zram0") && !shown_disk("loop3"));
         let n = parse_net_dev("Inter-|   Receive\n face |bytes\n    lo: 10 1 0 0 0 0 0 0 10 1 0 0 0 0 0 0\n enp5s0: 5000 10 0 0 0 0 0 0 7000 20 0 0 0 0 0 0\n");

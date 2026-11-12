@@ -43,7 +43,9 @@ pub fn parse_passwd(line: &str) -> Option<Account> {
 /// The signed-in user's account.
 pub fn account() -> Account {
     let login = crate::sys::run("id", &["-un"]).map(|s| s.trim().to_string()).unwrap_or_default();
-    let mut a = crate::sys::run("getent", &["passwd", &login]).and_then(|l| parse_passwd(&l)).unwrap_or(Account { login: login.clone(), ..Default::default() });
+    let mut a = crate::sys::run("getent", &["passwd", &login])
+        .and_then(|l| parse_passwd(&l))
+        .unwrap_or(Account { login: login.clone(), ..Default::default() });
     let groups = crate::sys::run("id", &["-Gn"]).unwrap_or_default();
     a.admin = groups.split_whitespace().any(|g| g == "wheel" || g == "sudo");
     a
@@ -64,7 +66,10 @@ pub fn explain_failure(output: &str) -> String {
     if lower.contains("do not match") {
         return "The two new passwords do not match.".into();
     }
-    if lower.contains("authentication token manipulation error") || lower.contains("authentication failure") || lower.contains("incorrect password") {
+    if lower.contains("authentication token manipulation error")
+        || lower.contains("authentication failure")
+        || lower.contains("incorrect password")
+    {
         return "The current password is not right.".into();
     }
     if lower.contains("locked") {
@@ -75,7 +80,13 @@ pub fn explain_failure(output: &str) -> String {
 
 /// Runs `cmdline` (normally `passwd`) in a terminal of its own and answers its three questions (current, new, new again).
 pub fn change_password_with(cmdline: &str, current: &str, new: &str) -> Result<(), String> {
-    let mut child = Command::new("script").args(["-qefc", cmdline, "/dev/null"]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|e| format!("cannot run passwd: {e}"))?;
+    let mut child = Command::new("script")
+        .args(["-qefc", cmdline, "/dev/null"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("cannot run passwd: {e}"))?;
     let buf = Arc::new(Mutex::new(String::new()));
     let reader = {
         let (buf, mut out) = (buf.clone(), child.stdout.take().ok_or("no output")?);
@@ -100,7 +111,9 @@ pub fn change_password_with(cmdline: &str, current: &str, new: &str) -> Result<(
         if let Ok(Some(status)) = child.try_wait() {
             let _ = reader.join();
             let text = buf.lock().unwrap().clone();
-            if std::env::var_os("YGGDRASIL_PW_DEBUG").is_some() { eprintln!("passwd exit {:?}, output: {:?}", status, text); }
+            if std::env::var_os("YGGDRASIL_PW_DEBUG").is_some() {
+                eprintln!("passwd exit {:?}, output: {:?}", status, text);
+            }
             break if status.success() { Ok(()) } else { Err(explain_failure(&text)) };
         }
         let text = buf.lock().unwrap().clone();
@@ -113,7 +126,9 @@ pub fn change_password_with(cmdline: &str, current: &str, new: &str) -> Result<(
         let mut sent = false;
         if stage == 0 && fresh.contains("current password") {
             sent = send(current, &mut stdin).is_ok();
-        } else if (stage == 1 && fresh.contains("new password:") && !fresh.contains("retype")) || (stage == 2 && fresh.contains("retype new password")) {
+        } else if (stage == 1 && fresh.contains("new password:") && !fresh.contains("retype"))
+            || (stage == 2 && fresh.contains("retype new password"))
+        {
             sent = send(new, &mut stdin).is_ok();
         }
         if sent {
@@ -134,7 +149,15 @@ pub fn change_password(current: &str, new: &str) -> Result<(), String> {
 /// A rough read of how good a new password is, for the form (length only: the system's own rules decide in the end).
 pub fn strength(pw: &str) -> (&'static str, f32) {
     let n = pw.chars().count();
-    let classes = [pw.chars().any(|c| c.is_lowercase()), pw.chars().any(|c| c.is_uppercase()), pw.chars().any(|c| c.is_ascii_digit()), pw.chars().any(|c| !c.is_alphanumeric())].iter().filter(|b| **b).count();
+    let classes = [
+        pw.chars().any(|c| c.is_lowercase()),
+        pw.chars().any(|c| c.is_uppercase()),
+        pw.chars().any(|c| c.is_ascii_digit()),
+        pw.chars().any(|c| !c.is_alphanumeric()),
+    ]
+    .iter()
+    .filter(|b| **b)
+    .count();
     match (n, classes) {
         (0, _) => ("", 0.0),
         (1..=7, _) => ("Too short", 0.15),
@@ -148,11 +171,20 @@ pub fn strength(pw: &str) -> (&'static str, f32) {
 
 /// Every login account (uid 1000 up) from the text of /etc/passwd and /etc/group; `admin` is membership of wheel.
 pub fn parse_accounts(passwd: &str, group: &str) -> Vec<Account> {
-    let admins: Vec<&str> = group.lines().find(|l| l.starts_with("wheel:")).map(|l| l.rsplit(':').next().unwrap_or("").split(',').filter(|s| !s.is_empty()).collect()).unwrap_or_default();
-    passwd.lines().filter_map(parse_passwd).filter(|a| a.uid >= 1000 && a.uid < 60000).map(|mut a| {
-        a.admin = admins.contains(&a.login.as_str());
-        a
-    }).collect()
+    let admins: Vec<&str> = group
+        .lines()
+        .find(|l| l.starts_with("wheel:"))
+        .map(|l| l.rsplit(':').next().unwrap_or("").split(',').filter(|s| !s.is_empty()).collect())
+        .unwrap_or_default();
+    passwd
+        .lines()
+        .filter_map(parse_passwd)
+        .filter(|a| a.uid >= 1000 && a.uid < 60000)
+        .map(|mut a| {
+            a.admin = admins.contains(&a.login.as_str());
+            a
+        })
+        .collect()
 }
 
 /// Every account and the optional groups this system has (name, what it allows), from the account helper's `list` and `groups`
@@ -169,7 +201,11 @@ pub fn all() -> (Vec<Account>, Vec<(String, String)>) {
         }
     };
     let groups = crate::sys::run(helper, &["groups"]).and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
-    let mut groups: Vec<(String, String)> = groups.as_ref().and_then(|v| v.as_object()).map(|o| o.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect()).unwrap_or_default();
+    let mut groups: Vec<(String, String)> = groups
+        .as_ref()
+        .and_then(|v| v.as_object())
+        .map(|o| o.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect())
+        .unwrap_or_default();
     groups.sort();
     (accounts, groups)
 }
@@ -191,18 +227,38 @@ fn account_from_json(v: &serde_json::Value) -> Option<Account> {
 /// A login name the helper will accept: 1 to 31 lowercase letters, digits, - or _, starting with a letter.
 pub fn valid_login(s: &str) -> bool {
     let mut c = s.chars();
-    s.len() <= 31 && c.next().map(|f| f.is_ascii_lowercase()).unwrap_or(false) && c.all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-' || ch == '_')
+    s.len() <= 31
+        && c.next().map(|f| f.is_ascii_lowercase()).unwrap_or(false)
+        && c.all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-' || ch == '_')
 }
 
 /// A login name suggested from a full name ("Alex Rivera" -> "alex").
 pub fn suggest_login(full: &str) -> String {
-    let first: String = full.split_whitespace().next().unwrap_or("").to_lowercase().chars().filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit()).collect();
-    if first.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) { String::new() } else { first }
+    let first: String = full
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_lowercase()
+        .chars()
+        .filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        .collect();
+    if first.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+        String::new()
+    } else {
+        first
+    }
 }
 
 /// Runs the account helper (/usr/lib/yggdrasil/account) with the administrator question (pkexec). `stdin` carries a password, never a command line.
 pub fn manage(args: &[&str], stdin: Option<&str>) -> Result<String, String> {
-    let mut child = Command::new("pkexec").arg("/usr/lib/yggdrasil/account").args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| format!("pkexec: {e}"))?;
+    let mut child = Command::new("pkexec")
+        .arg("/usr/lib/yggdrasil/account")
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("pkexec: {e}"))?;
     if let Some(mut si) = child.stdin.take() {
         if let Some(s) = stdin {
             let _ = si.write_all(s.as_bytes());
@@ -256,7 +312,8 @@ mod tests {
 
     #[test]
     fn failures_are_explained_in_plain_words() {
-        assert!(explain_failure("BAD PASSWORD: The password is shorter than 8 characters\n").contains("too weak: the password is shorter than 8 characters"));
+        assert!(explain_failure("BAD PASSWORD: The password is shorter than 8 characters\n")
+            .contains("too weak: the password is shorter than 8 characters"));
         assert_eq!(explain_failure("passwd: Authentication token manipulation error"), "The current password is not right.");
         assert_eq!(explain_failure("Sorry, passwords do not match."), "The two new passwords do not match.");
         assert_eq!(explain_failure("something odd"), "The password was not changed.");
@@ -274,7 +331,11 @@ mod tests {
     /// A stand-in for `passwd` that asks the same three questions and fails in the same ways.
     fn fake_passwd() -> std::path::PathBuf {
         static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let p = std::env::temp_dir().join(format!("fake-passwd-{}-{}.sh", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+        let p = std::env::temp_dir().join(format!(
+            "fake-passwd-{}-{}.sh",
+            std::process::id(),
+            N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
         std::fs::write(
             &p,
             r#"#!/bin/bash
@@ -302,7 +363,10 @@ echo "passwd: password updated successfully"
     #[test]
     fn a_wrong_current_password_is_reported() {
         let f = fake_passwd();
-        assert_eq!(change_password_with(f.to_str().unwrap(), "nope", "a-new-pass-1"), Err("The current password is not right.".to_string()));
+        assert_eq!(
+            change_password_with(f.to_str().unwrap(), "nope", "a-new-pass-1"),
+            Err("The current password is not right.".to_string())
+        );
     }
 
     #[test]
@@ -311,5 +375,4 @@ echo "passwd: password updated successfully"
         let e = change_password_with(f.to_str().unwrap(), "cur-pass", "short").unwrap_err();
         assert!(e.contains("too weak"), "{e}");
     }
-
 }

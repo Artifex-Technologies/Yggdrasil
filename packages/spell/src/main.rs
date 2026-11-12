@@ -30,7 +30,9 @@ fn main() {
         Some("electron") => electron_cmd(rest),
         _ => {
             eprintln!("usage: yggdrasil-spell check WORD... | text TEXT | languages | packs | words | add WORD | remove WORD | sync | watch | electron on|off|status");
-            eprintln!("       yggdrasil-spell global shared | pending | merge | approve WORD... | deny WORD...   (merge, approve, deny: root)");
+            eprintln!(
+                "       yggdrasil-spell global shared | pending | merge | approve WORD... | deny WORD...   (merge, approve, deny: root)"
+            );
             eprintln!("       yggdrasil-spell build-pack OUT 'name' 'description' licence 'source' yes|no [--deny MISSPELLINGS] FILE...   (for packaging)");
             2
         }
@@ -218,7 +220,11 @@ fn change(add: bool, words: &[String]) -> i32 {
     }
     let r = apps::edit_words(|l| {
         for w in words {
-            if add { l.add(w, "") } else { l.remove(w) };
+            if add {
+                l.add(w, "")
+            } else {
+                l.remove(w)
+            };
         }
     });
     match r {

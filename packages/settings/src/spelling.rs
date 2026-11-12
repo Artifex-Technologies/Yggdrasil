@@ -40,10 +40,18 @@ impl State {
 /// An administrator's choice for the shared list (`pkexec /usr/lib/yggdrasil/spell-global approve|deny WORD`), then tells the window.
 fn global_job(tx: std::sync::mpsc::Sender<Msg>, ctx: egui::Context, word: String, approve: bool) {
     std::thread::spawn(move || {
-        let out = std::process::Command::new("pkexec").arg("/usr/lib/yggdrasil/spell-global").arg(if approve { "approve" } else { "deny" }).arg(&word).output();
+        let out = std::process::Command::new("pkexec")
+            .arg("/usr/lib/yggdrasil/spell-global")
+            .arg(if approve { "approve" } else { "deny" })
+            .arg(&word)
+            .output();
         let r = match out {
-            Ok(o) if o.status.success() => Ok(format!("\"{word}\" {}", if approve { "is shared with every account" } else { "will not be shared" })),
-            Ok(o) if o.status.code() == Some(126) || o.status.code() == Some(127) => Err("Not done: the password was not given".to_string()),
+            Ok(o) if o.status.success() => {
+                Ok(format!("\"{word}\" {}", if approve { "is shared with every account" } else { "will not be shared" }))
+            }
+            Ok(o) if o.status.code() == Some(126) || o.status.code() == Some(127) => {
+                Err("Not done: the password was not given".to_string())
+            }
             Ok(o) => Err(String::from_utf8_lossy(&o.stderr).lines().last().unwrap_or("not done").to_string()),
             Err(_) => Err("pkexec is not available".to_string()),
         };
@@ -68,7 +76,9 @@ fn package_job(tx: std::sync::mpsc::Sender<Msg>, ctx: egui::Context, package: &'
         let out = std::process::Command::new("pkexec").arg("/usr/lib/agora/pkg-root").args(&args).output();
         let r = match out {
             Ok(o) if o.status.success() => Ok(format!("{} {}", package, if install { "installed" } else { "removed" })),
-            Ok(o) if o.status.code() == Some(126) || o.status.code() == Some(127) => Err("Not done: the password was not given".to_string()),
+            Ok(o) if o.status.code() == Some(126) || o.status.code() == Some(127) => {
+                Err("Not done: the password was not given".to_string())
+            }
             Ok(o) => Err(String::from_utf8_lossy(&o.stderr).lines().last().unwrap_or("pacman did not finish").to_string()),
             Err(_) => Err("pkexec is not available".to_string()),
         };
@@ -104,13 +114,20 @@ impl App {
         let mut autocorrect_changed = false;
 
         ui::group(ui, pal, None, |ui| {
-            ui::row(ui, pal, true, "Check spelling", Some("Mark misspelled words in apps that check spelling (GTK apps, browsers, Electron apps)"), |ui| {
-                if ui::switch(ui, pal, &mut conf.enabled).changed() {
-                    conf_changed = true;
-                    resync = true;
-                    autocorrect_changed = true;
-                }
-            });
+            ui::row(
+                ui,
+                pal,
+                true,
+                "Check spelling",
+                Some("Mark misspelled words in apps that check spelling (GTK apps, browsers, Electron apps)"),
+                |ui| {
+                    if ui::switch(ui, pal, &mut conf.enabled).changed() {
+                        conf_changed = true;
+                        resync = true;
+                        autocorrect_changed = true;
+                    }
+                },
+            );
             ui::row(ui, pal, false, "Correct as I type", Some("Fixes a word when you finish it, only when the fix is all but certain (teh, adn, thier). Backspace straight after puts your word back. Never in passwords, numbers, addresses or terminals"), |ui| {
                 ui.add_enabled_ui(conf.enabled, |ui| {
                     if ui::switch(ui, pal, &mut conf.autocorrect).changed() {
@@ -199,7 +216,9 @@ impl App {
             ui::row(ui, pal, true, "Add a word", Some("Known to every app from then on"), |ui| {
                 // the row lays its controls out from the right: the button first, so it ends up right of the box
                 let clicked = ui::action(ui, pal, "Add").clicked();
-                let enter = ui.add(egui::TextEdit::singleline(&mut self.spell.new_word).hint_text("Word").desired_width(180.0)).lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let enter =
+                    ui.add(egui::TextEdit::singleline(&mut self.spell.new_word).hint_text("Word").desired_width(180.0)).lost_focus()
+                        && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 if (clicked || enter) && !self.spell.new_word.trim().is_empty() {
                     add = Some(self.spell.new_word.trim().to_string());
                 }
@@ -282,7 +301,8 @@ impl App {
                 let on = conf.enabled && conf.autocorrect;
                 std::thread::spawn(move || {
                     let verb = if on { "enable" } else { "disable" };
-                    let _ = std::process::Command::new("systemctl").args(["--user", verb, "--now", "yggdrasil-autocorrect.service"]).output();
+                    let _ =
+                        std::process::Command::new("systemctl").args(["--user", verb, "--now", "yggdrasil-autocorrect.service"]).output();
                 });
             }
             self.spell.conf = Some(conf);
@@ -312,7 +332,8 @@ impl App {
                     ui::row(ui, pal, i == 0, name, None, |ui| {
                         if busy.as_deref() == Some(*pkg) {
                             ui.spinner();
-                        } else if ui.add_enabled(busy.is_none(), egui::Button::new(if installed { "Remove" } else { "Download" })).clicked() {
+                        } else if ui.add_enabled(busy.is_none(), egui::Button::new(if installed { "Remove" } else { "Download" })).clicked()
+                        {
                             job = Some((pkg, !installed));
                         }
                     });
