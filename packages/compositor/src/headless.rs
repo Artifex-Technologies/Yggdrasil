@@ -20,6 +20,7 @@
 //!   windows                      one line per window: app id, title, place, size, workspace, states (tab separated; the
 //!                                states are active, floating or tiled, maximized, fullscreen, left, right, minimized)
 //!   layers                       one line per panel or background: output, namespace, layer, place and size (tab separated)
+//!   free                         one line per output: the room the panels leave free for windows (output, place, size)
 //!   focus                        what has the keyboard: window APP TITLE, layer NAMESPACE OUTPUT, lock OUTPUT, or none
 //!   workspace                    the workspace showing (1 to 4)
 //!   lock                         "locked" or "unlocked", then one line per lock surface: output and size
@@ -505,6 +506,14 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String
             })
             .collect()),
         ["focus"] => Ok(vec![app.focus_info()]),
+        ["free"] => Ok(h
+            .screens
+            .iter()
+            .map(|s| {
+                let r = app.free_area(&s.output);
+                format!("{}\t{},{}\t{}x{}", s.output.name(), r.loc.x, r.loc.y, r.size.w, r.size.h)
+            })
+            .collect()),
         ["workspace"] => Ok(vec![(app.workspace() + 1).to_string()]),
         ["lock"] => {
             let mut lines = vec![if app.locked { "locked" } else { "unlocked" }.to_string()];
@@ -601,7 +610,7 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String
         }
         [] => Err("no command".into()),
         _ => Err(format!(
-            "unknown command {:?} (outputs, resize NAME WxH, scale NAME S, screenshot NAME FILE, windows, layers, focus, workspace, lock, key COMBO, type TEXT, pointer X Y, click [BUTTON], power NAME on|off, quit)",
+            "unknown command {:?} (outputs, resize NAME WxH, scale NAME S, screenshot NAME FILE, windows, layers, free, focus, workspace, lock, key COMBO, type TEXT, pointer X Y, click [BUTTON], power NAME on|off, quit)",
             words.join(" ")
         )),
     }

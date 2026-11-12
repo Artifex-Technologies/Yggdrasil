@@ -135,7 +135,11 @@ impl Compositor {
         std::fs::create_dir_all(dir.join("home")).unwrap();
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(dir.join("run"), std::fs::Permissions::from_mode(0o700)).unwrap();
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_yggdrasil-compositor"));
+        // YGGDRASIL_COMPOSITOR: another build of it (tests/apps-podman.sh runs the tests in a container)
+        let bin = std::env::var_os("YGGDRASIL_COMPOSITOR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| env!("CARGO_BIN_EXE_yggdrasil-compositor").into());
+        let mut cmd = Command::new(bin);
         cmd.arg("--headless").args(args);
         for v in DESKTOP_VARS {
             cmd.env_remove(v);
