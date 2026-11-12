@@ -506,7 +506,7 @@ pub fn group(list: Vec<Bss>) -> Vec<Network> {
     }
     let rank = |a: &Ap| (a.bss.associated, a.bss.signal_mbm.unwrap_or(i32::MIN));
     for n in &mut nets {
-        n.aps.sort_by(|a, b| rank(b).cmp(&rank(a)));
+        n.aps.sort_by_key(|a| std::cmp::Reverse(rank(a)));
     }
     nets.sort_by(|a, b| rank(&b.aps[0]).cmp(&rank(&a.aps[0])));
     nets
@@ -565,7 +565,7 @@ pub fn to_fixture(list: &[Bss]) -> String {
 }
 
 fn hex(s: &str) -> Option<Vec<u8>> {
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return None;
     }
     (0..s.len()).step_by(2).map(|i| s.get(i..i + 2).and_then(|p| u8::from_str_radix(p, 16).ok())).collect()

@@ -91,7 +91,7 @@ fn request(kind: u16, flags: u16, seq: u32, cmd: u8, attrs: &[(u16, &[u8])]) -> 
         m.extend_from_slice(&((4 + v.len()) as u16).to_ne_bytes());
         m.extend_from_slice(&t.to_ne_bytes());
         m.extend_from_slice(v);
-        while m.len() % 4 != 0 {
+        while !m.len().is_multiple_of(4) {
             m.push(0);
         }
     }
@@ -288,7 +288,7 @@ mod tests {
         let mut a = ((4 + v.len()) as u16).to_ne_bytes().to_vec();
         a.extend_from_slice(&t.to_ne_bytes());
         a.extend_from_slice(v);
-        while a.len() % 4 != 0 {
+        while !a.len().is_multiple_of(4) {
             a.push(0);
         }
         a

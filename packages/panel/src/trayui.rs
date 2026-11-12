@@ -58,6 +58,7 @@ pub fn current<'a>(items: &'a [MenuItem], path: &[i32]) -> &'a [MenuItem] {
 }
 
 /// Draws the card and returns its rectangle and the clickable rows (logical px; `s` is the scale).
+#[allow(clippy::too_many_arguments)] // drawing: the pixmap, scale, fonts and icons, then what to draw and where
 pub fn paint(
     pix: &mut Pixmap,
     s: f32,

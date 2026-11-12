@@ -153,6 +153,7 @@ impl Store {
         self.items.len()
     }
 
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
     }
@@ -641,7 +642,7 @@ pub fn spawn_security_alerts(tx: calloop::channel::Sender<NMsg>) {
                         }
                         fresh.sort_by(|a, b| a.get("time").and_then(|x| x.as_str()).cmp(&b.get("time").and_then(|x| x.as_str())));
                         for a in fresh.iter().take(5) {
-                            if let Some(n) = from_alert(a, &min, next_id()) {
+                            if let Some(n) = from_alert(a, min, next_id()) {
                                 let _ = tx.send(NMsg::New(n));
                             }
                         }
@@ -688,7 +689,7 @@ const FOOT_H: f32 = 34.0;
 
 enum Row<'a> {
     Head(&'a Group),
-    Item(&'a Notif, &'a Group),
+    Item(&'a Notif),
 }
 
 fn rows<'a>(groups: &'a [Group], expanded: &HashSet<String>) -> Vec<Row<'a>> {
@@ -697,7 +698,7 @@ fn rows<'a>(groups: &'a [Group], expanded: &HashSet<String>) -> Vec<Row<'a>> {
         v.push(Row::Head(g));
         if g.items.len() > 1 && expanded.contains(&g.key) {
             for n in &g.items {
-                v.push(Row::Item(n, g));
+                v.push(Row::Item(n));
             }
         }
     }
@@ -709,6 +710,7 @@ fn over(p: (f32, f32), r: Rect) -> bool {
 }
 
 /// The app's icon, or a coloured disc with its first letter when the theme has none.
+#[allow(clippy::too_many_arguments)] // drawing: the pixmap, scale, fonts and icons, then what to draw and where
 pub fn draw_app_icon(
     pix: &mut Pixmap,
     s: f32,
@@ -747,6 +749,7 @@ fn fit(font: &ab_glyph::FontVec, size: f32, text: &str, max: f32) -> String {
 
 /// Draws the grouped list inside `area` (logical px; `s` the scale) and returns what can be clicked,
 /// last drawn on top. The bottom strip holds "Clear all".
+#[allow(clippy::too_many_arguments)] // drawing: the pixmap, scale, fonts and icons, then what to draw and where
 pub fn paint_list(
     pix: &mut Pixmap,
     s: f32,
@@ -851,7 +854,7 @@ pub fn paint_list(
                     hits.push((x, NAct::ClearGroup(g.key.clone())));
                 }
             }
-            Row::Item(n, _) => {
+            Row::Item(n) => {
                 let r = (ax + 14.0, y, aw - 14.0, ITEM_H - 4.0);
                 let hot = over(pointer, r);
                 paint::fill_rounded(
@@ -1070,7 +1073,7 @@ pub fn paint_toasts(
                 if bl { paint::accent(255) } else { (255, 255, 255, 28) },
             );
             paint::draw_text(pix, &fonts.bold, 11.5 * s, (b.0 + 12.0) * s, (b.1 + 13.0) * s, WHITE, label);
-            hits.push(Hit { rect: phys(b), action: Action::ToastAction(n.id, i) });
+            hits.push(Hit { rect: phys(b), action: Action::ToastButton(n.id, i) });
             bx += bw + 8.0;
         }
         hits.push(Hit { rect: phys(r), action: Action::ToastOpen(n.id) });

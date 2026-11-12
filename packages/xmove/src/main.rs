@@ -45,7 +45,7 @@ fn json_ints(json: &str, key: &str) -> Vec<i64> {
     let Some(i) = json.find(&format!("\"{key}\":")) else { return vec![] };
     let rest = &json[i + key.len() + 3..];
     let rest = rest.trim_start().trim_start_matches('[');
-    rest.split(|c| c == ']' || c == '}' || c == '\n').next().unwrap_or("").split(',').filter_map(|n| n.trim().parse().ok()).collect()
+    rest.split([']', '}', '\n']).next().unwrap_or("").split(',').filter_map(|n| n.trim().parse().ok()).collect()
 }
 
 fn json_str(json: &str, key: &str) -> Option<String> {

@@ -90,7 +90,7 @@ pub fn bridges_in(home: &Path, config: &Path, languages: &[String]) -> Vec<Bridg
     }
     // Chromium-family profiles: three levels under ~/.config cover ~/.config/<app>, <app>/<profile> and <vendor>/<app>/<profile>
     let mut found = vec![];
-    collect_chromium(config, config, 0, &mut found);
+    collect_chromium(config, 0, &mut found);
     found.sort();
     for p in found {
         out.push(Bridge { app: chromium_app_name(config, &p), path: p.join("Custom Dictionary.txt"), format: Format::Chromium });
@@ -106,7 +106,7 @@ fn subdirs(dir: &Path) -> Vec<PathBuf> {
     v
 }
 
-fn collect_chromium(config: &Path, dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
+fn collect_chromium(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
     if depth > 3 {
         return;
     }
@@ -136,7 +136,7 @@ fn collect_chromium(config: &Path, dir: &Path, depth: usize, out: &mut Vec<PathB
                     | "Extensions"
             )
         {
-            collect_chromium(config, &p, depth + 1, out);
+            collect_chromium(&p, depth + 1, out);
         }
     }
 }

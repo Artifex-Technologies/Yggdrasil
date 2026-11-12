@@ -9,6 +9,8 @@ use crate::sys::Ctx;
 pub struct TempDir(pub PathBuf);
 
 impl TempDir {
+    // new() makes a folder on disk: a Default doing that would surprise
+    #[allow(clippy::new_without_default)]
     pub fn new() -> TempDir {
         static N: AtomicUsize = AtomicUsize::new(0);
         let p = std::env::temp_dir().join(format!("power-helpers-test-{}-{}", std::process::id(), N.fetch_add(1, Ordering::SeqCst)));

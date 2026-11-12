@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use accesskit::{
-    Action as AkAction, ActionHandler, ActionRequest, ActivationHandler, DeactivationHandler, Live, Node, NodeId, Role, Tree, TreeId,
+    Action as AkAction, ActionHandler, ActionRequest, ActivationHandler, DeactivationHandler, Live, Node, NodeId, Role, TreeId, TreeInfo,
     TreeUpdate,
 };
 
@@ -74,7 +74,7 @@ pub fn describe(a: &Action, m: &Model) -> Option<(Role, String, String)> {
             Some((Role::ListItem, format!("{}: {}", n.app, n.summary), n.body.clone()))
         }
         Action::ToastClose(_) => button("Dismiss notification".into()),
-        Action::ToastAction(id, i) => {
+        Action::ToastButton(id, i) => {
             let n = m.notifs.get(*id)?;
             let label = shell_toast_label(n, *i)?;
             button(label)
@@ -167,7 +167,7 @@ pub fn tree(m: &Model, parts: &[(Part, Vec<Hit>)]) -> (TreeUpdate, HashMap<u64, 
     root.set_label("Desktop");
     root.set_children(vec![BAR, DOCK, TOASTS, LIST]);
     nodes.push((ROOT, root));
-    let mut t = Tree::new(ROOT);
+    let mut t = TreeInfo::new(ROOT);
     t.toolkit_name = Some("yggdrasil-panel".into());
     (TreeUpdate { nodes, tree: Some(t), tree_id: TreeId::ROOT, focus: ROOT }, table)
 }

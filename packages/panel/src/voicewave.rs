@@ -142,7 +142,9 @@ pub fn level_of(bytes: &[u8]) -> f32 {
         return 0.0;
     }
     let sum: f64 = bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| {
             let v = i16::from_le_bytes([c[0], c[1]]) as f64 / 32768.0;
             v * v
@@ -211,11 +213,11 @@ mod tests {
     fn it_draws_something_and_stays_inside_the_surface() {
         let mut pix = Pixmap::new(420, 104).unwrap();
         paint(&mut pix, 1.0, &Viz { mode: Mode::Listening, level: 0.8, phase: 1.0, shown: 1.0 }, palette(0));
-        let lit = pix.data().chunks_exact(4).filter(|p| p[3] > 0).count();
+        let lit = pix.data().as_chunks::<4>().0.iter().filter(|p| p[3] > 0).count();
         assert!(lit > 5000, "the island is drawn ({lit} pixels)");
         let mut none = Pixmap::new(420, 104).unwrap();
         paint(&mut none, 1.0, &Viz { mode: Mode::Thinking, level: 0.0, phase: 0.0, shown: 0.0 }, palette(0));
-        assert_eq!(none.data().chunks_exact(4).filter(|p| p[3] > 0).count(), 0, "nothing when hidden");
+        assert_eq!(none.data().as_chunks::<4>().0.iter().filter(|p| p[3] > 0).count(), 0, "nothing when hidden");
     }
 
     /// `YGGDRASIL_VIZ_PNG=/tmp/x cargo test render_pictures` writes pictures of the island to look at.

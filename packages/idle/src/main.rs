@@ -67,7 +67,9 @@ fn screensaver_active() -> bool {
 /// logind's blocking inhibitors on idling or sleeping, as (who, what) pairs, e.g. ("Firefox", "idle"). Only "block" locks count:
 /// "delay" locks (NetworkManager, UPower and the compositor always hold one) only ask logind to wait a moment before sleeping.
 fn inhibitors() -> Vec<(String, String)> {
-    let list = || -> zbus::Result<Vec<(String, String, String, String, u32, u32)>> {
+    /// One ListInhibitors entry: (what, who, why, mode, uid, pid).
+    type Inhibitor = (String, String, String, String, u32, u32);
+    let list = || -> zbus::Result<Vec<Inhibitor>> {
         let sys = zbus::blocking::Connection::system()?;
         let login =
             zbus::blocking::Proxy::new(&sys, "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager")?;

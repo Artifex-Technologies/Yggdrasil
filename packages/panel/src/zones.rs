@@ -439,10 +439,13 @@ pub fn to_surface(s: &Session, (gx, gy): (f64, f64)) -> (f32, f32) {
 const THUMB_W: f32 = 132.0;
 const PAD: f32 = 14.0;
 
+/// A zone's rectangle on the sheet with its (layout, zone index).
+pub type ZoneHit = (Rect4, (usize, usize));
+
 /// The sheet under the notch: a card with one small picture per layout, its zones drawn in it. Returns each zone's rectangle on
 /// the surface (logical pixels) with its layout and zone index. Also lights, at its real size and place, the zone under the
 /// pointer.
-pub fn paint(pix: &mut Pixmap, scale: f32, s: &Session, fonts: &Fonts, dark: bool) -> (Rect4, Vec<(Rect4, (usize, usize))>) {
+pub fn paint(pix: &mut Pixmap, scale: f32, s: &Session, fonts: &Fonts, dark: bool) -> (Rect4, Vec<ZoneHit>) {
     pix.fill(paint::color((0, 0, 0, 0)));
     let w = pix.width() as f32 / scale;
     let (_, _, sw, sh) = s.monitor.free_area();

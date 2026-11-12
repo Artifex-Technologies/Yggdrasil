@@ -1,6 +1,6 @@
 //! Installed applications (desktop entries) and the dock's list of pinned apps.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Clone, Debug, Default)]
 pub struct App {
@@ -15,7 +15,6 @@ pub struct App {
     pub categories: Vec<String>,
     /// Terminal=true: a command-line program, started in a terminal.
     pub terminal: bool,
-    pub path: PathBuf,
 }
 
 /// The desktop's names as programs see them (XDG_CURRENT_DESKTOP, e.g. "Yggdrasil"), lowercase, for OnlyShowIn/NotShowIn.
@@ -29,13 +28,13 @@ fn current_desktops() -> Vec<String> {
 }
 
 /// Parse the `[Desktop Entry]` group of a desktop file.
-pub fn parse_entry(id: &str, text: &str, path: &Path) -> Option<App> {
-    parse_entry_for(id, text, path, &current_desktops())
+pub fn parse_entry(id: &str, text: &str) -> Option<App> {
+    parse_entry_for(id, text, &current_desktops())
 }
 
 /// `parse_entry` for a given desktop (the names in `desktops`, lowercase).
-pub fn parse_entry_for(id: &str, text: &str, path: &Path, desktops: &[String]) -> Option<App> {
-    let mut app = App { id: id.to_string(), path: path.to_path_buf(), ..Default::default() };
+pub fn parse_entry_for(id: &str, text: &str, desktops: &[String]) -> Option<App> {
+    let mut app = App { id: id.to_string(), ..Default::default() };
     let mut in_main = false;
     let mut kind_ok = false;
     let mut only_in = String::new();
@@ -106,7 +105,7 @@ pub fn load_all() -> Vec<App> {
                 continue;
             }
             let id = p.file_stem().unwrap().to_string_lossy().to_string();
-            if let Some(a) = std::fs::read_to_string(&p).ok().and_then(|t| parse_entry(&id, &t, &p)) {
+            if let Some(a) = std::fs::read_to_string(&p).ok().and_then(|t| parse_entry(&id, &t)) {
                 apps.retain(|x| x.id != a.id); // later directories (the user's) win
                 apps.push(a);
             }
@@ -339,7 +338,7 @@ mod tests {
         assert_eq!(folder_of(&apps[2]), "Multimedia");
         assert_eq!(folder_of(&mk("nmap", "Network;Security;")), "Security", "a security tool is under Security, not Internet");
         let t = "[Desktop Entry]\nType=Application\nName=nmap\nExec=nmap\nTerminal=true\nCategories=Network;Security;\n";
-        let a = parse_entry("sarina-nmap", t, Path::new("/x")).unwrap();
+        let a = parse_entry("sarina-nmap", t).unwrap();
         assert!(a.terminal && !mk("Zed", "").terminal);
         let mut hidden = mk("Hidden", "Utility;");
         hidden.no_display = true;
@@ -349,7 +348,7 @@ mod tests {
     #[test]
     fn parses_a_desktop_entry() {
         let t = "[Desktop Entry]\nType=Application\nName=Minos\nIcon=minos\nExec=minos %U\nStartupWMClass=minos\n[Desktop Action x]\nName=Other\n";
-        let a = parse_entry("minos", t, Path::new("/x/minos.desktop")).unwrap();
+        let a = parse_entry("minos", t).unwrap();
         assert_eq!((a.name.as_str(), a.icon.as_str(), a.exec.as_str()), ("Minos", "minos", "minos %U"));
         let gnome = "[Desktop Entry]
 Type=Application
@@ -367,15 +366,15 @@ Name=B
 OnlyShowIn=KDE;GNOME;
 ";
         let kde = ["kde".to_string()];
-        assert!(parse_entry_for("g", gnome, Path::new("/g"), &kde).unwrap().no_display);
-        assert!(parse_entry_for("n", not_kde, Path::new("/n"), &kde).unwrap().no_display);
-        assert!(!parse_entry_for("b", both, Path::new("/b"), &kde).unwrap().no_display);
+        assert!(parse_entry_for("g", gnome, &kde).unwrap().no_display);
+        assert!(parse_entry_for("n", not_kde, &kde).unwrap().no_display);
+        assert!(!parse_entry_for("b", both, &kde).unwrap().no_display);
         // in Yggdrasil's own session a KDE-only or GNOME-only entry is not listed
         let ygg = ["yggdrasil".to_string()];
-        assert!(parse_entry_for("b", both, Path::new("/b"), &ygg).unwrap().no_display);
-        assert!(!parse_entry_for("n", not_kde, Path::new("/n"), &ygg).unwrap().no_display);
-        assert!(parse_entry("h", "[Desktop Entry]\nType=Application\nName=H\nHidden=true\n", Path::new("/h")).is_none());
-        assert!(parse_entry("l", "[Desktop Entry]\nType=Link\nName=L\n", Path::new("/l")).is_none());
+        assert!(parse_entry_for("b", both, &ygg).unwrap().no_display);
+        assert!(!parse_entry_for("n", not_kde, &ygg).unwrap().no_display);
+        assert!(parse_entry("h", "[Desktop Entry]\nType=Application\nName=H\nHidden=true\n").is_none());
+        assert!(parse_entry("l", "[Desktop Entry]\nType=Link\nName=L\n").is_none());
     }
 
     #[test]

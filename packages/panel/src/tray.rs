@@ -61,7 +61,7 @@ pub fn pixmap_from_argb(w: i32, h: i32, data: &[u8]) -> Option<Pixmap> {
         return None;
     }
     let mut pm = Pixmap::new(w as u32, h as u32)?;
-    for (i, px) in pm.data_mut().chunks_exact_mut(4).enumerate() {
+    for (i, px) in pm.data_mut().as_chunks_mut::<4>().0.iter_mut().enumerate() {
         let (a, r, g, b) = (data[i * 4] as u32, data[i * 4 + 1] as u32, data[i * 4 + 2] as u32, data[i * 4 + 3] as u32);
         px[0] = (r * a / 255) as u8;
         px[1] = (g * a / 255) as u8;
@@ -341,7 +341,8 @@ pub fn fetch_menu(bus: &str, path: &str) -> Option<Vec<MenuItem>> {
     };
     let body = reply.body();
     // u(ia{sv}av): a revision, then the root node (id, properties, children as variants)
-    let parsed: Result<(u32, (i32, HashMap<String, OwnedValue>, Vec<OwnedValue>)), _> = body.deserialize();
+    type Layout = (u32, (i32, HashMap<String, OwnedValue>, Vec<OwnedValue>));
+    let parsed: Result<Layout, _> = body.deserialize();
     match parsed {
         Ok((_, (_, _, kids))) => Some(kids.iter().filter_map(|k| menu_from_value(k)).collect()),
         Err(e) => {

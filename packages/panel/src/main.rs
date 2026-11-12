@@ -204,7 +204,6 @@ enum VoiceKey {
 }
 
 struct Popup {
-    output: u32,
     kind: PopupKind,
 }
 
@@ -1042,7 +1041,7 @@ impl State {
             }
             self.dirty = true;
         }
-        self.popup = Some(Popup { output, kind });
+        self.popup = Some(Popup { kind });
     }
 
     /// The pointer has rested on the notch's tab: open Fylgja (the small card) on that screen.
@@ -1534,7 +1533,7 @@ impl State {
         }
         let Some((name, x, y)) = finder::locate() else { return };
         let Some(output) = self.outputs.iter().find(|(_, o)| o.name == name).map(|(k, _)| *k) else { return };
-        self.finder = Some(finder::Spot { output: name, x, y, start: Instant::now() });
+        self.finder = Some(finder::Spot { x, y, start: Instant::now() });
         // a new spotlight replaces one still showing (on whichever screen)
         if let Some(i) = self.surfs.iter().position(|s| s.kind == Kind::Finder) {
             self.surfs.remove(i).destroy();
@@ -2108,13 +2107,12 @@ impl State {
             _ => None,
         };
         // looking at the notification list reads it
-        if tab == Some(fylgja::NOTIFS)
-            || (self.model.conf.notify_pane && matches!(self.popup, Some(Popup { kind: PopupKind::Calendar { .. }, .. })))
+        if (tab == Some(fylgja::NOTIFS)
+            || (self.model.conf.notify_pane && matches!(self.popup, Some(Popup { kind: PopupKind::Calendar { .. }, .. }))))
+            && self.model.notifs.unread_count() > 0
         {
-            if self.model.notifs.unread_count() > 0 {
-                self.model.notifs.mark_read();
-                self.dirty = true;
-            }
+            self.model.notifs.mark_read();
+            self.dirty = true;
         }
         // the Stats readings are taken only while that section is showing
         self.stats_wanted.store(tab == Some(2), Ordering::Relaxed);
@@ -2403,12 +2401,6 @@ impl State {
     fn fylgja_act(&mut self, hit: fylgja::FHit, x: f32) {
         use fylgja::FAct;
         match hit.act {
-            FAct::Section(i) => {
-                if let Some(Popup { kind: PopupKind::Fylgja(st), .. }) = &mut self.popup {
-                    st.section = i;
-                    self.dirty = true;
-                }
-            }
             FAct::Expand => {
                 if let Some(Popup { kind: PopupKind::Fylgja(st), .. }) = &mut self.popup {
                     st.open = true;
@@ -3345,7 +3337,7 @@ impl State {
         };
         let b = &mut surf.bufs[idx];
         // tiny-skia is premultiplied RGBA; wl_shm's ARGB8888 (little-endian) is BGRA in memory.
-        for (dst, src) in b.map.chunks_exact_mut(4).zip(pix.data().chunks_exact(4)) {
+        for (dst, src) in b.map.as_chunks_mut::<4>().0.iter_mut().zip(pix.data().as_chunks::<4>().0) {
             dst[0] = src[2];
             dst[1] = src[1];
             dst[2] = src[0];
@@ -3433,7 +3425,7 @@ impl State {
                 }
             }
             Action::ToastOpen(id) => self.open_notification(id),
-            Action::ToastAction(id, i) => {
+            Action::ToastButton(id, i) => {
                 if let Some(n) = self.model.notifs.get(id).cloned() {
                     if let Some((key, _)) = notify::toast_actions(&n).get(i) {
                         notify::emit_action(id, key);
@@ -3623,10 +3615,8 @@ impl Dispatch<WlRegistry, GlobalListContents> for State {
                 let xdg = state.xdg_output_mgr.as_ref().map(|m| m.get_xdg_output(&wl, qh, name));
                 state.outputs.insert(name, Out { wl, name: String::new(), scale: 1, ready: false, logical: None, xdg });
             }
-            wl_registry::Event::GlobalRemove { name } => {
-                if state.outputs.remove(&name).is_some() {
-                    state.built_for = None; // a screen went away: rebuild
-                }
+            wl_registry::Event::GlobalRemove { name } if state.outputs.remove(&name).is_some() => {
+                state.built_for = None; // a screen went away: rebuild
             }
             _ => {}
         }
@@ -3642,11 +3632,9 @@ impl Dispatch<WlOutput, u32> for State {
                 o.scale = factor.max(1);
                 state.dirty = true;
             }
-            wl_output::Event::Done => {
-                if !o.ready {
-                    o.ready = true;
-                    state.built_for = None;
-                }
+            wl_output::Event::Done if !o.ready => {
+                o.ready = true;
+                state.built_for = None;
             }
             _ => {}
         }
@@ -3821,10 +3809,10 @@ impl Dispatch<WlKeyboard, ()> for State {
                     None
                 };
             }
-            wl_keyboard::Event::Key { key, state: WEnum::Value(wl_keyboard::KeyState::Released), .. } => {
-                if state.repeat.map(|r| r.0) == Some(key) {
-                    state.repeat = None;
-                }
+            wl_keyboard::Event::Key { key, state: WEnum::Value(wl_keyboard::KeyState::Released), .. }
+                if state.repeat.map(|r| r.0) == Some(key) =>
+            {
+                state.repeat = None;
             }
             _ => {}
         }
@@ -3863,18 +3851,11 @@ impl Dispatch<WlTouch, ()> for State {
                     wl_pointer::Event::Button { serial, time, button: 272, state: WEnum::Value(wl_pointer::ButtonState::Released) },
                 );
             }
-            wl_touch::Event::Cancel => {
-                if state.touch_id.take().is_some() {
-                    pointer_event(
-                        state,
-                        wl_pointer::Event::Button {
-                            serial: 0,
-                            time: 0,
-                            button: 272,
-                            state: WEnum::Value(wl_pointer::ButtonState::Released),
-                        },
-                    );
-                }
+            wl_touch::Event::Cancel if state.touch_id.take().is_some() => {
+                pointer_event(
+                    state,
+                    wl_pointer::Event::Button { serial: 0, time: 0, button: 272, state: WEnum::Value(wl_pointer::ButtonState::Released) },
+                );
             }
             _ => {}
         }
@@ -4171,13 +4152,11 @@ impl Dispatch<ZwlrForeignToplevelManagerV1, ()> for State {
             state.next_key += 1;
             let key = state.next_key;
             state.model.wins.push(Win {
-                key,
                 uuid: format!("wlr-{key}"),
                 title: String::new(),
                 app_id: String::new(),
                 flags: 0,
                 ready: false,
-                menu: None,
                 proxy: shell::WinHandle::Wlr(toplevel),
                 outputs: vec![],
             });
@@ -4206,7 +4185,7 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for State {
             E::State { state: bytes } => {
                 // an array of u32 states: 0 maximized, 1 minimized, 2 activated, 3 fullscreen
                 let mut flags = 0;
-                for c in bytes.chunks_exact(4) {
+                for c in bytes.as_chunks::<4>().0 {
                     match u32::from_ne_bytes([c[0], c[1], c[2], c[3]]) {
                         1 => flags |= shell::ST_MINIMIZED,
                         2 => flags |= shell::ST_ACTIVE,

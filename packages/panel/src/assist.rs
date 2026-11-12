@@ -314,6 +314,7 @@ mod tests {
         let c: serde_json::Value = serde_json::from_str(&hyprctl(&["-j", "clients"]).unwrap()).unwrap();
         let got = c.as_array().unwrap().iter().find(|c| c["address"].as_str() == Some(addr.as_str())).unwrap().clone();
         let _ = foot.kill();
+        let _ = foot.wait();
         let at = (got["at"][0].as_i64().unwrap() as i32, got["at"][1].as_i64().unwrap() as i32);
         let size = (got["size"][0].as_i64().unwrap() as i32, got["size"][1].as_i64().unwrap() as i32);
         eprintln!("zone {rect:?} -> at {at:?} size {size:?}, more {more}");

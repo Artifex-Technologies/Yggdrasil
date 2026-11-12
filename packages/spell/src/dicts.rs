@@ -279,7 +279,7 @@ mod tests {
         for f in ["en_US.aff", "en_US.dic", "de_DE.dic", "hyph_en_US.dic", "hyph_en_US.aff"] {
             std::fs::write(d.join(f), "").unwrap();
         }
-        let got: Vec<String> = installed_in(&[d.clone()]).into_iter().map(|i| i.code).collect();
+        let got: Vec<String> = installed_in(std::slice::from_ref(&d)).into_iter().map(|i| i.code).collect();
         assert_eq!(got, ["en_US"]);
         let _ = std::fs::remove_dir_all(&d);
     }

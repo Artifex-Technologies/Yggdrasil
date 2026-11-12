@@ -55,7 +55,7 @@ pub fn color(c: Rgba) -> Color {
 /// A rounded rectangle path (x, y, w, h, radius).
 pub fn rounded_path(x: f32, y: f32, w: f32, h: f32, r: f32) -> Option<SkPath> {
     let r = r.min(w / 2.0).min(h / 2.0).max(0.0);
-    let k = 0.552_284_75 * r; // circle approximated by cubic curves
+    let k = 0.552_284_8 * r; // circle approximated by cubic curves
     let mut p = PathBuilder::new();
     p.move_to(x + r, y);
     p.line_to(x + w - r, y);
@@ -79,6 +79,7 @@ pub fn fill_rounded(pix: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, c:
     }
 }
 
+#[allow(clippy::too_many_arguments)] // drawing: the pixmap, scale, fonts and icons, then what to draw and where
 pub fn stroke_rounded(pix: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, width: f32, c: Rgba) {
     if let Some(path) = rounded_path(x, y, w, h, r) {
         let mut paint = Paint::default();
@@ -497,7 +498,7 @@ fn recolor(svg: &str, hex: &str) -> String {
         while let Some(i) = rest.find(pre) {
             let (head, tail) = rest.split_at(i + pre.len());
             res.push_str(head);
-            let stop = tail.find(|c: char| c == end || c == '"' || c == '\'' || c == '}').unwrap_or(tail.len());
+            let stop = tail.find([end, '"', '\'', '}']).unwrap_or(tail.len());
             let value = &tail[..stop];
             res.push_str(if value.trim_start().starts_with('#') || value.trim_start().starts_with("rgb") { hex } else { value });
             rest = &tail[stop..];

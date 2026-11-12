@@ -353,7 +353,7 @@ pub fn spawn_poller(active: Arc<AtomicBool>, wanted: Arc<AtomicBool>, shared: Ar
             by_cpu.sort_by(|a, b| b.cpu.partial_cmp(&a.cpu).unwrap_or(std::cmp::Ordering::Equal));
             snap.top_cpu = by_cpu.into_iter().take(4).collect();
             let mut by_ram = apps;
-            by_ram.sort_by(|a, b| b.rss_mb.cmp(&a.rss_mb));
+            by_ram.sort_by_key(|a| std::cmp::Reverse(a.rss_mb));
             snap.top_ram = by_ram.into_iter().take(4).collect();
             // memory
             if let Some((used, total)) = std::fs::read_to_string("/proc/meminfo").ok().and_then(|m| crate::fylgja::parse_meminfo(&m)) {

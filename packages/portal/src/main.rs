@@ -203,7 +203,6 @@ impl Chooser {
         mode: &str,
         title: String,
         o: Options,
-        extra: Vec<String>,
     ) -> (u32, Results) {
         let key = program_key(app_id, &title);
         let _ = server.at(handle.as_str(), Request { handle: handle.to_string(), running: self.running.clone() }).await;
@@ -244,7 +243,6 @@ impl Chooser {
                 args.push(i.to_string());
             }
         }
-        args.extend(extra);
         let (h, run) = (handle.to_string(), self.running.clone());
         let paths = blocking::unblock(move || pick(&h, &run, args)).await;
         let _ = server.remove::<Request, _>(handle.as_str()).await;
@@ -271,7 +269,7 @@ impl Chooser {
         options: Options,
     ) -> (u32, Results) {
         let mode = if opt_bool(&options, "directory") { "dir" } else { "open" };
-        self.run(server, handle, &app_id, mode, title, options, vec![]).await
+        self.run(server, handle, &app_id, mode, title, options).await
     }
 
     async fn save_file(
@@ -283,7 +281,7 @@ impl Chooser {
         title: String,
         options: Options,
     ) -> (u32, Results) {
-        self.run(server, handle, &app_id, "save", title, options, vec![]).await
+        self.run(server, handle, &app_id, "save", title, options).await
     }
 
     /// Save several files into one folder: pick the folder, answer with each file name inside it.
@@ -303,7 +301,7 @@ impl Chooser {
             .into_iter()
             .map(bytes_text)
             .collect();
-        let (code, mut r) = self.run(server, handle, &app_id, "dir", title, options, vec![]).await;
+        let (code, mut r) = self.run(server, handle, &app_id, "dir", title, options).await;
         if code != 0 {
             return (code, r);
         }

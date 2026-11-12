@@ -277,8 +277,7 @@ mod tests {
 
     #[test]
     fn the_card_offers_what_each_controller_can_do() {
-        let mut s = Settings::default();
-        s.lightbar = Some("#7c54d6".into());
+        let s = Settings { lightbar: Some("#7c54d6".into()), ..Settings::default() };
         let v = bar(&[pad(Some(80), "Discharging", true), pad(None, "", false)], &s);
         let card = v["card"].as_array().unwrap();
         assert_eq!(card[0]["buttons"][1]["id"], "disconnect:a4:ae:12:00:11:22");

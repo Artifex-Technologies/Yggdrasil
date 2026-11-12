@@ -51,8 +51,6 @@ pub enum Voice {
     Listening(u64),
     /// The recording is with the assistant; what it heard once the words are known (empty before).
     Thinking(String),
-    Reply(String),
-    Failed(String),
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -208,12 +206,6 @@ pub fn parse_meminfo(m: &str) -> Option<(u64, u64)> {
     let kb = |k: &str| m.lines().find(|l| l.starts_with(k))?.split_whitespace().nth(1)?.parse::<u64>().ok();
     let total = kb("MemTotal:")?;
     Some(((total - kb("MemAvailable:")?) / 1024, total / 1024))
-}
-
-/// The text cut to one line that fits `max` pixels.
-fn one_line(font: &ab_glyph::FontVec, size: f32, text: &str, max: f32) -> String {
-    let line = text.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim();
-    fit(font, size, line, max)
 }
 
 /// `text` broken into lines of at most `max` pixels, at spaces where it can.
@@ -407,7 +399,7 @@ pub fn spawn_poller(active: Arc<AtomicBool>, shared: Arc<Mutex<Snapshot>>) {
             if let Ok(mut g) = shared.lock() {
                 *g = snap.clone();
             }
-            if round % 3 == 0 {
+            if round.is_multiple_of(3) {
                 snap.wifi = parse_wifi(
                     &out("nmcli", &["radio", "wifi"]),
                     &out("nmcli", &["-t", "-f", "TYPE", "device"]),
@@ -717,7 +709,7 @@ pub fn ask_assistant(
 /// Runs the assistant's `ask` program, passing on its first line (`Heard: "..."`) as soon as it is printed, so the card can show
 /// what was understood while the answer is still being worked on. A conversation's turns share YGGDRASIL_CONVERSATION.
 fn run_ask(
-    wav: &PathBuf,
+    wav: &Path,
     conversation: Option<&str>,
     heard: &calloop::channel::Sender<String>,
     say: &calloop::channel::Sender<String>,
@@ -775,7 +767,6 @@ pub enum Slider {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum FAct {
-    Section(usize),
     Prev,
     PlayPause,
     Next,
@@ -889,7 +880,6 @@ pub fn set_volume(target: &Slider, percent: u32) {
 const WHITE: Rgba = (255, 255, 255, 255);
 const DIM: Rgba = (150, 150, 165, 255);
 const FAINT: Rgba = (60, 60, 72, 255);
-const RED: Rgba = (232, 120, 120, 255);
 
 /// Whether there is anything to show: the small card only appears when something is playing.
 pub fn visible(m: &Model, st: &FyState) -> bool {
@@ -903,7 +893,6 @@ pub fn card_size(m: &Model, st: &FyState) -> (f32, f32) {
             Voice::Listening(_) => 128.0,
             Voice::Thinking(h) if !h.is_empty() => 118.0,
             Voice::Thinking(_) => 96.0,
-            Voice::Reply(_) => 230.0,
             _ => 130.0,
         };
         return (440.0, h);
@@ -951,19 +940,12 @@ fn slider(pix: &mut Pixmap, s: f32, x: f32, cy: f32, w: f32, percent: u32, c: Rg
     }
 }
 
-fn bar(pix: &mut Pixmap, s: f32, x: f32, cy: f32, w: f32, frac: f32, c: Rgba) {
-    paint::fill_rounded(pix, x * s, (cy - 4.0) * s, w * s, 8.0 * s, 4.0 * s, FAINT);
-    let fill = w * frac.clamp(0.0, 1.0);
-    if fill > 1.0 {
-        paint::fill_rounded(pix, x * s, (cy - 4.0) * s, fill * s, 8.0 * s, 4.0 * s, c);
-    }
-}
-
 pub fn over(p: (f32, f32), r: (f32, f32, f32, f32)) -> bool {
     p.0 >= r.0 && p.0 < r.0 + r.2 && p.1 >= r.1 && p.1 < r.1 + r.3
 }
 
 /// A round-cornered button with a symbolic icon; a hit is added for it.
+#[allow(clippy::too_many_arguments)] // drawing: the pixmap, scale, fonts and icons, then what to draw and where
 fn icon_button(
     pix: &mut Pixmap,
     s: f32,
@@ -984,6 +966,7 @@ fn icon_button(
     hits.push(FHit { rect, act });
 }
 
+#[allow(clippy::too_many_arguments)] // drawing: the pixmap, scale, fonts and icons, then what to draw and where
 fn media_buttons(pix: &mut Pixmap, s: f32, icons: &mut Icons, hits: &mut Vec<FHit>, pointer: (f32, f32), x: f32, y: f32, playing: bool) {
     let play = if playing { "media-playback-pause-symbolic" } else { "media-playback-start-symbolic" };
     for (i, (icon, act)) in
@@ -1422,6 +1405,7 @@ fn paint_controls(
 }
 
 /// Draws the notch and returns its card and what can be clicked, in logical pixels.
+#[allow(clippy::too_many_arguments)] // drawing: the pixmap, scale, fonts and icons, then what to draw and where
 pub fn paint(
     pix: &mut Pixmap,
     s: f32,
@@ -1514,29 +1498,6 @@ pub fn paint(
                     );
                 }
             }
-            Voice::Reply(text) => {
-                paint::draw_text(pix, &fonts.bold, 13.0 * s, x0 * s, (cy + 26.0) * s, paint::accent(255), crate::assistant::name());
-                let lines = wrap(&fonts.regular, 13.0 * s, text, inner * s);
-                let rows = 8;
-                for (i, l) in lines.iter().take(rows).enumerate() {
-                    let l = if i == rows - 1 && lines.len() > rows { format!("{l}…") } else { l.clone() };
-                    paint::draw_text(pix, &fonts.regular, 13.0 * s, x0 * s, (cy + 52.0 + 20.0 * i as f32) * s, WHITE, &l);
-                }
-            }
-            Voice::Failed(msg) => {
-                paint::draw_text(
-                    pix,
-                    &fonts.bold,
-                    13.0 * s,
-                    x0 * s,
-                    (cy + 26.0) * s,
-                    RED,
-                    &format!("{} could not be asked", crate::assistant::name()),
-                );
-                for (i, l) in wrap(&fonts.regular, 12.5 * s, msg, inner * s).iter().take(4).enumerate() {
-                    paint::draw_text(pix, &fonts.regular, 12.5 * s, x0 * s, (cy + 52.0 + 19.0 * i as f32) * s, DIM, l);
-                }
-            }
             Voice::Idle => {}
         }
         return (card, hits);
@@ -1547,33 +1508,30 @@ pub fn paint(
         if !snap.ready {
             return (card, hits);
         }
-        match &snap.media {
-            Some(md) => {
-                let mut tx = x0;
-                if let Some(art) = &d.art {
-                    paint::draw_pixmap(pix, art, (x0 * s) as i32, ((cy + 14.0) * s) as i32);
-                    tx = x0 + art.width() as f32 / s + 12.0;
-                } else {
-                    paint::fill_rounded(pix, x0 * s, (cy + 14.0) * s, 58.0 * s, 58.0 * s, 8.0 * s, (30, 30, 38, 255));
-                    tx = tx.max(x0 + 70.0);
-                }
-                let room = (cx + cw - pad - 112.0) - tx;
-                let title = if md.title.is_empty() { "Playing".to_string() } else { fit(&fonts.bold, 14.0 * s, &md.title, room * s) };
-                paint::draw_text(pix, &fonts.bold, 14.0 * s, tx * s, (cy + 34.0) * s, WHITE, &title);
-                paint::draw_text(
-                    pix,
-                    &fonts.regular,
-                    12.0 * s,
-                    tx * s,
-                    (cy + 54.0) * s,
-                    DIM,
-                    &fit(&fonts.regular, 12.0 * s, &md.artist, room * s),
-                );
-                media_buttons(pix, s, icons, &mut hits, pointer, cx + cw - pad - 108.0, cy + 26.0, md.playing);
-                // a click anywhere else on the card opens the full notch
-                hits.insert(0, FHit { rect: (cx, cy, cw, ch), act: FAct::Expand });
+        if let Some(md) = &snap.media {
+            let mut tx = x0;
+            if let Some(art) = &d.art {
+                paint::draw_pixmap(pix, art, (x0 * s) as i32, ((cy + 14.0) * s) as i32);
+                tx = x0 + art.width() as f32 / s + 12.0;
+            } else {
+                paint::fill_rounded(pix, x0 * s, (cy + 14.0) * s, 58.0 * s, 58.0 * s, 8.0 * s, (30, 30, 38, 255));
+                tx = tx.max(x0 + 70.0);
             }
-            None => {}
+            let room = (cx + cw - pad - 112.0) - tx;
+            let title = if md.title.is_empty() { "Playing".to_string() } else { fit(&fonts.bold, 14.0 * s, &md.title, room * s) };
+            paint::draw_text(pix, &fonts.bold, 14.0 * s, tx * s, (cy + 34.0) * s, WHITE, &title);
+            paint::draw_text(
+                pix,
+                &fonts.regular,
+                12.0 * s,
+                tx * s,
+                (cy + 54.0) * s,
+                DIM,
+                &fit(&fonts.regular, 12.0 * s, &md.artist, room * s),
+            );
+            media_buttons(pix, s, icons, &mut hits, pointer, cx + cw - pad - 108.0, cy + 26.0, md.playing);
+            // a click anywhere else on the card opens the full notch
+            hits.insert(0, FHit { rect: (cx, cy, cw, ch), act: FAct::Expand });
         }
         return (card, hits);
     }

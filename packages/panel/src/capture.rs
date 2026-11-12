@@ -366,7 +366,7 @@ mod tests {
     #[test]
     fn a_frame_becomes_a_thumbnail_that_fits() {
         // 4 x 2 opaque blue (B G R X), shrunk into a 2 x 2 box: 2 x 1, blue
-        let data: Vec<u8> = std::iter::repeat([255u8, 0, 0, 0]).take(8).flatten().collect();
+        let data: Vec<u8> = std::iter::repeat_n([255u8, 0, 0, 0], 8).flatten().collect();
         let t = to_thumb(&data, 4, 2, 16, true, 2, 2).unwrap();
         assert_eq!((t.width(), t.height()), (2, 1));
         assert_eq!(&t.data()[0..4], &[0, 0, 255, 255]);

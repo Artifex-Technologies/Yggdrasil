@@ -52,7 +52,7 @@ struct State {
     /// before the correction and it would delete the wrong text (found 2026-11-05: "adn thier" became "and ttheir").
     lookups: Sender<Lookup>,
     /// word -> (right?, suggestions best first); a word not in here yet is never corrected
-    verdicts: Arc<Mutex<HashMap<String, (bool, Vec<String>)>>>,
+    verdicts: Verdicts,
     asked: HashSet<String>,
     loaded: Option<SystemTime>,
     /// the last correction and the text it was made in (for Backspace to undo it), and the words put back
@@ -61,6 +61,9 @@ struct State {
     unavailable: bool,
 }
 
+/// word -> (right?, suggestions best first), shared with the dictionary thread.
+type Verdicts = Arc<Mutex<HashMap<String, (bool, Vec<String>)>>>;
+
 enum Lookup {
     Word(String),
     /// the word lists or languages changed: load the speller again and forget the answers
@@ -68,7 +71,7 @@ enum Lookup {
 }
 
 /// The dictionary thread: answers words into `verdicts`.
-fn start_lookups(verdicts: Arc<Mutex<HashMap<String, (bool, Vec<String>)>>>) -> Sender<Lookup> {
+fn start_lookups(verdicts: Verdicts) -> Sender<Lookup> {
     let (tx, rx) = channel::<Lookup>();
     std::thread::spawn(move || {
         let mut speller = Speller::load();

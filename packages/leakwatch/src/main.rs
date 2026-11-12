@@ -61,7 +61,7 @@ fn sample(dry_run: bool) -> i32 {
     let skip = ignored(&conf);
     for s in st.series.values_mut() {
         let Some(v) = judge(s) else { continue };
-        if !v.suspect || skip.iter().any(|n| *n == s.name) || s.warned.is_some_and(|w| t.saturating_sub(w) < 24 * 3600) {
+        if !v.suspect || skip.contains(&s.name) || s.warned.is_some_and(|w| t.saturating_sub(w) < 24 * 3600) {
             continue;
         }
         let (title, body) = warning(s, &v);

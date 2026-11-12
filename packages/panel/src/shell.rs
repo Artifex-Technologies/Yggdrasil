@@ -62,13 +62,11 @@ pub fn dock_h(icon: u32) -> u32 {
 }
 
 pub struct Win {
-    pub key: u32,
     pub uuid: String,
     pub title: String,
     pub app_id: String,
     pub flags: u32,
     pub ready: bool,
-    pub menu: Option<(String, String)>,
     pub proxy: WinHandle,
     /// The screens it is on (wlr-foreign-toplevel only).
     pub outputs: Vec<WlOutput>,
@@ -207,7 +205,7 @@ pub enum Action {
     ToastOpen(u32),
     ToastClose(u32),
     /// One of a pop-up's buttons: the notification's id and which button.
-    ToastAction(u32, usize),
+    ToastButton(u32, usize),
     /// The unread badge in the bar: open the list.
     Notifications,
     /// A tray icon, by its registration key: left click activates it, right click opens its menu.
@@ -340,8 +338,6 @@ pub fn app_name_for_bar(m: &Model) -> String {
         None => "Desktop".to_string(),
     }
 }
-
-/// The accent, for the current desktop and the active bits.
 
 /// Paints the notch's tab (or the open notch with Fylgja's section titles) and returns its click areas; `first` is the index
 /// its first click area will have (for the hover highlight).
@@ -717,6 +713,7 @@ fn block_height(b: &crate::addons::Block, first: bool) -> f32 {
 }
 
 /// A countdown in fixed-width cells, so the digits do not shift as they change. Returns its width.
+#[allow(clippy::too_many_arguments)] // drawing: the pixmap, scale, fonts and icons, then what to draw and where
 fn draw_clock(pix: &mut Pixmap, font: &ab_glyph::FontVec, size: f32, cx: f32, cy: f32, c: Rgba, text: &str, s: f32) {
     let cell = "0123456789".chars().map(|d| paint::text_width(font, size * s, &d.to_string())).fold(0.0, f32::max);
     let colon = paint::text_width(font, size * s, ":");
@@ -1200,6 +1197,7 @@ fn start_pal(dark: bool) -> StartPal {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // drawing: the pixmap, scale, fonts and icons, then what to draw and where
 fn app_icon(pix: &mut Pixmap, s: f32, icons: &mut Icons, fonts: &Fonts, app: &App, x: f32, y: f32, size: f32) {
     match icons.get_app(&app.icon, (size * s) as u32) {
         Some(p) => paint::draw_pixmap(pix, p, (x * s) as i32, (y * s) as i32),
@@ -1215,6 +1213,7 @@ fn app_icon(pix: &mut Pixmap, s: f32, icons: &mut Icons, fonts: &Fonts, app: &Ap
 
 /// The start menu: search, the pinned apps, every app A to Z (the wheel scrolls it), your name and
 /// the power buttons. `pointer` lights the row under it.
+#[allow(clippy::too_many_arguments)] // drawing: the pixmap, scale, fonts and icons, then what to draw and where
 pub fn paint_start(
     pix: &mut Pixmap,
     s: f32,
@@ -1230,7 +1229,7 @@ pub fn paint_start(
     let pal = start_pal(m.dark);
     let surf_h = pix.height() as f32 / s;
     let (cx, cy, cw) = (8.0, 3.0, 500.0);
-    let ch = (surf_h - 12.0).min(600.0).max(240.0);
+    let ch = (surf_h - 12.0).clamp(240.0, 600.0);
     let rr =
         |pix: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, c: Rgba| paint::fill_rounded(pix, x * s, y * s, w * s, h * s, r * s, c);
     let inside = |r: (f32, f32, f32, f32)| pointer.0 >= r.0 && pointer.0 < r.0 + r.2 && pointer.1 >= r.1 && pointer.1 < r.1 + r.3;
@@ -1458,7 +1457,7 @@ pub fn paint_start_folders(
     let pal = start_pal(m.dark);
     let surf_h = pix.height() as f32 / s;
     let (cx, cy, cw) = (8.0, 3.0, 300.0);
-    let ch = (surf_h - 12.0).min(640.0).max(240.0);
+    let ch = (surf_h - 12.0).clamp(240.0, 640.0);
     let rr =
         |pix: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, c: Rgba| paint::fill_rounded(pix, x * s, y * s, w * s, h * s, r * s, c);
     let inside = |r: (f32, f32, f32, f32)| pointer.0 >= r.0 && pointer.0 < r.0 + r.2 && pointer.1 >= r.1 && pointer.1 < r.1 + r.3;

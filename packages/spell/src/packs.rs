@@ -202,7 +202,7 @@ mod tests {
         std::fs::write(d.join("tech.txt"), "# name: Software and tech\n# licence: MIT\n# default: yes\nKubernetes\nGitHub\n").unwrap();
         std::fs::write(d.join("names.txt"), "# name: People's names\nAda\n").unwrap();
         std::fs::write(d.join("bad id!.txt"), "x\n").unwrap();
-        let p = installed_in(&[d.clone()]);
+        let p = installed_in(std::slice::from_ref(&d));
         assert_eq!(p.iter().map(|p| (p.id.as_str(), p.default_on, p.count)).collect::<Vec<_>>(), [("tech", true, 2), ("names", false, 1)]);
         assert_eq!(p[0].name, "Software and tech");
         assert_eq!(p[0].words(), ["Kubernetes", "GitHub"]);

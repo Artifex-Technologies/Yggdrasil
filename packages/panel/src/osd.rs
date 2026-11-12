@@ -7,7 +7,7 @@ use std::process::{Command, Stdio};
 
 use resvg::tiny_skia::Pixmap;
 
-use crate::paint::{self, Fonts, Icons, Rgba};
+use crate::paint::{self, Fonts, Icons};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OsdKind {

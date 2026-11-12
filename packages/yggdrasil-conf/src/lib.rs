@@ -367,6 +367,32 @@ impl PanelConf {
     }
 }
 
+/// Where the picture Yggdrasil draws as the wallpaper is named (one line: a path).
+pub fn wallpaper_path_file() -> Option<std::path::PathBuf> {
+    Some(dirs::config().join("wallpaper"))
+}
+
+/// The wallpaper picture's path: the one chosen, else the operating system's default (its branding), so a new account's
+/// desktop is not black before anyone picks one (found in a VM install test, 2026-11-08).
+pub fn wallpaper() -> Option<String> {
+    chosen_wallpaper().or_else(|| integrations::default_wallpaper().map(|p| p.display().to_string()))
+}
+
+fn chosen_wallpaper() -> Option<String> {
+    let t = std::fs::read_to_string(wallpaper_path_file()?).ok()?;
+    let p = t.lines().next()?.trim().to_string();
+    (!p.is_empty()).then_some(p)
+}
+
+/// Remember the wallpaper picture's path (written beside and renamed, so the panel never reads half a file).
+pub fn set_wallpaper(path: &str) -> Result<(), String> {
+    let p = wallpaper_path_file().ok_or("no config folder")?;
+    std::fs::create_dir_all(p.parent().unwrap()).map_err(|e| e.to_string())?;
+    let tmp = p.with_extension("tmp");
+    std::fs::write(&tmp, format!("{path}\n")).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &p).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -433,30 +459,4 @@ mod tests {
         assert_eq!(PanelConf::parse("dock_pos = left").dock_pos, DockPos::Left);
         assert_eq!(PanelConf::parse("dock_pos = sideways").dock_pos, DockPos::Bottom);
     }
-}
-
-/// Where the picture Yggdrasil draws as the wallpaper is named (one line: a path).
-pub fn wallpaper_path_file() -> Option<std::path::PathBuf> {
-    Some(dirs::config().join("wallpaper"))
-}
-
-/// The wallpaper picture's path: the one chosen, else the operating system's default (its branding), so a new account's
-/// desktop is not black before anyone picks one (found in a VM install test, 2026-11-08).
-pub fn wallpaper() -> Option<String> {
-    chosen_wallpaper().or_else(|| integrations::default_wallpaper().map(|p| p.display().to_string()))
-}
-
-fn chosen_wallpaper() -> Option<String> {
-    let t = std::fs::read_to_string(wallpaper_path_file()?).ok()?;
-    let p = t.lines().next()?.trim().to_string();
-    (!p.is_empty()).then_some(p)
-}
-
-/// Remember the wallpaper picture's path (written beside and renamed, so the panel never reads half a file).
-pub fn set_wallpaper(path: &str) -> Result<(), String> {
-    let p = wallpaper_path_file().ok_or("no config folder")?;
-    std::fs::create_dir_all(p.parent().unwrap()).map_err(|e| e.to_string())?;
-    let tmp = p.with_extension("tmp");
-    std::fs::write(&tmp, format!("{path}\n")).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, &p).map_err(|e| e.to_string())
 }

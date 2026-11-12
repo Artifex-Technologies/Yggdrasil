@@ -43,7 +43,6 @@ impl Taps {
 /// A spotlight being shown: on which screen (its name), where the pointer was (logical pixels on that screen), since when.
 #[derive(Clone, Debug)]
 pub struct Spot {
-    pub output: String,
     pub x: f32,
     pub y: f32,
     pub start: Instant,
@@ -104,9 +103,7 @@ pub fn paint(pix: &mut Pixmap, s: f32, spot: &Spot, now: Instant) {
     pix.fill(paint::color(dim));
     let (cx, cy) = (spot.x * s, spot.y * s);
     if let Some(circle) = PathBuilder::from_circle(cx, cy, r * s) {
-        let mut clear = Paint::default();
-        clear.blend_mode = BlendMode::Clear;
-        clear.anti_alias = true;
+        let clear = Paint { blend_mode: BlendMode::Clear, anti_alias: true, ..Paint::default() };
         pix.fill_path(&circle, &clear, FillRule::Winding, Transform::identity(), None);
     }
     paint::stroke_arc(pix, cx, cy, r * s, 3.0 * s, 1.0, paint::accent((230.0 * fade) as u8));
@@ -144,7 +141,7 @@ mod tests {
     #[test]
     fn the_spotlight_ends_and_leaves_the_pointer_clear() {
         let start = Instant::now();
-        let spot = Spot { output: "DP-1".into(), x: 100.0, y: 100.0, start };
+        let spot = Spot { x: 100.0, y: 100.0, start };
         let mut pix = Pixmap::new(400, 300).unwrap();
         paint(&mut pix, 1.0, &spot, start + Duration::from_millis(700));
         assert_eq!(pix.pixel(100, 100).unwrap().alpha(), 0, "the pointer itself stays clear");
