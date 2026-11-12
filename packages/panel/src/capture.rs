@@ -379,14 +379,8 @@ mod tests {
     #[ignore]
     fn live_capture() {
         assert!(available(), "the compositor has no window capture");
-        let out = std::process::Command::new("hyprctl").args(["-j", "clients"]).output().unwrap();
-        let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-        let wants: Vec<Want> = v
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|c| want(c["address"].as_str().unwrap(), c["class"].as_str().unwrap(), c["title"].as_str().unwrap()))
-            .collect();
+        let windows = yggdrasil_wm::Desk::detect().expect("a compositor").windows();
+        let wants: Vec<Want> = windows.iter().map(|c| want(&c.id, &c.class, &c.title)).collect();
         let mut got = vec![];
         let t = Instant::now();
         capture(&wants, 440, 280, |k, p| got.push((k, p))).unwrap();
