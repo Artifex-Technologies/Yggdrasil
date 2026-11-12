@@ -17,10 +17,22 @@
 //!   resize NAME WxH              change an output's size (the programs are told, panels laid out again)
 //!   scale NAME S                 change an output's scale
 //!   screenshot NAME FILE.png     draw what is pending and write the output's picture as a PNG
-//!   windows                      one line per window: app id, title, place and size (tab separated)
+//!   windows                      one line per window: app id, title, place, size, workspace, states (tab separated; the
+//!                                states are active, floating or tiled, maximized, fullscreen, left, right, minimized)
 //!   layers                       one line per panel or background: output, namespace, layer, place and size (tab separated)
+//!   focus                        what has the keyboard: window APP TITLE, layer NAMESPACE OUTPUT, lock OUTPUT, or none
+//!   workspace                    the workspace showing (1 to 4)
+//!   lock                         "locked" or "unlocked", then one line per lock surface: output and size
+//!   key COMBO...                 press and let go of keys, one combination after another: super+ctrl+2, Return, a
+//!   type TEXT                    type text (letters, digits, space and common punctuation, US layout)
+//!   pointer X Y                  move the pointer to X,Y (logical, in the space of all outputs)
+//!   click [left|right|middle]    press and let go of a pointer button where the pointer is
+//!   power NAME on|off            switch an output on or off (as wlr-output-power does)
 //!   quit                         end the compositor
 //! The answer is the lines, then "ok" or "error: ...".
+//!
+//! The input is made here, inside the compositor, for the tests: no input device is opened, and nothing reaches the running
+//! desktop. wlr-screencopy (screencopy.rs) and wlr-output-power (outputpower.rs) are served from the pictures in memory.
 
 use std::cell::RefCell;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -136,7 +148,19 @@ pub fn check_env() -> Result<PathBuf, String> {
     for v in ["WAYLAND_DISPLAY", "WAYLAND_SOCKET", "DISPLAY", "HYPRLAND_INSTANCE_SIGNATURE", "SWAYSOCK", "I3SOCK", "NIRI_SOCKET"] {
         std::env::remove_var(v);
     }
+    // the desktop's session bus is not passed on either (a program started here would act on the running desktop's services);
+    // a test gives a bus of its own
+    if let Some(bus) = std::env::var_os("DBUS_SESSION_BUS_ADDRESS") {
+        if desktop_bus(&bus.to_string_lossy(), uid) && std::env::var_os("YGGDRASIL_COMPOSITOR_SHARED_RUNTIME").is_none() {
+            std::env::remove_var("DBUS_SESSION_BUS_ADDRESS");
+        }
+    }
     Ok(dir)
+}
+
+/// The running desktop's session bus: the one in /run/user/UID (unix:path=/run/user/1000/bus, the usual address).
+fn desktop_bus(address: &str, uid: u32) -> bool {
+    address.contains(&format!("/run/user/{uid}/")) || address.contains("abstract=") || address.starts_with("systemd:")
 }
 
 /// The desktop's own runtime folder (/run/user/UID, however it is spelled) is not for tests, unless asked for.
@@ -178,6 +202,8 @@ struct Screen {
     damage: OutputDamageTracker,
     /// the picture holds the last frame (buffer age 1); false after it was made new
     drawn: bool,
+    /// something on it changed since a copy that waits for a change (copy_with_damage) was last made
+    changed: bool,
 }
 
 pub struct Headless {
@@ -209,6 +235,7 @@ impl Headless {
                 image: new_image(&mut renderer, o)?,
                 damage: OutputDamageTracker::from_output(o),
                 drawn: false,
+                changed: true,
             });
         }
         Ok(Headless { renderer, screens, pending: false, last: Instant::now() - FRAME, start: Instant::now() })
@@ -233,21 +260,70 @@ impl Headless {
             }
             let age = if s.drawn { 1 } else { 0 };
             let Ok(mut target) = self.renderer.bind(&mut s.image) else { continue };
-            let done = if app.locked {
+            let changed = |r: Result<smithay::backend::renderer::damage::RenderOutputResult<'_>, _>| match r {
+                Ok(r) => Some(r.damage.is_some_and(|d| !d.is_empty())),
+                Err(_) => None,
+            };
+            let done = if !app.power.is_on(&s.output) {
+                // switched off (wlr-output-power): black, as a screen that is off
+                let none: Vec<state::PixElem> = vec![];
+                changed(s.damage.render_output(&mut self.renderer, &mut target, age, &none, [0.0f32, 0.0, 0.0, 1.0]))
+            } else if app.locked {
                 let elements = app.lock_elements(&mut self.renderer, &s.output);
-                s.damage.render_output(&mut self.renderer, &mut target, age, &elements, [0.0f32, 0.0, 0.0, 1.0]).is_ok()
+                changed(s.damage.render_output(&mut self.renderer, &mut target, age, &elements, [0.0f32, 0.0, 0.0, 1.0]))
             } else {
                 let elements = app.scene(&mut self.renderer, &s.output);
-                s.damage.render_output(&mut self.renderer, &mut target, age, &elements, [0.05f32, 0.05, 0.08, 1.0]).is_ok()
+                changed(s.damage.render_output(&mut self.renderer, &mut target, age, &elements, [0.05f32, 0.05, 0.08, 1.0]))
             };
-            s.drawn = done;
+            s.drawn = done.is_some();
+            s.changed |= done.unwrap_or(false) || age == 0;
         }
+        self.serve_copies(app);
         self.last = Instant::now();
         app.send_frames(self.start.elapsed());
         app.space.refresh();
         app.foreign_refresh();
         app.popups.cleanup();
         let _ = app.display_handle.flush_clients();
+    }
+
+    /// The screen copies asked for (wlr-screencopy), made from the pictures just drawn. A copy that waits for a change waits on.
+    fn serve_copies(&mut self, app: &mut App) {
+        if app.screencopy.pending.is_empty() {
+            return;
+        }
+        let when: Duration = smithay::utils::Clock::<smithay::utils::Monotonic>::new().now().into();
+        let mut served: Vec<String> = vec![];
+        for c in std::mem::take(&mut app.screencopy.pending) {
+            let Some(s) = self.screens.iter().find(|s| s.output == c.output) else {
+                c.frame.failed();
+                continue;
+            };
+            let key = smithay::reexports::wayland_server::Resource::client(&c.frame).map(|cl| (cl.id(), s.output.name()));
+            let first = key.as_ref().is_some_and(|k| !app.screencopy.seen.contains(k));
+            if c.with_damage && !first && !s.changed {
+                app.screencopy.pending.push(c);
+                continue;
+            }
+            if let Some(k) = key {
+                app.screencopy.seen.insert(k);
+            }
+            if c.with_damage {
+                served.push(s.output.name());
+            }
+            let (bytes, stride) = pixels(&s.image);
+            crate::screencopy::fill(&c, bytes, stride, when);
+        }
+        for s in &mut self.screens {
+            if served.contains(&s.output.name()) {
+                s.changed = false;
+            }
+        }
+    }
+
+    /// Milliseconds since the start (the time stamp of input made here).
+    fn ms(&self) -> u32 {
+        self.start.elapsed().as_millis() as u32
     }
 
     fn screen(&self, name: &str) -> Option<&Screen> {
@@ -266,11 +342,17 @@ impl Headless {
     }
 }
 
+/// An output's picture: XRGB8888, rows `stride` bytes apart.
+fn pixels<'a>(image: &'a Image<'static, 'static>) -> (&'a [u8], usize) {
+    let (h, stride) = (image.height(), image.stride());
+    // SAFETY: the picture is h rows `stride` bytes apart, alive (and not drawn to) while `image` is borrowed here
+    (unsafe { std::slice::from_raw_parts(image.data() as *const u8, stride * h) }, stride)
+}
+
 /// Write an output's picture as an 8-bit RGB PNG.
 fn write_png(image: &Image<'static, 'static>, path: &Path) -> Result<(), String> {
-    let (w, h, stride) = (image.width(), image.height(), image.stride());
-    // SAFETY: the picture is w x h pixels of 4 bytes, rows `stride` bytes apart, alive while `image` is borrowed here
-    let bytes = unsafe { std::slice::from_raw_parts(image.data() as *const u8, stride * h) };
+    let (w, h) = (image.width(), image.height());
+    let (bytes, stride) = pixels(image);
     let mut rgb = Vec::with_capacity(w * h * 3);
     for row in bytes.chunks(stride).take(h) {
         for px in row[..w * 4].as_chunks::<4>().0 {
@@ -373,7 +455,7 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String
                 let l = state::logical_size(o);
                 let at = o.current_location();
                 format!(
-                    "{} {}x{} scale={} at={},{} logical={}x{}",
+                    "{} {}x{} scale={} at={},{} logical={}x{}{}",
                     o.name(),
                     m.w,
                     m.h,
@@ -381,7 +463,8 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String
                     at.x,
                     at.y,
                     l.w,
-                    l.h
+                    l.h,
+                    if app.power.is_on(o) { "" } else { " power=off" }
                 )
             })
             .collect()),
@@ -413,15 +496,85 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String
             Ok(vec![])
         }
         ["windows"] => Ok(app
-            .space
-            .elements()
-            .map(|w| {
-                let (title, app_id) = state::title_app(w);
-                let at = app.space.element_location(w).unwrap_or_default();
-                let size = w.geometry().size;
-                format!("{app_id}\t{title}\t{},{}\t{}x{}", at.x, at.y, size.w, size.h)
+            .window_infos()
+            .into_iter()
+            .map(|i| {
+                let (title, app_id) = state::title_app(&i.window);
+                let size = i.window.geometry().size;
+                format!("{app_id}\t{title}\t{},{}\t{}x{}\t{}\t{}", i.at.x, i.at.y, size.w, size.h, i.workspace + 1, i.states.join(","))
             })
             .collect()),
+        ["focus"] => Ok(vec![app.focus_info()]),
+        ["workspace"] => Ok(vec![(app.workspace() + 1).to_string()]),
+        ["lock"] => {
+            let mut lines = vec![if app.locked { "locked" } else { "unlocked" }.to_string()];
+            for (o, size) in app.lock_infos() {
+                let (w, hh) = size.map(|s| (s.w, s.h)).unwrap_or((0, 0));
+                lines.push(format!("{}\t{w}x{hh}", o.name()));
+            }
+            Ok(lines)
+        }
+        ["key", combos @ ..] if !combos.is_empty() => {
+            let mut all = vec![];
+            for c in combos {
+                all.push(combo(c).ok_or_else(|| format!("{c}: unknown key (names: super, ctrl, alt, shift, Return, Escape, Tab, Left ..., a-z, 0-9, F1-F12)"))?);
+            }
+            for keys in all {
+                for k in &keys {
+                    press(app, h, *k, true);
+                }
+                for k in keys.iter().rev() {
+                    press(app, h, *k, false);
+                }
+            }
+            Ok(vec![])
+        }
+        ["type", text @ ..] if !text.is_empty() => {
+            let text = text.join(" ");
+            let mut all = vec![];
+            for c in text.chars() {
+                all.push(char_key(c).ok_or_else(|| format!("{c:?} cannot be typed here"))?);
+            }
+            for (code, shift) in all {
+                if shift {
+                    press(app, h, KEY_LEFTSHIFT, true);
+                }
+                press(app, h, code, true);
+                press(app, h, code, false);
+                if shift {
+                    press(app, h, KEY_LEFTSHIFT, false);
+                }
+            }
+            Ok(vec![])
+        }
+        ["pointer", x, y] => {
+            let (x, y) = (x.parse::<f64>().map_err(|_| "pointer X Y: numbers")?, y.parse::<f64>().map_err(|_| "pointer X Y: numbers")?);
+            let t = h.ms();
+            app.pointer_to((x, y).into(), t);
+            Ok(vec![])
+        }
+        ["click", rest @ ..] if rest.len() <= 1 => {
+            let button = match rest.first().copied().unwrap_or("left") {
+                "left" => 0x110,
+                "right" => 0x111,
+                "middle" => 0x112,
+                b => return Err(format!("{b}: left, right or middle")),
+            };
+            let t = h.ms();
+            app.button(button, smithay::backend::input::ButtonState::Pressed, t);
+            app.button(button, smithay::backend::input::ButtonState::Released, t + 1);
+            Ok(vec![])
+        }
+        ["power", name, on] => {
+            let o = output(name, h)?;
+            let on = match *on {
+                "on" => true,
+                "off" => false,
+                v => return Err(format!("{v}: on or off")),
+            };
+            app.set_output_power(&o, on);
+            Ok(vec![])
+        }
         ["layers"] => {
             let mut lines = vec![];
             for s in &h.screens {
@@ -448,10 +601,86 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String
         }
         [] => Err("no command".into()),
         _ => Err(format!(
-            "unknown command {:?} (outputs, resize NAME WxH, scale NAME S, screenshot NAME FILE, windows, layers, quit)",
+            "unknown command {:?} (outputs, resize NAME WxH, scale NAME S, screenshot NAME FILE, windows, layers, focus, workspace, lock, key COMBO, type TEXT, pointer X Y, click [BUTTON], power NAME on|off, quit)",
             words.join(" ")
         )),
     }
+}
+
+const KEY_LEFTSHIFT: u32 = 42;
+
+/// A key's kernel code (evdev) by name: modifiers, the named keys, letters, digits and F1 to F12 (US layout).
+fn key_code(name: &str) -> Option<u32> {
+    let n = name.to_ascii_lowercase();
+    let named = match n.as_str() {
+        "super" | "meta" | "logo" | "win" => 125,
+        "ctrl" | "control" => 29,
+        "alt" => 56,
+        "shift" => KEY_LEFTSHIFT,
+        "altgr" => 100,
+        "return" | "enter" => 28,
+        "escape" | "esc" => 1,
+        "tab" => 15,
+        "space" => 57,
+        "backspace" => 14,
+        "delete" => 111,
+        "up" => 103,
+        "down" => 108,
+        "left" => 105,
+        "right" => 106,
+        "home" => 102,
+        "end" => 107,
+        "pageup" => 104,
+        "pagedown" => 109,
+        "print" => 99,
+        "f11" => 87,
+        "f12" => 88,
+        _ => 0,
+    };
+    if named != 0 {
+        return Some(named);
+    }
+    if let Some(f) = n.strip_prefix('f').and_then(|d| d.parse::<u32>().ok()).filter(|d| (1..=10).contains(d)) {
+        return Some(58 + f);
+    }
+    let mut chars = n.chars();
+    match (chars.next(), chars.next()) {
+        (Some(c), None) => char_key(c).filter(|(_, shift)| !shift).map(|(code, _)| code),
+        _ => None,
+    }
+}
+
+/// The key that types a character (US layout), and whether Shift is held for it.
+fn char_key(c: char) -> Option<(u32, bool)> {
+    const ROWS: [(&str, u32); 4] = [("1234567890-=", 2), ("qwertyuiop[]", 16), ("asdfghjkl;'`", 30), ("zxcvbnm,./", 44)];
+    const SHIFTED: [(&str, u32); 4] = [("!@#$%^&*()_+", 2), ("QWERTYUIOP{}", 16), ("ASDFGHJKL:\"~", 30), ("ZXCVBNM<>?", 44)];
+    match c {
+        ' ' => return Some((57, false)),
+        '\n' => return Some((28, false)),
+        '\\' => return Some((43, false)),
+        '|' => return Some((43, true)),
+        _ => {}
+    }
+    for (table, shift) in [(ROWS, false), (SHIFTED, true)] {
+        for (row, first) in table {
+            if let Some(i) = row.chars().position(|x| x == c) {
+                return Some((first + i as u32, shift));
+            }
+        }
+    }
+    None
+}
+
+/// "super+ctrl+2": the keys of a combination, in the order they are pressed.
+fn combo(s: &str) -> Option<Vec<u32>> {
+    s.split('+').map(key_code).collect()
+}
+
+/// One key down or up, as if from a keyboard.
+fn press(app: &mut App, h: &Headless, code: u32, down: bool) {
+    use smithay::backend::input::KeyState;
+    let state = if down { KeyState::Pressed } else { KeyState::Released };
+    app.key((code + 8).into(), state, h.ms());
 }
 
 /// `yggdrasil-compositor ctl [--socket PATH] COMMAND...`: send one command to a headless compositor and print the answer. The
@@ -546,6 +775,13 @@ mod tests {
         assert!(runtime_ok(Path::new("/run/user/1000"), 1000, true).is_ok(), "unless asked for");
         assert!(runtime_ok(Path::new("/tmp/ygg-test/run"), 1000, false).is_ok());
         assert!(runtime_ok(Path::new("/run/user/1001"), 1000, false).is_ok(), "another user's is not ours (and is not readable anyway)");
+    }
+
+    #[test]
+    fn the_desktops_session_bus_is_not_passed_on() {
+        assert!(desktop_bus("unix:path=/run/user/1000/bus", 1000));
+        assert!(desktop_bus("unix:abstract=/tmp/dbus-x", 1000));
+        assert!(!desktop_bus("unix:path=/tmp/ygg-hl-1/bus", 1000), "a test's own bus is");
     }
 
     #[test]

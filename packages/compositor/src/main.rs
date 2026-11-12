@@ -20,6 +20,9 @@ mod deco;
 mod draw;
 mod grabs;
 mod headless;
+mod outputpower;
+mod placement;
+mod screencopy;
 mod shortcuts;
 mod state;
 mod switcher;
@@ -196,6 +199,9 @@ fn run_headless(opts: &[String], run: Vec<Vec<String>>) -> Result<(), Box<dyn st
     let (ping, ping_source) = smithay::reexports::calloop::ping::make_ping()?;
     let outputs = headless::make_outputs(&dh, &specs);
     toplevels::create_global(&dh);
+    // screenshots and screen streaming (grim, Sunshine), and screens off and on (yggdrasil-idle): served from the pictures in memory
+    screencopy::create_global(&dh);
+    outputpower::create_global(&dh);
     let mut app = App::new(&dh, outputs[0].clone(), event_loop.handle(), event_loop.get_signal(), ping);
     for o in &outputs {
         app.space.map_output(o, o.current_location());

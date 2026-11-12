@@ -168,12 +168,17 @@ pub struct App {
     /// The session is locked: only the lock surfaces are shown (one per output) and they alone get input.
     pub locked: bool,
     lock_surfaces: Vec<(Output, LockSurface)>,
+    /// The lock object of the locker that holds the lock (a second locker is refused while it is alive).
+    lock_owner: Option<smithay::reexports::wayland_protocols::ext::session_lock::v1::server::ext_session_lock_v1::ExtSessionLockV1>,
     opened: usize,
     /// Where a window was (and how big) before it was maximized or made full screen.
     saved: Vec<(WlSurface, Rectangle<i32, Logical>)>,
     /// Windows hidden with minimize (still alive, listed to shell programs, brought back with activate).
     pub minimized: Vec<Window>,
     pub toplevels: Toplevels,
+    /// Copies of the screen asked for (wlr-screencopy, screencopy.rs) and outputs switched off (outputpower.rs): headless only.
+    pub screencopy: crate::screencopy::Screencopy,
+    pub power: crate::outputpower::OutputPower,
     pub bindings: Vec<Binding>,
     /// The Super key went down and nothing else was pressed since: letting go of it opens the start menu.
     super_tap: bool,
@@ -218,6 +223,10 @@ pub struct App {
     parked: Vec<(Window, usize, Point<i32, Logical>)>,
     /// X11 windows snapped to a half of the screen (a Wayland window keeps that in its xdg state; X11 has no such state).
     x11_snapped: Vec<WlSurface>,
+    /// New windows not yet placed: they are centred in the free room once their first picture says how big they are.
+    unplaced: Vec<WlSurface>,
+    /// The free room of each output (what the bar and the dock leave) when windows were last kept clear of them.
+    clear_zones: Vec<Rectangle<i32, Logical>>,
     /// X11 programs (xwayland.rs): the window manager once XWayland is ready, its display number (DISPLAY=:n), and the X11
     /// menus and tooltips now shown (override-redirect windows: drawn where they ask, on top, never given the keyboard).
     pub xwm: Option<smithay::xwayland::X11Wm>,
@@ -414,10 +423,13 @@ impl App {
             pointer_location: (0.0, 0.0).into(),
             locked: false,
             lock_surfaces: vec![],
+            lock_owner: None,
             opened: 0,
             saved: vec![],
             minimized: vec![],
             toplevels: Toplevels::default(),
+            screencopy: Default::default(),
+            power: Default::default(),
             bindings: {
                 let text = std::fs::read_to_string(shortcuts::config_path()).unwrap_or_default();
                 let (b, bad) = shortcuts::load(&text);
@@ -453,6 +465,8 @@ impl App {
             opaque_apps: crate::xwayland::parse_opaque(&std::fs::read_to_string(crate::xwayland::opaque_path()).unwrap_or_default()),
             parked: vec![],
             x11_snapped: vec![],
+            unplaced: vec![],
+            clear_zones: vec![],
             xwm: None,
             x11_display: None,
             x11_reader: None,
@@ -548,6 +562,13 @@ impl App {
         }
         let surface = surface_of(window);
         let back = surface.as_ref().and_then(|surface| self.saved.iter().position(|(s, _)| s == surface)).map(|i| self.saved.remove(i).1);
+        // as the session's keep-clear does: a window that comes back nearly as big as the free room gets a normal size, and none
+        // comes back under the bar or the dock
+        let back = back.map(|r| {
+            let (screen, zone) = self.screen_of(r);
+            let r = crate::placement::normal(r, screen, zone).unwrap_or(r);
+            crate::placement::fit(r, screen, zone).unwrap_or(r)
+        });
         if let Some(t) = window.toplevel() {
             t.with_pending_state(|s| {
                 for st in [
@@ -577,8 +598,120 @@ impl App {
 
     /// Maximize a window to the space the panels leave free.
     pub fn maximize(&mut self, window: &Window) {
-        let zone = layer_map_for_output(&self.output).non_exclusive_zone();
+        let zone = self.free_area(&self.output.clone());
         self.fit_window(window, zone, xdg_toplevel::State::Maximized);
+    }
+
+    /// The room the panels leave free on an output (what its bar and dock do not reserve), in the space's coordinates.
+    pub fn free_area(&self, o: &Output) -> Rectangle<i32, Logical> {
+        let mut zone = layer_map_for_output(o).non_exclusive_zone();
+        zone.loc += o.current_location();
+        zone
+    }
+
+    /// The output a window is shown on (the one under its middle), with the whole output's rectangle and its free room.
+    fn screen_of(&self, r: Rectangle<i32, Logical>) -> (Rectangle<i32, Logical>, Rectangle<i32, Logical>) {
+        let mid = Point::<f64, Logical>::from(((r.loc.x + r.size.w / 2) as f64, (r.loc.y + r.size.h / 2) as f64));
+        let o = self.output_at(mid);
+        (output_rect(&o), self.free_area(&o))
+    }
+
+    /// Floating windows on the workspace now showing (not tiled, maximized, full screen or snapped), bottom first.
+    fn floating_shown(&self) -> Vec<Window> {
+        use xdg_toplevel::State as S;
+        self.space
+            .elements()
+            .filter(|w| {
+                let Some(s) = surface_of(w) else { return false };
+                !self.is_tiled(w, &s)
+                    && !self.x11_snapped.contains(&s)
+                    && ![S::Maximized, S::Fullscreen, S::TiledLeft, S::TiledRight].into_iter().any(|st| win_has(w, st))
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Put a window at `r`, asking it for the new size when that differs.
+    fn place_at(&mut self, w: &Window, r: Rectangle<i32, Logical>) {
+        if let Some(t) = w.toplevel() {
+            if r.size != w.geometry().size {
+                t.with_pending_state(|s| s.size = Some(r.size));
+                t.send_pending_configure();
+            }
+        } else if let Some(x) = w.x11_surface() {
+            let _ = x.configure(r);
+        }
+        self.space.map_element(w.clone(), r.loc, false);
+    }
+
+    /// A new window's first picture (now its size is known): centred in the free room of the output it opens on, shortened to
+    /// it when it asked for more (Hyprland's `float, center` and keep-clear in the session's config).
+    fn place_new(&mut self, w: &Window) {
+        let Some(s) = surface_of(w) else { return };
+        self.unplaced.retain(|x| x != &s);
+        if !self.floating_shown().contains(w) {
+            return;
+        }
+        let zone = self.free_area(&self.output.clone());
+        let size = w.geometry().size;
+        let r = crate::placement::centred((size.w, size.h), zone);
+        self.place_at(w, r);
+        self.space.raise_element(w, true);
+    }
+
+    /// The bar or the dock appeared, went or changed size: floating windows that now reach under them are moved out (and
+    /// shortened if they must be), as keep-clear does in the Hyprland session. Only when the free room changed.
+    pub fn keep_clear(&mut self) {
+        let zones: Vec<Rectangle<i32, Logical>> = self.space.outputs().map(|o| self.free_area(o)).collect();
+        if self.clear_zones == zones {
+            return;
+        }
+        self.clear_zones = zones;
+        // every floating window is mapped again in order, so the stacking stays as it was
+        for w in self.floating_shown() {
+            let Some(loc) = self.space.element_location(&w) else { continue };
+            let r = Rectangle::new(loc, w.geometry().size);
+            if r.size.w <= 0 || r.size.h <= 0 {
+                continue;
+            }
+            let (screen, zone) = self.screen_of(r);
+            let n = crate::placement::fit(r, screen, zone).unwrap_or(r);
+            self.place_at(&w, n);
+        }
+    }
+
+    /// The keyboard goes back to the window used last on the workspace now showing (a panel's pop-up closed, or let go of it).
+    pub fn focus_back(&mut self) {
+        let next = self
+            .focus_order
+            .iter()
+            .find(|s| self.space.elements().any(|w| is_window_of(w, s)))
+            .cloned()
+            .or_else(|| self.space.elements().rev().find_map(surface_of));
+        self.give_keyboard(next, SERIAL_COUNTER.next_serial());
+    }
+
+    /// A panel's surface was committed: one that asks for the keyboard exclusively (the start menu) gets it as soon as it shows,
+    /// and gives it back to the window when it hides or stops asking (Hyprland does the first; the session's config the second).
+    fn layer_keyboard(&mut self, surface: &WlSurface) {
+        use smithay::wayland::shell::wlr_layer::{KeyboardInteractivity, LayerSurfaceCachedState};
+        if self.locked {
+            return;
+        }
+        let (wants, layer) = with_states(surface, |st| {
+            let c = *st.cached_state.get::<LayerSurfaceCachedState>().current();
+            (c.keyboard_interactivity, c.layer)
+        });
+        let shown = smithay::backend::renderer::utils::with_renderer_surface_state(surface, |s| s.buffer().is_some()).unwrap_or(false);
+        let has = self.focused_surface().as_ref() == Some(surface);
+        if wants == KeyboardInteractivity::Exclusive && shown && matches!(layer, Layer::Top | Layer::Overlay) {
+            if !has {
+                let kb = self.keyboard.clone();
+                kb.set_focus(self, Some(KbFocus::Wl(surface.clone())), SERIAL_COUNTER.next_serial());
+            }
+        } else if has && (!shown || wants == KeyboardInteractivity::None) {
+            self.focus_back();
+        }
     }
 
     /// Make a window full screen (the whole output).
@@ -905,7 +1038,7 @@ impl App {
             }
             Action::SnapLeft | Action::SnapRight => {
                 let Some(t) = current.and_then(|s| self.window_for(&s)) else { return };
-                let zone = layer_map_for_output(&self.output).non_exclusive_zone();
+                let zone = self.free_area(&self.output.clone());
                 let half = zone.size.w / 2;
                 let (area, st) = if action == Action::SnapLeft {
                     (Rectangle::new(zone.loc, (half, zone.size.h).into()), S::TiledLeft)
@@ -953,7 +1086,7 @@ impl App {
         if self.ws_profile(self.current_ws) != Some(Profile::Tiling) {
             return;
         }
-        let zone = layer_map_for_output(&self.output).non_exclusive_zone();
+        let zone = self.free_area(&self.output.clone());
         // windows in the order they were opened; maximized, full screen and floating ones keep out of it
         let mut tiled: Vec<Window> = self
             .space
@@ -1572,63 +1705,20 @@ impl App {
         self.give_keyboard(surface, serial);
     }
 
+    /// Input from the nested window (winit). The headless backend calls the same steps (key, pointer_to, button) with input of
+    /// its own, made from the control socket: never from a real device.
     pub fn on_input(&mut self, event: InputEvent<WinitInput>) {
-        self.wake();
-        if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
-            if let InputEvent::PointerButton { .. } = &event {
-                eprintln!("button at {:?}, over {:?}", self.pointer_location, self.surface_under(self.pointer_location).map(|x| x.0.id()));
-            }
-        }
-        self.idle_state.notify_activity(&self.seat);
-        let (keyboard, pointer) = (self.keyboard.clone(), self.pointer.clone());
         match event {
-            InputEvent::Keyboard { event } => {
-                let serial = SERIAL_COUNTER.next_serial();
-                let state = event.state();
-                let code = event.key_code();
-                let taken = keyboard.input::<Action, _>(self, code, state, serial, event.time_msec(), |app, mods, handle| {
-                    let sym = handle.raw_latin_sym_or_raw_current_sym().map(|s| shortcuts::lower(s.raw())).unwrap_or(0);
-                    app.key_filter(u32::from(code), state, mods, sym)
-                });
-                if let Some(a) = taken {
-                    self.queued.push(a);
-                }
-                for a in std::mem::take(&mut self.queued) {
-                    self.run_action(a);
-                }
-            }
+            InputEvent::Keyboard { event } => self.key(event.key_code(), event.state(), event.time_msec()),
             InputEvent::PointerMotionAbsolute { event } => {
                 let size = self.output.current_mode().map(|m| m.size).unwrap_or_default();
                 let pos = event.position_transformed(size.to_logical(1));
-                self.pointer_location = pos;
-                if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
-                    eprintln!("pointer {:.0},{:.0}", pos.x, pos.y);
-                }
-                let serial = SERIAL_COUNTER.next_serial();
-                let hover = self.bar_at(pos).and_then(|(w, h)| surface_of(&w).map(|s| (s, h)));
-                if hover != self.bar_hover {
-                    self.bar_hover = hover;
-                }
-                let under = self.surface_under(pos);
-                pointer.motion(self, under, &MotionEvent { location: pos, serial, time: event.time_msec() });
-                pointer.frame(self);
+                self.pointer_to(pos, event.time_msec());
             }
-            InputEvent::PointerButton { event } => {
-                let serial = SERIAL_COUNTER.next_serial();
-                if event.state() == ButtonState::Pressed
-                    && !pointer.is_grabbed()
-                    && !self.locked
-                    && (self.press_on_decoration(serial, event.button_code()) || self.super_drag(serial, event.button_code()))
-                {
-                    return;
-                }
-                if event.state() == ButtonState::Pressed && !pointer.is_grabbed() {
-                    self.focus_under_pointer(serial);
-                }
-                pointer.button(self, &ButtonEvent { button: event.button_code(), state: event.state(), serial, time: event.time_msec() });
-                pointer.frame(self);
-            }
+            InputEvent::PointerButton { event } => self.button(event.button_code(), event.state(), event.time_msec()),
             InputEvent::PointerAxis { event } => {
+                self.input_seen();
+                let pointer = self.pointer.clone();
                 let amount = |a: Axis| event.amount(a).unwrap_or_else(|| event.amount_v120(a).unwrap_or(0.0) * 15.0 / 120.0);
                 let mut frame = AxisFrame::new(event.time_msec()).source(event.source());
                 for a in [Axis::Horizontal, Axis::Vertical] {
@@ -1648,6 +1738,154 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    /// Any input: draw again soon, and the user is not idle.
+    fn input_seen(&mut self) {
+        self.wake();
+        self.idle_state.notify_activity(&self.seat);
+    }
+
+    /// A key went down or up (an xkb key code: the kernel's code + 8). Shortcuts are taken here; the rest goes to the focus.
+    pub fn key(&mut self, code: smithay::input::keyboard::Keycode, state: KeyState, time: u32) {
+        self.input_seen();
+        let keyboard = self.keyboard.clone();
+        let serial = SERIAL_COUNTER.next_serial();
+        let taken = keyboard.input::<Action, _>(self, code, state, serial, time, |app, mods, handle| {
+            let sym = handle.raw_latin_sym_or_raw_current_sym().map(|s| shortcuts::lower(s.raw())).unwrap_or(0);
+            app.key_filter(u32::from(code), state, mods, sym)
+        });
+        if let Some(a) = taken {
+            self.queued.push(a);
+        }
+        for a in std::mem::take(&mut self.queued) {
+            self.run_action(a);
+        }
+    }
+
+    /// The pointer moved to `pos` (in the space's coordinates).
+    pub fn pointer_to(&mut self, pos: Point<f64, Logical>, time: u32) {
+        self.input_seen();
+        let pointer = self.pointer.clone();
+        self.pointer_location = pos;
+        if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
+            eprintln!("pointer {:.0},{:.0}", pos.x, pos.y);
+        }
+        let serial = SERIAL_COUNTER.next_serial();
+        let hover = self.bar_at(pos).and_then(|(w, h)| surface_of(&w).map(|s| (s, h)));
+        if hover != self.bar_hover {
+            self.bar_hover = hover;
+        }
+        let under = self.surface_under(pos);
+        pointer.motion(self, under, &MotionEvent { location: pos, serial, time });
+        pointer.frame(self);
+    }
+
+    /// A pointer button went down or up (a kernel button code: 0x110 is the left one).
+    pub fn button(&mut self, button: u32, state: ButtonState, time: u32) {
+        self.input_seen();
+        if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
+            eprintln!("button at {:?}, over {:?}", self.pointer_location, self.surface_under(self.pointer_location).map(|x| x.0.id()));
+        }
+        let pointer = self.pointer.clone();
+        let serial = SERIAL_COUNTER.next_serial();
+        if state == ButtonState::Pressed
+            && !pointer.is_grabbed()
+            && !self.locked
+            && (self.press_on_decoration(serial, button) || self.super_drag(serial, button))
+        {
+            return;
+        }
+        if state == ButtonState::Pressed && !pointer.is_grabbed() {
+            self.focus_under_pointer(serial);
+        }
+        pointer.button(self, &ButtonEvent { button, state, serial, time });
+        pointer.frame(self);
+    }
+}
+
+/// What the headless backend's control socket reports (headless.rs): the windows wherever they are, the keyboard's focus, the
+/// workspace and the lock.
+pub struct WindowInfo {
+    pub window: Window,
+    /// 0-based
+    pub workspace: usize,
+    pub at: Point<i32, Logical>,
+    pub states: Vec<&'static str>,
+}
+
+impl App {
+    pub fn workspace(&self) -> usize {
+        self.current_ws
+    }
+
+    /// Every window: those showing (bottom first), then minimized ones, then those on other workspaces.
+    pub fn window_infos(&self) -> Vec<WindowInfo> {
+        use xdg_toplevel::State as S;
+        let focus = self.focused_surface();
+        let states = |w: &Window, minimized: bool| {
+            let s = surface_of(w);
+            let mut v = vec![];
+            if s.is_some() && s == focus {
+                v.push("active");
+            }
+            v.push(match &s {
+                Some(s) if self.is_tiled(w, s) => "tiled",
+                _ => "floating",
+            });
+            for (st, name) in [(S::Maximized, "maximized"), (S::Fullscreen, "fullscreen"), (S::TiledLeft, "left"), (S::TiledRight, "right")]
+            {
+                if win_has(w, st) {
+                    v.push(name);
+                }
+            }
+            if minimized {
+                v.push("minimized");
+            }
+            v
+        };
+        let mut out: Vec<WindowInfo> = self
+            .space
+            .elements()
+            .map(|w| WindowInfo {
+                window: w.clone(),
+                workspace: self.current_ws,
+                at: self.space.element_location(w).unwrap_or_default(),
+                states: states(w, false),
+            })
+            .collect();
+        for w in &self.minimized {
+            let at = surface_of(w).and_then(|s| self.saved.iter().find(|(x, _)| *x == s).map(|(_, r)| r.loc)).unwrap_or_default();
+            out.push(WindowInfo { window: w.clone(), workspace: self.current_ws, at, states: states(w, true) });
+        }
+        for (w, ws, at) in &self.parked {
+            out.push(WindowInfo { window: w.clone(), workspace: *ws, at: *at, states: states(w, false) });
+        }
+        out
+    }
+
+    /// What has the keyboard: "window APP TITLE", "layer NAMESPACE OUTPUT", "lock OUTPUT", "surface" or "none" (tab separated).
+    pub fn focus_info(&self) -> String {
+        let Some(f) = self.focused_surface() else { return "none".into() };
+        if let Some((o, _)) = self.lock_surfaces.iter().find(|(_, l)| l.wl_surface() == &f) {
+            return format!("lock\t{}", o.name());
+        }
+        if let Some(w) = self.window_for(&f) {
+            let (title, app_id) = title_app(&w);
+            return format!("window\t{app_id}\t{title}");
+        }
+        for o in self.space.outputs() {
+            let map = layer_map_for_output(o);
+            if let Some(l) = map.layer_for_surface(&f, WindowSurfaceType::TOPLEVEL) {
+                return format!("layer\t{}\t{}", l.namespace(), o.name());
+            }
+        }
+        "surface".into()
+    }
+
+    /// The lock surfaces: their output and the size the locker drew at (None until it has).
+    pub fn lock_infos(&self) -> Vec<(Output, Option<smithay::utils::Size<u32, Logical>>)> {
+        self.lock_surfaces.iter().map(|(o, l)| (o.clone(), l.current_state().size)).collect()
     }
 }
 
@@ -1671,8 +1909,12 @@ impl CompositorHandler for App {
             while let Some(p) = get_parent(&root) {
                 root = p;
             }
-            if let Some(w) = self.space.elements().find(|w| is_window_of(w, &root)).cloned() {
+            let found = self.space.elements().find(|w| is_window_of(w, &root)).cloned();
+            if let Some(w) = found {
                 w.on_commit();
+                if self.unplaced.contains(&root) && w.geometry().size.w > 0 && w.geometry().size.h > 0 {
+                    self.place_new(&w);
+                }
             }
         }
         // Panels and backgrounds: their size and place are settled on every commit, and the first commit is answered with the
@@ -1701,6 +1943,9 @@ impl CompositorHandler for App {
                     });
                     layer.layer_surface().send_configure();
                 }
+                drop(map);
+                self.keep_clear();
+                self.layer_keyboard(surface);
                 break;
             }
         }
@@ -1887,6 +2132,8 @@ impl XdgShellHandler for App {
         });
         surface.send_configure();
         self.space.map_element(window.clone(), at, true);
+        // centred in the free room once its first picture says how big it is (place_new)
+        self.unplaced.push(surface.wl_surface().clone());
         let decorate = self.decorate_all;
         self.adopt(&window, surface.wl_surface(), decorate);
     }
@@ -1974,6 +2221,7 @@ impl WlrLayerShellHandler for App {
 
     fn layer_destroyed(&mut self, surface: WlrLayerSurface) {
         self.wake();
+        let had_keyboard = self.focused_surface().as_ref() == Some(surface.wl_surface());
         for o in self.space.outputs() {
             let mut map = layer_map_for_output(o);
             let found = map.layers().find(|l| l.layer_surface() == &surface).cloned();
@@ -1981,6 +2229,10 @@ impl WlrLayerShellHandler for App {
                 map.unmap_layer(&l);
             }
         }
+        if had_keyboard && !self.locked {
+            self.focus_back();
+        }
+        self.keep_clear();
     }
 }
 delegate_layer_shell!(App);
@@ -1992,6 +2244,12 @@ impl SessionLockHandler for App {
 
     fn lock(&mut self, confirmation: SessionLocker) {
         self.wake();
+        // A second locker while the first is running is refused (dropping the confirmation tells it "finished"). One whose
+        // locker died may be taken over by a new one, which can then unlock: the session's allow_session_lock_restore on Hyprland.
+        if self.locked && self.lock_owner.as_ref().is_some_and(|l| l.is_alive()) {
+            return;
+        }
+        self.lock_owner = Some(confirmation.ext_session_lock().clone());
         // From now on nothing of the session is drawn or receives input. Confirmed at once: the screen is already only the lock's.
         self.locked = true;
         confirmation.lock();
@@ -2005,6 +2263,9 @@ impl SessionLockHandler for App {
         self.wake();
         self.locked = false;
         self.lock_surfaces.clear();
+        self.lock_owner = None;
+        // the keyboard goes back to the window used last (it was the lock's while locked)
+        self.focus_back();
     }
 
     /// One lock surface per output, as big as it; the keyboard goes to the one on the first output.
