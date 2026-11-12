@@ -619,7 +619,7 @@ impl Panel {
 mod tests {
     use super::*;
 
-    const SHOW: &str = r#"{"status": {"version": "0.1.0-dev", "running": true, "kvm": true, "ask_password": true,
+    const SHOW: &str = r#"{"status": {"version": "1.0.0", "running": true, "kvm": true, "ask_password": true,
         "space": {"total_bytes": 21474836480, "images_bytes": 8589934592, "guests_bytes": 1073741824, "evidence_bytes": 0, "exchange_bytes": 4096},
         "instances": {"total": 2, "running": 1, "held": 0}},
       "instances": [
