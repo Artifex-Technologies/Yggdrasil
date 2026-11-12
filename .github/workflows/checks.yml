@@ -17,13 +17,16 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0, pinned by commit
         with:
           persist-credentials: false
-      - name: Test and audit every crate
+      - name: Format, lint, test and audit every crate
         run: |
           cargo install cargo-audit --locked
-          # every crate is tested and audited; the job fails at the end, naming each one that did not pass
+          # every crate is checked, tested and audited; the job fails at the end, naming each one that did not pass
           failed=""
           for d in packages/*/; do
             [ -f "$d/Cargo.toml" ] || continue
+            # formatting (rustfmt.toml at the top) and lints: the debt cleared on 2026-11-11 must not come back
+            (cd "$d" && cargo fmt --check) || failed="$failed $d(fmt)"
+            (cd "$d" && cargo clippy --quiet --all-targets -- -D warnings) || failed="$failed $d(clippy)"
             (cd "$d" && cargo test --quiet) || failed="$failed $d(tests)"
             # RUSTSEC-2026-0196/0197: cgmath (unmaintained; Matrix::swap_columns unsound for identical indices) comes with smithay
             # 0.7, the newest, in the compositor; nothing here calls swap_columns. Revisit when smithay drops cgmath.
