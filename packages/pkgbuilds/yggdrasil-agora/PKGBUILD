@@ -1,8 +1,8 @@
 # Agora: apps in one place (built from packages/market in this repository), with its administrator helper pkg-root from
 # packages/agora-helpers (Rust; the Python script it replaced is kept in packages/market/helpers/python for a rollback).
 pkgname=yggdrasil-agora
-pkgver=0.1.0
-pkgrel=5
+pkgver=1.0.0
+pkgrel=1
 pkgdesc="Agora: browse and install apps from Yggdrasil's catalog and repositories you add"
 arch=('x86_64')
 provides=('labyrinth-market')
@@ -17,6 +17,10 @@ options=('!lto')
 
 _src="$startdir/../../market"
 _helpers="$startdir/../../agora-helpers"
+# The version is the system's (VERSION at the top of this repository); the build number counts the commits since that release
+# which touch the folders above, the crates they use and this recipe (scripts/package-version.sh, Labyrinth_OS docs/VERSIONING.md)
+. "$startdir/../../../scripts/package-version.sh"
+_version "$startdir" "$_src" "$_helpers"
 
 build() {
   cd "$_src"

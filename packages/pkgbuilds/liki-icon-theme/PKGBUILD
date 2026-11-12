@@ -2,8 +2,8 @@
 # liki-build, liki-icns and liki-icon-import are Rust (packages/liki/src; the Python scripts they replaced are kept in
 # packages/liki/python for a rollback); liki-icon and liki-minos-icon are shell scripts.
 pkgname=liki-icon-theme
-pkgver=0.1.0
-pkgrel=4
+pkgver=1.0.0
+pkgrel=1
 pkgdesc="Liki, Yggdrasil's icon pack: the system's own icons, the default app icon, and liki-build for app logos"
 arch=('x86_64')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
@@ -16,6 +16,10 @@ provides=('labyrinth-brand-pack')
 options=('!lto')
 
 _src="$startdir/../../liki"
+# The version is the system's (VERSION at the top of this repository); the build number counts the commits since that release
+# which touch the folders above, the crates they use and this recipe (scripts/package-version.sh, Labyrinth_OS docs/VERSIONING.md)
+. "$startdir/../../../scripts/package-version.sh"
+_version "$startdir" "$_src"
 
 build() {
   cd "$_src"

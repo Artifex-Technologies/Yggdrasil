@@ -1,8 +1,8 @@
 # Lets X11 programs that draw their own title bar (Steam) be dragged and resized in Yggdrasil's Hyprland session (Rust): built
 # from packages/xmove in this repository.
 pkgname=yggdrasil-xmove
-pkgver=0.1.0
-pkgrel=2
+pkgver=1.0.0
+pkgrel=1
 pkgdesc="Lets X11 programs that draw their own title bar (Steam) be dragged and resized in Yggdrasil's Hyprland session"
 arch=('x86_64')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
@@ -12,6 +12,10 @@ makedepends=('cargo')
 options=('!lto')
 
 _src="$startdir/../../xmove"
+# The version is the system's (VERSION at the top of this repository); the build number counts the commits since that release
+# which touch the folders above, the crates they use and this recipe (scripts/package-version.sh, Labyrinth_OS docs/VERSIONING.md)
+. "$startdir/../../../scripts/package-version.sh"
+_version "$startdir" "$_src"
 
 build() {
   cd "$_src"

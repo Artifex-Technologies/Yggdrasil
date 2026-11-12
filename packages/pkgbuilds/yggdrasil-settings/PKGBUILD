@@ -5,8 +5,8 @@
 # on-demand helpers account, bootscreen, game-fix and yggdrasil-gpu-run from packages/settings-helpers (Rust; their Python
 # scripts are kept there too).
 pkgname=yggdrasil-settings
-pkgver=0.1.0
-pkgrel=38
+pkgver=1.0.0
+pkgrel=1
 pkgdesc="Settings: Wi-Fi, Bluetooth, displays, sound, appearance, power and more"
 arch=('x86_64')
 provides=('labyrinth-settings')
@@ -31,6 +31,10 @@ _src="$startdir/../../settings"
 _power="$startdir/../../power-helpers"
 _helpers="$startdir/../../settings-helpers"
 _wifiscan="$startdir/../../wifiscan"
+# The version is the system's (VERSION at the top of this repository); the build number counts the commits since that release
+# which touch the folders above, the crates they use and this recipe (scripts/package-version.sh, Labyrinth_OS docs/VERSIONING.md)
+. "$startdir/../../../scripts/package-version.sh"
+_version "$startdir" "$_src" "$_power" "$_helpers" "$_wifiscan"
 
 build() {
   cd "$_src"

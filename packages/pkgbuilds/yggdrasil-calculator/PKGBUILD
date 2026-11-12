@@ -1,7 +1,7 @@
 # Calculator: standard with history, scientific when widened (packages/calculator).
 pkgname=yggdrasil-calculator
-pkgver=0.1.0
-pkgrel=2
+pkgver=1.0.0
+pkgrel=1
 pkgdesc="Calculator: standard with history, scientific when widened"
 arch=('x86_64')
 provides=('labyrinth-calculator')
@@ -14,6 +14,10 @@ makedepends=('cargo')
 options=('!lto')
 
 _src="$startdir/../../calculator"
+# The version is the system's (VERSION at the top of this repository); the build number counts the commits since that release
+# which touch the folders above, the crates they use and this recipe (scripts/package-version.sh, Labyrinth_OS docs/VERSIONING.md)
+. "$startdir/../../../scripts/package-version.sh"
+_version "$startdir" "$_src"
 
 build() {
   cd "$_src"

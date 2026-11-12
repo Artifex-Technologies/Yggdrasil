@@ -1,7 +1,7 @@
 # Yggdrasil keyring sync: one question at login if the keyring and the login password drifted apart (Rust): built from packages/keyring-sync in this repository.
 pkgname=yggdrasil-keyring-sync
-pkgver=0.1.0
-pkgrel=2
+pkgver=1.0.0
+pkgrel=1
 pkgdesc="Yggdrasil keyring sync: one question at login if the keyring and the login password drifted apart"
 arch=('x86_64')
 provides=('labyrinth-keyring-sync')
@@ -14,6 +14,10 @@ makedepends=('cargo')
 options=('!lto')
 
 _src="$startdir/../../keyring-sync"
+# The version is the system's (VERSION at the top of this repository); the build number counts the commits since that release
+# which touch the folders above, the crates they use and this recipe (scripts/package-version.sh, Labyrinth_OS docs/VERSIONING.md)
+. "$startdir/../../../scripts/package-version.sh"
+_version "$startdir" "$_src"
 
 build() {
   cd "$_src"

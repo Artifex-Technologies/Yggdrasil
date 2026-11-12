@@ -1,6 +1,6 @@
 # Saga MD, the Markdown reader: Markdown and text files shown formatted, or as their source to read and edit (packages/saga-md).
 pkgname=saga-md
-pkgver=0.1.0
+pkgver=1.0.0
 pkgrel=1
 pkgdesc="Saga MD, the Markdown reader: Markdown and text files shown formatted, or as their source to read and edit"
 arch=('x86_64')
@@ -17,6 +17,10 @@ provides=('yggdrasil-reader')
 options=('!lto')
 
 _src="$startdir/../../saga-md"
+# The version is the system's (VERSION at the top of this repository); the build number counts the commits since that release
+# which touch the folders above, the crates they use and this recipe (scripts/package-version.sh, Labyrinth_OS docs/VERSIONING.md)
+. "$startdir/../../../scripts/package-version.sh"
+_version "$startdir" "$_src"
 
 build() {
   cd "$_src"

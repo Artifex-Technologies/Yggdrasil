@@ -1,7 +1,7 @@
 # Yggdrasil's Color Picker: pick a colour anywhere on the screen (Win + Shift + C) and copy it: packages/colorpicker.
 pkgname=yggdrasil-colorpicker
-pkgver=0.1.0
-pkgrel=2
+pkgver=1.0.0
+pkgrel=1
 pkgdesc="Yggdrasil Color Picker: a frozen screen with a loupe, the colour copied in the chosen format"
 arch=('x86_64')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
@@ -11,6 +11,10 @@ makedepends=('cargo')
 options=('!lto')
 
 _src="$startdir/../../colorpicker"
+# The version is the system's (VERSION at the top of this repository); the build number counts the commits since that release
+# which touch the folders above, the crates they use and this recipe (scripts/package-version.sh, Labyrinth_OS docs/VERSIONING.md)
+. "$startdir/../../../scripts/package-version.sh"
+_version "$startdir" "$_src"
 
 build() {
   cd "$_src"

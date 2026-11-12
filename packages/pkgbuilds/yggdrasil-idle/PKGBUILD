@@ -1,7 +1,7 @@
 # Yggdrasil idle manager: watches how long you are away (observe-only unless configured) (Rust): built from packages/idle in this repository.
 pkgname=yggdrasil-idle
-pkgver=0.1.0
-pkgrel=4
+pkgver=1.0.0
+pkgrel=1
 pkgdesc="Yggdrasil idle manager: watches how long you are away (observe-only unless configured)"
 arch=('x86_64')
 provides=('labyrinth-idle')
@@ -15,6 +15,10 @@ makedepends=('cargo')
 options=('!lto')
 
 _src="$startdir/../../idle"
+# The version is the system's (VERSION at the top of this repository); the build number counts the commits since that release
+# which touch the folders above, the crates they use and this recipe (scripts/package-version.sh, Labyrinth_OS docs/VERSIONING.md)
+. "$startdir/../../../scripts/package-version.sh"
+_version "$startdir" "$_src"
 
 build() {
   cd "$_src"

@@ -53,6 +53,10 @@ version that runs in a window ([docs/COMPOSITOR.md](docs/COMPOSITOR.md)). The ch
 | `packages/theme` | `ygg-theme`, `ygg-cursors` | the look of GTK and Qt programs (dark mode included) and the mouse pointer ([docs/THEME.md](docs/THEME.md)) |
 | `packages/pkgbuilds` | | an Arch package recipe for each program, built from this repository |
 
+## Version
+
+`VERSION` is the system version, the same as Labyrinth OS's (Labyrinth OS 1.0 since 2026-11-11): every package built here has it, like an iPhone's built-in apps, as `VERSION-<build number>`; Settings > About shows it from `/etc/os-release`. How the numbers work and how to make a release: [Labyrinth_OS docs/VERSIONING.md](https://github.com/Artifex-Technologies/Labyrinth_OS/blob/main/docs/VERSIONING.md).
+
 <!-- shortcuts:start -->
 ## Keyboard shortcuts
 

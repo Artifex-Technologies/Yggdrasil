@@ -1,7 +1,7 @@
 # Yggdrasil's own desktop session: Hyprland with Yggdrasil's config (built from packages/session in this repository).
 pkgname=yggdrasil-session
-pkgver=0.1.0
-pkgrel=10
+pkgver=1.0.0
+pkgrel=1
 pkgdesc="Yggdrasil's own desktop session, on Hyprland"
 arch=('any')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
@@ -12,6 +12,10 @@ depends=('hyprland' 'xdg-desktop-portal-hyprland' 'yggdrasil-panel' 'yggdrasil-i
 optdepends=('ghostty: the terminal on Super+Return' 'btop: running programs on Ctrl+Shift+Esc')
 
 _src="$startdir/../../session"
+# The version is the system's (VERSION at the top of this repository); the build number counts the commits since that release
+# which touch the folders above, the crates they use and this recipe (scripts/package-version.sh, Labyrinth_OS docs/VERSIONING.md)
+. "$startdir/../../../scripts/package-version.sh"
+_version "$startdir" "$_src"
 
 package() {
   install -Dm755 "$_src/bin/yggdrasil-session" "$pkgdir/usr/bin/yggdrasil-session"

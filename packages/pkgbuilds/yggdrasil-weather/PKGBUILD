@@ -2,8 +2,8 @@
 # Builds yggdrasil-weather from packages/weather/ in this repository. Build from
 # this directory with `makepkg -s`.
 pkgname=yggdrasil-weather
-pkgver=0.1.0
-pkgrel=5
+pkgver=1.0.0
+pkgrel=1
 pkgdesc="Multi-model weather consensus for the Yggdrasil bar, scored against measured temperatures"
 arch=('x86_64')
 provides=('labyrinth-weather')
@@ -17,6 +17,10 @@ makedepends=('cargo')
 options=('!lto')
 
 _src="$startdir/../../weather"
+# The version is the system's (VERSION at the top of this repository); the build number counts the commits since that release
+# which touch the folders above, the crates they use and this recipe (scripts/package-version.sh, Labyrinth_OS docs/VERSIONING.md)
+. "$startdir/../../../scripts/package-version.sh"
+_version "$startdir" "$_src"
 
 build() {
   cd "$_src"

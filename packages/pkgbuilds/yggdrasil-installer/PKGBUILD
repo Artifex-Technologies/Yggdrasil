@@ -4,8 +4,8 @@
 # Built from packages/installer (the window) and packages/install-system (the install program, Rust; the Python script it
 # replaced is kept in packages/installer/helpers/python for a rollback).
 pkgname=yggdrasil-installer
-pkgver=0.1.0
-pkgrel=4
+pkgver=1.0.0
+pkgrel=1
 pkgdesc="Installs the operating system from its live medium: Yggdrasil's window and install program"
 arch=('x86_64')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
@@ -21,6 +21,10 @@ options=('!lto')
 
 _src="$startdir/../../installer"
 _sys="$startdir/../../install-system"
+# The version is the system's (VERSION at the top of this repository); the build number counts the commits since that release
+# which touch the folders above, the crates they use and this recipe (scripts/package-version.sh, Labyrinth_OS docs/VERSIONING.md)
+. "$startdir/../../../scripts/package-version.sh"
+_version "$startdir" "$_src" "$_sys"
 
 build() {
   cd "$_src"
