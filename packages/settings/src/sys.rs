@@ -68,12 +68,23 @@ pub fn os_logo(os_release: &str) -> String {
         .unwrap_or_default()
 }
 
+/// The system's name with its version, as About shows it: "Labyrinth OS 1.0" from PRETTY_NAME (or NAME) and VERSION. A
+/// PRETTY_NAME that already names the version ("Fedora Linux 40 (Workstation Edition)") is shown as it is.
 pub fn os_name(os_release: &str) -> String {
     let kv: BTreeMap<&str, &str> = os_release
         .lines()
         .filter_map(|l| l.split_once('='))
+        .map(|(k, v)| (k.trim(), v.trim().trim_matches('"').trim_matches('\'')))
         .collect();
-    kv.get("PRETTY_NAME").or(kv.get("NAME")).map(|v| v.trim_matches('"').to_string()).unwrap_or_default()
+    let name = kv.get("PRETTY_NAME").or(kv.get("NAME")).copied().unwrap_or_default();
+    let version = kv.get("VERSION").copied().unwrap_or_default();
+    let id = kv.get("VERSION_ID").copied().unwrap_or_default();
+    let named = [version, id].iter().any(|v| !v.is_empty() && name.contains(v));
+    if name.is_empty() || version.is_empty() || named {
+        name.to_string()
+    } else {
+        format!("{name} {version}")
+    }
 }
 
 pub fn cpu_model(cpuinfo: &str) -> String {
@@ -1212,6 +1223,13 @@ mod tests {
     #[test]
     fn about_parsers() {
         assert_eq!(os_name("NAME=\"Some OS\"\nPRETTY_NAME=\"Some OS 1\"\n"), "Some OS 1");
+        let labyrinth = "NAME=\"Labyrinth OS\"\nPRETTY_NAME=\"Labyrinth OS\"\nID=labyrinth\nVERSION=\"1.0\"\nVERSION_ID=1.0.0\nBUILD_ID=rolling\n";
+        assert_eq!(os_name(labyrinth), "Labyrinth OS 1.0", "the system version from VERSION");
+        assert_eq!(os_name("NAME=\"Labyrinth OS\"\nVERSION=\"1.1.1\"\nVERSION_ID=1.1.1\n"), "Labyrinth OS 1.1.1", "NAME when there is no PRETTY_NAME");
+        assert_eq!(os_name("NAME=\"Labyrinth OS\"\nPRETTY_NAME=\"Labyrinth OS\"\nID=labyrinth\n"), "Labyrinth OS", "an os-release without a version (before 1.0)");
+        let fedora = "NAME=\"Fedora Linux\"\nVERSION=\"40 (Workstation Edition)\"\nVERSION_ID=40\nPRETTY_NAME=\"Fedora Linux 40 (Workstation Edition)\"\n";
+        assert_eq!(os_name(fedora), "Fedora Linux 40 (Workstation Edition)", "a PRETTY_NAME that names its version is not repeated");
+        assert_eq!(os_name("NAME=\"Arch Linux\"\nPRETTY_NAME=\"Arch Linux\"\nBUILD_ID=rolling\n"), "Arch Linux");
         assert_eq!(os_logo("NAME=x\nLOGO=../../etc/passwd\n"), "", "an icon name, never a path");
         let cpu = "processor\t: 0\nmodel name\t: Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz\nprocessor\t: 1\nmodel name\t: Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz\n";
         assert_eq!(cpu_model(cpu), "Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz × 2");
