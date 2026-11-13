@@ -2,7 +2,7 @@
 name = "yggdrasil-wm"
 version = "0.1.0"
 edition = "2021"
-description = "What Yggdrasil's own tools ask of the compositor and tell it to do (windows, workspaces, screens, the pointer), whichever compositor runs: Hyprland through its socket, Yggdrasil's own through its control socket. Also yggdrasil-snap and yggdrasil-close."
+description = "What Yggdrasil's own tools ask of the compositor and tell it to do (windows, workspaces, screens, the pointer), whichever compositor runs: Hyprland through its socket, Yggdrasil's own through its control socket. Also yggdrasil-snap, yggdrasil-close and yggdrasil-logout."
 license = "MPL-2.0"
 
 [lib]
@@ -16,6 +16,10 @@ path = "src/bin/yggdrasil-snap.rs"
 [[bin]]
 name = "yggdrasil-close"
 path = "src/bin/yggdrasil-close.rs"
+
+[[bin]]
+name = "yggdrasil-logout"
+path = "src/bin/yggdrasil-logout.rs"
 
 [dependencies]
 # Hyprland's answers are JSON (already in the panel's tree)

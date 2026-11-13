@@ -13,3 +13,16 @@ dispatch hl.dsp.focus({ direction = "l" })	/dispatch hl.dsp.focus({ direction = 
 dispatch hl.dsp.window.resize({ x = 960, y = 1000 })	/dispatch hl.dsp.window.resize({ x = 960, y = 1000 })
 eval hl.config({ cursor = { inactive_timeout = 0.25 } })	/eval hl.config({ cursor = { inactive_timeout = 0.25 } })
 dispatch hl.dsp.window.close()	/dispatch hl.dsp.window.close()
+dispatch sendshortcut CTRL SHIFT, V, activewindow	/dispatch sendshortcut CTRL SHIFT, V, activewindow
+dispatch sendshortcut CTRL, V, activewindow	/dispatch sendshortcut CTRL, V, activewindow
+reload	/reload
+setcursor Yggdrasil 24	/setcursor Yggdrasil 24
+configerrors	/configerrors
+-j monitors all	j/monitors all
+-j binds	j/binds
+clients -j	j/clients
+-j layers	j/layers
+dispatch hl.dsp.focus({ window = "class:org.example.Settings" })	/dispatch hl.dsp.focus({ window = "class:org.example.Settings" })
+dispatch hl.dsp.window.close({ window = "address:0xabc" })	/dispatch hl.dsp.window.close({ window = "address:0xabc" })
+dispatch hl.dsp.exit()	/dispatch hl.dsp.exit()
+eval hl.config({ input = { kb_layout = "us", kb_variant = "" } })	/eval hl.config({ input = { kb_layout = "us", kb_variant = "" } })

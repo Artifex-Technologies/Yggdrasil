@@ -84,6 +84,9 @@ mod tests {
             disabled: false,
             active_workspace: Some(1),
             special_workspace: None,
+            special_workspace_id: None,
+            refresh: None,
+            modes: vec![],
         }
     }
 

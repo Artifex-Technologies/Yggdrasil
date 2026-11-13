@@ -1,0 +1,63 @@
+{
+"DP-1": {
+    "levels": {
+
+        "0": [
+                {
+                    "address": "0x5a0000009000",
+                    "x": 0,
+                    "y": 0,
+                    "w": 2560,
+                    "h": 1440,
+                    "alpha": 1,
+                    "namespace": "yggdrasil-wallpaper",
+                    "pid": 4200
+                }
+        ],        "1": [
+],
+        "2": [
+                {
+                    "address": "0x5a0000009100",
+                    "x": 0,
+                    "y": 0,
+                    "w": 2560,
+                    "h": 28,
+                    "alpha": 1,
+                    "namespace": "other-bar",
+                    "pid": 4200
+                },
+                {
+                    "address": "0x5a0000009200",
+                    "x": 980,
+                    "y": 1370,
+                    "w": 600,
+                    "h": 62,
+                    "alpha": 1,
+                    "namespace": "yggdrasil-dock",
+                    "pid": 4200
+                }
+        ],        "3": [
+]
+    }
+},
+"HDMI-A-1": {
+    "levels": {
+
+        "0": [
+                {
+                    "address": "0x5a0000009300",
+                    "x": 2560,
+                    "y": 0,
+                    "w": 1536,
+                    "h": 864,
+                    "alpha": 1,
+                    "namespace": "yggdrasil-wallpaper",
+                    "pid": 4200
+                }
+        ],        "1": [
+],        "2": [
+],        "3": [
+]
+    }
+}
+}

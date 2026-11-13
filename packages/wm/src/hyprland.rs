@@ -2,6 +2,8 @@
 //! `hyprctl` sends (`j/clients` for `hyprctl -j clients`, `/dispatch LUA` for `hyprctl dispatch LUA`, `/eval LUA` for `hyprctl
 //! eval LUA`; recorded from hyprctl 0.57.1, tests/fixtures/hyprland-0.57.1/wire.txt), without starting a program for each. The
 //! answers are read as Yggdrasil's tools always read hyprctl's (the same fields and the same defaults when one is missing).
+//! A few tools spoke to the socket themselves before (the Task Manager, yggdrasil-xmove) with requests of their own form
+//! ("dispatch ..." without the slash); they keep sending exactly those.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -13,6 +15,8 @@ use crate::{Desktops, MonitorRef, Rect, Screen, Window};
 /// Answers needed at once, while a window is dragged (the pointer, the window in front): as the zones always asked.
 const QUICK: Duration = Duration::from_millis(200);
 const NORMAL: Duration = Duration::from_secs(2);
+/// The lock screen's splash asks whether the desktop is up while it waits: as it always asked.
+const SPLASH: Duration = Duration::from_millis(500);
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Hyprland {
@@ -33,9 +37,29 @@ fn workspace(id: &str) -> Option<i64> {
     id.parse::<i64>().ok()
 }
 
+/// A name that may go into a request line or Lua text as it is: letters, digits and `._-+`, not empty, at most 128.
+pub fn plain_word(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 128 && s.chars().all(|c| c.is_ascii_alphanumeric() || "._-+".contains(c))
+}
+
 impl Hyprland {
     fn ask(&self, request: &str, timeout: Duration) -> Option<String> {
         crate::sock::request(&self.socket, request.as_bytes(), timeout)
+    }
+
+    /// A request exactly as given (for the tools that wrote their own), bounded like every other.
+    pub fn request(&self, raw: &str, timeout: Duration) -> Option<String> {
+        self.ask(raw, timeout)
+    }
+
+    /// `hyprctl COMMAND...` without -j (`reload`, `setcursor NAME SIZE`, `configerrors`).
+    pub fn command(&self, line: &str) -> Option<String> {
+        self.ask(&format!("/{line}"), NORMAL)
+    }
+
+    /// Hyprland's event socket (.socket2.sock), beside the control socket.
+    pub fn events_socket(&self) -> PathBuf {
+        self.socket.with_file_name(".socket2.sock")
     }
 
     /// `hyprctl -j WHAT`.
@@ -157,6 +181,79 @@ impl Hyprland {
         self.eval(&format!("hl.config({{ cursor = {{ inactive_timeout = {secs} }} }})"));
     }
 
+    /// The Task Manager's close (the request it always sent): the window is asked, as its close button would.
+    pub fn close_window(&self, window: &str) -> bool {
+        let Some(a) = address(window) else { return false };
+        self.ask(&format!("dispatch hl.dsp.window.close({{ window = '{a}' }})"), NORMAL).is_some_and(|r| r.trim() == "ok")
+    }
+
+    /// The Task Manager's "bring to the front".
+    pub fn focus_window(&self, window: &str) -> bool {
+        let Some(a) = address(window) else { return false };
+        self.ask(&format!("dispatch hl.dsp.focus({{ window = '{a}' }})"), NORMAL).is_some_and(|r| r.trim() == "ok")
+    }
+
+    /// yggdrasil-logout's close of every window.
+    pub fn ask_to_close(&self, window: &str) -> bool {
+        let Some(a) = address(window) else { return false };
+        self.dispatch(&format!("hl.dsp.window.close({{ window = \"{a}\" }})")).is_some()
+    }
+
+    /// Ends the session (Hyprland exits).
+    pub fn exit(&self) -> bool {
+        self.dispatch("hl.dsp.exit()").is_some()
+    }
+
+    /// Focuses the window of a class (a program's own window that is already open).
+    pub fn focus_class(&self, class: &str) -> bool {
+        plain_word(class) && self.dispatch(&format!("hl.dsp.focus({{ window = \"class:{class}\" }})")).is_some_and(|r| r.trim() == "ok")
+    }
+
+    /// Ctrl+V (Ctrl+Shift+V with `shift`: a terminal's paste) pressed in the window in front by the compositor itself.
+    pub fn paste(&self, shift: bool) -> bool {
+        let m = if shift { "CTRL SHIFT" } else { "CTRL" };
+        self.dispatch(&format!("sendshortcut {m}, V, activewindow")).is_some()
+    }
+
+    /// Every screen, those switched off too (`monitors all`).
+    pub fn screens_all(&self) -> Vec<Screen> {
+        self.query("monitors all").map(|j| parse_monitors(&j)).unwrap_or_default()
+    }
+
+    /// Hyprland reads its config again: Ok, or what it answered.
+    pub fn reload(&self) -> Result<(), String> {
+        match self.command("reload") {
+            Some(r) if r.trim() == "ok" => Ok(()),
+            Some(r) => Err(r.trim().to_string()),
+            None => Err("Hyprland did not answer".into()),
+        }
+    }
+
+    /// The key bindings, as the shortcut lists read them.
+    pub fn binds(&self) -> Option<Vec<yggdrasil_conf::shortcuts::Bind>> {
+        Some(parse_binds(&serde_json::from_str::<Value>(&self.query("binds")?).ok()?))
+    }
+
+    /// The mistakes in the config (one per line; empty when there are none).
+    pub fn config_errors(&self) -> Option<String> {
+        self.command("configerrors").map(|t| t.trim().to_string())
+    }
+
+    /// The pointer's theme and size, now.
+    pub fn set_cursor(&self, theme: &str, size: u32) -> bool {
+        plain_word(theme) && self.command(&format!("setcursor {theme} {size}")).is_some()
+    }
+
+    /// Whether a panel or background of this namespace is shown on some screen.
+    pub fn has_layer(&self, namespace: &str) -> Option<bool> {
+        Some(self.ask("j/layers", SPLASH)?.contains(&format!("\"{namespace}\"")))
+    }
+
+    /// The keyboard layout the live session types with (the installer tries the one chosen).
+    pub fn set_keyboard(&self, layout: &str, variant: &str) -> bool {
+        self.eval(&format!("hl.config({{ input = {{ kb_layout = {layout:?}, kb_variant = {variant:?} }} }})")).is_some()
+    }
+
     // The session's own keys (yggdrasil-snap, yggdrasil-close): they act on the focused window.
 
     pub fn focus_direction(&self, d: char) -> bool {
@@ -240,7 +337,32 @@ pub fn parse_monitors(json: &str) -> Vec<Screen> {
                 disabled: m["disabled"].as_bool().unwrap_or(false),
                 active_workspace: m["activeWorkspace"]["id"].as_i64(),
                 special_workspace: (!special.is_empty()).then(|| special.to_string()),
+                special_workspace_id: m["specialWorkspace"]["id"].as_i64().filter(|id| *id != 0),
+                refresh: m["refreshRate"].as_f64(),
+                modes: m["availableModes"]
+                    .as_array()
+                    .map(|l| l.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+                    .unwrap_or_default(),
             })
+        })
+        .collect()
+}
+
+/// `binds`: what the shortcut lists show (a key given by its code, such as the number row's, has no name: `code:N`).
+pub fn parse_binds(v: &Value) -> Vec<yggdrasil_conf::shortcuts::Bind> {
+    v.as_array()
+        .map(|a| a.as_slice())
+        .unwrap_or(&[])
+        .iter()
+        .map(|b| yggdrasil_conf::shortcuts::Bind {
+            modmask: b["modmask"].as_u64().unwrap_or(0) as u32,
+            key: b["key"]
+                .as_str()
+                .filter(|k| !k.is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("code:{}", b["keycode"].as_u64().unwrap_or(0))),
+            desc: b["description"].as_str().unwrap_or("").to_string(),
+            release: b["release"].as_bool().unwrap_or(false),
         })
         .collect()
 }

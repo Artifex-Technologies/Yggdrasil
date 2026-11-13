@@ -83,8 +83,12 @@ pub struct Screen {
     pub disabled: bool,
     /// The workspace it shows.
     pub active_workspace: Option<i64>,
-    /// A hidden workspace open over it (Hyprland's "special:minimized").
+    /// A hidden workspace open over it (Hyprland's "special:minimized"), and its number when the compositor gives one.
     pub special_workspace: Option<String>,
+    pub special_workspace_id: Option<i64>,
+    /// The refresh rate (Hz) and the modes the screen offers ("2560x1440@59.95Hz"), when the compositor says.
+    pub refresh: Option<f64>,
+    pub modes: Vec<String>,
 }
 
 impl Screen {
@@ -281,6 +285,111 @@ impl Desk {
         match self {
             Desk::Hyprland(h) => h.set_pointer_timeout(secs),
             Desk::Own(o) => o.set_pointer_timeout(secs),
+        }
+    }
+
+    /// The Task Manager's close: the window is asked, as its close button would (the program may ask to save first).
+    pub fn close_window(&self, window: &str) -> bool {
+        match self {
+            Desk::Hyprland(h) => h.close_window(window),
+            Desk::Own(o) => o.close_window(window),
+        }
+    }
+
+    /// Brings a window to the front.
+    pub fn focus_window(&self, window: &str) -> bool {
+        match self {
+            Desk::Hyprland(h) => h.focus_window(window),
+            Desk::Own(o) => o.focus_window(window),
+        }
+    }
+
+    /// yggdrasil-logout's close of each window.
+    pub fn ask_to_close(&self, window: &str) -> bool {
+        match self {
+            Desk::Hyprland(h) => h.ask_to_close(window),
+            Desk::Own(o) => o.close_window(window),
+        }
+    }
+
+    /// Ends the session: the compositor exits.
+    pub fn exit(&self) -> bool {
+        match self {
+            Desk::Hyprland(h) => h.exit(),
+            Desk::Own(o) => o.exit(),
+        }
+    }
+
+    /// Focuses the open window of a program by its class (app id).
+    pub fn focus_class(&self, class: &str) -> bool {
+        match self {
+            Desk::Hyprland(h) => h.focus_class(class),
+            Desk::Own(o) => o.focus_class(class),
+        }
+    }
+
+    /// Paste into the window in front: the compositor presses Ctrl+V there (Ctrl+Shift+V with `shift`, for terminals).
+    pub fn paste(&self, shift: bool) -> bool {
+        match self {
+            Desk::Hyprland(h) => h.paste(shift),
+            Desk::Own(o) => o.paste(shift),
+        }
+    }
+
+    /// Every screen, switched-off ones too, with the modes they offer where the compositor says.
+    pub fn screens_all(&self) -> Vec<Screen> {
+        match self {
+            Desk::Hyprland(h) => h.screens_all(),
+            Desk::Own(o) => o.screens(),
+        }
+    }
+
+    /// The compositor reads its settings files again.
+    pub fn reload(&self) -> Result<(), String> {
+        match self {
+            Desk::Hyprland(h) => h.reload(),
+            Desk::Own(o) => o.reload(),
+        }
+    }
+
+    /// The key bindings the compositor has now (None: it did not answer).
+    pub fn binds(&self) -> Option<Vec<yggdrasil_conf::shortcuts::Bind>> {
+        match self {
+            Desk::Hyprland(h) => h.binds(),
+            Desk::Own(o) => o.binds(),
+        }
+    }
+
+    /// The mistakes in the compositor's config, one per line (empty: none). Yggdrasil's compositor has none to report: its
+    /// files skip what they do not understand.
+    pub fn config_errors(&self) -> Option<String> {
+        match self {
+            Desk::Hyprland(h) => h.config_errors(),
+            Desk::Own(_) => Some(String::new()),
+        }
+    }
+
+    /// The pointer's theme and size, from now on.
+    pub fn set_cursor(&self, theme: &str, size: u32) -> bool {
+        match self {
+            Desk::Hyprland(h) => h.set_cursor(theme, size),
+            Desk::Own(o) => o.set_cursor(theme, size),
+        }
+    }
+
+    /// Whether a panel or background of this namespace is shown (None: the compositor did not answer).
+    pub fn has_layer(&self, namespace: &str) -> Option<bool> {
+        match self {
+            Desk::Hyprland(h) => h.has_layer(namespace),
+            Desk::Own(o) => o.has_layer(namespace),
+        }
+    }
+
+    /// The keyboard layout (and variant) the session types with from now on.
+    pub fn set_keyboard(&self, layout: &str, variant: &str) -> bool {
+        match self {
+            Desk::Hyprland(h) => h.set_keyboard(layout, variant),
+            Desk::Own(o) => o.set_keyboard(layout, variant),
         }
     }
 

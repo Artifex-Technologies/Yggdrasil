@@ -92,6 +92,48 @@ impl Own {
         self.act(&format!("pointer-timeout {secs}"));
     }
 
+    pub fn close_window(&self, window: &str) -> bool {
+        id(window).is_some_and(|w| self.act(&format!("close {w}")))
+    }
+
+    pub fn focus_window(&self, window: &str) -> bool {
+        id(window).is_some_and(|w| self.act(&format!("activate {w}")))
+    }
+
+    pub fn exit(&self) -> bool {
+        self.act("exit")
+    }
+
+    pub fn focus_class(&self, class: &str) -> bool {
+        crate::hyprland::plain_word(class)
+            && self.windows().into_iter().find(|w| w.class == class).is_some_and(|w| self.focus_window(&w.id))
+    }
+
+    pub fn paste(&self, shift: bool) -> bool {
+        self.act(if shift { "paste ctrl+shift" } else { "paste ctrl" })
+    }
+
+    pub fn reload(&self) -> Result<(), String> {
+        self.ask("reload").map(|_| ())
+    }
+
+    pub fn binds(&self) -> Option<Vec<yggdrasil_conf::shortcuts::Bind>> {
+        Some(self.ask("binds").ok()?.iter().filter_map(|l| parse_bind(l)).collect())
+    }
+
+    pub fn set_cursor(&self, theme: &str, size: u32) -> bool {
+        crate::hyprland::plain_word(theme) && self.act(&format!("cursor-theme {theme} {size}"))
+    }
+
+    pub fn has_layer(&self, namespace: &str) -> Option<bool> {
+        Some(self.ask("layers").ok()?.iter().any(|l| l.split('\t').nth(1) == Some(namespace)))
+    }
+
+    pub fn set_keyboard(&self, layout: &str, variant: &str) -> bool {
+        let ok = |s: &str| s.chars().all(|c| c.is_ascii_alphanumeric() || "_-,".contains(c)) && s.len() <= 64;
+        !layout.is_empty() && ok(layout) && ok(variant) && self.act(format!("keyboard {layout} {variant}").trim_end())
+    }
+
     pub fn maximize_active(&self) -> bool {
         self.act("maximize active toggle")
     }
@@ -114,10 +156,17 @@ fn pair<T: std::str::FromStr>(s: &str, sep: char) -> Option<(T, T)> {
     Some((a.parse().ok()?, b.parse().ok()?))
 }
 
-/// A `clients` line: id, app id, title, place, size, workspace, states, output.
+/// A `binds` line: modifier mask (Hyprland's numbers: Shift 1, Ctrl 4, Alt 8, Super 64), key (xkb name), what it does.
+pub fn parse_bind(line: &str) -> Option<yggdrasil_conf::shortcuts::Bind> {
+    let p: Vec<&str> = line.split('\t').collect();
+    let [mask, key, desc] = p.as_slice() else { return None };
+    Some(yggdrasil_conf::shortcuts::Bind { modmask: mask.parse().ok()?, key: key.to_string(), desc: desc.to_string(), release: false })
+}
+
+/// A `clients` line: id, app id, title, place, size, workspace, states, output, process id (0: not known).
 pub fn parse_client(line: &str) -> Option<Window> {
     let p: Vec<&str> = line.split('\t').collect();
-    let [id, app, title, at, size, ws, states, output] = p.as_slice() else { return None };
+    let [id, app, title, at, size, ws, states, output, pid] = p.as_slice() else { return None };
     id.parse::<u64>().ok()?;
     let states: Vec<&str> = states.split(',').collect();
     let minimized = states.contains(&"minimized");
@@ -134,10 +183,11 @@ pub fn parse_client(line: &str) -> Option<Window> {
         floating: Some(!states.contains(&"tiled")),
         fullscreen: states.contains(&"fullscreen"),
         mapped: true,
-        hidden: false,
+        // minimized here is hidden: not on any desktop's screen
+        hidden: minimized,
         monitor: Some(MonitorRef::Name(output.to_string())),
         focus_order: i64::MAX,
-        pid: None,
+        pid: pid.parse::<u32>().ok().filter(|p| *p > 0),
     })
 }
 
@@ -184,6 +234,9 @@ pub fn parse_screen(index: usize, line: &str, workspace: Option<i64>) -> Option<
         disabled: false,
         active_workspace: workspace,
         special_workspace: None,
+        special_workspace_id: None,
+        refresh: None,
+        modes: vec![],
     })
 }
 
@@ -193,14 +246,17 @@ mod tests {
 
     #[test]
     fn the_control_sockets_lines_are_read() {
-        let w = parse_client("7\torg.example.Editor\tnotes - Editor\t40,60\t800x600\t2\tactive,floating\tHEADLESS-1").unwrap();
+        let w = parse_client("7\torg.example.Editor\tnotes - Editor\t40,60\t800x600\t2\tactive,floating\tHEADLESS-1\t4321").unwrap();
+        assert_eq!(w.pid, Some(4321));
         assert_eq!((w.id.as_str(), w.class.as_str(), w.title.as_str()), ("7", "org.example.Editor", "notes - Editor"));
         assert_eq!((w.at, w.size, w.workspace, w.floating), (Some((40.0, 60.0)), Some((800.0, 600.0)), Some(2), Some(true)));
         assert!(!w.minimized && !w.fullscreen);
         assert_eq!(w.monitor, Some(MonitorRef::Name("HEADLESS-1".into())));
-        let m = parse_client("8\ta\tb\t0,0\t10x10\t1\ttiled,minimized\tHEADLESS-1").unwrap();
-        assert!(m.minimized && m.special && m.floating == Some(false));
-        assert_eq!(parse_client("x\ta\tb\t0,0\t10x10\t1\t\tH"), None, "the id is a number");
+        let m = parse_client("8\ta\tb\t0,0\t10x10\t1\ttiled,minimized\tHEADLESS-1\t0").unwrap();
+        assert!(m.minimized && m.special && m.hidden && m.floating == Some(false) && m.pid.is_none());
+        assert_eq!(parse_client("x\ta\tb\t0,0\t10x10\t1\t\tH\t0"), None, "the id is a number");
+        let b = parse_bind("64\tq\tClose the window").unwrap();
+        assert_eq!((b.modmask, b.key.as_str(), b.desc.as_str()), (64, "q", "Close the window"));
         assert_eq!(parse_client("1\ta\tb"), None);
 
         let s = parse_screen(1, "HEADLESS-2\t1280,0\t1600x900\t1.5\t0,32,0,64\tfocused", Some(3)).unwrap();

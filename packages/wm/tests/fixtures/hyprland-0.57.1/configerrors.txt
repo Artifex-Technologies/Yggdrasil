@@ -1,0 +1,2 @@
+Config error in file /home/someone/.config/yggdrasil/hyprland.lua at line 3: unknown option "gaps"
+Config error in file /home/someone/.config/yggdrasil/hyprland.lua at line 9: bad value

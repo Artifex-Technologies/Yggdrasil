@@ -5,7 +5,8 @@
 //! queries): every key, its order and Hyprland's formatting as recorded, the values (titles, classes, addresses, process ids,
 //! screens) made up. Two screens: DP-1 (2560x1440, scale 1, focused, the bar and dock reserving 28 and 70) and HDMI-A-1
 //! (1920x1080 at 1.25, to its right); four windows, one on the hidden "minimized" workspace. `monitors-minimized-open.json` has that
-//! workspace open over DP-1; `getoption-hidden.json` is the pointer timeout yggdrasil-idle sets while the screen is dimmed.
+//! workspace open over DP-1; `getoption-hidden.json` is the pointer timeout yggdrasil-idle sets while the screen is dimmed;
+//! `binds.json`, `layers.json` (the panel on DP-1) and `configerrors.txt` are the shortcut list, the panels and two config mistakes.
 //! `wire.txt` is what hyprctl writes to the socket for each command line, recorded against a stand-in socket in a sandbox.
 
 use std::collections::HashMap;
@@ -30,6 +31,9 @@ struct FakeHyprland {
     asked: Arc<Mutex<Vec<String>>>,
 }
 
+/// After a window was asked to close, the stand-in lists no windows (every program closed at once).
+const CLOSE_EMPTIES: &str = "close-empties";
+
 impl FakeHyprland {
     fn start(name: &str, answers: &[(&str, &str)]) -> FakeHyprland {
         let run = std::env::temp_dir().join(format!("ygg-wm-hypr-{}-{name}", std::process::id()));
@@ -45,10 +49,15 @@ impl FakeHyprland {
             ("j/activewindow", "activewindow.json"),
             ("j/cursorpos", "cursorpos.json"),
             ("j/getoption cursor:inactive_timeout", "getoption.json"),
+            ("j/monitors all", "monitors.json"),
+            ("j/binds", "binds.json"),
+            ("j/layers", "layers.json"),
+            ("/configerrors", "configerrors.txt"),
         ] {
             table.insert(q.into(), fixture(file));
         }
-        for (q, file) in answers {
+        let empties = answers.iter().any(|(q, _)| *q == CLOSE_EMPTIES);
+        for (q, file) in answers.iter().filter(|(q, _)| *q != CLOSE_EMPTIES) {
             table.insert(q.to_string(), fixture(file));
         }
         let asked = Arc::new(Mutex::new(vec![]));
@@ -70,6 +79,9 @@ impl FakeHyprland {
                 // the zones' Super question: Hyprland's Lua writes its answer into the runtime folder
                 if req.starts_with("/eval local f = io.open(") {
                     let _ = std::fs::write(runtime.join("yggdrasil-zones-super"), "true");
+                }
+                if empties && req.contains("hl.dsp.window.close(") {
+                    table.insert("j/clients".into(), "[]".into());
                 }
                 let answer = table.get(&req).cloned().unwrap_or_else(|| "ok".into());
                 log.lock().unwrap().push(req);
@@ -101,6 +113,7 @@ impl FakeHyprland {
     fn run_tool(&self, name: &str, arg: Option<&str>, config: &Path) -> i32 {
         let exe = match name {
             "yggdrasil-snap" => env!("CARGO_BIN_EXE_yggdrasil-snap"),
+            "yggdrasil-logout" => env!("CARGO_BIN_EXE_yggdrasil-logout"),
             _ => env!("CARGO_BIN_EXE_yggdrasil-close"),
         };
         let mut c = Command::new(exe);
@@ -108,7 +121,9 @@ impl FakeHyprland {
             .env("XDG_RUNTIME_DIR", &self.run)
             .env("HYPRLAND_INSTANCE_SIGNATURE", "testsig")
             .env("XDG_CONFIG_HOME", config)
-            .env("HOME", config);
+            .env("HOME", config)
+            // only the stand-ins of the system's programs (logout's): never the real loginctl or systemctl
+            .env("PATH", self.run.join("bin"));
         if let Some(a) = arg {
             c.arg(a);
         }
@@ -138,7 +153,7 @@ fn the_requests_are_the_bytes_hyprctl_sends() {
             [what, "-j"] => drop(hy.query(what)),
             ["dispatch", lua] => drop(hy.dispatch(lua)),
             ["eval", lua] => drop(hy.eval(lua)),
-            _ => panic!("{cmd}"),
+            _ => drop(hy.command(cmd)),
         }
         assert_eq!(h.take(), [bytes.to_string()], "{cmd}");
     }
@@ -370,4 +385,125 @@ fn without_hyprland_the_tools_do_nothing() {
         .unwrap();
     assert_eq!(st.code(), Some(1));
     let _ = std::fs::remove_dir_all(&run);
+}
+
+#[test]
+fn the_task_managers_requests_are_its_own_as_before() {
+    let h = FakeHyprland::start("taskmanager", &[]);
+    let d = h.desk();
+    let w = d.windows();
+    assert_eq!(w.iter().map(|w| (w.id.as_str(), w.pid)).collect::<Vec<_>>()[0], ("0x5a0000001000", Some(4101)));
+    assert!(d.close_window("0x5a0000001000") && d.focus_window("0x5a0000003000"));
+    assert!(!d.close_window("0x12'); os.execute('x"), "nothing but hex reaches the Lua line");
+    assert_eq!(
+        h.take(),
+        dispatches(&[
+            "j/clients",
+            "dispatch hl.dsp.window.close({ window = 'address:0x5a0000001000' })",
+            "dispatch hl.dsp.focus({ window = 'address:0x5a0000003000' })"
+        ])
+    );
+}
+
+#[test]
+fn paste_settings_and_the_session() {
+    let h = FakeHyprland::start("misc", &[]);
+    let d = h.desk();
+    assert!(d.paste(true) && d.paste(false));
+    assert!(d.focus_class("org.example.Settings") && !d.focus_class("x\" }) or (\""));
+    assert_eq!(d.reload(), Ok(()));
+    assert!(d.set_cursor("Yggdrasil", 24) && !d.set_cursor("../x", 24));
+    assert!(d.ask_to_close("0x5a0000002000") && d.exit());
+    assert!(d.set_keyboard("us", ""));
+    assert_eq!(
+        h.take(),
+        dispatches(&[
+            "/dispatch sendshortcut CTRL SHIFT, V, activewindow",
+            "/dispatch sendshortcut CTRL, V, activewindow",
+            r#"/dispatch hl.dsp.focus({ window = "class:org.example.Settings" })"#,
+            "/reload",
+            "/setcursor Yggdrasil 24",
+            r#"/dispatch hl.dsp.window.close({ window = "address:0x5a0000002000" })"#,
+            "/dispatch hl.dsp.exit()",
+            r#"/eval hl.config({ input = { kb_layout = "us", kb_variant = "" } })"#,
+        ])
+    );
+    // the screens with their modes (Settings > Displays), the shortcuts, the config's mistakes, the layers
+    let all = d.screens_all();
+    assert_eq!((all[0].refresh, all[0].modes.len(), all[1].modes.as_slice()), (Some(59.951), 2, &["1920x1080@60.00Hz".to_string()][..]));
+    let binds = d.binds().unwrap();
+    assert_eq!(binds.len(), 5);
+    assert_eq!((binds[0].modmask, binds[0].key.as_str()), (64, "Q"));
+    assert_eq!(binds[2].key, "code:10", "a key given by its code");
+    assert!(binds[3].release);
+    let errors = d.config_errors().unwrap();
+    assert_eq!(errors.lines().count(), 2);
+    assert_eq!(d.has_layer("yggdrasil-panel"), Some(true));
+    assert_eq!(d.has_layer("yggdrasil-lock"), Some(false));
+    assert_eq!(h.take(), ["j/monitors all", "j/binds", "/configerrors", "j/layers", "j/layers"]);
+    let h = FakeHyprland::start("nopanel", &[("j/layers", "layers-no-panel.json")]);
+    assert_eq!(h.desk().has_layer("yggdrasil-panel"), Some(false));
+}
+
+/// Stand-ins for the programs yggdrasil-logout runs (they write down how they were called).
+fn stand_ins(h: &FakeHyprland) -> PathBuf {
+    let bin = h.run.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let log = h.run.join("calls");
+    for t in ["systemd-cat", "notify-send", "loginctl", "systemctl"] {
+        let p = bin.join(t);
+        std::fs::write(
+            &p,
+            format!(
+                "#!/bin/sh\nprintf '%s' '{t}' >> '{}'\nfor a in \"$@\"; do printf ' [%s]' \"$a\" >> '{}'; done\necho >> '{}'\n",
+                log.display(),
+                log.display(),
+                log.display()
+            ),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    log
+}
+
+/// yggdrasil-logout as the shell script did it: every window asked to close, then the session ends (or, with a window left,
+/// the screen locks and a notification names it).
+#[test]
+fn logout_on_hyprland() {
+    let h = FakeHyprland::start("logout", &[(CLOSE_EMPTIES, "clients.json")]);
+    let calls = stand_ins(&h);
+    let conf = h.run.join("conf");
+    assert_eq!(h.run_tool("yggdrasil-logout", Some("reboot"), &conf), 0);
+    let mut want = vec!["j/clients".to_string()];
+    for a in ["0x5a0000001000", "0x5a0000002000", "0x5a0000003000", "0x5a0000004000"] {
+        want.push(format!(r#"/dispatch hl.dsp.window.close({{ window = "address:{a}" }})"#));
+    }
+    // one look while waiting (none left), one for the names of those left (none)
+    want.extend(["j/clients".to_string(), "j/clients".to_string(), "/dispatch hl.dsp.exit()".to_string()]);
+    assert_eq!(h.take(), want);
+    assert_eq!(
+        std::fs::read_to_string(&calls).unwrap(),
+        "systemd-cat [-t] [yggdrasil-session] [echo] [reboot: every window closed]\nsystemctl [--user] [stop] [xdg-desktop-portal-hyprland.service]\n"
+    );
+    assert_eq!(std::fs::read_to_string(h.run.join("yggdrasil-after-session")).unwrap(), "reboot\n");
+    assert_eq!(h.run_tool("yggdrasil-logout", Some("sideways"), &conf), 2);
+}
+
+#[test]
+fn logout_with_a_window_left_locks_instead() {
+    let h = FakeHyprland::start("logout-left", &[]);
+    let calls = stand_ins(&h);
+    let start = std::time::Instant::now();
+    assert_eq!(h.run_tool("yggdrasil-logout", None, &h.run.join("conf")), 1);
+    assert!(start.elapsed() >= Duration::from_secs(9), "it waits ten seconds for the programs");
+    let asked = h.take();
+    assert_eq!(asked.iter().filter(|r| *r == "j/clients").count(), 1 + 40 + 1, "a look before, forty while waiting, one for the names");
+    assert!(!asked.iter().any(|r| r.contains("exit")));
+    let c = std::fs::read_to_string(&calls).unwrap();
+    assert!(c.starts_with("systemd-cat [-t] [yggdrasil-session] [echo] [logout stopped: still open: notes.txt - Editor, A Song - Player, Terminal 1 and others]\n"), "{c}");
+    assert!(c.contains("notify-send [-a] [Desktop] [-u] [critical] [-i] [dialog-warning] [Still signed in] [notes.txt - Editor, A Song - Player, Terminal 1 and others did not close"));
+    assert!(c.ends_with("loginctl [lock-session]\n"));
+    assert!(!h.run.join("yggdrasil-after-session").exists());
 }
