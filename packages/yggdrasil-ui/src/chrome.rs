@@ -13,7 +13,9 @@ use crate::theme::Palette;
 
 const BUTTON: f32 = 13.0; // diameter of a traffic light
 const GAP: f32 = 8.0;
-const EDGE: f32 = 6.0; // width of the invisible resize handles
+const EDGE: f32 = 6.0;
+/// The edges a fingertip resizes from (left, right, bottom; the top stays EDGE so the title bar still moves the window).
+const TOUCH_EDGE: f32 = 22.0; // width of the invisible resize handles
 
 const MINIMIZE: Color32 = Color32::from_rgb(0xfe, 0xbc, 0x2e);
 const MAXIMIZE: Color32 = Color32::from_rgb(0x28, 0xc8, 0x40);
@@ -27,7 +29,16 @@ fn maximized(ctx: &egui::Context) -> bool {
 pub fn drag_area(ui: &mut egui::Ui, width: f32) {
     let (_, resp) = ui.allocate_exact_size(vec2(width.max(0.0), ui.available_height().max(30.0)), Sense::click_and_drag());
     if resp.drag_started_by(egui::PointerButton::Primary) {
-        ui.ctx().send_viewport_cmd(ViewportCommand::StartDrag);
+        let ctx = ui.ctx();
+        if ctx.input(|i| i.any_touches()) {
+            // a finger: the compositor will not move a window for a touch, so it is moved from here (touchmove.rs)
+            if let Some(p) = ctx.input(|i| i.pointer.interact_pos()) {
+                let z = ctx.zoom_factor() as f64;
+                crate::touchmove::begin(crate::touchmove::Kind::Move, (p.x as f64 * z, p.y as f64 * z));
+            }
+        } else {
+            ctx.send_viewport_cmd(ViewportCommand::StartDrag);
+        }
     }
     if resp.double_clicked() {
         let m = maximized(ui.ctx());
@@ -90,14 +101,29 @@ fn minimize(ctx: &egui::Context) {
 
 /// The outer EDGE pixels of the window resize it (not while maximized or full screen).
 pub fn resize_edges(ctx: &egui::Context) {
+    let touch = ctx.input(|i| i.any_touches());
+    let zoom = ctx.zoom_factor() as f64;
+    // a finger's move or resize under way (touchmove.rs): follow the finger until it lifts
+    if crate::touchmove::active() {
+        match ctx.input(|i| i.pointer.interact_pos()).filter(|_| touch && ctx.input(|i| i.pointer.primary_down())) {
+            Some(p) => {
+                crate::touchmove::update((p.x as f64 * zoom, p.y as f64 * zoom));
+                ctx.request_repaint();
+            }
+            None => crate::touchmove::end(),
+        }
+        return;
+    }
     let (full, max) = ctx.input(|i| (i.viewport().fullscreen.unwrap_or(false), i.viewport().maximized.unwrap_or(false)));
     if full || max {
         return;
     }
     let screen = ctx.viewport_rect();
     let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) else { return };
-    let (l, r) = (pos.x - screen.left() < EDGE, screen.right() - pos.x < EDGE);
-    let (t, b) = (pos.y - screen.top() < EDGE, screen.bottom() - pos.y < EDGE);
+    // a fingertip needs a wider edge than a pointer; the top edge stays thin, so the title bar still moves the window
+    let side = if touch { TOUCH_EDGE } else { EDGE };
+    let (l, r) = (pos.x - screen.left() < side, screen.right() - pos.x < side);
+    let (t, b) = (pos.y - screen.top() < EDGE, screen.bottom() - pos.y < side);
     let dir = match (l, r, t, b) {
         (true, _, true, _) => Some((ResizeDirection::NorthWest, CursorIcon::ResizeNorthWest)),
         (_, true, true, _) => Some((ResizeDirection::NorthEast, CursorIcon::ResizeNorthEast)),
@@ -112,7 +138,14 @@ pub fn resize_edges(ctx: &egui::Context) {
     if let Some((d, cursor)) = dir {
         ctx.set_cursor_icon(cursor);
         if ctx.input(|i| i.pointer.primary_pressed()) {
-            ctx.send_viewport_cmd(ViewportCommand::BeginResize(d));
+            if touch {
+                crate::touchmove::begin(
+                    crate::touchmove::Kind::Resize { left: l, right: r, top: t, bottom: b },
+                    (pos.x as f64 * zoom, pos.y as f64 * zoom),
+                );
+            } else {
+                ctx.send_viewport_cmd(ViewportCommand::BeginResize(d));
+            }
         }
     }
 }

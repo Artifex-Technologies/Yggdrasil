@@ -4399,6 +4399,15 @@ dependencies = [
  "eframe",
  "resvg 0.48.1",
  "yggdrasil-conf",
+ "yggdrasil-wm",
+]
+
+[[package]]
+name = "yggdrasil-wm"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "yggdrasil-conf",
 ]
 
 [[package]]

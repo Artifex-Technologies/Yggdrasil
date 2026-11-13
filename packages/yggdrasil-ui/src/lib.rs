@@ -6,3 +6,4 @@ pub mod chrome;
 pub mod single;
 pub mod sysicon;
 pub mod theme;
+pub mod touchmove;

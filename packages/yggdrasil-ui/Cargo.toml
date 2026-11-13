@@ -12,4 +12,6 @@ path = "src/lib.rs"
 [dependencies]
 eframe = "0.36.2"
 yggdrasil-conf = { path = "../yggdrasil-conf" }
+# a finger's drag moves and resizes the window through the compositor (touchmove.rs)
+yggdrasil-wm = { path = "../wm" }
 resvg = { version = "0.48", default-features = false, features = ["raster-images"] }

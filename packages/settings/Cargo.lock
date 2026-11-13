@@ -4586,6 +4586,7 @@ dependencies = [
  "eframe",
  "resvg 0.48.1",
  "yggdrasil-conf",
+ "yggdrasil-wm",
 ]
 
 [[package]]
