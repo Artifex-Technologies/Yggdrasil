@@ -59,6 +59,11 @@ impl App {
                     l.push("Wi-Fi checks".into());
                 }
             }
+            Page::Vpn => {
+                if self.vpn_add {
+                    l.push("Add VPN Configuration".into());
+                }
+            }
             Page::Bluetooth => {
                 if let Some(mac) = &self.bt_open {
                     let d = self.data.bluetooth.as_ref().and_then(|b| b.devices.iter().find(|d| &d.mac == mac));
@@ -163,6 +168,10 @@ impl App {
                     self.wifi_history = false;
                 }
             }
+            Page::Vpn => {
+                self.vpn_add = false;
+                self.vpn_form.clear();
+            }
             Page::Bluetooth => {
                 self.bt_open = None;
                 self.bt_forget = false;
@@ -211,6 +220,10 @@ impl App {
                 self.lan_dev = None;
                 self.lan_rename = None;
                 self.wifi_check_open = false;
+            }
+            Page::Vpn => {
+                self.vpn_add = false;
+                self.vpn_form.clear();
             }
             Page::Bluetooth => {
                 self.bt_open = None;

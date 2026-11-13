@@ -38,6 +38,7 @@ mod sys;
 mod tune;
 mod ui;
 mod users;
+mod vpn;
 mod wifi_ui;
 mod wifihealth;
 mod wifijoin;
@@ -68,6 +69,8 @@ enum Page {
     Language,
     /// A computer with a battery only (battery.rs).
     Battery,
+    /// NetworkManager's VPN and WireGuard connections, and Tailscale (vpn.rs).
+    Vpn,
     Network,
     Bluetooth,
     Displays,
@@ -131,11 +134,12 @@ enum AppSub {
 // The sidebar, in groups (a heading is drawn where the group changes; the first group has none). The words after the name are
 // what the search also finds the page by: what is inside it, not only its title. A page with a parent (`parent`) is a row on
 // that page instead of in the sidebar; the search still finds it.
-const PAGES: [(Page, &str, Icon, &str, &str); 23] = [
+const PAGES: [(Page, &str, Icon, &str, &str); 24] = [
     (Page::General, "General", Icon::Gear, "", "about software update storage disk date time keyboard language region"),
     (Page::Battery, "Battery", Icon::Battery, "", "charge health charge limit usage laptop"),
     (Page::Network, "Wi-Fi & Network", Icon::Wifi, "Connections", "internet ethernet proxy"),
     (Page::Bluetooth, "Bluetooth", Icon::Bluetooth, "Connections", "headphones controller pair"),
+    (Page::Vpn, "VPN", Icon::Key, "Connections", "vpn wireguard openvpn ikev2 tailscale tunnel"),
     (Page::Displays, "Displays", Icon::Display, "Devices", "monitor screen resolution refresh night light scale"),
     (Page::Sound, "Sound", Icon::Sound, "Devices", "audio volume speaker microphone output input"),
     (
@@ -246,6 +250,7 @@ enum Msg {
     Time(sys::Time),
     Storage(general::Storage),
     Battery(battery::Info),
+    Vpn(vpn::State),
     Language(general::Language),
     Apps(Vec<sys::Component>),
     Installed(Vec<appmgr::AppInfo>),
@@ -283,6 +288,7 @@ struct Data {
     time: Option<sys::Time>,
     storage: Option<general::Storage>,
     battery: Option<battery::Info>,
+    vpn: Option<vpn::State>,
     language: Option<general::Language>,
     apps: Option<Vec<sys::Component>>,
     installed: Option<Vec<appmgr::AppInfo>>,
@@ -394,6 +400,9 @@ struct App {
     /// Bluetooth: the search for devices nearby (only while the page is open), the paired device whose page is open and whether
     /// Forget was asked on it, and the device being paired or connected.
     bt_scan: Option<bluetooth_ui::Scanner>,
+    /// VPN > Add VPN Configuration is open, and its form (wiped when it closes: a pasted configuration holds a key).
+    vpn_add: bool,
+    vpn_form: vpn::Form,
     bt_open: Option<String>,
     bt_forget: bool,
     bt_pairing: Option<String>,
@@ -553,6 +562,9 @@ impl App {
             boot_pic: String::new(),
             splash_pic: String::new(),
             bt_scan: None,
+            // `yggdrasil-settings vpn:add` opens Add VPN Configuration
+            vpn_add: start_page() == Page::Vpn && start_sub() == "add",
+            vpn_form: Default::default(),
             bt_open: None,
             bt_forget: false,
             bt_pairing: None,
@@ -630,6 +642,7 @@ impl App {
                 Page::DateTime => Msg::Time(sys::time()),
                 Page::Storage => Msg::Storage(general::storage()),
                 Page::Battery => Msg::Battery(battery::load()),
+                Page::Vpn => Msg::Vpn(vpn::load()),
                 Page::Language => Msg::Language(general::language()),
                 Page::Apps => {
                     let _ = tx.send(Msg::Installed(load_installed(&tx)));
@@ -722,6 +735,7 @@ impl App {
                 Msg::Time(v) => self.data.time = Some(v),
                 Msg::Storage(v) => self.data.storage = Some(v),
                 Msg::Battery(v) => self.data.battery = Some(v),
+                Msg::Vpn(v) => self.data.vpn = Some(v),
                 Msg::Language(v) => self.data.language = Some(v),
                 Msg::Apps(v) => self.data.apps = Some(v),
                 Msg::Installed(v) => self.data.installed = Some(v),
@@ -826,7 +840,8 @@ impl eframe::App for App {
         let refreshable = matches!(
             self.page,
             Page::About | Page::Displays | Page::Sound | Page::Appearance | Page::Firewall | Page::DateTime | Page::Security
-        ) || self.page == Page::Power && !self.power_gpu && !self.power_cpu && !self.power_fans;
+        ) || self.page == Page::Vpn && !self.vpn_add
+            || self.page == Page::Power && !self.power_gpu && !self.power_cpu && !self.power_fans;
         // a sub-page's panel (and its once-a-second reader) lives only while it is shown
         if !(self.page == Page::Power && self.power_gpu) {
             self.gpu_panel = None;
@@ -836,6 +851,10 @@ impl eframe::App for App {
         }
         if !(self.page == Page::Power && self.power_fans) {
             self.fans_panel = None;
+        }
+        if self.page != Page::Vpn && self.vpn_add {
+            self.vpn_add = false;
+            self.vpn_form.clear();
         }
         // devices nearby are looked for only while the Bluetooth page is open and Bluetooth is on; leaving it ends the search
         let scan = self.page == Page::Bluetooth && self.data.bluetooth.as_ref().is_some_and(|b| b.present && b.powered);
@@ -1019,6 +1038,7 @@ impl eframe::App for App {
                         Page::General => self.page_general(ui, &pal),
                         Page::Storage => self.page_storage(ui, &pal),
                         Page::Battery => self.page_battery(ui, &pal, &ctx),
+                        Page::Vpn => self.page_vpn(ui, &pal, &ctx),
                         Page::Language => self.page_language(ui, &pal, &ctx),
                         Page::About => self.page_about(ui, &pal, &ctx),
                         Page::Network => self.page_network(ui, &pal, &ctx),

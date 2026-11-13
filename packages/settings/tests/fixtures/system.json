@@ -1,5 +1,7 @@
 {
  "run": {
+  "nmcli -t -f NAME,UUID,TYPE,STATE connection show": "Home:6b0c1f2e-0000-4000-8000-00000000a001:802-11-wireless:activated\nOffice:6b0c1f2e-0000-4000-8000-00000000b001:vpn:\nTravel:6b0c1f2e-0000-4000-8000-00000000b002:wireguard:activated\n",
+  "tailscale status --json": "{\"BackendState\": \"Stopped\", \"CurrentTailnet\": {\"Name\": \"example.ts.net\"}}",
   "df -B1 --output=source,size,used,avail,target -x tmpfs -x devtmpfs -x efivarfs -x squashfs -x overlay -l": "Filesystem      1B-blocks          Used         Avail Mounted on\n/dev/nvme0n1p2 1999844147200 712386146304 1287458000896 /\n/dev/nvme0n1p2 1999844147200 712386146304 1287458000896 /home\n/dev/nvme0n1p1 1071624192 167772160 903852032 /boot\n/dev/sda1 4000787030016 2861102882816 1139684147200 /run/media/alex/Games\n",
   "localectl status": "   System Locale: LANG=en_US.UTF-8\n                  LC_TIME=en_GB.UTF-8\n       VC Keymap: us\n      X11 Layout: us\n",
   "localectl list-locales": "C.UTF-8\nde_DE.UTF-8\nen_GB.UTF-8\nen_US.UTF-8\nes_ES.UTF-8\nfr_FR.UTF-8\nnl_NL.UTF-8\n",
@@ -54,5 +56,5 @@
   "systemctl --user is-enabled yggdrasil-autozone.timer": "disabled\n",
   "pacman -Q *": "example 1.0-1\n"
  },
- "tools": []
+ "tools": ["tailscale", "networkmanager-openvpn"]
 }

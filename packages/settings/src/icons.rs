@@ -36,6 +36,8 @@ pub enum Icon {
     Gear,
     /// Battery: a battery on its side, its terminal on the right, two thirds full.
     Battery,
+    /// VPN: a key (its ring on the left, two teeth on the right).
+    Key,
 }
 
 fn arc(c: Pos2, r: f32, from: f32, to: f32) -> Vec<Pos2> {
@@ -186,6 +188,12 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
             p.rect_stroke(Rect::from_min_max(at(0.08, 0.3), at(0.82, 0.7)), 0.08 * w, s, eframe::egui::StrokeKind::Inside);
             p.rect_filled(Rect::from_min_max(at(0.84, 0.42), at(0.93, 0.58)), 0.03 * w, color);
             p.rect_filled(Rect::from_min_max(at(0.16, 0.38), at(0.56, 0.62)), 0.03 * w, color);
+        }
+        Icon::Key => {
+            p.circle_stroke(at(0.3, 0.5), 0.17 * w, s);
+            p.line_segment([at(0.47, 0.5), at(0.9, 0.5)], s);
+            p.line_segment([at(0.74, 0.5), at(0.74, 0.66)], s);
+            p.line_segment([at(0.86, 0.5), at(0.86, 0.62)], s);
         }
         Icon::Info => {
             p.circle_stroke(c, 0.38 * w, s);

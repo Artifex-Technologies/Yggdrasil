@@ -52,6 +52,8 @@ shots() {
     shot settings-language              desktop settings language system
     shot settings-network               desktop settings network wifi
     shot settings-bluetooth             desktop settings bluetooth system
+    shot settings-vpn                   desktop settings vpn system
+    shot settings-vpn-add               desktop settings vpn:add system
     shot settings-displays              desktop settings displays system
     shot settings-displays-connect      desktop settings displays system
     shot settings-displays-single       desktop settings displays displays-single
