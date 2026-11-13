@@ -125,6 +125,51 @@ class Result:
         self.code, self.out, self.err, self.files = p.returncode, p.stdout, p.stderr, files
 
 
+class StandInHyprland:
+    """A stand-in Hyprland socket in a folder of its own (outside the world): the Rust game-fix asks the compositor through
+    yggdrasil-wm where the script ran hyprctl. It answers `j/monitors` as the hyprctl stand-in does ($HYPRCTL, else nothing)
+    and writes the same line into the calls, so both sides' calls stay comparable. Its signature names no real Hyprland."""
+
+    def __init__(self, answer):
+        import socket
+        import threading
+        self.dir = tempfile.mkdtemp(prefix="ygg-par-")
+        os.makedirs(os.path.join(self.dir, "hypr", "parity"))
+        self.sock = socket.socket(socket.AF_UNIX)
+        self.sock.bind(os.path.join(self.dir, "hypr", "parity", ".socket.sock"))
+        self.sock.listen(4)
+        self.sock.settimeout(0.2)
+        self.answer, self.done = answer.encode(), False
+        self.thread = threading.Thread(target=self.serve, daemon=True)
+        self.thread.start()
+
+    def serve(self):
+        while not self.done:
+            try:
+                c, _ = self.sock.accept()
+            except OSError:
+                continue
+            with c:
+                c.settimeout(0.5)
+                try:
+                    q = c.recv(4096).decode()
+                except OSError:
+                    q = ""
+                if q == "j/monitors":
+                    with open(os.path.join(WORLD, "calls"), "a") as f:
+                        f.write("hyprctl [-j] [monitors]\n")
+                    c.sendall(self.answer)
+
+    def env(self):
+        return {"XDG_RUNTIME_DIR": self.dir, "HYPRLAND_INSTANCE_SIGNATURE": "parity"}
+
+    def close(self):
+        self.done = True
+        self.thread.join()
+        self.sock.close()
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+
 def run_once(build, argv, env, stdin, sandbox):
     shutil.rmtree(WORLD, ignore_errors=True)
     os.makedirs(WORLD)
@@ -133,8 +178,13 @@ def run_once(build, argv, env, stdin, sandbox):
     e.update(extra_env)
     e.update(env)
     e = {k: v for k, v in e.items() if v is not None}
-    cmd = (["unshare", "-rm", "sh", SANDBOX, WORLD] if sandbox else []) + argv
-    p = subprocess.run(cmd, env=e, input=stdin, capture_output=True, timeout=120, cwd=WORLD)
+    hypr = StandInHyprland(e.get("HYPRCTL", ""))
+    e.update(hypr.env())
+    try:
+        cmd = (["unshare", "-rm", "sh", SANDBOX, WORLD] if sandbox else []) + argv
+        p = subprocess.run(cmd, env=e, input=stdin, capture_output=True, timeout=120, cwd=WORLD)
+    finally:
+        hypr.close()
     return Result(p, snapshot(WORLD))
 
 

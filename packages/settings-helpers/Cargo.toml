@@ -32,6 +32,8 @@ libc = "0.2"
 regex = { version = "1", default-features = false, features = ["std", "unicode"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 yggdrasil-pycompat = { path = "../pycompat" }
+# game-fix: the screen's size from the compositor (Hyprland or Yggdrasil's own)
+yggdrasil-wm = { path = "../wm" }
 
 [profile.release]
 opt-level = "s"

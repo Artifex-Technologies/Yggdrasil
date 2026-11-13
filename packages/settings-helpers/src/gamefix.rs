@@ -190,7 +190,7 @@ fn int_of(v: &Value) -> Option<i128> {
     }
 }
 
-/// (width, height) of the largest monitor: YGGDRASIL_SCREEN=WxH, else hyprctl, else xrandr.
+/// (width, height) of the largest monitor: YGGDRASIL_SCREEN=WxH, else the compositor's, else xrandr.
 pub fn screen() -> Option<(i128, i128)> {
     let forced = py::env_or("YGGDRASIL_SCREEN", "");
     let d = r"(\d+)";
@@ -199,27 +199,21 @@ pub fn screen() -> Option<(i128, i128)> {
             return Some((pycompat::int(&c[1])?, pycompat::int(&c[2])?));
         }
     }
-    let from_hyprctl = || -> Option<(i128, i128)> {
-        let text = run_timeout(&["hyprctl", "-j", "monitors"], 5)?;
-        let mons = json::loads(&text).ok()?;
-        let mons = mons.as_array()?;
-        let area = |m: &Value| -> Option<f64> {
-            let w = m.get("width")?;
-            let h = m.get("height")?;
-            Some(num(w)? * num(h)?)
+    // the compositor (yggdrasil-wm): Hyprland's `monitors` answer read as the script read hyprctl's, or Yggdrasil's own screens
+    let from_compositor = || -> Option<(i128, i128)> {
+        let screens = match yggdrasil_wm::Desk::detect()? {
+            yggdrasil_wm::Desk::Hyprland(h) => return largest_in(&h.query("monitors")?),
+            yggdrasil_wm::Desk::Own(o) => o.screens(),
         };
-        let mut best: Option<(&Value, f64)> = None;
-        for m in mons {
-            // max(): the first of the largest; a monitor without a size stopped it (the script's except caught that)
-            let a = area(m)?;
-            if best.map(|(_, b)| a > b).unwrap_or(true) {
-                best = Some((m, a));
+        let mut best: Option<&yggdrasil_wm::Screen> = None;
+        for m in &screens {
+            if best.map(|b| m.width as u64 * m.height as u64 > b.width as u64 * b.height as u64).unwrap_or(true) {
+                best = Some(m);
             }
         }
-        let (b, _) = best?;
-        Some((int_of(&b["width"])?, int_of(&b["height"])?))
+        best.map(|b| (b.width as i128, b.height as i128))
     };
-    if let Some(s) = from_hyprctl() {
+    if let Some(s) = from_compositor() {
         return Some(s);
     }
     let out = run_timeout(&["xrandr", "--current"], 5)?;
@@ -231,6 +225,27 @@ pub fn screen() -> Option<(i128, i128)> {
         }
     }
     best
+}
+
+/// The largest monitor in Hyprland's `monitors` answer, as the script's max() found it: the first of the largest; one without a
+/// size stops it (the script's except caught that).
+fn largest_in(text: &str) -> Option<(i128, i128)> {
+    let mons = json::loads(text).ok()?;
+    let mons = mons.as_array()?;
+    let area = |m: &Value| -> Option<f64> {
+        let w = m.get("width")?;
+        let h = m.get("height")?;
+        Some(num(w)? * num(h)?)
+    };
+    let mut best: Option<(&Value, f64)> = None;
+    for m in mons {
+        let a = area(m)?;
+        if best.map(|(_, b)| a > b).unwrap_or(true) {
+            best = Some((m, a));
+        }
+    }
+    let (b, _) = best?;
+    Some((int_of(&b["width"])?, int_of(&b["height"])?))
 }
 
 /// A number for the comparison max() made (width * height); text and other values made it fail.
