@@ -6,7 +6,10 @@
 # nothing, so grub-mkconfig's output is unchanged. The entry is never the default: I pick it by hand at a restart. It
 # never fails, so it can never stop a kernel update from writing the boot menu.
 entry=${YGGDRASIL_GPUUNLOCK_ENTRY:-/var/lib/yggdrasil/gpu-unlock/entry.cfg}
-[ -r "$entry" ] || exit 0
+# a plain file (gpuunlock writes it so; never through a link), ending in a newline, so the "### END" line grub-mkconfig adds
+# after it starts a line of its own
+[ -f "$entry" ] && [ ! -L "$entry" ] && [ -r "$entry" ] || exit 0
+[ -z "$(tail -c 1 "$entry")" ] || exit 0
 
 # exactly one entry of ours: our id on its first line, a closing brace on its last, one kernel line ending in the option for
 # one PCI address, and nothing inside that opens another entry

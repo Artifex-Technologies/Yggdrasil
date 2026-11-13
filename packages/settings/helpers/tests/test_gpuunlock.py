@@ -75,6 +75,7 @@ class Fake:
     def __init__(self, t):
         self.t, self.calls, self.fail = t, [], set()
         self.mkconfig_extra = ""
+        self.mkconfig_tail = b""
         self.kernel_log = ""
         self.compute = ""
         self.pmon = ""
@@ -98,7 +99,7 @@ class Fake:
         if name == "grub-mkconfig":
             env = dict(os.environ, YGGDRASIL_GPUUNLOCK_ENTRY=os.path.join(self.t.m.STATE_DIR, "entry.cfg"))
             frag = subprocess.run(["sh", FRAGMENT], capture_output=True, text=True, env=env).stdout
-            put(self.t.m.GRUB_CFG, self.mkconfig_extra + GRUB_BASE + frag)
+            put(self.t.m.GRUB_CFG, (self.mkconfig_extra + GRUB_BASE + frag).encode() + self.mkconfig_tail, "wb")
             return 0, ""
         return 0, ""
 
@@ -265,6 +266,13 @@ class Blockers(Base):
         os.remove(os.path.join(self.m.ROOT, "etc/mkinitcpio.conf.d/zz-turing-unlock.conf"))
         self.assertIn("start-up image", self.m.status()["arm_blocker"])
 
+    def test_a_timeout_that_is_a_digit_but_not_a_number(self):
+        # "²" is a digit to str.isdigit() but not a number to int(): status stopped with a traceback
+        self.root("etc/default/grub", "GRUB_TIMEOUT=\u00b2\n")
+        self.assertIsNone(self.m.status()["arm_blocker"])
+        self.root("etc/default/grub", "GRUB_TIMEOUT=\u0660\n")   # an Arabic-Indic zero is a zero to int()
+        self.assertIn("boot menu is hidden", self.m.status()["arm_blocker"])
+
     def test_a_hidden_boot_menu_blocks_arming(self):
         for grub in ["GRUB_TIMEOUT=2\nGRUB_TIMEOUT_STYLE=hidden\n", "GRUB_TIMEOUT=0\n", "GRUB_TIMEOUT='0'\nGRUB_TIMEOUT_STYLE=menu\n"]:
             self.root("etc/default/grub", grub)
@@ -287,6 +295,13 @@ class Entry(Base):
         self.assertIsNone(self.m.one_try_entry(GRUB_BASE.replace("quiet splash", "quiet splash turing_unlock.targets=all"), "0000:01:00.0"))
         self.assertIsNone(self.m.one_try_entry(GRUB_BASE.replace("\tlinux\t", "\techo\t"), "0000:01:00.0"))
         self.assertIsNone(self.m.one_try_entry("submenu 'x' {\n}\n", "0000:01:00.0"))
+
+    def test_a_final_newline_is_not_part_of_an_exact_identity(self):
+        # the patterns' $ matched before a final newline
+        self.assertIsNone(self.m.one_try_entry(GRUB_BASE, "0000:01:00.0\n"))
+        for field, bad in [("subsystem", "1462:3711\n"), ("device", "10de:1e07\n"), ("vbios", "90.02.17.00.3E\n")]:
+            self.table(lambda e: e.__setitem__(field, bad))
+            self.assertIn("support table is not valid", self.m.status()["reason"], field)
 
     def test_the_option_on_the_command_line(self):
         self.assertEqual(self.m.unlock_requested("root=UUID=x rw quiet turing_unlock.targets=0000:01:00.0"), "0000:01:00.0")
@@ -312,6 +327,31 @@ class Arming(Base):
         self.fake.mkconfig_extra = "menuentry 'Something else' $menuentry_id_option 'other' {\n}\n"
         self.assertEqual(self.m.cmd_arm(), 1)
         self.assertEqual(self.written(), ["log"])
+
+    def test_a_boot_menu_that_is_not_utf8_is_put_back(self):
+        # another system's entry in latin-1 (os-prober) after grub-mkconfig: arming used to stop with a traceback here, after
+        # the menu was rewritten, leaving the one-try entry in it with no power hold and no follow-up services
+        self.fake.mkconfig_tail = b"menuentry 'Syst\xe8me' {\n}\n"
+        self.assertEqual(self.m.cmd_arm(), 1)
+        self.assertEqual(self.written(), ["log"])
+        self.assertEqual(len(self.fake.ran("grub-mkconfig")), 2, "the menu written again without the entry")
+        # and a menu that is not UTF-8 before arming is refused before anything is done
+        put(self.m.GRUB_CFG, GRUB_BASE.encode() + b"menuentry 'Syst\xe8me' {\n}\n", "wb")
+        self.fake.calls.clear()
+        self.assertEqual(self.m.cmd_arm(), 2)
+        self.assertEqual(self.fake.ran("snapper"), [])
+
+    def test_links_in_the_state_folder_are_not_followed(self):
+        victim = os.path.join(self.d, "victim")
+        put(victim, "mine\n")
+        os.makedirs(self.m.STATE_DIR, exist_ok=True)
+        for name in ("power-hold.tmp", "armed.tmp", "entry.cfg", "entry.cfg.tmp", "log"):
+            os.symlink(victim, self.state(name))
+        self.assertEqual(self.m.cmd_arm(), 0)
+        self.assertEqual(text(victim), "mine\n", "nothing written through a link")
+        for name in ("power-hold", "armed", "entry.cfg"):
+            self.assertFalse(os.path.islink(self.state(name)), name)
+        self.assertIn("turing_unlock.targets=0000:01:00.0", text(self.state("entry.cfg")))
 
     def test_a_failed_snapshot_stops_before_the_menu_is_touched(self):
         self.fake.fail.add("snapper")
@@ -439,6 +479,18 @@ class Bench(Base):
         self.assertFalse(ok)
         self.assertIn("No locked baseline", why)
 
+    def test_rates_that_are_not_finite_never_judge_unlocked(self):
+        # float() reads "nan" and "inf": a NaN passed the control check and the ratio check, so it was judged unlocked
+        for now in [dict(UNLOCKED, mma_f16_acc_f32="nan"), dict(UNLOCKED, mma_f16_acc_f32="inf"),
+                    dict(UNLOCKED, mma_f16_acc_f16="nan")]:
+            ok, _, why = self.m.judge(LOCKED, now)
+            self.assertFalse(ok, now)
+            self.assertIn("incomplete", why)
+        for base in [dict(LOCKED, mma_f16_acc_f32="nan"), dict(LOCKED, mma_f16_acc_f16="inf")]:
+            ok, _, why = self.m.judge(base, UNLOCKED)
+            self.assertFalse(ok, base)
+            self.assertIn("not usable", why)
+
     def test_arming_waits_for_a_full_baseline_of_this_card(self):
         self.assertIsNone(self.m.status()["arm_blocker"])
         for bad, expect in [(None, "No locked baseline"), (dict(LOCKED, quick=True), "not a full, correct run"),
@@ -478,6 +530,37 @@ class Bench(Base):
         self.assertFalse(os.path.exists(self.state("baseline.json")))
         self.assertEqual(self.m.cmd_bench(["--quick", "--baseline"]), 2)
         self.assertEqual(self.m.cmd_bench(["--fast"]), 2)
+
+    def test_a_power_limit_that_is_not_a_number_is_not_the_default(self):
+        # float() reads "nan": abs(nan - 260) > 1 is false, so a limit nobody knows passed as the default watts
+        os.remove(self.state("baseline.json"))
+        self.m.run_bench = lambda bdf, quick=False: (dict(LOCKED), None)
+        for power in ["nan, 260.00", "260.00, nan", "inf, inf"]:
+            self.fake.power = power
+            self.assertEqual(self.m.cmd_bench(["--baseline"]), 2, power)
+            self.assertFalse(os.path.exists(self.state("baseline.json")), power)
+
+    def test_something_else_on_ollamas_port_is_not_a_model(self):
+        # an answer that is not HTTP stopped arming with a traceback (http.client's BadStatusLine is not an OSError)
+        import socket
+        import threading
+        srv = socket.socket()
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(4)
+        self.addCleanup(srv.close)
+
+        def answer():
+            for _ in range(2):
+                try:
+                    c, _ = srv.accept()
+                except OSError:
+                    return
+                c.recv(4096)
+                c.sendall(b"hello, this is not a web server\r\n\r\n")
+                c.close()
+        threading.Thread(target=answer, daemon=True).start()
+        self.m.OLLAMA_PS = f"http://127.0.0.1:{srv.getsockname()[1]}/api/ps"
+        self.assertIsNone(self.m.card_busy())
 
     def test_what_counts_as_busy(self):
         self.assertEqual(self.m.pmon_busy(PMON_HEAD + PMON_IDLE), [])
@@ -581,8 +664,18 @@ class Fragment(unittest.TestCase):
                     g + g,
                     g.replace("\tinitrd", "\tsubmenu 'x' {\n\tinitrd"),
                     g.replace("\tinitrd", "\tlinux\t/other\n\tinitrd"),
-                    g[:-2]]:
+                    g[:-2],
+                    g[:-1]]:   # no newline after the last brace: grub-mkconfig's "### END" line would be glued to it
             self.assertEqual(self.run_it(bad), "", bad)
+
+    def test_a_link_prints_nothing(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d)
+        put(os.path.join(d, "good.cfg"), self.GOOD)
+        os.symlink(os.path.join(d, "good.cfg"), os.path.join(d, "entry.cfg"))
+        p = subprocess.run(["sh", FRAGMENT], capture_output=True, text=True,
+                           env=dict(os.environ, YGGDRASIL_GPUUNLOCK_ENTRY=os.path.join(d, "entry.cfg")))
+        self.assertEqual((p.returncode, p.stdout), (0, ""))
 
 
 if __name__ == "__main__":
