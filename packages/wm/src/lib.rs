@@ -402,20 +402,20 @@ impl Desk {
         }
     }
 
-    /// The mice and keyboards the compositor has (None: it did not answer, or cannot list them: Yggdrasil's own compositor).
+    /// The mice and keyboards the compositor has (None: it did not answer).
     pub fn input_devices(&self) -> Option<Vec<input::InputDevice>> {
         match self {
             Desk::Hyprland(h) => h.input_devices(),
-            Desk::Own(_) => None,
+            Desk::Own(o) => o.input_devices(),
         }
     }
 
     /// The mouse and keyboard settings from now on (Settings > Peripherals), after `now` was saved to input.conf; `before` is
-    /// what was in force until then. On Yggdrasil's own compositor: `input::NOT_YET`.
+    /// what was in force until then. Yggdrasil's own compositor reads input.conf again on `reload`.
     pub fn apply_input(&self, before: &input::InputConf, now: &input::InputConf) -> Result<(), String> {
         match self {
             Desk::Hyprland(h) => h.apply_input(before, now),
-            Desk::Own(_) => Err(input::NOT_YET.into()),
+            Desk::Own(o) => o.reload(),
         }
     }
 

@@ -314,21 +314,26 @@ impl App {
         }
         let was = before.iter().find(|(_, r)| r.to_f64().contains(pos)).map(|(n, _)| n.clone());
         let gone = was.is_some_and(|n| !rects.iter().any(|(m, _)| *m == n));
-        let inside = |r: &smithay::utils::Rectangle<i32, Logical>| -> Point<f64, Logical> {
+        let to = if gone {
+            rects.first().map(|(_, r)| Point::from(((r.loc.x + r.size.w / 2) as f64, (r.loc.y + r.size.h / 2) as f64)))
+        } else {
+            self.nearest_on_screens(pos)
+        };
+        if let Some(to) = to {
+            self.pointer_moved_to(to);
+        }
+    }
+
+    /// The point of the screens nearest `pos` (itself when it is on one); None with no screen.
+    pub fn nearest_on_screens(&self, pos: Point<f64, Logical>) -> Option<Point<f64, Logical>> {
+        let inside = |r: smithay::utils::Rectangle<i32, Logical>| -> Point<f64, Logical> {
             Point::from((
                 pos.x.clamp(r.loc.x as f64, (r.loc.x + r.size.w - 1).max(r.loc.x) as f64),
                 pos.y.clamp(r.loc.y as f64, (r.loc.y + r.size.h - 1).max(r.loc.y) as f64),
             ))
         };
-        let to = if gone {
-            rects.first().map(|(_, r)| Point::from(((r.loc.x + r.size.w / 2) as f64, (r.loc.y + r.size.h / 2) as f64)))
-        } else {
-            let dist = |p: Point<f64, Logical>| (p.x - pos.x).powi(2) + (p.y - pos.y).powi(2);
-            rects.iter().map(|(_, r)| inside(r)).min_by(|a, b| dist(*a).total_cmp(&dist(*b)))
-        };
-        if let Some(to) = to {
-            self.pointer_moved_to(to);
-        }
+        let dist = |p: Point<f64, Logical>| (p.x - pos.x).powi(2) + (p.y - pos.y).powi(2);
+        self.space.outputs().map(|o| inside(crate::state::output_rect(o))).min_by(|a, b| dist(*a).total_cmp(&dist(*b)))
     }
 }
 

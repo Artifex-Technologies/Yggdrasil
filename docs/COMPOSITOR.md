@@ -83,7 +83,9 @@ a program's own cursor surface and the shapes programs name, hides it while yggd
 timeout through yggdrasil-wm) and moves it onto a remaining screen when its screen goes; headless it is painted over the screen's
 picture like a hardware cursor plane, so only `screenshot ... pointer`, grim -c and copies that ask for it show it
 (`tests/pointer.rs`, with snapshots, Yggdrasil's own arrow among them). GPU buffers for the copies (dmabuf) come with the
-hardware backend.
+hardware backend. The same day it took Settings > Peripherals' mouse and keyboard settings (`input.conf`, read with yggdrasil-wm's parser at
+start and on reload, which yggdrasil-wm's `apply_input` asks for): key repeat for every program, and headless the virtual
+mouse's speed, scrolling and left-handed buttons (`src/input.rs`, `tests/input.rs`).
 
 **2026-11-12: Yggdrasil's own tools talk to it through yggdrasil-wm** (`packages/wm`, the layer they share): the panel's desktop
 buttons, window zones, Snap Assist and the dock's minimize, `yggdrasil-snap`, `yggdrasil-close` and the idle manager's pointer find

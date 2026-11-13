@@ -96,7 +96,7 @@ jobs:
           # Yggdrasil's cursor theme as yggdrasil-theme draws it, for the pointer test
           (cd packages/theme && cargo build --locked --bin ygg-cursors)
           target/debug/ygg-cursors target/test-cursors/Yggdrasil
-          (cd packages/compositor && cargo test --locked --no-run --test apps --test behaviour --test tools --test keys --test look --test outputs --test places --test capture --test pointer)
+          (cd packages/compositor && cargo test --locked --no-run --test apps --test behaviour --test tools --test keys --test look --test outputs --test places --test capture --test pointer --test input)
       - name: Headless tests with Yggdrasil's programs
         timeout-minutes: 15
         run: |
@@ -109,7 +109,7 @@ jobs:
           YGGDRASIL_TEST_LOGOUT="$GITHUB_WORKSPACE/target/debug/yggdrasil-logout" \
           YGGDRASIL_TEST_CURSORS="$GITHUB_WORKSPACE/target/test-cursors" \
           YGGDRASIL_TEST_APPS_REQUIRED=1 \
-            cargo test --locked --test apps --test behaviour --test tools --test keys --test look --test outputs --test places --test capture --test pointer -- --test-threads=2
+            cargo test --locked --test apps --test behaviour --test tools --test keys --test look --test outputs --test places --test capture --test pointer --test input -- --test-threads=2
   # gpuunlock is a live root helper still in Python (Settings runs it through pkexec); its tests fake every outside program,
   # /sys, /proc and /etc, so they run without a graphics card.
   gpuunlock:

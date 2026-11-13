@@ -11,6 +11,8 @@ path = "src/main.rs"
 
 [dependencies]
 yggdrasil-conf = { path = "../yggdrasil-conf" }
+# input.rs: Settings > Peripherals' input.conf, read with the parser Settings writes it with (the layer Yggdrasil's tools share)
+yggdrasil-wm = { path = "../wm" }
 smithay = { version = "0.7", default-features = false, features = ["backend_winit", "backend_egl", "backend_drm", "renderer_gl", "renderer_pixman", "desktop", "wayland_frontend", "use_system_lib", "xwayland"] }
 tiny-skia = "0.11"
 # x11asked.rs: one property read on its own connection (already in the tree through smithay)
@@ -31,8 +33,6 @@ wayland-protocols = { version = "0.32", features = ["client", "staging"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 # the tests' children die with the test (prctl PR_SET_PDEATHSIG); already in the tree
 libc = "0.2"
-# tests/tools.rs: Yggdrasil's tools' own layer (packages/wm) speaking to the headless compositor
-yggdrasil-wm = { path = "../wm" }
 
 [profile.release]
 opt-level = 2

@@ -7,7 +7,7 @@
 //!   that key is let go with nothing else pressed in between, and the key still reaches the program (Hyprland's `release` and
 //!   `non_consuming` binds).
 //! - The volume, brightness and magnifier keys repeat while held (Hyprland's `repeating`), after the keyboard's delay and at its
-//!   rate (REPEAT_DELAY, REPEAT_RATE: Hyprland's defaults, which the session keeps).
+//!   rate (Settings > Peripherals' input.conf, input.rs; Hyprland's 600 ms and 25 a second when it says nothing).
 //! - Only the media keys work on the lock screen (`works_locked`; Hyprland's `locked`).
 //!
 //! `~/.config/yggdrasil/shortcuts.conf` changes the table, one binding per line:
@@ -89,11 +89,6 @@ impl Binding {
         is_modifier(self.sym)
     }
 }
-
-/// How long a key is held before it repeats, and how many times a second it then does (the keyboard's; Hyprland's defaults
-/// `input:repeat_delay` 600 and `input:repeat_rate` 25, which the session does not change).
-pub const REPEAT_DELAY: i32 = 600;
-pub const REPEAT_RATE: i32 = 25;
 
 pub fn parse_action(s: &str) -> Option<Action> {
     let s = s.trim();

@@ -37,7 +37,11 @@
 //!   key-down COMBO, key-up COMBO press keys and keep them down (a held key repeats its shortcut), let them go
 //!   type TEXT                    type text (letters, digits, space and common punctuation, US layout)
 //!   pointer X Y                  move the pointer to X,Y (logical, in the space of all outputs)
-//!   click [left|right|middle]    press and let go of a pointer button where the pointer is
+//!   click [left|right|middle]    press and let go of a button of the virtual mouse where the pointer is (left-handed in
+//!                                input.conf: its left one is the right button)
+//!   pointer-move DX DY           move the virtual mouse: the pointer goes as far as its speed in input.conf says
+//!   scroll DY [DX]               turn its wheel (input.conf's scroll factor and natural scrolling applied)
+//!   input                        the mouse and keyboard settings in force (input.rs: Settings > Peripherals' input.conf)
 //!   power NAME on|off            switch an output on or off (as wlr-output-power does)
 //!   clock [stop|run|+MS]         the clock the animations run on: stop it, move a stopped one on, let it run again; without
 //!                                a word: "running" or "stopped" and its time (ms). For tests: a frame in an animation
@@ -785,10 +789,48 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String
                 "middle" => 0x112,
                 b => return Err(format!("{b}: left, right or middle")),
             };
+            // a press of the virtual mouse's button: left-handed, its left one is the right button
+            let button = crate::input::button(&crate::input::mouse(&app.input, crate::input::HEADLESS_MOUSE), button);
             let t = h.ms();
             app.button(button, smithay::backend::input::ButtonState::Pressed, t);
             app.button(button, smithay::backend::input::ButtonState::Released, t + 1);
             Ok(vec![])
+        }
+        ["pointer-move", dx, dy] => {
+            let num = |v: &str| v.parse::<f64>().ok().filter(|v| v.is_finite() && v.abs() <= 65536.0).ok_or("pointer-move DX DY: numbers");
+            let m = crate::input::mouse(&app.input, crate::input::HEADLESS_MOUSE);
+            let (mx, my) = crate::input::motion(&m, (num(dx)?, num(dy)?));
+            let to = app.pointer_location + smithay::utils::Point::from((mx, my));
+            let to = app.nearest_on_screens(to).unwrap_or(to);
+            let t = h.ms();
+            app.pointer_to(to, t);
+            Ok(vec![])
+        }
+        ["scroll", dy, rest @ ..] if rest.len() <= 1 => {
+            use smithay::backend::input::{Axis, AxisSource};
+            let num = |v: &str| v.parse::<f64>().ok().filter(|v| v.is_finite() && v.abs() <= 10_000.0).ok_or("scroll DY [DX]: numbers");
+            let m = crate::input::mouse(&app.input, crate::input::HEADLESS_MOUSE);
+            let (vy, vx) = (crate::input::scroll(&m, num(dy)?), crate::input::scroll(&m, rest.first().map(|v| num(v)).transpose()?.unwrap_or(0.0)));
+            let t = h.ms();
+            app.wake();
+            let pointer = app.pointer.clone();
+            let mut frame = smithay::input::pointer::AxisFrame::new(t).source(AxisSource::Wheel);
+            for (axis, v) in [(Axis::Vertical, vy), (Axis::Horizontal, vx)] {
+                if v != 0.0 {
+                    frame = frame.value(axis, v);
+                }
+            }
+            pointer.axis(app, frame);
+            pointer.frame(app);
+            Ok(vec![])
+        }
+        ["input"] => {
+            let (rate, delay) = crate::input::repeat(&app.input);
+            let m = crate::input::mouse(&app.input, crate::input::HEADLESS_MOUSE);
+            Ok(vec![
+                format!("{}	repeat_rate={rate}	repeat_delay={delay}", crate::input::HEADLESS_KEYBOARD),
+                crate::input::describe(crate::input::HEADLESS_MOUSE, &m),
+            ])
         }
         ["power", name, on] => {
             let o = output(name, app)?;
@@ -825,7 +867,7 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String
         }
         [] => Err("no command".into()),
         _ => Err(format!(
-            "unknown command {:?} (outputs, resize NAME WxH, scale NAME S, add-output WxH[@S], remove-output NAME, screenshot NAME FILE [pointer], pointer-look, windows, layers, free, focus, workspace, lock, key COMBO, key-down COMBO, key-up COMBO, type TEXT, pointer X Y, click [BUTTON], power NAME on|off, clock [stop|run|+MS], quit; for the tools: clients, active, workspaces, workspace N, activate ID, close ID, minimize ID, maximize ID on|off|toggle, send ID N, place ID X Y W H, cursor, screens, pointer-timeout [S], modifiers)",
+            "unknown command {:?} (outputs, resize NAME WxH, scale NAME S, add-output WxH[@S], remove-output NAME, screenshot NAME FILE [pointer], pointer-look, windows, layers, free, focus, workspace, lock, key COMBO, key-down COMBO, key-up COMBO, type TEXT, pointer X Y, click [BUTTON], pointer-move DX DY, scroll DY [DX], input, power NAME on|off, clock [stop|run|+MS], quit; for the tools: clients, active, workspaces, workspace N, activate ID, close ID, minimize ID, maximize ID on|off|toggle, send ID N, place ID X Y W H, cursor, screens, pointer-timeout [S], modifiers)",
             words.join(" ")
         )),
     }

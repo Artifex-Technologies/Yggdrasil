@@ -130,6 +130,11 @@ impl Own {
         self.ask("reload").map(|_| ())
     }
 
+    /// The mice and keyboards (`devices`: name and kind, tab separated).
+    pub fn input_devices(&self) -> Option<Vec<crate::input::InputDevice>> {
+        Some(self.ask("devices").ok()?.iter().filter_map(|l| parse_device(l)).collect())
+    }
+
     pub fn binds(&self) -> Option<Vec<yggdrasil_conf::shortcuts::Bind>> {
         Some(self.ask("binds").ok()?.iter().filter_map(|l| parse_bind(l)).collect())
     }
@@ -171,6 +176,18 @@ fn pair<T: std::str::FromStr>(s: &str, sep: char) -> Option<(T, T)> {
 
 /// A `binds` line: modifier mask (Hyprland's numbers: Shift 1, Ctrl 4, Alt 8, Super 64), key (xkb name), what it does, and its
 /// kind (release, repeat, locked; comma separated, - for none; absent from compositors built before 2026-11-13).
+/// A `devices` line: NAME, then "pointer" or "keyboard".
+pub fn parse_device(line: &str) -> Option<crate::input::InputDevice> {
+    use crate::input::{DeviceKind, InputDevice};
+    let (name, kind) = line.split_once('\t')?;
+    let kind = match kind {
+        "pointer" => DeviceKind::Pointer,
+        "keyboard" => DeviceKind::Keyboard,
+        _ => return None,
+    };
+    crate::input::device_name_ok(name).then(|| InputDevice { name: name.to_string(), kind })
+}
+
 pub fn parse_bind(line: &str) -> Option<yggdrasil_conf::shortcuts::Bind> {
     let p: Vec<&str> = line.split('\t').collect();
     let (mask, key, desc, kind) = match p.as_slice() {
@@ -280,6 +297,10 @@ mod tests {
         let m = parse_client("8\ta\tb\t0,0\t10x10\t1\ttiled,minimized\tHEADLESS-1\t0").unwrap();
         assert!(m.minimized && m.special && m.hidden && m.floating == Some(false) && m.pid.is_none());
         assert_eq!(parse_client("x\ta\tb\t0,0\t10x10\t1\t\tH\t0"), None, "the id is a number");
+        let d = parse_device("yggdrasil-headless-mouse\tpointer").unwrap();
+        assert_eq!((d.name.as_str(), d.kind), ("yggdrasil-headless-mouse", crate::input::DeviceKind::Pointer));
+        assert_eq!(parse_device("Bad Name\tpointer"), None, "a name that may not go into input.conf");
+        assert_eq!(parse_device("kbd\ttablet"), None);
         let b = parse_bind("64\tq\tClose the window").unwrap();
         assert_eq!((b.modmask, b.key.as_str(), b.desc.as_str(), b.release), (64, "q", "Close the window", false));
         let tap = parse_bind("64\tSuper_L\tStart menu\trelease").unwrap();

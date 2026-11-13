@@ -17,13 +17,14 @@
 //! sensitivity = -0.5         what that mouse does differently (the pointer keys above)
 //! ```
 //!
-//! Yggdrasil's own compositor (packages/compositor) does not read this file yet: `apply_input` says so, and the file is kept for
-//! when it does (it is meant to read the same file, with `parse` here, on start and on `reload`).
+//! Yggdrasil's own compositor (packages/compositor) reads the same file with `parse` here, at start and on `reload` (which
+//! `apply_input` asks it for), and lists its devices on its control socket's `devices`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// What `Desk::apply_input` answers on Yggdrasil's own compositor.
+/// Settings > Peripherals' note on Yggdrasil's own compositor, from before it took these settings (2026-11-12); `apply_input`
+/// no longer answers it. Goes once Settings no longer shows it.
 pub const NOT_YET: &str = "Kept. Yggdrasil's own compositor does not take mouse and keyboard settings yet; Hyprland does.";
 
 pub const DEFAULT_REPEAT_RATE: u32 = 25;

@@ -21,6 +21,7 @@ mod deco;
 mod draw;
 mod grabs;
 mod headless;
+mod input;
 mod keymap;
 mod look;
 mod outputmgmt;

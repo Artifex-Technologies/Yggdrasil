@@ -278,6 +278,9 @@ pub struct App {
     pub pointer_timeout: f64,
     /// The pointer's theme and size as Yggdrasil's tools set it on the running compositor (ygg-theme); None: the files' (pointer.rs).
     pub cursor_theme: Option<(String, u32)>,
+    /// Settings > Peripherals' mouse and keyboard settings (input.rs) and when their file was changed as last seen.
+    pub input: yggdrasil_wm::input::InputConf,
+    input_time: Option<std::time::SystemTime>,
     /// The pointer the compositor draws (pointer.rs): what programs asked it to look like, when it last moved, the theme's pictures.
     pub cursor: crate::pointer::Pointer,
     /// The standard window list (ext-foreign-toplevel-list; its handles are kept in toplevels.rs) and the window and screen
@@ -464,13 +467,16 @@ impl App {
         let mut seat = seat_state.new_wl_seat(dh, "seat0");
         // the system's keyboard layout, as the session reads it for Hyprland (keymap.rs); xkb's default when it cannot be loaded
         let system_kb = crate::keymap::system();
-        let (keyboard, kb_layout) = match seat.add_keyboard(system_kb.xkb(), shortcuts::REPEAT_DELAY, shortcuts::REPEAT_RATE) {
+        // the key repeat from Settings > Peripherals (input.rs)
+        let input_conf = yggdrasil_wm::input::InputConf::load();
+        let (rate, delay) = crate::input::repeat(&input_conf);
+        let (keyboard, kb_layout) = match seat.add_keyboard(system_kb.xkb(), delay, rate) {
             Ok(k) => (k, Some((system_kb.layout.clone(), system_kb.variant.clone()))),
             Err(e) => {
                 eprintln!(
                     "yggdrasil-compositor: the system's keyboard layout {system_kb:?} could not be loaded ({e:?}); using xkb's default"
                 );
-                (seat.add_keyboard(Default::default(), shortcuts::REPEAT_DELAY, shortcuts::REPEAT_RATE).expect("keyboard"), None)
+                (seat.add_keyboard(Default::default(), delay, rate).expect("keyboard"), None)
             }
         };
         let pointer = seat.add_pointer();
@@ -565,6 +571,8 @@ impl App {
             pointer_timeout: 0.0,
             cursor_theme: None,
             cursor: Default::default(),
+            input_time: std::fs::metadata(yggdrasil_wm::input::InputConf::path()).and_then(|m| m.modified()).ok(),
+            input: input_conf,
             toplevel_list: smithay::wayland::foreign_toplevel_list::ForeignToplevelListState::new::<Self>(dh),
             capture: Default::default(),
             kb_layout,
@@ -1282,8 +1290,9 @@ impl App {
     fn start_repeat(&mut self, action: Action) {
         use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
         let Some((_, serial)) = self.repeating else { return };
-        let every = Duration::from_millis(1000 / shortcuts::REPEAT_RATE.max(1) as u64);
-        let delay = Duration::from_millis(shortcuts::REPEAT_DELAY.max(0) as u64);
+        let (rate, delay) = crate::input::repeat(&self.input);
+        let every = Duration::from_millis(1000 / rate.max(1) as u64);
+        let delay = Duration::from_millis(delay.max(0) as u64);
         let _ = self.loop_handle.insert_source(Timer::from_duration(delay), move |_, _, app| {
             // let go, or another key pressed meanwhile (on the lock screen too: its key handling ends a repeat the same way)
             if app.repeating.map(|(_, s)| s) != Some(serial) {
@@ -1549,6 +1558,14 @@ impl App {
                 Ok(()) => self.kb_layout = Some((l.layout, l.variant)),
                 Err(e) => eprintln!("yggdrasil-compositor: the system's keyboard layout {l:?} could not be loaded ({e:?})"),
             }
+        }
+        // the mouse and keyboard settings (Settings > Peripherals' input.conf, input.rs): key repeat at once
+        let in_t = mtime(yggdrasil_wm::input::InputConf::path());
+        if in_t != self.input_time {
+            self.input_time = in_t;
+            self.input = yggdrasil_wm::input::InputConf::load();
+            let (rate, delay) = crate::input::repeat(&self.input);
+            self.keyboard.change_repeat_info(rate, delay);
         }
         // the screens that tile (Settings > Displays); windows opening there from now on tile, as on Hyprland after a reload
         let tl_t = mtime(yggdrasil_conf::tiling::path());

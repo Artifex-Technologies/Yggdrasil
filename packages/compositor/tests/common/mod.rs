@@ -415,6 +415,12 @@ pub struct State {
     pub pointer_on: Option<ObjectId>,
     /// the serial of the last pointer enter (a cursor surface is set with it)
     pub pointer_serial: u32,
+    /// where the pointer is on the surface it is on (enter and motion), the buttons pressed and the scrolls (axis, value)
+    pub pointer_at: (f64, f64),
+    pub buttons: Vec<u32>,
+    pub axis: Vec<(u32, f64)>,
+    /// the keyboard's repeat (rate, delay) as last told
+    pub repeat_info: Option<(i32, i32)>,
     /// ext-session-lock
     pub locked: bool,
     pub lock_finished: bool,
@@ -898,6 +904,7 @@ impl Dispatch<WlKeyboard, ()> for State {
                 }
             }
             wl_keyboard::Event::Enter { surface, .. } => st.kb_focus = Some(surface.id()),
+            wl_keyboard::Event::RepeatInfo { rate, delay } => st.repeat_info = Some((rate, delay)),
             wl_keyboard::Event::Leave { .. } => st.kb_focus = None,
             wl_keyboard::Event::Key { key, state: WEnum::Value(wl_keyboard::KeyState::Pressed), .. } => {
                 if let Some(f) = &st.kb_focus {
@@ -912,11 +919,21 @@ impl Dispatch<WlKeyboard, ()> for State {
 impl Dispatch<WlPointer, ()> for State {
     fn event(st: &mut Self, _: &WlPointer, event: wl_pointer::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
         match event {
-            wl_pointer::Event::Enter { surface, serial, .. } => {
+            wl_pointer::Event::Enter { surface, serial, surface_x, surface_y } => {
                 st.pointer_on = Some(surface.id());
                 st.pointer_serial = serial;
+                st.pointer_at = (surface_x, surface_y);
             }
             wl_pointer::Event::Leave { .. } => st.pointer_on = None,
+            wl_pointer::Event::Motion { surface_x, surface_y, .. } => st.pointer_at = (surface_x, surface_y),
+            wl_pointer::Event::Button { button, state: WEnum::Value(wl_pointer::ButtonState::Pressed), .. } => st.buttons.push(button),
+            wl_pointer::Event::Axis { axis, value, .. } => st.axis.push((
+                match axis {
+                    WEnum::Value(a) => a as u32,
+                    WEnum::Unknown(u) => u,
+                },
+                value,
+            )),
             _ => {}
         }
     }

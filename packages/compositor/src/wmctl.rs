@@ -28,11 +28,14 @@
 //!   binds                       one line per shortcut: modifier mask (Shift 1, Ctrl 4, Alt 8, Super 64), key, what it does,
 //!                               its kind (release, repeat, locked, comma separated; - for none); the mouse's two last
 //!   reload                      read the config files again when they changed: workspaces.conf, shortcuts.conf, opaque.conf,
-//!                               the look's, the tiling screens, Settings > Displays' monitors.lua and the system's keyboard
+//!                               the look's, the tiling screens, Settings > Displays' monitors.lua, Settings > Peripherals'
+//!                               input.conf and the system's keyboard
 //!   paste ctrl|ctrl+shift       press Ctrl+V (or Ctrl+Shift+V, a terminal's) in the window with the keyboard: the clipboard's
 //!                               paste; refused while the screen is locked
 //!   cursor-theme [NAME SIZE]    the pointer's theme and size (ygg-theme cursor); the pointer is drawn with it from now on
 //!   keyboard [LAYOUT [VARIANT]] the keyboard layout from now on (xkb names); without one, the one in use
+//!   devices                     the mice and keyboards: name and "pointer" or "keyboard" (tab separated); headless the virtual
+//!                               ones the control socket moves (Settings > Peripherals offers settings per mouse by these names)
 //!   exit                        end the session (yggdrasil-logout, once every window has closed)
 //! ID is a number from `clients`, or `active` for the window with the keyboard.
 
@@ -196,6 +199,9 @@ pub fn command(words: &[&str], app: &mut App) -> Option<Result<Vec<String>, Stri
                 app.key((k + 8).into(), smithay::backend::input::KeyState::Released, t + 1);
             }
             Ok(vec![])
+        }
+        ["devices"] => {
+            Ok(vec![format!("{}\tpointer", crate::input::HEADLESS_MOUSE), format!("{}\tkeyboard", crate::input::HEADLESS_KEYBOARD)])
         }
         ["cursor-theme"] => Ok(app.cursor_theme.iter().map(|(n, s)| format!("{n} {s}")).collect()),
         ["cursor-theme", name, size] => {
