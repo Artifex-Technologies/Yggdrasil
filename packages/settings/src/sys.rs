@@ -210,8 +210,40 @@ pub fn wifi_list(text: &str) -> Vec<Wifi> {
         }
     }
     let mut v: Vec<Wifi> = best.into_values().collect();
+    fold_owe_twins(&mut v);
     v.sort_by(|a, b| b.in_use.cmp(&a.in_use).then(b.signal.cmp(&a.signal)));
     v
+}
+
+/// The open network an Enhanced Open twin belongs to, by the twin's name: "_owetm_" + the start of the open network's name +
+/// digits (an Aruba guest network, "_owetm_Shop Gue2770611103" for "Shop Guest").
+pub fn owe_twin_of<'a>(twin: &str, names: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
+    let rest = twin.strip_prefix("_owetm_")?.trim_end_matches(|c: char| c.is_ascii_digit());
+    if rest.is_empty() {
+        return None;
+    }
+    names.into_iter().find(|n| *n != twin && n.starts_with(rest))
+}
+
+/// One row per network, as a phone shows it: an Enhanced Open network in transition mode is an open network and a hidden,
+/// encrypted twin the computer actually joins. The twin's row goes, and when the twin is the one in use, its open network's
+/// row says so (it was listed twice, once under the twin's odd name, 2026-11-13).
+fn fold_owe_twins(v: &mut Vec<Wifi>) {
+    let names: Vec<String> = v.iter().map(|w| w.ssid.clone()).collect();
+    let mut keep = vec![true; v.len()];
+    for (i, w) in v.clone().iter().enumerate() {
+        if let Some(open) = owe_twin_of(&w.ssid, names.iter().map(String::as_str)) {
+            keep[i] = false;
+            if w.in_use {
+                if let Some(o) = v.iter_mut().find(|x| x.ssid == open) {
+                    o.in_use = true;
+                    o.signal = o.signal.max(w.signal);
+                }
+            }
+        }
+    }
+    let mut k = keep.into_iter();
+    v.retain(|_| k.next().unwrap_or(true));
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1718,6 +1750,11 @@ mod tests {
         assert!(w[0].in_use && w[0].secured);
         assert_eq!(w[1].signal, 80);
         assert!(!w[2].secured);
+        // an Enhanced Open twin is folded into its open network, which shows as the one in use
+        let t = wifi_list("*:_owetm_Shop Gue2770611103:80:OWE\n:Shop Guest:70:OWE-TM\n:Cafe:40:WPA2\n");
+        assert_eq!(t.iter().map(|x| (x.ssid.as_str(), x.in_use)).collect::<Vec<_>>(), vec![("Shop Guest", true), ("Cafe", false)]);
+        assert_eq!(owe_twin_of("_owetm_Shop Gue27", ["Cafe", "Shop Guest"]), Some("Shop Guest"));
+        assert_eq!(owe_twin_of("Shop Guest", ["Shop Guest"]), None);
         // Enhanced Open (a guest network): no password
         assert!(!nm_secured("OWE") && !nm_secured("OWE-TM") && !nm_secured("--"));
         assert!(nm_secured("WPA2") && nm_secured("WPA2 802.1X") && nm_secured("WPA2 WPA3"));

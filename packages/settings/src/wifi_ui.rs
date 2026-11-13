@@ -32,7 +32,14 @@ pub(crate) fn sections(n: &sys::Network) -> Sections<'_> {
         connected: n.networks.iter().find(|w| w.in_use),
         known: n.networks.iter().filter(|w| !w.in_use).filter_map(|w| saved_for(&w.ssid).map(|p| (w, p))).collect(),
         other: n.networks.iter().filter(|w| !w.in_use && saved_for(&w.ssid).is_none()).collect(),
-        hidden: n.air.iter().filter(|a| a.hidden()).collect(),
+        // not the hidden, encrypted twin of an open guest network in range (Enhanced Open in transition mode): a phone shows that
+        // network once, and so does this list
+        hidden: n
+            .air
+            .iter()
+            .filter(|a| a.hidden())
+            .filter(|a| !(a.best().security().kind == scan::SecKind::Owe && n.air.iter().any(|o| o.best().security().owe_twin)))
+            .collect(),
     }
 }
 
