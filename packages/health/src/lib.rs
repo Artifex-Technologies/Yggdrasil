@@ -184,6 +184,11 @@ impl Clock {
         unsafe {
             let t = libc::time(std::ptr::null_mut());
             let mut tm: libc::tm = std::mem::zeroed();
+            // tzset: glibc keeps the zone it first read; this notices a new /etc/localtime (the time zone changed)
+            unsafe extern "C" {
+                fn tzset();
+            }
+            tzset();
             libc::localtime_r(&t, &mut tm);
             Clock {
                 epoch: t as i64,

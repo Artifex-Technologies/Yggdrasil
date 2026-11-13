@@ -395,6 +395,11 @@ pub fn clock_text() -> (String, String) {
         unsafe {
             let t = libc::time(std::ptr::null_mut());
             let mut tm: libc::tm = std::mem::zeroed();
+            // tzset: glibc keeps the zone it first read; this notices a new /etc/localtime (the time zone changed)
+            unsafe extern "C" {
+                fn tzset();
+            }
+            tzset();
             libc::localtime_r(&t, &mut tm);
             let cf = std::ffi::CString::new(f).unwrap();
             let n = libc::strftime(buf.as_mut_ptr() as *mut libc::c_char, buf.len(), cf.as_ptr(), &tm);
@@ -408,6 +413,11 @@ pub fn current_hour() -> u32 {
     unsafe {
         let t = libc::time(std::ptr::null_mut());
         let mut tm: libc::tm = std::mem::zeroed();
+        // tzset: glibc keeps the zone it first read; this notices a new /etc/localtime (the time zone changed)
+        unsafe extern "C" {
+            fn tzset();
+        }
+        tzset();
         libc::localtime_r(&t, &mut tm);
         tm.tm_hour as u32
     }
