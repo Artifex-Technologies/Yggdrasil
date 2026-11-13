@@ -13,9 +13,13 @@
 //!
 //! A control socket in that runtime folder (printed as YGGDRASIL_COMPOSITOR_CTL=...; only this user can open it) takes one command
 //! per connection, and `yggdrasil-compositor ctl COMMAND...` sends one:
-//!   outputs                      one line per output: NAME WxH scale=S at=X,Y logical=WxH
-//!   resize NAME WxH              change an output's size (the programs are told, panels laid out again)
+//!   outputs                      one line per output: NAME WxH scale=S at=X,Y logical=WxH, then " power=off" for one that is
+//!                                off (wlr-output-power) and " disabled" for one switched off (Settings, wlr-output-management)
+//!   resize NAME WxH              the output becomes a screen of that size: its own (preferred) mode, which it is set to
 //!   scale NAME S                 change an output's scale
+//!   add-output WxH[@S]           a screen is plugged in (named HEADLESS-N, the next number), placed as Settings' file says or
+//!                                to the right of the others
+//!   remove-output NAME           a screen is unplugged: its panels are closed, its windows move to the first screen
 //!   screenshot NAME FILE.png     draw what is pending and write the output's picture as a PNG
 //!   windows                      one line per window: app id, title, place, size, workspace, states (tab separated; the
 //!                                states are active, floating or tiled, maximized, fullscreen, left, right, minimized)
@@ -35,11 +39,13 @@
 //!                                a word: "running" or "stopped" and its time (ms). For tests: a frame in an animation
 //!   quit                         end the compositor
 //! and the desktop commands Yggdrasil's own tools use through yggdrasil-wm (wmctl.rs: clients, active, workspaces, workspace N,
-//! activate, close, minimize, maximize, send, place, cursor, screens, pointer-timeout, modifiers).
+//! activate, close, minimize, maximize, send, place, cursor, screens, screens all, pointer-timeout, modifiers, layers, binds,
+//! reload, paste, cursor-theme, keyboard, exit).
 //! The answer is the lines, then "ok" or "error: ...".
 //!
 //! The input is made here, inside the compositor, for the tests: no input device is opened, and nothing reaches the running
-//! desktop. wlr-screencopy (screencopy.rs) and wlr-output-power (outputpower.rs) are served from the pictures in memory.
+//! desktop. wlr-screencopy (screencopy.rs) and wlr-output-power (outputpower.rs) are served from the pictures in memory, and
+//! the screens are listed and changed through wlr-output-management (outputmgmt.rs) and Settings' monitors.lua (outputs.rs).
 
 use std::cell::RefCell;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -58,7 +64,6 @@ use smithay::reexports::calloop::generic::Generic;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use smithay::reexports::calloop::{EventLoop, Interest, Mode as LoopMode, PostAction};
 use smithay::reexports::pixman::Image;
-use smithay::reexports::wayland_server::DisplayHandle;
 use smithay::utils::Transform;
 
 use crate::state::{self, App};
@@ -185,25 +190,16 @@ fn runtime_ok(dir: &Path, uid: u32, allow_shared: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// Make the outputs (wl_output and xdg-output globals), side by side from 0,0, named HEADLESS-1, HEADLESS-2, ...
-pub fn make_outputs(dh: &DisplayHandle, specs: &[OutputSpec]) -> Vec<Output> {
-    let mut x = 0;
-    specs
-        .iter()
-        .enumerate()
-        .map(|(i, s)| {
-            let o = Output::new(
-                format!("HEADLESS-{}", i + 1),
-                PhysicalProperties { size: (0, 0).into(), subpixel: Subpixel::Unknown, make: "Yggdrasil".into(), model: "headless".into() },
-            );
-            let _ = o.create_global::<App>(dh);
-            let mode = Mode { size: (s.w, s.h).into(), refresh: 60_000 };
-            o.change_current_state(Some(mode), Some(Transform::Normal), Some(Scale::Fractional(s.scale)), Some((x, 0).into()));
-            o.set_preferred(mode);
-            x += state::logical_size(&o).w;
-            o
-        })
-        .collect()
+/// A virtual screen HEADLESS-n of this size and scale (its wl_output global and its place come with `App::add_output`).
+pub fn make_output(n: usize, s: &OutputSpec) -> Output {
+    let o = Output::new(
+        format!("HEADLESS-{n}"),
+        PhysicalProperties { size: (0, 0).into(), subpixel: Subpixel::Unknown, make: "Yggdrasil".into(), model: "headless".into() },
+    );
+    let mode = Mode { size: (s.w, s.h).into(), refresh: 60_000 };
+    o.change_current_state(Some(mode), Some(Transform::Normal), Some(Scale::Fractional(s.scale)), None);
+    o.set_preferred(mode);
+    o
 }
 
 /// One output's picture in memory and what is known to be on it.
@@ -219,7 +215,10 @@ struct Screen {
 
 pub struct Headless {
     renderer: PixmanRenderer,
+    /// a picture for each output in the space (screens that are switched off or gone have none)
     screens: Vec<Screen>,
+    /// the number the next screen plugged in gets (HEADLESS-n; never one used before)
+    next: usize,
     /// a frame is already on its way (the wake-ups before it are folded into it)
     pending: bool,
     last: Instant,
@@ -237,23 +236,34 @@ fn new_image(renderer: &mut PixmanRenderer, o: &Output) -> Result<Image<'static,
 }
 
 impl Headless {
-    fn new(outputs: &[Output]) -> Result<Headless, String> {
-        let mut renderer = PixmanRenderer::new().map_err(|e| format!("the software renderer did not start: {e}"))?;
-        let mut screens = vec![];
-        for o in outputs {
-            screens.push(Screen {
-                output: o.clone(),
-                image: new_image(&mut renderer, o)?,
-                damage: OutputDamageTracker::from_output(o),
-                drawn: false,
-                changed: true,
-            });
+    fn new(next: usize) -> Result<Headless, String> {
+        let renderer = PixmanRenderer::new().map_err(|e| format!("the software renderer did not start: {e}"))?;
+        Ok(Headless { renderer, screens: vec![], next, pending: false, last: Instant::now() - FRAME, start: Instant::now() })
+    }
+
+    /// A picture for every output in the space, none for those that left it.
+    fn sync(&mut self, app: &App) {
+        self.screens.retain(|s| app.space.outputs().any(|o| *o == s.output));
+        for o in app.space.outputs() {
+            if self.screens.iter().any(|s| s.output == *o) {
+                continue;
+            }
+            match new_image(&mut self.renderer, o) {
+                Ok(image) => self.screens.push(Screen {
+                    output: o.clone(),
+                    image,
+                    damage: OutputDamageTracker::from_output(o),
+                    drawn: false,
+                    changed: true,
+                }),
+                Err(e) => eprintln!("yggdrasil-compositor: {e}"),
+            }
         }
-        Ok(Headless { renderer, screens, pending: false, last: Instant::now() - FRAME, start: Instant::now() })
     }
 
     /// Draw every output (only what changed), then tell the programs their frame is done.
     fn render(&mut self, app: &mut App) {
+        self.sync(app);
         // a window that has just closed: its last picture, from the screen, for its closing animation
         for c in app.closing.iter_mut().filter(|c| c.picture.is_none()) {
             if let Some((rect, picture)) = self.picture_of(c.rect, app.look.border) {
@@ -394,17 +404,6 @@ impl Headless {
     fn screen(&self, name: &str) -> Option<&Screen> {
         self.screens.iter().find(|s| s.output.name() == name)
     }
-
-    /// Lay the outputs out side by side again (one changed size or scale) and tell everyone.
-    fn relayout(&mut self, app: &mut App) {
-        let mut x = 0;
-        for s in &self.screens {
-            s.output.change_current_state(None, None, None, Some((x, 0).into()));
-            app.space.map_output(&s.output, (x, 0));
-            x += state::logical_size(&s.output).w;
-        }
-        app.output_resized();
-    }
 }
 
 /// An output's picture: XRGB8888, rows `stride` bytes apart.
@@ -438,11 +437,10 @@ fn write_png(image: &Image<'static, 'static>, path: &Path) -> Result<(), String>
 pub fn run(
     mut event_loop: EventLoop<'static, App>,
     mut app: App,
-    outputs: Vec<Output>,
     ping_source: smithay::reexports::calloop::ping::PingSource,
     runtime: PathBuf,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let h = Rc::new(RefCell::new(Headless::new(&outputs)?));
+    let h = Rc::new(RefCell::new(Headless::new(app.heads.list.len() + 1)?));
     let handle = event_loop.handle();
     // a closing window's last picture can be taken from the screens in memory
     app.pictures_of_closing = true;
@@ -515,18 +513,19 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String
     if let Some(r) = crate::wmctl::command(words, app) {
         return r;
     }
-    let output = |name: &str, h: &Headless| h.screen(name).map(|s| s.output.clone()).ok_or_else(|| format!("no output {name}"));
+    let output = |name: &str, app: &App| app.head(name).map(|hd| hd.output.clone()).ok_or_else(|| format!("no output {name}"));
     match words {
-        ["outputs"] => Ok(h
-            .screens
+        ["outputs"] => Ok(app
+            .heads
+            .list
             .iter()
-            .map(|s| {
-                let o = &s.output;
+            .map(|hd| {
+                let o = &hd.output;
                 let m = o.current_mode().map(|m| m.size).unwrap_or_default();
                 let l = state::logical_size(o);
                 let at = o.current_location();
                 format!(
-                    "{} {}x{} scale={} at={},{} logical={}x{}{}",
+                    "{} {}x{} scale={} at={},{} logical={}x{}{}{}",
                     o.name(),
                     m.w,
                     m.h,
@@ -535,32 +534,51 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String
                     at.y,
                     l.w,
                     l.h,
-                    if app.power.is_on(o) { "" } else { " power=off" }
+                    if app.power.is_on(o) { "" } else { " power=off" },
+                    if hd.enabled { "" } else { " disabled" }
                 )
             })
             .collect()),
         ["resize", name, size] => {
-            let o = output(name, h)?;
+            let o = output(name, app)?;
             let (w, hh) = parse_size(size).ok_or_else(|| format!("{size}: give WIDTHxHEIGHT"))?;
             let mode = Mode { size: (w, hh).into(), refresh: 60_000 };
-            let old = o.current_mode();
-            o.change_current_state(Some(mode), None, None, None);
-            o.set_preferred(mode);
-            if let Some(old) = old.filter(|m| *m != mode) {
+            // another screen of this size: its own mode is that one, and the old one is gone
+            for old in [o.current_mode(), o.preferred_mode()].into_iter().flatten().filter(|m| *m != mode) {
                 o.delete_mode(old);
             }
-            h.relayout(app);
+            o.set_preferred(mode);
+            let mut want = app.head(name).ok_or("the output went away")?.now();
+            want.mode = mode;
+            app.configure_outputs(vec![(name.to_string(), want)], false)?;
             Ok(vec![])
         }
         ["scale", name, s] => {
-            let o = output(name, h)?;
             let v = parse_scale(s).ok_or_else(|| format!("{s}: give a number from 0.25 to 8"))?;
-            o.change_current_state(None, None, Some(Scale::Fractional(v)), None);
-            h.relayout(app);
+            let mut want = app.head(name).ok_or_else(|| format!("no output {name}"))?.now();
+            want.scale = v;
+            app.configure_outputs(vec![(name.to_string(), want)], false)?;
+            Ok(vec![])
+        }
+        ["add-output", spec] => {
+            let spec = parse_output(spec).ok_or_else(|| format!("{spec}: give WIDTHxHEIGHT or WIDTHxHEIGHT@SCALE"))?;
+            if app.heads.list.len() >= 16 {
+                return Err("16 outputs at most".into());
+            }
+            let o = make_output(h.next, &spec);
+            h.next += 1;
+            let name = o.name();
+            app.add_output(o, spec.scale);
+            Ok(vec![name])
+        }
+        ["remove-output", name] => {
+            app.remove_output(name)?;
             Ok(vec![])
         }
         ["screenshot", name, path] => {
-            output(name, h)?;
+            if app.head(name).is_none_or(|hd| !hd.enabled) {
+                return Err(format!("no output {name} that is on"));
+            }
             h.render(app);
             let s = h.screen(name).ok_or("the output went away")?;
             write_png(&s.image, Path::new(path))?;
@@ -577,12 +595,12 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String
             })
             .collect()),
         ["focus"] => Ok(vec![app.focus_info()]),
-        ["free"] => Ok(h
-            .screens
-            .iter()
-            .map(|s| {
-                let r = app.free_area(&s.output);
-                format!("{}\t{},{}\t{}x{}", s.output.name(), r.loc.x, r.loc.y, r.size.w, r.size.h)
+        ["free"] => Ok(app
+            .space
+            .outputs()
+            .map(|o| {
+                let r = app.free_area(o);
+                format!("{}\t{},{}\t{}x{}", o.name(), r.loc.x, r.loc.y, r.size.w, r.size.h)
             })
             .collect()),
         ["workspace"] => Ok(vec![(app.workspace() + 1).to_string()]),
@@ -660,7 +678,7 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String
             Ok(vec![])
         }
         ["power", name, on] => {
-            let o = output(name, h)?;
+            let o = output(name, app)?;
             let on = match *on {
                 "on" => true,
                 "off" => false,
@@ -694,7 +712,7 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String
         }
         [] => Err("no command".into()),
         _ => Err(format!(
-            "unknown command {:?} (outputs, resize NAME WxH, scale NAME S, screenshot NAME FILE, windows, layers, free, focus, workspace, lock, key COMBO, key-down COMBO, key-up COMBO, type TEXT, pointer X Y, click [BUTTON], power NAME on|off, clock [stop|run|+MS], quit; for the tools: clients, active, workspaces, workspace N, activate ID, close ID, minimize ID, maximize ID on|off|toggle, send ID N, place ID X Y W H, cursor, screens, pointer-timeout [S], modifiers)",
+            "unknown command {:?} (outputs, resize NAME WxH, scale NAME S, add-output WxH[@S], remove-output NAME, screenshot NAME FILE, windows, layers, free, focus, workspace, lock, key COMBO, key-down COMBO, key-up COMBO, type TEXT, pointer X Y, click [BUTTON], power NAME on|off, clock [stop|run|+MS], quit; for the tools: clients, active, workspaces, workspace N, activate ID, close ID, minimize ID, maximize ID on|off|toggle, send ID N, place ID X Y W H, cursor, screens, pointer-timeout [S], modifiers)",
             words.join(" ")
         )),
     }

@@ -51,8 +51,17 @@ impl Own {
     }
 
     pub fn screens(&self) -> Vec<Screen> {
+        self.screens_from("screens")
+    }
+
+    /// Every screen, switched-off ones too, with its refresh rate and the modes it offers (Settings > Displays).
+    pub fn screens_all(&self) -> Vec<Screen> {
+        self.screens_from("screens all")
+    }
+
+    fn screens_from(&self, command: &str) -> Vec<Screen> {
         let current = self.ask("workspaces").ok().and_then(|l| parse_workspaces(&l).current());
-        self.ask("screens").map(|l| l.iter().enumerate().filter_map(|(i, l)| parse_screen(i, l, current)).collect()).unwrap_or_default()
+        self.ask(command).map(|l| l.iter().enumerate().filter_map(|(i, l)| parse_screen(i, l, current)).collect()).unwrap_or_default()
     }
 
     pub fn cursor(&self) -> Option<(f64, f64)> {
@@ -222,10 +231,16 @@ pub fn parse_workspaces(lines: &[String]) -> Desktops {
     Desktops { ids, at }
 }
 
-/// A `screens` line: name, place, mode size, scale, reserved strips, focused. `index` is its number (the output's order).
+/// A `screens` line: name, place, mode size, scale, reserved strips, focused; a `screens all` line then also the refresh rate,
+/// the modes (comma separated) and "on" or "off". `index` is its number (the output's order).
 pub fn parse_screen(index: usize, line: &str, workspace: Option<i64>) -> Option<Screen> {
     let p: Vec<&str> = line.split('\t').collect();
-    let [name, at, size, scale, reserved, focused] = p.as_slice() else { return None };
+    let (base, all) = match p.len() {
+        6 => (&p[..], None),
+        9 => (&p[..6], Some((p[6], p[7], p[8]))),
+        _ => return None,
+    };
+    let [name, at, size, scale, reserved, focused] = base else { return None };
     let (x, y) = pair::<i32>(at, ',')?;
     let (width, height) = pair::<u32>(size, 'x')?;
     let r: Vec<i32> = reserved.split(',').filter_map(|v| v.parse().ok()).collect();
@@ -241,12 +256,12 @@ pub fn parse_screen(index: usize, line: &str, workspace: Option<i64>) -> Option<
         transform: 0,
         reserved: [*l, *t, *rr, *b],
         focused: *focused == "focused",
-        disabled: false,
+        disabled: all.is_some_and(|(_, _, on)| on == "off"),
         active_workspace: workspace,
         special_workspace: None,
         special_workspace_id: None,
-        refresh: None,
-        modes: vec![],
+        refresh: all.and_then(|(r, _, _)| r.parse().ok()),
+        modes: all.map(|(_, m, _)| m.split(',').filter(|m| !m.is_empty()).map(str::to_string).collect()).unwrap_or_default(),
     })
 }
 
@@ -277,6 +292,10 @@ mod tests {
         assert_eq!((s.x, s.y, s.width, s.height, s.scale, s.reserved), (1280, 0, 1600, 900, Some(1.5), [0, 32, 0, 64]));
         assert!(s.focused && s.id == Some(1) && s.active_workspace == Some(3));
         assert_eq!(s.monitor().free_area(), (1280, 32, 1067, 504));
+        let all = parse_screen(0, "HEADLESS-3\t0,0\t800x600\t1\t0,0,0,0\t-\t59.95\t800x600@59.95Hz,1024x768@60.00Hz\toff", None).unwrap();
+        assert!(all.disabled && all.refresh == Some(59.95));
+        assert_eq!(all.modes, ["800x600@59.95Hz", "1024x768@60.00Hz"]);
+        assert_eq!(parse_screen(0, "A\t0,0\t8x6\t1\t0,0,0,0\t-\t60", None), None, "a line cut short");
 
         let lines: Vec<String> = ["1\t2\t-", "2\t0\tshown", "3\t1\t-", "4\t0\t-"].iter().map(|s| s.to_string()).collect();
         assert_eq!(parse_workspaces(&lines), Desktops { ids: vec![1, 2, 3], at: 1 }, "an empty one exists while it is shown");

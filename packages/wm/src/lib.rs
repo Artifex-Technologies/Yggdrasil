@@ -348,7 +348,7 @@ impl Desk {
     pub fn screens_all(&self) -> Vec<Screen> {
         match self {
             Desk::Hyprland(h) => h.screens_all(),
-            Desk::Own(o) => o.screens(),
+            Desk::Own(o) => o.screens_all(),
         }
     }
 

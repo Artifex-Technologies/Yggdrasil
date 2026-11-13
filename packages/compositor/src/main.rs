@@ -20,9 +20,13 @@ mod deco;
 mod draw;
 mod grabs;
 mod headless;
+mod keymap;
 mod look;
+mod outputmgmt;
 mod outputpower;
+mod outputs;
 mod placement;
+mod places;
 mod screencopy;
 mod shortcuts;
 mod state;
@@ -200,17 +204,21 @@ fn run_headless(opts: &[String], run: Vec<Vec<String>>) -> Result<(), Box<dyn st
     let display: Display<App> = Display::new()?;
     let dh = display.handle();
     let (ping, ping_source) = smithay::reexports::calloop::ping::make_ping()?;
-    let outputs = headless::make_outputs(&dh, &specs);
+    let outputs: Vec<_> = specs.iter().enumerate().map(|(i, s)| headless::make_output(i + 1, s)).collect();
     toplevels::create_global(&dh);
     // screenshots and screen streaming (grim, Sunshine), and screens off and on (yggdrasil-idle): served from the pictures in memory
     screencopy::create_global(&dh);
     outputpower::create_global(&dh);
     let mut app = App::new(&dh, outputs[0].clone(), event_loop.handle(), event_loop.get_signal(), ping);
-    for o in &outputs {
-        app.space.map_output(o, o.current_location());
+    // the screens: each with its wl_output, set as Settings > Displays' file says (outputs.rs); and the standard protocol to
+    // list and change them (wlr-output-management)
+    for (o, s) in outputs.into_iter().zip(&specs) {
+        app.add_output(o, s.scale);
     }
+    app.reload_monitors();
+    outputmgmt::create_global(&dh);
     serve(&event_loop, display, &mut app, run, false)?;
-    headless::run(event_loop, app, outputs, ping_source, runtime)
+    headless::run(event_loop, app, ping_source, runtime)
 }
 
 /// The nested backend: a window on the running desktop (winit), drawn with the GPU.

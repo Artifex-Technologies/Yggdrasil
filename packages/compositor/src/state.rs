@@ -278,8 +278,20 @@ pub struct App {
     pub pointer_timeout: f64,
     /// The pointer's theme and size as Yggdrasil's tools set it (ygg-theme), for when the compositor draws the pointer itself.
     pub cursor_theme: Option<(String, u32)>,
-    /// The keyboard layout and variant set from outside (the installer's try-out); None: the default.
+    /// The keyboard layout and variant in use: the system's (keymap.rs), or one set from outside (the installer's try-out);
+    /// None: xkb's default.
     pub kb_layout: Option<(String, String)>,
+    /// When the system's keyboard files (keymap.rs) were changed as last seen: a change brings their layout in.
+    kb_times: [Option<std::time::SystemTime>; 2],
+    /// Where programs' windows were when their last one closed (places.rs: the session's window-places).
+    places: std::collections::BTreeMap<String, crate::places::Rect>,
+    /// Windows that opened on a screen set to tile (they tile there, as the session's `tile-on-SCREEN` rules), and those
+    /// screens (~/.config/yggdrasil/tiling, Settings > Displays) with when the file was changed as last seen.
+    screen_tiled: Vec<WlSurface>,
+    tiling_screens: Vec<String>,
+    tiling_time: Option<std::time::SystemTime>,
+    /// The screens, on or off, their settings and wlr-output-management (outputs.rs). Headless only: nested has its window.
+    pub heads: crate::outputs::Heads,
     /// The session's window look (look.rs): border, rounding, shadow, gaps, animations; its pictures per scale; the clock the
     /// animations run on; closing windows still shrinking away.
     pub look: crate::look::Look,
@@ -421,6 +433,12 @@ fn xdg_title_app(s: &WlSurface) -> (String, String) {
     })
 }
 
+/// Steam asks at start to have its window un-maximized, and Hyprland maximized it instead: the session ignores Steam's own
+/// maximize requests (`steam-no-self-maximize`; Super+Up still maximizes it). The same here.
+pub fn ignores_maximize(w: &Window) -> bool {
+    title_app(w).1 == "steam"
+}
+
 /// Tell an X11 window where it is and how big (X11 programs place their menus from it). Wayland windows are left alone.
 pub fn x11_place(w: &Window, loc: Point<i32, Logical>, size: smithay::utils::Size<i32, Logical>) {
     if let Some(x) = w.x11_surface() {
@@ -438,7 +456,17 @@ impl App {
     ) -> App {
         let mut seat_state = SeatState::new();
         let mut seat = seat_state.new_wl_seat(dh, "seat0");
-        let keyboard = seat.add_keyboard(Default::default(), shortcuts::REPEAT_DELAY, shortcuts::REPEAT_RATE).expect("keyboard");
+        // the system's keyboard layout, as the session reads it for Hyprland (keymap.rs); xkb's default when it cannot be loaded
+        let system_kb = crate::keymap::system();
+        let (keyboard, kb_layout) = match seat.add_keyboard(system_kb.xkb(), shortcuts::REPEAT_DELAY, shortcuts::REPEAT_RATE) {
+            Ok(k) => (k, Some((system_kb.layout.clone(), system_kb.variant.clone()))),
+            Err(e) => {
+                eprintln!(
+                    "yggdrasil-compositor: the system's keyboard layout {system_kb:?} could not be loaded ({e:?}); using xkb's default"
+                );
+                (seat.add_keyboard(Default::default(), shortcuts::REPEAT_DELAY, shortcuts::REPEAT_RATE).expect("keyboard"), None)
+            }
+        };
         let pointer = seat.add_pointer();
         let loop_handle = handle.clone();
         App {
@@ -530,7 +558,13 @@ impl App {
             opaque_shader: None,
             pointer_timeout: 0.0,
             cursor_theme: None,
-            kb_layout: None,
+            kb_layout,
+            kb_times: crate::keymap::files().map(|f| std::fs::metadata(f).and_then(|m| m.modified()).ok()),
+            places: crate::places::load(),
+            screen_tiled: vec![],
+            tiling_screens: yggdrasil_conf::tiling::outputs(),
+            tiling_time: std::fs::metadata(yggdrasil_conf::tiling::path()).and_then(|m| m.modified()).ok(),
+            heads: Default::default(),
             look: crate::look::Look::load(),
             art: vec![],
             look_times: [None, None],
@@ -567,9 +601,10 @@ impl App {
         self.x11_snapped.contains(surface)
     }
 
-    /// Is this window laid out by tiling (the workspace showing tiles, and it is not floating, maximized or full screen)?
+    /// Is this window laid out by tiling (the workspace showing tiles, or it opened on a screen set to tile; and it is not
+    /// floating, maximized or full screen)?
     pub fn is_tiled(&self, w: &Window, s: &WlSurface) -> bool {
-        self.ws_profile(self.current_ws) == Some(Profile::Tiling)
+        (self.ws_profile(self.current_ws) == Some(Profile::Tiling) || self.screen_tiled.contains(s))
             && !self.floating.contains(s)
             && !win_has(w, xdg_toplevel::State::Maximized)
             && !win_has(w, xdg_toplevel::State::Fullscreen)
@@ -662,7 +697,7 @@ impl App {
     /// Maximize a window to the space the panels leave free, less the session's outer gap and the border (Hyprland's maximize
     /// keeps the gaps and the bar).
     pub fn maximize(&mut self, window: &Window) {
-        let zone = self.free_area(&self.output.clone());
+        let zone = self.free_area(&self.window_output(window));
         let inset = self.look.gaps_out + self.look.border;
         let zone = Rectangle::new(
             (zone.loc.x + inset, zone.loc.y + inset).into(),
@@ -716,6 +751,29 @@ impl App {
         zone
     }
 
+    /// The screen a window is on (the one under its middle); the first one for a window not shown.
+    pub fn window_output(&self, w: &Window) -> Output {
+        match self.space.element_location(w) {
+            Some(loc) => {
+                let size = w.geometry().size;
+                self.output_at(Point::from(((loc.x + size.w / 2) as f64, (loc.y + size.h / 2) as f64)))
+            }
+            None => self.output.clone(),
+        }
+    }
+
+    /// The left or right half of a screen's free room, as yggdrasil-snap works them out: each w/2 wide, the right one ending at
+    /// the room's right edge.
+    fn half(&self, o: &Output, left: bool) -> Rectangle<i32, Logical> {
+        let zone = self.free_area(o);
+        let half = zone.size.w / 2;
+        if left {
+            Rectangle::new(zone.loc, (half, zone.size.h).into())
+        } else {
+            Rectangle::new((zone.loc.x + zone.size.w - half, zone.loc.y).into(), (half, zone.size.h).into())
+        }
+    }
+
     /// The output a window is shown on (the one under its middle), with the whole output's rectangle and its free room.
     fn screen_of(&self, r: Rectangle<i32, Logical>) -> (Rectangle<i32, Logical>, Rectangle<i32, Logical>) {
         let mid = Point::<f64, Logical>::from(((r.loc.x + r.size.w / 2) as f64, (r.loc.y + r.size.h / 2) as f64));
@@ -753,17 +811,64 @@ impl App {
 
     /// A new window's first picture (now its size is known): centred in the free room of the output it opens on, shortened to
     /// it when it asked for more (Hyprland's `float, center` and keep-clear in the session's config).
+    /// A program whose window opens with none of its others open comes back where its last one was (the session's
+    /// window-places: places.rs), when the middle of that spot is on a screen; kept clear of the bar and the dock as any other.
     fn place_new(&mut self, w: &Window) {
         let Some(s) = surface_of(w) else { return };
         self.unplaced.retain(|x| x != &s);
         if !self.floating_shown().contains(w) {
             return;
         }
-        let zone = self.free_area(&self.output.clone());
+        let zone = self.free_area(&self.window_output(w));
         let size = w.geometry().size;
-        let r = crate::placement::centred((size.w, size.h), zone);
+        let r = self.remembered_place(w).unwrap_or_else(|| crate::placement::centred((size.w, size.h), zone));
         self.place_at(w, r);
         self.space.raise_element(w, true);
+    }
+
+    /// Where a new window goes back to (places.rs), kept clear of the bar and the dock; None: it opens as any other.
+    pub fn remembered_place(&self, w: &Window) -> Option<Rectangle<i32, Logical>> {
+        let class = title_app(w).1;
+        let p = *self.places.get(&class)?;
+        if self.all_windows().iter().any(|(x, _)| x != w && title_app(x).1 == class) {
+            return None;
+        }
+        let mid = Point::<f64, Logical>::from(((p.loc.x + p.size.w / 2) as f64, (p.loc.y + p.size.h / 2) as f64));
+        if !self.space.outputs().any(|o| output_rect(o).to_f64().contains(mid)) {
+            return None;
+        }
+        let (screen, zone) = self.screen_of(p);
+        Some(crate::placement::fit(p, screen, zone).unwrap_or(p))
+    }
+
+    /// A program's window closes: when it was its last one and a plain floating window (not tiled, maximized, full screen or
+    /// minimized) of at least 120 x 80, its place and size are kept for its next window, in the session's file (places.rs).
+    fn remember_place(&mut self, w: &Window) {
+        use xdg_toplevel::State as S;
+        let Some(s) = surface_of(w) else { return };
+        if self.minimized.contains(w)
+            || self.peek.contains(&s)
+            || self.is_tiled(w, &s)
+            || win_has(w, S::Maximized)
+            || win_has(w, S::Fullscreen)
+        {
+            return;
+        }
+        let class = title_app(w).1;
+        if !crate::places::usable_class(&class) || self.all_windows().iter().any(|(x, _)| x != w && title_app(x).1 == class) {
+            return;
+        }
+        let Some(loc) = self.space.element_location(w).or_else(|| self.parked.iter().find(|(x, _, _)| x == w).map(|(_, _, at)| *at)) else {
+            return;
+        };
+        let r = Rectangle::new(loc, w.geometry().size);
+        if !crate::places::worth_keeping(r) || self.places.get(&class) == Some(&r) {
+            return;
+        }
+        self.places.insert(class, r);
+        if let Err(e) = crate::places::save(&self.places) {
+            eprintln!("yggdrasil-compositor: keeping a window's place: {e}");
+        }
     }
 
     /// The bar or the dock appeared, went or changed size: floating windows that now reach under them are moved out (and
@@ -823,7 +928,7 @@ impl App {
 
     /// Make a window full screen (the whole output).
     pub fn fullscreen(&mut self, window: &Window) {
-        let r = output_rect(&self.output);
+        let r = output_rect(&self.window_output(window));
         self.fit_window(window, r, xdg_toplevel::State::Fullscreen);
     }
 
@@ -832,6 +937,10 @@ impl App {
     pub fn adopt(&mut self, window: &Window, surface: &WlSurface, decorate: bool) {
         if decorate {
             self.decorated.push(surface.clone());
+        }
+        // opened on a screen set to tile: it tiles (the session's tile-on-SCREEN rule, decided when a window opens)
+        if self.tiling_screens.contains(&self.window_output(window).name()) && !self.screen_tiled.contains(surface) {
+            self.screen_tiled.push(surface.clone());
         }
         self.opened_at.push(surface.clone());
         self.foreign_added(window);
@@ -844,7 +953,11 @@ impl App {
     /// `is` picks the window out; `surface` is None for an X11 window that went before XWayland made its surface.
     pub fn window_gone(&mut self, surface: Option<&WlSurface>, is: impl Fn(&Window) -> bool) {
         self.wake();
+        if let Some((w, _)) = self.all_windows().into_iter().find(|(w, _)| is(w)) {
+            self.remember_place(&w);
+        }
         if let Some(s) = surface {
+            self.screen_tiled.retain(|x| x != s);
             self.foreign_removed(s);
             self.decorated.retain(|x| x != s);
             self.focus_order.retain(|x| x != s);
@@ -1259,15 +1372,9 @@ impl App {
             Action::ShowMinimized => self.toggle_peek(),
             Action::SnapLeft | Action::SnapRight => {
                 let Some(t) = current.and_then(|s| self.window_for(&s)) else { return };
-                let zone = self.free_area(&self.output.clone());
-                // the halves yggdrasil-snap works out: each w/2 wide, the right one ending at the room's right edge
-                let half = zone.size.w / 2;
-                let (area, st) = if action == Action::SnapLeft {
-                    (Rectangle::new(zone.loc, (half, zone.size.h).into()), S::TiledLeft)
-                } else {
-                    (Rectangle::new((zone.loc.x + zone.size.w - half, zone.loc.y).into(), (half, zone.size.h).into()), S::TiledRight)
-                };
-                self.fit_window(&t, area, st);
+                let left = action == Action::SnapLeft;
+                let area = self.half(&self.window_output(&t), left);
+                self.fit_window(&t, area, if left { S::TiledLeft } else { S::TiledRight });
             }
             Action::NextWindow => self.cycle(1),
             Action::PrevWindow => self.cycle(-1),
@@ -1305,12 +1412,8 @@ impl App {
     /// Lay the windows of a tiling workspace out again (does nothing on a standard one).
     pub fn retile(&mut self) {
         self.wake();
-        if self.ws_profile(self.current_ws) != Some(Profile::Tiling) {
-            return;
-        }
-        let zone = self.free_area(&self.output.clone());
-        // windows in the order they were opened; maximized, full screen and floating ones keep out of it
-        let mut tiled: Vec<Window> = self
+        // windows in the order they were opened, each on the screen it is on; maximized, full screen and floating ones keep out
+        let mut tiled: Vec<(Window, Output)> = self
             .space
             .elements()
             .filter(|w| {
@@ -1318,9 +1421,23 @@ impl App {
                 let Some(s) = w.wl_surface() else { return false };
                 self.is_tiled(w, &s)
             })
-            .cloned()
+            .map(|w| (w.clone(), self.window_output(w)))
             .collect();
-        tiled.sort_by_key(|w| w.wl_surface().and_then(|s| self.opened_at.iter().position(|x| *x == *s)).unwrap_or(usize::MAX));
+        if tiled.is_empty() {
+            return;
+        }
+        tiled.sort_by_key(|(w, _)| w.wl_surface().and_then(|s| self.opened_at.iter().position(|x| *x == *s)).unwrap_or(usize::MAX));
+        for o in self.space.outputs().cloned().collect::<Vec<_>>() {
+            let here: Vec<Window> = tiled.iter().filter(|(_, x)| *x == o).map(|(w, _)| w.clone()).collect();
+            if !here.is_empty() {
+                self.tile_on(&o, &here);
+            }
+        }
+    }
+
+    /// Lay these windows out on one screen (dwindle in its free room).
+    fn tile_on(&mut self, o: &Output, tiled: &[Window]) {
+        let zone = self.free_area(o);
         // the session's gaps; each box holds the window and its border
         let b = self.look.border;
         let boxes = tiling::dwindle(zone, tiled.len(), self.look.gaps_in, self.look.gaps_out);
@@ -1411,6 +1528,25 @@ impl App {
             self.conf_times.2 = op_t;
             self.opaque_apps = crate::xwayland::parse_opaque(&std::fs::read_to_string(crate::xwayland::opaque_path()).unwrap_or_default());
         }
+        // the system's keyboard layout (keymap.rs): changed with localectl or by the installer
+        let kb_t = crate::keymap::files().map(mtime);
+        if kb_t != self.kb_times {
+            self.kb_times = kb_t;
+            let l = crate::keymap::system();
+            let kb = self.keyboard.clone();
+            match kb.set_xkb_config(self, l.xkb()) {
+                Ok(()) => self.kb_layout = Some((l.layout, l.variant)),
+                Err(e) => eprintln!("yggdrasil-compositor: the system's keyboard layout {l:?} could not be loaded ({e:?})"),
+            }
+        }
+        // the screens that tile (Settings > Displays); windows opening there from now on tile, as on Hyprland after a reload
+        let tl_t = mtime(yggdrasil_conf::tiling::path());
+        if tl_t != self.tiling_time {
+            self.tiling_time = tl_t;
+            self.tiling_screens = yggdrasil_conf::tiling::outputs();
+        }
+        // Settings > Displays' modes, scales and places (outputs.rs)
+        self.reload_monitors();
     }
 
     pub fn touch_focus(&mut self, s: &WlSurface) {
@@ -1880,6 +2016,83 @@ impl App {
             ls.send_configure();
         }
         self.apply_scale();
+    }
+
+    /// A screen went (switched off or unplugged): out of the space, its panels told they are closed, its lock surface dropped.
+    /// A panel or lock surface of it that had the keyboard gives it back (to the window used last, or to another lock surface).
+    pub fn output_gone(&mut self, o: &Output) {
+        let focus = self.focused_surface();
+        let layers: Vec<LayerSurface> = layer_map_for_output(o).layers().cloned().collect();
+        let mut had = false;
+        for l in layers {
+            had |= focus.as_ref() == Some(l.wl_surface());
+            l.layer_surface().send_close();
+            layer_map_for_output(o).unmap_layer(&l);
+        }
+        self.space.unmap_output(o);
+        had |= self.lock_surfaces.iter().any(|(x, l)| x == o && focus.as_ref() == Some(l.wl_surface()));
+        self.lock_surfaces.retain(|(x, _)| x != o);
+        self.power.off.retain(|n| *n != o.name());
+        if had {
+            if self.locked {
+                let next = self.lock_surfaces.first().map(|(_, l)| KbFocus::Wl(l.wl_surface().clone()));
+                let kb = self.keyboard.clone();
+                kb.set_focus(self, next, SERIAL_COUNTER.next_serial());
+            } else {
+                self.focus_back();
+            }
+        }
+    }
+
+    /// The screens changed (`before`: the name and rectangle of each that was on): windows go along with their screen, keeping
+    /// their place on it, and those on a screen that went move to the first one; then each is fitted to its screen again
+    /// (maximized, full screen and snapped ones to its room, floating ones kept clear of the bar and the dock). Windows on other
+    /// desktops and minimized ones are moved alike.
+    pub fn windows_follow_outputs(&mut self, before: &[(String, Rectangle<i32, Logical>)]) {
+        use xdg_toplevel::State as S;
+        for o in self.space.outputs().cloned().collect::<Vec<_>>() {
+            layer_map_for_output(&o).arrange();
+        }
+        let now: Vec<(String, Rectangle<i32, Logical>)> = self.space.outputs().map(|o| (o.name(), output_rect(o))).collect();
+        let main = self.output.name();
+        let follow = |r: Rectangle<i32, Logical>| -> Option<Rectangle<i32, Logical>> {
+            let mid = Point::<i32, Logical>::from((r.loc.x + r.size.w / 2, r.loc.y + r.size.h / 2));
+            let (name, old) = before.iter().find(|(_, o)| o.contains(mid))?;
+            let (_, new) = now.iter().find(|(n, _)| n == name).or_else(|| now.iter().find(|(n, _)| *n == main))?;
+            (new != old).then(|| Rectangle::new(new.loc + (r.loc - old.loc), r.size))
+        };
+        for (_, r) in &mut self.saved {
+            if let Some(n) = follow(*r) {
+                *r = n;
+            }
+        }
+        for (w, _, at) in &mut self.parked {
+            if let Some(n) = follow(Rectangle::new(*at, w.geometry().size)) {
+                *at = n.loc;
+            }
+        }
+        for w in self.space.elements().cloned().collect::<Vec<_>>() {
+            let Some(loc) = self.space.element_location(&w) else { continue };
+            let Some(n) = follow(Rectangle::new(loc, w.geometry().size)) else { continue };
+            self.space.map_element(w.clone(), n.loc, false);
+            x11_place(&w, n.loc, n.size);
+            let Some(s) = surface_of(&w) else { continue };
+            let o = self.window_output(&w);
+            if win_has(&w, S::Fullscreen) {
+                self.fullscreen(&w);
+            } else if win_has(&w, S::Maximized) {
+                self.maximize(&w);
+            } else if self.has_state(&s, S::TiledLeft) || self.has_state(&s, S::TiledRight) {
+                let left = self.has_state(&s, S::TiledLeft);
+                let area = self.half(&o, left);
+                self.fit_window(&w, area, if left { S::TiledLeft } else { S::TiledRight });
+            } else if !self.is_tiled(&w, &s) {
+                let (screen, zone) = (output_rect(&o), self.free_area(&o));
+                if let Some(f) = crate::placement::fit(n, screen, zone) {
+                    self.place_at(&w, f);
+                }
+            }
+        }
     }
 
     /// The output a surface is shown on (a panel's own, a window's first), else the first one.
@@ -2458,8 +2671,9 @@ impl XdgShellHandler for App {
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
         self.wake();
-        // New windows open one after another, a little offset, and take the keyboard.
-        let at = self.cascade();
+        // New windows open on the screen the pointer is on (Hyprland's focused monitor), one after another, a little offset (until
+        // their first picture says how big they are: place_new), and take the keyboard.
+        let at = self.output_at(self.pointer_location).current_location() + self.cascade();
         let window = Window::new_wayland_window(surface.clone());
         surface.with_pending_state(|s| {
             s.states.set(xdg_toplevel::State::Activated);
@@ -2504,6 +2718,9 @@ impl XdgShellHandler for App {
 
     fn maximize_request(&mut self, surface: ToplevelSurface) {
         if let Some(w) = self.window_of(&surface) {
+            if ignores_maximize(&w) {
+                return;
+            }
             self.maximize(&w);
         }
     }

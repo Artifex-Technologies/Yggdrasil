@@ -93,7 +93,7 @@ jobs:
           (cd packages/wm && cargo build --locked)
           # the lock screen's test build goes to a folder of its own, never mixed up with the real one
           (cd packages/lock && cargo build --locked --features test-auth --target-dir "$GITHUB_WORKSPACE/target/test-auth" --bin yggdrasil-lock)
-          (cd packages/compositor && cargo test --locked --no-run --test apps --test behaviour --test tools --test keys --test look)
+          (cd packages/compositor && cargo test --locked --no-run --test apps --test behaviour --test tools --test keys --test look --test outputs --test places)
       - name: Headless tests with Yggdrasil's programs
         timeout-minutes: 15
         run: |
@@ -105,7 +105,7 @@ jobs:
           YGGDRASIL_TEST_CLOSE="$GITHUB_WORKSPACE/target/debug/yggdrasil-close" \
           YGGDRASIL_TEST_LOGOUT="$GITHUB_WORKSPACE/target/debug/yggdrasil-logout" \
           YGGDRASIL_TEST_APPS_REQUIRED=1 \
-            cargo test --locked --test apps --test behaviour --test tools --test keys --test look -- --test-threads=2
+            cargo test --locked --test apps --test behaviour --test tools --test keys --test look --test outputs --test places -- --test-threads=2
   # gpuunlock is a live root helper still in Python (Settings runs it through pkexec); its tests fake every outside program,
   # /sys, /proc and /etc, so they run without a graphics card.
   gpuunlock:

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # The compositor's headless tests with Yggdrasil's own programs (tests/apps.rs), the protocol tests (tests/behaviour.rs), the
-# tools' layer (tests/tools.rs), the session's shortcut table (tests/keys.rs) and its window look (tests/look.rs), run in
+# tools' layer (tests/tools.rs), the session's shortcut table (tests/keys.rs), its window look (tests/look.rs), the system's
+# keyboard layout and the screens' settings (tests/outputs.rs) and window places and tiling screens (tests/places.rs), run in
 # a rootless podman container: no devices (no GPU, no input), no network, no system bus, nothing of the running desktop. The way
 # to run them on a desktop machine; CI runs the same tests in its own container (the compositor-headless job).
 #
@@ -24,7 +25,7 @@ command -v podman >/dev/null || { echo "apps-podman: podman is not installed" >&
 (cd "$repo/packages/lock" && cargo build --locked --features test-auth --target-dir "$target/test-auth" --bin yggdrasil-lock)
 cd "$repo/packages/compositor"
 cargo build --locked
-tests=$(cargo test --locked --no-run --test apps --test behaviour --test tools --test keys --test look --message-format=json 2>/dev/null |
+tests=$(cargo test --locked --no-run --test apps --test behaviour --test tools --test keys --test look --test outputs --test places --message-format=json 2>/dev/null |
     grep -o '"executable":"[^"]*/deps/[^"]*"' | sed 's/"executable":"//; s/"$//')
 [ -n "$tests" ] || { echo "apps-podman: the test programs were not built" >&2; exit 2; }
 

@@ -19,12 +19,16 @@
 //!   cursor                      where the pointer is: X Y
 //!   screens                     one line per output: name, place, mode size (pixels), scale, the strips panels reserve
 //!                               (left, top, right, bottom) and "focused" or "-" (tab separated)
+//!   screens all                 every screen, switched-off ones too (Settings > Displays), as `screens` and then the refresh
+//!                               rate (Hz), the modes it offers (comma separated, as Hyprland writes them: 2560x1440@59.95Hz)
+//!                               and "on" or "off"
 //!   pointer-timeout [SECONDS]   how long the pointer may rest before it is hidden (0: never); with a number, set it
 //!   modifiers                   the modifier keys held now: super, ctrl, alt, shift (one line, space separated)
 //!   layers                      one line per panel or background: output, namespace, layer, place and size (tab separated)
 //!   binds                       one line per shortcut: modifier mask (Shift 1, Ctrl 4, Alt 8, Super 64), key, what it does,
 //!                               its kind (release, repeat, locked, comma separated; - for none); the mouse's two last
-//!   reload                      read workspaces.conf, shortcuts.conf and opaque.conf again
+//!   reload                      read the config files again when they changed: workspaces.conf, shortcuts.conf, opaque.conf,
+//!                               the look's, the tiling screens, Settings > Displays' monitors.lua and the system's keyboard
 //!   paste ctrl|ctrl+shift       press Ctrl+V (or Ctrl+Shift+V, a terminal's) in the window with the keyboard: the clipboard's
 //!                               paste; refused while the screen is locked
 //!   cursor-theme [NAME SIZE]    the pointer's theme and size (kept for when the compositor draws the pointer)
@@ -121,6 +125,7 @@ pub fn command(words: &[&str], app: &mut App) -> Option<Result<Vec<String>, Stri
         }),
         ["cursor"] => Ok(vec![format!("{} {}", app.pointer_location.x, app.pointer_location.y)]),
         ["screens"] => Ok(screens(app)),
+        ["screens", "all"] => Ok(screens_all(app)),
         ["pointer-timeout"] => Ok(vec![app.pointer_timeout.to_string()]),
         ["pointer-timeout", secs] => match secs.parse::<f64>() {
             Ok(v) if v.is_finite() && (0.0..=86_400.0).contains(&v) => {
@@ -328,6 +333,45 @@ fn screens(app: &App) -> Vec<String> {
                 o.current_scale().fractional_scale(),
                 if *o == focused { "focused" } else { "-" }
             )
+        })
+        .collect()
+}
+
+/// A mode as Hyprland writes it (Settings > Displays reads it so): 2560x1440@59.95Hz.
+fn hypr_mode(m: &smithay::output::Mode) -> String {
+    format!("{}x{}@{:.2}Hz", m.size.w, m.size.h, m.refresh as f64 / 1000.0)
+}
+
+/// `screens` for the screens that are on, and a line for each that is off, each with its rate, its modes and on or off.
+fn screens_all(app: &App) -> Vec<String> {
+    let on = screens(app);
+    let extra = |o: &smithay::output::Output| {
+        let rate = o.current_mode().map(|m| m.refresh as f64 / 1000.0).unwrap_or(60.0);
+        format!("{rate:.2}\t{}", o.modes().iter().map(hypr_mode).collect::<Vec<_>>().join(","))
+    };
+    if app.heads.list.is_empty() {
+        return app.space.outputs().zip(on).map(|(o, l)| format!("{l}\t{}\ton", extra(o))).collect();
+    }
+    app.heads
+        .list
+        .iter()
+        .filter_map(|h| {
+            let o = &h.output;
+            if h.enabled {
+                let i = app.space.outputs().position(|x| x == o)?;
+                return Some(format!("{}\t{}\ton", on.get(i)?, extra(o)));
+            }
+            let (at, mode) = (o.current_location(), o.current_mode().map(|m| m.size).unwrap_or_default());
+            Some(format!(
+                "{}\t{},{}\t{}x{}\t{}\t0,0,0,0\t-\t{}\toff",
+                field(&o.name()),
+                at.x,
+                at.y,
+                mode.w,
+                mode.h,
+                o.current_scale().fractional_scale(),
+                extra(o)
+            ))
         })
         .collect()
 }

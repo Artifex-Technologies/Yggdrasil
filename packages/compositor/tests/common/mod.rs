@@ -45,6 +45,11 @@ use wayland_protocols::xdg::xdg_output::zv1::client::{
 use wayland_protocols_wlr::layer_shell::v1::client::{
     zwlr_layer_shell_v1::ZwlrLayerShellV1, zwlr_layer_surface_v1, zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
 };
+use wayland_protocols_wlr::output_management::v1::client::{
+    zwlr_output_configuration_head_v1::ZwlrOutputConfigurationHeadV1, zwlr_output_configuration_v1,
+    zwlr_output_configuration_v1::ZwlrOutputConfigurationV1, zwlr_output_head_v1, zwlr_output_head_v1::ZwlrOutputHeadV1,
+    zwlr_output_manager_v1, zwlr_output_manager_v1::ZwlrOutputManagerV1, zwlr_output_mode_v1, zwlr_output_mode_v1::ZwlrOutputModeV1,
+};
 use wayland_protocols_wlr::output_power_management::v1::client::{
     zwlr_output_power_manager_v1::ZwlrOutputPowerManagerV1, zwlr_output_power_v1, zwlr_output_power_v1::ZwlrOutputPowerV1,
 };
@@ -160,8 +165,10 @@ impl Compositor {
         for v in DESKTOP_VARS {
             cmd.env_remove(v);
         }
+        // the system's keyboard files (keymap.rs) are the test's own (home/../etc): none unless a test writes them
         cmd.env("XDG_RUNTIME_DIR", dir.join("run"))
             .env("HOME", dir.join("home"))
+            .env("YGGDRASIL_COMPOSITOR_ETC", dir.join("etc"))
             .env("YGGDRASIL_COMPOSITOR_XWAYLAND", "0")
             .envs(env.iter().copied())
             .stdout(Stdio::piped())
@@ -387,6 +394,9 @@ pub struct State {
     pub kb_focus: Option<ObjectId>,
     pub keys: Vec<(ObjectId, u32)>,
     pub keymap: bool,
+    /// the last keymap's text (xkb's), and how many keymaps came
+    pub keymap_text: String,
+    pub keymaps: usize,
     pub pointer_on: Option<ObjectId>,
     /// ext-session-lock
     pub locked: bool,
@@ -399,6 +409,63 @@ pub struct State {
     /// ext-idle-notify: idled and resumed events, per notification
     pub idled: HashMap<usize, u32>,
     pub resumed: HashMap<usize, u32>,
+    /// wlr-output-management
+    pub mgmt: Mgmt,
+}
+
+/// A head as wlr-output-management tells it.
+#[derive(Debug, Clone)]
+pub struct HeadInfo {
+    pub head: ZwlrOutputHeadV1,
+    pub name: String,
+    pub enabled: bool,
+    pub current: Option<ObjectId>,
+    pub at: (i32, i32),
+    pub scale: f64,
+    pub finished: bool,
+}
+
+/// A mode of a head: its size, refresh (mHz), preferred, gone.
+#[derive(Debug, Clone, Default)]
+pub struct ModeInfo {
+    pub head: Option<ObjectId>,
+    pub size: (i32, i32),
+    pub refresh: i32,
+    pub preferred: bool,
+    pub finished: bool,
+}
+
+#[derive(Debug, Default)]
+pub struct Mgmt {
+    pub heads: Vec<HeadInfo>,
+    pub modes: HashMap<ObjectId, (ZwlrOutputModeV1, ModeInfo)>,
+    /// the last `done`'s serial, and how many came
+    pub serial: Option<u32>,
+    pub dones: usize,
+    /// each configuration's answer: "succeeded", "failed" or "cancelled"
+    pub answers: HashMap<usize, &'static str>,
+}
+
+impl Mgmt {
+    pub fn head(&self, name: &str) -> &HeadInfo {
+        self.heads.iter().find(|h| h.name == name && !h.finished).unwrap_or_else(|| panic!("no head {name}: {:?}", self.heads))
+    }
+
+    /// A head's modes that are still there: (size, refresh, preferred) and the object.
+    pub fn modes_of(&self, name: &str) -> Vec<((i32, i32), i32, bool, ZwlrOutputModeV1)> {
+        let id = self.head(name).head.id();
+        self.modes
+            .values()
+            .filter(|(_, m)| m.head.as_ref() == Some(&id) && !m.finished)
+            .map(|(o, m)| (m.size, m.refresh, m.preferred, o.clone()))
+            .collect()
+    }
+
+    /// The size of a head's mode now.
+    pub fn current_size(&self, name: &str) -> Option<(i32, i32)> {
+        let c = self.head(name).current.clone()?;
+        self.modes.get(&c).map(|(_, m)| m.size)
+    }
 }
 
 pub struct Client {
@@ -684,7 +751,16 @@ impl Dispatch<WlSeat, ()> for State {
 impl Dispatch<WlKeyboard, ()> for State {
     fn event(st: &mut Self, _: &WlKeyboard, event: wl_keyboard::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
         match event {
-            wl_keyboard::Event::Keymap { .. } => st.keymap = true,
+            wl_keyboard::Event::Keymap { fd, size, .. } => {
+                st.keymap = true;
+                st.keymaps += 1;
+                // read where it is (the file is shared: its offset is not to be moved)
+                use std::os::unix::fs::FileExt;
+                let mut buf = vec![0u8; size as usize];
+                if File::from(fd).read_exact_at(&mut buf, 0).is_ok() {
+                    st.keymap_text = String::from_utf8_lossy(&buf).trim_end_matches('\0').to_string();
+                }
+            }
             wl_keyboard::Event::Enter { surface, .. } => st.kb_focus = Some(surface.id()),
             wl_keyboard::Event::Leave { .. } => st.kb_focus = None,
             wl_keyboard::Event::Key { key, state: WEnum::Value(wl_keyboard::KeyState::Pressed), .. } => {
@@ -803,6 +879,87 @@ delegate_noop!(State: ExtSessionLockManagerV1);
 delegate_noop!(State: ZwlrScreencopyManagerV1);
 delegate_noop!(State: ZwlrOutputPowerManagerV1);
 delegate_noop!(State: ExtIdleNotifierV1);
+delegate_noop!(State: ignore ZwlrOutputConfigurationHeadV1);
+
+impl Dispatch<ZwlrOutputManagerV1, ()> for State {
+    fn event(st: &mut Self, _: &ZwlrOutputManagerV1, event: zwlr_output_manager_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        match event {
+            zwlr_output_manager_v1::Event::Head { head } => st.mgmt.heads.push(HeadInfo {
+                head,
+                name: String::new(),
+                enabled: false,
+                current: None,
+                at: (0, 0),
+                scale: 0.0,
+                finished: false,
+            }),
+            zwlr_output_manager_v1::Event::Done { serial } => {
+                st.mgmt.serial = Some(serial);
+                st.mgmt.dones += 1;
+            }
+            _ => {}
+        }
+    }
+
+    wayland_client::event_created_child!(State, ZwlrOutputManagerV1, [
+        zwlr_output_manager_v1::EVT_HEAD_OPCODE => (ZwlrOutputHeadV1, ()),
+    ]);
+}
+
+impl Dispatch<ZwlrOutputHeadV1, ()> for State {
+    fn event(st: &mut Self, head: &ZwlrOutputHeadV1, event: zwlr_output_head_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        if let zwlr_output_head_v1::Event::Mode { mode } = &event {
+            st.mgmt.modes.insert(mode.id(), (mode.clone(), ModeInfo { head: Some(head.id()), ..Default::default() }));
+            return;
+        }
+        let Some(h) = st.mgmt.heads.iter_mut().find(|h| h.head == *head) else { return };
+        match event {
+            zwlr_output_head_v1::Event::Name { name } => h.name = name,
+            zwlr_output_head_v1::Event::Enabled { enabled } => h.enabled = enabled != 0,
+            zwlr_output_head_v1::Event::CurrentMode { mode } => h.current = Some(mode.id()),
+            zwlr_output_head_v1::Event::Position { x, y } => h.at = (x, y),
+            zwlr_output_head_v1::Event::Scale { scale } => h.scale = scale,
+            zwlr_output_head_v1::Event::Finished => h.finished = true,
+            _ => {}
+        }
+    }
+
+    wayland_client::event_created_child!(State, ZwlrOutputHeadV1, [
+        zwlr_output_head_v1::EVT_MODE_OPCODE => (ZwlrOutputModeV1, ()),
+    ]);
+}
+
+impl Dispatch<ZwlrOutputModeV1, ()> for State {
+    fn event(st: &mut Self, mode: &ZwlrOutputModeV1, event: zwlr_output_mode_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        let Some((_, m)) = st.mgmt.modes.get_mut(&mode.id()) else { return };
+        match event {
+            zwlr_output_mode_v1::Event::Size { width, height } => m.size = (width, height),
+            zwlr_output_mode_v1::Event::Refresh { refresh } => m.refresh = refresh,
+            zwlr_output_mode_v1::Event::Preferred => m.preferred = true,
+            zwlr_output_mode_v1::Event::Finished => m.finished = true,
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<ZwlrOutputConfigurationV1, usize> for State {
+    fn event(
+        st: &mut Self,
+        _: &ZwlrOutputConfigurationV1,
+        event: zwlr_output_configuration_v1::Event,
+        i: &usize,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let answer = match event {
+            zwlr_output_configuration_v1::Event::Succeeded => "succeeded",
+            zwlr_output_configuration_v1::Event::Failed => "failed",
+            zwlr_output_configuration_v1::Event::Cancelled => "cancelled",
+            _ => return,
+        };
+        st.mgmt.answers.insert(*i, answer);
+    }
+}
 
 // ------------------------------------------------------------------ screenshots
 

@@ -69,8 +69,8 @@ container with no devices and no network. Nothing switches: Hyprland stays the s
 repository, the Argus app (argus-app against its fake Flipper on a socket): skipped unless its programs are named, even in CI;
 Argus's `argus-tools/crates/argus-app/smoke-yggdrasil.sh` names them and runs it in the same container (2026-11-13).
 
-Not built headless yet: GPU buffers (linux-dmabuf is not offered: shared memory only), drawing the pointer, outputs added or removed
-while running, and placing outputs other than side by side.
+Not built headless yet: GPU buffers (linux-dmabuf is not offered: shared memory only) and drawing the pointer. Outputs added or
+removed while running and placed other than side by side came on 2026-11-12 (below).
 
 **2026-11-12: Yggdrasil's own tools talk to it through yggdrasil-wm** (`packages/wm`, the layer they share): the panel's desktop
 buttons, window zones, Snap Assist and the dock's minimize, `yggdrasil-snap`, `yggdrasil-close` and the idle manager's pointer find
@@ -92,6 +92,17 @@ minimized windows. Windows get the session's look: the accent border, corners ro
 window keeps 8 all round, as on Hyprland), and the open, close and move animations (800 ms, Hyprland's default curve), none with
 "reduce motion". `tests/keys.rs` (stand-ins on the compositor's PATH) and `tests/look.rs` (PNG snapshots, a stopped clock for the
 frames in an animation) run in CI's `compositor-headless` job and in `tests/apps-podman.sh`.
+
+**2026-11-12: the system's keyboard, the screens' settings and window places** (gap items 3 and 5; details in
+[packages/compositor/README.md](../packages/compositor/README.md)). The keyboard layout is the system's, from the file the
+installer and localectl write (`/etc/X11/xorg.conf.d/00-keyboard.conf`, then `/etc/vconsole.conf`), taken again when it changes.
+The screens follow Settings > Displays' `~/.config/yggdrasil/monitors.lua`, the file Hyprland loads (modes, scales, places, screens
+off), and the standard wlr-output-management protocol lists and changes them; headless, screens are plugged in and out while it
+runs, and the windows on a screen that goes move to the first one. Windows come back where a program's last one closed (the
+session's `window-places` file, shared with the Hyprland session), windows opening on a screen set to tile
+(`~/.config/yggdrasil/tiling`) tile there, and Steam's own maximize request is ignored. `tests/outputs.rs` and `tests/places.rs`
+(with two PNG snapshots) run in CI's `compositor-headless` job and in `tests/apps-podman.sh`. Settings itself still refuses to
+change a screen on this compositor; that check is the one step left.
 
 ## Status (2026-10-18): first version, runs nested in a window only
 
@@ -218,7 +229,8 @@ Not built yet (in the order I would do them):
    - VRR (the connector's VRR_ENABLED property) and tearing control (wp-tearing-control) for games; gamma and night light.
    This is what would let it run the real session instead of Hyprland; it is developed in a virtual machine (Limbo), never on the
    live session, and the headless tests keep running in CI the whole time.
-8. Screen recording and screenshots (the portal), output management for Settings > Displays.
+8. Screen recording and screenshots (the portal). Output management for Settings > Displays is there headless since 2026-11-12
+   (wlr-output-management and Settings' `monitors.lua`).
 
 Why not before: the roadmap puts the compositor last, once the pieces around it are stable; they now are (panel, lock, idle, greeter,
 portal, polkit), and each of them can be developed and tested on this compositor in a window, and since 2026-11-10 headless in CI.
@@ -233,7 +245,8 @@ no polling beyond a 2-second look at two small config files; pictures such as th
 Measured 2026-10-18 on this computer, nested: the compositor used about 2 % of a core while idle because it redrew 60 times a second; after the change it uses 0 %.
 Measured 2026-11-12 headless (release build, software drawing, 1920x1080, a bar, a dock and three 800x600 windows), before and after
 the window look: idle 0.004 % and 0.005 % of a core, 25.6 and 26.3 MB resident; a window opening costs about 0.1 s of CPU spread
-over its 800 ms animation, and nothing is drawn once it has settled. Its memory nested (about 117 MB) is mostly the graphics driver's context; the panel is about 89 MB, the idle manager 3 MB, the polkit agent 8 MB. Still to measure and trim: the panel's memory,
+over its 800 ms animation, and nothing is drawn once it has settled. After the keyboard, screens and window places (gap items 3 and
+5, the same day): idle 0.006 % of a core, 26.4-26.5 MB resident (from 26.3). Its memory nested (about 117 MB) is mostly the graphics driver's context; the panel is about 89 MB, the idle manager 3 MB, the polkit agent 8 MB. Still to measure and trim: the panel's memory,
 start-up time of each program, and the compositor's cost with several large windows.
 Settings > Power's root services (tune, casefan, gpufan) are Rust since 2026-11-09 (docs/APPS_SETTINGS.md): about 2.8 MB each on
 their own, plus about 26 MB while libnvidia-ml is initialised (the NVIDIA driver's own cost, the same in any language), and tune

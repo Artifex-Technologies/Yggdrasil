@@ -126,7 +126,7 @@ impl App {
         let Some(x) = w.x11_surface() else { return };
         if a.fullscreen && !x.is_fullscreen() {
             self.fullscreen(&w);
-        } else if a.maximized && !a.fullscreen && !x.is_maximized() && !self.placed_by_layout(&w) {
+        } else if a.maximized && !a.fullscreen && !x.is_maximized() && !self.placed_by_layout(&w) && !crate::state::ignores_maximize(&w) {
             self.maximize(&w);
         }
         self.wake();
@@ -214,15 +214,21 @@ impl XwmHandler for App {
         }
         // never bigger than the space the panels leave free, and wholly on it: Steam asks for 1373x1080 on a 1280x800 screen, and a
         // question it centres on that window landed off the edge, where nobody could answer it (found 2026-11-05)
-        let zone = smithay::desktop::layer_map_for_output(&self.output).non_exclusive_zone();
-        let screen = crate::state::logical_size(&self.output);
+        // on the screen the pointer is on, as a Wayland window
+        let o = self.output_at(self.pointer_location);
+        let zone = self.free_area(&o);
+        let screen = crate::state::logical_size(&o);
         let game_full = is_game(&window) && screen.w > 0 && geo.size.w >= screen.w && geo.size.h >= screen.h;
-        let place =
-            if game_full { Rectangle::new(self.cascade(), geo.size) } else { fit_in(zone, Rectangle::new(self.cascade(), geo.size)) };
-        let at = place.loc;
-        let _ = window.configure(place);
+        let start = o.current_location() + self.cascade();
         let w = Window::new_x11_window(window.clone());
-        self.space.map_element(w.clone(), at, true);
+        // back where the program's last window closed (places.rs), as a Wayland window
+        let place = if game_full {
+            Rectangle::new(start, geo.size)
+        } else {
+            self.remembered_place(&w).unwrap_or_else(|| fit_in(zone, Rectangle::new(start, geo.size)))
+        };
+        let _ = window.configure(place);
+        self.space.map_element(w.clone(), place.loc, true);
         // What it asked for before it was shown (full screen, maximized) is read on another thread: x11_asked acts on it.
         if let Some(r) = &self.x11_reader {
             r.ask(window.window_id());
@@ -322,6 +328,9 @@ impl XwmHandler for App {
 
     fn maximize_request(&mut self, _xwm: XwmId, window: X11Surface) {
         if let Some(w) = self.x11_window(&window) {
+            if crate::state::ignores_maximize(&w) {
+                return;
+            }
             self.maximize(&w);
         }
     }
