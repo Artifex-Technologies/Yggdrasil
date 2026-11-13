@@ -135,6 +135,24 @@ hl.config({
   },
 })
 
+-- A ThinkPad's TrackPoint scrolls while its middle button is held (a middle press without moving is still a middle click).
+-- Its buttons can arrive on the built-in touchpad's companion "-mouse" device, so that one gets it too; other mice do not.
+-- Without this the middle button only clicked (ThinkPad X1 Yoga, 2026-11-13).
+do
+  local devices = hl.get_devices() or {}
+  local touchpads = {}
+  for _, d in ipairs(devices) do
+    local name = tostring(d.name)
+    if name:sub(-9) == "-touchpad" then touchpads[name:sub(1, -10)] = true end
+  end
+  for _, d in ipairs(devices) do
+    local name = tostring(d.name)
+    if d.type == "pointer" and (name:find("trackpoint", 1, true) or (name:sub(-6) == "-mouse" and touchpads[name:sub(1, -7)])) then
+      hl.device({ name = name, scroll_method = "on_button_down", scroll_button = 274 })
+    end
+  end
+end
+
 -- Windows float, centred, at the size the program asks for...
 hl.window_rule({ name = "windows-float", match = { class = ".*" }, float = true, center = true })
 
