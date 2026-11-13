@@ -8,6 +8,8 @@
 //!   gpu-run     /usr/bin/yggdrasil-gpu-run     Settings > Games: a program on a chosen graphics card (a Steam launch option)
 //!   battery     /usr/lib/yggdrasil/battery     The top bar's battery and its drop-down, low-battery warnings, the charge
 //!                                              limit (set-limit and restore through pkexec / at boot)
+//!   gpuunlock   /usr/lib/yggdrasil/gpuunlock   Settings > Power > Graphics card unlock, as root through pkexec and its two
+//!                                              services; `grub-entry` for /etc/grub.d/41_gpu_unlock
 //!   autozone    /usr/lib/yggdrasil/autozone    Settings > Date & Time: set the time zone from where the computer is, by its IP
 //!                                              address (no Python script before it)
 //!
@@ -20,6 +22,7 @@ pub mod battery;
 pub mod bootscreen;
 pub mod gamefix;
 pub mod gpurun;
+pub mod gpuunlock;
 pub mod py;
 
 #[cfg(test)]

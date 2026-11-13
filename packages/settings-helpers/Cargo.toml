@@ -2,7 +2,7 @@
 name = "yggdrasil-settings-helpers"
 version = "0.1.0"
 edition = "2021"
-description = "Settings' on-demand helpers in Rust, replacing the Python scripts at the same paths with the same interface: account (Users, through pkexec), bootscreen (Appearance > Boot screen, through pkexec), game-fix (Games > Game fixes) and yggdrasil-gpu-run (Games: a program on a chosen graphics card)"
+description = "Settings' on-demand helpers in Rust, replacing the Python scripts at the same paths with the same interface: account (Users, through pkexec), bootscreen (Appearance > Boot screen, through pkexec), game-fix (Games > Game fixes), yggdrasil-gpu-run (Games: a program on a chosen graphics card) and gpuunlock (Power > Graphics card unlock, as root)"
 license = "MPL-2.0"
 
 [lib]
@@ -31,6 +31,12 @@ path = "src/bin/gpu-run.rs"
 name = "battery"
 path = "src/bin/battery.rs"
 
+# installed as /usr/lib/yggdrasil/gpuunlock (Power > Graphics card unlock, through pkexec and its two services), and called by
+# /etc/grub.d/41_gpu_unlock as `gpuunlock grub-entry`
+[[bin]]
+name = "gpuunlock"
+path = "src/bin/gpuunlock.rs"
+
 # installed as /usr/lib/yggdrasil/autozone, run by the user timer yggdrasil-autozone.timer (Date & Time)
 [[bin]]
 name = "autozone"
@@ -46,6 +52,8 @@ yggdrasil-pycompat = { path = "../pycompat" }
 yggdrasil-wm = { path = "../wm" }
 ureq = "3"
 serde_json = "1"
+# gpuunlock: the benchmark's source digest (ring is already here through ureq's TLS)
+ring = "0.17"
 # autozone: where the computer is, from its IP address only (and nothing while a VPN is on)
 yggdrasil-geolocate = { path = "../geolocate" }
 

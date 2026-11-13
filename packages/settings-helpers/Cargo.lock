@@ -619,6 +619,7 @@ dependencies = [
  "image",
  "libc",
  "regex",
+ "ring",
  "serde_json",
  "ureq",
  "yggdrasil-geolocate",

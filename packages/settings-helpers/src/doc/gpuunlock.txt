@@ -1,0 +1,30 @@
+gpuunlock: the tensor-rate unlock for a tested GeForce card (Settings > Power > Graphics card, Developer options).
+
+The plan, its safety rules and its phases are in Labyrinth OS, docs/GPU_UNLOCK.md (section 12: the method since 2026-10-27). In
+short: only a card whose identity matches an entry of the support table exactly is offered the unlock. The unlock itself is
+nlzy/turing-unlock's kernel module, which loads from the start-up image before the graphics driver and does nothing unless
+`turing_unlock.targets=` is on the kernel command line. Arming adds one boot-menu entry with that option, which I pick by hand
+at a restart: a start through any other entry is a normal one, and nothing writes to the card once its driver has it. Nothing here
+raises the card's power: while an attempt is armed and until its measurements are done, every power mode is held at the card's
+default watts (powerlimit reads the hold).
+
+Commands:
+  gpuunlock status [--json]   the card, the state and why (no root needed)
+  gpuunlock arm               add the one-try entry to the boot menu (root: pkexec asks for the password every time)
+  gpuunlock disarm            cancel that (root)
+  gpuunlock reenable          allow arming again after a failed attempt (root)
+  gpuunlock release           end the power hold (root): after the measurements, or when giving up
+  gpuunlock boot              early at every start while an attempt is pending (yggdrasil-gpu-unlock-boot.service)
+  gpuunlock verify            once the desktop is up after an attempt (yggdrasil-gpu-unlock-verify.service)
+  gpuunlock bench [--quick]   the correctness check and tensor benchmark on the card (needs the CUDA toolkit's nvcc)
+  gpuunlock bench --baseline  the same on the locked card at its default watts, kept as the baseline the unlock is judged by
+                              (root; arming waits for it)
+
+How an attempt is followed: `arm` writes `armed`. A start through the one-try entry has the module's option in /proc/cmdline:
+early in that start `boot` turns `armed` into `trying` with this start's boot id. Once the desktop is up, `verify` reads the
+module's own result from the kernel log, checks the card, removes `trying` and takes the entry out of the menu. If the computer
+never gets that far (a hang, the power button), the start after it still finds `trying` from an earlier start: that attempt
+failed, the unlock is switched off, and arming stays off until `reenable`. A start through the normal entry while armed simply
+did not try; the entry stays until it is picked or cancelled.
+
+State: /var/lib/yggdrasil/gpu-unlock/ (state.json, armed, trying, entry.cfg, power-hold, log).

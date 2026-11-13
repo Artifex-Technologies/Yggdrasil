@@ -27,7 +27,7 @@ children already waited for), and the memory of the whole process tree at its en
     nice -n 19 python3 tools/bench-port.py [--only NAME,...] [--runs N] [--heavy-runs N] [--daemon-seconds S]
                                            [--labyrinth DIR] [--json FILE] [-v]
 
-NAME: power, settings-helpers, appusage, crashwatch, pkg-root, theme, cursors, liki, install-system
+NAME: power, settings-helpers, appusage, crashwatch, pkg-root, theme, cursors, liki, install-system, gpuunlock
 --labyrinth: the Labyrinth OS repository (the crash watch's Python script is in its history; default ../Labyrinth_OS)
 """
 import argparse
@@ -58,6 +58,9 @@ OLD = {
     "bootscreen": ("yggdrasil", "725296c", "packages/settings/helpers/bootscreen"),
     "game-fix": ("yggdrasil", "725296c", "packages/settings/helpers/game-fix"),
     "gpu-run": ("yggdrasil", "725296c", "packages/settings/helpers/gpu-run"),
+    # the script with the eight fixes made before its port (their tests failed first), and its shell grub.d fragment
+    "gpuunlock": ("yggdrasil", "ff5b6de", "packages/settings/helpers/gpuunlock"),
+    "41_gpu_unlock": ("yggdrasil", "ff5b6de", "packages/settings/data/41_gpu_unlock"),
     "labyrinth-appusage": ("yggdrasil", "725296c", "packages/appusage/python/labyrinth-appusage"),
     "labyrinth-crash-watch": ("labyrinth", "292a53b", "profile/airootfs/usr/local/bin/labyrinth-crash-watch"),
     "pkg-root": ("yggdrasil", "0cff417", "packages/market/helpers/pkg-root"),
@@ -124,13 +127,17 @@ def build_launcher():
     subprocess.run(["rustc", "-O", "-C", "strip=symbols", "-o", LAUNCH, src], check=True)
 
 
-def measure(argv, env, stdin=None, cwd=None, wrap=()):
-    """One run: (wall s, cpu s, peak RSS KB, exit code, stderr tail). wrap: what the launcher runs inside (a sandbox)."""
-    out = os.path.join(SCRATCH, "run.txt")
+def measure(argv, env, stdin=None, cwd=None, wrap=(), inside=None):
+    """One run: (wall s, cpu s, peak RSS KB, exit code, stderr tail). wrap: what the launcher runs inside (a sandbox).
+    inside: the folder the sandbox makes the whole file system (pivot_root); the launcher is copied there and run from it."""
+    out = os.path.join(SCRATCH if inside is None else inside, "run.txt")
+    launch, out_arg = (LAUNCH, out) if inside is None else ("/launch", "/run.txt")
+    if inside is not None:
+        shutil.copy(LAUNCH, os.path.join(inside, "launch"))
     if os.path.exists(out):
         os.remove(out)
     with tempfile.TemporaryFile() as err:
-        p = subprocess.Popen(list(wrap) + [LAUNCH, out, "--"] + argv, env=env, cwd=cwd,
+        p = subprocess.Popen(list(wrap) + [launch, out_arg, "--"] + argv, env=env, cwd=cwd,
                              stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=err)
         if stdin is not None:
             try:
@@ -152,15 +159,15 @@ class Case:
     """One input: the old and the new command lines. setup(), when given, makes the world again before every run (not
     timed). sandbox: run inside COMMAND (a list, e.g. unshare -rm sh sandbox.sh WORLD) with only the program measured."""
 
-    def __init__(self, label, old, new, env, stdin=None, setup=None, cwd=None, runs=None, sandbox=None):
+    def __init__(self, label, old, new, env, stdin=None, setup=None, cwd=None, runs=None, sandbox=None, inside=None):
         self.label, self.old, self.new, self.env, self.stdin = label, old, new, env, stdin
-        self.setup, self.cwd, self.runs, self.sandbox = setup, cwd, runs, sandbox
+        self.setup, self.cwd, self.runs, self.sandbox, self.inside = setup, cwd, runs, sandbox, inside
 
 
 def run_one(case, argv):
     if case.setup:
         case.setup()
-    return measure(argv, case.env, case.stdin, case.cwd, case.sandbox or ())
+    return measure(argv, case.env, case.stdin, case.cwd, case.sandbox or (), case.inside)
 
 
 def pct(xs, q):
@@ -493,6 +500,45 @@ def settings_cases(old):
     return [bench(c) for c in cases], []
 
 
+def gpuunlock_cases(old):
+    """gpuunlock (a root helper) and its grub.d fragment in the differential's made-up worlds: user, mount, network and process
+    namespaces, the world as the whole file system (pivot_root), stand-ins for every program it runs. The launcher runs inside
+    the world, so only the program is measured, not the sandbox around it. The world is made again before every run."""
+    par = os.path.join(PKG, "settings-helpers", "parity")
+    gp = load(os.path.join(par, "gpuunlock.py"), "gpuunlock_parity")
+    gp.WORLD = os.path.join(mkdir("gpuunlock"), "world")
+    root = os.path.join(gp.WORLD, "root")
+    with open(os.path.join(BIN, "gpuunlock"), "rb") as f:
+        rust = f.read()
+    with open(os.path.join(PKG, "settings", "data", "41_gpu_unlock"), "rb") as f:
+        frag = f.read()
+    env = {"PATH": "/standins:/usr/bin", "HOME": "/root", "LANG": "C.UTF-8", "TZ": "UTC0"}
+    cases = []
+
+    def case(label, change, old_argv, new_argv):
+        w = gp.World()
+        if change:
+            change(w)
+
+        def setup():
+            w.build((rust, frag))
+            os.makedirs(os.path.join(root, "old"), exist_ok=True)
+            for name in ("gpuunlock", "41_gpu_unlock"):
+                shutil.copy(old[name], os.path.join(root, "old", name))
+        cases.append(Case(label, old_argv, new_argv, env, setup=setup, sandbox=["unshare", "-rmnpf", "sh", gp.SANDBOX, root, "root"], inside=root))
+
+    old_g, new_g = ["/usr/bin/python3", "/old/gpuunlock"], ["/usr/lib/yggdrasil/gpuunlock"]
+    picked = "root=UUID=3118e509 rw quiet splash turing_unlock.targets=0000:01:00.0"
+    case("status --json (Settings > Power: a supported card, modinfo run)", None, old_g + ["status", "--json"], new_g + ["status", "--json"])
+    case("status --json (no NVIDIA card: most computers)", lambda w: w.no_card(), old_g + ["status", "--json"], new_g + ["status", "--json"])
+    case("boot (the start that is the attempt: trying written, logger)", lambda w: (w.armed(), w.boot("bbbb", picked)), old_g + ["boot"], new_g + ["boot"])
+    case("verify (a normal start while armed: nothing to do)", lambda w: w.armed(), old_g + ["verify"], new_g + ["verify"])
+    case("41_gpu_unlock, nothing armed (every grub-mkconfig)", None, ["/usr/bin/sh", "/old/41_gpu_unlock"], ["/usr/bin/sh", "/etc/grub.d/41_gpu_unlock"])
+    case("41_gpu_unlock, armed (the entry checked and printed)", lambda w: w.armed(), ["/usr/bin/sh", "/old/41_gpu_unlock"],
+         ["/usr/bin/sh", "/etc/grub.d/41_gpu_unlock"])
+    return [bench(c) for c in cases], []
+
+
 def make_photo(path, w, h):
     """A photo-like picture (smooth gradients and fine detail), the same bytes every time."""
     from PIL import Image, ImageFilter
@@ -726,6 +772,7 @@ PROGRAMS = {
     "cursors": (cursors_cases, ["ygg-cursors"], ["ygg-cursors"]),
     "liki": (liki_cases, ["liki-build", "liki-icns", "liki-icon-import"], ["liki-build", "liki-icns", "liki-icon-import"]),
     "install-system": (install_cases, ["install-system"], ["yggdrasil-install-system"]),
+    "gpuunlock": (gpuunlock_cases, ["gpuunlock", "41_gpu_unlock"], ["gpuunlock"]),
 }
 
 

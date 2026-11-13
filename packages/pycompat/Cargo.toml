@@ -9,9 +9,11 @@ license = "MPL-2.0"
 name = "pycompat"
 path = "src/lib.rs"
 
-# serde_json keeps an object's keys in the file's order (as a Python dict does) with preserve_order
+# serde_json keeps an object's keys in the file's order (as a Python dict does) with preserve_order, and reads every number to
+# the nearest float (as Python's json and float() do) with float_roundtrip: without it gpuunlock's ratio 1.9859719438877754,
+# written to a file and read back, came out one bit off and was written again as ...752 (its differential, 2026-11-13)
 [dependencies]
-serde_json = { version = "1", features = ["preserve_order"] }
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 # process.rs: pidfd_open and poll, to wait for a child with a time limit
 libc = "0.2"
 

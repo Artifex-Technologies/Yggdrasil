@@ -1,4 +1,4 @@
-//! powerlimit without hardware: the cases of tests/test_settings_powerlimit.py and of helpers/tests/test_gpuunlock.py's
+//! powerlimit without hardware: the cases of tests/test_settings_powerlimit.py and of helpers/python/tests/test_gpuunlock.py's
 //! PowerHold (they test this helper's hold), with the same names and expectations, then what the Python tests left out: the
 //! mode from busctl, the card from nvidia-smi, set, get and the watch, against fake trees with the commands' answers in
 //! ROOT/commands.json (commands that change something are recorded, never run).
@@ -82,7 +82,7 @@ fn test_state_is_validated() {
     assert!(load_state(&c, Some(&d.path().join("none.json"))).is_empty());
 }
 
-// ---------------------------------------------------------------- helpers/tests/test_gpuunlock.py, PowerHold
+// ---------------------------------------------------------------- helpers/python/tests/test_gpuunlock.py, PowerHold
 
 #[test]
 fn test_performance_may_use_290_without_a_hold() {

@@ -34,7 +34,7 @@ is in each package's README ("Why Rust: measured") and in the main README; this 
 - Everything runs at `nice -n 19`, one process at a time (the whole run takes about ten minutes).
 
     cargo build --release      # in each ported package
-    nice -n 19 python3 tools/bench-port.py [--only power,settings-helpers,appusage,crashwatch,pkg-root,theme,cursors,liki,install-system] [--json FILE] [-v]
+    nice -n 19 python3 tools/bench-port.py [--only power,settings-helpers,appusage,crashwatch,pkg-root,theme,cursors,liki,install-system,gpuunlock] [--json FILE] [-v]
 
 Machine: my desktop, 16 threads, Linux 7.3, Python 3.14.9.
 
@@ -52,6 +52,7 @@ Machine: my desktop, 16 threads, Linux 7.3, Python 3.14.9.
 | ygg-cursors | `daf2334:packages/theme/bin/ygg-cursors` |
 | liki-build, liki-icns, liki-icon-import | `1cd6211:packages/liki/bin/NAME` |
 | yggdrasil-install-system | `a234048:packages/installer/helpers/install-system` (run as its shebang runs it, `python3 -I`) |
+| gpuunlock and its grub.d fragment | `ff5b6de:packages/settings/helpers/gpuunlock` and `ff5b6de:packages/settings/data/41_gpu_unlock` (with the eight fixes made before the port) |
 
 ## Results (2026-11-11)
 
@@ -378,3 +379,48 @@ launcher with Yggdrasil's own compositor in its headless mode as the compositor,
 yggdrasil.lua against stand-ins: it comes up (the environment reaches the systemd and D-Bus stand-ins with the compositor's
 display, the session target starts), ends cleanly (exit 0, the target stopped, nothing left running, the compositor's
 socket gone), and a compositor killed under it is started again, with the notice ten seconds later. About 11 s for both.
+
+### The graphics card unlock, gpuunlock (2026-11-13)
+
+The root helper behind Settings > Power > Graphics card unlock ([packages/settings-helpers](../packages/settings-helpers/README.md)):
+Settings runs `status --json` whenever the Power page opens, pkexec runs `arm`, `disarm`, `reenable`, `release` and
+`bench --baseline`, and two services run `boot` early at every start and `verify` once the desktop is up while an attempt is
+pending. Python, 841 lines, until 2026-11-13, with a 22-line shell grub.d fragment that checked entry.cfg with grep.
+
+Differential first, `packages/settings-helpers/parity/gpuunlock.py`: 489 of 489 cases the same, each world a whole file
+system of its own (`unshare -rmnpf` and pivot_root: a made-up /sys, /proc, boot menu, state folder and table, stand-ins for
+every program and for Ollama's port, nothing of the real system reachable), as root and as a user; exit code, output,
+errors, every call in order and every file with its mode. It found eight bugs in the script and its fragment, fixed there
+first (ff5b6de), and one in `packages/pycompat` (serde_json read some numbers one bit off).
+
+Measured with `tools/bench-port.py --only gpuunlock`, 30 runs a side taking turns after two warm-ups, in those worlds, with the
+launcher inside the world so only the program is measured; the world is made again before every run.
+
+| case | metric | old (Python) | Rust | change |
+| --- | --- | --- | --- | --- |
+| status --json (Settings > Power: a supported card, modinfo run) | wall (median; p10–p90) | 55.3 ms (54.3 ms–56.6 ms) | 1.69 ms (1.62 ms–1.76 ms) | −97 %, 53.6 ms faster |
+| | CPU time | 54.9 ms | 1.79 ms | −97 %, 53.2 ms less |
+| | peak RSS | 23.6 MB | 3.9 MB | −83 %, 19.6 MB less |
+| status --json (no NVIDIA card: most computers) | wall (median; p10–p90) | 52.5 ms (51.6 ms–55.5 ms) | 0.49 ms (0.47 ms–0.55 ms) | −99 %, 52.0 ms faster |
+| | CPU time | 52.1 ms | 0.43 ms | −99 %, 51.7 ms less |
+| | peak RSS | 23.4 MB | 2.6 MB | −89 %, 20.8 MB less |
+| boot (the start that is the attempt: trying written, logger) | wall (median; p10–p90) | 54.8 ms (53.7 ms–57.1 ms) | 1.67 ms (1.58 ms–1.76 ms) | −97 %, 53.2 ms faster |
+| | CPU time | 54.5 ms | 1.72 ms | −97 %, 52.8 ms less |
+| | peak RSS | 23.6 MB | 3.9 MB | −83 %, 19.6 MB less |
+| verify (a normal start while armed: nothing to do) | wall (median; p10–p90) | 52.8 ms (51.8 ms–53.7 ms) | 0.48 ms (0.46 ms–0.50 ms) | −99 %, 52.3 ms faster |
+| | CPU time | 52.4 ms | 0.40 ms | −99 %, 52.0 ms less |
+| | peak RSS | 23.4 MB | 2.5 MB | −89 %, 20.9 MB less |
+| 41_gpu_unlock, nothing armed (every grub-mkconfig) | wall (median; p10–p90) | 0.89 ms (0.86 ms–0.96 ms) | 1.44 ms (1.38 ms–1.60 ms) | **+62 %, 0.55 ms slower** |
+| | CPU time | 0.81 ms | 1.33 ms | +64 %, 0.52 ms more |
+| | peak RSS | 3.9 MB | 3.9 MB | the same (sh) |
+| 41_gpu_unlock, armed (the entry checked and printed) | wall (median; p10–p90) | 6.41 ms (6.24 ms–6.56 ms) | 1.49 ms (1.42 ms–1.58 ms) | −77 %, 4.92 ms faster |
+| | CPU time | 7.15 ms | 1.38 ms | −81 %, 5.78 ms less |
+| | peak RSS | 3.9 MB | 3.9 MB | the same (sh) |
+| on disk | | gpuunlock 37.4 KB, 41_gpu_unlock 1.6 KB (scripts; Python is 75 MB) | gpuunlock 693 KB, the fragment 0.9 KB | |
+
+- Most of the script's 53 ms was Python starting and importing what it uses (urllib, http.client, hashlib, json, re,
+  subprocess): 42.8 ms for those imports alone, against 9.7 ms for `python3 -c pass`. The Rust helper is done in half a
+  millisecond where it runs no program; otherwise the stand-in modinfo is most of its 1.7 ms.
+- Where Rust is worse: with nothing armed, the old fragment ended at its first test, and the new one starts the program to
+  find there is no file: half a millisecond per kernel update.
+- yggdrasil-settings no longer depends on Python: gpuunlock was the last Python it installed.

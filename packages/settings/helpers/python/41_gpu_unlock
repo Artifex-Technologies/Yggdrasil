@@ -1,0 +1,25 @@
+#! /bin/sh
+# grub-mkconfig fragment for the graphics card unlock (gpuunlock, Settings > Power > Graphics card).
+#
+# Prints the one-try entry only while an attempt is armed: `gpuunlock arm` writes entry.cfg, a copy of the menu's first entry
+# with turing_unlock.targets= added for this card, and `gpuunlock verify` or `disarm` removes it. Without the file it prints
+# nothing, so grub-mkconfig's output is unchanged. The entry is never the default: I pick it by hand at a restart. It
+# never fails, so it can never stop a kernel update from writing the boot menu.
+entry=${YGGDRASIL_GPUUNLOCK_ENTRY:-/var/lib/yggdrasil/gpu-unlock/entry.cfg}
+# a plain file (gpuunlock writes it so; never through a link), ending in a newline, so the "### END" line grub-mkconfig adds
+# after it starts a line of its own
+[ -f "$entry" ] && [ ! -L "$entry" ] && [ -r "$entry" ] || exit 0
+[ -z "$(tail -c 1 "$entry")" ] || exit 0
+
+# exactly one entry of ours: our id on its first line, a closing brace on its last, one kernel line ending in the option for
+# one PCI address, and nothing inside that opens another entry
+head -n 1 "$entry" | grep -q -- '--id yggdrasil-gpu-unlock {$' || exit 0
+[ "$(tail -n 1 "$entry")" = "}" ] || exit 0
+[ "$(grep -c '^menuentry ' "$entry")" = 1 ] || exit 0
+tail -n +2 "$entry" | grep -Eq '^[[:space:]]*(menuentry|submenu)' && exit 0
+[ "$(grep -Ec '^[[:space:]]*linux[[:space:]]' "$entry")" = 1 ] || exit 0
+grep -Eq '^[[:space:]]*linux[[:space:]].* turing_unlock\.targets=[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$' "$entry" || exit 0
+
+echo "Adding the graphics card unlock entry (one try, picked by hand)" >&2
+cat "$entry"
+exit 0

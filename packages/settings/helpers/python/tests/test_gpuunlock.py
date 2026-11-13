@@ -13,10 +13,12 @@ import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# the Python helper and its shell fragment, kept for a rollback (the package installs the Rust gpuunlock, packages/settings-helpers,
+# and a fragment that calls it); their Rust tests are packages/settings-helpers/src/gpuunlock_tests.rs
 HELPER = os.path.join(HERE, "..", "gpuunlock")
-POWERLIMIT = os.path.join(HERE, "..", "python", "powerlimit")  # the Python one, kept for a rollback (the package installs the Rust one)
-TABLE = os.path.join(HERE, "..", "..", "data", "gpu-unlock-supported.json")
-FRAGMENT = os.path.join(HERE, "..", "..", "data", "41_gpu_unlock")
+POWERLIMIT = os.path.join(HERE, "..", "powerlimit")  # the Python one, kept for a rollback (the package installs the Rust one)
+TABLE = os.path.join(HERE, "..", "..", "..", "data", "gpu-unlock-supported.json")
+FRAGMENT = os.path.join(HERE, "..", "41_gpu_unlock")
 
 MSI_CARD = {"bdf": "0000:01:00.0", "device": "1e07", "sub": ("1462", "3711"), "vbios": "90.02.17.00.3e", "bar0": "0x00000000de000000"}
 ASUS = {"bdf": "0000:02:00.0", "device": "1e07", "sub": ("1043", "866a"), "vbios": "90.02.17.00.47", "bar0": "0x00000000fa000000"}

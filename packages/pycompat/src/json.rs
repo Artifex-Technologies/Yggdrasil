@@ -212,6 +212,16 @@ mod tests {
     }
 
     #[test]
+    fn numbers_are_read_to_the_nearest_float() {
+        // as Python's json and float() read them; serde_json's fast reader was one bit off for some (49.9)
+        for text in ["49.9", "99.1", "99.6", "0.1", "1.9859719438877754", "2.2250738585072014e-308", "9007199254740993.0", "123456.789e-3"]
+        {
+            let v = loads(text).unwrap();
+            assert_eq!(v.as_f64().unwrap().to_bits(), text.parse::<f64>().unwrap().to_bits(), "{text}");
+        }
+    }
+
+    #[test]
     fn floats_as_repr() {
         for (x, want) in [
             (1.0, "1.0"),

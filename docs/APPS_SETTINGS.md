@@ -418,7 +418,7 @@ About only when switched on, have no picture.
     the first entry with the option, printed by `/etc/grub.d/41_gpu_unlock` only while armed. The owner picks it by hand at
     a restart; it is never the default.
   - **Following an attempt:** `yggdrasil-gpu-unlock-boot.service` and `-verify.service` follow it. The attempt is known by
-    the option in /proc/cmdline, the result by the module's kernel log, and the entry goes away after its one try. Tests: `helpers/tests/test_gpuunlock.py` (CI runs them on every push since 2026-11-11). A debug build reads the status from
+    the option in /proc/cmdline, the result by the module's kernel log, and the entry goes away after its one try. The helper is Rust since 2026-11-13 (`packages/settings-helpers`, `gpuunlock`; the fragment calls `gpuunlock grub-entry`). Tests: `packages/settings-helpers/src/gpuunlock_tests.rs`, and `parity/gpuunlock.py` against the Python script kept in `helpers/python/` until 2026-11-20 (CI runs both). A debug build reads the status from
   `$YGGDRASIL_GPUUNLOCK_FIXTURE` (for screenshots of the other states).
 
 ## Ask before connecting (built 2026-10-16)

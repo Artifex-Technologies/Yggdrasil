@@ -240,9 +240,10 @@ the bugs the port fixed and where the Rust one is worse.
 | the lights hook (shell; now inside yggdrasil-idle) | lights-off 100 → 2.82 ms (−97 %), lights-on 20.5 → 0.91 ms (−96 %) | 175 processes per lights-off → 0 | [idle](packages/idle/README.md) |
 | the session's, panel's, Liki's, Agora's and spell check's last 11 shell scripts | `liki-icon --import` 32.4 → 2.43 ms (−93 %); the plugin loader at login 20.3 → 3.01 ms (−85 %); a key press (panelctl) 4.19 → 3.61 ms | the plugin loader 11.1 → 3.8 MB (no Python) | [PORT_NUMBERS](docs/PORT_NUMBERS.md#the-desktops-last-shell-scripts-2026-11-12) |
 | the session's launcher, `yggdrasil-session` (bash) | to Hyprland 8.11 → 3.13 ms (−61 %); 44 processes a minute while the session runs → 0 | 4 processes, 9.5 MB RSS → 1 process, 2.7 MB | [PORT_NUMBERS](docs/PORT_NUMBERS.md#the-sessions-launcher-yggdrasil-session-2026-11-13) |
+| gpuunlock (root; the graphics card unlock) and its grub.d fragment | `status --json` 55.3 → 1.69 ms (−97 %), 52.5 → 0.49 ms with no NVIDIA card; the fragment while armed 6.41 → 1.49 ms, with nothing armed 0.89 → 1.44 ms (**+0.55 ms**) | 23.6 → 3.9 MB (−83 %) | [settings-helpers](packages/settings-helpers/README.md), [PORT_NUMBERS](docs/PORT_NUMBERS.md#the-graphics-card-unlock-gpuunlock-2026-11-13) |
 
 On disk the binaries are bigger than the scripts (0.3 to 1.3 MB each against a few KB), but the scripts needed Python
-(75 MB), and Agora, the theme package, Liki, the session and the installer no longer do.
+(75 MB), and Agora, the theme package, Liki, the session, the installer and Settings no longer do.
 
 ## Building
 

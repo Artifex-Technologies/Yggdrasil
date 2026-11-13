@@ -122,7 +122,8 @@ jobs:
         run: |
           scripts/screenshots.sh --no-build --out "$RUNNER_TEMP/shots" --only '^settings-(network|displays|power|about)'
           test "$(ls "$RUNNER_TEMP"/shots/*.png | wc -l)" = "$(scripts/screenshots.sh --list --only '^settings-(network|displays|power|about)' | wc -l)"
-  # gpuunlock is a live root helper still in Python (Settings runs it through pkexec); its tests fake every outside program,
+  # gpuunlock's Python copy and its shell fragment, kept for a rollback beside the Rust helper (packages/settings-helpers,
+  # tested in the rust job) until 2026-11-20, and the referee of its differential; their tests fake every outside program,
   # /sys, /proc and /etc, so they run without a graphics card.
   gpuunlock:
     runs-on: ubuntu-latest
@@ -134,7 +135,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Tests
-        run: python3 -m unittest discover -s packages/settings/helpers/tests -p 'test_gpuunlock.py' -v
+        run: python3 -m unittest discover -s packages/settings/helpers/python/tests -p 'test_gpuunlock.py' -v
   recipes:
     runs-on: ubuntu-latest
     container: archlinux:latest
