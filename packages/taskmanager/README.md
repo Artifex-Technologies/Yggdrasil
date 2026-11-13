@@ -3,6 +3,8 @@
 Yggdrasil's task manager (`yggdrasil-taskmanager`), laid out like the one on Windows 11, in the desktop's look (light or dark,
 the accent colour from Settings). Ctrl+Shift+Esc opens it; pressing it again brings the open one to the front.
 
+![The Task Manager, Performance](../../assets/screenshots/taskmanager.png)
+
 | Tab | What it shows and does |
 |:--|:--|
 | Processes | Apps (a window's process with all its helpers), background processes and the system's, with CPU, memory and disk shaded by how busy they are. End task, force it to end, suspend and resume, bring to front, close its windows, properties, search online |

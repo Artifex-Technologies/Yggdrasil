@@ -171,32 +171,52 @@ additions included; [docs/SHORTCUTS.md](docs/SHORTCUTS.md) is the same list. Thi
 
 ## Screenshots
 
-Applications are shown as windows on a 1920×1080 desktop.
+Applications are shown as windows on a 1920×1080 desktop, in the dark style. Everything in them is made up: the account
+(Alex Example), the computer (example-pc), its files, networks, devices and numbers.
 
 | | |
 | --- | --- |
 | ![The start menu](assets/screenshots/start-menu.png) | ![The calendar](assets/screenshots/calendar.png) |
-| *The start menu: favourites, folders by category, search.* | *The calendar, from the date in the top bar.* |
+| *The start menu: pinned apps, every app, search, and your name with the power choices.* | *The calendar, from the date in the top bar.* |
 | ![Fylgja, Stats](assets/screenshots/fylgja-stats.png) | ![Fylgja, Notifications](assets/screenshots/fylgja-notifications.png) |
-| *Fylgja, the notch: Stats (processor, graphics card, memory, disk, network, the busiest apps).* | *Fylgja: the notification history, grouped by app.* |
+| *Fylgja, the notch: Stats (processor, graphics card, memory, disk, network, the busiest apps).* | *Fylgja: the notification history.* |
+| ![The lock screen](assets/screenshots/lock-screen.png) | ![Settings, Lock screen](assets/screenshots/settings-lock-screen-designs.png) |
+| *The lock screen (the Split design).* | *Settings: the lock screen designs, each with its preview.* |
+| ![Settings, Wi-Fi & Network](assets/screenshots/settings-network.png) | ![Settings, Displays](assets/screenshots/settings-displays.png) |
+| *Settings: Wi-Fi & Network, laid out like a phone's.* | *Settings: Displays, an ultrawide and a second screen.* |
 | ![Settings, Appearance](assets/screenshots/settings-appearance.png) | ![Settings, Apps](assets/screenshots/settings-apps-list.png) |
 | *Settings: Appearance.* | *Settings: Apps, sorted by use, with restart, quit and remove.* |
-| ![Settings, Lock screen](assets/screenshots/settings-lock-screen-designs.png) | ![Minos](assets/screenshots/minos-explorer.png) |
-| *Settings: the lock screen designs.* | *Minos, the file manager: tabs, places, details.* |
-| ![Settings, Cooling](assets/screenshots/settings-cooling.png) | ![Settings, Cooling, a fan's curves](assets/screenshots/settings-cooling-curves.png) |
-| *Settings: Power > Cooling. The temperatures, and each port with your own name for it, pump or fan, and its speed now.* | *Settings: a fan's own curves, one for the processor and one for the graphics card, dragged point by point. Another fan can follow them.* |
+| ![Settings, Power on a laptop](assets/screenshots/settings-power-laptop.png) | ![Settings, Cooling, a fan's curves](assets/screenshots/settings-cooling-curves.png) |
+| *Settings: Power on a laptop: the battery, its health and charge limit, and the fan the firmware runs.* | *Settings: Power > Cooling on a desktop, a fan's own curves, one for the processor and one for the graphics card, dragged point by point. Another fan can follow them.* |
 | ![Settings, Games](assets/screenshots/settings-games.png) | ![Settings, Peripherals, Mouse](assets/screenshots/settings-peripherals-mouse.png) |
-| *Settings: Games. The graphics cards (with two or more, a Steam launch option runs a game on the one you pick), game fixes (Dead Space 2 and Fallout 4 at your screen's size, with Undo), and frame generation per game: Labyrinth's own (a preview) and Lossless Scaling's.* | *Settings: Peripherals > Mouse. Pointer speed, acceleration, scrolling and the main button, for every mouse or one by one.* |
-| ![Settings, Peripherals, a Razer mouse](assets/screenshots/settings-peripherals-razer.png) | ![Settings, Peripherals, Keyboard](assets/screenshots/settings-peripherals-keyboard.png) |
-| *Settings: a Razer mouse through OpenRazer: battery, DPI, polling rate, and each lighting zone's brightness, effect and colour (made-up devices).* | *Settings: Peripherals > Keyboard. Key repeat with a box to try it, the layout, and the lights going off while the screen is dimmed.* |
-| ![Agora](assets/screenshots/marketplace.png) | ![The installer, keyboard](assets/screenshots/installer-keyboard.png) |
-| *Agora, the app store.* | *The installer: keyboards by type.* |
+| *Settings: Games. The graphics cards (with two or more, a Steam launch option runs a game on the one you pick), game fixes with Undo, and frame generation per game.* | *Settings: Peripherals > Mouse. Pointer speed, acceleration, scrolling and the main button, for every mouse or one by one.* |
+| ![Minos](assets/screenshots/minos-explorer.png) | ![The Task Manager](assets/screenshots/taskmanager.png) |
+| *Minos, the file manager: tabs, places, details.* | *The Task Manager (Ctrl + Shift + Esc): Performance.* |
+| ![Agora](assets/screenshots/marketplace.png) | ![Saga MD](assets/screenshots/saga-md.png) |
+| *Agora, the app store.* | *Saga MD, the Markdown reader.* |
+| ![The calculator](assets/screenshots/calculator.png) | ![The installer, keyboard](assets/screenshots/installer-keyboard.png) |
+| *The calculator.* | *The installer: keyboards by type.* |
 | ![The installer, partitions](assets/screenshots/installer-disk-manual.png) | ![The installer, account](assets/screenshots/installer-account.png) |
 | *The installer: choosing partitions beside Windows (sample disks).* | *The installer: the account (sample name).* |
 
-The installer pictures use `yggdrasil-installer --demo PAGE`: sample disks and names, and nothing can be installed from it.
-The others come from `scripts/screenshot-desktop.sh`, which shows the desktop on a 1920×1080 screen inside a running Hyprland
-session (`start`, `run yggdrasil-settings power:cooling`, `shot FILE.png`, `stop`) and changes nothing in that session.
+Every page of Settings, each with a picture: [docs/APPS_SETTINGS.md](docs/APPS_SETTINGS.md#every-page).
+
+### Making them again
+
+    scripts/screenshots.sh                  # builds what it needs (debug), then every picture into assets/screenshots
+    scripts/screenshots.sh --only settings  # only the pictures whose name matches
+    scripts/screenshots.sh --list           # their names
+
+One command makes every picture above and in docs/ from this repository's own build, on Yggdrasil's headless compositor
+(`yggdrasil-compositor --headless`, [docs/COMPOSITOR.md](docs/COMPOSITOR.md)) with the panel, and never touches the running
+desktop: nothing opens on the screen, and it all runs in a bubblewrap sandbox with a blank /home, /run and /tmp, so the desktop's
+runtime folder, its session and system buses, the network and the input devices are not there. The made-up computer is in
+`tests/screenshots` (the account, a home folder with a few files, the processor and memory, a laptop's sensors, and
+stand-ins for the programs the apps run directly) and in Settings' fixtures (`packages/settings/tests/fixtures`: `system.json`,
+`laptop.json`, `wifi.json`, `peripherals.json`, read only by a debug build). It takes about 10 minutes; each picture waits until
+the screen stops changing. The installer pictures use `yggdrasil-installer --demo PAGE`, and the lock screen is its test build
+(a stand-in password check). A new picture is one `shot` line in the script, and a click or typing before it one `ACTIONS` entry.
+CI's `compositor-headless` job runs it on Settings' pages, so it keeps working.
 
 ## Why Rust: measured
 

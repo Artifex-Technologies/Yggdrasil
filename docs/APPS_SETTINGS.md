@@ -105,6 +105,43 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
   ![Settings > Peripherals > Mouse, a Razer mouse](../assets/screenshots/settings-peripherals-razer.png)
   ![Settings > Peripherals > Keyboard](../assets/screenshots/settings-peripherals-keyboard.png)
 
+## Every page
+
+Each page of the sidebar on a made-up computer (`scripts/screenshots.sh`, the README's "Making them again"; the fixtures are in
+`packages/settings/tests/fixtures`: `system.json` for a desktop, `laptop.json` for a laptop). Developer options, shown under
+About only when switched on, have no picture.
+
+| Page | |
+| --- | --- |
+| **Wi-Fi & Network**: the network in use, Known Networks and Other Networks (`wifi.json`). | ![Settings > Wi-Fi & Network](../assets/screenshots/settings-network.png) |
+| **Bluetooth**: paired devices with their battery, and a game controller. | ![Settings > Bluetooth](../assets/screenshots/settings-bluetooth.png) |
+| **Displays**: two screens, the ultrawide the main one. | ![Settings > Displays](../assets/screenshots/settings-displays.png) |
+| **Sound**: outputs and inputs, each with its volume. | ![Settings > Sound](../assets/screenshots/settings-sound.png) |
+| **Peripherals > Mouse**: every mouse, or one by one (`peripherals.json`). | ![Settings > Peripherals > Mouse](../assets/screenshots/settings-peripherals-mouse.png) |
+| **Peripherals > Mouse, a Razer mouse**: OpenRazer's battery, DPI, polling rate and lights. | ![Settings > Peripherals > Mouse, a Razer mouse](../assets/screenshots/settings-peripherals-razer.png) |
+| **Peripherals > Keyboard**: key repeat, the layout, the lights while dimmed. | ![Settings > Peripherals > Keyboard](../assets/screenshots/settings-peripherals-keyboard.png) |
+| **Printers**: two printers, their ink and toner. | ![Settings > Printers](../assets/screenshots/settings-printers.png) |
+| **Power, a desktop**: the power mode, Cooling and the idle timers (no battery). | ![Settings > Power, a desktop](../assets/screenshots/settings-power.png) |
+| **Power, a laptop**: the battery, its health and charge limit, the fan the firmware runs (`laptop.json`). | ![Settings > Power, a laptop](../assets/screenshots/settings-power-laptop.png) |
+| **Power > Cooling**: a fan controller's pump and fans, each with its speed now. | ![Settings > Power > Cooling](../assets/screenshots/settings-cooling.png) |
+| **Power > Cooling, a fan's curves**: the processor's curve, dragged point by point. | ![Settings > Power > Cooling, a fan's curves](../assets/screenshots/settings-cooling-curves.png) |
+| **Appearance**: light or dark, the accent, wallpapers, icons. | ![Settings > Appearance](../assets/screenshots/settings-appearance.png) |
+| **Appearance > Lock screen**: the designs with their previews. | ![Settings > Appearance > Lock screen](../assets/screenshots/settings-lock-screen-designs.png) |
+| **Sarina**: the operating system's assistant, from its integration. | ![Settings > Sarina](../assets/screenshots/settings-assistant.png) |
+| **Apps**: installed apps by use. | ![Settings > Apps](../assets/screenshots/settings-apps-list.png) |
+| **Default apps**: what opens each kind of file. | ![Settings > Default apps](../assets/screenshots/settings-default-apps.png) |
+| **Games**: graphics cards, game fixes, frame generation per game. | ![Settings > Games](../assets/screenshots/settings-games.png) |
+| **Security**: the security monitor, the password logs, the distress password, Limbo. | ![Settings > Security](../assets/screenshots/settings-security.png) |
+| **Security > Distress password**: it opens only after your account password. | ![Settings > Security > Distress password](../assets/screenshots/settings-distress-open.png) |
+| **Security > Distress password, the settings**: the password, and how many times within how long. | ![Settings > Security > Distress password, the settings](../assets/screenshots/settings-distress.png) |
+| **Security > Distress password, the two sections**: Section 1, and Section 2 that asks for your password again. | ![Settings > Security > Distress password, the two sections](../assets/screenshots/settings-distress-sections.png) |
+| **Security > Distress password, saving Section 2**: the warning, and your password once more. | ![Settings > Security > Distress password, saving Section 2](../assets/screenshots/settings-distress-warning.png) |
+| **Firewall**: on or off. | ![Settings > Firewall](../assets/screenshots/settings-firewall.png) |
+| **Users**: two accounts, the keyring. | ![Settings > Users](../assets/screenshots/settings-users.png) |
+| **Restore points**: Snapper's restore points, and how to go back to one. | ![Settings > Restore points](../assets/screenshots/settings-restore.png) |
+| **Date & Time**: the time zone, set automatically or by hand. | ![Settings > Date & Time](../assets/screenshots/settings-date-time.png) |
+| **About**: the operating system, the computer and its parts. | ![Settings > About](../assets/screenshots/settings-about.png) |
+
 ## How it works
 
 - **labyrinth-launch ID** starts an app inside its own systemd scope and slice (`lapp_<id>.slice`; no dash in the name, so it

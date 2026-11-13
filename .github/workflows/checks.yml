@@ -110,6 +110,11 @@ jobs:
           YGGDRASIL_TEST_CURSORS="$GITHUB_WORKSPACE/target/test-cursors" \
           YGGDRASIL_TEST_APPS_REQUIRED=1 \
             cargo test --locked --test apps --test behaviour --test tools --test keys --test look --test outputs --test places --test capture --test pointer --test input -- --test-threads=2
+      - name: The screenshot command still runs (scripts/screenshots.sh, a few of Settings' pages; the pictures are not compared)
+        timeout-minutes: 10
+        run: |
+          scripts/screenshots.sh --no-build --out "$RUNNER_TEMP/shots" --only '^settings-(network|displays|power|about)'
+          test "$(ls "$RUNNER_TEMP"/shots/*.png | wc -l)" = "$(scripts/screenshots.sh --list --only '^settings-(network|displays|power|about)' | wc -l)"
   # gpuunlock is a live root helper still in Python (Settings runs it through pkexec); its tests fake every outside program,
   # /sys, /proc and /etc, so they run without a graphics card.
   gpuunlock:

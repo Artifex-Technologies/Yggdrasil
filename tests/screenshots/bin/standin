@@ -1,0 +1,19 @@
+#!/bin/sh
+# A stand-in for the programs Yggdrasil's apps run directly (not through a fixture), for the screenshots only: scripts/screenshots.sh
+# puts it first in PATH under each name below, or binds it over the installed program inside its sandbox. It prints made-up
+# answers and changes nothing.
+case "$(basename "$0") $*" in
+"yggdrasil-gpu-run list --json")
+  echo '[{"number":1,"name":"GeForce RTX 4070","driver":"nvidia","boot":true,"screens":2},{"number":2,"name":"UHD Graphics 770","driver":"i915","boot":false,"screens":0}]' ;;
+"game-fix list --json")
+  echo '[{"appid":"367520","name":"Hollow Knight","title":"Ultrawide","about":"The game draws at 16:9; this lets it use the whole screen.","tip":"","state":"applied","screen":"3440x1440"},{"appid":"620","name":"Portal 2","title":"Screen size","about":"Sets the game to the screen size.","tip":"","state":"start once","screen":""}]' ;;
+"snapper --jsonout -c root list")
+  echo '{"root":[{"number":0,"type":"single","date":"","description":"current"},{"number":41,"type":"pre","date":"2026-11-09 18:02:11","description":"pacman -Syu","cleanup":"number"},{"number":42,"type":"post","date":"2026-11-09 18:04:37","description":"pacman -Syu","cleanup":"number"},{"number":43,"type":"single","date":"2026-11-10 21:15:00","description":"Before trying the new driver","cleanup":"","userdata":{"important":"yes"}},{"number":44,"type":"single","date":"2026-11-12 03:00:00","description":"timeline","cleanup":"timeline"}]}' ;;
+"labyrinth-sarina-setting voice list") printf 'Amber\nRowan\nSlate\n' ;;
+"labyrinth-sarina-setting voice get") echo Amber ;;
+"labyrinth-sarina-setting tone status") echo on ;;
+"labyrinth-quarantine list --json") echo '[]' ;;
+"labyrinth-security-setting auto-quarantine status") echo on ;;
+"systemctl "*) exit 0 ;;
+*) exit 1 ;;
+esac

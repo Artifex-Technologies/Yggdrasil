@@ -3,6 +3,8 @@
 Yggdrasil's Markdown reader; its icon is Saga's raven with a scroll in its claws (`saga-md.svg`, made by `icon/gen-icon.py` from a raven I had Gemini draw:
 the branch it stood on became a scroll tied with a purple ribbon). One Markdown or text file in one page, in Yggdrasil's look (light or dark like the rest of the desktop):
 
+![Saga MD, a Markdown file formatted](../../assets/screenshots/saga-md.png)
+
 - **Formatted** (Markdown files open this way): headings, bold and italic in the system font, lists and task lists, tables, quotes and
   GitHub's alerts (`> [!NOTE]`), code blocks with a Copy button, footnotes, pictures from the file's own folder.
 - **Source** (other text files open this way): the text itself, which you can also edit; Ctrl+S saves.
