@@ -153,6 +153,13 @@ pub fn main() -> ! {
             // say so once the panel is back (it serves notifications)
             notify_later();
         }
+        // The session's programs went with Hyprland's display: the panel ends quietly (exit 0, "Broken pipe"), the idle watch
+        // with an error, a portal may stay running on the display that is gone. The next Hyprland's autostart line starts
+        // yggdrasil-session.target, which does nothing while the target is still active: so the targets are stopped here (and
+        // with them everything PartOf graphical-session.target: the autostart folder's programs, the clipboard, the portals), and
+        // the next start brings all of it up afresh on the new display, as at sign-in (2026-11-13: an empty desktop after a
+        // restart, only the pointer).
+        stop_session_programs();
         std::thread::sleep(Duration::from_secs(1));
     };
     drop(keeper);
@@ -164,10 +171,7 @@ pub fn main() -> ! {
         cp(&log, &cat(&state, "/hyprland-last.log"));
     }
     // the session's programs (the panel and the rest) end with it
-    let _ = Command::new("systemctl")
-        .args(["--user", "stop", "yggdrasil-session.target", "graphical-session.target"])
-        .stderr(Stdio::null())
-        .status();
+    stop_session_programs();
     let mut m = format!("Hyprland ended (exit {code}); its log is in ").into_bytes();
     m.extend(state.as_bytes());
     m.extend(b"/hyprland-last.log");
@@ -375,6 +379,15 @@ fn status(c: &mut Command) -> i32 {
             }
         }
     }
+}
+
+/// `systemctl --user stop yggdrasil-session.target graphical-session.target 2>/dev/null`: the session's programs stopped (it
+/// waits until they have).
+fn stop_session_programs() {
+    let _ = Command::new("systemctl")
+        .args(["--user", "stop", "yggdrasil-session.target", "graphical-session.target"])
+        .stderr(Stdio::null())
+        .status();
 }
 
 /// The crash times of the last ten minutes, and this one.

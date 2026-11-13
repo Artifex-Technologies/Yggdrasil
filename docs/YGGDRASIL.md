@@ -7,7 +7,7 @@ Chymaera OS; [LykanOS](https://github.com/Artifex-Technologies/LykanOS)) will us
 
 | Piece | Today's program (package) | Notes |
 | --- | --- | --- |
-| Session (on Hyprland 0.57: configuration, window rules, keys) | `yggdrasil-session` | the desktop's login entry "Yggdrasil". It is Hyprland's watchdog: after a crash Hyprland starts again with Yggdrasil's settings (safe mode only after 3 crashes in 10 minutes), the crashed run's log kept in `~/.local/state/yggdrasil/hyprland-logs/`; monitor connects and disconnects are timed in `monitor-events.log` there |
+| Session (on Hyprland 0.57: configuration, window rules, keys) | `yggdrasil-session` | the desktop's login entry "Yggdrasil". It is Hyprland's watchdog: after a crash Hyprland starts again with Yggdrasil's settings (safe mode only after 3 crashes in 10 minutes) and the session's programs (panel, idle watch, clipboard, portals: everything of graphical-session.target) are stopped first, so the new Hyprland's autostart starts them all again; the crashed run's log kept in `~/.local/state/yggdrasil/hyprland-logs/`; monitor connects and disconnects are timed in `monitor-events.log` there |
 | Panel: top bar, dock, tray, Fylgja, notifications, start menu, wallpaper | `yggdrasil-panel` | |
 | Settings | `yggdrasil-settings` | Labyrinth-only pages (games, Artifex apps) are separable |
 | File manager and file chooser | `minos`, `yggdrasil-portal` | |

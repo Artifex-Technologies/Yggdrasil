@@ -16,7 +16,9 @@ stand-in Hyprland that writes down its environment and crashes, is killed or sig
 systemd-cat, udevadm, fc-match and notify-send, /proc/driver replaced by an empty folder (or one with a made-up NVIDIA driver),
 and everything it leaves running (the log copier, the monitor watch, a notice ten seconds after a crash) ends with the
 namespace. Its old script is the test fixture packages/session/tests/fixtures/yggdrasil-session.sh, read from the working tree
-(it goes on 2026-11-20, a week after the switch; then from git, 2026-11-13's commit before the switch).
+(it goes on 2026-11-20, a week after the switch; then from git, the last commit that has it). One change went into both after
+the switch, on 2026-11-13: after a crash the session's programs are stopped before Hyprland starts again (systemctl --user stop
+yggdrasil-session.target graphical-session.target), so the next autostart starts them afresh.
 
 For each case both run in a fresh copy of the world, and these are compared: exit code, standard output, standard error, the
 calls the stand-ins wrote down (in order) and every file left in the world (type, mode, content). Known differences by design

@@ -36,6 +36,8 @@ package() {
   install -Dm644 "$_src/yggdrasil-panel.desktop" "$pkgdir/usr/share/applications/yggdrasil-panel.desktop"
   # started at login by the desktop session
   install -Dm644 "$_src/yggdrasil-panel-autostart.desktop" "$pkgdir/etc/xdg/autostart/yggdrasil-panel.desktop"
+  # and a drop-in for the unit systemd makes of that entry: the panel's end is the unit's end, a crash brings it back
+  install -Dm644 "$_src/yggdrasil-panel-autostart.conf" "$pkgdir"'/usr/lib/systemd/user/app-yggdrasil\x2dpanel@autostart.service.d/yggdrasil.conf'
   # small commands for key bindings and the panel (Rust since 2026-11-12, were shell scripts): the panel's remote, the multimedia
   # keys, and opening a drive just connected
   install -Dm755 "$srcdir/target/release/yggdrasil-panelctl" "$pkgdir/usr/bin/yggdrasil-panelctl"

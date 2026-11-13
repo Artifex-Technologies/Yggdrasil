@@ -73,9 +73,9 @@ pub fn spawn_watchers(tx: calloop::channel::Sender<OsdState>) {
         // gone for good until the panel restarted (seen 2026-10-26: no pactl child, no volume pop-up)
         let mut last = read_volume();
         loop {
-            let Ok(mut child) =
-                Command::new("pactl").arg("subscribe").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn()
-            else {
+            let mut pactl = Command::new("pactl");
+            pactl.arg("subscribe").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+            let Ok(mut child) = ends_with_us(&mut pactl).spawn() else {
                 std::thread::sleep(std::time::Duration::from_secs(5));
                 continue;
             };
@@ -121,6 +121,24 @@ pub fn spawn_watchers(tx: calloop::channel::Sender<OsdState>) {
     });
 }
 
+/// A child that ends with the thread that starts it (and so with the panel): `pactl subscribe` runs as long as the panel does,
+/// and once outlived it, keeping the panel's unit "active (running)" with no panel (2026-11-13, after Hyprland restarted).
+fn ends_with_us(c: &mut Command) -> &mut Command {
+    use std::os::unix::process::CommandExt;
+    let parent = std::process::id() as libc::pid_t;
+    // SAFETY: prctl, getppid and _exit are async-signal-safe and touch no memory of the parent's
+    unsafe {
+        c.pre_exec(move || {
+            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+            // the panel ended between the fork and the prctl: nothing will send the signal now
+            if libc::getppid() != parent {
+                libc::_exit(0);
+            }
+            Ok(())
+        })
+    }
+}
+
 /// The screen's backlight: the graphics driver's own ("raw", intel_backlight say, the one brightnessctl changes) before the
 /// firmware's and a vendor's.
 fn backlight() -> Option<std::path::PathBuf> {
@@ -140,6 +158,21 @@ fn brightness_percent(now: u32, max: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_watcher_ends_with_the_thread_that_started_it() {
+        let pid = std::thread::spawn(|| {
+            let mut c = Command::new("sleep");
+            c.arg("30").stdin(Stdio::null());
+            ends_with_us(&mut c).spawn().expect("sleep").id() as libc::pid_t
+        })
+        .join()
+        .unwrap();
+        let mut status = 0;
+        // SAFETY: waitpid on our own child
+        assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+        assert!(libc::WIFSIGNALED(status) && libc::WTERMSIG(status) == libc::SIGTERM, "status {status:#x}");
+    }
 
     #[test]
     fn brightness_is_a_percentage_of_the_backlights_range() {

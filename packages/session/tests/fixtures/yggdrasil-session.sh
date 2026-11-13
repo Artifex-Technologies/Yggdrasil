@@ -141,6 +141,8 @@ while :; do
     # say so once the panel is back (it serves notifications)
     ( sleep 10; notify-send -a Yggdrasil -i dialog-warning "The desktop restarted" "Hyprland stopped unexpectedly and was started again. Open programs had to close; its log is kept in ~/.local/state/yggdrasil/hyprland-logs." 2>/dev/null ) &
   fi
+  # (added 2026-11-13 with the same change in the port: the session's programs stopped, so the next autostart starts them again)
+  systemctl --user stop yggdrasil-session.target graphical-session.target 2>/dev/null
   sleep 1
 done
 kill "$keeper" 2>/dev/null
