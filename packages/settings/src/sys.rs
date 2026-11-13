@@ -186,6 +186,13 @@ pub fn nm_fields(line: &str) -> Vec<String> {
 }
 
 /// `nmcli -t -f IN-USE,SSID,SIGNAL,SECURITY device wifi list`, strongest first, one row per name.
+/// nmcli's SECURITY for a network that asks for a password or a sign-in. "OWE" and "OWE-TM" (Enhanced Open: encrypted, but no
+/// password, like many shop and guest networks) are open: before, they showed a lock and asked for a password there is none of.
+pub fn nm_secured(security: &str) -> bool {
+    let s = security.trim();
+    !(s.is_empty() || s == "--" || s.split_whitespace().all(|t| t.starts_with("OWE")))
+}
+
 pub fn wifi_list(text: &str) -> Vec<Wifi> {
     let mut best: BTreeMap<String, Wifi> = BTreeMap::new();
     for l in text.lines() {
@@ -193,8 +200,7 @@ pub fn wifi_list(text: &str) -> Vec<Wifi> {
         if f.len() < 4 || f[1].is_empty() {
             continue;
         }
-        let w =
-            Wifi { in_use: f[0] == "*", ssid: f[1].clone(), signal: f[2].parse().unwrap_or(0), secured: !f[3].is_empty() && f[3] != "--" };
+        let w = Wifi { in_use: f[0] == "*", ssid: f[1].clone(), signal: f[2].parse().unwrap_or(0), secured: nm_secured(&f[3]) };
         let keep = match best.get(&w.ssid) {
             Some(old) => w.in_use || (!old.in_use && w.signal > old.signal),
             None => true,
@@ -1712,6 +1718,9 @@ mod tests {
         assert!(w[0].in_use && w[0].secured);
         assert_eq!(w[1].signal, 80);
         assert!(!w[2].secured);
+        // Enhanced Open (a guest network): no password
+        assert!(!nm_secured("OWE") && !nm_secured("OWE-TM") && !nm_secured("--"));
+        assert!(nm_secured("WPA2") && nm_secured("WPA2 802.1X") && nm_secured("WPA2 WPA3"));
     }
 
     #[test]

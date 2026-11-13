@@ -5138,12 +5138,21 @@ fn main() {
     let shared = Arc::new(std::sync::Mutex::new(status::Status::default()));
     {
         let shared = shared.clone();
-        std::thread::spawn(move || loop {
-            let now = status::poll();
-            if let Ok(mut g) = shared.lock() {
-                *g = now;
+        std::thread::spawn(move || {
+            let mut connectivity = String::new();
+            loop {
+                let now = status::poll();
+                if let Ok(mut g) = shared.lock() {
+                    *g = now;
+                }
+                // a network that wants a sign-in first (a shop's guest Wi-Fi): one notification with a Sign in button
+                let c = status::connectivity();
+                if status::portal_appeared(&connectivity, &c) {
+                    status::ask_portal_sign_in();
+                }
+                connectivity = c;
+                std::thread::sleep(Duration::from_secs(2));
             }
-            std::thread::sleep(Duration::from_secs(2));
         });
     }
     event_loop

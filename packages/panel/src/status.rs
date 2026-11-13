@@ -89,9 +89,55 @@ pub fn poll() -> Status {
     Status { desktops, current, net, bt }
 }
 
+/// NetworkManager's connectivity check (`nmcli -t -f CONNECTIVITY general`): "full", "limited", "portal", "none", "unknown".
+pub fn connectivity() -> String {
+    out("nmcli", &["-t", "-f", "CONNECTIVITY", "general"]).trim().to_string()
+}
+
+/// An address that a sign-in page catches: plain http (a portal cannot redirect https), and NetworkManager's own check, so a
+/// network that has already let you in shows only "NetworkManager is online".
+pub const PORTAL_PROBE: &str = "http://ping.archlinux.org/nm-check.txt";
+
+/// Whether this reading is a new sign-in page: the network just started asking (it did not in the reading before).
+pub fn portal_appeared(before: &str, now: &str) -> bool {
+    now == "portal" && before != "portal"
+}
+
+/// A guest or shop network that wants you to sign in or accept its terms first (a captive portal): a notification with a Sign in
+/// button that opens the page in the browser, as a phone does. Runs on a thread of its own (it waits for the button).
+pub fn ask_portal_sign_in() {
+    std::thread::spawn(|| {
+        let answer = std::process::Command::new("notify-send")
+            .args([
+                "-a",
+                "Wi-Fi",
+                "-i",
+                "network-wireless-symbolic",
+                "--action=open=Sign in",
+                "--wait",
+                "Sign in to this Wi-Fi network",
+                "It asks you to sign in or accept its terms before it lets you online.",
+            ])
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output();
+        if answer.is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "open") {
+            let _ = std::process::Command::new("xdg-open").arg(PORTAL_PROBE).stdin(std::process::Stdio::null()).spawn();
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sign_in_page_is_asked_about_once_when_it_appears() {
+        assert!(portal_appeared("full", "portal"));
+        assert!(portal_appeared("", "portal"));
+        assert!(!portal_appeared("portal", "portal"), "not again while it stays");
+        assert!(!portal_appeared("portal", "full"));
+    }
 
     #[test]
     fn no_compositor_no_desktops() {
