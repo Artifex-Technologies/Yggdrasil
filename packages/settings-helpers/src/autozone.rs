@@ -17,19 +17,43 @@ use std::time::Duration;
 
 pub const OPENMETEO_URL: &str = "https://api.open-meteo.com/v1/forecast";
 
-/// Open-Meteo's answer to `timezone=auto`: {"timezone": "America/Denver", ...}. Only a name the system's tz database has.
+/// Open-Meteo's answer to `timezone=auto`: {"timezone": "America/Denver", ...}. Only an Area/Location name (it goes on
+/// timedatectl's command line: never one starting with "-") that the system's tz database lists (`known`, see [`in_tzdata`]);
+/// never "Factory", "posixrules", "localtime" or the "right/" and "posix/" copies, whatever a server names.
 pub fn parse_zone(text: &str, known: impl Fn(&str) -> bool) -> Result<String, String> {
     let v: serde_json::Value = serde_json::from_str(text).map_err(|_| "Open-Meteo gave an answer that is not JSON".to_string())?;
     let z = v["timezone"].as_str().unwrap_or_default();
-    let plain =
-        !z.is_empty() && !z.starts_with('/') && !z.contains("..") && z.chars().all(|c| c.is_ascii_alphanumeric() || "/_+-".contains(c));
-    if plain && known(z) {
+    let area_location = z.len() <= 64
+        && z.starts_with(|c: char| c.is_ascii_uppercase())
+        && z.contains('/')
+        && !z.contains("..")
+        && !z.contains("//")
+        && !z.ends_with('/')
+        && !z.starts_with("right/")
+        && !z.starts_with("posix/")
+        && z.chars().all(|c| c.is_ascii_alphanumeric() || "/_+-".contains(c));
+    if area_location && known(z) {
         Ok(z.to_string())
     } else if z.is_empty() {
         Err("Open-Meteo did not say which time zone that is".into())
     } else {
         Err(format!("Open-Meteo named a time zone this computer does not know: {z}"))
     }
+}
+
+/// Whether tzdata.zi (the tz database in one file, /usr/share/zoneinfo/tzdata.zi) names `zone`: a zone ("Z NAME ...") or a
+/// link to one ("L TARGET NAME").
+pub fn in_tzdata(zi: &str, zone: &str) -> bool {
+    zi.lines().any(|l| {
+        let w: Vec<&str> = l.split_whitespace().collect();
+        matches!(w.as_slice(), ["Z", name, ..] if *name == zone) || matches!(w.as_slice(), ["L", _, name] if *name == zone)
+    })
+}
+
+/// The live check: listed in tzdata.zi, and its file is there for timedated to use.
+fn known_zone(zone: &str) -> bool {
+    let dir = std::path::Path::new("/usr/share/zoneinfo");
+    std::fs::read_to_string(dir.join("tzdata.zi")).is_ok_and(|zi| in_tzdata(&zi, zone)) && dir.join(zone).is_file()
 }
 
 fn agent() -> ureq::Agent {
@@ -66,7 +90,7 @@ pub fn locate_zone() -> Result<String, Error> {
         .call()
         .map_err(|e| failed(format!("Open-Meteo could not be reached: {e}")))?;
     let text = resp.body_mut().read_to_string().map_err(|e| failed(e.to_string()))?;
-    parse_zone(&text, |z| std::path::Path::new("/usr/share/zoneinfo").join(z).is_file()).map_err(failed)
+    parse_zone(&text, known_zone).map_err(failed)
 }
 
 /// `autozone [--dry-run]`: 0 when the zone is right (set now or already), 1 when it could not be found or set.
@@ -133,5 +157,34 @@ mod tests {
         assert!(parse_zone(r#"{"timezone":"Mars/Olympus"}"#, known).is_err());
         assert!(parse_zone(r#"{"timezone":"../../etc/passwd"}"#, |_| true).is_err());
         assert!(parse_zone(r#"{"latitude":1}"#, known).is_err());
+        // names that are files under /usr/share/zoneinfo but not Area/Location zones, or would read as an option to
+        // timedatectl: refused even when the system says it has them
+        for z in [
+            "-America/Denver",
+            "--help",
+            "Factory",
+            "posixrules",
+            "localtime",
+            "right/America/Denver",
+            "posix/America/Denver",
+            "America//Denver",
+            "America/",
+            "/etc/localtime",
+            "america/denver",
+        ] {
+            let answer = serde_json::json!({ "timezone": z }).to_string();
+            assert!(parse_zone(&answer, |_| true).is_err(), "{z} was taken");
+        }
+    }
+
+    #[test]
+    fn tzdata_lists_zones_and_links() {
+        let zi = "# version 2026a\nR US 1967 2006 - O lastSu 2 0 S\nZ America/Denver -6:59:56 - LMT 1883 N 18 19u\nZ Factory 0 - -00\nL America/Denver America/Shiprock\nL Etc/GMT GMT\n";
+        assert!(in_tzdata(zi, "America/Denver") && in_tzdata(zi, "America/Shiprock"));
+        assert!(!in_tzdata(zi, "America/Boise") && !in_tzdata(zi, "Etc/GMT") && !in_tzdata(zi, "US"));
+        // tzdata names Factory, but it is no Area/Location zone
+        assert!(in_tzdata(zi, "Factory"));
+        assert!(parse_zone(r#"{"timezone":"Factory"}"#, |z| in_tzdata(zi, z)).is_err());
+        assert_eq!(parse_zone(r#"{"timezone":"America/Shiprock"}"#, |z| in_tzdata(zi, z)), Ok("America/Shiprock".into()));
     }
 }
