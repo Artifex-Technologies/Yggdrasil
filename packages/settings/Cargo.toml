@@ -25,5 +25,12 @@ yggdrasil-gamepads = { path = "../gamepads" }
 yggdrasil-colorpicker = { path = "../colorpicker", default-features = false }
 # Wi-Fi & Network: what nearby networks broadcast (the kernel's scan list, read without root or sending anything)
 yggdrasil-wifiscan = { path = "../wifiscan" }
+# joining a Wi-Fi network: the password goes to NetworkManager over D-Bus, never on a command line (already in the tree:
+# eframe's accessibility uses it)
+zbus = "5"
 serde_json = "1.0.151"
 serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+# the Wi-Fi tests talk to a made-up NetworkManager over a socket pair (peer to peer: no bus)
+zbus = { version = "5", features = ["p2p"] }

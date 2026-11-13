@@ -31,6 +31,7 @@ mod ui;
 mod users;
 mod wifi_ui;
 mod wifihealth;
+mod wifijoin;
 mod wifimem;
 mod workspaces;
 mod zones_ui;
@@ -1623,33 +1624,11 @@ impl App {
     }
 
     fn wifi_dialog(&mut self, ctx: &egui::Context, pal: &Palette) {
-        let mut done: Option<bool> = None;
-        if let Some((ssid, pw)) = &mut self.wifi_password {
-            egui::Window::new(format!("Connect to “{ssid}”"))
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0))
-                .show(ctx, |ui| {
-                    ui.label("Password");
-                    let r = ui.add(egui::TextEdit::singleline(pw).password(true).desired_width(280.0));
-                    r.request_focus();
-                    ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        if ui::action(ui, pal, "Connect").clicked() || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
-                            done = Some(true);
-                        }
-                        if ui::quiet(ui, pal, "Cancel").clicked() {
-                            done = Some(false);
-                        }
-                    });
-                });
-        }
-        if let Some(ok) = done {
-            if let Some((ssid, pw)) = self.wifi_password.take() {
-                if ok {
-                    self.change(ctx, move || sys::act("nmcli", &["device", "wifi", "connect", &ssid, "password", &pw]));
-                }
-            }
+        let Some((ssid, pw)) = &mut self.wifi_password else { return };
+        let Some(ok) = wifi_ui::password_window(ctx, pal, ssid, pw) else { return };
+        if let Some((ssid, pw)) = self.wifi_password.take().filter(|_| ok) {
+            // over D-Bus: on nmcli's command line every program could read the password (/proc/PID/cmdline)
+            self.change(ctx, move || wifijoin::connect(&ssid, &pw));
         }
     }
 

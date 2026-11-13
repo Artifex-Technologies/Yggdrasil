@@ -92,6 +92,33 @@ fn header(ui: &mut egui::Ui, pal: &Palette, back_to: &str, title: &str, sub: &st
     back
 }
 
+/// The password box for a secured Wi-Fi network: Some(true) to connect (the Connect button, or Enter, with a password typed),
+/// Some(false) to give up (Cancel, or Escape), None while it stays open. The box keeps the keyboard while the window is open,
+/// so Enter is read from the frame's keys: it never "loses focus" (it takes it back every frame), which is why Enter used to
+/// do nothing here.
+pub(crate) fn password_window(ctx: &egui::Context, pal: &Palette, ssid: &str, pw: &mut String) -> Option<bool> {
+    let mut done = None;
+    egui::Window::new(format!("Connect to “{ssid}”"))
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .show(ctx, |ui| {
+            ui.label("Password");
+            ui.add(egui::TextEdit::singleline(pw).password(true).desired_width(280.0)).request_focus();
+            let (enter, escape) = ui.input(|i| (i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Escape)));
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if (ui::action(ui, pal, "Connect").clicked() || enter) && !pw.is_empty() {
+                    done = Some(true);
+                }
+                if ui::quiet(ui, pal, "Cancel").clicked() || escape {
+                    done = Some(false);
+                }
+            });
+        });
+    done
+}
+
 impl App {
     pub(crate) fn page_network(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         let Some(n) = self.data.network.clone() else { return loading(ui) };
@@ -960,5 +987,32 @@ mod tests {
         assert_eq!(span(1800), "30 min");
         assert_eq!(span(30), "1 min");
         assert_eq!(span(3 * 86_400), "3 days");
+    }
+
+    /// The password window driven headless (an egui context with made-up keys, nothing drawn): Enter connects once a password
+    /// is typed, Escape gives up.
+    #[test]
+    fn enter_connects_and_escape_cancels() {
+        let ctx = egui::Context::default();
+        let pal = yggdrasil_ui::theme::palette(true);
+        let key = |k| egui::Event::Key { key: k, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
+        let frame = |pw: &mut String, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1024.0, 768.0))),
+                events,
+                ..Default::default()
+            };
+            let mut done = None;
+            ctx.run_ui(input, |ui| done = password_window(ui.ctx(), &pal, "Home", pw)).drop_without_applying_deltas();
+            done
+        };
+        let mut pw = String::new();
+        assert_eq!(frame(&mut pw, vec![]), None, "open, waiting");
+        assert_eq!(frame(&mut pw, vec![key(egui::Key::Enter)]), None, "Enter with no password does nothing");
+        assert_eq!(frame(&mut pw, vec![egui::Event::Text("hunter22".into())]), None);
+        assert_eq!(pw, "hunter22", "the box has the keyboard from the start");
+        assert_eq!(frame(&mut pw, vec![key(egui::Key::Enter)]), Some(true), "Enter connects");
+        assert_eq!(frame(&mut pw, vec![]), None, "and only on the frame it was pressed");
+        assert_eq!(frame(&mut pw, vec![key(egui::Key::Escape)]), Some(false), "Escape cancels");
     }
 }
