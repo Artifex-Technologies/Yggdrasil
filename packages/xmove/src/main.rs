@@ -1,15 +1,16 @@
 //! yggdrasil-xmove: X11 programs that draw their own title bar (Steam, some games' launchers) move and resize their window by
 //! asking the window manager with `_NET_WM_MOVERESIZE` when you press on their title or edge. Hyprland 0.56 lists that request
 //! as supported but does nothing with it, so those windows could not be dragged. This watches the root window for the request
-//! (any program may listen for it) and moves the window with the pointer itself, through Hyprland's socket, until the button is
-//! let go (Hyprland's own drag cannot be started from outside a Super+mouse shortcut). It sleeps until such a request comes.
+//! (any program may listen for it) and moves the window with the pointer itself, through Hyprland's socket (yggdrasil-wm's
+//! Hyprland backend, bounded), until the button is let go (Hyprland's own drag cannot be started from outside a Super+mouse
+//! shortcut). It sleeps until such a request comes. Hyprland only: Yggdrasil's own compositor answers the request itself (its
+//! X11 window manager moves the window), so there this does nothing.
 
-use std::io::{Read, Write};
-use std::os::unix::net::UnixStream;
 use std::time::{Duration, Instant};
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{ChangeWindowAttributesAux, ConnectionExt, EventMask, KeyButMask, Window};
 use x11rb::protocol::Event;
+use yggdrasil_wm::{Desk, Hyprland};
 
 /// What `_NET_WM_MOVERESIZE` asks for (its third number): 0-7 resize from that edge or corner, 8 move, 9-10 the same from the
 /// keyboard, 11 cancel.
@@ -28,16 +29,10 @@ fn ask(direction: u32) -> Ask {
     }
 }
 
-/// One request to Hyprland's control socket (what hyprctl does, without starting a program 100 times a second).
-fn hypr(request: &str) -> Option<String> {
-    let dir =
-        std::path::PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR")?).join("hypr").join(std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE")?);
-    let mut s = UnixStream::connect(dir.join(".socket.sock")).ok()?;
-    s.set_read_timeout(Some(Duration::from_secs(1))).ok()?;
-    s.write_all(request.as_bytes()).ok()?;
-    let mut out = String::new();
-    s.read_to_string(&mut out).ok()?;
-    Some(out)
+/// One request to Hyprland's control socket (what hyprctl does, without starting a program 100 times a second), as it was always
+/// written here, with a second for the answer.
+fn hypr(h: &Hyprland, request: &str) -> Option<String> {
+    h.request(request, Duration::from_secs(1))
 }
 
 /// A number after `"key":` in Hyprland's JSON (enough for the few fields read here).
@@ -56,13 +51,13 @@ fn json_str(json: &str, key: &str) -> Option<String> {
 
 /// Moves the focused window (the one just pressed on) with the pointer until the button is let go, the program cancels, or
 /// half a minute passed.
-fn follow<C: Connection>(conn: &C, root: Window, button: u32) {
-    let Some(active) = hypr("j/activewindow") else { return };
+fn follow<C: Connection>(h: &Hyprland, conn: &C, root: Window, button: u32) {
+    let Some(active) = hypr(h, "j/activewindow") else { return };
     let (Some(addr), at) = (json_str(&active, "address"), json_ints(&active, "at")) else { return };
     if at.len() < 2 {
         return;
     }
-    let Some(start) = hypr("j/cursorpos").map(|c| (json_ints(&c, "x"), json_ints(&c, "y"))) else { return };
+    let Some(start) = hypr(h, "j/cursorpos").map(|c| (json_ints(&c, "x"), json_ints(&c, "y"))) else { return };
     let (Some(&sx), Some(&sy)) = (start.0.first(), start.1.first()) else { return };
     let (wx, wy) = (at[0], at[1]);
     let held = match button {
@@ -77,11 +72,11 @@ fn follow<C: Connection>(conn: &C, root: Window, button: u32) {
         if !p.mask.contains(held) {
             return;
         }
-        if let Some(c) = hypr("j/cursorpos") {
+        if let Some(c) = hypr(h, "j/cursorpos") {
             if let (Some(&x), Some(&y)) = (json_ints(&c, "x").first(), json_ints(&c, "y").first()) {
                 let to = (wx + x - sx, wy + y - sy);
                 if to != last {
-                    hypr(&format!(r#"dispatch hl.dsp.window.move({{ x = {}, y = {}, window = "address:{addr}" }})"#, to.0, to.1));
+                    hypr(h, &format!(r#"dispatch hl.dsp.window.move({{ x = {}, y = {}, window = "address:{addr}" }})"#, to.0, to.1));
                     last = to;
                 }
             }
@@ -91,20 +86,20 @@ fn follow<C: Connection>(conn: &C, root: Window, button: u32) {
 }
 
 fn main() {
-    if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_none() {
+    let Some(Desk::Hyprland(h)) = Desk::detect() else {
         eprintln!("yggdrasil-xmove: not in Hyprland, nothing to do");
         return;
-    }
+    };
     // Xwayland may come up a moment after the session's programs, and comes back if it ever restarts: keep (re)connecting
     loop {
-        if let Err(e) = watch() {
+        if let Err(e) = watch(&h) {
             eprintln!("yggdrasil-xmove: {e}; trying again");
         }
         std::thread::sleep(std::time::Duration::from_secs(3));
     }
 }
 
-fn watch() -> Result<(), String> {
+fn watch(h: &Hyprland) -> Result<(), String> {
     let (conn, screen) = x11rb::connect(None).map_err(|e| format!("no X11 display ({e})"))?;
     let root = conn.setup().roots[screen].root;
     let atom = conn.intern_atom(false, b"_NET_WM_MOVERESIZE").map_err(|e| e.to_string())?.reply().map_err(|e| e.to_string())?.atom;
@@ -122,7 +117,7 @@ fn watch() -> Result<(), String> {
             let d = m.data.as_data32();
             // resizing from an edge works already (Hyprland's own edge grips); moving is done here
             if ask(d[2]) == Ask::Move {
-                follow(&conn, root, d[3]);
+                follow(h, &conn, root, d[3]);
             }
         }
     }
