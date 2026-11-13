@@ -21,11 +21,13 @@ _version "$startdir" "$_src"
 
 build() {
   cd "$_src"
-  cargo build --release --locked --target-dir "$srcdir/target"}
+  cargo build --release --locked --target-dir "$srcdir/target"
+}
 
 check() {
   cd "$_src"
-  cargo test --release --locked --target-dir "$srcdir/target"}
+  cargo test --release --locked --target-dir "$srcdir/target"
+}
 
 package() {
   install -Dm755 "$srcdir/target/release/yggdrasil-lock" "$pkgdir/usr/bin/yggdrasil-lock"
