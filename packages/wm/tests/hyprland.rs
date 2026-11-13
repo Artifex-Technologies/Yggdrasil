@@ -276,6 +276,15 @@ fn window_zones() {
 }
 
 #[test]
+fn an_unreadable_window_list_is_not_an_empty_one() {
+    let h = FakeHyprland::start("unreadable", &[("j/clients", "configerrors.txt")]);
+    assert_eq!(h.desk().try_windows(), None, "browser-warm then restarts nothing");
+    assert!(h.desk().windows().is_empty());
+    let h = FakeHyprland::start("readable", &[]);
+    assert_eq!(h.desk().try_windows().map(|w| w.len()), Some(4));
+}
+
+#[test]
 fn no_window_in_front() {
     let h = FakeHyprland::start("none", &[("j/activewindow", "activewindow-none.json")]);
     assert_eq!(h.desk().active_window(false), None);

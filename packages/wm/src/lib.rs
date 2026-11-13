@@ -166,6 +166,14 @@ impl Desk {
         }
     }
 
+    /// The windows, or None when that cannot be told (the compositor did not answer, or not readably).
+    pub fn try_windows(&self) -> Option<Vec<Window>> {
+        match self {
+            Desk::Hyprland(h) => h.try_windows(),
+            Desk::Own(o) => o.try_windows(),
+        }
+    }
+
     /// The window in front. `quick`: asked while a window is dragged, so the answer must come at once.
     pub fn active_window(&self, quick: bool) -> Option<Window> {
         match self {

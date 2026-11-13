@@ -315,16 +315,13 @@ fn descends_from(mut pid: u32, ancestor: u32) -> bool {
 
 /// Whether the browser has windows open. None when that cannot be told (then nothing is restarted).
 fn has_windows(pid: u32) -> Option<bool> {
-    let o = Command::new("hyprctl").args(["clients", "-j"]).stderr(Stdio::null()).output().ok()?;
-    if !o.status.success() {
-        return None;
-    }
-    windows_of(&String::from_utf8_lossy(&o.stdout), |w| w == pid || descends_from(w, pid))
+    let windows = yggdrasil_wm::Desk::detect()?.try_windows()?;
+    Some(windows_of(&windows, |w| w == pid || descends_from(w, pid)))
 }
 
-fn windows_of(json: &str, ours: impl Fn(u32) -> bool) -> Option<bool> {
-    let v: serde_json::Value = serde_json::from_str(json).ok()?;
-    Some(v.as_array()?.iter().filter_map(|c| c["pid"].as_u64()).any(|p| ours(p as u32)))
+/// Whether any of the compositor's windows (yggdrasil-wm: Hyprland or Yggdrasil's own) belongs to one of these processes.
+fn windows_of(windows: &[yggdrasil_wm::Window], ours: impl Fn(u32) -> bool) -> bool {
+    windows.iter().filter_map(|w| w.pid).any(ours)
 }
 
 /// Whether the running program was replaced on disk (a package update).
@@ -587,11 +584,12 @@ mod tests {
 
     #[test]
     fn windows_are_matched_by_process() {
-        let j = r#"[{"class":"vivaldi-stable","pid":1965},{"class":"foot","pid":42}]"#;
-        assert_eq!(windows_of(j, |p| p == 1965), Some(true));
-        assert_eq!(windows_of(j, |p| p == 7), Some(false));
-        assert_eq!(windows_of("[]", |_| true), Some(false));
-        assert_eq!(windows_of("nope", |_| true), None);
+        let w = yggdrasil_wm::hyprland::parse_clients(
+            r#"[{"address":"0x1","class":"vivaldi-stable","pid":1965},{"address":"0x2","class":"foot","pid":42},{"address":"0x3","pid":-1}]"#,
+        );
+        assert!(windows_of(&w, |p| p == 1965));
+        assert!(!windows_of(&w, |p| p == 7));
+        assert!(!windows_of(&[], |_| true));
     }
 
     #[test]

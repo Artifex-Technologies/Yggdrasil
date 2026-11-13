@@ -81,6 +81,12 @@ impl Hyprland {
         self.query("clients").map(|j| parse_clients(&j)).unwrap_or_default()
     }
 
+    /// The windows, or None when Hyprland did not answer or its answer is not a list.
+    pub fn try_windows(&self) -> Option<Vec<Window>> {
+        let v: Value = serde_json::from_str(&self.query("clients")?).ok()?;
+        Some(v.as_array()?.iter().filter_map(client).collect())
+    }
+
     pub fn active_window(&self, quick: bool) -> Option<Window> {
         parse_client_one(&self.ask("j/activewindow", if quick { QUICK } else { NORMAL })?)
     }

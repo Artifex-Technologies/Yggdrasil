@@ -42,6 +42,10 @@ impl Own {
         self.ask("clients").map(|l| l.iter().filter_map(|l| parse_client(l)).collect()).unwrap_or_default()
     }
 
+    pub fn try_windows(&self) -> Option<Vec<Window>> {
+        Some(self.ask("clients").ok()?.iter().filter_map(|l| parse_client(l)).collect())
+    }
+
     pub fn active_window(&self) -> Option<Window> {
         self.ask("active").ok()?.first().and_then(|l| parse_client(l))
     }

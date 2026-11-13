@@ -7,6 +7,8 @@ license = "MPL-2.0"
 
 [dependencies]
 serde_json = "1"
+# whether the browser has windows: the compositor's list (Hyprland or Yggdrasil's own)
+yggdrasil-wm = { path = "../wm" }
 
 [profile.release]
 opt-level = "s"
