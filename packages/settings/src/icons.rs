@@ -34,6 +34,8 @@ pub enum Icon {
     Check,
     /// General: a gear (a ring with eight teeth around a hole).
     Gear,
+    /// Battery: a battery on its side, its terminal on the right, two thirds full.
+    Battery,
 }
 
 fn arc(c: Pos2, r: f32, from: f32, to: f32) -> Vec<Pos2> {
@@ -179,6 +181,11 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
             }
             p.circle_stroke(c, 0.27 * w, s);
             p.circle_stroke(c, 0.11 * w, s);
+        }
+        Icon::Battery => {
+            p.rect_stroke(Rect::from_min_max(at(0.08, 0.3), at(0.82, 0.7)), 0.08 * w, s, eframe::egui::StrokeKind::Inside);
+            p.rect_filled(Rect::from_min_max(at(0.84, 0.42), at(0.93, 0.58)), 0.03 * w, color);
+            p.rect_filled(Rect::from_min_max(at(0.16, 0.38), at(0.56, 0.62)), 0.03 * w, color);
         }
         Icon::Info => {
             p.circle_stroke(c, 0.38 * w, s);

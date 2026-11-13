@@ -62,6 +62,7 @@ shots() {
     shot settings-printers              desktop settings printers system
     shot settings-power                 desktop settings power system
     shot settings-power-laptop          laptop  settings power laptop
+    shot settings-battery               laptop  settings battery laptop
     shot settings-cooling               desktop settings power:cooling system
     shot settings-cooling-curves        desktop settings power:cooling system 700
     shot settings-appearance            desktop settings appearance system

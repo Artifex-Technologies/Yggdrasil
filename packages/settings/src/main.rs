@@ -7,6 +7,7 @@
 
 mod appmgr;
 mod apps_ui;
+mod battery;
 mod controls;
 mod cpu;
 mod curve;
@@ -64,6 +65,8 @@ enum Page {
     Storage,
     /// Inside General: the system's language and region.
     Language,
+    /// A computer with a battery only (battery.rs).
+    Battery,
     Network,
     Bluetooth,
     Displays,
@@ -127,8 +130,9 @@ enum AppSub {
 // The sidebar, in groups (a heading is drawn where the group changes; the first group has none). The words after the name are
 // what the search also finds the page by: what is inside it, not only its title. A page with a parent (`parent`) is a row on
 // that page instead of in the sidebar; the search still finds it.
-const PAGES: [(Page, &str, Icon, &str, &str); 22] = [
+const PAGES: [(Page, &str, Icon, &str, &str); 23] = [
     (Page::General, "General", Icon::Gear, "", "about software update storage disk date time keyboard language region"),
+    (Page::Battery, "Battery", Icon::Battery, "", "charge health charge limit usage laptop"),
     (Page::Network, "Wi-Fi & Network", Icon::Wifi, "Connections", "internet ethernet proxy"),
     (Page::Bluetooth, "Bluetooth", Icon::Bluetooth, "Connections", "headphones controller pair"),
     (Page::Displays, "Displays", Icon::Display, "Devices", "monitor screen resolution refresh night light scale"),
@@ -178,6 +182,40 @@ const PAGES: [(Page, &str, Icon, &str, &str); 22] = [
     (Page::Language, "Language & Region", Icon::Keyboard, "General", "locale formats country"),
 ];
 
+/// What this computer has that decides which pages and rows show.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Hardware {
+    battery: bool,
+}
+
+impl Hardware {
+    fn here() -> Hardware {
+        Hardware { battery: battery::present() }
+    }
+}
+
+/// Whether a page has a place on this computer (Battery only with a battery of its own).
+fn shown(page: Page, hw: Hardware) -> bool {
+    match page {
+        Page::Battery => hw.battery,
+        _ => true,
+    }
+}
+
+#[cfg(test)]
+mod visibility_tests {
+    use super::*;
+
+    #[test]
+    fn battery_shows_only_on_a_computer_with_one() {
+        let desktop = Hardware { battery: false };
+        let laptop = Hardware { battery: true };
+        assert!(!shown(Page::Battery, desktop));
+        assert!(shown(Page::Battery, laptop));
+        assert!(shown(Page::Power, desktop) && shown(Page::General, desktop));
+    }
+}
+
 /// The page a page is a row on (it is not in the sidebar of its own).
 fn parent(page: Page) -> Option<Page> {
     match page {
@@ -206,6 +244,7 @@ enum Msg {
     Password(Result<(), String>),
     Time(sys::Time),
     Storage(general::Storage),
+    Battery(battery::Info),
     Language(general::Language),
     Apps(Vec<sys::Component>),
     Installed(Vec<appmgr::AppInfo>),
@@ -242,6 +281,7 @@ struct Data {
     firewall: Option<bool>,
     time: Option<sys::Time>,
     storage: Option<general::Storage>,
+    battery: Option<battery::Info>,
     language: Option<general::Language>,
     apps: Option<Vec<sys::Component>>,
     installed: Option<Vec<appmgr::AppInfo>>,
@@ -585,6 +625,7 @@ impl App {
                 Page::Restore => Msg::Restore(restore::load()),
                 Page::DateTime => Msg::Time(sys::time()),
                 Page::Storage => Msg::Storage(general::storage()),
+                Page::Battery => Msg::Battery(battery::load()),
                 Page::Language => Msg::Language(general::language()),
                 Page::Apps => {
                     let _ = tx.send(Msg::Installed(load_installed(&tx)));
@@ -676,6 +717,7 @@ impl App {
                 }
                 Msg::Time(v) => self.data.time = Some(v),
                 Msg::Storage(v) => self.data.storage = Some(v),
+                Msg::Battery(v) => self.data.battery = Some(v),
                 Msg::Language(v) => self.data.language = Some(v),
                 Msg::Apps(v) => self.data.apps = Some(v),
                 Msg::Installed(v) => self.data.installed = Some(v),
@@ -761,6 +803,7 @@ fn start_page() -> Page {
         .iter()
         .find(|(p, name, ..)| format!("{p:?}").to_lowercase() == arg || name.to_lowercase().starts_with(&arg) && !arg.is_empty())
         .map(|(p, ..)| *p)
+        .map(|p| if shown(p, Hardware::here()) { p } else { Page::Power })
         .unwrap_or(Page::General)
 }
 
@@ -803,6 +846,13 @@ impl eframe::App for App {
                 self.load(page, &ctx);
             }
             ctx.request_repaint_after(std::time::Duration::from_secs(4));
+        } else if self.page == Page::Battery {
+            // the charge, the history and the apps' share: again every 30 seconds while the page is open, never otherwise
+            let idle = self.loading.is_none() && ctx.input(|i| i.viewport().focused != Some(false));
+            if idle && self.refreshed.elapsed() >= std::time::Duration::from_secs(30) {
+                self.load(Page::Battery, &ctx);
+            }
+            ctx.request_repaint_after(std::time::Duration::from_secs(30));
         } else if self.page == Page::Bluetooth
             && self.bt_scan_until.is_none()
             && self.data.bluetooth.as_ref().is_some_and(|b| !b.pads.is_empty() || !b.paired_pads.is_empty())
@@ -857,6 +907,7 @@ impl eframe::App for App {
                 ui.add_space(8.0);
                 let q = self.search.to_lowercase();
                 let developer_on = yggdrasil_conf::PanelConf::load().developer;
+                let hw = Hardware::here();
                 // the list scrolls on its own (the search box stays put), so a short window still reaches every page
                 egui::ScrollArea::vertical().id_salt("pages-list").auto_shrink([false, false]).show(ui, |ui| {
                     let mut last_group = "";
@@ -873,7 +924,7 @@ impl eframe::App for App {
                             continue;
                         }
                         // a page inside another is found by the search; otherwise it is a row on its parent page
-                        if q.is_empty() && parent(p).is_some() {
+                        if q.is_empty() && parent(p).is_some() || !shown(p, hw) {
                             continue;
                         }
                         if !q.is_empty() && !name.to_lowercase().contains(&q) && !words.contains(&q) {
@@ -957,6 +1008,7 @@ impl eframe::App for App {
                     match self.page {
                         Page::General => self.page_general(ui, &pal),
                         Page::Storage => self.page_storage(ui, &pal),
+                        Page::Battery => self.page_battery(ui, &pal, &ctx),
                         Page::Language => self.page_language(ui, &pal, &ctx),
                         Page::About => self.page_about(ui, &pal, &ctx),
                         Page::Network => self.page_network(ui, &pal, &ctx),
@@ -2714,40 +2766,23 @@ impl App {
             return;
         }
         let Some(p) = self.data.power.clone() else { return loading(ui) };
-        // A laptop's battery (only on a computer with one): its charge, health and charge limit, as in the top bar's drop-down
+        // A laptop's battery (only on a computer with one): its own page now, with the health and the charge limit
         if let Some(b) = &p.battery {
-            let mut new_limit: Option<i64> = None;
-            ui::group(ui, pal, Some("Battery"), |ui| {
-                ui::row(ui, pal, true, &format!("{} %", b.percent), Some(&b.status), |ui| {
-                    ui.add(egui::ProgressBar::new(b.percent as f32 / 100.0).desired_width(160.0));
-                });
-                if let Some(h) = b.health {
-                    let note = match b.cycles {
-                        Some(c) => format!("Of its capacity when new, after {c} charge cycles"),
-                        None => "Of its capacity when new".to_string(),
-                    };
-                    ui::row(ui, pal, false, &format!("Health: {h} %"), Some(&note), |_| {});
-                }
-                if let Some(limit) = b.limit {
-                    const LIMITS: [i64; 4] = [60, 80, 90, 100];
-                    let sel = LIMITS.iter().position(|&l| l == limit).unwrap_or(LIMITS.len() - 1);
-                    ui::row(
-                        ui,
-                        pal,
-                        false,
-                        "Charge limit",
-                        Some("Stop charging here: 80 % is best for the battery's life when the laptop is mostly plugged in"),
-                        |ui| {
-                            if let Some(i) = ui::segmented(ui, pal, &["60 %", "80 %", "90 %", "100 %"], sel) {
-                                new_limit = Some(LIMITS[i]);
-                            }
-                        },
-                    );
-                }
+            let mut open = false;
+            ui::group(ui, pal, None, |ui| {
+                open = ui::nav_row(
+                    ui,
+                    pal,
+                    true,
+                    "Battery",
+                    Some("Its charge and history, which apps use it, health and the charge limit"),
+                    |ui| {
+                        ui.label(RichText::new(format!("{}% · {}", b.percent, b.status)).color(pal.dim));
+                    },
+                );
             });
-            if let Some(l) = new_limit {
-                let arg = l.to_string();
-                self.change(ctx, move || sys::act("pkexec", &["/usr/lib/yggdrasil/battery", "set-limit", &arg]));
+            if open {
+                self.open_page(Page::Battery, ctx);
             }
             ui.add_space(8.0);
         }

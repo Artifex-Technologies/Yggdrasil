@@ -23,6 +23,17 @@ rows, a row that opens a page ending in ›, and a small grey note under a card 
   About and Date & Time moved here from the sidebar; the search still finds them, and `yggdrasil-settings about`,
   `datetime`, `storage` and `language` open them inside General. A page inside another is marked by `parent()` in main.rs.
 
+- **Battery** (`src/battery.rs`; in the sidebar only on a computer with a battery of its own, a power_supply of type
+  Battery that is not a device's): the charge in large type with "Last charged to N%" and a bar (a line at the charge
+  limit), the last ten days as bars of the battery used each day while unplugged, App & System activity, Battery Health
+  (maximum capacity, charge cycles) and the charge limit, which moved here from Power (Power keeps a Battery row that opens
+  it, and the power mode). Nothing runs in the background for it: UPower already records the charge (its files in
+  /var/lib/upower are readable by root only, so the same samples are asked for over D-Bus with GetHistory), and an app's
+  share is the processor time of the systemd scopes the launcher starts it in (lapp_*.scope, app-*.scope, matched to apps by
+  yggdrasil-appusage), against the rest of the session. Both are read when the page opens and every 30 seconds while it is
+  open. The apps' share counts the apps open now; apps already closed would need a small record kept in the background,
+  which I left out.
+
 ## The pages
 
 - **The list** (2026-11-13, as on a tablet): a card at the top with Default Apps ("Manage default apps", no longer in the
@@ -146,7 +157,8 @@ About only when switched on, have no picture.
 | **Peripherals > Keyboard**: key repeat, the layout, the lights while dimmed. | ![Settings > Peripherals > Keyboard](../assets/screenshots/settings-peripherals-keyboard.png) |
 | **Printers**: two printers, their ink and toner. | ![Settings > Printers](../assets/screenshots/settings-printers.png) |
 | **Power, a desktop**: the power mode, Cooling and the idle timers (no battery). | ![Settings > Power, a desktop](../assets/screenshots/settings-power.png) |
-| **Power, a laptop**: the battery, its health and charge limit, the fan the firmware runs (`laptop.json`). | ![Settings > Power, a laptop](../assets/screenshots/settings-power-laptop.png) |
+| **Power, a laptop**: a row to Battery, the fan the firmware runs (`laptop.json`). | ![Settings > Power, a laptop](../assets/screenshots/settings-power-laptop.png) |
+| **Battery** (`laptop.json`): the charge, the last ten days, the apps' share, health and the charge limit. | ![Settings > Battery](../assets/screenshots/settings-battery.png) |
 | **Power > Cooling**: a fan controller's pump and fans, each with its speed now. | ![Settings > Power > Cooling](../assets/screenshots/settings-cooling.png) |
 | **Power > Cooling, a fan's curves**: the processor's curve, dragged point by point. | ![Settings > Power > Cooling, a fan's curves](../assets/screenshots/settings-cooling-curves.png) |
 | **Appearance**: light or dark, the accent, wallpapers, icons. | ![Settings > Appearance](../assets/screenshots/settings-appearance.png) |

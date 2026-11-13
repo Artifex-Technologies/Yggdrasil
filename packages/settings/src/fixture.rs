@@ -25,6 +25,20 @@ pub struct Fixture {
     pub razer: Option<Vec<crate::razer::Device>>,
     #[serde(default)]
     pub tools: Vec<String>,
+    /// Settings > Battery: UPower's charge history (a history-charge file's lines) and the apps' processor time.
+    #[serde(default)]
+    pub battery: Option<BatteryFixture>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct BatteryFixture {
+    #[serde(default)]
+    pub history: String,
+    /// (desktop id, microseconds of processor time)
+    #[serde(default)]
+    pub activity: Vec<(String, u64)>,
+    #[serde(default)]
+    pub system: u64,
 }
 
 /// The fixture, when a debug build was started with one. A file that cannot be read gives an empty one (nothing real is run
