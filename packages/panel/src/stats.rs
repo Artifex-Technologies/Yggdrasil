@@ -440,22 +440,51 @@ fn measure(download: bool) -> Option<f32> {
     let started = Instant::now();
     let mut kids = vec![];
     for _ in 0..n {
-        let script = if download {
-            "curl -s -m 40 -o /dev/null -w '%{size_download}' 'https://speed.cloudflare.com/__down?bytes=10000000'"
-        } else {
-            "head -c 5000000 /dev/zero | curl -s -m 40 -o /dev/null -w '%{size_upload}' --data-binary @- 'https://speed.cloudflare.com/__up'"
-        };
-        kids.push(Command::new("sh").args(["-c", script]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?);
+        kids.push(transfer("curl", download)?);
     }
     let mut bytes = 0u64;
     for k in kids {
-        let o = k.wait_with_output().ok()?;
-        bytes += String::from_utf8_lossy(&o.stdout).trim().parse::<f64>().unwrap_or(0.0) as u64;
+        bytes += k.join().ok()??;
     }
     if bytes == 0 {
         return None;
     }
     Some(mbps(bytes, started.elapsed().as_secs_f32()))
+}
+
+/// One download of 10 MB or upload of 5 MB with CURL (by argv; the upload's zeros written into its standard input from here,
+/// where a shell line once ran `head -c 5000000 /dev/zero | curl ... --data-binary @-`): the bytes curl reports moved.
+fn transfer(curl: &str, download: bool) -> Option<std::thread::JoinHandle<Option<u64>>> {
+    use std::io::{Read, Write};
+    let mut c = Command::new(curl);
+    if download {
+        c.args(["-s", "-m", "40", "-o", "/dev/null", "-w", "%{size_download}", "https://speed.cloudflare.com/__down?bytes=10000000"]);
+        c.stdin(Stdio::null());
+    } else {
+        c.args(["-s", "-m", "40", "-o", "/dev/null", "-w", "%{size_upload}", "--data-binary", "@-", "https://speed.cloudflare.com/__up"]);
+        c.stdin(Stdio::piped());
+    }
+    let mut kid = c.stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+    let stdin = kid.stdin.take();
+    let mut out = kid.stdout.take()?;
+    Some(std::thread::spawn(move || {
+        if let Some(mut w) = stdin {
+            // curl may stop reading (a time-out, an error): a write that fails then ends the feeding
+            let zeros = [0u8; 64 * 1024];
+            let mut left = 5_000_000usize;
+            while left > 0 {
+                let n = left.min(zeros.len());
+                if w.write_all(&zeros[..n]).is_err() {
+                    break;
+                }
+                left -= n;
+            }
+        }
+        let mut text = String::new();
+        let _ = out.read_to_string(&mut text);
+        let _ = kid.wait();
+        Some(text.trim().parse::<f64>().unwrap_or(0.0) as u64)
+    }))
 }
 
 // ---------------------------------------------------------------- drawing
@@ -827,6 +856,47 @@ pub fn paint(
 
 #[cfg(test)]
 mod tests {
+    // differential: the shell lines transfer() replaced and transfer() itself, against one stand-in curl that writes down its
+    // arguments and how many bytes it was given, and answers with that count
+    #[test]
+    fn transfers_make_the_calls_the_shell_lines_made() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = std::env::temp_dir().join(format!("panel-speed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let curl = d.join("curl");
+        let log = d.join("log");
+        std::fs::write(
+            &curl,
+            format!(
+                "#!/bin/sh\nn=$(wc -c | tr -d ' ')\nprintf '%s|' \"$@\" >> '{}'\necho \" $n\" >> '{0}'\nprintf '%s' \"$n\"\n",
+                log.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&curl, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let c = curl.to_string_lossy().into_owned();
+        let old = |download: bool| {
+            let script = if download {
+                "curl -s -m 40 -o /dev/null -w '%{size_download}' 'https://speed.cloudflare.com/__down?bytes=10000000'"
+            } else {
+                "head -c 5000000 /dev/zero | curl -s -m 40 -o /dev/null -w '%{size_upload}' --data-binary @- 'https://speed.cloudflare.com/__up'"
+            };
+            let o = Command::new("sh").args(["-c", &script.replace("curl", &c)]).stdin(Stdio::null()).output().unwrap();
+            String::from_utf8_lossy(&o.stdout).trim().parse::<f64>().unwrap_or(0.0) as u64
+        };
+        for download in [true, false] {
+            let _ = std::fs::remove_file(&log);
+            let was = old(download);
+            let was_log = std::fs::read_to_string(&log).unwrap();
+            let _ = std::fs::remove_file(&log);
+            let now = transfer(&c, download).unwrap().join().unwrap().unwrap();
+            assert_eq!((now, std::fs::read_to_string(&log).unwrap()), (was, was_log), "download {download}");
+            assert_eq!(now, if download { 0 } else { 5_000_000 });
+        }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     use super::*;
 
     #[test]
