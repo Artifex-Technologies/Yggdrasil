@@ -59,10 +59,11 @@ with Orca before trusting the table below**, and again when eframe is upgraded.
    switch and the zoom level in Settings, and sticky keys in Yggdrasil itself or in the compositor (libinput supports sticky/bounce
    keys only partly). Yggdrasil's own compositor must offer
    them too when it runs the real session.
-8. **On-screen keyboard: missing now.** `qt6-virtualkeyboard` went with Plasma and no other on-screen keyboard is installed; our own
-   lock screen and password box have none either. Needed for tablets and for some motor impairments. The Wayland ones that work
-   with Hyprland (wvkbd, squeekboard) are not in Arch's repositories (checked 2026-11-07), so this needs our own (a panel surface on
-   the virtual-keyboard protocol) or a package built for Labyrinth's repository.
+8. **On-screen keyboard: for tablet mode since 2026-11-13, not yet for accessibility.** wvkbd (in the AUR; squeekboard is in
+   Arch's repositories since, but pulls in GNOME's libraries) is Agora's "On-screen keyboard" component, and on a 2-in-1 the
+   tablet watcher shows it while the screen is folded and no keyboard is plugged in (DESKTOP.md, "Tablet mode and rotation").
+   Still missing: a way to open it on demand (a top-bar button or a key), and one on our own lock screen and password box, which
+   draw their own fields; for those our own keyboard (a panel surface on the virtual-keyboard protocol) is still the plan.
 
 ## Already fine
 

@@ -18,6 +18,7 @@ mod fixture;
 mod games;
 mod gpu;
 mod icons;
+mod laptop_ui;
 mod limbo_ui;
 mod netconf;
 mod peripherals;
@@ -183,6 +184,9 @@ enum Msg {
     Time(sys::Time),
     Apps(Vec<sys::Component>),
     Installed(Vec<appmgr::AppInfo>),
+    /// Displays > Tablet mode (a 2-in-1 only) and Users > Fingerprint (a reader only), sent ahead of their page's data.
+    Tablet(Option<laptop_ui::Tablet>),
+    Fingerprint(Option<laptop_ui::Fingerprint>),
     Defaults(Vec<defaults::Row>),
     Assistant(Vec<controls::State>),
     Printers(printers::State),
@@ -214,6 +218,8 @@ struct Data {
     time: Option<sys::Time>,
     apps: Option<Vec<sys::Component>>,
     installed: Option<Vec<appmgr::AppInfo>>,
+    tablet: Option<laptop_ui::Tablet>,
+    fingerprint: Option<laptop_ui::Fingerprint>,
     defaults: Option<Vec<defaults::Row>>,
     assistant: Option<Vec<controls::State>>,
     printers: Option<printers::State>,
@@ -288,6 +294,8 @@ struct App {
     // Users page: adding and removing other accounts
     acct_form: AddForm,
     acct_busy: bool,
+    /// Users > Fingerprint: an enrolment is waiting for a finger (cleared by its thread).
+    fp_busy: std::sync::Arc<std::sync::atomic::AtomicBool>,
     acct_msg: Option<(String, bool)>,
     /// The account asked to be removed (waiting for the confirmation) and whether its home folder goes too.
     acct_remove: Option<(String, bool)>,
@@ -430,6 +438,7 @@ impl App {
             pw_busy: false,
             acct_form: AddForm::default(),
             acct_busy: false,
+            fp_busy: Default::default(),
             acct_msg: None,
             acct_remove: None,
             acct_sel: None,
@@ -521,12 +530,16 @@ impl App {
                 Page::About => Msg::About(sys::about()),
                 Page::Network => Msg::Network(sys::network()),
                 Page::Bluetooth => Msg::Bluetooth(sys::bluetooth()),
-                Page::Displays => Msg::Displays(sys::displays()),
+                Page::Displays => {
+                    let _ = tx.send(Msg::Tablet(laptop_ui::tablet()));
+                    Msg::Displays(sys::displays())
+                }
                 Page::Sound => Msg::Sound(sys::sound()),
                 Page::Appearance => Msg::Appearance(sys::appearance()),
                 Page::Power => Msg::Power(sys::power()),
                 Page::Firewall => Msg::Firewall(sys::firewall_on()),
                 Page::Users => {
+                    let _ = tx.send(Msg::Fingerprint(laptop_ui::fingerprint()));
                     let me = users::account();
                     let (all, groups) = users::all();
                     Msg::Account(me, users::keyring_state(), all, groups)
@@ -625,6 +638,14 @@ impl App {
                 Msg::Time(v) => self.data.time = Some(v),
                 Msg::Apps(v) => self.data.apps = Some(v),
                 Msg::Installed(v) => self.data.installed = Some(v),
+                Msg::Tablet(v) => {
+                    self.data.tablet = v;
+                    continue;
+                }
+                Msg::Fingerprint(v) => {
+                    self.data.fingerprint = v;
+                    continue;
+                }
                 Msg::AppSizes(m) => {
                     self.app_sizes = m;
                     continue;
@@ -2129,6 +2150,12 @@ impl App {
         }
         if let Some((name, on)) = tiling {
             self.change(ctx, move || sys::set_tiling(&name, on));
+        }
+        // a 2-in-1: the rotation lock and the on-screen keyboard in tablet mode
+        if let Some(t) = self.data.tablet.clone() {
+            if let Some(a) = laptop_ui::tablet_group(ui, pal, &t) {
+                self.change(ctx, move || a.run());
+            }
         }
         if hypr {
             self.night_light(ui, pal);
@@ -4251,6 +4278,24 @@ impl App {
                     let _ = tx.send(Msg::AccountDone(r));
                     ctx2.request_repaint();
                 });
+            }
+        }
+        // your own fingerprints, and fingerprint for sudo (off until you turn it on)
+        if mine {
+            if let Some(fp) = self.data.fingerprint.clone() {
+                ui.add_space(8.0);
+                let busy = self.fp_busy.load(std::sync::atomic::Ordering::Relaxed);
+                if let Some(a) = laptop_ui::fingerprint_group(ui, pal, &fp, busy) {
+                    let flag = self.fp_busy.clone();
+                    if a == laptop_ui::Action::Enroll {
+                        flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    self.change(ctx, move || {
+                        let r = a.run();
+                        flag.store(false, std::sync::atomic::Ordering::Relaxed);
+                        r
+                    });
+                }
             }
         }
     }

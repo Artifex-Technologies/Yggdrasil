@@ -243,6 +243,32 @@ resume configuration. That is a decision for you; see the end of this file.
   Chymaera OS) also has not adopted.
 - **Battery** (2026-11-13): on a laptop, the battery sits beside the clock; its drop-down has the power mode and the charge
   limit, and Settings > Power the same (Settings' `battery` helper, a bar add-on). Brightness is in the volume and brightness pop-up.
+- **Tablet mode and rotation** (2026-11-13, for a 2-in-1 such as the ThinkPad X1 Yoga): `/usr/lib/yggdrasil/tablet watch`
+  (packages/laptop, in Settings' package, autostarted; it says "off" and stops on a computer without an accelerometer or a
+  tablet-mode switch). Folding the screen back flips the switch; the session's binds (`switch:on:` / `switch:off:` in
+  yggdrasil.lua) tell the watcher. Folded, the built-in screen (eDP) follows the accelerometer through iio-sensor-proxy, and its
+  touchscreen and built-in pen are given the same turn so a touch lands under the finger; opened, it goes upright. The sensor
+  is claimed only while it is followed. Hyprland loses the turn when it rereads its config, so the watcher turns it again on
+  `configreloaded`. The on-screen keyboard (wvkbd from the AUR, Agora's "On-screen keyboard") shows while folded and no keyboard
+  is plugged in by USB or Bluetooth (read from /sys, no input device is opened). Settings > Displays: Lock rotation, and the
+  keyboard switch (~/.config/yggdrasil/tablet.conf). Not yet: Yggdrasil's own compositor cannot turn a screen (its
+  output management refuses a transform), so there the watcher shows the keyboard only; the turn direction and the touch
+  turn are to be checked on the laptop (Labyrinth OS docs/LAPTOP.md).
+- **Fingerprint reader** (2026-11-13): fprintd and libfprint are an online component (Agora's "Fingerprint reader"; the
+  installer ticks it when a reader libfprint supports is plugged in). Settings > Users > Fingerprint enrols a finger (fprintd
+  asks for your password through the polkit agent) and removes them. **Fingerprint for sudo** is a switch there, off until you
+  turn it on: `pkexec /usr/lib/yggdrasil/fingerprint sudo on` (org.yggdrasil.fingerprint.sudo, an administrator's password every
+  time) puts a marker line and `auth sufficient pam_fprintd.so` at the top of /etc/pam.d/sudo; "sufficient", so no finger
+  (Ctrl+C, the time running out, no reader) falls through to the password as before. `sudo off` takes exactly those two lines
+  out. The plan for the rest, not done:
+  1. **Lock screen:** not through PAM (with pam_fprintd in its stack, a typed password would first wait for a finger). The
+     lock talks to fprintd itself: VerifyStart while the password field is shown, unlock on `verify-match`, the password still
+     works at any moment; a switch "Unlock with fingerprint" beside the sudo one, off by default. After three failed fingers,
+     only the password.
+  2. **Password boxes (polkit):** our polkit agent runs polkit's helper over PAM's `polkit-1` stack; the same marked-line
+     approach for `polkit-1`, a third switch, once the agent shows "Touch the reader" from PAM's text messages.
+  3. **Login screen:** last, and maybe never: the disk's encryption needs the password at boot anyway, and the keyring is opened
+     with the login password.
 - **Weather privacy:** Open-Meteo and aviationweather.gov receive the coordinates of the
   place you set (never guessed from your IP). See WEATHER.md.
 - **`minos` has no package yet**, so the `SUPER + SHIFT + F` binding will not

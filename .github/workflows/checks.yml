@@ -138,6 +138,7 @@ jobs:
           lua packages/session/tests/keep-clear.lua
           lua packages/session/tests/input-conf.lua
           lua packages/session/tests/window-open.lua
+          lua packages/session/tests/tablet-switch.lua
           lua packages/session/tests/panel-scale.lua
       - name: Package recipes parse
         run: |

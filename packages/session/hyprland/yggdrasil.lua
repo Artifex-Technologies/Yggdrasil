@@ -179,6 +179,32 @@ do
   end
 end
 
+-- A 2-in-1's tablet-mode switch (the screen folded back): /usr/lib/yggdrasil/tablet (Settings' package) then turns the built-in
+-- screen with the accelerometer, its touchscreen and pen with it, and shows the on-screen keyboard while no keyboard is plugged
+-- in (2026-11-13, ThinkPad X1 Yoga). Hyprland hands a switch's changes to binds named after the switch: the ones it lists, and
+-- the kernel's names for the usual tablet-mode switches (thinkpad_acpi, intel-hid, intel-vbtn, GPIO), since a bind for a switch
+-- that is not there does nothing. The lid's switch is logind's.
+do
+  local tablet = "/usr/lib/yggdrasil/tablet"
+  local f = io.open(tablet, "r")
+  if f then
+    f:close()
+    local names, seen = {}, {}
+    local function add(n)
+      n = tostring(n)
+      if n ~= "" and not seen[n] and not n:lower():find("lid", 1, true) then seen[n] = true table.insert(names, n) end
+    end
+    for _, d in ipairs(hl.get_devices() or {}) do
+      if d.type == "switch" then add(d.name) end
+    end
+    for _, n in ipairs({ "ThinkPad Extra Buttons", "Intel HID switches", "Intel Virtual Switches", "Tablet Mode Switch", "GPIO Tablet Mode Switch" }) do add(n) end
+    for _, n in ipairs(names) do
+      pcall(hl.bind, "switch:on:" .. n, hl.dsp.exec_cmd(tablet .. " mode on"), { locked = true, desc = "Tablet mode" })
+      pcall(hl.bind, "switch:off:" .. n, hl.dsp.exec_cmd(tablet .. " mode off"), { locked = true, desc = "Laptop mode" })
+    end
+  end
+end
+
 -- A ThinkPad's TrackPoint scrolls while its middle button is held (a middle press without moving is still a middle click).
 -- Its buttons can arrive on the built-in touchpad's companion "-mouse" device, so that one gets it too; other mice do not.
 -- Without this the middle button only clicked (ThinkPad X1 Yoga, 2026-11-13).

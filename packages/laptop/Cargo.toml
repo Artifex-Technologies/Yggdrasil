@@ -1,0 +1,38 @@
+[package]
+name = "yggdrasil-laptop"
+version = "0.1.0"
+edition = "2021"
+description = "A laptop's hardware for Yggdrasil: tablet mode and screen rotation on a 2-in-1 (the session's `tablet watch`, the switch's `tablet mode`, Settings' rotation lock) and the fingerprint reader (Settings > Users: enrol, and fingerprint for sudo, off until chosen, through pkexec)"
+license = "MPL-2.0"
+
+[lib]
+name = "laptop"
+path = "src/lib.rs"
+
+# installed as /usr/lib/yggdrasil/tablet and /usr/lib/yggdrasil/fingerprint (packages/pkgbuilds/yggdrasil-settings)
+[[bin]]
+name = "tablet"
+path = "src/bin/tablet.rs"
+
+[[bin]]
+name = "fingerprint"
+path = "src/bin/fingerprint.rs"
+
+[dependencies]
+# the compositor (Hyprland's socket): the built-in screen's turn, its touchscreen and pen
+yggdrasil-wm = { path = "../wm" }
+# ~/.config/yggdrasil (tablet.conf)
+yggdrasil-conf = { path = "../yggdrasil-conf" }
+serde_json = "1"
+# iio-sensor-proxy (the accelerometer) and fprintd, on the system bus
+zbus = "5"
+libc = "0.2"
+# keyboards plugged in or out (/dev/input), without polling
+inotify = { version = "0.11", default-features = false }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

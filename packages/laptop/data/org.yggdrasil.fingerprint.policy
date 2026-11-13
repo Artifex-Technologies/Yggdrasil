@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN" "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>Yggdrasil</vendor>
+  <!-- Settings > Users > Fingerprint: "Use for sudo" adds or removes one marked line in /etc/pam.d/sudo. An administrator's
+       password every time (not kept): it changes how sudo signs you in. -->
+  <action id="org.yggdrasil.fingerprint.sudo">
+    <description>Turn fingerprint for sudo on or off</description>
+    <message>Authentication is required to change how sudo signs you in</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/yggdrasil/fingerprint</annotate>
+  </action>
+</policyconfig>

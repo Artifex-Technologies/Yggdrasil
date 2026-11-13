@@ -3,7 +3,7 @@
 # root helpers tune, casefan, gpufan and powerlimit from packages/power-helpers (Rust; the Python scripts they replaced are
 # kept in packages/settings/helpers/python for a rollback), whose loops run in one root service, yggdrasil-power, and the
 # on-demand helpers account, bootscreen, game-fix and yggdrasil-gpu-run from packages/settings-helpers (Rust; their Python
-# scripts are kept there too).
+# scripts are kept there too), and a laptop's tablet watcher and fingerprint helper from packages/laptop.
 pkgname=yggdrasil-settings
 pkgver=1.0.0
 pkgrel=1
@@ -23,7 +23,10 @@ optdepends=('ufw: firewall page'
             'grub: the graphics card unlock picks its boot entry for one start (Power, Developer options)'
             'nvidia-utils: the Graphics card page (Power, Developer options): readout and fan control'
             'vulkan-tools: Games: the exact name of each card, so Proton draws on the chosen card'
-            'lsfg-vk: Games: frame generation (Lossless Scaling), from Agora')
+            'lsfg-vk: Games: frame generation (Lossless Scaling), from Agora'
+            'iio-sensor-proxy: a 2-in-1 turns its screen with the device (tablet mode)'
+            'wvkbd: the on-screen keyboard in tablet mode, from Agora'
+            'fprintd: Users > Fingerprint, from Agora')
 makedepends=('cargo')
 options=('!lto')
 
@@ -31,10 +34,11 @@ _src="$startdir/../../settings"
 _power="$startdir/../../power-helpers"
 _helpers="$startdir/../../settings-helpers"
 _wifiscan="$startdir/../../wifiscan"
+_laptop="$startdir/../../laptop"
 # The version is the system's (VERSION at the top of this repository); the build number counts the commits since that release
 # which touch the folders above, the crates they use and this recipe (scripts/package-version.sh, Labyrinth_OS docs/VERSIONING.md)
 . "$startdir/../../../scripts/package-version.sh"
-_version "$startdir" "$_src" "$_power" "$_helpers" "$_wifiscan"
+_version "$startdir" "$_src" "$_power" "$_helpers" "$_wifiscan" "$_laptop"
 
 build() {
   cd "$_src"
@@ -42,6 +46,8 @@ build() {
   cd "$_power"
   cargo build --release --locked --target-dir "$srcdir/target"
   cd "$_helpers"
+  cargo build --release --locked --target-dir "$srcdir/target"
+  cd "$_laptop"
   cargo build --release --locked --target-dir "$srcdir/target"
 }
 
@@ -58,6 +64,10 @@ check() {
   cargo test --release --locked --target-dir "$srcdir/target"
   # Wi-Fi & Network's reader of what networks broadcast (built into Settings): its parsers on random and damaged input
   cd "$_wifiscan"
+  cargo test --release --locked --target-dir "$srcdir/target"
+  # a laptop's tablet mode, rotation and fingerprint reader: a private D-Bus daemon with a pretend iio-sensor-proxy and fprintd,
+  # a pretend Hyprland socket and /sys, a PAM file in a temporary folder; no sensor, screen, reader or PAM file is touched
+  cd "$_laptop"
   cargo test --release --locked --target-dir "$srcdir/target"
 }
 
@@ -86,6 +96,14 @@ package() {
   install -Dm644 "$_src/data/yggdrasil-battery.desktop" "$pkgdir/etc/xdg/autostart/yggdrasil-battery.desktop"
   install -Dm644 "$_src/data/org.yggdrasil.battery.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.battery.policy"
   install -Dm644 "$_src/data/yggdrasil-charge-limit.service" "$pkgdir/usr/lib/systemd/system/yggdrasil-charge-limit.service"
+  # a 2-in-1: the watcher that turns the built-in screen in tablet mode and shows the on-screen keyboard (says "off" and stops
+  # on a computer without an accelerometer or a tablet-mode switch); Settings > Displays' rotation lock
+  install -Dm755 "$srcdir/target/release/tablet" "$pkgdir/usr/lib/yggdrasil/tablet"
+  install -Dm644 "$_laptop/data/yggdrasil-tablet.desktop" "$pkgdir/etc/xdg/autostart/yggdrasil-tablet.desktop"
+  # the fingerprint reader (Settings > Users; fprintd itself is Agora's "Fingerprint reader"): enrol, and fingerprint for sudo,
+  # off until chosen; turning it on or off changes /etc/pam.d/sudo through pkexec with an administrator's password each time
+  install -Dm755 "$srcdir/target/release/fingerprint" "$pkgdir/usr/lib/yggdrasil/fingerprint"
+  install -Dm644 "$_laptop/data/org.yggdrasil.fingerprint.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.fingerprint.policy"
   # Date & Time > "Set time zone automatically": the helper, its user timer (off until the switch enables it) and the polkit
   # rule that lets a signed-in administrator set the time zone without a password (approved by the owner, 2026-11-13)
   install -Dm755 "$srcdir/target/release/autozone" "$pkgdir/usr/lib/yggdrasil/autozone"

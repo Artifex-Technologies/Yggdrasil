@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Tablet mode
+Comment=A 2-in-1's screen turns with the device in tablet mode, with an on-screen keyboard
+Exec=/usr/lib/yggdrasil/tablet watch
+NoDisplay=true
+OnlyShowIn=Yggdrasil;
+X-GNOME-Autostart-enabled=true
