@@ -11,8 +11,8 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
 I reorganised Settings on the model of a tablet's settings (its structure, not its look; the colours stay Yggdrasil's):
 the sidebar holds grouped rows with the open page as a filled pill in the accent colour, and each page is rounded cards of
 rows, a row that opens a page ending in ›, and a small grey note under a card where it needs one. The sidebar's groups, in
-order: Personal (General, Accessibility, Appearance, the assistant), Connections, Devices (Battery last, after Power), Apps,
-Privacy & security, System. Settings opens on General, the first row.
+order: Connections, Devices (Battery last, after Power), Personal (General at its top, then Accessibility, Appearance, the
+assistant), Apps, Privacy & security, System. Settings opens on General all the same.
 
 - **The way back** (`src/nav.rs`): one header above every page, outside the scrolling part, shows the path ("Appearance ›
   Wallpaper") and, on a sub-page, Back. Back, the mouse's back button and Alt+Left go up one level at a time; a click on the

@@ -137,27 +137,11 @@ enum AppSub {
     Boot,
 }
 
-// The sidebar, in groups (a heading is drawn where the group changes). Personal comes first with General at its top; Settings
-// opens on General. The words after the name are
+// The sidebar, in groups (a heading is drawn where the group changes): Connections, Devices, then Personal with General at its
+// top. Settings opens on General all the same. The words after the name are
 // what the search also finds the page by: what is inside it, not only its title. A page with a parent (`parent`) is a row on
 // that page instead of in the sidebar; the search still finds it.
 const PAGES: [(Page, &str, Icon, &str, &str); 25] = [
-    (Page::General, "General", Icon::Gear, "Personal", "about software update storage disk date time keyboard language region"),
-    (
-        Page::Accessibility,
-        "Accessibility",
-        Icon::Accessibility,
-        "Personal",
-        "text size larger zoom magnifier pointer cursor size colour color filters greyscale colour blind reduce motion animations",
-    ),
-    (
-        Page::Appearance,
-        "Appearance",
-        Icon::Appearance,
-        "Personal",
-        "theme dark light accent wallpaper icons top bar notifications lock screen workspaces boot",
-    ),
-    (Page::Assistant, "Assistant", Icon::Sound, "Personal", "voice"),
     (Page::Network, "Wi-Fi & Network", Icon::Wifi, "Connections", "internet ethernet proxy"),
     (Page::Bluetooth, "Bluetooth", Icon::Bluetooth, "Connections", "headphones controller pair"),
     (Page::Vpn, "VPN", Icon::Key, "Connections", "vpn wireguard openvpn ikev2 tailscale tunnel"),
@@ -175,6 +159,22 @@ const PAGES: [(Page, &str, Icon, &str, &str); 25] = [
     (Page::Printers, "Printers", Icon::Printer, "Devices", "print scanner"),
     (Page::Power, "Power", Icon::Power, "Devices", "battery sleep suspend graphics card gpu processor cpu fans pump cooling"),
     (Page::Battery, "Battery", Icon::Battery, "Devices", "charge health charge limit usage laptop"),
+    (Page::General, "General", Icon::Gear, "Personal", "about software update storage disk date time keyboard language region"),
+    (
+        Page::Accessibility,
+        "Accessibility",
+        Icon::Accessibility,
+        "Personal",
+        "text size larger zoom magnifier pointer cursor size colour color filters greyscale colour blind reduce motion animations",
+    ),
+    (
+        Page::Appearance,
+        "Appearance",
+        Icon::Appearance,
+        "Personal",
+        "theme dark light accent wallpaper icons top bar notifications lock screen workspaces boot",
+    ),
+    (Page::Assistant, "Assistant", Icon::Sound, "Personal", "voice"),
     (Page::Apps, "Apps", Icon::Apps, "Apps", "installed optional software uninstall minos"),
     (
         Page::Games,
