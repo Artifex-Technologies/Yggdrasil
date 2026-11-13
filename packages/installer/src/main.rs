@@ -54,27 +54,80 @@ struct Extra {
     note: String,
     /// The heading it is shown under (`group`; entries of one group are listed together, in the list's order).
     group: String,
-    /// Chosen to start with (`chosen`; `chosen_if_exists`: a file on the live system, i.e. this medium carries it; or
-    /// `chosen_if_usb`: a plugged-in USB device from one of these vendors, hex ids such as "1532").
+    /// Chosen to start with (`chosen`; `chosen_if_exists`: a file on the live system, i.e. this medium carries it;
+    /// `chosen_if_usb`: a plugged-in USB device from one of these vendors, hex ids such as "1532", or this exact device,
+    /// "06cb:00fc"; or `chosen_if_machine`: what the computer is, see Hardware::matches).
     chosen: bool,
 }
 
-/// The vendor ids (lowercase hex) of the USB devices plugged in now.
-fn usb_vendors() -> Vec<String> {
-    let mut v: Vec<String> = std::fs::read_dir("/sys/bus/usb/devices")
-        .map(|rd| {
-            rd.flatten().filter_map(|e| std::fs::read_to_string(e.path().join("idVendor")).ok()).map(|s| s.trim().to_lowercase()).collect()
-        })
-        .unwrap_or_default();
-    v.sort();
-    v.dedup();
-    v
+/// What the live system shows of the computer, for the `chosen_if_usb` and `chosen_if_machine` rules. Read from /sys and
+/// /proc (Hardware::read; a fixture tree in tests).
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Hardware {
+    /// The USB devices plugged in now, lowercase hex: each vendor ("06cb") and each vendor:product ("06cb:00fc").
+    usb: Vec<String>,
+    /// /proc/cpuinfo's vendor_id: "GenuineIntel", "AuthenticAMD".
+    cpu_vendor: String,
+    /// A battery that runs the computer (power_supply of type Battery, not a mouse's or a pen's: those say scope Device).
+    battery: bool,
+    /// An input device with a tablet-mode switch (SW_TABLET_MODE): a 2-in-1 that folds into a tablet.
+    tablet_switch: bool,
+}
+
+impl Hardware {
+    /// The computer as seen under `root` ("/" outside tests).
+    fn read(root: &std::path::Path) -> Hardware {
+        let dir = |d: &str| -> Vec<std::path::PathBuf> {
+            std::fs::read_dir(root.join(d)).map(|rd| rd.flatten().map(|e| e.path()).collect()).unwrap_or_default()
+        };
+        let text = |p: std::path::PathBuf| std::fs::read_to_string(p).map(|s| s.trim().to_lowercase()).ok();
+        let mut usb = vec![];
+        for d in dir("sys/bus/usb/devices") {
+            if let Some(v) = text(d.join("idVendor")) {
+                if let Some(p) = text(d.join("idProduct")) {
+                    usb.push(format!("{v}:{p}"));
+                }
+                usb.push(v);
+            }
+        }
+        usb.sort();
+        usb.dedup();
+        let cpu_vendor = std::fs::read_to_string(root.join("proc/cpuinfo"))
+            .ok()
+            .and_then(|t| t.lines().find(|l| l.starts_with("vendor_id")).and_then(|l| l.split(':').nth(1)).map(|v| v.trim().to_string()))
+            .unwrap_or_default();
+        let battery = dir("sys/class/power_supply")
+            .into_iter()
+            .any(|d| text(d.join("type")).as_deref() == Some("battery") && text(d.join("scope")).as_deref() != Some("device"));
+        let tablet_switch =
+            dir("sys/class/input").into_iter().any(|d| text(d.join("capabilities/sw")).is_some_and(|b| sw_has_tablet_mode(&b)));
+        Hardware { usb, cpu_vendor, battery, tablet_switch }
+    }
+
+    /// `chosen_if_machine`: every key it gives holds. "cpu_vendor" (as /proc/cpuinfo says it), "battery" and "tablet_switch"
+    /// (true or false), "absent" (an absolute path that must not exist: a place where the software would refuse to run). A
+    /// key this installer does not know never ticks the entry.
+    fn matches(&self, rule: &serde_json::Map<String, serde_json::Value>, exists: &dyn Fn(&str) -> bool) -> bool {
+        !rule.is_empty()
+            && rule.iter().all(|(k, v)| match k.as_str() {
+                "cpu_vendor" => v.as_str() == Some(self.cpu_vendor.as_str()),
+                "battery" => v.as_bool() == Some(self.battery),
+                "tablet_switch" => v.as_bool() == Some(self.tablet_switch),
+                "absent" => v.as_str().is_some_and(|p| p.starts_with('/') && !exists(p)),
+                _ => false,
+            })
+    }
+}
+
+/// An input device's switch bitmap (capabilities/sw: hex words, the lowest last) has SW_TABLET_MODE (bit 1).
+fn sw_has_tablet_mode(bits: &str) -> bool {
+    bits.split_whitespace().last().and_then(|w| u64::from_str_radix(w, 16).ok()).is_some_and(|v| v & 0b10 != 0)
 }
 
 /// The OS's optional parts: `{"title", "intro", "extras": [{"id", "name", "note", "group", "chosen" | "chosen_if_exists" |
-/// "chosen_if_usb"}, ...]}`; what else each entry says is the OS's business. `exists` answers for `chosen_if_exists` (the file
-/// system, outside tests); `usb` is the vendor ids plugged in (usb_vendors, outside tests).
-fn parse_extras(text: &str, exists: &dyn Fn(&str) -> bool, usb: &[String]) -> (String, String, Vec<Extra>) {
+/// "chosen_if_usb" | "chosen_if_machine"}, ...]}`; what else each entry says is the OS's business. `exists` answers for
+/// paths (the file system, outside tests); `hw` is the computer (Hardware::read, outside tests).
+fn parse_extras(text: &str, exists: &dyn Fn(&str) -> bool, hw: &Hardware) -> (String, String, Vec<Extra>) {
     let v: serde_json::Value = serde_json::from_str(text).unwrap_or(serde_json::Value::Null);
     let list = v["extras"]
         .as_array()
@@ -84,10 +137,12 @@ fn parse_extras(text: &str, exists: &dyn Fn(&str) -> bool, usb: &[String]) -> (S
                     let id = e["id"].as_str()?.to_string();
                     let plugged = e["chosen_if_usb"]
                         .as_array()
-                        .is_some_and(|ids| ids.iter().filter_map(|x| x.as_str()).any(|x| usb.iter().any(|u| u.eq_ignore_ascii_case(x))));
+                        .is_some_and(|ids| ids.iter().filter_map(|x| x.as_str()).any(|x| hw.usb.iter().any(|u| u.eq_ignore_ascii_case(x))));
+                    let machine = e["chosen_if_machine"].as_object().is_some_and(|r| hw.matches(r, exists));
                     let chosen = e["chosen"].as_bool().unwrap_or(false)
                         || e["chosen_if_exists"].as_str().is_some_and(|p| p.starts_with('/') && exists(p))
-                        || plugged;
+                        || plugged
+                        || machine;
                     Some(Extra {
                         name: e["name"].as_str().unwrap_or(&id).to_string(),
                         note: e["note"].as_str().unwrap_or("").to_string(),
@@ -532,7 +587,7 @@ impl App {
             self.manual_mode = true;
         }
         if self.extras.is_empty() {
-            self.set_extras(parse_extras(r#"{"title":"AI and security","intro":"Optional. Both can be added or removed later in Agora.","extras":[{"id":"sarina","name":"Sarina","note":"Your local AI assistant","chosen":true},{"id":"heimdall","name":"Heimdall","note":"Watches this computer for attacks"}]}"#, &|_| false, &[]));
+            self.set_extras(parse_extras(r#"{"title":"AI and security","intro":"Optional. Both can be added or removed later in Agora.","extras":[{"id":"sarina","name":"Sarina","note":"Your local AI assistant","chosen":true},{"id":"heimdall","name":"Heimdall","note":"Watches this computer for attacks"}]}"#, &|_| false, &Hardware::default()));
         }
         if self.browsers.is_empty() {
             self.set_browsers(parse_browsers(r#"{"browsers":[{"id":"vivaldi","name":"Vivaldi","note":"Chromium-based, very customisable","chosen":true},{"id":"firefox","name":"Firefox","note":"Mozilla's browser"},{"id":"librewolf","name":"LibreWolf","note":"Firefox, hardened for privacy"}]}"#));
@@ -605,7 +660,7 @@ impl App {
         app.set_browsers(list.and_then(|f| std::fs::read_to_string(f).ok()).map(|t| parse_browsers(&t)).unwrap_or_default());
         let extras = yggdrasil_conf::integrations::first("installer").and_then(|i| i.get("extras").map(str::to_string));
         if let Some(t) = extras.and_then(|f| std::fs::read_to_string(f).ok()) {
-            app.set_extras(parse_extras(&t, &|p| std::path::Path::new(p).exists(), &usb_vendors()));
+            app.set_extras(parse_extras(&t, &|p| std::path::Path::new(p).exists(), &Hardware::read(std::path::Path::new("/"))));
         }
         let args: Vec<String> = std::env::args().collect();
         if let Some(i) = args.iter().position(|a| a == "--demo") {
@@ -1338,7 +1393,7 @@ mod tests {
     #[test]
     fn optional_parts_come_from_the_os_and_start_chosen_when_the_medium_has_them() {
         let text = r#"{"title":"AI and security","intro":"Optional.","extras":[{"id":"sarina","name":"Sarina","note":"n","chosen_if_exists":"/usr/bin/sarina","components":["sarina"]},{"id":"heimdall","name":"Heimdall","chosen_if_exists":"/usr/bin/heimdalld"},{"name":"no id"},{"id":"x","chosen_if_exists":"relative/path"}]}"#;
-        let (title, intro, list) = parse_extras(text, &|p| p == "/usr/bin/heimdalld" || p == "relative/path", &[]);
+        let (title, intro, list) = parse_extras(text, &|p| p == "/usr/bin/heimdalld" || p == "relative/path", &Hardware::default());
         assert_eq!((title.as_str(), intro.as_str()), ("AI and security", "Optional."));
         assert_eq!(
             list.iter().map(|e| (e.id.as_str(), e.chosen)).collect::<Vec<_>>(),
@@ -1361,15 +1416,102 @@ mod tests {
     #[test]
     fn device_software_starts_chosen_when_such_a_device_is_plugged_in() {
         let text = r#"{"extras":[{"id":"razer","group":"Devices","name":"Razer","chosen_if_usb":["1532"]},{"id":"logitech","group":"Devices","name":"Logitech","chosen_if_usb":["046D"]},{"id":"hp","group":"Devices","name":"HP","chosen_if_usb":["03f0"]}]}"#;
-        let (_, _, list) = parse_extras(text, &|_| false, &["1532".to_string(), "046d".to_string()]);
+        let hw = Hardware { usb: vec!["1532".into(), "046d".into()], ..Default::default() };
+        let (_, _, list) = parse_extras(text, &|_| false, &hw);
         assert_eq!(
             list.iter().map(|e| (e.id.as_str(), e.chosen)).collect::<Vec<_>>(),
             [("razer", true), ("logitech", true), ("hp", false)],
             "vendor ids compare without case"
         );
         assert!(list.iter().all(|e| e.group == "Devices"));
-        let (_, _, none) = parse_extras(text, &|_| false, &[]);
+        let (_, _, none) = parse_extras(text, &|_| false, &Hardware::default());
         assert!(none.iter().all(|e| !e.chosen), "nothing plugged in: nothing ticked");
+    }
+
+    /// A pretend computer under a temporary folder: USB devices, /proc/cpuinfo, power supplies and input switches.
+    fn fake_root(name: &str, usb: &[(&str, &str)], cpu: &str, supplies: &[(&str, &str, Option<&str>)], sw: &[&str]) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("ygg-installer-hw-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let put = |p: &str, t: &str| {
+            let f = d.join(p);
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            std::fs::write(f, format!("{t}\n")).unwrap();
+        };
+        for (i, (v, p)) in usb.iter().enumerate() {
+            put(&format!("sys/bus/usb/devices/1-{i}/idVendor"), v);
+            put(&format!("sys/bus/usb/devices/1-{i}/idProduct"), p);
+        }
+        put("sys/bus/usb/devices/1-0:1.0/bInterfaceClass", "03"); // an interface folder: no ids, skipped
+        put("proc/cpuinfo", &format!("processor\t: 0\nvendor_id\t: {cpu}\ncpu family\t: 6\n"));
+        for (n, t, scope) in supplies {
+            put(&format!("sys/class/power_supply/{n}/type"), t);
+            if let Some(s) = scope {
+                put(&format!("sys/class/power_supply/{n}/scope"), s);
+            }
+        }
+        for (i, b) in sw.iter().enumerate() {
+            put(&format!("sys/class/input/input{i}/capabilities/sw"), b);
+        }
+        d
+    }
+
+    #[test]
+    fn the_computer_is_read_from_sys_and_proc() {
+        let d = fake_root(
+            "x1",
+            &[("1d6b", "0002"), ("06CB", "00FC")],
+            "GenuineIntel",
+            &[("AC", "Mains", None), ("BAT0", "Battery", Some("System"))],
+            &["0", "2"],
+        );
+        let hw = Hardware::read(&d);
+        assert_eq!(hw.usb, ["06cb", "06cb:00fc", "1d6b", "1d6b:0002"], "vendors and vendor:product, lowercase");
+        assert_eq!((hw.cpu_vendor.as_str(), hw.battery, hw.tablet_switch), ("GenuineIntel", true, true));
+        let desk = fake_root("desk", &[], "AuthenticAMD", &[("hidpp_battery_0", "Battery", Some("Device"))], &["1", "0"]);
+        let hw = Hardware::read(&desk);
+        assert_eq!(
+            (hw.cpu_vendor.as_str(), hw.battery, hw.tablet_switch),
+            ("AuthenticAMD", false, false),
+            "a mouse's battery is not the computer's; the lid switch (bit 0) is not a tablet switch"
+        );
+        assert_eq!(Hardware::read(&d.join("nothing")), Hardware::default(), "nothing to read: nothing known");
+        let _ = std::fs::remove_dir_all(&d);
+        let _ = std::fs::remove_dir_all(&desk);
+        assert!(sw_has_tablet_mode("3") && sw_has_tablet_mode("0 2") && !sw_has_tablet_mode("2 0") && !sw_has_tablet_mode("zz"));
+    }
+
+    #[test]
+    fn laptop_software_is_ticked_by_what_the_computer_is() {
+        let text = r#"{"extras":[
+            {"id":"fingerprint","chosen_if_usb":["06cb:00fc","27c6:6594"]},
+            {"id":"thermald","chosen_if_machine":{"cpu_vendor":"GenuineIntel","battery":true,"absent":"/sys/devices/platform/thinkpad_acpi/dytc_lapmode"}},
+            {"id":"osk","chosen_if_machine":{"tablet_switch":true}},
+            {"id":"odd","chosen_if_machine":{"tablet_switch":true,"colour":"red"}},
+            {"id":"empty","chosen_if_machine":{}}]}"#;
+        let chosen = |hw: &Hardware, exists: &dyn Fn(&str) -> bool| {
+            parse_extras(text, exists, hw).2.into_iter().filter(|e| e.chosen).map(|e| e.id).collect::<Vec<_>>()
+        };
+        let yoga = Hardware {
+            usb: vec!["06cb".into(), "06cb:00fc".into()],
+            cpu_vendor: "GenuineIntel".into(),
+            battery: true,
+            tablet_switch: true,
+        };
+        assert_eq!(chosen(&yoga, &|_| false), ["fingerprint", "thermald", "osk"], "an unknown rule key or an empty rule ticks nothing");
+        assert_eq!(
+            chosen(&yoga, &|p| p.ends_with("dytc_lapmode")),
+            ["fingerprint", "osk"],
+            "a ThinkPad whose firmware runs the cooling: no thermald"
+        );
+        let unsupported_reader = Hardware { usb: vec!["06cb".into(), "06cb:00a2".into()], ..yoga.clone() };
+        assert!(
+            !chosen(&unsupported_reader, &|_| false).contains(&"fingerprint".to_string()),
+            "a reader libfprint cannot drive is not ticked"
+        );
+        let desktop = Hardware { cpu_vendor: "GenuineIntel".into(), ..Default::default() };
+        assert!(chosen(&desktop, &|_| false).is_empty(), "an Intel desktop: none of it");
+        let amd_laptop = Hardware { cpu_vendor: "AuthenticAMD".into(), battery: true, ..Default::default() };
+        assert!(chosen(&amd_laptop, &|_| false).is_empty());
     }
 
     #[test]
