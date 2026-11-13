@@ -186,6 +186,10 @@ by the program's own title bar, Super+drag, xdg-activation, idle inhibit, clipbo
      rule, so a change to the file is for windows opened after it. The per-workspace profiles of `workspaces.conf` stay as well.
    - **Steam's own maximize request** (Wayland or X11, and `_NET_WM_STATE` asked before its window shows) is ignored, as the
      session's `steam-no-self-maximize`; Super+Up still maximizes it.
+   Measured for items 3 and 5 together on release builds (the same `tests/look.rs idle_cost` set: 1920x1080, a bar, a dock,
+   three 800x600 windows), two runs each, before and after: idle 0.005-0.006 % and 0.006 % of a core (540-611 and 612-613 µs in
+   10 s; the 2-second look now also checks four more files' times), 26.2-26.3 and 26.4-26.5 MB resident (22.8 and 22.9-23.0 MB
+   proportional), an 800x600 window drawn anew 808-810 and 789-849 µs a frame.
    Measured for items 3 and 5 together, as for item 4 (release build, `tests/look.rs idle_cost`, two runs each, the build before
    and after side by side): idle 530-611 and 580-622 µs of CPU in 10 s (0.005-0.006 % and 0.006 % of a core), 26.3 and
    26.4-26.5 MB resident (22.7-22.8 and 22.9-23.0 MB proportional); an 800x600 window drawn anew 0.77-0.86 and 0.86-1.02 ms a

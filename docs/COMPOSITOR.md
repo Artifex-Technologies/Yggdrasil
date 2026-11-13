@@ -245,7 +245,8 @@ no polling beyond a 2-second look at two small config files; pictures such as th
 Measured 2026-10-18 on this computer, nested: the compositor used about 2 % of a core while idle because it redrew 60 times a second; after the change it uses 0 %.
 Measured 2026-11-12 headless (release build, software drawing, 1920x1080, a bar, a dock and three 800x600 windows), before and after
 the window look: idle 0.004 % and 0.005 % of a core, 25.6 and 26.3 MB resident; a window opening costs about 0.1 s of CPU spread
-over its 800 ms animation, and nothing is drawn once it has settled. After the keyboard, screens and window places (gap items 3 and
+over its 800 ms animation, and nothing is drawn once it has settled. After the keyboard, screens and window places (gap items 3
+and 5, the same set): idle 0.006 % of a core, 26.4-26.5 MB resident (before: 0.005-0.006 %, 26.2-26.3 MB). After the keyboard, screens and window places (gap items 3 and
 5, the same day): idle 0.006 % of a core, 26.4-26.5 MB resident (from 26.3). Its memory nested (about 117 MB) is mostly the graphics driver's context; the panel is about 89 MB, the idle manager 3 MB, the polkit agent 8 MB. Still to measure and trim: the panel's memory,
 start-up time of each program, and the compositor's cost with several large windows.
 Settings > Power's root services (tune, casefan, gpufan) are Rust since 2026-11-09 (docs/APPS_SETTINGS.md): about 2.8 MB each on
