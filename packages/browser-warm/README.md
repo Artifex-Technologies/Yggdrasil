@@ -11,18 +11,20 @@ opening in about 0.08 s instead of 0.5 s (0.15 s for Vivaldi).
 ## Which browsers
 
 Chromium-based ones: Chromium, Google Chrome, Brave, Microsoft Edge, Vivaldi, Helium and Thorium. The browser starts with
-`--no-startup-window --keep-alive-for-test`. The first flag starts it with no window. The second keeps it running:
+`--silent-launch --keep-alive-for-test`. The first flag starts it with no window. The second keeps it running:
 without it, Chromium quits as soon as its extensions have loaded, because nothing is holding it open.
 
-**Background mode must be on.** `--keep-alive-for-test` works through the browser's background mode (Chromium's
-"Continue running background apps" setting, stored as `background_mode` in the profile's `Local State` file). With
-background mode off, the browser quits within a second of starting with no window, whatever the flags. I tested this
-with Vivaldi 8.3: `--keep-alive-for-test`, `--silent-launch` and the two together all quit at once with background mode
-off, and `--keep-alive-for-test` keeps it running with background mode on. I found no other flag or setting that keeps it
-running with no window. So when background mode is off, the browser is not started at all, and `status` says why.
-Background mode also shows the browser's icon in the tray while it runs in the background, so warm start comes with
-that icon. To use warm start, turn background mode back on. I found no switch for it in Vivaldi's settings: with
-Vivaldi closed, set `"background_mode":{"enabled":true}` in `~/.config/vivaldi/Local State`, or delete that entry.
+Until 2026-11-13 it used `--no-startup-window` instead of `--silent-launch`. With that flag, `--keep-alive-for-test`
+works only while the browser's background mode is on (Chromium's "Continue running background apps" setting, stored as
+`background_mode` in the profile's `Local State` file; it also puts the browser's icon in the tray). I had turned
+background mode off in Vivaldi to keep its icon out of the tray, so from then on the browser quit within a second of
+every start, and the service started it again every minute. I tested this with Vivaldi 8.3, each start under `timeout`:
+
+| Flags (with `--ozone-platform=wayland`)          | Background mode off | Background mode on |
+|--------------------------------------------------|---------------------|--------------------|
+| `--no-startup-window --keep-alive-for-test`       | quits in 0.4 s      | keeps running      |
+| `--no-startup-window --silent-launch --keep-alive-for-test` | quits in 0.4 s | not tried     |
+| `--silent-launch --keep-alive-for-test`           | keeps running, no tray icon | not tried  |
 
 Firefox-based browsers (Firefox, LibreWolf, Zen, Floorp, Waterfox, Mullvad Browser) cannot run with no window, so this
 does nothing for them. It also does nothing for Flatpak browsers. It keeps checking, so it starts working if you later

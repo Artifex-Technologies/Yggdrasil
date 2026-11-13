@@ -1,12 +1,11 @@
 //! yggdrasil-browser-warm: keeps the default browser started with no windows, so a new window or a link opens almost at
 //! once (the launcher hands it to the running browser over its singleton socket instead of starting a new one).
 //!
-//! Only Chromium-based browsers can do this: `--no-startup-window` starts one with no window, and `--keep-alive-for-test`
-//! keeps it running (without it, Chromium quits once its extensions have loaded, as nothing holds it). That flag works
-//! through Chromium's background mode: with background mode turned off in the profile ("background_mode" in its Local
-//! State), the browser quits at once whatever the flags, so it is not started then (`status` says why). Background mode
-//! also gives the browser a tray icon while it runs. Firefox-based browsers have no way to run with no window, so for them
-//! this does nothing.
+//! Only Chromium-based browsers can do this: `--silent-launch` starts one with no window, and `--keep-alive-for-test`
+//! keeps it running (without it, Chromium quits once its extensions have loaded, as nothing holds it). Not
+//! `--no-startup-window`: with it, `--keep-alive-for-test` works only while the browser's background mode is on (the
+//! "background_mode" pref, which also puts its icon in the tray), and with background mode off the browser quits at once.
+//! Firefox-based browsers have no way to run with no window, so for them this does nothing.
 //!
 //! The cost is memory: the browser stays loaded, about 0.5-0.8 GB, even with every window closed.
 //!
@@ -356,7 +355,7 @@ fn start_command(t: &Target, slice: Option<&str>, flags: &[String]) -> Vec<Strin
         }
     }
     c.push(t.program.to_string_lossy().into());
-    c.extend(["--no-startup-window", "--keep-alive-for-test"].map(String::from));
+    c.extend(["--silent-launch", "--keep-alive-for-test"].map(String::from));
     c.extend(flags.iter().cloned());
     c
 }
@@ -378,9 +377,6 @@ fn placement(t: &Target) -> Result<Option<String>, String> {
 fn start(t: &Target) -> Result<(), String> {
     if instance_active() {
         return Ok(());
-    }
-    if let Some(why) = no_background_mode(t) {
-        return Err(why);
     }
     if let Some(pid) = browser_pid(t.profile) {
         return Err(format!("{} is already running (pid {pid}); it will be warmed once it is closed", app_id(&t.desktop_id)));
@@ -532,7 +528,7 @@ fn status() {
             );
         }
         None => {
-            let why = t.ok().and_then(|t| no_background_mode(&t).or_else(|| (load_gave_up()? == give_up_key(&t)).then(gave_up_text)));
+            let why = t.ok().and_then(|t| (load_gave_up()? == give_up_key(&t)).then(gave_up_text));
             match why {
                 Some(why) => println!("background browser: not started: {why}"),
                 None => println!("background browser: stopped"),
@@ -680,27 +676,6 @@ fn save_gave_up(key: Option<&str>) {
     }
 }
 
-/// Whether a profile's Local State has background mode turned off. Chromium keeps a windowless browser running only in
-/// background mode (`--keep-alive-for-test` works through it), so with it off the browser quits as soon as it starts.
-fn background_mode_off(local_state: &str) -> bool {
-    serde_json::from_str::<serde_json::Value>(local_state)
-        .map(|v| v["background_mode"]["enabled"] == serde_json::Value::Bool(false))
-        .unwrap_or(false)
-}
-
-/// Why the browser cannot stay running with no window, from its own settings.
-fn no_background_mode(t: &Target) -> Option<String> {
-    let text = std::fs::read_to_string(config_home().join(t.profile).join("Local State")).ok()?;
-    background_mode_off(&text).then(|| {
-        format!(
-            "{}'s background mode is off (\"background_mode\" in its Local State). Without it a Chromium-based browser quits \
-             as soon as it starts with no window, and no flag keeps it running, so it is not kept warm. Turning background \
-             mode back on also brings back the browser's tray icon",
-            app_id(&t.desktop_id)
-        )
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -768,17 +743,9 @@ mod tests {
         assert!(c.contains(&"--slice=lapp_vivaldi_stable.slice".to_string()));
         assert!(c.contains(&format!("--unit={INSTANCE}")));
         let tail: Vec<&str> = c.iter().rev().take(4).rev().map(String::as_str).collect();
-        assert_eq!(tail, ["/usr/bin/vivaldi-stable", "--no-startup-window", "--keep-alive-for-test", "--ozone-platform=wayland"]);
+        // --silent-launch, not --no-startup-window: with that one, --keep-alive-for-test needs the browser's background mode
+        assert_eq!(tail, ["/usr/bin/vivaldi-stable", "--silent-launch", "--keep-alive-for-test", "--ozone-platform=wayland"]);
         assert!(start_command(&t, None, &[]).contains(&"--slice=app-graphical.slice".to_string()));
-    }
-
-    #[test]
-    fn background_mode_off_is_read_from_local_state() {
-        // Chromium keeps a windowless browser running only in background mode: --keep-alive-for-test needs it
-        assert!(background_mode_off(r#"{"background_mode":{"enabled":false},"profile":{}}"#));
-        assert!(!background_mode_off(r#"{"background_mode":{"enabled":true}}"#));
-        assert!(!background_mode_off(r#"{"profile":{}}"#), "not set: Chromium's default is on");
-        assert!(!background_mode_off("half a file"), "unreadable: try (the quick-exit backoff covers it)");
     }
 
     #[test]
