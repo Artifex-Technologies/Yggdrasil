@@ -654,6 +654,35 @@ fn keep_shot(pic: &Picture, name: &str) {
     }
 }
 
+/// An app installed while the panel runs is in its dock at once (the app folders are watched; it used to look every 4 s), and
+/// gone when removed. The user's apps folder is made only then, so the panel also has to wait for it to appear.
+#[test]
+fn an_app_installed_shows_in_the_dock_at_once() {
+    let Some(panel) = program("YGGDRASIL_TEST_PANEL") else { return };
+    let _l = limit(90, "an app installed");
+    let comp = Compositor::start(&["--size", "1600x900"]);
+    let bus = Bus::start(&comp.dir);
+    let home = comp.dir.join("home");
+    // pinned before it is installed: the dock leaves it out until it is
+    std::fs::write(home.join(".config/yggdrasil/dock"), "ygg-test-later\n").unwrap();
+    let mut p = App::start(&comp, &panel, Some(&bus), &[("YGGDRASIL_A11Y", "off"), ("XDG_CURRENT_DESKTOP", "Yggdrasil")]);
+    wait_for(&comp, &mut p, 60, "the dock", |c| layer(&c.layers(), "yggdrasil-dock").is_some_and(|d| d.size.0 > 0));
+    std::thread::sleep(Duration::from_millis(500));
+    let before = layer(&comp.layers(), "yggdrasil-dock").unwrap().size.0;
+    let apps = home.join(".local/share/applications");
+    assert!(!apps.exists());
+    std::fs::create_dir_all(&apps).unwrap();
+    std::fs::write(apps.join("ygg-test-later.desktop"), "[Desktop Entry]\nType=Application\nName=Later\nExec=true\n").unwrap();
+    wait_for(&comp, &mut p, 3, "the app in the dock once installed, before a 4 s look", |c| {
+        layer(&c.layers(), "yggdrasil-dock").is_some_and(|d| d.size.0 > before)
+    });
+    std::fs::remove_file(apps.join("ygg-test-later.desktop")).unwrap();
+    wait_for(&comp, &mut p, 3, "the app gone from the dock once removed", |c| {
+        layer(&c.layers(), "yggdrasil-dock").is_some_and(|d| d.size.0 == before)
+    });
+    assert!(p.running(), "the panel is still running: {}", p.log());
+}
+
 #[test]
 fn the_docks_window_list_shows_pictures_of_the_windows() {
     let Some(panel) = program("YGGDRASIL_TEST_PANEL") else { return };

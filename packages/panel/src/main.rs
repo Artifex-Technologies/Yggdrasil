@@ -5,11 +5,13 @@
 //! One full bar on every screen except the tiling screen (which gets a slim one), and the dock on
 //! the main screen (Settings > Displays: the chosen monitor, else the one at the top left;
 //! yggdrasil_conf::display). Screens coming, going or changing are Wayland events, and the
-//! settings files are watched (inotify), so a change in Settings takes effect at once.
+//! settings files are watched (inotify), so a change in Settings takes effect at once. So are
+//! the app and icon folders (appwatch): an app installed or removed shows at once.
 
 mod a11y;
 mod addons;
 mod apps;
+mod appwatch;
 mod assist;
 mod assistant;
 mod calendar;
@@ -485,7 +487,7 @@ struct State {
     /// Wallpaper pictures already scaled to a screen's size.
     wall_cache: Vec<((String, u32, u32), Pixmap)>,
     toast_hide_tx: calloop::channel::Sender<u32>,
-    /// When Minos's generated icon file last changed (it follows the accent colour).
+    /// When Minos's generated icon file last changed (it follows the accent colour; looked at only without the folder watch).
     icon_stamp: Option<std::time::SystemTime>,
     /// The icon pack chosen in Settings, to notice a change.
     icon_pack: Option<String>,
@@ -550,8 +552,11 @@ struct State {
     say_tx: calloop::channel::Sender<String>,
     thumbs_started: bool,
     art_for: Option<String>,
-    /// When the app folders last changed: the apps are read again when this does (an install or removal).
+    /// When the app folders last changed: the apps are read again when this does (an install or removal; looked at only without
+    /// the folder watch).
     apps_stamp: Vec<Option<std::time::SystemTime>>,
+    /// The app and icon folders' watch (None, or stopped: past the inotify watch limit they are looked at every 4 s).
+    appwatch: Option<appwatch::Watch<State>>,
     /// Fylgja sliding down (opening) or up (closing): when it began, and ticks that redraw it.
     fy_anim: Option<(std::time::Instant, bool)>,
     anim_tx: calloop::channel::Sender<()>,
@@ -1918,6 +1923,19 @@ impl State {
         self.dirty = true;
     }
 
+    /// Apps were installed or removed, or icon files added or replaced: read the apps again (the start menu, search and the dock
+    /// follow), and draw the icons again from their files.
+    fn apps_or_icons_changed(&mut self, c: appwatch::Changed) {
+        if c.apps {
+            self.model.apps = apps::load_all();
+            self.dirty = true;
+        }
+        if c.icons {
+            self.assets.icons.clear();
+            self.dirty = true;
+        }
+    }
+
     /// Once a second while the countdown runs: draw the seconds left, or go ahead when they ran out.
     /// A file in the settings folder was written, replaced or removed: take up what it holds now.
     fn config_changed(&mut self, name: &str) {
@@ -1958,6 +1976,9 @@ impl State {
                     // Minos's icon for the new pack (its own, the pack's file manager's, or our logo)
                     let _ = std::process::Command::new("liki-minos-icon").status();
                     self.assets.icons.set_pack(pack.as_deref());
+                    if let Some(w) = &self.appwatch {
+                        w.set_icon_themes(self.assets.icons.theme_dirs());
+                    }
                     self.dirty = true;
                 }
             }
@@ -4815,6 +4836,7 @@ fn main() {
         thumbs_started: false,
         art_for: None,
         apps_stamp: apps::stamp(),
+        appwatch: None,
         fy_anim: None,
         anim_tx,
         xkb: None,
@@ -5279,33 +5301,13 @@ fn main() {
         }
         Err(e) => eprintln!("yggdrasil-panel: the settings folder cannot be watched ({e}); changes show after a restart"),
     }
-    // apps installed or removed, and icon files changed (the app folders and icon packs are not watched yet)
-    event_loop
-        .handle()
-        .insert_source(Timer::from_duration(Duration::from_secs(4)), |_, _, st| {
-            // an app installed or removed since: read the apps again (the start menu, search and the dock's icons follow)
-            let stamp = apps::stamp();
-            if stamp != st.apps_stamp {
-                st.apps_stamp = stamp;
-                st.model.apps = apps::load_all();
-                st.dirty = true;
-            }
-            // Minos's icon is redrawn in the new accent colour: take it up when its file changes
-            let stamp = std::env::var_os("HOME").and_then(|h| {
-                std::fs::metadata(std::path::PathBuf::from(h).join(".local/share/icons/Liki/apps/scalable/minos.svg")).ok()?.modified().ok()
-            });
-            if stamp != st.icon_stamp {
-                st.icon_stamp = stamp;
-                st.assets.icons.clear();
-                st.dirty = true;
-            }
-            // any icon file added or replaced in the pack in use (a rebuilt pack, a new app icon)
-            if st.assets.icons.refresh_if_changed() {
-                st.dirty = true;
-            }
-            TimeoutAction::ToDuration(Duration::from_secs(4))
-        })
-        .expect("apps timer");
+    // apps installed or removed, and icon files added or replaced: their folders are watched, and a package's burst of files is
+    // taken up once it has settled
+    let places =
+        appwatch::Places { apps: apps::app_dirs(), themes: state.assets.icons.theme_dirs(), icons: vec![paint::LOOSE_ICONS.into()] };
+    let h = event_loop.handle();
+    state.appwatch =
+        appwatch::start(&event_loop.handle(), places, |st: &mut State, c| st.apps_or_icons_changed(c), move |e| look_every_4s(&h, e));
 
     let ran = event_loop.run(None, &mut state, |st| {
         if st.layout_stale {
@@ -5335,6 +5337,32 @@ fn main() {
         }
         panic!("event loop run: {e:?}");
     }
+}
+
+/// Past the inotify watch limit: the app folders and icon packs are looked at every 4 s instead of watched.
+fn look_every_4s(handle: &calloop::LoopHandle<'static, State>, e: std::io::Error) {
+    eprintln!("yggdrasil-panel: the app and icon folders cannot be watched ({e}); looking at them every 4 s instead");
+    let _ = handle.insert_source(Timer::from_duration(Duration::from_secs(4)), |_, _, st| {
+        // an app installed or removed since: read the apps again (the start menu, search and the dock's icons follow)
+        let stamp = apps::stamp();
+        if stamp != st.apps_stamp {
+            st.apps_stamp = stamp;
+            st.apps_or_icons_changed(appwatch::Changed { apps: true, icons: false });
+        }
+        // Minos's icon is redrawn in the new accent colour: take it up when its file changes
+        let stamp = std::env::var_os("HOME").and_then(|h| {
+            std::fs::metadata(std::path::PathBuf::from(h).join(".local/share/icons/Liki/apps/scalable/minos.svg")).ok()?.modified().ok()
+        });
+        if stamp != st.icon_stamp {
+            st.icon_stamp = stamp;
+            st.apps_or_icons_changed(appwatch::Changed { apps: false, icons: true });
+        }
+        // any icon file added or replaced in the pack in use (a rebuilt pack, a new app icon)
+        if st.assets.icons.refresh_if_changed() {
+            st.dirty = true;
+        }
+        TimeoutAction::ToDuration(Duration::from_secs(4))
+    });
 }
 
 /// An event-loop error that only means the Wayland connection closed (the session ended).

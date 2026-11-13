@@ -75,8 +75,9 @@ pub fn parse_entry_for(id: &str, text: &str, desktops: &[String]) -> Option<App>
     (kind_ok && !app.name.is_empty()).then_some(app)
 }
 
-/// The folders apps are listed in, least important first (an app in a later one wins): every XDG_DATA_DIRS entry (Flatpak's
-/// exports among them) from the last to the first, then the user's own (XDG_DATA_HOME).
+/// The folders apps are listed in, least important first (an app in a later one wins): every XDG_DATA_DIRS entry from the last to
+/// the first, Flatpak's exports (the system's, then the user's) where XDG_DATA_DIRS does not name them (a session started before
+/// Flatpak was installed), then the user's own (XDG_DATA_HOME).
 pub fn app_dirs() -> Vec<PathBuf> {
     let data_dirs = std::env::var("XDG_DATA_DIRS").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/usr/local/share:/usr/share".into());
     let mut dirs: Vec<PathBuf> =
@@ -84,6 +85,13 @@ pub fn app_dirs() -> Vec<PathBuf> {
     let home = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
+    let mut flatpak = vec![PathBuf::from("/var/lib/flatpak/exports/share/applications")];
+    flatpak.extend(home.iter().map(|h| h.join("flatpak/exports/share/applications")));
+    for f in flatpak {
+        if !dirs.contains(&f) {
+            dirs.push(f);
+        }
+    }
     if let Some(h) = home {
         dirs.push(h.join("applications"));
     }
@@ -92,16 +100,20 @@ pub fn app_dirs() -> Vec<PathBuf> {
 }
 
 /// When the app folders last changed (a file added, removed or replaced changes its folder's time): compared to know when to
-/// read the apps again.
+/// read the apps again, when the folders cannot be watched (the inotify watch limit reached).
 pub fn stamp() -> Vec<Option<std::time::SystemTime>> {
     app_dirs().iter().map(|d| std::fs::metadata(d).and_then(|m| m.modified()).ok()).collect()
 }
 
 pub fn load_all() -> Vec<App> {
-    let dirs = app_dirs();
+    load_from(&app_dirs())
+}
+
+/// The apps in `dirs` (least important first, as `app_dirs`).
+pub fn load_from(dirs: &[PathBuf]) -> Vec<App> {
     let mut apps: Vec<App> = vec![];
     for d in dirs {
-        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        let Ok(rd) = std::fs::read_dir(d) else { continue };
         for e in rd.flatten() {
             let p = e.path();
             if p.extension().map(|x| x != "desktop").unwrap_or(true) {

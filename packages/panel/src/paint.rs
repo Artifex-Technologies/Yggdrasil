@@ -221,6 +221,12 @@ pub fn draw_text(pix: &mut Pixmap, font: &FontVec, size: f32, x: f32, cy: f32, c
 
 // ---------------------------------------------------------------- icons
 
+/// The kinds of icon an icon pack's folders are looked in for (named "apps/48", "48x48/apps", "apps/scalable", ...).
+pub const ICON_CONTEXTS: [&str; 4] = ["apps", "places", "status", "actions"];
+
+/// Loose icon files, looked in when no pack has the icon.
+pub const LOOSE_ICONS: &str = "/usr/share/pixmaps";
+
 pub struct Icons {
     cache: HashMap<(String, u32), Option<Pixmap>>,
     themes: Vec<String>,
@@ -235,7 +241,8 @@ impl Icons {
         i
     }
 
-    /// A number that changes when files appear in, or leave, the icon folders of the packs in use.
+    /// A number that changes when files appear in, or leave, the icon folders of the packs in use (looked at every 4 s only when
+    /// the folders cannot be watched).
     fn fingerprint(&self) -> u64 {
         let mut h: u64 = 1469598103934665603;
         for root in Self::roots() {
@@ -289,6 +296,12 @@ impl Icons {
         self.cache.clear();
     }
 
+    /// The folders of the packs in use (the user's, then the system's): what `find` looks in, below the folders named in
+    /// `ICON_CONTEXTS`.
+    pub fn theme_dirs(&self) -> Vec<PathBuf> {
+        Self::roots().iter().flat_map(|r| self.themes.iter().map(move |t| r.join(t))).collect()
+    }
+
     fn roots() -> Vec<PathBuf> {
         let mut v = vec![];
         if let Some(h) = std::env::var_os("HOME") {
@@ -308,7 +321,7 @@ impl Icons {
             for theme in &self.themes {
                 let t = root.join(theme);
                 let mut dirs: Vec<PathBuf> = vec![];
-                for ctx in ["apps", "places", "status", "actions"] {
+                for ctx in ICON_CONTEXTS {
                     dirs.push(t.join(format!("{ctx}/scalable")));
                     dirs.push(t.join(format!("scalable/{ctx}")));
                     dirs.push(t.join(format!("{ctx}/symbolic")));
@@ -329,7 +342,7 @@ impl Icons {
             }
         }
         for e in exts {
-            let p = PathBuf::from(format!("/usr/share/pixmaps/{name}.{e}"));
+            let p = Path::new(LOOSE_ICONS).join(format!("{name}.{e}"));
             if p.is_file() {
                 return Some(p);
             }

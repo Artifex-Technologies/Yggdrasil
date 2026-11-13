@@ -235,6 +235,11 @@ write-once-and-reload. **Not tested, because it needs the real machine:**
   makes it X11's primary monitor. The panel watches the settings folder (inotify) and the screens (Wayland events), so the
   dock moves at once. The login screen shows its sign-in on the same display (the panel hands the choice over; see
   [LOGIN_SCREEN.md](LOGIN_SCREEN.md)).
+- An app installed or removed shows in the start menu, search and the dock at once, and so does a new or replaced icon: the
+  panel watches the app folders (every XDG data folder's `applications`, Flatpak's exports, `~/.local/share/applications`)
+  and the folders of the icon packs in use (inotify, 2026-11-13), and takes up a package's burst of files once it has been
+  quiet for 0.5 s. Folders that are not there yet (Flatpak before its first app) are waited for. Past the inotify watch
+  limit the panel says so once in its log and looks every 4 s instead, as it used to.
 - Which monitor games use when fullscreen, and workspace assignment per monitor.
 
 ## Optional software
