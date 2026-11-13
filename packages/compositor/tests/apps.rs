@@ -755,6 +755,140 @@ fn the_docks_window_list_shows_pictures_of_the_windows() {
     assert!(p.running(), "the panel is still running: {}", p.log());
 }
 
+/// How often the panel's event loop woke (its main thread's voluntary context switches, from /proc) over `ms`.
+fn wakeups(p: &App, ms: u64) -> u64 {
+    let pid = p.child.id();
+    let read = || {
+        let st = std::fs::read_to_string(format!("/proc/{pid}/task/{pid}/status")).unwrap_or_default();
+        st.lines().find_map(|l| l.strip_prefix("voluntary_ctxt_switches:")).and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(0)
+    };
+    let before = read();
+    std::thread::sleep(Duration::from_millis(ms));
+    read() - before
+}
+
+/// The time the panel's event loop has been at work (its main thread's user and system time), in milliseconds.
+fn busy_ms(p: &App) -> u64 {
+    let pid = p.child.id();
+    let st = std::fs::read_to_string(format!("/proc/{pid}/task/{pid}/stat")).unwrap_or_default();
+    // after the name: state, ppid, ... utime is the 12th field and stime the 13th (clock ticks, 100 a second)
+    let f: Vec<&str> = st.rsplit_once(')').map(|(_, r)| r.split_whitespace().collect()).unwrap_or_default();
+    let tick = |i: usize| f.get(i).and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
+    (tick(11) + tick(12)) * 10
+}
+
+/// The panel's short timers run only while what they are for goes on: idle it does not tick; the clock ticks every second only
+/// while the calendar shows seconds; a held key repeats in the start menu and stops when let go; resting on a dock app lists its
+/// windows and the list goes when the pointer leaves; over a full-screen window the dock comes back when the pointer is pushed
+/// against the edge (the pointer is looked at every 100 ms then, and not once the window is no longer full screen).
+#[test]
+fn the_panel_ticks_only_while_something_goes_on() {
+    let Some(panel) = program("YGGDRASIL_TEST_PANEL") else { return };
+    let _l = limit(150, "the panel's timers");
+    let comp = Compositor::start(&["--size", "1600x900"]);
+    let bus = Bus::start(&comp.dir);
+    std::fs::write(comp.dir.join("home/.config/yggdrasil/dock"), "# none\n").unwrap();
+    let mut p = App::start(&comp, &panel, Some(&bus), &[("YGGDRASIL_A11Y", "off"), ("XDG_CURRENT_DESKTOP", "Yggdrasil")]);
+    wait_for(&comp, &mut p, 60, "the bar and the dock", |c| {
+        let l = c.layers();
+        ["yggdrasil-panel", "yggdrasil-dock"].iter().all(|ns| layer(&l, ns).is_some_and(|x| x.size.0 > 0))
+    });
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !bus.has("org.yggdrasil.Panel") {
+        assert!(Instant::now() < deadline, "the panel's bus name: {}", p.log());
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let call = |m: &str| bus.call(&["call", "org.yggdrasil.Panel", "/Panel", "org.yggdrasil.Panel", m]).expect(m);
+    // a quiet panel: the clock's minute at most, nothing that ticks (it was ~36 a second)
+    std::thread::sleep(Duration::from_secs(2));
+    let idle = wakeups(&p, 3000);
+    assert!(idle <= 6, "idle: {idle} wake-ups in 3 s");
+
+    // the calendar shows seconds: the clock ticks every second while it is open, and back to the minute once it closes
+    call("ToggleCalendar");
+    comp.wait(10, "the calendar", |c| layer(&c.layers(), "yggdrasil-popup").is_some_and(|l| l.size.0 > 0));
+    let open = wakeups(&p, 3000);
+    assert!((3..=40).contains(&open), "the calendar open: {open} wake-ups in 3 s");
+    call("ToggleCalendar");
+    comp.wait(10, "the calendar closed", |c| layer(&c.layers(), "yggdrasil-popup").is_none());
+    std::thread::sleep(Duration::from_millis(300));
+    let closed = wakeups(&p, 3000);
+    assert!(closed <= 6, "the calendar closed: {closed} wake-ups in 3 s");
+
+    // resting on a dock app lists its windows; leaving the list closes it, and nothing ticks after
+    let before = layer(&comp.layers(), "yggdrasil-dock").unwrap().size.0;
+    let mut c = comp.connect();
+    let w = c.window("test.viewer", "Viewer");
+    c.draw(&w, (400, 300), BLUE);
+    wait_for(&comp, &mut p, 10, "the window's icon in the dock", |c| {
+        layer(&c.layers(), "yggdrasil-dock").is_some_and(|d| d.size.0 == before + (d.size.1 - 24) + 10)
+    });
+    std::thread::sleep(Duration::from_millis(300));
+    let dock = layer(&comp.layers(), "yggdrasil-dock").cloned().unwrap();
+    // its slot (the dock may hold apps of the computer's own besides): the one whose resting opens a list
+    let icon = dock.size.1 - 24;
+    let slots = (dock.size.0 - 28 + 10) / (icon + 10);
+    let y = dock.at.1 + 9 + icon / 2;
+    let found = (0..slots).rev().any(|i| {
+        let x = dock.at.0 + 14 + i * (icon + 10) + icon / 2;
+        comp.must(&format!("pointer {} {y}", x - 3));
+        comp.must(&format!("pointer {x} {y}"));
+        let deadline = Instant::now() + Duration::from_millis(1200);
+        while Instant::now() < deadline {
+            if layer(&comp.layers(), "yggdrasil-popup").is_some_and(|l| l.size.0 > 0) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        false
+    });
+    assert!(found, "a window list after resting on the window's icon: {}", p.log());
+    comp.must("pointer 800 120");
+    wait_for(&comp, &mut p, 3, "the window list gone once the pointer left", |c| layer(&c.layers(), "yggdrasil-popup").is_none());
+    std::thread::sleep(Duration::from_millis(300));
+    let left = wakeups(&p, 2000);
+    assert!(left <= 6, "after the window list: {left} wake-ups in 2 s");
+
+    // full screen: the dock steps aside, and the pointer is followed (every 100 ms) for the edge that brings it back
+    w.toplevel.set_fullscreen(None);
+    c.roundtrip();
+    let _ = settle(&comp, &mut c, &w, "test.viewer", BLUE);
+    wait_for(&comp, &mut p, 5, "the dock away over the full-screen window", |c| {
+        layer(&c.layers(), "yggdrasil-dock").is_none_or(|d| d.size.0 == 0)
+    });
+    let peeking = wakeups(&p, 2000);
+    assert!(peeking >= 10, "full screen: {peeking} wake-ups in 2 s");
+    comp.must("pointer 800 899");
+    wait_for(&comp, &mut p, 3, "the dock back at the edge", |c| layer(&c.layers(), "yggdrasil-dock").is_some_and(|d| d.size.0 > 0));
+    comp.must("pointer 800 300");
+    wait_for(&comp, &mut p, 3, "the dock away again", |c| layer(&c.layers(), "yggdrasil-dock").is_none_or(|d| d.size.0 == 0));
+    w.toplevel.unset_fullscreen();
+    c.roundtrip();
+    let _ = settle(&comp, &mut c, &w, "test.viewer", BLUE);
+    wait_for(&comp, &mut p, 5, "the dock back", |c| layer(&c.layers(), "yggdrasil-dock").is_some_and(|d| d.size.0 > 0));
+    std::thread::sleep(Duration::from_millis(300));
+    let after = wakeups(&p, 2000);
+    assert!(after <= 6, "no longer full screen: {after} wake-ups in 2 s");
+    // a key held in the start menu repeats, and the repeat stops when it is let go
+    call("ToggleStart");
+    comp.wait(10, "the start menu with the keyboard", |c| c.focus().starts_with("layer\tyggdrasil-popup\t"));
+    std::thread::sleep(Duration::from_millis(300));
+    comp.must("key-down a");
+    // (a debug build may be at work the whole time, and so never wait: its time at work counts too)
+    let busy0 = busy_ms(&p);
+    let held = wakeups(&p, 1500);
+    let busy = busy_ms(&p) - busy0;
+    comp.must("key-up a");
+    assert!(held >= 10 || busy >= 300, "a held key: {held} wake-ups, {busy} ms busy in 1.5 s");
+    std::thread::sleep(Duration::from_millis(300));
+    let let_go = wakeups(&p, 2000);
+    assert!(let_go <= 6, "the key let go: {let_go} wake-ups in 2 s");
+    call("ToggleStart");
+    comp.wait(10, "the start menu closed", |c| layer(&c.layers(), "yggdrasil-popup").is_none());
+
+    assert!(p.running(), "the panel is still running: {}", p.log());
+}
+
 /// Stand-ins for the programs yggdrasil-logout runs, the only ones on its PATH: each writes down how it was called.
 fn logout_stand_ins(comp: &Compositor) -> (PathBuf, PathBuf) {
     let bin = comp.dir.join("stand-ins");

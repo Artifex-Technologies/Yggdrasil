@@ -29,6 +29,11 @@ impl FolderWatch {
         self.fd.as_fd()
     }
 
+    /// A second handle to the watch, for an event loop.
+    pub fn poll_fd(&self) -> std::io::Result<OwnedFd> {
+        self.fd.as_fd().try_clone_to_owned()
+    }
+
     /// Other folders from now on (an add-on installed with a file of its own).
     pub fn set_targets(&mut self, targets: Vec<PathBuf>) {
         if targets != self.targets {

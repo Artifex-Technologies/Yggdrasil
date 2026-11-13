@@ -181,30 +181,161 @@ impl Buttons {
     }
 }
 
+/// The left mouse button's presses and releases as events, from the pointer devices this user may read (the same ones as
+/// [`Buttons`]). Each device is told to report the left button and nothing else (EVIOCSMASK), so moving the mouse or turning
+/// the wheel wakes nothing; all of them sit in one epoll, which the panel's event loop watches. Nothing is read or asked between
+/// presses.
+pub struct ButtonEvents {
+    epoll: std::os::fd::OwnedFd,
+    /// Each device, and whether its left button is down.
+    devices: Vec<(std::fs::File, bool)>,
+}
+
+const EV_SYN: u16 = 0;
+const EV_KEY: u16 = 1;
+const SYN_DROPPED: u16 = 3;
+
+/// EVIOCSMASK's argument (linux/input.h, struct input_mask).
+#[repr(C)]
+struct InputMask {
+    kind: u32,
+    codes_size: u32,
+    codes_ptr: u64,
+}
+
+fn ioc_write(nr: u64, len: usize) -> u64 {
+    (1u64 << 30) | ((len as u64) << 16) | ((b'E' as u64) << 8) | nr
+}
+
+/// Only the left button from now on: of the event types, keys and buttons alone; of those, BTN_LEFT alone. An empty report is
+/// not delivered, so a motion wakes no one. A device that does not take masks (an old kernel) still works, it just wakes more.
+fn left_button_only(f: &std::fs::File) {
+    use std::os::fd::AsRawFd;
+    let mut types = [0u8; 4]; // EV_CNT bits
+    types[(EV_KEY / 8) as usize] |= 1 << (EV_KEY % 8);
+    let mut keys = [0u8; 96]; // KEY_CNT bits
+    keys[BTN_LEFT / 8] |= 1 << (BTN_LEFT % 8);
+    for (kind, codes) in [(EV_SYN as u32, &types[..]), (EV_KEY as u32, &keys[..])] {
+        let m = InputMask { kind, codes_size: codes.len() as u32, codes_ptr: codes.as_ptr() as u64 };
+        // SAFETY: EVIOCSMASK reads the struct and `codes_size` bytes at `codes_ptr`, both alive for the call
+        unsafe { libc::ioctl(f.as_raw_fd(), ioc_write(0x93, std::mem::size_of::<InputMask>()) as _, &m) };
+    }
+}
+
+/// Whether the left button is down on this device now (EVIOCGKEY); false when it cannot be asked.
+fn left_down_now(f: &std::fs::File) -> bool {
+    use std::os::fd::AsRawFd;
+    let mut state = [0u8; 96];
+    // SAFETY: EVIOCGKEY writes at most `state.len()` bytes into the buffer
+    let n = unsafe { libc::ioctl(f.as_raw_fd(), ioc_read(0x18, state.len()) as _, state.as_mut_ptr()) };
+    n >= 0 && bit(&state, BTN_LEFT)
+}
+
+impl ButtonEvents {
+    /// The pointer devices in /dev/input that can be read now.
+    pub fn open() -> ButtonEvents {
+        ButtonEvents::with(Buttons::open().devices)
+    }
+
+    /// These devices (the tests give pipes that stand in for them).
+    pub fn with(files: Vec<std::fs::File>) -> ButtonEvents {
+        let epoll = rustix::event::epoll::create(rustix::event::epoll::CreateFlags::CLOEXEC).expect("an epoll");
+        let mut b = ButtonEvents { epoll, devices: vec![] };
+        b.take(files);
+        b
+    }
+
+    fn take(&mut self, files: Vec<std::fs::File>) {
+        use rustix::event::epoll;
+        for f in files {
+            let _ = rustix::fs::fcntl_setfl(&f, rustix::fs::OFlags::NONBLOCK);
+            left_button_only(&f);
+            if epoll::add(&self.epoll, &f, epoll::EventData::new_u64(0), epoll::EventFlags::IN).is_ok() {
+                let down = left_down_now(&f);
+                self.devices.push((f, down));
+            }
+        }
+    }
+
+    /// A mouse was plugged in or out, or became readable (/dev/input changed): the devices again. Closing a device takes it out
+    /// of the epoll.
+    pub fn reopen(&mut self) {
+        self.devices.clear();
+        self.take(Buttons::open().devices);
+    }
+
+    /// The epoll that is ready when a press or release can be read (a second handle to it, for the event loop).
+    pub fn poll_fd(&self) -> std::io::Result<std::os::fd::OwnedFd> {
+        use std::os::fd::AsFd;
+        self.epoll.as_fd().try_clone_to_owned()
+    }
+
+    /// Reads what the devices reported (all of it: the epoll is not ready again until something new comes).
+    pub fn read(&mut self) {
+        use std::io::Read;
+        const SIZE: usize = std::mem::size_of::<libc::input_event>();
+        for (f, down) in &mut self.devices {
+            let mut buf = [0u8; SIZE * 16];
+            loop {
+                let n = match f.read(&mut buf) {
+                    Ok(n) if n >= SIZE => n,
+                    _ => break, // nothing more for now (EAGAIN), or the device went (its node goes too: reopen follows)
+                };
+                for ev in buf[..n].as_chunks::<SIZE>().0 {
+                    // SAFETY: input_event is plain data, and the chunk is exactly its size
+                    let ev: libc::input_event = unsafe { std::ptr::read_unaligned(ev.as_ptr() as *const libc::input_event) };
+                    match (ev.type_, ev.code as usize) {
+                        (EV_KEY, BTN_LEFT) => *down = ev.value != 0,
+                        // the kernel dropped events (a full queue): ask for the button itself
+                        (EV_SYN, c) if c == SYN_DROPPED as usize => *down = left_down_now(f),
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    /// The left button is down on one of the devices.
+    pub fn held(&self) -> bool {
+        self.devices.iter().any(|(_, d)| *d)
+    }
+}
+
 /// Notices a window being dragged to the notch, with no binding on the mouse button (a binding on the left button kept Hyprland
-/// 0.56 from ending its own window move when the button came up). Each tick asks the kernel whether the left button is held (one
-/// ioctl per mouse); only while it is held does it ask Hyprland where the window in front is and where the pointer is.
+/// 0.56 from ending its own window move when the button came up). The left button's presses and releases come as events
+/// ([`ButtonEvents`]); only while it is held does the panel tick and ask Hyprland where the window in front is and where the
+/// pointer is.
 pub struct Spotter {
-    buttons: Buttons,
-    opened: std::time::Instant,
+    pub events: ButtonEvents,
     start: Option<(String, (f64, f64))>,
     told: bool,
 }
 
 impl Default for Spotter {
     fn default() -> Self {
-        Spotter { buttons: Buttons::open(), opened: std::time::Instant::now(), start: None, told: false }
+        Spotter { events: ButtonEvents::open(), start: None, told: false }
     }
 }
 
 impl Spotter {
-    /// Call every tick. True once per drag, when a floating window being dragged has reached the notch of its screen.
-    pub fn tick(&mut self) -> bool {
-        // mice come and go: look again now and then while no button is held
-        if self.start.is_none() && self.opened.elapsed() > std::time::Duration::from_secs(10) {
-            *self = Spotter::default();
+    /// While this is true the panel calls `tick` (every 60 ms): the left button is held.
+    pub fn held(&self) -> bool {
+        self.events.held()
+    }
+
+    /// The devices reported a press or release: read it; a release ends the drag being followed.
+    pub fn read(&mut self) {
+        self.events.read();
+        if !self.events.held() {
+            self.start = None;
+            self.told = false;
         }
-        if self.buttons.left_down() != Some(true) {
+    }
+
+    /// Call every tick while the button is held. True once per drag, when a floating window being dragged has reached the notch
+    /// of its screen.
+    pub fn tick(&mut self) -> bool {
+        if !self.events.held() {
             self.start = None;
             self.told = false;
             return false;
@@ -430,6 +561,55 @@ pub fn hit_at(hits: &[(Rect4, (usize, usize))], (px, py): (f32, f32)) -> Option<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A pipe standing in for a mouse: the panel's end, and the end its events are written into.
+    fn fake_mouse() -> (std::fs::File, std::fs::File) {
+        use std::os::fd::FromRawFd;
+        let mut fds = [0; 2];
+        // SAFETY: pipe fills the two descriptors, each owned by one File from here on
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0);
+        unsafe { (std::fs::File::from_raw_fd(fds[0]), std::fs::File::from_raw_fd(fds[1])) }
+    }
+
+    fn send(w: &mut std::fs::File, type_: u16, code: u16, value: i32) {
+        use std::io::Write;
+        let ev = libc::input_event { time: libc::timeval { tv_sec: 0, tv_usec: 0 }, type_, code, value };
+        // SAFETY: input_event is plain data; its bytes are what the kernel would write
+        let bytes = unsafe { std::slice::from_raw_parts(&ev as *const _ as *const u8, std::mem::size_of::<libc::input_event>()) };
+        w.write_all(bytes).unwrap();
+    }
+
+    fn ready(fd: &std::os::fd::OwnedFd) -> bool {
+        use rustix::event::{poll, PollFd, PollFlags};
+        let mut p = [PollFd::new(fd, PollFlags::IN)];
+        poll(&mut p, Some(&rustix::time::Timespec { tv_sec: 0, tv_nsec: 50_000_000 })).unwrap() > 0
+    }
+
+    #[test]
+    fn the_left_button_wakes_the_spotter_and_its_release_ends_the_ticking() {
+        let (mouse, mut kernel) = fake_mouse();
+        let mut s = Spotter { events: ButtonEvents::with(vec![mouse]), start: None, told: false };
+        let epoll = s.events.poll_fd().unwrap();
+        assert!(!s.held() && !ready(&epoll), "nothing held, nothing to read: no ticks");
+        // pressed: the event loop is woken, and the spotter wants its ticks
+        send(&mut kernel, EV_KEY, BTN_LEFT as u16, 1);
+        send(&mut kernel, EV_SYN, 0, 0);
+        assert!(ready(&epoll));
+        s.read();
+        assert!(s.held(), "held: the 60 ms ticks run");
+        assert!(!ready(&epoll), "read: not woken again until the next press or release");
+        s.start = Some(("0x1".into(), (10.0, 10.0)));
+        // another button, as a mouse without masks would still report it: changes nothing
+        send(&mut kernel, EV_KEY, 0x111, 1);
+        s.read();
+        assert!(s.held());
+        // let go: the ticks stop, and the drag followed is forgotten
+        send(&mut kernel, EV_KEY, BTN_LEFT as u16, 0);
+        assert!(ready(&epoll));
+        s.read();
+        assert!(!s.held(), "let go: no ticks");
+        assert!(s.start.is_none(), "the next press starts a new drag");
+    }
 
     fn session() -> Session {
         let monitor =

@@ -17,6 +17,7 @@ mod assistant;
 mod calendar;
 mod capture;
 mod cheatsheet;
+mod clock;
 mod confirm;
 mod convo;
 mod devices;
@@ -448,6 +449,15 @@ struct State {
     assist_after: Option<(zones::Session, (usize, usize), Instant)>,
     /// Notices a window dragged to the notch (no binding on the mouse button: see zones::Spotter).
     zone_spotter: zones::Spotter,
+    /// The short timers that run only while what they are for goes on (`Tick`): each is armed when that starts and dropped when it
+    /// ends (`arm_timers`, after every pass of the event loop). Nothing ticks while the desktop is idle.
+    ticks: [Option<calloop::RegistrationToken>; 3],
+    /// The timer for the next moment something waits for (a held key's repeat, the dock's window list, ...), and that moment.
+    deadline: Option<(calloop::RegistrationToken, Instant)>,
+    /// The bar's clock (a wall-clock timer), and whether it is armed for every second or every minute (None: arm it again).
+    clock: Option<clock::Clock>,
+    clock_every_second: Option<bool>,
+    handle: Option<calloop::LoopHandle<'static, State>>,
     /// Snap Assist's window tiles on its surface, and the zone they are in.
     assist_hits: Vec<(zones::Rect4, usize)>,
     assist_area: zones::Rect4,
@@ -681,6 +691,14 @@ fn config_watch() -> std::io::Result<std::os::fd::OwnedFd> {
     let dir = yggdrasil_conf::dirs::config();
     std::fs::create_dir_all(&dir)?;
     watch_dir(&dir)
+}
+
+/// /dev/input: a mouse plugged in or out, or made readable to this user (udev sets its permissions just after the node appears).
+fn input_watch() -> std::io::Result<std::os::fd::OwnedFd> {
+    use rustix::fs::inotify::{self, CreateFlags, WatchFlags};
+    let fd = inotify::init(CreateFlags::CLOEXEC | CreateFlags::NONBLOCK)?;
+    inotify::add_watch(&fd, "/dev/input", WatchFlags::CREATE | WatchFlags::DELETE | WatchFlags::ATTRIB | WatchFlags::ONLYDIR)?;
+    Ok(fd)
 }
 
 fn watch_dir(dir: &std::path::Path) -> std::io::Result<std::os::fd::OwnedFd> {
@@ -3361,6 +3379,8 @@ impl State {
         }
         let _ = self.conn.flush();
         self.dirty = false;
+        // what a screen reader is told follows what was drawn (it sends only what changed)
+        self.a11y_sync();
     }
 
     fn draw(&mut self, i: usize) {
@@ -4770,6 +4790,11 @@ fn main() {
         zone_buttons: None,
         assist_after: None,
         zone_spotter: zones::Spotter::default(),
+        ticks: [None; 3],
+        deadline: None,
+        clock: None,
+        clock_every_second: None,
+        handle: None,
         assist_hits: vec![],
         assist_area: (0.0, 0.0, 0.0, 0.0),
         fy_active: Arc::new(AtomicBool::new(false)),
@@ -4999,58 +5024,7 @@ fn main() {
                 }
             })
             .expect("accessibility channel");
-        event_loop
-            .handle()
-            .insert_source(Timer::from_duration(Duration::from_millis(500)), |_, _, st| {
-                st.a11y_sync();
-                TimeoutAction::ToDuration(Duration::from_millis(500))
-            })
-            .expect("accessibility timer");
     }
-    // a held key in the start menu repeats (the compositor only reports the press)
-    event_loop
-        .handle()
-        .insert_source(Timer::from_duration(Duration::from_millis(20)), |_, _, st| {
-            if let Some((key, next)) = st.repeat {
-                if !matches!(st.popup, Some(Popup { kind: PopupKind::Start(_), .. })) {
-                    st.repeat = None;
-                } else if Instant::now() >= next {
-                    st.repeat = Some((key, next + Duration::from_millis(1000 / st.repeat_rate.max(1) as u64)));
-                    st.key_pressed(key);
-                }
-            }
-            // Snap Assist waiting for a drop to settle
-            if st.assist_after.as_ref().is_some_and(|(_, _, at)| Instant::now() >= *at) {
-                if let Some((z, hit, _)) = st.assist_after.take() {
-                    if st.popup.is_none() {
-                        st.assist_open(&z, hit);
-                    }
-                }
-            }
-            // a conversation listens again a breath after she has finished speaking
-            if st.listen_at.is_some_and(|t| Instant::now() >= t) {
-                st.listen_at = None;
-                st.after_speech();
-            }
-            // a window dragged to the notch opens the zones sheet
-            if st.popup.is_none() && st.zone_spotter.tick() {
-                zones::note("drag reached the notch (seen by the panel)");
-                st.zones_open(zones::Mode::Drag);
-            }
-            // a window is being dragged over the zones sheet: follow the pointer (only then)
-            let dragging = matches!(st.popup, Some(Popup { kind: PopupKind::Zones(ref z), .. }) if z.mode == zones::Mode::Drag);
-            if dragging {
-                st.zones_follow();
-            }
-            TimeoutAction::ToDuration(Duration::from_millis(if st.repeat.is_some() {
-                20
-            } else if dragging {
-                30
-            } else {
-                60
-            }))
-        })
-        .expect("key repeat timer");
     // a finished window picture: keep it and redraw the list
     event_loop
         .handle()
@@ -5061,37 +5035,6 @@ fn main() {
             }
         })
         .expect("window picture channel");
-    // over a full-screen window the dock comes back when the pointer is pushed against its edge
-    event_loop
-        .handle()
-        .insert_source(Timer::from_duration(Duration::from_millis(100)), |_, _, st| {
-            if !st.covered.is_empty() || st.dock_peek.is_some() {
-                st.check_dock_peek();
-            }
-            TimeoutAction::ToDuration(Duration::from_millis(100))
-        })
-        .expect("dock peek timer");
-    // resting on a dock app (400 ms, as Windows does) lists its windows; the list goes when the pointer has left it
-    event_loop
-        .handle()
-        .insert_source(Timer::from_duration(Duration::from_millis(120)), |_, _, st| {
-            if st.popup.is_none() {
-                if let Some((id, at, x, out)) = st.dock_hover.clone() {
-                    if at.elapsed() >= Duration::from_millis(400) {
-                        st.dock_hover = None;
-                        st.open_windows_popup(&id, x, out);
-                    }
-                }
-            }
-            if st.preview_close.is_some_and(|t| Instant::now() >= t) {
-                st.preview_close = None;
-                if st.windows_popup_open() {
-                    st.close_popup();
-                }
-            }
-            TimeoutAction::ToDuration(Duration::from_millis(120))
-        })
-        .expect("dock preview timer");
     // each step of Fylgja sliding: redraw, and finish a close once it has gone up
     event_loop
         .handle()
@@ -5186,102 +5129,87 @@ fn main() {
             }
         })
         .expect("add-ons channel");
+    // the clock: once a minute on the minute, every second while something shows seconds; a new time zone at once
+    let clock = clock::Clock::new().expect("a timer for the clock");
     event_loop
         .handle()
-        .insert_source(Timer::from_duration(Duration::from_secs(1)), |_, _, st| {
-            st.tick_confirm();
-            if st.identify_until.is_some_and(|t| Instant::now() >= t) {
-                st.close_identify();
-            }
-            // add-on countdowns tick by themselves
-            st.model.now_secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
-            if st.model.addons.iter().any(|a| a.until.is_some() && a.text.contains("{countdown}")) {
-                st.dirty = true;
-            }
-            // an open card is redrawn each second (its clock, its bar) and read again when it asked to be (codes rolling over)
-            if let Some(Popup { kind: PopupKind::Addon(i), .. }) = st.popup {
-                st.dirty = true;
-                let at = st.model.addons.get(i).and_then(|a| a.refresh_at);
-                if let Some(at) = at.filter(|at| *at <= st.model.now_secs && st.addon_refreshed != Some(*at)) {
-                    st.addon_refreshed = Some(at);
-                    st.addons_now.ask();
+        .insert_source(
+            calloop::generic::Generic::new(clock.poll_fd().expect("the clock's timer"), calloop::Interest::READ, calloop::Mode::Level),
+            |_, _, st| {
+                if let Some(c) = &st.clock {
+                    c.read();
                 }
-            }
-            let h24 = st.model.conf.clock_24h;
-            let now = clock_text(h24);
-            if now != st.model.clock {
-                st.model.clock = now;
-                st.model.date = date_text();
-                st.model.today = today_ymd();
-                st.dirty = true;
-            }
-            // The calendar shows seconds: redraw it each second while it is open.
-            let secs = secs_text(h24);
-            if secs != st.model.clock_secs {
-                st.model.clock_secs = secs;
-                if matches!(st.popup, Some(Popup { kind: PopupKind::Calendar { .. }, .. }) | Some(Popup { kind: PopupKind::Fylgja(_), .. }))
-                {
-                    st.dirty = true;
-                }
-            }
-            // a question being recorded: the seconds, and a recording that stopped by itself (no microphone)
-            if let Some(since) = st.rec_since {
-                let ended = st.rec.as_mut().map(|(c, _)| c.try_wait().map(|r| r.is_some()).unwrap_or(false)).unwrap_or(false);
-                if ended {
-                    if let Some((_, path)) = st.rec.take() {
-                        let _ = std::fs::remove_file(path);
+                st.clock_every_second = None; // armed again for the next one after this pass
+                st.clock_tick();
+                Ok(calloop::PostAction::Continue)
+            },
+        )
+        .expect("clock");
+    state.clock = Some(clock);
+    match clock::zone_watch() {
+        Ok(fd) => {
+            event_loop
+                .handle()
+                .insert_source(calloop::generic::Generic::new(fd, calloop::Interest::READ, calloop::Mode::Level), |_, fd, st| {
+                    if changed_files(&fd).iter().any(|n| n == "localtime") {
+                        st.clock_tick();
                     }
-                    st.rec_since = None;
-                    st.voice_failed(
-                        "No microphone could be recorded. Check that one is plugged in and not muted, and that this app may use it.",
-                    );
-                } else if !st.vad_mode && since.elapsed().as_secs() >= 90 {
-                    // a held question no longer than 90 s: past that the key-up was missed, so what was said is sent rather than recorded for ever
-                    st.send_recording();
-                } else {
-                    st.model.fylgja.voice = fylgja::Voice::Listening(since.elapsed().as_secs());
-                }
-                st.dirty = true;
-            }
-            if matches!(st.popup, Some(Popup { kind: PopupKind::Fylgja(_), .. })) {
-                let snap = st.fy_shared.lock().map(|g| g.clone()).unwrap_or_default();
-                if snap != st.model.fylgja.snap && st.drag.is_none() {
-                    st.model.fylgja.snap = snap;
-                    st.dirty = true;
-                }
-                // the small card with nothing playing has nothing to show: put it away
-                let nothing = matches!(&st.popup, Some(Popup { kind: PopupKind::Fylgja(f), .. }) if !f.open && !f.pinned && !f.voice_ui)
-                    && st.model.fylgja.snap.ready
-                    && st.model.fylgja.snap.media.is_none();
-                if nothing {
-                    st.peek_blocked = Some(std::time::Instant::now());
-                    st.close_popup();
-                }
-                if st.model.notch_tab == Some(2) {
-                    let stats = st.stats_shared.lock().map(|g| g.clone()).unwrap_or_default();
-                    if stats != st.model.fylgja.stats {
-                        st.model.fylgja.stats = stats;
+                    Ok(calloop::PostAction::Continue)
+                })
+                .expect("time zone watch");
+        }
+        Err(e) => eprintln!("yggdrasil-panel: /etc cannot be watched ({e}); a new time zone shows on the next minute"),
+    }
+    // the trash: its folder is watched (made later, it is waited for), so the dock's trash fills and empties as files come and go
+    use rustix::fs::inotify::WatchFlags as W;
+    let trash = shell::trash_dir().map(|d| vec![d]).unwrap_or_default();
+    match folders::FolderWatch::new(trash, W::CREATE | W::DELETE | W::MOVED_FROM | W::MOVED_TO) {
+        Ok(mut w) => {
+            let fd = w.poll_fd().expect("the trash watch");
+            event_loop
+                .handle()
+                .insert_source(calloop::generic::Generic::new(fd, calloop::Interest::READ, calloop::Mode::Level), move |_, _, st| {
+                    w.changed();
+                    let full = shell::trash_has_files();
+                    if full != st.model.trash_full {
+                        st.model.trash_full = full;
+                        st.dirty = true;
                     }
-                    st.dirty = true; // the speed test's progress shows on the next draw
-                }
-                // the cover of what is playing, loaded when the song changes
-                let want = st.model.fylgja.snap.media.as_ref().and_then(|m| m.art.clone());
-                if want != st.art_for {
-                    let scale =
-                        st.surfs.iter().find(|x| x.kind == Kind::Popup).map(|x| st.scale_of(x)).unwrap_or(1.0).ceil().max(1.0) as u32;
-                    st.model.fylgja.art = want.as_deref().and_then(|p| fylgja::load_image(p, 58 * scale, 58 * scale, 8.0 * scale as f32));
-                    st.art_for = want;
-                    st.dirty = true;
-                }
-            }
-            let full = shell::trash_has_files();
-            if full != st.model.trash_full {
-                st.model.trash_full = full;
-                st.dirty = true;
-            }
-            TimeoutAction::ToDuration(Duration::from_secs(1))
-        })
-        .expect("clock timer");
+                    Ok(calloop::PostAction::Continue)
+                })
+                .expect("trash watch");
+        }
+        Err(e) => eprintln!("yggdrasil-panel: the trash cannot be watched ({e}); the dock's trash shows what it held at the start"),
+    }
+    // the mouse's left button (a window dragged to the notch): its presses and releases, and mice plugged in or out
+    event_loop
+        .handle()
+        .insert_source(
+            calloop::generic::Generic::new(
+                state.zone_spotter.events.poll_fd().expect("the mouse buttons' epoll"),
+                calloop::Interest::READ,
+                calloop::Mode::Level,
+            ),
+            |_, _, st| {
+                st.zone_spotter.read();
+                Ok(calloop::PostAction::Continue)
+            },
+        )
+        .expect("mouse buttons");
+    match input_watch() {
+        Ok(fd) => {
+            event_loop
+                .handle()
+                .insert_source(calloop::generic::Generic::new(fd, calloop::Interest::READ, calloop::Mode::Level), |_, fd, st| {
+                    if changed_files(&fd).iter().any(|n| n.starts_with("event")) {
+                        st.zone_spotter.events.reopen();
+                    }
+                    Ok(calloop::PostAction::Continue)
+                })
+                .expect("input devices watch");
+        }
+        Err(e) => eprintln!("yggdrasil-panel: /dev/input cannot be watched ({e}); a mouse plugged in later is not seen at the notch"),
+    }
     // Settings writes ~/.config/yggdrasil (panel.conf, appearance.conf, display.conf, tiling) and Agora pins apps in its dock
     // file: the folder is watched, and a change is taken up as it is written. Screens are Wayland events (layout_stale).
     match config_watch() {
@@ -5306,7 +5234,10 @@ fn main() {
     state.appwatch =
         appwatch::start(&event_loop.handle(), places, |st: &mut State, c| st.apps_or_icons_changed(c), move |e| look_every_4s(&h, e));
 
+    state.handle = Some(event_loop.handle());
+    state.arm_timers();
     let ran = event_loop.run(None, &mut state, |st| {
+        st.arm_timers();
         if st.layout_stale {
             st.layout_stale = false;
             let l = read_layout();
@@ -5333,6 +5264,261 @@ fn main() {
             return;
         }
         panic!("event loop run: {e:?}");
+    }
+}
+
+/// The panel's short timers: each runs only while what it is for goes on, and is dropped when that ends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Tick {
+    /// A window dragged over the zones sheet: the sheet follows the pointer.
+    Follow,
+    /// The left button is held: is a window being dragged to the notch?
+    Spot,
+    /// A full-screen window is in front of the dock's screen: is the pointer pushed against the dock's edge?
+    Peek,
+}
+
+const TICKS: [(Tick, Duration); 3] =
+    [(Tick::Follow, Duration::from_millis(30)), (Tick::Spot, Duration::from_millis(60)), (Tick::Peek, Duration::from_millis(100))];
+
+/// Resting on a dock app this long (as Windows does) lists its windows.
+const HOVER: Duration = Duration::from_millis(400);
+
+impl State {
+    fn tick_wanted(&self, t: Tick) -> bool {
+        match t {
+            Tick::Follow => matches!(self.popup, Some(Popup { kind: PopupKind::Zones(ref z), .. }) if z.mode == zones::Mode::Drag),
+            Tick::Spot => self.popup.is_none() && self.zone_spotter.held(),
+            Tick::Peek => !self.covered.is_empty() || self.dock_peek.is_some(),
+        }
+    }
+
+    fn tick_run(&mut self, t: Tick) {
+        match t {
+            Tick::Follow => self.zones_follow(),
+            Tick::Spot => {
+                if self.zone_spotter.tick() {
+                    zones::note("drag reached the notch (seen by the panel)");
+                    self.zones_open(zones::Mode::Drag);
+                }
+            }
+            Tick::Peek => self.check_dock_peek(),
+        }
+    }
+
+    /// The next moment something waits for: a held key's next repeat (start menu), Snap Assist after a drop, listening again in a
+    /// conversation, the dock's window list after resting on an app, and that list closing after the pointer left it.
+    fn next_deadline(&mut self) -> Option<Instant> {
+        if self.repeat.is_some() && !matches!(self.popup, Some(Popup { kind: PopupKind::Start(_), .. })) {
+            self.repeat = None;
+        }
+        let hover = self.dock_hover.as_ref().filter(|_| self.popup.is_none()).map(|(_, since, _, _)| *since + HOVER);
+        [self.repeat.map(|(_, at)| at), self.assist_after.as_ref().map(|(_, _, at)| *at), self.listen_at, hover, self.preview_close]
+            .into_iter()
+            .flatten()
+            .min()
+    }
+
+    /// What was waited for, when its moment has come.
+    fn run_deadlines(&mut self) {
+        let now = Instant::now();
+        if let Some((key, next)) = self.repeat {
+            if !matches!(self.popup, Some(Popup { kind: PopupKind::Start(_), .. })) {
+                self.repeat = None;
+            } else if now >= next {
+                self.repeat = Some((key, next + Duration::from_millis(1000 / self.repeat_rate.max(1) as u64)));
+                self.key_pressed(key);
+            }
+        }
+        // Snap Assist waiting for a drop to settle
+        if self.assist_after.as_ref().is_some_and(|(_, _, at)| now >= *at) {
+            if let Some((z, hit, _)) = self.assist_after.take() {
+                if self.popup.is_none() {
+                    self.assist_open(&z, hit);
+                }
+            }
+        }
+        // a conversation listens again a breath after she has finished speaking
+        if self.listen_at.is_some_and(|t| now >= t) {
+            self.listen_at = None;
+            self.after_speech();
+        }
+        if self.popup.is_none() {
+            if let Some((id, at, x, out)) = self.dock_hover.clone() {
+                if now >= at + HOVER {
+                    self.dock_hover = None;
+                    self.open_windows_popup(&id, x, out);
+                }
+            }
+        }
+        if self.preview_close.is_some_and(|t| now >= t) {
+            self.preview_close = None;
+            if self.windows_popup_open() {
+                self.close_popup();
+            }
+        }
+    }
+
+    /// Something on screen shows seconds or counts them down: the clock wakes every second instead of every minute.
+    fn needs_seconds(&self) -> bool {
+        self.confirm.is_some()
+            || self.identify_until.is_some()
+            || self.rec_since.is_some()
+            || matches!(
+                self.popup,
+                Some(Popup { kind: PopupKind::Calendar { .. }, .. })
+                    | Some(Popup { kind: PopupKind::Fylgja(_), .. })
+                    | Some(Popup { kind: PopupKind::Addon(_), .. })
+            )
+            || self.model.addons.iter().any(|a| a.until.is_some() && a.text.contains("{countdown}"))
+    }
+
+    /// After every pass of the event loop: the short timers that should run are armed, the ones whose interaction has ended are
+    /// dropped, the next deadline is set, and the clock ticks every minute or every second as needed.
+    fn arm_timers(&mut self) {
+        let Some(h) = self.handle.clone() else { return };
+        for (i, &(t, every)) in TICKS.iter().enumerate() {
+            match (self.tick_wanted(t), self.ticks[i]) {
+                (true, None) => {
+                    self.ticks[i] = h
+                        .insert_source(Timer::from_duration(every), move |_, _, st: &mut State| {
+                            if st.tick_wanted(t) {
+                                st.tick_run(t);
+                            }
+                            if st.tick_wanted(t) {
+                                TimeoutAction::ToDuration(every)
+                            } else {
+                                st.ticks[i] = None;
+                                TimeoutAction::Drop
+                            }
+                        })
+                        .ok();
+                }
+                (false, Some(token)) => {
+                    h.remove(token);
+                    self.ticks[i] = None;
+                }
+                _ => {}
+            }
+        }
+        let due = self.next_deadline();
+        if let Some((token, at)) = self.deadline {
+            if due.is_none_or(|d| d < at) {
+                h.remove(token);
+                self.deadline = None;
+            }
+        }
+        if let (Some(d), None) = (due, self.deadline) {
+            let token = h
+                .insert_source(Timer::from_deadline(d), |_, _, st: &mut State| {
+                    st.deadline = None;
+                    st.run_deadlines();
+                    TimeoutAction::Drop
+                })
+                .ok();
+            self.deadline = token.map(|t| (t, d));
+        }
+        let secs = self.needs_seconds();
+        if self.clock_every_second != Some(secs) {
+            if secs && self.clock_every_second == Some(false) {
+                // seconds from now on (the calendar opened): the time shown must be this second's, not the minute's
+                self.clock_tick();
+            }
+            if let Some(c) = &self.clock {
+                c.arm(secs);
+            }
+            self.clock_every_second = Some(secs);
+        }
+    }
+
+    /// The clock's tick (each minute, or each second while something shows seconds): the time and date, and what counts seconds.
+    fn clock_tick(&mut self) {
+        // first: it notices a new time zone (glibc keeps the one it read first), which the times below then use
+        let today = today_ymd();
+        self.tick_confirm();
+        if self.identify_until.is_some_and(|t| Instant::now() >= t) {
+            self.close_identify();
+        }
+        // add-on countdowns tick by themselves
+        self.model.now_secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+        if self.model.addons.iter().any(|a| a.until.is_some() && a.text.contains("{countdown}")) {
+            self.dirty = true;
+        }
+        // an open card is redrawn each second (its clock, its bar) and read again when it asked to be (codes rolling over)
+        if let Some(Popup { kind: PopupKind::Addon(i), .. }) = self.popup {
+            self.dirty = true;
+            let at = self.model.addons.get(i).and_then(|a| a.refresh_at);
+            if let Some(at) = at.filter(|at| *at <= self.model.now_secs && self.addon_refreshed != Some(*at)) {
+                self.addon_refreshed = Some(at);
+                self.addons_now.ask();
+            }
+        }
+        let h24 = self.model.conf.clock_24h;
+        let now = clock_text(h24);
+        if now != self.model.clock || today != self.model.today {
+            self.model.clock = now;
+            self.model.date = date_text();
+            self.model.today = today;
+            self.dirty = true;
+        }
+        // The calendar shows seconds: redraw it each second while it is open.
+        let secs = secs_text(h24);
+        if secs != self.model.clock_secs {
+            self.model.clock_secs = secs;
+            if matches!(self.popup, Some(Popup { kind: PopupKind::Calendar { .. }, .. }) | Some(Popup { kind: PopupKind::Fylgja(_), .. })) {
+                self.dirty = true;
+            }
+        }
+        // a question being recorded: the seconds, and a recording that stopped by itself (no microphone)
+        if let Some(since) = self.rec_since {
+            let ended = self.rec.as_mut().map(|(c, _)| c.try_wait().map(|r| r.is_some()).unwrap_or(false)).unwrap_or(false);
+            if ended {
+                if let Some((_, path)) = self.rec.take() {
+                    let _ = std::fs::remove_file(path);
+                }
+                self.rec_since = None;
+                self.voice_failed(
+                    "No microphone could be recorded. Check that one is plugged in and not muted, and that this app may use it.",
+                );
+            } else if !self.vad_mode && since.elapsed().as_secs() >= 90 {
+                // a held question no longer than 90 s: past that the key-up was missed, so what was said is sent rather than recorded for ever
+                self.send_recording();
+            } else {
+                self.model.fylgja.voice = fylgja::Voice::Listening(since.elapsed().as_secs());
+            }
+            self.dirty = true;
+        }
+        if matches!(self.popup, Some(Popup { kind: PopupKind::Fylgja(_), .. })) {
+            let snap = self.fy_shared.lock().map(|g| g.clone()).unwrap_or_default();
+            if snap != self.model.fylgja.snap && self.drag.is_none() {
+                self.model.fylgja.snap = snap;
+                self.dirty = true;
+            }
+            // the small card with nothing playing has nothing to show: put it away
+            let nothing = matches!(&self.popup, Some(Popup { kind: PopupKind::Fylgja(f), .. }) if !f.open && !f.pinned && !f.voice_ui)
+                && self.model.fylgja.snap.ready
+                && self.model.fylgja.snap.media.is_none();
+            if nothing {
+                self.peek_blocked = Some(std::time::Instant::now());
+                self.close_popup();
+            }
+            if self.model.notch_tab == Some(2) {
+                let stats = self.stats_shared.lock().map(|g| g.clone()).unwrap_or_default();
+                if stats != self.model.fylgja.stats {
+                    self.model.fylgja.stats = stats;
+                }
+                self.dirty = true; // the speed test's progress shows on the next draw
+            }
+            // the cover of what is playing, loaded when the song changes
+            let want = self.model.fylgja.snap.media.as_ref().and_then(|m| m.art.clone());
+            if want != self.art_for {
+                let scale =
+                    self.surfs.iter().find(|x| x.kind == Kind::Popup).map(|x| self.scale_of(x)).unwrap_or(1.0).ceil().max(1.0) as u32;
+                self.model.fylgja.art = want.as_deref().and_then(|p| fylgja::load_image(p, 58 * scale, 58 * scale, 8.0 * scale as f32));
+                self.art_for = want;
+                self.dirty = true;
+            }
+        }
     }
 }
 
