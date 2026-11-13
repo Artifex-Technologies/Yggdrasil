@@ -65,6 +65,8 @@ hl.config({
     kb_options = kb_options,
     -- click to focus, as on Windows and macOS (moving the pointer alone does not change the focused window)
     follow_mouse = 2,
+    -- a touchpad scrolls the way the content moves, as on Windows and macOS (Hyprland's default is the reverse)
+    touchpad = { natural_scroll = true },
   },
 
   general = {
@@ -116,6 +118,10 @@ hl.config({
 
   cursor = {
     hide_on_key_press = false,
+    -- the pointer moves only when you move it, as on Windows and macOS. Hyprland warps it to the middle of a window that is
+    -- focused by a command, and the keyboard hand-back below focuses the front window whenever a pop-up closes
+    -- (notifications close on their own), so the pointer jumped to the middle of the screen at random (2026-11-13).
+    no_warps = true,
   },
 
   debug = {
