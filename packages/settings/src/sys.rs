@@ -784,9 +784,10 @@ fn parse_hypr_mode(s: &str) -> Option<Mode> {
     Some(Mode { id: hypr_mode_id(w, h, r), width: w, height: h, refresh: r })
 }
 
-/// The monitor lines of `~/.config/yggdrasil/monitors.lua` for these screens (what Yggdrasil's Hyprland config loads).
+/// The monitor lines of `~/.config/yggdrasil/monitors.lua` for these screens (what Yggdrasil's Hyprland config and its own
+/// compositor load).
 pub fn hypr_monitors_lua(outs: &[Output]) -> String {
-    let mut t = String::from("-- Written by Settings > Displays. Loaded by Yggdrasil's Hyprland config.\n");
+    let mut t = String::from("-- Written by Settings > Displays. Loaded by Yggdrasil's Hyprland config and its own compositor.\n");
     for o in outs {
         if !o.enabled {
             t.push_str(&format!("hl.monitor({{ output = \"{}\", disabled = true }})\n", o.name));
@@ -800,13 +801,17 @@ pub fn hypr_monitors_lua(outs: &[Output]) -> String {
     t
 }
 
-/// Changes one screen's mode or scale in Hyprland: the whole list is written (from what Hyprland reports now, with the change) and
-/// Hyprland reads it again. Yggdrasil's own compositor cannot change a screen yet (wlr-output-management is still to come).
-pub fn hypr_set(name: &str, mode: Option<&str>, scale: Option<f64>) -> Result<(), String> {
-    if matches!(desk(), Some(yggdrasil_wm::Desk::Own(_))) {
-        return Err("Yggdrasil's own compositor cannot change a screen's mode or scale yet".into());
-    }
-    let mut outs = outputs_from(&screens_all().ok_or("Hyprland did not answer")?);
+/// Changes one screen's mode or scale: the whole list is written to ~/.config/yggdrasil/monitors.lua (from what the compositor
+/// reports now, with the change) and the compositor reads it again. Hyprland's session config and Yggdrasil's own compositor
+/// both load that file on reload (the compositor since 2026-11-12, its gap item 3), so this is the same on both.
+pub fn set_screen(name: &str, mode: Option<&str>, scale: Option<f64>) -> Result<(), String> {
+    let outs = outputs_from(&screens_all().ok_or("The compositor did not answer")?);
+    write_monitors(outs, name, mode, scale, &yggdrasil_conf::dirs::config().join("monitors.lua"))?;
+    reload()
+}
+
+/// The screens with one changed, as monitors.lua at `path`.
+fn write_monitors(mut outs: Vec<Output>, name: &str, mode: Option<&str>, scale: Option<f64>, path: &std::path::Path) -> Result<(), String> {
     let o = outs.iter_mut().find(|o| o.name == name).ok_or("that screen is not there")?;
     if let Some(m) = mode {
         o.current = m.to_string();
@@ -814,9 +819,10 @@ pub fn hypr_set(name: &str, mode: Option<&str>, scale: Option<f64>) -> Result<()
     if let Some(s) = scale {
         o.scale = s;
     }
-    let p = yggdrasil_conf::dirs::config().join("monitors.lua");
-    std::fs::write(&p, hypr_monitors_lua(&outs)).map_err(|e| e.to_string())?;
-    reload()
+    if let Some(d) = path.parent() {
+        std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(path, hypr_monitors_lua(&outs)).map_err(|e| e.to_string())
 }
 
 /// Turns tiling on or off for one screen: the shared list (yggdrasil_conf::tiling) and then whoever draws the windows.
@@ -1897,6 +1903,80 @@ fn cursor_in(text: &str) -> Option<String> {
         .find(|(k, _)| k.trim() == "cursor")
         .map(|(_, v)| v.trim().to_string())
         .filter(|v| !v.is_empty())
+}
+
+#[cfg(test)]
+mod screen_tests {
+    //! Settings > Displays on Yggdrasil's own compositor: a stand-in for its control socket in a runtime folder of the test's own
+    //! (the desktop's is never named, and Hyprland's variable is taken away), and monitors.lua written in a temporary config
+    //! folder.
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixListener;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn a_screen_is_changed_on_our_own_compositor_as_on_hyprland() {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let d = std::env::temp_dir().join(format!("ygg-settings-screens-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("run")).unwrap();
+        let listener = UnixListener::bind(d.join("run/yggdrasil-compositor-wayland-test.ctl")).unwrap();
+        let asked: Arc<Mutex<Vec<String>>> = Arc::default();
+        let log = asked.clone();
+        std::thread::spawn(move || {
+            for c in listener.incoming() {
+                let Ok(mut c) = c else { break };
+                let mut line = String::new();
+                if BufReader::new(&c).read_line(&mut line).is_err() {
+                    continue;
+                }
+                let cmd = line.trim().to_string();
+                let answer = match cmd.as_str() {
+                    "workspaces" => "1\t1\tshown\nok\n",
+                    "screens all" => {
+                        "HEADLESS-1\t0,0\t1280x720\t1\t0,0,0,0\tfocused\t60.00\t1280x720@60.00Hz,1920x1080@60.00Hz\ton\n\
+                         HEADLESS-2\t1280,0\t1600x900\t1.5\t0,0,0,0\t-\t59.95\t1600x900@59.95Hz\ton\nok\n"
+                    }
+                    _ => "ok\n",
+                };
+                log.lock().unwrap().push(cmd);
+                let _ = c.write_all(answer.as_bytes());
+            }
+        });
+        let saved: Vec<(&str, Option<std::ffi::OsString>)> =
+            ["XDG_RUNTIME_DIR", "WAYLAND_DISPLAY", "HYPRLAND_INSTANCE_SIGNATURE", "XDG_CONFIG_HOME"]
+                .iter()
+                .map(|k| (*k, std::env::var_os(k)))
+                .collect();
+        std::env::set_var("XDG_RUNTIME_DIR", d.join("run"));
+        std::env::set_var("WAYLAND_DISPLAY", "wayland-test");
+        std::env::remove_var("HYPRLAND_INSTANCE_SIGNATURE");
+        std::env::set_var("XDG_CONFIG_HOME", d.join("config"));
+        assert!(matches!(super::desk(), Some(yggdrasil_wm::Desk::Own(_))), "the stand-in is the compositor found");
+        let mode = super::set_screen("HEADLESS-1", Some("1920x1080@60.00"), None);
+        let scale = super::set_screen("HEADLESS-2", None, Some(2.0));
+        let missing = super::set_screen("HDMI-A-9", None, Some(1.0));
+        let lua = std::fs::read_to_string(d.join("config/yggdrasil/monitors.lua")).unwrap_or_default();
+        for (k, v) in saved {
+            match v {
+                Some(v) => std::env::set_var(k, v),
+                None => std::env::remove_var(k),
+            }
+        }
+        let _ = std::fs::remove_dir_all(&d);
+        assert_eq!((mode, scale), (Ok(()), Ok(())), "no longer refused on our own compositor");
+        assert!(missing.is_err());
+        assert_eq!(
+            lua.lines().skip(1).collect::<Vec<_>>(),
+            [
+                r#"hl.monitor({ output = "HEADLESS-1", mode = "1280x720@60.00", position = "0x0", scale = 1 })"#,
+                r#"hl.monitor({ output = "HEADLESS-2", mode = "1600x900@59.95", position = "1280x0", scale = 2 })"#,
+            ],
+            "the last change holds what the compositor reports now, with the change; the form both compositors read"
+        );
+        let asked = asked.lock().unwrap().clone();
+        assert_eq!(asked.iter().filter(|c| *c == "reload").count(), 2, "read again after each change: {asked:?}");
+    }
 }
 
 #[cfg(test)]

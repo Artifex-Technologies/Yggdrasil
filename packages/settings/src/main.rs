@@ -2090,7 +2090,8 @@ impl App {
                         },
                     );
                 });
-                if !o.primary && !hypr {
+                // neither compositor has a main screen of its own to set (the bar and dock follow the top-left one)
+                if !o.primary && !hypr && !matches!(sys::desk(), Some(yggdrasil_wm::Desk::Own(_))) {
                     ui::row(ui, pal, false, "Main display", Some("The top bar and dock live here"), |ui| {
                         if ui::quiet(ui, pal, "Make main").clicked() {
                             cmd = Some(vec![format!("output.{}.priority.1", o.name)]);
@@ -2120,8 +2121,8 @@ impl App {
                 // the choices as Hyprland settings: "output.NAME.mode.ID" or "output.NAME.scale.S"
                 let parts: Vec<&str> = args[0].splitn(4, '.').collect();
                 match parts.as_slice() {
-                    ["output", name, "mode", id] => sys::hypr_set(name, Some(id), None),
-                    ["output", name, "scale", s] => sys::hypr_set(name, None, s.parse().ok()),
+                    ["output", name, "mode", id] => sys::set_screen(name, Some(id), None),
+                    ["output", name, "scale", s] => sys::set_screen(name, None, s.parse().ok()),
                     _ => Err("not available here yet".into()),
                 }
             });
