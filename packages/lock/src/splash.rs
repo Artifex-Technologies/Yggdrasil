@@ -17,7 +17,6 @@ mod design;
 #[allow(dead_code)]
 mod draw;
 
-use std::io::{Read, Write};
 use std::os::fd::AsFd;
 use std::time::{Duration, Instant};
 
@@ -582,22 +581,10 @@ impl App {
         s.surface.commit();
     }
 
-    /// The desktop is ready once Yggdrasil's top bar is on a screen (Hyprland lists its layer).
+    /// The desktop is ready once Yggdrasil's top bar is on a screen (the compositor lists its layer, through yggdrasil-wm).
     fn desktop_ready() -> bool {
-        hypr("j/layers").map(|t| t.contains("\"yggdrasil-panel\"")).unwrap_or(false)
+        yggdrasil_wm::Desk::detect().and_then(|d| d.has_layer("yggdrasil-panel")).unwrap_or(false)
     }
-}
-
-/// One request to Hyprland's control socket.
-fn hypr(request: &str) -> Option<String> {
-    let dir =
-        std::path::PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR")?).join("hypr").join(std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE")?);
-    let mut s = std::os::unix::net::UnixStream::connect(dir.join(".socket.sock")).ok()?;
-    s.set_read_timeout(Some(Duration::from_millis(500))).ok()?;
-    s.write_all(request.as_bytes()).ok()?;
-    let mut out = String::new();
-    s.read_to_string(&mut out).ok()?;
-    Some(out)
 }
 
 fn main() {

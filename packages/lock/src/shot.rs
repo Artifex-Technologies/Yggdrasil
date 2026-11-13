@@ -404,34 +404,36 @@ fn from_ppm(data: &[u8]) -> Option<Img> {
     Some(Img { w, h, bright, dim })
 }
 
-/// The windows on each screen, from Hyprland (in each screen's picture's pixels). Empty elsewhere: then a click takes the screen.
-fn hypr_windows() -> std::collections::HashMap<String, Vec<R>> {
+/// The windows on each screen, from the compositor (yggdrasil-wm: Hyprland or Yggdrasil's own), in each screen's picture's
+/// pixels. Empty when it does not answer: then a click takes the screen.
+fn compositor_windows() -> std::collections::HashMap<String, Vec<R>> {
+    let Some(d) = yggdrasil_wm::Desk::detect() else { return Default::default() };
+    let screens = d.screens();
+    match d.try_windows() {
+        Some(windows) if !screens.is_empty() => windows_on_screens(&screens, &windows),
+        _ => Default::default(),
+    }
+}
+
+/// Each screen's windows on the desktops it shows (and a hidden workspace open over it), not hidden or unmapped ones.
+fn windows_on_screens(screens: &[yggdrasil_wm::Screen], windows: &[yggdrasil_wm::Window]) -> std::collections::HashMap<String, Vec<R>> {
     let mut out = std::collections::HashMap::new();
-    let json = |a: &str| -> Option<serde_json::Value> {
-        let o = Command::new("hyprctl").args(["-j", a]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
-        serde_json::from_slice(&o.stdout).ok()
-    };
-    let (Some(mons), Some(clients)) = (json("monitors"), json("clients")) else { return out };
-    for m in mons.as_array().into_iter().flatten() {
-        let name = m["name"].as_str().unwrap_or("").to_string();
-        let (mx, my, scale) = (m["x"].as_f64().unwrap_or(0.0), m["y"].as_f64().unwrap_or(0.0), m["scale"].as_f64().unwrap_or(1.0));
-        let shown = [m["activeWorkspace"]["id"].as_i64(), m["specialWorkspace"]["id"].as_i64().filter(|id| *id != 0)];
+    for m in screens {
+        let (mx, my, scale) = (m.x as f64, m.y as f64, m.scale.unwrap_or(1.0));
+        let shown = [m.active_workspace, m.special_workspace_id];
         let mut v = vec![];
-        for c in clients.as_array().into_iter().flatten() {
-            if c["hidden"].as_bool() == Some(true)
-                || c["mapped"].as_bool() == Some(false)
-                || !shown.contains(&c["workspace"]["id"].as_i64())
-            {
+        for c in windows {
+            if c.hidden || !c.mapped || !shown.contains(&c.workspace) {
                 continue;
             }
-            let at = (c["at"][0].as_f64().unwrap_or(0.0), c["at"][1].as_f64().unwrap_or(0.0));
-            let size = (c["size"][0].as_f64().unwrap_or(0.0), c["size"][1].as_f64().unwrap_or(0.0));
+            let at = c.at.unwrap_or((0.0, 0.0));
+            let size = c.size.unwrap_or((0.0, 0.0));
             v.push(R::from_corners(
                 ((at.0 - mx) * scale, (at.1 - my) * scale),
                 ((at.0 - mx + size.0) * scale, (at.1 - my + size.1) * scale),
             ));
         }
-        out.insert(name, v);
+        out.insert(m.name.clone(), v);
     }
     out
 }
@@ -526,7 +528,7 @@ fn main() {
     let shots: Vec<Option<Img>> = std::thread::scope(|sc| {
         names.iter().map(|n| sc.spawn(move || capture(n))).collect::<Vec<_>>().into_iter().map(|h| h.join().ok().flatten()).collect()
     });
-    let mut windows = hypr_windows();
+    let mut windows = compositor_windows();
     for (s, img) in app.screens.iter_mut().zip(shots) {
         s.img = img;
         s.windows = windows.remove(&s.name).unwrap_or_default();
@@ -600,6 +602,23 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_screens_windows_in_its_pictures_pixels() {
+        let screens = yggdrasil_wm::hyprland::parse_monitors(
+            r#"[{"name":"DP-1","x":0,"y":0,"width":2560,"height":1440,"scale":1,"activeWorkspace":{"id":2},"specialWorkspace":{"name":""}},
+                {"name":"HDMI-A-1","x":2560,"y":0,"width":1920,"height":1080,"scale":1.25,"activeWorkspace":{"id":3}}]"#,
+        );
+        let windows = yggdrasil_wm::hyprland::parse_clients(
+            r#"[{"address":"0x1","at":[40,128],"size":[1200,800],"workspace":{"id":2,"name":"2"}},
+                {"address":"0x2","at":[300,200],"size":[900,600],"workspace":{"id":-98,"name":"special:minimized"}},
+                {"address":"0x3","at":[2600,60],"size":[900,700],"workspace":{"id":3,"name":"3"}},
+                {"address":"0x4","at":[0,0],"size":[10,10],"workspace":{"id":2},"hidden":true}]"#,
+        );
+        let w = windows_on_screens(&screens, &windows);
+        assert_eq!(w["DP-1"].iter().map(|r| (r.x, r.y, r.w, r.h)).collect::<Vec<_>>(), [(40, 128, 1200, 800)]);
+        assert_eq!(w["HDMI-A-1"].iter().map(|r| (r.x, r.y, r.w, r.h)).collect::<Vec<_>>(), [(50, 75, 1125, 875)], "at the screen's scale");
+    }
 
     #[test]
     fn ppm_becomes_bgra() {

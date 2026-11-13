@@ -27,6 +27,8 @@ test-auth = []
 
 [dependencies]
 yggdrasil-conf = { path = "../yggdrasil-conf" }
+# the screenshot tool's windows and the splash's "is the desktop up" (Hyprland or Yggdrasil's own compositor)
+yggdrasil-wm = { path = "../wm" }
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
