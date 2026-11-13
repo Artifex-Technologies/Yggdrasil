@@ -216,9 +216,10 @@ the bugs the port fixed and where the Rust one is worse.
 | liki-build, liki-icns, liki-icon-import | a pack of 3,000 icons 127 → 30.3 ms (−76 %) | 22.5 → 5.7 MB (−74 %) | [liki](packages/liki/README.md) |
 | yggdrasil-install-system | `--check` 35.6 → 0.72 ms (−98 %); a whole install (stand-ins) 106 → 62.4 ms CPU | 18.0 → 3.6 MB (−80 %) | [install-system](packages/install-system/README.md) |
 | the lights hook (shell; now inside yggdrasil-idle) | lights-off 100 → 2.82 ms (−97 %), lights-on 20.5 → 0.91 ms (−96 %) | 175 processes per lights-off → 0 | [idle](packages/idle/README.md) |
+| the session's, panel's, Liki's, Agora's and spell check's last 11 shell scripts | `liki-icon --import` 32.4 → 2.43 ms (−93 %); the plugin loader at login 20.3 → 3.01 ms (−85 %); a key press (panelctl) 4.19 → 3.61 ms | the plugin loader 11.1 → 3.8 MB (no Python) | [PORT_NUMBERS](docs/PORT_NUMBERS.md#the-desktops-last-shell-scripts-2026-11-12) |
 
 On disk the binaries are bigger than the scripts (0.3 to 1.3 MB each against a few KB), but the scripts needed Python
-(75 MB), and Agora, the theme package, Liki and the installer no longer do.
+(75 MB), and Agora, the theme package, Liki, the session and the installer no longer do.
 
 ## Building
 

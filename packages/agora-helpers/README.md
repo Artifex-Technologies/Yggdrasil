@@ -1,7 +1,8 @@
-# Agora's administrator helper (Rust): pkg-root
+# Agora's administrator helpers (Rust): pkg-root and the sudo stand-in
 
 `/usr/lib/agora/pkg-root` runs one pacman command with administrator rights for Agora, so an install can be cancelled and
-cleaned up. Agora's sudo stand-in (`packages/market/helpers/sudo`, given to yay) runs it through pkexec:
+cleaned up. Agora's sudo stand-in (`/usr/lib/agora/sudo`, given to yay; `src/bin/agora-sudo.rs`, a shell script until
+2026-11-12, 9 of 9 cases the same in `tools/parity-shell-ports.py`) runs it through pkexec:
 
     pkexec /usr/lib/agora/pkg-root CANCELFILE pacman OPTIONS... PACKAGES...
 

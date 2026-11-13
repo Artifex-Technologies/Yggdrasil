@@ -6,6 +6,8 @@
 //!   import/      liki-icon-import: an Android icon pack (.apk) as a Linux icon theme; the pack is only read
 //!                (zip.rs: the archive as Python's zipfile read it; axml.rs: Android's compiled XML; xml.rs: plain XML
 //!                through libexpat, the parser Python's ElementTree used)
+//!   icon.rs      liki-icon: an app's icon replaced by a picture (.svg, .png, .icns), a folder of them imported, or reset
+//!   minos_icon.rs liki-minos-icon: Minos's icon for the icon pack in use, in the accent colour
 //!   argparse.rs  the command lines as Python's argparse parsed and printed them (help, usage, errors, exit code 2)
 //!   py.rs        the Python behaviours the scripts' results depend on (text files with universal newlines, float
 //!                formatting, folder listings in the folder's own order, ~ and $XDG_* as os.path did)
@@ -16,7 +18,9 @@
 pub mod argparse;
 pub mod build;
 pub mod icns;
+pub mod icon;
 pub mod import;
+pub mod minos_icon;
 pub mod py;
 pub mod pyjson;
 

@@ -23,7 +23,9 @@ keeps **one word list** that all your apps share.
   - The root unit `yggdrasil-spell-global.path` runs `yggdrasil-spell global merge` when an offer changes. It writes
     `global.txt` (for everyone) and `pending.txt` (words one account offered, without saying which; readable by the `wheel`
     group only).
-  - Administrators choose in Settings (Share / Don't share), through `pkexec /usr/lib/yggdrasil/spell-global approve|deny WORD`.
+  - Administrators choose in Settings (Share / Don't share), through `pkexec /usr/lib/yggdrasil/spell-global approve|deny WORD`
+    (`src/bin/spell-global.rs`, which becomes `yggdrasil-spell global ...`; a shell script until 2026-11-12, so no shell runs
+    as root between pkexec and the word list now).
     A word denied never reaches the shared list.
   - Shared words reach every app's list like a word pack that is on, and never join an account's own list.
 

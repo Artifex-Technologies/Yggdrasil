@@ -1,5 +1,6 @@
 # Agora: apps in one place (built from packages/market in this repository), with its administrator helper pkg-root from
-# packages/agora-helpers (Rust; the Python script it replaced is kept in packages/market/helpers/python for a rollback).
+# packages/agora-helpers (Rust; the Python script it replaced is kept in packages/market/helpers/python for a rollback), and the
+# sudo stand-in it gives yay (Rust since 2026-11-12, was the shell script packages/market/helpers/sudo).
 pkgname=yggdrasil-agora
 pkgver=1.0.0
 pkgrel=1
@@ -41,7 +42,7 @@ package() {
   install -Dm755 "$srcdir/target/release/agora" "$pkgdir/usr/bin/agora"
   install -Dm644 "$_src/agora.desktop" "$pkgdir/usr/share/applications/agora.desktop"
   # the administrator helpers: a password-box stand-in for sudo, and one narrow pacman command that can be cancelled and cleaned up
-  install -Dm755 "$_src/helpers/sudo" "$pkgdir/usr/lib/agora/sudo"
+  install -Dm755 "$srcdir/target/release/agora-sudo" "$pkgdir/usr/lib/agora/sudo"
   install -Dm755 "$srcdir/target/release/pkg-root" "$pkgdir/usr/lib/agora/pkg-root"
   # the password is remembered a few minutes for the helper only, so one update asks once
   install -Dm644 "$_src/data/org.yggdrasil.agora.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.agora.policy"

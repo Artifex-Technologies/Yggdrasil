@@ -48,6 +48,6 @@ package() {
   install -Dm644 "$_src/yggdrasil-spell-global.service" "$pkgdir/usr/lib/systemd/system/yggdrasil-spell-global.service"
   install -dm755 "$pkgdir/usr/lib/systemd/system/paths.target.wants"
   ln -s ../yggdrasil-spell-global.path "$pkgdir/usr/lib/systemd/system/paths.target.wants/yggdrasil-spell-global.path"
-  install -Dm755 "$_src/spell-global" "$pkgdir/usr/lib/yggdrasil/spell-global"
+  install -Dm755 "$srcdir/target/release/spell-global" "$pkgdir/usr/lib/yggdrasil/spell-global"
   install -Dm644 "$_src/org.yggdrasil.spell.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.spell.policy"
 }

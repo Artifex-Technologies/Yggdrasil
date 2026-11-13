@@ -9,6 +9,20 @@ license = "MPL-2.0"
 name = "yggdrasil-panel"
 path = "src/main.rs"
 
+# the small commands for key bindings and the panel (installed in /usr/bin): the panel's remote, the multimedia keys, and
+# opening a drive just connected
+[[bin]]
+name = "yggdrasil-panelctl"
+path = "src/bin/yggdrasil-panelctl.rs"
+
+[[bin]]
+name = "yggdrasil-mediakey"
+path = "src/bin/yggdrasil-mediakey.rs"
+
+[[bin]]
+name = "yggdrasil-mount-open"
+path = "src/bin/yggdrasil-mount-open.rs"
+
 [dependencies]
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }

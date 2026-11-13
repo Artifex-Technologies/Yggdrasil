@@ -1,0 +1,40 @@
+[package]
+name = "yggdrasil-session-tools"
+version = "0.1.0"
+edition = "2021"
+description = "The session's small programs in Rust: the magnifier (yggdrasil-zoom), the screen reader switch (yggdrasil-screen-reader), the Hyprland plugin loader (yggdrasil-hypr-plugin) and the Hyprland log keeper (yggdrasil-hypr-logkeep), replacing the shell scripts of the same names with the same arguments, output, files, calls and exit codes"
+license = "MPL-2.0"
+
+[lib]
+name = "session_tools"
+path = "src/lib.rs"
+
+# installed in /usr/bin (packages/pkgbuilds/yggdrasil-session)
+[[bin]]
+name = "yggdrasil-zoom"
+path = "src/bin/yggdrasil-zoom.rs"
+
+[[bin]]
+name = "yggdrasil-screen-reader"
+path = "src/bin/yggdrasil-screen-reader.rs"
+
+[[bin]]
+name = "yggdrasil-hypr-plugin"
+path = "src/bin/yggdrasil-hypr-plugin.rs"
+
+[[bin]]
+name = "yggdrasil-hypr-logkeep"
+path = "src/bin/yggdrasil-hypr-logkeep.rs"
+
+# libc: setsid, kill, localtime_r and access; serde_json: Hyprland's version (hyprctl -j version), which the script read
+# with python3
+[dependencies]
+libc = "0.2"
+serde_json = "1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

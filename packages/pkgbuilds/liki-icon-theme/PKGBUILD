@@ -1,6 +1,6 @@
 # Liki: Yggdrasil's icon pack (used by every system that installs Yggdrasil) and the tools that build and manage it (packages/liki).
-# liki-build, liki-icns and liki-icon-import are Rust (packages/liki/src; the Python scripts they replaced are kept in
-# packages/liki/python for a rollback); liki-icon and liki-minos-icon are shell scripts.
+# Its tools are Rust (packages/liki/src): liki-build, liki-icns and liki-icon-import (the Python scripts they replaced are kept in
+# packages/liki/python for a rollback), liki-icon and liki-minos-icon (shell scripts until 2026-11-12).
 pkgname=liki-icon-theme
 pkgver=1.0.0
 pkgrel=1
@@ -39,8 +39,7 @@ package() {
   # the pack itself: Yggdrasil's own icons and the default app icon (the apps' logos are made per user by liki-build)
   LIKI_BRAND_ICONS="$_src/share/brand-icons" "$srcdir/target/release/liki-build" --natives-only --out "$pkgdir/usr/share/icons/Liki"
   rm -f "$pkgdir/usr/share/icons/Liki/icon-theme.cache"
-  for f in liki-build liki-icns liki-icon-import; do install -Dm755 "$srcdir/target/release/$f" "$pkgdir/usr/bin/$f"; done
-  for f in "$_src"/bin/liki-*; do install -Dm755 "$f" "$pkgdir/usr/bin/$(basename "$f")"; done
+  for f in liki-build liki-icns liki-icon-import liki-icon liki-minos-icon; do install -Dm755 "$srcdir/target/release/$f" "$pkgdir/usr/bin/$f"; done
   install -Dm644 "$_src/README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
   # the old names keep working until Yggdrasil's programs are renamed
   install -Dm644 "$_src/liki-minos-icon.desktop" "$pkgdir/etc/xdg/autostart/liki-minos-icon.desktop"

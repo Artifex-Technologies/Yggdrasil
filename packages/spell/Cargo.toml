@@ -17,6 +17,11 @@ path = "src/main.rs"
 name = "yggdrasil-autocorrect"
 path = "src/bin/autocorrect.rs"
 
+# installed as /usr/lib/yggdrasil/spell-global: the approve/deny helper Settings runs through pkexec
+[[bin]]
+name = "spell-global"
+path = "src/bin/spell-global.rs"
+
 [dependencies]
 spellbook = "0.4.2"
 yggdrasil-conf = { path = "../yggdrasil-conf" }

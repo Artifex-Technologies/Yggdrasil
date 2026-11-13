@@ -285,3 +285,51 @@ processes are counted from the PID namespace's last PID.
 | lights-on | wall (median; p10–p90) | 20.5 ms (19.7 ms–21.6 ms) | 0.91 ms (0.80 ms–1.05 ms) | −96 %, 19.6 ms faster |
 | | CPU time | 17.8 ms | 0.51 ms | −97 %, 17.3 ms less |
 | | processes started | 21 | 0 (2 threads) | |
+
+### The desktop's last shell scripts (2026-11-12)
+
+Eleven shell scripts of the session, the panel, Liki, Agora and the spell check became Rust programs of the same names on
+2026-11-12: `yggdrasil-zoom`, `yggdrasil-screen-reader`, `yggdrasil-hypr-plugin` and `yggdrasil-hypr-logkeep`
+([packages/session](../packages/session/src)), `yggdrasil-panelctl`, `yggdrasil-mediakey` and `yggdrasil-mount-open`
+([packages/panel](../packages/panel/src/bin)), `liki-icon` and `liki-minos-icon` ([packages/liki](../packages/liki/README.md)),
+Agora's sudo stand-in `/usr/lib/agora/sudo` ([packages/agora-helpers](../packages/agora-helpers/README.md)) and the spell
+check's root helper `/usr/lib/yggdrasil/spell-global` ([packages/spell](../packages/spell/README.md)).
+
+Measured differently from the cases above: with `tools/parity-shell-ports.py --bench 30`, which first runs every case of
+both on the same made-up world and compares exit code, output, errors, the stand-ins' calls and every file left (131 of 131
+the same, against the scripts at f54dc78, which has the fixes below; 120 of 131 against the scripts before them, the 11 others
+being those bugs). Then the everyday cases, 30 runs of each side after two warm-up runs, taking turns, at nice 19, each run
+started by bench-port's launcher inside the case's namespaces (the namespaces' own set-up is not counted).
+
+Most of these programs are a few lines that start another program (busctl, wpctl, hyprctl, pkexec, udisksctl). In the cases
+that program is a stand-in, a small shell script (about 1.5–2 ms and 3.7 MB each), and it is counted on both sides: in the
+Rust columns it is most of the time and the whole peak memory. The real busctl or wpctl costs the same on both sides.
+
+| Program and case | Script | Rust | Change | CPU, script → Rust | Peak RSS, script → Rust |
+| --- | --- | --- | --- | --- | --- |
+| yggdrasil-zoom in | 4.12 ms (4.00–4.24) | 2.46 ms (2.41–2.52) | −40 %, 1.66 ms faster | 4.96 → 2.41 ms | 4.2 → 3.7 MB |
+| yggdrasil-screen-reader, Orca running: stopped | 4.40 ms (4.13–4.98) | 1.74 ms (1.70–1.96) | −60 %, 2.66 ms faster | 4.30 → 1.68 ms | 3.9 → 3.8 MB |
+| yggdrasil-hypr-plugin, already loaded (every login) | 20.3 ms (18.5–26.0) | 3.01 ms (2.83–3.93) | −85 %, 17.3 ms faster | 22.4 → 3.00 ms | **11.1 → 3.8 MB** |
+| yggdrasil-hypr-plugin, built (g++ stand-in) and loaded | 24.9 ms (24.4–25.6) | 6.19 ms (6.00–6.53) | −75 %, 18.7 ms faster | 26.9 → 6.19 ms | 11.1 → 3.8 MB |
+| yggdrasil-hypr-logkeep, two logs compressed, old ones removed, the log followed | 8.06 ms (6.56–11.7) | 3.28 ms (2.50–5.79) | −59 %, 4.78 ms faster | 9.42 → 2.58 ms | 4.1 → 3.3 MB |
+| yggdrasil-panelctl start | 4.19 ms (3.32–7.54) | 3.61 ms (2.41–7.80) | −14 %, 0.58 ms faster | 3.03 → 2.34 ms | 3.8 → 3.8 MB |
+| yggdrasil-mediakey volume-up | 5.23 ms (2.86–7.87) | 4.73 ms (2.27–6.61) | −10 %, 0.50 ms faster | 2.91 → 2.30 ms | 3.8 → 3.7 MB |
+| yggdrasil-mediakey play-pause (a player running) | 10.3 ms (7.71–15.3) | 8.31 ms (4.95–10.9) | −19 %, 1.94 ms faster | 7.36 → 4.32 ms | 4.3 → 3.8 MB |
+| yggdrasil-mount-open, mounted now | 12.5 ms (8.39–16.1) | 9.52 ms (6.45–20.8) | −24 %, 3.02 ms faster | 8.05 → 5.79 ms | 3.8 → 3.8 MB |
+| Agora's sudo, pacman with a cancel file | 4.21 ms (2.74–8.59) | 2.94 ms (2.29–5.24) | −30 %, 1.27 ms faster | 2.75 → 2.21 ms | 3.8 → 3.7 MB |
+| spell-global approve | 2.89 ms (2.64–4.01) | 2.28 ms (2.16–3.80) | −21 %, 0.61 ms faster | 2.59 → 2.14 ms | 3.8 → 3.7 MB |
+| liki-icon APP FILE.icns | 10.6 ms (8.46–13.3) | 2.47 ms (2.14–3.76) | −77 %, 8.11 ms faster | 8.73 → 2.34 ms | 3.8 → 3.8 MB |
+| liki-icon --import, a folder of 8 pictures | 32.4 ms (26.5–36.5) | 2.43 ms (1.70–2.72) | −93 %, 30.0 ms faster | 31.3 → 2.37 ms | 3.8 → 3.7 MB |
+| liki-minos-icon, a pack's largest PNG | 16.4 ms (15.1–19.6) | 1.95 ms (1.78–2.96) | −88 %, 14.5 ms faster | 23.4 → 1.94 ms | 4.2 → 3.7 MB |
+| liki-minos-icon, the logo in the accent | 17.9 ms (15.9–22.1) | 1.90 ms (1.68–2.46) | −89 %, 16.0 ms faster | 26.3 → 1.85 ms | 3.9 → 3.7 MB |
+| **on disk, the 11 programs** | 18.6 KB of scripts (+ bash, coreutils, sed, awk, find, Python for the plugin) | 3.7 MB (297–373 KB each) | **+3.7 MB** | | |
+
+- Worse: the disk, as with Labyrinth's scripts: each program carries Rust's standard library. Python is no longer needed by
+  the session package (the plugin loader started it to read one JSON field at every login).
+- The everyday cost that matters most is per key press (panelctl on every tap of Super and Ctrl, mediakey on every volume key):
+  there the gain is the shell's start-up, under a millisecond; busctl and wpctl stay.
+- Safer, which is the reason for these ports: no shell between pkexec and yggdrasil-spell or pacman (spell-global and the sudo
+  stand-in run as root's front door); pkg-config's flags reach g++ as words, never through the shell's globbing; the Hyprland
+  version is read as JSON, not by a Python one-liner; the old logs are chosen without `find | sort | cut | xargs rm`; Minos's
+  accent is checked as three numbers before any arithmetic (bash evaluated an accent like `a[$(command)]` as code); and the
+  bugs listed in the packages' READMEs and in f54dc78 (a drive named "Photos at home" opened "home").

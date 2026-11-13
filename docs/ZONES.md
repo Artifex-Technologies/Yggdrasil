@@ -47,7 +47,7 @@ a zone places it.
 | Asking the compositor (the window in front, the pointer, Super held, the screens, placing) | `packages/wm` (yggdrasil-wm: Hyprland or Yggdrasil's own compositor) |
 | Snap Assist (the other zones offered to the other windows) | `packages/panel/src/assist.rs` (`PopupKind::Assist` in `main.rs`) |
 | The bindings and the timer | `packages/session/hyprland/yggdrasil.lua`, the "Window zones" block |
-| `zones`, `zones-drag`, `zones-drop` | `packages/panel/bin/yggdrasil-panelctl` |
+| `zones`, `zones-drag`, `zones-drop` | `packages/panel/src/bin/yggdrasil-panelctl.rs` |
 | Settings > Displays > Window zones | `packages/settings/src/zones_ui.rs` |
 
 Built-in layouts: Halves, Thirds, Wide left (2/3 + 1/3), Wide right, Priority (1/4 + 1/2 + 1/4), Quarters, Grid (3 x 2), Rows,

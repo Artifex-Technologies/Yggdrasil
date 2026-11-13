@@ -36,8 +36,9 @@ package() {
   install -Dm644 "$_src/yggdrasil-panel.desktop" "$pkgdir/usr/share/applications/yggdrasil-panel.desktop"
   # started at login by the desktop session
   install -Dm644 "$_src/yggdrasil-panel-autostart.desktop" "$pkgdir/etc/xdg/autostart/yggdrasil-panel.desktop"
-  # small commands for key bindings and the panel: the panel's remote, the multimedia keys, and opening a drive just connected
-  install -Dm755 "$_src/bin/yggdrasil-panelctl" "$pkgdir/usr/bin/yggdrasil-panelctl"
-  install -Dm755 "$_src/bin/yggdrasil-mediakey" "$pkgdir/usr/bin/yggdrasil-mediakey"
-  install -Dm755 "$_src/bin/yggdrasil-mount-open" "$pkgdir/usr/bin/yggdrasil-mount-open"
+  # small commands for key bindings and the panel (Rust since 2026-11-12, were shell scripts): the panel's remote, the multimedia
+  # keys, and opening a drive just connected
+  install -Dm755 "$srcdir/target/release/yggdrasil-panelctl" "$pkgdir/usr/bin/yggdrasil-panelctl"
+  install -Dm755 "$srcdir/target/release/yggdrasil-mediakey" "$pkgdir/usr/bin/yggdrasil-mediakey"
+  install -Dm755 "$srcdir/target/release/yggdrasil-mount-open" "$pkgdir/usr/bin/yggdrasil-mount-open"
 }

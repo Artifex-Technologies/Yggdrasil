@@ -1,16 +1,19 @@
 # Liki's tools (Rust)
 
-Liki is Yggdrasil's icon pack ([docs/LIKI.md](../../docs/LIKI.md)). Three of its tools are Rust now, replacing the Python
-scripts at the same paths with the same interface: arguments (as Python's argparse took them, help and errors included),
-output, exit codes and files.
+Liki is Yggdrasil's icon pack ([docs/LIKI.md](../../docs/LIKI.md)). All five of its tools are Rust, replacing the Python
+and shell scripts at the same paths with the same interface: arguments (as Python's argparse took them, help and errors
+included), output, exit codes and files.
 
 | Tool | Installed as | For |
 | --- | --- | --- |
 | `liki-build` | `/usr/bin/liki-build` | the pack: Yggdrasil's own glyphs and the installed apps' logos (Simple Icons) as SVG, in a shape and a style; the package runs it with `--natives-only`, Settings > Appearance > Icons runs it ("Make", and `--rebuild` when the accent changes) |
-| `liki-icns` | `/usr/bin/liki-icns` | the biggest PNG in a macOS `.icns` (`liki-icon` uses it) |
+| `liki-icns` | `/usr/bin/liki-icns` | the biggest PNG in a macOS `.icns` (`liki-icon` reads them with the same code) |
 | `liki-icon-import` | `/usr/bin/liki-icon-import` | an Android icon pack (`.apk`) as a Linux icon theme; Settings > Appearance > Icons > "Install an icon pack" runs it |
+| `liki-icon` | `/usr/bin/liki-icon` | an app's icon replaced by a picture (`.svg`, `.png`, `.icns`), a folder of macOS-style icons imported by their file names, or reset (by hand; shell script until 2026-11-12) |
+| `liki-minos-icon` | `/usr/bin/liki-minos-icon` | Minos's icon for the pack in use: nothing for Liki, the pack's own file-manager icon, or the bare logo in the accent; at login, from Settings and the panel (shell script until 2026-11-12) |
 
-`liki-icon` and `liki-minos-icon` stay shell scripts in `bin/`.
+`liki-icon` and `liki-minos-icon` (src/icon.rs, src/minos_icon.rs) were checked against the scripts by
+`tools/parity-shell-ports.py` (15 of 15 and 18 of 18 cases the same); what they do differently is in each module's first lines.
 
 The pack is only ever read: `liki-icon-import` reads the `.apk` as a zip archive the way Python's zipfile read it (the end
 record, ZIP64, data before the archive, cp437 and UTF-8 names, the Unicode path field, the local headers' checks,
@@ -19,6 +22,12 @@ libexpat, the same parser Python's ElementTree used (opened at run time; the pac
 read past its stated size.
 
 ## Bugs fixed (in the Rust tools and in the Python scripts kept for a rollback)
+
+- `liki-minos-icon - - plain` (the style as "-") looked for a picture called `-.svg` and stopped where the pack has no
+  file-manager icon; an accent given that was not three numbers went into bash's arithmetic, which runs `a[$(command)]` as
+  code. Both fixed (in the shell script first, f54dc78, then the port).
+- `liki-icon --import` counted a folder named like a picture (`x.png`) as an imported icon; the usage text printed two lines
+  of the script's code.
 
 - `liki-build`: a pack name with `[` or `*` in it (`--name "Liki[12]"`) was read by `glob` as a pattern: the stale SVGs of
   *other* packs (`Liki1`, `Liki2`) were deleted and the pack's own were not. The folders are now listed as they are.
@@ -93,6 +102,11 @@ script's made-up worlds, on my desktop (16 threads). Method and every case: [doc
 | `liki-icon-import`, a pack of 3,000 icons, wall time | 127 ms | 30.3 ms | −76 %, 97.0 ms faster |
 | peak memory | 10.1–22.5 MB | 2.3–5.7 MB | −74 to −83 % |
 | on disk | 35 KB of scripts (+ Python, 75 MB) | 1.3 MB (three binaries) | +1.3 MB; Liki no longer needs Python |
+
+`liki-icon` and `liki-minos-icon` (the shell scripts, 2026-11-12, `tools/parity-shell-ports.py --bench 30`): `liki-icon
+--import` of 8 pictures 32.4 → 2.43 ms (−93 %), an `.icns` 10.6 → 2.47 ms (−77 %); `liki-minos-icon` 16.4–17.9 → 1.90–1.95 ms
+(−88 to −89 %); 3.8 → 3.7 MB, most of it the stand-in for gtk-update-icon-cache; on disk 9.2 KB of scripts → 0.7 MB. Details in
+[docs/PORT_NUMBERS.md](../../docs/PORT_NUMBERS.md#the-desktops-last-shell-scripts-2026-11-12).
 
 More accurate: the nine bugs listed above under "Bugs fixed" (found while porting, fixed in both), and parity of liki-build
 120 of 120 cases, liki-icns 210 of 210, liki-icon-import 40 of 40 made packs, 17 of 17 crafted archives and 800 of 800
