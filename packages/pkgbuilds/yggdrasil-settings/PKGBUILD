@@ -79,6 +79,12 @@ package() {
   install -Dm644 "$_src/data/org.yggdrasil.powerlimit.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.powerlimit.policy"
   # the boot screen (Appearance > Boot screen): Plymouth's theme, switched on the first time
   install -Dm755 "$srcdir/target/release/bootscreen" "$pkgdir/usr/lib/yggdrasil/bootscreen"
+  # Date & Time > "Set time zone automatically": the helper, its user timer (off until the switch enables it) and the polkit
+  # rule that lets a signed-in administrator set the time zone without a password (approved by the owner, 2026-11-13)
+  install -Dm755 "$srcdir/target/release/autozone" "$pkgdir/usr/lib/yggdrasil/autozone"
+  install -Dm644 "$_src/data/yggdrasil-autozone.service" "$pkgdir/usr/lib/systemd/user/yggdrasil-autozone.service"
+  install -Dm644 "$_src/data/yggdrasil-autozone.timer" "$pkgdir/usr/lib/systemd/user/yggdrasil-autozone.timer"
+  install -Dm644 "$_src/data/50-yggdrasil-timezone.rules" "$pkgdir/usr/share/polkit-1/rules.d/50-yggdrasil-timezone.rules"
   install -Dm644 "$_src/data/org.yggdrasil.bootscreen.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.bootscreen.policy"
   # applies the limits on every power-mode change (a part of yggdrasil-power); the operating system decides whether it is on
   install -Dm644 "$_src/data/yggdrasil-powerlimit.service" "$pkgdir/usr/lib/systemd/system/yggdrasil-powerlimit.service"

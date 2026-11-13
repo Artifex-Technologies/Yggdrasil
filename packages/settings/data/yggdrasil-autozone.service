@@ -1,0 +1,8 @@
+[Unit]
+Description=Set the time zone from where this computer is (Settings > Date & Time)
+Documentation=file:///usr/share/doc/yggdrasil-settings
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/yggdrasil/autozone

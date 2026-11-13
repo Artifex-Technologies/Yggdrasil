@@ -26,6 +26,11 @@ path = "src/bin/game-fix.rs"
 name = "gpu-run"
 path = "src/bin/gpu-run.rs"
 
+# installed as /usr/lib/yggdrasil/autozone, run by the user timer yggdrasil-autozone.timer (Date & Time)
+[[bin]]
+name = "autozone"
+path = "src/bin/autozone.rs"
+
 # image: only the three formats the Python script let Pillow decode (no decoder that hands a file to another program)
 [dependencies]
 libc = "0.2"
@@ -34,6 +39,8 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 yggdrasil-pycompat = { path = "../pycompat" }
 # game-fix: the screen's size from the compositor (Hyprland or Yggdrasil's own)
 yggdrasil-wm = { path = "../wm" }
+ureq = "3"
+serde_json = "1"
 
 [profile.release]
 opt-level = "s"

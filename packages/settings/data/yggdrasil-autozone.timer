@@ -1,0 +1,11 @@
+# Enabled by Settings > Date & Time > "Set time zone automatically" (systemctl --user enable --now); off by default.
+[Unit]
+Description=Check the time zone against where this computer is, now and then
+
+[Timer]
+OnStartupSec=2min
+OnUnitActiveSec=3h
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

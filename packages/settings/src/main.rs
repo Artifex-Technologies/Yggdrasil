@@ -4185,58 +4185,84 @@ impl App {
         let mut clock = yggdrasil_conf::PanelConf::load();
         let mut clock_changed = false;
         let mut zone: Option<String> = None;
+        let mut autozone = t.autozone;
+        let mut autozone_changed = false;
+        // in Windows' order: the time zone (automatically, or chosen), then the time
         ui::group(ui, pal, None, |ui| {
-            ui::row(ui, pal, true, "Set the time automatically", Some("From time servers on the internet"), |ui| {
+            ui::row(
+                ui,
+                pal,
+                true,
+                "Set time zone automatically",
+                Some("From nearby Wi-Fi networks (their IDs, not names) through beaconDB, checked every few hours"),
+                |ui| {
+                    autozone_changed = ui::switch(ui, pal, &mut autozone).changed();
+                },
+            );
+            let current = t.zones.iter().find(|z| z.id == t.timezone).map(|z| z.label.clone()).unwrap_or_else(|| t.timezone.clone());
+            ui::row(ui, pal, false, "Time zone", Some("Daylight saving time is followed automatically"), |ui| {
+                ui.add_enabled_ui(!t.autozone, |ui| {
+                    // As Windows lists them: "(UTC-07:00) Denver, United States", by offset. A combo box closes on any click, its
+                    // own search box included: this one closes only on a click outside it (or on a choice), and the search box has
+                    // the keyboard as soon as the list opens. Enter takes the first match.
+                    let open = egui::ComboBox::from_id_salt("zone")
+                        .selected_text(&current)
+                        .width((ui.available_width() * 0.6).clamp(220.0, 360.0))
+                        .height(360.0)
+                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                        .show_ui(ui, |ui| {
+                            let search =
+                                ui.add(egui::TextEdit::singleline(&mut self.zone_filter).hint_text("Search: a city, a country or UTC-07"));
+                            let opening = !self.zone_open;
+                            if opening {
+                                search.request_focus();
+                            }
+                            let enter = search.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                            let q = self.zone_filter.clone();
+                            let mut matches = t.zones.iter().filter(|z| z.matches(&q)).peekable();
+                            if enter && !q.trim().is_empty() {
+                                zone = matches.peek().map(|z| z.id.clone());
+                            }
+                            for z in matches {
+                                let row = ui.selectable_label(z.id == t.timezone, &z.label);
+                                if opening && z.id == t.timezone {
+                                    // the list opens at the zone in use, as Windows' does
+                                    row.scroll_to_me(Some(egui::Align::Center));
+                                }
+                                if row.clicked() {
+                                    zone = Some(z.id.clone());
+                                }
+                            }
+                            if zone.is_some() {
+                                ui.close();
+                            }
+                        })
+                        .inner
+                        .is_some();
+                    if self.zone_open && !open {
+                        self.zone_filter.clear();
+                    }
+                    self.zone_open = open;
+                });
+            });
+            ui::row(ui, pal, false, "Set time automatically", Some("From time servers on the internet"), |ui| {
                 ntp_changed = ui::switch(ui, pal, &mut ntp).changed();
             });
             ui::row(ui, pal, false, "24-hour clock", Some("In the top bar and the calendar; off shows AM/PM"), |ui| {
                 clock_changed = ui::switch(ui, pal, &mut clock.clock_24h).changed();
             });
-            let current = t.zones.iter().find(|z| z.id == t.timezone).map(|z| z.label.clone()).unwrap_or_else(|| t.timezone.clone());
-            ui::row(ui, pal, false, "Time zone", Some("Daylight saving time is followed automatically"), |ui| {
-                // As Windows lists them: "(UTC-07:00) Denver, United States", by offset. A combo box closes on any click, its
-                // own search box included: this one closes only on a click outside it (or on a choice), and the search box has
-                // the keyboard as soon as the list opens. Enter takes the first match.
-                let open = egui::ComboBox::from_id_salt("zone")
-                    .selected_text(&current)
-                    .width((ui.available_width() * 0.6).clamp(220.0, 360.0))
-                    .height(360.0)
-                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                    .show_ui(ui, |ui| {
-                        let search =
-                            ui.add(egui::TextEdit::singleline(&mut self.zone_filter).hint_text("Search: a city, a country or UTC-07"));
-                        let opening = !self.zone_open;
-                        if opening {
-                            search.request_focus();
-                        }
-                        let enter = search.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                        let q = self.zone_filter.clone();
-                        let mut matches = t.zones.iter().filter(|z| z.matches(&q)).peekable();
-                        if enter && !q.trim().is_empty() {
-                            zone = matches.peek().map(|z| z.id.clone());
-                        }
-                        for z in matches {
-                            let row = ui.selectable_label(z.id == t.timezone, &z.label);
-                            if opening && z.id == t.timezone {
-                                // the list opens at the zone in use, as Windows' does
-                                row.scroll_to_me(Some(egui::Align::Center));
-                            }
-                            if row.clicked() {
-                                zone = Some(z.id.clone());
-                            }
-                        }
-                        if zone.is_some() {
-                            ui.close();
-                        }
-                    })
-                    .inner
-                    .is_some();
-                if self.zone_open && !open {
-                    self.zone_filter.clear();
-                }
-                self.zone_open = open;
-            });
         });
+        if autozone_changed {
+            // on: the timer is enabled and the first check runs now; off: nothing is asked any more
+            self.change(ctx, move || {
+                if autozone {
+                    sys::act("systemctl", &["--user", "enable", "--now", "yggdrasil-autozone.timer"])?;
+                    sys::act("systemctl", &["--user", "start", "yggdrasil-autozone.service"])
+                } else {
+                    sys::act("systemctl", &["--user", "disable", "--now", "yggdrasil-autozone.timer"])
+                }
+            });
+        }
         if ntp_changed {
             let arg = if ntp { "true" } else { "false" };
             self.change(ctx, move || sys::act("timedatectl", &["set-ntp", arg]));

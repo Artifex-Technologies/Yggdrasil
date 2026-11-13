@@ -1252,6 +1252,8 @@ pub fn firewall_on() -> bool {
 pub struct Time {
     pub timezone: String,
     pub ntp: bool,
+    /// "Set time zone automatically": the user timer yggdrasil-autozone.timer is enabled.
+    pub autozone: bool,
     /// The time zones to choose from, as Windows lists them: by their offset from UTC, then by name.
     pub zones: Vec<Zone>,
 }
@@ -1335,7 +1337,8 @@ pub fn time() -> Time {
     let countries = zone_countries(&read("zone.tab"), &read("iso3166.tab"));
     let now = jiff::Timestamp::now();
     let zones = zone_list(&countries, &timezone, |id| jiff::tz::TimeZone::get(id).ok().map(|tz| tz.to_offset(now).seconds()));
-    Time { timezone, ntp, zones }
+    let autozone = run("systemctl", &["--user", "is-enabled", "yggdrasil-autozone.timer"]).is_some_and(|s| s.trim() == "enabled");
+    Time { timezone, ntp, autozone, zones }
 }
 
 // ---------------------------------------------------------------- Apps (the operating system's optional software)
