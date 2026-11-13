@@ -2406,6 +2406,7 @@ dependencies = [
  "wayland-protocols",
  "wayland-protocols-wlr",
  "x11rb",
+ "xcursor",
  "yggdrasil-conf",
  "yggdrasil-wm",
 ]

@@ -1,6 +1,9 @@
 //! wlr-foreign-toplevel-management: tells the dock, the notch and other shell programs which windows exist (title, app id, whether
 //! one is active, minimized, maximized or full screen) and lets them activate, minimize, maximize and close windows. Smithay does not
 //! ship this protocol, so it is written here.
+//!
+//! The standard list, ext-foreign-toplevel-list (title and app id only), comes from Smithay and is kept here alongside: its handles
+//! name the windows for the capture protocols (capture.rs: the panel's window previews).
 
 use smithay::desktop::Window;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
@@ -9,6 +12,9 @@ use wayland_protocols_wlr::foreign_toplevel::v1::server::{
     zwlr_foreign_toplevel_handle_v1::{self, ZwlrForeignToplevelHandleV1},
     zwlr_foreign_toplevel_manager_v1::{self, ZwlrForeignToplevelManagerV1},
 };
+
+use smithay::reexports::wayland_protocols::ext::foreign_toplevel_list::v1::server::ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1;
+use smithay::wayland::foreign_toplevel_list::{ForeignToplevelHandle, ForeignToplevelListHandler, ForeignToplevelListState};
 
 use crate::state::{self, App};
 
@@ -30,6 +36,8 @@ pub struct Entry {
 pub struct Toplevels {
     managers: Vec<ZwlrForeignToplevelManagerV1>,
     entries: Vec<Entry>,
+    /// each window's handle in the standard list (ext-foreign-toplevel-list)
+    listed: Vec<(WlSurface, ForeignToplevelHandle)>,
 }
 
 const STATE_MAXIMIZED: u32 = 0;
@@ -93,6 +101,13 @@ impl App {
         for m in self.toplevels.managers.clone() {
             self.new_handle(&m, window, false);
         }
+        if let Some(surface) = state::surface_of(window) {
+            if !self.toplevels.listed.iter().any(|(s, _)| *s == surface) {
+                let (title, app_id) = state::title_app(window);
+                let handle = self.toplevel_list.new_toplevel::<App>(title, app_id);
+                self.toplevels.listed.push((surface, handle));
+            }
+        }
     }
 
     /// A window closed.
@@ -105,10 +120,42 @@ impl App {
                 true
             }
         });
+        if let Some(i) = self.toplevels.listed.iter().position(|(s, _)| s == surface) {
+            let (_, handle) = self.toplevels.listed.remove(i);
+            self.toplevel_list.remove_toplevel(&handle);
+        }
+    }
+
+    /// The window an ext-foreign-toplevel-list handle names (None when it closed).
+    pub fn window_of_list_handle(&self, handle: &ExtForeignToplevelHandleV1) -> Option<WlSurface> {
+        let h = ForeignToplevelHandle::from_resource(handle)?;
+        let id = h.identifier();
+        self.toplevels.listed.iter().find(|(_, x)| x.identifier() == id).map(|(s, _)| s.clone())
+    }
+
+    /// A window's title and app id in the standard list, when they changed (after every commit of the window, and every frame).
+    pub fn list_refresh(&self, surface: &WlSurface) {
+        let Some((_, handle)) = self.toplevels.listed.iter().find(|(s, _)| s == surface) else { return };
+        let Some(w) = self.window_for(surface) else { return };
+        let (title, app_id) = state::title_app(&w);
+        let (t, a) = (handle.title() != title, handle.app_id() != app_id);
+        if t {
+            handle.send_title(&title);
+        }
+        if a {
+            handle.send_app_id(&app_id);
+        }
+        if t || a {
+            handle.send_done();
+        }
     }
 
     /// Send what changed (title, focus, maximized, minimized, ...) since last time.
     pub fn foreign_refresh(&mut self) {
+        // the standard list: titles and app ids
+        for (surface, _) in &self.toplevels.listed {
+            self.list_refresh(surface);
+        }
         if self.toplevels.entries.is_empty() {
             return;
         }
@@ -187,3 +234,10 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, WlSurface> for App {
         }
     }
 }
+
+impl ForeignToplevelListHandler for App {
+    fn foreign_toplevel_list_state(&mut self) -> &mut ForeignToplevelListState {
+        &mut self.toplevel_list
+    }
+}
+smithay::delegate_foreign_toplevel_list!(App);

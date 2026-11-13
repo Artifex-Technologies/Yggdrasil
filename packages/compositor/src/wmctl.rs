@@ -31,7 +31,7 @@
 //!                               the look's, the tiling screens, Settings > Displays' monitors.lua and the system's keyboard
 //!   paste ctrl|ctrl+shift       press Ctrl+V (or Ctrl+Shift+V, a terminal's) in the window with the keyboard: the clipboard's
 //!                               paste; refused while the screen is locked
-//!   cursor-theme [NAME SIZE]    the pointer's theme and size (kept for when the compositor draws the pointer)
+//!   cursor-theme [NAME SIZE]    the pointer's theme and size (ygg-theme cursor); the pointer is drawn with it from now on
 //!   keyboard [LAYOUT [VARIANT]] the keyboard layout from now on (xkb names); without one, the one in use
 //!   exit                        end the session (yggdrasil-logout, once every window has closed)
 //! ID is a number from `clients`, or `active` for the window with the keyboard.
@@ -201,8 +201,9 @@ pub fn command(words: &[&str], app: &mut App) -> Option<Result<Vec<String>, Stri
         ["cursor-theme", name, size] => {
             let size = size.parse::<u32>().ok().filter(|s| (8..=256).contains(s));
             match size {
-                Some(size) if plain(name) => {
+                Some(size) if plain(name) && crate::pointer::plain(name) => {
                     app.cursor_theme = Some((name.to_string(), size));
+                    app.wake();
                     Ok(vec![])
                 }
                 _ => Err("cursor-theme NAME SIZE: a theme's name and a size from 8 to 256".into()),
@@ -240,7 +241,7 @@ fn plain(s: &str) -> bool {
 }
 
 /// Milliseconds on a clock of this process (the time stamp of the keys `paste` presses).
-fn now_ms() -> u32 {
+pub fn now_ms() -> u32 {
     static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
     START.get_or_init(std::time::Instant::now).elapsed().as_millis() as u32
 }

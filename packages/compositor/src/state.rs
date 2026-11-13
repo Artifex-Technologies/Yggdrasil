@@ -273,11 +273,17 @@ pub struct App {
     /// The shader that draws full screen X11 windows opaque, made the first time one is drawn (None if it failed to build).
     opaque_shader: Option<Option<smithay::backend::renderer::gles::GlesTexProgram>>,
     /// Seconds without pointer motion after which the pointer is hidden (0: never), as Yggdrasil's tools set it (yggdrasil-idle
-    /// while the screen is dimmed; Hyprland's `cursor:inactive_timeout`). Kept and reported; the pointer is not drawn by this
-    /// compositor yet (the nested window's host draws it), so nothing is hidden until it is.
+    /// while the screen is dimmed; Hyprland's `cursor:inactive_timeout`). Headless the pointer is then left out of the screen's
+    /// picture (pointer.rs); nested, the host window draws the pointer and nothing is hidden.
     pub pointer_timeout: f64,
-    /// The pointer's theme and size as Yggdrasil's tools set it (ygg-theme), for when the compositor draws the pointer itself.
+    /// The pointer's theme and size as Yggdrasil's tools set it on the running compositor (ygg-theme); None: the files' (pointer.rs).
     pub cursor_theme: Option<(String, u32)>,
+    /// The pointer the compositor draws (pointer.rs): what programs asked it to look like, when it last moved, the theme's pictures.
+    pub cursor: crate::pointer::Pointer,
+    /// The standard window list (ext-foreign-toplevel-list; its handles are kept in toplevels.rs) and the window and screen
+    /// copies of ext-image-copy-capture (capture.rs: the panel's previews; headless only).
+    pub toplevel_list: smithay::wayland::foreign_toplevel_list::ForeignToplevelListState,
+    pub capture: crate::capture::Capture,
     /// The keyboard layout and variant in use: the system's (keymap.rs), or one set from outside (the installer's try-out);
     /// None: xkb's default.
     pub kb_layout: Option<(String, String)>,
@@ -558,6 +564,9 @@ impl App {
             opaque_shader: None,
             pointer_timeout: 0.0,
             cursor_theme: None,
+            cursor: Default::default(),
+            toplevel_list: smithay::wayland::foreign_toplevel_list::ForeignToplevelListState::new::<Self>(dh),
+            capture: Default::default(),
             kb_layout,
             kb_times: crate::keymap::files().map(|f| std::fs::metadata(f).and_then(|m| m.modified()).ok()),
             places: crate::places::load(),
@@ -959,6 +968,7 @@ impl App {
         if let Some(s) = surface {
             self.screen_tiled.retain(|x| x != s);
             self.foreign_removed(s);
+            self.capture_source_gone(|src| matches!(src, crate::capture::Source::Window(w) if w == s));
             self.decorated.retain(|x| x != s);
             self.focus_order.retain(|x| x != s);
             self.opened_at.retain(|x| x != s);
@@ -1514,6 +1524,7 @@ impl App {
         let look_t = crate::look::Look::files().map(|f| f.and_then(mtime));
         if look_t != self.look_times {
             self.look_times = look_t;
+            self.pointer_files_changed();
             let look = crate::look::Look::load();
             if look != self.look {
                 let gaps = (look.gaps_in, look.gaps_out, look.border) != (self.look.gaps_in, self.look.gaps_out, self.look.border);
@@ -2030,6 +2041,7 @@ impl App {
             layer_map_for_output(o).unmap_layer(&l);
         }
         self.space.unmap_output(o);
+        self.capture_source_gone(|src| matches!(src, crate::capture::Source::Output(x) if x == o));
         had |= self.lock_surfaces.iter().any(|(x, l)| x == o && focus.as_ref() == Some(l.wl_surface()));
         self.lock_surfaces.retain(|(x, _)| x != o);
         self.power.off.retain(|n| *n != o.name());
@@ -2144,6 +2156,11 @@ impl App {
         }
         for (out, ls) in &self.lock_surfaces {
             smithay::desktop::utils::send_frames_surface_tree(ls.wl_surface(), out, t, Some(Duration::ZERO), |_, _| Some(out.clone()));
+        }
+        // a program's own pointer picture (an animated one waits for this)
+        if let CursorImageStatus::Surface(s) = &self.cursor.status {
+            let out = self.output_at(self.pointer_location);
+            smithay::desktop::utils::send_frames_surface_tree(s, &out, t, Some(Duration::ZERO), |_, _| Some(out.clone()));
         }
         let out = primary;
         for x in &self.overlays {
@@ -2306,13 +2323,31 @@ impl App {
         }
     }
 
-    /// The pointer moved to `pos` (in the space's coordinates).
+    /// The pointer moved to `pos` (in the space's coordinates): input, so it shows again if it was resting.
     pub fn pointer_to(&mut self, pos: Point<f64, Logical>, time: u32) {
         self.input_seen();
+        self.cursor.last_motion = std::time::Instant::now();
+        self.motion(pos, time);
+    }
+
+    /// The pointer put somewhere by the compositor (its screen went): not input, the idle time and a resting pointer stay.
+    pub fn pointer_moved_to(&mut self, pos: Point<f64, Logical>) {
+        self.wake();
+        self.motion(pos, crate::wmctl::now_ms());
+    }
+
+    fn motion(&mut self, pos: Point<f64, Logical>, time: u32) {
         let pointer = self.pointer.clone();
+        let from = self.output_at(self.pointer_location);
         self.pointer_location = pos;
         if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
             eprintln!("pointer {:.0},{:.0}", pos.x, pos.y);
+        }
+        if !self.capture.sessions.is_empty() {
+            // a copy of a screen with the pointer painted in has something new
+            let to = self.output_at(pos);
+            self.capture_output_changed(&from, true);
+            self.capture_output_changed(&to, true);
         }
         let serial = SERIAL_COUNTER.next_serial();
         let hover = self.bar_at(pos).and_then(|(w, h)| surface_of(&w).map(|s| (s, h)));
@@ -2320,6 +2355,10 @@ impl App {
             self.bar_hover = hover;
         }
         let under = self.surface_under(pos);
+        if under.is_none() && !matches!(self.cursor.status, CursorImageStatus::Named(smithay::input::pointer::CursorIcon::Default)) {
+            // over no program (the background, the compositor's own title bars): the default arrow
+            self.cursor.status = CursorImageStatus::default_named();
+        }
         pointer.motion(self, under, &MotionEvent { location: pos, serial, time });
         pointer.frame(self);
     }
@@ -2456,6 +2495,10 @@ impl CompositorHandler for App {
             while let Some(p) = get_parent(&root) {
                 root = p;
             }
+            if !self.capture.sessions.is_empty() {
+                self.capture_window_changed(&root);
+            }
+            self.list_refresh(&root);
             let found = self.space.elements().find(|w| is_window_of(w, &root)).cloned();
             if let Some(w) = found {
                 w.on_commit();
@@ -2610,6 +2653,8 @@ impl SeatHandler for App {
         smithay::wayland::selection::primary_selection::set_primary_focus(&self.display_handle, seat, client);
     }
     fn cursor_image(&mut self, _: &Seat<Self>, image: CursorImageStatus) {
+        self.cursor.status = image.clone();
+        self.wake();
         if let Some(f) = self.cursor_hook.as_mut() {
             f(&image);
         }

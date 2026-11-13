@@ -20,6 +20,8 @@ wayland-protocols-wlr = { version = "0.3", features = ["server"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # headless.rs: an output's picture written as a PNG (screenshots for tests); already in the tree
 png = "0.17"
+# pointer.rs: the cursor theme's pictures (libXcursor's lookup and file format, in Rust); already in the tree through smithay
+xcursor = "0.3"
 
 [dev-dependencies]
 # tests/: a small Wayland client of the tests' own (tests/common) that speaks to the headless backend like the panel, a window,

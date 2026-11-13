@@ -294,7 +294,8 @@ fn cost(pid: u32) -> (u64, u64, u64) {
     (ns / 1000, kb("status", "VmRSS:"), kb("smaps_rollup", "Pss:"))
 }
 
-/// The compositor's cost with a bar, a dock and three windows: idle for 10 s, then the window in front drawn 60 times, then
+/// The compositor's cost with a bar, a dock and three windows: idle for 10 s, then the window in front drawn 60 times, a window's
+/// picture taken 10 times (the dock's previews), then
 /// (YGGDRASIL_MEASURE_ANIMATIONS=1: with the animations on) a window opening and closing. Not part of the normal run (it only
 /// measures; best with a release build in YGGDRASIL_COMPOSITOR): `cargo test --test look -- --ignored --nocapture idle_cost`.
 #[test]
@@ -346,6 +347,21 @@ fn idle_cost() {
     std::thread::sleep(Duration::from_millis(100));
     let (t3, rss2, pss2) = cost(pid);
     println!("an 800x600 window drawn 60 times: {} us a frame, memory {rss2} kB resident, {pss2} kB proportional", (t3 - t2) / 60);
+    // the dock's window list takes a picture of each window about once a second while it is open (ext-image-copy-capture, a
+    // session each time, as the panel does): the compositor's time per picture
+    let mut p = comp.connect();
+    let _list = p.toplevel_list();
+    let handle = p.listed("test.w0").expect("listed").handle;
+    let (t4, _, _) = cost(pid);
+    for _ in 0..10 {
+        let (i, s) = p.capture_window(&handle);
+        let size = p.state.caps[i].size.expect("a size");
+        let f = p.begin_copy(i, &s, size, 0);
+        p.end_copy(f, 5.0).expect("a picture");
+        s.destroy();
+    }
+    let (t5, rss3, pss3) = cost(pid);
+    println!("an 800x600 window's picture taken 10 times: {} us each, memory {rss3} kB resident, {pss3} kB proportional", (t5 - t4) / 10);
     if animations {
         // a window opening (800 ms of frames), then closing
         let (t4, _, _) = cost(pid);

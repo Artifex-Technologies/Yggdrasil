@@ -25,9 +25,24 @@ use wayland_client::protocol::{
     wl_pointer::WlPointer, wl_registry::WlRegistry, wl_seat, wl_seat::WlSeat, wl_shm, wl_shm::WlShm, wl_shm_pool::WlShmPool,
     wl_surface::WlSurface,
 };
-use wayland_client::{delegate_noop, Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum};
+use wayland_client::{delegate_noop, event_created_child, Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum};
+use wayland_protocols::ext::foreign_toplevel_list::v1::client::{
+    ext_foreign_toplevel_handle_v1, ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1, ext_foreign_toplevel_list_v1,
+    ext_foreign_toplevel_list_v1::ExtForeignToplevelListV1,
+};
 use wayland_protocols::ext::idle_notify::v1::client::{
     ext_idle_notification_v1, ext_idle_notification_v1::ExtIdleNotificationV1, ext_idle_notifier_v1::ExtIdleNotifierV1,
+};
+use wayland_protocols::ext::image_capture_source::v1::client::{
+    ext_foreign_toplevel_image_capture_source_manager_v1::ExtForeignToplevelImageCaptureSourceManagerV1,
+    ext_image_capture_source_v1::ExtImageCaptureSourceV1, ext_output_image_capture_source_manager_v1::ExtOutputImageCaptureSourceManagerV1,
+};
+use wayland_protocols::ext::image_copy_capture::v1::client::{
+    ext_image_copy_capture_frame_v1,
+    ext_image_copy_capture_frame_v1::ExtImageCopyCaptureFrameV1,
+    ext_image_copy_capture_manager_v1::{ExtImageCopyCaptureManagerV1, Options},
+    ext_image_copy_capture_session_v1,
+    ext_image_copy_capture_session_v1::ExtImageCopyCaptureSessionV1,
 };
 use wayland_protocols::ext::session_lock::v1::client::{
     ext_session_lock_manager_v1::ExtSessionLockManagerV1, ext_session_lock_surface_v1,
@@ -398,6 +413,8 @@ pub struct State {
     pub keymap_text: String,
     pub keymaps: usize,
     pub pointer_on: Option<ObjectId>,
+    /// the serial of the last pointer enter (a cursor surface is set with it)
+    pub pointer_serial: u32,
     /// ext-session-lock
     pub locked: bool,
     pub lock_finished: bool,
@@ -411,6 +428,45 @@ pub struct State {
     pub resumed: HashMap<usize, u32>,
     /// wlr-output-management
     pub mgmt: Mgmt,
+    /// ext-foreign-toplevel-list: the windows as listed, in the order they came
+    pub listed: Vec<Listed>,
+    pub list_finished: bool,
+    /// ext-image-copy-capture: each session's side (a session's frames report to it too)
+    pub caps: Vec<CapState>,
+}
+
+/// One window as ext-foreign-toplevel-list tells it.
+#[derive(Debug, Clone)]
+pub struct Listed {
+    pub handle: ExtForeignToplevelHandleV1,
+    pub title: String,
+    pub app_id: String,
+    pub identifier: String,
+    /// how many `done` events came
+    pub done: u32,
+    pub closed: bool,
+}
+
+/// One ext-image-copy-capture session's side of things, and its frame's.
+#[derive(Default, Debug, Clone)]
+pub struct CapState {
+    pub size: Option<(u32, u32)>,
+    pub formats: Vec<u32>,
+    pub done: u32,
+    pub stopped: bool,
+    pub ready: bool,
+    pub failed: Option<u32>,
+    pub damage: Vec<(i32, i32, i32, i32)>,
+    pub transform: Option<u32>,
+}
+
+/// A frame on its way: its buffer's memory is read back when it is ready.
+pub struct CopyFrame {
+    pub frame: ExtImageCopyCaptureFrameV1,
+    pub index: usize,
+    file: File,
+    size: (u32, u32),
+    buffer: WlBuffer,
 }
 
 /// A head as wlr-output-management tells it.
@@ -632,6 +688,86 @@ impl Client {
         Window { index, surface, xdg, toplevel }
     }
 
+    /// The windows as ext-foreign-toplevel-list lists them (bound now; `state.listed` follows from here on).
+    pub fn toplevel_list(&mut self) -> ExtForeignToplevelListV1 {
+        let list: ExtForeignToplevelListV1 = self.globals.bind(&self.qh, 1..=1, ()).expect("ext-foreign-toplevel-list");
+        self.roundtrip();
+        self.roundtrip();
+        list
+    }
+
+    /// The listed window with this app id (the last one that is not closed).
+    pub fn listed(&self, app_id: &str) -> Option<Listed> {
+        self.state.listed.iter().rev().find(|l| l.app_id == app_id && !l.closed).cloned()
+    }
+
+    /// A capture session for a window of the list (`paint_cursors` off), and its index in `state.caps`.
+    pub fn capture_window(&mut self, handle: &ExtForeignToplevelHandleV1) -> (usize, ExtImageCopyCaptureSessionV1) {
+        let m: ExtForeignToplevelImageCaptureSourceManagerV1 = self.globals.bind(&self.qh, 1..=1, ()).expect("toplevel capture source");
+        let source = m.create_source(handle, &self.qh, ());
+        self.session(&source, false)
+    }
+
+    /// A capture session for a screen, with the pointer painted in or not.
+    pub fn capture_output(&mut self, output: usize, cursors: bool) -> (usize, ExtImageCopyCaptureSessionV1) {
+        let m: ExtOutputImageCaptureSourceManagerV1 = self.globals.bind(&self.qh, 1..=1, ()).expect("output capture source");
+        let source = m.create_source(&self.wl_outputs[output], &self.qh, ());
+        self.session(&source, cursors)
+    }
+
+    fn session(&mut self, source: &ExtImageCaptureSourceV1, cursors: bool) -> (usize, ExtImageCopyCaptureSessionV1) {
+        let copier: ExtImageCopyCaptureManagerV1 = self.globals.bind(&self.qh, 1..=1, ()).expect("ext-image-copy-capture");
+        let index = self.state.caps.len();
+        self.state.caps.push(CapState::default());
+        let options = if cursors { Options::PaintCursors } else { Options::empty() };
+        let session = copier.create_session(source, options, &self.qh, index);
+        self.until("the session's buffer constraints or its end", |s| s.caps[index].done > 0 || s.caps[index].stopped);
+        (index, session)
+    }
+
+    /// Ask for a copy into a buffer of this size and format (wl_shm's number: 0 ARGB8888, 1 XRGB8888).
+    pub fn begin_copy(&mut self, index: usize, session: &ExtImageCopyCaptureSessionV1, size: (u32, u32), format: u32) -> CopyFrame {
+        let (w, h) = size;
+        let (pool, file) = self.pool((w * h * 4) as i32);
+        let f = if format == 0 { wl_shm::Format::Argb8888 } else { wl_shm::Format::Xrgb8888 };
+        let buffer = pool.create_buffer(0, w as i32, h as i32, (w * 4) as i32, f, &self.qh, ());
+        pool.destroy();
+        let c = &mut self.state.caps[index];
+        (c.ready, c.failed) = (false, None);
+        let frame = session.create_frame(&self.qh, index);
+        frame.attach_buffer(&buffer);
+        frame.damage_buffer(0, 0, w as i32, h as i32);
+        frame.capture();
+        let _ = self.conn.flush();
+        CopyFrame { frame, index, file, size, buffer }
+    }
+
+    /// Wait (up to `secs`) for a copy: its picture and its bytes (B G R A), or the failure's reason (None: no answer in time).
+    pub fn end_copy(&mut self, f: CopyFrame, secs: f64) -> Result<(Picture, Vec<u8>), Option<u32>> {
+        let deadline = Instant::now() + Duration::from_secs_f64(secs);
+        let i = f.index;
+        while !self.state.caps[i].ready && self.state.caps[i].failed.is_none() {
+            if Instant::now() > deadline {
+                f.frame.destroy();
+                f.buffer.destroy();
+                self.roundtrip();
+                return Err(None);
+            }
+            self.roundtrip();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        f.frame.destroy();
+        f.buffer.destroy();
+        if let Some(r) = self.state.caps[i].failed {
+            return Err(Some(r));
+        }
+        let (w, h) = f.size;
+        let mut bytes = vec![0u8; (w * h * 4) as usize];
+        use std::os::unix::fs::FileExt;
+        f.file.read_exact_at(&mut bytes, 0).unwrap();
+        Ok((Picture::from_xrgb(w as usize, h as usize, (w * 4) as usize, &bytes), bytes))
+    }
+
     /// Draw a window in one colour: at the size it was last given, or `size` when it may choose.
     pub fn draw(&mut self, w: &Window, size: (i32, i32), argb: u32) -> (i32, i32) {
         let given = self.state.wins[w.index].size;
@@ -776,7 +912,10 @@ impl Dispatch<WlKeyboard, ()> for State {
 impl Dispatch<WlPointer, ()> for State {
     fn event(st: &mut Self, _: &WlPointer, event: wl_pointer::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
         match event {
-            wl_pointer::Event::Enter { surface, .. } => st.pointer_on = Some(surface.id()),
+            wl_pointer::Event::Enter { surface, serial, .. } => {
+                st.pointer_on = Some(surface.id());
+                st.pointer_serial = serial;
+            }
             wl_pointer::Event::Leave { .. } => st.pointer_on = None,
             _ => {}
         }
@@ -868,6 +1007,117 @@ impl Dispatch<ExtIdleNotificationV1, usize> for State {
 }
 
 delegate_noop!(State: ignore WlCompositor);
+delegate_noop!(State: ExtForeignToplevelImageCaptureSourceManagerV1);
+delegate_noop!(State: ExtOutputImageCaptureSourceManagerV1);
+delegate_noop!(State: ExtImageCaptureSourceV1);
+delegate_noop!(State: ExtImageCopyCaptureManagerV1);
+delegate_noop!(State: wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_manager_v1::WpCursorShapeManagerV1);
+delegate_noop!(State: wayland_protocols::wp::cursor_shape::v1::client::wp_cursor_shape_device_v1::WpCursorShapeDeviceV1);
+
+impl Dispatch<ExtForeignToplevelListV1, ()> for State {
+    fn event(
+        st: &mut Self,
+        _: &ExtForeignToplevelListV1,
+        event: ext_foreign_toplevel_list_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            ext_foreign_toplevel_list_v1::Event::Toplevel { toplevel } => st.listed.push(Listed {
+                handle: toplevel,
+                title: String::new(),
+                app_id: String::new(),
+                identifier: String::new(),
+                done: 0,
+                closed: false,
+            }),
+            ext_foreign_toplevel_list_v1::Event::Finished => st.list_finished = true,
+            _ => {}
+        }
+    }
+
+    event_created_child!(State, ExtForeignToplevelListV1, [
+        ext_foreign_toplevel_list_v1::EVT_TOPLEVEL_OPCODE => (ExtForeignToplevelHandleV1, ()),
+    ]);
+}
+
+impl Dispatch<ExtForeignToplevelHandleV1, ()> for State {
+    fn event(
+        st: &mut Self,
+        h: &ExtForeignToplevelHandleV1,
+        event: ext_foreign_toplevel_handle_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let Some(t) = st.listed.iter_mut().find(|t| t.handle == *h) else { return };
+        match event {
+            ext_foreign_toplevel_handle_v1::Event::Title { title } => t.title = title,
+            ext_foreign_toplevel_handle_v1::Event::AppId { app_id } => t.app_id = app_id,
+            ext_foreign_toplevel_handle_v1::Event::Identifier { identifier } => t.identifier = identifier,
+            ext_foreign_toplevel_handle_v1::Event::Done => t.done += 1,
+            ext_foreign_toplevel_handle_v1::Event::Closed => t.closed = true,
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<ExtImageCopyCaptureSessionV1, usize> for State {
+    fn event(
+        st: &mut Self,
+        _: &ExtImageCopyCaptureSessionV1,
+        event: ext_image_copy_capture_session_v1::Event,
+        i: &usize,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let c = &mut st.caps[*i];
+        match event {
+            ext_image_copy_capture_session_v1::Event::BufferSize { width, height } => {
+                c.size = Some((width, height));
+                c.formats.clear();
+            }
+            ext_image_copy_capture_session_v1::Event::ShmFormat { format } => c.formats.push(match format {
+                WEnum::Value(f) => f as u32,
+                WEnum::Unknown(u) => u,
+            }),
+            ext_image_copy_capture_session_v1::Event::Done => c.done += 1,
+            ext_image_copy_capture_session_v1::Event::Stopped => c.stopped = true,
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<ExtImageCopyCaptureFrameV1, usize> for State {
+    fn event(
+        st: &mut Self,
+        _: &ExtImageCopyCaptureFrameV1,
+        event: ext_image_copy_capture_frame_v1::Event,
+        i: &usize,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        let c = &mut st.caps[*i];
+        match event {
+            ext_image_copy_capture_frame_v1::Event::Transform { transform } => {
+                c.transform = Some(match transform {
+                    WEnum::Value(t) => t as u32,
+                    WEnum::Unknown(u) => u,
+                })
+            }
+            ext_image_copy_capture_frame_v1::Event::Damage { x, y, width, height } => c.damage.push((x, y, width, height)),
+            ext_image_copy_capture_frame_v1::Event::Ready => c.ready = true,
+            ext_image_copy_capture_frame_v1::Event::Failed { reason } => {
+                c.failed = Some(match reason {
+                    WEnum::Value(r) => r as u32,
+                    WEnum::Unknown(u) => u,
+                })
+            }
+            _ => {}
+        }
+    }
+}
 delegate_noop!(State: ignore WlShm);
 delegate_noop!(State: ignore WlShmPool);
 delegate_noop!(State: ignore WlBuffer);

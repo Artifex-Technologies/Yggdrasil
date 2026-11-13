@@ -16,6 +16,7 @@
 //!
 //! See docs/COMPOSITOR.md for what is built and what is not.
 
+mod capture;
 mod deco;
 mod draw;
 mod grabs;
@@ -27,6 +28,7 @@ mod outputpower;
 mod outputs;
 mod placement;
 mod places;
+mod pointer;
 mod screencopy;
 mod shortcuts;
 mod state;
@@ -209,6 +211,8 @@ fn run_headless(opts: &[String], run: Vec<Vec<String>>) -> Result<(), Box<dyn st
     // screenshots and screen streaming (grim, Sunshine), and screens off and on (yggdrasil-idle): served from the pictures in memory
     screencopy::create_global(&dh);
     outputpower::create_global(&dh);
+    // pictures of single windows and screens (ext-image-copy-capture): the panel's window previews
+    capture::create_globals(&dh);
     let mut app = App::new(&dh, outputs[0].clone(), event_loop.handle(), event_loop.get_signal(), ping);
     // the screens: each with its wl_output, set as Settings > Displays' file says (outputs.rs); and the standard protocol to
     // list and change them (wlr-output-management)

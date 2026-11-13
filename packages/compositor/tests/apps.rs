@@ -600,6 +600,86 @@ fn the_panels_desktop_buttons_and_window_zones_work_on_it() {
     assert!(p.running(), "the panel is still running: {}", p.log());
 }
 
+/// A screenshot kept for looking at: written to the folder YGGDRASIL_TEST_SHOTS names (tests/apps-podman.sh mounts one when the
+/// variable is set), else nowhere.
+fn keep_shot(pic: &Picture, name: &str) {
+    if let Some(dir) = std::env::var_os("YGGDRASIL_TEST_SHOTS") {
+        pic.save(&Path::new(&dir).join(format!("{name}.png")));
+    }
+}
+
+#[test]
+fn the_docks_window_list_shows_pictures_of_the_windows() {
+    let Some(panel) = program("YGGDRASIL_TEST_PANEL") else { return };
+    let _l = limit(150, "the dock's window previews");
+    let comp = Compositor::start(&["--size", "1600x900"]);
+    let bus = Bus::start(&comp.dir);
+    // nothing pinned: the dock shows the running app, then the trash
+    let conf = comp.dir.join("home/.config/yggdrasil");
+    std::fs::create_dir_all(&conf).unwrap();
+    std::fs::write(conf.join("dock"), "# none\n").unwrap();
+    let mut p = App::start(&comp, &panel, Some(&bus), &[("YGGDRASIL_A11Y", "off"), ("XDG_CURRENT_DESKTOP", "Yggdrasil")]);
+    wait_for(&comp, &mut p, 60, "the bar and the dock", |c| {
+        let l = c.layers();
+        ["yggdrasil-panel", "yggdrasil-dock"].iter().all(|ns| layer(&l, ns).is_some_and(|x| x.size.0 > 0))
+    });
+    // a window of the test's own, red on the left and green on the right; the dock gets its icon
+    let mut c = comp.connect();
+    let w = c.window("test.viewer", "Viewer");
+    let (pool, f) = c.pool(400 * 300 * 4);
+    let data: Vec<u8> = (0..400 * 300).flat_map(|i| if i % 400 < 200 { RED.to_le_bytes() } else { 0xff00ff00u32.to_le_bytes() }).collect();
+    std::io::Write::write_all(&mut &f, &data).unwrap();
+    let buf = pool.create_buffer(0, 400, 300, 1600, wayland_client::protocol::wl_shm::Format::Argb8888, &c.qh, ());
+    w.surface.attach(Some(&buf), 0, 0);
+    w.surface.damage_buffer(0, 0, 400, 300);
+    w.surface.commit();
+    c.roundtrip();
+    // two icons (the window's app and the trash): 14 on each side, 10 between
+    wait_for(&comp, &mut p, 10, "the window's icon in the dock", |c| {
+        layer(&c.layers(), "yggdrasil-dock").is_some_and(|d| d.size.0 == 28 + 2 * (d.size.1 - 24) + 10)
+    });
+    std::thread::sleep(Duration::from_millis(300));
+    let dock = layer(&comp.layers(), "yggdrasil-dock").cloned().unwrap();
+    // its first slot: 14 in, the icon as tall as the dock less 24; resting on it (400 ms) lists the app's windows
+    let icon = dock.size.1 - 24;
+    let (x, y) = (dock.at.0 + 14 + icon / 2, dock.at.1 + 9 + icon / 2);
+    comp.must(&format!("pointer {} {}", x - 3, y));
+    comp.must(&format!("pointer {x} {y}"));
+    wait_for(&comp, &mut p, 10, "the window list over the dock", |c| layer(&c.layers(), "yggdrasil-popup").is_some_and(|l| l.size.0 > 0));
+    // its card shows the window's picture, shrunk (the window itself is higher up the screen, above the card)
+    let info = comp.window("test.viewer").unwrap();
+    let card = (dock.at.0 - 200, info.at.1 + 300 + 10, 800, dock.at.1 - (info.at.1 + 310));
+    assert!(card.3 > 100, "room for the card below the window: {info:?} {dock:?}");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let pic = loop {
+        let pic = comp.screenshot("HEADLESS-1");
+        let (red, green) = (pic.count(card, (255, 0, 0)), pic.count(card, (0, 255, 0)));
+        if red > 3000 && green > 3000 {
+            break pic;
+        }
+        assert!(Instant::now() < deadline, "the window's picture in the card: {red} red, {green} green pixels\npanel: {}", p.log());
+        std::thread::sleep(Duration::from_millis(200));
+    };
+    keep_shot(&pic, "dock-window-preview");
+    // the picture: red on the left of green, as the window
+    let (mut rx, mut gx, mut n) = (0i64, 0i64, 0i64);
+    for yy in card.1..card.1 + card.3 {
+        for xx in card.0..card.0 + card.2 {
+            match pic.at(xx as usize, yy as usize) {
+                (255, 0, 0) => rx += xx as i64,
+                (0, 255, 0) => {
+                    gx += xx as i64;
+                    n += 1
+                }
+                _ => {}
+            }
+        }
+    }
+    let reds = pic.count(card, (255, 0, 0)) as i64;
+    assert!(rx / reds < gx / n, "red left of green in the picture");
+    assert!(p.running(), "the panel is still running: {}", p.log());
+}
+
 /// Stand-ins for the programs yggdrasil-logout runs, the only ones on its PATH: each writes down how it was called.
 fn logout_stand_ins(comp: &Compositor) -> (PathBuf, PathBuf) {
     let bin = comp.dir.join("stand-ins");

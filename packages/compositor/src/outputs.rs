@@ -288,6 +288,7 @@ impl App {
         }
         self.layout_outputs();
         self.windows_follow_outputs(&before);
+        self.keep_pointer_on_screens(&before);
         self.output_resized();
         self.keep_clear();
         self.output_list_changed();

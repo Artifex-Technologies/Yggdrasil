@@ -38,7 +38,7 @@ Smithay's software renderer (pixman), so it runs in a CI container. Source: `src
 - **Lightness**: as nested, nothing is drawn while nothing changes; a burst of commits is folded into at most one frame per 16 ms.
 - **The panel runs on it**: the wallpaper, the top bar and the dock map and draw (wlr-layer-shell, xdg-output, wlr-foreign-toplevel,
   fractional scale, viewporter, cursor-shape are the same code as nested), at scale 1 and 1.5, and follow a size change. Its window
-  previews need ext-foreign-toplevel-list and ext-image-copy-capture, which this compositor does not have; the panel leaves them out.
+  previews come through ext-foreign-toplevel-list and ext-image-copy-capture since 2026-11-12 (below), as on Hyprland.
 
 Tests (`cargo test` in `packages/compositor`; the CI's rust job runs them): 30 in all, 24 unit tests (5 new: the options, sizes
 and scales, the refused runtime folder) and 6 end-to-end ones in `tests/headless.rs`, where a small Wayland client of the test's own
@@ -69,8 +69,21 @@ container with no devices and no network. Nothing switches: Hyprland stays the s
 repository, the Argus app (argus-app against its fake Flipper on a socket): skipped unless its programs are named, even in CI;
 Argus's `argus-tools/crates/argus-app/smoke-yggdrasil.sh` names them and runs it in the same container (2026-11-13).
 
-Not built headless yet: GPU buffers (linux-dmabuf is not offered: shared memory only) and drawing the pointer. Outputs added or
-removed while running and placed other than side by side came on 2026-11-12 (below).
+Not built headless yet: GPU buffers (linux-dmabuf is not offered: shared memory only). Outputs added or removed while running and
+placed other than side by side came on 2026-11-12 (below), and so did the window previews and the pointer:
+
+**2026-11-12: the dock's window previews and the pointer** (gap items 6 and 7; details in
+[packages/compositor/README.md](../packages/compositor/README.md)). The panel takes pictures of windows through
+ext-foreign-toplevel-list, ext-image-capture-source and ext-image-copy-capture on Hyprland, so the compositor now offers them
+(`src/capture.rs`; the list is Smithay's): each window drawn on its own at its screen's scale, covered, on another desktop or
+minimized, never while the session is locked; the panel's card shows the window's picture on it (`tests/apps.rs`), and
+`tests/capture.rs` checks the protocols with the tests' own client. The compositor draws the pointer (`src/pointer.rs`) with the
+cursor theme as `ygg-theme cursor` stores and sets it (appearance.conf, the running compositor through yggdrasil-wm, XCURSOR_SIZE),
+a program's own cursor surface and the shapes programs name, hides it while yggdrasil-idle has the screen dimmed (the pointer
+timeout through yggdrasil-wm) and moves it onto a remaining screen when its screen goes; headless it is painted over the screen's
+picture like a hardware cursor plane, so only `screenshot ... pointer`, grim -c and copies that ask for it show it
+(`tests/pointer.rs`, with snapshots, Yggdrasil's own arrow among them). GPU buffers for the copies (dmabuf) come with the
+hardware backend.
 
 **2026-11-12: Yggdrasil's own tools talk to it through yggdrasil-wm** (`packages/wm`, the layer they share): the panel's desktop
 buttons, window zones, Snap Assist and the dock's minimize, `yggdrasil-snap`, `yggdrasil-close` and the idle manager's pointer find
@@ -211,7 +224,8 @@ Not built yet (in the order I would do them):
 6. **More of our programs in the headless tests** (2026-11-10 has the panel's leak test and the backend's own tests): the lock
    screen (ext-session-lock, one surface per output, built for it), the idle manager, Settings; for that, input in the headless mode
    (a virtual keyboard and pointer driven from the control socket, inside the compositor only, never the real devices),
-   ext-foreign-toplevel-list and ext-image-copy-capture (the panel's window previews), and drawing the pointer.
+   ext-foreign-toplevel-list and ext-image-copy-capture (the panel's window previews), and drawing the pointer. All done by
+   2026-11-12.
 7. **The hardware backend** (DRM/KMS), what it needs, in order:
    - a seat: libseat (logind or seatd) through Smithay's session backend, to open the GPU and input devices without root, and
      to give them up on a VT switch and take them back (pause and resume);
@@ -247,7 +261,9 @@ Measured 2026-11-12 headless (release build, software drawing, 1920x1080, a bar,
 the window look: idle 0.004 % and 0.005 % of a core, 25.6 and 26.3 MB resident; a window opening costs about 0.1 s of CPU spread
 over its 800 ms animation, and nothing is drawn once it has settled. After the keyboard, screens and window places (gap items 3
 and 5, the same set): idle 0.006 % of a core, 26.4-26.5 MB resident (before: 0.005-0.006 %, 26.2-26.3 MB). After the keyboard, screens and window places (gap items 3 and
-5, the same day): idle 0.006 % of a core, 26.4-26.5 MB resident (from 26.3). Its memory nested (about 117 MB) is mostly the graphics driver's context; the panel is about 89 MB, the idle manager 3 MB, the polkit agent 8 MB. Still to measure and trim: the panel's memory,
+5, the same day): idle 0.006 % of a core, 26.4-26.5 MB resident (from 26.3). After the window previews and the pointer (gap items
+6 and 7, the same set, five runs): idle 0.006 % of a core (560-621 µs in 10 s, before 547-572), 26.5-26.8 MB resident (before
+26.6-26.7); a window's picture for the dock costs 1.1-1.2 ms of CPU (800x600), and the pointer costs nothing while it rests. Its memory nested (about 117 MB) is mostly the graphics driver's context; the panel is about 89 MB, the idle manager 3 MB, the polkit agent 8 MB. Still to measure and trim: the panel's memory,
 start-up time of each program, and the compositor's cost with several large windows.
 Settings > Power's root services (tune, casefan, gpufan) are Rust since 2026-11-09 (docs/APPS_SETTINGS.md): about 2.8 MB each on
 their own, plus about 26 MB while libnvidia-ml is initialised (the NVIDIA driver's own cost, the same in any language), and tune

@@ -5,6 +5,7 @@
 //! Only the headless backend offers it today (headless.rs fills the copies from its pictures in memory); the nested window and the
 //! future hardware backend need a read-back from the GPU first. While the session is locked the picture is the lock screen's, so a
 //! copy never shows what the lock hides. Copies go in XRGB8888 (ARGB8888 is accepted too), shared memory only (no dmabuf yet).
+//! The pointer is painted in when the program asks (overlay_cursor: grim -c), as on Hyprland.
 
 use std::collections::HashSet;
 use std::sync::Mutex;
@@ -30,6 +31,8 @@ pub struct Copy {
     pub region: Rectangle<i32, Physical>,
     /// copy_with_damage: wait until something on the output changed (except for the first copy of a program)
     pub with_damage: bool,
+    /// the pointer painted in
+    pub cursor: bool,
 }
 
 #[derive(Default)]
@@ -43,6 +46,7 @@ pub struct Screencopy {
 pub struct FrameData {
     output: Option<Output>,
     region: Rectangle<i32, Physical>,
+    cursor: bool,
     used: Mutex<bool>,
 }
 
@@ -71,9 +75,10 @@ impl App {
         frame: New<ZwlrScreencopyFrameV1>,
         output: Option<Output>,
         logical: Option<(i32, i32, i32, i32)>,
+        cursor: bool,
     ) {
         let region = output.as_ref().and_then(|o| physical_region(o, logical));
-        let data = FrameData { output: output.clone(), region: region.unwrap_or_default(), used: Mutex::new(false) };
+        let data = FrameData { output: output.clone(), region: region.unwrap_or_default(), cursor, used: Mutex::new(false) };
         let frame = init.init(frame, data);
         let Some(region) = region.filter(|_| output.is_some()) else {
             frame.failed();
@@ -105,13 +110,13 @@ impl Dispatch<ZwlrScreencopyManagerV1, ()> for App {
     ) {
         use zwlr_screencopy_manager_v1::Request as R;
         match request {
-            R::CaptureOutput { frame, output, .. } => {
+            R::CaptureOutput { frame, output, overlay_cursor } => {
                 let o = Output::from_resource(&output);
-                state.new_frame(init, frame, o, None);
+                state.new_frame(init, frame, o, None, overlay_cursor != 0);
             }
-            R::CaptureOutputRegion { frame, output, x, y, width, height, .. } => {
+            R::CaptureOutputRegion { frame, output, x, y, width, height, overlay_cursor } => {
                 let o = Output::from_resource(&output);
-                state.new_frame(init, frame, o, Some((x, y, width, height)));
+                state.new_frame(init, frame, o, Some((x, y, width, height)), overlay_cursor != 0);
             }
             _ => {}
         }
@@ -162,7 +167,7 @@ impl Dispatch<ZwlrScreencopyFrameV1, FrameData> for App {
             );
             return;
         }
-        state.screencopy.pending.push(Copy { frame: frame.clone(), buffer, output, region: r, with_damage });
+        state.screencopy.pending.push(Copy { frame: frame.clone(), buffer, output, region: r, with_damage, cursor: data.cursor });
         state.wake();
     }
 
@@ -171,8 +176,15 @@ impl Dispatch<ZwlrScreencopyFrameV1, FrameData> for App {
     }
 }
 
-/// Fill a copy from an output's picture (XRGB8888 rows `stride` bytes apart) and tell the program it is ready.
-pub fn fill(copy: &Copy, picture: &[u8], stride: usize, when: std::time::Duration) {
+/// Fill a copy from an output's picture (XRGB8888 rows `stride` bytes apart), the pointer painted in when given (its picture and
+/// its top-left corner in the output's pixels), and tell the program it is ready.
+pub fn fill(
+    copy: &Copy,
+    picture: &[u8],
+    stride: usize,
+    pointer: Option<(&crate::pointer::Picture, (i32, i32))>,
+    when: std::time::Duration,
+) {
     let r = copy.region;
     let done = smithay::wayland::shm::with_buffer_contents_mut(&copy.buffer, |ptr, len, b| {
         let (w, h, dst_stride, offset) = (r.size.w as usize, r.size.h as usize, b.stride as usize, b.offset as usize);
@@ -185,6 +197,11 @@ pub fn fill(copy: &Copy, picture: &[u8], stride: usize, when: std::time::Duratio
             // SAFETY: the destination row lies inside the pool (checked above); the program may write to its own memory meanwhile,
             // which only spoils its own picture
             unsafe { std::ptr::copy_nonoverlapping(src.as_ptr(), ptr.add(offset + row * dst_stride), w * 4) };
+        }
+        if let Some((pic, at)) = pointer {
+            // SAFETY: as above, the rows lie inside the pool
+            let dst = unsafe { std::slice::from_raw_parts_mut(ptr.add(offset), dst_stride * h) };
+            crate::pointer::blend(dst, dst_stride, (w as u32, h as u32), pic, (at.0 - r.loc.x, at.1 - r.loc.y));
         }
         true
     });

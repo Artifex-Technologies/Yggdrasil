@@ -20,7 +20,11 @@
 //!   add-output WxH[@S]           a screen is plugged in (named HEADLESS-N, the next number), placed as Settings' file says or
 //!                                to the right of the others
 //!   remove-output NAME           a screen is unplugged: its panels are closed, its windows move to the first screen
-//!   screenshot NAME FILE.png     draw what is pending and write the output's picture as a PNG
+//!   screenshot NAME FILE.png [pointer]
+//!                                draw what is pending and write the output's picture as a PNG; with "pointer", the pointer
+//!                                painted over it, as the screen shows it (pointer.rs: drawn as a cursor plane, not in the picture)
+//!   pointer-look                 what the pointer looks like: theme NAME SIZE SHAPE, surface WxH X,Y (a program's own picture and
+//!                                its hotspot) or hidden (resting: the pointer timeout; program: the program hid it)
 //!   windows                      one line per window: app id, title, place, size, workspace, states (tab separated; the
 //!                                states are active, floating or tiled, maximized, fullscreen, left, right, minimized)
 //!   layers                       one line per panel or background: output, namespace, layer, place and size (tab separated)
@@ -44,7 +48,8 @@
 //! The answer is the lines, then "ok" or "error: ...".
 //!
 //! The input is made here, inside the compositor, for the tests: no input device is opened, and nothing reaches the running
-//! desktop. wlr-screencopy (screencopy.rs) and wlr-output-power (outputpower.rs) are served from the pictures in memory, and
+//! desktop. wlr-screencopy (screencopy.rs), ext-image-copy-capture (capture.rs: single windows, drawn on their own, and screens)
+//! and wlr-output-power (outputpower.rs) are served from the pictures in memory, and
 //! the screens are listed and changed through wlr-output-management (outputmgmt.rs) and Settings' monitors.lua (outputs.rs).
 
 use std::cell::RefCell;
@@ -306,8 +311,12 @@ impl Headless {
             };
             s.drawn = done.is_some();
             s.changed |= done.unwrap_or(false) || age == 0;
+            if done == Some(true) && !app.capture.sessions.is_empty() {
+                app.capture_output_changed(&s.output, false);
+            }
         }
         self.serve_copies(app);
+        self.serve_captures(app);
         self.last = Instant::now();
         // an animation running: the next frame (at most one every 16 ms)
         if app.animating() {
@@ -344,14 +353,106 @@ impl Headless {
             if c.with_damage {
                 served.push(s.output.name());
             }
+            let pointer = if c.cursor { app.pointer_picture(&s.output) } else { None };
             let (bytes, stride) = pixels(&s.image);
-            crate::screencopy::fill(&c, bytes, stride, when);
+            crate::screencopy::fill(&c, bytes, stride, pointer.as_ref().map(|(p, at)| (&**p, *at)), when);
         }
         for s in &mut self.screens {
             if served.contains(&s.output.name()) {
                 s.changed = false;
             }
         }
+    }
+
+    /// The window and screen copies asked for (ext-image-copy-capture), made after the frame is drawn. A copy after the first in a
+    /// session waits until its source changed; one whose source changed size fails, with the new size told (the program asks
+    /// again with a buffer of that size).
+    fn serve_captures(&mut self, app: &mut App) {
+        use crate::capture::Source;
+        use smithay::reexports::wayland_protocols::ext::image_copy_capture::v1::server::ext_image_copy_capture_frame_v1::FailureReason;
+        if app.capture.pending.is_empty() {
+            return;
+        }
+        let when: Duration = smithay::utils::Clock::<smithay::utils::Monotonic>::new().now().into();
+        for p in std::mem::take(&mut app.capture.pending) {
+            let Some(i) = app.capture.sessions.iter().position(|s| s.resource == p.session) else {
+                p.frame.failed(FailureReason::Stopped);
+                continue;
+            };
+            let source = app.capture.sessions[i].source.clone();
+            let size = app.capture_size(&source);
+            let s = &mut app.capture.sessions[i];
+            let Some(size) = size else {
+                if !s.stopped {
+                    s.stopped = true;
+                    s.resource.stopped();
+                }
+                p.frame.failed(FailureReason::Stopped);
+                continue;
+            };
+            if size != s.told {
+                s.told = size;
+                crate::capture::constraints(&s.resource, size);
+                p.frame.failed(FailureReason::BufferConstraints);
+                continue;
+            }
+            if !s.fresh && !s.dirty {
+                app.capture.pending.push(p);
+                continue;
+            }
+            s.fresh = false;
+            s.dirty = false;
+            let cursors = s.cursors;
+            match source {
+                Source::Window(surface) => {
+                    // nothing of the session is copied while it is locked
+                    let w = app.window_for(&surface).filter(|_| !app.locked);
+                    let Some(w) = w else {
+                        p.frame.failed(FailureReason::Unknown);
+                        continue;
+                    };
+                    let scale = app.window_output(&w).current_scale().fractional_scale();
+                    match self.window_picture(&w, size, scale) {
+                        Some(image) => {
+                            let (bytes, stride) = pixels(&image);
+                            crate::capture::fill(&p, bytes, stride, size, None, when);
+                        }
+                        None => p.frame.failed(FailureReason::Unknown),
+                    }
+                }
+                Source::Output(o) => {
+                    let Some(scr) = self.screens.iter().find(|x| x.output == o) else {
+                        p.frame.failed(FailureReason::Stopped);
+                        continue;
+                    };
+                    let pointer = if cursors { app.pointer_picture(&o) } else { None };
+                    let (bytes, stride) = pixels(&scr.image);
+                    crate::capture::fill(&p, bytes, stride, size, pointer.as_ref().map(|(p, at)| (&**p, *at)), when);
+                }
+                Source::Gone => p.frame.failed(FailureReason::Stopped),
+            }
+        }
+    }
+
+    /// A window drawn on its own, `size` pixels at `scale` (its own picture and its menus, without the compositor's border and
+    /// shadow; transparent where it draws nothing): its copy, whether it is covered, on another desktop or minimized. (Drawn into
+    /// a picture of its own and then copied: Smithay cannot draw into a program's shared memory while it reads the window's.)
+    fn window_picture(&mut self, w: &smithay::desktop::Window, size: (u32, u32), scale: f64) -> Option<Image<'static, 'static>> {
+        use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
+        use smithay::backend::renderer::element::AsRenderElements;
+        let mut image = self.renderer.create_buffer(Fourcc::Argb8888, (size.0 as i32, size.1 as i32).into()).ok()?;
+        let geo = w.geometry();
+        let at = smithay::utils::Point::<i32, smithay::utils::Physical>::from((
+            -(geo.loc.x as f64 * scale).round() as i32,
+            -(geo.loc.y as f64 * scale).round() as i32,
+        ));
+        let elements: Vec<WaylandSurfaceRenderElement<PixmanRenderer>> =
+            w.render_elements(&mut self.renderer, at, smithay::utils::Scale::from(scale), 1.0);
+        let mut damage = OutputDamageTracker::new((size.0 as i32, size.1 as i32), scale, Transform::Normal);
+        let mut target = self.renderer.bind(&mut image).ok()?;
+        damage.render_output(&mut self.renderer, &mut target, 0, &elements, [0.0f32, 0.0, 0.0, 0.0]).ok()?;
+        drop(target);
+        Some(image)
     }
 
     /// The pixels of the screen under `rect` (logical, with `border` around it): what a window looked like as it closed. The
@@ -413,10 +514,19 @@ fn pixels<'a>(image: &'a Image<'static, 'static>) -> (&'a [u8], usize) {
     (unsafe { std::slice::from_raw_parts(image.data() as *const u8, stride * h) }, stride)
 }
 
-/// Write an output's picture as an 8-bit RGB PNG.
-fn write_png(image: &Image<'static, 'static>, path: &Path) -> Result<(), String> {
+/// Write an output's picture as an 8-bit RGB PNG, the pointer painted over it when given.
+fn write_png(image: &Image<'static, 'static>, path: &Path, pointer: Option<(&crate::pointer::Picture, (i32, i32))>) -> Result<(), String> {
     let (w, h) = (image.width(), image.height());
     let (bytes, stride) = pixels(image);
+    let mut with_pointer;
+    let bytes = match pointer {
+        Some((pic, at)) => {
+            with_pointer = bytes.to_vec();
+            crate::pointer::blend(&mut with_pointer, stride, (w as u32, h as u32), pic, at);
+            &with_pointer[..]
+        }
+        None => bytes,
+    };
     let mut rgb = Vec::with_capacity(w * h * 3);
     for row in bytes.chunks(stride).take(h) {
         for px in row[..w * 4].as_chunks::<4>().0 {
@@ -575,15 +685,18 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String
             app.remove_output(name)?;
             Ok(vec![])
         }
-        ["screenshot", name, path] => {
+        ["screenshot", name, path, rest @ ..] if rest.is_empty() || rest == ["pointer"] => {
             if app.head(name).is_none_or(|hd| !hd.enabled) {
                 return Err(format!("no output {name} that is on"));
             }
             h.render(app);
+            let o = output(name, app)?;
+            let pointer = if rest.is_empty() { None } else { app.pointer_picture(&o) };
             let s = h.screen(name).ok_or("the output went away")?;
-            write_png(&s.image, Path::new(path))?;
+            write_png(&s.image, Path::new(path), pointer.as_ref().map(|(p, at)| (&**p, *at)))?;
             Ok(vec![])
         }
+        ["pointer-look"] => Ok(vec![app.pointer_look()]),
         ["windows"] => Ok(app
             .window_infos()
             .into_iter()
@@ -712,7 +825,7 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String
         }
         [] => Err("no command".into()),
         _ => Err(format!(
-            "unknown command {:?} (outputs, resize NAME WxH, scale NAME S, add-output WxH[@S], remove-output NAME, screenshot NAME FILE, windows, layers, free, focus, workspace, lock, key COMBO, key-down COMBO, key-up COMBO, type TEXT, pointer X Y, click [BUTTON], power NAME on|off, clock [stop|run|+MS], quit; for the tools: clients, active, workspaces, workspace N, activate ID, close ID, minimize ID, maximize ID on|off|toggle, send ID N, place ID X Y W H, cursor, screens, pointer-timeout [S], modifiers)",
+            "unknown command {:?} (outputs, resize NAME WxH, scale NAME S, add-output WxH[@S], remove-output NAME, screenshot NAME FILE [pointer], pointer-look, windows, layers, free, focus, workspace, lock, key COMBO, key-down COMBO, key-up COMBO, type TEXT, pointer X Y, click [BUTTON], power NAME on|off, clock [stop|run|+MS], quit; for the tools: clients, active, workspaces, workspace N, activate ID, close ID, minimize ID, maximize ID on|off|toggle, send ID N, place ID X Y W H, cursor, screens, pointer-timeout [S], modifiers)",
             words.join(" ")
         )),
     }
