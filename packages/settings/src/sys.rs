@@ -961,12 +961,24 @@ pub struct LaptopCooling {
     pub thermal: Option<String>,
 }
 
-/// One hwmon folder's (name, fan speeds, first temperature in °C).
+/// The processor's sensors: the only temperatures read (an NVMe's or a disk's wakes it, and the page reads every few seconds).
+const CPU_HWMON: [&str; 2] = ["coretemp", "k10temp"];
+/// A graphics card's drivers: their fans are the card's, not the laptop's, and reading them can wake a sleeping card.
+const GPU_HWMON: [&str; 4] = ["amdgpu", "radeon", "nouveau", "xe"];
+
+/// One hwmon folder's (name, fan speeds, the processor's temperature in °C).
 pub fn read_hwmon(dir: &std::path::Path) -> (String, Vec<i64>, Option<i64>) {
     let read = |f: &str| std::fs::read_to_string(dir.join(f)).ok().map(|s| s.trim().to_string());
     let name = read("name").unwrap_or_default();
+    if GPU_HWMON.contains(&name.as_str()) {
+        return (name, vec![], None);
+    }
     let fans = (1..=8).filter_map(|i| read(&format!("fan{i}_input")).and_then(|v| v.parse().ok())).collect();
-    let temp = read("temp1_input").and_then(|v| v.parse::<i64>().ok()).map(|m| (m as f64 / 1000.0).round() as i64);
+    let temp = if CPU_HWMON.contains(&name.as_str()) {
+        read("temp1_input").and_then(|v| v.parse::<i64>().ok()).map(|m| (m as f64 / 1000.0).round() as i64)
+    } else {
+        None
+    };
     (name, fans, temp)
 }
 
@@ -974,7 +986,7 @@ pub fn read_hwmon(dir: &std::path::Path) -> (String, Vec<i64>, Option<i64>) {
 pub fn laptop_cooling_from(hwmons: &[(String, Vec<i64>, Option<i64>)], thermal: Option<String>) -> Option<LaptopCooling> {
     let vendor = hwmons.iter().find(|(n, f, _)| !f.is_empty() && n != "acpi_fan");
     let fans = vendor.or_else(|| hwmons.iter().find(|(_, f, _)| !f.is_empty())).map(|(_, f, _)| f.clone()).unwrap_or_default();
-    let cpu_temp = hwmons.iter().find(|(n, _, t)| (n == "coretemp" || n == "k10temp") && t.is_some()).and_then(|(_, _, t)| *t);
+    let cpu_temp = hwmons.iter().find(|(n, _, t)| CPU_HWMON.contains(&n.as_str()) && t.is_some()).and_then(|(_, _, t)| *t);
     (!fans.is_empty() || cpu_temp.is_some()).then_some(LaptopCooling { fans, cpu_temp, thermal })
 }
 
@@ -1584,6 +1596,31 @@ mod tests {
             profiles("  performance:\n    CpuDriver:\tintel_pstate\n\n* balanced:\n    CpuDriver:\tintel_pstate\n\n  power-saver:\n");
         assert_eq!(n, vec!["performance", "balanced", "power-saver"]);
         assert_eq!(a, "balanced");
+    }
+
+    #[test]
+    fn only_the_processors_temperature_is_read_and_a_graphics_cards_fan_is_not_the_laptops() {
+        let root = std::env::temp_dir().join(format!("ygg-hwmon-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let mk = |d: &str, files: &[(&str, &str)]| {
+            std::fs::create_dir_all(root.join(d)).unwrap();
+            for (f, v) in files {
+                std::fs::write(root.join(d).join(f), format!("{v}\n")).unwrap();
+            }
+            read_hwmon(&root.join(d))
+        };
+        // reading an NVMe's or a disk's temperature wakes it, and the page reads every few seconds
+        assert_eq!(mk("hwmon0", &[("name", "nvme"), ("temp1_input", "38850")]), ("nvme".to_string(), vec![], None));
+        assert_eq!(mk("hwmon1", &[("name", "drivetemp"), ("temp1_input", "31000")]).2, None);
+        assert_eq!(mk("hwmon2", &[("name", "coretemp"), ("temp1_input", "57400")]).2, Some(57));
+        // a dGPU's hwmon (sorted before the vendor driver's) is not the laptop's fan
+        let gpu = mk("hwmon3", &[("name", "amdgpu"), ("fan1_input", "2100"), ("temp1_input", "45000")]);
+        assert_eq!((gpu.1.len(), gpu.2), (0, None));
+        let tp = mk("hwmon4", &[("name", "thinkpad"), ("fan1_input", "6329"), ("fan2_input", "5917")]);
+        assert_eq!(tp.1, vec![6329, 5917]);
+        let c = laptop_cooling_from(&[gpu, tp], None).unwrap();
+        assert_eq!(c.fans, vec![6329, 5917]);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
