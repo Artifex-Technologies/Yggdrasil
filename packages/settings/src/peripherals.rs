@@ -124,6 +124,8 @@ pub struct State {
     openrazer: bool,
     note: Option<(String, bool)>,
     try_text: String,
+    /// The star key's group (read when the Keyboard page is first shown)
+    star: Option<crate::starkey::State>,
 }
 
 impl Default for State {
@@ -148,6 +150,7 @@ impl Default for State {
             openrazer: false,
             note: None,
             try_text: String::new(),
+            star: None,
         }
     }
 }
@@ -488,6 +491,8 @@ impl State {
         if commit {
             self.apply_input(conf, ctx);
         }
+        // a keyboard with a star key (a ThinkPad's F12): what it does
+        crate::starkey::group(ui, pal, self.star.get_or_insert_with(crate::starkey::State::read));
         self.layout_group(ui, pal, ctx);
         let mut lights = self.lights_off;
         ui::group(ui, pal, Some("Lights"), |ui| {

@@ -37,6 +37,7 @@ mod restore;
 mod security;
 mod single;
 mod spelling;
+mod starkey;
 mod sys;
 mod tune;
 mod ui;
