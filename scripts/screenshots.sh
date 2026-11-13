@@ -173,8 +173,8 @@ inside() {
     cp -r "$data/home/." "$HOME/"
     # the operating system's wallpaper as the chosen one (the lock screen draws only a chosen wallpaper)
     local wall
-    wall=$(sed -n 's/^wallpaper *= *//p' /usr/share/yggdrasil/integrations/*.conf 2>/dev/null | head -1)
-    [ -f "$wall" ] && echo "$wall" > "$HOME/.config/yggdrasil/wallpaper"
+    wall=$(sed -n 's/^wallpaper *= *//p' /usr/share/yggdrasil/integrations/*.conf 2>/dev/null | head -1) || true
+    if [ -f "$wall" ]; then echo "$wall" > "$HOME/.config/yggdrasil/wallpaper"; fi
     # programs found by name: the stand-ins, and this build's lock screen for Settings' lock screen previews
     local n
     for n in snapper systemctl; do ln -s "$data/bin/standin" "$work/bin/$n"; done
@@ -319,7 +319,7 @@ steady() {
     for i in $(seq 15); do
         pause 1
         ctl screenshot HEADLESS-1 "$b" > /dev/null
-        cmp -s "$a" "$b" && break
+        [ "$(cksum < "$a")" = "$(cksum < "$b")" ] && break
         mv "$b" "$a"
     done
     cp "$a" "$file"
