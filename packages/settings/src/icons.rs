@@ -38,6 +38,8 @@ pub enum Icon {
     Battery,
     /// VPN: a key (its ring on the left, two teeth on the right).
     Key,
+    /// Accessibility: a person with open arms in a circle.
+    Accessibility,
 }
 
 fn arc(c: Pos2, r: f32, from: f32, to: f32) -> Vec<Pos2> {
@@ -194,6 +196,13 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
             p.line_segment([at(0.47, 0.5), at(0.9, 0.5)], s);
             p.line_segment([at(0.74, 0.5), at(0.74, 0.66)], s);
             p.line_segment([at(0.86, 0.5), at(0.86, 0.62)], s);
+        }
+        Icon::Accessibility => {
+            p.circle_stroke(c, 0.42 * w, s);
+            p.circle_filled(at(0.5, 0.28), 0.07 * w, color);
+            p.line_segment([at(0.26, 0.4), at(0.74, 0.4)], s);
+            p.line_segment([at(0.5, 0.4), at(0.5, 0.6)], s);
+            p.add(Shape::line(vec![at(0.38, 0.78), at(0.5, 0.6), at(0.62, 0.78)], s));
         }
         Icon::Info => {
             p.circle_stroke(c, 0.38 * w, s);

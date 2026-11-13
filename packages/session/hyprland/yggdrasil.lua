@@ -27,6 +27,20 @@ do
 end
 local dark = setting("appearance.conf", "style") ~= "light"
 local reduce_motion = setting("panel.conf", "reduce_motion") == "yes" or setting("panel.conf", "reduce_motion") == "true"
+-- Settings > Accessibility > Colour filters: a screen shader Settings writes as ~/.config/yggdrasil/shaders/NAME.frag, named by
+-- `color_filter` in accessibility.conf (greyscale, protanopia, deuteranopia, tritanopia; none or missing: no shader)
+local screen_shader = nil
+do
+  local name = setting("accessibility.conf", "color_filter")
+  if name and name ~= "none" and name:match("^%a+$") then
+    local p = config_home .. "/yggdrasil/shaders/" .. name .. ".frag"
+    local f = io.open(p, "r")
+    if f then
+      f:close()
+      screen_shader = p
+    end
+  end
+end
 
 -- The keyboard layout the system was set up with (the installer, or `localectl set-x11-keymap`), from the file both write:
 -- /etc/X11/xorg.conf.d/00-keyboard.conf. US when there is none.
@@ -108,6 +122,7 @@ hl.config({
     shadow = { enabled = true, range = 18, render_power = 3, color = "rgba(00000044)" },
     -- no blur: it costs the graphics card something on every frame
     blur = { enabled = false },
+    screen_shader = screen_shader,
   },
 
   animations = {

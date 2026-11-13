@@ -60,6 +60,21 @@ fn dispatch(argv: &[String]) -> files::R<i32> {
             println!("Pointer: {name}");
             Ok(0)
         }
+        "cursor-size" => {
+            if argv.len() < 2 {
+                println!("{}", files::cursor_size());
+                return Ok(0);
+            }
+            let Some(n) = argv[1].parse().ok().filter(|n| files::CURSOR_SIZES.contains(n)) else {
+                eprintln!("ygg-theme: the pointer's size is one of 24, 32, 48, 64 or 96");
+                return Ok(1);
+            };
+            let (dark, acc) = files::current()?;
+            files::write_appearance_sized(dark, acc, None, Some(n))?;
+            files::apply_cursor(&files::cursor_theme()?, true)?;
+            println!("Pointer size: {n}");
+            Ok(0)
+        }
         "apply" => {
             let (mut dark, mut acc) = files::current()?;
             let a = &argv[1..];

@@ -1,5 +1,14 @@
 # Accessibility audit (2026-10-16)
 
+**Status 2026-11-13:** Settings has an Accessibility page (`packages/settings/src/accessibility.rs`, near the top of the
+sidebar): text and control size and reduce motion (moved from Appearance; reduce motion now also reloads Hyprland so its window
+animations follow), the pointer's size (`ygg-theme cursor-size 24|32|48|64|96`: Hyprland at once, programs as they start,
+`cursor_size` in appearance.conf), Hyprland's zoom around the pointer with the Super+Alt+= / - / 0 keys beside it, and colour
+filters (greyscale, protanopia, deuteranopia, tritanopia: a screen shader Settings writes to ~/.config/yggdrasil/shaders, named
+in accessibility.conf, which the session's yggdrasil.lua gives Hyprland at every start; `packages/session/tests/color-filter.lua`).
+Zoom and colour filters are Hyprland's: Yggdrasil's own compositor does not offer them yet. Still missing: sticky, slow and
+bounce keys, high contrast, mono audio. The shaders and the live zoom were not tried on a screen yet.
+
 **Status 2026-11-04:** KDE is gone (removed from the owner's PC on 2026-10-24), and with it everything this audit said was still
 KDE's: `kaccess` (sticky, slow and bounce keys, mouse keys), KWin's zoom and high-contrast effects, KDE's Orca hook and
 `qt6-virtualkeyboard` are not installed now. The Yggdrasil session runs on Hyprland 0.57, and **nothing replaces them yet**: there

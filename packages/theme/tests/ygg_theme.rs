@@ -134,3 +134,27 @@ fn a_pointer_theme_is_chosen_only_when_installed() {
     assert_eq!(String::from_utf8_lossy(&h.run(&["cursor"], "0").stdout), "Yggdrasil\n");
     assert!(!Path::new("/nonexistent").exists());
 }
+
+#[test]
+fn the_pointer_size_is_kept_and_given_to_every_program() {
+    let h = home();
+    h.write(".local/share/icons/Mine/cursors/left_ptr", "x");
+    h.run(&["cursor", "Mine"], "0");
+    for bad in ["0", "25", "big", "-48"] {
+        assert_eq!(h.run(&["cursor-size", bad], "0").status.code(), Some(1), "{bad}");
+    }
+    let r = h.run(&["cursor-size", "48"], "0");
+    assert_eq!(String::from_utf8_lossy(&r.stdout), "Pointer size: 48\n");
+    assert_eq!(h.read(".config/environment.d/50-yggdrasil-cursor.conf"), "XCURSOR_THEME=Mine\nXCURSOR_SIZE=48\n");
+    assert_eq!(section(&h.read(".config/gtk-3.0/settings.ini"), "[Settings]", "gtk-cursor-theme-size").as_deref(), Some("48"));
+    let conf = h.read(".config/yggdrasil/appearance.conf");
+    assert!(conf.contains("cursor = Mine\n") && conf.contains("cursor_size = 48\n"), "{conf}");
+    assert_eq!(String::from_utf8_lossy(&h.run(&["cursor-size"], "0").stdout), "48\n");
+    // a later change of theme or style keeps the size
+    h.run(&["apply", "--light"], "0");
+    assert!(h.read(".config/yggdrasil/appearance.conf").contains("cursor_size = 48\n"));
+    // back to the default size: not written down
+    h.run(&["cursor-size", "24"], "0");
+    assert!(!h.read(".config/yggdrasil/appearance.conf").contains("cursor_size"));
+    assert_eq!(h.read(".config/environment.d/50-yggdrasil-cursor.conf"), "XCURSOR_THEME=Mine\nXCURSOR_SIZE=24\n");
+}

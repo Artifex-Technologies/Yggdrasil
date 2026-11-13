@@ -65,6 +65,10 @@ rows, a row that opens a page ending in ›, and a small grey note under a card 
   top bar, a window with the accent's border, the dock with the first pinned apps in the icon pack). Both are made again
   only when one of those changes, and dropped when the page is left.
 
+- **Accessibility** (`src/accessibility.rs`, near the top of the sidebar; Appearance keeps a row to it): text and control
+  size, pointer size, zoom, colour filters, reduce motion, and rows to key repeat and the on-screen keyboard. What each does
+  and what is still missing: docs/ACCESSIBILITY.md.
+
 ## The pages
 
 - **The list** (2026-11-13, as on a tablet): a card at the top with Default Apps ("Manage default apps", no longer in the
@@ -174,6 +178,7 @@ About only when switched on, have no picture.
 
 | Page | |
 | --- | --- |
+| **Accessibility**: text and pointer size, zoom, colour filters, reduce motion. | ![Settings > Accessibility](../assets/screenshots/settings-accessibility.png) |
 | **General**: the page Settings opens on. | ![Settings > General](../assets/screenshots/settings-general.png) |
 | **General > Storage**: each disk's use (`system.json`'s made-up disks). | ![Settings > General > Storage](../assets/screenshots/settings-storage.png) |
 | **General > Language & Region**: the system's language, a separate region for dates and times. | ![Settings > General > Language & Region](../assets/screenshots/settings-language.png) |
@@ -196,7 +201,7 @@ About only when switched on, have no picture.
 | **Battery** (`laptop.json`): the charge, the last ten days, the apps' share, health and the charge limit. | ![Settings > Battery](../assets/screenshots/settings-battery.png) |
 | **Power > Cooling**: a fan controller's pump and fans, each with its speed now. | ![Settings > Power > Cooling](../assets/screenshots/settings-cooling.png) |
 | **Power > Cooling, a fan's curves**: the processor's curve, dragged point by point. | ![Settings > Power > Cooling, a fan's curves](../assets/screenshots/settings-cooling-curves.png) |
-| **Appearance**: light or dark, the accent, wallpapers, icons. | ![Settings > Appearance](../assets/screenshots/settings-appearance.png) |
+| **Appearance**: light or dark, the accent, the pages inside it, a row to Accessibility. | ![Settings > Appearance](../assets/screenshots/settings-appearance.png) |
 | **Appearance > Wallpaper**: the lock screen and the desktop previewed side by side, the wallpapers below. | ![Settings > Appearance > Wallpaper](../assets/screenshots/settings-wallpaper.png) |
 | **Appearance > Lock screen**: the designs with their previews. | ![Settings > Appearance > Lock screen](../assets/screenshots/settings-lock-screen-designs.png) |
 | **Sarina**: the operating system's assistant, from its integration. | ![Settings > Sarina](../assets/screenshots/settings-assistant.png) |

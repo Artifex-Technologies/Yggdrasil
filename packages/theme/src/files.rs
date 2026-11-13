@@ -8,7 +8,16 @@ use std::path::Path;
 use crate::colors::{gtk_colors, rgb, scheme, Rgb};
 
 pub const DEFAULT_CURSOR: &str = "Yggdrasil";
+/// The pointer's size unless another is chosen (Settings > Accessibility, `cursor_size` in appearance.conf).
 pub const CURSOR_SIZE: i32 = 24;
+/// The sizes that may be chosen.
+pub const CURSOR_SIZES: [i32; 5] = [24, 32, 48, 64, 96];
+
+/// The pointer's size: appearance.conf's `cursor_size` when it is one of CURSOR_SIZES, else 24.
+pub fn cursor_size() -> i32 {
+    let vals = read_appearance().unwrap_or_default();
+    get(&vals, "cursor_size").parse().ok().filter(|n| CURSOR_SIZES.contains(n)).unwrap_or(CURSOR_SIZE)
+}
 
 /// Where the script stopped with a traceback.
 #[derive(Debug)]
@@ -221,9 +230,15 @@ fn get<'a>(vals: &'a [(String, String)], k: &str) -> &'a str {
 /// The desktop's own record of the choice (read by the panel, the apps and the portal). The icon pack (Settings writes it)
 /// is kept; the pointer is written only when it is not the default.
 pub fn write_appearance(dark: bool, accent: Rgb, cursor: Option<&str>) -> R<()> {
+    write_appearance_sized(dark, accent, cursor, None)
+}
+
+/// The same, with the pointer's size (None keeps the one written; the default size is not written down).
+pub fn write_appearance_sized(dark: bool, accent: Rgb, cursor: Option<&str>, size: Option<i32>) -> R<()> {
     let p = appearance_path();
     makedirs(&dirname(&p))?;
     let old = read_appearance()?;
+    let size = size.or_else(|| get(&old, "cursor_size").parse().ok()).filter(|n| CURSOR_SIZES.contains(n) && *n != CURSOR_SIZE);
     let cursor = cursor.filter(|c| !c.is_empty()).unwrap_or(get(&old, "cursor")).to_string();
     let mut text = format!("style = {}\naccent = {}\n", if dark { "dark" } else { "light" }, rgb(accent));
     if !get(&old, "icons").is_empty() {
@@ -231,6 +246,9 @@ pub fn write_appearance(dark: bool, accent: Rgb, cursor: Option<&str>) -> R<()> 
     }
     if !cursor.is_empty() && cursor != DEFAULT_CURSOR {
         text += &format!("cursor = {cursor}\n");
+    }
+    if let Some(n) = size {
+        text += &format!("cursor_size = {n}\n");
     }
     let tmp = format!("{p}.tmp");
     write_text(&tmp, &text)?;
@@ -290,19 +308,24 @@ pub fn apply_cursor(name: &str, live: bool) -> R<()> {
         makedirs(&d)?;
         ini_set(&join(&d, "settings.ini"), "Settings", "gtk-cursor-theme-name", name)?;
     }
-    xsettings(&[("Gtk/CursorThemeName", name)])?;
+    let size = cursor_size();
+    for ver in ["gtk-3.0", "gtk-4.0"] {
+        ini_set(&join(&join(&config(), ver), "settings.ini"), "Settings", "gtk-cursor-theme-size", &size.to_string())?;
+    }
+    xsettings(&[("Gtk/CursorThemeName", name), ("Gtk/CursorThemeSize", &size.to_string())])?;
     // programs started from now on (Wayland programs and the compositor at the next login read these)
     let envd = join(&config(), "environment.d");
     makedirs(&envd)?;
-    write_text(&join(&envd, "50-yggdrasil-cursor.conf"), &format!("XCURSOR_THEME={name}\nXCURSOR_SIZE={CURSOR_SIZE}\n"))?;
+    write_text(&join(&envd, "50-yggdrasil-cursor.conf"), &format!("XCURSOR_THEME={name}\nXCURSOR_SIZE={size}\n"))?;
     if which("gsettings") {
         run(&["gsettings", "set", "org.gnome.desktop.interface", "cursor-theme", name]);
+        run(&["gsettings", "set", "org.gnome.desktop.interface", "cursor-size", &size.to_string()]);
     }
     if live {
-        run(&["systemctl", "--user", "set-environment", &format!("XCURSOR_THEME={name}")]);
+        run(&["systemctl", "--user", "set-environment", &format!("XCURSOR_THEME={name}"), &format!("XCURSOR_SIZE={size}")]);
         // the compositor (yggdrasil-wm: Hyprland's `setcursor` on its socket, or Yggdrasil's own compositor)
         if let Some(d) = yggdrasil_wm::Desk::detect() {
-            d.set_cursor(name, CURSOR_SIZE as u32);
+            d.set_cursor(name, size as u32);
         }
     }
     Ok(())

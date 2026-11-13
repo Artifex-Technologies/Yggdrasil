@@ -5,6 +5,7 @@ ygg-theme: Yggdrasil's look for the programs Yggdrasil does not write (Qt, KDE a
   ygg-theme gtk dark|light [R,G,B]                     print the GTK colour definitions
   ygg-theme gtk3-theme|gtk4-theme dark|light           print the system GTK 3 or GTK 4 theme file (what the package installs)
   ygg-theme cursor [NAME]                              print the mouse pointer theme, or switch to NAME (an installed cursor theme)
+  ygg-theme cursor-size [N]                            print the pointer's size, or set it (24, 32, 48, 64 or 96)
   ygg-theme --help
 
 Nothing here draws anything: it writes small text files (GTK colours, a few settings) from Yggdrasil's palette (the same colours the
@@ -12,7 +13,7 @@ panel, Settings and Minos use) and the accent colour. GTK programs use GTK's own
 light or dark style through the desktop portal; the mouse pointer is the Yggdrasil cursor theme (ygg-cursors) unless another installed
 cursor theme was chosen (Settings > Appearance > Icons, Pointer). No other theme package is needed.
 
-The choice itself is kept in ~/.config/yggdrasil/appearance.conf (style, accent, icons, cursor); the files written for the other programs
+The choice itself is kept in ~/.config/yggdrasil/appearance.conf (style, accent, icons, cursor, cursor_size); the files written for the other programs
 are ~/.config/gtk-3.0 and gtk-4.0 (GTK). Only when a program built on KDE's libraries is installed (ghostwriter, Krita: they read KDE's
 settings files and nothing else) are KDE's files written for it too: the colour scheme (~/.config/kdeglobals,
 ~/.local/share/color-schemes) and the pointer (~/.config/kcminputrc). Nothing of KDE's is read.

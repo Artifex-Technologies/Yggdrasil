@@ -5,6 +5,7 @@
 //! Reading the system can be slow (Wi-Fi scans, Bluetooth), so every page loads on a background
 //! thread and every change runs on one too; the window never freezes.
 
+mod accessibility;
 mod appmgr;
 mod apps_ui;
 mod battery;
@@ -73,6 +74,8 @@ enum Page {
     Battery,
     /// NetworkManager's VPN and WireGuard connections, and Tailscale (vpn.rs).
     Vpn,
+    /// Text size, pointer size, zoom, colour filters, reduce motion (accessibility.rs).
+    Accessibility,
     Network,
     Bluetooth,
     Displays,
@@ -136,9 +139,16 @@ enum AppSub {
 // The sidebar, in groups (a heading is drawn where the group changes; the first group has none). The words after the name are
 // what the search also finds the page by: what is inside it, not only its title. A page with a parent (`parent`) is a row on
 // that page instead of in the sidebar; the search still finds it.
-const PAGES: [(Page, &str, Icon, &str, &str); 24] = [
+const PAGES: [(Page, &str, Icon, &str, &str); 25] = [
     (Page::General, "General", Icon::Gear, "", "about software update storage disk date time keyboard language region"),
     (Page::Battery, "Battery", Icon::Battery, "", "charge health charge limit usage laptop"),
+    (
+        Page::Accessibility,
+        "Accessibility",
+        Icon::Accessibility,
+        "",
+        "text size larger zoom magnifier pointer cursor size colour color filters greyscale colour blind reduce motion animations",
+    ),
     (Page::Network, "Wi-Fi & Network", Icon::Wifi, "Connections", "internet ethernet proxy"),
     (Page::Bluetooth, "Bluetooth", Icon::Bluetooth, "Connections", "headphones controller pair"),
     (Page::Vpn, "VPN", Icon::Key, "Connections", "vpn wireguard openvpn ikev2 tailscale tunnel"),
@@ -254,6 +264,7 @@ enum Msg {
     Battery(battery::Info),
     Vpn(vpn::State),
     Media(media::Info),
+    Access(accessibility::State),
     Language(general::Language),
     Apps(Vec<sys::Component>),
     Installed(Vec<appmgr::AppInfo>),
@@ -292,6 +303,7 @@ struct Data {
     storage: Option<general::Storage>,
     battery: Option<battery::Info>,
     vpn: Option<vpn::State>,
+    access: Option<accessibility::State>,
     language: Option<general::Language>,
     apps: Option<Vec<sys::Component>>,
     installed: Option<Vec<appmgr::AppInfo>>,
@@ -414,6 +426,8 @@ struct App {
     mic_meter: Option<media::Meter>,
     /// Appearance > Wallpaper's preview of the lock screen and the desktop (dropped when that page is left).
     wall_preview: Option<wallpaper::Preview>,
+    /// Accessibility > Zoom while its slider is dragged (applied when let go).
+    zoom_drag: Option<f32>,
     bt_open: Option<String>,
     bt_forget: bool,
     bt_pairing: Option<String>,
@@ -587,6 +601,7 @@ impl App {
             cam_preview: None,
             mic_meter: None,
             wall_preview: None,
+            zoom_drag: None,
             bt_open: None,
             bt_forget: false,
             bt_pairing: None,
@@ -665,6 +680,7 @@ impl App {
                 Page::Storage => Msg::Storage(general::storage()),
                 Page::Battery => Msg::Battery(battery::load()),
                 Page::Vpn => Msg::Vpn(vpn::load()),
+                Page::Accessibility => Msg::Access(accessibility::load()),
                 Page::Peripherals => Msg::Media(media::load()),
                 Page::Language => Msg::Language(general::language()),
                 Page::Apps => {
@@ -759,6 +775,7 @@ impl App {
                 Msg::Storage(v) => self.data.storage = Some(v),
                 Msg::Battery(v) => self.data.battery = Some(v),
                 Msg::Vpn(v) => self.data.vpn = Some(v),
+                Msg::Access(v) => self.data.access = Some(v),
                 Msg::Media(v) => self.media_info = Some(v),
                 Msg::Language(v) => self.data.language = Some(v),
                 Msg::Apps(v) => self.data.apps = Some(v),
@@ -1074,6 +1091,7 @@ impl eframe::App for App {
                         Page::Storage => self.page_storage(ui, &pal),
                         Page::Battery => self.page_battery(ui, &pal, &ctx),
                         Page::Vpn => self.page_vpn(ui, &pal, &ctx),
+                        Page::Accessibility => self.page_accessibility(ui, &pal, &ctx),
                         Page::Language => self.page_language(ui, &pal, &ctx),
                         Page::About => self.page_about(ui, &pal, &ctx),
                         Page::Network => self.page_network(ui, &pal, &ctx),
@@ -2011,6 +2029,7 @@ impl App {
         let mut minos_live = false;
         let mut conf = a.panel;
         let mut conf_changed = false;
+        let mut open_access = false;
         if self.app_sub == AppSub::Main {
             ui::group(ui, pal, Some("Style"), |ui| {
                 ui::row(ui, pal, true, "Look", None, |ui| {
@@ -2299,6 +2318,118 @@ impl App {
             });
         }
         if self.app_sub == AppSub::Main {
+            // text size and reduce motion moved to their own page, Accessibility
+            ui::group(ui, pal, None, |ui| {
+                if ui::nav_row(
+                    ui,
+                    pal,
+                    true,
+                    "Accessibility",
+                    Some("Text size, pointer size, zoom, colour filters and reduce motion"),
+                    |_| {},
+                ) {
+                    open_access = true;
+                }
+            });
+        }
+        if self.app_sub == AppSub::Bar {
+            ui::group(ui, pal, Some("Dock"), |ui| {
+                let positions = ["Bottom", "Left", "Right"];
+                let pos_index = match conf.dock_pos {
+                    yggdrasil_conf::DockPos::Bottom => 0,
+                    yggdrasil_conf::DockPos::Left => 1,
+                    yggdrasil_conf::DockPos::Right => 2,
+                };
+                ui::row(ui, pal, true, "Position", Some("Which edge of the screen; left and right are vertical"), |ui| {
+                    if let Some(i) = ui::segmented(ui, pal, &positions, pos_index) {
+                        conf.dock_pos = [yggdrasil_conf::DockPos::Bottom, yggdrasil_conf::DockPos::Left, yggdrasil_conf::DockPos::Right][i];
+                        conf_changed = true;
+                    }
+                });
+                let mut gap = conf.dock_gap as f32;
+                ui::row(
+                    ui,
+                    pal,
+                    false,
+                    "Distance from edge",
+                    Some("How far the dock floats off the screen edge; 0 puts it right on the edge"),
+                    |ui| {
+                        let r = ui::slider_range(ui, pal, &mut gap, 0.0..=yggdrasil_conf::DOCK_GAP_MAX as f32, " px");
+                        if r.drag_stopped() || (r.changed() && !r.dragged()) {
+                            conf.dock_gap = gap as u32;
+                            conf_changed = true;
+                        }
+                    },
+                );
+                let mut size = conf.dock_icon as f32;
+                ui::row(ui, pal, false, "Size", Some("Icon size"), |ui| {
+                    let r = ui::slider_range(
+                        ui,
+                        pal,
+                        &mut size,
+                        yggdrasil_conf::DOCK_ICON_MIN as f32..=yggdrasil_conf::DOCK_ICON_MAX as f32,
+                        " px",
+                    );
+                    if r.drag_stopped() || (r.changed() && !r.dragged()) {
+                        conf.dock_icon = size as u32;
+                        conf_changed = true;
+                    }
+                });
+                let mut opacity = conf.dock_opacity as f32;
+                ui::row(ui, pal, false, "Background", Some("Opacity of the dock's shelf; 0% leaves just the icons"), |ui| {
+                    let r = ui::slider(ui, pal, &mut opacity);
+                    if r.drag_stopped() || (r.changed() && !r.dragged()) {
+                        conf.dock_opacity = opacity as u32;
+                        conf_changed = true;
+                    }
+                });
+                ui::row(ui, pal, false, "Color", Some("Match the theme's purple, or follow only dark and light"), |ui| {
+                    if let Some(i) = ui::segmented(ui, pal, &modes, mode_index(conf.dock_color)) {
+                        conf.dock_color = mode_of(i);
+                        conf_changed = true;
+                    }
+                });
+            });
+        }
+        if self.app_sub == AppSub::Bar {
+            ui::group(ui, pal, Some("Top bar"), |ui| {
+                let mut opacity = conf.bar_opacity as f32;
+                ui::row(ui, pal, true, "Background", Some("Opacity of the bar; 0% leaves just its text"), |ui| {
+                    let r = ui::slider(ui, pal, &mut opacity);
+                    if r.drag_stopped() || (r.changed() && !r.dragged()) {
+                        conf.bar_opacity = opacity as u32;
+                        conf_changed = true;
+                    }
+                });
+                ui::row(ui, pal, false, "Color", Some("Match the theme's purple, or follow only dark and light"), |ui| {
+                    if let Some(i) = ui::segmented(ui, pal, &modes, mode_index(conf.bar_color)) {
+                        conf.bar_color = mode_of(i);
+                        conf_changed = true;
+                    }
+                });
+            });
+        }
+        if self.app_sub == AppSub::Bar {
+            ui::group(ui, pal, Some("Start menu"), |ui| {
+                let themes = ["Windows", "Folders"];
+                let current = if conf.start_theme == yggdrasil_conf::StartTheme::Folders { 1 } else { 0 };
+                ui::row(
+                    ui,
+                    pal,
+                    true,
+                    "Theme",
+                    Some("Windows: pinned apps and every app in a list. Folders: narrow, apps in folders by kind, and a power button"),
+                    |ui| {
+                        if let Some(i) = ui::segmented(ui, pal, &themes, current) {
+                            conf.start_theme =
+                                if i == 1 { yggdrasil_conf::StartTheme::Folders } else { yggdrasil_conf::StartTheme::Windows };
+                            conf_changed = true;
+                        }
+                    },
+                );
+            });
+        }
+        if self.app_sub == AppSub::Main {
             ui::group(ui, pal, Some("Accessibility"), |ui| {
                 let sizes = ["100%", "125%", "150%", "200%"];
                 let cur = match conf.text_scale {
@@ -2393,6 +2524,9 @@ impl App {
         }
         if conf_changed {
             self.change(ctx, move || conf.save());
+        }
+        if open_access {
+            self.open_page(Page::Accessibility, ctx);
         }
         if let Some(dark) = style {
             self.change(ctx, move || {
