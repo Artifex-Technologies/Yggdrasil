@@ -709,7 +709,32 @@ pub struct Displays {
 
 pub fn displays() -> Displays {
     let tiling = yggdrasil_conf::tiling::outputs().join(",");
-    Displays { outputs: hypr_outputs(&run("hyprctl", &["-j", "monitors", "all"]).unwrap_or_default()), tiling }
+    Displays { outputs: outputs_from(&screens_all().unwrap_or_default()), tiling }
+}
+
+/// The compositor (yggdrasil-wm: Hyprland or Yggdrasil's own), unless a made-up system (a fixture) stands in for the real one.
+pub fn desk() -> Option<yggdrasil_wm::Desk> {
+    if crate::fixture::get().is_some() {
+        return None;
+    }
+    yggdrasil_wm::Desk::detect()
+}
+
+/// Every screen, switched-off ones too, with the modes it offers: from the compositor (a fixture answers it as `hyprctl -j
+/// monitors all`).
+fn screens_all() -> Option<Vec<yggdrasil_wm::Screen>> {
+    if let Some(f) = crate::fixture::get() {
+        return f.answer("hyprctl", &["-j", "monitors", "all"]).map(|j| yggdrasil_wm::hyprland::parse_monitors(&j));
+    }
+    yggdrasil_wm::Desk::detect().map(|d| d.screens_all())
+}
+
+/// The compositor reads its settings again (after Settings wrote them).
+pub fn reload() -> Result<(), String> {
+    if crate::fixture::get().is_some() {
+        return Err("A made-up system (a fixture): nothing is changed.".into());
+    }
+    desk().ok_or("No compositor answered")?.reload()
 }
 
 /// The session's compositor is Hyprland (Yggdrasil's own session).
@@ -717,37 +742,30 @@ pub fn hyprland() -> bool {
     std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some()
 }
 
-/// `hyprctl -j monitors all`: the screens. Hyprland has no "main" screen: the one at the top left of the space is it.
-pub fn hypr_outputs(json: &str) -> Vec<Output> {
-    let v: serde_json::Value = serde_json::from_str(json).unwrap_or(serde_json::Value::Null);
-    let mut outs: Vec<Output> = v
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(|m| {
-                    let (w, h, r) = (m["width"].as_u64()? as u32, m["height"].as_u64()? as u32, m["refreshRate"].as_f64().unwrap_or(60.0));
-                    let mut modes: Vec<Mode> = m["availableModes"]
-                        .as_array()
-                        .map(|l| l.iter().filter_map(|x| parse_hypr_mode(x.as_str()?)).collect())
-                        .unwrap_or_default();
-                    let current = hypr_mode_id(w, h, r);
-                    if !modes.iter().any(|x| x.id == current) {
-                        modes.push(Mode { id: current.clone(), width: w, height: h, refresh: r });
-                    }
-                    Some(Output {
-                        name: m["name"].as_str()?.to_string(),
-                        enabled: !m["disabled"].as_bool().unwrap_or(false),
-                        primary: false,
-                        scale: m["scale"].as_f64().unwrap_or(1.0),
-                        current,
-                        modes,
-                        x: m["x"].as_i64().unwrap_or(0),
-                        y: m["y"].as_i64().unwrap_or(0),
-                    })
-                })
-                .collect()
+/// The screens as the compositor lists them. Hyprland has no "main" screen: the one at the top left of the space is it. A screen
+/// that does not say its refresh rate is taken as 60 Hz, and its mode now is always among its modes.
+pub fn outputs_from(screens: &[yggdrasil_wm::Screen]) -> Vec<Output> {
+    let mut outs: Vec<Output> = screens
+        .iter()
+        .map(|m| {
+            let (w, h, r) = (m.width, m.height, m.refresh.unwrap_or(60.0));
+            let mut modes: Vec<Mode> = m.modes.iter().filter_map(|x| parse_hypr_mode(x)).collect();
+            let current = hypr_mode_id(w, h, r);
+            if !modes.iter().any(|x| x.id == current) {
+                modes.push(Mode { id: current.clone(), width: w, height: h, refresh: r });
+            }
+            Output {
+                name: m.name.clone(),
+                enabled: !m.disabled,
+                primary: false,
+                scale: m.scale.unwrap_or(1.0),
+                current,
+                modes,
+                x: m.x as i64,
+                y: m.y as i64,
+            }
         })
-        .unwrap_or_default();
+        .collect();
     if let Some(first) = outs.iter_mut().filter(|o| o.enabled).min_by_key(|o| (o.x, o.y)) {
         first.primary = true;
     }
@@ -783,9 +801,12 @@ pub fn hypr_monitors_lua(outs: &[Output]) -> String {
 }
 
 /// Changes one screen's mode or scale in Hyprland: the whole list is written (from what Hyprland reports now, with the change) and
-/// Hyprland reads it again.
+/// Hyprland reads it again. Yggdrasil's own compositor cannot change a screen yet (wlr-output-management is still to come).
 pub fn hypr_set(name: &str, mode: Option<&str>, scale: Option<f64>) -> Result<(), String> {
-    let mut outs = hypr_outputs(&run("hyprctl", &["-j", "monitors", "all"]).ok_or("Hyprland did not answer")?);
+    if matches!(desk(), Some(yggdrasil_wm::Desk::Own(_))) {
+        return Err("Yggdrasil's own compositor cannot change a screen's mode or scale yet".into());
+    }
+    let mut outs = outputs_from(&screens_all().ok_or("Hyprland did not answer")?);
     let o = outs.iter_mut().find(|o| o.name == name).ok_or("that screen is not there")?;
     if let Some(m) = mode {
         o.current = m.to_string();
@@ -795,7 +816,7 @@ pub fn hypr_set(name: &str, mode: Option<&str>, scale: Option<f64>) -> Result<()
     }
     let p = yggdrasil_conf::dirs::config().join("monitors.lua");
     std::fs::write(&p, hypr_monitors_lua(&outs)).map_err(|e| e.to_string())?;
-    act("hyprctl", &["reload"])
+    reload()
 }
 
 /// Turns tiling on or off for one screen: the shared list (yggdrasil_conf::tiling) and then whoever draws the windows.
@@ -806,7 +827,7 @@ pub fn set_tiling(name: &str, on: bool) -> Result<(), String> {
         list.push(name.to_string());
     }
     yggdrasil_conf::tiling::set_outputs(&list).map_err(|e| e.to_string())?;
-    act("hyprctl", &["reload"])
+    reload()
 }
 
 // ---------------------------------------------------------------- Appearance
@@ -1298,12 +1319,15 @@ mod tests {
     fn hyprland_screens_and_their_settings_file() {
         let j = r#"[{"name":"DP-3","width":2560,"height":2880,"refreshRate":59.95,"x":3440,"y":0,"scale":1.25,"disabled":false,"availableModes":["2560x2880@59.95Hz","1920x1080@60.00Hz"]},
                    {"name":"DP-1","width":3440,"height":1440,"refreshRate":180.0,"x":0,"y":0,"scale":1.0,"disabled":false,"availableModes":["3440x1440@180.00Hz","3440x1440@60.00Hz"]}]"#;
-        let o = hypr_outputs(j);
+        let o = outputs_from(&yggdrasil_wm::hyprland::parse_monitors(j));
         let dp1 = o.iter().find(|x| x.name == "DP-1").unwrap();
         assert!(dp1.primary, "the screen at the top left is the main one");
         assert_eq!(dp1.current, "3440x1440@180.00");
         assert_eq!(dp1.current_mode().unwrap().refresh, 180.0);
         assert_eq!(dp1.rates(3440, 1440).len(), 2);
+        // a screen of Yggdrasil's own compositor says no rate and no modes: 60 Hz, its one mode
+        let own = outputs_from(&[yggdrasil_wm::own::parse_screen(0, "HEADLESS-1\t0,0\t1600x900\t1\t0,32,0,64\tfocused", Some(1)).unwrap()]);
+        assert_eq!((own[0].current.as_str(), own[0].modes.len(), own[0].primary), ("1600x900@60.00", 1, true));
         let lua = hypr_monitors_lua(&o);
         assert!(lua.contains(r#"hl.monitor({ output = "DP-3", mode = "2560x2880@59.95", position = "3440x0", scale = 1.25 })"#), "{lua}");
     }

@@ -4496,6 +4496,7 @@ dependencies = [
  "yggdrasil-spell",
  "yggdrasil-ui",
  "yggdrasil-wifiscan",
+ "yggdrasil-wm",
 ]
 
 [[package]]
@@ -4523,6 +4524,14 @@ name = "yggdrasil-wifiscan"
 version = "0.1.0"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "yggdrasil-wm"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "yggdrasil-conf",
 ]
 
 [[package]]

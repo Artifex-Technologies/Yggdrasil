@@ -16,6 +16,8 @@ egui_extras = { version = "0.36.2", features = ["file", "image", "svg"] }
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
 yggdrasil-ui = { path = "../yggdrasil-ui" }
 yggdrasil-conf = { path = "../yggdrasil-conf" }
+# the compositor (Hyprland or Yggdrasil's own): screens, reload, shortcuts, focusing a window
+yggdrasil-wm = { path = "../wm" }
 # Keyboard > Spelling and languages
 yggdrasil-spell = { path = "../spell" }
 yggdrasil-gamepads = { path = "../gamepads" }

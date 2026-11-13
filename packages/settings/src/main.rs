@@ -4376,9 +4376,9 @@ fn account_row(ui: &mut egui::Ui, pal: &Palette, first: bool, a: &users::Account
     resp.clicked()
 }
 
-/// The shortcuts of the running Hyprland session (Yggdrasil's own and the user's), grouped (yggdrasil_conf::shortcuts), read every
-/// few seconds.
-fn hypr_shortcuts() -> Vec<yggdrasil_conf::shortcuts::Shortcut> {
+/// The shortcuts of the running session (Hyprland's binds, Yggdrasil's own and the user's, or Yggdrasil's own compositor's), grouped
+/// (yggdrasil_conf::shortcuts), read every few seconds.
+fn live_shortcuts() -> Vec<yggdrasil_conf::shortcuts::Shortcut> {
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
     use yggdrasil_conf::shortcuts::{self, Bind, Shortcut};
@@ -4389,24 +4389,15 @@ fn hypr_shortcuts() -> Vec<yggdrasil_conf::shortcuts::Shortcut> {
             return v.clone();
         }
     }
-    let json: serde_json::Value = sys::run("hyprctl", &["-j", "binds"]).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
-    let binds: Vec<Bind> = json
-        .as_array()
-        .map(|a| a.as_slice())
-        .unwrap_or(&[])
-        .iter()
-        .map(|b| Bind {
-            modmask: b["modmask"].as_u64().unwrap_or(0) as u32,
-            // a key given by its code (the number row: code:10 is 1) has no name, only the code
-            key: b["key"]
-                .as_str()
-                .filter(|k| !k.is_empty())
-                .map(str::to_string)
-                .unwrap_or_else(|| format!("code:{}", b["keycode"].as_u64().unwrap_or(0))),
-            desc: b["description"].as_str().unwrap_or("").to_string(),
-            release: b["release"].as_bool().unwrap_or(false),
-        })
-        .collect();
+    // a made-up system (a fixture) answers as `hyprctl -j binds`
+    let binds: Vec<Bind> = match crate::fixture::get() {
+        Some(f) => f
+            .answer("hyprctl", &["-j", "binds"])
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .map(|v| yggdrasil_wm::hyprland::parse_binds(&v))
+            .unwrap_or_default(),
+        None => yggdrasil_wm::Desk::detect().and_then(|d| d.binds()).unwrap_or_default(),
+    };
     let out = shortcuts::list(&binds);
     *g = Some((Instant::now(), out.clone()));
     out
@@ -4538,9 +4529,9 @@ fn shortcut_tools(ui: &mut egui::Ui, pal: &Palette) {
 }
 
 fn page_shortcuts(ui: &mut egui::Ui, pal: &Palette) {
-    // Yggdrasil's session: the shortcuts as Hyprland has them right now, with their own descriptions, grouped, with a search
-    if sys::hyprland() {
-        let list = hypr_shortcuts();
+    // Yggdrasil's session: the shortcuts as the compositor has them right now, with their own descriptions, grouped, with a search
+    if sys::hyprland() || matches!(sys::desk(), Some(yggdrasil_wm::Desk::Own(_))) {
+        let list = live_shortcuts();
         let qid = egui::Id::new("shortcut-search");
         let mut query = ui.data_mut(|d| d.get_temp::<String>(qid)).unwrap_or_default();
         ui.horizontal(|ui| {
@@ -4570,14 +4561,16 @@ fn page_shortcuts(ui: &mut egui::Ui, pal: &Palette) {
             });
         }
         if list.is_empty() {
-            ui.label(RichText::new("Hyprland did not answer").color(pal.dim));
+            ui.label(RichText::new("The compositor did not answer").color(pal.dim));
         } else if shown.is_empty() {
             ui.label(RichText::new("No shortcut matches").color(pal.dim));
         }
         ui.add_space(8.0);
-        if ui::quiet(ui, pal, "Add your own shortcuts…")
-            .on_hover_text("Opens your own settings file for the session (~/.config/yggdrasil/hyprland.lua)")
-            .clicked()
+        // the user's own file is Hyprland's (Yggdrasil's own compositor reads shortcuts.conf)
+        if sys::hyprland()
+            && ui::quiet(ui, pal, "Add your own shortcuts…")
+                .on_hover_text("Opens your own settings file for the session (~/.config/yggdrasil/hyprland.lua)")
+                .clicked()
         {
             open_own_shortcuts();
         }

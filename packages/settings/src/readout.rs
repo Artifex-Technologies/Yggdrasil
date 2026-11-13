@@ -185,7 +185,9 @@ pub fn window_main(kind: Kind) -> eframe::Result {
     let dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into());
     let lock = std::fs::File::create(format!("{dir}/{}-window.lock", kind.app_id())).ok();
     if lock.as_ref().is_some_and(|f| f.try_lock().is_err()) {
-        let _ = sys::act("hyprctl", &["dispatch", &format!(r#"hl.dsp.focus({{ window = "class:{}" }})"#, kind.app_id())]);
+        if let Some(d) = sys::desk() {
+            d.focus_class(kind.app_id());
+        }
         return Ok(());
     }
     let options = eframe::NativeOptions {
