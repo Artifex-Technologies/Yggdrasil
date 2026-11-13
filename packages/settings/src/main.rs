@@ -2636,6 +2636,7 @@ impl App {
             return;
         }
         let Some(p) = self.data.power.clone() else { return loading(ui) };
+        let mut source_mode: Option<(bool, String)> = None;
         // A laptop's battery (only on a computer with one): its own page now, with the health and the charge limit
         if let Some(b) = &p.battery {
             let mut open = false;
@@ -2712,6 +2713,26 @@ impl App {
                         profile = Some(p.profiles[i].clone());
                     }
                 });
+                // a laptop: the mode for each power source, set when it is plugged in or unplugged (the battery watcher); a
+                // mode chosen above holds until the next plug or unplug
+                if p.battery.is_some() && p.on_mains.is_some() {
+                    let mut ids: Vec<String> = vec!["keep".into()];
+                    ids.extend(p.profiles.iter().cloned());
+                    let mut words: Vec<String> = vec!["Don't change".into()];
+                    words.extend(p.profiles.iter().map(|x| name(x)));
+                    let wrefs: Vec<&str> = words.iter().map(String::as_str).collect();
+                    for (first, title, sub, cur, mains) in [
+                        (false, "When plugged in", "Set when the charger is connected", &p.plugged_in, true),
+                        (false, "On battery", "Set when the charger is disconnected", &p.on_battery, false),
+                    ] {
+                        let sel = ids.iter().position(|x| x == cur).unwrap_or(0);
+                        ui::row(ui, pal, first, title, Some(sub), |ui| {
+                            if let Some(i) = ui::segmented(ui, pal, &wrefs, sel) {
+                                source_mode = Some((mains, ids[i].clone()));
+                            }
+                        });
+                    }
+                }
                 let Some(l) = &p.limits else { return };
                 let mode = p.profile.clone();
                 let in_mode = format!("in {} mode", name(&mode));
@@ -3012,6 +3033,23 @@ impl App {
         }
         if let Some(name) = profile {
             self.change(ctx, move || sys::set_profile(&name));
+        }
+        if let Some((mains, mode)) = source_mode {
+            let (mut plugged, mut battery) = (p.plugged_in.clone(), p.on_battery.clone());
+            if mains {
+                plugged = mode.clone();
+            } else {
+                battery = mode.clone();
+            }
+            // set at once when it is the power source in use now
+            let now = (p.on_mains == Some(mains) && mode != "keep").then_some(mode);
+            self.change(ctx, move || {
+                sys::write_power_conf(&plugged, &battery)?;
+                match now {
+                    Some(m) => sys::set_profile(&m),
+                    None => Ok(()),
+                }
+            });
         }
     }
 

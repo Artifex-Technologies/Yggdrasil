@@ -1,6 +1,8 @@
 //! battery: a laptop's battery in the top bar, its drop-down, and its charge limit (/usr/lib/yggdrasil/battery).
 //!
-//!   battery watch           at login (autostart): every few seconds writes the bar add-on's JSON
+//!   battery watch           at login (autostart): sets the power mode for the power source when the laptop is plugged in or
+//!                           unplugged (~/.config/yggdrasil/power.conf: plugged_in = performance, on_battery = balanced by
+//!                           default; `keep` leaves it alone), and every few seconds writes the bar add-on's JSON
 //!                           (~/.local/state/yggdrasil/battery/bar.json, read by yggdrasil-battery.conf) when it changed, and warns
 //!                           when the battery runs low (20 %, 10 %; at 5 % the computer sleeps a minute later unless plugged in).
 //!                           Writes "off" and stops on a computer with no battery.
@@ -312,14 +314,64 @@ impl Low {
     }
 }
 
+/// Whether the computer runs on mains power now (a power_supply of type Mains that is online); None without one.
+pub fn on_mains(root: &Path) -> Option<bool> {
+    let dirs = std::fs::read_dir(root).ok()?;
+    let mut seen = false;
+    for d in dirs.flatten().map(|e| e.path()) {
+        if read(&d, "type").as_deref() == Some("Mains") {
+            seen = true;
+            if read(&d, "online").as_deref() == Some("1") {
+                return Some(true);
+            }
+        }
+    }
+    seen.then_some(false)
+}
+
+/// The power mode for a power source, from power.conf (`plugged_in`, `on_battery`): Performance plugged in and Balanced on
+/// battery unless set otherwise; None for `keep` (leave it as it is).
+pub fn mode_for(conf: &str, mains: bool) -> Option<String> {
+    let key = if mains { "plugged_in" } else { "on_battery" };
+    let v = conf
+        .lines()
+        .filter(|l| !l.trim_start().starts_with('#'))
+        .filter_map(|l| l.split_once('='))
+        .find(|(k, _)| k.trim() == key)
+        .map(|(_, v)| v.trim().to_string())
+        .unwrap_or_else(|| if mains { "performance".into() } else { "balanced".into() });
+    PROFILES.iter().any(|(id, _, _)| *id == v).then_some(v)
+}
+
+fn power_conf() -> String {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+        .map(|d| std::fs::read_to_string(d.join("yggdrasil/power.conf")).unwrap_or_default())
+        .unwrap_or_default()
+}
+
+fn set_profile(p: &str) -> bool {
+    out("busctl", &["--system", "set-property", PPD[0], PPD[1], PPD[2], "ActiveProfile", "s", p]).is_some()
+}
+
 fn watch() -> i32 {
     let mut last = String::new();
     let mut low = Low::default();
+    let mut mains: Option<bool> = None;
     if system_battery().is_none() {
         write_view(&mut last);
         return 0;
     }
     loop {
+        // plugged in or unplugged (and once at login): the power mode for that source
+        let now_mains = on_mains(Path::new("/sys/class/power_supply"));
+        if now_mains.is_some() && now_mains != mains {
+            if let Some(mode) = now_mains.and_then(|m| mode_for(&power_conf(), m)) {
+                set_profile(&mode);
+            }
+            mains = now_mains;
+        }
         write_view(&mut last);
         if let Some(b) = system_battery() {
             match low.step(b.discharging(), b.percent, Instant::now()) {
@@ -587,6 +639,28 @@ mod tests {
             sleep_delay_text(1500),
             "# Written by Settings > Power (the lid): suspend-then-hibernate hibernates after this long asleep.\n[Sleep]\nHibernateDelaySec=1500s\n"
         );
+    }
+
+    #[test]
+    fn the_power_mode_follows_the_power_source() {
+        assert_eq!(mode_for("", true).as_deref(), Some("performance"));
+        assert_eq!(mode_for("", false).as_deref(), Some("balanced"));
+        assert_eq!(mode_for("plugged_in = balanced\non_battery = power-saver\n", false).as_deref(), Some("power-saver"));
+        assert_eq!(mode_for("plugged_in = keep\n", true), None);
+        assert_eq!(mode_for("on_battery = turbo\n", false), None, "not a mode");
+        let root = std::env::temp_dir().join(format!("ygg-ac-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        bat(&root.join("AC"), &[("type", "Mains"), ("online", "1")]);
+        bat(&root.join("BAT0"), &[("type", "Battery")]);
+        assert_eq!(on_mains(&root), Some(true));
+        bat(&root.join("AC"), &[("online", "0")]);
+        assert_eq!(on_mains(&root), Some(false));
+        std::fs::remove_dir_all(&root).unwrap();
+        let desk = std::env::temp_dir().join(format!("ygg-noac-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&desk);
+        bat(&desk.join("BAT0"), &[("type", "Battery")]);
+        assert_eq!(on_mains(&desk), None, "no mains supply listed");
+        std::fs::remove_dir_all(&desk).unwrap();
     }
 
     #[test]

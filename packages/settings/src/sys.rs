@@ -1156,6 +1156,57 @@ pub struct Power {
     pub battery: Option<Battery>,
     /// A laptop's fans and processor temperature, shown (not set: the firmware runs them) on a computer with a battery.
     pub laptop_cooling: Option<LaptopCooling>,
+    /// The power mode for each power source (power.conf; the battery watcher switches when the laptop is plugged in or
+    /// unplugged): a mode's id, or "keep".
+    pub plugged_in: String,
+    pub on_battery: String,
+    /// On mains power now; None on a computer without a mains supply listed.
+    pub on_mains: Option<bool>,
+}
+
+fn power_conf_path() -> std::path::PathBuf {
+    yggdrasil_conf::dirs::config().join("power.conf")
+}
+
+/// power.conf's (plugged_in, on_battery): Performance plugged in and Balanced on battery unless set.
+pub fn parse_power_conf(text: &str) -> (String, String) {
+    let get = |key: &str, default: &str| {
+        text.lines()
+            .filter(|l| !l.trim_start().starts_with('#'))
+            .filter_map(|l| l.split_once('='))
+            .find(|(k, _)| k.trim() == key)
+            .map(|(_, v)| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| default.to_string())
+    };
+    (get("plugged_in", "performance"), get("on_battery", "balanced"))
+}
+
+pub fn write_power_conf(plugged_in: &str, on_battery: &str) -> Result<(), String> {
+    let p = power_conf_path();
+    if let Some(d) = p.parent() {
+        std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(
+        &p,
+        format!(
+            "# Written by Settings > Power: the power mode the battery watcher sets when the laptop is plugged in or unplugged\n# (performance, balanced, power-saver, or keep to leave it as it is).\nplugged_in = {plugged_in}\non_battery = {on_battery}\n"
+        ),
+    )
+    .map_err(|e| e.to_string())
+}
+
+fn on_mains() -> Option<bool> {
+    let mut seen = false;
+    for d in std::fs::read_dir("/sys/class/power_supply").ok()?.flatten().map(|e| e.path()) {
+        if std::fs::read_to_string(d.join("type")).is_ok_and(|t| t.trim() == "Mains") {
+            seen = true;
+            if std::fs::read_to_string(d.join("online")).is_ok_and(|t| t.trim() == "1") {
+                return Some(true);
+            }
+        }
+    }
+    seen.then_some(false)
 }
 
 /// What a laptop's firmware is doing with its fans.
@@ -1369,7 +1420,19 @@ pub fn power() -> Power {
     let unlock = if limits.as_ref().is_some_and(|l| l.gpu.is_some()) { gpu_unlock() } else { None };
     let battery = run("/usr/lib/yggdrasil/battery", &["json"]).and_then(|s| parse_battery(&s));
     let laptop_cooling = if battery.is_some() { laptop_cooling() } else { None };
-    Power { profile: active, profiles, limits, unlock, idle: read_idle(), battery, laptop_cooling }
+    let (plugged_in, on_battery) = parse_power_conf(&std::fs::read_to_string(power_conf_path()).unwrap_or_default());
+    Power {
+        profile: active,
+        profiles,
+        limits,
+        unlock,
+        idle: read_idle(),
+        battery,
+        laptop_cooling,
+        plugged_in,
+        on_battery,
+        on_mains: on_mains(),
+    }
 }
 
 /// What to do as the user stays away, in minutes (0 = never), and whether this computer can sleep and hibernate.
@@ -1557,6 +1620,12 @@ pub fn write_idle(i: &Idle) -> Result<(), String> {
 #[cfg(test)]
 mod ini_tests {
     use super::*;
+
+    #[test]
+    fn power_conf_defaults_and_reads() {
+        assert_eq!(parse_power_conf(""), ("performance".into(), "balanced".into()));
+        assert_eq!(parse_power_conf("plugged_in = keep\non_battery = power-saver\n"), ("keep".into(), "power-saver".into()));
+    }
 
     #[test]
     fn the_lids_settings_go_round_and_set_the_delay() {
