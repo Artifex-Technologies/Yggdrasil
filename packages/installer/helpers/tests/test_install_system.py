@@ -1,8 +1,12 @@
 """Tests for the Python yggdrasil-install-system (helpers/python, kept for a rollback; the program installed is the Rust port in
 packages/install-system, compared with this one by its parity/compare.py). python3 -m unittest discover -s helpers/tests"""
+import contextlib
 import importlib.machinery
 import importlib.util
+import io
 import os
+import shutil
+import stat
 import tempfile
 import unittest
 
@@ -448,6 +452,97 @@ class RemovePackages(unittest.TestCase):
         self.assertEqual(self.installed, {"b", "z"})
         self.assertEqual(inst.remove_packages([]), [])
 
+
+
+class SavedNetworks(unittest.TestCase):
+    """The live session's saved networks carried over to the new system (scratch folders for both: never the real /etc)."""
+    HOME = b"[connection]\nid=Home Net\ntype=wifi\npermissions=user:live:;\n\n[wifi-security]\nkey-mgmt=wpa-psk\npsk=pw-WIFI-3\n"
+
+    def setUp(self):
+        self.old = (inst.TARGET, inst.LIVE_NM_CONNECTIONS)
+        top = tempfile.mkdtemp()
+        self.top = top
+        inst.TARGET = os.path.join(top, "target")
+        inst.LIVE_NM_CONNECTIONS = os.path.join(top, "live/system-connections")
+        os.makedirs(inst.TARGET)
+
+    def tearDown(self):
+        inst.TARGET, inst.LIVE_NM_CONNECTIONS = self.old
+        shutil.rmtree(self.top, ignore_errors=True)
+
+    def carry(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            inst.carry_networks("ada")
+        return out.getvalue().splitlines()
+
+    def live(self, name, data):
+        os.makedirs(inst.LIVE_NM_CONNECTIONS, exist_ok=True)
+        with open(os.path.join(inst.LIVE_NM_CONNECTIONS, name), "wb") as f:
+            f.write(data)
+
+    def test_plain_files_go_over_root_only_and_the_live_account_becomes_the_new_one(self):
+        self.live("Home Net.nmconnection", self.HOME)
+        self.live("Cafe.nmconnection", b"[connection]\nid=Cafe\n")
+        self.live("notes.txt", b"not a profile\n")
+        self.live("../Elsewhere.nmconnection", b"[connection]\nid=Elsewhere\n")
+        os.symlink(os.path.join(self.top, "live/Elsewhere.nmconnection"), os.path.join(inst.LIVE_NM_CONNECTIONS, "Link.nmconnection"))
+        os.mkdir(os.path.join(inst.LIVE_NM_CONNECTIONS, "Folder.nmconnection"))
+        os.mkfifo(os.path.join(inst.LIVE_NM_CONNECTIONS, "Pipe.nmconnection"))
+        said = self.carry()
+        self.assertEqual(said, ["WARN left behind 3 of the live session's saved networks that are not plain files",
+                                "INFO the live session's saved networks carried over: 2"])
+        d = inst.TARGET + "/etc/NetworkManager/system-connections"
+        self.assertEqual(stat.S_IMODE(os.lstat(d).st_mode), 0o700)
+        self.assertEqual(sorted(os.listdir(d)), ["Cafe.nmconnection", "Home Net.nmconnection"])
+        for n in os.listdir(d):
+            self.assertEqual(stat.S_IMODE(os.lstat(os.path.join(d, n)).st_mode), 0o600, n)
+        self.assertEqual(open(os.path.join(d, "Home Net.nmconnection"), "rb").read(), self.HOME.replace(b"user:live:", b"user:ada:"))
+        self.assertEqual(open(os.path.join(d, "Cafe.nmconnection"), "rb").read(), b"[connection]\nid=Cafe\n")
+
+    def test_nothing_saved_nothing_to_do(self):
+        self.assertEqual(self.carry(), [], "no folder")
+        os.makedirs(inst.LIVE_NM_CONNECTIONS)
+        self.assertEqual(self.carry(), [], "an empty folder")
+        self.assertFalse(os.path.exists(inst.TARGET + "/etc/NetworkManager"))
+        os.rmdir(inst.LIVE_NM_CONNECTIONS)
+        os.makedirs(os.path.join(self.top, "elsewhere"))
+        open(os.path.join(self.top, "elsewhere/Home.nmconnection"), "w").write("[connection]\n")
+        os.symlink(os.path.join(self.top, "elsewhere"), inst.LIVE_NM_CONNECTIONS)
+        self.assertEqual(self.carry(), [], "a link in the folder's place is not followed")
+        self.assertFalse(os.path.exists(inst.TARGET + "/etc/NetworkManager"))
+
+    def test_a_link_in_the_new_system_is_not_written_through(self):
+        self.live("Home.nmconnection", self.HOME)
+        os.makedirs(inst.TARGET + "/etc/NetworkManager")
+        os.makedirs(os.path.join(self.top, "victim"))
+        os.symlink(os.path.join(self.top, "victim"), inst.TARGET + "/etc/NetworkManager/system-connections")
+        self.assertEqual(self.carry(), ["WARN the new system's folder for saved networks is a link: none were carried over"])
+        self.assertEqual(os.listdir(os.path.join(self.top, "victim")), [])
+
+    def test_a_link_where_a_file_goes_is_replaced_not_followed(self):
+        self.live("Home.nmconnection", self.HOME)
+        d = inst.TARGET + "/etc/NetworkManager/system-connections"
+        os.makedirs(d)
+        victim = os.path.join(self.top, "victim")
+        open(victim, "w").write("keep\n")
+        os.symlink(victim, os.path.join(d, "Home.nmconnection"))
+        self.assertEqual(self.carry(), ["INFO the live session's saved networks carried over: 1"])
+        self.assertEqual(open(victim).read(), "keep\n")
+        self.assertFalse(os.path.islink(os.path.join(d, "Home.nmconnection")))
+
+    def test_only_the_live_accounts_permission_changes_hands(self):
+        f = lambda t: inst.network_for(t.encode(), "ada").decode()  # noqa: E731
+        self.assertEqual(f("[connection]\npermissions=user:live:;\n"), "[connection]\npermissions=user:ada:;\n")
+        self.assertEqual(f("[connection]\npermissions=user:live;\n"), "[connection]\npermissions=user:ada;\n")
+        self.assertEqual(f("[connection]\npermissions=user:bob:;user:live:;\n"), "[connection]\npermissions=user:bob:;user:ada:;\n")
+        self.assertEqual(f("[connection]\r\npermissions = user:live\r\n"), "[connection]\r\npermissions = user:ada\r\n")
+        for same in ["[connection]\npermissions=user:bob:;\n", "[connection]\npermissions=user:livewire:;\n",
+                     "[connection]\npermissions=group:live:;\n", "[wifi]\npermissions=user:live:;\n", "[connection]\nid=user:live\nuuid=x\n",
+                     "permissions=user:live:;\n", "", "[connection]\n\n[vpn]\npermissions=user:live:;"]:
+            self.assertEqual(f(same), same)
+        self.assertEqual(inst.network_for(b"[connection]\nid=\xff\xfe\npermissions=user:live:;\n", "ada"),
+                         b"[connection]\nid=\xff\xfe\npermissions=user:ada:;\n")
 
 if __name__ == "__main__":
     unittest.main()

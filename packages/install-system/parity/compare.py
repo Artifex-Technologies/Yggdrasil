@@ -4,7 +4,8 @@ computers. Nothing real is touched:
 
   - every case runs in a throwaway user and mount namespace (unshare -rm, see sandbox.sh): "root" there is this user, with no
     power over the real computer; /dev is an empty tmpfs (no real disk can even be named), and /mnt, /run, /sys/firmware and
-    the integration folders are tmpfs of their own; /etc/os-release, /etc/passwd and /etc/resolv.conf are the world's;
+    the integration folders are tmpfs of their own; /etc/os-release, /etc/passwd and /etc/resolv.conf are the world's, and so is
+    /etc/NetworkManager (a tmpfs with its saved networks: the real ones are never seen);
   - every program the install runs (lsblk, sfdisk, wipefs, cryptsetup, mkfs.*, mount, unsquashfs, chroot ...) is a stand-in
     (fake.py) on a PATH that holds nothing else: it writes down its arguments and what it read, and answers from a made-up
     computer whose disks are /dev/vdz and the like.
@@ -178,6 +179,8 @@ def world(**kw):
         "run_files": {"/run/os/installer-browsers.json": json.dumps(BROWSERS), "/run/os/installer-extras.json": json.dumps(EXTRAS),
                       "/run/os/components.json": json.dumps(COMPONENTS)},
         "mnt_files": {},
+        # the live system's /etc/NetworkManager (networks(): its saved networks); none at all by default
+        "nm": None,
         "state": {
             "disks": [disk(), disk("/dev/sdy", size=16 * GB, table="dos", tran="usb", rm=True, model="TEST USB 0002",
                                    parts=[part("/dev/sdy", 1, 1, 15000, "0x17", "iso9660", "EXAMPLE_202611", mounted="/run/archiso/bootmnt")])],
@@ -260,6 +263,21 @@ def build(w, spec):
         write(os.path.join(w, "root", path.lstrip("/")), text)
     for path, text in spec["mnt_files"].items():
         write(os.path.join(w, "root", path.lstrip("/")), text)
+    os.makedirs(os.path.join(w, "root/nm"))
+    nm = spec.get("nm")
+    if nm is not None:
+        top = os.fsencode(os.path.join(w, "root/nm"))
+        conns = os.path.join(top, b"system-connections")
+        os.makedirs(conns, mode=0o700)
+        for name, data in nm["files"].items():
+            write(os.path.join(conns, os.fsencode(name)), data, 0o600)
+        for name, dest in nm["links"].items():
+            os.symlink(dest, os.path.join(conns, os.fsencode(name)))
+        for name in nm["fifos"]:
+            os.mkfifo(os.path.join(conns, os.fsencode(name)), 0o600)
+        for name in nm["dirs"]:
+            os.makedirs(os.path.join(conns, os.fsencode(name)))
+        os.chmod(conns, 0o700)
     write(os.path.join(w, "state.json"), json.dumps(spec["state"], indent=1, sort_keys=True))
 
 
@@ -400,6 +418,15 @@ def with_medium(change=None, drop=(), links=None):
     return m
 
 
+HOME_NET = b"[connection]\nid=Home Net\ntype=wifi\npermissions=user:live:;\n\n[wifi]\nssid=Home Net\n\n[wifi-security]\nkey-mgmt=wpa-psk\npsk=WIFI-3\n"
+
+
+def networks(files=None, links=None, fifos=(), dirs=()):
+    """The live system's saved networks (/etc/NetworkManager/system-connections): file name -> its bytes, links, pipes, folders."""
+    return {"files": files if files is not None else {"Home Net.nmconnection": HOME_NET, "Cafe.nmconnection": b"[connection]\nid=Cafe\ntype=wifi\n"},
+            "links": links or {}, "fifos": list(fifos), "dirs": list(dirs)}
+
+
 def cases_disks(jobs):
     w = world()
     jobs.append(("disks", "the default computer (the live USB, loop, zram and DVD left out)", w, ["--disks"], b""))
@@ -513,6 +540,20 @@ def cases_install(jobs):
     add("unsquashfs prints a digit int() cannot read", world(state={"unsquashfs": {"stdout": "10\n²\n", "code": 0}}))
     add("unsquashfs fails", world(state={"unsquashfs": {"stdout": "10\n", "stderr": "FATAL ERROR: " + "e" * 450 + "\n", "code": 1}}))
     add("no system copied (no etc)", world(state={"medium": {"files": {}, "links": {}, "dirs": []}}))
+    add("saved networks: carried over, the live account's becomes the new one's", world(nm=networks()))
+    add("saved networks: links, a folder, a pipe and other files left behind",
+        world(nm=networks(files={"Home Net.nmconnection": HOME_NET, "notes.txt": b"x\n"}, links={"Link.nmconnection": "/etc/passwd", "Dangling.nmconnection": "/nowhere"},
+                          fifos=["Pipe.nmconnection"], dirs=["Folder.nmconnection"])))
+    add("saved networks: only things that are not plain files", world(nm=networks(files={}, links={"Link.nmconnection": "/etc/passwd"})))
+    add("saved networks: an empty folder", world(nm=networks(files={})))
+    add("saved networks: names and contents that are not UTF-8, CRLF, private to another account",
+        world(nm=networks(files={b"Caf\xe9 \xff.nmconnection": b"[connection]\r\nid=\xff\r\npermissions = user:live\r\n",
+                                 "Other.nmconnection": b"[connection]\npermissions=user:bob:;user:live:;\n[vpn]\npermissions=user:live:;\n"})),
+        plan(user={"name": "Zoe", "login": "zoe_2-x", "password": ACCOUNT_PW}))
+    add("saved networks: the new system's folder is a link", world(nm=networks(), state={"medium": with_medium(links={**medium()["links"], "etc/NetworkManager/system-connections": "/run/elsewhere"})}))
+    add("saved networks: the new system has one of them already, and a link in another's place",
+        world(nm=networks(), state={"medium": with_medium({"etc/NetworkManager/system-connections/Cafe.nmconnection": "old\n"},
+                                                          links={**medium()["links"], "etc/NetworkManager/system-connections/Home Net.nmconnection": "/run/victim"})}))
     for label, rule in [
         ("wipefs fails", fail("wipefs", stderr="wipefs: error: /dev/vdz: probing initialization failed: Device or resource busy\n")),
         ("sfdisk fails", fail("sfdisk", "--wipe", stdout="out only\n", stderr="")),

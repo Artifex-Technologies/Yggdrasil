@@ -26,6 +26,8 @@ const MIN_ROOT: i128 = 20 * GIB;
 const MIN_ESP: i128 = 260 * MIB;
 const SUBVOLUMES: [(&str, &str); 4] = [("@", ""), ("@home", "home"), ("@cache", "var/cache"), ("@log", "var/log")];
 const INSIDE_PATH: &str = "PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/sbin";
+/// Where NetworkManager keeps the networks it joins (with their passwords), on the live system and on the new one.
+pub const NM_CONNECTIONS: &str = "/etc/NetworkManager/system-connections";
 
 /// The live system's own places the program looks at (other than through programs): fixed on a live medium, elsewhere in
 /// the tests.
@@ -38,6 +40,8 @@ pub struct Host {
     pub efi: String,
     /// the live system's /etc/resolv.conf
     pub resolv_conf: String,
+    /// the live system's saved networks (NetworkManager's /etc/NetworkManager/system-connections)
+    pub nm_connections: String,
 }
 
 impl Host {
@@ -48,6 +52,7 @@ impl Host {
             zoneinfo: "/usr/share/zoneinfo".into(),
             efi: "/sys/firmware/efi".into(),
             resolv_conf: "/etc/resolv.conf".into(),
+            nm_connections: NM_CONNECTIONS.into(),
         }
     }
 }
@@ -177,6 +182,94 @@ fn keymap_file_under(top: &str, name: &str) -> bool {
         }
     }
     found || dirs.iter().any(|d| keymap_file_under(&d.to_string_lossy(), name))
+}
+
+/// A saved network's file for the new system: in its [connection] part, `permissions=user:live:;` (a profile only the live
+/// account could use, as NetworkManager writes a private one) names the new account instead. Every other byte stays as it was.
+pub fn network_for(data: &[u8], login: &str) -> Vec<u8> {
+    let trim_end = |b: &[u8]| -> usize { b.iter().rposition(|c| !b" \t\r".contains(c)).map_or(0, |i| i + 1) };
+    let trim = |b: &[u8]| -> Vec<u8> {
+        let end = trim_end(b);
+        let start = b[..end].iter().position(|c| !b" \t\r".contains(c)).unwrap_or(end);
+        b[start..end].to_vec()
+    };
+    let mut section: Vec<u8> = vec![];
+    let mut out: Vec<Vec<u8>> = vec![];
+    for line in data.split(|&c| c == b'\n') {
+        let s = trim(line);
+        if s.starts_with(b"[") && s.ends_with(b"]") {
+            section = s;
+        } else if section == b"[connection]" {
+            if let Some(eq) = line.iter().position(|&c| c == b'=') {
+                let (key, value) = (&line[..eq], &line[eq + 1..]);
+                if trim(key) == b"permissions" {
+                    let items: Vec<Vec<u8>> = value
+                        .split(|&c| c == b';')
+                        .map(|item| {
+                            let mut f: Vec<Vec<u8>> = item.split(|&c| c == b':').map(<[u8]>::to_vec).collect();
+                            if f.len() >= 2 && trim(&f[0]) == b"user" && &f[1][..trim_end(&f[1])] == crate::plan::LIVE_USER.as_bytes() {
+                                let rest = f[1][trim_end(&f[1])..].to_vec();
+                                f[1] = [login.as_bytes(), &rest].concat();
+                            }
+                            f.join(&b':')
+                        })
+                        .collect();
+                    out.push([key, b"=", &items.join(&b';')].concat());
+                    continue;
+                }
+            }
+        }
+        out.push(line.to_vec());
+    }
+    out.join(&b'\n')
+}
+
+/// An error as the script words it (its OSError's strerror): no file name, which here could be a network's.
+fn why(e: &std::io::Error) -> String {
+    e.raw_os_error().map(py::strerror).unwrap_or_else(|| e.to_string())
+}
+
+/// A plain file's bytes, or None for anything else (a link is never followed; a pipe or a device is never opened).
+fn read_plain(path: &std::path::Path) -> std::io::Result<Option<Vec<u8>>> {
+    use std::io::Read;
+    use std::os::unix::fs::OpenOptionsExt;
+    if !std::fs::symlink_metadata(path)?.file_type().is_file() {
+        return Ok(None);
+    }
+    let mut f = std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK).open(path)?;
+    if !f.metadata()?.is_file() {
+        return Ok(None);
+    }
+    let mut data = vec![];
+    f.read_to_end(&mut data)?;
+    Ok(Some(data))
+}
+
+/// A folder only root may enter (0700, root's when this runs as root).
+fn private_dir(dir: &str) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::create_dir_all(dir)?;
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    if unsafe { libc::geteuid() } == 0 {
+        std::os::unix::fs::lchown(dir, Some(0), Some(0))?;
+    }
+    Ok(())
+}
+
+/// A file only root may read (0600, root's when this runs as root), written without following a link.
+fn write_private(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
+        std::fs::remove_file(path)?;
+    }
+    let mut f =
+        std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).custom_flags(libc::O_NOFOLLOW).open(path)?;
+    if unsafe { libc::geteuid() } == 0 {
+        std::os::unix::fs::fchown(&f, Some(0), Some(0))?;
+    }
+    f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    f.write_all(data)
 }
 
 /// The text console's keymap for an X11 layout and variant ("gb" -> "uk", "us"+"dvorak" -> "dvorak"): from systemd's own
@@ -604,11 +697,68 @@ impl Ctx<'_> {
         let sudoers = self.t(&format!("/etc/sudoers.d/10-{}-wheel", self.os.id));
         write_text(&sudoers, "# Written by yggdrasil-install-system: administrators (the wheel group) use sudo with their own password.\n%wheel ALL=(ALL:ALL) ALL\n")?;
         py::chmod(&sudoers, 0o440)?;
+        // the networks joined in the live session, so the new system is online at its first start
+        self.carry_networks(&login)?;
         // the login screen: greetd with Yggdrasil's greeter; never leave the system without one
         if !py::exists(&self.t("/usr/lib/systemd/system/greetd.service")) {
             return stop("the system has no login screen (greetd is missing)");
         }
         self.inside(&strings(&["systemctl", "enable", "-f", "greetd.service"]), None, true)?;
+        Ok(())
+    }
+
+    /// The networks saved in the live session (NetworkManager's files, the Wi-Fi joined there with its password) go to the new
+    /// system as they are, so it is online at its first start without asking again (as Calamares' networkcfg does): the folder
+    /// root's alone (0700), each file 0600. A profile only the live account could use becomes the new account's (network_for).
+    /// Only plain files directly in the folder are taken: a link is never followed, and anything else is left behind. Nothing
+    /// here stops the install, and no network's name or password is said, only how many were carried over.
+    fn carry_networks(&mut self, login: &str) -> R<()> {
+        use std::os::unix::ffi::OsStrExt;
+        let live = self.host.nm_connections.clone();
+        if py::islink(&live) || !py::isdir(&live) {
+            return Ok(());
+        }
+        let mut names: Vec<std::ffi::OsString> = match std::fs::read_dir(&live) {
+            Ok(rd) => rd.flatten().map(|e| e.file_name()).filter(|n| n.as_bytes().ends_with(b".nmconnection")).collect(),
+            Err(e) => return self.say("WARN", &format!("the live session's saved networks could not be read ({})", why(&e))),
+        };
+        names.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+        let mut got = vec![];
+        let mut left = 0;
+        for n in names {
+            match read_plain(&std::path::Path::new(&live).join(&n)) {
+                Ok(Some(data)) => got.push((n, network_for(&data, login))),
+                Ok(None) => left += 1,
+                Err(e) => self.say("WARN", &format!("a saved network could not be read ({})", why(&e)))?,
+            }
+        }
+        if left > 0 {
+            self.say("WARN", &format!("left behind {left} of the live session's saved networks that are not plain files"))?;
+        }
+        if got.is_empty() {
+            return Ok(());
+        }
+        let dir = self.t(NM_CONNECTIONS);
+        if py::islink(&dir) {
+            return self.say("WARN", "the new system's folder for saved networks is a link: none were carried over");
+        }
+        if let Err(e) = private_dir(&dir) {
+            return self.say("WARN", &format!("the new system's folder for saved networks could not be made ({})", why(&e)));
+        }
+        let mut copied = 0;
+        for (n, data) in got {
+            let dst = std::path::Path::new(&dir).join(&n);
+            match write_private(&dst, &data) {
+                Ok(()) => copied += 1,
+                Err(e) => {
+                    let _ = std::fs::remove_file(&dst);
+                    self.say("WARN", &format!("a saved network could not be written ({})", why(&e)))?;
+                }
+            }
+        }
+        if copied > 0 {
+            self.say("INFO", &format!("the live session's saved networks carried over: {copied}"))?;
+        }
         Ok(())
     }
 

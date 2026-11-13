@@ -19,7 +19,11 @@ Since 2026-11-07 (it was Labyrinth's `labyrinth-install-system` until then; Lyka
 whole disk: a 1 GiB EFI partition and the rest; or the partitions chosen by hand), encrypts / with LUKS2 if asked (one password,
 typed in GRUB), makes btrfs with the subvolumes `@`, `@home`, `@cache`, `@log` (ext4 or XFS by hand), copies the medium's system,
 sets up language, keyboard, time zone, the computer's name and the account (an administrator through sudo; root stays locked),
-switches on greetd, builds the start-up image and installs GRUB. The live system's /dev and /run/udev are bound into the new system one way
+switches on greetd, builds the start-up image and installs GRUB. The networks joined in the live session (NetworkManager's
+`/etc/NetworkManager/system-connections`, the Wi-Fi with its password) go to the new system as they are, so it is online at its first
+start (since 2026-11-12, as Calamares' networkcfg does): the folder root's alone (0700), each file 0600, plain files only (a link is
+never followed), and a profile only the live account could use (`permissions=user:live:;`) becomes the new account's; the log says
+how many, never a network's name. The live system's /dev and /run/udev are bound into the new system one way
 only, in one call (`mount --rbind --make-rslave`), and the cleanup makes everything under the new system a slave before
 `umount -R` (and unmounts nothing if it cannot): unmounting the new system must never unmount the live system's /dev/pts or
 /dev/shm. What belongs to the OS comes from the same integration file and

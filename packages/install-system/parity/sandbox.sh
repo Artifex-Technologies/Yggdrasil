@@ -5,6 +5,7 @@
 #   /dev, /mnt, /run, /sys/firmware             empty tmpfs (no real device can be named: /dev holds nothing at all)
 #   /usr/share/yggdrasil/integrations, /etc/yggdrasil    tmpfs with WORLD's installer integration files
 #   /etc/os-release, /etc/passwd, /etc/resolv.conf       WORLD's own
+#   /etc/NetworkManager                                  tmpfs with WORLD's saved networks (the real ones are never seen)
 # then WORLD/root/{run,mnt,firmware,share-integrations,etc-yggdrasil} is copied into place. COMMAND runs with PATH=$FAKEPATH
 # (the stand-ins in fake.py; nothing else can be run by name). Afterwards what is in /mnt and /run is written down in
 # WORLD/snapshot.json (snapshot.py), and the exit code is COMMAND's. With NONROOT=1 it runs as uid 1000 of a namespace inside.
@@ -20,6 +21,12 @@ for f in os-release passwd resolv.conf; do
 done
 cp -a "$w/root/run/." /run/ && cp -a "$w/root/mnt/." /mnt/ && cp -a "$w/root/firmware/." /sys/firmware/ \
   && cp -a "$w/root/share-integrations/." /usr/share/yggdrasil/integrations/ && cp -a "$w/root/etc-yggdrasil/." /etc/yggdrasil/ || exit 99
+# the live system's saved networks: the world's only (where this computer has none at all, a world with some cannot be made)
+if [ -d /etc/NetworkManager ]; then
+  mount -t tmpfs -o mode=755 tmpfs /etc/NetworkManager && cp -a "$w/root/nm/." /etc/NetworkManager/ || exit 99
+elif [ -n "$(ls -A "$w/root/nm")" ]; then
+  exit 99
+fi
 # the real devices are out of sight: refuse to go on if one is not
 [ -z "$(ls -A /dev)" ] || exit 98
 if [ "${NONROOT:-}" = 1 ]; then

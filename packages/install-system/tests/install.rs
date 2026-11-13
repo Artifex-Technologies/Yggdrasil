@@ -303,3 +303,119 @@ fn left_mounted_rather_than_unmounted_unsafely() {
     assert_eq!(live.run(&mut f, &[], &plan().dumps()), 1);
     assert!(!f.calls.iter().any(|(a, _)| a[..2] == ["mount", "--make-rslave"]));
 }
+
+const WIFI_PW: &str = "pw-WIFI-3";
+
+/// The live session's saved networks in Live's scratch folder: two plain profiles (one only the live account may use), and a
+/// link, a folder, a pipe and a file of another kind that must all stay behind.
+fn live_networks(live: &Live) -> String {
+    use std::os::unix::fs::PermissionsExt;
+    let home = format!(
+        "[connection]\nid=Home Net\ntype=wifi\npermissions=user:live:;\n\n[wifi]\nssid=Home Net\n\n[wifi-security]\nkey-mgmt=wpa-psk\npsk={WIFI_PW}\n"
+    );
+    live.dir.write("nm/system-connections/Home Net.nmconnection", &home);
+    live.dir.write("nm/system-connections/Cafe.nmconnection", "[connection]\nid=Cafe\ntype=wifi\n\n[wifi]\nssid=Cafe\n");
+    live.dir.write("nm/system-connections/notes.txt", "not a profile\n");
+    live.dir.write("outside/Elsewhere.nmconnection", "[connection]\nid=Elsewhere\n");
+    std::os::unix::fs::symlink(live.dir.path("outside/Elsewhere.nmconnection"), live.dir.path("nm/system-connections/Link.nmconnection"))
+        .unwrap();
+    std::fs::create_dir(live.dir.path("nm/system-connections/Folder.nmconnection")).unwrap();
+    let fifo = std::ffi::CString::new(live.dir.path("nm/system-connections/Pipe.nmconnection")).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+    std::fs::set_permissions(live.dir.path("nm/system-connections"), std::fs::Permissions::from_mode(0o700)).unwrap();
+    home
+}
+
+#[test]
+fn the_live_sessions_networks_are_carried_over() {
+    use std::os::unix::fs::PermissionsExt;
+    let live = Live::new();
+    let home = live_networks(&live);
+    let mut f = live.fake();
+    assert_eq!(live.run(&mut f, &[], &plan().dumps()), 0, "{:?}", f.out);
+    assert!(f.out.contains(&"INFO the live session's saved networks carried over: 2".to_string()), "{:?}", f.out);
+    assert!(f.out.contains(&"WARN left behind 3 of the live session's saved networks that are not plain files".to_string()));
+    for line in &f.out {
+        assert!(!line.contains("Home Net") && !line.contains("Cafe") && !line.contains(WIFI_PW), "a network named: {line}");
+    }
+    let dir = format!("{}/etc/NetworkManager/system-connections", live.target());
+    assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o7777, 0o700);
+    let mut names: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+    names.sort();
+    assert_eq!(names, ["Cafe.nmconnection", "Home Net.nmconnection"], "plain .nmconnection files only");
+    for n in &names {
+        let m = std::fs::symlink_metadata(format!("{dir}/{n}")).unwrap();
+        assert!(m.file_type().is_file());
+        assert_eq!(m.permissions().mode() & 0o7777, 0o600, "{n}");
+    }
+    assert_eq!(live.read("etc/NetworkManager/system-connections/Home Net.nmconnection"), home.replace("user:live:", "user:ada:"));
+    assert_eq!(
+        live.read("etc/NetworkManager/system-connections/Cafe.nmconnection"),
+        "[connection]\nid=Cafe\ntype=wifi\n\n[wifi]\nssid=Cafe\n"
+    );
+    // the password went from file to file: never into a program's arguments or standard input
+    for (argv, stdin) in &f.calls {
+        assert!(!argv.iter().any(|a| a.contains(WIFI_PW)) && !stdin.as_deref().unwrap_or("").contains(WIFI_PW), "{argv:?}");
+    }
+}
+
+#[test]
+fn no_saved_networks_nothing_to_do() {
+    // no folder at all (a live system without NetworkManager), an empty one, and a link in its place: nothing said, nothing made
+    for how in ["missing", "empty", "link"] {
+        let live = Live::new();
+        match how {
+            "empty" => std::fs::create_dir_all(live.dir.path("nm/system-connections")).unwrap(),
+            "link" => {
+                live.dir.write("elsewhere/Home.nmconnection", "[connection]\nid=Home\n");
+                std::fs::create_dir_all(live.dir.path("nm")).unwrap();
+                std::os::unix::fs::symlink(live.dir.path("elsewhere"), live.dir.path("nm/system-connections")).unwrap();
+            }
+            _ => {}
+        }
+        let mut f = live.fake();
+        assert_eq!(live.run(&mut f, &[], &plan().dumps()), 0, "{how}: {:?}", f.out);
+        assert!(!f.out.iter().any(|l| l.contains("saved network")), "{how}: {:?}", f.out);
+        assert!(!std::path::Path::new(&format!("{}/etc/NetworkManager", live.target())).exists(), "{how}");
+    }
+}
+
+#[test]
+fn a_link_in_the_new_system_is_not_written_through() {
+    let live = Live::new();
+    live_networks(&live);
+    let mut f = live.fake();
+    // the medium (made by the fake unsquashfs) with its saved-networks folder a link out of the new system
+    live.dir.write("victim/keep", "");
+    std::fs::create_dir_all(format!("{}/etc/NetworkManager", live.target())).unwrap();
+    std::os::unix::fs::symlink(live.dir.path("victim"), format!("{}/etc/NetworkManager/system-connections", live.target())).unwrap();
+    assert_eq!(live.run(&mut f, &[], &plan().dumps()), 0, "{:?}", f.out);
+    assert!(f.out.contains(&"WARN the new system's folder for saved networks is a link: none were carried over".to_string()));
+    assert_eq!(std::fs::read_dir(live.dir.path("victim")).unwrap().count(), 1, "nothing written through the link");
+}
+
+#[test]
+fn only_the_live_accounts_permission_changes_hands() {
+    use install_system::install::network_for;
+    let f = |t: &str| String::from_utf8(network_for(t.as_bytes(), "ada")).unwrap();
+    assert_eq!(f("[connection]\npermissions=user:live:;\n"), "[connection]\npermissions=user:ada:;\n");
+    assert_eq!(f("[connection]\npermissions=user:live;\n"), "[connection]\npermissions=user:ada;\n");
+    assert_eq!(f("[connection]\npermissions=user:bob:;user:live:;\n"), "[connection]\npermissions=user:bob:;user:ada:;\n");
+    assert_eq!(f("[connection]\r\npermissions = user:live\r\n"), "[connection]\r\npermissions = user:ada\r\n");
+    // another account, a name that only starts with "live", another part of the file, other keys: as they were
+    for same in [
+        "[connection]\npermissions=user:bob:;\n",
+        "[connection]\npermissions=user:livewire:;\n",
+        "[connection]\npermissions=group:live:;\n",
+        "[wifi]\npermissions=user:live:;\n",
+        "[connection]\nid=user:live\nuuid=x\n",
+        "permissions=user:live:;\n",
+        "",
+        "[connection]\n\n[vpn]\npermissions=user:live:;",
+    ] {
+        assert_eq!(f(same), same);
+    }
+    // bytes that are not UTF-8 (an SSID can be anything) stay as they were
+    let odd = b"[connection]\nid=\xff\xfe\npermissions=user:live:;\n";
+    assert_eq!(network_for(odd, "ada"), b"[connection]\nid=\xff\xfe\npermissions=user:ada:;\n");
+}

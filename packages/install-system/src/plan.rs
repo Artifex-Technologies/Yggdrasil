@@ -17,8 +17,10 @@ pub const MOUNTS: [(&str, &[&str]); 7] = [
     ("/boot/efi", &["vfat"]),
     ("swap", &["swap"]),
 ];
+/// The live medium's own account (every OS built on Yggdrasil names it so).
+pub const LIVE_USER: &str = "live";
 /// accounts the live medium or the login screen use, whatever the OS
-pub const RESERVED: [&str; 3] = ["root", "live", "greeter"];
+pub const RESERVED: [&str; 3] = ["root", LIVE_USER, "greeter"];
 
 pub fn formats_of(mount: &str) -> Option<&'static [&'static str]> {
     MOUNTS.iter().find(|(m, _)| *m == mount).map(|(_, f)| *f)

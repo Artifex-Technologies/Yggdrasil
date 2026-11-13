@@ -59,6 +59,7 @@ fuzz_target!(|data: &[u8]| {
         zoneinfo: "/usr/share/zoneinfo".into(),
         efi: "/nonexistent".into(),
         resolv_conf: "/nonexistent".into(),
+        nm_connections: "/nonexistent".into(),
     };
     let env = install_system::Env { sfs: Some("/nonexistent".into()), target: Some("/nonexistent/target".into()) };
     let mut sys = Nothing::default();

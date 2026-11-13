@@ -63,6 +63,7 @@ import os
 import pwd
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -78,8 +79,13 @@ MIN_ROOT = 20 * 1024**3
 MIN_ESP = 260 * 1024**2
 MIB = 1024**2
 SUBVOLUMES = [("@", ""), ("@home", "home"), ("@cache", "var/cache"), ("@log", "var/log")]
+# the live medium's own account (every OS built on Yggdrasil names it so)
+LIVE_USER = "live"
 # accounts the live medium or the login screen use, whatever the OS
-RESERVED = {"root", "live", "greeter"}
+RESERVED = {"root", LIVE_USER, "greeter"}
+# where NetworkManager keeps the networks it joins (with their passwords), on the live system and on the new one
+NM_CONNECTIONS = "/etc/NetworkManager/system-connections"
+LIVE_NM_CONNECTIONS = NM_CONNECTIONS
 # What GRUB is set up with: a short menu and no submenu or recovery entries.
 GRUB_DEFAULTS = {
     "GRUB_TIMEOUT": "2",
@@ -994,10 +1000,118 @@ def set_up(p):
     with open(f"{TARGET}/etc/sudoers.d/10-{OS_ID}-wheel", "w") as f:
         f.write("# Written by yggdrasil-install-system: administrators (the wheel group) use sudo with their own password.\n%wheel ALL=(ALL:ALL) ALL\n")
     os.chmod(f"{TARGET}/etc/sudoers.d/10-{OS_ID}-wheel", 0o440)
+    # the networks joined in the live session, so the new system is online at its first start
+    carry_networks(u["login"])
     # the login screen: greetd with Yggdrasil's greeter; never leave the system without one
     if not os.path.exists(f"{TARGET}/usr/lib/systemd/system/greetd.service"):
         raise Stop("the system has no login screen (greetd is missing)")
     inside(["systemctl", "enable", "-f", "greetd.service"])
+
+
+def network_for(data, login):
+    """A saved network's file for the new system: in its [connection] part, `permissions=user:live:;` (a profile only the live
+    account could use, as NetworkManager writes a private one) names the new account instead. Every other byte stays as it was."""
+    out = []
+    section = b""
+    for line in data.split(b"\n"):
+        s = line.strip(b" \t\r")
+        if s.startswith(b"[") and s.endswith(b"]"):
+            section = s
+        elif section == b"[connection]" and b"=" in line:
+            key, value = line.split(b"=", 1)
+            if key.strip(b" \t\r") == b"permissions":
+                items = []
+                for item in value.split(b";"):
+                    f = item.split(b":")
+                    if len(f) >= 2 and f[0].strip(b" \t\r") == b"user" and f[1].rstrip(b" \t\r") == LIVE_USER.encode():
+                        f[1] = login.encode() + f[1][len(f[1].rstrip(b" \t\r")):]
+                    items.append(b":".join(f))
+                line = key + b"=" + b";".join(items)
+        out.append(line)
+    return b"\n".join(out)
+
+
+def read_plain(path):
+    """A plain file's bytes, or None for anything else (a link is never followed; a pipe or a device is never opened)."""
+    if not stat.S_ISREG(os.lstat(path).st_mode):
+        return None
+    with os.fdopen(os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC), "rb") as f:
+        if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+            return None
+        return f.read()
+
+
+def private_dir(d):
+    """A folder only root may enter (0700, root's when this runs as root)."""
+    os.makedirs(d, exist_ok=True)
+    os.chmod(d, 0o700)
+    if os.geteuid() == 0:
+        os.lchown(d, 0, 0)
+
+
+def write_private(path, data):
+    """A file only root may read (0600, root's when this runs as root), written without following a link."""
+    if os.path.islink(path):
+        os.remove(path)
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600), "wb") as f:
+        if os.geteuid() == 0:
+            os.fchown(f.fileno(), 0, 0)
+        os.fchmod(f.fileno(), 0o600)
+        f.write(data)
+
+
+def carry_networks(login):
+    """The networks saved in the live session (NetworkManager's files, the Wi-Fi joined there with its password) go to the new
+    system as they are, so it is online at its first start without asking again (as Calamares' networkcfg does): the folder
+    root's alone (0700), each file 0600. A profile only the live account could use becomes the new account's (network_for).
+    Only plain files directly in the folder are taken: a link is never followed, and anything else is left behind. Nothing here
+    stops the install, and no network's name or password is said, only how many were carried over."""
+    live = LIVE_NM_CONNECTIONS
+    if os.path.islink(live) or not os.path.isdir(live):
+        return
+    try:
+        names = sorted((n for n in os.listdir(os.fsencode(live)) if n.endswith(b".nmconnection")))
+    except OSError as e:
+        say("WARN", f"the live session's saved networks could not be read ({e.strerror})")
+        return
+    got, left = [], 0
+    for n in names:
+        try:
+            data = read_plain(os.path.join(os.fsencode(live), n))
+        except OSError as e:
+            say("WARN", f"a saved network could not be read ({e.strerror})")
+            continue
+        if data is None:
+            left += 1
+        else:
+            got.append((n, network_for(data, login)))
+    if left:
+        say("WARN", f"left behind {left} of the live session's saved networks that are not plain files")
+    if not got:
+        return
+    d = TARGET + NM_CONNECTIONS
+    if os.path.islink(d):
+        say("WARN", "the new system's folder for saved networks is a link: none were carried over")
+        return
+    try:
+        private_dir(d)
+    except OSError as e:
+        say("WARN", f"the new system's folder for saved networks could not be made ({e.strerror})")
+        return
+    copied = 0
+    for n, data in got:
+        dst = os.path.join(os.fsencode(d), n)
+        try:
+            write_private(dst, data)
+            copied += 1
+        except OSError as e:
+            try:
+                os.remove(dst)
+            except OSError:
+                pass
+            say("WARN", f"a saved network could not be written ({e.strerror})")
+    if copied:
+        say("INFO", f"the live session's saved networks carried over: {copied}")
 
 
 def encryption_setup(dev):

@@ -1,6 +1,6 @@
 //! A made-up computer for the tests, in the test process itself: every program the install runs is answered here and written
 //! down (nothing is started), and its disks are /dev/vdz and the like. The new system goes into a scratch folder, and the live
-//! system's places (integration files, zoneinfo, /sys/firmware/efi, resolv.conf) are scratch folders too.
+//! system's places (integration files, zoneinfo, /sys/firmware/efi, resolv.conf, saved networks) are scratch folders too.
 
 #![allow(dead_code)]
 
@@ -479,6 +479,7 @@ impl Live {
             zoneinfo: dir.path("zoneinfo"),
             efi: dir.path("firmware/efi"),
             resolv_conf: dir.path("resolv.conf"),
+            nm_connections: dir.path("nm/system-connections"),
         };
         let env = Env { sfs: Some(dir.path("medium/airootfs.sfs")), target: Some(dir.path("target")) };
         Live { dir, host, env }
