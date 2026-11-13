@@ -1,0 +1,5 @@
+# Yggdrasil's defaults for apps that read GNOME's settings (GTK 4 and libadwaita apps, Electron apps such as VS Code) rather
+# than gtk-3.0/settings.ini: window buttons on the right in Windows' order, minimize, maximize, close (settings.ini says the
+# same for GTK 3). A user's own choice still wins. Without this a new install showed only Close (2026-11-13).
+[org.gnome.desktop.wm.preferences]
+button-layout='appmenu:minimize,maximize,close'

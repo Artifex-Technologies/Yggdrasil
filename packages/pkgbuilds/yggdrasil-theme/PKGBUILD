@@ -65,4 +65,6 @@ package() {
   printf '[Desktop Entry]\nType=X-GNOME-Metatheme\nName=Yggdrasil\nComment=Yggdrasil colours on GTK'"'"'s Adwaita\n\n[X-GNOME-Metatheme]\nGtkTheme=Yggdrasil\nIconTheme=Liki\nCursorTheme=Yggdrasil\n' > "$pkgdir/usr/share/themes/Yggdrasil/index.theme"
   # the pointer for programs started at login
   install -Dm644 /dev/stdin "$pkgdir/usr/lib/environment.d/50-yggdrasil-cursor.conf" <<<$'XCURSOR_THEME=Yggdrasil\nXCURSOR_SIZE=24'
+  # minimize, maximize and close on every window, for apps that read GNOME's settings (glib2's hook compiles the schemas)
+  install -Dm644 "$_src/data/90_yggdrasil.gschema.override" "$pkgdir/usr/share/glib-2.0/schemas/90_yggdrasil.gschema.override"
 }
