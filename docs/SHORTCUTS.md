@@ -88,3 +88,8 @@ of date). Settings > Peripherals > Keyboard > Shortcuts and the cheat sheet (Win
 | Stop | Stop |
 | Brightness up | Brightness up |
 | Brightness down | Brightness down |
+| Display | Screens |
+| RFKill | Airplane mode |
+| WLAN | Airplane mode |
+| NotificationCenter | Notifications |
+| Favorites | Star key |

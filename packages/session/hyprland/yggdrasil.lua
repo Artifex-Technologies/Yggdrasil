@@ -572,6 +572,15 @@ for key, what in pairs({
   cmd(key, "yggdrasil-mediakey " .. what, { locked = true, repeating = repeating })
 end
 
+-- A laptop's other top-row keys (a ThinkPad's F7 to F12): the screens, airplane mode, the notifications, and the star key
+-- (Settings > Peripherals > Keyboard > Star key; talking to the assistant unless set otherwise). The phone keys (answer, hang
+-- up) are left unbound, so they reach the app in front (2026-11-13).
+cmd("XF86Display", "yggdrasil-mediakey display", { desc = "Screens" })
+cmd("XF86RFKill", "yggdrasil-mediakey airplane", { desc = "Airplane mode" })
+cmd("XF86WLAN", "yggdrasil-mediakey airplane", { desc = "Airplane mode" })
+cmd("XF86NotificationCenter", "yggdrasil-mediakey notifications", { desc = "Notifications" })
+cmd("XF86Favorites", "yggdrasil-mediakey favorite", { desc = "Star key" })
+
 -- The session's programs: the environment goes to systemd and D-Bus first (so programs started there find this display), then the
 -- autostart folder (the panel, the idle watch, the password box, the keyring check ...). Programs meant for other desktops only
 -- (OnlyShowIn=KDE, ...) are left out by the autostart rules themselves.

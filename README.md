@@ -150,6 +150,11 @@ additions included; [docs/SHORTCUTS.md](docs/SHORTCUTS.md) is the same list. Thi
 | Stop | Stop |
 | Brightness up | Brightness up |
 | Brightness down | Brightness down |
+| Display | Screens |
+| RFKill | Airplane mode |
+| WLAN | Airplane mode |
+| NotificationCenter | Notifications |
+| Favorites | Star key |
 <!-- shortcuts:end -->
 
 ### In the apps

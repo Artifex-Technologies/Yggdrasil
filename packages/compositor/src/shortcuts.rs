@@ -281,6 +281,16 @@ pub fn defaults() -> Vec<Binding> {
         let repeat = what.contains("volume") || what.contains("brightness");
         v.push(Binding { repeat, ..b(key, exec(&format!("yggdrasil-mediakey {what}")), "") });
     }
+    // a laptop's other top-row keys (as the Hyprland session's yggdrasil.lua): screens, airplane mode, notifications, the star key
+    for (key, what, words) in [
+        ("XF86Display", "display", "Screens"),
+        ("XF86RFKill", "airplane", "Airplane mode"),
+        ("XF86WLAN", "airplane", "Airplane mode"),
+        ("XF86NotificationCenter", "notifications", "Notifications"),
+        ("XF86Favorites", "favorite", "Star key"),
+    ] {
+        v.push(b(key, exec(&format!("yggdrasil-mediakey {what}")), words));
+    }
     v
 }
 
@@ -448,7 +458,7 @@ mod tests {
         let missing: Vec<_> = want.iter().filter(|w| !have.contains(w)).collect();
         let extra: Vec<_> = have.iter().filter(|h| !want.contains(h)).collect();
         assert!(missing.is_empty() && extra.is_empty(), "not in the compositor: {missing:?}\nnot in the session: {extra:?}");
-        assert_eq!(have.len(), 57, "{have:?}");
+        assert_eq!(have.len(), 62, "{have:?}");
 
         // repeating: the session's `repeating = true` binds (the magnifier) and the volume and brightness keys of its media table
         let mut repeating: Vec<(u32, String)> = lua
