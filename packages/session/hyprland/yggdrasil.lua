@@ -135,6 +135,26 @@ hl.config({
   },
 })
 
+-- A laptop's own touchscreen and pen draw on its own screen (eDP), not across every screen once a monitor is plugged in.
+-- Touchscreens are a laptop's (or a tablet's) own; of the pens, only those built into the screen (Wacom's HID digitisers and
+-- the ELAN, Goodix and other stylus panels), never a drawing tablet on a cable such as an Intuos or a Huion (2026-11-13).
+do
+  local panel
+  for _, m in ipairs(hl.get_monitors() or {}) do
+    if tostring(m.name):sub(1, 3) == "eDP" then panel = tostring(m.name) end
+  end
+  if panel then
+    for _, d in ipairs(hl.get_devices() or {}) do
+      local name = tostring(d.name)
+      local builtin_pen = d.type == "tablet"
+        and (name:sub(1, 10) == "wacom-hid-" or name:find("elan", 1, true) or name:find("goodix", 1, true) or name:find("stylus", 1, true))
+      if d.type == "touch" or builtin_pen then
+        hl.device({ name = name, output = panel })
+      end
+    end
+  end
+end
+
 -- A ThinkPad's TrackPoint scrolls while its middle button is held (a middle press without moving is still a middle click).
 -- Its buttons can arrive on the built-in touchpad's companion "-mouse" device, so that one gets it too; other mice do not.
 -- Without this the middle button only clicked (ThinkPad X1 Yoga, 2026-11-13).
