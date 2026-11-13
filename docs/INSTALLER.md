@@ -57,8 +57,9 @@ plans (a refused plan runs nothing; no plan ever names another disk to a disk to
 
 Welcome (language) → Keyboard (first the arrangement: QWERTY, QWERTZ, AZERTY, Dvorak, Colemak or other alphabets; then the
 layouts of that kind by name, Dvorak and Colemak being variants; the live session switches to the one chosen, so the box on the
-page tries it) → Time zone (searchable by place, without the old aliases; the live system's zone first, no location service
-asked) → Disk (the disk, then how: erase all of it, or choose partitions by hand; encryption on by default, with its password
+page tries it) → Time zone (a world map with the zone bands, click your part of it, and a short list of about 80 friendly zones
+grouped by UTC offset, searchable by city, country or offset: packages/tzpicker, the same picker as Settings'; the live system's
+zone first, no location service asked) → Disk (the disk, then how: erase all of it, or choose partitions by hand; encryption on by default, with its password
 twice) → Your account (name,
 account name made from it, computer's name, password twice) → Browsers (only when the OS offers a list: choose one or more,
 and which is the default; none is allowed, with a note that Agora has them) → the optional parts (only when the OS offers some,

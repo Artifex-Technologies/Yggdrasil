@@ -51,7 +51,7 @@
   "/usr/lib/yggdrasil/account list": "[{\"login\": \"alex\", \"uid\": 1000, \"full_name\": \"Alex Example\", \"home\": \"/home/alex\", \"shell\": \"/bin/bash\", \"admin\": true, \"protected\": false, \"can_login\": true, \"sudo_nopassword\": false, \"groups\": [\"gamemode\"]}, {\"login\": \"sam\", \"uid\": 1001, \"full_name\": \"Sam Example\", \"home\": \"/home/sam\", \"shell\": \"/bin/bash\", \"admin\": false, \"protected\": false, \"can_login\": true, \"sudo_nopassword\": false, \"groups\": []}]",
   "/usr/lib/yggdrasil/account groups": "{\"libvirt\": \"Run virtual machines\", \"docker\": \"Run Docker containers (this is administrator-level access)\", \"gamemode\": \"Ask for the games performance mode\"}",
   "timedatectl show": "Timezone=America/Denver\nLocalRTC=no\nCanNTP=yes\nNTP=yes\nNTPSynchronized=yes\n",
-  "systemctl --user is-enabled yggdrasil-autozone.timer": "enabled\n",
+  "systemctl --user is-enabled yggdrasil-autozone.timer": "disabled\n",
   "pacman -Q *": "example 1.0-1\n"
  },
  "tools": []

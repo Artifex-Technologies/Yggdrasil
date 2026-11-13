@@ -4524,13 +4524,13 @@ dependencies = [
  "eframe",
  "egui_extras",
  "image",
- "jiff",
  "serde",
  "serde_json",
  "yggdrasil-colorpicker",
  "yggdrasil-conf",
  "yggdrasil-gamepads",
  "yggdrasil-spell",
+ "yggdrasil-tzpicker",
  "yggdrasil-ui",
  "yggdrasil-wifiscan",
  "yggdrasil-wm",
@@ -4546,6 +4546,16 @@ dependencies = [
  "wayland-client",
  "wayland-protocols-misc",
  "yggdrasil-conf",
+]
+
+[[package]]
+name = "yggdrasil-tzpicker"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "jiff",
+ "tiny-skia 0.12.0",
+ "yggdrasil-ui",
 ]
 
 [[package]]

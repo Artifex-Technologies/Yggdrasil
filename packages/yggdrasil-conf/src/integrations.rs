@@ -216,6 +216,11 @@ pub fn default_accent() -> [u8; 3] {
     branding().and_then(|b| b.get("accent")).and_then(hex).unwrap_or(FALLBACK_ACCENT)
 }
 
+/// The operating system's highlight colour (`highlight = #rrggbb`: what is picked on a map or a chart); None: Yggdrasil's orange.
+pub fn default_highlight() -> Option<[u8; 3]> {
+    branding().and_then(|b| b.get("highlight")).and_then(hex)
+}
+
 /// The operating system's default wallpaper, if its branding names one that exists.
 pub fn default_wallpaper() -> Option<PathBuf> {
     branding().and_then(|b| b.path("wallpaper")).filter(|p| p.is_file())

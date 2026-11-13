@@ -198,6 +198,8 @@ Applications are shown as windows on a 1920×1080 desktop, in the dark style. Ev
 | *The calculator.* | *The installer: keyboards by type.* |
 | ![The installer, partitions](assets/screenshots/installer-disk-manual.png) | ![The installer, account](assets/screenshots/installer-account.png) |
 | *The installer: choosing partitions beside Windows (sample disks).* | *The installer: the account (sample name).* |
+| ![The installer, time zone](assets/screenshots/installer-timezone.png) | ![Settings, Date & Time](assets/screenshots/settings-date-time-light.png) |
+| *The installer: the time zone on the map, or in the short list beside it.* | *Settings: Date & Time in the light style, the same map and list.* |
 
 Every page of Settings, each with a picture: [docs/APPS_SETTINGS.md](docs/APPS_SETTINGS.md#every-page).
 

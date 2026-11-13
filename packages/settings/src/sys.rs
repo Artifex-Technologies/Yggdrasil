@@ -1491,75 +1491,8 @@ pub struct Time {
     pub ntp: bool,
     /// "Set time zone automatically": the user timer yggdrasil-autozone.timer is enabled.
     pub autozone: bool,
-    /// The time zones to choose from, as Windows lists them: by their offset from UTC, then by name.
-    pub zones: Vec<Zone>,
-}
-
-/// A time zone as the list shows it.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Zone {
-    /// The tz database name ("America/Denver"), what timedatectl takes.
-    pub id: String,
-    /// "(UTC-07:00) Denver, United States"
-    pub label: String,
-    /// Seconds east of UTC now (daylight saving time included).
-    pub offset: i32,
-}
-
-impl Zone {
-    /// What a search looks through: the label and the tz name ("utc-07", "denver", "united states", "america/denver").
-    pub fn matches(&self, q: &str) -> bool {
-        let q = q.trim().to_lowercase();
-        q.is_empty() || self.label.to_lowercase().contains(&q) || self.id.to_lowercase().replace('_', " ").contains(&q)
-    }
-}
-
-/// "(UTC-07:00)", "(UTC+05:30)", "(UTC+00:00)".
-pub fn utc_offset(seconds: i32) -> String {
-    let sign = if seconds < 0 { '-' } else { '+' };
-    let m = seconds.unsigned_abs() / 60;
-    format!("(UTC{sign}{:02}:{:02})", m / 60, m % 60)
-}
-
-/// The list's line for a zone: "(UTC-07:00) Denver, United States"; "America/Argentina/Buenos_Aires" is "Buenos Aires".
-pub fn zone_label(id: &str, offset: i32, country: Option<&str>) -> String {
-    if id == "UTC" {
-        return "(UTC) Coordinated Universal Time".into();
-    }
-    let city = id.rsplit('/').next().unwrap_or(id).replace('_', " ");
-    match country {
-        Some(c) => format!("{} {city}, {c}", utc_offset(offset)),
-        None => format!("{} {city}", utc_offset(offset)),
-    }
-}
-
-/// zone.tab and iso3166.tab (tzdata's own tables): each zone's country name, for the zones people live in (no old aliases
-/// such as US/Mountain, no Etc/GMT+7).
-pub fn zone_countries(zone_tab: &str, iso3166: &str) -> Vec<(String, String)> {
-    let names: BTreeMap<&str, &str> =
-        iso3166.lines().filter(|l| !l.starts_with('#')).filter_map(|l| l.split_once('\t')).map(|(c, n)| (c, n.trim())).collect();
-    zone_tab
-        .lines()
-        .filter(|l| !l.starts_with('#'))
-        .filter_map(|l| {
-            let mut f = l.split('\t');
-            let (cc, _, id) = (f.next()?, f.next()?, f.next()?);
-            Some((id.trim().to_string(), names.get(cc).unwrap_or(&cc).to_string()))
-        })
-        .collect()
-}
-
-/// The zones in Windows' order: by offset, then by label. The zone in use is always listed, even when it is an alias.
-pub fn zone_list(countries: &[(String, String)], current: &str, offset_of: impl Fn(&str) -> Option<i32>) -> Vec<Zone> {
-    let mut v: Vec<Zone> = countries
-        .iter()
-        .map(|(id, c)| (id.as_str(), Some(c.as_str())))
-        .chain(std::iter::once(("UTC", None)))
-        .chain((!current.is_empty() && current != "UTC" && !countries.iter().any(|(id, _)| id == current)).then_some((current, None)))
-        .filter_map(|(id, c)| offset_of(id).map(|o| Zone { id: id.to_string(), label: zone_label(id, o, c), offset: o }))
-        .collect();
-    v.sort_by(|a, b| a.offset.cmp(&b.offset).then_with(|| a.label.cmp(&b.label)));
-    v
+    /// The time zones to choose from (read once: zone.tab and the tz database do not change while Settings is open).
+    pub catalog: std::sync::Arc<yggdrasil_tzpicker::Catalog>,
 }
 
 /// `timedatectl show`: Key=Value lines.
@@ -1570,12 +1503,10 @@ pub fn time_show(text: &str) -> (String, bool) {
 
 pub fn time() -> Time {
     let (timezone, ntp) = time_show(&run("timedatectl", &["show"]).unwrap_or_default());
-    let read = |f: &str| std::fs::read_to_string(format!("/usr/share/zoneinfo/{f}")).unwrap_or_default();
-    let countries = zone_countries(&read("zone.tab"), &read("iso3166.tab"));
-    let now = jiff::Timestamp::now();
-    let zones = zone_list(&countries, &timezone, |id| jiff::tz::TimeZone::get(id).ok().map(|tz| tz.to_offset(now).seconds()));
+    static CATALOG: std::sync::OnceLock<std::sync::Arc<yggdrasil_tzpicker::Catalog>> = std::sync::OnceLock::new();
+    let catalog = CATALOG.get_or_init(|| std::sync::Arc::new(yggdrasil_tzpicker::Catalog::system(&timezone))).clone();
     let autozone = run("systemctl", &["--user", "is-enabled", "yggdrasil-autozone.timer"]).is_some_and(|s| s.trim() == "enabled");
-    Time { timezone, ntp, autozone, zones }
+    Time { timezone, ntp, autozone, catalog }
 }
 
 // ---------------------------------------------------------------- Apps (the operating system's optional software)
@@ -1851,41 +1782,6 @@ mod tests {
     #[test]
     fn time_parser() {
         assert_eq!(time_show("Timezone=America/Denver\nLocalRTC=no\nNTP=yes\n"), ("America/Denver".to_string(), true));
-    }
-
-    #[test]
-    fn time_zones_are_listed_as_windows_lists_them() {
-        assert_eq!(utc_offset(-7 * 3600), "(UTC-07:00)");
-        assert_eq!(utc_offset(5 * 3600 + 1800), "(UTC+05:30)");
-        assert_eq!(utc_offset(0), "(UTC+00:00)");
-        let countries = zone_countries(
-            "# comment\nUS\t+394421-1045903\tAmerica/Denver\tMountain (most areas)\nGB\t+513030-0000731\tEurope/London\n\
-             AR\t-3436-05827\tAmerica/Argentina/Buenos_Aires\tBuenos Aires (BA, CF)\nIN\t+2232+08822\tAsia/Kolkata\n",
-            "# comment\nUS\tUnited States\nGB\tBritain (UK)\nAR\tArgentina\nIN\tIndia\n",
-        );
-        let offsets = |id: &str| match id {
-            "America/Denver" | "US/Mountain" => Some(-7 * 3600),
-            "Europe/London" | "UTC" => Some(0),
-            "America/Argentina/Buenos_Aires" => Some(-3 * 3600),
-            "Asia/Kolkata" => Some(5 * 3600 + 1800),
-            _ => None,
-        };
-        let labels = |current: &str| zone_list(&countries, current, offsets).into_iter().map(|z| z.label).collect::<Vec<_>>();
-        assert_eq!(
-            labels("Europe/London"),
-            [
-                "(UTC-07:00) Denver, United States",
-                "(UTC-03:00) Buenos Aires, Argentina",
-                "(UTC) Coordinated Universal Time",
-                "(UTC+00:00) London, Britain (UK)",
-                "(UTC+05:30) Kolkata, India",
-            ]
-        );
-        // an alias in use is still listed, so the list can show what is set
-        assert!(labels("US/Mountain").contains(&"(UTC-07:00) Mountain".to_string()));
-        let denver = zone_list(&countries, "", offsets).into_iter().find(|z| z.id == "America/Denver").unwrap();
-        assert!(denver.matches("denver") && denver.matches("UTC-07") && denver.matches("united states"));
-        assert!(denver.matches("america/denver") && !denver.matches("london"));
     }
 
     #[test]

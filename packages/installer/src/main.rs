@@ -373,27 +373,6 @@ fn try_keyboard(c: &KbChoice) {
     });
 }
 
-/// The time zones a person would pick: Region/City ones and UTC (not the old aliases such as "W-SU", "Zulu" or "US/Pacific").
-fn timezones() -> Vec<String> {
-    let mut v: Vec<String> = run_lines("timedatectl", &["list-timezones"]).into_iter().filter(|z| real_zone(z)).collect();
-    v.sort_by_key(|z| zone_label(z).to_lowercase());
-    v
-}
-
-fn real_zone(z: &str) -> bool {
-    const AREAS: [&str; 10] = ["Africa", "America", "Antarctica", "Arctic", "Asia", "Atlantic", "Australia", "Europe", "Indian", "Pacific"];
-    z == "UTC" || z.split_once('/').map(|(area, rest)| AREAS.contains(&area) && !rest.is_empty()).unwrap_or(false)
-}
-
-/// "America/Argentina/Buenos_Aires" -> "Buenos Aires (America, Argentina)"
-fn zone_label(z: &str) -> String {
-    let parts: Vec<&str> = z.split('/').collect();
-    if parts.len() < 2 {
-        return z.replace('_', " ");
-    }
-    format!("{} ({})", parts[parts.len() - 1].replace('_', " "), parts[..parts.len() - 1].join(", ").replace('_', " "))
-}
-
 /// The live system's own time zone (what the medium was set to), as the first guess. No location service is asked.
 fn current_timezone() -> String {
     std::fs::read_link("/etc/localtime")
@@ -421,9 +400,9 @@ struct App {
     keymap: String,
     keymap_variant: String,
     test_text: String,
-    zones: Vec<String>,
+    /// The time zone page: the map and the list (yggdrasil-tzpicker, the same as Settings').
+    zones: yggdrasil_tzpicker::Picker,
     zone: String,
-    zone_filter: String,
     disks: Vec<Disk>,
     disk: Option<String>,
     /// Partitions chosen by hand instead of erasing the whole disk.
@@ -560,9 +539,8 @@ impl App {
             keymap: "us".into(),
             keymap_variant: String::new(),
             test_text: String::new(),
-            zones: timezones(),
+            zones: yggdrasil_tzpicker::Picker::new(std::sync::Arc::new(yggdrasil_tzpicker::Catalog::system(&current_timezone()))),
             zone: current_timezone(),
-            zone_filter: String::new(),
             disks: vec![],
             disk: None,
             manual_mode: false,
@@ -897,8 +875,11 @@ impl eframe::App for App {
         let ctx = ui.ctx().clone();
         chrome::resize_edges(&ctx);
         let accent = theme::system_accent();
-        theme::apply(&ctx, true, accent);
-        let pal = theme::palette_for(true, accent);
+        // the live session's style (dark unless it was set to light), read once
+        static DARK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let dark = *DARK.get_or_init(theme::system_dark);
+        theme::apply(&ctx, dark, accent);
+        let pal = theme::palette_for(dark, accent);
         self.poll();
         let mut go: Option<Page> = None;
         let mut install = false;
@@ -979,14 +960,11 @@ impl eframe::App for App {
                         field(ui, &mut self.test_text, "Try your keyboard here", false);
                     }
                     Page::TimeZone => {
-                        heading(ui, &pal, "Time zone", "Where the clock should be set for. Type a city to find it.");
-                        field(ui, &mut self.zone_filter, "Search, e.g. Denver or Berlin", false);
-                        ui.add_space(6.0);
-                        let q = self.zone_filter.to_lowercase();
-                        let shown: Vec<String> = self.zones.iter().filter(|z| q.is_empty() || zone_label(z).to_lowercase().contains(&q)).cloned().collect();
-                        let mut z = self.zone.clone();
-                        pick_list(ui, &pal, "zones", &shown, &mut z, (body_h - 150.0).max(120.0), zone_label);
-                        self.zone = z;
+                        heading(ui, &pal, "Time zone", "Where the clock should be set for. Click your part of the map, or type a city.");
+                        let opts = yggdrasil_tzpicker::Options { list_height: (body_h - 120.0).max(220.0), ..Default::default() };
+                        if let Some(z) = self.zones.show(ui, &pal, &self.zone, opts) {
+                            self.zone = z;
+                        }
                     }
                     Page::Disk => {
                         heading(ui, &pal, "Where to install", "Choose the disk, then how: erase all of it, or choose partitions yourself (beside Windows, for one).");
@@ -1123,7 +1101,7 @@ impl eframe::App for App {
                         let rows = [
                             ("Language", locale_label(&self.locale)),
                             ("Keyboard", self.kb_chosen().map(KbChoice::label).unwrap_or_else(|| self.keymap.clone())),
-                            ("Time zone", zone_label(&self.zone)),
+                            ("Time zone", self.zones.catalog().label(&self.zone)),
                             ("Disk", disk.map(|d| format!("{} ({}, {}), {}", if d.model.is_empty() { "Disk" } else { &d.model }, size_text(d.size), d.path, if self.manual_mode { "partitions chosen below" } else { "erased" })).unwrap_or_default()),
                             ("Encryption", if self.encrypt { "on".to_string() } else { "off".to_string() }),
                             ("Account", format!("{} ({})", self.name.trim(), self.login)),
@@ -1254,7 +1232,7 @@ impl eframe::App for App {
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([760.0, 600.0])
+            .with_inner_size([1100.0, 620.0])
             .with_min_inner_size([620.0, 520.0])
             .with_title("Install")
             .with_app_id("yggdrasil-installer")
@@ -1284,17 +1262,6 @@ mod tests {
         // only what the system has, when it says
         assert!(super::keyboard_choices(lst, &["us".to_string()]).iter().all(|c| c.layout == "us"));
         assert_eq!(all.iter().find(|c| c.variant == "dvorak").unwrap().label(), "English (Dvorak)   (us, dvorak)");
-    }
-
-    #[test]
-    fn only_region_city_zones_are_offered_and_read_as_places() {
-        assert!(super::real_zone("America/Denver") && super::real_zone("UTC"));
-        assert!(
-            !super::real_zone("W-SU") && !super::real_zone("Zulu") && !super::real_zone("US/Pacific") && !super::real_zone("Etc/GMT+5")
-        );
-        assert_eq!(super::zone_label("America/Argentina/Buenos_Aires"), "Buenos Aires (America, Argentina)");
-        assert_eq!(super::zone_label("Europe/Berlin"), "Berlin (Europe)");
-        assert_eq!(super::zone_label("UTC"), "UTC");
     }
 
     use super::*;

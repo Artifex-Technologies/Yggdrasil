@@ -11,10 +11,11 @@
 #   --only REGEX   only the pictures whose name matches (e.g. 'settings-power' or '^settings-')
 #   --list         the pictures it makes, and stop
 #
-# Each picture is 1920x1080: the panel (wallpaper, top bar, dock) with the app as a window, in the dark style. The made-up system
-# is in tests/screenshots: the account "alex" (Alex Example) on "example-pc", a home folder with a few files, stand-ins for the
-# programs the apps run directly (tests/screenshots/bin/standin), and a laptop's sensors; Settings' pages get theirs from its
-# fixtures (packages/settings/tests/fixtures: system.json, laptop.json, wifi.json, peripherals.json, displays-single.json). Two sandboxes are made, a
+# Each picture is 1920x1080: the panel (wallpaper, top bar, dock) with the app as a window, in the dark style (in the light style
+# for a name ending in "-light"). The made-up system is in tests/screenshots: the account "alex" (Alex Example) on "example-pc",
+# a home folder with a few files, stand-ins for the programs the apps run directly (tests/screenshots/bin/standin), and a
+# laptop's sensors; Settings' pages get theirs from its fixtures (packages/settings/tests/fixtures: system.json, laptop.json,
+# wifi.json, peripherals.json, displays-single.json). Two sandboxes are made, a
 # desktop computer and a laptop (a battery, no fan controller).
 #
 # Needs bwrap (bubblewrap), dbus-daemon and busctl. In CI (CI=true, already a throw-away container) it runs without bwrap.
@@ -78,6 +79,7 @@ shots() {
     shot settings-users                 desktop settings users system
     shot settings-restore               desktop settings restore system
     shot settings-date-time             desktop settings datetime system
+    shot settings-date-time-light       desktop settings datetime system
     shot settings-about                 desktop settings about system
     shot minos-explorer                 desktop app minos /home/alex/Documents
     shot taskmanager                    desktop app yggdrasil-taskmanager
@@ -86,6 +88,8 @@ shots() {
     shot saga-md                        desktop app saga-md "/home/alex/Documents/Trip plan.md"
     shot installer-welcome              desktop app yggdrasil-installer --demo welcome
     shot installer-keyboard             desktop app yggdrasil-installer --demo keyboard
+    shot installer-timezone             desktop app yggdrasil-installer --demo timezone
+    shot installer-timezone-light       desktop app yggdrasil-installer --demo timezone
     shot installer-disk-manual          desktop app yggdrasil-installer --demo disk-manual
     shot installer-account              desktop app yggdrasil-installer --demo account
     shot lock-screen                    desktop lock
@@ -223,6 +227,11 @@ EOF
         local what=${1:-}
         [ "$m" = "$machine" ] && [[ $name =~ ${ONLY:-.} ]] || return 0
         echo "screenshots: $name"
+        # the style: set before the app starts (the panel follows the file too), back to dark after the picture
+        local style=dark
+        [[ $name == *-light ]] && style=light
+        sed -i "s/^style = .*/style = $style/" "$HOME/.config/yggdrasil/appearance.conf"
+        [ $style = dark ] || pause 2
         local app=''
         case "$kind" in
         settings)
@@ -276,6 +285,7 @@ EOF
             pause 0.5
         done
         steady "${OUT:?}/$name.png"
+        if [ $style != dark ]; then sed -i "s/^style = .*/style = dark/" "$HOME/.config/yggdrasil/appearance.conf"; fi
         # back to the plain desktop for the next one
         case "$kind" in
         lock)

@@ -24,6 +24,9 @@ pub struct Palette {
     pub green: Color32,
     pub amber: Color32,
     pub red: Color32,
+    /// What is picked on a map or a chart, set apart from the accent (the time zone picker's chosen zone): orange unless the
+    /// operating system's branding names one (`highlight = #rrggbb`).
+    pub highlight: Color32,
 }
 
 /// The default palette (Minos's own purple).
@@ -116,6 +119,7 @@ fn base_palette(dark: bool) -> Palette {
             green: Color32::from_rgb(58, 158, 94),
             amber: Color32::from_rgb(201, 146, 58),
             red: Color32::from_rgb(180, 58, 69),
+            highlight: highlight(true),
         }
     } else {
         Palette {
@@ -137,7 +141,17 @@ fn base_palette(dark: bool) -> Palette {
             green: Color32::from_rgb(46, 140, 80),
             amber: Color32::from_rgb(196, 130, 30),
             red: Color32::from_rgb(190, 50, 60),
+            highlight: highlight(false),
         }
+    }
+}
+
+/// The highlight colour: the branding's, else orange (a little deeper on the light style, so it holds on white).
+fn highlight(dark: bool) -> Color32 {
+    match yggdrasil_conf::integrations::default_highlight() {
+        Some([r, g, b]) => Color32::from_rgb(r, g, b),
+        None if dark => Color32::from_rgb(255, 140, 50),
+        None => Color32::from_rgb(234, 108, 16),
     }
 }
 

@@ -161,7 +161,8 @@ About only when switched on, have no picture.
 | **Firewall**: on or off. | ![Settings > Firewall](../assets/screenshots/settings-firewall.png) |
 | **Users**: two accounts, the keyring. | ![Settings > Users](../assets/screenshots/settings-users.png) |
 | **Restore points**: Snapper's restore points, and how to go back to one. | ![Settings > Restore points](../assets/screenshots/settings-restore.png) |
-| **Date & Time**: the time zone, set automatically or by hand. | ![Settings > Date & Time](../assets/screenshots/settings-date-time.png) |
+| **Date & Time**: the time zone, set automatically or by hand: click your part of the map, or search the short list (about 80 friendly zones by UTC offset). | ![Settings > Date & Time](../assets/screenshots/settings-date-time.png) |
+| **Date & Time, light style**: the chosen zone in the highlight colour, orange unless the OS's branding names another. | ![Settings > Date & Time, light](../assets/screenshots/settings-date-time-light.png) |
 | **About**: the operating system, the computer and its parts. | ![Settings > About](../assets/screenshots/settings-about.png) |
 
 ## How it works

@@ -1,0 +1,18 @@
+[package]
+name = "yggdrasil-tzpicker"
+version = "0.1.0"
+edition = "2021"
+description = "The time zone picker of Settings > Date & time and the installer: a world map with the zone bands, and a short list grouped by UTC offset"
+license = "MPL-2.0"
+
+[lib]
+name = "yggdrasil_tzpicker"
+path = "src/lib.rs"
+
+[dependencies]
+eframe = "0.36.2"
+yggdrasil-ui = { path = "../yggdrasil-ui" }
+# each zone's offset now and over the coming year, from the system's tz database (/usr/share/zoneinfo)
+jiff = { version = "0.2", default-features = false, features = ["std", "tzdb-zoneinfo"] }
+# the map is drawn into a picture once per change (already in the tree: resvg draws with it)
+tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }

@@ -26,6 +26,9 @@ licence, listed here.
   - omarchy-2048 ((c) 2026 Imran H.), after gabrielecirulli/2048 (MIT, (c) 2014 Gabriele Cirulli): `packages/game-2048`.
   - omarchy-sudoku-plugin ((c) 2026 Morganczech (gruut)): `packages/sudoku`.
 - **omarchy-weather-nowcast** (Hizoul, GPL-3.0): only the idea of the rain view in `packages/weather`; no code is taken from it.
+- **Natural Earth** (public domain, naturalearthdata.com), version 5.0.0: the time zone picker's map (`packages/tzpicker/data/world.bin`)
+  is baked from `ne_50m_admin_0_countries` and `ne_10m_time_zones`, simplified (see `packages/tzpicker/README.md`). Made with Natural
+  Earth.
 - **Simple Icons** (CC0-1.0): the brand logos in `packages/liki/share/brand-icons`.
 - **Pillow** (MIT-CMU, (c) 1997-2011 Secret Labs AB, (c) 1995-2011 Fredrik Lundh and contributors, (c) 2010 Jeffrey A. Clark and contributors): `packages/theme/src/cursors` (draw.rs, resample.rs, text.rs) is translated from Pillow 13.0's drawing, resampling and text code so ygg-cursors draws the cursors exactly as the Python script did with Pillow; the licence is in `packages/theme/src/cursors/NOTICE-Pillow` and installed with the package.
 - **Aileron** (CC0-1.0, Sora Sagano, dotcolon.net): `packages/theme/src/cursors/aileron-subset.ttf`, the subset Pillow carries as its default font, used by ygg-cursors where Pillow used it.

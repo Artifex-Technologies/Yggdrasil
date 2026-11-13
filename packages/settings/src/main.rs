@@ -331,9 +331,8 @@ struct App {
     other_pw: (bool, String, String),
     /// The full name being edited: (account, text).
     name_edit: Option<(String, String)>,
-    zone_filter: String,
-    /// The time zone list was open in the last frame (so its search box takes the keyboard only as it opens).
-    zone_open: bool,
+    /// Date & time's map and list of time zones (made when the page is first shown).
+    zone_picker: Option<yggdrasil_tzpicker::Picker>,
     /// What the icon-pack install box holds: a folder, an archive or a link.
     icon_src: String,
     // Apps page
@@ -481,8 +480,7 @@ impl App {
             acct_sel: None,
             other_pw: (false, String::new(), String::new()),
             name_edit: None,
-            zone_filter: String::new(),
-            zone_open: false,
+            zone_picker: None,
             icon_src: String::new(),
             app_tab: 0,
             app_sub: match start_sub().as_str() {
@@ -834,7 +832,9 @@ impl eframe::App for App {
         }
         chrome::resize_edges(&ctx);
         let accent = theme::system_accent();
-        let dark = self.data.appearance.as_ref().map(|a| a.dark).unwrap_or(true);
+        // the style as the Appearance page last read it; before that page is opened, as the file said when Settings started
+        static DARK_AT_START: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let dark = self.data.appearance.as_ref().map(|a| a.dark).unwrap_or_else(|| *DARK_AT_START.get_or_init(theme::system_dark));
         theme::apply(&ctx, dark, accent);
         let pal = theme::palette_for(dark, accent);
 
@@ -4255,52 +4255,20 @@ impl App {
                     autozone_changed = ui::switch(ui, pal, &mut autozone).changed();
                 },
             );
-            let current = t.zones.iter().find(|z| z.id == t.timezone).map(|z| z.label.clone()).unwrap_or_else(|| t.timezone.clone());
-            ui::row(ui, pal, false, "Time zone", Some("Daylight saving time is followed automatically"), |ui| {
-                ui.add_enabled_ui(!t.autozone, |ui| {
-                    // As Windows lists them: "(UTC-07:00) Denver, United States", by offset. A combo box closes on any click, its
-                    // own search box included: this one closes only on a click outside it (or on a choice), and the search box has
-                    // the keyboard as soon as the list opens. Enter takes the first match.
-                    let open = egui::ComboBox::from_id_salt("zone")
-                        .selected_text(&current)
-                        .width((ui.available_width() * 0.6).clamp(220.0, 360.0))
-                        .height(360.0)
-                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                        .show_ui(ui, |ui| {
-                            let search =
-                                ui.add(egui::TextEdit::singleline(&mut self.zone_filter).hint_text("Search: a city, a country or UTC-07"));
-                            let opening = !self.zone_open;
-                            if opening {
-                                search.request_focus();
-                            }
-                            let enter = search.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                            let q = self.zone_filter.clone();
-                            let mut matches = t.zones.iter().filter(|z| z.matches(&q)).peekable();
-                            if enter && !q.trim().is_empty() {
-                                zone = matches.peek().map(|z| z.id.clone());
-                            }
-                            for z in matches {
-                                let row = ui.selectable_label(z.id == t.timezone, &z.label);
-                                if opening && z.id == t.timezone {
-                                    // the list opens at the zone in use, as Windows' does
-                                    row.scroll_to_me(Some(egui::Align::Center));
-                                }
-                                if row.clicked() {
-                                    zone = Some(z.id.clone());
-                                }
-                            }
-                            if zone.is_some() {
-                                ui.close();
-                            }
-                        })
-                        .inner
-                        .is_some();
-                    if self.zone_open && !open {
-                        self.zone_filter.clear();
-                    }
-                    self.zone_open = open;
-                });
+            let picker = self.zone_picker.get_or_insert_with(|| yggdrasil_tzpicker::Picker::new(t.catalog.clone()));
+            let current = picker.catalog().label(&t.timezone);
+            let detail = if t.autozone {
+                "Set automatically; turn that off to choose on the map"
+            } else {
+                "Click your part of the map, or search the list. Daylight saving time is followed automatically"
+            };
+            ui::row(ui, pal, false, "Time zone", Some(detail), |ui| {
+                ui.label(egui::RichText::new(&current).color(pal.dim));
             });
+            ui.add_space(6.0);
+            let opts = yggdrasil_tzpicker::Options { enabled: !t.autozone, clock_24h: clock.clock_24h, list_height: 300.0 };
+            zone = picker.show(ui, pal, &t.timezone, opts);
+            ui.add_space(10.0);
             ui::row(ui, pal, false, "Set time automatically", Some("From time servers on the internet"), |ui| {
                 ntp_changed = ui::switch(ui, pal, &mut ntp).changed();
             });
@@ -4324,6 +4292,11 @@ impl App {
             self.change(ctx, move || sys::act("timedatectl", &["set-ntp", arg]));
         }
         if let Some(z) = zone {
+            // shown at once; the page is read again once timedatectl has answered (no password: an administrator at this
+            // computer may set the time zone, data/50-yggdrasil-timezone.rules)
+            if let Some(t) = self.data.time.as_mut() {
+                t.timezone = z.clone();
+            }
             self.change(ctx, move || sys::act("timedatectl", &["set-timezone", &z]));
         }
         if clock_changed {

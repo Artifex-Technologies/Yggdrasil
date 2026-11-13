@@ -171,6 +171,7 @@ home folder.
 ```
 kind = branding
 accent = #7c54d6                   # the default accent until the user picks one
+highlight = #ff8c32                # what is picked on a map (the time zone picker's chosen zone); default orange
 wallpaper = /usr/share/wallpapers/labyrinth/labyrinth-purple.png
 ```
 
