@@ -25,7 +25,8 @@
 //!   workspace                    the workspace showing (1 to 4)
 //!   lock                         "locked" or "unlocked", then one line per lock surface: output and size
 //!   key COMBO...                 press and let go of keys, one combination after another: super+ctrl+2, Return, a,
-//!                                XF86AudioMute
+//!                                XF86AudioMute, ctrl (the left one; rctrl the right one)
+//!   key-down COMBO, key-up COMBO press keys and keep them down (a held key repeats its shortcut), let them go
 //!   type TEXT                    type text (letters, digits, space and common punctuation, US layout)
 //!   pointer X Y                  move the pointer to X,Y (logical, in the space of all outputs)
 //!   click [left|right|middle]    press and let go of a pointer button where the pointer is
@@ -157,6 +158,11 @@ pub fn check_env() -> Result<PathBuf, String> {
         if desktop_bus(&bus.to_string_lossy(), uid) && std::env::var_os("YGGDRASIL_COMPOSITOR_SHARED_RUNTIME").is_none() {
             std::env::remove_var("DBUS_SESSION_BUS_ADDRESS");
         }
+    }
+    // nor the system bus: Super+L runs the session's `loginctl lock-session`, which through logind would lock the running
+    // desktop; here it finds no bus and does nothing
+    if std::env::var_os("YGGDRASIL_COMPOSITOR_SHARED_RUNTIME").is_none() {
+        std::env::set_var("DBUS_SYSTEM_BUS_ADDRESS", format!("unix:path={}", dir.join("no-system-bus").display()));
     }
     Ok(dir)
 }
@@ -545,6 +551,20 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String
             }
             Ok(vec![])
         }
+        ["key-down" | "key-up", c] => {
+            let keys = combo(c).ok_or_else(|| format!("{c}: unknown key"))?;
+            let down = words[0] == "key-down";
+            if down {
+                for k in &keys {
+                    press(app, h, *k, true);
+                }
+            } else {
+                for k in keys.iter().rev() {
+                    press(app, h, *k, false);
+                }
+            }
+            Ok(vec![])
+        }
         ["type", text @ ..] if !text.is_empty() => {
             let text = text.join(" ");
             let mut all = vec![];
@@ -597,7 +617,7 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String
         }
         [] => Err("no command".into()),
         _ => Err(format!(
-            "unknown command {:?} (outputs, resize NAME WxH, scale NAME S, screenshot NAME FILE, windows, layers, free, focus, workspace, lock, key COMBO, type TEXT, pointer X Y, click [BUTTON], power NAME on|off, quit; for the tools: clients, active, workspaces, workspace N, activate ID, close ID, minimize ID, maximize ID on|off|toggle, send ID N, place ID X Y W H, cursor, screens, pointer-timeout [S], modifiers)",
+            "unknown command {:?} (outputs, resize NAME WxH, scale NAME S, screenshot NAME FILE, windows, layers, free, focus, workspace, lock, key COMBO, key-down COMBO, key-up COMBO, type TEXT, pointer X Y, click [BUTTON], power NAME on|off, quit; for the tools: clients, active, workspaces, workspace N, activate ID, close ID, minimize ID, maximize ID on|off|toggle, send ID N, place ID X Y W H, cursor, screens, pointer-timeout [S], modifiers)",
             words.join(" ")
         )),
     }
@@ -611,6 +631,7 @@ fn key_code(name: &str) -> Option<u32> {
     let named = match n.as_str() {
         "super" | "meta" | "logo" | "win" => 125,
         "ctrl" | "control" => 29,
+        "rctrl" => 97,
         "alt" => 56,
         "shift" => KEY_LEFTSHIFT,
         "altgr" => 100,
@@ -629,6 +650,10 @@ fn key_code(name: &str) -> Option<u32> {
         "pageup" => 104,
         "pagedown" => 109,
         "print" => 99,
+        "equal" => 13,
+        "minus" => 12,
+        "slash" => 53,
+        "xf86audiopause" => 201,
         "f11" => 87,
         "f12" => 88,
         "xf86audiomute" | "mute" => 113,

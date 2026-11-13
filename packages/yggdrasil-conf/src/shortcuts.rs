@@ -190,8 +190,19 @@ fn quoted(line: &str, fill: &str) -> Vec<String> {
 /// The shortcuts a session file (yggdrasil.lua) sets: `cmd("KEYS", ..., { desc = "..." })` and `dsp(...)` lines, the numbered
 /// desktop loop shown once as "1-4", the media keys from their table.
 pub fn from_lua(text: &str) -> Vec<Shortcut> {
+    list(&parse_lua(text, false))
+}
+
+/// Every bind a session file sets, one per key: the numbered desktop loop once per number, the media keys from their table
+/// (Yggdrasil's own compositor checks its table against this: packages/compositor/src/shortcuts.rs).
+pub fn lua_binds(text: &str) -> Vec<Bind> {
+    parse_lua(text, true)
+}
+
+/// The binds of a session file; `expand`: the numbered loop once per number, else once with the range ("1-4").
+fn parse_lua(text: &str, expand: bool) -> Vec<Bind> {
     let mut binds: Vec<Bind> = vec![];
-    let mut loop_range: Option<String> = None;
+    let mut range: Option<(u32, u32)> = None;
     for line in text.lines() {
         let t = line.trim();
         if t.starts_with("--") {
@@ -199,26 +210,30 @@ pub fn from_lua(text: &str) -> Vec<Shortcut> {
         }
         if let Some(r) = t.strip_prefix("for n = ") {
             // for n = 1, 4 do
-            let nums: Vec<&str> = r.trim_end_matches("do").split(',').map(str::trim).collect();
-            if nums.len() == 2 {
-                loop_range = Some(format!("{}-{}", nums[0], nums[1]));
+            let nums: Vec<u32> = r.trim_end_matches("do").split(',').filter_map(|n| n.trim().parse().ok()).collect();
+            if let [lo, hi] = nums[..] {
+                range = Some((lo, hi));
             }
             continue;
         }
         if t == "end" {
-            loop_range = None;
+            range = None;
             continue;
         }
         // only binds whose keys are written out (the media keys' loop passes a variable: those come from their table below)
         if t.starts_with("cmd(\"") || t.starts_with("dsp(\"") || t.starts_with("hl.bind(\"") {
-            let q = quoted(t, loop_range.as_deref().unwrap_or(""));
-            let Some(combo) = q.first() else { continue };
-            let desc = t
-                .find("desc = \"")
-                .and_then(|i| quoted(&t[i..], loop_range.as_deref().unwrap_or("")).into_iter().next())
-                .unwrap_or_default();
-            let (modmask, key) = parse_combo(combo);
-            binds.push(Bind { modmask, key, desc, release: t.contains("release = true") });
+            let fills: Vec<String> = match range {
+                Some((lo, hi)) if expand => (lo..=hi).map(|n| n.to_string()).collect(),
+                Some((lo, hi)) => vec![format!("{lo}-{hi}")],
+                None => vec![String::new()],
+            };
+            for fill in fills {
+                let q = quoted(t, &fill);
+                let Some(combo) = q.first() else { continue };
+                let desc = t.find("desc = \"").and_then(|i| quoted(&t[i..], &fill).into_iter().next()).unwrap_or_default();
+                let (modmask, key) = parse_combo(combo);
+                binds.push(Bind { modmask, key, desc, release: t.contains("release = true") });
+            }
             continue;
         }
         // the media keys' table: XF86AudioRaiseVolume = "volume-up", ...
@@ -231,7 +246,7 @@ pub fn from_lua(text: &str) -> Vec<Shortcut> {
             }
         }
     }
-    list(&binds)
+    binds
 }
 
 /// docs/SHORTCUTS.md from the shortcuts.
@@ -358,6 +373,12 @@ for key, what in pairs({
         assert_eq!(get("Win + Ctrl + 1-4").as_deref(), Some("Desktop 1-4"));
         assert_eq!(get("Volume up").as_deref(), Some("Volume up"));
         assert!(get("Win + X").is_none());
+        // one bind per key for a compositor to compare its own table with
+        let binds = lua_binds(lua);
+        assert_eq!(binds.iter().filter(|b| b.modmask == 68).map(|b| b.key.as_str()).collect::<Vec<_>>(), ["1", "2", "3", "4"]);
+        assert!(binds.iter().any(|b| b.modmask == 68 && b.key == "3" && b.desc == "Desktop 3"));
+        assert!(binds.iter().any(|b| b.modmask == 0 && b.key == "XF86AudioMute" && b.desc.is_empty()));
+        assert_eq!(binds.len(), 8);
     }
 
     /// docs/SHORTCUTS.md and the README's shortcut section are made from the session file; with YGGDRASIL_WRITE_DOCS=1 this

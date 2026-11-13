@@ -22,7 +22,8 @@
 //!   pointer-timeout [SECONDS]   how long the pointer may rest before it is hidden (0: never); with a number, set it
 //!   modifiers                   the modifier keys held now: super, ctrl, alt, shift (one line, space separated)
 //!   layers                      one line per panel or background: output, namespace, layer, place and size (tab separated)
-//!   binds                       one line per shortcut: modifier mask (Shift 1, Ctrl 4, Alt 8, Super 64), key, what it does
+//!   binds                       one line per shortcut: modifier mask (Shift 1, Ctrl 4, Alt 8, Super 64), key, what it does,
+//!                               its kind (release, repeat, locked, comma separated; - for none); the mouse's two last
 //!   reload                      read workspaces.conf, shortcuts.conf and opaque.conf again
 //!   paste ctrl|ctrl+shift       press Ctrl+V (or Ctrl+Shift+V, a terminal's) in the window with the keyboard: the clipboard's
 //!                               paste; refused while the screen is locked
@@ -161,9 +162,10 @@ pub fn command(words: &[&str], app: &mut App) -> Option<Result<Vec<String>, Stri
             .bindings
             .iter()
             .map(|b| {
-                let (mask, key, what) = crate::shortcuts::listed(b);
-                format!("{mask}\t{}\t{}", field(&key), field(&what))
+                let (mask, key, what, kind) = crate::shortcuts::listed(b);
+                format!("{mask}\t{}\t{}\t{kind}", field(&key), field(&what))
             })
+            .chain(crate::shortcuts::MOUSE.iter().map(|(mask, key, what)| format!("{mask}\t{key}\t{what}\t-")))
             .collect()),
         ["reload"] => {
             app.reload_config();

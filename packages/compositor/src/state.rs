@@ -180,8 +180,14 @@ pub struct App {
     pub screencopy: crate::screencopy::Screencopy,
     pub power: crate::outputpower::OutputPower,
     pub bindings: Vec<Binding>,
-    /// The Super key went down and nothing else was pressed since: letting go of it opens the start menu.
-    super_tap: bool,
+    /// A modifier key with a tap binding went down and nothing else was pressed since (its key code and what letting go does):
+    /// Super on its own opens the start menu, Ctrl on its own is a tap of Find my mouse.
+    tap: Option<(u32, Action)>,
+    /// The key of a repeating binding held down now (its code and a number of its own: the repeat timer of an older press stops).
+    repeating: Option<(u32, u64)>,
+    repeat_serial: u64,
+    /// Minimized windows shown over the desktop (Super+Shift+M; Hyprland's special workspace): still minimized, on show.
+    peek: Vec<WlSurface>,
     /// Keys whose press was taken by a shortcut: their release is not passed on either.
     taken: Vec<u32>,
     /// What the shortcuts asked for while the keyboard handler was busy.
@@ -395,7 +401,7 @@ impl App {
     ) -> App {
         let mut seat_state = SeatState::new();
         let mut seat = seat_state.new_wl_seat(dh, "seat0");
-        let keyboard = seat.add_keyboard(Default::default(), 300, 40).expect("keyboard");
+        let keyboard = seat.add_keyboard(Default::default(), shortcuts::REPEAT_DELAY, shortcuts::REPEAT_RATE).expect("keyboard");
         let pointer = seat.add_pointer();
         let loop_handle = handle.clone();
         App {
@@ -446,7 +452,10 @@ impl App {
                 }
                 b
             },
-            super_tap: false,
+            tap: None,
+            repeating: None,
+            repeat_serial: 0,
+            peek: vec![],
             taken: vec![],
             queued: vec![],
             socket: String::new(),
@@ -799,6 +808,7 @@ impl App {
             self.saved.retain(|(x, _)| x != s);
             self.x11_snapped.retain(|x| x != s);
             self.floating.retain(|x| x != s);
+            self.peek.retain(|x| x != s);
         }
         self.parked.retain(|(w, _, _)| !is(w));
         self.minimized.retain(|w| !is(w));
@@ -872,23 +882,67 @@ impl App {
             self.switch_workspace(ws);
         }
         if let Some(i) = self.minimized.iter().position(|w| is_window_of(w, surface)) {
-            let w = self.minimized.remove(i);
-            let at = self.saved.iter().find(|(s, _)| s == surface).map(|(_, r)| r.loc).unwrap_or((80, 80).into());
-            if let Some(x) = w.x11_surface() {
-                let _ = x.set_suspended(false);
-                if let Some(r) = &self.x11_reader {
-                    r.iconic(x.window_id(), false);
-                }
-            }
-            x11_place(&w, at, w.geometry().size);
-            self.space.map_element(w, at, true);
-            self.retile();
+            self.unminimize(i);
         }
+        // brought back for good (it was only on show with the minimized ones)
+        self.peek.retain(|s| s != surface);
         let Some(window) = self.shown_window(surface) else { return };
         self.space.raise_element(&window, true);
         self.mark_active(&window);
         self.give_keyboard(Some(surface.clone()), SERIAL_COUNTER.next_serial());
         self.touch_focus(surface);
+    }
+
+    /// A minimized window back on the desktop where it was (not yet raised or given the keyboard).
+    fn unminimize(&mut self, i: usize) -> Window {
+        let w = self.minimized.remove(i);
+        let surface = surface_of(&w);
+        let at = self.saved.iter().find(|(s, _)| Some(s) == surface.as_ref()).map(|(_, r)| r.loc).unwrap_or((80, 80).into());
+        if let Some(x) = w.x11_surface() {
+            let _ = x.set_suspended(false);
+            if let Some(r) = &self.x11_reader {
+                r.iconic(x.window_id(), false);
+            }
+        }
+        x11_place(&w, at, w.geometry().size);
+        self.space.map_element(w.clone(), at, true);
+        self.retile();
+        w
+    }
+
+    /// Super+Shift+M: the minimized windows shown over the desktop (still minimized: the dock and the window list say so), and
+    /// again hidden; as Hyprland's special workspace "minimized" that the session's minimize uses. One brought forward from
+    /// there (the dock, activate) stays on the desktop.
+    pub fn toggle_peek(&mut self) {
+        self.wake();
+        if !self.peek.is_empty() {
+            self.end_peek();
+            self.focus_back();
+            return;
+        }
+        let mut top = None;
+        while !self.minimized.is_empty() {
+            let w = self.unminimize(0);
+            if let Some(s) = surface_of(&w) {
+                self.peek.push(s);
+            }
+            top = Some(w);
+        }
+        if let Some(w) = top {
+            self.mark_active(&w);
+            let s = surface_of(&w);
+            if let Some(s) = &s {
+                self.touch_focus(s);
+            }
+            self.give_keyboard(s, SERIAL_COUNTER.next_serial());
+        }
+    }
+
+    /// The minimized windows on show go back out of sight.
+    fn end_peek(&mut self) {
+        for s in std::mem::take(&mut self.peek) {
+            self.minimize_surface(&s);
+        }
     }
 
     pub fn close_surface(&mut self, surface: &WlSurface) {
@@ -908,6 +962,7 @@ impl App {
 
     pub fn minimize_surface(&mut self, surface: &WlSurface) {
         self.wake();
+        self.peek.retain(|s| s != surface);
         let Some(window) = self.shown_window(surface) else { return };
         let loc = self.space.element_location(&window).unwrap_or_default();
         self.saved.retain(|(s, _)| s != surface);
@@ -957,14 +1012,25 @@ impl App {
     /// Decides what a key does: a shortcut (taken, not passed to the focused program) or nothing special.
     fn key_filter(&mut self, code: u32, state: KeyState, mods: &ModifiersState, sym: u32) -> FilterResult<Action> {
         if self.locked {
-            // only the media keys' shortcuts run on the lock screen; every other key goes to the lock
+            // only the media keys' shortcuts run on the lock screen (volume and brightness repeating); every other key goes to the lock
+            self.tap = None;
+            if state == KeyState::Pressed {
+                self.repeating = None;
+            }
             if state == KeyState::Pressed && shortcuts::works_locked(sym) {
                 if let Some(b) = shortcuts::find(&self.bindings, Mods::of(mods), sym) {
                     self.taken.push(code);
+                    if b.repeat {
+                        self.repeat_serial += 1;
+                        self.repeating = Some((code, self.repeat_serial));
+                    }
                     return FilterResult::Intercept(b.action.clone());
                 }
             }
             if state == KeyState::Released {
+                if self.repeating.is_some_and(|(c, _)| c == code) {
+                    self.repeating = None;
+                }
                 if let Some(i) = self.taken.iter().position(|c| *c == code) {
                     self.taken.remove(i);
                     return FilterResult::Intercept(Action::None);
@@ -990,8 +1056,13 @@ impl App {
             }
         }
         if state == KeyState::Released {
-            if shortcuts::is_super(sym) && std::mem::take(&mut self.super_tap) {
-                self.queued.push(Action::ToggleStart);
+            if self.repeating.is_some_and(|(c, _)| c == code) {
+                self.repeating = None;
+            }
+            if self.tap.as_ref().is_some_and(|(c, _)| *c == code) {
+                if let Some((_, action)) = self.tap.take() {
+                    self.queued.push(action);
+                }
             }
             if let Some(i) = self.taken.iter().position(|c| *c == code) {
                 self.taken.remove(i);
@@ -999,11 +1070,14 @@ impl App {
             }
             return FilterResult::Forward;
         }
-        if shortcuts::is_super(sym) {
-            self.super_tap = true;
+        // any other key pressed: a held key no longer repeats, a modifier held is no longer a tap
+        self.repeating = None;
+        self.tap = None;
+        if shortcuts::is_modifier(sym) {
+            // a modifier on its own does its binding when let go (Super: the start menu), and always reaches the program
+            self.tap = shortcuts::find(&self.bindings, Mods::of(mods), sym).map(|b| (code, b.action.clone()));
             return FilterResult::Forward;
         }
-        self.super_tap = false;
         match shortcuts::find(&self.bindings, Mods::of(mods), sym) {
             Some(b) => {
                 self.taken.push(code);
@@ -1011,14 +1085,36 @@ impl App {
                     // the switcher stays open while these modifiers (Alt for Alt+Tab) are held
                     self.switcher_hold = Mods { shift: false, ..Mods::of(mods) };
                 }
+                if b.repeat {
+                    self.repeat_serial += 1;
+                    self.repeating = Some((code, self.repeat_serial));
+                }
                 FilterResult::Intercept(b.action.clone())
             }
             None => FilterResult::Forward,
         }
     }
 
+    /// A repeating binding's key was pressed: while it stays down, its action runs again after the keyboard's delay and then at
+    /// its rate (the volume and brightness keys, the magnifier).
+    fn start_repeat(&mut self, action: Action) {
+        use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
+        let Some((_, serial)) = self.repeating else { return };
+        let every = Duration::from_millis(1000 / shortcuts::REPEAT_RATE.max(1) as u64);
+        let delay = Duration::from_millis(shortcuts::REPEAT_DELAY.max(0) as u64);
+        let _ = self.loop_handle.insert_source(Timer::from_duration(delay), move |_, _, app| {
+            // let go, or another key pressed meanwhile (on the lock screen too: its key handling ends a repeat the same way)
+            if app.repeating.map(|(_, s)| s) != Some(serial) {
+                return TimeoutAction::Drop;
+            }
+            app.run_action(action.clone());
+            TimeoutAction::ToDuration(every)
+        });
+    }
+
     fn spawn(&self, cmd: &str) {
-        let mut c = std::process::Command::new("sh");
+        // /bin/sh by its path: the commands are looked up on the compositor's PATH by the shell (the tests give one of stand-ins)
+        let mut c = std::process::Command::new("/bin/sh");
         // X11 programs go to this compositor's XWayland, never to the host's X server
         c.arg("-c").arg(cmd).env_remove("DISPLAY").env_remove("HYPRLAND_INSTANCE_SIGNATURE");
         if let Some(n) = self.x11_display {
@@ -1038,11 +1134,6 @@ impl App {
         }
     }
 
-    fn panel(&self, method: &str, arg: Option<u32>) {
-        let a = arg.map(|n| format!(" u {n}")).unwrap_or_default();
-        self.spawn(&format!("busctl --user call org.yggdrasil.Panel /Panel org.yggdrasil.Panel {method}{a}"));
-    }
-
     fn focused(&self) -> Option<WlSurface> {
         let f = self.focused_surface()?;
         self.space.elements().any(|w| is_window_of(w, &f)).then_some(f)
@@ -1055,17 +1146,25 @@ impl App {
         let has = |app: &App, s: &WlSurface, st: S| app.has_state(s, st);
         match action {
             Action::None => {}
-            Action::ToggleStart => self.panel("ToggleStart", None),
+            // the panel's own actions through its command (yggdrasil-panelctl), as the session binds them
+            Action::ToggleStart => self.spawn("yggdrasil-panelctl start"),
             Action::Clipboard => self.spawn("yggdrasil-clipboard"),
-            Action::Assistant => self.panel("Ask", None),
-            Action::Calendar => self.panel("ToggleCalendar", None),
-            Action::Fylgja(n) => self.panel("ShowFylgja", Some(n)),
+            Action::Assistant => self.spawn("yggdrasil-panelctl ask-press"),
+            Action::Calendar => self.spawn("yggdrasil-panelctl calendar"),
+            Action::Fylgja(n) => self.spawn(&format!("yggdrasil-panelctl fylgja {n}")),
             Action::Exec(cmd) => self.spawn(&cmd),
-            Action::Lock => self.spawn("yggdrasil-lock"),
+            // the session's lock: logind asks the idle manager, which starts the lock screen (headless: no system bus, see headless.rs)
+            Action::Lock => self.spawn("loginctl lock-session"),
             Action::Quit => self.quit(),
             Action::Close => {
                 if let Some(s) = current {
-                    self.close_surface(&s);
+                    // as the session's yggdrasil-close: a program that keeps running (keep-running) is minimized instead
+                    let class = self.window_for(&s).map(|w| title_app(&w).1).unwrap_or_default();
+                    if yggdrasil_conf::keep_running::keeps(&yggdrasil_conf::keep_running::load(), &class) {
+                        self.minimize_surface(&s);
+                    } else {
+                        self.close_surface(&s);
+                    }
                 }
             }
             Action::Maximize => {
@@ -1098,14 +1197,16 @@ impl App {
                     self.minimize_surface(&s);
                 }
             }
+            Action::ShowMinimized => self.toggle_peek(),
             Action::SnapLeft | Action::SnapRight => {
                 let Some(t) = current.and_then(|s| self.window_for(&s)) else { return };
                 let zone = self.free_area(&self.output.clone());
+                // the halves yggdrasil-snap works out: each w/2 wide, the right one ending at the room's right edge
                 let half = zone.size.w / 2;
                 let (area, st) = if action == Action::SnapLeft {
                     (Rectangle::new(zone.loc, (half, zone.size.h).into()), S::TiledLeft)
                 } else {
-                    (Rectangle::new((zone.loc.x + half, zone.loc.y).into(), (zone.size.w - half, zone.size.h).into()), S::TiledRight)
+                    (Rectangle::new((zone.loc.x + zone.size.w - half, zone.loc.y).into(), (half, zone.size.h).into()), S::TiledRight)
                 };
                 self.fit_window(&t, area, st);
             }
@@ -1281,6 +1382,8 @@ impl App {
         if n == self.current_ws {
             return;
         }
+        // the minimized windows on show go out of sight first (they belong to no desktop)
+        self.end_peek();
         let here = self.current_ws;
         let shown: Vec<Window> = self.space.elements().cloned().collect();
         for w in shown {
@@ -1813,11 +1916,15 @@ impl App {
         self.input_seen();
         let keyboard = self.keyboard.clone();
         let serial = SERIAL_COUNTER.next_serial();
+        let repeating_before = self.repeating;
         let taken = keyboard.input::<Action, _>(self, code, state, serial, time, |app, mods, handle| {
             let sym = handle.raw_latin_sym_or_raw_current_sym().map(|s| shortcuts::lower(s.raw())).unwrap_or(0);
             app.key_filter(u32::from(code), state, mods, sym)
         });
         if let Some(a) = taken {
+            if self.repeating.is_some() && self.repeating != repeating_before {
+                self.start_repeat(a.clone());
+            }
             self.queued.push(a);
         }
         for a in std::mem::take(&mut self.queued) {
@@ -1851,6 +1958,10 @@ impl App {
         }
         let pointer = self.pointer.clone();
         let serial = SERIAL_COUNTER.next_serial();
+        if state == ButtonState::Pressed {
+            // Super held for a Super+drag is not a tap of Super
+            self.tap = None;
+        }
         if state == ButtonState::Pressed
             && !pointer.is_grabbed()
             && !self.locked
@@ -1901,7 +2012,7 @@ impl App {
                     v.push(name);
                 }
             }
-            if minimized {
+            if minimized || s.as_ref().is_some_and(|s| self.peek.contains(s)) {
                 v.push("minimized");
             }
             v

@@ -261,7 +261,10 @@ fn the_task_manager_the_clipboard_and_settings_through_the_layer() {
 
     // the shortcut lists: the compositor's own bindings with Hyprland's modifier numbers
     let binds = d.binds().unwrap();
-    assert!(binds.iter().any(|b| b.modmask == 64 && b.key == "q" && b.desc == "Close the window"), "{binds:?}");
+    assert!(
+        binds.iter().any(|b| b.modmask == 64 && b.key == "q" && b.desc == "Close the window (programs that keep running: hide it)"),
+        "{binds:?}"
+    );
     assert!(!yggdrasil_conf::shortcuts::list(&binds).is_empty());
     assert_eq!(d.config_errors().as_deref(), Some(""));
     assert_eq!(d.reload(), Ok(()));

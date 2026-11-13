@@ -192,7 +192,7 @@ fn windows_keep_clear_of_a_dock_that_appears_and_come_back_from_maximize_at_a_no
 }
 
 #[test]
-fn shortcuts_maximize_snap_restore_and_minimize() {
+fn shortcuts_maximize_snap_and_minimize() {
     let _l = limit(60, "shortcuts");
     let comp = Compositor::start(&["--size", "1600x900"]);
     let mut c = comp.connect();
@@ -210,16 +210,13 @@ fn shortcuts_maximize_snap_restore_and_minimize() {
     c.roundtrip();
     assert_eq!(settle(&comp, &mut c, &w, "test.w", BLUE).rect(), (600, 284, 400, 300));
 
-    // Super+Left: the left half of the free room; Super+Down restores, again minimizes
+    // Super+Left: the left half of the free room; Super+Down minimizes it as it is (the session's yggdrasil-snap down)
     comp.must("key super+Left");
     c.roundtrip();
     assert!(c.state.wins[w.index].states.contains(&TILED_LEFT));
     let info = settle(&comp, &mut c, &w, "test.w", BLUE);
     assert_eq!(info.rect(), (0, 32, 800, 804));
     assert!(info.has("left"));
-    comp.must("key super+Down");
-    c.roundtrip();
-    assert_eq!(settle(&comp, &mut c, &w, "test.w", BLUE).rect(), (600, 284, 400, 300));
     comp.must("key super+Down");
     let info = comp.window("test.w").unwrap();
     assert!(info.has("minimized"), "{info:?}");

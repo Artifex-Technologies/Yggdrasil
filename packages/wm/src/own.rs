@@ -160,11 +160,17 @@ fn pair<T: std::str::FromStr>(s: &str, sep: char) -> Option<(T, T)> {
     Some((a.parse().ok()?, b.parse().ok()?))
 }
 
-/// A `binds` line: modifier mask (Hyprland's numbers: Shift 1, Ctrl 4, Alt 8, Super 64), key (xkb name), what it does.
+/// A `binds` line: modifier mask (Hyprland's numbers: Shift 1, Ctrl 4, Alt 8, Super 64), key (xkb name), what it does, and its
+/// kind (release, repeat, locked; comma separated, - for none; absent from compositors built before 2026-11-13).
 pub fn parse_bind(line: &str) -> Option<yggdrasil_conf::shortcuts::Bind> {
     let p: Vec<&str> = line.split('\t').collect();
-    let [mask, key, desc] = p.as_slice() else { return None };
-    Some(yggdrasil_conf::shortcuts::Bind { modmask: mask.parse().ok()?, key: key.to_string(), desc: desc.to_string(), release: false })
+    let (mask, key, desc, kind) = match p.as_slice() {
+        [mask, key, desc] => (mask, key, desc, ""),
+        [mask, key, desc, kind] => (mask, key, desc, *kind),
+        _ => return None,
+    };
+    let release = kind.split(',').any(|k| k == "release");
+    Some(yggdrasil_conf::shortcuts::Bind { modmask: mask.parse().ok()?, key: key.to_string(), desc: desc.to_string(), release })
 }
 
 /// A `clients` line: id, app id, title, place, size, workspace, states, output, process id (0: not known).
@@ -260,7 +266,11 @@ mod tests {
         assert!(m.minimized && m.special && m.hidden && m.floating == Some(false) && m.pid.is_none());
         assert_eq!(parse_client("x\ta\tb\t0,0\t10x10\t1\t\tH\t0"), None, "the id is a number");
         let b = parse_bind("64\tq\tClose the window").unwrap();
-        assert_eq!((b.modmask, b.key.as_str(), b.desc.as_str()), (64, "q", "Close the window"));
+        assert_eq!((b.modmask, b.key.as_str(), b.desc.as_str(), b.release), (64, "q", "Close the window", false));
+        let tap = parse_bind("64\tSuper_L\tStart menu\trelease").unwrap();
+        assert!(tap.release && tap.key == "Super_L");
+        assert!(!parse_bind("0\tXF86AudioRaiseVolume\t\trepeat,locked").unwrap().release);
+        assert_eq!(parse_bind("1\t2\t3\t4\t5"), None);
         assert_eq!(parse_client("1\ta\tb"), None);
 
         let s = parse_screen(1, "HEADLESS-2\t1280,0\t1600x900\t1.5\t0,32,0,64\tfocused", Some(3)).unwrap();

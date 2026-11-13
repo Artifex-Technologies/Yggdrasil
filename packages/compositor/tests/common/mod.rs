@@ -132,6 +132,14 @@ impl Compositor {
 
     /// The same, with `setup` run on the test's folder first (its `home` holds the compositor's config: home/.config/yggdrasil).
     pub fn start_with(args: &[&str], setup: impl FnOnce(&Path)) -> Compositor {
+        Compositor::start_env(args, &[], setup)
+    }
+
+    /// The same, with variables of the test's own for the compositor (PATH: the programs its shortcuts find).
+    ///
+    /// Every test's compositor starts with "reduce motion" on (panel.conf, as Settings writes it), so windows show at once and
+    /// screenshots need no waiting; the animation tests (tests/look.rs) remove that line in `setup`.
+    pub fn start_env(args: &[&str], env: &[(&str, &str)], setup: impl FnOnce(&Path)) -> Compositor {
         static N: AtomicUsize = AtomicUsize::new(0);
         let n = N.fetch_add(1, Ordering::SeqCst);
         let dir = std::env::temp_dir().join(format!("ygg-hl-{}-{n}", std::process::id()));
@@ -140,6 +148,8 @@ impl Compositor {
         std::fs::create_dir_all(dir.join("home")).unwrap();
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(dir.join("run"), std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::create_dir_all(dir.join("home/.config/yggdrasil")).unwrap();
+        std::fs::write(dir.join("home/.config/yggdrasil/panel.conf"), "reduce_motion = yes\n").unwrap();
         setup(&dir);
         // YGGDRASIL_COMPOSITOR: another build of it (tests/apps-podman.sh runs the tests in a container)
         let bin = std::env::var_os("YGGDRASIL_COMPOSITOR")
@@ -153,6 +163,7 @@ impl Compositor {
         cmd.env("XDG_RUNTIME_DIR", dir.join("run"))
             .env("HOME", dir.join("home"))
             .env("YGGDRASIL_COMPOSITOR_XWAYLAND", "0")
+            .envs(env.iter().copied())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         let mut child = dies_with_test(&mut cmd).spawn().expect("start the compositor");
