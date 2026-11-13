@@ -286,6 +286,45 @@ fn workspaces_switch_and_take_windows_along() {
     assert!(comp.windows().iter().all(|w| w.workspace == 1));
 }
 
+/// The panel's desktops wait on `watch` (no asking every few seconds): a line at once, one when a window opens or the desktop
+/// shown changes, and nothing while nothing that shows changes (the pointer moving, the same desktop asked for again).
+#[test]
+fn a_watch_hears_the_desktops_change_and_nothing_else() {
+    use std::io::{BufRead, BufReader, Write};
+    let _l = limit(60, "desktops watch");
+    let comp = Compositor::start(&["--size", "1280x720"]);
+    let mut s = std::os::unix::net::UnixStream::connect(&comp.ctl).unwrap();
+    s.write_all(b"watch\n").unwrap();
+    let mut r = BufReader::new(s);
+    // the lines that come within `ms`
+    let mut heard = |ms: u64| {
+        r.get_ref().set_read_timeout(Some(Duration::from_millis(ms))).unwrap();
+        let mut n = vec![];
+        let mut line = String::new();
+        while r.read_line(&mut line).is_ok_and(|k| k > 0) {
+            n.push(line.trim_end().to_string());
+            line.clear();
+        }
+        n
+    };
+    assert_eq!(heard(2000), ["desktops"], "one at once");
+    assert!(heard(400).is_empty(), "nothing while nothing happens");
+    comp.must("pointer 300 300");
+    comp.must("pointer 600 400");
+    assert!(heard(400).is_empty(), "the pointer moving is not the desktops changing");
+
+    let mut c = comp.connect();
+    let a = c.window("test.a", "A");
+    c.draw(&a, (400, 300), BLUE);
+    assert_eq!(heard(1000), ["desktops"], "a window came to the first desktop");
+    comp.must("workspace 2");
+    assert_eq!(heard(1000), ["desktops"], "the second desktop shown");
+    comp.must("workspace 2");
+    assert!(heard(400).is_empty(), "the same one again changes nothing");
+    comp.must("workspace 1");
+    assert_eq!(heard(1000), ["desktops"], "back to the first");
+}
+
 #[test]
 fn the_keyboard_follows_clicks_new_windows_and_an_exclusive_panel() {
     let _l = limit(60, "keyboard focus");

@@ -10,6 +10,8 @@
 //!   active                      the window with the keyboard, as a `clients` line (no line when none has it)
 //!   workspaces                  one line per workspace: number (1-based), how many windows it holds, "shown" or "-"
 //!   workspace N                 show workspace N
+//!   watch                       keep the connection: a line "desktops" now and each time the workspaces change (the one shown,
+//!                               how many windows each holds); nothing while they do not (served by the socket's loop)
 //!   activate ID                 bring a window forward (from minimized or another workspace too) and give it the keyboard
 //!   close ID                    ask a window to close
 //!   minimize ID

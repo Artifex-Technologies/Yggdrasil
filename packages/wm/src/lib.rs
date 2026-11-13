@@ -21,6 +21,30 @@ use std::path::PathBuf;
 pub use hyprland::Hyprland;
 pub use own::Own;
 
+/// Whether a line from `Desk::events` can change the desktops the panel shows (which numbered workspaces hold a window or are
+/// shown, and which is in front): a workspace shown, made, removed or moved, a window opened, closed or moved, a screen added,
+/// removed or focused; on Yggdrasil's compositor, its "desktops".
+pub fn moves_desktops(line: &str) -> bool {
+    let name = line.split_once(">>").map(|(n, _)| n).unwrap_or(line.trim());
+    let name = name.strip_suffix("v2").unwrap_or(name);
+    matches!(
+        name,
+        "workspace"
+            | "createworkspace"
+            | "destroyworkspace"
+            | "moveworkspace"
+            | "renameworkspace"
+            | "focusedmon"
+            | "activespecial"
+            | "openwindow"
+            | "closewindow"
+            | "movewindow"
+            | "monitoradded"
+            | "monitorremoved"
+            | "desktops"
+    )
+}
+
 /// A rectangle in logical pixels: x, y, width, height.
 pub type Rect = (i32, i32, i32, i32);
 
@@ -221,6 +245,24 @@ impl Desk {
         match self {
             Desk::Hyprland(h) => h.desktops(),
             Desk::Own(o) => o.desktops(),
+        }
+    }
+
+    /// A connection that gets a line whenever something happens that can change the desktops: Hyprland's event socket (one
+    /// line per event; `moves_desktops` tells which matter), or Yggdrasil's compositor's `watch` (a line "desktops" when they
+    /// changed, and one at once). Read it and wait: nothing comes while nothing happens. None when it cannot be opened.
+    pub fn events(&self) -> Option<std::os::unix::net::UnixStream> {
+        use std::io::Write;
+        match self {
+            Desk::Hyprland(h) => {
+                let path = h.events_socket();
+                sock::ours(&path).then(|| std::os::unix::net::UnixStream::connect(&path).ok()).flatten()
+            }
+            Desk::Own(o) => {
+                let mut s = std::os::unix::net::UnixStream::connect(&o.ctl).ok()?;
+                s.write_all(b"watch\n").ok()?;
+                Some(s)
+            }
         }
     }
 
@@ -479,6 +521,25 @@ pub fn find_in(windows: Vec<Window>, app_id: &str, title: &str) -> Option<Window
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_what_moves_the_desktops_wakes_the_panel() {
+        for l in [
+            "workspace>>2",
+            "workspacev2>>2,2",
+            "createworkspace>>5",
+            "openwindow>>80a1,1,foot,~",
+            "closewindow>>80a1",
+            "movewindowv2>>80a1,3,3",
+            "focusedmon>>DP-1,1",
+            "desktops",
+        ] {
+            assert!(moves_desktops(l), "{l}");
+        }
+        for l in ["activewindow>>foot,~", "activewindowv2>>80a1", "windowtitlev2>>80a1,vim", "configreloaded>>", "fullscreen>>1", ""] {
+            assert!(!moves_desktops(l), "{l}");
+        }
+    }
 
     fn win(id: &str, class: &str, title: &str) -> Window {
         Window {

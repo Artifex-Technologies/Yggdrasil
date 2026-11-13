@@ -232,6 +232,9 @@ pub struct Headless {
     pending: bool,
     last: Instant,
     start: Instant,
+    /// Control-socket connections that asked to `watch` the desktops (the panel), and the desktops they were last told of.
+    watchers: Vec<UnixStream>,
+    desktops_seen: Option<(usize, [usize; crate::state::WORKSPACES])>,
 }
 
 /// About 60 frames a second at most, however often programs commit.
@@ -247,7 +250,30 @@ fn new_image(renderer: &mut PixmanRenderer, o: &Output) -> Result<Image<'static,
 impl Headless {
     fn new(next: usize) -> Result<Headless, String> {
         let renderer = PixmanRenderer::new().map_err(|e| format!("the software renderer did not start: {e}"))?;
-        Ok(Headless { renderer, screens: vec![], next, pending: false, last: Instant::now() - FRAME, start: Instant::now() })
+        Ok(Headless {
+            renderer,
+            screens: vec![],
+            next,
+            pending: false,
+            last: Instant::now() - FRAME,
+            start: Instant::now(),
+            watchers: vec![],
+            desktops_seen: None,
+        })
+    }
+
+    /// After every pass of the loop: the watchers hear "desktops" when the desktops changed (the one shown, or how many windows
+    /// one holds). Nothing is written while they stay as they were; a watcher that has gone (or stopped reading) is dropped.
+    fn tell_watchers(&mut self, app: &App) {
+        if self.watchers.is_empty() {
+            return;
+        }
+        let now = app.desktops_key();
+        if self.desktops_seen == Some(now) {
+            return;
+        }
+        self.desktops_seen = Some(now);
+        self.watchers.retain(|mut w| w.write_all(b"desktops\n").is_ok());
     }
 
     /// A picture for every output in the space, none for those that left it.
@@ -595,6 +621,7 @@ pub fn run(
 
     event_loop.run(None, &mut app, |app| {
         let _ = app.display_handle.flush_clients();
+        h.borrow_mut().tell_watchers(app);
     })?;
     // the loop's sources hold handles to the loop itself, so they are never dropped and the Wayland socket would stay behind
     let _ = std::fs::remove_file(&ctl);
@@ -614,6 +641,17 @@ fn serve(stream: UnixStream, app: &mut App, h: &mut Headless) {
         return;
     }
     let words: Vec<&str> = line.split_whitespace().collect();
+    // the connection stays open, and gets a line "desktops" now and whenever they change (the panel's desktops wait on it)
+    if words == ["watch"] {
+        let mut s = &stream;
+        if stream.set_nonblocking(true).is_ok() && s.write_all(b"desktops\n").is_ok() {
+            if h.watchers.is_empty() {
+                h.desktops_seen = Some(app.desktops_key());
+            }
+            h.watchers.push(stream);
+        }
+        return;
+    }
     let answer = match command(&words, app, h) {
         Ok(lines) => lines.into_iter().map(|l| l + "\n").collect::<String>() + "ok\n",
         Err(e) => format!("error: {e}\n"),

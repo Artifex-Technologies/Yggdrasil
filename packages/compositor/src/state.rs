@@ -2446,6 +2446,19 @@ impl App {
         self.current_ws
     }
 
+    /// What the panel's desktops show: the workspace shown, and how many windows each holds (cheap: asked after every pass of the
+    /// loop while the panel watches).
+    pub fn desktops_key(&self) -> (usize, [usize; WORKSPACES]) {
+        let mut n = [0; WORKSPACES];
+        n[self.current_ws.min(WORKSPACES - 1)] = self.space.elements().count() + self.minimized.len();
+        for (_, ws, _) in &self.parked {
+            if let Some(c) = n.get_mut(*ws) {
+                *c += 1;
+            }
+        }
+        (self.current_ws, n)
+    }
+
     /// Every window: those showing (bottom first), then minimized ones, then those on other workspaces.
     pub fn window_infos(&self) -> Vec<WindowInfo> {
         use xdg_toplevel::State as S;
