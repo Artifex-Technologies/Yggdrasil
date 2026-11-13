@@ -47,10 +47,34 @@ end
 local kb_layout, kb_variant, kb_options = system_keyboard()
 
 -- Every monitor at its fastest mode, until Settings > Displays (or you) sets them: ~/.config/yggdrasil/monitors.lua.
+-- Scale 1, except a laptop's own screen (eDP, or LVDS on older ones): its scale is Hyprland's automatic one, from the panel's
+-- size and resolution, so a sharp 14-inch panel is not tiny (2026-11-12). Monitors on a cable stay at 1. Once monitors.lua names
+-- the screen (Settings > Displays wrote it), that wins and the automatic scale is not set.
 hl.monitor({ output = "", mode = "highrr", position = "auto", scale = 1 })
 do
   local monitors = config_home .. "/yggdrasil/monitors.lua"
+  local named = {}
   local f = io.open(monitors, "r")
+  if f then
+    for out in f:read("*a"):gmatch('output%s*=%s*"([^"]*)"') do named[out] = true end
+    f:close()
+  end
+  local panels, seen = {}, {}
+  local function panel(name)
+    name = tostring(name)
+    if (name:match("^eDP%-%d+$") or name:match("^LVDS%-%d+$")) and not seen[name] then
+      seen[name] = true
+      table.insert(panels, name)
+    end
+  end
+  -- the usual names, so the first start (before Hyprland lists its screens) has them too; a rule for a screen that is not
+  -- there does nothing
+  for _, name in ipairs({ "eDP-1", "eDP-2", "LVDS-1" }) do panel(name) end
+  for _, m in ipairs(hl.get_monitors() or {}) do panel(m.name) end
+  for _, name in ipairs(panels) do
+    if not named[name] then hl.monitor({ output = name, mode = "highrr", position = "auto", scale = "auto" }) end
+  end
+  f = io.open(monitors, "r")
   if f then
     f:close()
     local ok, err = pcall(dofile, monitors)
