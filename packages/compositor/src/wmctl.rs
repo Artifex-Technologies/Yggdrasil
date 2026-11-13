@@ -5,8 +5,8 @@
 //! minimize, maximize, place and activate windows, which any program can already ask for its own windows (xdg-shell) or the
 //! panel for every window (wlr-foreign-toplevel).
 //!
-//!   clients                     one line per window: id, app id, title, place, size, workspace (1-based), states, output
-//!                               (tab separated; states as `windows`, comma separated)
+//!   clients                     one line per window: id, app id, title, place, size, workspace (1-based), states, output,
+//!                               process id (0: not known) (tab separated; states as `windows`, comma separated)
 //!   active                      the window with the keyboard, as a `clients` line (no line when none has it)
 //!   workspaces                  one line per workspace: number (1-based), how many windows it holds, "shown" or "-"
 //!   workspace N                 show workspace N
@@ -21,6 +21,14 @@
 //!                               (left, top, right, bottom) and "focused" or "-" (tab separated)
 //!   pointer-timeout [SECONDS]   how long the pointer may rest before it is hidden (0: never); with a number, set it
 //!   modifiers                   the modifier keys held now: super, ctrl, alt, shift (one line, space separated)
+//!   layers                      one line per panel or background: output, namespace, layer, place and size (tab separated)
+//!   binds                       one line per shortcut: modifier mask (Shift 1, Ctrl 4, Alt 8, Super 64), key, what it does
+//!   reload                      read workspaces.conf, shortcuts.conf and opaque.conf again
+//!   paste ctrl|ctrl+shift       press Ctrl+V (or Ctrl+Shift+V, a terminal's) in the window with the keyboard: the clipboard's
+//!                               paste; refused while the screen is locked
+//!   cursor-theme [NAME SIZE]    the pointer's theme and size (kept for when the compositor draws the pointer)
+//!   keyboard [LAYOUT [VARIANT]] the keyboard layout from now on (xkb names); without one, the one in use
+//!   exit                        end the session (yggdrasil-logout, once every window has closed)
 //! ID is a number from `clients`, or `active` for the window with the keyboard.
 
 use smithay::desktop::Window;
@@ -129,9 +137,117 @@ pub fn command(words: &[&str], app: &mut App) -> Option<Result<Vec<String>, Stri
                 .collect();
             Ok(vec![held.join(" ")])
         }
+        ["layers"] => {
+            let mut lines = vec![];
+            for o in app.space.outputs() {
+                let map = smithay::desktop::layer_map_for_output(o);
+                for l in map.layers() {
+                    let geo = map.layer_geometry(l).unwrap_or_default();
+                    lines.push(format!(
+                        "{}\t{}\t{:?}\t{},{}\t{}x{}",
+                        field(&o.name()),
+                        field(l.namespace()),
+                        l.layer(),
+                        geo.loc.x,
+                        geo.loc.y,
+                        geo.size.w,
+                        geo.size.h
+                    ));
+                }
+            }
+            Ok(lines)
+        }
+        ["binds"] => Ok(app
+            .bindings
+            .iter()
+            .map(|b| {
+                let (mask, key, what) = crate::shortcuts::listed(b);
+                format!("{mask}\t{}\t{}", field(&key), field(&what))
+            })
+            .collect()),
+        ["reload"] => {
+            app.reload_config();
+            Ok(vec![])
+        }
+        ["paste", how] => {
+            let keys: &[u32] = match *how {
+                "ctrl" => &[29, 47],
+                "ctrl+shift" => &[29, 42, 47],
+                v => return Some(Err(format!("{v}: ctrl or ctrl+shift"))),
+            };
+            if app.locked {
+                return Some(Err("the screen is locked".into()));
+            }
+            if app.focused_surface().and_then(|f| app.window_for(&f)).is_none() {
+                return Some(Err("no window has the keyboard".into()));
+            }
+            let t = now_ms();
+            for k in keys {
+                app.key((k + 8).into(), smithay::backend::input::KeyState::Pressed, t);
+            }
+            for k in keys.iter().rev() {
+                app.key((k + 8).into(), smithay::backend::input::KeyState::Released, t + 1);
+            }
+            Ok(vec![])
+        }
+        ["cursor-theme"] => Ok(app.cursor_theme.iter().map(|(n, s)| format!("{n} {s}")).collect()),
+        ["cursor-theme", name, size] => {
+            let size = size.parse::<u32>().ok().filter(|s| (8..=256).contains(s));
+            match size {
+                Some(size) if plain(name) => {
+                    app.cursor_theme = Some((name.to_string(), size));
+                    Ok(vec![])
+                }
+                _ => Err("cursor-theme NAME SIZE: a theme's name and a size from 8 to 256".into()),
+            }
+        }
+        ["keyboard"] => Ok(app.kb_layout.iter().map(|(l, v)| format!("{l} {v}").trim_end().to_string()).collect()),
+        ["keyboard", layout, variant @ ..] if variant.len() <= 1 => {
+            let variant = variant.first().copied().unwrap_or("");
+            let ok = |s: &str| s.len() <= 64 && s.chars().all(|c| c.is_ascii_alphanumeric() || "_-,".contains(c));
+            if layout.is_empty() || !ok(layout) || !ok(variant) {
+                return Some(Err("keyboard LAYOUT [VARIANT]: xkb names".into()));
+            }
+            let config = smithay::input::keyboard::XkbConfig { layout, variant, ..Default::default() };
+            let kb = app.keyboard.clone();
+            match kb.set_xkb_config(app, config) {
+                Ok(()) => {
+                    app.kb_layout = Some((layout.to_string(), variant.to_string()));
+                    Ok(vec![])
+                }
+                Err(e) => Err(format!("that layout could not be loaded ({e:?})")),
+            }
+        }
+        ["exit"] => {
+            app.quit();
+            Ok(vec![])
+        }
         _ => return None,
     };
     Some(r)
+}
+
+/// A name that may be kept as it is: letters, digits and `._-+`.
+fn plain(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 128 && s.chars().all(|c| c.is_ascii_alphanumeric() || "._-+".contains(c))
+}
+
+/// Milliseconds on a clock of this process (the time stamp of the keys `paste` presses).
+fn now_ms() -> u32 {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    START.get_or_init(std::time::Instant::now).elapsed().as_millis() as u32
+}
+
+/// The process of a window (its client's, or the X11 window's _NET_WM_PID); 0 when not known.
+fn pid(app: &App, w: &Window) -> u32 {
+    if let Some(x) = w.x11_surface() {
+        return x.pid().unwrap_or(0);
+    }
+    state::surface_of(w)
+        .and_then(|s| smithay::reexports::wayland_server::Resource::client(&s))
+        .and_then(|c| c.get_credentials(&app.display_handle).ok())
+        .map(|c| c.pid.max(0) as u32)
+        .unwrap_or(0)
 }
 
 /// "1" to "4": the 0-based workspace.
@@ -165,7 +281,7 @@ fn clients(app: &App) -> Vec<(Window, String)> {
             let size = i.window.geometry().size;
             let output = state::surface_of(&i.window).map(|s| app.output_of(&s)).unwrap_or_else(|| app.output.clone());
             let line = format!(
-                "{}\t{}\t{}\t{},{}\t{}x{}\t{}\t{}\t{}",
+                "{}\t{}\t{}\t{},{}\t{}x{}\t{}\t{}\t{}\t{}",
                 window_id(&i.window),
                 field(&app_id),
                 field(&title),
@@ -175,7 +291,8 @@ fn clients(app: &App) -> Vec<(Window, String)> {
                 size.h,
                 i.workspace + 1,
                 i.states.join(","),
-                field(&output.name())
+                field(&output.name()),
+                pid(app, &i.window)
             );
             (i.window, line)
         })

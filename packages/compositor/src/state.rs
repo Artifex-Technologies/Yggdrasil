@@ -242,6 +242,10 @@ pub struct App {
     /// while the screen is dimmed; Hyprland's `cursor:inactive_timeout`). Kept and reported; the pointer is not drawn by this
     /// compositor yet (the nested window's host draws it), so nothing is hidden until it is.
     pub pointer_timeout: f64,
+    /// The pointer's theme and size as Yggdrasil's tools set it (ygg-theme), for when the compositor draws the pointer itself.
+    pub cursor_theme: Option<(String, u32)>,
+    /// The keyboard layout and variant set from outside (the installer's try-out); None: the default.
+    pub kb_layout: Option<(String, String)>,
 }
 
 /// How many workspaces there are.
@@ -479,6 +483,8 @@ impl App {
             loop_handle,
             opaque_shader: None,
             pointer_timeout: 0.0,
+            cursor_theme: None,
+            kb_layout: None,
         }
     }
 

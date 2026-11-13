@@ -50,7 +50,6 @@ use smithay::backend::allocator::Fourcc;
 use smithay::backend::renderer::damage::OutputDamageTracker;
 use smithay::backend::renderer::pixman::PixmanRenderer;
 use smithay::backend::renderer::{Bind, Offscreen};
-use smithay::desktop::layer_map_for_output;
 use smithay::output::{Mode, Output, PhysicalProperties, Scale, Subpixel};
 use smithay::reexports::calloop::generic::Generic;
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
@@ -591,26 +590,6 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String
             };
             app.set_output_power(&o, on);
             Ok(vec![])
-        }
-        ["layers"] => {
-            let mut lines = vec![];
-            for s in &h.screens {
-                let map = layer_map_for_output(&s.output);
-                for l in map.layers() {
-                    let geo = map.layer_geometry(l).unwrap_or_default();
-                    lines.push(format!(
-                        "{}\t{}\t{:?}\t{},{}\t{}x{}",
-                        s.output.name(),
-                        l.namespace(),
-                        l.layer(),
-                        geo.loc.x,
-                        geo.loc.y,
-                        geo.size.w,
-                        geo.size.h
-                    ));
-                }
-            }
-            Ok(lines)
         }
         ["quit"] => {
             app.quit();

@@ -132,6 +132,44 @@ pub fn lower(raw: u32) -> u32 {
     }
 }
 
+/// A binding as the shortcut lists read it (Settings > Keyboard Shortcuts, the panel's card): Hyprland's modifier numbers (Shift
+/// 1, Ctrl 4, Alt 8, Super 64), the key's xkb name and what it does.
+pub fn listed(b: &Binding) -> (u32, String, String) {
+    let m = &b.mods;
+    let mask = m.shift as u32 | (m.ctrl as u32) << 2 | (m.alt as u32) << 3 | (m.logo as u32) << 6;
+    (mask, xkb::keysym_get_name(xkb::Keysym::new(b.sym)), describe(&b.action))
+}
+
+/// What an action does, in words.
+pub fn describe(a: &Action) -> String {
+    match a {
+        Action::None => "Nothing".into(),
+        Action::ToggleStart => "Start menu".into(),
+        Action::Clipboard => "Clipboard history".into(),
+        Action::Assistant => "Ask the assistant".into(),
+        Action::Calendar => "Calendar".into(),
+        Action::Fylgja(n) => format!("Fylgja, section {n}"),
+        Action::Close => "Close the window".into(),
+        Action::Maximize => "Maximize (again: restore)".into(),
+        Action::Restore => "Restore, or minimize".into(),
+        Action::Fullscreen => "Full screen".into(),
+        Action::Minimize => "Minimize".into(),
+        Action::SnapLeft => "Left half".into(),
+        Action::SnapRight => "Right half".into(),
+        Action::NextWindow => "Switch windows".into(),
+        Action::PrevWindow => "Switch windows, backwards".into(),
+        Action::CommitSwitcher | Action::CancelSwitcher => "Window switcher".into(),
+        Action::ToggleFloat => "Float or tile the window".into(),
+        Action::Workspace(n) => format!("Desktop {}", n + 1),
+        Action::MoveToWorkspace(n) => format!("Move the window to desktop {}", n + 1),
+        Action::WorkspaceNext => "Next desktop".into(),
+        Action::WorkspacePrev => "Previous desktop".into(),
+        Action::Lock => "Lock the screen".into(),
+        Action::Quit => "End the session".into(),
+        Action::Exec(cmd) => format!("Run {cmd}"),
+    }
+}
+
 fn b(combo: &str, action: Action) -> Binding {
     let (mods, sym) = parse_combo(combo).expect("built-in shortcut");
     Binding { mods, sym, action }

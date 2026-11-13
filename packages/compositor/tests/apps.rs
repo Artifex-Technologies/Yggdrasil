@@ -10,6 +10,8 @@
 //!                            password with PAM)
 //!   YGGDRASIL_TEST_SNAP      target/debug/yggdrasil-snap (packages/wm)
 //!   YGGDRASIL_TEST_CLOSE     target/debug/yggdrasil-close (packages/wm)
+//!   YGGDRASIL_TEST_LOGOUT    target/debug/yggdrasil-logout (packages/wm); it runs with stand-ins for systemd-cat, notify-send,
+//!                            loginctl and systemctl as its only PATH, so it never locks or stops anything of the real desktop
 //! A test whose program is not named is skipped, unless YGGDRASIL_TEST_APPS_REQUIRED is set (CI's compositor-headless job).
 //! tests/apps-podman.sh runs these in a container with no devices and no network.
 //!
@@ -584,4 +586,109 @@ fn the_panels_desktop_buttons_and_window_zones_work_on_it() {
         std::thread::sleep(Duration::from_millis(100));
     }
     assert!(p.running(), "the panel is still running: {}", p.log());
+}
+
+/// Stand-ins for the programs yggdrasil-logout runs, the only ones on its PATH: each writes down how it was called.
+fn logout_stand_ins(comp: &Compositor) -> (PathBuf, PathBuf) {
+    let bin = comp.dir.join("stand-ins");
+    std::fs::create_dir_all(&bin).unwrap();
+    let log = comp.dir.join("calls");
+    for t in ["systemd-cat", "notify-send", "loginctl", "systemctl"] {
+        let p = bin.join(t);
+        let l = log.display();
+        std::fs::write(
+            &p,
+            format!("#!/bin/sh\nprintf '%s' '{t}' >> '{l}'\nfor a in \"$@\"; do printf ' [%s]' \"$a\" >> '{l}'; done\necho >> '{l}'\n"),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    (bin, log)
+}
+
+fn start_logout(comp: &Compositor, bin: &Path, path: &Path, arg: &str) -> Child {
+    let mut cmd = Command::new(bin);
+    cmd.env_clear()
+        .env("PATH", path)
+        .env("HOME", comp.dir.join("home"))
+        .env("XDG_RUNTIME_DIR", comp.dir.join("run"))
+        .env("WAYLAND_DISPLAY", comp.wayland.file_name().unwrap())
+        .env("HYPRLAND_INSTANCE_SIGNATURE", "no-hyprland-here")
+        .arg(arg)
+        .stdin(Stdio::null());
+    dies_with_test(&mut cmd).spawn().expect("yggdrasil-logout starts")
+}
+
+#[test]
+fn logout_closes_every_window_then_ends_the_session() {
+    let Some(logout) = program("YGGDRASIL_TEST_LOGOUT") else { return };
+    let _l = limit(60, "logout");
+    let mut comp = Compositor::start(&["--size", "1280x720"]);
+    let (path, calls) = logout_stand_ins(&comp);
+    let mut c = comp.connect();
+    let a = c.window("test.editor", "notes.txt - Editor");
+    c.draw(&a, (400, 300), BLUE);
+    let b = c.window("test.player", "Player");
+    c.draw(&b, (400, 300), BLUE);
+    let mut child = start_logout(&comp, &logout, &path, "poweroff");
+    // each program closes when asked (as one with nothing to save does)
+    let mut open = vec![a, b];
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let status = loop {
+        // (the compositor ends with the session: a closed connection is no failure here)
+        let _ = c.queue.roundtrip(&mut c.state);
+        open.retain(|w| {
+            let asked = c.state.wins[w.index].close_asked;
+            if asked {
+                w.toplevel.destroy();
+                w.xdg.destroy();
+                w.surface.destroy();
+            }
+            !asked
+        });
+        let _ = c.conn.flush();
+        if let Ok(Some(st)) = child.try_wait() {
+            break st;
+        }
+        assert!(Instant::now() < deadline, "yggdrasil-logout ends");
+        std::thread::sleep(Duration::from_millis(30));
+    };
+    assert_eq!(status.code(), Some(0));
+    assert!(open.is_empty(), "every window was asked to close");
+    assert_eq!(
+        std::fs::read_to_string(&calls).unwrap(),
+        "systemd-cat [-t] [yggdrasil-session] [echo] [poweroff: every window closed]\n",
+        "no Hyprland portal to stop here"
+    );
+    assert_eq!(std::fs::read_to_string(comp.dir.join("run/yggdrasil-after-session")).unwrap(), "poweroff\n");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while comp.child.try_wait().ok().flatten().is_none() {
+        assert!(Instant::now() < deadline, "the compositor ends with the session");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[test]
+fn logout_with_a_window_that_stays_locks_instead() {
+    let Some(logout) = program("YGGDRASIL_TEST_LOGOUT") else { return };
+    let _l = limit(60, "logout, a window stays");
+    let comp = Compositor::start(&["--size", "1280x720"]);
+    let (path, calls) = logout_stand_ins(&comp);
+    let mut c = comp.connect();
+    let a = c.window("test.editor", "notes.txt - Editor");
+    c.draw(&a, (400, 300), BLUE);
+    let mut child = start_logout(&comp, &logout, &path, "logout");
+    let st = child.wait().unwrap();
+    assert_eq!(st.code(), Some(1));
+    c.roundtrip();
+    assert!(c.state.wins[a.index].close_asked, "it was asked");
+    let log = std::fs::read_to_string(&calls).unwrap();
+    assert_eq!(
+        log,
+        "systemd-cat [-t] [yggdrasil-session] [echo] [logout stopped: still open: notes.txt - Editor]\n\
+         notify-send [-a] [Desktop] [-u] [critical] [-i] [dialog-warning] [Still signed in] [notes.txt - Editor did not close (it may be asking whether to save). The screen was locked instead; close it, then try again.]\n\
+         loginctl [lock-session]\n"
+    );
+    assert!(comp.window("test.editor").is_some(), "the session goes on");
 }

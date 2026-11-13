@@ -11,6 +11,8 @@ use std::ffi::OsString;
 use std::time::{Duration, Instant};
 
 use common::*;
+use wayland_client::Proxy;
+use wayland_protocols::ext::session_lock::v1::client::ext_session_lock_manager_v1::ExtSessionLockManagerV1;
 use yggdrasil_wm::{Desk, Desktops, MonitorRef};
 
 const BLUE: u32 = 0xff0000ff;
@@ -217,4 +219,89 @@ fn a_window_title_cannot_add_lines_to_the_answers() {
     assert_eq!(wins.len(), 1);
     assert_eq!(wins[0].title, "two lines and a tab");
     assert_eq!(comp.windows().len(), 1);
+}
+
+#[test]
+fn the_task_manager_the_clipboard_and_settings_through_the_layer() {
+    let _l = limit(60, "task manager, clipboard, settings");
+    let comp = Compositor::start(&["--size", "1600x900"]);
+    let mut c = comp.connect();
+    let (_k, _p) = c.input();
+    let _layers = bar_and_dock(&mut c);
+    let a = c.window("test.editor", "Editor");
+    c.draw(&a, (400, 300), BLUE);
+    let t = c.window("org.example.terminal", "Terminal");
+    c.draw(&t, (400, 300), BLUE);
+    let d = desk(&comp);
+
+    // the Task Manager: each window with its process (here the test's own), brought to the front, closed
+    let wins = d.windows();
+    assert!(wins.iter().all(|w| w.pid == Some(std::process::id())), "{wins:?}");
+    let editor = wins.iter().find(|w| w.class == "test.editor").unwrap().id.clone();
+    assert!(d.focus_window(&editor));
+    comp.wait(10, "the editor in front", |c| c.focus() == "window\ttest.editor\tEditor");
+    assert!(!d.focus_window("99999") && !d.close_window("x; quit"));
+
+    // the clipboard's paste: Ctrl+V pressed in the window in front by the compositor, Ctrl+Shift+V for a terminal
+    c.roundtrip();
+    let before = c.state.keys.len();
+    assert!(d.paste(false));
+    c.roundtrip();
+    let keys: Vec<(bool, u32)> = c.state.keys[before..].iter().map(|(s, k)| (*s == a.surface.id(), *k)).collect();
+    assert_eq!(keys, [(true, 29), (true, 47)], "Ctrl, then V, in the editor");
+    // Settings' "bring my window back": by its class
+    assert!(d.focus_class("org.example.terminal"));
+    comp.wait(10, "the terminal in front", |c| c.focus() == "window\torg.example.terminal\tTerminal");
+    let before = c.state.keys.len();
+    assert!(d.paste(true));
+    c.roundtrip();
+    let keys: Vec<u32> = c.state.keys[before..].iter().filter(|(s, _)| *s == t.surface.id()).map(|(_, k)| *k).collect();
+    assert_eq!(keys, [29, 42, 47]);
+    assert!(!d.focus_class("no.such.app"));
+
+    // the shortcut lists: the compositor's own bindings with Hyprland's modifier numbers
+    let binds = d.binds().unwrap();
+    assert!(binds.iter().any(|b| b.modmask == 64 && b.key == "q" && b.desc == "Close the window"), "{binds:?}");
+    assert!(!yggdrasil_conf::shortcuts::list(&binds).is_empty());
+    assert_eq!(d.config_errors().as_deref(), Some(""));
+    assert_eq!(d.reload(), Ok(()));
+
+    // the screens for Settings > Displays; the pointer's theme (ygg-theme); the installer's keyboard try-out; the lock's splash
+    let all = d.screens_all();
+    assert_eq!((all.len(), all[0].width, all[0].height), (1, 1600, 900));
+    assert!(d.set_cursor("Yggdrasil", 24) && !d.set_cursor("../x", 24));
+    assert_eq!(comp.must("cursor-theme"), ["Yggdrasil 24"]);
+    assert!(d.set_keyboard("de", "nodeadkeys"));
+    assert_eq!(comp.must("keyboard"), ["de nodeadkeys"]);
+    assert!(!d.set_keyboard("no-such-layout-here", ""), "a layout that cannot be loaded is refused");
+    assert!(d.set_keyboard("us", ""));
+    assert_eq!(d.has_layer("test-bar"), Some(true));
+    assert_eq!(d.has_layer("yggdrasil-panel"), Some(false));
+
+    // closing from the Task Manager: the window is asked
+    assert!(d.close_window(&editor));
+    c.until("the editor asked to close", |s| s.wins[a.index].close_asked);
+}
+
+#[test]
+fn paste_is_refused_while_locked_and_exit_ends_the_compositor() {
+    let _l = limit(60, "paste while locked, exit");
+    let mut comp = Compositor::start(&["--size", "800x600"]);
+    let mut c = comp.connect();
+    let a = c.window("test.a", "A");
+    c.draw(&a, (200, 100), BLUE);
+    let d = desk(&comp);
+    let mut l = comp.connect();
+    let mgr: ExtSessionLockManagerV1 = l.globals.bind(&l.qh, 1..=1, ()).expect("ext-session-lock");
+    let lock = mgr.lock(&l.qh, ());
+    let s = l.compositor.create_surface(&l.qh, ());
+    let _ls = lock.get_lock_surface(&s, &l.wl_outputs[0].clone(), &l.qh, 0);
+    l.until("locked", |s| s.locked);
+    assert!(!d.paste(false), "nothing is pressed into the lock screen");
+    assert!(d.exit());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while comp.child.try_wait().ok().flatten().is_none() {
+        assert!(Instant::now() < deadline, "the compositor ends");
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }

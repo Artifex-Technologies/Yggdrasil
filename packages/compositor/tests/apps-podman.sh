@@ -6,9 +6,9 @@
 #
 #   packages/compositor/tests/apps-podman.sh [cargo test filters...]
 #
-# Builds what it needs first (debug): the compositor and its tests, the panel, Settings, yggdrasil-snap and yggdrasil-close
-# (packages/wm), and the lock screen with --features test-auth in a folder of its own (target/test-auth), so the normal build of
-# the lock is never the test one.
+# Builds what it needs first (debug): the compositor and its tests, the panel, Settings, yggdrasil-snap, yggdrasil-close and
+# yggdrasil-logout (packages/wm), and the lock screen with --features test-auth in a folder of its own (target/test-auth), so
+# the normal build of the lock is never the test one.
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -49,6 +49,7 @@ for t in $tests; do
         -e YGGDRASIL_TEST_LOCK=/target/test-auth/debug/yggdrasil-lock \
         -e YGGDRASIL_TEST_SNAP=/target/debug/yggdrasil-snap \
         -e YGGDRASIL_TEST_CLOSE=/target/debug/yggdrasil-close \
+        -e YGGDRASIL_TEST_LOGOUT=/target/debug/yggdrasil-logout \
         -e YGGDRASIL_TEST_APPS_REQUIRED=1 \
         "$image" "/target/$rel" --test-threads=2 "$@" || status=1
 done
