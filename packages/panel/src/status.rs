@@ -1,6 +1,11 @@
 //! What the top bar shows besides the clock: the desktops (workspaces), the network and Bluetooth.
-//! Read every couple of seconds on a worker thread, so the bar never waits on them: the desktops from the compositor
-//! (yggdrasil-wm), the rest with the system's own tools. The parsing is separate from the commands so it can be tested.
+//! Read on a worker thread when they change, so the bar never waits on them and nothing is read while nothing happens: the
+//! desktops from the compositor (yggdrasil-wm) after its events say they moved, the network and Bluetooth with the system's own
+//! tools after NetworkManager or BlueZ signal a change on the system bus. The parsing is separate from the commands so it can be
+//! tested.
+
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Net {
@@ -10,6 +15,20 @@ pub enum Net {
     /// Wi-Fi, with its signal strength in percent.
     Wifi(u8),
     Wired,
+}
+
+impl Net {
+    /// The bar's icon for it (the signal shows in four steps).
+    pub fn icon(self) -> &'static str {
+        match self {
+            Net::Off => "network-offline-symbolic",
+            Net::Wired => "network-wired-symbolic",
+            Net::Wifi(sig) if sig >= 75 => "network-wireless-signal-excellent-symbolic",
+            Net::Wifi(sig) if sig >= 50 => "network-wireless-signal-good-symbolic",
+            Net::Wifi(sig) if sig >= 25 => "network-wireless-signal-ok-symbolic",
+            Net::Wifi(_) => "network-wireless-signal-weak-symbolic",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -82,15 +101,270 @@ pub fn parse_bt(show: &str, connected: &str) -> Bt {
     }
 }
 
-pub fn poll() -> Status {
-    let (desktops, current) = desktops(yggdrasil_wm::Desk::detect().as_ref());
-    let net = parse_net(&out("nmcli", &["-t", "-f", "TYPE,STATE", "device"]), &out("nmcli", &["-t", "-f", "IN-USE,SIGNAL", "dev", "wifi"]));
-    let bt = parse_bt(&out("timeout", &["2", "bluetoothctl", "show"]), &out("timeout", &["2", "bluetoothctl", "devices", "Connected"]));
-    Status { desktops, current, net, bt }
+fn read_net() -> Net {
+    parse_net(&out("nmcli", &["-t", "-f", "TYPE,STATE", "device"]), &out("nmcli", &["-t", "-f", "IN-USE,SIGNAL", "dev", "wifi"]))
+}
+
+fn read_bt() -> Bt {
+    parse_bt(&out("timeout", &["2", "bluetoothctl", "show"]), &out("timeout", &["2", "bluetoothctl", "devices", "Connected"]))
+}
+
+/// What a change asks to be read again.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Parts {
+    pub desktops: bool,
+    pub net: bool,
+    pub bt: bool,
+    /// The Wi-Fi in use has this signal strength now (from NetworkManager's signal itself: nothing to run).
+    pub signal: Option<u8>,
+}
+
+impl Parts {
+    const ALL: Parts = Parts { desktops: true, net: true, bt: true, signal: None };
+    fn add(&mut self, o: Parts) {
+        self.desktops |= o.desktops;
+        self.net |= o.net;
+        self.bt |= o.bt;
+        self.signal = o.signal.or(self.signal);
+    }
+}
+
+/// Whether two readings look the same in the bar (the Wi-Fi signal shows in four steps).
+fn looks_same(a: &Status, b: &Status) -> bool {
+    a.desktops == b.desktops && a.current == b.current && a.bt == b.bt && a.net.icon() == b.net.icon()
+}
+
+/// A burst of signals (NetworkManager says several things as a connection comes up) is read once it has been quiet this long,
+/// and at least this often while it goes on.
+const QUIET: Duration = Duration::from_millis(150);
+const LONGEST: Duration = Duration::from_secs(1);
+
+/// Reads the desktops, the network and Bluetooth at the start, and again only when something says they changed; sends each
+/// reading that differs from the one before. A network that wants a sign-in first (a shop's guest Wi-Fi) gets one notification
+/// with a Sign in button, and is preferred until it is online, so the portal's drop after the terms does not end on another
+/// network.
+pub fn spawn(tx: calloop::channel::Sender<Status>) {
+    let (wake, woken) = mpsc::channel::<Parts>();
+    {
+        let wake = wake.clone();
+        std::thread::spawn(move || watch_system_bus(wake));
+    }
+    std::thread::spawn(move || watch_compositor(wake));
+    std::thread::spawn(move || {
+        let desk = yggdrasil_wm::Desk::detect();
+        let mut now = Status::default();
+        let mut connectivity = String::new();
+        let mut signing_in: Option<String> = None;
+        let mut parts = Parts::ALL;
+        let mut sent: Option<Status> = None;
+        loop {
+            if parts.desktops {
+                (now.desktops, now.current) = desktops(desk.as_ref());
+            }
+            if parts.net {
+                now.net = read_net();
+                let c = connectivity_now();
+                if portal_appeared(&connectivity, &c) {
+                    let active = out("nmcli", &["-t", "-f", "UUID,TYPE", "connection", "show", "--active"]);
+                    if let Some(u) = active_wifi(&active) {
+                        prefer_while_signing_in(&u, true);
+                        signing_in = Some(u);
+                    }
+                    ask_portal_sign_in();
+                }
+                if c == "full" {
+                    if let Some(u) = signing_in.take() {
+                        prefer_while_signing_in(&u, false);
+                    }
+                }
+                connectivity = c;
+            }
+            if parts.bt {
+                now.bt = read_bt();
+            }
+            if let (Some(sig), false, Net::Wifi(_)) = (parts.signal, parts.net, now.net) {
+                now.net = Net::Wifi(sig);
+            }
+            if !sent.as_ref().is_some_and(|s| looks_same(s, &now)) {
+                if tx.send(now.clone()).is_err() {
+                    return;
+                }
+                sent = Some(now.clone());
+            }
+            // wait for the next change, then for its burst to settle
+            let Ok(first) = woken.recv() else { return };
+            parts = first;
+            let until = Instant::now() + LONGEST;
+            while let Ok(p) = woken.recv_timeout(QUIET) {
+                parts.add(p);
+                if Instant::now() >= until {
+                    break;
+                }
+            }
+        }
+    });
+}
+
+/// The system bus's signals from NetworkManager and BlueZ (and either of them starting or stopping), as the parts to read again.
+/// Blocks on the bus; besides the Wi-Fi in use (asked once, then followed through the signals), nothing is asked of it.
+fn watch_system_bus(wake: mpsc::Sender<Parts>) {
+    use std::collections::HashMap;
+    use zbus::zvariant::{OwnedObjectPath, OwnedValue};
+    let Ok(conn) = zbus::blocking::Connection::system() else { return };
+    let Ok(dbus) = zbus::blocking::fdo::DBusProxy::new(&conn) else { return };
+    let rules = [
+        "type='signal',sender='org.freedesktop.NetworkManager'",
+        "type='signal',sender='org.bluez'",
+        "type='signal',sender='org.freedesktop.DBus',member='NameOwnerChanged',arg0='org.freedesktop.NetworkManager'",
+        "type='signal',sender='org.freedesktop.DBus',member='NameOwnerChanged',arg0='org.bluez'",
+    ];
+    for r in rules {
+        let Ok(rule) = zbus::MatchRule::try_from(r) else { return };
+        if dbus.add_match_rule(rule).is_err() {
+            return;
+        }
+    }
+    // the access point each Wi-Fi device uses: its strength is the bar's signal
+    let mut active: HashMap<String, String> = active_access_points(&conn);
+    for msg in zbus::blocking::MessageIterator::from(&conn).flatten() {
+        let hdr = msg.header();
+        if hdr.message_type() != zbus::message::Type::Signal {
+            continue;
+        }
+        let path = hdr.path().map(|p| p.as_str().to_string()).unwrap_or_default();
+        let member = hdr.member().map(|m| m.as_str()).unwrap_or("");
+        let none = Parts::default();
+        let parts = match member {
+            "NameOwnerChanged" => match msg.body().deserialize::<(String, String, String)>() {
+                Ok((name, _, _)) if name == "org.bluez" => Parts { bt: true, ..none },
+                Ok((name, _, _)) if name == "org.freedesktop.NetworkManager" => {
+                    active = active_access_points(&conn);
+                    Parts { net: true, ..none }
+                }
+                _ => continue,
+            },
+            "PropertiesChanged" => {
+                let Ok((iface, changed, _)) = msg.body().deserialize::<(String, HashMap<String, OwnedValue>, Vec<String>)>() else {
+                    continue;
+                };
+                if let Some(ap) = changed.get("ActiveAccessPoint").and_then(|v| OwnedObjectPath::try_from(v.try_clone().ok()?).ok()) {
+                    active.insert(path.clone(), ap.to_string());
+                }
+                let strength = changed.get("Strength").and_then(|v| u8::try_from(v).ok());
+                let keys: Vec<&str> = changed.keys().map(String::as_str).collect();
+                let used: Vec<&str> = active.values().map(String::as_str).collect();
+                signal_parts(&path, &iface, &keys, strength, &used)
+            }
+            "InterfacesAdded" | "InterfacesRemoved" => {
+                let ifaces: Vec<String> = match member {
+                    "InterfacesAdded" => msg
+                        .body()
+                        .deserialize::<(OwnedObjectPath, HashMap<String, HashMap<String, OwnedValue>>)>()
+                        .map(|(_, m)| m.into_keys().collect())
+                        .unwrap_or_default(),
+                    _ => msg.body().deserialize::<(OwnedObjectPath, Vec<String>)>().map(|(_, v)| v).unwrap_or_default(),
+                };
+                ifaces.iter().map(|i| signal_parts(&path, i, &[], None, &[])).fold(none, |mut a, p| {
+                    a.add(p);
+                    a
+                })
+            }
+            // NetworkManager's own StateChanged and the like
+            _ => signal_parts(&path, "", &[], None, &[]),
+        };
+        if parts != none && wake.send(parts).is_err() {
+            return;
+        }
+    }
+}
+
+/// The access point each Wi-Fi device of NetworkManager's uses now (device path to access point path).
+fn active_access_points(conn: &zbus::blocking::Connection) -> std::collections::HashMap<String, String> {
+    use zbus::zvariant::OwnedObjectPath;
+    let nm = "org.freedesktop.NetworkManager";
+    let Ok(p) = zbus::blocking::Proxy::new(conn, nm, "/org/freedesktop/NetworkManager", nm) else { return Default::default() };
+    let devices: Vec<OwnedObjectPath> = p.call("GetDevices", &()).unwrap_or_default();
+    devices
+        .into_iter()
+        .filter_map(|d| {
+            let w = zbus::blocking::Proxy::new(conn, nm, d.clone(), "org.freedesktop.NetworkManager.Device.Wireless").ok()?;
+            let ap: OwnedObjectPath = w.get_property("ActiveAccessPoint").ok()?;
+            Some((d.to_string(), ap.to_string()))
+        })
+        .collect()
+}
+
+/// Which parts a signal can change, by the object it is about, its interface and the properties that changed (none: the object
+/// came or went, or another signal), given the access points in use. What shows nowhere wakes nothing: counters, bit rates, scans,
+/// the strength of networks not in use, Bluetooth devices seen while searching. The strength of the one in use is passed on as
+/// it is.
+pub fn signal_parts(path: &str, iface: &str, keys: &[&str], strength: Option<u8>, in_use: &[&str]) -> Parts {
+    let none = Parts::default();
+    let net = Parts { net: true, ..none };
+    let bt = Parts { bt: true, ..none };
+    if iface.starts_with("org.bluez.") {
+        return match iface {
+            "org.bluez.Adapter1" if keys.is_empty() || keys.contains(&"Powered") => bt,
+            "org.bluez.Device1" if keys.contains(&"Connected") => bt,
+            _ => none,
+        };
+    }
+    if path.starts_with("/org/bluez") {
+        return none;
+    }
+    match iface {
+        "org.freedesktop.NetworkManager.Device.Statistics" => none,
+        "org.freedesktop.NetworkManager.Device.Wireless" if !keys.is_empty() => {
+            if keys.contains(&"ActiveAccessPoint") {
+                net
+            } else {
+                none
+            }
+        }
+        "org.freedesktop.NetworkManager.AccessPoint" if !keys.is_empty() => match strength {
+            Some(s) if in_use.contains(&path) => Parts { signal: Some(s), ..none },
+            _ => none,
+        },
+        _ if path.starts_with("/org/freedesktop") => net,
+        _ => none,
+    }
+}
+
+/// The compositor's events (yggdrasil-wm): the desktops are read again when one can have moved them. Blocks on the connection;
+/// if the compositor restarts, it is waited for and listened to again.
+fn watch_compositor(wake: mpsc::Sender<Parts>) {
+    use std::io::BufRead;
+    let Some(desk) = yggdrasil_wm::Desk::detect() else { return };
+    loop {
+        if let Some(stream) = desk.events() {
+            let mut lines = std::io::BufReader::new(stream);
+            let mut line = String::new();
+            loop {
+                line.clear();
+                // one event per line; a line past 64 KB is not one (and is not kept growing)
+                match std::io::Read::take(&mut lines, 64 * 1024).read_line(&mut line) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) if !line.ends_with('\n') => break,
+                    Ok(_) => {
+                        if yggdrasil_wm::moves_desktops(line.trim_end())
+                            && wake.send(Parts { desktops: true, ..Default::default() }).is_err()
+                        {
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+        // the compositor went away (or is restarting): try again in a while, and read what it has then
+        std::thread::sleep(Duration::from_secs(5));
+        if wake.send(Parts { desktops: true, ..Default::default() }).is_err() {
+            return;
+        }
+    }
 }
 
 /// NetworkManager's connectivity check (`nmcli -t -f CONNECTIVITY general`): "full", "limited", "portal", "none", "unknown".
-pub fn connectivity() -> String {
+fn connectivity_now() -> String {
     out("nmcli", &["-t", "-f", "CONNECTIVITY", "general"]).trim().to_string()
 }
 
@@ -169,6 +443,44 @@ mod tests {
         assert_eq!(portal_page("https://guest.example.com/terms?x=1\n"), Some("https://guest.example.com/terms?x=1"));
         assert_eq!(portal_page(""), None);
         assert_eq!(portal_page("javascript:alert(1)"), None);
+    }
+
+    #[test]
+    fn only_signals_that_show_wake_the_reading() {
+        let none = Parts::default();
+        let net = Parts { net: true, ..none };
+        let bt = Parts { bt: true, ..none };
+        let sig = |p: &str, i: &str, k: &[&str]| signal_parts(p, i, k, None, &[]);
+        let (ap, other) = ("/org/freedesktop/NetworkManager/AccessPoint/1", "/org/freedesktop/NetworkManager/AccessPoint/650");
+        let wifi = "org.freedesktop.NetworkManager.Device.Wireless";
+        let dev = "/org/freedesktop/NetworkManager/Devices/3";
+        assert_eq!(sig("/org/freedesktop/NetworkManager", "org.freedesktop.NetworkManager", &["Connectivity"]), net);
+        assert_eq!(sig(dev, "", &[]), net, "StateChanged");
+        // what a Wi-Fi PC's NetworkManager says every few seconds (seen 2026-11-13): none of it is worth a reading
+        assert_eq!(sig(dev, wifi, &["Bitrate"]), none);
+        assert_eq!(sig(dev, wifi, &["LastScan"]), none);
+        assert_eq!(sig(dev, wifi, &["ActiveAccessPoint"]), net, "another network joined");
+        let ap_sig = |p: &str, k: &[&str], s| signal_parts(p, "org.freedesktop.NetworkManager.AccessPoint", k, s, &[ap]);
+        assert_eq!(ap_sig(ap, &["Strength"], Some(63)), Parts { signal: Some(63), ..none }, "the one in use: its strength, no command");
+        assert_eq!(ap_sig(other, &["Strength", "LastSeen"], Some(52)), none, "a network not in use");
+        assert_eq!(ap_sig(ap, &["LastSeen"], None), none, "a scan's stamp");
+        assert_eq!(sig(dev, "org.freedesktop.NetworkManager.Device.Statistics", &["RxBytes"]), none);
+        assert_eq!(sig("/org/bluez/hci0", "org.bluez.Adapter1", &["Powered"]), bt);
+        assert_eq!(sig("/org/bluez/hci0", "org.bluez.Adapter1", &["Discovering"]), none);
+        assert_eq!(sig("/", "org.bluez.Adapter1", &[]), bt, "an adapter plugged in or out");
+        assert_eq!(sig("/org/bluez/hci0/dev_11", "org.bluez.Device1", &["RSSI"]), none, "a device seen while searching");
+        assert_eq!(sig("/org/bluez/hci0/dev_11", "org.bluez.Device1", &["Connected"]), bt);
+        assert_eq!(sig("/", "org.bluez.Device1", &[]), none, "a device found");
+        assert_eq!(sig("/org/bluez/hci0", "", &[]), none);
+    }
+
+    #[test]
+    fn a_reading_is_sent_when_the_bar_would_change() {
+        let a = Status { net: Net::Wifi(63), ..Default::default() };
+        assert!(looks_same(&a, &Status { net: Net::Wifi(67), ..a.clone() }), "the same step of the signal");
+        assert!(!looks_same(&a, &Status { net: Net::Wifi(80), ..a.clone() }));
+        assert!(!looks_same(&a, &Status { bt: Bt::On, ..a.clone() }));
+        assert!(!looks_same(&a, &Status { current: 1, ..a.clone() }));
     }
 
     #[test]

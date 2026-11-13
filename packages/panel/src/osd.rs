@@ -65,7 +65,8 @@ fn read_volume() -> Option<(u32, bool)> {
     crate::fylgja::parse_wpctl(&String::from_utf8_lossy(&out.stdout))
 }
 
-/// Watches the output's volume and the screen's brightness on their own threads and sends each change.
+/// Watches the output's volume and the screen's brightness on their own threads and sends each change. Both wait for the change
+/// itself (the sound server's events, the backlight's notification); nothing is looked at in between.
 pub fn spawn_watchers(tx: calloop::channel::Sender<OsdState>) {
     let vtx = tx.clone();
     std::thread::spawn(move || {
@@ -75,39 +76,46 @@ pub fn spawn_watchers(tx: calloop::channel::Sender<OsdState>) {
         loop {
             let mut pactl = Command::new("pactl");
             pactl.arg("subscribe").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
-            let Ok(mut child) = ends_with_us(&mut pactl).spawn() else {
-                std::thread::sleep(std::time::Duration::from_secs(5));
-                continue;
-            };
-            let Some(out) = child.stdout.take() else { return };
-            for line in BufReader::new(out).lines().map_while(Result::ok) {
-                // "Event 'change' on sink #53" (not a sink-input: that is one app's volume)
-                if !(line.contains("'change' on sink #") || line.contains("'change' on server")) {
-                    continue;
-                }
-                let now = read_volume();
-                if now != last {
-                    last = now;
-                    if let Some((percent, muted)) = now {
-                        if vtx.send(OsdState { kind: OsdKind::Volume, percent, muted }).is_err() {
-                            return;
+            let started = std::time::Instant::now();
+            if let Ok(mut child) = ends_with_us(&mut pactl).spawn() {
+                let Some(out) = child.stdout.take() else { return };
+                for line in BufReader::new(out).lines().map_while(Result::ok) {
+                    // "Event 'change' on sink #53" (not a sink-input: that is one app's volume)
+                    if !(line.contains("'change' on sink #") || line.contains("'change' on server")) {
+                        continue;
+                    }
+                    let now = read_volume();
+                    if now != last {
+                        last = now;
+                        if let Some((percent, muted)) = now {
+                            if vtx.send(OsdState { kind: OsdKind::Volume, percent, muted }).is_err() {
+                                return;
+                            }
                         }
                     }
                 }
+                let _ = child.wait();
             }
-            let _ = child.wait();
-            std::thread::sleep(std::time::Duration::from_secs(2));
+            // no sound server (it is restarting, or there is none): wait for its socket to appear rather than trying every few
+            // seconds; a server elsewhere (PULSE_SERVER) is tried again after a minute
+            if started.elapsed() < std::time::Duration::from_secs(2) {
+                wait_for_sound_server(std::time::Duration::from_secs(60));
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
         }
     });
     std::thread::spawn(move || {
-        // sysfs announces no change of a backlight's level, so it is read four times a second; only where there is a backlight
-        // (a laptop or a monitor with one): a desktop PC has none and this thread ends at once
+        // sysfs notifies a change of the backlight's level on actual_brightness (poll for POLLPRI, then read it again): only
+        // where there is a backlight (a laptop or a monitor with one); a desktop PC has none and this thread ends at once
         let Some(dir) = backlight() else { return };
         let read = |f: &str| std::fs::read_to_string(dir.join(f)).ok().and_then(|t| t.trim().parse::<u32>().ok());
         let Some(max) = read("max_brightness").filter(|&m| m > 0) else { return };
+        let Ok(mut actual) = std::fs::File::open(dir.join("actual_brightness")) else { return };
         let mut last = read("brightness");
         loop {
-            std::thread::sleep(std::time::Duration::from_millis(250));
+            if !backlight_changed(&mut actual) {
+                return;
+            }
             let now = read("brightness");
             if now != last {
                 last = now;
@@ -119,6 +127,41 @@ pub fn spawn_watchers(tx: calloop::channel::Sender<OsdState>) {
             }
         }
     });
+}
+
+/// Waits for the backlight's next change: sysfs wakes a poll for POLLPRI when the level changes (the attribute is read first, as
+/// sysfs wants, so the next notification counts). False when it cannot be waited on.
+fn backlight_changed(f: &mut std::fs::File) -> bool {
+    use rustix::event::{poll, PollFd, PollFlags};
+    use std::io::{Read, Seek};
+    let mut buf = [0u8; 32];
+    if f.seek(std::io::SeekFrom::Start(0)).is_err() || f.read(&mut buf).is_err() {
+        return false;
+    }
+    let mut fds = [PollFd::new(&*f, PollFlags::PRI | PollFlags::ERR)];
+    poll(&mut fds, None).is_ok()
+}
+
+/// Waits until something is made in the sound server's folder (pipewire-pulse or PulseAudio making its socket as it starts), or
+/// `longest`.
+fn wait_for_sound_server(longest: std::time::Duration) {
+    let dir = std::env::var_os("PULSE_RUNTIME_PATH")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("XDG_RUNTIME_DIR").map(|d| std::path::PathBuf::from(d).join("pulse")));
+    use rustix::fs::inotify::WatchFlags as W;
+    let Some(mut w) = dir.clone().and_then(|d| crate::folders::FolderWatch::new(vec![d], W::CREATE | W::MOVED_TO).ok()) else {
+        return std::thread::sleep(longest);
+    };
+    let until = std::time::Instant::now() + longest;
+    loop {
+        let left = until.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            return;
+        }
+        if crate::folders::wait(Some(w.fd()), None, Some(left)).0 && w.changed().iter().any(|d| Some(d) == dir.as_ref()) {
+            return;
+        }
+    }
 }
 
 /// A child that ends with the thread that starts it (and so with the panel): `pactl subscribe` runs as long as the panel does,

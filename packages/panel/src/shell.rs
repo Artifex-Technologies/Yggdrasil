@@ -735,15 +735,7 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
         };
         icon_pill(pix, icons, &mut hits, &mut rx, name, Action::Bluetooth);
     }
-    let net = match m.status.net {
-        crate::status::Net::Off => "network-offline-symbolic",
-        crate::status::Net::Wired => "network-wired-symbolic",
-        crate::status::Net::Wifi(sig) if sig >= 75 => "network-wireless-signal-excellent-symbolic",
-        crate::status::Net::Wifi(sig) if sig >= 50 => "network-wireless-signal-good-symbolic",
-        crate::status::Net::Wifi(sig) if sig >= 25 => "network-wireless-signal-ok-symbolic",
-        crate::status::Net::Wifi(_) => "network-wireless-signal-weak-symbolic",
-    };
-    icon_pill(pix, icons, &mut hits, &mut rx, net, Action::Network);
+    icon_pill(pix, icons, &mut hits, &mut rx, m.status.net.icon(), Action::Network);
     // the notch over everything (its click areas are already in, at the front)
     paint_notch(pix, s, m, fonts, hover, notch_first_hit, h, py, ph);
     hits

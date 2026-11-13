@@ -21,6 +21,7 @@ mod confirm;
 mod convo;
 mod devices;
 mod finder;
+mod folders;
 mod fylgja;
 mod notify;
 mod osd;
@@ -496,7 +497,7 @@ struct State {
     stats_shared: Arc<std::sync::Mutex<stats::StatsSnap>>,
     /// What the bar add-ons last printed (their thread writes it), and the flag that asks them to run now.
     addons_shared: Arc<std::sync::Mutex<Vec<addons::View>>>,
-    addons_now: Arc<AtomicBool>,
+    addons_now: Arc<addons::Now>,
     stats_wanted: Arc<AtomicBool>,
     /// Resting the pointer on the notch's tab opens Fylgja after a short delay: the count of the
     /// latest rest, whether the pointer is still on the tab, and its screen.
@@ -3682,7 +3683,7 @@ impl State {
                 if let Some(cmd) = self.model.addons.get(i).filter(|a| a.card.is_empty()).and_then(|a| a.open.clone()) {
                     let _ = std::process::Command::new(&cmd[0]).args(&cmd[1..]).stdin(std::process::Stdio::null()).spawn();
                 } else {
-                    self.addons_now.store(true, Ordering::Relaxed);
+                    self.addons_now.ask();
                     self.addon_field = None;
                     self.addon_refreshed = None;
                     self.toggle_popup(PopupKind::Addon(i));
@@ -4799,7 +4800,7 @@ fn main() {
         tab_hover: false,
         stats_shared: Arc::new(std::sync::Mutex::new(Default::default())),
         addons_shared: Arc::new(std::sync::Mutex::new(Vec::new())),
-        addons_now: Arc::new(AtomicBool::new(false)),
+        addons_now: addons::Now::new(),
         stats_wanted: Arc::new(AtomicBool::new(false)),
         tab_tx,
         thumbs: HashMap::new(),
@@ -4962,7 +4963,8 @@ fn main() {
     // the tray registry first (it waits while another program still serves it), then the panel's tray as a host of it
     snwatcher::spawn();
     // the bar add-ons installed (integrations of kind bar-item): one thread runs them all
-    addons::spawn(state.addons_shared.clone(), state.addons_now.clone());
+    let (addons_tx, addons_rx) = calloop::channel::channel::<()>();
+    addons::spawn(state.addons_shared.clone(), state.addons_now.clone(), addons_tx);
     state.model.fylgja.night = nightlight::load();
     tray::spawn(tray_tx.clone());
     state.tray_tx = Some(tray_tx);
@@ -5156,61 +5158,40 @@ fn main() {
         })
         .expect("voice island channel");
 
-    // Desktops, network and Bluetooth are read on a worker thread; the 1 s timer picks up the result.
-    let shared = Arc::new(std::sync::Mutex::new(status::Status::default()));
-    {
-        let shared = shared.clone();
-        std::thread::spawn(move || {
-            let mut connectivity = String::new();
-            let mut signing_in: Option<String> = None;
-            loop {
-                let now = status::poll();
-                if let Ok(mut g) = shared.lock() {
-                    *g = now;
-                }
-                // a network that wants a sign-in first (a shop's guest Wi-Fi): one notification with a Sign in button, and that
-                // network preferred until it is online, so the portal's drop after the terms does not end on another network
-                let c = status::connectivity();
-                if status::portal_appeared(&connectivity, &c) {
-                    let active = std::process::Command::new("nmcli")
-                        .args(["-t", "-f", "UUID,TYPE", "connection", "show", "--active"])
-                        .output()
-                        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-                        .unwrap_or_default();
-                    if let Some(u) = status::active_wifi(&active) {
-                        status::prefer_while_signing_in(&u, true);
-                        signing_in = Some(u);
-                    }
-                    status::ask_portal_sign_in();
-                }
-                if c == "full" {
-                    if let Some(u) = signing_in.take() {
-                        status::prefer_while_signing_in(&u, false);
-                    }
-                }
-                connectivity = c;
-                std::thread::sleep(Duration::from_secs(2));
-            }
-        });
-    }
+    // Desktops, network and Bluetooth are read on a worker thread when they change; it sends what it read
+    let (status_tx, status_rx) = calloop::channel::channel::<status::Status>();
+    status::spawn(status_tx);
     event_loop
         .handle()
-        .insert_source(Timer::from_duration(Duration::from_secs(1)), move |_, _, st| {
+        .insert_source(status_rx, |event, _, st| {
+            if let calloop::channel::Event::Msg(now) = event {
+                if now != st.model.status {
+                    st.model.status = now;
+                    st.dirty = true;
+                }
+            }
+        })
+        .expect("status channel");
+    // the bar add-ons' thread says when what they show changed
+    event_loop
+        .handle()
+        .insert_source(addons_rx, |event, _, st| {
+            if let calloop::channel::Event::Msg(()) = event {
+                if let Ok(cur) = st.addons_shared.lock() {
+                    if *cur != st.model.addons {
+                        st.model.addons = cur.clone();
+                        st.dirty = true;
+                    }
+                }
+            }
+        })
+        .expect("add-ons channel");
+    event_loop
+        .handle()
+        .insert_source(Timer::from_duration(Duration::from_secs(1)), |_, _, st| {
             st.tick_confirm();
             if st.identify_until.is_some_and(|t| Instant::now() >= t) {
                 st.close_identify();
-            }
-            if let Ok(cur) = shared.lock() {
-                if *cur != st.model.status {
-                    st.model.status = cur.clone();
-                    st.dirty = true;
-                }
-            }
-            if let Ok(cur) = st.addons_shared.lock() {
-                if *cur != st.model.addons {
-                    st.model.addons = cur.clone();
-                    st.dirty = true;
-                }
             }
             // add-on countdowns tick by themselves
             st.model.now_secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
@@ -5223,7 +5204,7 @@ fn main() {
                 let at = st.model.addons.get(i).and_then(|a| a.refresh_at);
                 if let Some(at) = at.filter(|at| *at <= st.model.now_secs && st.addon_refreshed != Some(*at)) {
                     st.addon_refreshed = Some(at);
-                    st.addons_now.store(true, Ordering::Relaxed);
+                    st.addons_now.ask();
                 }
             }
             let h24 = st.model.conf.clock_24h;

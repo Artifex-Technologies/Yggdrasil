@@ -107,8 +107,8 @@ its card. The command prints `{"text": "...", "state": "ok" | "warn" | "alert" |
 drawn as given (cut short, control characters removed): an add-on can show things, never run anything through the panel. Add-ons
 are installed as packages (Agora lists them under Plugins), so removing the package removes the pill.
 
-Instead of `command`, an add-on can name `file = %h/.local/state/NAME/bar.json` (the same JSON, read again within a second of
-each change; no file yet means just the icon, if any) or a fixed `text = 2FA` (or no text at all: the icon alone, a button for the add-on's window). Any of them can add:
+Instead of `command`, an add-on can name `file = %h/.local/state/NAME/bar.json` (the same JSON, read again as soon as it
+changes: its folder is watched; no file yet means just the icon, if any) or a fixed `text = 2FA` (or no text at all: the icon alone, a button for the add-on's window). Any of them can add:
 
 ```
 icon = timer-symbolic                  # an icon theme name, drawn before the text in the text's colour

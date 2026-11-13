@@ -18,7 +18,7 @@
 //!
 //! Other ways to feed the pill, instead of `command`:
 //!
-//!   file = %h/.local/state/yggdrasil/timer/bar.json   # the same JSON in a file, read again within a second of each change
+//!   file = %h/.local/state/yggdrasil/timer/bar.json   # the same JSON in a file, read again as soon as it changes
 //!   text = 2FA                                        # a fixed label (leave it out for an icon alone)
 //!
 //! and, for any of them:
@@ -351,7 +351,7 @@ fn block(b: &serde_json::Value) -> Option<Block> {
 
 /// Runs the add-on's `act` for a press on its card (`id`, plus a field's text) on a thread of its own, then asks for the add-on to
 /// be read again at once. Only ids the card listed get here.
-pub fn press(act: Vec<String>, id: String, text: Option<String>, now: Arc<AtomicBool>) {
+pub fn press(act: Vec<String>, id: String, text: Option<String>, now: Arc<Now>) {
     std::thread::spawn(move || {
         let mut cmd = act;
         cmd.push(id);
@@ -359,7 +359,7 @@ pub fn press(act: Vec<String>, id: String, text: Option<String>, now: Arc<Atomic
             cmd.push(clip(&t, 200));
         }
         let _ = run(&cmd);
-        now.store(true, Ordering::Relaxed);
+        now.ask();
     });
 }
 
@@ -406,20 +406,24 @@ fn read(a: &Addon) -> View {
     view
 }
 
-/// Runs the command with a time and size limit; its output, or None.
+/// Runs the command with a time and size limit; its output, or None. Waits on the command's output (it ends when the command
+/// does), not by looking every so often.
 fn run(cmd: &[String]) -> Option<String> {
     let mut child = Command::new(&cmd[0]).args(&cmd[1..]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
     let mut out = child.stdout.take()?;
-    let reader = std::thread::spawn(move || {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
         let mut buf = Vec::new();
         let _ = (&mut out).take(64 << 10).read_to_end(&mut buf);
-        buf
+        let _ = tx.send(buf);
     });
-    let start = Instant::now();
+    let deadline = Instant::now() + LIMIT;
+    let got = rx.recv_timeout(LIMIT).ok();
+    // the output is closed: the command has ended, or is ending (or kept running without it: given until the limit)
     loop {
         match child.try_wait() {
             Ok(Some(_)) => break,
-            Ok(None) if start.elapsed() < Duration::from_secs(30) => std::thread::sleep(Duration::from_millis(200)),
+            Ok(None) if got.is_some() && Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
             _ => {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -427,20 +431,57 @@ fn run(cmd: &[String]) -> Option<String> {
             }
         }
     }
-    String::from_utf8(reader.join().ok()?).ok()
+    String::from_utf8(got?).ok()
 }
 
-/// Polls every add-on on one thread; `now` set to true asks for a refresh at once (the card was opened). The list of add-ons is read
-/// again every 30 seconds, so one installed or removed (from Agora) appears or goes without signing out.
-pub fn spawn(shared: Arc<Mutex<Vec<View>>>, now: Arc<AtomicBool>) {
+/// How long an add-on's command may run.
+const LIMIT: Duration = Duration::from_secs(30);
+
+/// Asks the add-ons' thread to read them all again at once (a card opened, a press): a flag, and a descriptor that wakes the
+/// thread where it waits.
+pub struct Now {
+    asked: AtomicBool,
+    fd: std::os::fd::OwnedFd,
+}
+
+impl Now {
+    pub fn new() -> Arc<Now> {
+        use rustix::event::{eventfd, EventfdFlags};
+        let fd = eventfd(0, EventfdFlags::CLOEXEC | EventfdFlags::NONBLOCK).expect("an eventfd");
+        Arc::new(Now { asked: AtomicBool::new(false), fd })
+    }
+
+    pub fn ask(&self) {
+        self.asked.store(true, Ordering::Relaxed);
+        let _ = rustix::io::write(&self.fd, &1u64.to_ne_bytes());
+    }
+
+    /// Whether it was asked since the last time, and the wake-up taken.
+    fn take(&self) -> bool {
+        let mut b = [0u8; 8];
+        let _ = rustix::io::read(&self.fd, &mut b);
+        self.asked.swap(false, Ordering::Relaxed)
+    }
+}
+
+/// Runs every add-on on one thread: a command when it is due (its interval), a file when it changed (its folder is watched), all of
+/// them at once when `now` asks (the card was opened). The integration folders are watched too, so an add-on installed or removed
+/// (from Agora) appears or goes without signing out. Between those the thread waits; nothing is looked at. `changed` hears of
+/// every new reading.
+pub fn spawn(shared: Arc<Mutex<Vec<View>>>, now: Arc<Now>, changed: calloop::channel::Sender<()>) {
     std::thread::spawn(move || {
+        use rustix::fs::inotify::WatchFlags as W;
+        let lists = [yggdrasil_conf::dirs::system_data().join("integrations"), yggdrasil_conf::dirs::system_config().join("integrations")];
+        let mask = W::CLOSE_WRITE | W::CREATE | W::DELETE | W::MOVED_FROM | W::MOVED_TO;
+        let mut watch = crate::folders::FolderWatch::new(lists.to_vec(), mask).ok();
         let mut addons: Vec<Addon> = vec![];
         let mut due: Vec<Instant> = vec![];
         let mut stamps: Vec<Option<(std::time::SystemTime, u64)>> = vec![];
-        let mut listed = Instant::now() - Duration::from_secs(60);
+        let mut relist = true;
+        let mut forced = false;
         loop {
-            if listed.elapsed() >= Duration::from_secs(30) {
-                listed = Instant::now();
+            if relist {
+                relist = false;
                 let fresh = load();
                 if fresh != addons {
                     addons = fresh;
@@ -449,9 +490,19 @@ pub fn spawn(shared: Arc<Mutex<Vec<View>>>, now: Arc<AtomicBool>) {
                     if let Ok(mut v) = shared.lock() {
                         v.retain(|x| addons.iter().any(|a| a.id == x.id));
                     }
+                    let _ = changed.send(());
+                    // the folders of the add-ons' files are watched beside the integration folders
+                    let mut folders = lists.to_vec();
+                    folders.extend(addons.iter().filter_map(|a| match &a.feed {
+                        Feed::File(p) => p.parent().map(|d| d.to_path_buf()),
+                        _ => None,
+                    }));
+                    if let Some(w) = watch.as_mut() {
+                        w.set_targets(folders);
+                    }
                 }
             }
-            let forced = now.swap(false, Ordering::Relaxed);
+            let mut read_any = false;
             for (i, a) in addons.iter().enumerate() {
                 match &a.feed {
                     Feed::Command { interval, .. } => {
@@ -464,7 +515,7 @@ pub fn spawn(shared: Arc<Mutex<Vec<View>>>, now: Arc<AtomicBool>) {
                         }
                         due[i] = Instant::now() + Duration::from_secs((*interval).max(60));
                     }
-                    // a file: read again when it changed (a stat each second), or at once when asked
+                    // a file: read again when it changed, or at once when asked
                     Feed::File(p) => {
                         let st = file_stamp(p);
                         if !forced && st == stamps[i] && Instant::now() < due[i] {
@@ -487,8 +538,27 @@ pub fn spawn(shared: Arc<Mutex<Vec<View>>>, now: Arc<AtomicBool>) {
                         None => v.push(view),
                     }
                 }
+                read_any = true;
             }
-            std::thread::sleep(Duration::from_secs(1));
+            if read_any {
+                let _ = changed.send(());
+            }
+            // wait for the next one due, a file or folder that changed, or a card that asks
+            let next = addons
+                .iter()
+                .zip(&due)
+                .filter(|(a, _)| !matches!(a.feed, Feed::Command { interval: 0, .. }))
+                .map(|(_, d)| *d)
+                .min()
+                .map(|d| d.saturating_duration_since(Instant::now()));
+            let (seen, asked) = crate::folders::wait(watch.as_ref().map(|w| w.fd()), Some(rustix::fd::AsFd::as_fd(&now.fd)), next);
+            if seen {
+                if let Some(w) = watch.as_mut() {
+                    // an integration folder (or the folder above a missing one): the list again; a file's folder: its stamp tells
+                    relist = w.changed().iter().any(|d| lists.iter().any(|l| l.starts_with(d)));
+                }
+            }
+            forced = asked && now.take();
         }
     });
 }
@@ -585,16 +655,16 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("addon-press-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let out = dir.join("pressed");
-        let now = Arc::new(AtomicBool::new(false));
+        let now = Now::new();
         let act = vec!["sh".into(), "-c".into(), format!("echo \"$1 $2\" > {}", out.display()), "sh".into()];
         press(act, "search".into(), Some("git hub".into()), now.clone());
         for _ in 0..50 {
-            if now.load(Ordering::Relaxed) {
+            if now.asked.load(Ordering::Relaxed) {
                 break;
             }
             std::thread::sleep(Duration::from_millis(50));
         }
-        assert!(now.load(Ordering::Relaxed));
+        assert!(now.take(), "a refresh was asked for");
         assert_eq!(std::fs::read_to_string(&out).unwrap().trim(), "search git hub");
         std::fs::remove_dir_all(&dir).ok();
     }

@@ -408,9 +408,9 @@ pub fn spawn_server(tx: calloop::channel::Sender<NMsg>) {
                 Ok(conn) => {
                     let _ = CONN.set(conn.clone());
                     eprintln!("yggdrasil-panel: serving notifications");
-                    // the connection serves on its own threads; keep this one (and the connection) alive
+                    // the connection serves on its own threads; keep this one (and the connection) alive, asleep
                     loop {
-                        std::thread::sleep(Duration::from_secs(3600));
+                        std::thread::park();
                     }
                 }
                 Err(e) => {
