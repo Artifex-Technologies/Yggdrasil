@@ -11,6 +11,8 @@ path = "src/main.rs"
 
 [dependencies]
 yggdrasil-conf = { path = "../yggdrasil-conf" }
+# the live session's keyboard layout while one is chosen (Hyprland or Yggdrasil's own compositor)
+yggdrasil-wm = { path = "../wm" }
 yggdrasil-ui = { path = "../yggdrasil-ui" }
 eframe = "0.36.2"
 serde_json = "1.0.151"

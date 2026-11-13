@@ -4173,6 +4173,7 @@ dependencies = [
  "serde_json",
  "yggdrasil-conf",
  "yggdrasil-ui",
+ "yggdrasil-wm",
 ]
 
 [[package]]
@@ -4181,6 +4182,14 @@ version = "0.1.0"
 dependencies = [
  "eframe",
  "resvg",
+ "yggdrasil-conf",
+]
+
+[[package]]
+name = "yggdrasil-wm"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
  "yggdrasil-conf",
 ]
 

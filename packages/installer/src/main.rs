@@ -372,17 +372,16 @@ fn keyboard_choices(lst: &str, available: &[String]) -> Vec<KbChoice> {
     out
 }
 
-/// The live session types with this keyboard from now on (Hyprland), so the box on the page tries the layout chosen.
+/// The live session types with this keyboard from now on (the compositor, through yggdrasil-wm: Hyprland's `input` setting, or
+/// Yggdrasil's own compositor's keyboard layout), so the box on the page tries the layout chosen. Asked on a thread of its own, so
+/// the page never waits for it.
 fn try_keyboard(c: &KbChoice) {
-    if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_none() {
-        return;
-    }
-    let lua = format!("hl.config({{ input = {{ kb_layout = {:?}, kb_variant = {:?} }} }})", c.layout, c.variant);
-    let _ = std::process::Command::new("hyprctl")
-        .args(["eval", &lua])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
+    let (layout, variant) = (c.layout.clone(), c.variant.clone());
+    std::thread::spawn(move || {
+        if let Some(d) = yggdrasil_wm::Desk::detect() {
+            d.set_keyboard(&layout, &variant);
+        }
+    });
 }
 
 /// The time zones a person would pick: Region/City ones and UTC (not the old aliases such as "W-SU", "Zulu" or "US/Pacific").
