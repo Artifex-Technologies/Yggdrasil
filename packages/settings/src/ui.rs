@@ -25,6 +25,15 @@ pub fn group(ui: &mut egui::Ui, pal: &Palette, title: Option<&str>, add: impl Fn
         });
 }
 
+/// A small grey note under a card, as a tablet's settings explain a card in a line under it.
+pub fn footnote(ui: &mut egui::Ui, pal: &Palette, text: &str) {
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        ui.add_space(14.0);
+        ui.add(egui::Label::new(RichText::new(text).size(12.0).color(pal.dim)).wrap());
+    });
+}
+
 /// One row: title (and subtitle) on the left, `control` on the right. The control is laid out
 /// first and the text wraps in the space left, so narrow windows never overlap the two. Rows
 /// after the first in a group get a hairline above them.

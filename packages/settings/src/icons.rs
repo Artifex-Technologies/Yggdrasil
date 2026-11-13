@@ -32,6 +32,8 @@ pub enum Icon {
     Lock,
     /// A check mark: the network this computer is on.
     Check,
+    /// General: a gear (a ring with eight teeth around a hole).
+    Gear,
 }
 
 fn arc(c: Pos2, r: f32, from: f32, to: f32) -> Vec<Pos2> {
@@ -165,6 +167,18 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32) {
         }
         Icon::Check => {
             p.add(Shape::line(vec![at(0.16, 0.54), at(0.4, 0.78), at(0.86, 0.24)], Stroke::new(2.2, color)));
+        }
+        Icon::Gear => {
+            for i in 0..8 {
+                let a = (i as f32 * 45.0).to_radians();
+                let (dx, dy) = (a.cos(), a.sin());
+                p.line_segment(
+                    [pos2(c.x + 0.27 * w * dx, c.y + 0.27 * w * dy), pos2(c.x + 0.42 * w * dx, c.y + 0.42 * w * dy)],
+                    Stroke::new(2.4, color),
+                );
+            }
+            p.circle_stroke(c, 0.27 * w, s);
+            p.circle_stroke(c, 0.11 * w, s);
         }
         Icon::Info => {
             p.circle_stroke(c, 0.38 * w, s);

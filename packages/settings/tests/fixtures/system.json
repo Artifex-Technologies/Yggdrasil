@@ -1,5 +1,8 @@
 {
  "run": {
+  "df -B1 --output=source,size,used,avail,target -x tmpfs -x devtmpfs -x efivarfs -x squashfs -x overlay -l": "Filesystem      1B-blocks          Used         Avail Mounted on\n/dev/nvme0n1p2 1999844147200 712386146304 1287458000896 /\n/dev/nvme0n1p2 1999844147200 712386146304 1287458000896 /home\n/dev/nvme0n1p1 1071624192 167772160 903852032 /boot\n/dev/sda1 4000787030016 2861102882816 1139684147200 /run/media/alex/Games\n",
+  "localectl status": "   System Locale: LANG=en_US.UTF-8\n                  LC_TIME=en_GB.UTF-8\n       VC Keymap: us\n      X11 Layout: us\n",
+  "localectl list-locales": "C.UTF-8\nde_DE.UTF-8\nen_GB.UTF-8\nen_US.UTF-8\nes_ES.UTF-8\nfr_FR.UTF-8\nnl_NL.UTF-8\n",
   "df -B1 --output=size,avail /": "     1B-blocks         Avail\n1999844147200 1287458000896\n",
   "lspci -mm": "01:00.0 \"VGA compatible controller\" \"NVIDIA Corporation\" \"AD104 [GeForce RTX 4070]\" -ra1 \"\" \"\"\n",
   "uname -r": "6.17.8-2-cachyos\n",

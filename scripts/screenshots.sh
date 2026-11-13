@@ -46,6 +46,9 @@ shots() {
     shot calendar                       desktop panel calendar
     shot fylgja-stats                   desktop panel fylgja 2
     shot fylgja-notifications           desktop panel fylgja 3
+    shot settings-general               desktop settings general system
+    shot settings-storage               desktop settings storage system
+    shot settings-language              desktop settings language system
     shot settings-network               desktop settings network wifi
     shot settings-bluetooth             desktop settings bluetooth system
     shot settings-displays              desktop settings displays system

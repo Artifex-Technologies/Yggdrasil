@@ -24,7 +24,8 @@ impl App {
 
     /// The open page, then each level opened under it, outermost first.
     pub(crate) fn path(&self) -> Vec<String> {
-        let mut path = vec![self.page_title(self.page)];
+        let mut path: Vec<String> = crate::parent(self.page).map(|p| self.page_title(p)).into_iter().collect();
+        path.push(self.page_title(self.page));
         path.extend(self.levels());
         path
     }
@@ -121,10 +122,13 @@ impl App {
         l
     }
 
-    /// Back one level. False when the page is already on its first level.
+    /// Back one level (from a page inside another, such as General > About, to that page). False when there is nowhere to go.
     pub(crate) fn back(&mut self) -> bool {
         if self.levels().is_empty() {
-            return false;
+            let Some(up) = crate::parent(self.page) else { return false };
+            self.page = up;
+            self.status.clear();
+            return true;
         }
         match self.page {
             Page::Network => {
@@ -339,6 +343,17 @@ mod tests {
         a.sec_sub = SecSub::Logins;
         a.back();
         assert_eq!(a.path(), ["Security"]);
+    }
+
+    #[test]
+    fn a_page_inside_general_goes_back_to_general() {
+        let mut a = app();
+        a.page = Page::DateTime;
+        assert_eq!(a.path(), ["General", "Date & Time"]);
+        assert!(a.back());
+        assert_eq!(a.page, Page::General);
+        assert_eq!(a.path(), ["General"]);
+        assert!(!a.back());
     }
 
     #[test]

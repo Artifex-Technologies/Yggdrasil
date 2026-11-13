@@ -18,6 +18,7 @@ mod distress;
 mod fans;
 mod fixture;
 mod games;
+mod general;
 mod gpu;
 mod icons;
 mod laptop_ui;
@@ -57,6 +58,12 @@ use yggdrasil_ui::{chrome, theme};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Page {
+    /// About, Software Update, Storage, Date & Time, Keyboard, Language & Region (general.rs); Settings opens here.
+    General,
+    /// Inside General: each disk's use.
+    Storage,
+    /// Inside General: the system's language and region.
+    Language,
     Network,
     Bluetooth,
     Displays,
@@ -117,10 +124,12 @@ enum AppSub {
     Boot,
 }
 
-// The sidebar, in groups (a heading is drawn where the group changes). The words after the name are what the search also
-// finds the page by: what is inside it, not only its title.
-const PAGES: [(Page, &str, Icon, &str, &str); 19] = [
-    (Page::Network, "Wi-Fi & Network", Icon::Wifi, "Connections", "internet ethernet vpn proxy"),
+// The sidebar, in groups (a heading is drawn where the group changes; the first group has none). The words after the name are
+// what the search also finds the page by: what is inside it, not only its title. A page with a parent (`parent`) is a row on
+// that page instead of in the sidebar; the search still finds it.
+const PAGES: [(Page, &str, Icon, &str, &str); 22] = [
+    (Page::General, "General", Icon::Gear, "", "about software update storage disk date time keyboard language region"),
+    (Page::Network, "Wi-Fi & Network", Icon::Wifi, "Connections", "internet ethernet proxy"),
     (Page::Bluetooth, "Bluetooth", Icon::Bluetooth, "Connections", "headphones controller pair"),
     (Page::Displays, "Displays", Icon::Display, "Devices", "monitor screen resolution refresh night light scale"),
     (Page::Sound, "Sound", Icon::Sound, "Devices", "audio volume speaker microphone output input"),
@@ -162,10 +171,20 @@ const PAGES: [(Page, &str, Icon, &str, &str); 19] = [
     (Page::Firewall, "Firewall", Icon::Shield, "Privacy & security", "ports network block"),
     (Page::Restore, "Restore points", Icon::Restart, "Privacy & security", "snapshot backup rollback undo"),
     (Page::Users, "Users", Icon::User, "System", "account people"),
-    (Page::DateTime, "Date & Time", Icon::Clock, "System", "clock timezone"),
-    (Page::About, "About", Icon::Info, "System", "version system information hardware"),
     (Page::Developer, "Developer Mode", Icon::Keyboard, "System", "developer options"),
+    (Page::About, "About", Icon::Info, "General", "version system information hardware"),
+    (Page::DateTime, "Date & Time", Icon::Clock, "General", "clock timezone"),
+    (Page::Storage, "Storage", Icon::Gear, "General", "disk space free used"),
+    (Page::Language, "Language & Region", Icon::Keyboard, "General", "locale formats country"),
 ];
+
+/// The page a page is a row on (it is not in the sidebar of its own).
+fn parent(page: Page) -> Option<Page> {
+    match page {
+        Page::About | Page::DateTime | Page::Storage | Page::Language => Some(Page::General),
+        _ => None,
+    }
+}
 
 enum Msg {
     About(sys::About),
@@ -185,6 +204,8 @@ enum Msg {
     SudoLog(Vec<security::LogEntry>),
     Password(Result<(), String>),
     Time(sys::Time),
+    Storage(general::Storage),
+    Language(general::Language),
     Apps(Vec<sys::Component>),
     Installed(Vec<appmgr::AppInfo>),
     /// Displays > Tablet mode (a 2-in-1 only) and Users > Fingerprint (a reader only), sent ahead of their page's data.
@@ -219,6 +240,8 @@ struct Data {
     power: Option<sys::Power>,
     firewall: Option<bool>,
     time: Option<sys::Time>,
+    storage: Option<general::Storage>,
+    language: Option<general::Language>,
     apps: Option<Vec<sys::Component>>,
     installed: Option<Vec<appmgr::AppInfo>>,
     tablet: Option<laptop_ui::Tablet>,
@@ -562,6 +585,8 @@ impl App {
                 Page::Security => Msg::Security(security::overview()),
                 Page::Restore => Msg::Restore(restore::load()),
                 Page::DateTime => Msg::Time(sys::time()),
+                Page::Storage => Msg::Storage(general::storage()),
+                Page::Language => Msg::Language(general::language()),
                 Page::Apps => {
                     let _ = tx.send(Msg::Installed(load_installed(&tx)));
                     Msg::Apps(sys::apps())
@@ -571,7 +596,7 @@ impl App {
                     yggdrasil_conf::integrations::first("assistant").map(|i| i.controls()).unwrap_or_default(),
                 )),
                 Page::Printers => Msg::Printers(printers::load()),
-                Page::Peripherals | Page::Developer | Page::Games => return,
+                Page::Peripherals | Page::Developer | Page::Games | Page::General => return,
             };
             let _ = tx.send(msg);
             ctx.request_repaint();
@@ -651,6 +676,8 @@ impl App {
                     continue;
                 }
                 Msg::Time(v) => self.data.time = Some(v),
+                Msg::Storage(v) => self.data.storage = Some(v),
+                Msg::Language(v) => self.data.language = Some(v),
                 Msg::Apps(v) => self.data.apps = Some(v),
                 Msg::Installed(v) => self.data.installed = Some(v),
                 Msg::Tablet(v) => {
@@ -735,7 +762,7 @@ fn start_page() -> Page {
         .iter()
         .find(|(p, name, ..)| format!("{p:?}").to_lowercase() == arg || name.to_lowercase().starts_with(&arg) && !arg.is_empty())
         .map(|(p, ..)| *p)
-        .unwrap_or(Page::Network)
+        .unwrap_or(Page::General)
 }
 
 impl eframe::App for App {
@@ -844,41 +871,45 @@ impl eframe::App for App {
                         {
                             continue;
                         }
+                        // a page inside another is found by the search; otherwise it is a row on its parent page
+                        if q.is_empty() && parent(p).is_some() {
+                            continue;
+                        }
                         if !q.is_empty() && !name.to_lowercase().contains(&q) && !words.contains(&q) {
                             continue;
                         }
                         if q.is_empty() && group != last_group {
                             ui.add_space(if last_group.is_empty() { 2.0 } else { 10.0 });
-                            ui.label(RichText::new(group).size(12.0).color(pal.dim));
-                            ui.add_space(2.0);
+                            if !group.is_empty() {
+                                ui.label(RichText::new(group).size(12.0).color(pal.dim));
+                                ui.add_space(2.0);
+                            }
                         }
                         last_group = group;
-                        let sel = self.page == p;
+                        // the open page's row is a filled pill in the accent colour (a page inside it lights its parent's)
+                        let sel = self.page == p || q.is_empty() && parent(self.page) == Some(p);
                         let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::click());
                         if sel {
-                            ui.painter().rect_filled(rect, CornerRadius::same(8), pal.select);
+                            ui.painter().rect_filled(rect, CornerRadius::same(10), pal.accent);
                         } else if resp.hovered() {
-                            ui.painter().rect_filled(rect, CornerRadius::same(8), pal.hover);
+                            ui.painter().rect_filled(rect, CornerRadius::same(10), pal.hover);
                         }
+                        let ink = if sel { pal.on_accent() } else { pal.text };
                         let icon_rect = egui::Rect::from_center_size(egui::pos2(rect.left() + 20.0, rect.center().y), vec2(18.0, 18.0));
                         // Sarina gets the S of her own icon; another assistant keeps the general one
                         let icon = if assistant_name.as_deref() == Some("Sarina") { Icon::Constellation } else { icon };
-                        icons::paint(ui.painter(), icon_rect, icon, if sel { pal.accent } else { pal.text });
+                        icons::paint(ui.painter(), icon_rect, icon, ink);
                         ui.painter().text(
                             egui::pos2(rect.left() + 40.0, rect.center().y),
                             egui::Align2::LEFT_CENTER,
                             name,
                             egui::FontId::proportional(14.0),
-                            pal.text,
+                            ink,
                         );
                         if resp.clicked() {
                             // the page as it first opens: a click on the open page's row is the way back to its start
                             self.rewind(p);
-                        }
-                        if resp.clicked() && !sel {
-                            self.page = p;
-                            self.status.clear();
-                            self.load(p, &ctx);
+                            self.open_page(p, &ctx);
                         }
                     }
                 });
@@ -923,6 +954,9 @@ impl eframe::App for App {
                         ui.colored_label(pal.red, &self.status);
                     }
                     match self.page {
+                        Page::General => self.page_general(ui, &pal),
+                        Page::Storage => self.page_storage(ui, &pal),
+                        Page::Language => self.page_language(ui, &pal, &ctx),
                         Page::About => self.page_about(ui, &pal, &ctx),
                         Page::Network => self.page_network(ui, &pal, &ctx),
                         Page::Bluetooth => self.page_bluetooth(ui, &pal, &ctx),

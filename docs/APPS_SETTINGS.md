@@ -6,6 +6,23 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
 `apps` integration (INTEGRATIONS.md; on Labyrinth `labyrinth-launch` and `labyrinth-appnet`, tested in Labyrinth's repository).
 `cargo test` in `packages/settings`.
 
+## The layout (2026-11-13)
+
+I reorganised Settings on the model of a tablet's settings (its structure, not its look; the colours stay Yggdrasil's):
+the sidebar holds grouped rows with the open page as a filled pill in the accent colour, and each page is rounded cards of
+rows, a row that opens a page ending in ›, and a small grey note under a card where it needs one.
+
+- **The way back** (`src/nav.rs`): one header above every page, outside the scrolling part, shows the path ("Appearance ›
+  Wallpaper") and, on a sub-page, Back. Back, the mouse's back button and Alt+Left go up one level at a time; a click on the
+  open page's sidebar row returns it to its first level. Each level keeps its own scroll position; a level just opened starts at
+  its top. Before this a sub-page's own back button scrolled away with the page (the new level kept the old one's scroll
+  offset), so the way back was often out of sight.
+- **General** is the page Settings opens on: About, Software Update (opens Agora on its Updates page; the system's version
+  beside it), Storage (each disk's use, read when the page opens), Date & Time, Keyboard (Peripherals > Keyboard) and
+  Language & Region (`localectl`: the system's language for every account, and a separate format region when there is one).
+  About and Date & Time moved here from the sidebar; the search still finds them, and `yggdrasil-settings about`,
+  `datetime`, `storage` and `language` open them inside General. A page inside another is marked by `parent()` in main.rs.
+
 ## The pages
 
 - **Installed** (tab): every visible desktop entry, sortable by Usage (how often it was opened from here), Size (its folders
@@ -113,6 +130,9 @@ About only when switched on, have no picture.
 
 | Page | |
 | --- | --- |
+| **General**: the page Settings opens on. | ![Settings > General](../assets/screenshots/settings-general.png) |
+| **General > Storage**: each disk's use (`system.json`'s made-up disks). | ![Settings > General > Storage](../assets/screenshots/settings-storage.png) |
+| **General > Language & Region**: the system's language, a separate region for dates and times. | ![Settings > General > Language & Region](../assets/screenshots/settings-language.png) |
 | **Wi-Fi & Network**: the network in use, Known Networks and Other Networks (`wifi.json`). | ![Settings > Wi-Fi & Network](../assets/screenshots/settings-network.png) |
 | **Bluetooth**: paired devices with their battery, and a game controller. | ![Settings > Bluetooth](../assets/screenshots/settings-bluetooth.png) |
 | **Displays**: three displays attached, one disconnected; the arrangement box with the main display (1) selected, its settings below. | ![Settings > Displays](../assets/screenshots/settings-displays.png) |
