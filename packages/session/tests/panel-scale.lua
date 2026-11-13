@@ -49,9 +49,9 @@ end
 
 run(nil, { { name = "eDP-1" }, { name = "DP-1" }, { name = "eDP-3" } })
 local all = for_output("")
-check("every screen: fastest mode, scale 1", #all == 1 and all[1].scale == 1 and all[1].mode == "highrr")
+check("every screen: its own mode, scale 1", #all == 1 and all[1].scale == 1 and all[1].mode == "preferred")
 local p = for_output("eDP-1")
-check("the laptop's own screen: automatic scale", #p == 1 and p[1].scale == "auto" and p[1].mode == "highrr" and p[1].position == "auto")
+check("the laptop's own screen: automatic scale", #p == 1 and p[1].scale == "auto" and p[1].mode == "preferred" and p[1].position == "auto")
 check("another panel Hyprland lists", #for_output("eDP-3") == 1 and for_output("eDP-3")[1].scale == "auto")
 check("the usual names before Hyprland lists any", #for_output("eDP-2") == 1 and #for_output("LVDS-1") == 1)
 check("a monitor on a cable: no rule of its own", #for_output("DP-1") == 0)

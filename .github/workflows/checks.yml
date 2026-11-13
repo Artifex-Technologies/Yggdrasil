@@ -140,7 +140,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0, pinned by commit
         with:
           persist-credentials: false
-      - name: Session config parses, keep-clear, input.conf and window-open checks
+      - name: Session config parses, keep-clear, input.conf, window-open and monitor-mode checks
         run: |
           for f in packages/session/hyprland/*.lua; do luac -p "$f" || exit 1; done
           lua packages/session/tests/keep-clear.lua
@@ -148,6 +148,7 @@ jobs:
           lua packages/session/tests/window-open.lua
           lua packages/session/tests/tablet-switch.lua
           lua packages/session/tests/panel-scale.lua
+          lua packages/session/tests/monitor-modes.lua
       - name: Package recipes parse
         run: |
           useradd -m ci && chown -R ci "$GITHUB_WORKSPACE"

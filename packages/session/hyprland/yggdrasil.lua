@@ -46,41 +46,35 @@ local function system_keyboard()
 end
 local kb_layout, kb_variant, kb_options = system_keyboard()
 
--- Every monitor at its fastest mode, until Settings > Displays (or you) sets them: ~/.config/yggdrasil/monitors.lua.
+-- Monitors. Until Settings > Displays (or you) sets one, a monitor comes up at its own resolution (the one it names itself, its
+-- "preferred" mode) at the fastest refresh rate it has for that resolution: an X34 at 3440x1440@180, an LG DualUp at 2560x2880.
+-- Hyprland has no word for that: "highrr" is the fastest mode of any size (2026-11-13 the DualUp came up at 800x600, whose
+-- 60.32 Hz beats the 59.98 Hz of its own size), "highres" the biggest one (the 3840x2160 an X34 accepts and scales down, at
+-- 60 Hz), and "preferred" its own mode at the rate it names (60 Hz on the X34). So "preferred" is the rule for every screen,
+-- and each screen there is gets a rule of its own with the fastest rate at that size, worked out from its modes (the end of
+-- this file: the screens there are now, and a screen added later, plugged in or switched on, the moment Hyprland adds it).
 -- Scale 1, except a laptop's own screen (eDP, or LVDS on older ones): its scale is Hyprland's automatic one, from the panel's
--- size and resolution, so a sharp 14-inch panel is not tiny (2026-11-12). Monitors on a cable stay at 1. Once monitors.lua names
--- the screen (Settings > Displays wrote it), that wins and the automatic scale is not set.
-hl.monitor({ output = "", mode = "highrr", position = "auto", scale = 1 })
-do
-  local monitors = config_home .. "/yggdrasil/monitors.lua"
-  local named = {}
-  local f = io.open(monitors, "r")
-  if f then
-    for out in f:read("*a"):gmatch('output%s*=%s*"([^"]*)"') do named[out] = true end
-    f:close()
+-- size and resolution, so a sharp 14-inch panel is not tiny (2026-11-12). Monitors on a cable stay at 1.
+-- A screen monitors.lua (Settings > Displays) or your hyprland.lua names keeps what it says: nothing is worked out for it.
+hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
+-- the screens monitors.lua and your hyprland.lua name: their `output`, a connector ("DP-1") or "desc:" and the start of the
+-- monitor's description; "" (a rule for every screen) means you set them all
+local named_screens = {}
+-- runs one of those files, writing down the screens it names
+local function run_with_monitors(path, what)
+  local f = io.open(path, "r")
+  if not f then return end
+  f:close()
+  local monitor = hl.monitor
+  hl.monitor = function(spec, ...)
+    if type(spec) == "table" and type(spec.output) == "string" then named_screens[spec.output] = true end
+    return monitor(spec, ...)
   end
-  local panels, seen = {}, {}
-  local function panel(name)
-    name = tostring(name)
-    if (name:match("^eDP%-%d+$") or name:match("^LVDS%-%d+$")) and not seen[name] then
-      seen[name] = true
-      table.insert(panels, name)
-    end
-  end
-  -- the usual names, so the first start (before Hyprland lists its screens) has them too; a rule for a screen that is not
-  -- there does nothing
-  for _, name in ipairs({ "eDP-1", "eDP-2", "LVDS-1" }) do panel(name) end
-  for _, m in ipairs(hl.get_monitors() or {}) do panel(m.name) end
-  for _, name in ipairs(panels) do
-    if not named[name] then hl.monitor({ output = name, mode = "highrr", position = "auto", scale = "auto" }) end
-  end
-  f = io.open(monitors, "r")
-  if f then
-    f:close()
-    local ok, err = pcall(dofile, monitors)
-    if not ok then io.stderr:write(("yggdrasil: monitors.lua has a mistake: %s\n"):format(err)) end
-  end
+  local ok, err = pcall(dofile, path)
+  hl.monitor = monitor
+  if not ok then io.stderr:write(("yggdrasil: %s has a mistake: %s\n"):format(what, err)) end
 end
+run_with_monitors(config_home .. "/yggdrasil/monitors.lua", "monitors.lua")
 
 hl.config({
   input = {
@@ -579,10 +573,62 @@ hl.on("hyprland.start", function()
 end)
 
 -- Yours last.
-local user_file = config_home .. "/yggdrasil/hyprland.lua"
-local f = io.open(user_file, "r")
-if f then
-  f:close()
-  local ok, err = pcall(dofile, user_file)
-  if not ok then io.stderr:write(("yggdrasil: your hyprland.lua has a mistake: %s\n"):format(err)) end
+run_with_monitors(config_home .. "/yggdrasil/hyprland.lua", "your hyprland.lua")
+
+-- Each screen's own rule (Monitors, at the top), now that monitors.lua and your file have named theirs.
+do
+  local function is_panel(name) return name:match("^eDP%-%d+$") ~= nil or name:match("^LVDS%-%d+$") ~= nil end
+  local function is_named(m)
+    if named_screens[""] or named_screens[m.name] then return true end
+    local desc = type(m.description) == "string" and m.description or ""
+    for sel in pairs(named_screens) do
+      local start = sel:match("^desc:%s*(.-)%s*$")
+      if start and start ~= "" and desc:sub(1, #start) == start then return true end
+    end
+    return false
+  end
+  -- the screen's own size at the fastest rate it has for it; "preferred" when that is its own mode already (or it lists
+  -- none). Counted with #, never ipairs: a list is a plain table.
+  local function fastest_own(modes)
+    if type(modes) ~= "table" then return "preferred" end
+    local own
+    for i = 1, #modes do
+      if modes[i].preferred then own = modes[i] break end
+    end
+    own = own or modes[1]
+    if not own then return "preferred" end
+    local best = own
+    for i = 1, #modes do
+      local m = modes[i]
+      if m.width == own.width and m.height == own.height and (tonumber(m.refresh_rate) or 0) > (tonumber(best.refresh_rate) or 0) then
+        best = m
+      end
+    end
+    if best == own then return "preferred" end
+    return string.format("%dx%d@%.2f", best.width, best.height, best.refresh_rate)
+  end
+  -- what each connector was given here ("mode scale"); one with nothing has the rule for every screen, "preferred 1". A rule is
+  -- added only when it changes that, so a screen already right is not set again (setting a mode can blank it for a moment).
+  local given = {}
+  local function give(m)
+    local name = tostring(m.name)
+    if is_named({ name = name, description = m.description }) then return end
+    local mode, scale = fastest_own(m.available_modes), is_panel(name) and "auto" or 1
+    local key = mode .. " " .. tostring(scale)
+    if key == (given[name] or "preferred 1") then return end
+    given[name] = key
+    hl.monitor({ output = name, mode = mode, position = "auto", scale = scale })
+  end
+  local screens = hl.get_monitors({ all = true }) or {}
+  for i = 1, #screens do give(screens[i]) end
+  -- the usual laptop names too, so the first start (before Hyprland lists its screens) has the automatic scale for them; a rule
+  -- for a screen that is not there does nothing
+  for _, name in ipairs({ "eDP-1", "eDP-2", "LVDS-1" }) do
+    if not given[name] then give({ name = name }) end
+  end
+  -- a screen Hyprland adds (at start, plugged in, switched on): it is at its own mode by now, this raises the rate
+  hl.on("monitor.added", function(m)
+    local ok, err = pcall(give, m)
+    if not ok then io.stderr:write("yggdrasil: a new screen's mode: " .. tostring(err) .. "\n") end
+  end)
 end
