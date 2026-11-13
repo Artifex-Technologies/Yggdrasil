@@ -79,6 +79,13 @@ package() {
   install -Dm644 "$_src/data/org.yggdrasil.powerlimit.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.powerlimit.policy"
   # the boot screen (Appearance > Boot screen): Plymouth's theme, switched on the first time
   install -Dm755 "$srcdir/target/release/bootscreen" "$pkgdir/usr/lib/yggdrasil/bootscreen"
+  # a laptop's battery: the top bar's pill and drop-down (a bar add-on fed by `battery watch` at login), low-battery warnings,
+  # and the charge limit (set through pkexec, set again at boot by the service once a limit was chosen)
+  install -Dm755 "$srcdir/target/release/battery" "$pkgdir/usr/lib/yggdrasil/battery"
+  install -Dm644 "$_src/data/yggdrasil-battery.conf" "$pkgdir/usr/share/yggdrasil/integrations/yggdrasil-battery.conf"
+  install -Dm644 "$_src/data/yggdrasil-battery.desktop" "$pkgdir/etc/xdg/autostart/yggdrasil-battery.desktop"
+  install -Dm644 "$_src/data/org.yggdrasil.battery.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.battery.policy"
+  install -Dm644 "$_src/data/yggdrasil-charge-limit.service" "$pkgdir/usr/lib/systemd/system/yggdrasil-charge-limit.service"
   # Date & Time > "Set time zone automatically": the helper, its user timer (off until the switch enables it) and the polkit
   # rule that lets a signed-in administrator set the time zone without a password (approved by the owner, 2026-11-13)
   install -Dm755 "$srcdir/target/release/autozone" "$pkgdir/usr/lib/yggdrasil/autozone"

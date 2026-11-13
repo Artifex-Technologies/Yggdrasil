@@ -233,7 +233,8 @@ resume configuration. That is a decision for you; see the end of this file.
   matching app (pavucontrol, nm-connection-editor, blueman). A Quickshell shell like
   Omarchy's would add them; it needs the Omarchy repo's packages, which LykanOS (formerly
   Chymaera OS) also has not adopted.
-- **Battery and brightness** are left out (desktop PC).
+- **Battery** (2026-11-13): on a laptop, the battery sits beside the clock; its drop-down has the power mode and the charge
+  limit, and Settings > Power the same (Settings' `battery` helper, a bar add-on). Brightness is in the volume and brightness pop-up.
 - **Weather privacy:** Open-Meteo and aviationweather.gov receive the coordinates of the
   place you set (never guessed from your IP). See WEATHER.md.
 - **`minos` has no package yet**, so the `SUPER + SHIFT + F` binding will not

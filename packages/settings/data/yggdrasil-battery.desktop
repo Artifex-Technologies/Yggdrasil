@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Battery
+Comment=The battery in the top bar, and low-battery warnings
+Exec=/usr/lib/yggdrasil/battery watch
+NoDisplay=true
+OnlyShowIn=Yggdrasil;
+X-GNOME-Autostart-enabled=true

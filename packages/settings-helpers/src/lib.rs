@@ -6,6 +6,8 @@
 //!   bootscreen  /usr/lib/yggdrasil/bootscreen  Settings > Appearance > Boot screen: get, and set through pkexec
 //!   game-fix    /usr/lib/yggdrasil/game-fix    Settings > Games > Game fixes: list, apply, undo
 //!   gpu-run     /usr/bin/yggdrasil-gpu-run     Settings > Games: a program on a chosen graphics card (a Steam launch option)
+//!   battery     /usr/lib/yggdrasil/battery     The top bar's battery and its drop-down, low-battery warnings, the charge
+//!                                              limit (set-limit and restore through pkexec / at boot)
 //!   autozone    /usr/lib/yggdrasil/autozone    Settings > Date & Time: set the time zone from where the computer is (no Python
 //!                                              script before it)
 //!
@@ -14,6 +16,7 @@
 
 pub mod account;
 pub mod autozone;
+pub mod battery;
 pub mod bootscreen;
 pub mod gamefix;
 pub mod gpurun;

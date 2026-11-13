@@ -26,6 +26,11 @@ path = "src/bin/game-fix.rs"
 name = "gpu-run"
 path = "src/bin/gpu-run.rs"
 
+# installed as /usr/lib/yggdrasil/battery: the top bar's battery (watch, press), its charge limit (set-limit, restore)
+[[bin]]
+name = "battery"
+path = "src/bin/battery.rs"
+
 # installed as /usr/lib/yggdrasil/autozone, run by the user timer yggdrasil-autozone.timer (Date & Time)
 [[bin]]
 name = "autozone"

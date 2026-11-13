@@ -937,6 +937,32 @@ pub struct Power {
     pub limits: Option<PowerLimits>,
     /// The graphics card unlock (Developer options, an NVIDIA card only).
     pub unlock: Option<GpuUnlock>,
+    /// A laptop's battery; None on a computer without one (the Battery section is left out).
+    pub battery: Option<Battery>,
+}
+
+/// `/usr/lib/yggdrasil/battery json`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Battery {
+    pub percent: i64,
+    /// "2 h 10 min left", "Charging: full in 45 min"
+    pub status: String,
+    pub health: Option<i64>,
+    pub cycles: Option<i64>,
+    /// The charge limit in percent, when the battery has one.
+    pub limit: Option<i64>,
+}
+
+pub fn parse_battery(json: &str) -> Option<Battery> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    v["present"].as_bool().filter(|p| *p)?;
+    Some(Battery {
+        percent: v["percent"].as_i64().unwrap_or(0),
+        status: v["status"].as_str().unwrap_or_default().to_string(),
+        health: v["health"].as_i64(),
+        cycles: v["cycles"].as_i64(),
+        limit: v["limit"].as_i64(),
+    })
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -1075,7 +1101,8 @@ pub fn power() -> Power {
         None
     };
     let unlock = if limits.as_ref().is_some_and(|l| l.gpu.is_some()) { gpu_unlock() } else { None };
-    Power { profile: active, profiles, limits, unlock, idle: read_idle() }
+    let battery = run("/usr/lib/yggdrasil/battery", &["json"]).and_then(|s| parse_battery(&s));
+    Power { profile: active, profiles, limits, unlock, idle: read_idle(), battery }
 }
 
 /// What to do as the user stays away, in minutes (0 = never), and whether this computer can sleep and hibernate.
@@ -1496,6 +1523,13 @@ mod tests {
             profiles("  performance:\n    CpuDriver:\tintel_pstate\n\n* balanced:\n    CpuDriver:\tintel_pstate\n\n  power-saver:\n");
         assert_eq!(n, vec!["performance", "balanced", "power-saver"]);
         assert_eq!(a, "balanced");
+    }
+
+    #[test]
+    fn battery_parser() {
+        let b = parse_battery(r#"{"present":true,"percent":76,"status":"Charging: full in 59 min","health":86,"cycles":209,"limit":80}"#);
+        assert_eq!(b.map(|b| (b.percent, b.health, b.limit)), Some((76, Some(86), Some(80))));
+        assert_eq!(parse_battery(r#"{"present":false}"#), None);
     }
 
     #[test]

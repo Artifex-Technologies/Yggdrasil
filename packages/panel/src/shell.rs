@@ -286,6 +286,9 @@ pub fn dock_items(m: &Model) -> Vec<DockItem> {
     items
 }
 
+/// The battery's bar add-on (yggdrasil-battery.conf, installed with Settings): its pill goes beside the clock.
+pub const BATTERY_ADDON: &str = "yggdrasil-battery";
+
 /// Dock id of the trash, which is not an app.
 pub const TRASH_ID: &str = "yggdrasil:trash";
 
@@ -504,7 +507,42 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
         paint::draw_text(pix, &fonts.bold, 12.5 * s, x + 10.0 * s, cy, lk.text, &name);
     }
 
-    // ---- right: network, Bluetooth, the clock (24 hours)
+    // An add-on's pill: its text (and icon), red or amber when it says something needs attention.
+    let addon_pill = |pix: &mut Pixmap, icons: &mut Icons, hits: &mut Vec<Hit>, rx: &mut f32, i: usize, a: &crate::addons::View| {
+        if a.off || (a.text.is_empty() && a.icon.is_empty()) {
+            return;
+        }
+        let text = a.display(m.now_secs);
+        let isz = (14.0 * s) as u32;
+        let icon_w = if a.icon.is_empty() {
+            0.0
+        } else if text.is_empty() {
+            isz as f32
+        } else {
+            isz as f32 + 6.0 * s
+        };
+        let aw = paint::text_width(&fonts.regular, 12.0 * s, &text) + 20.0 * s + icon_w;
+        *rx -= aw;
+        pill(pix, *rx, aw);
+        if hover == Some(hits.len()) {
+            paint::fill_rounded(pix, *rx, py, aw, ph, r, lk.hover);
+        }
+        let col = match a.level {
+            crate::addons::Level::Alert => (240, 96, 96, 255),
+            crate::addons::Level::Warn => (232, 176, 72, 255),
+            crate::addons::Level::Ok => lk.text,
+        };
+        if !a.icon.is_empty() {
+            if let Some(ic) = icons.get_tinted(&a.icon, isz, lk.text) {
+                paint::draw_pixmap(pix, ic, (*rx + 10.0 * s) as i32, (cy - isz as f32 / 2.0).round() as i32);
+            }
+        }
+        paint::draw_text(pix, &fonts.regular, 12.0 * s, *rx + 10.0 * s + icon_w, cy, col, &text);
+        hits.push(Hit { rect: (*rx, 0.0, aw, h), action: Action::Addon(i) });
+        *rx -= 6.0 * s;
+    };
+
+    // ---- right: the battery, network, Bluetooth, the clock (24 hours)
     let mut rx = w - 8.0 * s;
     // The date and the time in one pill; clicking it opens the calendar.
     let stamp = format!("{}   {}", m.date, m.clock);
@@ -517,6 +555,11 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
     paint::draw_text(pix, &fonts.regular, 12.5 * s, rx + 10.0 * s, cy, lk.text, &stamp);
     hits.push(Hit { rect: (rx, 0.0, cw, h), action: Action::Clock });
     rx -= 6.0 * s;
+
+    // A laptop's battery, right beside the clock (an add-on of Settings' own; it says "off" on a computer with no battery)
+    if let Some((i, a)) = m.addons.iter().enumerate().find(|(_, a)| a.id == BATTERY_ADDON) {
+        addon_pill(pix, icons, &mut hits, &mut rx, i, a);
+    }
 
     // Unread notifications: a small purple count beside the clock; clicking it opens the list.
     let unread = m.notifs.unread_count();
@@ -611,38 +654,11 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
     }
 
     // Bar add-ons (installed from Agora, for instance): their text in a pill; red when they say something needs attention.
+    // The battery's is beside the clock (drawn there).
     for (i, a) in m.addons.iter().enumerate().rev() {
-        if a.off || (a.text.is_empty() && a.icon.is_empty()) {
-            continue;
+        if a.id != BATTERY_ADDON {
+            addon_pill(pix, icons, &mut hits, &mut rx, i, a);
         }
-        let text = a.display(m.now_secs);
-        let isz = (14.0 * s) as u32;
-        let icon_w = if a.icon.is_empty() {
-            0.0
-        } else if text.is_empty() {
-            isz as f32
-        } else {
-            isz as f32 + 6.0 * s
-        };
-        let aw = paint::text_width(&fonts.regular, 12.0 * s, &text) + 20.0 * s + icon_w;
-        rx -= aw;
-        pill(pix, rx, aw);
-        if hover == Some(hits.len()) {
-            paint::fill_rounded(pix, rx, py, aw, ph, r, lk.hover);
-        }
-        let col = match a.level {
-            crate::addons::Level::Alert => (240, 96, 96, 255),
-            crate::addons::Level::Warn => (232, 176, 72, 255),
-            crate::addons::Level::Ok => lk.text,
-        };
-        if !a.icon.is_empty() {
-            if let Some(ic) = icons.get_tinted(&a.icon, isz, lk.text) {
-                paint::draw_pixmap(pix, ic, (rx + 10.0 * s) as i32, (cy - isz as f32 / 2.0).round() as i32);
-            }
-        }
-        paint::draw_text(pix, &fonts.regular, 12.0 * s, rx + 10.0 * s + icon_w, cy, col, &text);
-        hits.push(Hit { rect: (rx, 0.0, aw, h), action: Action::Addon(i) });
-        rx -= 6.0 * s;
     }
 
     let iw = 28.0 * s;

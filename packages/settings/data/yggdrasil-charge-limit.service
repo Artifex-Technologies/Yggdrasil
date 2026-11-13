@@ -1,0 +1,12 @@
+# The battery's charge limit (Settings > Power, or the top bar's battery) set again at boot, for laptops whose firmware forgets
+# it. Enabled by `battery set-limit` the first time a limit is chosen.
+[Unit]
+Description=Set the battery's charge limit
+ConditionPathExists=/etc/yggdrasil/charge-limit
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/yggdrasil/battery restore
+
+[Install]
+WantedBy=multi-user.target

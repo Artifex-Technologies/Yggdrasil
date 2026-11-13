@@ -2722,6 +2722,43 @@ impl App {
             return;
         }
         let Some(p) = self.data.power.clone() else { return loading(ui) };
+        // A laptop's battery (only on a computer with one): its charge, health and charge limit, as in the top bar's drop-down
+        if let Some(b) = &p.battery {
+            let mut new_limit: Option<i64> = None;
+            ui::group(ui, pal, Some("Battery"), |ui| {
+                ui::row(ui, pal, true, &format!("{} %", b.percent), Some(&b.status), |ui| {
+                    ui.add(egui::ProgressBar::new(b.percent as f32 / 100.0).desired_width(160.0));
+                });
+                if let Some(h) = b.health {
+                    let note = match b.cycles {
+                        Some(c) => format!("Of its capacity when new, after {c} charge cycles"),
+                        None => "Of its capacity when new".to_string(),
+                    };
+                    ui::row(ui, pal, false, &format!("Health: {h} %"), Some(&note), |_| {});
+                }
+                if let Some(limit) = b.limit {
+                    const LIMITS: [i64; 4] = [60, 80, 90, 100];
+                    let sel = LIMITS.iter().position(|&l| l == limit).unwrap_or(LIMITS.len() - 1);
+                    ui::row(
+                        ui,
+                        pal,
+                        false,
+                        "Charge limit",
+                        Some("Stop charging here: 80 % is best for the battery's life when the laptop is mostly plugged in"),
+                        |ui| {
+                            if let Some(i) = ui::segmented(ui, pal, &["60 %", "80 %", "90 %", "100 %"], sel) {
+                                new_limit = Some(LIMITS[i]);
+                            }
+                        },
+                    );
+                }
+            });
+            if let Some(l) = new_limit {
+                let arg = l.to_string();
+                self.change(ctx, move || sys::act("pkexec", &["/usr/lib/yggdrasil/battery", "set-limit", &arg]));
+            }
+            ui.add_space(8.0);
+        }
         let mut profile: Option<String> = None;
         // Developer options add the selected mode's limits under the mode itself: the processor's clock, then the graphics
         // card's power (and, on a card in the unlock's support table, the unlock). Choosing another mode shows that mode's.
