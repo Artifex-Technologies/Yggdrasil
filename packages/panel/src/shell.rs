@@ -289,6 +289,16 @@ pub fn dock_items(m: &Model) -> Vec<DockItem> {
 /// The battery's bar add-on (yggdrasil-battery.conf, installed with Settings): its pill goes beside the clock.
 pub const BATTERY_ADDON: &str = "yggdrasil-battery";
 
+/// The battery pill's level (0 to 100) and whether it is charging; None when there is nothing to draw: the add-on said "off"
+/// (no battery) or has not written its file yet (a desktop between an update and the next login showed an empty "0%" battery).
+pub fn battery_pill(a: &crate::addons::View) -> Option<(f32, bool)> {
+    if a.off {
+        return None;
+    }
+    let pct = a.lines.first().and_then(|l| l.percent)?.clamp(0.0, 100.0);
+    Some((pct, a.icon.contains("charging")))
+}
+
 /// Dock id of the trash, which is not an app.
 pub const TRASH_ID: &str = "yggdrasil:trash";
 
@@ -558,9 +568,9 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
 
     // A laptop's battery, right beside the clock (an add-on of Settings' own; it says "off" on a computer with no battery)
     // drawn as on a Mac: "72%" and a battery that fills to the level (green with a bolt while charging, amber and red when low)
-    if let Some((i, a)) = m.addons.iter().enumerate().find(|(_, a)| a.id == BATTERY_ADDON && !a.off) {
-        let pct = a.lines.first().and_then(|l| l.percent).unwrap_or(0.0).clamp(0.0, 100.0);
-        let charging = a.icon.contains("charging");
+    if let Some((i, a, (pct, charging))) =
+        m.addons.iter().enumerate().find_map(|(i, a)| (a.id == BATTERY_ADDON).then(|| battery_pill(a)).flatten().map(|b| (i, a, b)))
+    {
         let label = format!("{}%", pct.round() as u32);
         let tw = paint::text_width(&fonts.regular, 12.5 * s, &label);
         let (bw, bh, nub) = (23.0 * s, 11.5 * s, 2.0 * s);
@@ -1941,6 +1951,21 @@ pub fn paint_dock(pix: &mut Pixmap, s: f32, m: &Model, fonts: &Fonts, icons: &mu
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_battery_pill_shows_only_once_the_battery_said_its_level() {
+        let a = |out: Option<&str>| match out {
+            Some(o) => crate::addons::parse(super::BATTERY_ADDON, "Battery", o),
+            // the add-on's file is not written yet (a desktop before `battery watch` ran): its conf's icon, no text
+            None => crate::addons::View { id: super::BATTERY_ADDON.into(), icon: "battery-good-symbolic".into(), ..Default::default() },
+        };
+        assert_eq!(super::battery_pill(&a(None)), None, "no file yet: no empty 0 % battery on a desktop");
+        assert_eq!(super::battery_pill(&a(Some(r#"{"state":"off"}"#))), None);
+        let laptop = a(Some(
+            r#"{"text":"72 %","icon":"battery-level-70-charging-symbolic","state":"ok","lines":[{"title":"Battery","value":"72 %","percent":72}]}"#,
+        ));
+        assert_eq!(super::battery_pill(&laptop), Some((72.0, true)));
+    }
+
     fn ids(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
     }
