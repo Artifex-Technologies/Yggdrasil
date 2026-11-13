@@ -1914,9 +1914,13 @@ impl App {
             });
         });
         ui.scope_builder(egui::UiBuilder::new().max_rect(main), |ui| {
-            egui::ScrollArea::vertical()
-                .id_salt("perf-main")
-                .show(ui, |ui| self.perf_detail(ui, pal, data, cpu_col, mem_col, disk_col, net_col, gpu_col));
+            // a margin on the right: the scroll bar floats over the pane's edge, and the processor's name, the 100% and the graph
+            // ran to it and looked cut off (an X1 Yoga, 2026-11-13)
+            egui::ScrollArea::vertical().id_salt("perf-main").show(ui, |ui| {
+                egui::Frame::new()
+                    .inner_margin(egui::Margin { left: 0, right: 18, top: 0, bottom: 8 })
+                    .show(ui, |ui| self.perf_detail(ui, pal, data, cpu_col, mem_col, disk_col, net_col, gpu_col));
+            });
         });
     }
 
