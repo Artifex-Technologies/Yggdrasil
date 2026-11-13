@@ -203,6 +203,52 @@ pub fn net_row(
     }
 }
 
+/// A device's row, as on a phone: its name (and a line under it), a status on the right ("Connected", "Not Connected") and, with
+/// `info`, an (i). The whole row is one button; the (i) is a button of its own.
+pub fn status_row(
+    ui: &mut egui::Ui,
+    pal: &Palette,
+    first: bool,
+    title: &str,
+    subtitle: Option<&str>,
+    status: &str,
+    info_button: bool,
+) -> NetClick {
+    let bg = ui.painter().add(egui::Shape::Noop);
+    let id = ui.next_auto_id();
+    let mut info = egui::Rect::NOTHING;
+    let r = ui.scope(|ui| {
+        row(ui, pal, first, title, subtitle, |ui| {
+            if info_button {
+                let (rect, _) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::hover());
+                info = rect;
+                ui.add_space(6.0);
+            }
+            ui.label(RichText::new(status).color(pal.dim));
+        });
+    });
+    let resp = ui.interact(r.response.rect, id.with("status"), Sense::click());
+    let over_info = resp.hover_pos().is_some_and(|p| info.expand(2.0).contains(p));
+    if resp.hovered() {
+        let mut hl = r.response.rect.expand2(vec2(6.0, 0.0));
+        hl.min.y += if first { 3.0 } else { 4.0 };
+        hl.max.y -= 3.0;
+        ui.painter().set(bg, egui::Shape::rect_filled(hl, CornerRadius::same(8), if over_info { Color32::TRANSPARENT } else { pal.hover }));
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    if over_info {
+        ui.painter().circle_filled(info.center(), 13.0, pal.hover);
+    }
+    if info_button {
+        crate::icons::paint(ui.painter(), info.shrink(3.0), crate::icons::Icon::Info, pal.accent);
+    }
+    match (resp.clicked(), resp.interact_pointer_pos().is_some_and(|p| info.expand(2.0).contains(p))) {
+        (true, true) => NetClick::Info,
+        (true, false) => NetClick::Row,
+        _ => NetClick::None,
+    }
+}
+
 /// An on/off switch, drawn like GNOME's (accent when on).
 pub fn switch(ui: &mut egui::Ui, pal: &Palette, on: &mut bool) -> egui::Response {
     let (rect, mut resp) = ui.allocate_exact_size(vec2(44.0, 24.0), Sense::click());

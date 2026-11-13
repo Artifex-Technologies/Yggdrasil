@@ -34,6 +34,14 @@ rows, a row that opens a page ending in ›, and a small grey note under a card 
   open. The apps' share counts the apps open now; apps already closed would need a small record kept in the background,
   which I left out.
 
+- **Bluetooth** (`src/bluetooth_ui.rs`), laid out like Wi-Fi: the switch; My Devices (paired, each Connected or Not
+  Connected; a tap connects, the (i) opens its page with its kind, battery, address, Connect/Disconnect and Forget This
+  Device, asked twice); Other Devices, found while the page is open (a tap pairs, trusts and connects; a code to compare or
+  type comes up in yggdrasil-polkit, BlueZ's agent); then the game controllers as before. The search is a BlueZ discovery
+  session on a D-Bus connection of the page's own, read every two seconds and dropped when the page is left (BlueZ ends a
+  client's discovery when its connection closes, so it stops even if Settings is killed). The "Searching" mark stands still:
+  a turning one redrew the whole window several times a second (15 % of a core with software drawing).
+
 ## The pages
 
 - **The list** (2026-11-13, as on a tablet): a card at the top with Default Apps ("Manage default apps", no longer in the
@@ -147,7 +155,7 @@ About only when switched on, have no picture.
 | **General > Storage**: each disk's use (`system.json`'s made-up disks). | ![Settings > General > Storage](../assets/screenshots/settings-storage.png) |
 | **General > Language & Region**: the system's language, a separate region for dates and times. | ![Settings > General > Language & Region](../assets/screenshots/settings-language.png) |
 | **Wi-Fi & Network**: the network in use, Known Networks and Other Networks (`wifi.json`). | ![Settings > Wi-Fi & Network](../assets/screenshots/settings-network.png) |
-| **Bluetooth**: paired devices with their battery, and a game controller. | ![Settings > Bluetooth](../assets/screenshots/settings-bluetooth.png) |
+| **Bluetooth**: My Devices (Connected / Not Connected, an (i) each), Other Devices found nearby, a game controller. | ![Settings > Bluetooth](../assets/screenshots/settings-bluetooth.png) |
 | **Displays**: three displays attached, one disconnected; the arrangement box with the main display (1) selected, its settings below. | ![Settings > Displays](../assets/screenshots/settings-displays.png) |
 | **Displays, a disconnected display selected**: grey and smaller in the box, Connect among its settings. | ![Settings > Displays, a disconnected display](../assets/screenshots/settings-displays-connect.png) |
 | **Displays, one display** (`displays-single.json`): its settings at once, no box, no Duplicate or Disconnect. | ![Settings > Displays, one display](../assets/screenshots/settings-displays-single.png) |

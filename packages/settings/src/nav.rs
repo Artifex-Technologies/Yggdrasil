@@ -59,6 +59,12 @@ impl App {
                     l.push("Wi-Fi checks".into());
                 }
             }
+            Page::Bluetooth => {
+                if let Some(mac) = &self.bt_open {
+                    let d = self.data.bluetooth.as_ref().and_then(|b| b.devices.iter().find(|d| &d.mac == mac));
+                    l.push(d.map(|d| d.name.clone()).unwrap_or_else(|| "Device".into()));
+                }
+            }
             Page::Appearance => {
                 let t = match self.app_sub {
                     AppSub::Main => None,
@@ -157,6 +163,10 @@ impl App {
                     self.wifi_history = false;
                 }
             }
+            Page::Bluetooth => {
+                self.bt_open = None;
+                self.bt_forget = false;
+            }
             Page::Appearance => self.app_sub = AppSub::Main,
             Page::Power => {
                 self.power_fans = false;
@@ -201,6 +211,12 @@ impl App {
                 self.lan_dev = None;
                 self.lan_rename = None;
                 self.wifi_check_open = false;
+            }
+            Page::Bluetooth => {
+                self.bt_open = None;
+                self.bt_forget = false;
+                self.pad_sel = None;
+                self.pad_add = None;
             }
             Page::Appearance => self.app_sub = AppSub::Main,
             Page::Power => {

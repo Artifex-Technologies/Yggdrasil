@@ -505,21 +505,6 @@ pub fn bt_nearby() -> Vec<(String, String)> {
         .collect()
 }
 
-/// Looks for devices nearby for `secs` seconds (in the background; bt_nearby lists what turned up).
-pub fn bt_scan(secs: u32) {
-    if let Ok(mut c) = Command::new("bluetoothctl")
-        .args(["--timeout", &secs.to_string(), "scan", "on"])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-    {
-        std::thread::spawn(move || {
-            let _ = c.wait();
-        });
-    }
-}
-
 /// The BlueZ object of a device: /org/bluez/hci0/dev_AA_BB_CC_DD_EE_FF (the first adapter).
 pub fn bt_path(mac: &str) -> Option<String> {
     let adapter = std::fs::read_dir("/sys/class/bluetooth")

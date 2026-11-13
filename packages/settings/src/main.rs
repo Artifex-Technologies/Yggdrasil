@@ -8,6 +8,7 @@
 mod appmgr;
 mod apps_ui;
 mod battery;
+mod bluetooth_ui;
 mod controls;
 mod cpu;
 mod curve;
@@ -390,9 +391,11 @@ struct App {
     boot_info: Option<(std::time::Instant, serde_json::Value)>,
     boot_pic: String,
     splash_pic: String,
-    /// Bluetooth > Add a device: searching until, what was found (and when it was last asked), the one being paired.
-    bt_scan_until: Option<std::time::Instant>,
-    bt_found: (std::time::Instant, Vec<(String, String)>),
+    /// Bluetooth: the search for devices nearby (only while the page is open), the paired device whose page is open and whether
+    /// Forget was asked on it, and the device being paired or connected.
+    bt_scan: Option<bluetooth_ui::Scanner>,
+    bt_open: Option<String>,
+    bt_forget: bool,
     bt_pairing: Option<String>,
     bt_pairing_done: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Bluetooth > Controllers: the controller whose options are open (its address or serial), and Add a controller: None when
@@ -549,8 +552,9 @@ impl App {
             boot_info: None,
             boot_pic: String::new(),
             splash_pic: String::new(),
-            bt_scan_until: None,
-            bt_found: (std::time::Instant::now(), vec![]),
+            bt_scan: None,
+            bt_open: None,
+            bt_forget: false,
             bt_pairing: None,
             bt_pairing_done: Default::default(),
             pad_sel: None,
@@ -833,6 +837,13 @@ impl eframe::App for App {
         if !(self.page == Page::Power && self.power_fans) {
             self.fans_panel = None;
         }
+        // devices nearby are looked for only while the Bluetooth page is open and Bluetooth is on; leaving it ends the search
+        let scan = self.page == Page::Bluetooth && self.data.bluetooth.as_ref().is_some_and(|b| b.present && b.powered);
+        if !scan {
+            self.bt_scan = None;
+        } else if self.bt_scan.is_none() {
+            self.bt_scan = Some(bluetooth_ui::Scanner::start(&ctx));
+        }
         if !(self.page == Page::Security && self.sec_sub == SecSub::Limbo) {
             self.limbo_panel = None;
         }
@@ -854,7 +865,6 @@ impl eframe::App for App {
             }
             ctx.request_repaint_after(std::time::Duration::from_secs(30));
         } else if self.page == Page::Bluetooth
-            && self.bt_scan_until.is_none()
             && self.data.bluetooth.as_ref().is_some_and(|b| !b.pads.is_empty() || !b.paired_pads.is_empty())
         {
             // controllers listed: their battery (and whether they are connected) stays current
@@ -1732,389 +1742,6 @@ impl App {
             // over D-Bus: on nmcli's command line every program could read the password (/proc/PID/cmdline)
             self.change(ctx, move || wifijoin::connect(&ssid, &pw));
         }
-    }
-
-    fn page_bluetooth(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
-        let Some(b) = self.data.bluetooth.clone() else { return loading(ui) };
-        if !b.present {
-            ui::group(ui, pal, None, |ui| ui::row(ui, pal, true, "No Bluetooth adapter found", None, |_| {}));
-            return;
-        }
-        let mut on = b.powered;
-        let mut toggled = false;
-        ui::group(ui, pal, None, |ui| {
-            ui::row(ui, pal, true, "Bluetooth", Some("Keyboards, mice, headphones and phones"), |ui| {
-                toggled = ui::switch(ui, pal, &mut on).changed();
-            });
-        });
-        if toggled {
-            let arg = if on { "on" } else { "off" };
-            self.change(ctx, move || sys::act("bluetoothctl", &["power", arg]));
-        }
-        if b.powered {
-            let mut act: Option<(String, &'static str)> = None;
-            ui::group(ui, pal, Some("Devices"), |ui| {
-                if b.devices.is_empty() {
-                    // game controllers have their own list below
-                    let none = if b.paired_pads.is_empty() { "No devices yet" } else { "No other devices" };
-                    ui::row(ui, pal, true, none, Some("Use “Add a device” to pair one"), |_| {});
-                }
-                for (i, d) in b.devices.iter().enumerate() {
-                    let mut sub = if d.connected { "Connected".to_string() } else { "Not connected".to_string() };
-                    if let Some(p) = d.battery {
-                        sub.push_str(&format!(" · Battery {p}%"));
-                    }
-                    ui::row(ui, pal, i == 0, &d.name, Some(&sub), |ui| {
-                        if ui::quiet(ui, pal, "Forget").clicked() {
-                            act = Some((d.mac.clone(), "remove"));
-                        }
-                        if d.connected {
-                            if ui::quiet(ui, pal, "Disconnect").clicked() {
-                                act = Some((d.mac.clone(), "disconnect"));
-                            }
-                        } else if ui::action(ui, pal, "Connect").clicked() {
-                            act = Some((d.mac.clone(), "connect"));
-                        }
-                    });
-                }
-            });
-            if let Some((mac, verb)) = act {
-                self.change(ctx, move || sys::act("bluetoothctl", &[verb, &mac]));
-            }
-            ui.add_space(8.0);
-            if self.pad_add.is_none() {
-                self.bt_add(ui, pal, ctx);
-            }
-            ui.add_space(8.0);
-            self.bt_controllers(ui, pal, ctx, &b);
-        }
-    }
-
-    /// Bluetooth > Controllers: game controllers (connected over USB or Bluetooth, or paired and off) with their battery; one's
-    /// options open below it: light bar colour, player light, a rumble test, disconnect and forget. The lights chosen are kept in
-    /// ~/.config/yggdrasil/controllers.json, which the Controllers plugin reads to put them back on every connection.
-    fn bt_controllers(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context, b: &sys::Bluetooth) {
-        const COLOURS: [(&str, [u8; 3]); 6] = [
-            ("Purple", [124, 84, 214]),
-            ("Blue", [40, 110, 255]),
-            ("Red", [255, 40, 40]),
-            ("Green", [34, 197, 94]),
-            ("White", [255, 255, 255]),
-            ("Off", [0, 0, 0]),
-        ];
-        enum Do {
-            Select(String),
-            Light(gamepads::Pad, [u8; 3]),
-            Player(gamepads::Pad, u8),
-            Rumble(gamepads::Pad),
-            Bt(String, &'static str),
-        }
-        let mut todo: Option<Do> = None;
-        // the paired Bluetooth controllers that are off (the connected ones are listed from the kernel, with their battery)
-        let off: Vec<&sys::BtDevice> =
-            b.paired_pads.iter().filter(|d| !b.pads.iter().any(|p| p.mac() == Some(d.mac.to_lowercase().as_str()))).collect();
-        ui::group(ui, pal, Some("Controllers"), |ui| {
-            if b.pads.is_empty() && off.is_empty() {
-                ui::row(
-                    ui,
-                    pal,
-                    true,
-                    "No controllers yet",
-                    Some("Use “Add a controller” to pair one, or plug one in with a cable"),
-                    |_| {},
-                );
-            }
-            for (i, p) in b.pads.iter().enumerate() {
-                let key = p.uniq.clone();
-                let open = self.pad_sel.as_deref() == Some(key.as_str());
-                let mut sub = p.connection.label().to_string();
-                if let Some(bat) = &p.battery {
-                    sub.push_str(&format!(" · {}", bat.describe()));
-                }
-                ui::row(ui, pal, i == 0, &p.title(), Some(&sub), |ui| {
-                    if ui::quiet(ui, pal, if open { "Close" } else { "Options" }).clicked() {
-                        todo = Some(Do::Select(if open { String::new() } else { key.clone() }));
-                    }
-                    if let Some(pct) = p.battery.as_ref().and_then(|bat| bat.estimate()) {
-                        let charging = p.battery.as_ref().is_some_and(|bat| bat.charging());
-                        let (r, _) = ui.allocate_exact_size(egui::vec2(90.0, 8.0), egui::Sense::hover());
-                        ui.painter().rect_filled(r, 4.0, pal.field);
-                        let col = if charging || pct > 40 {
-                            pal.green
-                        } else if pct > 20 {
-                            pal.amber
-                        } else {
-                            pal.red
-                        };
-                        let mut fill = r;
-                        fill.set_width((r.width() * pct as f32 / 100.0).max(8.0));
-                        ui.painter().rect_filled(fill, 4.0, col);
-                    }
-                });
-                if !open {
-                    continue;
-                }
-                if p.leds.has_lightbar() {
-                    let current = b.pad_settings.lightbar_for(p);
-                    ui::row(
-                        ui,
-                        pal,
-                        false,
-                        "Light bar",
-                        if p.leds.writable { None } else { Some("Install Controller support from Agora to change the lights") },
-                        |ui| {
-                            ui.add_enabled_ui(p.leds.writable, |ui| {
-                                for (name, rgb) in COLOURS.iter().rev() {
-                                    let (r, resp) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::click());
-                                    let c = if *rgb == [0, 0, 0] { pal.field } else { egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]) };
-                                    ui.painter().circle_filled(r.center(), 10.0, c);
-                                    if current == Some(*rgb) || resp.hovered() {
-                                        ui.painter().circle_stroke(r.center(), 11.5, egui::Stroke::new(2.0, pal.text));
-                                    }
-                                    if resp.on_hover_text(*name).clicked() {
-                                        todo = Some(Do::Light(p.clone(), *rgb));
-                                    }
-                                }
-                            });
-                        },
-                    );
-                }
-                if !p.leds.players.is_empty() {
-                    let now = b.pad_settings.player_for(p).unwrap_or(0) as usize;
-                    ui::row(ui, pal, false, "Player light", None, |ui| {
-                        ui.add_enabled_ui(p.leds.writable, |ui| {
-                            if let Some(n) = ui::segmented(ui, pal, &["Off", "1", "2", "3", "4", "5"], now) {
-                                todo = Some(Do::Player(p.clone(), n as u8));
-                            }
-                        });
-                    });
-                }
-                if let Some(mode) = p.mode() {
-                    // an 8BitDo: the mode it was switched into decides which driver takes it
-                    let note = match mode {
-                        "Xbox mode" => "Recommended. Over Bluetooth it works best with Xbox controller support from Agora",
-                        "Switch mode" => "Driven like a Switch Pro Controller",
-                        _ => "Basic buttons only; Xbox mode (Start + X when pairing) works best",
-                    };
-                    ui::row(ui, pal, false, &format!("Mode: {mode}"), Some(note), |_| {});
-                    let fw_note = if p.model == gamepads::Model::XboxCompatible {
-                        "If it is an 8BitDo: use a Chromium-based browser such as Vivaldi; connect the controller by USB"
-                    } else {
-                        "Use a Chromium-based browser such as Vivaldi; connect the controller by USB"
-                    };
-                    ui::row(ui, pal, false, "Firmware updates", Some(fw_note), |ui| {
-                        if ui::quiet(ui, pal, "Open 8BitDo's updater").clicked() {
-                            let _ = std::process::Command::new("xdg-open")
-                                .arg("https://web.8bitdo.com")
-                                .stdin(std::process::Stdio::null())
-                                .spawn();
-                        }
-                    });
-                }
-                ui::row(ui, pal, false, "Rumble", Some("A short buzz, to check it works"), |ui| {
-                    ui.add_enabled_ui(p.event.is_some(), |ui| {
-                        if ui::quiet(ui, pal, "Test").clicked() {
-                            todo = Some(Do::Rumble(p.clone()));
-                        }
-                    });
-                });
-                if let Some(mac) = p.mac() {
-                    let mac = mac.to_uppercase();
-                    ui::row(ui, pal, false, &mac, Some("Bluetooth address"), |ui| {
-                        if ui::quiet(ui, pal, "Forget").clicked() {
-                            todo = Some(Do::Bt(mac.clone(), "remove"));
-                        }
-                        if ui::quiet(ui, pal, "Disconnect").clicked() {
-                            todo = Some(Do::Bt(mac.clone(), "disconnect"));
-                        }
-                    });
-                }
-            }
-            for (i, d) in off.iter().enumerate() {
-                ui::row(ui, pal, i == 0 && b.pads.is_empty(), &d.name, Some("Not connected · press its PS, Xbox or Home button"), |ui| {
-                    if ui::quiet(ui, pal, "Forget").clicked() {
-                        todo = Some(Do::Bt(d.mac.clone(), "remove"));
-                    }
-                    if ui::action(ui, pal, "Connect").clicked() {
-                        todo = Some(Do::Bt(d.mac.clone(), "connect"));
-                    }
-                });
-            }
-            if !std::path::Path::new("/usr/bin/yggdrasil-controllers").exists() {
-                ui::row(
-                    ui,
-                    pal,
-                    false,
-                    "Controller support",
-                    Some("Battery in the top bar, and your lights kept between connections"),
-                    |ui| {
-                        if ui::quiet(ui, pal, "Get it in Agora").clicked() {
-                            sys::spawn("agora", &[]);
-                        }
-                    },
-                );
-            }
-        });
-        match todo {
-            Some(Do::Select(k)) => self.pad_sel = (!k.is_empty()).then_some(k),
-            Some(Do::Light(p, rgb)) => {
-                let mut st = b.pad_settings.clone();
-                st.per_pad.entry(p.uniq.clone()).or_default().lightbar = Some(gamepads::color_hex(rgb));
-                self.change(ctx, move || {
-                    st.save().map_err(|e| e.to_string())?;
-                    gamepads::set_lightbar(&p, rgb)
-                });
-            }
-            Some(Do::Player(p, n)) => {
-                let mut st = b.pad_settings.clone();
-                st.per_pad.entry(p.uniq.clone()).or_default().player = Some(n);
-                self.change(ctx, move || {
-                    st.save().map_err(|e| e.to_string())?;
-                    gamepads::set_player(&p, n)
-                });
-            }
-            Some(Do::Rumble(p)) => {
-                // it blocks for the length of the buzz: on a thread, not reloading the page
-                std::thread::spawn(move || {
-                    let _ = gamepads::rumble(&p, 400);
-                });
-            }
-            Some(Do::Bt(mac, verb)) => {
-                if verb == "remove" {
-                    self.pad_sel = None;
-                }
-                self.change(ctx, move || sys::act("bluetoothctl", &[verb, &mac]));
-            }
-            None => {}
-        }
-        ui.add_space(8.0);
-        self.pad_add_flow(ui, pal, ctx);
-    }
-
-    /// Bluetooth > Controllers > Add a controller: which kind, how to put it in pairing mode, then the same search and pairing as
-    /// Add a device.
-    fn pad_add_flow(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
-        use gamepads::Model;
-        const KINDS: [(&str, Model); 6] = [
-            ("PlayStation 4", Model::DualShock4),
-            ("PlayStation 5", Model::DualSense),
-            ("Xbox", Model::Xbox),
-            ("Switch Pro", Model::SwitchPro),
-            ("8BitDo", Model::EightBitDo),
-            ("Other", Model::Other),
-        ];
-        match self.pad_add {
-            None => {
-                if ui::action(ui, pal, "Add a controller…").clicked() {
-                    self.pad_add = Some(None);
-                }
-            }
-            Some(None) => {
-                let mut pick = None;
-                ui::group(ui, pal, Some("Which controller?"), |ui| {
-                    for (i, (name, m)) in KINDS.iter().enumerate() {
-                        ui::row(ui, pal, i == 0, name, None, |ui| {
-                            if ui::action(ui, pal, "Choose").clicked() {
-                                pick = Some(*m);
-                            }
-                        });
-                    }
-                });
-                if ui::quiet(ui, pal, "Cancel").clicked() {
-                    self.pad_add = None;
-                }
-                if let Some(m) = pick {
-                    self.pad_add = Some(Some(m));
-                    sys::bt_scan(30);
-                    self.bt_scan_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(30));
-                    self.bt_found = (std::time::Instant::now(), vec![]);
-                }
-            }
-            Some(Some(m)) => {
-                ui::group(ui, pal, Some("Pairing mode"), |ui| {
-                    ui::row(ui, pal, true, m.pairing_hint(), Some("Then pick it below when it turns up"), |_| {});
-                    if m == Model::Xbox || m == Model::EightBitDo {
-                        ui::row(
-                            ui,
-                            pal,
-                            false,
-                            "Xbox controllers (and 8BitDo in Xbox mode) work best with Xbox controller support from Agora (xpadneo)",
-                            None,
-                            |_| {},
-                        );
-                    }
-                });
-                ui.add_space(6.0);
-                self.bt_add(ui, pal, ctx);
-                if self.bt_scan_until.is_none() {
-                    // Done in the list: the flow is over
-                    self.pad_add = None;
-                }
-            }
-        }
-    }
-
-    /// Bluetooth > Add a device: looks for devices nearby for 20 seconds and lists them as they turn up; Pair pairs, trusts
-    /// and connects one (a code to compare comes up in Yggdrasil's own box).
-    fn bt_add(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
-        let searching = self.bt_scan_until.map(|t| std::time::Instant::now() < t).unwrap_or(false);
-        if self.bt_scan_until.is_none() {
-            if ui::action(ui, pal, "Add a device…").on_hover_text("Put the device in pairing mode first").clicked() {
-                sys::bt_scan(20);
-                self.bt_scan_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(20));
-                self.bt_found = (std::time::Instant::now(), vec![]);
-            }
-            return;
-        }
-        if self.bt_found.0.elapsed() > std::time::Duration::from_millis(1500) {
-            self.bt_found = (std::time::Instant::now(), sys::bt_nearby());
-        }
-        let mut pair: Option<String> = None;
-        ui::group(ui, pal, Some(if searching { "Looking for devices nearby…" } else { "Devices nearby" }), |ui| {
-            for (i, (mac, name)) in self.bt_found.1.iter().enumerate() {
-                ui::row(ui, pal, i == 0, name, Some(mac), |ui| {
-                    if self.bt_pairing.as_deref() == Some(mac.as_str()) {
-                        ui.label(RichText::new("Pairing…").color(pal.dim));
-                    } else if ui::action(ui, pal, "Pair").clicked() {
-                        pair = Some(mac.clone());
-                    }
-                });
-            }
-            if self.bt_found.1.is_empty() {
-                ui.label(
-                    RichText::new(if searching {
-                        "Nothing yet. Put the device in pairing mode."
-                    } else {
-                        "Nothing found. Is the device in pairing mode?"
-                    })
-                    .color(pal.dim),
-                );
-            }
-        });
-        ui.horizontal(|ui| {
-            if !searching && ui::quiet(ui, pal, "Look again").clicked() {
-                sys::bt_scan(20);
-                self.bt_scan_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(20));
-            }
-            if ui::quiet(ui, pal, "Done").clicked() {
-                self.bt_scan_until = None;
-                self.bt_found.1.clear();
-            }
-        });
-        if let Some(mac) = pair {
-            self.bt_pairing = Some(mac.clone());
-            let busy = self.bt_pairing_done.clone();
-            busy.store(false, std::sync::atomic::Ordering::Release);
-            self.change(ctx, move || {
-                let r = sys::bt_pair(&mac);
-                busy.store(true, std::sync::atomic::Ordering::Release);
-                r
-            });
-        }
-        if self.bt_pairing_done.load(std::sync::atomic::Ordering::Acquire) {
-            self.bt_pairing = None;
-        }
-        ctx.request_repaint_after(std::time::Duration::from_millis(700));
     }
 
     fn page_displays(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
