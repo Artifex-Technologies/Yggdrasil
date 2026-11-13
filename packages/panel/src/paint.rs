@@ -120,6 +120,25 @@ pub fn fill_circle(pix: &mut Pixmap, cx: f32, cy: f32, r: f32, c: Rgba) {
     fill_rounded(pix, cx - r, cy - r, r * 2.0, r * 2.0, r, c);
 }
 
+/// A filled shape through `pts` (closed), such as the battery's charging bolt.
+pub fn fill_polygon(pix: &mut Pixmap, pts: &[(f32, f32)], c: Rgba) {
+    let mut pb = PathBuilder::new();
+    for (i, &(x, y)) in pts.iter().enumerate() {
+        if i == 0 {
+            pb.move_to(x, y);
+        } else {
+            pb.line_to(x, y);
+        }
+    }
+    pb.close();
+    if let Some(path) = pb.finish() {
+        let mut paint = Paint::default();
+        paint.set_color(color(c));
+        paint.anti_alias = true;
+        pix.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+    }
+}
+
 // ---------------------------------------------------------------- fonts
 
 pub struct Fonts {

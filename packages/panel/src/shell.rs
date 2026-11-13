@@ -557,8 +557,50 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
     rx -= 6.0 * s;
 
     // A laptop's battery, right beside the clock (an add-on of Settings' own; it says "off" on a computer with no battery)
-    if let Some((i, a)) = m.addons.iter().enumerate().find(|(_, a)| a.id == BATTERY_ADDON) {
-        addon_pill(pix, icons, &mut hits, &mut rx, i, a);
+    // drawn as on a Mac: "72%" and a battery that fills to the level (green with a bolt while charging, amber and red when low)
+    if let Some((i, a)) = m.addons.iter().enumerate().find(|(_, a)| a.id == BATTERY_ADDON && !a.off) {
+        let pct = a.lines.first().and_then(|l| l.percent).unwrap_or(0.0).clamp(0.0, 100.0);
+        let charging = a.icon.contains("charging");
+        let label = format!("{}%", pct.round() as u32);
+        let tw = paint::text_width(&fonts.regular, 12.5 * s, &label);
+        let (bw, bh, nub) = (23.0 * s, 11.5 * s, 2.0 * s);
+        let aw = 10.0 * s + tw + 6.0 * s + bw + nub + 10.0 * s;
+        rx -= aw;
+        pill(pix, rx, aw);
+        if lit(&hits) {
+            paint::fill_rounded(pix, rx, py, aw, ph, r, lk.hover);
+        }
+        paint::draw_text(pix, &fonts.regular, 12.5 * s, rx + 10.0 * s, cy, lk.text, &label);
+        let (bx, by) = (rx + 10.0 * s + tw + 6.0 * s, cy - bh / 2.0);
+        let (outline, cr) = ((lk.text.0, lk.text.1, lk.text.2, 150), 3.0 * s);
+        paint::stroke_rounded(pix, bx, by, bw, bh, cr, 1.1 * s, outline);
+        paint::fill_rounded(pix, bx + bw + 0.6 * s, cy - 2.5 * s, nub, 5.0 * s, 1.0 * s, outline);
+        let fill = match a.level {
+            _ if charging => (52, 199, 89, 255),
+            crate::addons::Level::Alert => (240, 96, 96, 255),
+            crate::addons::Level::Warn => (232, 176, 72, 255),
+            crate::addons::Level::Ok => lk.text,
+        };
+        let inset = 2.0 * s;
+        let fw = (bw - inset * 2.0) * pct / 100.0;
+        if fw > 0.5 {
+            paint::fill_rounded(pix, bx + inset, by + inset, fw.max(1.5 * s), bh - inset * 2.0, 1.5 * s, fill);
+        }
+        if charging {
+            // a bolt across the middle, dark over the green
+            let (mx, my, u) = (bx + bw / 2.0, cy, s);
+            let bolt = [
+                (mx + 1.2 * u, my - 4.6 * u),
+                (mx - 2.6 * u, my + 0.6 * u),
+                (mx - 0.2 * u, my + 0.6 * u),
+                (mx - 1.2 * u, my + 4.6 * u),
+                (mx + 2.6 * u, my - 0.6 * u),
+                (mx + 0.2 * u, my - 0.6 * u),
+            ];
+            paint::fill_polygon(pix, &bolt, (20, 20, 24, 255));
+        }
+        hits.push(Hit { rect: (rx, 0.0, aw, h), action: Action::Addon(i) });
+        rx -= 6.0 * s;
     }
 
     // Unread notifications: a small purple count beside the clock; clicking it opens the list.
