@@ -469,6 +469,9 @@ struct State {
     /// The touch screen (when the seat has one) and the finger being followed: taps act as clicks.
     touch: Option<WlTouch>,
     touch_id: Option<i32>,
+    /// A finger pulling Fylgja down from the notch: where it touched (the bar's logical y), how far down the card hangs
+    /// (0 to 1) and whether the finger has moved (a tap opens it fully).
+    fy_pull: Option<(f32, f32, bool)>,
     tab_output: u32,
     /// A question for the assistant being recorded, and when it began; its answer comes back on `voice_tx`.
     rec: Option<(std::process::Child, std::path::PathBuf)>,
@@ -2055,11 +2058,58 @@ impl State {
 
     /// How far down Fylgja hangs now: 1 when settled, between 0 and 1 while it slides.
     fn fy_slide(&self) -> f32 {
+        if let Some((_, f, _)) = self.fy_pull {
+            return f;
+        }
         match self.fy_anim {
             Some((t, true)) => fylgja::ease(t.elapsed().as_millis()),
             Some((t, false)) => 1.0 - fylgja::ease(t.elapsed().as_millis()),
             None => 1.0,
         }
+    }
+
+    /// A finger came down on the notch: Fylgja opens under it, hanging as far as the finger pulls (it stays open when the finger
+    /// leaves the bar, unlike the pointer's resting open).
+    fn start_pull(&mut self, y: f32) {
+        self.tab_on = false;
+        self.click_output = Some(self.tab_output);
+        self.toggle_popup(PopupKind::Fylgja(fylgja::FyState { open: true, pinned: true, ..Default::default() }));
+        if matches!(self.popup, Some(Popup { kind: PopupKind::Fylgja(_), .. })) {
+            self.fy_anim = None;
+            self.fy_pull = Some((y, 0.0, false));
+            self.dirty = true;
+        }
+    }
+
+    /// The pulling finger moved: the card follows it.
+    fn pull_moved(&mut self, y: f32) {
+        let Some((y0, _, moved)) = self.fy_pull else { return };
+        let h = match &self.popup {
+            Some(Popup { kind: PopupKind::Fylgja(st), .. }) => fylgja::card_size(&self.model, st).1.max(1.0),
+            _ => return,
+        };
+        self.fy_pull = Some((y0, ((y - y0) / h).clamp(0.0, 1.0), moved || (y - y0).abs() > 8.0));
+        self.dirty = true;
+    }
+
+    /// The pulling finger lifted: past a third of the card (or a tap) the card settles open, otherwise it goes back up; either
+    /// way it carries on from where the finger left it.
+    fn pull_released(&mut self) {
+        let Some((_, f, moved)) = self.fy_pull.take() else { return };
+        if !matches!(self.popup, Some(Popup { kind: PopupKind::Fylgja(_), .. })) {
+            return; // closed meanwhile (Escape)
+        }
+        let ms = |left: f32| Duration::from_millis((fylgja::SLIDE_MS as f32 * (1.0 - left.clamp(0.0, 1.0).cbrt())) as u64);
+        if !moved || f >= 0.3 {
+            // ease(t) = f: t = SLIDE_MS * (1 - cbrt(1 - f))
+            self.start_anim(true);
+            self.fy_anim = Some((Instant::now().checked_sub(ms(1.0 - f)).unwrap_or_else(Instant::now), true));
+        } else {
+            // 1 - ease(t) = f: t = SLIDE_MS * (1 - cbrt(f))
+            self.retract_fylgja();
+            self.fy_anim = Some((Instant::now().checked_sub(ms(f)).unwrap_or_else(Instant::now), false));
+        }
+        self.dirty = true;
     }
 
     /// Closes Fylgja by sliding it back up into the bar.
@@ -3860,22 +3910,39 @@ impl Dispatch<WlTouch, ()> for State {
                 }
                 state.touch_id = Some(id);
                 pointer_event(state, wl_pointer::Event::Enter { serial, surface, surface_x: x, surface_y: y });
+                // on the notch: the finger pulls Fylgja down (in any mode: laptop, tent or tablet)
+                if state.tab_hover && state.popup.is_none() {
+                    state.start_pull(y as f32);
+                    return;
+                }
                 pointer_event(
                     state,
                     wl_pointer::Event::Button { serial, time, button: 272, state: WEnum::Value(wl_pointer::ButtonState::Pressed) },
                 );
             }
             wl_touch::Event::Motion { time, id, x, y } if state.touch_id == Some(id) => {
+                if state.fy_pull.is_some() {
+                    state.pull_moved(y as f32);
+                    return;
+                }
                 pointer_event(state, wl_pointer::Event::Motion { time, surface_x: x, surface_y: y });
             }
             wl_touch::Event::Up { serial, time, id } if state.touch_id == Some(id) => {
                 state.touch_id = None;
+                if state.fy_pull.is_some() {
+                    state.pull_released();
+                    return;
+                }
                 pointer_event(
                     state,
                     wl_pointer::Event::Button { serial, time, button: 272, state: WEnum::Value(wl_pointer::ButtonState::Released) },
                 );
             }
             wl_touch::Event::Cancel if state.touch_id.take().is_some() => {
+                if state.fy_pull.is_some() {
+                    state.pull_released();
+                    return;
+                }
                 pointer_event(
                     state,
                     wl_pointer::Event::Button { serial: 0, time: 0, button: 272, state: WEnum::Value(wl_pointer::ButtonState::Released) },
@@ -4461,6 +4528,7 @@ fn main() {
         tab_on: false,
         touch: None,
         touch_id: None,
+        fy_pull: None,
         tab_output: 0,
         rec: None,
         rec_since: None,
