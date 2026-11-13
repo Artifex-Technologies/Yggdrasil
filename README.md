@@ -26,7 +26,7 @@ version that runs in a window ([docs/COMPOSITOR.md](docs/COMPOSITOR.md)). The ch
 | `packages/lock` | `yggdrasil-lock`, `yggdrasil-greeter`, `yggdrasil-shot` | the lock screen and the login screen with selectable designs ([docs/LOCKSCREEN.md](docs/LOCKSCREEN.md), [docs/LOGIN_SCREEN.md](docs/LOGIN_SCREEN.md)), the boot splash, and the screenshot tool (Print: freezes the screen first, so open menus can be captured) |
 | `packages/installer` | `yggdrasil-installer` | the installer's window: language, keyboard (by type: QWERTY, QWERTZ, AZERTY, Dvorak, Colemak), time zone, disk (erase, or choose partitions beside Windows), account; the OS supplies the install steps ([docs/INSTALLER.md](docs/INSTALLER.md)) |
 | `packages/player` | `yggdrasil-player` | video player: VLC (libVLC) in Yggdrasil's window |
-| `packages/idle` | `yggdrasil-idle` | dims, blacks out the screen (pointer hidden), locks, turns the screen off and sleeps when you are away; keyboard lights off with the screen |
+| `packages/idle` | `yggdrasil-idle` | dims, blacks out the screen (pointer hidden), locks, turns the screen off and sleeps when you are away; keyboard and mouse lights off with the screen ([README](packages/idle/README.md)) |
 | `packages/polkit` | `yggdrasil-polkit` | the password box for administrator actions, Wi-Fi and VPN passwords, and Bluetooth pairing |
 | `packages/portal` | `yggdrasil-portal` | the file chooser portal (Minos) |
 | `packages/keyring-sync` | `yggdrasil-keyring-sync` | keeps the keyring and the login password in step ([docs/USERS_KEYRING.md](docs/USERS_KEYRING.md)) |
@@ -215,6 +215,7 @@ the bugs the port fixed and where the Rust one is worse.
 | ygg-cursors | 1057 → 1604 ms (**+52 %, slower**) | 31.5 → 15.1 MB (−52 %) | [theme](packages/theme/README.md) |
 | liki-build, liki-icns, liki-icon-import | a pack of 3,000 icons 127 → 30.3 ms (−76 %) | 22.5 → 5.7 MB (−74 %) | [liki](packages/liki/README.md) |
 | yggdrasil-install-system | `--check` 35.6 → 0.72 ms (−98 %); a whole install (stand-ins) 106 → 62.4 ms CPU | 18.0 → 3.6 MB (−80 %) | [install-system](packages/install-system/README.md) |
+| the lights hook (shell; now inside yggdrasil-idle) | lights-off 100 → 2.82 ms (−97 %), lights-on 20.5 → 0.91 ms (−96 %) | 175 processes per lights-off → 0 | [idle](packages/idle/README.md) |
 
 On disk the binaries are bigger than the scripts (0.3 to 1.3 MB each against a few KB), but the scripts needed Python
 (75 MB), and Agora, the theme package, Liki and the installer no longer do.

@@ -15,6 +15,7 @@
 
 mod dim;
 mod inhibit;
+mod lights;
 mod lock;
 mod policy;
 mod power;
@@ -41,9 +42,12 @@ fn config_path() -> std::path::PathBuf {
     yggdrasil_conf::dirs::config().join("idle.conf")
 }
 
+/// The local time for the log, without starting `date` for every line.
 fn now() -> String {
-    let out = Command::new("date").arg("+%Y-%m-%d %H:%M:%S").output().ok();
-    out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
+    // SAFETY: time and localtime_r only fill what they are given
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    unsafe { libc::localtime_r(&libc::time(std::ptr::null_mut()), &mut tm) };
+    format!("{:04}-{:02}-{:02} {:02}:{:02}:{:02}", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec)
 }
 
 fn log(line: &str) {
@@ -96,7 +100,7 @@ pub struct App {
     done: HashMap<Step, bool>,
     /// The screensaver while it runs (it ends when the user is back).
     screensaver: Option<std::process::Child>,
-    /// The lights hooks were told "lights-off" and not yet "lights-on".
+    /// The lights were told to go off and not yet to come back.
     lights_out: bool,
     /// The pointer is hidden (dim or black screen): the compositor's own idle-pointer timeout as it was before, to put back.
     pointer_was: Option<f32>,
@@ -118,17 +122,15 @@ fn set_pointer_timeout(secs: f32) {
     }
 }
 
-/// Runs every lights hook with `arg` ("lights-off" or "lights-on"), without waiting: the system's (/usr/lib/yggdrasil/idle.d, e.g.
-/// keyboard-lights, from this package) and the user's own (~/.config/yggdrasil/idle.d), each an executable file.
-fn lights(arg: &str) {
-    let mut hooks: Vec<std::path::PathBuf> = vec![];
-    for dir in [std::path::PathBuf::from("/usr/lib/yggdrasil/idle.d"), yggdrasil_conf::dirs::config().join("idle.d")] {
-        if let Ok(rd) = std::fs::read_dir(dir) {
-            let mut v: Vec<_> = rd.flatten().map(|e| e.path()).filter(|p| p.is_file()).collect();
-            v.sort();
-            hooks.extend(v);
-        }
-    }
+/// Keyboard and mouse lights off (`lights::Op::Off`) or back as they were (`On`): Yggdrasil's own (lights.rs, on its worker
+/// thread), then the user's own hooks (~/.config/yggdrasil/idle.d, each an executable file, run with "lights-off" or
+/// "lights-on"), without waiting for either.
+fn lights(op: lights::Op) {
+    lights::request(op);
+    let arg = if op == lights::Op::Off { "lights-off" } else { "lights-on" };
+    let Ok(rd) = std::fs::read_dir(yggdrasil_conf::dirs::config().join("idle.d")) else { return };
+    let mut hooks: Vec<_> = rd.flatten().map(|e| e.path()).filter(|p| p.is_file()).collect();
+    hooks.sort();
     for h in hooks {
         match Command::new(&h).arg(arg).stdin(std::process::Stdio::null()).spawn() {
             Ok(mut c) => {
@@ -190,7 +192,7 @@ impl Dispatch<ExtIdleNotificationV1, u32> for App {
                 }
                 if app.lights_out {
                     app.lights_out = false;
-                    lights("lights-on");
+                    lights(lights::Op::On);
                 }
                 if let Some((m, _)) = app.longest.take() {
                     log(&format!("active again (had been idle {}s or more)  {}", m, context()));
@@ -228,7 +230,7 @@ impl App {
         }
         if self.conf.lights_off && policy::darkens(step) && !self.lights_out {
             self.lights_out = true;
-            lights("lights-off");
+            lights(lights::Op::Off);
         }
         match step {
             Step::Screensaver => {
@@ -325,8 +327,8 @@ fn main() {
     if pointer_timeout() == Some(POINTER_HIDDEN) {
         set_pointer_timeout(0.0);
     }
-    // the same for lights an earlier run (or session) turned off and never put back: a hook with nothing to put back does nothing
-    lights("lights-on");
+    // the same for lights an earlier run (or session) turned off and never put back: with nothing to put back, nothing is done
+    lights(lights::Op::On);
     let mut last_check = Instant::now();
     loop {
         if queue.dispatch_pending(&mut app).is_err() || conn.flush().is_err() {

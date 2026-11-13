@@ -20,6 +20,12 @@ libc = "0.2"
 zbus = "5"
 blocking = "1"
 
+[dev-dependencies]
+# the lights' tests talk to a made-up openrazer daemon and logind over socket pairs (peer to peer: no bus)
+zbus = { version = "5", features = ["p2p"] }
+# property tests: the lights list is read back from a file anything may have written
+proptest = { version = "1.12", default-features = false, features = ["std"] }
+
 [profile.release]
 opt-level = 2
 lto = "thin"

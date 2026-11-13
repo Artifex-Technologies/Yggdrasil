@@ -267,3 +267,21 @@ are nothing there.
 
 In `--disks` and the whole install, most of the Rust program's time is the stand-ins (five and about sixty shell processes),
 and its peak memory may be one of them.
+
+### The lights hook ([packages/idle](../packages/idle/README.md))
+
+Not a Python script but a shell hook (`keyboard-lights`, run through busctl), ported into yggdrasil-idle on 2026-11-12 and
+measured differently: not with `tools/bench-port.py` but with the package's own ignored test `lights::tests::measure`. The old
+hook (from the package's test fixtures, the real busctl) and the Rust code run against the same made-up openrazer daemon and
+logind, a process of their own on a private bus with no service files, in user, mount and PID namespaces with the real
+buses' sockets covered. Six Razer zones and two backlights lit; 30 runs each after two warm-up rounds, taking turns. The
+processes are counted from the PID namespace's last PID.
+
+| case | metric | old (sh + busctl) | Rust | change |
+| --- | --- | --- | --- | --- |
+| lights-off | wall (median; p10–p90) | 100.1 ms (96.9 ms–101.2 ms) | 2.82 ms (2.44 ms–3.20 ms) | −97 %, 97.3 ms faster |
+| | CPU time | 104.8 ms | 1.24 ms | −99 %, 103.6 ms less |
+| | processes started | 175 | 0 (2 threads) | |
+| lights-on | wall (median; p10–p90) | 20.5 ms (19.7 ms–21.6 ms) | 0.91 ms (0.80 ms–1.05 ms) | −96 %, 19.6 ms faster |
+| | CPU time | 17.8 ms | 0.51 ms | −97 %, 17.3 ms less |
+| | processes started | 21 | 0 (2 threads) | |
