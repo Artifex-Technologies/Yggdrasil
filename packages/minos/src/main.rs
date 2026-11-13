@@ -4249,7 +4249,9 @@ impl eframe::App for App {
                 ui.add(egui::TextEdit::singleline(&mut f[1]).password(true));
                 ui.label("Two-factor code (if you use one; it lasts about 30 seconds)");
                 ui.text_edit_singleline(&mut f[3]);
-                ui.label(RichText::new("Passed straight to rclone, which keeps a scrambled copy in its own config.").small());
+                ui.label(
+                    RichText::new("Kept, scrambled, in rclone's own config, which only you can read; never on a command line.").small(),
+                );
                 ui.horizontal(|ui| {
                     if ui
                         .add_enabled(

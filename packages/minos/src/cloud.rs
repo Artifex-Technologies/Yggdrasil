@@ -640,55 +640,223 @@ pub fn proton_configured() -> bool {
         .unwrap_or(false)
 }
 
+/// rclone's scrambled form of a secret (`rclone obscure -`): the secret goes in on rclone's standard input, never on its command line.
+/// The scrambling can be undone by anyone, so the result is as secret as the input: it only ever goes into rclone's config file.
 fn obscure(secret: &str) -> Result<String, String> {
     use std::io::Write;
+    use std::process::Stdio;
     let mut child = Command::new("rclone")
         .args(["obscure", "-"])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("cannot run rclone (is it installed?): {e}"))?;
+    // the pipe closes when the handle is dropped at the end of this statement, so rclone sees the end of its input
     child.stdin.take().ok_or("no stdin")?.write_all(secret.as_bytes()).map_err(|e| e.to_string())?;
     let out = child.wait_with_output().map_err(|e| e.to_string())?;
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    let scrambled = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    // rclone answers in base64 (the URL alphabet): nothing, or anything else, means it failed, and that must not be saved as the password
+    if !out.status.success() || scrambled.is_empty() || !scrambled.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+        return Err(format!("rclone could not scramble the password: {}", String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    Ok(scrambled)
+}
+
+/// rclone's config file: the one `rclone config file` names (RCLONE_CONFIG when that is set, otherwise rclone's own default place).
+fn rclone_config_path() -> Result<PathBuf, String> {
+    let out = Command::new("rclone")
+        .args(["config", "file"])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| format!("cannot run rclone (is it installed?): {e}"))?;
+    // "Configuration file is stored at:" (or "...doesn't exist, but rclone will use this path:"), then the path on its own line
+    let text = String::from_utf8_lossy(&out.stdout);
+    match text.lines().map(str::trim).rfind(|l| !l.is_empty()).map(PathBuf::from) {
+        Some(p) if out.status.success() && p.is_absolute() => Ok(p),
+        _ => Err(format!("rclone did not say where its config is: {}", String::from_utf8_lossy(&out.stderr).trim())),
+    }
+}
+
+/// Whether a value can go into rclone's config as it is: on its own line, read back unchanged by rclone's parser (no quotes, comment
+/// marks, spaces or line breaks). Letters, digits and `@ . _ + -`: what user names, e-mail addresses, codes and scrambled values are.
+pub fn conf_value_ok(v: &str) -> bool {
+    v.chars().all(|c| c.is_alphanumeric() || "@._+-".contains(c))
+}
+
+/// Whether rclone's config is encrypted (`rclone config` > set a password): then only rclone can change it.
+pub fn conf_encrypted(conf: &str) -> bool {
+    conf.lines().any(|l| l.trim_start().starts_with("RCLONE_ENCRYPT_V0:"))
+}
+
+/// Whether rclone's config has a section for `remote`.
+pub fn conf_has_remote(conf: &str, remote: &str) -> bool {
+    let header = format!("[{remote}]");
+    conf.lines().any(|l| l.trim() == header)
+}
+
+/// rclone's config text with one remote's section changed: each `set` key gets its value (where the key was, otherwise added after
+/// the section's last line), each `drop` key goes, and a missing section is added at the end. Every other line, including every other
+/// remote's section and every comment, stays byte for byte.
+pub fn edit_remote(conf: &str, remote: &str, set: &[(&str, &str)], drop: &[&str]) -> String {
+    let header = format!("[{remote}]");
+    let is_header = |l: &str| {
+        let t = l.trim();
+        t.starts_with('[') && t.ends_with(']')
+    };
+    let key_of = |l: &str| -> Option<String> {
+        let t = l.trim();
+        if t.is_empty() || t.starts_with('#') || t.starts_with(';') {
+            return None;
+        }
+        // rclone's parser takes `key = value` and `key: value`
+        t.find(['=', ':']).map(|i| t[..i].trim().to_string())
+    };
+    let mut written = vec![false; set.len()];
+    let mut out = String::with_capacity(conf.len() + 256);
+    let lines: Vec<&str> = conf.split_inclusive('\n').collect();
+    let mut i = 0;
+    while i < lines.len() {
+        out.push_str(lines[i]);
+        if lines[i].trim() != header {
+            i += 1;
+            continue;
+        }
+        // the section's lines, up to the next header
+        let start = i + 1;
+        let mut end = start;
+        while end < lines.len() && !is_header(lines[end]) {
+            end += 1;
+        }
+        // keys that are missing go after the section's last non-blank line, so the blank line before the next section stays
+        let last = (start..end).rev().find(|&j| !lines[j].trim().is_empty()).map_or(start, |j| j + 1);
+        for (j, line) in lines.iter().enumerate().take(end).skip(start) {
+            if j == last {
+                push_missing(&mut out, set, &mut written);
+            }
+            match key_of(line) {
+                Some(k) if drop.contains(&k.as_str()) => {}
+                Some(k) if set.iter().any(|(s, _)| *s == k) => {
+                    let n = set.iter().position(|(s, _)| *s == k).unwrap_or(0);
+                    if !written[n] {
+                        written[n] = true;
+                        out.push_str(&format!("{} = {}\n", set[n].0, set[n].1));
+                    }
+                }
+                _ => out.push_str(line),
+            }
+        }
+        if last == end {
+            push_missing(&mut out, set, &mut written);
+        }
+        i = end;
+    }
+    if !conf_has_remote(conf, remote) {
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        if !out.is_empty() && !out.ends_with("\n\n") {
+            out.push('\n');
+        }
+        out.push_str(&header);
+        out.push('\n');
+        push_missing(&mut out, set, &mut written);
+        out.push('\n');
+    }
+    out
+}
+
+fn push_missing(out: &mut String, set: &[(&str, &str)], written: &mut [bool]) {
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    for (n, (k, v)) in set.iter().enumerate() {
+        if !written[n] {
+            written[n] = true;
+            out.push_str(&format!("{k} = {v}\n"));
+        }
+    }
+}
+
+/// Writes `text` to `path` as a file only its owner can read and write (0600), all at once: a new file next to it, flushed to disk,
+/// then renamed over the old one, so rclone never reads half a config. A config that is a symlink is written where the link points.
+pub fn write_private(path: &Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
+        return Err(std::io::Error::other("not a file path"));
+    };
+    std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
+    let tmp = dir.join(format!(".{}.minos-{}", name.to_string_lossy(), std::process::id()));
+    let _ = std::fs::remove_file(&tmp);
+    // create_new: never through a link someone left at that name
+    let mut f = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&tmp)?;
+    let done = f.write_all(text.as_bytes()).and_then(|_| f.sync_all()).and_then(|_| std::fs::rename(&tmp, &path));
+    if done.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    done?;
+    if let Ok(d) = std::fs::File::open(dir) {
+        let _ = d.sync_all();
+    }
+    Ok(())
+}
+
+/// Saves a Proton sign-in in rclone's `proton` remote (rclone's `protondrive` backend): made when missing, renewed in place when the
+/// sign-in lapsed. No secret is ever on a command line, where every program on the computer could read it (/proc/PID/cmdline): the
+/// passwords reach `rclone obscure -` on its standard input, and Minos writes the remote's section into rclone's config itself (0600,
+/// in one rename; the other remotes stay byte for byte). `mailbox` and `twofa` may be empty.
+pub fn save_proton_signin(user: &str, password: &str, mailbox: &str, twofa: &str) -> Result<(), String> {
+    let (user, twofa) = (user.trim(), twofa.trim());
+    if !conf_value_ok(user) {
+        return Err("That user name has characters rclone's config cannot hold (letters, digits and @ . _ + - only)".into());
+    }
+    if !twofa.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err("The two-factor code is the digits your authenticator app shows".into());
+    }
+    let path = rclone_config_path()?;
+    let conf = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(format!("cannot read rclone's config: {e}")),
+    };
+    if conf_encrypted(&conf) {
+        return Err(
+            "rclone's config is encrypted, so Minos cannot add the sign-in to it: connect with `rclone config` in a terminal".into()
+        );
+    }
+    // a lapsed sign-in is renewed in place; a first one is created
+    let renew = conf_has_remote(&conf, "proton");
+    let password = obscure(password)?;
+    let mailbox = if mailbox.is_empty() { None } else { Some(obscure(mailbox)?) };
+    let mut set: Vec<(&str, &str)> = Vec::new();
+    if !renew {
+        set.push(("type", "protondrive"));
+    }
+    set.push(("username", user));
+    set.push(("password", &password));
+    if let Some(m) = &mailbox {
+        set.push(("mailbox_password", m));
+    }
+    // The two-factor code is good for one sign-in only (about 30 seconds): it is handed over for this sign-in and removed again once
+    // the drive is mounted (rclone keeps a session instead). Signing in again also drops the old session, so the new code is used.
+    let mut drop: Vec<&str> = Vec::new();
+    if twofa.is_empty() {
+        drop.push("2fa");
+    } else {
+        set.push(("2fa", twofa));
+    }
+    if renew {
+        drop.extend(SESSION_KEYS);
+    }
+    write_private(&path, &edit_remote(&conf, "proton", &set, &drop)).map_err(|e| format!("cannot save the sign-in in rclone's config: {e}"))
 }
 
 /// Sign in to Proton Drive (rclone's `protondrive` backend, remote `proton`) and start the mount at
 /// `~/ProtonDrive`, so the Cloud entry in the sidebar fills in. `mailbox` and `twofa` may be empty.
 pub fn connect_proton(user: &str, password: &str, mailbox: &str, twofa: &str) -> Result<(), String> {
-    // a lapsed sign-in is renewed in place; a first one is created
-    let verb = if proton_configured() { "update" } else { "create" };
-    let mut args: Vec<String> = if verb == "update" {
-        ["config", "update", "proton", "username"].map(String::from).to_vec()
-    } else {
-        ["config", "create", "proton", "protondrive", "username"].map(String::from).to_vec()
-    };
-    args.push(user.trim().to_string());
-    args.push("password".into());
-    args.push(obscure(password)?);
-    if !mailbox.is_empty() {
-        args.push("mailbox_password".into());
-        args.push(obscure(mailbox)?);
-    }
-    // The two-factor code is good for one sign-in only (about 30 seconds): it is handed over for this sign-in and removed again once
-    // the drive is mounted (rclone keeps a session instead). Signing in again also drops the old session, so the new code is used.
-    if verb == "update" || !twofa.trim().is_empty() {
-        args.push("2fa".into());
-        args.push(twofa.trim().to_string());
-    }
-    if verb == "update" {
-        for key in SESSION_KEYS {
-            args.push(key.into());
-            args.push(String::new());
-        }
-    }
-    let out = Command::new("rclone").args(&args).output().map_err(|e| format!("cannot run rclone: {e}"))?;
-    if !out.status.success() {
-        if verb == "create" {
-            let _ = Command::new("rclone").args(["config", "delete", "proton"]).status();
-        }
-        return Err(format!("Proton refused the sign-in: {}", String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("").trim()));
-    }
+    save_proton_signin(user, password, mailbox, twofa)?;
     let mounted = start_proton_mount().and_then(|_| wait_mounted(20).then_some(()).ok_or_else(String::new));
     forget_twofa();
     mounted.map_err(|_| {
@@ -895,5 +1063,80 @@ mod tests {
         // waiting to upload
         assert_eq!(avail_from_meta(Some(&m("null", true)), 100, None), Avail::Syncing);
         assert_eq!(avail_from_meta(Some("garbage"), 100, None), Avail::Cloud);
+    }
+
+    const CONF: &str = "# kept as it is\n[backup]\ntype = sftp\nhost = example.invalid\npass = c2VjcmV0\n\n[proton]\ntype = protondrive\nusername = old@example.invalid\npassword = T0xE\n2fa = 111111\nclient_uid = u\nclient_access_token = a\nclient_refresh_token = r\nclient_salted_key_pass = s\nreplace_existing_draft = true\n\n[zz]\ntype = local\n";
+
+    #[test]
+    fn a_renewed_sign_in_changes_only_the_proton_section() {
+        let set = [("username", "new@example.invalid"), ("password", "TkVX"), ("2fa", "222222")];
+        let out = edit_remote(CONF, "proton", &set, &SESSION_KEYS);
+        assert_eq!(
+            out,
+            "# kept as it is\n[backup]\ntype = sftp\nhost = example.invalid\npass = c2VjcmV0\n\n[proton]\ntype = protondrive\nusername = new@example.invalid\npassword = TkVX\n2fa = 222222\nreplace_existing_draft = true\n\n[zz]\ntype = local\n"
+        );
+        // the other sections are byte for byte what they were
+        let (before, after) = (CONF.split("[proton]").collect::<Vec<_>>(), out.split("[proton]").collect::<Vec<_>>());
+        assert_eq!(before[0], after[0]);
+        assert_eq!(CONF[CONF.find("[zz]").unwrap()..], out[out.find("[zz]").unwrap()..]);
+    }
+
+    #[test]
+    fn a_missing_key_is_added_at_the_end_of_its_section_and_a_dropped_one_goes() {
+        let out = edit_remote(CONF, "proton", &[("mailbox_password", "TUI")], &["2fa"]);
+        assert!(out.contains("replace_existing_draft = true\nmailbox_password = TUI\n\n[zz]"), "{out}");
+        assert!(!out.contains("2fa"));
+        assert_eq!(edit_remote(CONF, "proton", &[], &[]), CONF);
+    }
+
+    #[test]
+    fn a_first_sign_in_adds_a_section_after_the_others() {
+        let set = [("type", "protondrive"), ("username", "me@example.invalid"), ("password", "UFc")];
+        let base = "[backup]\ntype = sftp\n";
+        assert_eq!(
+            edit_remote(base, "proton", &set, &["2fa"]),
+            "[backup]\ntype = sftp\n\n[proton]\ntype = protondrive\nusername = me@example.invalid\npassword = UFc\n\n"
+        );
+        // no trailing line break in the old file, and no file at all
+        assert!(edit_remote("[backup]\ntype = sftp", "proton", &set, &[]).starts_with("[backup]\ntype = sftp\n\n[proton]\n"));
+        assert_eq!(edit_remote("", "proton", &set, &[]), "[proton]\ntype = protondrive\nusername = me@example.invalid\npassword = UFc\n\n");
+        // a remote whose name only starts the same is another remote
+        assert!(edit_remote("[proton2]\ntype = x\n", "proton", &set, &[]).starts_with("[proton2]\ntype = x\n\n[proton]\n"));
+    }
+
+    #[test]
+    fn values_that_could_break_out_of_their_line_are_refused() {
+        assert!(conf_value_ok("someone.else+drive@example.invalid"));
+        assert!(conf_value_ok("123456"));
+        for bad in ["a\nclient_uid = x", "a b", "a#b", "a;b", "\"a\"", "`a`", "[x]", "a=b"] {
+            assert!(!conf_value_ok(bad), "{bad:?}");
+        }
+        assert!(conf_encrypted("# Encrypted rclone configuration File\n\nRCLONE_ENCRYPT_V0:\nabc\n"));
+        assert!(!conf_encrypted(CONF));
+        assert!(conf_has_remote(CONF, "proton") && !conf_has_remote(CONF, "prot"));
+    }
+
+    #[test]
+    fn the_config_is_written_whole_and_only_for_its_owner() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("minos-conf-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("rclone").join("rclone.conf");
+        write_private(&path, "[a]\ntype = local\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        write_private(&path, CONF).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), CONF);
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        // nothing left beside it
+        assert_eq!(std::fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+        // a config that is a link is written where the link points, and stays a link
+        let real = dir.join("real.conf");
+        std::fs::write(&real, "x").unwrap();
+        let link = dir.join("link.conf");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        write_private(&link, CONF).unwrap();
+        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink());
+        assert_eq!(std::fs::read_to_string(&real).unwrap(), CONF);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
