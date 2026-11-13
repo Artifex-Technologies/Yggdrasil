@@ -35,6 +35,7 @@ mod razer;
 mod readout;
 mod restore;
 mod security;
+mod single;
 mod spelling;
 mod sys;
 mod tune;
@@ -243,6 +244,8 @@ fn parent(page: Page) -> Option<Page> {
 }
 
 enum Msg {
+    /// Another `yggdrasil-settings PAGE` was started: turn to that page and come to the front (single.rs)
+    Open(String),
     About(sys::About),
     Network(sys::Network),
     Bluetooth(sys::Bluetooth),
@@ -485,6 +488,12 @@ impl App {
     fn new(ctx: &egui::Context) -> Self {
         let mut app = App::bare();
         app.load(app.page, ctx);
+        // the pages later `yggdrasil-settings PAGE` hand to this one (single.rs)
+        let (tx, ctx2) = (app.tx.clone(), ctx.clone());
+        single::listen(move |arg| {
+            let _ = tx.send(Msg::Open(arg));
+            ctx2.request_repaint();
+        });
         app
     }
 
@@ -714,6 +723,25 @@ impl App {
     fn receive(&mut self, ctx: &egui::Context) {
         while let Ok(m) = self.rx.try_recv() {
             match m {
+                Msg::Open(arg) => {
+                    if !arg.is_empty() {
+                        self.page = page_from(&arg);
+                        if self.page == Page::Peripherals {
+                            self.peri = peripherals::State::on(peripheral_from(&arg));
+                        }
+                        self.power_gpu = false;
+                        self.power_cpu = false;
+                        self.power_fans = false;
+                        let page = self.page;
+                        self.load(page, ctx);
+                    }
+                    // to the front: Wayland lets the compositor do it, not the window itself
+                    std::thread::spawn(|| {
+                        if let Some(d) = yggdrasil_wm::Desk::detect() {
+                            d.focus_class("yggdrasil-settings");
+                        }
+                    });
+                }
                 Msg::About(v) => self.data.about = Some(v),
                 Msg::Network(v) => self.data.network = Some(v),
                 Msg::Bluetooth(v) => self.data.bluetooth = Some(v),
@@ -841,7 +869,11 @@ fn start_sub() -> String {
 /// Which page inside Peripherals to open on: `yggdrasil-settings mouse`, `keyboard` (`keyboard:shortcuts`, `shortcuts`),
 /// `peripherals:mouse`, `peripherals:keyboard`.
 fn start_peripheral() -> peripherals::Sub {
-    let arg = std::env::args().nth(1).unwrap_or_default().to_lowercase();
+    peripheral_from(&std::env::args().nth(1).unwrap_or_default())
+}
+
+fn peripheral_from(arg: &str) -> peripherals::Sub {
+    let arg = arg.to_lowercase();
     let (page, sub) = arg.split_once(':').unwrap_or((arg.as_str(), ""));
     match (page, sub) {
         ("mouse", _) | ("peripherals", "mouse") => peripherals::Sub::Mouse,
@@ -852,7 +884,12 @@ fn start_peripheral() -> peripherals::Sub {
 
 /// `yggdrasil-settings displays` opens on a page (for links from the top bar or other apps).
 fn start_page() -> Page {
-    let arg = std::env::args().nth(1).unwrap_or_default().to_lowercase();
+    page_from(&std::env::args().nth(1).unwrap_or_default())
+}
+
+/// The page an argument names (`displays`, `bluetooth`, `apps:ID`...), as `yggdrasil-settings PAGE` takes it.
+fn page_from(arg: &str) -> Page {
+    let arg = arg.to_lowercase();
     let arg = arg.split(':').next().unwrap_or_default().to_string();
     // the old page names: Keyboard Shortcuts became Keyboard, and Keyboard went into Peripherals with Mouse
     if matches!(arg.as_str(), "shortcuts" | "keyboard" | "mouse") {
@@ -4595,6 +4632,10 @@ fn main() -> eframe::Result {
     // Power > Graphics card's pop-out: the same panel in a window (and process) of its own
     if let Some(kind) = readout::Kind::from_args() {
         return readout::window_main(kind);
+    }
+    // one Settings at a time: an open one takes this page and comes to the front
+    if single::hand_over(&std::env::args().nth(1).unwrap_or_default()) {
+        return Ok(());
     }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
