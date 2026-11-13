@@ -1,50 +1,19 @@
 //! The keyboard shortcuts card (Win + /): every shortcut the session has right now, grouped (yggdrasil_conf::shortcuts), on a card in
 //! the middle of the screen over a dimmed background. Any key or click closes it.
 
-use std::process::{Command, Stdio};
-
 use resvg::tiny_skia::Pixmap;
-use yggdrasil_conf::shortcuts::{self, Bind, Shortcut, GROUPS};
+use yggdrasil_conf::shortcuts::{self, Shortcut, GROUPS};
 
 use crate::paint::{self, Fonts, Rgba};
 
-/// The live shortcuts (Hyprland's binds), or the session file's when Hyprland does not answer.
+/// The live shortcuts (the compositor's bindings, through yggdrasil-wm: Hyprland's binds or Yggdrasil's own compositor's), or the
+/// session file's when no compositor answers.
 pub fn load() -> Vec<Shortcut> {
-    let live = Command::new("hyprctl")
-        .args(["-j", "binds"])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()
-        .and_then(|o| serde_json::from_slice::<serde_json::Value>(&o.stdout).ok())
-        .map(|v| from_json(&v))
-        .unwrap_or_default();
+    let live = yggdrasil_wm::Desk::detect().and_then(|d| d.binds()).map(|b| shortcuts::list(&b)).unwrap_or_default();
     if !live.is_empty() {
         return live;
     }
     std::fs::read_to_string("/usr/share/yggdrasil/hyprland/yggdrasil.lua").map(|t| shortcuts::from_lua(&t)).unwrap_or_default()
-}
-
-/// `hyprctl -j binds` as the shortcut list.
-pub fn from_json(v: &serde_json::Value) -> Vec<Shortcut> {
-    let binds: Vec<Bind> = v
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .map(|b| Bind {
-                    modmask: b["modmask"].as_u64().unwrap_or(0) as u32,
-                    key: b["key"]
-                        .as_str()
-                        .filter(|k| !k.is_empty())
-                        .map(str::to_string)
-                        .unwrap_or_else(|| format!("code:{}", b["keycode"].as_u64().unwrap_or(0))),
-                    desc: b["description"].as_str().unwrap_or("").to_string(),
-                    release: b["release"].as_bool().unwrap_or(false),
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    shortcuts::list(&binds)
 }
 
 /// `text` cut to fit `max` pixels, with an ellipsis.
@@ -141,7 +110,7 @@ mod tests {
             {"modmask": 68, "key": "", "keycode": 10, "description": "Desktop 1", "release": false},
             {"modmask": 4, "key": "CONTROL_L", "keycode": 0, "description": "Find my mouse (press Ctrl twice)", "release": true},
         ]);
-        let l = from_json(&v);
+        let l = shortcuts::list(&yggdrasil_wm::hyprland::parse_binds(&v));
         assert!(l.iter().any(|s| s.keys == "Win + /" && s.group == "System"));
         assert!(l.iter().any(|s| s.keys == "Win + Ctrl + 1" && s.group == "Desktops"));
         assert!(l.iter().any(|s| s.keys == "Ctrl twice" && s.group == "Mouse"));
@@ -150,9 +119,9 @@ mod tests {
     #[test]
     fn the_card_draws_on_a_small_screen_too() {
         let Some(fonts) = Fonts::load() else { return };
-        let list = from_json(
+        let list = shortcuts::list(&yggdrasil_wm::hyprland::parse_binds(
             &serde_json::json!([{"modmask": 64, "key": "E", "description": "Files (Minos) with a very long description that has to be cut", "release": false}]),
-        );
+        ));
         for (w, h) in [(1280, 720), (3440, 1440)] {
             let mut pix = Pixmap::new(w, h).unwrap();
             paint(&mut pix, 1.0, &list, true, &fonts);

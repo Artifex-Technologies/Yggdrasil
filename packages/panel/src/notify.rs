@@ -508,16 +508,17 @@ pub fn hypr_errors_note(text: &str, id: u32) -> Option<Notif> {
 }
 
 /// In Hyprland: listens to its event socket and, at the start and after every config (re)load, puts its config errors into the
-/// notification center. The same errors are shown once, again only after they changed or went away.
+/// notification center. The same errors are shown once, again only after they changed or went away. Both through yggdrasil-wm
+/// (Hyprland's `configerrors` on its socket). Hyprland only: Yggdrasil's own compositor has no config errors to report (its files
+/// skip what they do not understand) and no event socket.
 pub fn spawn_hypr_watch(tx: calloop::channel::Sender<NMsg>) {
-    let (Some(sig), Some(run)) = (std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE"), std::env::var_os("XDG_RUNTIME_DIR")) else { return };
-    let sock = std::path::PathBuf::from(run).join("hypr").join(sig).join(".socket2.sock");
+    let Some(yggdrasil_wm::Desk::Hyprland(h)) = yggdrasil_wm::Desk::detect() else { return };
+    let sock = h.events_socket();
     std::thread::spawn(move || {
-        use std::io::BufRead;
+        use std::io::{BufRead, Read};
         let mut last = String::new();
         let check = |last: &mut String| {
-            let out = std::process::Command::new("hyprctl").arg("configerrors").stdin(std::process::Stdio::null()).output();
-            let text = out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+            let text = h.config_errors().unwrap_or_default();
             if text != *last {
                 if let Some(n) = hypr_errors_note(&text, next_id()) {
                     let _ = tx.send(NMsg::New(n));
@@ -528,10 +529,19 @@ pub fn spawn_hypr_watch(tx: calloop::channel::Sender<NMsg>) {
         check(&mut last);
         loop {
             if let Ok(stream) = std::os::unix::net::UnixStream::connect(&sock) {
-                for line in std::io::BufReader::new(stream).lines() {
-                    let Ok(line) = line else { break };
-                    if line.starts_with("configreloaded>>") {
-                        check(&mut last);
+                let mut reader = std::io::BufReader::new(stream);
+                let mut line = Vec::new();
+                loop {
+                    line.clear();
+                    // one event per line; a line longer than 64 KB is not one of Hyprland's (and is not kept growing)
+                    match (&mut reader).take(64 * 1024).read_until(b'\n', &mut line) {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) if line.last() != Some(&b'\n') => break,
+                        Ok(_) => {
+                            if line.starts_with(b"configreloaded>>") {
+                                check(&mut last);
+                            }
+                        }
                     }
                 }
             }
