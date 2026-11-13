@@ -1086,7 +1086,7 @@ pub struct Idle {
     pub dim: i64,
     /// How bright the screen is while dimmed, in percent.
     pub dim_level: i64,
-    /// Keyboard lights go off while the screen is dimmed, off or showing the screensaver.
+    /// Keyboard and mouse lights go off while the screen is dimmed, off or showing the screensaver.
     pub lights_off: bool,
     /// The screen covered in black, the pointer hidden (minutes; 0 = never). Unlike turning the screen off, the monitor stays
     /// connected, so nothing has to come back from an unplug.

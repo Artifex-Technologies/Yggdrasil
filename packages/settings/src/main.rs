@@ -2913,7 +2913,7 @@ impl App {
                     idle_changed = true;
                 }
             });
-            ui::row(ui, pal, false, "Keyboard lights off while dimmed", Some("Also while the screen is off or shows the screensaver; they come back with you. Razer keyboards (openrazer) and laptop keyboard backlights"), |ui| {
+            ui::row(ui, pal, false, "Keyboard and mouse lights off while dimmed", Some("Also while the screen is off or shows the screensaver; they come back with you. Razer keyboards, mice and mouse mats (openrazer) and laptop keyboard backlights"), |ui| {
                 if ui::switch(ui, pal, &mut idle.lights_off).changed() {
                     idle_changed = true;
                 }

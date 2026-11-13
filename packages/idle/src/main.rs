@@ -325,6 +325,8 @@ fn main() {
     if pointer_timeout() == Some(POINTER_HIDDEN) {
         set_pointer_timeout(0.0);
     }
+    // the same for lights an earlier run (or session) turned off and never put back: a hook with nothing to put back does nothing
+    lights("lights-on");
     let mut last_check = Instant::now();
     loop {
         if queue.dispatch_pending(&mut app).is_err() || conn.flush().is_err() {
