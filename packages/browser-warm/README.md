@@ -14,6 +14,16 @@ Chromium-based ones: Chromium, Google Chrome, Brave, Microsoft Edge, Vivaldi, He
 `--no-startup-window --keep-alive-for-test`. The first flag starts it with no window. The second keeps it running:
 without it, Chromium quits as soon as its extensions have loaded, because nothing is holding it open.
 
+**Background mode must be on.** `--keep-alive-for-test` works through the browser's background mode (Chromium's
+"Continue running background apps" setting, stored as `background_mode` in the profile's `Local State` file). With
+background mode off, the browser quits within a second of starting with no window, whatever the flags. I tested this
+with Vivaldi 8.3: `--keep-alive-for-test`, `--silent-launch` and the two together all quit at once with background mode
+off, and `--keep-alive-for-test` keeps it running with background mode on. I found no other flag or setting that keeps it
+running with no window. So when background mode is off, the browser is not started at all, and `status` says why.
+Background mode also shows the browser's icon in the tray while it runs in the background, so warm start comes with
+that icon. To use warm start, turn background mode back on. I found no switch for it in Vivaldi's settings: with
+Vivaldi closed, set `"background_mode":{"enabled":true}` in `~/.config/vivaldi/Local State`, or delete that entry.
+
 Firefox-based browsers (Firefox, LibreWolf, Zen, Floorp, Waterfox, Mullvad Browser) cannot run with no window, so this
 does nothing for them. It also does nothing for Flatpak browsers. It keeps checking, so it starts working if you later
 switch to a Chromium-based browser.
@@ -30,6 +40,11 @@ The `yggdrasil-browser-warm` user service checks every minute.
   not installing anything. It finds open windows through the compositor (yggdrasil-wm: Hyprland's
   window list on its socket, or Yggdrasil's own compositor's). When it cannot tell whether
   windows are open, it does not restart anything.
+- **A browser that will not stay running:** if the background browser quits on its own right after it was started
+  (gone by the next check), it is tried again after 5 minutes, then after 15. After the third such exit it is not
+  started again until the browser is updated (its program on disk is replaced) or your default browser changes, also
+  after a restart or reboot (the note is kept in `~/.local/state/yggdrasil/browser-warm-gave-up`).
+  `yggdrasil-browser-warm status` says so, and `yggdrasil-browser-warm start` tries again at once.
 - **Quitting:** if you quit the browser from its menu, it is started again in the background within a minute. To turn
   this off, run `systemctl --user disable --now yggdrasil-browser-warm`. Stopping the service also stops the background
   browser, unless it has windows open; it then ends when they are closed or when you log out.
@@ -49,8 +64,8 @@ On a desktop with an app launcher that applies per-app rules (the `apps` integra
 
 ## Commands
 
-    yggdrasil-browser-warm status    # the default browser, the background copy, open windows
-    yggdrasil-browser-warm start     # start it now (the service does this by itself)
+    yggdrasil-browser-warm status    # the default browser, the background copy, open windows, why it is not started
+    yggdrasil-browser-warm start     # start it now (the service does this by itself); also a new try after it gave up
     yggdrasil-browser-warm stop      # stop it now
     yggdrasil-browser-warm run       # what the service runs
 

@@ -2,8 +2,11 @@
 //! once (the launcher hands it to the running browser over its singleton socket instead of starting a new one).
 //!
 //! Only Chromium-based browsers can do this: `--no-startup-window` starts one with no window, and `--keep-alive-for-test`
-//! keeps it running (without it, Chromium quits once its extensions have loaded, as nothing holds it). Firefox-based
-//! browsers have no way to run with no window, so for them this does nothing.
+//! keeps it running (without it, Chromium quits once its extensions have loaded, as nothing holds it). That flag works
+//! through Chromium's background mode: with background mode turned off in the profile ("background_mode" in its Local
+//! State), the browser quits at once whatever the flags, so it is not started then (`status` says why). Background mode
+//! also gives the browser a tray icon while it runs. Firefox-based browsers have no way to run with no window, so for them
+//! this does nothing.
 //!
 //! The cost is memory: the browser stays loaded, about 0.5-0.8 GB, even with every window closed.
 //!
@@ -15,11 +18,14 @@
 //!
 //! `run` (the service) checks every minute. It starts the browser when no copy of it is running, and restarts the
 //! background copy only when the browser was updated (its program on disk was replaced) or the default browser changed,
-//! and then only when it has no windows open and pacman is not working.
+//! and then only when it has no windows open and pacman is not working. A browser that quits on its own right after it
+//! was started (gone by the next check) is tried again after 5 and then 15 minutes; after the third such exit `run`
+//! stops starting it until the browser is updated or the default browser changes (noted in
+//! ~/.local/state/yggdrasil/browser-warm-gave-up, so a restart does not try it again).
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const INSTANCE: &str = "yggdrasil-browser-warm-instance";
 const PACMAN_LOCK: &str = "/var/lib/pacman/db.lck";
@@ -373,6 +379,9 @@ fn start(t: &Target) -> Result<(), String> {
     if instance_active() {
         return Ok(());
     }
+    if let Some(why) = no_background_mode(t) {
+        return Err(why);
+    }
     if let Some(pid) = browser_pid(t.profile) {
         return Err(format!("{} is already running (pid {pid}); it will be warmed once it is closed", app_id(&t.desktop_id)));
     }
@@ -426,7 +435,7 @@ fn log(msg: &str) {
 }
 
 /// One round of `run`. `said` keeps the last log line so a steady state is not repeated every minute.
-fn check(said: &mut String) {
+fn check(said: &mut String, tries: &mut Tries) {
     let mut say = |m: String| {
         if *said != m {
             log(&m);
@@ -436,9 +445,41 @@ fn check(said: &mut String) {
     if Path::new(PACMAN_LOCK).exists() {
         return;
     }
+    let now = Instant::now();
+    let active = instance_active();
+    let quit = tries.observe(active, now);
     let want = target();
+    if !active {
+        let key = want.as_ref().map(give_up_key).unwrap_or_default();
+        match quit {
+            Some(n) if n >= GIVE_UP_AFTER => {
+                save_gave_up(Some(&key));
+                tries.stopped_for = Some(key.clone());
+                say(format!("the background browser: {}", gave_up_text()));
+            }
+            Some(n) => log(&format!(
+                "the background browser quit on its own right after it was started ({n} of {GIVE_UP_AFTER}); trying again in {} minutes",
+                tries.not_before.map_or(0, |t| t.saturating_duration_since(now).as_secs() / 60)
+            )),
+            None => {}
+        }
+        if let Some(k) = &tries.stopped_for {
+            if *k == key {
+                return;
+            }
+            tries.reset();
+            save_gave_up(None);
+            log("the browser was updated or the default browser changed: trying again");
+        }
+        if !tries.may_start(now) {
+            return;
+        }
+    } else if tries.stopped_for.is_some() {
+        // started by hand (`yggdrasil-browser-warm start`) and running: begin again
+        tries.reset();
+    }
     let want_ok = want.as_ref().ok().filter(|t| placement(t).is_ok());
-    if instance_active() {
+    if active {
         let Some((pid, windows)) = instance_state() else { return };
         let reason = if program_replaced(pid) {
             Some("the browser was updated".to_string())
@@ -463,6 +504,7 @@ fn check(said: &mut String) {
             if let Err(e) = start(&t) {
                 say(e);
             } else {
+                tries.started();
                 said.clear();
             }
         }
@@ -471,7 +513,8 @@ fn check(said: &mut String) {
 }
 
 fn status() {
-    match target() {
+    let t = target();
+    match &t {
         Ok(t) => println!("default browser: {} ({})", t.desktop_id, t.program.display()),
         Err(e) => println!("default browser: {e}"),
     }
@@ -488,7 +531,13 @@ fn status() {
                 }
             );
         }
-        None => println!("background browser: stopped"),
+        None => {
+            let why = t.ok().and_then(|t| no_background_mode(&t).or_else(|| (load_gave_up()? == give_up_key(&t)).then(gave_up_text)));
+            match why {
+                Some(why) => println!("background browser: not started: {why}"),
+                None => println!("background browser: stopped"),
+            }
+        }
     }
 }
 
@@ -497,12 +546,17 @@ fn main() -> ExitCode {
     match arg.as_deref() {
         Some("run") => {
             let mut said = String::new();
+            let mut tries = Tries { stopped_for: load_gave_up(), ..Tries::default() };
             loop {
-                check(&mut said);
+                check(&mut said, &mut tries);
                 std::thread::sleep(POLL);
             }
         }
-        Some("start") => match target().and_then(|t| start(&t)) {
+        // by hand: also a new try after `run` gave up on the browser
+        Some("start") => match target().and_then(|t| {
+            save_gave_up(None);
+            start(&t)
+        }) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 // nothing to warm (a Firefox-based browser, a sandboxed one, one already open) is not an error
@@ -530,6 +584,121 @@ fn main() -> ExitCode {
             ExitCode::from(2)
         }
     }
+}
+
+/// How long `run` waits before starting the browser again after it quit on its own, by the number of quick exits so far.
+const BACKOFF: [Duration; 2] = [Duration::from_secs(5 * 60), Duration::from_secs(15 * 60)];
+/// Quick exits in a row after which `run` stops starting the browser (until it is updated or another one is the default).
+const GIVE_UP_AFTER: u32 = 3;
+
+/// `run`'s memory of the starts it made. The browser being gone at the first check after it was started (under a minute
+/// later) is a quick exit: it quit on its own, as a Chromium-based browser does when nothing keeps it running.
+#[derive(Debug, Default)]
+struct Tries {
+    /// Quick exits in a row.
+    quick: u32,
+    /// Started, and not yet looked at by a check since.
+    pending: bool,
+    /// No start before this (the backoff after a quick exit).
+    not_before: Option<Instant>,
+    /// The browser it gave up on (`give_up_key`), kept in the state file too.
+    stopped_for: Option<String>,
+}
+
+impl Tries {
+    /// At each check, with whether the background browser is running: Some(n) when it quit on its own right after the
+    /// last start, the nth time in a row.
+    fn observe(&mut self, active: bool, now: Instant) -> Option<u32> {
+        if !std::mem::take(&mut self.pending) {
+            return None;
+        }
+        if active {
+            self.quick = 0;
+            self.not_before = None;
+            return None;
+        }
+        self.quick += 1;
+        self.not_before = BACKOFF.get(self.quick as usize - 1).map(|d| now + *d);
+        Some(self.quick)
+    }
+
+    fn started(&mut self) {
+        self.pending = true;
+    }
+
+    fn may_start(&self, now: Instant) -> bool {
+        !self.gave_up() && self.not_before.is_none_or(|t| now >= t)
+    }
+
+    fn gave_up(&self) -> bool {
+        self.quick >= GIVE_UP_AFTER
+    }
+
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
+/// What names the browser `run` gave up on: its desktop id, its program, and the program file's identity on disk (an
+/// update replaces the file, which changes it).
+fn give_up_key(t: &Target) -> String {
+    use std::os::unix::fs::MetadataExt;
+    let stamp = std::fs::metadata(&t.program).map(|m| format!("{}:{}:{}:{}", m.dev(), m.ino(), m.size(), m.mtime())).unwrap_or_default();
+    format!("{}\n{}\n{stamp}\n", t.desktop_id, t.program.display())
+}
+
+fn gave_up_text() -> String {
+    format!(
+        "it quit on its own right after it was started, {GIVE_UP_AFTER} times in a row, so it is not started again until the \
+         browser is updated or the default browser changes (`yggdrasil-browser-warm start` tries again now)"
+    )
+}
+
+/// Where `run` notes the browser it gave up on, so a restart of the service (or a reboot) does not try it again.
+fn gave_up_file() -> PathBuf {
+    std::env::var("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| home().join(".local/state"))
+        .join("yggdrasil/browser-warm-gave-up")
+}
+
+fn load_gave_up() -> Option<String> {
+    std::fs::read_to_string(gave_up_file()).ok()
+}
+
+fn save_gave_up(key: Option<&str>) {
+    let f = gave_up_file();
+    let res = match key {
+        Some(k) => f.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(&f, k)),
+        None => match std::fs::remove_file(&f) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            r => r,
+        },
+    };
+    if let Err(e) = res {
+        log(&format!("{}: {e}", f.display()));
+    }
+}
+
+/// Whether a profile's Local State has background mode turned off. Chromium keeps a windowless browser running only in
+/// background mode (`--keep-alive-for-test` works through it), so with it off the browser quits as soon as it starts.
+fn background_mode_off(local_state: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(local_state)
+        .map(|v| v["background_mode"]["enabled"] == serde_json::Value::Bool(false))
+        .unwrap_or(false)
+}
+
+/// Why the browser cannot stay running with no window, from its own settings.
+fn no_background_mode(t: &Target) -> Option<String> {
+    let text = std::fs::read_to_string(config_home().join(t.profile).join("Local State")).ok()?;
+    background_mode_off(&text).then(|| {
+        format!(
+            "{}'s background mode is off (\"background_mode\" in its Local State). Without it a Chromium-based browser quits \
+             as soon as it starts with no window, and no flag keeps it running, so it is not kept warm. Turning background \
+             mode back on also brings back the browser's tray icon",
+            app_id(&t.desktop_id)
+        )
+    })
 }
 
 #[cfg(test)]
@@ -601,5 +770,77 @@ mod tests {
         let tail: Vec<&str> = c.iter().rev().take(4).rev().map(String::as_str).collect();
         assert_eq!(tail, ["/usr/bin/vivaldi-stable", "--no-startup-window", "--keep-alive-for-test", "--ozone-platform=wayland"]);
         assert!(start_command(&t, None, &[]).contains(&"--slice=app-graphical.slice".to_string()));
+    }
+
+    #[test]
+    fn background_mode_off_is_read_from_local_state() {
+        // Chromium keeps a windowless browser running only in background mode: --keep-alive-for-test needs it
+        assert!(background_mode_off(r#"{"background_mode":{"enabled":false},"profile":{}}"#));
+        assert!(!background_mode_off(r#"{"background_mode":{"enabled":true}}"#));
+        assert!(!background_mode_off(r#"{"profile":{}}"#), "not set: Chromium's default is on");
+        assert!(!background_mode_off("half a file"), "unreadable: try (the quick-exit backoff covers it)");
+    }
+
+    #[test]
+    fn quick_exits_back_off_then_give_up() {
+        let t0 = Instant::now();
+        let mut tries = Tries::default();
+        assert!(tries.may_start(t0));
+        assert_eq!(tries.observe(false, t0), None, "nothing started yet: not a quick exit");
+        // started, and gone by the next check: a quick exit; the next start waits
+        tries.started();
+        let t1 = t0 + POLL;
+        assert_eq!(tries.observe(false, t1), Some(1));
+        assert!(!tries.may_start(t1));
+        assert!(!tries.may_start(t1 + BACKOFF[0] - Duration::from_secs(1)));
+        assert!(tries.may_start(t1 + BACKOFF[0]));
+        tries.started();
+        let t2 = t1 + BACKOFF[0] + POLL;
+        assert_eq!(tries.observe(false, t2), Some(2));
+        assert!(!tries.may_start(t2 + BACKOFF[0]));
+        assert!(tries.may_start(t2 + BACKOFF[1]));
+        tries.started();
+        let t3 = t2 + BACKOFF[1] + POLL;
+        assert_eq!(tries.observe(false, t3), Some(GIVE_UP_AFTER));
+        assert!(tries.gave_up());
+        assert!(!tries.may_start(t3 + Duration::from_secs(24 * 3600)), "given up: no more starts, however long");
+        // a later check that finds it still stopped is not another exit
+        assert_eq!(tries.observe(false, t3 + POLL), None);
+        // a fresh start (an update, another default browser) begins again
+        tries.reset();
+        assert!(tries.may_start(t3));
+    }
+
+    #[test]
+    fn a_browser_that_stays_up_clears_the_count() {
+        let t0 = Instant::now();
+        let mut tries = Tries::default();
+        tries.started();
+        assert_eq!(tries.observe(false, t0 + POLL), Some(1));
+        tries.started();
+        assert_eq!(tries.observe(true, t0 + BACKOFF[0] + 2 * POLL), None);
+        assert_eq!(tries.quick, 0);
+        // quit from its menu hours later: not a quick exit, started again at the next check
+        assert_eq!(tries.observe(false, t0 + Duration::from_secs(3 * 3600)), None);
+        assert!(tries.may_start(t0 + Duration::from_secs(3 * 3600)));
+    }
+
+    #[test]
+    fn giving_up_holds_until_the_program_or_default_browser_changes() {
+        let d = std::env::temp_dir().join(format!("bw-stamp-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let prog = d.join("vivaldi-stable");
+        std::fs::write(&prog, "8.3").unwrap();
+        let t = Target { desktop_id: "vivaldi-stable.desktop".into(), program: prog.clone(), profile: "vivaldi" };
+        let key = give_up_key(&t);
+        assert_eq!(give_up_key(&t), key, "the same browser, untouched: still given up");
+        let other = Target { desktop_id: "chromium.desktop".into(), ..t.clone() };
+        assert_ne!(give_up_key(&other), key, "another default browser: try it");
+        // an update replaces the program file (a new file renamed over the old one)
+        let new = d.join("vivaldi-stable.new");
+        std::fs::write(&new, "8.4").unwrap();
+        std::fs::rename(&new, &prog).unwrap();
+        assert_ne!(give_up_key(&t), key, "the program was replaced: try again");
+        std::fs::remove_dir_all(&d).ok();
     }
 }
