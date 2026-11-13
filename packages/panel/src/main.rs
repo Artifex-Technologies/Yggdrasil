@@ -3238,6 +3238,7 @@ impl State {
                                 &st.query,
                                 st.all,
                                 st.scroll,
+                                st.power_open,
                                 self.pointer_pos,
                                 &self.assets.fonts,
                                 &mut self.assets.icons,

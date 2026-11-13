@@ -1306,6 +1306,7 @@ pub fn paint_start(
     query: &str,
     select_all: bool,
     scroll: i32,
+    power_open: bool,
     pointer: (f32, f32),
     fonts: &Fonts,
     icons: &mut Icons,
@@ -1418,30 +1419,50 @@ pub fn paint_start(
         }
     }
 
-    // bottom: your name on the left, the power buttons on the right
+    // bottom: your name on the right, as a button; a click opens the power choices above it (Lock, Sleep, Log out...)
     paint::fill_rounded(pix, (cx + 1.0) * s, bottom * s, (cw - 2.0) * s, s, 0.0, pal.border);
     let my = bottom + 31.0;
-    paint::fill_circle(pix, (cx + 36.0) * s, my * s, 15.0 * s, paint::accent(255));
+    let name = fit_text(&fonts.regular, 13.5 * s, &m.user, 220.0 * s);
+    let nw = paint::text_width(&fonts.regular, 13.5 * s, &name) / s;
+    let ubtn = (cx + cw - 12.0 - (nw + 60.0), my - 19.0, nw + 60.0, 38.0);
+    rr(
+        pix,
+        ubtn.0,
+        ubtn.1,
+        ubtn.2,
+        ubtn.3,
+        10.0,
+        if power_open {
+            pal.select
+        } else if inside(ubtn) {
+            pal.hover
+        } else {
+            (0, 0, 0, 0)
+        },
+    );
+    let (ax, tx) = (ubtn.0 + 22.0, ubtn.0 + 44.0);
+    paint::fill_circle(pix, ax * s, my * s, 15.0 * s, paint::accent(255));
     let initial: String = m.user.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_else(|| "?".into());
     let iw = paint::text_width(&fonts.bold, 15.0 * s, &initial) / s;
-    text(pix, &fonts.bold, 15.0, cx + 36.0 - iw / 2.0, my, (255, 255, 255, 255), &initial);
-    text(pix, &fonts.regular, 13.5, cx + 60.0, my, pal.text, &m.user);
-    let buttons = [
-        ("Lock", PowerAct::Lock),
-        ("Sleep", PowerAct::Sleep),
-        ("Log out", PowerAct::Logout),
-        ("Restart", PowerAct::Restart),
-        ("Shut down", PowerAct::Shutdown),
-    ];
-    let mut bx = cx + cw - 16.0;
-    for (label, act) in buttons.iter().rev() {
-        let bw = paint::text_width(&fonts.regular, 12.5 * s, label) / s + 22.0;
-        bx -= bw;
-        let r = (bx, my - 15.0, bw, 30.0);
-        rr(pix, r.0, r.1, r.2, r.3, 8.0, if inside(r) { pal.select } else { pal.field });
-        text(pix, &fonts.regular, 12.5, r.0 + 11.0, my, pal.text, label);
-        hits.push(StartHit { rect: r, act: StartAct::Power(*act) });
-        bx -= 6.0;
+    text(pix, &fonts.bold, 15.0, ax - iw / 2.0, my, (255, 255, 255, 255), &initial);
+    text(pix, &fonts.regular, 13.5, tx, my, pal.text, &name);
+    hits.push(StartHit { rect: ubtn, act: StartAct::TogglePower });
+    if power_open {
+        let items = power_items(m);
+        let pw = 180.0_f32.max(ubtn.2);
+        let ph = items.len() as f32 * 34.0 + 12.0;
+        let (px, py) = (ubtn.0 + ubtn.2 - pw, ubtn.1 - 8.0 - ph);
+        rr(pix, px, py, pw, ph, 12.0, pal.field);
+        paint::stroke_rounded(pix, (px + 0.5) * s, (py + 0.5) * s, (pw - 1.0) * s, (ph - 1.0) * s, 12.0 * s, s, pal.border);
+        // the choices are on top of the apps: their click areas go last, and the last drawn wins
+        for (n, (label, act)) in items.iter().enumerate() {
+            let r = (px + 6.0, py + 6.0 + n as f32 * 34.0, pw - 12.0, 34.0);
+            if inside(r) {
+                rr(pix, r.0, r.1, r.2, r.3 - 2.0, 8.0, pal.select);
+            }
+            text(pix, &fonts.regular, 13.5, r.0 + 12.0, r.1 + 17.0, pal.text, label);
+            hits.push(StartHit { rect: r, act: StartAct::Power(*act) });
+        }
     }
     StartPaint { card: (cx, cy, cw, ch), hits, max_scroll, scroll, sub_scroll: 0 }
 }
