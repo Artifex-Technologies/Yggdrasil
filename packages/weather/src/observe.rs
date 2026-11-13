@@ -55,8 +55,10 @@ pub fn nearest(stations: &[Station], lat: f64, lon: f64, max_km: f64) -> Option<
         .map(|(s, d)| (s.clone(), d))
 }
 
-/// A ~1.2 degree box (~65 km each way) around the point, latest 3 hours of reports.
+/// A ~1.2 degree box (~65 km each way) around the point (taken with two decimals, as Open-Meteo gets it), latest 3 hours of
+/// reports.
 pub fn metar_url(lat: f64, lon: f64) -> String {
+    let (lat, lon) = (geolocate::round2(lat), geolocate::round2(lon));
     format!(
         "https://aviationweather.gov/api/data/metar?bbox={:.3},{:.3},{:.3},{:.3}&format=json&hours=3",
         lat - 0.6,
@@ -79,6 +81,11 @@ mod tests {
         let linden = s.iter().find(|x| x.id == "KLDJ").unwrap();
         assert_eq!(linden.temp_c, 20.9);
         assert_eq!(linden.obs_epoch, 1_791_653_700);
+    }
+
+    #[test]
+    fn the_box_is_around_two_decimals() {
+        assert!(metar_url(48.85661, 2.35222).contains("bbox=48.260,1.750,49.460,2.950&"));
     }
 
     #[test]

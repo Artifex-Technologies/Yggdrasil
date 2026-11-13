@@ -12,7 +12,7 @@ replaces=('labyrinth-weather')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
 license=('MPL-2.0')
 depends=('gcc-libs' 'ca-certificates' 'libnotify')
-optdepends=('networkmanager: Wi-Fi networks for the automatic place (without it, beaconDB places the IP address)')
+optdepends=('networkmanager: notices a VPN connection (IPsec has no tunnel interface of its own), so the automatic place is not looked up through it')
 makedepends=('cargo')
 options=('!lto')
 

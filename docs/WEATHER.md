@@ -33,8 +33,12 @@ information about how uncertain the forecast is.
   A model needs at least ~24 scored predictions before its weight changes anything, and
   weights only apply when at least two models qualify. Weight = 1 / (error + 0.5),
   scaled to average 1.
-- **Never guesses your location.** Set it once (`set-location "City"` uses Open-Meteo's
-  place search; `set-location --coords LAT LON`). Only those coordinates are sent out.
+- **Your place, your choice.** The time zone's main city (the default, offline), a city you
+  pick (`set-location "City"` uses Open-Meteo's place search; `set-location --coords LAT LON`),
+  or Automatic (`locate`): your IP address only, looked up at beaconDB, and nothing while a
+  VPN is on (the address would be the VPN server's). No Wi-Fi networks or hardware IDs are
+  read or sent. The weather services get the coordinates rounded to two decimals (about 1 km).
+  Details: [packages/weather/README.md](../packages/weather/README.md).
 
 ## Limits, stated plainly
 

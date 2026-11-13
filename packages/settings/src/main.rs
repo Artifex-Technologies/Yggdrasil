@@ -4286,7 +4286,7 @@ impl App {
                 pal,
                 true,
                 "Set time zone automatically",
-                Some("From nearby Wi-Fi networks (their IDs, not names) through beaconDB, checked every few hours"),
+                Some("Checked every few hours: your IP address only, to beaconDB; the rough place (2 decimals) to Open-Meteo for the time zone. Skipped while a VPN is on"),
                 |ui| {
                     autozone_changed = ui::switch(ui, pal, &mut autozone).changed();
                 },

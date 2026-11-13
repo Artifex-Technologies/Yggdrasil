@@ -1,9 +1,9 @@
-//! Finding the place without a terminal: from the time zone (offline, rough) or from nearby Wi-Fi through beaconDB
-//! (an open, non-profit location database; Ichnaea API). Nothing here runs unless the user picked that mode.
+//! Finding the place without a terminal: from the time zone (offline, rough) or from the IP address through beaconDB (an
+//! open, non-profit location service; packages/geolocate: the IP address only, no Wi-Fi networks, no hardware IDs, and nothing
+//! while a VPN is on). Nothing here runs unless the user picked that mode.
 
+use geolocate::round2;
 use std::time::Duration;
-
-pub const BEACONDB_URL: &str = "https://api.beacondb.net/v1/geolocate";
 
 /// "yggdrasil-weather/1.0.0 (+https://github.com/Artifex-Technologies/Yggdrasil)"
 fn ua() -> String {
@@ -17,13 +17,6 @@ pub struct Found {
     pub name: String,
     pub lat: f64,
     pub lon: f64,
-    /// Metres, when the service said.
-    pub accuracy_m: Option<f64>,
-}
-
-/// Coordinates rounded to two decimals (about 1 km): all that leaves this computer afterwards.
-pub fn round2(x: f64) -> f64 {
-    (x * 100.0).round() / 100.0
 }
 
 /// ISO 6709 as zone1970.tab writes it: "+394421-1045903" or "+2232+08822".
@@ -79,48 +72,7 @@ pub fn from_timezone() -> Result<Found, String> {
     let zone = system_zone().ok_or("the time zone is not set")?;
     let tab = std::fs::read_to_string("/usr/share/zoneinfo/zone1970.tab").map_err(|e| format!("no time zone table: {e}"))?;
     let (lat, lon) = zone_coords(&tab, &zone).ok_or_else(|| format!("{zone} has no place in the time zone table"))?;
-    Ok(Found { name: zone_city(&zone), lat: round2(lat), lon: round2(lon), accuracy_m: None })
-}
-
-/// `nmcli -t -f BSSID,SIGNAL dev wifi list` lines ("AA\:BB\:CC\:DD\:EE\:FF:84") -> (mac, dBm), strongest first, at most 30.
-pub fn parse_nmcli(out: &str) -> Vec<(String, i32)> {
-    let mut v: Vec<(String, i32)> = out
-        .lines()
-        .filter_map(|l| {
-            let (mac, sig) = l.trim().rsplit_once(':')?;
-            let mac = mac.replace("\\:", ":").to_lowercase();
-            let ok = mac.len() == 17 && mac.split(':').all(|p| p.len() == 2 && p.chars().all(|c| c.is_ascii_hexdigit()));
-            let sig: i32 = sig.parse().ok()?;
-            ok.then(|| (mac, sig / 2 - 100))
-        })
-        .collect();
-    v.sort_by_key(|a| std::cmp::Reverse(a.1));
-    v.dedup_by(|a, b| a.0 == b.0);
-    v.truncate(30);
-    v
-}
-
-/// The request beaconDB gets: the networks' IDs and signal (no names); with none, it places the IP address.
-pub fn request_body(aps: &[(String, i32)]) -> serde_json::Value {
-    if aps.is_empty() {
-        return serde_json::json!({"considerIp": true});
-    }
-    let list: Vec<_> = aps.iter().map(|(m, s)| serde_json::json!({"macAddress": m, "signalStrength": s})).collect();
-    serde_json::json!({"considerIp": true, "wifiAccessPoints": list})
-}
-
-/// beaconDB's answer: {"location": {"lat", "lng"}, "accuracy"} or {"error": {...}}.
-pub fn parse_answer(text: &str) -> Result<(f64, f64, Option<f64>), String> {
-    let v: serde_json::Value = serde_json::from_str(text).map_err(|_| "beaconDB gave an answer that is not JSON".to_string())?;
-    if let Some(m) = v["error"]["message"].as_str() {
-        return Err(format!("beaconDB: {m}"));
-    }
-    match (v["location"]["lat"].as_f64(), v["location"]["lng"].as_f64()) {
-        (Some(lat), Some(lon)) if (-90.0..=90.0).contains(&lat) && (-180.0..=180.0).contains(&lon) => {
-            Ok((lat, lon, v["accuracy"].as_f64()))
-        }
-        _ => Err("beaconDB did not know where these networks are".into()),
-    }
+    Ok(Found { name: zone_city(&zone), lat: round2(lat), lon: round2(lon) })
 }
 
 pub fn km(a: (f64, f64), b: (f64, f64)) -> f64 {
@@ -129,31 +81,16 @@ pub fn km(a: (f64, f64), b: (f64, f64)) -> f64 {
     6371.0 * 2.0 * h.sqrt().asin()
 }
 
-/// Precise: nearby Wi-Fi (as NetworkManager last saw it, no new scan) through beaconDB.
-pub fn from_wifi() -> Result<Found, String> {
-    let scan = std::process::Command::new("nmcli")
-        .args(["-t", "-f", "BSSID,SIGNAL", "dev", "wifi", "list", "--rescan", "no"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-        .unwrap_or_default();
-    let body = request_body(&parse_nmcli(&scan)).to_string();
-    let agent: ureq::Agent =
-        ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(15))).http_status_as_error(false).build().into();
-    let mut resp = agent
-        .post(BEACONDB_URL)
-        .header("User-Agent", &ua())
-        .header("Content-Type", "application/json")
-        .send(body.as_bytes())
-        .map_err(|e| format!("beaconDB could not be reached: {e}"))?;
-    let text = resp.body_mut().read_to_string().map_err(|e| e.to_string())?;
-    let (lat, lon, acc) = parse_answer(&text)?;
-    let (lat, lon) = (round2(lat), round2(lon));
+/// From the IP address through beaconDB (rounded to two decimals); `Error::Vpn` while a VPN is on, and nothing is asked then.
+/// Named after the time zone's city when that is close by.
+pub fn from_ip() -> Result<Found, geolocate::Error> {
+    let geolocate::Place { lat, lon } = geolocate::locate(&ua())?;
     let name = from_timezone()
         .ok()
         .filter(|t| km((t.lat, t.lon), (lat, lon)) <= NAME_KM)
         .map(|t| t.name)
         .unwrap_or_else(|| "Current location".into());
-    Ok(Found { name, lat, lon, accuracy_m: acc })
+    Ok(Found { name, lat, lon })
 }
 
 /// Places named like `query` (Open-Meteo's geocoding: only the typed name is sent).
@@ -187,22 +124,7 @@ mod tests {
     }
 
     #[test]
-    fn nmcli_lines_become_networks() {
-        let out = "AA\\:BB\\:CC\\:00\\:11\\:22:40\nAA\\:BB\\:CC\\:00\\:11\\:23:84\n\nnot a line\nAA\\:BB\\:CC\\:00\\:11\\:23:84\n";
-        let v = parse_nmcli(out);
-        assert_eq!(v, vec![("aa:bb:cc:00:11:23".to_string(), -58), ("aa:bb:cc:00:11:22".to_string(), -80)]);
-        assert_eq!(request_body(&[]), serde_json::json!({"considerIp": true}));
-        assert_eq!(request_body(&v)["wifiAccessPoints"][0]["macAddress"], "aa:bb:cc:00:11:23");
-        let many: String = (0..40).map(|i| format!("AA\\:BB\\:CC\\:00\\:11\\:{i:02X}:{}\n", 50 + i)).collect();
-        assert_eq!(parse_nmcli(&many).len(), 30);
-    }
-
-    #[test]
-    fn beacondb_answers_are_read() {
-        assert_eq!(parse_answer(r#"{"location":{"lat":39.7392,"lng":-104.9903},"accuracy":120.5}"#), Ok((39.7392, -104.9903, Some(120.5))));
-        assert!(parse_answer(r#"{"error":{"code":404,"message":"Not found"}}"#).unwrap_err().contains("Not found"));
-        assert!(parse_answer("<html>").is_err());
-        assert!(parse_answer(r#"{"location":{"lat":999,"lng":0}}"#).is_err());
+    fn distances() {
         assert!(km((39.74, -104.98), (40.01, -105.27)) < 50.0);
     }
 }

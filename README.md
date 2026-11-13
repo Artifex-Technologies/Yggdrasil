@@ -45,6 +45,7 @@ version that runs in a window ([docs/COMPOSITOR.md](docs/COMPOSITOR.md)). The ch
 | `packages/gametime` | `yggdrasil-gametime` | game time: while a game runs, background updates and chores wait and catch up afterwards; the leak watch, virus scans and Heimdall keep running ([docs/GAME_TIME.md](docs/GAME_TIME.md)) |
 | `packages/controllers` | `yggdrasil-controllers` | game controllers in the top bar: battery, rumble test, light bar colour, notifications |
 | `packages/gamepads` | | the game controller library that Settings and the controllers add-on share (reads sysfs) |
+| `packages/geolocate` | | where the computer roughly is, for Weather's automatic place and Settings' automatic time zone: its IP address only, through beaconDB (no Wi-Fi networks, no hardware IDs), and nothing while a VPN is on |
 | `packages/wifiscan` | | what nearby Wi-Fi networks broadcast, for Settings: the kernel's last scan read over nl80211 (no root, nothing sent), the information elements parsed as hostile input (property-tested), makers from the IEEE list |
 | `packages/agent-usage` | `yggdrasil-agent-usage` | a top bar add-on: how much of Claude's weekly and 5-hour limits is used |
 | `packages/browser-warm` | `yggdrasil-browser-warm` | keeps the default browser running with no windows, so new windows and links open almost at once |

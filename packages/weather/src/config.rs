@@ -1,5 +1,5 @@
 //! Where you are: a place you chose ("manual"), the time zone's main city ("timezone": offline, rough, the default when
-//! nothing is set), or nearby Wi-Fi through beaconDB ("auto"), only when you pick it.
+//! nothing is set), or the IP address through beaconDB ("auto"), only when you pick it.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;

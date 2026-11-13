@@ -2,6 +2,7 @@
 //! Free for non-commercial use with no key (https://open-meteo.com/en/docs); the
 //! terms are theirs, not ours. Responses are parsed from text so tests use fixtures.
 
+use geolocate::round2;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
@@ -137,16 +138,22 @@ pub fn parse_places(text: &str) -> Result<Vec<Place>, String> {
     serde_json::from_str::<R>(text).map(|r| r.results).map_err(|e| format!("cannot parse place search: {e}"))
 }
 
+/// "latitude=45.68&longitude=-111.04": every place goes to Open-Meteo with two decimals (about 1 km), whichever way it was found.
+pub fn at(lat: f64, lon: f64) -> String {
+    format!("latitude={:.2}&longitude={:.2}", round2(lat), round2(lon))
+}
+
 pub fn forecast_url(lat: f64, lon: f64, models: &[&str], days: u32) -> String {
     format!(
-        "{FORECAST_URL}?latitude={lat:.4}&longitude={lon:.4}&hourly=temperature_2m,precipitation_probability&models={}&forecast_days={days}&timezone=auto",
+        "{FORECAST_URL}?{}&hourly=temperature_2m,precipitation_probability&models={}&forecast_days={days}&timezone=auto",
+        at(lat, lon),
         models.join(",")
     )
 }
 
 /// The weather right now (WMO weather code and day or night), for the bar's icon: one small request, no model list.
 pub fn current_url(lat: f64, lon: f64) -> String {
-    format!("{FORECAST_URL}?latitude={lat:.4}&longitude={lon:.4}&current=weather_code,is_day&timezone=auto")
+    format!("{FORECAST_URL}?{}&current=weather_code,is_day&timezone=auto", at(lat, lon))
 }
 
 /// (WMO weather code, daytime) from a `current_url` answer.
@@ -157,7 +164,7 @@ pub fn parse_current(text: &str) -> Option<(i64, bool)> {
 }
 
 pub fn ensemble_url(lat: f64, lon: f64, days: u32) -> String {
-    format!("{ENSEMBLE_URL}?latitude={lat:.4}&longitude={lon:.4}&hourly=temperature_2m&models=gfs025&forecast_days={days}&timezone=auto")
+    format!("{ENSEMBLE_URL}?{}&hourly=temperature_2m&models=gfs025&forecast_days={days}&timezone=auto", at(lat, lon))
 }
 
 pub fn geocode_url(name: &str) -> String {
@@ -228,6 +235,12 @@ mod tests {
     #[test]
     fn urls() {
         assert!(forecast_url(40.7, -74.0, DEFAULT_MODELS, 3).contains("models=gfs_seamless,ecmwf_ifs025,icon_seamless"));
+        // two decimals, whichever way the place was found (a city picked from the search comes with four or more)
+        for url in
+            [forecast_url(40.71278, -74.00597, DEFAULT_MODELS, 3), current_url(40.71278, -74.00597), ensemble_url(40.71278, -74.00597, 3)]
+        {
+            assert!(url.contains("?latitude=40.71&longitude=-74.01&"), "{url}");
+        }
         assert!(geocode_url("São Paulo & co").contains("name=S%C3%A3o%20Paulo%20%26%20co"));
     }
 }

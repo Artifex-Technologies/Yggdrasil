@@ -2,7 +2,7 @@
 //! (in the US that is NOAA's HRRR, in Europe the regional models; elsewhere it is filled from the
 //! hourly global models). Read as text so tests use fixtures.
 
-use crate::openmeteo::FORECAST_URL;
+use crate::openmeteo::{at, FORECAST_URL};
 use crate::timeutil::parse_local;
 use serde::{Deserialize, Serialize};
 
@@ -13,7 +13,7 @@ pub const STEPS: usize = 8;
 const STEP_S: i64 = 900;
 
 pub fn url(lat: f64, lon: f64) -> String {
-    format!("{FORECAST_URL}?latitude={lat:.4}&longitude={lon:.4}&minutely_15=precipitation&forecast_minutely_15=12&past_minutely_15=1&timezone=auto")
+    format!("{FORECAST_URL}?{}&minutely_15=precipitation&forecast_minutely_15=12&past_minutely_15=1&timezone=auto", at(lat, lon))
 }
 
 /// One 15-minute step: when it starts (epoch seconds) and the rate in mm/h.
@@ -147,6 +147,11 @@ mod tests {
     // 2026-10-25T14:00 at UTC-4 (the fixture's offset)
     fn t(hh: i64, mm: i64) -> i64 {
         parse_local(&format!("2026-10-25T{hh:02}:{mm:02}"), -4 * 3600).unwrap()
+    }
+
+    #[test]
+    fn the_place_goes_out_with_two_decimals() {
+        assert!(url(48.85661, 2.35222).contains("?latitude=48.86&longitude=2.35&minutely_15="));
     }
 
     #[test]

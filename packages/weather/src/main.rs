@@ -106,10 +106,11 @@ fn load_config() -> Result<Config, String> {
     Ok(Config { name: f.name, lat: f.lat, lon: f.lon, mode: "timezone".into(), detected_at: 0, ..base })
 }
 
-/// Finds the place from nearby Wi-Fi (beaconDB) and saves it as the automatic place, keeping the rest of `base`.
+/// Finds the place from the IP address (beaconDB; not while a VPN is on) and saves it as the automatic place, keeping the rest
+/// of `base`.
 fn detect_and_save(base: Config) -> Result<Config, String> {
     let path = config::config_path().ok_or("no config directory")?;
-    let f = locate::from_wifi()?;
+    let f = locate::from_ip().map_err(|e| e.to_string())?;
     let c = Config { name: f.name, lat: f.lat, lon: f.lon, mode: "auto".into(), detected_at: now_epoch(), ..base };
     config::save(&path, &c).map_err(|e| e.to_string())?;
     Ok(c)
@@ -229,7 +230,7 @@ fn cmd_press(args: &[String]) -> ExitCode {
         current,
         now,
         locate::from_timezone,
-        locate::from_wifi,
+        locate::from_ip,
         locate::search_places,
     );
     if let Some(c) = changed {
@@ -249,7 +250,7 @@ fn cmd_watch() -> ExitCode {
         Ok(c) => c,
         Err(e) => return die(&e),
     };
-    // the automatic place is found again every few hours (a laptop travels); if that fails the last place stays
+    // the automatic place is found again every few hours (a laptop travels); if that fails, or a VPN is on, the last place stays
     if cfg.mode == "auto" && now_epoch() - cfg.detected_at > 3 * 3600 {
         match detect_and_save(cfg.clone()) {
             Ok(c) => cfg = c,

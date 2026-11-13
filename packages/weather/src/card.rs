@@ -71,7 +71,7 @@ pub fn blocks(cfg: Option<&Config>, st: &CardState) -> Value {
     let mut b = vec![
         json!({"section": "PLACE"}),
         json!({"list": [
-            {"id": "mode:auto", "title": "Automatic", "note": place_note("auto", "nearby Wi-Fi through beaconDB; network IDs and your IP go to beaconDB"), "on": mode == "auto"},
+            {"id": "mode:auto", "title": "Automatic", "note": place_note("auto", "from your IP address, through beaconDB; off while a VPN is on"), "on": mode == "auto"},
             {"id": "mode:timezone", "title": "From time zone", "note": place_note("timezone", "rough, offline"), "on": mode == "timezone"},
             {"id": "mode:manual", "title": "Chosen place", "note": chosen.unwrap_or_else(|| "search below".into()), "on": mode == "manual"},
         ]}),
@@ -97,8 +97,8 @@ pub fn blocks(cfg: Option<&Config>, st: &CardState) -> Value {
 }
 
 /// What a press does. `current` is the place in use (saved, or the time zone's when nothing is saved); the lookups are passed in
-/// so nothing reaches the network but the one the press asks for (beaconDB only for "Automatic", Open-Meteo's search only when
-/// the search is sent). Returns the config to save, if it changed.
+/// so nothing reaches the network but the one the press asks for (beaconDB only for "Automatic", and not while a VPN is on;
+/// Open-Meteo's search only when the search is sent). Returns the config to save, if it changed.
 #[allow(clippy::too_many_arguments)]
 pub fn press(
     id: &str,
@@ -107,7 +107,7 @@ pub fn press(
     current: Option<Config>,
     now: i64,
     timezone: impl Fn() -> Result<Found, String>,
-    wifi: impl Fn() -> Result<Found, String>,
+    auto: impl Fn() -> Result<Found, geolocate::Error>,
     search: impl Fn(&str) -> Result<Vec<Place>, String>,
 ) -> Option<Config> {
     st.updated = now;
@@ -138,10 +138,15 @@ pub fn press(
             *st = CardState { updated: now, ..Default::default() };
             None
         }
-        "mode:auto" => match wifi() {
+        "mode:auto" => match auto() {
             Ok(f) => {
                 st.status = format!("Found {}.", f.name);
                 Some(at(f, "auto"))
+            }
+            // through a VPN the place would be the VPN server's: the place in use stays
+            Err(geolocate::Error::Vpn(_)) => {
+                st.status = "Location is off while a VPN is on.".into();
+                None
             }
             Err(e) => {
                 st.status = format!("Could not find your place: {e}");
@@ -229,13 +234,16 @@ mod tests {
     use super::*;
 
     fn tz() -> Result<Found, String> {
-        Ok(Found { name: "Denver".into(), lat: 39.74, lon: -104.98, accuracy_m: None })
+        Ok(Found { name: "Denver".into(), lat: 39.74, lon: -104.98 })
     }
-    fn no_wifi() -> Result<Found, String> {
-        Err("offline".into())
+    fn offline() -> Result<Found, geolocate::Error> {
+        Err(geolocate::Error::Failed("offline".into()))
     }
-    fn wifi() -> Result<Found, String> {
-        Ok(Found { name: "Current location".into(), lat: 45.68, lon: -111.04, accuracy_m: Some(80.0) })
+    fn vpn() -> Result<Found, geolocate::Error> {
+        Err(geolocate::Error::Vpn("a WireGuard connection is active".into()))
+    }
+    fn by_ip() -> Result<Found, geolocate::Error> {
+        Ok(Found { name: "Current location".into(), lat: 45.68, lon: -111.04 })
     }
     fn no_search(_: &str) -> Result<Vec<Place>, String> {
         panic!("searched")
@@ -277,49 +285,52 @@ mod tests {
     #[test]
     fn typing_only_stores_the_search_and_enter_searches() {
         let mut st = CardState { view: "settings".into(), ..Default::default() };
-        assert_eq!(press("search", Some("Bozeman"), &mut st, Some(cfg("timezone")), 10, tz, no_wifi, no_search), None);
+        assert_eq!(press("search", Some("Bozeman"), &mut st, Some(cfg("timezone")), 10, tz, offline, no_search), None);
         assert_eq!(st.query, "Bozeman");
-        let found = press("search-go", None, &mut st, Some(cfg("timezone")), 11, tz, no_wifi, |q| {
+        let found = press("search-go", None, &mut st, Some(cfg("timezone")), 11, tz, offline, |q| {
             assert_eq!(q, "Bozeman");
             Ok(vec![place("Bozeman"), place("Belgrade")])
         });
         assert_eq!((found, st.results.len()), (None, 2));
-        let c = press("pick:0", None, &mut st, Some(cfg("timezone")), 12, tz, no_wifi, no_search).unwrap();
+        let c = press("pick:0", None, &mut st, Some(cfg("timezone")), 12, tz, offline, no_search).unwrap();
         assert_eq!((c.mode.as_str(), c.name.as_str()), ("manual", "Bozeman, Montana, United States"));
         assert_eq!(c.chosen.as_ref().unwrap().lat, 45.68);
         assert!(st.results.is_empty());
         // back to the time zone, then to the chosen place again, without searching
-        let tzc = press("mode:timezone", None, &mut st, Some(c.clone()), 13, tz, no_wifi, no_search).unwrap();
+        let tzc = press("mode:timezone", None, &mut st, Some(c.clone()), 13, tz, offline, no_search).unwrap();
         assert_eq!((tzc.mode.as_str(), tzc.name.as_str(), tzc.chosen.is_some()), ("timezone", "Denver", true));
-        let back = press("mode:manual", None, &mut st, Some(tzc), 14, tz, no_wifi, no_search).unwrap();
+        let back = press("mode:manual", None, &mut st, Some(tzc), 14, tz, offline, no_search).unwrap();
         assert_eq!((back.mode.as_str(), back.lat), ("manual", 45.68));
     }
 
     #[test]
-    fn automatic_saves_what_beacondb_found_and_a_failure_keeps_the_place() {
+    fn automatic_saves_what_beacondb_found_and_a_failure_or_a_vpn_keeps_the_place() {
         let mut st = CardState::default();
-        assert_eq!(press("mode:auto", None, &mut st, Some(cfg("timezone")), 20, tz, no_wifi, no_search), None);
+        assert_eq!(press("mode:auto", None, &mut st, Some(cfg("timezone")), 20, tz, offline, no_search), None);
         assert!(st.status.contains("offline"));
-        let c = press("mode:auto", None, &mut st, Some(cfg("timezone")), 21, tz, wifi, no_search).unwrap();
+        let c = press("mode:auto", None, &mut st, Some(cfg("timezone")), 21, tz, by_ip, no_search).unwrap();
         assert_eq!((c.mode.as_str(), c.detected_at, c.lat), ("auto", 21, 45.68));
+        // a VPN: the place in use stays (it would otherwise jump to the VPN server's country), and the card says why
+        assert_eq!(press("mode:auto", None, &mut st, Some(c), 22, tz, vpn, no_search), None);
+        assert_eq!(st.status, "Location is off while a VPN is on.");
     }
 
     #[test]
     fn units_and_views() {
         let mut st = CardState::default();
-        let c = press("units:us", None, &mut st, Some(cfg("manual")), 1, tz, no_wifi, no_search).unwrap();
+        let c = press("units:us", None, &mut st, Some(cfg("manual")), 1, tz, offline, no_search).unwrap();
         assert_eq!(c.units, "us");
-        assert_eq!(press("units:metric", None, &mut st, Some(cfg("manual")), 1, tz, no_wifi, no_search), None, "already metric");
+        assert_eq!(press("units:metric", None, &mut st, Some(cfg("manual")), 1, tz, offline, no_search), None, "already metric");
         // nothing saved yet: Fahrenheit saves the time zone's place in Fahrenheit; Celsius is already what is shown
-        let c = press("units:us", None, &mut st, None, 1, tz, no_wifi, no_search).unwrap();
+        let c = press("units:us", None, &mut st, None, 1, tz, offline, no_search).unwrap();
         assert_eq!((c.units.as_str(), c.mode.as_str(), c.valid()), ("us", "timezone", true));
-        assert_eq!(press("units:metric", None, &mut st, None, 1, tz, no_wifi, no_search), None);
-        press("view:settings", None, &mut st, None, 5, tz, no_wifi, no_search);
+        assert_eq!(press("units:metric", None, &mut st, None, 1, tz, offline, no_search), None);
+        press("view:settings", None, &mut st, None, 5, tz, offline, no_search);
         assert_eq!(st.view, "settings");
-        press("view:normal", None, &mut st, None, 6, tz, no_wifi, no_search);
+        press("view:normal", None, &mut st, None, 6, tz, offline, no_search);
         assert_eq!((st.view.as_str(), st.updated), ("", 6));
-        assert_eq!(press("pick:9", None, &mut st, None, 7, tz, no_wifi, no_search), None);
-        assert_eq!(press("nonsense", None, &mut st, None, 7, tz, no_wifi, no_search), None);
+        assert_eq!(press("pick:9", None, &mut st, None, 7, tz, offline, no_search), None);
+        assert_eq!(press("nonsense", None, &mut st, None, 7, tz, offline, no_search), None);
     }
 
     #[test]

@@ -498,6 +498,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "yggdrasil-geolocate"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "ureq",
+]
+
+[[package]]
 name = "yggdrasil-weather"
 version = "0.1.0"
 dependencies = [
@@ -506,6 +514,7 @@ dependencies = [
  "serde_json",
  "ureq",
  "yggdrasil-conf",
+ "yggdrasil-geolocate",
 ]
 
 [[package]]
