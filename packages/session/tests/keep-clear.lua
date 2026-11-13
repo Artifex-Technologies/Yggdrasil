@@ -60,6 +60,36 @@ check("wide but short keeps its size", nil, kc.normal(0, 28, 1210, 400, ipad))
 check("the whole screen (a game) is left alone", nil, kc.normal(0, 0, 1210, 834, ipad))
 check("big screen", { 1640, 205, 2580, 1059 }, kc.normal(1210, 28, 3440, 1412, wide))
 
+-- as a window opens: one bigger than the free room is made to fit it, less the gap of 8, and centred; one that fits keeps its
+-- size. The laptop's 1920x1200 panel at scale 1.5 (1280x800 to lay out), the bar 28 high, the dock 70.
+local laptop = { x = 0, y = 0, width = 1920, height = 1200, scale = 1.5, transform = 0,
+  reserved = { top = 28.0, right = 0.0, bottom = 70.0, left = 0.0 } }
+-- 2026-11-13: VS Code's size kept from scale 1 (1208x806) is taller than the 702 the laptop leaves free
+check("kept size from before the scale changed", { 36, 36, 1208, 686 }, kc.open(100, 50, 1208, 806, laptop, 8))
+-- a pop-up wider than the screen (Hyprland centred it, hanging off both bare edges): as wide as the room, centred
+check("wider than the screen", { 8, 179, 1264, 400 }, kc.open(-110, 200, 1500, 400, laptop, 8))
+check("bigger both ways", { 8, 36, 1264, 686 }, kc.open(-200, -100, 1680, 1000, laptop, 8))
+-- a normal dialog keeps its size and place
+check("a normal dialog is left alone", nil, kc.open(374, 311, 532, 177, laptop, 8))
+check("as big as the free room exactly is left alone", nil, kc.open(0, 28, 1280, 702, laptop, 8))
+-- one that fits but reaches under the dock is only moved above it, as before
+check("fits, but under the dock", { 100, 430, 600, 300 }, kc.open(100, 500, 600, 300, laptop, 8))
+-- the whole screen exactly (a borderless game or a video) is left alone
+check("borderless full screen as it opens", nil, kc.open(0, 0, 1280, 800, laptop, 8))
+-- scale 2 (960x600 to lay out): a trust dialog 560 high in 502 free
+local laptop2 = { x = 0, y = 0, width = 1920, height = 1200, scale = 2.0, transform = 0,
+  reserved = { top = 28.0, right = 0.0, bottom = 70.0, left = 0.0 } }
+check("tall dialog at scale 2", { 180, 36, 600, 486 }, kc.open(180, 20, 600, 560, laptop2, 8))
+-- a screen with nothing reserved: the gap all round
+local bare = { x = 1280, y = 0, width = 1280, height = 800, scale = 1.0, transform = 0, reserved = {} }
+check("no bar or dock", { 1288, 8, 1264, 784 }, kc.open(1220, -50, 1400, 900, bare, 8))
+-- turned into a tablet (portrait, 800x1280 to lay out): too wide
+local portrait = { x = 0, y = 0, width = 1920, height = 1200, scale = 1.5, transform = 1,
+  reserved = { top = 28.0, right = 0.0, bottom = 70.0, left = 0.0 } }
+check("portrait screen", { 8, 216, 784, 806 }, kc.open(-204, 216, 1208, 806, portrait, 8))
+-- no gap given: the free room itself
+check("no gap", { 0, 28, 1280, 702 }, kc.open(-110, 0, 1500, 900, laptop))
+
 if failed > 0 then
   io.stderr:write(failed .. " failed\n")
   os.exit(1)

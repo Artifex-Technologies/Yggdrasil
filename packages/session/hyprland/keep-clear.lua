@@ -1,6 +1,6 @@
 -- keep-clear.lua: where a floating window goes so that it keeps clear of the bar and the dock, the room they reserve on
--- their screen. Pure functions with no Hyprland calls: yggdrasil.lua runs them on window events, and
--- packages/session/tests/keep-clear.lua checks them with plain Lua.
+-- their screen, and opens no bigger than that screen. Pure functions with no Hyprland calls: yggdrasil.lua runs them on
+-- window events, and packages/session/tests/keep-clear.lua checks them with plain Lua.
 local M = {}
 
 -- One axis: a window from p, len long, kept inside lo..hi (shortened when it does not fit).
@@ -31,6 +31,33 @@ function M.fit(x, y, w, h, m)
   if (top > 0 and y < y0) or (bottom > 0 and y + h > y1) then ny, nh = fit_axis(y, h, y0, y1) end
   if (left > 0 and x < x0) or (right > 0 and x + w > x1) then nx, nw = fit_axis(x, w, x0, x1) end
   nx, ny, nw, nh = round(nx), round(ny), round(nw), round(nh)
+  if nx == x and ny == y and nw == w and nh == h then return nil end
+  return nx, ny, nw, nh
+end
+
+-- A window as it opens. One bigger than the free room on its screen (the screen less the bar and the dock) is made as big as
+-- that room less the gap around it, at most, and centred in it; one that fits keeps its size and is only kept clear of the bar
+-- and the dock (fit above). On the laptop (a small screen at scale 1.5 or 2) VS Code's workspace-trust dialog opened larger
+-- than the screen and had to be dragged around to be read (2026-11-13): sizes kept from before the scale changed, and nothing
+-- narrowed a window that was too wide. gap: the room kept free around it (the session's gaps_out). Returns x, y, w, h, or nil
+-- when it may stay as it is. A program that cannot be made smaller than its own minimum stays bigger, from the top left of the
+-- room, so its title and buttons can be reached.
+function M.open(x, y, w, h, m, gap)
+  local s = (m.scale and m.scale > 0) and m.scale or 1
+  local r = m.reserved or {}
+  local sw, sh = m.width / s, m.height / s
+  if (m.transform or 0) % 2 == 1 then sw, sh = sh, sw end
+  local mx, my = m.x or 0, m.y or 0
+  if math.abs(x - mx) <= 1 and math.abs(y - my) <= 1 and math.abs(w - sw) <= 1 and math.abs(h - sh) <= 1 then return nil end
+  local fw, fh = sw - (r.left or 0) - (r.right or 0), sh - (r.top or 0) - (r.bottom or 0)
+  if fw < 100 or fh < 100 or (w <= fw and h <= fh) then return M.fit(x, y, w, h, m) end
+  gap = math.max(0, math.min(tonumber(gap) or 0, 64))
+  if fw - 2 * gap < 100 or fh - 2 * gap < 100 then gap = 0 end
+  local x0, y0 = mx + (r.left or 0) + gap, my + (r.top or 0) + gap
+  fw, fh = fw - 2 * gap, fh - 2 * gap
+  local nw, nh = math.min(w, fw), math.min(h, fh)
+  local nx, ny = round(x0 + (fw - nw) / 2), round(y0 + (fh - nh) / 2)
+  nw, nh = round(nw), round(nh)
   if nx == x and ny == y and nw == w and nh == h then return nil end
   return nx, ny, nw, nh
 end

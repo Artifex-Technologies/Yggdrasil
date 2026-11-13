@@ -264,9 +264,28 @@ for _, screen in ipairs(tiling_screens()) do
   hl.window_rule({ name = "tile-on-" .. screen, match = { class = ".*", workspace = "m[" .. screen .. "]" }, tile = true })
 end
 
+-- Where a window goes so that it keeps clear of the bar and the dock and opens no bigger than its screen (keep-clear.lua, with
+-- plain-Lua tests in packages/session/tests/keep-clear.lua); used by the window places below and the keep-clear block after them.
+local keep_clear_ok, keep_clear = pcall(dofile, "/usr/share/yggdrasil/hyprland/keep-clear.lua")
+if not keep_clear_ok then
+  io.stderr:write("yggdrasil: keep-clear.lua: " .. tostring(keep_clear) .. "\n")
+  keep_clear = nil
+end
+-- the room kept free around a window made smaller to fit its screen: the session's outer gap (8 unless yours says otherwise)
+local function open_gap()
+  local ok, v = pcall(hl.get_config, "general.gaps_out")
+  if not ok then return 8 end
+  if type(v) == "table" then v = v.top or v[1] end
+  if type(v) == "string" then v = v:match("%d+") end
+  return tonumber(v) or 8
+end
+
 -- Windows come back where they were: when a program's last window closes, its size and place are kept (one line per program in
--- ~/.local/state/yggdrasil/window-places), and its next window opens there, if that spot is still on a screen. Dialogs and second
--- windows of a program that already has one open are left where the program puts them.
+-- ~/.local/state/yggdrasil/window-places), and its next window opens there, if that spot is still on a screen, and no bigger
+-- than that screen is now (the scale may have changed since). Dialogs and second windows of a program that already has one
+-- open are left where the program puts them: a window of the same program is one of the same class or of the same process.
+-- VS Code's dialogs are "code" and its main window "com.microsoft.VSCode", so its dialogs were kept and opened at the size of
+-- the dialog before (2026-11-13).
 local places_file = (os.getenv("XDG_STATE_HOME") or (home .. "/.local/state")) .. "/yggdrasil/window-places"
 local places = {}
 do
@@ -285,8 +304,9 @@ local function xy(v)
 end
 local function others_of(w)
   local n = 0
+  local pid = tonumber(w.pid) or 0
   for _, o in ipairs(hl.get_windows()) do
-    if o.address ~= w.address and o.class == w.class then n = n + 1 end
+    if o.address ~= w.address and (o.class == w.class or (pid > 0 and tonumber(o.pid) == pid)) then n = n + 1 end
   end
   return n
 end
@@ -312,11 +332,17 @@ hl.on("window.open", function(w)
   local ok, err = pcall(function()
     local p = places[w.class]
     if not p or not w.floating or others_of(w) > 0 then return end
-    if not hl.get_monitor_at(p[1] + p[3] / 2, p[2] + p[4] / 2) then return end
+    local m = hl.get_monitor_at(p[1] + p[3] / 2, p[2] + p[4] / 2)
+    if not m then return end
+    local x, y, width, height = p[1], p[2], p[3], p[4]
+    if keep_clear then
+      local nx, ny, nw, nh = keep_clear.open(x, y, width, height, m, open_gap())
+      if nx then x, y, width, height = nx, ny, nw, nh end
+    end
     local target = "address:" .. w.address
     -- resizing keeps a window centred, so the size first, then the place
-    hl.dispatch(hl.dsp.window.resize({ x = p[3], y = p[4], window = target }))
-    hl.dispatch(hl.dsp.window.move({ x = p[1], y = p[2], window = target }))
+    hl.dispatch(hl.dsp.window.resize({ x = width, y = height, window = target }))
+    hl.dispatch(hl.dsp.window.move({ x = x, y = y, window = target }))
   end)
   if not ok then io.stderr:write("yggdrasil: putting a window back: " .. tostring(err) .. "\n") end
 end)
@@ -324,15 +350,13 @@ end)
 -- Windows keep clear of the bar and the dock (keep-clear.lua works out where a window goes). Checked when a window opens,
 -- when it comes back from maximize or full screen, and when the bar or the dock appears on a screen (the dock follows the
 -- main screen). On 2026-11-08 VS Code came back from maximize at 1210x806, its size from before, under the iPad screen's dock.
+-- A window that opens bigger than the free room on its screen (any program's, dialogs and pop-ups too) is made to fit it and
+-- centred there; one that fits keeps its size.
 -- Left alone: maximized, full-screen, tiled and pinned windows, games (content type "game"), the special workspaces, and a
 -- window dragged under the dock by hand.
-local keep_clear_ok, keep_clear = pcall(dofile, "/usr/share/yggdrasil/hyprland/keep-clear.lua")
-if not keep_clear_ok then
-  io.stderr:write("yggdrasil: keep-clear.lua: " .. tostring(keep_clear) .. "\n")
-  keep_clear = nil
-end
--- back: the window has just come back from maximize or full screen (then a size as big as the free room becomes a normal one)
-local function clear_of_bars(w, back)
+-- back: the window has just come back from maximize or full screen (then a size as big as the free room becomes a normal one);
+-- opening: it has just opened (then one bigger than its screen is made to fit and centred)
+local function clear_of_bars(w, back, opening)
   if not keep_clear or not w or not w.mapped or not w.floating or (w.fullscreen or 0) ~= 0 or w.pinned then return end
   if w.content_type == "game" then return end
   local ws = w.workspace
@@ -344,6 +368,7 @@ local function clear_of_bars(w, back)
   if not m then return end
   local nx, ny, nw, nh
   if back then nx, ny, nw, nh = keep_clear.normal(x, y, width, height, m) end
+  if not nx and opening then nx, ny, nw, nh = keep_clear.open(x, y, width, height, m, open_gap()) end
   if not nx then nx, ny, nw, nh = keep_clear.fit(x, y, width, height, m) end
   if not nx then return end
   local target = "address:" .. w.address
@@ -353,13 +378,13 @@ local function clear_of_bars(w, back)
 end
 -- a moment later: Hyprland (and the program) settle the window's size first; address nil = every window
 local clear_timers = {}
-local function clear_later(address, ms, back)
+local function clear_later(address, ms, back, opening)
   local t
   t = hl.timer(function()
     clear_timers[t] = nil
     local ok, err = pcall(function()
       for _, o in ipairs(hl.get_windows()) do
-        if address == nil or o.address == address then clear_of_bars(o, back) end
+        if address == nil or o.address == address then clear_of_bars(o, back, opening) end
       end
     end)
     if not ok then io.stderr:write("yggdrasil: keeping windows clear of the bar and dock: " .. tostring(err) .. "\n") end
@@ -368,9 +393,9 @@ local function clear_later(address, ms, back)
 end
 hl.on("window.open", function(w)
   if w and w.address then
-    clear_later(w.address, 150)
+    clear_later(w.address, 150, false, true)
     -- some programs (Electron) set their saved size a little after they open
-    clear_later(w.address, 1200)
+    clear_later(w.address, 1200, false, true)
   end
 end)
 -- the window comes as a userdata object (not a table)

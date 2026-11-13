@@ -96,7 +96,15 @@ How the macOS mode was put together (KDE era; none of this is used now):
   floating window out from under the bar and the dock, and shortens it if it does not fit. It runs
   when the window opens, when it comes back from maximize or full screen, and when the bar or the
   dock appears on a screen. Dragging a window there by hand is left alone, and so are games and
-  true full screen.
+  true full screen. Since 2026-11-13 no floating window opens bigger than its screen: on my laptop (a
+  small screen at scale 1.5 or 2) VS Code's workspace-trust dialog opened larger than the screen
+  and I had to drag it around to read it. A window (any program's, dialogs and pop-ups too) that
+  opens bigger than the room the bar and the dock leave free is made as big as that room less the
+  8-pixel gap and centred in it; one that fits keeps its size. Kept window places are fitted the same
+  way (sizes kept before a scale change were too big), and a dialog is no longer kept as a place of
+  its own: a window of the same process counts as the same program (VS Code's dialogs are class
+  "code", its main window "com.microsoft.VSCode"). Tested in plain Lua
+  (`packages/session/tests/keep-clear.lua`, `window-open.lua`).
 - Verified in a VM: the desktop, the dock, the window buttons, the global menu in the top bar, the
   Meta-key launcher, the installer, maximize stopping at the dock, full screen and Meta + Alt + P
   (now also Meta + Space) raising the panels over it. Not yet verified: NVIDIA, the real monitors.
