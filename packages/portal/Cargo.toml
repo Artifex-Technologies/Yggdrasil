@@ -13,6 +13,8 @@ path = "src/main.rs"
 zbus = "5"
 libc = "0.2"
 yggdrasil-conf = { path = "../yggdrasil-conf" }
+# the window in front, when a program does not say who it is (Hyprland or Yggdrasil's own compositor)
+yggdrasil-wm = { path = "../wm" }
 blocking = "1"
 
 [profile.release]

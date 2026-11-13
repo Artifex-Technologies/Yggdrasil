@@ -141,23 +141,17 @@ fn remember(key: &str, folder: &str) {
     let _ = std::fs::write(&path, lines.join("\n") + "\n");
 }
 
-/// Which program is asking: its app id, else the class of the window with the focus (Hyprland), else the dialog's title.
+/// Which program is asking: its app id, else the class of the window with the focus (the compositor's, through yggdrasil-wm),
+/// else the dialog's title.
 fn program_key(app_id: &str, title: &str) -> String {
     if !app_id.is_empty() {
         return format!("app:{app_id}");
     }
-    if std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some() {
-        if let Ok(out) = Command::new("hyprctl").args(["activewindow", "-j"]).stderr(Stdio::null()).output() {
-            let text = String::from_utf8_lossy(&out.stdout);
-            // the window's class, from Hyprland's JSON without a JSON library: "class": "daedalus",
-            if let Some(rest) = text.split("\"class\": \"").nth(1) {
-                if let Some(class) = rest.split('"').next().filter(|c| !c.is_empty()) {
-                    return format!("window:{class}");
-                }
-            }
-        }
+    let class = yggdrasil_wm::Desk::detect().and_then(|d| d.active_window(false)).map(|w| w.class).filter(|c| !c.is_empty());
+    match class {
+        Some(class) => format!("window:{class}"),
+        None => format!("title:{title}"),
     }
-    format!("title:{title}")
 }
 
 /// Run Minos as a chooser; Some(paths) when the user chose, None when they cancelled.
