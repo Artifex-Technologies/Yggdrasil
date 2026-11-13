@@ -26,6 +26,9 @@ accent=${1:-}
 mode=${2:-}
 shape=${3:-}
 [[ $accent == - ]] && accent=
+[[ $mode == - ]] && mode=   # ("-" for the style looked for a picture called "-.svg")
+# an accent given must be three numbers (bash's arithmetic below would evaluate anything else as code)
+[[ -z $accent || $accent =~ ^[0-9]+,[0-9]+,[0-9]+$ ]] || accent=
 
 CONF=${XDG_CONFIG_HOME:-$HOME/.config}
 # KEY from the desktop's own appearance file ("key = value" lines, written by Settings and ygg-theme)

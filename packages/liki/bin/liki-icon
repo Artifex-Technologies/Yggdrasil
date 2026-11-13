@@ -29,7 +29,8 @@ install_icon() {
   mkdir -p "$DIR"
   for name in "$@"; do
     rm -f "$DIR/$name".{svg,png}
-    cp "$file" "$DIR/$name.$ext"
+    # (a folder named like a picture used to count as imported under --import)
+    cp "$file" "$DIR/$name.$ext" || { [[ -z $tmp ]] || rm -f "$tmp"; return 1; }
   done
   [[ -z $tmp ]] || rm -f "$tmp"
 }
@@ -86,7 +87,7 @@ case ${1:-} in
       fi
     done
     refresh; echo "$done_n icons imported" ;;
-  "") sed -n 2,11p "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+  "") sed -n 2,9p "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
   *)
     [[ $# -eq 2 && -r $2 ]] || { echo "usage: liki-icon APP FILE" >&2; exit 1; }
     install_icon "$2" "$1"; refresh; echo "$1 now uses $2" ;;

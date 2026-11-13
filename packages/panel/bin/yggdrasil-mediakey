@@ -24,5 +24,5 @@ case "${1:-}" in
   stop) mpris Stop ;;
   brightness-up) brightnessctl set 5%+ ;;
   brightness-down) brightnessctl set 5%- ;;
-  *) sed -n '2,12p' "$0" >&2; exit 2 ;;
+  *) sed -n '2,8p' "$0" >&2; exit 2 ;;
 esac

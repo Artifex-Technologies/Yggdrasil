@@ -30,5 +30,5 @@ case "${1:-}" in
   zones-drop) call ZonesDrop ;;
   shortcuts) call ToggleShortcuts ;;
   cursor-tap) call CursorTap ;;
-  *) sed -n '2,18p' "$0" >&2; exit 2 ;;
+  *) sed -n '2,17p' "$0" >&2; exit 2 ;;
 esac
