@@ -25,8 +25,8 @@ yggdrasil-gamepads = { path = "../gamepads" }
 yggdrasil-colorpicker = { path = "../colorpicker", default-features = false }
 # Battery: which app a systemd scope belongs to, as the launcher's usage counter matches them (its library only)
 yggdrasil-appusage = { path = "../appusage" }
-# Battery: the history's days in the computer's time zone (already in the tree through yggdrasil-tzpicker)
-jiff = { version = "0.2", default-features = false, features = ["std", "tzdb-zoneinfo"] }
+# Battery and the wallpaper preview: days and the clock in the computer's time zone (in the tree through yggdrasil-tzpicker)
+jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo"] }
 # Wi-Fi & Network: what nearby networks broadcast (the kernel's scan list, read without root or sending anything)
 yggdrasil-wifiscan = { path = "../wifiscan" }
 # joining a Wi-Fi network: the password goes to NetworkManager over D-Bus, never on a command line (already in the tree:

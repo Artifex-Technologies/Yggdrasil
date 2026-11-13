@@ -38,6 +38,7 @@ declare -A ACTIONS=(
     [settings-cooling-curves]="tap 1408 273"
     [settings-displays-connect]="tap 1413 517"
     [settings-lock-screen-designs]="wait 30"
+    [settings-wallpaper]="wait 30"
     [taskmanager]="tap 474 265"
     [calculator]="type 1299*12"
 )
@@ -71,6 +72,7 @@ shots() {
     shot settings-cooling-curves        desktop settings power:cooling system 700
     shot settings-appearance            desktop settings appearance system
     shot settings-lock-screen-designs   desktop settings appearance:lock system
+    shot settings-wallpaper             desktop settings appearance:wallpaper system
     shot settings-assistant             desktop settings assistant system
     shot settings-apps-list             desktop settings apps system
     shot settings-default-apps          desktop settings default system

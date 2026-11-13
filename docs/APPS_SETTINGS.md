@@ -58,6 +58,13 @@ rows, a row that opens a page ending in ›, and a small grey note under a card 
   Microphone: the input device, a level meter while the page is open (`pw-record`, 16 kHz mono, the loudest sample of each
   50 ms; stopped when the page is left), volume and mute. Sound keeps the output and a row to Microphone.
 
+- **Appearance > Wallpaper** has a preview card on top (`src/wallpaper.rs`): the lock screen and the desktop side by side in
+  the current wallpaper, style, accent, icon pack and lock screen design. The lock screen is the lock's own drawing
+  (`yggdrasil-lock --preview` of the design in use, 640x360, nothing locked; a likeness drawn by Settings stands in while it
+  is made: the lock is a program, its design code is not a library Settings can call); the desktop is drawn by Settings (the
+  top bar, a window with the accent's border, the dock with the first pinned apps in the icon pack). Both are made again
+  only when one of those changes, and dropped when the page is left.
+
 ## The pages
 
 - **The list** (2026-11-13, as on a tablet): a card at the top with Default Apps ("Manage default apps", no longer in the
@@ -190,6 +197,7 @@ About only when switched on, have no picture.
 | **Power > Cooling**: a fan controller's pump and fans, each with its speed now. | ![Settings > Power > Cooling](../assets/screenshots/settings-cooling.png) |
 | **Power > Cooling, a fan's curves**: the processor's curve, dragged point by point. | ![Settings > Power > Cooling, a fan's curves](../assets/screenshots/settings-cooling-curves.png) |
 | **Appearance**: light or dark, the accent, wallpapers, icons. | ![Settings > Appearance](../assets/screenshots/settings-appearance.png) |
+| **Appearance > Wallpaper**: the lock screen and the desktop previewed side by side, the wallpapers below. | ![Settings > Appearance > Wallpaper](../assets/screenshots/settings-wallpaper.png) |
 | **Appearance > Lock screen**: the designs with their previews. | ![Settings > Appearance > Lock screen](../assets/screenshots/settings-lock-screen-designs.png) |
 | **Sarina**: the operating system's assistant, from its integration. | ![Settings > Sarina](../assets/screenshots/settings-assistant.png) |
 | **Apps**: Default Apps, Optional software and Minos on a card at the top, then every installed app A to Z under its letter, with a search. | ![Settings > Apps](../assets/screenshots/settings-apps-list.png) |

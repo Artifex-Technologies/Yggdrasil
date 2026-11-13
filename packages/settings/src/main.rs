@@ -40,6 +40,7 @@ mod tune;
 mod ui;
 mod users;
 mod vpn;
+mod wallpaper;
 mod wifi_ui;
 mod wifihealth;
 mod wifijoin;
@@ -411,6 +412,8 @@ struct App {
     cam_pick: Option<std::path::PathBuf>,
     cam_preview: Option<media::Preview>,
     mic_meter: Option<media::Meter>,
+    /// Appearance > Wallpaper's preview of the lock screen and the desktop (dropped when that page is left).
+    wall_preview: Option<wallpaper::Preview>,
     bt_open: Option<String>,
     bt_forget: bool,
     bt_pairing: Option<String>,
@@ -583,6 +586,7 @@ impl App {
             cam_pick: None,
             cam_preview: None,
             mic_meter: None,
+            wall_preview: None,
             bt_open: None,
             bt_forget: false,
             bt_pairing: None,
@@ -879,6 +883,9 @@ impl eframe::App for App {
         }
         if !media_open(media::Sub::Microphone) {
             self.mic_meter = None;
+        }
+        if !(self.page == Page::Appearance && self.app_sub == AppSub::Wallpaper) {
+            self.wall_preview = None;
         }
         if self.page != Page::Vpn && self.vpn_add {
             self.vpn_add = false;
@@ -2358,6 +2365,7 @@ impl App {
             notify_rules(ui, pal);
         }
         if self.app_sub == AppSub::Wallpaper {
+            self.wallpaper_preview(ui, pal, ctx, &a);
             ui::group(ui, pal, Some("Wallpaper"), |ui| {
                 ui.add_space(6.0);
                 ui.horizontal_wrapped(|ui| {
