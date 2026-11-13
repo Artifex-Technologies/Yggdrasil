@@ -20,11 +20,15 @@ end
 hl = stub()
 hl.config = function(c) if c.input then table.insert(inputs, c.input) end end
 hl.device = function(spec) local copy = {} for k, v in pairs(spec) do copy[k] = v end table.insert(devices, copy) end
+-- the devices and monitors Hyprland lists (each run sets its own; the stub's own tables would never end under ipairs)
+local fake_devices, fake_monitors = {}, {}
 hl.get_windows = function() return {} end
-hl.get_devices = function() return {} end
+hl.get_devices = function() return fake_devices end
+hl.get_monitors = function() return fake_monitors end
 
-local function run(conf_text)
+local function run(conf_text, devs, mons)
   inputs, devices = {}, {}
+  fake_devices, fake_monitors = devs or {}, mons or {}
   local dir = os.tmpname()
   os.remove(dir)
   assert(os.execute("mkdir -p '" .. dir .. "/yggdrasil'"))
@@ -80,6 +84,43 @@ local d = devices[1] or {}
 check("the mouse's own settings", d.name == "example-gaming-mouse" and d.sensitivity == 0.5 and d.left_handed == true)
 check("key repeat is for every keyboard, not in a mouse's section", d.repeat_rate == nil)
 check("its parts", (devices[3] or {}).name == "example-gaming-mouse-2" and (devices[10] or {}).name == "example-gaming-mouse-9")
+
+-- the pen, touchscreen and TrackPoint rules, by the devices a computer has
+local function spec_for(name)
+  for _, d in ipairs(devices) do if d.name == name then return d end end
+end
+
+-- a desktop: a wide monitor and a streamed iPad screen (a headless output), a gaming mouse with its extra parts, a keyboard and
+-- the stream's own virtual mouse, touchscreen and pen. No laptop panel: nothing is mapped and no mouse scrolls on a button.
+run(nil, {
+  { name = "example-gaming-mouse", type = "pointer" },
+  { name = "example-gaming-mouse-1", type = "pointer" },
+  { name = "example-gaming-keyboard", type = "keyboard" },
+  { name = "mouse-passthrough", type = "pointer" },
+  { name = "touch-passthrough", type = "touch" },
+  { name = "pen-passthrough", type = "tablet" },
+}, { { name = "DP-1" }, { name = "HEADLESS-2" } })
+check("a desktop: no device is given a screen or a scroll button", #devices == 0, tostring(#devices))
+
+-- a laptop (ThinkPad style): its panel, a TrackPoint, a touchpad with its "-mouse" companion, the screen's pen and touchscreen,
+-- an external monitor and a drawing tablet on a cable
+run(nil, {
+  { name = "tpps/2-elan-trackpoint", type = "pointer" },
+  { name = "elan0001:00-04f3:3200-touchpad", type = "pointer" },
+  { name = "elan0001:00-04f3:3200-mouse", type = "pointer" },
+  { name = "wacom-hid-5349-pen", type = "tablet" },
+  { name = "wacom-hid-5349-finger", type = "touch" },
+  { name = "wacom-intuos-pro-m-pen", type = "tablet" },
+  { name = "example-usb-mouse", type = "pointer" },
+}, { { name = "eDP-1" }, { name = "DP-3" } })
+check("the screen's pen draws on the panel", (spec_for("wacom-hid-5349-pen") or {}).output == "eDP-1")
+check("the touchscreen is the panel's", (spec_for("wacom-hid-5349-finger") or {}).output == "eDP-1")
+check("a drawing tablet on a cable is left alone", spec_for("wacom-intuos-pro-m-pen") == nil)
+local tp = spec_for("tpps/2-elan-trackpoint") or {}
+check("the TrackPoint scrolls on its middle button", tp.scroll_method == "on_button_down" and tp.scroll_button == 274)
+check("the touchpad's companion mouse too", (spec_for("elan0001:00-04f3:3200-mouse") or {}).scroll_button == 274)
+check("the touchpad itself and other mice are left alone",
+  spec_for("elan0001:00-04f3:3200-touchpad") == nil and spec_for("example-usb-mouse") == nil)
 
 if failed > 0 then
   io.stderr:write(failed .. " failed\n")
