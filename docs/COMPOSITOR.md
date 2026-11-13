@@ -84,6 +84,15 @@ shortcuts list, focusing a pop-out), the game fixes, the pointer theme, the shor
 warm-up, the portal, the screenshot tool and splash, xmove and the installer's keyboard try-out; the control socket gained the
 commands for them (window processes, layers, bindings, reload, paste, the pointer theme, the keyboard layout, exit).
 
+**2026-11-12: the session's shortcut table and window look** (gap items 2 and 4; details and what is left in
+[packages/compositor/README.md](../packages/compositor/README.md)). The compositor's built-in shortcuts are now the table of
+`yggdrasil.lua` (a unit test holds the two together), with the session's words and command lines, taps on a modifier (Super for
+the start menu, Ctrl for Find my mouse) and repeat for held volume, brightness and magnifier keys; Super+Shift+M shows the
+minimized windows. Windows get the session's look: the accent border, corners rounded at 10, the shadow, the gaps (a maximized
+window keeps 8 all round, as on Hyprland), and the open, close and move animations (800 ms, Hyprland's default curve), none with
+"reduce motion". `tests/keys.rs` (stand-ins on the compositor's PATH) and `tests/look.rs` (PNG snapshots, a stopped clock for the
+frames in an animation) run in CI's `compositor-headless` job and in `tests/apps-podman.sh`.
+
 ## Status (2026-10-18): first version, runs nested in a window only
 
 It opens a window on the running desktop (winit backend) and serves its own Wayland socket; programs started with `--run` use it:
@@ -181,8 +190,8 @@ game full screen (no see-through patches, keys and mouse reach it). `YGGDRASIL_C
 
 Not built yet (in the order I would do them):
 1. Trying resize, maximize, full screen and minimize by hand, and X11 programs (above): xterm, Steam, a Proton game.
-2. Key repeat for the volume keys; the protocol `ext-workspace` for other programs (the panel's workspace buttons follow this compositor's
-   workspaces through yggdrasil-wm since 2026-11-12).
+2. The protocol `ext-workspace` for other programs (the panel's workspace buttons follow this compositor's workspaces through
+   yggdrasil-wm since 2026-11-12). Key repeat for the volume keys was done on 2026-11-12.
 4. More workspaces than four.
 5. Built 2026-11-04, not yet tried by hand: a full screen window in front covers the top bar and dock (they go behind it and get
    no pointer; the Overlay layer stays in front). Also built 2026-11-04, not yet tried by hand: GPU clients (linux-dmabuf, with default feedback naming the render node), idle inhibit,
@@ -222,7 +231,9 @@ Yggdrasil must stay as light and quick as the features allow, on any machine, in
 nothing changes (a frame is drawn only after a program committed a picture, input arrived or a setting changed, and a frame with no change is not even sent on);
 no polling beyond a 2-second look at two small config files; pictures such as the window controls and the switcher are drawn once and kept until what they show changes.
 Measured 2026-10-18 on this computer, nested: the compositor used about 2 % of a core while idle because it redrew 60 times a second; after the change it uses 0 %.
-Its memory (about 117 MB) is mostly the graphics driver's context; the panel is about 89 MB, the idle manager 3 MB, the polkit agent 8 MB. Still to measure and trim: the panel's memory,
+Measured 2026-11-12 headless (release build, software drawing, 1920x1080, a bar, a dock and three 800x600 windows), before and after
+the window look: idle 0.004 % and 0.005 % of a core, 25.6 and 26.3 MB resident; a window opening costs about 0.1 s of CPU spread
+over its 800 ms animation, and nothing is drawn once it has settled. Its memory nested (about 117 MB) is mostly the graphics driver's context; the panel is about 89 MB, the idle manager 3 MB, the polkit agent 8 MB. Still to measure and trim: the panel's memory,
 start-up time of each program, and the compositor's cost with several large windows.
 Settings > Power's root services (tune, casefan, gpufan) are Rust since 2026-11-09 (docs/APPS_SETTINGS.md): about 2.8 MB each on
 their own, plus about 26 MB while libnvidia-ml is initialised (the NVIDIA driver's own cost, the same in any language), and tune

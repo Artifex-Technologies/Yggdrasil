@@ -147,11 +147,11 @@ fn the_tools_place_maximize_minimize_and_close_windows() {
     assert_eq!(d.place(&id, true, (0, 0, 0, 10))[0].1.as_deref().map(|a| a.contains("size")), Some(true));
     assert!(d.place("not-a-number", true, (0, 0, 10, 10)).is_empty());
 
-    // Super+Up twice (yggdrasil-snap up): maximized to the free room, then back
+    // Super+Up twice (yggdrasil-snap up): maximized to the free room (less the session's gap), then back
     assert!(d.maximize_active());
     let info = settle(&comp, &mut c, &a, "test.a", BLUE);
     assert!(info.has("maximized") && c.state.wins[a.index].states.contains(&MAXIMIZED), "{info:?}");
-    assert_eq!(info.rect(), (0, 32, 1600, 804));
+    assert_eq!(info.rect(), maximized_in((0, 32, 1600, 804)));
     assert!(d.maximize_active());
     let info = settle(&comp, &mut c, &a, "test.a", BLUE);
     assert!(!info.has("maximized"), "{info:?}");

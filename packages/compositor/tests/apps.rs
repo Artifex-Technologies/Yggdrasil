@@ -282,7 +282,8 @@ fn the_panel_draws_its_bar_dock_and_wallpaper_and_windows_keep_clear_of_them() {
         std::thread::sleep(Duration::from_millis(100));
     }
 
-    // a window (the terminal stand-in) opens centred in the room the bar and the dock leave, and maximizes to exactly that room
+    // a window (the terminal stand-in) opens centred in the room the bar and the dock leave, and maximizes to that room (less
+    // the session's gap)
     let mut c = comp.connect();
     let (_k, _p) = c.input();
     let t = c.window("test.terminal", "Terminal");
@@ -292,7 +293,7 @@ fn the_panel_draws_its_bar_dock_and_wallpaper_and_windows_keep_clear_of_them() {
     assert!((info.at.0 - want.0).abs() <= 1 && (info.at.1 - want.1).abs() <= 1, "centred in {room:?}: {info:?}");
     comp.must("key super+Up");
     let info = settle(&comp, &mut c, &t, "test.terminal", BLUE);
-    assert_eq!(info.rect(), room, "maximized to the room the bar and dock leave");
+    assert_eq!(info.rect(), maximized_in(room), "maximized to the room the bar and dock leave");
     comp.must("key super+Up");
     settle(&comp, &mut c, &t, "test.terminal", BLUE);
 
@@ -384,10 +385,10 @@ fn settings_opens_centred_maximizes_and_closes() {
     }
     assert!(colours.len() > 8, "Settings drew its page ({} colours)", colours.len());
 
-    // Super+Up: maximized to the free room; again: back at its size, centred
+    // Super+Up: maximized to the free room (less the session's gap); again: back at its size, centred
     comp.must("key super+Up");
     wait_for(&comp, &mut s, 30, "Settings maximized", |c| {
-        c.window("yggdrasil-settings").is_some_and(|w| w.rect() == room && w.has("maximized"))
+        c.window("yggdrasil-settings").is_some_and(|w| w.rect() == maximized_in(room) && w.has("maximized"))
     });
     comp.must("key super+Up");
     wait_for(&comp, &mut s, 30, "Settings back at its size", |c| {
@@ -503,7 +504,7 @@ fn the_session_keys_snap_and_close_windows_on_it() {
     // Super+Up: maximized into that room, again: back
     assert_eq!(session_key(&comp, &snap, Some("up")), 0);
     let info = settle(&comp, &mut c, &t, "test.terminal", BLUE);
-    assert!(info.has("maximized") && info.rect() == (0, 32, 1600, 804), "{info:?}");
+    assert!(info.has("maximized") && info.rect() == maximized_in((0, 32, 1600, 804)), "{info:?}");
     assert_eq!(session_key(&comp, &snap, Some("up")), 0);
     assert!(!settle(&comp, &mut c, &t, "test.terminal", BLUE).has("maximized"));
     // Super+Down: minimized

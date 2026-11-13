@@ -131,7 +131,7 @@ fn the_bar_and_dock_reserve_their_room_and_windows_open_centred_in_the_rest() {
     assert_eq!(pic.at(800, 10), RGB_RED, "the bar over everything at the top");
     assert_eq!(pic.at(800, 870), RGB_GREEN, "the dock at the bottom");
     assert_eq!(pic.at(800, 450), RGB_YELLOW, "the window in front");
-    assert_eq!(pic.count((0, 32, 1600, 804), RGB_YELLOW), 1600 * 804, "the window fills the free room exactly");
+    assert!(pic.fills((0, 32, 1600, 804), RGB_YELLOW, 10), "the window fills the free room exactly (its corners rounded)");
 }
 
 #[test]
@@ -170,7 +170,7 @@ fn windows_keep_clear_of_a_dock_that_appears_and_come_back_from_maximize_at_a_no
     c.roundtrip();
     assert!(c.state.wins[big.index].states.contains(&MAXIMIZED));
     let info = settle(&comp, &mut c, &big, "test.big", YELLOW);
-    assert_eq!(info.rect(), (0, 32, 1600, 804), "maximized to the free room: {info:?}");
+    assert_eq!(info.rect(), maximized_in((0, 32, 1600, 804)), "maximized to the free room, less the session's gap: {info:?}");
     assert!(info.has("maximized"));
     big.toplevel.unset_maximized();
     c.roundtrip();
@@ -201,11 +201,11 @@ fn shortcuts_maximize_snap_and_minimize() {
     c.draw(&w, (400, 300), BLUE);
     assert_eq!(comp.focus(), "window\ttest.w\tW");
 
-    // Super+Up maximizes to the free room, again restores (the session's yggdrasil-snap up)
+    // Super+Up maximizes to the free room (less the session's gap), again restores (the session's yggdrasil-snap up)
     comp.must("key super+Up");
     c.roundtrip();
     assert!(c.state.wins[w.index].states.contains(&MAXIMIZED));
-    assert_eq!(settle(&comp, &mut c, &w, "test.w", BLUE).rect(), (0, 32, 1600, 804));
+    assert_eq!(settle(&comp, &mut c, &w, "test.w", BLUE).rect(), maximized_in((0, 32, 1600, 804)));
     comp.must("key super+Up");
     c.roundtrip();
     assert_eq!(settle(&comp, &mut c, &w, "test.w", BLUE).rect(), (600, 284, 400, 300));
@@ -567,11 +567,11 @@ fn screen_copies_return_what_is_shown() {
     assert!(pic.rgb == shot.rgb, "the copy is the screen");
     assert_eq!(pic.at(10, 10), RGB_RED);
 
-    // a part of it: the window's rectangle, all blue
+    // a part of it: the window's rectangle, all blue (but for its rounded corners)
     let r = comp.window("test.w").unwrap().rect();
     let (part, _) = copy(&mut c, &mgr, 0, Some(r), false);
     assert_eq!((part.w, part.h), (400, 300));
-    assert_eq!(part.count((0, 0, 400, 300), RGB_BLUE), 400 * 300);
+    assert!(part.fills((0, 0, 400, 300), RGB_BLUE, 10));
 
     // a part of the scale 2 output is twice as many pixels each way
     let (half, _) = copy(&mut c, &mgr, 1, Some((10, 10, 100, 50)), false);
@@ -597,7 +597,7 @@ fn screen_copies_return_what_is_shown() {
     let mut data = vec![0u8; 1280 * 720 * 4];
     file.read_exact_at(&mut data, 0).unwrap();
     let after = Picture::from_xrgb(1280, 720, 1280 * 4, &data);
-    assert_eq!(after.count(r, RGB_YELLOW), 400 * 300, "the change is in the copy");
+    assert!(after.fills(r, RGB_YELLOW, 10), "the change is in the copy");
 
     // while locked, a copy shows the lock and nothing else
     let mut l = comp.connect();
@@ -653,7 +653,7 @@ fn grim_takes_the_same_screenshot() {
     let shot = comp.screenshot("HEADLESS-1");
     assert_eq!((pic.w, pic.h), (800, 600));
     assert!(pic.rgb == shot.rgb, "grim's picture is the screen");
-    assert_eq!(pic.count((250, 200, 300, 200), RGB_BLUE), 300 * 200);
+    assert!(pic.fills((250, 200, 300, 200), RGB_BLUE, 10));
 }
 
 #[test]

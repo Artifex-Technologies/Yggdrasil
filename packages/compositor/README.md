@@ -21,7 +21,8 @@ so nothing it starts can reach the running desktop. A control socket (`yggdrasil
 | `windows` | every window: app id, title, place, size, workspace, states (active, floating/tiled, maximized, fullscreen, left, right, minimized) |
 | `layers`, `free` | the layer-shell surfaces per output; the room they leave free for windows |
 | `focus`, `workspace`, `lock` | what has the keyboard; the workspace showing; the lock and its surfaces |
-| `key super+ctrl+2`, `type TEXT`, `pointer X Y`, `click [left\|right\|middle]` | input made inside the compositor (US layout) |
+| `key super+ctrl+2`, `key-down COMBO`, `key-up COMBO`, `type TEXT`, `pointer X Y`, `click [left\|right\|middle]` | input made inside the compositor (US layout); a key held down repeats its shortcut |
+| `clock`, `clock stop`, `clock +MS`, `clock run` | the clock the animations run on: stopped and moved on by hand, a frame in the middle of an animation can be looked at |
 | `quit` | end it |
 | `clients`, `active`, `workspaces`, `workspace N`, `activate`/`close`/`minimize ID`, `maximize ID on\|off\|toggle`, `send ID N`, `place ID X Y W H`, `cursor`, `screens`, `layers`, `binds`, `reload`, `pointer-timeout [S]`, `cursor-theme [NAME SIZE]`, `keyboard [LAYOUT [VARIANT]]`, `modifiers`, `paste ctrl\|ctrl+shift`, `exit` | the desktop commands Yggdrasil's own tools use through yggdrasil-wm (`src/wmctl.rs`; below): nothing outside the compositor; the only key presses are `paste`'s Ctrl+V into the window with the keyboard (as Hyprland's sendshortcut), refused while locked |
 
@@ -32,11 +33,13 @@ served from the pictures in memory.
 
 | File | What it checks | Runs |
 | --- | --- | --- |
-| `src/*` unit tests (28) | options, sizes and scales, the refused runtime folder and session bus, shortcuts, tiling, placement (the same cases as `keep-clear.lua`) | `cargo test`, CI `rust` |
+| `src/*` unit tests (37) | options, sizes and scales, the refused runtime folder and session bus, shortcuts (the table held to the session's `yggdrasil.lua`: every bind, its words, release and repeat), tiling with the session's gaps, placement (the same cases as `keep-clear.lua`), the look (the session's values, Hyprland's curve, opening, moving and closing, the corners' pixels) | `cargo test`, CI `rust` |
 | `tests/headless.rs` (6) | outputs (size, scale, name, place), a bar and a window drawn where they belong, size and scale changes reaching programs, `quit` | `cargo test`, CI `rust` |
 | `tests/behaviour.rs` (14) | with the tests' own small clients: the bar and dock reserve their room; windows open centred in the rest, kept clear of a dock that appears, back from maximize at a normal size; Super+Up/Left/Down; full screen over the bar and dock; workspaces by keys; the keyboard following new windows, clicks and an exclusive panel, typing reaching the window; the lock on every output taking every key, a second locker refused, a crashed one leaving the screen locked and a new one taking over; only the media keys' shortcuts working while locked; screen copies (whole, part, scale 2, with damage, while locked, a wrong buffer); grim's picture equal to the screen; screens off and on; idle and resume | `cargo test`, CI `rust` and `compositor-headless` |
 | `tests/tools.rs` (6) | yggdrasil-wm, the layer Yggdrasil's tools share, on it: found before a Hyprland named in the environment; windows (with their processes), screens, the free room, the pointer and the desktops read; desktops shown and a window sent to another; a window placed, snapped, maximized and back, minimized and closed; a tiled one floated where it is put; the pointer timeout set and put back; a title with a line break stays one line; the Task Manager's bring-to-front and close, the clipboard's paste into an editor and a terminal (none into the lock screen), Settings' focus by class, the shortcut list, reload, the pointer theme, the keyboard layout, layers; exit ends it | `cargo test`, CI `rust` and `compositor-headless` |
-| `tests/apps.rs` (7) | Yggdrasil's real programs inside it: the panel (bar, dock, wallpaper drawn; the free room; the terminal stand-in centred and maximized into it; a notification toast that leaves the keyboard alone; the start menu taking the keyboard and giving it back; a smaller screen), the panel's desktop buttons ("+" makes and shows desktop 2, desktop 1's button goes back) and window zones (Super+Shift+Z's sheet for the window in front, a click on the left zone puts it there), `yggdrasil-snap` (the four halves of the free room, maximize and back, minimize) and `yggdrasil-close` (a keep-running program minimized, any other asked to close), `yggdrasil-logout` with stand-ins as its only PATH (every window asked; all closed: the session ends; one stays: the screen locks and the session goes on), Settings (egui drawn by Mesa in software: centred at 1060x720, drawn, Super+Up and back, Super+Q ends it), the lock screen in its test-auth build (two outputs, one at 1.5, nothing of the session shows, a wrong password keeps it locked, the right one unlocks and the keyboard goes back) | CI `compositor-headless`; on a desktop `tests/apps-podman.sh` |
+| `tests/keys.rs` (5) | the session's shortcut table, with stand-ins as the compositor's only PATH (each writes down how it was called; nothing real runs): every key starts the command line it starts on Hyprland (`yggdrasil-panelctl notifications`, `loginctl lock-session`, `yggdrasil-shot` ...); Super and Ctrl tapped on their own (the start menu, Find my mouse) and not when another key comes between, and the key still reaching the program; held volume and magnifier keys repeating (600 ms, then 25 a second) and stopping when let go or another key is pressed, mute not repeating; Super+W, Alt+F4 and Super+Q closing (a keep-running program minimized), Super+Down minimizing a maximized window, Super+Shift+M showing the minimized windows and hiding them, one brought back staying; the bindings listed with the session's words, the lists Settings and the panel's card make from them equal to those from `yggdrasil.lua` | `cargo test`, CI `rust` and `compositor-headless` |
+| `tests/look.rs` (4, and 1 that only measures) | the window look against PNG snapshots (`tests/snapshots`) and numbers worked out from the session's values: the border (the accent at 80 % in front, faint behind, in the dark and the light style, another accent read again), the corners cut round, the shadow's fall-off, a front window's shadow over the one behind; maximized and tiled windows with the gaps, full screen with none of it; a window opening (40 ms in), sliding to maximized (60 ms in, its picture stretched) and closing (50 ms in) on a stopped clock; "reduce motion" | `cargo test`, CI `rust` and `compositor-headless` |
+| `tests/apps.rs` (8) | Yggdrasil's real programs inside it: the panel (bar, dock, wallpaper drawn; the free room; the terminal stand-in centred and maximized into it; a notification toast that leaves the keyboard alone; the start menu taking the keyboard and giving it back; a smaller screen), the panel's desktop buttons ("+" makes and shows desktop 2, desktop 1's button goes back) and window zones (Super+Shift+Z's sheet for the window in front, a click on the left zone puts it there), `yggdrasil-snap` (the four halves of the free room, maximize and back, minimize) and `yggdrasil-close` (a keep-running program minimized, any other asked to close), `yggdrasil-logout` with stand-ins as its only PATH (every window asked; all closed: the session ends; one stays: the screen locks and the session goes on), Settings (egui drawn by Mesa in software: centred at 1060x720, drawn, Super+Up and back, Super+Q ends it), the lock screen in its test-auth build (two outputs, one at 1.5, nothing of the session shows, a wrong password keeps it locked, the right one unlocks and the keyboard goes back) | CI `compositor-headless`; on a desktop `tests/apps-podman.sh` |
 
 Every test starts its own compositor in a private folder, has a time limit (the test program ends past it), and every process it
 starts dies with it. The programs get an empty environment, the compositor's private runtime folder and home, and a session bus of
@@ -89,8 +92,11 @@ The session's behaviour is set in `packages/session/hyprland/yggdrasil.lua` (wit
   window after; the result differs by at most half the bar's or dock's height.)
 - The panel as layer-shell surfaces: bar on Top reserving its height, dock on Top reserving its height and gap, wallpaper on
   Background, menus with exclusive zone 0 under the bar, toasts on Overlay without the keyboard.
-- Super+Up maximize and restore, Super+Left/Right halves, Super+Down restore then minimize (the session's `yggdrasil-snap`),
-  Super+Q close, maximize into the free room, full screen covering the bar and the dock.
+- The session's whole shortcut table (2026-11-12, below): the same keys, words and command lines; Super+Up maximize and restore,
+  Super+Left/Right halves, Super+Down minimize (the session's `yggdrasil-snap`), Super+Q, Super+W and Alt+F4 close (a
+  keep-running program minimized, as `yggdrasil-close`), maximize into the free room less the gap, full screen covering the bar
+  and the dock.
+- The window look (2026-11-12, below): border, rounded corners, shadow, gaps, the open, close and move animations, "reduce motion".
 - Four workspaces: Super+Ctrl+1..4, Super+Ctrl+Left/Right, Super+Ctrl+Shift+1..4 sending the window.
 - Click to focus (`follow_mouse = 2`), a new window takes the keyboard, a panel asking for the keyboard exclusively (the start
   menu) gets it at once and gives it back to the window when it closes (the session's `layer.closed` rule).
@@ -104,26 +110,45 @@ The session's behaviour is set in `packages/session/hyprland/yggdrasil.lua` (wit
 
 **Built but only tried nested (not in the headless tests):** XWayland and games (opaque games, `_NET_WM_STATE` before mapping,
 Wine's WM_STATE), Alt+Tab switcher, Super+T and tiling workspaces, window controls for server-side decoration, move and resize
-by the program's own title bar, Super+drag, xdg-activation, idle inhibit, clipboard and primary selection, the Super tap for the
-start menu.
+by the program's own title bar, Super+drag, xdg-activation, idle inhibit, clipboard and primary selection.
 
 **Not yet (the gap), in the order I would close it:**
 1. **What is left of "our tools call hyprctl"** (every tool moved to yggdrasil-wm on 2026-11-12, above). Hyprland's own on purpose:
    hyprsunset's night light (its own socket; this compositor has no gamma control yet, item 9), the Hyprland plugin builder
-   (`yggdrasil-hypr-plugin`), the magnifier (`yggdrasil-zoom`, Hyprland's zoom; item 2), the config-error toast's event socket and
+   (`yggdrasil-hypr-plugin`), the magnifier (`yggdrasil-zoom`, Hyprland's zoom: its keys are bound here, it zooms nothing yet),
+   the config-error toast's event socket and
    xmove (both do nothing elsewhere), and Settings' own Hyprland file and night light. Settings > Displays lists this compositor's
    screens but cannot change them yet (wlr-output-management, item 3). Still to come: the control socket on the real session
    (today only headless), and ext-workspace and ext-foreign-toplevel-list so other programs see this compositor's desktops and
    windows the standard way.
-2. **The shortcut table:** Super+N, Super+W, Super+Shift+M (minimized
-   windows), Super+Shift+Z (zones), Print and Super+Shift+S (yggdrasil-shot), Super+Shift+C, Super+/, Ctrl+Shift+Esc, the
-   magnifier (Super+Alt+=/-/0) and the screen reader (Super+Alt+S), the Ctrl double-tap (release binds that do not consume the
-   key), key repeat for the volume keys.
+2. ~~The shortcut table~~, closed 2026-11-12: the built-in table is the session's (`src/shortcuts.rs`; a unit test reads
+   `yggdrasil.lua` and fails on any bind missing on either side), with its words and the same command lines (Super+N, Super+S
+   and Ctrl+Alt+S, Super+Shift+Z, Super+/ and the Ctrl taps through `yggdrasil-panelctl`; Print and Super+Shift+S, Super+Shift+C,
+   Ctrl+Shift+Esc, the magnifier, the screen reader, `loginctl lock-session`, XF86AudioPause), the window keys as
+   `yggdrasil-close` and `yggdrasil-snap` do them (Super+W; the keep-running list now in yggdrasil-conf; Super+Down minimizes),
+   Super+Shift+M showing the minimized windows (as Hyprland's special workspace), taps on a modifier (release binds that do not
+   take the key: Super for the start menu, Ctrl for Find my mouse), repeat while held for volume, brightness and the magnifier at
+   Hyprland's 600 ms and 25 a second (also what programs are told now; was 300 ms and 40). The control socket's `binds` gives
+   each one's kind and the mouse's two binds, and yggdrasil-wm reads the release flag. Headless, programs it starts get no system
+   bus (Super+L's `loginctl` would otherwise lock the running desktop). Left: the magnifier's zoom itself (item 1), and the
+   switcher is this compositor's own (Hyprland only cycles).
 3. **Input and outputs from the system's settings:** the keyboard layout from `/etc/X11/xorg.conf.d/00-keyboard.conf` (today
    the default US layout), Settings > Displays (`monitors.lua` modes, places and scales; wlr-output-management), outputs that
    come and go.
-4. **The window look:** the 1-pixel border in the accent colour, rounded corners (10), shadows, the gaps (4 and 8), animations
-   with "reduce motion".
+4. ~~The window look~~, closed 2026-11-12 (`src/look.rs`), with the session's values: the 1-pixel border in the accent colour at
+   80 % (Yggdrasil's purple when none is chosen) and a faint one behind (white 8 % dark, black 9 % light), corners rounded at 10,
+   the shadow (18, power 3, black 27 %), gaps 8 around maximized and tiled windows and 4 + 4 between tiled ones (Hyprland's
+   maximize keeps the gaps: a maximized window is now the free room less 9 all round), none of it in full screen; windows open
+   growing from their middle and fading in, close shrinking and fading out (from their last picture on the screen, headless
+   only), slide to a new place and size (maximize, snapping, tiling, keep-clear, the tools' `place`), 800 ms on Hyprland's
+   default curve, none with "reduce motion" or while dragged. Accent, style and reduce motion are read again with the 2-second
+   look at the config files. Drawn in software too: corner and shadow pictures made once per scale and stretched along the
+   edges, the window's own picture clipped by damage regions with the curve's pixels at their share. Measured on a release
+   build (1920x1080, a bar, a dock, three 800x600 windows; `tests/look.rs idle_cost`), before and after: idle 0.004 % and
+   0.005 % of a core (350 and 550 µs in 10 s), 25.6 and 26.3 MB resident (22.4 and 23.2 MB proportional), an 800x600 window
+   drawn anew 0.76-0.87 and 0.86-0.98 ms a frame; a window opening costs 90-100 ms of CPU over its 800 ms, closing 40-47 ms,
+   and nothing is drawn after. Not done: the workspace slide, the border's colour fading, layers' animations, dimming behind
+   the minimized windows on show; nested (GPU) there is no closing animation and games are neither rounded nor stretched.
 5. **Remembered places** (the session's `window-places`) and the per-screen tiling file (`~/.config/yggdrasil/tiling`; the
    compositor has per-workspace profiles in `workspaces.conf` instead), Steam's maximize request ignored.
 6. **The panel's window previews:** ext-foreign-toplevel-list and ext-image-copy-capture; screencopy into GPU buffers (dmabuf).

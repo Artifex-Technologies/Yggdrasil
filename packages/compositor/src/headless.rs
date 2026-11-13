@@ -31,6 +31,8 @@
 //!   pointer X Y                  move the pointer to X,Y (logical, in the space of all outputs)
 //!   click [left|right|middle]    press and let go of a pointer button where the pointer is
 //!   power NAME on|off            switch an output on or off (as wlr-output-power does)
+//!   clock [stop|run|+MS]         the clock the animations run on: stop it, move a stopped one on, let it run again; without
+//!                                a word: "running" or "stopped" and its time (ms). For tests: a frame in an animation
 //!   quit                         end the compositor
 //! and the desktop commands Yggdrasil's own tools use through yggdrasil-wm (wmctl.rs: clients, active, workspaces, workspace N,
 //! activate, close, minimize, maximize, send, place, cursor, screens, pointer-timeout, modifiers).
@@ -252,6 +254,14 @@ impl Headless {
 
     /// Draw every output (only what changed), then tell the programs their frame is done.
     fn render(&mut self, app: &mut App) {
+        // a window that has just closed: its last picture, from the screen, for its closing animation
+        for c in app.closing.iter_mut().filter(|c| c.picture.is_none()) {
+            if let Some((rect, picture)) = self.picture_of(c.rect, app.look.border) {
+                c.rect = rect;
+                c.picture = Some(picture);
+            }
+        }
+        app.closing.retain(|c| c.picture.is_some());
         for s in &mut self.screens {
             let size = s.output.current_mode().map(|m| m.size).unwrap_or_default();
             if s.image.width() as i32 != size.w || s.image.height() as i32 != size.h {
@@ -289,6 +299,10 @@ impl Headless {
         }
         self.serve_copies(app);
         self.last = Instant::now();
+        // an animation running: the next frame (at most one every 16 ms)
+        if app.animating() {
+            app.wake();
+        }
         app.send_frames(self.start.elapsed());
         app.space.refresh();
         app.foreign_refresh();
@@ -328,6 +342,48 @@ impl Headless {
                 s.changed = false;
             }
         }
+    }
+
+    /// The pixels of the screen under `rect` (logical, with `border` around it): what a window looked like as it closed. The
+    /// rectangle they cover (cut to the screen) and the picture with the screen's name.
+    fn picture_of(
+        &self,
+        rect: crate::look::RectF,
+        border: i32,
+    ) -> Option<(crate::look::RectF, (smithay::backend::renderer::element::memory::MemoryRenderBuffer, String))> {
+        let mid = (rect.x + rect.w / 2.0, rect.y + rect.h / 2.0);
+        let s = self.screens.iter().find(|s| state::output_rect(&s.output).to_f64().contains(mid))?;
+        if !s.drawn {
+            return None;
+        }
+        let (scale, origin) = (s.output.current_scale().fractional_scale(), s.output.current_location());
+        let b = border as f64;
+        let outer = crate::look::RectF { x: rect.x - b, y: rect.y - b, w: rect.w + 2.0 * b, h: rect.h + 2.0 * b };
+        let p = outer.physical(origin, scale);
+        let screen =
+            smithay::utils::Rectangle::<i32, smithay::utils::Physical>::from_size((s.image.width() as i32, s.image.height() as i32).into());
+        let p = p.intersection(screen).filter(|p| p.size.w > 0 && p.size.h > 0)?;
+        let (bytes, stride) = pixels(&s.image);
+        let mut data = Vec::with_capacity((p.size.w * p.size.h * 4) as usize);
+        for y in p.loc.y..p.loc.y + p.size.h {
+            let row = y as usize * stride;
+            data.extend_from_slice(&bytes[row + p.loc.x as usize * 4..row + (p.loc.x + p.size.w) as usize * 4]);
+        }
+        let buffer = smithay::backend::renderer::element::memory::MemoryRenderBuffer::from_slice(
+            &data,
+            Fourcc::Xrgb8888,
+            (p.size.w, p.size.h),
+            1,
+            Transform::Normal,
+            None,
+        );
+        let covered = crate::look::RectF {
+            x: origin.x as f64 + p.loc.x as f64 / scale,
+            y: origin.y as f64 + p.loc.y as f64 / scale,
+            w: p.size.w as f64 / scale,
+            h: p.size.h as f64 / scale,
+        };
+        Some((covered, (buffer, s.output.name())))
     }
 
     /// Milliseconds since the start (the time stamp of input made here).
@@ -388,6 +444,8 @@ pub fn run(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let h = Rc::new(RefCell::new(Headless::new(&outputs)?));
     let handle = event_loop.handle();
+    // a closing window's last picture can be taken from the screens in memory
+    app.pictures_of_closing = true;
 
     // a wake-up (a commit, a setting, a command) draws soon: right away when the last frame is old enough, else at the next tick
     let (h2, handle2) = (h.clone(), handle.clone());
@@ -611,13 +669,32 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String
             app.set_output_power(&o, on);
             Ok(vec![])
         }
+        ["clock"] => Ok(vec![format!("{} {}", if app.clock.running() { "running" } else { "stopped" }, app.clock.now().as_millis())]),
+        ["clock", "stop"] => {
+            app.clock.stop();
+            Ok(vec![])
+        }
+        ["clock", "run"] => {
+            app.clock.run();
+            app.wake();
+            Ok(vec![])
+        }
+        ["clock", step] if step.starts_with('+') => {
+            let ms: u64 = step[1..].parse().map_err(|_| format!("{step}: +MILLISECONDS"))?;
+            if app.clock.running() {
+                return Err("the clock runs: clock stop first".into());
+            }
+            app.clock.advance(Duration::from_millis(ms.min(60_000)));
+            app.wake();
+            Ok(vec![])
+        }
         ["quit"] => {
             app.quit();
             Ok(vec![])
         }
         [] => Err("no command".into()),
         _ => Err(format!(
-            "unknown command {:?} (outputs, resize NAME WxH, scale NAME S, screenshot NAME FILE, windows, layers, free, focus, workspace, lock, key COMBO, key-down COMBO, key-up COMBO, type TEXT, pointer X Y, click [BUTTON], power NAME on|off, quit; for the tools: clients, active, workspaces, workspace N, activate ID, close ID, minimize ID, maximize ID on|off|toggle, send ID N, place ID X Y W H, cursor, screens, pointer-timeout [S], modifiers)",
+            "unknown command {:?} (outputs, resize NAME WxH, scale NAME S, screenshot NAME FILE, windows, layers, free, focus, workspace, lock, key COMBO, key-down COMBO, key-up COMBO, type TEXT, pointer X Y, click [BUTTON], power NAME on|off, clock [stop|run|+MS], quit; for the tools: clients, active, workspaces, workspace N, activate ID, close ID, minimize ID, maximize ID on|off|toggle, send ID N, place ID X Y W H, cursor, screens, pointer-timeout [S], modifiers)",
             words.join(" ")
         )),
     }

@@ -79,31 +79,40 @@ pub fn config_path() -> std::path::PathBuf {
     yggdrasil_conf::dirs::config().join("workspaces.conf")
 }
 
-/// Where `n` tiled windows go inside `zone`, with `gap` pixels between them and around the edge. Dwindle: each window takes half of what is
-/// left, splitting left/right, then top/bottom, and so on; the last takes the rest.
-pub fn dwindle(zone: Rectangle<i32, Logical>, n: usize, gap: i32) -> Vec<Rectangle<i32, Logical>> {
-    let mut out = Vec::with_capacity(n);
-    let mut area = Rectangle::new(
-        (zone.loc.x + gap, zone.loc.y + gap).into(),
-        ((zone.size.w - 2 * gap).max(1), (zone.size.h - 2 * gap).max(1)).into(),
-    );
+/// Where `n` tiled windows go inside `zone`, as Hyprland's dwindle with the session's gaps: each window takes half of what is left,
+/// splitting left/right, then top/bottom, and so on, the last takes the rest; then each box keeps `gaps_out` from the zone's edges
+/// and `gaps_in` from its neighbours (so two windows are 2 x `gaps_in` apart). The boxes include the window's border.
+pub fn dwindle(zone: Rectangle<i32, Logical>, n: usize, gaps_in: i32, gaps_out: i32) -> Vec<Rectangle<i32, Logical>> {
+    let mut boxes = Vec::with_capacity(n);
+    let mut area = zone;
     for i in 0..n {
         if i == n - 1 {
-            out.push(area);
+            boxes.push(area);
             break;
         }
         let (x, y, w, h) = (area.loc.x, area.loc.y, area.size.w, area.size.h);
         if i % 2 == 0 {
-            let first = (w - gap) / 2;
-            out.push(Rectangle::new((x, y).into(), (first, h).into()));
-            area = Rectangle::new((x + first + gap, y).into(), ((w - first - gap).max(1), h).into());
+            let first = w / 2;
+            boxes.push(Rectangle::new((x, y).into(), (first, h).into()));
+            area = Rectangle::new((x + first, y).into(), (w - first, h).into());
         } else {
-            let first = (h - gap) / 2;
-            out.push(Rectangle::new((x, y).into(), (w, first).into()));
-            area = Rectangle::new((x, y + first + gap).into(), (w, (h - first - gap).max(1)).into());
+            let first = h / 2;
+            boxes.push(Rectangle::new((x, y).into(), (w, first).into()));
+            area = Rectangle::new((x, y + first).into(), (w, h - first).into());
         }
     }
-    out
+    let (right, bottom) = (zone.loc.x + zone.size.w, zone.loc.y + zone.size.h);
+    boxes
+        .into_iter()
+        .map(|b| {
+            let gap = |at_edge: bool| if at_edge { gaps_out } else { gaps_in };
+            let l = gap(b.loc.x == zone.loc.x);
+            let t = gap(b.loc.y == zone.loc.y);
+            let r = gap(b.loc.x + b.size.w == right);
+            let bt = gap(b.loc.y + b.size.h == bottom);
+            Rectangle::new((b.loc.x + l, b.loc.y + t).into(), ((b.size.w - l - r).max(1), (b.size.h - t - bt).max(1)).into())
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -127,31 +136,26 @@ mod tests {
     }
 
     #[test]
-    fn one_window_takes_everything() {
-        assert_eq!(dwindle(r(0, 0, 1000, 600), 1, 10), vec![r(10, 10, 980, 580)]);
+    fn one_window_takes_everything_but_the_outer_gap() {
+        assert_eq!(dwindle(r(0, 0, 1000, 600), 1, 4, 8), vec![r(8, 8, 984, 584)]);
     }
 
     #[test]
-    fn two_windows_split_left_and_right() {
-        let v = dwindle(r(0, 0, 1000, 600), 2, 10);
-        assert_eq!(v.len(), 2);
-        assert_eq!(v[0].loc.x, 10);
-        assert!(v[1].loc.x > v[0].loc.x + v[0].size.w, "a gap between them");
-        assert_eq!(v[0].size.h, 580);
-        assert_eq!(v[1].size.h, 580);
+    fn two_windows_split_left_and_right_with_the_sessions_gaps() {
+        // 8 from the edges, 4 + 4 between them (Hyprland's gaps_out and gaps_in)
+        assert_eq!(dwindle(r(0, 32, 1600, 804), 2, 4, 8), vec![r(8, 40, 788, 788), r(804, 40, 788, 788)]);
     }
 
     #[test]
     fn three_windows_split_the_right_half_top_and_bottom() {
-        let v = dwindle(r(0, 0, 1000, 600), 3, 10);
-        assert_eq!(v[1].loc.x, v[2].loc.x);
-        assert!(v[2].loc.y > v[1].loc.y + v[1].size.h - 1);
+        let v = dwindle(r(0, 0, 1000, 600), 3, 4, 8);
+        assert_eq!(v, vec![r(8, 8, 488, 584), r(504, 8, 488, 288), r(504, 304, 488, 288)]);
     }
 
     #[test]
     fn no_window_overlaps_another() {
         for n in 1..9 {
-            let v = dwindle(r(0, 40, 1920, 1000), n, 8);
+            let v = dwindle(r(0, 40, 1920, 1000), n, 4, 8);
             for (i, a) in v.iter().enumerate() {
                 for b in &v[i + 1..] {
                     assert!(!a.overlaps(*b), "{n} windows: {a:?} and {b:?}");

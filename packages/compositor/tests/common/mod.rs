@@ -866,6 +866,70 @@ impl Picture {
     }
 }
 
+impl Picture {
+    /// Write it as an 8-bit RGB PNG.
+    pub fn save(&self, path: &Path) {
+        let file = File::create(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let mut enc = png::Encoder::new(std::io::BufWriter::new(file), self.w as u32, self.h as u32);
+        enc.set_color(png::ColorType::Rgb);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.write_header().unwrap().write_image_data(&self.rgb).unwrap();
+    }
+
+    /// Whether a window's picture of one colour fills the rectangle but for its rounded corners (radius `r`): every pixel of
+    /// the cross between the corners has the colour.
+    pub fn fills(&self, (x, y, w, h): (i32, i32, i32, i32), colour: (u8, u8, u8), r: i32) -> bool {
+        self.count((x, y + r, w, h - 2 * r), colour) == (w * (h - 2 * r)) as usize
+            && self.count((x + r, y, w - 2 * r, h), colour) == ((w - 2 * r) * h) as usize
+    }
+}
+
+/// A screenshot compared with its snapshot, the PNG in tests/snapshots (embedded at build time, so the tests need no checkout:
+/// the container runs them from the build folder). The same within a little (pixman's anti-aliasing may differ by a shade
+/// between versions): at most 0.2 % of the pixels off by more than 3 in a channel. `YGGDRASIL_UPDATE_SNAPSHOTS=1` writes the
+/// snapshot instead (then build again); on a difference the picture is written next to the test's folder to look at.
+#[macro_export]
+macro_rules! snapshot {
+    ($pic:expr, $name:literal) => {
+        $crate::common::compare_snapshot(
+            &$pic,
+            $name,
+            include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/snapshots/", $name, ".png")),
+        )
+    };
+}
+
+pub fn compare_snapshot(pic: &Picture, name: &str, committed: &[u8]) {
+    if std::env::var_os("YGGDRASIL_UPDATE_SNAPSHOTS").is_some() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/snapshots");
+        std::fs::create_dir_all(&dir).unwrap();
+        pic.save(&dir.join(format!("{name}.png")));
+        return;
+    }
+    let here = std::env::temp_dir().join(format!("ygg-snapshot-{name}.png"));
+    assert!(!committed.is_empty(), "no snapshot {name} yet: YGGDRASIL_UPDATE_SNAPSHOTS=1 cargo test, then look at it and build again");
+    let path = std::env::temp_dir().join(format!("ygg-snapshot-{}-{name}-committed.png", std::process::id()));
+    std::fs::write(&path, committed).unwrap();
+    let want = Picture::load(&path);
+    let _ = std::fs::remove_file(&path);
+    let same_size = (want.w, want.h) == (pic.w, pic.h);
+    let off = if same_size {
+        want.rgb.chunks(3).zip(pic.rgb.chunks(3)).filter(|(a, b)| a.iter().zip(b.iter()).any(|(x, y)| x.abs_diff(*y) > 3)).count()
+    } else {
+        usize::MAX
+    };
+    if !same_size || off * 500 > pic.w * pic.h {
+        pic.save(&here);
+        panic!("the screen differs from snapshot {name} ({off} pixels off); this run's picture: {}", here.display());
+    }
+}
+
+/// Where a maximized window goes in a free room: the session's outer gap (8) and the border (1) inside it all round (Hyprland's
+/// maximize keeps the gaps).
+pub fn maximized_in((x, y, w, h): (i32, i32, i32, i32)) -> (i32, i32, i32, i32) {
+    (x + 9, y + 9, w - 18, h - 18)
+}
+
 /// The colour the compositor clears its background with (0.05, 0.05, 0.08), as the screenshot has it.
 pub fn background(pic: &Picture) -> (u8, u8, u8) {
     pic.at(pic.w - 1, pic.h - 1)

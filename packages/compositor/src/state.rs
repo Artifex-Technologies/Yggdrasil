@@ -60,6 +60,10 @@ smithay::render_elements! {
     Bar = MemoryRenderBufferRenderElement<GlesRenderer>,
     /// a full screen X11 window, drawn with its alpha channel ignored (see xwayland.rs)
     Opaque = crate::xwayland::OpaqueElement,
+    /// a window's picture with its corners rounded, its border's and shadow's pieces (look.rs)
+    Clipped = crate::look::Clipped<GlesRenderer>,
+    Piece = crate::look::Piece<GlesRenderer>,
+    Strip = crate::look::Strip,
 }
 
 smithay::render_elements! {
@@ -67,7 +71,14 @@ smithay::render_elements! {
     pub PixElem<=PixmanRenderer>;
     Surface = WaylandSurfaceRenderElement<PixmanRenderer>,
     Bar = MemoryRenderBufferRenderElement<PixmanRenderer>,
+    Clipped = crate::look::Clipped<PixmanRenderer>,
+    Piece = crate::look::Piece<PixmanRenderer>,
+    Strip = crate::look::Strip,
 }
+
+/// How a window's picture is drawn on an output: clipped to its rectangle (physical pixels) with the corners' radius (None for
+/// its menus), and stretched about its corner (the point and the scale; 1 but for an animation).
+pub type Shape = (Option<(Rectangle<i32, smithay::utils::Physical>, i32)>, Point<i32, smithay::utils::Physical>, Scale<f64>);
 
 /// A renderer the scene can be drawn with: the GPU one of the nested window (GLES) and the software one of the headless
 /// backend (pixman). They differ only in how a window that must be drawn opaque is drawn.
@@ -76,19 +87,36 @@ pub trait Draw:
 {
     type Elem: smithay::backend::renderer::element::RenderElement<Self>
         + From<WaylandSurfaceRenderElement<Self>>
-        + From<MemoryRenderBufferRenderElement<Self>>;
-    /// A window's elements; `opaque` when its alpha channel must be ignored (a full screen X11 window, a game).
-    fn window_elements(app: &mut App, renderer: &mut Self, els: Vec<WaylandSurfaceRenderElement<Self>>, opaque: bool) -> Vec<Self::Elem>;
+        + From<MemoryRenderBufferRenderElement<Self>>
+        + From<crate::look::Piece<Self>>
+        + From<crate::look::Strip>
+        + From<crate::look::Clipped<Self>>;
+    /// A window's elements, clipped to its rounded rectangle; `opaque` when its alpha channel must be ignored (a full screen
+    /// X11 window, a game).
+    fn window_elements(
+        app: &mut App,
+        renderer: &mut Self,
+        els: Vec<WaylandSurfaceRenderElement<Self>>,
+        opaque: bool,
+        shape: Shape,
+    ) -> Vec<Self::Elem>;
 }
 
 impl Draw for GlesRenderer {
     type Elem = Elem;
-    fn window_elements(app: &mut App, renderer: &mut Self, els: Vec<WaylandSurfaceRenderElement<Self>>, opaque: bool) -> Vec<Elem> {
+    fn window_elements(
+        app: &mut App,
+        renderer: &mut Self,
+        els: Vec<WaylandSurfaceRenderElement<Self>>,
+        opaque: bool,
+        shape: Shape,
+    ) -> Vec<Elem> {
         match opaque.then(|| app.opaque_shader(renderer)).flatten() {
+            // (a game: drawn as it is, neither rounded nor stretched)
             Some(program) => {
                 els.into_iter().map(|inner| Elem::Opaque(crate::xwayland::OpaqueElement { inner, program: program.clone() })).collect()
             }
-            None => els.into_iter().map(Elem::from).collect(),
+            None => els.into_iter().map(|e| Elem::Clipped(crate::look::Clipped::new(e, shape.0, shape.1, shape.2))).collect(),
         }
     }
 }
@@ -96,8 +124,8 @@ impl Draw for GlesRenderer {
 impl Draw for PixmanRenderer {
     type Elem = PixElem;
     // no shader to ignore the alpha channel with; games do not run headless
-    fn window_elements(_: &mut App, _: &mut Self, els: Vec<WaylandSurfaceRenderElement<Self>>, _: bool) -> Vec<PixElem> {
-        els.into_iter().map(PixElem::from).collect()
+    fn window_elements(_: &mut App, _: &mut Self, els: Vec<WaylandSurfaceRenderElement<Self>>, _: bool, shape: Shape) -> Vec<PixElem> {
+        els.into_iter().map(|e| PixElem::Clipped(crate::look::Clipped::new(e, shape.0, shape.1, shape.2))).collect()
     }
 }
 
@@ -252,6 +280,15 @@ pub struct App {
     pub cursor_theme: Option<(String, u32)>,
     /// The keyboard layout and variant set from outside (the installer's try-out); None: the default.
     pub kb_layout: Option<(String, String)>,
+    /// The session's window look (look.rs): border, rounding, shadow, gaps, animations; its pictures per scale; the clock the
+    /// animations run on; closing windows still shrinking away.
+    pub look: crate::look::Look,
+    art: Vec<(u64, crate::look::Look, std::sync::Arc<crate::look::Art>)>,
+    look_times: [Option<std::time::SystemTime>; 2],
+    pub clock: crate::look::Clock,
+    pub closing: Vec<crate::look::Closing>,
+    /// The backend takes a closing window's last picture from the screen (headless); without that there is no closing animation.
+    pub pictures_of_closing: bool,
 }
 
 /// How many workspaces there are.
@@ -494,6 +531,12 @@ impl App {
             pointer_timeout: 0.0,
             cursor_theme: None,
             kb_layout: None,
+            look: crate::look::Look::load(),
+            art: vec![],
+            look_times: [None, None],
+            clock: Default::default(),
+            closing: vec![],
+            pictures_of_closing: false,
         }
     }
 
@@ -616,9 +659,15 @@ impl App {
         self.retile();
     }
 
-    /// Maximize a window to the space the panels leave free.
+    /// Maximize a window to the space the panels leave free, less the session's outer gap and the border (Hyprland's maximize
+    /// keeps the gaps and the bar).
     pub fn maximize(&mut self, window: &Window) {
         let zone = self.free_area(&self.output.clone());
+        let inset = self.look.gaps_out + self.look.border;
+        let zone = Rectangle::new(
+            (zone.loc.x + inset, zone.loc.y + inset).into(),
+            ((zone.size.w - 2 * inset).max(1), (zone.size.h - 2 * inset).max(1)).into(),
+        );
         self.fit_window(window, zone, xdg_toplevel::State::Maximized);
     }
 
@@ -814,6 +863,16 @@ impl App {
         self.minimized.retain(|w| !is(w));
         let gone = self.space.elements().find(|w| is(w)).cloned();
         if let Some(w) = gone {
+            // shrinks and fades away from where it was last drawn (the backend takes its picture before the next frame)
+            let shown = w.user_data().get::<std::cell::RefCell<crate::look::WinLook>>().and_then(|l| crate::look::shown(&l.borrow()));
+            if let (true, true, Some(rect)) = (self.look.animate, self.pictures_of_closing, shown) {
+                self.closing.push(crate::look::Closing {
+                    id: smithay::backend::renderer::element::Id::new(),
+                    rect,
+                    start: self.clock.now(),
+                    picture: None,
+                });
+            }
             self.space.unmap_elem(&w);
         }
         let next = self.space.elements().rev().find_map(surface_of);
@@ -1262,7 +1321,13 @@ impl App {
             .cloned()
             .collect();
         tiled.sort_by_key(|w| w.wl_surface().and_then(|s| self.opened_at.iter().position(|x| *x == *s)).unwrap_or(usize::MAX));
-        for (w, r) in tiled.iter().zip(tiling::dwindle(zone, tiled.len(), 8)) {
+        // the session's gaps; each box holds the window and its border
+        let b = self.look.border;
+        let boxes = tiling::dwindle(zone, tiled.len(), self.look.gaps_in, self.look.gaps_out);
+        let boxes = boxes
+            .into_iter()
+            .map(|r| Rectangle::new((r.loc.x + b, r.loc.y + b).into(), ((r.size.w - 2 * b).max(1), (r.size.h - 2 * b).max(1)).into()));
+        for (w, r) in tiled.iter().zip(boxes) {
             if let Some(t) = w.toplevel() {
                 t.with_pending_state(|s| s.size = Some(r.size));
                 t.send_pending_configure();
@@ -1327,6 +1392,19 @@ impl App {
             self.conf_times.1 = sc_t;
             let (b, _) = shortcuts::load(&std::fs::read_to_string(shortcuts::config_path()).unwrap_or_default());
             self.bindings = b;
+        }
+        // the accent, the style and "reduce motion" (appearance.conf, panel.conf)
+        let look_t = crate::look::Look::files().map(|f| f.and_then(mtime));
+        if look_t != self.look_times {
+            self.look_times = look_t;
+            let look = crate::look::Look::load();
+            if look != self.look {
+                let gaps = (look.gaps_in, look.gaps_out, look.border) != (self.look.gaps_in, self.look.gaps_out, self.look.border);
+                self.look = look;
+                if gaps {
+                    self.retile();
+                }
+            }
         }
         let op_t = mtime(crate::xwayland::opaque_path());
         if op_t != self.conf_times.2 {
@@ -1643,10 +1721,40 @@ impl App {
         // windows. The Overlay layer (the lock's own picture, alerts that must be seen) stays in front.
         let full_front = self.space.elements().last().is_some_and(|w| win_has(w, xdg_toplevel::State::Fullscreen));
         layer_els(renderer, if full_front { &[Layer::Overlay][..] } else { &[Layer::Overlay, Layer::Top][..] }, &mut out);
+        let now = self.clock.now();
+        let s = output.current_scale().fractional_scale();
+        let art = crate::look::art(&mut self.art, &self.look, s);
+        // closed windows shrinking away, over the windows
+        self.closing.retain(|c| crate::look::closing_place(c, now).is_some());
+        for c in &self.closing {
+            let Some((buffer, on)) = &c.picture else { continue };
+            if *on != output.name() {
+                continue;
+            }
+            if let Some((rect, alpha)) = crate::look::closing_place(c, now) {
+                let geo = rect.physical(origin, s);
+                out.extend(crate::look::closing_piece(renderer, c, buffer, geo, alpha).map(R::Elem::from));
+            }
+        }
+        let grabbed = self.pointer.is_grabbed();
+        let front = self.front_window();
         let windows: Vec<Window> = self.space.elements().rev().cloned().collect();
         for w in windows {
             let Some(loc) = self.space.element_location(&w) else { continue };
             let geo = w.geometry();
+            if geo.size.w <= 0 || geo.size.h <= 0 {
+                // nothing drawn yet (a window waiting for its first picture)
+                continue;
+            }
+            let full = win_has(&w, xdg_toplevel::State::Fullscreen);
+            // where it should be: its place, and the size the compositor asked for while the program has not drawn it yet
+            let asked = w.toplevel().and_then(|t| {
+                let pending = t.with_pending_state(|p| p.size);
+                pending.filter(|p| p.w > 0 && p.h > 0 && Some(*p) != t.current_state().size)
+            });
+            let goal = Rectangle::new(loc, asked.unwrap_or(geo.size));
+            let wl = w.user_data().get_or_insert(|| std::cell::RefCell::new(crate::look::WinLook::default()));
+            let (rect, alpha) = crate::look::place(&mut wl.borrow_mut(), goal, asked.is_some(), self.look.animate, grabbed, now);
             // the controls sit on top of the program's own picture, so they come first in a front-to-back list
             if let (Some(r), Some(surface)) = (self.bar_rect(&w), surface_of(&w)) {
                 let key = BarKey {
@@ -1664,17 +1772,50 @@ impl App {
                     }
                 }
             }
-            let els = w.render_elements::<WaylandSurfaceRenderElement<R>>(
-                renderer,
-                (loc - geo.loc - origin).to_physical_precise_round(scale),
-                scale,
-                1.0,
-            );
+            // drawn at `rect`: its picture stretched there while an animation runs (as Hyprland does), else as it is
+            let (sx, sy) = crate::look::stretch(rect, geo.size);
+            let stretch = Scale::from((sx, sy));
+            let corner = crate::look::RectF { x: rect.x, y: rect.y, w: 0.0, h: 0.0 }.physical(origin, s).loc;
+            let draw_at: Point<i32, smithay::utils::Physical> =
+                corner - Point::from(((geo.loc.x as f64 * s).round() as i32, (geo.loc.y as f64 * s).round() as i32));
+            let main: Vec<WaylandSurfaceRenderElement<R>> = match w.toplevel() {
+                Some(t) => {
+                    // its menus (xdg popups) in front, not clipped
+                    let mut menus = vec![];
+                    for (popup, offset) in PopupManager::popups_for_surface(t.wl_surface()) {
+                        let o = (geo.loc + offset - popup.geometry().loc).to_physical_precise_round(s);
+                        menus.extend(render_elements_from_surface_tree::<R, WaylandSurfaceRenderElement<R>>(
+                            renderer,
+                            popup.wl_surface(),
+                            draw_at + o,
+                            s,
+                            alpha,
+                            Kind::Unspecified,
+                        ));
+                    }
+                    out.extend(R::window_elements(self, renderer, menus, false, (None, corner, stretch)));
+                    render_elements_from_surface_tree(renderer, t.wl_surface(), draw_at, s, alpha, Kind::Unspecified)
+                }
+                None => w.render_elements::<WaylandSurfaceRenderElement<R>>(renderer, draw_at, Scale::from(s), alpha),
+            };
+            let clip = crate::look::clip_of(rect, origin, s, &self.look, full);
+            // the border in front of the picture, the shadow behind it; neither in full screen
+            let around = (!full).then(|| {
+                let active = front.as_ref().is_some_and(|f| is_window_of(&w, f));
+                crate::look::deco(renderer, &art, &wl.borrow(), clip.0, active, alpha, &self.look)
+            });
+            let mut back = vec![];
+            if let Some(d) = around {
+                out.extend(d.front.into_iter().map(R::Elem::from));
+                out.extend(d.strips.into_iter().map(R::Elem::from));
+                back = d.back;
+            }
             // a full screen X11 window, a game, or a program in opaque.conf is drawn opaque: see OPAQUE_SHADER in xwayland.rs
             let opaque = w
                 .x11_surface()
                 .is_some_and(|x| x.is_fullscreen() || crate::xwayland::is_game(x) || crate::xwayland::listed(x, &self.opaque_apps));
-            out.extend(R::window_elements(self, renderer, els, opaque));
+            out.extend(R::window_elements(self, renderer, main, opaque, (Some(clip), corner, stretch)));
+            out.extend(back.into_iter().map(R::Elem::from));
         }
         layer_els(
             renderer,
@@ -1682,6 +1823,26 @@ impl App {
             &mut out,
         );
         out
+    }
+
+    /// The window whose border shows the accent: the one with the keyboard, or, while a panel has it (the start menu), the one
+    /// that had it last.
+    fn front_window(&self) -> Option<WlSurface> {
+        let f = self.focused_surface()?;
+        if self.space.elements().any(|w| is_window_of(w, &f)) {
+            return Some(f);
+        }
+        let on_layer = self.space.outputs().any(|o| layer_map_for_output(o).layer_for_surface(&f, WindowSurfaceType::ALL).is_some());
+        on_layer.then(|| self.focus_order.iter().find(|s| self.space.elements().any(|w| is_window_of(w, s))).cloned()).flatten()
+    }
+
+    /// Something is moving: frames go on being drawn until it has settled (never while the clock is stopped).
+    pub fn animating(&self) -> bool {
+        self.clock.running()
+            && (!self.closing.is_empty()
+                || self.space.elements().any(|w| {
+                    w.user_data().get::<std::cell::RefCell<crate::look::WinLook>>().is_some_and(|l| crate::look::animating(&l.borrow()))
+                }))
     }
 
     /// The shader for opaque X11 windows, built once (the first time a full screen X11 window is drawn).

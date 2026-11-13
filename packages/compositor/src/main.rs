@@ -20,6 +20,7 @@ mod deco;
 mod draw;
 mod grabs;
 mod headless;
+mod look;
 mod outputpower;
 mod placement;
 mod screencopy;
@@ -295,6 +296,10 @@ fn run_nested(
             // only what changed is sent on; a frame with no change at all is not even submitted
             if let Some(d) = &damage {
                 let _ = backend.submit(Some(d));
+            }
+            // an animation running: the next frame
+            if app.animating() {
+                app.wake();
             }
             app.send_frames(start.elapsed());
             app.space.refresh();
