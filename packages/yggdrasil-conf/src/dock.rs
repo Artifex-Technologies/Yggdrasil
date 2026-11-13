@@ -1,5 +1,5 @@
 //! The dock's pinned apps: `~/.config/yggdrasil/dock` (one desktop id per line), else the operating system's or the
-//! administrator's default, else the desktop's own. The panel shows them and re-reads the file when it changes; Agora pins and
+//! administrator's default, else the desktop's own. The panel shows them and reads the file again when it changes (it watches the folder); Agora pins and
 //! unpins an app from its page.
 
 use std::path::PathBuf;
@@ -52,11 +52,6 @@ pub fn with(mut ids: Vec<String>, id: &str, on: bool) -> Vec<String> {
 /// Pins or unpins `id` (the default list becomes the user's own on the first change).
 pub fn set_pinned(id: &str, on: bool) {
     save_pinned(&with(pinned(), id, on));
-}
-
-/// When the user's file last changed (the panel compares it to know when to read the list again).
-pub fn modified() -> Option<std::time::SystemTime> {
-    std::fs::metadata(path()).and_then(|m| m.modified()).ok()
 }
 
 #[cfg(test)]

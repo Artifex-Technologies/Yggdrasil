@@ -299,6 +299,9 @@ pub struct App {
     screen_tiled: Vec<WlSurface>,
     tiling_screens: Vec<String>,
     tiling_time: Option<std::time::SystemTime>,
+    /// The main display chosen in Settings > Displays (yggdrasil_conf::display), and when its file was changed as last seen.
+    pub main_choice: Option<yggdrasil_conf::display::MainDisplay>,
+    main_time: Option<std::time::SystemTime>,
     /// The screens, on or off, their settings and wlr-output-management (outputs.rs). Headless only: nested has its window.
     pub heads: crate::outputs::Heads,
     /// The session's window look (look.rs): border, rounding, shadow, gaps, animations; its pictures per scale; the clock the
@@ -581,6 +584,8 @@ impl App {
             screen_tiled: vec![],
             tiling_screens: yggdrasil_conf::tiling::outputs(),
             tiling_time: std::fs::metadata(yggdrasil_conf::tiling::path()).and_then(|m| m.modified()).ok(),
+            main_choice: yggdrasil_conf::display::load(),
+            main_time: std::fs::metadata(yggdrasil_conf::display::path()).and_then(|m| m.modified()).ok(),
             heads: Default::default(),
             look: crate::look::Look::load(),
             art: vec![],
@@ -1584,6 +1589,13 @@ impl App {
         if tl_t != self.tiling_time {
             self.tiling_time = tl_t;
             self.tiling_screens = yggdrasil_conf::tiling::outputs();
+        }
+        // Settings > Displays' main display (outputs.rs: the main screen)
+        let md_t = mtime(yggdrasil_conf::display::path());
+        if md_t != self.main_time {
+            self.main_time = md_t;
+            self.main_choice = yggdrasil_conf::display::load();
+            self.choose_main();
         }
         // Settings > Displays' modes, scales and places (outputs.rs)
         self.reload_monitors();

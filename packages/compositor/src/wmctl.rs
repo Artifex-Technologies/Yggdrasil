@@ -21,7 +21,7 @@
 //!                               (left, top, right, bottom) and "focused" or "-" (tab separated)
 //!   screens all                 every screen, switched-off ones too (Settings > Displays), as `screens` and then the refresh
 //!                               rate (Hz), the modes it offers (comma separated, as Hyprland writes them: 2560x1440@59.95Hz)
-//!                               and "on" or "off"
+//!                               and "on" or "off", then the monitor's maker and model (Settings > Displays' main display)
 //!   pointer-timeout [SECONDS]   how long the pointer may rest before it is hidden (0: never); with a number, set it
 //!   modifiers                   the modifier keys held now: super, ctrl, alt, shift (one line, space separated)
 //!   layers                      one line per panel or background: output, namespace, layer, place and size (tab separated)
@@ -356,8 +356,13 @@ fn screens_all(app: &App) -> Vec<String> {
         let rate = o.current_mode().map(|m| m.refresh as f64 / 1000.0).unwrap_or(60.0);
         format!("{rate:.2}\t{}", o.modes().iter().map(hypr_mode).collect::<Vec<_>>().join(","))
     };
+    // the maker and model, last (an older yggdrasil-wm reads the lines without them)
+    let named = |o: &smithay::output::Output| {
+        let p = o.physical_properties();
+        format!("{}\t{}", field(&p.make), field(&p.model))
+    };
     if app.heads.list.is_empty() {
-        return app.space.outputs().zip(on).map(|(o, l)| format!("{l}\t{}\ton", extra(o))).collect();
+        return app.space.outputs().zip(on).map(|(o, l)| format!("{l}\t{}\ton\t{}", extra(o), named(o))).collect();
     }
     app.heads
         .list
@@ -366,18 +371,19 @@ fn screens_all(app: &App) -> Vec<String> {
             let o = &h.output;
             if h.enabled {
                 let i = app.space.outputs().position(|x| x == o)?;
-                return Some(format!("{}\t{}\ton", on.get(i)?, extra(o)));
+                return Some(format!("{}\t{}\ton\t{}", on.get(i)?, extra(o), named(o)));
             }
             let (at, mode) = (o.current_location(), o.current_mode().map(|m| m.size).unwrap_or_default());
             Some(format!(
-                "{}\t{},{}\t{}x{}\t{}\t0,0,0,0\t-\t{}\toff",
+                "{}\t{},{}\t{}x{}\t{}\t0,0,0,0\t-\t{}\toff\t{}",
                 field(&o.name()),
                 at.x,
                 at.y,
                 mode.w,
                 mode.h,
                 o.current_scale().fractional_scale(),
-                extra(o)
+                extra(o),
+                named(o)
             ))
         })
         .collect()

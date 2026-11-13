@@ -351,6 +351,8 @@ pub fn parse_monitors(json: &str) -> Vec<Screen> {
             Some(Screen {
                 id: m["id"].as_i64(),
                 name: m["name"].as_str()?.to_string(),
+                make: m["make"].as_str().unwrap_or("").to_string(),
+                model: m["model"].as_str().unwrap_or("").to_string(),
                 x: m["x"].as_i64()? as i32,
                 y: m["y"].as_i64()? as i32,
                 width: m["width"].as_u64()? as u32,
@@ -465,6 +467,9 @@ mod tests {
         let j = r#"[{"id":0,"name":"DP-1","x":0,"y":0,"width":3440,"height":1440,"scale":1.00,"transform":0,"reserved":[0,28,0,70]}]"#;
         let m = parse_monitors(j);
         assert_eq!(m[0].monitor().free_area(), (0, 28, 3440, 1342));
+        assert_eq!((m[0].make.as_str(), m[0].model.as_str()), ("", ""), "no maker or model said");
+        let named = parse_monitors(r#"[{"name":"DP-1","make":"Example Display","model":"UW34","x":0,"y":0,"width":3440,"height":1440}]"#);
+        assert_eq!((named[0].make.as_str(), named[0].model.as_str()), ("Example Display", "UW34"));
         assert_eq!(parse_monitors(r#"[{"name":"DP-2","x":0,"y":0}]"#), vec![], "a screen without a size is left out");
         assert_eq!(parse_cursor(r#"{"x": 1720.5, "y": 12}"#), Some((1720.5, 12.0)));
         assert_eq!(parse_cursor("garbage"), None);

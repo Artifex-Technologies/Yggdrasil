@@ -673,7 +673,11 @@ pub struct Mode {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Output {
     pub name: String,
+    /// The monitor's maker and model (empty when the compositor does not say): the main display is chosen by them.
+    pub make: String,
+    pub model: String,
     pub enabled: bool,
+    /// The main display (yggdrasil_conf::display): the dock, notifications and the start menu are there.
     pub primary: bool,
     pub scale: f64,
     pub current: String,
@@ -683,6 +687,11 @@ pub struct Output {
 }
 
 impl Output {
+    /// As the main display's choice sees it.
+    pub fn seen(&self) -> yggdrasil_conf::display::Seen<'_> {
+        yggdrasil_conf::display::Seen { connector: &self.name, make: &self.make, model: &self.model, x: self.x as i32, y: self.y as i32 }
+    }
+
     pub fn current_mode(&self) -> Option<&Mode> {
         self.modes.iter().find(|m| m.id == self.current)
     }
@@ -709,7 +718,8 @@ pub struct Displays {
 
 pub fn displays() -> Displays {
     let tiling = yggdrasil_conf::tiling::outputs().join(",");
-    Displays { outputs: outputs_from(&screens_all().unwrap_or_default()), tiling }
+    let main = yggdrasil_conf::display::load();
+    Displays { outputs: outputs_from(&screens_all().unwrap_or_default(), main.as_ref()), tiling }
 }
 
 /// The compositor (yggdrasil-wm: Hyprland or Yggdrasil's own), unless a made-up system (a fixture) stands in for the real one.
@@ -742,9 +752,10 @@ pub fn hyprland() -> bool {
     std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some()
 }
 
-/// The screens as the compositor lists them. Hyprland has no "main" screen: the one at the top left of the space is it. A screen
-/// that does not say its refresh rate is taken as 60 Hz, and its mode now is always among its modes.
-pub fn outputs_from(screens: &[yggdrasil_wm::Screen]) -> Vec<Output> {
+/// The screens as the compositor lists them. Neither compositor has a "main" screen of its own: it is the one chosen here
+/// (`main`, when that monitor is on), else the one at the top left of the space. A screen that does not say its refresh rate is
+/// taken as 60 Hz, and its mode now is always among its modes.
+pub fn outputs_from(screens: &[yggdrasil_wm::Screen], main: Option<&yggdrasil_conf::display::MainDisplay>) -> Vec<Output> {
     let mut outs: Vec<Output> = screens
         .iter()
         .map(|m| {
@@ -756,6 +767,8 @@ pub fn outputs_from(screens: &[yggdrasil_wm::Screen]) -> Vec<Output> {
             }
             Output {
                 name: m.name.clone(),
+                make: m.make.clone(),
+                model: m.model.clone(),
                 enabled: !m.disabled,
                 primary: false,
                 scale: m.scale.unwrap_or(1.0),
@@ -766,10 +779,25 @@ pub fn outputs_from(screens: &[yggdrasil_wm::Screen]) -> Vec<Output> {
             }
         })
         .collect();
-    if let Some(first) = outs.iter_mut().filter(|o| o.enabled).min_by_key(|o| (o.x, o.y)) {
-        first.primary = true;
+    let on: Vec<usize> = (0..outs.len()).filter(|&i| outs[i].enabled).collect();
+    let seen: Vec<yggdrasil_conf::display::Seen> = on.iter().map(|&i| outs[i].seen()).collect();
+    if let Some(i) = yggdrasil_conf::display::pick(main, &seen).map(|k| on[k]) {
+        outs[i].primary = true;
     }
     outs
+}
+
+/// Makes this monitor the main display: the dock, notifications and the start menu move there (the panel watches the file), and
+/// it stays the main one on another port. Yggdrasil's own compositor reads it again too (its main screen: X11 programs' primary).
+pub fn set_main_display(o: &Output) -> Result<(), String> {
+    if crate::fixture::get().is_some() {
+        return Err("A made-up system (a fixture): nothing is changed.".into());
+    }
+    yggdrasil_conf::display::save(&yggdrasil_conf::display::MainDisplay::of(&o.seen())).map_err(|e| e.to_string())?;
+    match desk() {
+        Some(d @ yggdrasil_wm::Desk::Own(_)) => d.reload(),
+        _ => Ok(()),
+    }
 }
 
 fn hypr_mode_id(w: u32, h: u32, r: f64) -> String {
@@ -805,7 +833,8 @@ pub fn hypr_monitors_lua(outs: &[Output]) -> String {
 /// reports now, with the change) and the compositor reads it again. Hyprland's session config and Yggdrasil's own compositor
 /// both load that file on reload (the compositor since 2026-11-12, its gap item 3), so this is the same on both.
 pub fn set_screen(name: &str, mode: Option<&str>, scale: Option<f64>) -> Result<(), String> {
-    let outs = outputs_from(&screens_all().ok_or("The compositor did not answer")?);
+    // which one is the main display does not go into the file
+    let outs = outputs_from(&screens_all().ok_or("The compositor did not answer")?, None);
     write_monitors(outs, name, mode, scale, &yggdrasil_conf::dirs::config().join("monitors.lua"))?;
     reload()
 }
@@ -1493,17 +1522,43 @@ mod tests {
     fn hyprland_screens_and_their_settings_file() {
         let j = r#"[{"name":"DP-3","width":2560,"height":2880,"refreshRate":59.95,"x":3440,"y":0,"scale":1.25,"disabled":false,"availableModes":["2560x2880@59.95Hz","1920x1080@60.00Hz"]},
                    {"name":"DP-1","width":3440,"height":1440,"refreshRate":180.0,"x":0,"y":0,"scale":1.0,"disabled":false,"availableModes":["3440x1440@180.00Hz","3440x1440@60.00Hz"]}]"#;
-        let o = outputs_from(&yggdrasil_wm::hyprland::parse_monitors(j));
+        let o = outputs_from(&yggdrasil_wm::hyprland::parse_monitors(j), None);
         let dp1 = o.iter().find(|x| x.name == "DP-1").unwrap();
         assert!(dp1.primary, "the screen at the top left is the main one");
         assert_eq!(dp1.current, "3440x1440@180.00");
         assert_eq!(dp1.current_mode().unwrap().refresh, 180.0);
         assert_eq!(dp1.rates(3440, 1440).len(), 2);
         // a screen of Yggdrasil's own compositor says no rate and no modes: 60 Hz, its one mode
-        let own = outputs_from(&[yggdrasil_wm::own::parse_screen(0, "HEADLESS-1\t0,0\t1600x900\t1\t0,32,0,64\tfocused", Some(1)).unwrap()]);
+        let own =
+            outputs_from(&[yggdrasil_wm::own::parse_screen(0, "HEADLESS-1\t0,0\t1600x900\t1\t0,32,0,64\tfocused", Some(1)).unwrap()], None);
         assert_eq!((own[0].current.as_str(), own[0].modes.len(), own[0].primary), ("1600x900@60.00", 1, true));
         let lua = hypr_monitors_lua(&o);
         assert!(lua.contains(r#"hl.monitor({ output = "DP-3", mode = "2560x2880@59.95", position = "3440x0", scale = 1.25 })"#), "{lua}");
+    }
+
+    #[test]
+    fn the_main_display_is_the_chosen_monitor_when_it_is_on() {
+        use yggdrasil_conf::display::MainDisplay;
+        // made-up monitors: a wide one at the left, a tall one at its right
+        let j = |tall_port: &str, tall_on: bool| {
+            format!(
+                r#"[{{"name":"DP-1","make":"Example Display","model":"UW34","width":3440,"height":1440,"x":0,"y":0,"disabled":false}},
+                   {{"name":"{tall_port}","make":"Sample Screens","model":"Tall27","width":2560,"height":2880,"x":3440,"y":0,"disabled":{}}}]"#,
+                !tall_on
+            )
+        };
+        let main = |o: &[Output]| o.iter().find(|x| x.primary).map(|x| x.name.clone());
+        let screens = yggdrasil_wm::hyprland::parse_monitors(&j("DP-3", true));
+        let o = outputs_from(&screens, None);
+        assert_eq!(main(&o).as_deref(), Some("DP-1"), "no choice: the top left");
+        let tall = o.iter().find(|x| x.name == "DP-3").unwrap();
+        assert_eq!((tall.make.as_str(), tall.model.as_str()), ("Sample Screens", "Tall27"));
+        let c = MainDisplay::of(&tall.seen());
+        assert_eq!(main(&outputs_from(&screens, Some(&c))).as_deref(), Some("DP-3"), "the choice is kept");
+        let moved = yggdrasil_wm::hyprland::parse_monitors(&j("HDMI-A-1", true));
+        assert_eq!(main(&outputs_from(&moved, Some(&c))).as_deref(), Some("HDMI-A-1"), "and moves with the monitor");
+        let off = yggdrasil_wm::hyprland::parse_monitors(&j("DP-3", false));
+        assert_eq!(main(&outputs_from(&off, Some(&c))).as_deref(), Some("DP-1"), "switched off: the top left again");
     }
 
     #[test]

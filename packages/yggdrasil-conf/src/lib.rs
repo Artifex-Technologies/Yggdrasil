@@ -1,5 +1,5 @@
 //! ~/.config/yggdrasil/panel.conf: how the top bar and the dock look. Settings writes
-//! it and the panel re-reads it about once a second, so changes show at once. Plain
+//! it and the panel, which watches the folder, reads it again as it is written. Plain
 //! `key = value` lines; unknown keys are ignored and values are clamped to what makes sense, so a
 //! hand-edited file can never break the panel.
 
@@ -11,6 +11,7 @@ pub fn own_session() -> bool {
     std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|d| d.split(':').any(|x| x == "Yggdrasil"))
 }
 pub mod dirs;
+pub mod display;
 pub mod dock;
 pub mod integrations;
 pub mod keep_running;
@@ -360,11 +361,6 @@ impl PanelConf {
         let tmp = p.with_extension("conf.tmp");
         std::fs::write(&tmp, self.to_text()).map_err(|e| e.to_string())?;
         std::fs::rename(&tmp, &p).map_err(|e| e.to_string())
-    }
-
-    /// When the file last changed, for cheap change detection.
-    pub fn modified() -> Option<std::time::SystemTime> {
-        std::fs::metadata(Self::path()?).ok()?.modified().ok()
     }
 }
 

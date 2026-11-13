@@ -3,8 +3,9 @@
 //! protocol (Hyprland, Yggdrasil's session).
 //!
 //! One full bar on every screen except the tiling screen (which gets a slim one), and the dock on
-//! the main screen. Which screen is which comes from Hyprland's monitors and the tiling setting;
-//! it is re-read every few seconds, so changing it in Settings takes effect live.
+//! the main screen (Settings > Displays: the chosen monitor, else the one at the top left;
+//! yggdrasil_conf::display). Screens coming, going or changing are Wayland events, and the
+//! settings files are watched (inotify), so a change in Settings takes effect at once.
 
 mod a11y;
 mod addons;
@@ -309,11 +310,21 @@ impl Drop for Surf {
 struct Out {
     wl: WlOutput,
     name: String,
+    /// The monitor's maker and model (wl_output's geometry): the main display is chosen by them.
+    make: String,
+    model: String,
     scale: i32,
     ready: bool,
     /// Where the compositor says this output is in the global space, in logical pixels (x, y, width, height), from xdg-output.
     logical: Option<(i32, i32, u32, u32)>,
     xdg: Option<ZxdgOutputV1>,
+}
+
+impl Out {
+    /// A screen just bound: its name, monitor and size come in its events.
+    fn new(wl: WlOutput, xdg: Option<ZxdgOutputV1>) -> Out {
+        Out { wl, name: String::new(), make: String::new(), model: String::new(), scale: 1, ready: false, logical: None, xdg }
+    }
 }
 
 impl Drop for Out {
@@ -337,7 +348,6 @@ struct Assets {
 /// Which screen does what (Hyprland's monitors, the tiling setting).
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Layout {
-    primary: String,
     tiling: Vec<String>,
     /// Each enabled output's place in the global space, in logical pixels (name, x, y, width, height), for
     /// placing the dock.
@@ -361,6 +371,10 @@ struct State {
     next_surf: usize,
     outputs: HashMap<u32, Out>,
     layout: Layout,
+    /// The screens changed (a Wayland event) or the tiling file did: read the layout again before the next draw.
+    layout_stale: bool,
+    /// The main display chosen in Settings > Displays (None: the screen at the top left).
+    main_choice: Option<yggdrasil_conf::display::MainDisplay>,
     built_for: Option<Layout>,
     pointer_surface: Option<usize>,
     /// Screens where the focused window is full screen: the bar and the dock step aside there (own session only).
@@ -595,8 +609,8 @@ fn date_text() -> String {
     strftime_now(c"%a %-d %b")
 }
 
-/// The screens from the compositor: the main one is the one at the top left of the space (Hyprland has no "primary"), sizes in
-/// logical pixels.
+/// The screens from the compositor (sizes in logical pixels) and the tiling setting. Which one is the main one is the panel's own
+/// choice (`State::main_output`).
 fn screens_layout(screens: &[yggdrasil_wm::Screen]) -> Layout {
     let mut sizes: Vec<(String, i32, i32, u32, u32)> = screens
         .iter()
@@ -609,12 +623,42 @@ fn screens_layout(screens: &[yggdrasil_wm::Screen]) -> Layout {
         })
         .collect();
     sizes.sort_by_key(|s| (s.1, s.2));
-    let primary = sizes.first().map(|s| s.0.clone()).unwrap_or_default();
-    Layout { primary, tiling: yggdrasil_conf::tiling::outputs(), sizes }
+    Layout { tiling: yggdrasil_conf::tiling::outputs(), sizes }
 }
 
 fn read_layout() -> Layout {
     screens_layout(&yggdrasil_wm::Desk::detect().map(|d| d.screens()).unwrap_or_default())
+}
+
+/// An inotify watch on the settings folder (~/.config/yggdrasil, made when missing): files written, replaced (written beside and
+/// renamed) or removed there.
+fn config_watch() -> std::io::Result<std::os::fd::OwnedFd> {
+    let dir = yggdrasil_conf::dirs::config();
+    std::fs::create_dir_all(&dir)?;
+    watch_dir(&dir)
+}
+
+fn watch_dir(dir: &std::path::Path) -> std::io::Result<std::os::fd::OwnedFd> {
+    use rustix::fs::inotify::{self, CreateFlags, WatchFlags};
+    let fd = inotify::init(CreateFlags::CLOEXEC | CreateFlags::NONBLOCK)?;
+    inotify::add_watch(&fd, dir, WatchFlags::CLOSE_WRITE | WatchFlags::MOVED_TO | WatchFlags::MOVED_FROM | WatchFlags::DELETE)?;
+    Ok(fd)
+}
+
+/// The names of the files an inotify watch saw change since it was last read, each once.
+fn changed_files(fd: &impl AsFd) -> Vec<String> {
+    let mut buf = [std::mem::MaybeUninit::<u8>::uninit(); 4096];
+    let mut reader = rustix::fs::inotify::Reader::new(fd, &mut buf);
+    let mut names: Vec<String> = vec![];
+    // until the queue is empty (EAGAIN: the watch does not block)
+    while let Ok(ev) = reader.next() {
+        if let Some(n) = ev.file_name().map(|n| n.to_string_lossy().into_owned()) {
+            if !n.is_empty() && !names.contains(&n) {
+                names.push(n);
+            }
+        }
+    }
+    names
 }
 
 /// Whether the desktop style is dark (Settings > Appearance; one small file read, no program started).
@@ -702,7 +746,6 @@ impl State {
         }
     }
 
-    /// Which output the dock goes on: the main screen unless it is the tiling one.
     /// An output's place in the global space (x, y, width, height in logical pixels): from the compositor (xdg-output) when it says,
     /// else from Hyprland's list of monitors.
     fn area_of(&self, output: u32) -> Option<(i32, i32, u32, u32)> {
@@ -712,11 +755,29 @@ impl State {
             .or_else(|| self.layout.sizes.iter().find(|(n, ..)| *n == o.name).map(|(_, x, y, w, h)| (*x, *y, *w, *h)))
     }
 
+    /// The main display: the monitor chosen in Settings > Displays when it is connected, else the screen at the top left of the
+    /// space (left first, then up). Notifications, the on-screen volume and the menus opened by a key go there too.
+    fn main_output(&self) -> Option<u32> {
+        let ready: Vec<(u32, &Out, (i32, i32))> = self
+            .outputs
+            .iter()
+            .filter(|(_, o)| o.ready && !o.name.is_empty())
+            .map(|(k, o)| (*k, o, self.area_of(*k).map(|(x, y, _, _)| (x, y)).unwrap_or((i32::MAX, i32::MAX))))
+            .collect();
+        let seen: Vec<yggdrasil_conf::display::Seen> = ready
+            .iter()
+            .map(|(_, o, (x, y))| yggdrasil_conf::display::Seen { connector: &o.name, make: &o.make, model: &o.model, x: *x, y: *y })
+            .collect();
+        yggdrasil_conf::display::pick(self.main_choice.as_ref(), &seen).map(|i| ready[i].0)
+    }
+
+    /// Which output the dock goes on: the main display unless it is a tiling one.
     fn dock_output(&self) -> Option<u32> {
         let ready = || self.outputs.iter().filter(|(_, o)| o.ready && !o.name.is_empty());
         let is_tiling = |o: &Out| self.layout.tiling.contains(&o.name);
+        let main = self.main_output();
         ready()
-            .find(|(_, o)| o.name == self.layout.primary && !is_tiling(o))
+            .find(|(k, o)| Some(**k) == main && !is_tiling(o))
             .or_else(|| ready().find(|(_, o)| !is_tiling(o)))
             .or_else(|| ready().next())
             .map(|(k, _)| *k)
@@ -1749,6 +1810,62 @@ impl State {
     }
 
     /// Once a second while the countdown runs: draw the seconds left, or go ahead when they ran out.
+    /// A file in the settings folder was written, replaced or removed: take up what it holds now.
+    fn config_changed(&mut self, name: &str) {
+        match name {
+            // Settings > Appearance and the rest: how the bar and the dock look
+            "panel.conf" => {
+                let old = self.model.conf;
+                self.model.conf = PanelConf::load();
+                if self.model.conf.own_wallpaper != old.own_wallpaper || self.model.conf.dock_pos != old.dock_pos {
+                    self.built_for = None; // the wallpaper surface comes or goes, or the dock moves to another edge
+                }
+                self.model.notifs.dnd = self.model.conf.notify_dnd;
+                self.model.clock = clock_text(self.model.conf.clock_24h);
+                self.model.clock_secs = secs_text(self.model.conf.clock_24h);
+                self.dirty = true;
+            }
+            // Agora pinned or unpinned an app
+            "dock" => {
+                let pinned = apps::pinned();
+                if pinned != self.model.pinned {
+                    self.model.pinned = pinned;
+                    self.dirty = true;
+                }
+            }
+            // light or dark, the accent colour, the icon pack
+            "appearance.conf" => {
+                if paint::refresh_accent() {
+                    self.dirty = true;
+                }
+                let dark = system_dark();
+                if dark != self.model.dark {
+                    self.model.dark = dark;
+                    self.dirty = true;
+                }
+                let pack = paint::selected_icon_theme();
+                if pack != self.icon_pack {
+                    self.icon_pack = pack.clone();
+                    // Minos's icon for the new pack (its own, the pack's file manager's, or our logo)
+                    let _ = std::process::Command::new("liki-minos-icon").status();
+                    self.assets.icons.set_pack(pack.as_deref());
+                    self.dirty = true;
+                }
+            }
+            // Settings > Displays: another main display (the dock, notifications and menus move there)
+            yggdrasil_conf::display::FILE => {
+                let c = yggdrasil_conf::display::load();
+                if c != self.main_choice {
+                    self.main_choice = c;
+                    self.built_for = None;
+                }
+            }
+            // Settings > Displays: the screens that tile
+            "tiling" => self.layout_stale = true,
+            _ => {}
+        }
+    }
+
     fn tick_confirm(&mut self) {
         let Some(c) = self.confirm else { return };
         if c.expired() {
@@ -3698,10 +3815,11 @@ impl Dispatch<WlRegistry, GlobalListContents> for State {
             wl_registry::Event::Global { name, interface, version } if interface == "wl_output" => {
                 let wl = registry.bind::<WlOutput, _, _>(name, version.min(4), qh, name);
                 let xdg = state.xdg_output_mgr.as_ref().map(|m| m.get_xdg_output(&wl, qh, name));
-                state.outputs.insert(name, Out { wl, name: String::new(), scale: 1, ready: false, logical: None, xdg });
+                state.outputs.insert(name, Out::new(wl, xdg));
             }
             wl_registry::Event::GlobalRemove { name } if state.outputs.remove(&name).is_some() => {
                 state.built_for = None; // a screen went away: rebuild
+                state.layout_stale = true;
             }
             _ => {}
         }
@@ -3713,13 +3831,24 @@ impl Dispatch<WlOutput, u32> for State {
         let Some(o) = state.outputs.get_mut(key) else { return };
         match event {
             wl_output::Event::Name { name } => o.name = name,
+            wl_output::Event::Geometry { make, model, .. } => {
+                if o.ready && (o.make != make || o.model != model) {
+                    state.built_for = None; // another monitor behind the same output: it may be the main one now, or no longer
+                }
+                o.make = make;
+                o.model = model;
+            }
             wl_output::Event::Scale { factor } => {
                 o.scale = factor.max(1);
                 state.dirty = true;
             }
-            wl_output::Event::Done if !o.ready => {
-                o.ready = true;
-                state.built_for = None;
+            wl_output::Event::Done => {
+                if !o.ready {
+                    o.ready = true;
+                    state.built_for = None;
+                }
+                // a screen came, or its mode, scale or place changed: the compositor's list of screens is read again
+                state.layout_stale = true;
             }
             _ => {}
         }
@@ -4382,7 +4511,7 @@ fn bind_outputs(globals: &GlobalList, state: &mut State, qh: &QueueHandle<State>
     for (name, version) in existing {
         let wl = globals.registry().bind::<WlOutput, _, _>(name, version.min(4), qh, name);
         let xdg = state.xdg_output_mgr.as_ref().map(|m| m.get_xdg_output(&wl, qh, name));
-        state.outputs.insert(name, Out { wl, name: String::new(), scale: 1, ready: false, logical: None, xdg });
+        state.outputs.insert(name, Out::new(wl, xdg));
     }
 }
 
@@ -4473,6 +4602,8 @@ fn main() {
         next_surf: 0,
         outputs: HashMap::new(),
         layout: read_layout(),
+        layout_stale: false,
+        main_choice: yggdrasil_conf::display::load(),
         built_for: None,
         pointer_surface: None,
         covered: vec![],
@@ -4900,6 +5031,7 @@ fn main() {
     event_loop
         .handle()
         .insert_source(Timer::from_duration(Duration::from_secs(1)), move |_, _, st| {
+            st.tick_confirm();
             if let Ok(cur) = shared.lock() {
                 if *cur != st.model.status {
                     st.model.status = cur.clone();
@@ -5001,15 +5133,26 @@ fn main() {
             TimeoutAction::ToDuration(Duration::from_secs(1))
         })
         .expect("clock timer");
-    // The screens can change under us (Settings > Displays, a plugged-in monitor).
+    // Settings writes ~/.config/yggdrasil (panel.conf, appearance.conf, display.conf, tiling) and Agora pins apps in its dock
+    // file: the folder is watched, and a change is taken up as it is written. Screens are Wayland events (layout_stale).
+    match config_watch() {
+        Ok(fd) => {
+            event_loop
+                .handle()
+                .insert_source(calloop::generic::Generic::new(fd, calloop::Interest::READ, calloop::Mode::Level), |_, fd, st| {
+                    for name in changed_files(&fd) {
+                        st.config_changed(&name);
+                    }
+                    Ok(calloop::PostAction::Continue)
+                })
+                .expect("config watch");
+        }
+        Err(e) => eprintln!("yggdrasil-panel: the settings folder cannot be watched ({e}); changes show after a restart"),
+    }
+    // apps installed or removed, and icon files changed (the app folders and icon packs are not watched yet)
     event_loop
         .handle()
         .insert_source(Timer::from_duration(Duration::from_secs(4)), |_, _, st| {
-            let l = read_layout();
-            if l != st.layout {
-                st.layout = l;
-                st.built_for = None;
-            }
             // an app installed or removed since: read the apps again (the start menu, search and the dock's icons follow)
             let stamp = apps::stamp();
             if stamp != st.apps_stamp {
@@ -5017,23 +5160,10 @@ fn main() {
                 st.model.apps = apps::load_all();
                 st.dirty = true;
             }
-            let dark = system_dark();
-            if dark != st.model.dark {
-                st.model.dark = dark;
-                st.dirty = true;
-            }
             // Minos's icon is redrawn in the new accent colour: take it up when its file changes
             let stamp = std::env::var_os("HOME").and_then(|h| {
                 std::fs::metadata(std::path::PathBuf::from(h).join(".local/share/icons/Liki/apps/scalable/minos.svg")).ok()?.modified().ok()
             });
-            let pack = paint::selected_icon_theme();
-            if pack != st.icon_pack {
-                st.icon_pack = pack.clone();
-                // Minos's icon for the new pack (its own, the pack's file manager's, or our logo)
-                let _ = std::process::Command::new("liki-minos-icon").status();
-                st.assets.icons.set_pack(pack.as_deref());
-                st.dirty = true;
-            }
             if stamp != st.icon_stamp {
                 st.icon_stamp = stamp;
                 st.assets.icons.clear();
@@ -5045,50 +5175,17 @@ fn main() {
             }
             TimeoutAction::ToDuration(Duration::from_secs(4))
         })
-        .expect("layout timer");
-
-    // Settings writes ~/.config/yggdrasil/panel.conf; pick changes up within a second. Agora pins apps in ~/.config/yggdrasil/dock.
-    let mut seen = PanelConf::modified();
-    let mut seen_dock = yggdrasil_conf::dock::modified();
-    event_loop
-        .handle()
-        .insert_source(Timer::from_duration(Duration::from_secs(1)), move |_, _, st| {
-            st.tick_confirm();
-            // the accent colour is in appearance.conf, not panel.conf: look at it every second
-            if paint::refresh_accent() {
-                st.dirty = true;
-            }
-            let dock_now = yggdrasil_conf::dock::modified();
-            if dock_now != seen_dock {
-                seen_dock = dock_now;
-                let pinned = apps::pinned();
-                if pinned != st.model.pinned {
-                    st.model.pinned = pinned;
-                    st.dirty = true;
-                }
-            }
-            let now = PanelConf::modified();
-            if now != seen {
-                seen = now;
-                let old = st.model.conf.dock_pos;
-                let old_wall = st.model.conf.own_wallpaper;
-                st.model.conf = PanelConf::load();
-                if st.model.conf.own_wallpaper != old_wall {
-                    st.built_for = None; // the wallpaper surface comes or goes
-                }
-                st.model.notifs.dnd = st.model.conf.notify_dnd;
-                st.model.clock = clock_text(st.model.conf.clock_24h);
-                st.model.clock_secs = secs_text(st.model.conf.clock_24h);
-                if st.model.conf.dock_pos != old {
-                    st.built_for = None; // another edge: the dock's surface is rebuilt
-                }
-                st.dirty = true;
-            }
-            TimeoutAction::ToDuration(Duration::from_secs(1))
-        })
-        .expect("config timer");
+        .expect("apps timer");
 
     let ran = event_loop.run(None, &mut state, |st| {
+        if st.layout_stale {
+            st.layout_stale = false;
+            let l = read_layout();
+            if l != st.layout {
+                st.layout = l;
+                st.built_for = None;
+            }
+        }
         // after a window changed, or the screens did (their names may come after the windows)
         if st.covered_stale || st.built_for.is_none() {
             st.covered_stale = false;
@@ -5121,9 +5218,28 @@ mod layout_tests {
     fn hyprland_screens_become_the_layout() {
         let j = r#"[{"name":"DP-3","width":2560,"height":2880,"x":3440,"y":0,"scale":1.0,"transform":0,"disabled":false},{"name":"DP-1","width":3440,"height":1440,"x":0,"y":0,"scale":1.0,"transform":0,"disabled":false},{"name":"HDMI-A-1","width":1920,"height":1080,"x":-1920,"y":0,"disabled":true}]"#;
         let l = super::screens_layout(&yggdrasil_wm::hyprland::parse_monitors(j));
-        assert_eq!(l.primary, "DP-1", "the screen at the top left");
+        assert_eq!(l.sizes[0].0, "DP-1", "left to right");
         assert_eq!(l.sizes[1], ("DP-3".to_string(), 3440, 0, 2560, 2880));
         assert_eq!(l.sizes.len(), 2, "a screen switched off is not laid out");
+    }
+
+    #[test]
+    fn the_settings_folder_is_watched() {
+        let d = std::env::temp_dir().join(format!("ygg-panel-watch-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let fd = super::watch_dir(&d).unwrap();
+        assert!(super::changed_files(&fd).is_empty(), "nothing yet, and reading does not wait");
+        // as Settings saves (beside, then renamed), as Agora writes the dock, twice
+        std::fs::write(d.join("display.conf.tmp"), "main_connector = DP-3\n").unwrap();
+        std::fs::rename(d.join("display.conf.tmp"), d.join("display.conf")).unwrap();
+        std::fs::write(d.join("dock"), "minos\n").unwrap();
+        std::fs::write(d.join("dock"), "minos\ncode\n").unwrap();
+        let names = super::changed_files(&fd);
+        assert!(names.contains(&"display.conf".to_string()) && names.contains(&"dock".to_string()), "{names:?}");
+        assert_eq!(names.iter().filter(|n| *n == "dock").count(), 1, "each name once");
+        std::fs::remove_file(d.join("display.conf")).unwrap();
+        assert_eq!(super::changed_files(&fd), ["display.conf"], "a removed choice is a change too");
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
@@ -5262,8 +5378,32 @@ mod cleanup_tests {
         let xdg_new = mgr.get_xdg_output(&new, &w.qh, 2);
         let xdg_old = mgr.get_xdg_output(&old, &w.qh, 3);
         let mut outputs: HashMap<u32, Out> = HashMap::new();
-        outputs.insert(2, Out { wl: new.clone(), name: "DP-1".into(), scale: 1, ready: true, logical: None, xdg: Some(xdg_new.clone()) });
-        outputs.insert(3, Out { wl: old.clone(), name: "DP-2".into(), scale: 1, ready: true, logical: None, xdg: Some(xdg_old.clone()) });
+        outputs.insert(
+            2,
+            Out {
+                wl: new.clone(),
+                name: "DP-1".into(),
+                make: String::new(),
+                model: String::new(),
+                scale: 1,
+                ready: true,
+                logical: None,
+                xdg: Some(xdg_new.clone()),
+            },
+        );
+        outputs.insert(
+            3,
+            Out {
+                wl: old.clone(),
+                name: "DP-2".into(),
+                make: String::new(),
+                model: String::new(),
+                scale: 1,
+                ready: true,
+                logical: None,
+                xdg: Some(xdg_old.clone()),
+            },
+        );
         outputs.remove(&2);
         outputs.remove(&3);
         let sent = w.sent();

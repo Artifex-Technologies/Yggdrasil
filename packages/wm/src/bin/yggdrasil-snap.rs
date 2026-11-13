@@ -73,6 +73,8 @@ mod tests {
         Screen {
             id: Some(0),
             name: "DP-1".into(),
+            make: String::new(),
+            model: String::new(),
             x: 2560,
             y: 0,
             width,

@@ -2069,6 +2069,7 @@ impl App {
         let Some(d) = self.data.displays.clone() else { return loading(ui) };
         let mut cmd: Option<Vec<String>> = None;
         let mut tiling: Option<(String, bool)> = None;
+        let mut main: Option<sys::Output> = None;
         let hypr = sys::hyprland();
         for o in d.outputs.iter().filter(|o| o.enabled) {
             let Some(cur) = o.current_mode().cloned() else { continue };
@@ -2111,11 +2112,11 @@ impl App {
                         },
                     );
                 });
-                // neither compositor has a main screen of its own to set (the bar and dock follow the top-left one)
-                if !o.primary && !hypr && !matches!(sys::desk(), Some(yggdrasil_wm::Desk::Own(_))) {
-                    ui::row(ui, pal, false, "Main display", Some("The top bar and dock live here"), |ui| {
+                // Yggdrasil's own setting on either compositor (yggdrasil_conf::display): it follows this monitor to another port
+                if !o.primary {
+                    ui::row(ui, pal, false, "Main display", Some("The dock, notifications and the start menu live there"), |ui| {
                         if ui::quiet(ui, pal, "Make main").clicked() {
-                            cmd = Some(vec![format!("output.{}.priority.1", o.name)]);
+                            main = Some(o.clone());
                         }
                     });
                 }
@@ -2150,6 +2151,9 @@ impl App {
         }
         if let Some((name, on)) = tiling {
             self.change(ctx, move || sys::set_tiling(&name, on));
+        }
+        if let Some(o) = main {
+            self.change(ctx, move || sys::set_main_display(&o));
         }
         // a 2-in-1: the rotation lock and the on-screen keyboard in tablet mode
         if let Some(t) = self.data.tablet.clone() {

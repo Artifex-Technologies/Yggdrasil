@@ -347,6 +347,35 @@ fn the_panel_draws_its_bar_dock_and_wallpaper_and_windows_keep_clear_of_them() {
 }
 
 #[test]
+fn the_dock_moves_to_the_main_display_chosen_in_settings() {
+    let Some(panel) = program("YGGDRASIL_TEST_PANEL") else { return };
+    let _l = limit(120, "the main display");
+    let comp = Compositor::start(&["--outputs", "2", "--size", "1280x720"]);
+    let bus = Bus::start(&comp.dir);
+    let conf = comp.dir.join("home/.config/yggdrasil");
+    std::fs::create_dir_all(&conf).unwrap();
+    let mut p = App::start(&comp, &panel, Some(&bus), &[("YGGDRASIL_A11Y", "off")]);
+    let dock_on = |c: &Compositor| layer(&c.layers(), "yggdrasil-dock").filter(|d| d.size.0 > 0).map(|d| d.output.clone());
+    wait_for(&comp, &mut p, 60, "the dock on the screen at the top left", |c| dock_on(c).as_deref() == Some("HEADLESS-1"));
+    // Settings > Displays > Make main on the second screen (both headless screens are alike: the connector decides), saved as
+    // Settings saves it (beside, then renamed); the panel watches the folder, so the dock moves without a timer to wait for
+    std::fs::write(conf.join("display.conf.tmp"), "main_make = Yggdrasil\nmain_model = headless\nmain_connector = HEADLESS-2\n").unwrap();
+    std::fs::rename(conf.join("display.conf.tmp"), conf.join("display.conf")).unwrap();
+    wait_for(&comp, &mut p, 3, "the dock on the chosen screen", |c| dock_on(c).as_deref() == Some("HEADLESS-2"));
+    let bars: Vec<String> = comp.layers().into_iter().filter(|l| l.namespace == "yggdrasil-panel").map(|l| l.output).collect();
+    assert!(bars.contains(&"HEADLESS-1".into()) && bars.contains(&"HEADLESS-2".into()), "the bar stays on every screen: {bars:?}");
+    // the chosen screen unplugged: the top-left one is the main one again
+    comp.must("remove-output HEADLESS-2");
+    wait_for(&comp, &mut p, 3, "the dock back on the top-left screen", |c| dock_on(c).as_deref() == Some("HEADLESS-1"));
+    // the choice taken away: the top left, as before
+    comp.must("add-output 1280x720");
+    std::fs::remove_file(conf.join("display.conf")).unwrap();
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(dock_on(&comp).as_deref(), Some("HEADLESS-1"));
+    assert!(p.running(), "the panel kept running: {}", p.log());
+}
+
+#[test]
 fn settings_opens_centred_maximizes_and_closes() {
     let Some(settings) = program("YGGDRASIL_TEST_SETTINGS") else { return };
     let _l = limit(240, "settings");

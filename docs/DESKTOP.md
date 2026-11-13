@@ -209,7 +209,12 @@ write-once-and-reload. **Not tested, because it needs the real machine:**
   driver on Wayland. VRR is **left off**; I found no source either way.
 - **Apps running through XWayland** (Steam, most Proton games) can look blurry on the
   125% display. Not addressed.
-- The bar and dock appear on **both** monitors; pinning them to one is not set up.
+- The top bar is on every monitor; the dock only on the **main display** (2026-11-13). That is the monitor at the top left
+  until another is chosen in Settings > Displays ("Make main"), saved in `~/.config/yggdrasil/display.conf` by its make and
+  model (the port only decides between two alike), so it stays main on another port; when it is unplugged the top-left one
+  takes over. Notifications, the on-screen volume and the menus opened by a key follow it, and Yggdrasil's own compositor
+  makes it X11's primary monitor. The panel watches the settings folder (inotify) and the screens (Wayland events), so the
+  dock moves at once.
 - Which monitor games use when fullscreen, and workspace assignment per monitor.
 
 ## Optional software

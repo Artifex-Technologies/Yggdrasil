@@ -311,11 +311,28 @@ impl App {
             }
             self.space.map_output(o, p);
         }
-        // the first screen that is on is the main one (windows maximize and the switcher shows there)
-        if !on.iter().any(|(o, _)| *o == self.output) {
-            if let Some((o, _)) = on.first() {
-                self.output = o.clone();
-            }
+        self.choose_main();
+    }
+
+    /// The main screen (windows maximize and the switcher shows there; X11 programs are told it is the primary one): the monitor
+    /// chosen in Settings > Displays when it is on (yggdrasil_conf::display), else the one that was main while it stays on, else
+    /// the first screen that is on.
+    pub fn choose_main(&mut self) {
+        let on: Vec<Output> = self.heads.list.iter().filter(|h| h.enabled).map(|h| h.output.clone()).collect();
+        let props: Vec<(String, smithay::output::PhysicalProperties, Point<i32, Logical>)> =
+            on.iter().map(|o| (o.name(), o.physical_properties(), o.current_location())).collect();
+        let seen: Vec<yggdrasil_conf::display::Seen> = props
+            .iter()
+            .map(|(name, p, at)| yggdrasil_conf::display::Seen { connector: name, make: &p.make, model: &p.model, x: at.x, y: at.y })
+            .collect();
+        let chosen = self.main_choice.as_ref().and_then(|c| yggdrasil_conf::display::chosen(c, &seen)).map(|i| on[i].clone());
+        let main = chosen.or_else(|| on.iter().find(|o| **o == self.output).cloned()).or_else(|| on.first().cloned());
+        let Some(main) = main.filter(|m| *m != self.output) else { return };
+        self.output = main;
+        if let Some(wm) = self.xwm.as_mut() {
+            let _ = wm.set_randr_primary_output(Some(&self.output));
+            // a request with an answer after it, as at the start (xwayland.rs): Smithay ignores the number of the one before
+            let _ = wm.get_randr_primary_output();
         }
     }
 

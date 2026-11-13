@@ -249,12 +249,14 @@ pub fn parse_workspaces(lines: &[String]) -> Desktops {
 }
 
 /// A `screens` line: name, place, mode size, scale, reserved strips, focused; a `screens all` line then also the refresh rate,
-/// the modes (comma separated) and "on" or "off". `index` is its number (the output's order).
+/// the modes (comma separated) and "on" or "off", and from a newer compositor the monitor's maker and model. `index` is its
+/// number (the output's order).
 pub fn parse_screen(index: usize, line: &str, workspace: Option<i64>) -> Option<Screen> {
     let p: Vec<&str> = line.split('\t').collect();
-    let (base, all) = match p.len() {
-        6 => (&p[..], None),
-        9 => (&p[..6], Some((p[6], p[7], p[8]))),
+    let (base, all, (make, model)) = match p.len() {
+        6 => (&p[..], None, ("", "")),
+        9 => (&p[..6], Some((p[6], p[7], p[8])), ("", "")),
+        11 => (&p[..6], Some((p[6], p[7], p[8])), (p[9], p[10])),
         _ => return None,
     };
     let [name, at, size, scale, reserved, focused] = base else { return None };
@@ -265,6 +267,8 @@ pub fn parse_screen(index: usize, line: &str, workspace: Option<i64>) -> Option<
     Some(Screen {
         id: Some(index as i64),
         name: name.to_string(),
+        make: make.to_string(),
+        model: model.to_string(),
         x,
         y,
         width,
@@ -316,6 +320,10 @@ mod tests {
         let all = parse_screen(0, "HEADLESS-3\t0,0\t800x600\t1\t0,0,0,0\t-\t59.95\t800x600@59.95Hz,1024x768@60.00Hz\toff", None).unwrap();
         assert!(all.disabled && all.refresh == Some(59.95));
         assert_eq!(all.modes, ["800x600@59.95Hz", "1024x768@60.00Hz"]);
+        assert_eq!((all.make.as_str(), all.model.as_str()), ("", ""), "an older compositor's line: no maker or model");
+        let named =
+            parse_screen(0, "HEADLESS-1\t0,0\t800x600\t1\t0,0,0,0\t-\t60.00\t800x600@60.00Hz\ton\tExample Display\tUW34", None).unwrap();
+        assert_eq!((named.make.as_str(), named.model.as_str(), named.disabled), ("Example Display", "UW34", false));
         assert_eq!(parse_screen(0, "A\t0,0\t8x6\t1\t0,0,0,0\t-\t60", None), None, "a line cut short");
 
         let lines: Vec<String> = ["1\t2\t-", "2\t0\tshown", "3\t1\t-", "4\t0\t-"].iter().map(|s| s.to_string()).collect();

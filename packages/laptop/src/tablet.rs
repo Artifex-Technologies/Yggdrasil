@@ -508,6 +508,8 @@ mod tests {
         Screen {
             id: Some(0),
             name: name.into(),
+            make: String::new(),
+            model: String::new(),
             x: 0,
             y: 0,
             width: 2880,

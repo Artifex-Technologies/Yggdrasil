@@ -160,6 +160,7 @@ fn settings_monitors_file_sets_modes_scales_places_and_screens_off() {
     assert_eq!((all[0].width, all[0].height, all[0].refresh), (1280, 720, Some(60.0)));
     assert_eq!(all[0].modes, ["1600x900@60.00Hz", "1280x720@60.00Hz"], "its own mode and the one Settings chose");
     assert_eq!((all[1].x, all[1].y, all[1].scale), (-1280, 100, Some(1.25)));
+    assert!(all.iter().all(|s| s.make == "Yggdrasil" && s.model == "headless"), "each says its maker and model, a switched-off one too");
 
     // Settings changes them: it writes the file and asks for a reload (as on Hyprland)
     write_monitors(

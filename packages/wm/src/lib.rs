@@ -69,6 +69,10 @@ pub struct Window {
 pub struct Screen {
     pub id: Option<i64>,
     pub name: String,
+    /// The monitor's maker and model, as it reports them (empty when the compositor does not say): Settings > Displays' main
+    /// display is chosen by them (yggdrasil_conf::display).
+    pub make: String,
+    pub model: String,
     /// The top-left corner in the space of all screens (logical pixels).
     pub x: i32,
     pub y: i32,
