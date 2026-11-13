@@ -98,6 +98,12 @@ pub fn connectivity() -> String {
 /// network that has already let you in shows only "NetworkManager is online".
 pub const PORTAL_PROBE: &str = "http://ping.archlinux.org/nm-check.txt";
 
+/// The sign-in page the network sent the check to (curl's redirect_url), if it is a web address.
+pub fn portal_page(redirect: &str) -> Option<&str> {
+    let r = redirect.trim();
+    ((r.starts_with("https://") || r.starts_with("http://")) && !r.contains(char::is_whitespace)).then_some(r)
+}
+
 /// Whether this reading is a new sign-in page: the network just started asking (it did not in the reading before).
 pub fn portal_appeared(before: &str, now: &str) -> bool {
     now == "portal" && before != "portal"
@@ -122,7 +128,11 @@ pub fn ask_portal_sign_in() {
             .stderr(std::process::Stdio::null())
             .output();
         if answer.is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "open") {
-            let _ = std::process::Command::new("xdg-open").arg(PORTAL_PROBE).stdin(std::process::Stdio::null()).spawn();
+            // the sign-in page's own address, asked of the network: opening the plain-http check in the browser could be upgraded
+            // to https first and meet the portal's stand-in certificate ("not private") instead of its page
+            let asked = out("curl", &["-s", "-o", "/dev/null", "--max-time", "5", "-w", "%{redirect_url}", PORTAL_PROBE]);
+            let page = portal_page(&asked).unwrap_or(PORTAL_PROBE).to_string();
+            let _ = std::process::Command::new("xdg-open").arg(page).stdin(std::process::Stdio::null()).spawn();
         }
     });
 }
@@ -137,6 +147,9 @@ mod tests {
         assert!(portal_appeared("", "portal"));
         assert!(!portal_appeared("portal", "portal"), "not again while it stays");
         assert!(!portal_appeared("portal", "full"));
+        assert_eq!(portal_page("https://guest.example.com/terms?x=1\n"), Some("https://guest.example.com/terms?x=1"));
+        assert_eq!(portal_page(""), None);
+        assert_eq!(portal_page("javascript:alert(1)"), None);
     }
 
     #[test]
