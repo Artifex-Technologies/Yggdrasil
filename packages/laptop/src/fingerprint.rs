@@ -98,6 +98,76 @@ pub fn set_sudo(path: &Path, on: bool, module: &Path) -> Result<bool, String> {
     Ok(true)
 }
 
+/// Whether the system around the reader can be trusted with it: Secure Boot on (what boots has been checked) and the system
+/// disk encrypted (nothing on it can be changed or read with the laptop switched off). Until both, a finger cannot be enrolled
+/// and sudo cannot take one (the owner's rule, 2026-11-13: a fingerprint is only as safe as the system that checks it); taking
+/// fingers out and turning sudo off always work.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Trust {
+    pub secure_boot: bool,
+    pub encrypted: bool,
+}
+
+impl Trust {
+    pub fn ok(self) -> bool {
+        self.secure_boot && self.encrypted
+    }
+
+    /// Why a finger cannot be used yet, in a sentence; empty when it can.
+    pub fn why_not(self) -> &'static str {
+        match (self.secure_boot, self.encrypted) {
+            (true, true) => "",
+            (false, false) => "Off until Secure Boot is on and the system disk is encrypted",
+            (false, true) => "Off until Secure Boot is on",
+            (true, false) => "Off until the system disk is encrypted",
+        }
+    }
+
+    pub fn here() -> Trust {
+        Trust {
+            secure_boot: std::fs::read(SECURE_BOOT_VAR).map(|b| secure_boot_on(&b)).unwrap_or(false),
+            encrypted: root_encrypted(Path::new("/proc/self/mountinfo"), Path::new("/sys/class/block")),
+        }
+    }
+}
+
+/// The firmware's SecureBoot variable (UEFI global variables' GUID).
+pub const SECURE_BOOT_VAR: &str = "/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c";
+
+/// efivarfs gives 4 bytes of attributes, then the value: 1 is on.
+pub fn secure_boot_on(var: &[u8]) -> bool {
+    var.get(4) == Some(&1)
+}
+
+/// The block device the root file system is on (`/dev/nvme0n1p2`, `/dev/mapper/root`), from mountinfo's source field.
+pub fn root_source(mountinfo: &str) -> Option<String> {
+    mountinfo.lines().find_map(|l| {
+        let (left, right) = l.split_once(" - ")?;
+        (left.split_whitespace().nth(4)? == "/").then(|| right.split_whitespace().nth(1).map(str::to_string)).flatten()
+    })
+}
+
+/// Whether block device `name` (as /sys/class/block lists it: nvme0n1p2, dm-0) is, or sits on, an encrypted (LUKS, dm-crypt)
+/// device: a device-mapper device whose uuid starts with CRYPT-, here or below it (LVM on LUKS, and so on).
+pub fn encrypted_in(sys_block: &Path, name: &str, depth: u8) -> bool {
+    let dir = sys_block.join(name);
+    if std::fs::read_to_string(dir.join("dm/uuid")).is_ok_and(|u| u.starts_with("CRYPT-")) {
+        return true;
+    }
+    depth < 8
+        && std::fs::read_dir(dir.join("slaves"))
+            .map(|rd| rd.flatten().any(|e| encrypted_in(sys_block, &e.file_name().to_string_lossy(), depth + 1)))
+            .unwrap_or(false)
+}
+
+fn root_encrypted(mountinfo: &Path, sys_block: &Path) -> bool {
+    let Some(src) = std::fs::read_to_string(mountinfo).ok().and_then(|m| root_source(&m)) else { return false };
+    // /dev/mapper/root is a link to /dev/dm-0; its last part is the name /sys/class/block uses
+    let real = std::fs::canonicalize(&src).unwrap_or_else(|_| src.clone().into());
+    let Some(name) = real.file_name().map(|n| n.to_string_lossy().into_owned()) else { return false };
+    encrypted_in(sys_block, &name, 0)
+}
+
 /// What Settings shows (`fingerprint json`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Status {
@@ -109,6 +179,8 @@ pub struct Status {
     pub fingers: Vec<String>,
     /// Fingerprint for sudo is on.
     pub sudo: bool,
+    /// Secure Boot and disk encryption, which a finger waits for.
+    pub trust: Trust,
 }
 
 impl Status {
@@ -118,6 +190,8 @@ impl Status {
             "reader": self.reader,
             "fingers": self.fingers,
             "sudo": self.sudo,
+            "secure_boot": self.trust.secure_boot,
+            "encrypted": self.trust.encrypted,
         })
         .to_string()
     }
@@ -152,12 +226,12 @@ pub fn status(conn: &zbus::blocking::Connection, user: &str, sudo_pam: &Path) ->
         Err(e) => {
             // ServiceUnknown: fprintd is not installed; NoSuchDevice: installed, no reader it can drive
             let installed = error_name(&e).is_some_and(|n| n.contains("NoSuchDevice"));
-            return Status { installed, sudo, ..Default::default() };
+            return Status { installed, sudo, trust: Trust::here(), ..Default::default() };
         }
     };
     let reader = dev.get_property::<String>("name").ok();
     let fingers: Vec<String> = dev.call("ListEnrolledFingers", &(user,)).unwrap_or_default();
-    Status { installed: true, reader, fingers, sudo }
+    Status { installed: true, reader, fingers, sudo, trust: Trust::here() }
 }
 
 /// Enrols `finger` for this user: each of fprintd's steps is passed to `progress` ("enroll-stage-passed", "enroll-retry-scan",
@@ -214,6 +288,38 @@ pub fn words(result: &str) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_finger_waits_for_secure_boot_and_an_encrypted_disk() {
+        assert!(secure_boot_on(&[6, 0, 0, 0, 1]) && !secure_boot_on(&[6, 0, 0, 0, 0]) && !secure_boot_on(&[]));
+        let mi = "24 1 0:22 /@ / rw,relatime shared:1 - btrfs /dev/mapper/root rw\n25 24 0:23 / /boot rw - vfat /dev/nvme0n1p1 rw\n";
+        assert_eq!(root_source(mi).as_deref(), Some("/dev/mapper/root"));
+        // dm-1 (LVM) on dm-0 (LUKS) on nvme0n1p2; and a plain partition
+        let root = std::env::temp_dir().join(format!("ygg-fp-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for (dev, uuid, slave) in [
+            ("dm-1", Some("LVM-abc"), Some("dm-0")),
+            ("dm-0", Some("CRYPT-LUKS2-xyz"), Some("nvme0n1p2")),
+            ("nvme0n1p2", None, None),
+            ("sda1", None, None),
+        ] {
+            std::fs::create_dir_all(root.join(dev).join("slaves")).unwrap();
+            if let Some(u) = uuid {
+                std::fs::create_dir_all(root.join(dev).join("dm")).unwrap();
+                std::fs::write(root.join(dev).join("dm/uuid"), u).unwrap();
+            }
+            if let Some(s) = slave {
+                std::fs::create_dir_all(root.join(dev).join("slaves").join(s)).unwrap();
+            }
+        }
+        assert!(encrypted_in(&root, "dm-1", 0), "LVM on LUKS");
+        assert!(encrypted_in(&root, "dm-0", 0));
+        assert!(!encrypted_in(&root, "sda1", 0), "a plain partition");
+        std::fs::remove_dir_all(&root).unwrap();
+        let t = Trust { secure_boot: false, encrypted: false };
+        assert!(!t.ok() && t.why_not().contains("Secure Boot") && t.why_not().contains("encrypted"));
+        assert!(Trust { secure_boot: true, encrypted: true }.ok());
+    }
+
     use super::*;
 
     /// Arch's /etc/pam.d/sudo.
@@ -268,8 +374,13 @@ mod tests {
         assert_eq!(words("enroll-completed"), "Fingerprint added");
         assert!(words("enroll-retry-scan").starts_with("Not quite"));
         assert!(words("something new").contains("could not"));
-        let s =
-            Status { installed: true, reader: Some("Synaptics Sensors".into()), fingers: vec!["right-index-finger".into()], sudo: false };
+        let s = Status {
+            installed: true,
+            reader: Some("Synaptics Sensors".into()),
+            fingers: vec!["right-index-finger".into()],
+            sudo: false,
+            trust: Trust::default(),
+        };
         let v: serde_json::Value = serde_json::from_str(&s.json()).unwrap();
         assert_eq!(
             (v["reader"].as_str(), v["fingers"][0].as_str(), v["sudo"].as_bool()),

@@ -1,7 +1,9 @@
 //! /usr/lib/yggdrasil/fingerprint: the fingerprint reader for Settings > Users (laptop::fingerprint).
 //!
 //!   fingerprint json            the reader, your enrolled fingers, and whether sudo takes a finger
-//!   fingerprint enroll [FINGER] enrol a finger (right-index-finger unless named); each step on its own line
+//!   fingerprint enroll [FINGER] enrol a finger (right-index-finger unless named); each step on its own line. Refused until
+//!                               Secure Boot is on and the system disk is encrypted (so is `sudo on`); delete and `sudo off`
+//!                               always work
 //!   fingerprint delete          remove your enrolled fingers
 //!   fingerprint sudo on|off     as root only, through pkexec (org.yggdrasil.fingerprint.sudo): fingerprint for sudo
 
@@ -43,7 +45,10 @@ fn main() {
         Some("json") => system().map(|c| println!("{}", fingerprint::status(&c, &login(), Path::new(fingerprint::SUDO_PAM)).json())),
         Some("enroll") => {
             let finger = args.get(1).map(String::as_str).unwrap_or("right-index-finger");
-            if !FINGERS.contains(&finger) {
+            let trust = fingerprint::Trust::here();
+            if !trust.ok() {
+                Err(format!("{}: a fingerprint is only as safe as the system that checks it", trust.why_not()))
+            } else if !FINGERS.contains(&finger) {
                 Err(format!("not a finger fprintd knows: {finger}"))
             } else {
                 println!("Touch the reader with your finger");
@@ -56,6 +61,9 @@ fn main() {
         Some("delete") => system().and_then(|c| fingerprint::delete_all(&c)),
         Some("sudo") => match args.get(1).map(String::as_str) {
             _ if unsafe { libc::geteuid() } != 0 => Err("only through pkexec: Settings > Users".into()),
+            Some("on") if !fingerprint::Trust::here().ok() => {
+                Err(format!("{}: a fingerprint is only as safe as the system that checks it", fingerprint::Trust::here().why_not()))
+            }
             Some(v @ ("on" | "off")) => fingerprint::set_sudo(Path::new(fingerprint::SUDO_PAM), v == "on", Path::new(fingerprint::MODULE))
                 .map(|changed| println!("{}", if changed { "changed" } else { "unchanged" })),
             _ => Err("on or off".into()),

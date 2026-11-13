@@ -43,13 +43,29 @@ pub struct Fingerprint {
     pub reader: String,
     pub fingers: Vec<String>,
     pub sudo: bool,
+    /// Secure Boot is on, and the system disk is encrypted: until both, a finger cannot be added and sudo cannot take one
+    /// (the helper refuses too).
+    pub secure_boot: bool,
+    pub encrypted: bool,
+}
+
+impl Fingerprint {
+    pub fn trusted(&self) -> bool {
+        self.secure_boot && self.encrypted
+    }
 }
 
 pub fn parse_fingerprint(json: &str) -> Option<Fingerprint> {
     let v: serde_json::Value = serde_json::from_str(json).ok()?;
     let reader = v["reader"].as_str()?.to_string();
     let fingers = v["fingers"].as_array().map(|a| a.iter().filter_map(|f| f.as_str().map(str::to_string)).collect()).unwrap_or_default();
-    Some(Fingerprint { reader, fingers, sudo: v["sudo"].as_bool().unwrap_or(false) })
+    Some(Fingerprint {
+        reader,
+        fingers,
+        sudo: v["sudo"].as_bool().unwrap_or(false),
+        secure_boot: v["secure_boot"].as_bool().unwrap_or(false),
+        encrypted: v["encrypted"].as_bool().unwrap_or(false),
+    })
 }
 
 pub fn fingerprint() -> Option<Fingerprint> {
@@ -137,11 +153,20 @@ pub fn fingerprint_group(ui: &mut egui::Ui, pal: &Palette, fp: &Fingerprint, bus
         } else {
             fp.fingers.iter().map(|f| finger_name(f)).collect::<Vec<_>>().join(", ")
         };
-        ui::row(ui, pal, true, &fp.reader, Some(&enrolled), |ui| {
+        if !fp.trusted() {
+            // visible, greyed out: a fingerprint is only as safe as the system that checks it
+            let why = match (fp.secure_boot, fp.encrypted) {
+                (false, false) => "Turned off until Secure Boot is on and the system disk is encrypted",
+                (false, true) => "Turned off until Secure Boot is on",
+                _ => "Turned off until the system disk is encrypted",
+            };
+            ui::row(ui, pal, true, why, Some("A fingerprint is only as safe as the system that checks it"), |_| {});
+        }
+        ui::row(ui, pal, fp.trusted(), &fp.reader, Some(&enrolled), |ui| {
             if busy {
                 ui.label(RichText::new("Touch the reader until it is done").color(pal.dim));
             } else {
-                if ui::action(ui, pal, "Add a finger").clicked() {
+                if ui.add_enabled_ui(fp.trusted(), |ui| ui::action(ui, pal, "Add a finger")).inner.clicked() {
                     out = Some(Action::Enroll);
                 }
                 if !fp.fingers.is_empty() && ui::quiet(ui, pal, "Remove all").clicked() {
@@ -156,7 +181,8 @@ pub fn fingerprint_group(ui: &mut egui::Ui, pal: &Palette, fp: &Fingerprint, bus
             "A finger instead of your password in the terminal; the password always works too (an administrator's password to change)"
         };
         ui::row(ui, pal, false, "Use for sudo", Some(note), |ui| {
-            let can = !busy && (fp.sudo || !fp.fingers.is_empty());
+            // turning it off always works; on waits for a finger, Secure Boot and an encrypted disk
+            let can = !busy && (fp.sudo || (!fp.fingers.is_empty() && fp.trusted()));
             if ui.add_enabled_ui(can, |ui| ui::switch(ui, pal, &mut sudo)).inner.changed() {
                 out = Some(Action::Sudo(sudo));
             }
@@ -177,7 +203,18 @@ mod tests {
         assert_eq!(parse_tablet(r#"{"accelerometer":false,"tablet_switch":false}"#), None, "a desktop: no group");
         assert_eq!(parse_tablet("off"), None);
         let f = parse_fingerprint(r#"{"installed":true,"reader":"Synaptics Sensors","fingers":["right-index-finger"],"sudo":false}"#);
-        assert_eq!(f, Some(Fingerprint { reader: "Synaptics Sensors".into(), fingers: vec!["right-index-finger".into()], sudo: false }));
+        assert_eq!(
+            f,
+            Some(Fingerprint {
+                reader: "Synaptics Sensors".into(),
+                fingers: vec!["right-index-finger".into()],
+                sudo: false,
+                secure_boot: false,
+                encrypted: false
+            })
+        );
+        let t = parse_fingerprint(r#"{"installed":true,"reader":"R","fingers":[],"sudo":false,"secure_boot":true,"encrypted":true}"#);
+        assert!(t.is_some_and(|f| f.trusted()));
         assert_eq!(parse_fingerprint(r#"{"installed":true,"reader":null,"fingers":[],"sudo":false}"#), None, "no reader: no group");
         assert_eq!(parse_fingerprint(r#"{"installed":false,"reader":null}"#), None);
         assert_eq!(finger_name("right-index-finger"), "Right index finger");
