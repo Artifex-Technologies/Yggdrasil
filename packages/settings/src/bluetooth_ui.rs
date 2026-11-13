@@ -218,7 +218,7 @@ impl App {
             let busy = self.bt_pairing_done.clone();
             busy.store(false, Ordering::Release);
             self.change(ctx, move || {
-                let r = sys::act("bluetoothctl", &[verb, &mac]);
+                let r = sys::bt_act(verb, &mac);
                 busy.store(true, Ordering::Release);
                 r
             });
@@ -324,7 +324,7 @@ impl App {
                 self.bt_forget = false;
             }
             let mac = mac.to_string();
-            self.change(ctx, move || sys::act("bluetoothctl", &[verb, &mac]));
+            self.change(ctx, move || sys::bt_act(verb, &mac));
         }
     }
 
@@ -521,7 +521,7 @@ impl App {
                 if verb == "remove" {
                     self.pad_sel = None;
                 }
-                self.change(ctx, move || sys::act("bluetoothctl", &[verb, &mac]));
+                self.change(ctx, move || sys::bt_act(verb, &mac));
             }
             None => {}
         }

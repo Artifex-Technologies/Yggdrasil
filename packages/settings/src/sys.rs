@@ -580,6 +580,28 @@ pub fn bt_pair(mac: &str) -> Result<(), String> {
     }
 }
 
+/// `bluetoothctl VERB MAC` (connect, disconnect, remove...), reading what it says: bluetoothctl reports a failure on its
+/// standard output, so Settings showed only "That did not work". Connecting a device that only an app opens (an OBD adapter's
+/// serial port) is not a failure: it is paired, and the app connects it (an OBDLink MX+, 2026-11-13).
+pub fn bt_act(verb: &str, mac: &str) -> Result<(), String> {
+    if crate::fixture::get().is_some() {
+        return Err("A made-up system (a fixture): nothing is changed.".into());
+    }
+    let o = Command::new("bluetoothctl").args([verb, mac]).output().map_err(|e| format!("bluetoothctl: {e}"))?;
+    let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+    bt_outcome(verb, o.status.success(), &text)
+}
+
+pub fn bt_outcome(verb: &str, ok: bool, text: &str) -> Result<(), String> {
+    let failed = text.lines().find(|l| l.contains("Failed") || l.contains("Error")).map(|l| l.trim().to_string());
+    match failed {
+        None if ok => Ok(()),
+        Some(f) if verb == "connect" && connects_only_through_an_app(&f) => Ok(()),
+        Some(f) => Err(f),
+        None => Err(text.lines().last().unwrap_or("bluetoothctl failed").trim().to_string()),
+    }
+}
+
 /// BlueZ's answer to Connect when the device offers no profile it connects by itself (no audio, no keyboard or mouse).
 pub fn connects_only_through_an_app(err: &str) -> bool {
     err.contains("No more profiles to connect to") || err.contains("profile-unavailable") || err.contains("org.bluez.Error.NotAvailable")
@@ -1680,6 +1702,20 @@ pub fn apps() -> Vec<Component> {
 mod tests {
     #[test]
     fn a_serial_only_device_is_paired_without_connecting() {
+        // bluetoothctl says it on its standard output
+        assert_eq!(
+            bt_outcome(
+                "connect",
+                false,
+                "Attempting to connect to AA:BB\nFailed to connect: org.bluez.Error.NotAvailable br-connection-profile-unavailable\n"
+            ),
+            Ok(())
+        );
+        assert_eq!(
+            bt_outcome("connect", false, "Failed to connect: org.bluez.Error.Failed Page Timeout\n"),
+            Err("Failed to connect: org.bluez.Error.Failed Page Timeout".into())
+        );
+        assert_eq!(bt_outcome("disconnect", true, "Successful disconnected\n"), Ok(()));
         // what busctl says for an OBDLink MX+ (a serial port only), seen 2026-11-13
         assert!(super::connects_only_through_an_app("Call failed: No more profiles to connect to"));
         assert!(super::connects_only_through_an_app("Call failed: br-connection-profile-unavailable"));
