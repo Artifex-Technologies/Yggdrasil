@@ -1,62 +1,31 @@
-//! The desktop around the processes: Hyprland's windows (through its socket, no program per question) and the apps' names
-//! and icons from their menu entries.
+//! The desktop around the processes: the compositor's windows (yggdrasil-wm: Hyprland's socket or Yggdrasil's own compositor,
+//! no program per question) and the apps' names and icons from their menu entries.
 
 use crate::procs::Window;
 use std::collections::HashMap;
-use std::io::{Read, Write};
 use std::path::PathBuf;
 
-fn socket() -> Option<PathBuf> {
-    let run = std::env::var_os("XDG_RUNTIME_DIR")?;
-    let sig = std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE")?;
-    Some(PathBuf::from(run).join("hypr").join(sig).join(".socket.sock"))
-}
-
-/// One request to Hyprland ("j/clients", "dispatch ..."), its answer.
-pub fn hypr(cmd: &str) -> Option<String> {
-    let mut s = std::os::unix::net::UnixStream::connect(socket()?).ok()?;
-    s.set_read_timeout(Some(std::time::Duration::from_secs(2))).ok()?;
-    s.write_all(cmd.as_bytes()).ok()?;
-    let mut out = String::new();
-    s.read_to_string(&mut out).ok()?;
-    Some(out)
-}
-
-pub fn parse_clients(json: &str) -> Vec<Window> {
-    let Ok(serde_json::Value::Array(v)) = serde_json::from_str::<serde_json::Value>(json) else { return vec![] };
-    v.iter()
-        .filter(|c| c.get("mapped").and_then(|m| m.as_bool()).unwrap_or(true))
-        .filter_map(|c| {
-            Some(Window {
-                address: c.get("address")?.as_str()?.to_string(),
-                pid: c.get("pid")?.as_i64().filter(|&p| p > 0)? as u32,
-                class: c.get("class").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-                title: c.get("title").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-            })
-        })
+/// The windows that are shown and belong to a process.
+pub fn from_wm(windows: Vec<yggdrasil_wm::Window>) -> Vec<Window> {
+    windows
+        .into_iter()
+        .filter(|w| w.mapped)
+        .filter_map(|w| Some(Window { address: w.id, pid: w.pid?, class: w.class, title: w.title }))
         .collect()
 }
 
 pub fn windows() -> Vec<Window> {
-    hypr("j/clients").map(|s| parse_clients(&s)).unwrap_or_default()
-}
-
-/// A Hyprland address as the Lua dispatchers want it (only hex digits get through).
-fn address(a: &str) -> Option<String> {
-    let hex = a.trim_start_matches("0x");
-    (!hex.is_empty() && hex.chars().all(|c| c.is_ascii_hexdigit())).then(|| format!("address:0x{hex}"))
+    yggdrasil_wm::Desk::detect().map(|d| from_wm(d.windows())).unwrap_or_default()
 }
 
 /// Asks a window to close, as its close button would (the app may ask to save first).
 pub fn close_window(addr: &str) -> bool {
-    let Some(a) = address(addr) else { return false };
-    hypr(&format!("dispatch hl.dsp.window.close({{ window = '{a}' }})")).is_some_and(|r| r.trim() == "ok")
+    yggdrasil_wm::Desk::detect().is_some_and(|d| d.close_window(addr))
 }
 
 /// Brings a window to the front.
 pub fn focus_window(addr: &str) -> bool {
-    let Some(a) = address(addr) else { return false };
-    hypr(&format!("dispatch hl.dsp.focus({{ window = '{a}' }})")).is_some_and(|r| r.trim() == "ok")
+    yggdrasil_wm::Desk::detect().is_some_and(|d| d.focus_window(addr))
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -167,12 +136,10 @@ mod tests {
         let j = r#"[{"address":"0x55d9","mapped":true,"pid":1234,"class":"code","title":"main.rs"},
                     {"address":"0x77","mapped":false,"pid":5,"class":"x","title":""},
                     {"address":"0x88","pid":-1,"class":"y","title":""}]"#;
-        let w = parse_clients(j);
+        let w = from_wm(yggdrasil_wm::hyprland::parse_clients(j));
         assert_eq!(w.len(), 1);
         assert_eq!((w[0].pid, w[0].class.as_str(), w[0].address.as_str()), (1234, "code", "0x55d9"));
-        assert!(parse_clients("nope").is_empty());
-        assert_eq!(address("0x55d9aa"), Some("address:0x55d9aa".into()));
-        assert_eq!(address("0x12'); os.execute('x"), None, "nothing but hex reaches the Lua line");
+        assert!(from_wm(yggdrasil_wm::hyprland::parse_clients("nope")).is_empty());
     }
 
     #[test]
