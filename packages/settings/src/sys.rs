@@ -533,7 +533,18 @@ pub fn bt_pair(mac: &str) -> Result<(), String> {
         .map_err(|e| if e.contains("AlreadyExists") { String::new() } else { format!("Pairing did not work: {e}") })
         .or_else(|e| if e.is_empty() { Ok(()) } else { Err(e) })?;
     ask(&["set-property", "org.bluez", &path, "org.bluez.Device1", "Trusted", "b", "true"])?;
-    ask(&["call", "org.bluez", &path, "org.bluez.Device1", "Connect"]).map_err(|e| format!("Paired, but it did not connect yet: {e}"))
+    match ask(&["call", "org.bluez", &path, "org.bluez.Device1", "Connect"]) {
+        Ok(()) => Ok(()),
+        // a device with nothing BlueZ connects by itself (only a serial port, such as an OBD adapter): it is paired, and an app
+        // opens its port when it needs it; before, this read as a failed pairing (an OBDLink MX+, 2026-11-13)
+        Err(e) if connects_only_through_an_app(&e) => Ok(()),
+        Err(e) => Err(format!("Paired, but it did not connect yet: {e}")),
+    }
+}
+
+/// BlueZ's answer to Connect when the device offers no profile it connects by itself (no audio, no keyboard or mouse).
+pub fn connects_only_through_an_app(err: &str) -> bool {
+    err.contains("No more profiles to connect to") || err.contains("profile-unavailable") || err.contains("org.bluez.Error.NotAvailable")
 }
 
 /// `bluetoothctl info MAC`: (connected, icon kind, battery %).
@@ -1556,6 +1567,15 @@ pub fn apps() -> Vec<Component> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_serial_only_device_is_paired_without_connecting() {
+        // what busctl says for an OBDLink MX+ (a serial port only), seen 2026-11-13
+        assert!(super::connects_only_through_an_app("Call failed: No more profiles to connect to"));
+        assert!(super::connects_only_through_an_app("Call failed: br-connection-profile-unavailable"));
+        assert!(super::connects_only_through_an_app("org.bluez.Error.NotAvailable: Operation currently not available"));
+        assert!(!super::connects_only_through_an_app("Call failed: Page Timeout"));
+    }
+
     use super::*;
 
     #[test]
