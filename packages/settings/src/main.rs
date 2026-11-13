@@ -4192,28 +4192,37 @@ impl App {
             ui::row(ui, pal, false, "24-hour clock", Some("In the top bar and the calendar; off shows AM/PM"), |ui| {
                 clock_changed = ui::switch(ui, pal, &mut clock.clock_24h).changed();
             });
-            ui::row(ui, pal, false, "Time zone", Some(&t.timezone), |ui| {
-                // A combo box closes on any click, its own search box included: this one closes only on a click outside it
-                // (or on a choice), and the search box has the keyboard as soon as the list opens. Enter takes the first match.
+            let current = t.zones.iter().find(|z| z.id == t.timezone).map(|z| z.label.clone()).unwrap_or_else(|| t.timezone.clone());
+            ui::row(ui, pal, false, "Time zone", Some("Daylight saving time is followed automatically"), |ui| {
+                // As Windows lists them: "(UTC-07:00) Denver, United States", by offset. A combo box closes on any click, its
+                // own search box included: this one closes only on a click outside it (or on a choice), and the search box has
+                // the keyboard as soon as the list opens. Enter takes the first match.
                 let open = egui::ComboBox::from_id_salt("zone")
-                    .selected_text(&t.timezone)
-                    .width((ui.available_width() * 0.55).clamp(160.0, 260.0))
+                    .selected_text(&current)
+                    .width((ui.available_width() * 0.6).clamp(220.0, 360.0))
                     .height(360.0)
                     .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                     .show_ui(ui, |ui| {
-                        let search = ui.add(egui::TextEdit::singleline(&mut self.zone_filter).hint_text("Search, e.g. Denver"));
-                        if !self.zone_open {
+                        let search =
+                            ui.add(egui::TextEdit::singleline(&mut self.zone_filter).hint_text("Search: a city, a country or UTC-07"));
+                        let opening = !self.zone_open;
+                        if opening {
                             search.request_focus();
                         }
                         let enter = search.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                        let q = self.zone_filter.to_lowercase();
-                        let mut matches = t.zones.iter().filter(|z| q.is_empty() || z.to_lowercase().contains(&q)).peekable();
-                        if enter && !q.is_empty() {
-                            zone = matches.peek().map(|z| z.to_string());
+                        let q = self.zone_filter.clone();
+                        let mut matches = t.zones.iter().filter(|z| z.matches(&q)).peekable();
+                        if enter && !q.trim().is_empty() {
+                            zone = matches.peek().map(|z| z.id.clone());
                         }
-                        for z in matches.take(400) {
-                            if ui.selectable_label(*z == t.timezone, z).clicked() {
-                                zone = Some(z.clone());
+                        for z in matches {
+                            let row = ui.selectable_label(z.id == t.timezone, &z.label);
+                            if opening && z.id == t.timezone {
+                                // the list opens at the zone in use, as Windows' does
+                                row.scroll_to_me(Some(egui::Align::Center));
+                            }
+                            if row.clicked() {
+                                zone = Some(z.id.clone());
                             }
                         }
                         if zone.is_some() {

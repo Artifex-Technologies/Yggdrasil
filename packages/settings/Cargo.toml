@@ -30,6 +30,7 @@ yggdrasil-wifiscan = { path = "../wifiscan" }
 zbus = "5"
 serde_json = "1.0.151"
 serde = { version = "1", features = ["derive"] }
+jiff = { version = "0.2", default-features = false, features = ["std", "tzdb-zoneinfo"] }
 
 [dev-dependencies]
 # the Wi-Fi tests talk to a made-up NetworkManager over a socket pair (peer to peer: no bus)
