@@ -370,6 +370,7 @@ pub fn parse_monitors(json: &str) -> Vec<Screen> {
                     .as_array()
                     .map(|l| l.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
                     .unwrap_or_default(),
+                mirror_of: m["mirrorOf"].as_str().filter(|n| !n.is_empty() && *n != "none").map(str::to_string),
             })
         })
         .collect()
@@ -470,6 +471,11 @@ mod tests {
         assert_eq!((m[0].make.as_str(), m[0].model.as_str()), ("", ""), "no maker or model said");
         let named = parse_monitors(r#"[{"name":"DP-1","make":"Example Display","model":"UW34","x":0,"y":0,"width":3440,"height":1440}]"#);
         assert_eq!((named[0].make.as_str(), named[0].model.as_str()), ("Example Display", "UW34"));
+        assert_eq!(named[0].mirror_of, None, "no mirrorOf: none");
+        let copy = parse_monitors(
+            r#"[{"name":"DP-3","mirrorOf":"DP-1","x":0,"y":0,"width":1920,"height":1080},{"name":"DP-1","mirrorOf":"none","x":0,"y":0,"width":1920,"height":1080}]"#,
+        );
+        assert_eq!((copy[0].mirror_of.as_deref(), copy[1].mirror_of.as_deref()), (Some("DP-1"), None));
         assert_eq!(parse_monitors(r#"[{"name":"DP-2","x":0,"y":0}]"#), vec![], "a screen without a size is left out");
         assert_eq!(parse_cursor(r#"{"x": 1720.5, "y": 12}"#), Some((1720.5, 12.0)));
         assert_eq!(parse_cursor("garbage"), None);

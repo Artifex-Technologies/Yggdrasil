@@ -108,6 +108,8 @@ enum Kind {
     Finder,
     /// The keyboard shortcuts card (Win + /), over the whole screen: any key or click closes it (cheatsheet.rs).
     Cheat,
+    /// Settings > Displays > Identify: the display's number, large, in the middle of it for a few seconds.
+    Identify(u32),
 }
 
 /// The panel's own D-Bus service, so a key press elsewhere (the Super key, through yggdrasil-panelctl) can reach it:
@@ -115,7 +117,7 @@ enum Kind {
 struct PanelBus(calloop::channel::Sender<BusMsg>);
 
 /// What a request over D-Bus asks the panel to do.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 enum BusMsg {
     ToggleStart,
     ShowClipboard,
@@ -131,6 +133,21 @@ enum BusMsg {
     ZonesDrag,
     ZonesDrop,
     ZonesPick,
+    /// Settings > Displays > Identify: each screen (connector) and the number to show on it.
+    Identify(Vec<(String, u32)>),
+}
+
+/// "DP-1=1,DP-3=2" from Settings: screen names and the numbers to show (a few, small numbers; anything else is left out).
+fn identify_list(s: &str) -> Vec<(String, u32)> {
+    s.split(',')
+        .filter_map(|p| {
+            let (n, k) = p.split_once('=')?;
+            let (n, k) = (n.trim(), k.trim().parse::<u32>().ok()?);
+            let ok = !n.is_empty() && n.len() <= 32 && n.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c));
+            (ok && (1..=99).contains(&k)).then(|| (n.to_string(), k))
+        })
+        .take(16)
+        .collect()
 }
 
 #[zbus::interface(name = "org.yggdrasil.Panel")]
@@ -193,6 +210,11 @@ impl PanelBus {
     /// Open the zones sheet for the window in front, or close it (Super+Shift+Z).
     fn zones_pick(&self) {
         let _ = self.0.send(BusMsg::ZonesPick);
+    }
+
+    /// Show each screen's number on it for a few seconds: "DP-1=1,DP-3=2" (Settings > Displays > Identify).
+    fn identify(&self, screens: &str) {
+        let _ = self.0.send(BusMsg::Identify(identify_list(screens)));
     }
 }
 
@@ -443,6 +465,8 @@ struct State {
     /// A log-out, restart or shut-down waiting for its countdown.
     confirm: Option<confirm::Confirm>,
     osd_gen: u64,
+    /// The Identify numbers are showing until then.
+    identify_until: Option<Instant>,
     osd_hide_tx: calloop::channel::Sender<u64>,
     /// Find my mouse: the Ctrl taps, the spotlight being shown, and the ticks that animate it (only while it shows).
     finder_taps: finder::Taps,
@@ -628,6 +652,21 @@ fn screens_layout(screens: &[yggdrasil_wm::Screen]) -> Layout {
 
 fn read_layout() -> Layout {
     screens_layout(&yggdrasil_wm::Desk::detect().map(|d| d.screens()).unwrap_or_default())
+}
+
+/// The Identify card's size (logical pixels).
+const IDENTIFY_SIZE: u32 = 180;
+
+/// A dark card with the accent's edge and the display's number, large (Settings > Displays > Identify).
+fn paint_identify(pix: &mut Pixmap, s: f32, n: u32, fonts: &paint::Fonts) {
+    pix.fill(paint::color((0, 0, 0, 0)));
+    let side = pix.width().min(pix.height()) as f32;
+    paint::fill_rounded(pix, 0.0, 0.0, side, side, 28.0 * s, (16, 16, 20, 235));
+    paint::stroke_rounded(pix, 2.0 * s, 2.0 * s, side - 4.0 * s, side - 4.0 * s, 26.0 * s, 4.0 * s, paint::accent(255));
+    let label = n.to_string();
+    let size = 120.0 * s;
+    let w = paint::text_width(&fonts.bold, size, &label);
+    paint::draw_text(pix, &fonts.bold, size, (side - w) / 2.0, side / 2.0, (255, 255, 255, 255), &label);
 }
 
 /// An inotify watch on the settings folder (~/.config/yggdrasil, made when missing): files written, replaced (written beside and
@@ -1642,6 +1681,55 @@ impl State {
         self.cheat = Some(cheatsheet::load());
         self.add_overlay(output, Kind::Cheat, "yggdrasil-shortcuts", true);
         self.dirty = true;
+    }
+
+    /// Settings > Displays > Identify: a card with the number in the middle of each screen named, for 3 seconds; it takes no
+    /// clicks or keys.
+    fn show_identify(&mut self, list: &[(String, u32)]) {
+        self.close_identify();
+        for (name, n) in list {
+            let Some((output, out)) = self.outputs.iter().find(|(_, o)| o.ready && o.name == *name).map(|(k, o)| (*k, o.wl.clone())) else {
+                continue;
+            };
+            let id = self.next_surf;
+            self.next_surf += 1;
+            let wl = self.compositor.create_surface(&self.qh, ());
+            let layer = self.layer_shell.get_layer_surface(&wl, Some(&out), Layer::Overlay, "yggdrasil-identify".into(), &self.qh, id);
+            layer.set_size(IDENTIFY_SIZE, IDENTIFY_SIZE);
+            layer.set_exclusive_zone(-1);
+            layer.set_keyboard_interactivity(KeyboardInteractivity::None);
+            let region = self.compositor.create_region(&self.qh, ());
+            wl.set_input_region(Some(&region));
+            region.destroy();
+            wl.commit();
+            self.surfs.push(Surf {
+                id,
+                kind: Kind::Identify(*n),
+                output,
+                wl,
+                layer: Some(layer),
+                w: IDENTIFY_SIZE,
+                h: IDENTIFY_SIZE,
+                want: (IDENTIFY_SIZE, IDENTIFY_SIZE),
+                gap: 0,
+                configured: false,
+                bufs: vec![],
+                hits: vec![],
+                hover: None,
+                frac: None,
+                fscale: 0.0,
+                stamp: None,
+            });
+        }
+        self.identify_until = Some(Instant::now() + Duration::from_secs(3));
+        self.dirty = true;
+    }
+
+    fn close_identify(&mut self) {
+        self.identify_until = None;
+        while let Some(i) = self.surfs.iter().position(|s| matches!(s.kind, Kind::Identify(_))) {
+            self.surfs.remove(i).destroy();
+        }
     }
 
     fn close_cheat(&mut self) {
@@ -3289,6 +3377,10 @@ impl State {
                 }
                 vec![]
             }
+            Kind::Identify(n) => {
+                paint_identify(&mut pix, s, n, &self.assets.fonts);
+                vec![]
+            }
             Kind::Osd => {
                 if let Some(st) = self.osd {
                     osd::paint(&mut pix, s, &st, &self.assets.fonts, &mut self.assets.icons);
@@ -4644,6 +4736,7 @@ fn main() {
         osd: None,
         confirm: None,
         osd_gen: 0,
+        identify_until: None,
         osd_hide_tx,
         finder_taps: Default::default(),
         finder: None,
@@ -4751,6 +4844,7 @@ fn main() {
                     BusMsg::ToggleCalendar => st.toggle_calendar(),
                     BusMsg::FylgjaSection(n) => st.show_fylgja_section(n as usize),
                     BusMsg::CursorTap => st.cursor_tap(),
+                    BusMsg::Identify(list) => st.show_identify(&list),
                     BusMsg::ToggleShortcuts => st.toggle_shortcuts(),
                     BusMsg::ZonesDrag => st.zones_open(zones::Mode::Drag),
                     BusMsg::ZonesDrop => st.zones_drop(),
@@ -5032,6 +5126,9 @@ fn main() {
         .handle()
         .insert_source(Timer::from_duration(Duration::from_secs(1)), move |_, _, st| {
             st.tick_confirm();
+            if st.identify_until.is_some_and(|t| Instant::now() >= t) {
+                st.close_identify();
+            }
             if let Ok(cur) = shared.lock() {
                 if *cur != st.model.status {
                     st.model.status = cur.clone();
@@ -5221,6 +5318,12 @@ mod layout_tests {
         assert_eq!(l.sizes[0].0, "DP-1", "left to right");
         assert_eq!(l.sizes[1], ("DP-3".to_string(), 3440, 0, 2560, 2880));
         assert_eq!(l.sizes.len(), 2, "a screen switched off is not laid out");
+    }
+
+    #[test]
+    fn identify_takes_screen_names_and_small_numbers() {
+        assert_eq!(super::identify_list("DP-1=1, HDMI-A-1=2"), [("DP-1".to_string(), 1), ("HDMI-A-1".to_string(), 2)]);
+        assert!(super::identify_list("../x=1,DP-1=0,DP-2=100,=3,DP-3=x,a b=1").is_empty(), "nothing odd gets through");
     }
 
     #[test]

@@ -12,6 +12,8 @@ mod cpu;
 mod curve;
 mod defaults;
 mod devices;
+mod displays;
+mod displays_ui;
 mod distress;
 mod fans;
 mod fixture;
@@ -372,6 +374,8 @@ struct App {
     refreshed: std::time::Instant,
     /// Displays > Night Light: its settings, whether it is on now, and the thread that runs hyprsunset (read when first shown).
     night: Option<(nightlight::Settings, bool, Sender<nightlight::Cmd>)>,
+    /// Settings > Displays: the display selected, a drag in the arrangement box, "Keep these display settings?".
+    displays_ui: displays_ui::State,
 }
 
 impl App {
@@ -507,6 +511,7 @@ impl App {
             brand_style: 0,
             refreshed: std::time::Instant::now(),
             night: None,
+            displays_ui: Default::default(),
         };
         // `yggdrasil-settings apps:ID` opens that app's own page (links from the dock or the notch)
         if let Some(id) = std::env::args().nth(1).and_then(|a| a.strip_prefix("apps:").map(String::from)).filter(|s| !s.is_empty()) {
@@ -941,6 +946,8 @@ impl eframe::App for App {
             });
 
         self.wifi_dialog(&ctx, &pal);
+        // on top of any page: a display change waits for its answer wherever one goes meanwhile
+        displays_ui::prompt(&ctx, &pal, &mut self.displays_ui);
         chrome::outline(&ctx, &pal);
         // Keep live values (volume, connections) fresh while the window is open.
         ctx.request_repaint_after(Duration::from_secs(5));
@@ -2067,93 +2074,13 @@ impl App {
 
     fn page_displays(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         let Some(d) = self.data.displays.clone() else { return loading(ui) };
-        let mut cmd: Option<Vec<String>> = None;
-        let mut tiling: Option<(String, bool)> = None;
-        let mut main: Option<sys::Output> = None;
         let hypr = sys::hyprland();
-        for o in d.outputs.iter().filter(|o| o.enabled) {
-            let Some(cur) = o.current_mode().cloned() else { continue };
-            let title = if o.primary { format!("{} · Main display", o.name) } else { o.name.clone() };
-            ui::group(ui, pal, Some(&title), |ui| {
-                ui::row(ui, pal, true, "Resolution", None, |ui| {
-                    egui::ComboBox::from_id_salt(format!("res-{}", o.name))
-                        .selected_text(format!("{} × {}", cur.width, cur.height))
-                        .show_ui(ui, |ui| {
-                            for (w, h) in o.resolutions() {
-                                if ui.selectable_label(w == cur.width && h == cur.height, format!("{w} × {h}")).clicked() {
-                                    if let Some(m) = o.rates(w, h).first() {
-                                        cmd = Some(vec![format!("output.{}.mode.{}", o.name, m.id)]);
-                                    }
-                                }
-                            }
-                        });
-                });
-                ui::row(ui, pal, false, "Refresh rate", None, |ui| {
-                    egui::ComboBox::from_id_salt(format!("hz-{}", o.name)).selected_text(format!("{:.0} Hz", cur.refresh)).show_ui(
-                        ui,
-                        |ui| {
-                            for m in o.rates(cur.width, cur.height) {
-                                if ui.selectable_label(m.id == cur.id, format!("{:.2} Hz", m.refresh)).clicked() {
-                                    cmd = Some(vec![format!("output.{}.mode.{}", o.name, m.id)]);
-                                }
-                            }
-                        },
-                    );
-                });
-                ui::row(ui, pal, false, "Scale", Some("Makes text and windows larger"), |ui| {
-                    egui::ComboBox::from_id_salt(format!("scale-{}", o.name)).selected_text(format!("{:.0} %", o.scale * 100.0)).show_ui(
-                        ui,
-                        |ui| {
-                            for s in [1.0, 1.25, 1.5, 1.75, 2.0] {
-                                if ui.selectable_label((s - o.scale).abs() < 0.01, format!("{:.0} %", s * 100.0)).clicked() {
-                                    cmd = Some(vec![format!("output.{}.scale.{}", o.name, s)]);
-                                }
-                            }
-                        },
-                    );
-                });
-                // Yggdrasil's own setting on either compositor (yggdrasil_conf::display): it follows this monitor to another port
-                if !o.primary {
-                    ui::row(ui, pal, false, "Main display", Some("The dock, notifications and the start menu live there"), |ui| {
-                        if ui::quiet(ui, pal, "Make main").clicked() {
-                            main = Some(o.clone());
-                        }
-                    });
-                }
-                let mut is_tiling = d.tiling.split(',').any(|t| t.trim() == o.name);
-                ui::row(
-                    ui,
-                    pal,
-                    false,
-                    "Tiling screen",
-                    Some("Windows tile automatically, Omarchy-style, with their own workspaces"),
-                    |ui| {
-                        if ui::switch(ui, pal, &mut is_tiling).changed() {
-                            tiling = Some((o.name.clone(), is_tiling));
-                        }
-                    },
-                );
-            });
-        }
-        if d.outputs.is_empty() {
-            ui::group(ui, pal, None, |ui| ui::row(ui, pal, true, "No displays reported", None, |_| {}));
-        }
-        if let Some(args) = cmd {
-            self.change(ctx, move || {
-                // the choices as Hyprland settings: "output.NAME.mode.ID" or "output.NAME.scale.S"
-                let parts: Vec<&str> = args[0].splitn(4, '.').collect();
-                match parts.as_slice() {
-                    ["output", name, "mode", id] => sys::set_screen(name, Some(id), None),
-                    ["output", name, "scale", s] => sys::set_screen(name, None, s.parse().ok()),
-                    _ => Err("not available here yet".into()),
-                }
-            });
-        }
-        if let Some((name, on)) = tiling {
-            self.change(ctx, move || sys::set_tiling(&name, on));
-        }
-        if let Some(o) = main {
-            self.change(ctx, move || sys::set_main_display(&o));
+        match displays_ui::page(ui, pal, &d, &mut self.displays_ui) {
+            Some(displays_ui::Act::Change(c)) => self.display_change(ctx, c),
+            Some(displays_ui::Act::MakeMain(o)) => self.change(ctx, move || sys::set_main_display(&o)),
+            Some(displays_ui::Act::Tiling(name, on)) => self.change(ctx, move || sys::set_tiling(&name, on)),
+            Some(displays_ui::Act::Identify(list)) => self.change(ctx, move || sys::identify(&list)),
+            None => {}
         }
         // a 2-in-1: the rotation lock and the on-screen keyboard in tablet mode
         if let Some(t) = self.data.tablet.clone() {
@@ -2165,6 +2092,51 @@ impl App {
             self.night_light(ui, pal);
             zones_ui::group(ui, pal);
         }
+    }
+
+    /// A change on Settings > Displays. One that can leave a screen black (resolution, refresh rate, orientation, Extend,
+    /// Duplicate, Disconnect) is put back after displays::KEEP_SECS unless "Keep changes" is pressed: a thread of its own waits
+    /// for the answer, so it is put back even when this window is on the screen that went black and draws nothing.
+    fn display_change(&mut self, ctx: &egui::Context, c: displays::Change) {
+        use displays_ui::{KEPT, OVER, PUT_BACK, WAITING};
+        use std::sync::atomic::{AtomicU8, Ordering};
+        if !c.needs_keep() {
+            self.change(ctx, move || sys::set_screens(|outs| c.apply(outs)).map(|_| ()));
+            return;
+        }
+        if self.displays_ui.prompt.is_some() {
+            return; // one change waits for its answer at a time
+        }
+        let answer = std::sync::Arc::new(AtomicU8::new(WAITING));
+        let keep = displays::Keep::start(std::time::Instant::now());
+        self.displays_ui.prompt = Some(displays_ui::Prompt { keep, answer: answer.clone() });
+        let (tx, page, ctx) = (self.tx.clone(), self.page, ctx.clone());
+        std::thread::spawn(move || {
+            let done = |r: Result<(), String>| {
+                let _ = tx.send(Msg::Done(page, r));
+                ctx.request_repaint();
+            };
+            let before = match sys::set_screens(|outs| c.apply(outs)) {
+                Ok(b) => b,
+                Err(e) => {
+                    answer.store(OVER, Ordering::Release);
+                    return done(Err(e));
+                }
+            };
+            done(Ok(())); // the page shows the change while the question waits
+            let a = loop {
+                let a = answer.load(Ordering::Acquire);
+                if a != WAITING {
+                    break a;
+                }
+                if keep.expired(std::time::Instant::now()) {
+                    break PUT_BACK;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            };
+            answer.store(OVER, Ordering::Release);
+            done(if a == KEPT { Ok(()) } else { sys::restore_screens(before) });
+        });
     }
 
     /// Displays > Night Light: the same settings as the notch's drop-down; yggdrasil_conf::nightlight writes them and runs hyprsunset.

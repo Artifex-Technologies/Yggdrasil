@@ -1,0 +1,5 @@
+{
+  "run": {
+    "hyprctl -j monitors all": "[{\"id\": 0, \"name\": \"DP-1\", \"description\": \"Example Display UW34 (DP-1)\", \"make\": \"Example Display\", \"model\": \"UW34\", \"x\": 0, \"y\": 0, \"width\": 3440, \"height\": 1440, \"refreshRate\": 164.9, \"scale\": 1.0, \"transform\": 0, \"focused\": true, \"disabled\": false, \"mirrorOf\": \"none\", \"availableModes\": [\"3440x1440@164.90Hz\", \"3440x1440@144.00Hz\", \"3440x1440@120.00Hz\", \"3440x1440@59.97Hz\", \"2560x1080@60.00Hz\", \"1920x1080@60.00Hz\"]}]"
+  }
+}

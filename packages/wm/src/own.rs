@@ -283,6 +283,7 @@ pub fn parse_screen(index: usize, line: &str, workspace: Option<i64>) -> Option<
         special_workspace_id: None,
         refresh: all.and_then(|(r, _, _)| r.parse().ok()),
         modes: all.map(|(_, m, _)| m.split(',').filter(|m| !m.is_empty()).map(str::to_string).collect()).unwrap_or_default(),
+        mirror_of: None,
     })
 }
 

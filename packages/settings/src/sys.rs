@@ -660,7 +660,7 @@ pub fn sound() -> Sound {
     }
 }
 
-// ---------------------------------------------------------------- Displays (Hyprland)
+// ---------------------------------------------------------------- Displays (Hyprland and Yggdrasil's own compositor)
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Mode {
@@ -684,9 +684,43 @@ pub struct Output {
     pub modes: Vec<Mode>,
     pub x: i64,
     pub y: i64,
+    /// Turned: 0 none, 1 90°, 2 180°, 3 270° (wl_output's transforms; 4 to 7 are those flipped).
+    pub transform: u32,
+    /// The screen it shows a copy of (Duplicate), when it does.
+    pub mirror_of: Option<String>,
+    /// Variable refresh rate as monitors.lua sets it (0 off, 1 on, 2 for full-screen games); None: the session's own setting.
+    pub vrr: Option<u8>,
 }
 
 impl Output {
+    /// Its size in the space of all screens (logical pixels): the mode over the scale, turned when it is turned. A screen that is
+    /// off and says no mode takes its largest one.
+    pub fn logical(&self) -> (i32, i32) {
+        let (w, h) = match self.current_mode().filter(|m| m.width > 0 && m.height > 0) {
+            Some(m) => (m.width, m.height),
+            None => self.resolutions().first().copied().unwrap_or((1920, 1080)),
+        };
+        let s = if self.scale.is_finite() && self.scale > 0.1 { self.scale } else { 1.0 };
+        let (w, h) = ((w as f64 / s).round() as i32, (h as f64 / s).round() as i32);
+        if self.transform % 2 == 1 {
+            (h, w)
+        } else {
+            (w, h)
+        }
+    }
+
+    /// A mode to switch it on with: the one it has, else its largest at its fastest rate.
+    pub fn mode_to_use(&self) -> String {
+        match self.current_mode().filter(|m| m.width > 0 && m.height > 0) {
+            Some(m) => m.id.clone(),
+            None => self
+                .resolutions()
+                .first()
+                .and_then(|&(w, h)| self.rates(w, h).first().map(|m| m.id.clone()))
+                .unwrap_or_else(|| self.current.clone()),
+        }
+    }
+
     /// As the main display's choice sees it.
     pub fn seen(&self) -> yggdrasil_conf::display::Seen<'_> {
         yggdrasil_conf::display::Seen { connector: &self.name, make: &self.make, model: &self.model, x: self.x as i32, y: self.y as i32 }
@@ -714,12 +748,52 @@ impl Output {
 pub struct Displays {
     pub outputs: Vec<Output>,
     pub tiling: String,
+    pub caps: Caps,
+}
+
+/// What the compositor can do beyond modes, scales, places and switching a screen off.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Caps {
+    /// Turn a screen (portrait).
+    pub transform: bool,
+    /// Show a copy of another screen (Duplicate).
+    pub mirror: bool,
+    /// Variable refresh rate per screen.
+    pub vrr: bool,
+}
+
+/// Hyprland does all of it (a fixture stands in for Hyprland); Yggdrasil's own compositor not yet.
+fn caps() -> Caps {
+    let hypr = crate::fixture::get().is_some() || hyprland() && !matches!(desk(), Some(yggdrasil_wm::Desk::Own(_)));
+    Caps { transform: hypr, mirror: hypr, vrr: hypr }
 }
 
 pub fn displays() -> Displays {
     let tiling = yggdrasil_conf::tiling::outputs().join(",");
+    Displays { outputs: current_outputs().unwrap_or_default(), tiling, caps: caps() }
+}
+
+/// The screens now, with the main display marked and what monitors.lua adds (variable refresh rate).
+fn current_outputs() -> Option<Vec<Output>> {
     let main = yggdrasil_conf::display::load();
-    Displays { outputs: outputs_from(&screens_all().unwrap_or_default(), main.as_ref()), tiling }
+    let mut outs = outputs_from(&screens_all()?, main.as_ref());
+    let lua = std::fs::read_to_string(monitors_path()).unwrap_or_default();
+    for o in &mut outs {
+        o.vrr = lua_value(&lua, &o.name, "vrr").and_then(|v| v.parse().ok()).filter(|v: &u8| *v <= 2);
+    }
+    Some(outs)
+}
+
+pub fn monitors_path() -> std::path::PathBuf {
+    yggdrasil_conf::dirs::config().join("monitors.lua")
+}
+
+/// A value of the last `hl.monitor({ output = "NAME", ... })` line naming a screen (the form Settings writes, one per line).
+fn lua_value(lua: &str, output: &str, key: &str) -> Option<String> {
+    let named = format!("output = \"{output}\"");
+    let line = lua.lines().rev().find(|l| l.trim_start().starts_with("hl.monitor(") && l.contains(&named))?;
+    let inside = line.split_once('{')?.1.rsplit_once('}')?.0;
+    inside.split(',').filter_map(|p| p.split_once('=')).find(|(k, _)| k.trim() == key).map(|(_, v)| v.trim().trim_matches('"').to_string())
 }
 
 /// The compositor (yggdrasil-wm: Hyprland or Yggdrasil's own), unless a made-up system (a fixture) stands in for the real one.
@@ -776,10 +850,13 @@ pub fn outputs_from(screens: &[yggdrasil_wm::Screen], main: Option<&yggdrasil_co
                 modes,
                 x: m.x as i64,
                 y: m.y as i64,
+                transform: m.transform,
+                mirror_of: m.mirror_of.clone(),
+                vrr: None,
             }
         })
         .collect();
-    let on: Vec<usize> = (0..outs.len()).filter(|&i| outs[i].enabled).collect();
+    let on: Vec<usize> = (0..outs.len()).filter(|&i| outs[i].enabled && outs[i].mirror_of.is_none()).collect();
     let seen: Vec<yggdrasil_conf::display::Seen> = on.iter().map(|&i| outs[i].seen()).collect();
     if let Some(i) = yggdrasil_conf::display::pick(main, &seen).map(|k| on[k]) {
         outs[i].primary = true;
@@ -813,7 +890,7 @@ fn parse_hypr_mode(s: &str) -> Option<Mode> {
 }
 
 /// The monitor lines of `~/.config/yggdrasil/monitors.lua` for these screens (what Yggdrasil's Hyprland config and its own
-/// compositor load).
+/// compositor load; the compositor leaves out what it cannot do yet: mirror, transform, vrr).
 pub fn hypr_monitors_lua(outs: &[Output]) -> String {
     let mut t = String::from("-- Written by Settings > Displays. Loaded by Yggdrasil's Hyprland config and its own compositor.\n");
     for o in outs {
@@ -821,37 +898,68 @@ pub fn hypr_monitors_lua(outs: &[Output]) -> String {
             t.push_str(&format!("hl.monitor({{ output = \"{}\", disabled = true }})\n", o.name));
             continue;
         }
-        t.push_str(&format!(
-            "hl.monitor({{ output = \"{}\", mode = \"{}\", position = \"{}x{}\", scale = {} }})\n",
-            o.name, o.current, o.x, o.y, o.scale
-        ));
+        let place = match &o.mirror_of {
+            Some(of) => format!("position = \"auto\", scale = {}, mirror = \"{of}\"", o.scale),
+            None => format!("position = \"{}x{}\", scale = {}", o.x, o.y, o.scale),
+        };
+        let mut extra = String::new();
+        if o.transform != 0 {
+            extra.push_str(&format!(", transform = {}", o.transform));
+        }
+        if let Some(v) = o.vrr {
+            extra.push_str(&format!(", vrr = {v}"));
+        }
+        t.push_str(&format!("hl.monitor({{ output = \"{}\", mode = \"{}\", {place}{extra} }})\n", o.name, o.mode_to_use()));
     }
     t
 }
 
-/// Changes one screen's mode or scale: the whole list is written to ~/.config/yggdrasil/monitors.lua (from what the compositor
-/// reports now, with the change) and the compositor reads it again. Hyprland's session config and Yggdrasil's own compositor
-/// both load that file on reload (the compositor since 2026-11-12, its gap item 3), so this is the same on both.
-pub fn set_screen(name: &str, mode: Option<&str>, scale: Option<f64>) -> Result<(), String> {
-    // which one is the main display does not go into the file
-    let outs = outputs_from(&screens_all().ok_or("The compositor did not answer")?, None);
-    write_monitors(outs, name, mode, scale, &yggdrasil_conf::dirs::config().join("monitors.lua"))?;
+/// monitors.lua before a change, to put back (None: there was none).
+pub type Snapshot = Option<String>;
+
+/// Changes the screens: `change` gets them as the compositor reports them now (the main display marked) and changes them; the
+/// whole list is written to ~/.config/yggdrasil/monitors.lua and the compositor reads it again. Hyprland's session config and
+/// Yggdrasil's own compositor both load that file on reload, so this is the same on both. The file as it was comes back, for
+/// "Keep these display settings?".
+pub fn set_screens(change: impl FnOnce(&mut Vec<Output>) -> Result<(), String>) -> Result<Snapshot, String> {
+    if crate::fixture::get().is_some() {
+        return Err("A made-up system (a fixture): nothing is changed.".into());
+    }
+    let mut outs = current_outputs().ok_or("The compositor did not answer")?;
+    change(&mut outs)?;
+    let path = monitors_path();
+    let before = std::fs::read_to_string(&path).ok();
+    write_file(&path, &hypr_monitors_lua(&outs))?;
+    reload()?;
+    Ok(before)
+}
+
+/// Puts monitors.lua back as it was before a change (removed when there was none) and has the compositor read it.
+pub fn restore_screens(before: Snapshot) -> Result<(), String> {
+    let path = monitors_path();
+    match before {
+        Some(t) => write_file(&path, &t)?,
+        None => {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
     reload()
 }
 
-/// The screens with one changed, as monitors.lua at `path`.
-fn write_monitors(mut outs: Vec<Output>, name: &str, mode: Option<&str>, scale: Option<f64>, path: &std::path::Path) -> Result<(), String> {
-    let o = outs.iter_mut().find(|o| o.name == name).ok_or("that screen is not there")?;
-    if let Some(m) = mode {
-        o.current = m.to_string();
-    }
-    if let Some(s) = scale {
-        o.scale = s;
-    }
+/// Written beside and renamed: the compositor never reads half a file.
+fn write_file(path: &std::path::Path, text: &str) -> Result<(), String> {
     if let Some(d) = path.parent() {
         std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
     }
-    std::fs::write(path, hypr_monitors_lua(&outs)).map_err(|e| e.to_string())
+    let tmp = path.with_extension("lua.tmp");
+    std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, path).map_err(|e| e.to_string())
+}
+
+/// Shows each screen's number large on it for a few seconds (the panel draws them): "DP-1=1,DP-3=2".
+pub fn identify(numbers: &[(String, u32)]) -> Result<(), String> {
+    let list = numbers.iter().map(|(n, k)| format!("{n}={k}")).collect::<Vec<_>>().join(",");
+    act("busctl", &["--user", "call", "org.yggdrasil.Panel", "/Panel", "org.yggdrasil.Panel", "Identify", "s", &list])
 }
 
 /// Turns tiling on or off for one screen: the shared list (yggdrasil_conf::tiling) and then whoever draws the windows.
@@ -1562,6 +1670,47 @@ mod tests {
     }
 
     #[test]
+    fn copies_turns_vrr_and_screens_off_in_monitors_lua() {
+        use crate::displays::tests::screen;
+        let wide = Output { vrr: Some(2), ..screen("DP-1", (3440, 1440), (0, 0)) };
+        let tall = Output { transform: 1, ..screen("DP-3", (2560, 2880), (3440, 0)) };
+        let copy = Output { mirror_of: Some("DP-1".into()), ..screen("HDMI-A-1", (1920, 1080), (0, 0)) };
+        let off = Output { enabled: false, ..screen("HDMI-A-2", (1920, 1080), (0, 0)) };
+        let lua = hypr_monitors_lua(&[wide, tall, copy, off]);
+        assert_eq!(
+            lua.lines().skip(1).collect::<Vec<_>>(),
+            [
+                r#"hl.monitor({ output = "DP-1", mode = "3440x1440@60.00", position = "0x0", scale = 1, vrr = 2 })"#,
+                r#"hl.monitor({ output = "DP-3", mode = "2560x2880@60.00", position = "3440x0", scale = 1, transform = 1 })"#,
+                r#"hl.monitor({ output = "HDMI-A-1", mode = "1920x1080@60.00", position = "auto", scale = 1, mirror = "DP-1" })"#,
+                r#"hl.monitor({ output = "HDMI-A-2", disabled = true })"#,
+            ]
+        );
+        assert_eq!(lua_value(&lua, "DP-1", "vrr").as_deref(), Some("2"), "read back for the page");
+        assert_eq!(lua_value(&lua, "DP-3", "vrr"), None);
+        assert_eq!(lua_value(&lua, "HDMI-A-1", "mirror").as_deref(), Some("DP-1"));
+        assert_eq!(
+            lua_value("hl.monitor({ output = \"DP-1\", vrr = 1 })\nhl.monitor({ output = \"DP-1\", vrr = 0 })\n", "DP-1", "vrr").as_deref(),
+            Some("0"),
+            "the last line wins"
+        );
+    }
+
+    #[test]
+    fn the_screenshot_fixtures_have_three_displays_and_one() {
+        let monitors = |fixture: &str| {
+            let v: serde_json::Value = serde_json::from_str(fixture).unwrap();
+            outputs_from(&yggdrasil_wm::hyprland::parse_monitors(v["run"]["hyprctl -j monitors all"].as_str().unwrap()), None)
+        };
+        let three = monitors(include_str!("../tests/fixtures/system.json"));
+        assert_eq!(three.len(), 3);
+        assert_eq!(three.iter().filter(|o| !o.enabled).count(), 1, "one of them disconnected");
+        assert!(crate::displays::several(&three), "the arrangement box");
+        let one = monitors(include_str!("../tests/fixtures/displays-single.json"));
+        assert!(one.len() == 1 && !crate::displays::several(&one), "one display: no box, no Disconnect or Duplicate");
+    }
+
+    #[test]
     fn about_parsers() {
         assert_eq!(os_name("NAME=\"Some OS\"\nPRETTY_NAME=\"Some OS 1\"\n"), "Some OS 1");
         let labyrinth =
@@ -2045,10 +2194,27 @@ mod screen_tests {
         std::env::remove_var("HYPRLAND_INSTANCE_SIGNATURE");
         std::env::set_var("XDG_CONFIG_HOME", d.join("config"));
         assert!(matches!(super::desk(), Some(yggdrasil_wm::Desk::Own(_))), "the stand-in is the compositor found");
-        let mode = super::set_screen("HEADLESS-1", Some("1920x1080@60.00"), None);
-        let scale = super::set_screen("HEADLESS-2", None, Some(2.0));
-        let missing = super::set_screen("HDMI-A-9", None, Some(1.0));
+        let set = |name: &str, mode: Option<&str>, scale: Option<f64>| {
+            let (name, mode) = (name.to_string(), mode.map(str::to_string));
+            super::set_screens(move |outs| {
+                let o = outs.iter_mut().find(|o| o.name == name).ok_or("that screen is not there")?;
+                if let Some(m) = mode {
+                    o.current = m;
+                }
+                if let Some(s) = scale {
+                    o.scale = s;
+                }
+                Ok(())
+            })
+        };
+        let mode = set("HEADLESS-1", Some("1920x1080@60.00"), None);
+        let before = std::fs::read_to_string(d.join("config/yggdrasil/monitors.lua")).ok();
+        let scale = set("HEADLESS-2", None, Some(2.0));
+        let missing = set("HDMI-A-9", None, Some(1.0));
         let lua = std::fs::read_to_string(d.join("config/yggdrasil/monitors.lua")).unwrap_or_default();
+        // "Keep these display settings?" not answered: the file as it was before the first change (none) comes back
+        let undone = super::restore_screens(None);
+        let gone = !d.join("config/yggdrasil/monitors.lua").exists();
         for (k, v) in saved {
             match v {
                 Some(v) => std::env::set_var(k, v),
@@ -2056,7 +2222,8 @@ mod screen_tests {
             }
         }
         let _ = std::fs::remove_dir_all(&d);
-        assert_eq!((mode, scale), (Ok(()), Ok(())), "no longer refused on our own compositor");
+        assert_eq!(mode, Ok(None), "no longer refused on our own compositor; there was no file before");
+        assert_eq!(scale, Ok(before), "the file as it was comes back, to put back");
         assert!(missing.is_err());
         assert_eq!(
             lua.lines().skip(1).collect::<Vec<_>>(),
@@ -2066,8 +2233,9 @@ mod screen_tests {
             ],
             "the last change holds what the compositor reports now, with the change; the form both compositors read"
         );
+        assert!(undone.is_ok() && gone, "put back: no file, as before");
         let asked = asked.lock().unwrap().clone();
-        assert_eq!(asked.iter().filter(|c| *c == "reload").count(), 2, "read again after each change: {asked:?}");
+        assert_eq!(asked.iter().filter(|c| *c == "reload").count(), 3, "read again after each change and the undo: {asked:?}");
     }
 }
 

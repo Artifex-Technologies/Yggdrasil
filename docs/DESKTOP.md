@@ -209,6 +209,25 @@ write-once-and-reload. **Not tested, because it needs the real machine:**
   driver on Wayland. VRR is **left off**; I found no source either way.
 - **Apps running through XWayland** (Steam, most Proton games) can look blurry on the
   125% display. Not addressed.
+- **Settings > Displays** works like Windows 11's (2026-11-13). With two or more displays attached (a disconnected one
+  counts), a box at the top shows each display to scale, numbered by connector (1, 2, 3). Drag one to arrange them: it lands
+  edge to edge with the others, lined up when it is near, and a display left apart moves back in. The places are written to
+  `~/.config/yggdrasil/monitors.lua` when it is let go, with the main display at 0,0. Click a display to select it (accent
+  colour); only its settings show below:
+  - resolution, refresh rate and scale;
+  - orientation and variable refresh rate (on Hyprland);
+  - "Make this my main display";
+  - the tiling switch;
+  - **Display mode**: Extend (the default), Duplicate display N (Hyprland's `mirror`) or Disconnect (Hyprland's `disabled`).
+
+  A disconnected display stays in the box, smaller and grey, with Connect among its settings. The last display showing the
+  desktop cannot be disconnected or made a copy. A change of resolution, refresh rate, orientation or mode asks "Keep these
+  display settings?" and is put back after 15 s unless kept. A thread of Settings' own waits for the answer, so the change is
+  put back even when Settings is on the screen that went black. **Identify** has the panel show each display's number large
+  in its middle for 3 s. With one display there is no box: its settings show at once, without Duplicate or Disconnect. HDR
+  is not offered yet. Our own compositor does not do orientation, Duplicate or variable refresh rate yet, so they are not
+  shown there. Dragging is unit-tested (the snapping, the joining up, the main display at 0,0). The box was checked in
+  screenshots and by clicking, not yet by dragging on a real screen.
 - The top bar is on every monitor; the dock only on the **main display** (2026-11-13). That is the monitor at the top left
   until another is chosen in Settings > Displays ("Make main"), saved in `~/.config/yggdrasil/display.conf` by its make and
   model (the port only decides between two alike), so it stays main on another port; when it is unplugged the top-left one

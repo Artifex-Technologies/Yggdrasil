@@ -357,6 +357,23 @@ fn the_dock_moves_to_the_main_display_chosen_in_settings() {
     let mut p = App::start(&comp, &panel, Some(&bus), &[("YGGDRASIL_A11Y", "off")]);
     let dock_on = |c: &Compositor| layer(&c.layers(), "yggdrasil-dock").filter(|d| d.size.0 > 0).map(|d| d.output.clone());
     wait_for(&comp, &mut p, 60, "the dock on the screen at the top left", |c| dock_on(c).as_deref() == Some("HEADLESS-1"));
+    // Settings > Displays > Identify: each screen's number in the middle of it, for a few seconds, taking no clicks
+    let wait_bus = Instant::now();
+    while !bus.has("org.yggdrasil.Panel") && wait_bus.elapsed() < Duration::from_secs(20) {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    bus.call(&["call", "org.yggdrasil.Panel", "/Panel", "org.yggdrasil.Panel", "Identify", "s", "HEADLESS-1=1,HEADLESS-2=2"])
+        .expect("Identify");
+    let numbers = |c: &Compositor| {
+        let mut o: Vec<String> =
+            c.layers().into_iter().filter(|l| l.namespace == "yggdrasil-identify" && l.size.0 > 0).map(|l| l.output).collect();
+        o.sort();
+        o
+    };
+    wait_for(&comp, &mut p, 5, "a number on each screen", |c| numbers(c) == ["HEADLESS-1", "HEADLESS-2"]);
+    let card = comp.layers().into_iter().find(|l| l.namespace == "yggdrasil-identify" && l.output == "HEADLESS-1").unwrap();
+    assert_eq!((card.at, card.size), ((550, 270), (180, 180)), "in the middle of the 1280x720 screen");
+    wait_for(&comp, &mut p, 6, "the numbers gone again", |c| numbers(c).is_empty());
     // Settings > Displays > Make main on the second screen (both headless screens are alike: the connector decides), saved as
     // Settings saves it (beside, then renamed); the panel watches the folder, so the dock moves without a timer to wait for
     std::fs::write(conf.join("display.conf.tmp"), "main_make = Yggdrasil\nmain_model = headless\nmain_connector = HEADLESS-2\n").unwrap();

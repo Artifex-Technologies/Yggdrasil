@@ -94,6 +94,8 @@ pub struct Screen {
     /// The refresh rate (Hz) and the modes the screen offers ("2560x1440@59.95Hz"), when the compositor says.
     pub refresh: Option<f64>,
     pub modes: Vec<String>,
+    /// The screen it shows a copy of (Hyprland's `mirror`), when it mirrors one.
+    pub mirror_of: Option<String>,
 }
 
 impl Screen {

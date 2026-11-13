@@ -14,7 +14,7 @@
 # Each picture is 1920x1080: the panel (wallpaper, top bar, dock) with the app as a window, in the dark style. The made-up system
 # is in tests/screenshots: the account "alex" (Alex Example) on "example-pc", a home folder with a few files, stand-ins for the
 # programs the apps run directly (tests/screenshots/bin/standin), and a laptop's sensors; Settings' pages get theirs from its
-# fixtures (packages/settings/tests/fixtures: system.json, laptop.json, wifi.json, peripherals.json). Two sandboxes are made, a
+# fixtures (packages/settings/tests/fixtures: system.json, laptop.json, wifi.json, peripherals.json, displays-single.json). Two sandboxes are made, a
 # desktop computer and a laptop (a battery, no fan controller).
 #
 # Needs bwrap (bubblewrap), dbus-daemon and busctl. In CI (CI=true, already a throw-away container) it runs without bwrap.
@@ -35,6 +35,7 @@ SIZE=1920x1080
 # compositor control command (`yggdrasil-compositor ctl`, e.g. `type TEXT`)
 declare -A ACTIONS=(
     [settings-cooling-curves]="tap 1408 273"
+    [settings-displays-connect]="tap 1413 517"
     [settings-lock-screen-designs]="wait 30"
     [taskmanager]="tap 474 265"
     [calculator]="type 1299*12"
@@ -48,6 +49,8 @@ shots() {
     shot settings-network               desktop settings network wifi
     shot settings-bluetooth             desktop settings bluetooth system
     shot settings-displays              desktop settings displays system
+    shot settings-displays-connect      desktop settings displays system
+    shot settings-displays-single       desktop settings displays displays-single
     shot settings-sound                 desktop settings sound system
     shot settings-peripherals-mouse     desktop settings peripherals:mouse peripherals
     shot settings-peripherals-razer     desktop settings peripherals:mouse peripherals 600

@@ -524,6 +524,7 @@ mod tests {
             special_workspace_id: None,
             refresh: Some(60.001),
             modes: vec![],
+            mirror_of: None,
         }
     }
 

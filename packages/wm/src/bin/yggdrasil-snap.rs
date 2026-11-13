@@ -89,6 +89,7 @@ mod tests {
             special_workspace_id: None,
             refresh: None,
             modes: vec![],
+            mirror_of: None,
         }
     }
 

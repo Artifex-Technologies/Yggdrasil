@@ -115,7 +115,9 @@ About only when switched on, have no picture.
 | --- | --- |
 | **Wi-Fi & Network**: the network in use, Known Networks and Other Networks (`wifi.json`). | ![Settings > Wi-Fi & Network](../assets/screenshots/settings-network.png) |
 | **Bluetooth**: paired devices with their battery, and a game controller. | ![Settings > Bluetooth](../assets/screenshots/settings-bluetooth.png) |
-| **Displays**: two screens, the ultrawide the main one. | ![Settings > Displays](../assets/screenshots/settings-displays.png) |
+| **Displays**: three displays attached, one disconnected; the arrangement box with the main display (1) selected, its settings below. | ![Settings > Displays](../assets/screenshots/settings-displays.png) |
+| **Displays, a disconnected display selected**: grey and smaller in the box, Connect among its settings. | ![Settings > Displays, a disconnected display](../assets/screenshots/settings-displays-connect.png) |
+| **Displays, one display** (`displays-single.json`): its settings at once, no box, no Duplicate or Disconnect. | ![Settings > Displays, one display](../assets/screenshots/settings-displays-single.png) |
 | **Sound**: outputs and inputs, each with its volume. | ![Settings > Sound](../assets/screenshots/settings-sound.png) |
 | **Peripherals > Mouse**: every mouse, or one by one (`peripherals.json`). | ![Settings > Peripherals > Mouse](../assets/screenshots/settings-peripherals-mouse.png) |
 | **Peripherals > Mouse, a Razer mouse**: OpenRazer's battery, DPI, polling rate and lights. | ![Settings > Peripherals > Mouse, a Razer mouse](../assets/screenshots/settings-peripherals-razer.png) |
