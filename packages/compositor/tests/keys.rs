@@ -283,5 +283,5 @@ fn the_bindings_are_listed_with_the_sessions_words() {
     ours.sort();
     theirs.sort();
     assert_eq!(ours, theirs);
-    assert_eq!(ours.len(), 56);
+    assert_eq!(ours.len(), 61);
 }
