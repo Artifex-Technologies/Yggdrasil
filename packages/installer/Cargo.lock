@@ -4166,12 +4166,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "yggdrasil-device-offers"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "serde_json",
+ "yggdrasil-conf",
+]
+
+[[package]]
 name = "yggdrasil-installer"
 version = "0.1.0"
 dependencies = [
  "eframe",
  "serde_json",
  "yggdrasil-conf",
+ "yggdrasil-device-offers",
  "yggdrasil-ui",
  "yggdrasil-wm",
 ]

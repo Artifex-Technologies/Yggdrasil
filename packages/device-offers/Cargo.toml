@@ -1,0 +1,35 @@
+[package]
+name = "yggdrasil-device-offers"
+version = "0.1.0"
+edition = "2021"
+description = "Device software: which of the operating system's optional parts this computer's devices ask for (the installer ticks them), and an offer of the missing ones once the computer is online or such a device is plugged in"
+license = "MPL-2.0"
+
+# What the installer shares: the computer as /sys and /proc show it, the OS's device list, what is installed. serde_json only.
+[lib]
+name = "device_offers"
+path = "src/lib.rs"
+
+# The check in the signed-in user's session (systemd starts it: at sign-in, when a USB device is plugged in, when the computer
+# comes online). It asks through a notification and exits.
+[[bin]]
+name = "yggdrasil-device-offers"
+path = "src/main.rs"
+
+# NetworkManager's dispatcher runs it as root on network events: once online, it starts yggdrasil-online.target in each signed-in
+# user's service manager, and returns.
+[[bin]]
+name = "device-offers-online"
+path = "src/bin/online.rs"
+
+[dependencies]
+libc = "0.2"
+serde_json = "1.0.151"
+yggdrasil-conf = { path = "../yggdrasil-conf" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

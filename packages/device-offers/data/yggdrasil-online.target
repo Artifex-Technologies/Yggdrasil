@@ -1,0 +1,9 @@
+# Yggdrasil: the computer has come online. NetworkManager's dispatcher (device-offers-online) starts this target in each signed-in
+# user's service manager; it stops again at once (StopWhenUnneeded, as sleep.target does), so the next start starts what it wants
+# again. What wants it: yggdrasil-device-offers.service here, and whatever the operating system links into
+# yggdrasil-online.target.wants (one-shot jobs that need the internet). Nothing runs while nothing happens.
+[Unit]
+Description=Online (started on network events)
+Documentation=https://github.com/Artifex-Technologies/Yggdrasil/blob/main/packages/device-offers/README.md
+StopWhenUnneeded=yes
+Wants=yggdrasil-device-offers.service

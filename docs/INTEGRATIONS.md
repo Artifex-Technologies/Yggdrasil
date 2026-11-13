@@ -48,9 +48,17 @@ components = /usr/share/labyrinth/components.json     # the OS's own optional so
 component = /usr/bin/labyrinth-apps                   # run with `install ID` or `remove ID`; AGORA_SUDO names a password-box sudo
 own_builds = /usr/share/labyrinth/pkgbuilds           # one folder per package the OS builds itself: never updated from the AUR
 edition = labyrinth                # optional: which entries of a shared catalog apply (default: ID in /etc/os-release)
+devices = /usr/share/labyrinth/installer-extras.json  # optional: the device list (the installer's extras format, INSTALLER.md)
+first_login = /var/lib/labyrinth/first-login-components.json   # optional: what the OS still installs by itself at the first login
 ```
 
 Without one, Agora lists only the sources the user adds (each marked as not reviewed) and Flathub.
+
+With `devices`, the installed system offers device software by itself (packages/device-offers/README.md): when it comes online,
+when a USB device is plugged in and at sign-in, the entries whose `chosen_if_usb` / `usb_kind` / `chosen_if_machine` match this
+computer and whose components are not installed are offered in one notification (Install, through `component install ID...` and
+AGORA_SUDO; or Don't ask again). Components in the `first_login` list are left to the OS. The list is the installer's own file, so
+the devices are named in one place.
 
 ### `security` (a security monitor)
 

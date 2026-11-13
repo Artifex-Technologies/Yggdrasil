@@ -1,0 +1,17 @@
+# Yggdrasil: offers the software for this computer's devices that is not installed yet, once it is online (one notification with
+# Install and Don't ask again; nothing is installed without that click). Started at sign-in (graphical-session.target.wants),
+# when a USB device is plugged in (71-yggdrasil-device-offers.rules) and when the computer comes online (yggdrasil-online.target).
+# It looks once and exits; offline it exits at once.
+[Unit]
+Description=Offer software for the devices plugged in (Agora)
+Documentation=https://github.com/Artifex-Technologies/Yggdrasil/blob/main/packages/device-offers/README.md
+After=graphical-session.target
+# only in a desktop session: the plug-in rule also reaches a service manager that has none (before sign-in, a login screen)
+ConditionEnvironment=WAYLAND_DISPLAY
+
+[Service]
+Type=exec
+ExecStart=/usr/lib/yggdrasil/device-offers
+# it waits while its question is open; an unanswered one is let go after an hour (asked again at the next trigger)
+RuntimeMaxSec=1h
+Nice=10

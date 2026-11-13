@@ -1,6 +1,8 @@
 # Agora: apps in one place (built from packages/market in this repository), with its administrator helper pkg-root from
 # packages/agora-helpers (Rust; the Python script it replaced is kept in packages/market/helpers/python for a rollback), and the
-# sudo stand-in it gives yay (Rust since 2026-11-12, was the shell script packages/market/helpers/sudo).
+# sudo stand-in it gives yay (Rust since 2026-11-12, was the shell script packages/market/helpers/sudo), and the device-software
+# offer from packages/device-offers (2026-11-13: once online, or when such a device is plugged in, one notification offers what
+# Agora has for this computer's devices; started by systemd, udev and NetworkManager's dispatcher, nothing stays running).
 pkgname=yggdrasil-agora
 pkgver=1.0.0
 pkgrel=1
@@ -12,21 +14,26 @@ replaces=('labyrinth-market')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
 license=('MPL-2.0')
 depends=('gcc-libs' 'libxkbcommon' 'wayland' 'vulkan-icd-loader' 'libglvnd' 'fontconfig' 'curl' 'yay' 'ghostty' 'polkit')
-optdepends=('flatpak: apps from Flathub')
+optdepends=('flatpak: apps from Flathub'
+            'libnotify: the device-software offer asks through notify-send'
+            'networkmanager: the device-software offer when the computer comes online')
 makedepends=('cargo')
 options=('!lto')
 
 _src="$startdir/../../market"
 _helpers="$startdir/../../agora-helpers"
+_offers="$startdir/../../device-offers"
 # The version is the system's (VERSION at the top of this repository); the build number counts the commits since that release
 # which touch the folders above, the crates they use and this recipe (scripts/package-version.sh, Labyrinth_OS docs/VERSIONING.md)
 . "$startdir/../../../scripts/package-version.sh"
-_version "$startdir" "$_src" "$_helpers"
+_version "$startdir" "$_src" "$_helpers" "$_offers"
 
 build() {
   cd "$_src"
   cargo build --release --locked --target-dir "$srcdir/target"
   cd "$_helpers"
+  cargo build --release --locked --target-dir "$srcdir/target"
+  cd "$_offers"
   cargo build --release --locked --target-dir "$srcdir/target"
 }
 
@@ -35,6 +42,9 @@ check() {
   cargo test --release --locked --target-dir "$srcdir/target"
   # pkg-root's refusals with a stand-in pacman; its cancel tests run in a user namespace of their own (skipped without one)
   cd "$_helpers"
+  cargo test --release --locked --target-dir "$srcdir/target"
+  # the offer on a made-up computer with stand-in tools (its no-network case in a network namespace of its own when allowed)
+  cd "$_offers"
   cargo test --release --locked --target-dir "$srcdir/target"
 }
 
@@ -46,4 +56,15 @@ package() {
   install -Dm755 "$srcdir/target/release/pkg-root" "$pkgdir/usr/lib/agora/pkg-root"
   # the password is remembered a few minutes for the helper only, so one update asks once
   install -Dm644 "$_src/data/org.yggdrasil.agora.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.agora.policy"
+  # the device-software offer: the check (a user service started at sign-in, on a USB device plugged in, on coming online), the
+  # online trigger NetworkManager's dispatcher runs, the udev rule, the user target the trigger starts
+  install -Dm755 "$srcdir/target/release/yggdrasil-device-offers" "$pkgdir/usr/lib/yggdrasil/device-offers"
+  install -Dm755 "$srcdir/target/release/device-offers-online" "$pkgdir/usr/lib/yggdrasil/device-offers-online"
+  install -dm755 "$pkgdir/usr/lib/NetworkManager/dispatcher.d"
+  ln -s /usr/lib/yggdrasil/device-offers-online "$pkgdir/usr/lib/NetworkManager/dispatcher.d/90-yggdrasil-online"
+  install -Dm644 "$_offers/data/71-yggdrasil-device-offers.rules" "$pkgdir/usr/lib/udev/rules.d/71-yggdrasil-device-offers.rules"
+  install -Dm644 "$_offers/data/yggdrasil-device-offers.service" "$pkgdir/usr/lib/systemd/user/yggdrasil-device-offers.service"
+  install -Dm644 "$_offers/data/yggdrasil-online.target" "$pkgdir/usr/lib/systemd/user/yggdrasil-online.target"
+  install -dm755 "$pkgdir/usr/lib/systemd/user/graphical-session.target.wants"
+  ln -s ../yggdrasil-device-offers.service "$pkgdir/usr/lib/systemd/user/graphical-session.target.wants/yggdrasil-device-offers.service"
 }

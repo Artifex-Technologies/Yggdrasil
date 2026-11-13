@@ -1,0 +1,4 @@
+# Yggdrasil: a USB device plugged in starts the device-software check (yggdrasil-device-offers.service) in each signed-in user's
+# session. It offers what the operating system has for that device, only when online, once a session. Whole devices only (not
+# their interfaces), only when they are added; nothing runs while nothing is plugged in.
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", TAG+="systemd", ENV{SYSTEMD_USER_WANTS}+="yggdrasil-device-offers.service"

@@ -10,6 +10,13 @@ No hidden installs. **Get** opens a terminal (Ghostty) and runs the command show
 - **Repositories you add** (Sources, bottom of the sidebar): an https address to a catalog file, or the Omarchy plugin registry. Adding shows a warning and needs a tick: *(the system) has not tested or reviewed anything from this source; it is up to you to decide what to trust.* Their apps are marked "Not reviewed by" the system (an amber dot in lists, a notice on the page). A repository cannot mark itself reviewed, cannot define components, and package names that are not plain names are dropped (they end up in a shell command).
 - **Omarchy plugins** (`omacom/omarchy-plugin-marketplace` registry.json, ~5,600 listings): browse and search only. They are QML for Omarchy's own shell and run unsandboxed there, so there is no install button; **View** opens the plugin's repository. Plugins tagged `games` show under Play. See `OMARCHY_PLUGINS.md`. The plugins I wanted (timer, health, browser warm-up, agent usage, Proton Authenticator, controllers, 2048, Sudoku) were instead rewritten in Rust as native apps; they are in the system's catalog (Plugins, or Play for the games) and install like any reviewed app (THIRD_PARTY_NOTICES.md names each original).
 
+## Device software, offered by itself (2026-11-13)
+Software for this computer's devices (Razer, Corsair, Logitech, gaming mice, printers, a laptop's fingerprint reader) is offered
+without opening Agora: once the computer is online, when such a USB device is plugged in, and at sign-in, one notification names
+what is missing, with **Install** (the component command, root steps through the password box) and **Don't ask again**. Closing it
+means not now (asked again next session). Nothing installs without the click. The device list is the OS's (its `packages`
+integration's `devices`, the installer's own list); see packages/device-offers/README.md.
+
 ## Writing a catalog file
 ```json
 { "name": "My apps",

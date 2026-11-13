@@ -229,6 +229,41 @@ fn browsers_and_extras() {
     assert_eq!(f.installed, ["firefox"]);
 }
 
+/// No internet at all (every download fails): the install still finishes from the medium alone. A browser that is not on it is
+/// left for Agora with a warning; device software that is not on it waits in the first-login list for the new user, who gets it
+/// once online (Labyrinth's labyrinth-first-components, Yggdrasil's yggdrasil-device-offers).
+#[test]
+fn no_internet_never_stops_the_install() {
+    let live = Live::new();
+    let conf = live.dir.path("share/integrations/example-installer.conf");
+    let text = std::fs::read_to_string(&conf).unwrap();
+    std::fs::write(&conf, format!("{text}first_login = /var/lib/example/first-login.json\n")).unwrap();
+    live.dir.write(
+        "os/extras.json",
+        r#"{"extras": [{"id": "monitor", "components": ["monitor"]}, {"id": "razer", "group": "Devices", "components": ["razer"], "chosen_if_usb": ["1532"]}]}"#,
+    );
+    live.dir.write(
+        "os/components.json",
+        r#"{"components": [{"id": "monitor", "packages": ["monitor-git"]}, {"id": "razer", "packages": ["openrazer-daemon"]}]}"#,
+    );
+    let mut f = live.fake();
+    f.installed = vec!["vivaldi".into()];
+    for p in [&["pacman", "-S"][..], &["pacman", "-Syu"], &["flatpak"]] {
+        f.fail.push(p.iter().map(|s| s.to_string()).collect());
+    }
+    let p = plan_with(&[("browsers", r#"["firefox"]"#), ("default_browser", "\"firefox\""), ("extras", r#"["razer"]"#)]);
+    assert_eq!(live.run(&mut f, &[], &p), 0, "{:?}", f.out);
+    assert_eq!(f.out.last().unwrap(), "DONE");
+    assert!(f.out.contains(&"WARN could not install firefox (no internet?); Agora can install them later".to_string()), "{:?}", f.out);
+    assert!(
+        f.out.contains(&"INFO not on the installer, installed at the first login (needs the internet): razer".to_string()),
+        "{:?}",
+        f.out
+    );
+    assert_eq!(live.read("var/lib/example/first-login.json"), r#"{"user": "ada", "components": ["razer"]}"#);
+    assert!(f.failed.iter().filter(|x| **x).count() >= 2, "the downloads were tried and failed");
+}
+
 /// What may never happen to the live system's mounts in one run: a bind of its /dev or /run/udev that is not made a slave in
 /// the same call, or umount -R of the new system after such a bind without a successful `mount --make-rslave TARGET` first
 /// (umount -R would carry over to the live system's /dev/pts, /dev/shm ... through a shared bind).
