@@ -5162,15 +5162,31 @@ fn main() {
         let shared = shared.clone();
         std::thread::spawn(move || {
             let mut connectivity = String::new();
+            let mut signing_in: Option<String> = None;
             loop {
                 let now = status::poll();
                 if let Ok(mut g) = shared.lock() {
                     *g = now;
                 }
-                // a network that wants a sign-in first (a shop's guest Wi-Fi): one notification with a Sign in button
+                // a network that wants a sign-in first (a shop's guest Wi-Fi): one notification with a Sign in button, and that
+                // network preferred until it is online, so the portal's drop after the terms does not end on another network
                 let c = status::connectivity();
                 if status::portal_appeared(&connectivity, &c) {
+                    let active = std::process::Command::new("nmcli")
+                        .args(["-t", "-f", "UUID,TYPE", "connection", "show", "--active"])
+                        .output()
+                        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+                        .unwrap_or_default();
+                    if let Some(u) = status::active_wifi(&active) {
+                        status::prefer_while_signing_in(&u, true);
+                        signing_in = Some(u);
+                    }
                     status::ask_portal_sign_in();
+                }
+                if c == "full" {
+                    if let Some(u) = signing_in.take() {
+                        status::prefer_while_signing_in(&u, false);
+                    }
                 }
                 connectivity = c;
                 std::thread::sleep(Duration::from_secs(2));

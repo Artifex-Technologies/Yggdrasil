@@ -104,6 +104,23 @@ pub fn portal_page(redirect: &str) -> Option<&str> {
     ((r.starts_with("https://") || r.starts_with("http://")) && !r.contains(char::is_whitespace)).then_some(r)
 }
 
+/// The Wi-Fi connection in use (its NetworkManager id), from `nmcli -t -f UUID,TYPE connection show --active`.
+pub fn active_wifi(text: &str) -> Option<String> {
+    text.lines().find_map(|l| l.split_once(':').filter(|(_, t)| t.trim() == "802-11-wireless").map(|(u, _)| u.to_string()))
+}
+
+/// While a network's sign-in page is open, NetworkManager prefers that network: many portals drop the connection once when the
+/// terms are accepted, and the computer then joined another saved network (a phone's hotspot) instead of coming back. Its usual
+/// priority returns once it is online (`restore`).
+pub fn prefer_while_signing_in(uuid: &str, on: bool) {
+    let prio = if on { "100" } else { "0" };
+    let _ = std::process::Command::new("nmcli")
+        .args(["connection", "modify", uuid, "connection.autoconnect-priority", prio])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
 /// Whether this reading is a new sign-in page: the network just started asking (it did not in the reading before).
 pub fn portal_appeared(before: &str, now: &str) -> bool {
     now == "portal" && before != "portal"
@@ -147,6 +164,8 @@ mod tests {
         assert!(portal_appeared("", "portal"));
         assert!(!portal_appeared("portal", "portal"), "not again while it stays");
         assert!(!portal_appeared("portal", "full"));
+        assert_eq!(active_wifi("abc-1:802-11-wireless\nlo-1:loopback\n"), Some("abc-1".into()));
+        assert_eq!(active_wifi("lo-1:loopback\n"), None);
         assert_eq!(portal_page("https://guest.example.com/terms?x=1\n"), Some("https://guest.example.com/terms?x=1"));
         assert_eq!(portal_page(""), None);
         assert_eq!(portal_page("javascript:alert(1)"), None);
