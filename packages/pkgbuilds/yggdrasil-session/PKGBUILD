@@ -1,7 +1,8 @@
 # Yggdrasil's own desktop session: Hyprland with Yggdrasil's config (built from packages/session in this repository), and the
 # session's window keys yggdrasil-snap and yggdrasil-close and its careful log-out yggdrasil-logout (Rust, from packages/wm: they
 # work on Yggdrasil's own compositor too). The magnifier, the screen reader switch, the Hyprland plugin loader and log keeper are
-# Rust too (packages/session/src, shell scripts until 2026-11-12; the loader needed Python, the package does not any more).
+# Rust too (packages/session/src, shell scripts until 2026-11-12; the loader needed Python, the package does not any more), and so
+# is yggdrasil-session itself, the launcher with Hyprland's crash watchdog (a bash script until 2026-11-13).
 pkgname=yggdrasil-session
 pkgver=1.0.0
 pkgrel=1
@@ -38,7 +39,7 @@ check() {
 }
 
 package() {
-  install -Dm755 "$_src/bin/yggdrasil-session" "$pkgdir/usr/bin/yggdrasil-session"
+  install -Dm755 "$srcdir/target/release/yggdrasil-session" "$pkgdir/usr/bin/yggdrasil-session"
   install -Dm755 "$srcdir/target/release/yggdrasil-snap" "$pkgdir/usr/bin/yggdrasil-snap"
   install -Dm755 "$srcdir/target/release/yggdrasil-close" "$pkgdir/usr/bin/yggdrasil-close"
   install -Dm755 "$srcdir/target/release/yggdrasil-logout" "$pkgdir/usr/bin/yggdrasil-logout"

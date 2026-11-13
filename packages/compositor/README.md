@@ -276,7 +276,12 @@ by the program's own title bar, Super+drag, xdg-activation, idle inhibit, clipbo
    session checks again 150 ms and 1.2 s after a window opens (Electron sets its saved size late); here a window is placed
    once, at its first picture, and a size it sets for itself later is left as it is.
 10. **The session:** `yggdrasil-session` starting it instead of Hyprland (the environment to systemd and D-Bus, the autostart
-   target, restarts after a crash), and a log kept across a crash.
+   target, restarts after a crash), and a log kept across a crash. A first step, 2026-11-13: the launcher is Rust now, and
+   `packages/session/tests/nested_session.rs` starts it with this compositor, headless, in Hyprland's place (a stand-in
+   "Hyprland" on the PATH runs it), with the autostart line of yggdrasil.lua as its `--run` program and stand-ins for systemd and
+   D-Bus: the environment arrives with this compositor's display, the session target starts and stops, a compositor killed
+   under the session is started again. Left: the launcher choosing this compositor itself, and the autostart without Hyprland's
+   Lua.
 11. **The hardware backend** (DRM/KMS), developed in a Limbo virtual machine, never on the live session: libseat, udev and hotplug,
    GBM/EGL and Smithay's DrmCompositor with page-flip pacing, libinput, then the checklist below.
 12. **The bake-off:** the same games and the CAD model measured against Hyprland (`tools/bakeoff`), and only then a decision.

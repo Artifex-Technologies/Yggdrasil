@@ -333,3 +333,48 @@ Rust columns it is most of the time and the whole peak memory. The real busctl o
   version is read as JSON, not by a Python one-liner; the old logs are chosen without `find | sort | cut | xargs rm`; Minos's
   accent is checked as three numbers before any arithmetic (bash evaluated an accent like `a[$(command)]` as code); and the
   bugs listed in the packages' READMEs and in f54dc78 (a drive named "Photos at home" opened "home").
+
+### The session's launcher, yggdrasil-session (2026-11-13)
+
+The program the login screen starts ([packages/session](../packages/session/src/session.rs)): the environment, MangoHud's
+look, Hyprland's crash watchdog and safe mode, the copies of Hyprland's log, the monitor log and the restart or shut-down
+after the session. A bash script of 164 lines until 2026-11-13; while the session ran it kept two background shells, one of
+which started `sleep`, `ls`, `head` and `basename` every five seconds to copy Hyprland's log.
+
+Differential first, with `tools/parity-shell-ports.py --only yggdrasil-session`: 43 of 43 cases the same (exit code, output,
+errors, the stand-ins' calls in order, the environment Hyprland is given, every file left), each in user, mount and process
+namespaces of its own with a stand-in Hyprland that signs out, crashes, is killed or keeps crashing on cue (and safe mode
+then works or fails too), no Hyprland at all, the restart and shut-down files, a state folder that cannot be made, no HOME,
+accents bash reads as octal, and the log copier while Hyprland runs. The one difference by design, normalised in the
+comparison: bash's own notes about its jobs ("Killed", "Terminated" and the job's text) in session-output.log. All the shell
+ports together: 174 of 174.
+
+Measured with `--bench 30 --steady 60`, at nice 19, inside the case's namespaces, with stand-ins that start nothing
+themselves: the time from the launcher's start to Hyprland's (taken in both by the shell's `$EPOCHREALTIME`), 30 runs a side
+taking turns; then 60 s of a running session, once a side: the processes it started, its CPU time and the memory of every
+process named after it (the script's subshells too, from `smaps_rollup`). Which processes run before Hyprland was read from
+the process IDs a new process namespace hands out one after another (a thread takes one too).
+
+| What | Script | Rust | Change |
+| --- | --- | --- | --- |
+| Start to Hyprland | 8.11 ms (7.92–8.40) | 3.13 ms (3.05–3.34) | −61 %, 4.98 ms sooner |
+| Processes before Hyprland | 21 (the 4 programs below, and 17 of its own: subshells, sed, head, cut, cat, mkdir, ls, tail, date) | 4 programs (fc-match, Hyprland --version, systemd-cat, udevadm) and 2 threads | −17 processes |
+| A whole short session (Hyprland signs out after 0.3 s), CPU | 27.0 ms | 14.8 ms | −45 % |
+| Processes started while the session runs | 44 a minute (about 63,000 a day) | 0 | none |
+| CPU while the session runs, 60 s | 10 ms (one clock tick) | below one tick (0 ms) | |
+| Its own processes while the session runs | 4 (bash and three subshells) | 1 (with 2 threads) | |
+| Memory while the session runs | 9.5 MB RSS, 0.90 MB PSS | 2.7 MB RSS, 0.56 MB PSS | −71 % RSS, −38 % PSS |
+| On disk | 8.8 KB (+ bash, coreutils, sed, grep) | 433 KB | +424 KB |
+
+- The start-up gain is small next to Hyprland's own start-up, but it is on the way from the login screen to the desktop.
+- The gain that counts is during the session: nothing is started every five seconds any more, all day, and one process
+  instead of four. A wake-up every five seconds for a log copy is now a thread that sleeps on a channel.
+- Safer: no shell runs at login; the accent from Settings is read as three numbers (the script passed them to bash's
+  `printf`, which read a leading zero as octal, kept here for the comparison), and the crash notice is a forked process with
+  its arguments fixed, not a background shell.
+
+The nested-session test the plan asked for (`packages/session/tests/nested_session.rs`, in CI since 2026-11-13) starts this
+launcher with Yggdrasil's own compositor in its headless mode as the compositor, running the session's autostart line from
+yggdrasil.lua against stand-ins: it comes up (the environment reaches the systemd and D-Bus stand-ins with the compositor's
+display, the session target starts), ends cleanly (exit 0, the target stopped, nothing left running, the compositor's
+socket gone), and a compositor killed under it is started again, with the notice ten seconds later. About 11 s for both.

@@ -22,6 +22,9 @@ jobs:
           cargo install cargo-audit --locked
           # every crate is checked, tested and audited; the job fails at the end, naming each one that did not pass
           failed=""
+          # the session's nested test (packages/session/tests/nested_session.rs) runs the launcher with the compositor that
+          # packages/compositor's tests built just before it (target/debug): it may not skip for want of one
+          export YGGDRASIL_TEST_NESTED_REQUIRED=1
           for d in packages/*/; do
             [ -f "$d/Cargo.toml" ] || continue
             # formatting (rustfmt.toml at the top) and lints: the debt cleared on 2026-11-11 must not come back

@@ -11,22 +11,32 @@ fixed path (/usr/bin/yggdrasil-spell, the plugin's source, Liki's index.theme, t
 user and mount namespace of its own with the case's file bound over that path (unshare -rm); the screen reader's cases run in
 a process namespace too, so pgrep and the port see only the case's stand-in Orca.
 
+The session's launcher (yggdrasil-session, ported 2026-11-13) runs in a user, mount and process namespace in every case: a
+stand-in Hyprland that writes down its environment and crashes, is killed or signs out on cue, stand-ins for systemctl,
+systemd-cat, udevadm, fc-match and notify-send, /proc/driver replaced by an empty folder (or one with a made-up NVIDIA driver),
+and everything it leaves running (the log copier, the monitor watch, a notice ten seconds after a crash) ends with the
+namespace. Its old script is the test fixture packages/session/tests/fixtures/yggdrasil-session.sh, read from the working tree
+(it goes on 2026-11-20, a week after the switch; then from git, 2026-11-13's commit before the switch).
+
 For each case both run in a fresh copy of the world, and these are compared: exit code, standard output, standard error, the
 calls the stand-ins wrote down (in order) and every file left in the world (type, mode, content). Known differences by design
 (the wording of "not found" messages, which the shell words with its own line numbers) are listed per case and checked to be
 the only ones.
 
-    python3 -I tools/parity-shell-ports.py [--old REV] [--only NAME,...] [--bench N] [--json FILE] [-v]
+    python3 -I tools/parity-shell-ports.py [--old REV] [--only NAME,...] [--bench N [--steady S]] [--json FILE] [-v]
 
 --bench N also times the everyday cases (BENCH) N times per side (alternating, after two warm-up runs), with bench-port's launcher (wall time,
-CPU time with children, peak RSS), at nice 19.
+CPU time with children, peak RSS), at nice 19; for the session also the time to Hyprland, the processes started on the way and,
+--steady S seconds into a session, the processes it starts a minute, its CPU time and memory (session_numbers).
 """
 import argparse
 import hashlib
 import importlib.util
 import json
 import os
+import re
 import shutil
+import stat
 import statistics
 import subprocess
 import sys
@@ -49,11 +59,14 @@ SCRIPTS = {
     "liki-minos-icon": ("liki", "packages/liki/bin/liki-minos-icon"),
     "spell-global": ("spell", "packages/spell/spell-global"),
     "agora-sudo": ("agora-helpers", "packages/market/helpers/sudo"),
+    "yggdrasil-session": ("session", "packages/session/tests/fixtures/yggdrasil-session.sh"),
 }
+# read from the working tree, not from git at --old: the launcher's script, kept as a test fixture until 2026-11-20
+FIXTURES = {"yggdrasil-session"}
 # the real tools a world's PATH has (after the stand-ins)
 TOOLS = ["bash", "sh", "env", "cat", "head", "tail", "cut", "sort", "rm", "mv", "cp", "mkdir", "basename", "dirname", "date",
          "seq", "sleep", "mktemp", "printf", "echo", "find", "xargs", "sed", "awk", "grep", "readlink", "touch", "true", "false",
-         "zstd", "kill", "mount", "chmod", "ln", "pgrep", "pkill", "setsid", "python3"]
+         "zstd", "kill", "mount", "chmod", "ln", "pgrep", "pkill", "setsid", "python3", "ls"]
 ARGS = None
 SCRATCH = None
 
@@ -110,7 +123,7 @@ def old_scripts(rev):
     os.makedirs(d)
     out = {}
     for name, (_, path) in SCRIPTS.items():
-        if rev == "worktree":
+        if rev == "worktree" or name in FIXTURES:
             data = open(os.path.join(REPO, path), "rb").read()
         else:
             data = subprocess.run(["git", "-C", REPO, "show", f"{rev}:{path}"], capture_output=True, check=True).stdout
@@ -154,8 +167,9 @@ def environment(world):
     return {k: v for k, v in e.items() if v is not None}
 
 
-def snapshot(w, skip=("stubs", "calls", "tmp")):
-    """Every file left in the world: path -> (type, mode, content hash or link target)."""
+def snapshot(w, skip=("stubs", "calls", "tmp"), content=None):
+    """Every file left in the world: path -> (type, mode, content hash or link target). CONTENT(path, bytes): a case's
+    normaliser (times of day ...); the files are then kept as text, so a difference shows."""
     out = {}
     for root, dirs, files in os.walk(w):
         rel_root = os.path.relpath(root, w)
@@ -172,6 +186,10 @@ def snapshot(w, skip=("stubs", "calls", "tmp")):
                 out[rel] = ("link", os.readlink(p))
             elif os.path.isdir(p):
                 out[rel] = ("dir", oct(st.st_mode & 0o7777))
+            elif not stat.S_ISREG(st.st_mode):
+                out[rel] = ("special", oct(stat.S_IFMT(st.st_mode)), oct(st.st_mode & 0o7777))
+            elif content:
+                out[rel] = ("file", oct(st.st_mode & 0o7777), content(rel, open(p, "rb").read()))
             else:
                 out[rel] = ("file", oct(st.st_mode & 0o7777), hashlib.sha256(open(p, "rb").read()).hexdigest()[:16])
     return out
@@ -180,6 +198,8 @@ def snapshot(w, skip=("stubs", "calls", "tmp")):
 def normalise(case, text):
     for a, b in case.get("replace", []):
         text = text.replace(a, b)
+    for a, b in case.get("re", []):
+        text = re.sub(a, b, text, flags=re.M)
     return text
 
 
@@ -192,7 +212,7 @@ def run_side(case, prog):
     p = subprocess.run(argv, env=environment(world), capture_output=True, input=case.get("stdin", b""), timeout=60)
     time.sleep(case.get("settle", 0))
     calls = open(world.env.get("CALLS", os.path.join(w, "calls")), "rb").read().decode("utf-8", "replace") if os.path.exists(os.path.join(w, "calls")) else ""
-    files = snapshot(w)
+    files = snapshot(w, content=case.get("content") and (lambda rel, data: case["content"](rel, data.decode("utf-8", "replace").replace(w, "W"))))
     if case.get("rename"):
         files = {case["rename"](k): v for k, v in files.items()}
     r = {"exit": p.returncode, "out": p.stdout.decode("utf-8", "replace"), "err": p.stderr.decode("utf-8", "replace"),
@@ -214,7 +234,11 @@ def compare(name, case, old, new):
         print(f"  {'DIFF' if diffs else 'same'} {name}: {case['label']} {diffs or ''}")
     if diffs:
         for k in diffs:
-            if k in a:
+            if k == "files":
+                for f in sorted(set(a[k]) | set(b[k])):
+                    if a[k].get(f) != b[k].get(f):
+                        print(f"    old file {f}: {a[k].get(f)!r}\n    new file {f}: {b[k].get(f)!r}")
+            elif k in a:
                 print(f"    old {k}: {a[k]!r}\n    new {k}: {b[k]!r}")
     return not diffs, a, b
 
@@ -335,7 +359,6 @@ def cases_logkeep():
                 w.file(f"{d}/same-a.log.zst", "s", mtime=1_700_000_250)
                 w.file(f"{d}/same-b.log.zst", "s", mtime=1_700_000_250)
         return make
-    import re
     date = re.compile(r"\d{4}-\d{2}-\d{2}-\d{4}-hyprland\.log$")
     rename = lambda k: date.sub("DATE-hyprland.log", k) if "hyprland-logs" in k and not k.startswith("home/.local/state/yggdrasil/hyprland-logs/2026") else k
     return [
@@ -545,6 +568,174 @@ def cases_minos_icon():
     ]
 
 
+HYPR_VERSION = "Hyprland 0.57.1 built from branch main at commit 0123456789abcdef (version: bump to 0.57.1).\nDate: today\n"
+# bash's own words, by line number: the port says the same without the line number. And bash's notes about its jobs that a
+# signal ended ("Killed  Hyprland --config "$conf"", "Terminated  udevadm monitor ... done >> "$events"", the latter only when
+# bash happens to notice in time): the port has no jobs and writes no such note (by design: the crash itself is in the
+# system log and the monitor log, with its exit code)
+BASH_LINE = (r"^\S*yggdrasil-session: line \d+: ", "yggdrasil-session: ")
+BASH_JOB = (r"^(?:yggdrasil-session:\s+\d+\s+)?(?:Killed|Hangup|Terminated|Interrupt)\s+"
+            r"(?:udevadm monitor[^\n]*\n(?:[^\n]*\n)*?done >> \"\$events\"\n|[^\n]*\n)")
+
+
+def session_content(rel, text):
+    """The session's files with the times of day and bash's line numbers taken out."""
+    text = re.sub(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", "DATE", text)
+    text = re.sub(BASH_LINE[0], BASH_LINE[1], text, flags=re.M)
+    return re.sub(BASH_JOB, "", text, flags=re.M)
+
+
+def session_rename(rel):
+    return re.sub(r"/\d{4}-\d{2}-\d{2}-\d{6}-run", "/STAMP-run", rel)
+
+
+def cases_session():
+    def world(codes=(0,), version=HYPR_VERSION, hypr=True, log=True, sleep="0.3", during="", nvidia=True, bus="socket",
+              udevadm=True, fc="/usr/share/fonts/TTF/DejaVuSans.ttf", appearance=None, after_file=None, catfail=None, more=None):
+        def make(w):
+            W = w.w
+            w.pidns = True
+            w.before.append("mount -t tmpfs none /proc/driver || exit 99")
+            if nvidia:
+                w.before.append("mkdir /proc/driver/nvidia && echo 'NVRM version: made up' > /proc/driver/nvidia/version")
+            # what is still running in the background has a moment to finish writing; then the namespace ends it
+            w.after.append(f"sleep {w.settle if hasattr(w, 'settle') else 0.4}")
+            if hypr:
+                w.file("hypr.codes", "".join(f"{c}\n" for c in codes))
+                w.stub("Hyprland", f"""if [ "$1" = --version ]; then printf '%s' '{version}'; exit 0; fi
+n=$(cat '{W}/hypr.count' 2>/dev/null || echo 0); n=$((n + 1)); echo $n > '{W}/hypr.count'
+env | LC_ALL=C sort | grep -vE '^(SHLVL|_|PWD|OLDPWD)=' > "{W}/hypr.env.$n"
+echo "Hyprland run $n says hello"; echo "Hyprland run $n warns" >&2
+{"mkdir -p \"$XDG_RUNTIME_DIR/hypr/sig$n\" && echo \"log of run $n\" > \"$XDG_RUNTIME_DIR/hypr/sig$n/hyprland.log\"" if log else ":"}
+{during}
+sleep {sleep}
+code=$(sed -n "${{n}}p" '{W}/hypr.codes'); [ -n "$code" ] || code=0
+case $code in KILL|HUP|TERM|INT) kill -$code $$; sleep 1;; esac
+exit $code
+""")
+            for name in ("systemctl", "notify-send"):
+                w.stub(name)
+            w.stub("systemd-cat", f"exit {catfail}\n" if catfail is not None else "exit 0\n")
+            if catfail == "missing":
+                os.remove(os.path.join(w.stubs, "systemd-cat"))
+            if fc is not None:
+                w.stub("fc-match", f"printf '%s\\n\\n' '{fc}'\n")
+            if udevadm:
+                # its own file: it starts beside Hyprland, so its place among the calls is a matter of luck
+                w.file("stubs/udevadm", f"""#!/bin/sh
+echo "udevadm $*" >> '{W}/udevadm.calls'
+sleep 0.15
+printf 'monitor will print the received events for:\\nKERNEL - the kernel uevent\\n\\nKERNEL[123.456] change   /devices/pci/drm/card1 (drm)\\nUDEV  [123.457] change   /devices/pci/drm/card1 (drm)\\nKERNEL[124.000] add      /devices/pci/drm/card1/card1-DP-1 (drm)\\nKERNEL partial line'
+exec sleep 30
+""", 0o755)
+            if bus == "socket":
+                import socket
+                with socket.socket(socket.AF_UNIX) as sk:
+                    sk.bind(os.path.join(w.run, "bus"))
+            elif bus == "file":
+                w.file("run/bus", "not a socket")
+            if appearance is not None:
+                w.file("home/.config/yggdrasil/appearance.conf", appearance)
+            if after_file is not None:
+                if after_file == "dir":
+                    os.makedirs(os.path.join(w.run, "yggdrasil-after-session"))
+                else:
+                    w.file("run/yggdrasil-after-session", after_file)
+            if more:
+                more(w)
+        return make
+
+    def case(label, settle=0.4, **kw):
+        def make(w):
+            w.settle = settle
+            world(**{k: v for k, v in kw.items() if k not in ("env", "differs", "want")})(w)
+            w.env.update({k: v.replace("{W}", w.w) if isinstance(v, str) else v for k, v in kw.get("env", {}).items()})
+        c = {"label": label, "world": make, "content": session_content, "rename": session_rename, "re": [BASH_LINE, (BASH_JOB, "")]}
+        for k in ("differs", "want"):
+            if k in kw:
+                c[k] = kw[k]
+        return c
+
+    def files(**fs):
+        def more(w):
+            for rel, data in fs.items():
+                w.file(rel.replace("__", "/"), data)
+        return more
+
+    events = "".join(f"2026-11-0{1 + i // 1000} 10:00:00 line {i}\n" for i in range(2500))
+
+    def old_state(w):
+        st = "home/.local/state/yggdrasil"
+        w.file(f"{st}/monitor-events.log", events)
+        w.file(f"{st}/hyprland-last.log", "the log of last time\n", 0o600)
+        w.file(f"{st}/session-output.log", "last time's output\n")
+        w.file(f"{st}/hyprland-logs/2026-11-01-100000-run1-crashed-exit1.log", "an old crash\n")
+
+    def linked_events(w):
+        st = os.path.join(w.home, ".local/state/yggdrasil")
+        w.file("elsewhere/events", "2026-11-01 10:00:00 session start\n")
+        os.makedirs(st)
+        os.symlink(os.path.join(w.w, "elsewhere/events"), os.path.join(st, "monitor-events.log"))
+
+    def before_instance(w):
+        # a Hyprland folder from before this session, newer than anything this one makes: not copied while it runs
+        w.file("run/hypr/earlier/hyprland.log", "the log of an earlier session\n")
+        w.file("run/hypr/.hidden/hyprland.log", "hidden\n")
+        t = 4_000_000_000
+        os.utime(os.path.join(w.run, "hypr/earlier"), (t, t))
+
+    keep_check = f"sleep 5.6; if [ -f \"$HOME/.local/state/yggdrasil/hyprland-last.log\" ]; then echo kept-while-running; cat \"$HOME/.local/state/yggdrasil/hyprland-last.log\"; else echo not-kept-while-running; fi >> \"$CALLS\""
+    return [
+        case("a sign-in and a sign-out (NVIDIA, the session bus, a monitor watch)"),
+        case("no NVIDIA driver", nvidia=False),
+        case("the accent from Settings", appearance="# appearance\nmode = dark\naccent = 0, 160 ,255 # blue\naccent = 1,2,3\n"),
+        case("an accent bash reads as octal, too big or wrong", appearance="  accent=010,08,300\n"),
+        case("an accent too big for 64 bits", appearance="accent = 99999999999999999999,1,2\n"),
+        case("no accent line, a colour name", appearance="accent = purple\n"),
+        case("no fc-match: no font line", fc=None),
+        case("fc-match answers nothing", fc=""),
+        case("your own MangoHud.conf", more=files(**{"home__.config__MangoHud__MangoHud.conf": "fps\n"})),
+        case("MANGOHUD_CONFIGFILE already set", env={"MANGOHUD_CONFIGFILE": "/elsewhere/mango.conf"}),
+        case("XDG_CONFIG_HOME and XDG_STATE_HOME, with slashes at the end",
+             env={"XDG_CONFIG_HOME": "{W}/cfg/", "XDG_STATE_HOME": "{W}/st/"},
+             more=files(**{"cfg__MangoHud__MangoHud.conf": "fps\n"})),
+        case("XDG_CONFIG_HOME without its own MangoHud.conf", env={"XDG_CONFIG_HOME": "{W}/cfg"},
+             more=files(**{"cfg__yggdrasil__appearance.conf": "accent = 1, 2, 3\n"})),
+        case("no runtime folder", env={"XDG_RUNTIME_DIR": "{W}/gone"}),
+        case("the Qt variables you set are kept (an empty one is not)",
+             env={"QT_WAYLAND_DISABLED_INTERFACES": "mine", "QT_QPA_PLATFORMTHEME": "", "GDK_BACKEND": "x11"}),
+        case("YGGDRASIL_HYPRLAND_CONFIG", env={"YGGDRASIL_HYPRLAND_CONFIG": "/home/me/my hypr.lua"}),
+        case("no bus socket, an address given", bus=None, env={"DBUS_SESSION_BUS_ADDRESS": "unix:path=/elsewhere/bus"}),
+        case("the bus is a plain file", bus="file"),
+        case("Hyprland --version says one word", version="Hyprland\n"),
+        case("Hyprland --version says nothing", version=""),
+        case("one crash, then a sign-out: the log kept, the notice 10 s later", codes=(1, 0), settle=11),
+        case("killed (SIGKILL), then a sign-out", codes=("KILL", 0), settle=11),
+        case("a crash without a log", codes=(134, 0), log=False, settle=11),
+        case("SIGTERM is not a crash", codes=("TERM",)),
+        case("exit 130 is not a crash", codes=(130,)),
+        case("three crashes: safe mode, which works", codes=(1, 2, 3, 0), settle=11),
+        case("a bad config: safe mode fails too", codes=(1, 1, 1, 1), settle=11),
+        case("no Hyprland at all", hypr=False, settle=11),
+        case("a restart asked for", after_file="reboot\n\n"),
+        case("a shut-down asked for", after_file="poweroff"),
+        case("something else in the after file", after_file="rm -rf /\n"),
+        case("the after file is a folder", after_file="dir"),
+        case("no systemd-cat: said on standard error, then in the output file", catfail="missing"),
+        case("systemd-cat fails", catfail=1),
+        case("no udevadm", udevadm=False),
+        case("last time's files: the monitor log trimmed to 2000 lines, a log copy's mode kept", more=old_state),
+        case("the monitor log is a link", more=linked_events),
+        case("the log copier keeps this session's log while it runs", sleep="0.1", during=keep_check),
+        case("the log copier leaves a folder from before this session", sleep="0.1", during=keep_check, more=before_instance),
+        case("the state folder is a file", more=files(**{"home__.local__state__yggdrasil": "a file"})),
+        case("the state's parent is a file", more=files(**{"home__.local__state": "a file"})),
+        case("no HOME", env={"HOME": None}),
+        case("no HOME, the XDG folders given", env={"HOME": None, "XDG_CONFIG_HOME": "{W}/cfg", "XDG_STATE_HOME": "{W}/st"}),
+        case("no HOME, only XDG_CONFIG_HOME", env={"HOME": None, "XDG_CONFIG_HOME": "{W}/cfg"}),
+    ]
+
+
 # the cases --bench times (one or two a program: the everyday ones)
 BENCH = {
     "yggdrasil-zoom": ["in, from off"],
@@ -558,6 +749,7 @@ BENCH = {
     "spell-global": ["approve"],
     "liki-icon": ["an icns", "import"],
     "liki-minos-icon": ["a pack's largest png", "nothing of the pack's: the logo, dark"],
+    "yggdrasil-session": ["a sign-in and a sign-out (NVIDIA, the session bus, a monitor watch)"],
 }
 
 PROGRAMS = {
@@ -572,6 +764,7 @@ PROGRAMS = {
     "spell-global": cases_spell_global,
     "liki-icon": cases_liki_icon,
     "liki-minos-icon": cases_minos_icon,
+    "yggdrasil-session": cases_session,
 }
 
 
@@ -610,12 +803,82 @@ def time_case(bm, case, old, new, n):
     return {k: bm.summary(v) for k, v in res.items()}
 
 
+def session_numbers(old, new, runs, steady):
+    """The launcher's own costs, measured inside the namespace with stand-ins that start nothing themselves (no fork in them):
+    the time from the launcher's start to Hyprland's (EPOCHREALTIME in both) and how many processes the launcher started on
+    the way (process IDs are handed out one after another in a new process namespace; a thread takes one too), RUNS times a
+    side, taking turns; then,
+    STEADY seconds into a session (once a side), the processes it starts per minute while Hyprland runs and its memory and CPU
+    (every process named yggdrasil-sessi[on]: the script's subshells too)."""
+    def world(w, hold):
+        W = w.w
+        w.pidns = True
+        w.before += ["mount -t tmpfs none /proc/driver || exit 99",
+                     f"read p < /proc/sys/kernel/ns_last_pid; echo $p > '{W}/pid0'; echo $EPOCHREALTIME > '{W}/t0'"]
+        for name in ("systemctl", "systemd-cat", "notify-send"):
+            w.file(f"stubs/{name}", "#!/bin/sh\nexit 0\n", 0o755)
+        w.file("stubs/fc-match", "#!/bin/sh\nprintf /usr/share/fonts/TTF/DejaVuSans.ttf\n", 0o755)
+        w.file("stubs/udevadm", "#!/bin/sh\nexec sleep 600\n", 0o755)
+        measure = f"""
+sleep 5; read a < /proc/sys/kernel/ns_last_pid; cpu0=$(cpu); sleep {hold}; read b < /proc/sys/kernel/ns_last_pid; cpu1=$(cpu)
+echo "$a $b $cpu0 $cpu1" > '{W}/steady'
+for d in /proc/[0-9]*; do read c < $d/comm 2>/dev/null; [ "$c" = yggdrasil-sessi ] && cat $d/smaps_rollup >> '{W}/mem'; done""" if hold else ""
+        w.file("stubs/Hyprland", f"""#!/bin/sh
+[ "$1" = --version ] && {{ printf 'Hyprland 0.57.1 built from branch main\\n'; exit 0; }}
+echo $EPOCHREALTIME > '{W}/t1'; echo $$ > '{W}/pid1'
+cpu() {{ t=0; for d in /proc/[0-9]*; do read c < $d/comm 2>/dev/null; [ "$c" = yggdrasil-sessi ] || continue
+  read -r line < $d/stat; set -- ${{line##*) }}; t=$((t + ${{12}} + ${{13}} + ${{14}} + ${{15}})); done; echo $t; }}
+{measure}
+exit 0
+""", 0o755)
+
+    def one(prog, hold=0):
+        w = os.path.join(SCRATCH, "w")
+        shutil.rmtree(w, ignore_errors=True)
+        world_ = World(w)
+        world(world_, hold)
+        subprocess.run(wrapper(world_) + [prog], env=environment(world_), capture_output=True, timeout=hold + 60)
+        r = lambda n: open(os.path.join(w, n)).read().split()
+        out = {"start_ms": (float(r("t1")[0]) - float(r("t0")[0])) * 1000,
+               # less the launcher itself and Hyprland
+               "processes_before": int(r("pid1")[0]) - int(r("pid0")[0]) - 2}
+        if hold:
+            a, b, c0, c1 = map(int, r("steady"))
+            mem = open(os.path.join(w, "mem")).read()
+            kb = lambda key: sum(int(m) for m in re.findall(rf"^{key}:\s+(\d+) kB", mem, re.M))
+            # less the stand-in's own `sleep HOLD` and the $(cpu) subshell
+            out.update(per_minute=(b - a - 2) * 60 / hold, cpu_ms=(c1 - c0) * 1000 / os.sysconf("SC_CLK_TCK"),
+                       rss_mb=kb("Rss") / 1024, pss_mb=kb("Pss") / 1024, processes=len(re.findall(r"^Rss:", mem, re.M)))
+        return out
+
+    res = {"old": [], "new": []}
+    for _ in range(2):
+        one(old), one(new)
+    for i in range(runs):
+        for who in (("old", "new") if i % 2 == 0 else ("new", "old")):
+            res[who].append(one(old if who == "old" else new))
+    out = {}
+    for who in ("old", "new"):
+        st = [r["start_ms"] for r in res[who]]
+        out[who] = {"start_ms": statistics.median(st), "start_p10_ms": sorted(st)[len(st) // 10],
+                    "start_p90_ms": sorted(st)[len(st) * 9 // 10], "processes_before": statistics.median(r["processes_before"] for r in res[who])}
+        if steady:
+            out[who].update({k: v for k, v in one(old if who == "old" else new, steady).items() if k not in out[who]})
+        print(f"  session {who}: to Hyprland {out[who]['start_ms']:.2f} ms ({out[who]['start_p10_ms']:.2f}-{out[who]['start_p90_ms']:.2f}), "
+              f"{out[who]['processes_before']:.0f} process and thread IDs used on the way" +
+              (f"; while it runs: {out[who]['per_minute']:.1f} processes a minute, {out[who]['cpu_ms']:.0f} ms CPU in {steady} s, "
+               f"{out[who]['processes']} process(es) of its own, {out[who]['rss_mb']:.1f} MB RSS, {out[who]['pss_mb']:.2f} MB PSS" if steady else ""),
+              flush=True)
+    return out
+
+
 def main():
     global ARGS, SCRATCH
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--old", default=OLD_REV, help="the scripts' revision (default %(default)s; 'worktree' for the files as they are)")
     ap.add_argument("--only", help="comma-separated: " + ", ".join(PROGRAMS))
     ap.add_argument("--bench", type=int, default=0, metavar="N", help="also time the everyday cases N times per side")
+    ap.add_argument("--steady", type=int, default=60, metavar="S", help="with --bench: the session's steady state over S seconds (0: not measured)")
     ap.add_argument("--json", help="write the results (and timings) to this file")
     ap.add_argument("-v", action="store_true")
     ARGS = ap.parse_args()
@@ -646,6 +909,8 @@ def main():
                           f"{o['rss_mb']:.1f} MB; Rust {n['wall_ms']:.2f} ms ({n['wall_p10_ms']:.2f}-{n['wall_p90_ms']:.2f}), CPU {n['cpu_ms']:.2f} ms, "
                           f"{n['rss_mb']:.1f} MB", flush=True)
                 results[name]["cases"].append(entry)
+            if bm and name == "yggdrasil-session":
+                results[name]["session"] = session_numbers(old[name], new, ARGS.bench, ARGS.steady)
             results[name]["size"] = {"old": os.path.getsize(old[name]), "new": os.path.getsize(new)}
             print(f"{name}: {ok}/{len(cases)} the same", flush=True)
             total += len(cases)
