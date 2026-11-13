@@ -51,6 +51,13 @@ rows, a row that opens a page ending in ›, and a small grey note under a card 
   NetworkManager's agent when it first connects; needs networkmanager-strongswan). The security monitor owns the network's
   security policy; this page is only the user interface. `yggdrasil-settings vpn:add` opens Add VPN Configuration.
 
+- **Peripherals > Camera and Microphone** (`src/media.rs`): rows on Peripherals only when the computer has a camera (a
+  capture node in /sys/class/video4linux) or an input device. Camera: each camera, which one is the default (WirePlumber's
+  default video source, `wpctl set-default`) and a live preview of it while the page is open (ffmpeg reads the camera and
+  hands raw frames over a pipe, five a second; it is stopped when the page is left; without ffmpeg the page says so).
+  Microphone: the input device, a level meter while the page is open (`pw-record`, 16 kHz mono, the loudest sample of each
+  50 ms; stopped when the page is left), volume and mute. Sound keeps the output and a row to Microphone.
+
 ## The pages
 
 - **The list** (2026-11-13, as on a tablet): a card at the top with Default Apps ("Manage default apps", no longer in the
@@ -170,10 +177,12 @@ About only when switched on, have no picture.
 | **Displays**: three displays attached, one disconnected; the arrangement box with the main display (1) selected, its settings below. | ![Settings > Displays](../assets/screenshots/settings-displays.png) |
 | **Displays, a disconnected display selected**: grey and smaller in the box, Connect among its settings. | ![Settings > Displays, a disconnected display](../assets/screenshots/settings-displays-connect.png) |
 | **Displays, one display** (`displays-single.json`): its settings at once, no box, no Duplicate or Disconnect. | ![Settings > Displays, one display](../assets/screenshots/settings-displays-single.png) |
-| **Sound**: outputs and inputs, each with its volume. | ![Settings > Sound](../assets/screenshots/settings-sound.png) |
+| **Sound**: the output with its volume, and a row to Microphone. | ![Settings > Sound](../assets/screenshots/settings-sound.png) |
 | **Peripherals > Mouse**: every mouse, or one by one (`peripherals.json`). | ![Settings > Peripherals > Mouse](../assets/screenshots/settings-peripherals-mouse.png) |
 | **Peripherals > Mouse, a Razer mouse**: OpenRazer's battery, DPI, polling rate and lights. | ![Settings > Peripherals > Mouse, a Razer mouse](../assets/screenshots/settings-peripherals-razer.png) |
 | **Peripherals > Keyboard**: key repeat, the layout, the lights while dimmed. | ![Settings > Peripherals > Keyboard](../assets/screenshots/settings-peripherals-keyboard.png) |
+| **Peripherals > Camera**: the default camera and its preview (`system.json`; ffmpeg's test picture stands in for a camera). | ![Settings > Peripherals > Camera](../assets/screenshots/settings-camera.png) |
+| **Peripherals > Microphone**: the input device, its level, volume and mute (a made-up level). | ![Settings > Peripherals > Microphone](../assets/screenshots/settings-microphone.png) |
 | **Printers**: two printers, their ink and toner. | ![Settings > Printers](../assets/screenshots/settings-printers.png) |
 | **Power, a desktop**: the power mode, Cooling and the idle timers (no battery). | ![Settings > Power, a desktop](../assets/screenshots/settings-power.png) |
 | **Power, a laptop**: a row to Battery, the fan the firmware runs (`laptop.json`). | ![Settings > Power, a laptop](../assets/screenshots/settings-power-laptop.png) |

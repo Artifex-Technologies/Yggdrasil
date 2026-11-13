@@ -25,6 +25,7 @@ mod gpu;
 mod icons;
 mod laptop_ui;
 mod limbo_ui;
+mod media;
 mod nav;
 mod netconf;
 mod peripherals;
@@ -251,6 +252,7 @@ enum Msg {
     Storage(general::Storage),
     Battery(battery::Info),
     Vpn(vpn::State),
+    Media(media::Info),
     Language(general::Language),
     Apps(Vec<sys::Component>),
     Installed(Vec<appmgr::AppInfo>),
@@ -403,6 +405,12 @@ struct App {
     /// VPN > Add VPN Configuration is open, and its form (wiped when it closes: a pasted configuration holds a key).
     vpn_add: bool,
     vpn_form: vpn::Form,
+    /// Peripherals > Camera or Microphone while open, what they read, and the preview and level meter (only while shown).
+    media: Option<media::Sub>,
+    media_info: Option<media::Info>,
+    cam_pick: Option<std::path::PathBuf>,
+    cam_preview: Option<media::Preview>,
+    mic_meter: Option<media::Meter>,
     bt_open: Option<String>,
     bt_forget: bool,
     bt_pairing: Option<String>,
@@ -565,6 +573,16 @@ impl App {
             // `yggdrasil-settings vpn:add` opens Add VPN Configuration
             vpn_add: start_page() == Page::Vpn && start_sub() == "add",
             vpn_form: Default::default(),
+            // `yggdrasil-settings peripherals:camera` / `peripherals:microphone`
+            media: match (start_page(), start_sub().as_str()) {
+                (Page::Peripherals, "camera") => Some(media::Sub::Camera),
+                (Page::Peripherals, "microphone" | "mic") => Some(media::Sub::Microphone),
+                _ => None,
+            },
+            media_info: None,
+            cam_pick: None,
+            cam_preview: None,
+            mic_meter: None,
             bt_open: None,
             bt_forget: false,
             bt_pairing: None,
@@ -643,6 +661,7 @@ impl App {
                 Page::Storage => Msg::Storage(general::storage()),
                 Page::Battery => Msg::Battery(battery::load()),
                 Page::Vpn => Msg::Vpn(vpn::load()),
+                Page::Peripherals => Msg::Media(media::load()),
                 Page::Language => Msg::Language(general::language()),
                 Page::Apps => {
                     let _ = tx.send(Msg::Installed(load_installed(&tx)));
@@ -653,7 +672,7 @@ impl App {
                     yggdrasil_conf::integrations::first("assistant").map(|i| i.controls()).unwrap_or_default(),
                 )),
                 Page::Printers => Msg::Printers(printers::load()),
-                Page::Peripherals | Page::Developer | Page::Games | Page::General => return,
+                Page::Developer | Page::Games | Page::General => return,
             };
             let _ = tx.send(msg);
             ctx.request_repaint();
@@ -736,6 +755,7 @@ impl App {
                 Msg::Storage(v) => self.data.storage = Some(v),
                 Msg::Battery(v) => self.data.battery = Some(v),
                 Msg::Vpn(v) => self.data.vpn = Some(v),
+                Msg::Media(v) => self.media_info = Some(v),
                 Msg::Language(v) => self.data.language = Some(v),
                 Msg::Apps(v) => self.data.apps = Some(v),
                 Msg::Installed(v) => self.data.installed = Some(v),
@@ -851,6 +871,14 @@ impl eframe::App for App {
         }
         if !(self.page == Page::Power && self.power_fans) {
             self.fans_panel = None;
+        }
+        // the camera and the microphone are read only while their page is on screen
+        let media_open = |m| self.page == Page::Peripherals && self.peri.sub == peripherals::Sub::Main && self.media == Some(m);
+        if !media_open(media::Sub::Camera) {
+            self.cam_preview = None;
+        }
+        if !media_open(media::Sub::Microphone) {
+            self.mic_meter = None;
         }
         if self.page != Page::Vpn && self.vpn_add {
             self.vpn_add = false;
@@ -1902,9 +1930,8 @@ impl App {
     fn page_sound(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         let Some(s) = self.data.sound.clone() else { return loading(ui) };
         let mut cmds: Vec<Vec<String>> = vec![];
-        for (title, devices, default, kind) in
-            [("Output", &s.outputs, &s.default_output, "sink"), ("Input", &s.inputs, &s.default_input, "source")]
         {
+            let (title, devices, default, kind) = ("Output", &s.outputs, &s.default_output, "sink");
             ui::group(ui, pal, Some(title), |ui| {
                 if devices.is_empty() {
                     ui::row(ui, pal, true, "No devices", None, |_| {});
@@ -1937,6 +1964,21 @@ impl App {
                     }
                 });
             });
+        }
+        // the input moved to Peripherals > Microphone (with a level meter there)
+        let mut mic = false;
+        if !s.inputs.is_empty() {
+            ui::group(ui, pal, Some("Input"), |ui| {
+                let cur = s.inputs.iter().find(|d| d.name == s.default_input).unwrap_or(&s.inputs[0]);
+                mic = ui::nav_row(ui, pal, true, "Microphone", Some("Input device, level and volume: under Peripherals"), |ui| {
+                    ui.label(RichText::new(&cur.description).color(pal.dim));
+                });
+            });
+        }
+        if mic {
+            self.rewind(Page::Peripherals);
+            self.media = Some(media::Sub::Microphone);
+            self.open_page(Page::Peripherals, ctx);
         }
         if !cmds.is_empty() {
             self.change(ctx, move || {
@@ -4214,8 +4256,14 @@ fn color_picker_section(ui: &mut egui::Ui, pal: &Palette) {
 impl App {
     /// Peripherals: the way to Mouse and Keyboard, and those two pages.
     fn page_peripherals(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
+        if let (peripherals::Sub::Main, Some(m)) = (self.peri.sub, self.media) {
+            return self.page_media(ui, pal, ctx, m);
+        }
         match self.peri.sub {
-            peripherals::Sub::Main => self.peri.main_page(ui, pal),
+            peripherals::Sub::Main => {
+                self.peri.main_page(ui, pal);
+                self.media_rows(ui, pal);
+            }
             peripherals::Sub::Mouse => self.peri.mouse_page(ui, pal, ctx),
             peripherals::Sub::Keyboard => self.page_keyboard(ui, pal, ctx),
         }

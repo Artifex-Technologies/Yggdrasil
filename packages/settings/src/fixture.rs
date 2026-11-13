@@ -28,6 +28,9 @@ pub struct Fixture {
     /// Settings > Battery: UPower's charge history (a history-charge file's lines) and the apps' processor time.
     #[serde(default)]
     pub battery: Option<BatteryFixture>,
+    /// Settings > Peripherals > Camera: made-up cameras (their names) instead of /sys/class/video4linux.
+    #[serde(default)]
+    pub cameras: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]

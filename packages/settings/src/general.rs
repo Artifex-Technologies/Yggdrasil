@@ -237,6 +237,7 @@ impl App {
             if ui::nav_row(ui, pal, false, "Keyboard", None, |_| {}) {
                 open = Some(Page::Peripherals);
                 self.peri.sub = peripherals::Sub::Keyboard;
+                self.media = None;
                 self.key_sub = crate::KeySub::Main;
             }
             if ui::nav_row(ui, pal, false, "Language & Region", None, |_| {}) {

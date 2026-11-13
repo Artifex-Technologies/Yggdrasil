@@ -118,7 +118,11 @@ impl App {
                 }
             }
             Page::Peripherals => match self.peri.sub {
-                peripherals::Sub::Main => {}
+                peripherals::Sub::Main => match self.media {
+                    Some(crate::media::Sub::Camera) => l.push("Camera".into()),
+                    Some(crate::media::Sub::Microphone) => l.push("Microphone".into()),
+                    None => {}
+                },
                 peripherals::Sub::Mouse => l.push("Mouse".into()),
                 peripherals::Sub::Keyboard => {
                     l.push("Keyboard".into());
@@ -198,6 +202,7 @@ impl App {
             Page::Peripherals => match (self.peri.sub, self.key_sub) {
                 (peripherals::Sub::Keyboard, KeySub::SpellDownload) => self.key_sub = KeySub::Spelling,
                 (peripherals::Sub::Keyboard, KeySub::Shortcuts | KeySub::Spelling) => self.key_sub = KeySub::Main,
+                (peripherals::Sub::Main, _) => self.media = None,
                 _ => self.peri.sub = peripherals::Sub::Main,
             },
             _ => {}
@@ -250,6 +255,7 @@ impl App {
             Page::Peripherals => {
                 self.peri.sub = peripherals::Sub::Main;
                 self.key_sub = KeySub::Main;
+                self.media = None;
             }
             Page::Games => self.games.reload(),
             _ => {}

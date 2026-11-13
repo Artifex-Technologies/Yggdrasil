@@ -61,6 +61,8 @@ shots() {
     shot settings-peripherals-mouse     desktop settings peripherals:mouse peripherals
     shot settings-peripherals-razer     desktop settings peripherals:mouse peripherals 600
     shot settings-peripherals-keyboard  desktop settings peripherals:keyboard peripherals
+    shot settings-camera                desktop settings peripherals:camera system
+    shot settings-microphone            desktop settings peripherals:microphone system
     shot settings-printers              desktop settings printers system
     shot settings-power                 desktop settings power system
     shot settings-power-laptop          laptop  settings power laptop

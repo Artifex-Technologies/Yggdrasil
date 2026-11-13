@@ -1,5 +1,6 @@
 {
  "run": {
+  "wpctl status": "PipeWire 'pipewire-0' [1.4.0, alex@example-pc, cookie:1]\n\nAudio\n ├─ Sources:\n │  *   40. Example Microphone [vol: 0.60]\n │\n\nVideo\n ├─ Devices:\n │      58. Example Webcam                       [v4l2]\n │\n ├─ Sinks:\n │\n ├─ Sources:\n │  *   62. Example Webcam (V4L2)\n │\n └─ Streams:\n\nSettings\n └─ Default Configured Devices:\n",
   "nmcli -t -f NAME,UUID,TYPE,STATE connection show": "Home:6b0c1f2e-0000-4000-8000-00000000a001:802-11-wireless:activated\nOffice:6b0c1f2e-0000-4000-8000-00000000b001:vpn:\nTravel:6b0c1f2e-0000-4000-8000-00000000b002:wireguard:activated\n",
   "tailscale status --json": "{\"BackendState\": \"Stopped\", \"CurrentTailnet\": {\"Name\": \"example.ts.net\"}}",
   "df -B1 --output=source,size,used,avail,target -x tmpfs -x devtmpfs -x efivarfs -x squashfs -x overlay -l": "Filesystem      1B-blocks          Used         Avail Mounted on\n/dev/nvme0n1p2 1999844147200 712386146304 1287458000896 /\n/dev/nvme0n1p2 1999844147200 712386146304 1287458000896 /home\n/dev/nvme0n1p1 1071624192 167772160 903852032 /boot\n/dev/sda1 4000787030016 2861102882816 1139684147200 /run/media/alex/Games\n",
@@ -56,5 +57,6 @@
   "systemctl --user is-enabled yggdrasil-autozone.timer": "disabled\n",
   "pacman -Q *": "example 1.0-1\n"
  },
- "tools": ["tailscale", "networkmanager-openvpn"]
+ "tools": ["tailscale", "networkmanager-openvpn"],
+ "cameras": ["Example Webcam"]
 }
