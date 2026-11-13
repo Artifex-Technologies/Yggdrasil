@@ -222,9 +222,6 @@ impl App {
         let developer = yggdrasil_conf::PanelConf::load().developer;
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            if icon_button(ui, pal, Icon::Back, "All apps", true, false).clicked() {
-                self.app_sel = None;
-            }
             app_icon(ui, pal, &a, 40.0);
             ui.vertical(|ui| {
                 ui.label(RichText::new(&a.name).size(20.0).strong());

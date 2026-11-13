@@ -22,6 +22,7 @@ mod gpu;
 mod icons;
 mod laptop_ui;
 mod limbo_ui;
+mod nav;
 mod netconf;
 mod peripherals;
 mod printers;
@@ -376,10 +377,19 @@ struct App {
     night: Option<(nightlight::Settings, bool, Sender<nightlight::Cmd>)>,
     /// Settings > Displays: the display selected, a drag in the arrangement box, "Keep these display settings?".
     displays_ui: displays_ui::State,
+    /// The path shown in the last frame (nav.rs), to start a level just opened at its top.
+    last_path: Vec<String>,
 }
 
 impl App {
     fn new(ctx: &egui::Context) -> Self {
+        let mut app = App::bare();
+        app.load(app.page, ctx);
+        app
+    }
+
+    /// The app before anything is read (the tests start from here).
+    fn bare() -> Self {
         let (tx, rx) = channel();
         let mut app = App {
             page: start_page(),
@@ -512,12 +522,12 @@ impl App {
             refreshed: std::time::Instant::now(),
             night: None,
             displays_ui: Default::default(),
+            last_path: Vec::new(),
         };
         // `yggdrasil-settings apps:ID` opens that app's own page (links from the dock or the notch)
         if let Some(id) = std::env::args().nth(1).and_then(|a| a.strip_prefix("apps:").map(String::from)).filter(|s| !s.is_empty()) {
             app.app_sel = Some(id);
         }
-        app.load(app.page, ctx);
         app
     }
 
@@ -861,36 +871,9 @@ impl eframe::App for App {
                             egui::FontId::proportional(14.0),
                             pal.text,
                         );
-                        if resp.clicked() && p == Page::Appearance {
-                            self.app_sub = AppSub::Main;
-                        }
-                        if resp.clicked() && p == Page::Games {
-                            self.games.reload();
-                        }
-                        if resp.clicked() && p == Page::Peripherals {
-                            self.key_sub = KeySub::Main;
-                            self.peri.sub = peripherals::Sub::Main;
-                        }
                         if resp.clicked() {
-                            self.distress.close();
-                        }
-                        if resp.clicked() && p == Page::Security {
-                            self.sec_sub = SecSub::Main;
-                        }
-                        if resp.clicked() && p == Page::Power {
-                            self.power_gpu = false;
-                            self.power_cpu = false;
-                            self.power_fans = false;
-                        }
-                        if resp.clicked() && p == Page::Network {
-                            self.net_open = None;
-                            self.lan_open = false;
-                            self.lan_dev = None;
-                            self.wifi_check_open = false;
-                            self.net_draft = None;
-                            self.net_from_history = false;
-                            self.wifi_air = None;
-                            self.wifi_history = false;
+                            // the page as it first opens: a click on the open page's row is the way back to its start
+                            self.rewind(p);
                         }
                         if resp.clicked() && !sel {
                             self.page = p;
@@ -908,7 +891,25 @@ impl eframe::App for App {
                     chrome::drag_area(ui, ui.available_width() - chrome::controls_width());
                     chrome::window_controls(ui, &pal);
                 });
-                let mut area = egui::ScrollArea::vertical().auto_shrink([false, false]);
+                // the page's path and its Back button, above the scrolling part so they never scroll out of reach
+                let path = self.path();
+                let back = ui
+                    .scope(|ui| {
+                        ui.set_max_width((ui.available_width() - 20.0).min(760.0));
+                        App::nav_header(ui, &pal, &path)
+                    })
+                    .inner;
+                if (back || App::back_pressed(&ctx)) && self.back() {
+                    ctx.request_repaint();
+                }
+                ui.add_space(2.0);
+                // each level scrolls on its own: a level just opened starts at its top, and Back finds the one below where it was
+                let went_back = self.last_path.starts_with(&path);
+                let mut area = egui::ScrollArea::vertical().id_salt(("page", path.join("/"))).auto_shrink([false, false]);
+                if !went_back {
+                    area = area.vertical_scroll_offset(0.0);
+                }
+                self.last_path = path;
                 if self.demo_scroll > 0 {
                     // the preview for pictures: start scrolled to the bottom
                     self.demo_scroll -= 1;
@@ -1406,22 +1407,8 @@ impl App {
             }
             self.lan_dev = None;
         }
-        ui.add_space(6.0);
-        let mut back = false;
-        ui.horizontal(|ui| {
-            if ui::icon_button(ui, pal, Icon::Back, "Wi-Fi & Network", true, false).clicked() {
-                back = true;
-            }
-            ui.vertical(|ui| {
-                ui.label(RichText::new("Devices").size(20.0).strong());
-                let on = if l.ssid.is_empty() { "This network".to_string() } else { l.ssid.clone() };
-                ui.label(RichText::new(format!("{on} · {}", lan_summary(&l, now))).size(12.0).color(pal.dim));
-            });
-        });
-        if back {
-            self.lan_open = false;
-            return;
-        }
+        let on = if l.ssid.is_empty() { "This network".to_string() } else { l.ssid.clone() };
+        ui.label(RichText::new(format!("{on} · {}", lan_summary(&l, now))).size(12.0).color(pal.dim));
         ui.add_space(8.0);
         let note = match l.status.as_str() {
             "not_trusted" => Some(format!("Devices are listed only on networks you trust (your home network). On other networks {} does not look around: they are not yours.", l.monitor)),
@@ -1478,21 +1465,7 @@ impl App {
 
     /// Wi-Fi & Network > Wi-Fi checks: run the security monitor's check and show what it found, the likely cause first.
     fn wifi_check_page(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
-        ui.add_space(6.0);
-        let mut back = false;
-        ui.horizontal(|ui| {
-            if ui::icon_button(ui, pal, Icon::Back, "Wi-Fi & Network", true, false).clicked() {
-                back = true;
-            }
-            ui.vertical(|ui| {
-                ui.label(RichText::new("Wi-Fi checks").size(20.0).strong());
-                ui.label(RichText::new("Measures the connection for about 10 seconds; nothing is changed").size(12.0).color(pal.dim));
-            });
-        });
-        if back {
-            self.wifi_check_open = false;
-            return;
-        }
+        ui.label(RichText::new("Measures the connection for about 10 seconds; nothing is changed").size(12.0).color(pal.dim));
         ui.add_space(8.0);
         let mut start: Option<bool> = None;
         ui::group(ui, pal, None, |ui| {
@@ -1585,22 +1558,7 @@ impl App {
     /// One device: its name (the owner may give it one), what it is, its addresses, services, first and last seen.
     fn device_page(&mut self, ui: &mut egui::Ui, pal: &Palette, d: &devices::Device, l: &devices::List, now: i64) {
         let name = devices::shown_name(d, &self.lan_names);
-        ui.add_space(6.0);
-        let mut back = false;
-        ui.horizontal(|ui| {
-            if ui::icon_button(ui, pal, Icon::Back, "Devices", true, false).clicked() {
-                back = true;
-            }
-            ui.vertical(|ui| {
-                ui.label(RichText::new(&name).size(20.0).strong());
-                ui.label(RichText::new(devices::kind_name(&d.kind)).size(12.0).color(pal.dim));
-            });
-        });
-        if back {
-            self.lan_dev = None;
-            self.lan_rename = None;
-            return;
-        }
+        ui.label(RichText::new(devices::kind_name(&d.kind)).size(12.0).color(pal.dim));
         ui.add_space(8.0);
         let mut rename = self.lan_rename.take();
         let mut save: Option<String> = None;
@@ -2270,25 +2228,6 @@ impl App {
         let mut minos_live = false;
         let mut conf = a.panel;
         let mut conf_changed = false;
-        if self.app_sub != AppSub::Main {
-            let title = match self.app_sub {
-                AppSub::Icons => "Icons",
-                AppSub::Bar => "Top bar and dock",
-                AppSub::Notifs => "Notifications",
-                AppSub::Minos => "Minos",
-                AppSub::Lock => "Lock screen",
-                AppSub::Workspaces => "Workspaces",
-                AppSub::Boot => "Boot screen",
-                _ => "Wallpaper",
-            };
-            ui.horizontal(|ui| {
-                if ui::quiet(ui, pal, "\u{2039}  Appearance").clicked() {
-                    self.app_sub = AppSub::Main;
-                }
-                ui.label(RichText::new(title).size(18.0).strong());
-            });
-            ui.add_space(6.0);
-        }
         if self.app_sub == AppSub::Main {
             ui::group(ui, pal, Some("Style"), |ui| {
                 ui::row(ui, pal, true, "Look", None, |ui| {
@@ -2716,13 +2655,6 @@ impl App {
 
     fn page_power(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         if self.power_fans {
-            ui.horizontal(|ui| {
-                if ui::quiet(ui, pal, "\u{2039}  Power").clicked() {
-                    self.power_fans = false;
-                }
-                ui.label(RichText::new("Cooling").size(18.0).strong());
-            });
-            ui.add_space(6.0);
             if let Some(p) = self.fans_panel.as_mut() {
                 p.show(ui, pal, ctx);
             } else {
@@ -2733,11 +2665,6 @@ impl App {
         if self.power_gpu || self.power_cpu {
             let kind = if self.power_gpu { readout::Kind::Gpu } else { readout::Kind::Cpu };
             ui.horizontal(|ui| {
-                if ui::quiet(ui, pal, "\u{2039}  Power").clicked() {
-                    self.power_gpu = false;
-                    self.power_cpu = false;
-                }
-                ui.label(RichText::new(if kind == readout::Kind::Gpu { "Graphics card" } else { "Processor" }).size(18.0).strong());
                 if ui::icon_button(ui, pal, Icon::PopOut, "Open in its own window (it stays open after Settings is closed)", true, false)
                     .clicked()
                 {
@@ -3306,24 +3233,6 @@ impl App {
     }
 
     fn page_security(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
-        if self.sec_sub != SecSub::Main {
-            let monitor = yggdrasil_conf::integrations::security().map(security::monitor_name).unwrap_or_default();
-            let title = match self.sec_sub {
-                SecSub::Monitor => monitor.as_str(),
-                SecSub::Logins => "Login history",
-                SecSub::Distress => "Distress password",
-                SecSub::Limbo => "Limbo",
-                _ => "Sudo history",
-            };
-            ui.horizontal(|ui| {
-                if ui::quiet(ui, pal, "\u{2039}  Security").clicked() {
-                    self.sec_sub = SecSub::Main;
-                    self.distress.close();
-                }
-                ui.label(RichText::new(title).size(18.0).strong());
-            });
-            ui.add_space(6.0);
-        }
         match self.sec_sub {
             SecSub::Monitor => return self.page_monitor(ui, pal, ctx),
             SecSub::Logins => return self.page_log(ui, pal, ctx, false),
@@ -4617,16 +4526,7 @@ impl App {
     fn page_peripherals(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         match self.peri.sub {
             peripherals::Sub::Main => self.peri.main_page(ui, pal),
-            peripherals::Sub::Mouse => {
-                ui.horizontal(|ui| {
-                    if ui::quiet(ui, pal, "\u{2039}  Peripherals").clicked() {
-                        self.peri.sub = peripherals::Sub::Main;
-                    }
-                    ui.label(RichText::new("Mouse").size(18.0).strong());
-                });
-                ui.add_space(6.0);
-                self.peri.mouse_page(ui, pal, ctx);
-            }
+            peripherals::Sub::Mouse => self.peri.mouse_page(ui, pal, ctx),
             peripherals::Sub::Keyboard => self.page_keyboard(ui, pal, ctx),
         }
     }
@@ -4635,19 +4535,8 @@ impl App {
     /// pages) and the tool that lives on a key.
     fn page_keyboard(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         if self.key_sub != KeySub::Main {
-            // the way back: Download more languages goes back to Spelling and languages, the others to Keyboard
-            let (back, up, title) = match self.key_sub {
-                KeySub::Shortcuts => ("Keyboard", KeySub::Main, "Shortcuts"),
-                KeySub::SpellDownload => ("Spelling and languages", KeySub::Spelling, "Download more languages"),
-                _ => ("Keyboard", KeySub::Main, "Spelling and languages"),
-            };
-            ui.horizontal(|ui| {
-                if ui::quiet(ui, pal, &format!("\u{2039}  {back}")).clicked() {
-                    self.key_sub = up;
-                }
-                ui.label(RichText::new(title).size(18.0).strong());
-            });
-            ui.add_space(6.0);
+            // the header above (nav.rs) shows where this is and goes back: Download more languages to Spelling and
+            // languages, the others to Keyboard
             match self.key_sub {
                 KeySub::Shortcuts => page_shortcuts(ui, pal),
                 KeySub::SpellDownload => self.page_spell_download(ui, pal, ctx),
@@ -4655,13 +4544,6 @@ impl App {
             }
             return;
         }
-        ui.horizontal(|ui| {
-            if ui::quiet(ui, pal, "\u{2039}  Peripherals").clicked() {
-                self.peri.sub = peripherals::Sub::Main;
-            }
-            ui.label(RichText::new("Keyboard").size(18.0).strong());
-        });
-        ui.add_space(6.0);
         self.peri.keyboard_page(ui, pal, ctx);
         ui::group(ui, pal, Some("Keys and languages"), |ui| {
             if ui::nav_row(

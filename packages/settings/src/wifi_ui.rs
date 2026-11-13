@@ -5,7 +5,6 @@
 //! one also what it gave this computer and This Network (its devices, Wi-Fi checks). Below the lists, Previously connected
 //! networks: every saved Wi-Fi network, the most recent first.
 
-use crate::icons::Icon;
 use crate::{devices, loading, netconf, sys, ui, wifihealth, App};
 use eframe::egui::{self, RichText};
 use yggdrasil_ui::theme::Palette;
@@ -73,23 +72,12 @@ fn note(ui: &mut egui::Ui, pal: &Palette, text: &str) {
     });
 }
 
-/// A page's title with its back button. True when back was clicked.
-fn header(ui: &mut egui::Ui, pal: &Palette, back_to: &str, title: &str, sub: &str) -> bool {
-    ui.add_space(6.0);
-    let mut back = false;
-    ui.horizontal(|ui| {
-        if ui::icon_button(ui, pal, Icon::Back, back_to, true, false).clicked() {
-            back = true;
-        }
-        ui.vertical(|ui| {
-            ui.label(RichText::new(title).size(20.0).strong());
-            if !sub.is_empty() {
-                ui.label(RichText::new(sub).size(12.0).color(pal.dim));
-            }
-        });
-    });
+/// The line under a page's title (the title and Back are the header above the page, nav.rs).
+fn header(ui: &mut egui::Ui, pal: &Palette, sub: &str) {
+    if !sub.is_empty() {
+        ui.label(RichText::new(sub).size(12.0).color(pal.dim));
+    }
     ui.add_space(8.0);
-    back
 }
 
 /// The password box for a secured Wi-Fi network: Some(true) to connect (the Connect button, or Enter, with a password typed),
@@ -288,10 +276,7 @@ impl App {
     /// Previously connected networks: every saved Wi-Fi network, newest connection first, each with its security and when it
     /// was last joined; the (i) opens its page.
     fn history_page(&mut self, ui: &mut egui::Ui, pal: &Palette, n: &sys::Network) {
-        if header(ui, pal, "Wi-Fi & Network", "Previously connected networks", "Every saved Wi-Fi network, the most recent first") {
-            self.wifi_history = false;
-            return;
-        }
+        header(ui, pal, "Every saved Wi-Fi network, the most recent first");
         let now = sys::unix_now();
         let list = history(n);
         let mut open: Option<String> = None;
@@ -339,13 +324,9 @@ impl App {
             None => n.air_for(&k.ssid),
         };
         let listed = n.networks.iter().find(|w| !k.ssid.is_empty() && w.ssid == k.ssid);
-        let title = if k.ssid.is_empty() { "Hidden network".to_string() } else { k.ssid.clone() };
         let state =
             if listed.is_some() || net.is_some() { "Wi-Fi · Not saved · in range" } else { "Wi-Fi · Not saved · not heard now" };
-        if header(ui, pal, "Wi-Fi & Network", &title, state) {
-            self.wifi_air = None;
-            return;
-        }
+        header(ui, pal, state);
         if let Some(w) = listed {
             if ui::action(ui, pal, "Join this network").clicked() {
                 if w.secured {
@@ -381,7 +362,6 @@ impl App {
         let live = n.live.get(uuid);
         let in_range = saved.wifi && n.networks.iter().any(|w| w.ssid == saved.ssid);
         let air = if saved.wifi { n.air_for(&saved.ssid) } else { None };
-        let title = if saved.wifi && !saved.ssid.is_empty() { saved.ssid.clone() } else { saved.name.clone() };
         let state = match (saved.wifi, live.is_some(), in_range) {
             (false, true, _) => "Wired · Connected",
             (false, false, _) => "Wired · Saved",
@@ -389,8 +369,8 @@ impl App {
             (true, false, true) => "Wi-Fi · Saved · in range",
             (true, false, false) => "Wi-Fi · Saved · not in range",
         };
-        let back_to = if self.net_from_history { "Previously connected networks" } else { "Wi-Fi & Network" };
-        let mut back = header(ui, pal, back_to, &title, state);
+        header(ui, pal, state);
+        let mut back = false;
         if saved.wifi {
             if live.is_some() {
                 if ui::quiet(ui, pal, "Disconnect").clicked() {
