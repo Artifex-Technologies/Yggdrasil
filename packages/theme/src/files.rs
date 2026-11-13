@@ -300,8 +300,9 @@ pub fn apply_cursor(name: &str, live: bool) -> R<()> {
     }
     if live {
         run(&["systemctl", "--user", "set-environment", &format!("XCURSOR_THEME={name}")]);
-        if which("hyprctl") {
-            run(&["hyprctl", "setcursor", name, &CURSOR_SIZE.to_string()]);
+        // the compositor (yggdrasil-wm: Hyprland's `setcursor` on its socket, or Yggdrasil's own compositor)
+        if let Some(d) = yggdrasil_wm::Desk::detect() {
+            d.set_cursor(name, CURSOR_SIZE as u32);
         }
     }
     Ok(())

@@ -28,6 +28,8 @@ path = "examples/theme_retint.rs"
 # libgtk-4 is opened at run time (dlopen), only for gtk4-theme; without it the theme falls back as the script's did
 [dependencies]
 libc = "0.2"
+# the pointer's theme in the running compositor (Hyprland or Yggdrasil's own)
+yggdrasil-wm = { path = "../wm" }
 # the cursors' preview sheet is written as a PNG (zlib)
 miniz_oxide = { version = "0.8", default-features = false, features = ["with-alloc"] }
 regex = { version = "1", default-features = false, features = ["std", "unicode"] }

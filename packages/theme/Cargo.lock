@@ -181,6 +181,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
 
 [[package]]
+name = "yggdrasil-conf"
+version = "0.1.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "yggdrasil-pycompat"
 version = "0.1.0"
 dependencies = [
@@ -196,6 +203,15 @@ dependencies = [
  "miniz_oxide",
  "regex",
  "yggdrasil-pycompat",
+ "yggdrasil-wm",
+]
+
+[[package]]
+name = "yggdrasil-wm"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "yggdrasil-conf",
 ]
 
 [[package]]

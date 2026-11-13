@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """compare: the Rust ygg-theme and the Python script it replaces, run as programs on the same inputs, in dry runs: HOME,
 XDG_CONFIG_HOME and XDG_DATA_HOME are a scratch folder made again for each run (at the same path), and gsettings,
-systemctl, hyprctl and pkill are stand-ins on the PATH that write down how they were called. Nothing of this user's own is
-read or written.
+systemctl, hyprctl and pkill are stand-ins on the PATH that write down how they were called (with a stand-in Hyprland socket
+for the Rust side, which sets the pointer through yggdrasil-wm). Nothing of this user's own is read or written.
 
   1. what it prints: scheme and gtk (dark, light, many accents, bad accents), gtk3-theme, gtk4-theme (GTK 4's own theme from
      the installed libgtk-4, retinted), --help, a command that does not exist;
@@ -23,6 +23,50 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+class StandInHyprland:
+    """A stand-in Hyprland socket in a folder of its own: the Rust ygg-theme sets the pointer through yggdrasil-wm (`setcursor` on
+    the socket) where the script ran hyprctl. It writes the same line the hyprctl stand-in writes into the calls. Its signature
+    names no real Hyprland."""
+
+    def __init__(self, calls):
+        import socket
+        import threading
+        self.dir, self.calls, self.done = tempfile.mkdtemp(prefix="ygg-th-"), calls, False
+        os.makedirs(os.path.join(self.dir, "hypr", "parity"))
+        self.sock = socket.socket(socket.AF_UNIX)
+        self.sock.bind(os.path.join(self.dir, "hypr", "parity", ".socket.sock"))
+        self.sock.listen(4)
+        self.sock.settimeout(0.2)
+        self.thread = threading.Thread(target=self.serve, daemon=True)
+        self.thread.start()
+
+    def serve(self):
+        while not self.done:
+            try:
+                c, _ = self.sock.accept()
+            except OSError:
+                continue
+            with c:
+                c.settimeout(0.5)
+                try:
+                    q = c.recv(4096).decode()
+                except OSError:
+                    q = ""
+                if q.startswith("/"):
+                    with open(self.calls, "a") as f:
+                        f.write("hyprctl" + "".join(f" [{a}]" for a in q[1:].split(" ")) + "\n")
+                c.sendall(b"ok")
+
+    def env(self):
+        return {"XDG_RUNTIME_DIR": self.dir, "HYPRLAND_INSTANCE_SIGNATURE": "parity"}
+
+    def close(self):
+        self.done = True
+        self.thread.join()
+        self.sock.close()
+        shutil.rmtree(self.dir, ignore_errors=True)
 STUB = """#!/bin/sh
 printf '%s' "$(basename "$0")" >> "$W/calls"; for a in "$@"; do printf ' [%s]' "$a" >> "$W/calls"; done; echo >> "$W/calls"
 """
@@ -140,7 +184,15 @@ def main():
                             write(os.path.join(w, rel.replace("h/", "h/", 1)), text)
                         e = {"PATH": os.path.join(w, "bin") + (":/usr/bin:/bin" if tools else ""), "W": w, "HOME": os.path.join(w, "h"),
                              "XDG_CONFIG_HOME": os.path.join(w, "c"), "XDG_DATA_HOME": os.path.join(w, "d"), "YGG_THEME_KDE": kde, "LANG": "en_US.UTF-8"}
-                        code, out, err = run(cmd + args, e)
+                        # with the tools there, a stand-in Hyprland too (the Rust side sets the pointer on its socket)
+                        hypr = StandInHyprland(os.path.join(w, "calls")) if tools else None
+                        if hypr:
+                            e.update(hypr.env())
+                        try:
+                            code, out, err = run(cmd + args, e)
+                        finally:
+                            if hypr:
+                                hypr.close()
                         res[who] = (code, out, err, snapshot(w))
                     counts["files"] = counts.get("files", 0) + 1
                     pr, rr = res["python"], res["rust"]
