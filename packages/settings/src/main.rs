@@ -294,6 +294,8 @@ struct App {
     /// The full name being edited: (account, text).
     name_edit: Option<(String, String)>,
     zone_filter: String,
+    /// The time zone list was open in the last frame (so its search box takes the keyboard only as it opens).
+    zone_open: bool,
     /// What the icon-pack install box holds: a folder, an archive or a link.
     icon_src: String,
     // Apps page
@@ -428,6 +430,7 @@ impl App {
             other_pw: (false, String::new(), String::new()),
             name_edit: None,
             zone_filter: String::new(),
+            zone_open: false,
             icon_src: String::new(),
             app_tab: 0,
             app_sub: match start_sub().as_str() {
@@ -4190,19 +4193,39 @@ impl App {
                 clock_changed = ui::switch(ui, pal, &mut clock.clock_24h).changed();
             });
             ui::row(ui, pal, false, "Time zone", Some(&t.timezone), |ui| {
-                egui::ComboBox::from_id_salt("zone")
+                // A combo box closes on any click, its own search box included: this one closes only on a click outside it
+                // (or on a choice), and the search box has the keyboard as soon as the list opens. Enter takes the first match.
+                let open = egui::ComboBox::from_id_salt("zone")
                     .selected_text(&t.timezone)
                     .width((ui.available_width() * 0.55).clamp(160.0, 260.0))
                     .height(360.0)
+                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                     .show_ui(ui, |ui| {
-                        ui.add(egui::TextEdit::singleline(&mut self.zone_filter).hint_text("Search, e.g. Denver"));
+                        let search = ui.add(egui::TextEdit::singleline(&mut self.zone_filter).hint_text("Search, e.g. Denver"));
+                        if !self.zone_open {
+                            search.request_focus();
+                        }
+                        let enter = search.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                         let q = self.zone_filter.to_lowercase();
-                        for z in t.zones.iter().filter(|z| q.is_empty() || z.to_lowercase().contains(&q)).take(400) {
+                        let mut matches = t.zones.iter().filter(|z| q.is_empty() || z.to_lowercase().contains(&q)).peekable();
+                        if enter && !q.is_empty() {
+                            zone = matches.peek().map(|z| z.to_string());
+                        }
+                        for z in matches.take(400) {
                             if ui.selectable_label(*z == t.timezone, z).clicked() {
                                 zone = Some(z.clone());
                             }
                         }
-                    });
+                        if zone.is_some() {
+                            ui.close();
+                        }
+                    })
+                    .inner
+                    .is_some();
+                if self.zone_open && !open {
+                    self.zone_filter.clear();
+                }
+                self.zone_open = open;
             });
         });
         if ntp_changed {
