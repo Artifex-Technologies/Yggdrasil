@@ -336,7 +336,6 @@ fn watch() -> i32 {
 fn press(id: &str) -> i32 {
     let ok = if let Some(p) = id.strip_prefix("profile:").filter(|p| PROFILES.iter().any(|(x, _, _)| x == p)) {
         out("busctl", &["--system", "set-property", PPD[0], PPD[1], PPD[2], "ActiveProfile", "s", p]).is_some()
-            || out("powerprofilesctl", &["set", p]).is_some()
     } else if let Some(n) = id.strip_prefix("limit:").and_then(|n| n.parse::<u32>().ok()).filter(|n| LIMITS.contains(n)) {
         std::process::Command::new("pkexec")
             .args(["/usr/lib/yggdrasil/battery", "set-limit", &n.to_string()])
