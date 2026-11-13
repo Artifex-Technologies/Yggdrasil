@@ -12,6 +12,11 @@
 //!   YGGDRASIL_TEST_CLOSE     target/debug/yggdrasil-close (packages/wm)
 //!   YGGDRASIL_TEST_LOGOUT    target/debug/yggdrasil-logout (packages/wm); it runs with stand-ins for systemd-cat, notify-send,
 //!                            loginctl and systemctl as its only PATH, so it never locks or stops anything of the real desktop
+//!   YGGDRASIL_TEST_ARGUS_APP, YGGDRASIL_TEST_FLIPPER_FAKE
+//!                            the Argus repository's argus-app and flipper-fake (argus-tools/target/debug); the smoke test of the
+//!                            Argus app runs against the fake Flipper on a Unix socket only. Both are optional even in CI (they come
+//!                            from another repository): Argus's argus-tools/crates/argus-app/smoke-yggdrasil.sh names them
+//!                            (and YGGDRASIL_TEST_ARGUS_LIB, a folder with the SQLite library the test image lacks)
 //! A test whose program is not named is skipped, unless YGGDRASIL_TEST_APPS_REQUIRED is set (CI's compositor-headless job).
 //! tests/apps-podman.sh runs these in a container with no devices and no network.
 //!
@@ -117,11 +122,17 @@ struct App {
 
 impl App {
     fn start(comp: &Compositor, bin: &Path, bus: Option<&Bus>, env: &[(&str, &str)]) -> App {
+        App::start_with(comp, bin, bus, env, &[])
+    }
+
+    /// [`App::start`] with arguments.
+    fn start_with(comp: &Compositor, bin: &Path, bus: Option<&Bus>, env: &[(&str, &str)], args: &[&str]) -> App {
         let name = bin.file_name().unwrap().to_string_lossy().into_owned();
         let log = comp.dir.join(format!("{name}.log"));
         let home = comp.dir.join("home");
         let mut cmd = Command::new(bin);
-        cmd.env_clear()
+        cmd.args(args)
+            .env_clear()
             .env("PATH", "/usr/bin")
             .env("HOME", &home)
             .env("USER", "yggdrasil-test")
@@ -691,4 +702,89 @@ fn logout_with_a_window_that_stays_locks_instead() {
          loginctl [lock-session]\n"
     );
     assert!(comp.window("test.editor").is_some(), "the session goes on");
+}
+
+/// A program of another repository: skipped when not named, even where every program of this one is required.
+fn other_program(var: &str) -> Option<PathBuf> {
+    match std::env::var_os(var).map(PathBuf::from) {
+        Some(p) if p.is_file() => Some(p),
+        Some(p) => panic!("{var}={}: no such program", p.display()),
+        None => {
+            eprintln!("skipped: {var} is not set");
+            None
+        }
+    }
+}
+
+#[test]
+fn the_argus_app_opens_reaches_the_fake_flipper_and_closes() {
+    let (Some(argus), Some(fake)) = (other_program("YGGDRASIL_TEST_ARGUS_APP"), other_program("YGGDRASIL_TEST_FLIPPER_FAKE")) else {
+        return;
+    };
+    let _l = limit(240, "argus-app");
+    let comp = Compositor::start(&["--size", "1600x900"]);
+    // the only Flipper is the fake on a socket of the test's own; it serves one session and writes what it was asked
+    let sock = comp.dir.join("flipper.sock");
+    let requests = comp.dir.join("flipper-requests.txt");
+    let mut f = Command::new(&fake);
+    f.arg("--socket")
+        .arg(&sock)
+        .arg("--sessions")
+        .arg("1")
+        .arg("--requests")
+        .arg(&requests)
+        .env_clear()
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut fake_child = dies_with_test(&mut f).spawn().expect("flipper-fake starts");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !sock.exists() {
+        assert!(Instant::now() < deadline, "the fake Flipper listens");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    // its settings: no update check (there is no network here anyway), nothing else of the user's
+    let config = comp.dir.join("argus-config");
+    std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(config.join("argus-app.conf"), "check_updates = false\n").unwrap();
+    // drawn in software as Settings; a library the image lacks (SQLite) may come from YGGDRASIL_TEST_ARGUS_LIB
+    let lib = std::env::var("YGGDRASIL_TEST_ARGUS_LIB").unwrap_or_default();
+    let mut soft = vec![
+        ("LIBGL_ALWAYS_SOFTWARE", "1"),
+        ("__EGL_VENDOR_LIBRARY_FILENAMES", "/usr/share/glvnd/egl_vendor.d/50_mesa.json"),
+        ("WGPU_BACKEND", "gl"),
+    ];
+    if !lib.is_empty() {
+        soft.push(("LD_LIBRARY_PATH", lib.as_str()));
+    }
+    let args = ["--socket", sock.to_str().unwrap(), "--config-dir", config.to_str().unwrap(), "--update-server", "https://127.0.0.1:9"];
+    let mut app = App::start_with(&comp, &argus, None, &soft, &args);
+    wait_for(&comp, &mut app, 120, "the Argus window, drawn", |c| c.window("argus-app").is_some_and(|w| w.size.0 > 0));
+    let info = comp.window("argus-app").unwrap();
+    assert_eq!(info.title, "Argus");
+    assert_eq!(info.size, (860, 500), "qFlipper's window size");
+    // connected to the fake, drawn (many colours), then closed with the session's Super+Q
+    std::thread::sleep(Duration::from_millis(2500));
+    let pic = comp.screenshot("HEADLESS-1");
+    let mut colours = std::collections::HashSet::new();
+    for y in (info.at.1..info.at.1 + 500).step_by(5) {
+        for x in (info.at.0..info.at.0 + 860).step_by(5) {
+            colours.insert(pic.at(x as usize, y as usize));
+        }
+    }
+    assert!(colours.len() > 8, "Argus drew its window ({} colours)", colours.len());
+    comp.must("key super+q");
+    assert_eq!(app.wait_exit(30), Some(0), "argus-app ends when its window is closed: {}", app.log());
+    // the fake's session ended with the app: what the app asked for, read only
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while fake_child.try_wait().ok().flatten().is_none() {
+        assert!(Instant::now() < deadline, "the fake Flipper's session ends with the app");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let asked = std::fs::read_to_string(&requests).unwrap();
+    for r in ["SystemProtobufVersionRequest", "PropertyGetRequest", "GuiStartScreenStreamRequest"] {
+        assert!(asked.contains(r), "the app asked for {r}: {asked}");
+    }
+    for w in ["StorageWriteRequest", "StorageDeleteRequest", "SystemRebootRequest", "SystemUpdateRequest", "SystemFactoryResetRequest"] {
+        assert!(!asked.contains(w), "nothing changed the fake: {asked}");
+    }
 }

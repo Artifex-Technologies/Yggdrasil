@@ -65,7 +65,9 @@ leave free and keep clear of them, as in the Hyprland session (`placement.rs`, t
 the keyboard exclusively (the start menu) gets it at once and gives it back; a second locker is refused while the first runs; the media keys' shortcuts work on the lock screen, no others.
 `tests/behaviour.rs` (14 tests, own small clients) and `tests/apps.rs` (the panel, Settings drawn in software, the lock screen's
 test-auth build on two outputs) run in CI's `compositor-headless` job, and on a desktop through `tests/apps-podman.sh` in a
-container with no devices and no network. Nothing switches: Hyprland stays the session.
+container with no devices and no network. Nothing switches: Hyprland stays the session. One test there is for a program of another
+repository, the Argus app (argus-app against its fake Flipper on a socket): skipped unless its programs are named, even in CI;
+Argus's `argus-tools/crates/argus-app/smoke-yggdrasil.sh` names them and runs it in the same container (2026-11-13).
 
 Not built headless yet: GPU buffers (linux-dmabuf is not offered: shared memory only), drawing the pointer, outputs added or removed
 while running, and placing outputs other than side by side.
