@@ -63,22 +63,37 @@ fn now() -> u64 {
     SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
-/// Pasting is offered only where the compositor itself can send the key press (Hyprland's sendshortcut); nothing types into
-/// other windows through a fake keyboard.
+/// Pasting is offered only where the compositor itself can send the key press (Hyprland's sendshortcut, Yggdrasil's own
+/// compositor's `paste`, through yggdrasil-wm); nothing types into other windows through a fake keyboard.
 fn can_paste() -> bool {
-    std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some()
+    yggdrasil_wm::Desk::detect().is_some()
 }
 
-/// After this window has closed and focus is back, asks Hyprland to press Ctrl+V (Ctrl+Shift+V in a terminal) in the window.
+/// Terminals (and Minos, whose Ctrl+V pastes files) take Ctrl+Shift+V for text.
+fn pastes_with_shift(class: &str) -> bool {
+    let c = class.to_lowercase();
+    ["kitty", "foot", "alacritty", "ghostty", "wezterm", "konsole", "terminal", "minos"].iter().any(|t| c.contains(t))
+}
+
+/// After this window has closed and focus is back, the compositor presses Ctrl+V (Ctrl+Shift+V in a terminal) in the window: a
+/// copy of this program does it a quarter of a second later, after this one has gone.
 fn paste_after_close() {
-    let script = r#"sleep 0.25
-if hyprctl -j activewindow 2>/dev/null | grep -qiE '"class": *"[^"]*(kitty|foot|alacritty|ghostty|wezterm|konsole|terminal|minos)'; then m="CTRL SHIFT"; else m="CTRL"; fi
-hyprctl dispatch sendshortcut "$m, V, activewindow" >/dev/null 2>&1"#;
-    let _ = std::process::Command::new("sh")
-        .args(["-c", script])
+    let Ok(me) = std::env::current_exe() else { return };
+    let _ = std::process::Command::new(me)
+        .arg("paste-after-close")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .spawn();
+}
+
+/// `yggdrasil-clipboard paste-after-close`.
+fn paste_now() {
+    std::thread::sleep(std::time::Duration::from_millis(250));
+    if let Some(d) = yggdrasil_wm::Desk::detect() {
+        let shift = d.active_window(false).is_some_and(|w| pastes_with_shift(&w.class));
+        d.paste(shift);
+    }
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -479,6 +494,10 @@ fn main() -> std::process::ExitCode {
     if std::env::args().nth(1).as_deref() == Some("daemon") {
         return daemon::run();
     }
+    if std::env::args().nth(1).as_deref() == Some("paste-after-close") {
+        paste_now();
+        return std::process::ExitCode::SUCCESS;
+    }
     if yggdrasil_ui::single::toggle("yggdrasil-clipboard") {
         return std::process::ExitCode::SUCCESS;
     }
@@ -503,6 +522,26 @@ fn main() -> std::process::ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The classes the shell script's `grep -iE '"class": *"[^"]*(kitty|...)'` matched: any containing one of the words, in any case.
+    #[test]
+    fn terminals_paste_with_shift() {
+        for c in [
+            "kitty",
+            "foot",
+            "Alacritty",
+            "com.mitchellh.ghostty",
+            "org.wezfurlong.wezterm",
+            "org.kde.konsole",
+            "gnome-terminal-server",
+            "minos",
+        ] {
+            assert!(pastes_with_shift(c), "{c}");
+        }
+        for c in ["vivaldi-stable", "org.example.Editor", ""] {
+            assert!(!pastes_with_shift(c), "{c}");
+        }
+    }
 
     #[test]
     fn search_ages_and_summaries() {
