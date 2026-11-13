@@ -85,7 +85,10 @@ picture like a hardware cursor plane, so only `screenshot ... pointer`, grim -c 
 (`tests/pointer.rs`, with snapshots, Yggdrasil's own arrow among them). GPU buffers for the copies (dmabuf) come with the
 hardware backend. The same day it took Settings > Peripherals' mouse and keyboard settings (`input.conf`, read with yggdrasil-wm's parser at
 start and on reload, which yggdrasil-wm's `apply_input` asks for): key repeat for every program, and headless the virtual
-mouse's speed, scrolling and left-handed buttons (`src/input.rs`, `tests/input.rs`).
+mouse's speed, scrolling and left-handed buttons (`src/input.rs`, `tests/input.rs`). And, as the Hyprland session does since 2026-11-13, no floating
+window opens bigger than its screen: one bigger than the free room is made as big as it less the outer gap and centred
+(`placement.rs`'s `open`, keep-clear.lua's cases), remembered places are put back no bigger than the screen is now, and a dialog of
+the same process counts as the same program for them.
 
 **2026-11-12: Yggdrasil's own tools talk to it through yggdrasil-wm** (`packages/wm`, the layer they share): the panel's desktop
 buttons, window zones, Snap Assist and the dock's minimize, `yggdrasil-snap`, `yggdrasil-close` and the idle manager's pointer find

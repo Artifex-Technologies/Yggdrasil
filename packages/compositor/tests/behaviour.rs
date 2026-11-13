@@ -120,18 +120,19 @@ fn the_bar_and_dock_reserve_their_room_and_windows_open_centred_in_the_rest() {
     assert_eq!(info.rect(), (600, 284, 400, 300), "centred in the free room: {info:?}");
     assert!(info.has("floating") && info.has("active"), "{info:?}");
 
-    // one that asks for more than the free room is shortened to it
+    // one that asks for more than the free room is made as big as the room less the outer gap (8) and centred, as the
+    // session's keep-clear open() does
     let b = c.window("test.b", "B");
     c.draw(&b, (1600, 900), YELLOW);
-    assert_eq!(c.state.wins[b.index].size, (1600, 804), "told the free room's size");
+    assert_eq!(c.state.wins[b.index].size, (1584, 788), "told the free room's size less the gap");
     let info = settle(&comp, &mut c, &b, "test.b", YELLOW);
-    assert_eq!(info.rect(), (0, 32, 1600, 804), "{info:?}");
+    assert_eq!(info.rect(), (8, 40, 1584, 788), "{info:?}");
 
     let pic = comp.screenshot("HEADLESS-1");
     assert_eq!(pic.at(800, 10), RGB_RED, "the bar over everything at the top");
     assert_eq!(pic.at(800, 870), RGB_GREEN, "the dock at the bottom");
     assert_eq!(pic.at(800, 450), RGB_YELLOW, "the window in front");
-    assert!(pic.fills((0, 32, 1600, 804), RGB_YELLOW, 10), "the window fills the free room exactly (its corners rounded)");
+    assert!(pic.fills((8, 40, 1584, 788), RGB_YELLOW, 10), "the window fills the free room less the gap (its corners rounded)");
 }
 
 #[test]
@@ -153,17 +154,17 @@ fn windows_keep_clear_of_a_dock_that_appears_and_come_back_from_maximize_at_a_no
     let w = c.window("test.tall", "Tall");
     c.draw(&w, (800, 840), BLUE);
     assert_eq!(comp.window("test.tall").unwrap().rect(), (400, 46, 800, 840));
-    // and one that asks for all of the screen gets the free room
+    // and one that asks for all of the screen gets the free room less the gap
     let big = c.window("test.big", "Big");
     c.draw(&big, (1600, 900), YELLOW);
-    assert_eq!(settle(&comp, &mut c, &big, "test.big", YELLOW).rect(), (0, 32, 1600, 868));
+    assert_eq!(settle(&comp, &mut c, &big, "test.big", YELLOW).rect(), (8, 40, 1584, 852));
     let dock = c.layer_with(0, Layer::Top, "test-dock", Anchor::Bottom, DOCK, DOCK.1 as i32, KeyboardInteractivity::None);
     c.draw_layer(&dock, GREEN);
     // the dock's room is 836..900: the window is moved up and shortened to the 804 rows left (keep-clear.lua's fit)
     let info = settle(&comp, &mut c, &w, "test.tall", BLUE);
     assert_eq!(info.rect(), (400, 32, 800, 804), "{info:?}");
     let info = settle(&comp, &mut c, &big, "test.big", YELLOW);
-    assert_eq!(info.rect(), (0, 32, 1600, 804), "{info:?}");
+    assert_eq!(info.rect(), (8, 32, 1584, 804), "{info:?}");
 
     // maximize (the program asks), then back: a window as big as the free room comes back at three quarters of it, centred
     big.toplevel.set_maximized();

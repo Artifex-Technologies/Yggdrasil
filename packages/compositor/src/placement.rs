@@ -1,7 +1,8 @@
 //! Where a floating window goes: the same rules as the Hyprland session (`packages/session/hyprland/yggdrasil.lua` and
 //! `keep-clear.lua`), so both compositors place windows alike:
-//! - a new window opens centred in the room the bar and the dock leave free (Hyprland: `float, center` plus keep-clear), and
-//!   is shortened to that room when it asks for more;
+//! - a new window opens centred in the room the bar and the dock leave free (Hyprland: `float, center` plus keep-clear); one
+//!   bigger than that room is made as big as the room less the outer gap and centred in it (keep-clear's `open`), and so is a
+//!   remembered place that no longer fits its screen (the scale changed since);
 //! - a window keeps clear of the bar and the dock: one that reaches under them is moved out (and shortened if it must be);
 //! - a window back from maximize or full screen that still covers nearly all the free room gets a normal size: three quarters
 //!   of the room each way, centred.
@@ -54,6 +55,33 @@ pub fn fit(win: Rect, screen: Rect, zone: Rect) -> Option<Rect> {
     (out != win).then_some(out)
 }
 
+/// A window as it opens (keep-clear.lua's `open`): one bigger than the free room is made as big as that room less `gap` (the
+/// session's gaps_out; none when the room would be under 100 less it) and centred in it; one that fits is only kept clear of
+/// the bar and the dock (`fit`). None when it may stay as it is; a window covering its whole screen is left alone.
+pub fn open(win: Rect, screen: Rect, zone: Rect, gap: i32) -> Option<Rect> {
+    let close = |a: i32, b: i32| (a - b).abs() <= 1;
+    if close(win.loc.x, screen.loc.x)
+        && close(win.loc.y, screen.loc.y)
+        && close(win.size.w, screen.size.w)
+        && close(win.size.h, screen.size.h)
+    {
+        return None;
+    }
+    let (fw, fh) = (zone.size.w, zone.size.h);
+    if fw < 100 || fh < 100 || (win.size.w <= fw && win.size.h <= fh) {
+        return fit(win, screen, zone);
+    }
+    let mut gap = gap.clamp(0, 64);
+    if fw - 2 * gap < 100 || fh - 2 * gap < 100 {
+        gap = 0;
+    }
+    let (x0, y0, fw, fh) = (zone.loc.x + gap, zone.loc.y + gap, fw - 2 * gap, fh - 2 * gap);
+    let (nw, nh) = (win.size.w.min(fw), win.size.h.min(fh));
+    let round = |v: f64| v.round() as i32;
+    let out = rect(x0 + round((fw - nw) as f64 / 2.0), y0 + round((fh - nh) as f64 / 2.0), nw, nh);
+    (out != win).then_some(out)
+}
+
 /// A window back from maximize or full screen: when it still covers nearly all the free room (90 % each way), a normal size,
 /// three quarters of the room, centred in it. None when its own size is fine.
 pub fn normal(win: Rect, screen: Rect, zone: Rect) -> Option<Rect> {
@@ -73,9 +101,9 @@ pub fn normal(win: Rect, screen: Rect, zone: Rect) -> Option<Rect> {
     Some(centred((nw, nh), zone))
 }
 
-/// A window of `size` centred in the free room, shortened to it when it is bigger.
+/// A window of `size` centred in the free room (one bigger than it hangs over: `open` then fits it).
 pub fn centred(size: (i32, i32), zone: Rect) -> Rect {
-    let (w, h) = (size.0.min(zone.size.w).max(1), size.1.min(zone.size.h).max(1));
+    let (w, h) = (size.0.max(1), size.1.max(1));
     let round = |v: f64| v.round() as i32;
     rect(zone.loc.x + round((zone.size.w - w) as f64 / 2.0), zone.loc.y + round((zone.size.h - h) as f64 / 2.0), w, h)
 }
@@ -125,9 +153,34 @@ mod tests {
     }
 
     #[test]
+    fn a_window_opens_no_bigger_than_its_screen() {
+        // the same cases as keep-clear.lua's open(): the laptop's 1920x1200 at 1.5 (1280x800 to lay out), bar 28, dock 70
+        let (s, z) = (rect(0, 0, 1280, 800), rect(0, 28, 1280, 702));
+        assert_eq!(open(rect(100, 50, 1208, 806), s, z, 8), Some(rect(36, 36, 1208, 686)), "kept size from before the scale changed");
+        assert_eq!(open(rect(-110, 200, 1500, 400), s, z, 8), Some(rect(8, 179, 1264, 400)), "wider than the screen");
+        assert_eq!(open(rect(-200, -100, 1680, 1000), s, z, 8), Some(rect(8, 36, 1264, 686)), "bigger both ways");
+        assert_eq!(open(rect(374, 311, 532, 177), s, z, 8), None, "a normal dialog is left alone");
+        assert_eq!(open(rect(0, 28, 1280, 702), s, z, 8), None, "as big as the free room exactly is left alone");
+        assert_eq!(open(rect(100, 500, 600, 300), s, z, 8), Some(rect(100, 430, 600, 300)), "fits, but under the dock");
+        assert_eq!(open(rect(0, 0, 1280, 800), s, z, 8), None, "borderless full screen as it opens");
+        assert_eq!(open(rect(-110, 0, 1500, 900), s, z, 0), Some(rect(0, 28, 1280, 702)), "no gap");
+        // scale 2 (960x600 to lay out)
+        let (s, z) = (rect(0, 0, 960, 600), rect(0, 28, 960, 502));
+        assert_eq!(open(rect(180, 20, 600, 560), s, z, 8), Some(rect(180, 36, 600, 486)), "tall dialog at scale 2");
+        // a screen with nothing reserved
+        let s = rect(1280, 0, 1280, 800);
+        assert_eq!(open(rect(1220, -50, 1400, 900), s, s, 8), Some(rect(1288, 8, 1264, 784)), "no bar or dock");
+        // turned into a tablet (portrait, 800x1280 to lay out)
+        let (s, z) = (rect(0, 0, 800, 1280), rect(0, 28, 800, 1182));
+        assert_eq!(open(rect(-204, 216, 1208, 806), s, z, 8), Some(rect(8, 216, 784, 806)), "portrait screen");
+    }
+
+    #[test]
     fn new_windows_open_centred_in_the_free_room() {
         let (_, z) = ipad();
         assert_eq!(centred((600, 400), z), rect(305, 196, 600, 400));
-        assert_eq!(centred((2000, 2000), z), z, "too big: shortened to the room");
+        assert_eq!(centred((2000, 2000), z), rect(-395, -604, 2000, 2000), "too big: centred over it");
+        let (s, _) = ipad();
+        assert_eq!(open(centred((2000, 2000), z), s, z, 8), Some(rect(8, 36, 1194, 720)), "then made to fit, less the gap");
     }
 }

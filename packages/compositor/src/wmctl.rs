@@ -253,7 +253,7 @@ pub fn now_ms() -> u32 {
 }
 
 /// The process of a window (its client's, or the X11 window's _NET_WM_PID); 0 when not known.
-fn pid(app: &App, w: &Window) -> u32 {
+pub fn pid(app: &App, w: &Window) -> u32 {
     if let Some(x) = w.x11_surface() {
         return x.pid().unwrap_or(0);
     }

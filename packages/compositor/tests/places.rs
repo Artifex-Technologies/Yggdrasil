@@ -117,13 +117,47 @@ fn places_kept_on_hyprland_are_used_kept_clear_of_the_bar_and_skipped_off_screen
     let away = c.window("test.away", "Away");
     c.draw(&away, (600, 400), YELLOW);
     assert_eq!(settle(&comp, &mut c, &away, "Away", YELLOW).rect(), (340, 176, 600, 400), "that spot is on no screen: centred");
+    // (both windows are the same program here, one process: the first to close is not kept, as in the session)
     close(&comp, &mut c, away, "Away");
     close(&comp, &mut c, under, "Under");
     assert_eq!(
         std::fs::read_to_string(places_file(&comp.dir)).unwrap(),
-        "test.away\t340\t176\t600\t400\ntest.under\t200\t32\t600\t400\n",
-        "both kept again, in the session's form"
+        "test.away\t5000\t5000\t600\t400\ntest.under\t200\t32\t600\t400\n",
+        "the last one kept again, in the session's form"
     );
+}
+
+#[test]
+fn a_kept_place_too_big_for_the_screen_is_made_to_fit_and_dialogs_are_not_kept() {
+    let _l = limit(60, "places that no longer fit, dialogs");
+    // kept at scale 1 on a bigger screen (VS Code's 1208x806), and a dialog's place kept by the session before 2026-11-13
+    let comp = Compositor::start_with(&["--size", "1280x720"], |dir| {
+        let p = places_file(dir);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, "test.code\t50\t20\t1208\t806\ntest.dialog\t10\t10\t500\t300\n").unwrap();
+    });
+    let mut c = comp.connect();
+    let _bar = bar(&mut c);
+    // the free room is 0,32 1280x688: the kept size is made to fit it less the gap of 8, centred (keep-clear.lua's open)
+    let main = c.window("test.code", "Main");
+    c.draw(&main, (640, 480), BLUE);
+    assert_eq!(settle(&comp, &mut c, &main, "Main", BLUE).rect(), (36, 40, 1208, 672));
+    // a dialog of the same process with another class: no kept place for it, centred as any new window
+    let dialog = c.window("test.dialog", "Trust");
+    c.draw(&dialog, (300, 200), YELLOW);
+    assert_eq!(settle(&comp, &mut c, &dialog, "Trust", YELLOW).rect(), (490, 276, 300, 200));
+    // ...and closing it keeps nothing: its program still has a window
+    close(&comp, &mut c, dialog, "Trust");
+    let file = || std::fs::read_to_string(places_file(&comp.dir)).unwrap();
+    assert_eq!(file(), "test.code\t50\t20\t1208\t806\ntest.dialog\t10\t10\t500\t300\n");
+    // a window that opens bigger than the screen gets the free room less the gap
+    let wide = c.window("test.code", "Wide");
+    c.draw(&wide, (1500, 900), BLUE);
+    assert_eq!(settle(&comp, &mut c, &wide, "Wide", BLUE).rect(), (8, 40, 1264, 672));
+    close(&comp, &mut c, wide, "Wide");
+    // the program's last window closes: kept at the size it has now
+    close(&comp, &mut c, main, "Main");
+    assert_eq!(file(), "test.code\t36\t40\t1208\t672\ntest.dialog\t10\t10\t500\t300\n");
 }
 
 /// The tiling file as Settings > Displays writes it (yggdrasil_conf::tiling::set_outputs).

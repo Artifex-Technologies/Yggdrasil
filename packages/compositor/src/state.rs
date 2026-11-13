@@ -836,18 +836,30 @@ impl App {
         if !self.floating_shown().contains(w) {
             return;
         }
-        let zone = self.free_area(&self.window_output(w));
+        let o = self.window_output(w);
+        let (screen, zone) = (output_rect(&o), self.free_area(&o));
         let size = w.geometry().size;
-        let r = self.remembered_place(w).unwrap_or_else(|| crate::placement::centred((size.w, size.h), zone));
+        // centred in the free room; one bigger than the room is made as big as it less the outer gap (keep-clear's open)
+        let start = crate::placement::centred((size.w, size.h), zone);
+        let opened = crate::placement::open(start, screen, zone, self.look.gaps_out).unwrap_or(start);
+        let r = self.remembered_place(w).unwrap_or(opened);
         self.place_at(w, r);
         self.space.raise_element(w, true);
     }
 
-    /// Where a new window goes back to (places.rs), kept clear of the bar and the dock; None: it opens as any other.
+    /// Another window of the same program is open: one of the same class or of the same process (VS Code's dialogs are "code",
+    /// its main window "com.microsoft.VSCode"), as the session's window places count them.
+    fn program_has_another(&self, w: &Window, class: &str) -> bool {
+        let pid = crate::wmctl::pid(self, w);
+        self.all_windows().iter().any(|(x, _)| x != w && (title_app(x).1 == class || (pid > 0 && crate::wmctl::pid(self, x) == pid)))
+    }
+
+    /// Where a new window goes back to (places.rs), kept clear of the bar and the dock and no bigger than its screen now (the
+    /// scale may have changed since); None: it opens as any other.
     pub fn remembered_place(&self, w: &Window) -> Option<Rectangle<i32, Logical>> {
         let class = title_app(w).1;
         let p = *self.places.get(&class)?;
-        if self.all_windows().iter().any(|(x, _)| x != w && title_app(x).1 == class) {
+        if self.program_has_another(w, &class) {
             return None;
         }
         let mid = Point::<f64, Logical>::from(((p.loc.x + p.size.w / 2) as f64, (p.loc.y + p.size.h / 2) as f64));
@@ -855,7 +867,7 @@ impl App {
             return None;
         }
         let (screen, zone) = self.screen_of(p);
-        Some(crate::placement::fit(p, screen, zone).unwrap_or(p))
+        Some(crate::placement::open(p, screen, zone, self.look.gaps_out).unwrap_or(p))
     }
 
     /// A program's window closes: when it was its last one and a plain floating window (not tiled, maximized, full screen or
@@ -872,7 +884,7 @@ impl App {
             return;
         }
         let class = title_app(w).1;
-        if !crate::places::usable_class(&class) || self.all_windows().iter().any(|(x, _)| x != w && title_app(x).1 == class) {
+        if !crate::places::usable_class(&class) || self.program_has_another(w, &class) {
             return;
         }
         let Some(loc) = self.space.element_location(w).or_else(|| self.parked.iter().find(|(x, _, _)| x == w).map(|(_, _, at)| *at)) else {
