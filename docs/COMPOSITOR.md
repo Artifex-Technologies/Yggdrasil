@@ -77,6 +77,10 @@ The control socket got the desktop commands they use (`src/wmctl.rs`: windows wi
 pointer, placing, maximizing, minimizing and closing windows); a window's title can no longer add lines to an answer, and programs it
 starts never get Hyprland's signature. Proof on Hyprland with recorded Hyprland 0.57.1 answers, on this compositor in the headless
 tests (`tests/tools.rs`, `tests/apps.rs`): details and what still calls hyprctl in [packages/compositor/README.md](../packages/compositor/README.md).
+Later that day the rest moved too: the Task Manager, the clipboard's paste, `yggdrasil-logout`, Settings (Displays, reload, the
+shortcuts list, focusing a pop-out), the game fixes, the pointer theme, the shortcuts card and config-error toast, the browser
+warm-up, the portal, the screenshot tool and splash, xmove and the installer's keyboard try-out; the control socket gained the
+commands for them (window processes, layers, bindings, reload, paste, the pointer theme, the keyboard layout, exit).
 
 ## Status (2026-10-18): first version, runs nested in a window only
 

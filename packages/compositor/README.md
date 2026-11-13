@@ -23,7 +23,7 @@ so nothing it starts can reach the running desktop. A control socket (`yggdrasil
 | `focus`, `workspace`, `lock` | what has the keyboard; the workspace showing; the lock and its surfaces |
 | `key super+ctrl+2`, `type TEXT`, `pointer X Y`, `click [left\|right\|middle]` | input made inside the compositor (US layout) |
 | `quit` | end it |
-| `clients`, `active`, `workspaces`, `workspace N`, `activate`/`close`/`minimize ID`, `maximize ID on\|off\|toggle`, `send ID N`, `place ID X Y W H`, `cursor`, `screens`, `pointer-timeout [S]`, `modifiers` | the desktop commands Yggdrasil's own tools use through yggdrasil-wm (`src/wmctl.rs`; below): no input, nothing outside the compositor |
+| `clients`, `active`, `workspaces`, `workspace N`, `activate`/`close`/`minimize ID`, `maximize ID on\|off\|toggle`, `send ID N`, `place ID X Y W H`, `cursor`, `screens`, `layers`, `binds`, `reload`, `pointer-timeout [S]`, `cursor-theme [NAME SIZE]`, `keyboard [LAYOUT [VARIANT]]`, `modifiers`, `paste ctrl\|ctrl+shift`, `exit` | the desktop commands Yggdrasil's own tools use through yggdrasil-wm (`src/wmctl.rs`; below): nothing outside the compositor; the only key presses are `paste`'s Ctrl+V into the window with the keyboard (as Hyprland's sendshortcut), refused while locked |
 
 Headless it also offers wlr-screencopy (grim, yggdrasil-shot, Sunshine's shared-memory path) and wlr-output-power (yggdrasil-idle),
 served from the pictures in memory.
@@ -35,8 +35,8 @@ served from the pictures in memory.
 | `src/*` unit tests (28) | options, sizes and scales, the refused runtime folder and session bus, shortcuts, tiling, placement (the same cases as `keep-clear.lua`) | `cargo test`, CI `rust` |
 | `tests/headless.rs` (6) | outputs (size, scale, name, place), a bar and a window drawn where they belong, size and scale changes reaching programs, `quit` | `cargo test`, CI `rust` |
 | `tests/behaviour.rs` (14) | with the tests' own small clients: the bar and dock reserve their room; windows open centred in the rest, kept clear of a dock that appears, back from maximize at a normal size; Super+Up/Left/Down; full screen over the bar and dock; workspaces by keys; the keyboard following new windows, clicks and an exclusive panel, typing reaching the window; the lock on every output taking every key, a second locker refused, a crashed one leaving the screen locked and a new one taking over; only the media keys' shortcuts working while locked; screen copies (whole, part, scale 2, with damage, while locked, a wrong buffer); grim's picture equal to the screen; screens off and on; idle and resume | `cargo test`, CI `rust` and `compositor-headless` |
-| `tests/tools.rs` (4) | yggdrasil-wm, the layer Yggdrasil's tools share, on it: found before a Hyprland named in the environment; windows, screens, the free room, the pointer and the desktops read; desktops shown and a window sent to another; a window placed, snapped, maximized and back, minimized and closed; a tiled one floated where it is put; the pointer timeout set and put back; a title with a line break stays one line | `cargo test`, CI `rust` and `compositor-headless` |
-| `tests/apps.rs` (5) | Yggdrasil's real programs inside it: the panel (bar, dock, wallpaper drawn; the free room; the terminal stand-in centred and maximized into it; a notification toast that leaves the keyboard alone; the start menu taking the keyboard and giving it back; a smaller screen), the panel's desktop buttons ("+" makes and shows desktop 2, desktop 1's button goes back) and window zones (Super+Shift+Z's sheet for the window in front, a click on the left zone puts it there), `yggdrasil-snap` (the four halves of the free room, maximize and back, minimize) and `yggdrasil-close` (a keep-running program minimized, any other asked to close), Settings (egui drawn by Mesa in software: centred at 1060x720, drawn, Super+Up and back, Super+Q ends it), the lock screen in its test-auth build (two outputs, one at 1.5, nothing of the session shows, a wrong password keeps it locked, the right one unlocks and the keyboard goes back) | CI `compositor-headless`; on a desktop `tests/apps-podman.sh` |
+| `tests/tools.rs` (6) | yggdrasil-wm, the layer Yggdrasil's tools share, on it: found before a Hyprland named in the environment; windows (with their processes), screens, the free room, the pointer and the desktops read; desktops shown and a window sent to another; a window placed, snapped, maximized and back, minimized and closed; a tiled one floated where it is put; the pointer timeout set and put back; a title with a line break stays one line; the Task Manager's bring-to-front and close, the clipboard's paste into an editor and a terminal (none into the lock screen), Settings' focus by class, the shortcut list, reload, the pointer theme, the keyboard layout, layers; exit ends it | `cargo test`, CI `rust` and `compositor-headless` |
+| `tests/apps.rs` (7) | Yggdrasil's real programs inside it: the panel (bar, dock, wallpaper drawn; the free room; the terminal stand-in centred and maximized into it; a notification toast that leaves the keyboard alone; the start menu taking the keyboard and giving it back; a smaller screen), the panel's desktop buttons ("+" makes and shows desktop 2, desktop 1's button goes back) and window zones (Super+Shift+Z's sheet for the window in front, a click on the left zone puts it there), `yggdrasil-snap` (the four halves of the free room, maximize and back, minimize) and `yggdrasil-close` (a keep-running program minimized, any other asked to close), `yggdrasil-logout` with stand-ins as its only PATH (every window asked; all closed: the session ends; one stays: the screen locks and the session goes on), Settings (egui drawn by Mesa in software: centred at 1060x720, drawn, Super+Up and back, Super+Q ends it), the lock screen in its test-auth build (two outputs, one at 1.5, nothing of the session shows, a wrong password keeps it locked, the right one unlocks and the keyboard goes back) | CI `compositor-headless`; on a desktop `tests/apps-podman.sh` |
 
 Every test starts its own compositor in a private folder, has a time limit (the test program ends past it), and every process it
 starts dies with it. The programs get an empty environment, the compositor's private runtime folder and home, and a session bus of
@@ -59,17 +59,24 @@ socket is spoken to only when it is a socket owned by this user. On this composi
 stay on wlr-foreign-toplevel (the standard protocol); the rest goes through the desktop commands above.
 
 Moved to it: the panel's desktop buttons (reading, showing, adding and removing desktops), window zones and Snap Assist, the dock's
-minimize and restore (Hyprland's hidden "minimized" workspace), the pointer finder, the focused screen and the screens' layout;
-`yggdrasil-snap` and `yggdrasil-close` (now Rust programs in that crate, built by the session package); `yggdrasil-idle`'s pointer
-hiding.
+minimize and restore (Hyprland's hidden "minimized" workspace), the pointer finder, the focused screen, the screens' layout, the
+shortcuts card and Hyprland's config-error toast; `yggdrasil-snap`, `yggdrasil-close` and `yggdrasil-logout` (now Rust programs in
+that crate, built by the session package); `yggdrasil-idle`'s pointer hiding; the Task Manager's windows, close and bring-to-front;
+the clipboard's paste; Settings' Displays, reload, shortcuts list and pop-out focus; the game fixes' screen size; the pointer
+theme (`ygg-theme cursor`); the browser warm-up's window check; the portal's window in front; the screenshot tool's windows and
+the splash's wait for the desktop; `yggdrasil-xmove` (Hyprland-only, through the layer's bounded raw request); the installer's
+keyboard try-out. The Task Manager and xmove keep sending the exact requests they wrote to the socket themselves.
 
 Proof that nothing changes on Hyprland: `packages/wm/tests/hyprland.rs` answers from Hyprland 0.57.1's recorded replies (every key,
 its order and the formatting as recorded with read-only `hyprctl -j` queries; titles, classes, addresses and screens made up) on a
 stand-in socket that writes down each request: every tool sends the bytes hyprctl sent (`wire.txt`, recorded from hyprctl against a
 stand-in socket in a sandbox), in the same order. The old shell scripts and the new snap and close programs were also run side by
 side against one stand-in in a sandbox (the scripts with the real hyprctl): every side, with and without tiling screens and a
-keep-running list, the same requests and exit codes (the scripts looked at the screens twice, the programs once). Proof on this
-compositor: `tests/tools.rs` and `tests/apps.rs` above.
+keep-running list, the same requests and exit codes (the scripts looked at the screens twice, the programs once); so were the old
+log-out script and the clipboard's paste line (all windows closed or one left; an editor and a terminal): the same requests, calls
+of the system's programs, exit codes and files. The parity harnesses of the game fixes (466 cases) and of ygg-theme (766) give the
+Rust side a stand-in Hyprland socket that writes the same call down as the hyprctl stand-in: all the same as the Python scripts.
+Proof on this compositor: `tests/tools.rs` and `tests/apps.rs` above.
 
 ## What it matches of Yggdrasil's Hyprland session
 
@@ -101,14 +108,13 @@ by the program's own title bar, Super+drag, xdg-activation, idle inhibit, clipbo
 start menu.
 
 **Not yet (the gap), in the order I would close it:**
-1. **The rest of our tools that speak to Hyprland directly** (the panel, `yggdrasil-snap`, `yggdrasil-close` and the idle manager's
-   pointer moved to yggdrasil-wm on 2026-11-12, above): the Task Manager's window list, the clipboard's paste into the window in
-   front, `yggdrasil-logout` closing windows, the browser warm-up's window check, the portal's and the installer's look at the window
-   in front, the screenshot tool's window list, Settings' "focus that window", the game fixes' screen size and the cursor theme: each
-   a small move to the same layer. Hyprland's own things go with the items below: Settings > Displays and its reload (3), the
-   shortcut lists read from `binds` (2), Hyprland's config-error toast, hyprsunset, `yggdrasil-xmove` and the Hyprland plugin (8).
-   The control socket also has to exist on the real session (today only headless), and ext-workspace and ext-foreign-toplevel-list
-   would let other programs see this compositor's desktops and windows the standard way.
+1. **What is left of "our tools call hyprctl"** (every tool moved to yggdrasil-wm on 2026-11-12, above). Hyprland's own on purpose:
+   hyprsunset's night light (its own socket; this compositor has no gamma control yet, item 9), the Hyprland plugin builder
+   (`yggdrasil-hypr-plugin`), the magnifier (`yggdrasil-zoom`, Hyprland's zoom; item 2), the config-error toast's event socket and
+   xmove (both do nothing elsewhere), and Settings' own Hyprland file and night light. Settings > Displays lists this compositor's
+   screens but cannot change them yet (wlr-output-management, item 3). Still to come: the control socket on the real session
+   (today only headless), and ext-workspace and ext-foreign-toplevel-list so other programs see this compositor's desktops and
+   windows the standard way.
 2. **The shortcut table:** Super+N, Super+W, Super+Shift+M (minimized
    windows), Super+Shift+Z (zones), Print and Super+Shift+S (yggdrasil-shot), Super+Shift+C, Super+/, Ctrl+Shift+Esc, the
    magnifier (Super+Alt+=/-/0) and the screen reader (Super+Alt+S), the Ctrl double-tap (release binds that do not consume the

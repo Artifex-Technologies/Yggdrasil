@@ -27,7 +27,8 @@ The `yggdrasil-browser-warm` user service checks every minute.
   background.
 - **Restarting:** it restarts the background browser only when the browser was updated (its program on disk was
   replaced) or your default browser changed. Even then, it only restarts it when it has no windows open and pacman is
-  not installing anything. It finds open windows through Hyprland (`hyprctl clients`). When it cannot tell whether
+  not installing anything. It finds open windows through the compositor (yggdrasil-wm: Hyprland's
+  window list on its socket, or Yggdrasil's own compositor's). When it cannot tell whether
   windows are open, it does not restart anything.
 - **Quitting:** if you quit the browser from its menu, it is started again in the background within a minute. To turn
   this off, run `systemctl --user disable --now yggdrasil-browser-warm`. Stopping the service also stops the background

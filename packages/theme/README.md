@@ -18,7 +18,8 @@ time (no python-gobject), and replaces its colours as the script did; without li
 `cargo test` carries the script's tests over (the colour scheme, the GTK colours, ini files, apply with and without KDE
 programs). `parity/compare.py` runs both on the same inputs: every print command in many accents, GTK 4's own theme
 retinted in 47 accents dark and light, and apply and cursor on every combination of files that may be there before, with
-stand-ins for gsettings, systemctl, hyprctl and pkill; output, calls and files must be the same.
+stand-ins for gsettings, systemctl, hyprctl and pkill (and, for the Rust side, which sets the pointer through yggdrasil-wm, a
+stand-in Hyprland socket that writes the same call down); output, calls and files must be the same.
 
 ## ygg-cursors
 
