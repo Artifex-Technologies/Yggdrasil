@@ -2759,6 +2759,39 @@ impl App {
             }
             ui.add_space(8.0);
         }
+        // A laptop's cooling: the firmware runs the fans (no manual control: the owner's choice, 2026-11-13); shown so you can see
+        // what it does, and the power mode below switches the firmware's thermal profile with it
+        if let (Some(c), false) = (&p.laptop_cooling, fans::installed()) {
+            ui::group(ui, pal, Some("Cooling"), |ui| {
+                let mut first = true;
+                for (i, rpm) in c.fans.iter().enumerate() {
+                    let title = if c.fans.len() > 1 { format!("Fan {}", i + 1) } else { "Fan".to_string() };
+                    let note = if *rpm == 0 { "Stopped" } else { "Run by the laptop's firmware" };
+                    ui::row(ui, pal, first, &title, Some(note), |ui| {
+                        ui.label(format!("{rpm} RPM"));
+                    });
+                    first = false;
+                }
+                if let Some(t) = c.cpu_temp {
+                    ui::row(ui, pal, first, "Processor", None, |ui| {
+                        ui.label(format!("{t} °C"));
+                    });
+                    first = false;
+                }
+                let profile = match c.thermal.as_deref() {
+                    Some("low-power") => Some("Quiet: the firmware keeps the fans low"),
+                    Some("balanced") => Some("Balanced"),
+                    Some("performance") => Some("Performance: the firmware lets the fans run faster"),
+                    _ => None,
+                };
+                if let Some(pr) = profile {
+                    ui::row(ui, pal, first, "Thermal profile", Some("Follows the power mode below"), |ui| {
+                        ui.label(pr);
+                    });
+                }
+            });
+            ui.add_space(8.0);
+        }
         let mut profile: Option<String> = None;
         // Developer options add the selected mode's limits under the mode itself: the processor's clock, then the graphics
         // card's power (and, on a card in the unlock's support table, the unlock). Choosing another mode shows that mode's.

@@ -939,6 +939,45 @@ pub struct Power {
     pub unlock: Option<GpuUnlock>,
     /// A laptop's battery; None on a computer without one (the Battery section is left out).
     pub battery: Option<Battery>,
+    /// A laptop's fans and processor temperature, shown (not set: the firmware runs them) on a computer with a battery.
+    pub laptop_cooling: Option<LaptopCooling>,
+}
+
+/// What a laptop's firmware is doing with its fans.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LaptopCooling {
+    /// Each fan's speed in RPM, in hwmon's order.
+    pub fans: Vec<i64>,
+    /// The processor's temperature in °C (coretemp's package sensor, or k10temp's Tctl).
+    pub cpu_temp: Option<i64>,
+    /// The firmware's thermal profile (/sys/firmware/acpi/platform_profile: low-power, balanced, performance), which
+    /// power-profiles-daemon switches with the power mode.
+    pub thermal: Option<String>,
+}
+
+/// One hwmon folder's (name, fan speeds, first temperature in °C).
+pub fn read_hwmon(dir: &std::path::Path) -> (String, Vec<i64>, Option<i64>) {
+    let read = |f: &str| std::fs::read_to_string(dir.join(f)).ok().map(|s| s.trim().to_string());
+    let name = read("name").unwrap_or_default();
+    let fans = (1..=8).filter_map(|i| read(&format!("fan{i}_input")).and_then(|v| v.parse().ok())).collect();
+    let temp = read("temp1_input").and_then(|v| v.parse::<i64>().ok()).map(|m| (m as f64 / 1000.0).round() as i64);
+    (name, fans, temp)
+}
+
+/// The fans to show: the laptop vendor's driver (thinkpad, dell_smm, asus...) rather than ACPI's generic copy of the same fan.
+pub fn laptop_cooling_from(hwmons: &[(String, Vec<i64>, Option<i64>)], thermal: Option<String>) -> Option<LaptopCooling> {
+    let vendor = hwmons.iter().find(|(n, f, _)| !f.is_empty() && n != "acpi_fan");
+    let fans = vendor.or_else(|| hwmons.iter().find(|(_, f, _)| !f.is_empty())).map(|(_, f, _)| f.clone()).unwrap_or_default();
+    let cpu_temp = hwmons.iter().find(|(n, _, t)| (n == "coretemp" || n == "k10temp") && t.is_some()).and_then(|(_, _, t)| *t);
+    (!fans.is_empty() || cpu_temp.is_some()).then_some(LaptopCooling { fans, cpu_temp, thermal })
+}
+
+fn laptop_cooling() -> Option<LaptopCooling> {
+    let mut dirs: Vec<std::path::PathBuf> = std::fs::read_dir("/sys/class/hwmon").ok()?.flatten().map(|e| e.path()).collect();
+    dirs.sort();
+    let hwmons: Vec<_> = dirs.iter().map(|d| read_hwmon(d)).collect();
+    let thermal = std::fs::read_to_string("/sys/firmware/acpi/platform_profile").ok().map(|s| s.trim().to_string());
+    laptop_cooling_from(&hwmons, thermal)
 }
 
 /// `/usr/lib/yggdrasil/battery json`.
@@ -1102,7 +1141,8 @@ pub fn power() -> Power {
     };
     let unlock = if limits.as_ref().is_some_and(|l| l.gpu.is_some()) { gpu_unlock() } else { None };
     let battery = run("/usr/lib/yggdrasil/battery", &["json"]).and_then(|s| parse_battery(&s));
-    Power { profile: active, profiles, limits, unlock, idle: read_idle(), battery }
+    let laptop_cooling = if battery.is_some() { laptop_cooling() } else { None };
+    Power { profile: active, profiles, limits, unlock, idle: read_idle(), battery, laptop_cooling }
 }
 
 /// What to do as the user stays away, in minutes (0 = never), and whether this computer can sleep and hibernate.
@@ -1523,6 +1563,20 @@ mod tests {
             profiles("  performance:\n    CpuDriver:\tintel_pstate\n\n* balanced:\n    CpuDriver:\tintel_pstate\n\n  power-saver:\n");
         assert_eq!(n, vec!["performance", "balanced", "power-saver"]);
         assert_eq!(a, "balanced");
+    }
+
+    #[test]
+    fn a_laptops_fans_come_from_its_vendor_driver() {
+        let h = |n: &str, f: &[i64], t: Option<i64>| (n.to_string(), f.to_vec(), t);
+        let hwmons = [
+            h("acpi_fan", &[6300], None),
+            h("acpitz", &[], Some(56)),
+            h("thinkpad", &[6329, 5917], Some(56)),
+            h("coretemp", &[], Some(57)),
+        ];
+        let c = laptop_cooling_from(&hwmons, Some("balanced".into())).unwrap();
+        assert_eq!((c.fans, c.cpu_temp, c.thermal.as_deref()), (vec![6329, 5917], Some(57), Some("balanced")));
+        assert_eq!(laptop_cooling_from(&[h("nvme", &[], None)], None), None);
     }
 
     #[test]
