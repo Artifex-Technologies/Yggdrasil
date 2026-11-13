@@ -1,5 +1,6 @@
 # Yggdrasil's own desktop session: Hyprland with Yggdrasil's config (built from packages/session in this repository), and the
-# session's window keys yggdrasil-snap and yggdrasil-close (Rust, from packages/wm: they work on Yggdrasil's own compositor too).
+# session's window keys yggdrasil-snap and yggdrasil-close and its careful log-out yggdrasil-logout (Rust, from packages/wm: they
+# work on Yggdrasil's own compositor too).
 pkgname=yggdrasil-session
 pkgver=1.0.0
 pkgrel=1
@@ -35,7 +36,7 @@ package() {
   install -Dm755 "$_src/bin/yggdrasil-session" "$pkgdir/usr/bin/yggdrasil-session"
   install -Dm755 "$srcdir/target/release/yggdrasil-snap" "$pkgdir/usr/bin/yggdrasil-snap"
   install -Dm755 "$srcdir/target/release/yggdrasil-close" "$pkgdir/usr/bin/yggdrasil-close"
-  install -Dm755 "$_src/bin/yggdrasil-logout" "$pkgdir/usr/bin/yggdrasil-logout"
+  install -Dm755 "$srcdir/target/release/yggdrasil-logout" "$pkgdir/usr/bin/yggdrasil-logout"
   install -Dm755 "$_src/bin/yggdrasil-zoom" "$pkgdir/usr/bin/yggdrasil-zoom"
   install -Dm755 "$_src/bin/yggdrasil-screen-reader" "$pkgdir/usr/bin/yggdrasil-screen-reader"
   install -Dm755 "$_src/bin/yggdrasil-hypr-plugin" "$pkgdir/usr/bin/yggdrasil-hypr-plugin"
