@@ -417,6 +417,9 @@ struct State {
     /// A volume slider being dragged: which one, its rectangle, and the last level and time sent.
     drag: Option<(fylgja::Slider, (f32, f32, f32, f32))>,
     drag_sent: (std::time::Instant, u32),
+    /// A pinned dock app pressed with the left button: its id, where the press was (on the dock, logical pixels) and whether it
+    /// is being dragged. Released without moving it is a click; dragged along the dock it moves to another place.
+    dock_press: Option<(String, (f32, f32), bool)>,
     /// The thread that runs hyprsunset (Night Light).
     night_tx: std::sync::mpsc::Sender<nightlight::Cmd>,
     /// Nothing was playing when the small card was last asked for: do not ask again for a few seconds.
@@ -3508,6 +3511,45 @@ impl State {
         Some((id, along))
     }
 
+    /// The pointer moved with a pinned dock app pressed: once it has gone a few pixels along the dock the app is dragged, and
+    /// it takes the place of the pinned app under the pointer as it goes (the others move aside at once).
+    fn dock_drag_moved(&mut self) {
+        let Some((id, start, dragging)) = self.dock_press.clone() else { return };
+        let vertical = self.model.conf.dock_pos.vertical();
+        let (px, py) = self.pointer_pos;
+        if !dragging {
+            let moved = if vertical { py - start.1 } else { px - start.0 };
+            if moved.abs() < 8.0 {
+                return;
+            }
+            // the window list that was about to open (or is open) steps aside for the drag
+            self.dock_hover = None;
+            if self.windows_popup_open() {
+                self.close_popup();
+            }
+            self.dock_press = Some((id.clone(), start, true));
+        }
+        let shown: Vec<String> =
+            shell::dock_items(&self.model).into_iter().filter(|it| it.pinned && it.app_id != shell::TRASH_ID).map(|it| it.app_id).collect();
+        let slot = shell::dock_slot(if vertical { py } else { px }, self.model.conf.dock_icon);
+        let new = shell::reorder_pinned(&self.model.pinned, &shown, &id, slot);
+        if new != self.model.pinned {
+            self.model.pinned = new;
+            self.dirty = true;
+        }
+    }
+
+    /// The left button came up: a dragged dock app stays where it was dropped (the order is saved), an undragged one was a click.
+    fn dock_drag_released(&mut self) {
+        let Some((id, _, dragging)) = self.dock_press.take() else { return };
+        if dragging {
+            apps::save_pinned(&self.model.pinned);
+            self.dirty = true;
+        } else {
+            self.click(Action::Dock(id));
+        }
+    }
+
     fn hover_at(&mut self, x: f32, y: f32) {
         let Some(i) = self.pointer_surface else { return };
         let s = self.scale_of(&self.surfs[i]);
@@ -3885,6 +3927,10 @@ fn pointer_event(state: &mut State, event: wl_pointer::Event) {
                     state.drag_apply(false);
                     return;
                 }
+                if state.dock_press.is_some() {
+                    state.dock_drag_moved();
+                    return;
+                }
                 if state.fylgja_pointer_moved() || state.preview_pointer_moved() {
                     return;
                 }
@@ -3938,6 +3984,7 @@ fn pointer_event(state: &mut State, event: wl_pointer::Event) {
                     state.drag_apply(true);
                     state.drag = None;
                 }
+                state.dock_drag_released();
             }
             wl_pointer::Event::Button { state: WEnum::Value(wl_pointer::ButtonState::Pressed), button, .. } => {
                 // the shortcuts card: a click anywhere closes it
@@ -4079,6 +4126,13 @@ fn pointer_event(state: &mut State, event: wl_pointer::Event) {
                         state.click_output = state.surfs.get(i).map(|s| s.output);
                         if let Some(h) = state.surfs.get(i).and_then(|s| s.hover) {
                             if let Some(hit) = state.surfs[i].hits.get(h).cloned() {
+                                // a pinned dock app may be dragged to another place: its click waits for the release
+                                if let Action::Dock(id) = &hit.action {
+                                    if state.model.pinned.contains(id) {
+                                        state.dock_press = Some((id.clone(), state.pointer_pos, false));
+                                        return;
+                                    }
+                                }
                                 state.click(hit.action);
                             }
                         }
@@ -4375,6 +4429,7 @@ fn main() {
         fy_shared: Arc::new(std::sync::Mutex::new(Default::default())),
         drag: None,
         drag_sent: (std::time::Instant::now(), 101),
+        dock_press: None,
         night_tx: nightlight::spawn(),
         peek_blocked: None,
         osd: None,

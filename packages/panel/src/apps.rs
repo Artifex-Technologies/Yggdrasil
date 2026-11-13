@@ -15,6 +15,8 @@ pub struct App {
     pub categories: Vec<String>,
     /// Terminal=true: a command-line program, started in a terminal.
     pub terminal: bool,
+    /// Other words the app is found by, lowercase: its GenericName ("app store") and Keywords ("store", "marketplace").
+    pub keywords: Vec<String>,
 }
 
 /// The desktop's names as programs see them (XDG_CURRENT_DESKTOP, e.g. "Yggdrasil"), lowercase, for OnlyShowIn/NotShowIn.
@@ -57,6 +59,7 @@ pub fn parse_entry_for(id: &str, text: &str, desktops: &[String]) -> Option<App>
             "NoDisplay" => app.no_display = v == "true",
             "Terminal" => app.terminal = v == "true",
             "Categories" => app.categories = v.split(';').filter(|c| !c.is_empty()).map(str::to_string).collect(),
+            "GenericName" | "Keywords" => app.keywords.extend(v.split(';').map(|w| w.trim().to_lowercase()).filter(|w| !w.is_empty())),
             "OnlyShowIn" => only_in = v.to_lowercase(),
             "NotShowIn" => not_in = v.to_lowercase(),
             "Hidden" if v == "true" => return None,

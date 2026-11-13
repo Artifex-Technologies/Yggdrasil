@@ -321,6 +321,28 @@ pub fn dock_peeks(pos: DockPos, out: (f32, f32, f32, f32), reach: f32, (px, py):
     }
 }
 
+/// Which dock slot (an index into `dock_items`) is under `along`, the pointer's place along the dock in logical pixels.
+pub fn dock_slot(along: f32, icon: u32) -> usize {
+    ((along - PAD_X + GAP / 2.0) / (icon as f32 + GAP)).floor().max(0.0) as usize
+}
+
+/// The pinned list with `id` moved to where the pinned app `shown[slot]` is now (`shown`: the pinned apps the dock shows, in
+/// order; a pinned app that is not installed is not shown but keeps its place in the list). A slot past the last shown app
+/// means the last one.
+pub fn reorder_pinned(pinned: &[String], shown: &[String], id: &str, slot: usize) -> Vec<String> {
+    let Some(target) = shown.get(slot.min(shown.len().saturating_sub(1))) else { return pinned.to_vec() };
+    let (Some(from), Some(to)) = (pinned.iter().position(|p| p == id), pinned.iter().position(|p| p == target)) else {
+        return pinned.to_vec();
+    };
+    if from == to {
+        return pinned.to_vec();
+    }
+    let mut out = pinned.to_vec();
+    let moved = out.remove(from);
+    out.insert(to, moved);
+    out
+}
+
 /// The dock's size in logical pixels for the current items: wide on the bottom, tall on a side.
 pub fn dock_size(items: &[DockItem], icon: u32, pos: DockPos) -> (u32, u32) {
     let n = items.len().max(1) as f32;
@@ -1125,7 +1147,8 @@ pub fn all_apps(apps: &[App]) -> Vec<&App> {
     v
 }
 
-/// What matches a search: names that start with it first, then names that contain it.
+/// What matches a search: names that start with it first, then names that contain it, then apps one of whose other words
+/// (GenericName, Keywords: "store" finds Agora) starts with it.
 pub fn search_apps<'a>(apps: &'a [App], q: &str) -> Vec<&'a App> {
     let q = q.trim().to_lowercase();
     if q.is_empty() {
@@ -1133,15 +1156,19 @@ pub fn search_apps<'a>(apps: &'a [App], q: &str) -> Vec<&'a App> {
     }
     let mut starts: Vec<&App> = vec![];
     let mut has: Vec<&App> = vec![];
+    let mut word: Vec<&App> = vec![];
     for a in all_apps(apps) {
         let n = a.name.to_lowercase();
         if n.starts_with(&q) {
             starts.push(a);
         } else if n.contains(&q) {
             has.push(a);
+        } else if a.keywords.iter().any(|k| k.starts_with(&q) || k.split(' ').any(|w| w.starts_with(&q))) {
+            word.push(a);
         }
     }
     starts.extend(has);
+    starts.extend(word);
     starts
 }
 
@@ -1835,6 +1862,48 @@ pub fn paint_dock(pix: &mut Pixmap, s: f32, m: &Model, fonts: &Fonts, icons: &mu
 
 #[cfg(test)]
 mod tests {
+    fn ids(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn a_dragged_dock_icon_takes_the_place_of_the_one_under_the_pointer() {
+        let pinned = ids(&["a", "b", "c", "d"]);
+        assert_eq!(super::reorder_pinned(&pinned, &pinned, "a", 2), ids(&["b", "c", "a", "d"]));
+        assert_eq!(super::reorder_pinned(&pinned, &pinned, "d", 0), ids(&["d", "a", "b", "c"]));
+        assert_eq!(super::reorder_pinned(&pinned, &pinned, "b", 1), pinned);
+        // past the last pinned app (a running app or the trash): the end of the pinned ones
+        assert_eq!(super::reorder_pinned(&pinned, &pinned, "a", 9), ids(&["b", "c", "d", "a"]));
+        // "x" is pinned but not installed, so not shown: it keeps its place
+        let with_missing = ids(&["a", "x", "b", "c"]);
+        assert_eq!(super::reorder_pinned(&with_missing, &ids(&["a", "b", "c"]), "c", 1), ids(&["a", "x", "c", "b"]));
+    }
+
+    #[test]
+    fn an_app_is_found_by_its_keywords_after_the_names() {
+        let agora = crate::apps::parse_entry(
+            "agora",
+            "[Desktop Entry]\nType=Application\nName=Agora\nGenericName=App Store\nKeywords=apps;store;marketplace;\n",
+        )
+        .unwrap();
+        let store = crate::apps::App { id: "storeman".into(), name: "Storeman".into(), ..Default::default() };
+        let apps = vec![agora, store];
+        let names = |q: &str| super::search_apps(&apps, q).iter().map(|a| a.name.clone()).collect::<Vec<_>>();
+        assert_eq!(names("store"), ["Storeman", "Agora"]);
+        assert_eq!(names("Market"), ["Agora"]);
+        assert_eq!(names("app st"), ["Agora"]);
+        assert!(names("tore").contains(&"Storeman".to_string()) && !names("tore").contains(&"Agora".to_string()));
+    }
+
+    #[test]
+    fn the_dock_slot_changes_halfway_through_the_gap() {
+        // icons of 48 from 14, 10 apart: the first spans 14..62, the second 72..120
+        assert_eq!(super::dock_slot(0.0, 48), 0);
+        assert_eq!(super::dock_slot(66.9, 48), 0);
+        assert_eq!(super::dock_slot(67.1, 48), 1);
+        assert_eq!(super::dock_slot(119.0, 48), 1);
+    }
+
     #[test]
     fn the_dock_peeks_over_a_full_screen_window_from_its_edge() {
         let out = (0.0, 0.0, 1210.0, 834.0);
