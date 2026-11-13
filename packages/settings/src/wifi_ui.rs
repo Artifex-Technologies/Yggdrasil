@@ -371,17 +371,34 @@ impl App {
         };
         header(ui, pal, state);
         let mut back = false;
-        if saved.wifi {
-            if live.is_some() {
-                if ui::quiet(ui, pal, "Disconnect").clicked() {
+        let mut forget = false;
+        // join (or disconnect) and Delete side by side at the top, where they are seen; Delete asks once more
+        ui.horizontal(|ui| {
+            if saved.wifi {
+                if live.is_some() {
+                    if ui::quiet(ui, pal, "Disconnect").clicked() {
+                        let id = uuid.to_string();
+                        self.change(ctx, move || sys::act("nmcli", &["connection", "down", &id]));
+                    }
+                } else if in_range && ui::action(ui, pal, "Join this network").clicked() {
                     let id = uuid.to_string();
-                    self.change(ctx, move || sys::act("nmcli", &["connection", "down", &id]));
+                    self.change(ctx, move || sys::act("nmcli", &["connection", "up", &id]));
                 }
-            } else if in_range && ui::action(ui, pal, "Join this network").clicked() {
-                let id = uuid.to_string();
-                self.change(ctx, move || sys::act("nmcli", &["connection", "up", &id]));
             }
-        }
+            if !self.net_forget {
+                if ui.button(RichText::new("Delete").color(pal.red)).on_hover_text("Delete this saved network").clicked() {
+                    self.net_forget = true;
+                }
+            } else {
+                ui.label(if saved.wifi { "Its password and settings go; joining again needs the password." } else { "Its settings go." });
+                if ui.button(RichText::new("Delete").color(pal.red)).clicked() {
+                    forget = true;
+                }
+                if ui::quiet(ui, pal, "Keep it").clicked() {
+                    self.net_forget = false;
+                }
+            }
+        });
         if let Some(l) = live {
             ui::group(ui, pal, Some("Connection"), |ui| {
                 let mut first = true;
@@ -603,7 +620,7 @@ impl App {
         });
         ui.add_space(10.0);
         let dirty = d != saved;
-        let (mut save, mut rejoin, mut undo, mut forget) = (false, false, false, false);
+        let (mut save, mut rejoin, mut undo) = (false, false, false);
         if dirty {
             ui.horizontal(|ui| {
                 if ui::action(ui, pal, "Save").clicked() {
@@ -626,22 +643,6 @@ impl App {
                 .color(pal.dim),
             );
         }
-        ui.add_space(14.0);
-        ui.horizontal(|ui| {
-            if !self.net_forget {
-                if ui.button(RichText::new("Forget this network").color(pal.red)).clicked() {
-                    self.net_forget = true;
-                }
-            } else {
-                ui.label(if saved.wifi { "Its password and settings go; joining again needs the password." } else { "Its settings go." });
-                if ui.button(RichText::new("Forget").color(pal.red)).clicked() {
-                    forget = true;
-                }
-                if ui::quiet(ui, pal, "Keep it").clicked() {
-                    self.net_forget = false;
-                }
-            }
-        });
         if undo {
             d = saved.clone();
         }
