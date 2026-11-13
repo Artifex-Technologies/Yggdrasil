@@ -11,7 +11,8 @@ const USAGE: &str = "\
 #   volume-up | volume-down | mute            the sound output (PipeWire, wpctl); the panel shows its own volume pop-up
 #   mic-mute                                   the microphone
 #   play-pause | next | previous | stop        the music player that is running (MPRIS)
-#   brightness-up | brightness-down            the screen brightness (brightnessctl, when installed)
+#   brightness-up | brightness-down            the screen brightness, 5 % a press (brightnessctl when installed, else
+#                                              the backlight through logind, which the person at the computer may set)
 #   display                                    the screens' settings (Settings > Displays)
 #   airplane                                   every radio off (Wi-Fi, Bluetooth), or all back on (rfkill), and says which
 #   notifications                              the notification list
@@ -31,8 +32,8 @@ fn main() {
         "next" => mpris("Next"),
         "previous" => mpris("Previous"),
         "stop" => mpris("Stop"),
-        "brightness-up" => run(&["brightnessctl", "set", "5%+"]),
-        "brightness-down" => run(&["brightnessctl", "set", "5%-"]),
+        "brightness-up" => brightness(5),
+        "brightness-down" => brightness(-5),
         "display" => run(&["yggdrasil-settings", "displays"]),
         "airplane" => airplane(),
         "notifications" => run(&["yggdrasil-panelctl", "notifications"]),
@@ -43,6 +44,68 @@ fn main() {
         }
     };
     std::process::exit(code)
+}
+
+/// The screen brightness, `step` percent up or down. brightnessctl when it is installed; otherwise the built-in screen's
+/// backlight (/sys/class/backlight) set through logind's Session.SetBrightness, which lets the person at the computer change it
+/// without a password and needs nothing installed (a laptop had no brightnessctl, so its brightness keys did nothing,
+/// 2026-11-13).
+fn brightness(step: i32) -> i32 {
+    let sign = if step >= 0 { "+" } else { "-" };
+    match Command::new("brightnessctl").args(["set", &format!("{}%{sign}", step.abs())]).stdout(Stdio::null()).status() {
+        Ok(s) if s.success() => return 0,
+        Ok(_) | Err(_) => {}
+    }
+    let Some((name, now, max)) = backlight(std::path::Path::new("/sys/class/backlight")) else {
+        eprintln!("yggdrasil-mediakey: no screen backlight to change");
+        return 1;
+    };
+    let value = stepped(now, max, step);
+    let mut c = Command::new("busctl");
+    c.args([
+        "call",
+        "org.freedesktop.login1",
+        "/org/freedesktop/login1/session/auto",
+        "org.freedesktop.login1.Session",
+        "SetBrightness",
+        "ssu",
+        "backlight",
+        &name,
+        &value.to_string(),
+    ])
+    .stdout(Stdio::null());
+    status(&mut c)
+}
+
+/// The backlight to change: a laptop panel's own (raw: intel_backlight, amdgpu_bl0...) before the firmware's (acpi_video0),
+/// with its brightness now and its most.
+fn backlight(root: &std::path::Path) -> Option<(String, u32, u32)> {
+    let mut found: Vec<(u8, String, u32, u32)> = std::fs::read_dir(root)
+        .ok()?
+        .flatten()
+        .filter_map(|e| {
+            let d = e.path();
+            let read = |f: &str| std::fs::read_to_string(d.join(f)).ok().map(|s| s.trim().to_string());
+            let max: u32 = read("max_brightness")?.parse().ok().filter(|&m| m > 0)?;
+            let now: u32 = read("brightness")?.parse().ok()?;
+            let rank = match read("type").as_deref() {
+                Some("raw") => 0,
+                Some("platform") => 1,
+                _ => 2,
+            };
+            Some((rank, e.file_name().to_string_lossy().into_owned(), now, max))
+        })
+        .collect();
+    found.sort();
+    found.into_iter().next().map(|(_, n, now, max)| (n, now, max))
+}
+
+/// `step` percent of `max` up or down from `now`, never quite off (1 % at least, so a dark screen can be found again).
+fn stepped(now: u32, max: u32, step: i32) -> u32 {
+    let delta = (max as i64 * step.unsigned_abs() as i64 / 100).max(1);
+    let floor = (max as i64 / 100).max(1);
+    let v = if step >= 0 { now as i64 + delta } else { now as i64 - delta };
+    v.clamp(floor, max as i64) as u32
 }
 
 /// What the star key (F12 on a ThinkPad) is set to do, from keys.conf's `favorite = ...` line.
@@ -164,6 +227,30 @@ mod tests {
         assert_eq!(first_player(list).as_deref(), Some("org.mpris.MediaPlayer2.vlc"));
         assert_eq!(first_player("org.mpris.MediaPlayer2 1 x\n x org.mpris.MediaPlayer2.a\n"), None);
         assert_eq!(first_player(""), None);
+    }
+
+    #[test]
+    fn brightness_steps_and_never_goes_quite_dark() {
+        assert_eq!(stepped(48000, 96000, 5), 52800);
+        assert_eq!(stepped(48000, 96000, -5), 43200);
+        assert_eq!(stepped(96000, 96000, 5), 96000);
+        assert_eq!(stepped(2000, 96000, -5), 960, "1 % at least");
+        assert_eq!(stepped(0, 7, 5), 1);
+    }
+
+    #[test]
+    fn the_panels_own_backlight_comes_first() {
+        let root = std::env::temp_dir().join(format!("ygg-bl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for (n, t, now, max) in [("acpi_video0", "firmware", "50", "100"), ("intel_backlight", "raw", "48000", "96000")] {
+            let d = root.join(n);
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("type"), t).unwrap();
+            std::fs::write(d.join("brightness"), now).unwrap();
+            std::fs::write(d.join("max_brightness"), max).unwrap();
+        }
+        assert_eq!(backlight(&root), Some(("intel_backlight".into(), 48000, 96000)));
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
