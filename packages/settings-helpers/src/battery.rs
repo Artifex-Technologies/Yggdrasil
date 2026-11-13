@@ -221,15 +221,18 @@ pub fn parse_busctl_string(s: &str) -> String {
 
 const PPD: [&str; 3] = ["net.hadess.PowerProfiles", "/net/hadess/PowerProfiles", "net.hadess.PowerProfiles"];
 
-/// The power mode in use and the ones there are (power-profiles-daemon), empty when it is not running.
+/// busctl's answer for Profiles (`aa{sv} 3 2 "Driver" s "..." "Profile" s "performance" ...`) -> the modes it has, in the
+/// drop-down's order.
+pub fn parse_profiles(answer: &str) -> Vec<String> {
+    PROFILES.iter().map(|(id, _, _)| id.to_string()).filter(|id| answer.contains(&format!("\"{id}\""))).collect()
+}
+
+/// The power mode in use and the ones there are (power-profiles-daemon), empty when it is not running. Two busctl calls: the
+/// watch asks every three seconds (it asked for Profiles once per mode, four programs each time).
 pub fn profiles() -> (String, Vec<String>) {
     let get = |prop: &str| out("busctl", &["--system", "get-property", PPD[0], PPD[1], PPD[2], prop]);
     let active = get("ActiveProfile").map(|s| parse_busctl_string(&s)).unwrap_or_default();
-    let list: Vec<String> = PROFILES
-        .iter()
-        .map(|(id, _, _)| id.to_string())
-        .filter(|id| get("Profiles").is_some_and(|s| s.contains(&format!("\"{id}\""))))
-        .collect();
+    let list = get("Profiles").map(|s| parse_profiles(&s)).unwrap_or_default();
     (active, list)
 }
 
@@ -424,7 +427,18 @@ fn json() -> i32 {
     0
 }
 
+/// What may run as root through pkexec: only set-limit. The polkit action (org.yggdrasil.battery.set-limit) names the program,
+/// not its arguments, so without this an administrator's cached password would also run the watch (and its suspend), a press
+/// or restore as root.
+pub fn allowed_through_pkexec(cmd: Option<&str>) -> bool {
+    cmd == Some("set-limit")
+}
+
 pub fn main(args: &[String]) -> i32 {
+    if std::env::var_os("PKEXEC_UID").is_some() && !allowed_through_pkexec(args.first().map(String::as_str)) {
+        eprintln!("battery: only set-limit runs through pkexec");
+        return 2;
+    }
     match args.first().map(String::as_str) {
         Some("watch") => watch(),
         Some("press") => args.get(1).map(|id| press(id)).unwrap_or(2),
@@ -520,6 +534,23 @@ mod tests {
         // plugged in: it starts over
         assert_eq!(low.step(false, 4, t), LowAct::Nothing);
         assert_eq!(low.step(true, 15, t), LowAct::Warn(20));
+    }
+
+    #[test]
+    fn the_modes_come_from_one_answer_in_the_drop_downs_order() {
+        let answer = r#"aa{sv} 3 2 "Driver" s "intel_pstate" "Profile" s "performance" 2 "Driver" s "intel_pstate" "Profile" s "balanced" 2 "Driver" s "platform_profile" "Profile" s "power-saver""#;
+        assert_eq!(parse_profiles(answer), ["power-saver", "balanced", "performance"]);
+        assert_eq!(parse_profiles(r#"aa{sv} 1 2 "Driver" s "placeholder" "Profile" s "balanced""#), ["balanced"]);
+        assert!(parse_profiles("").is_empty());
+    }
+
+    #[test]
+    fn only_set_limit_runs_through_pkexec() {
+        // the polkit action lets an administrator run the program as root with any arguments
+        assert!(allowed_through_pkexec(Some("set-limit")));
+        for other in [Some("watch"), Some("press"), Some("json"), Some("restore"), None] {
+            assert!(!allowed_through_pkexec(other), "{other:?}");
+        }
     }
 
     #[test]
