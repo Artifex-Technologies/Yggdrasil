@@ -190,7 +190,19 @@ pub fn press(
         }
         "units:metric" | "units:us" => {
             let units = &id[6..];
-            (current.is_some() && base.units != units).then(|| Config { units: units.into(), ..base })
+            match &current {
+                Some(c) => (c.units != units).then(|| Config { units: units.into(), ..base }),
+                // nothing saved yet (the place comes from the time zone each time): save that place, in these units; before,
+                // the press did nothing, so Fahrenheit could not be chosen until a place had been set (2026-11-13)
+                None if units == "metric" => None,
+                None => match timezone() {
+                    Ok(f) => Some(Config { units: units.into(), ..at(f, "timezone") }),
+                    Err(e) => {
+                        st.status = e;
+                        None
+                    }
+                },
+            }
         }
         _ => {
             if let Some(p) = id.strip_prefix("pick:").and_then(|n| n.parse::<usize>().ok()).and_then(|n| st.results.get(n).cloned()) {
@@ -298,6 +310,10 @@ mod tests {
         let c = press("units:us", None, &mut st, Some(cfg("manual")), 1, tz, no_wifi, no_search).unwrap();
         assert_eq!(c.units, "us");
         assert_eq!(press("units:metric", None, &mut st, Some(cfg("manual")), 1, tz, no_wifi, no_search), None, "already metric");
+        // nothing saved yet: Fahrenheit saves the time zone's place in Fahrenheit; Celsius is already what is shown
+        let c = press("units:us", None, &mut st, None, 1, tz, no_wifi, no_search).unwrap();
+        assert_eq!((c.units.as_str(), c.mode.as_str(), c.valid()), ("us", "timezone", true));
+        assert_eq!(press("units:metric", None, &mut st, None, 1, tz, no_wifi, no_search), None);
         press("view:settings", None, &mut st, None, 5, tz, no_wifi, no_search);
         assert_eq!(st.view, "settings");
         press("view:normal", None, &mut st, None, 6, tz, no_wifi, no_search);
