@@ -776,7 +776,10 @@ pub fn displays() -> Displays {
 /// The screens now, with the main display marked and what monitors.lua adds (variable refresh rate).
 fn current_outputs() -> Option<Vec<Output>> {
     let main = yggdrasil_conf::display::load();
-    let mut outs = outputs_from(&screens_all()?, main.as_ref());
+    let screens = screens_all()?;
+    // on Yggdrasil's own compositor every screen is a real one (its headless outputs are the test screens)
+    let screens = if hyprland() && !matches!(desk(), Some(yggdrasil_wm::Desk::Own(_))) { real_screens(screens) } else { screens };
+    let mut outs = outputs_from(&screens, main.as_ref());
     let lua = std::fs::read_to_string(monitors_path()).unwrap_or_default();
     for o in &mut outs {
         o.vrr = lua_value(&lua, &o.name, "vrr").and_then(|v| v.parse().ok()).filter(|v: &u8| *v <= 2);
@@ -824,6 +827,19 @@ pub fn reload() -> Result<(), String> {
 /// The session's compositor is Hyprland (Yggdrasil's own session).
 pub fn hyprland() -> bool {
     std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some()
+}
+
+/// Leaves out the screens Hyprland makes itself (`hyprctl output create headless`, such as the one the iPad streams from): they
+/// have no maker or model, and their names are not a connector's. They are not displays to arrange or keep in monitors.lua: saved
+/// there next to the others, a streaming screen got placed beside a real monitor and the pointer could wander onto it. A real
+/// monitor without EDID still has its connector's name, so it stays.
+pub fn real_screens(screens: Vec<yggdrasil_wm::Screen>) -> Vec<yggdrasil_wm::Screen> {
+    const CONNECTORS: [&str; 12] =
+        ["DP-", "eDP-", "HDMI-", "DVI-", "VGA-", "LVDS-", "DSI-", "Virtual-", "Unknown-", "USB-", "SPI-", "Composite-"];
+    screens
+        .into_iter()
+        .filter(|s| !(s.make.is_empty() && s.model.is_empty() && !CONNECTORS.iter().any(|c| s.name.starts_with(c))))
+        .collect()
 }
 
 /// The screens as the compositor lists them. Neither compositor has a "main" screen of its own: it is the one chosen here
@@ -1573,6 +1589,17 @@ mod tests {
         assert_eq!((own[0].current.as_str(), own[0].modes.len(), own[0].primary), ("1600x900@60.00", 1, true));
         let lua = hypr_monitors_lua(&o);
         assert!(lua.contains(r#"hl.monitor({ output = "DP-3", mode = "2560x2880@59.95", position = "3440x0", scale = 1.25 })"#), "{lua}");
+    }
+
+    #[test]
+    fn a_virtual_screen_on_hyprland_is_not_a_display() {
+        let j = r#"[{"name":"DP-1","make":"Example","model":"UW34","width":3440,"height":1440,"refreshRate":144.0,"x":0,"y":0,"scale":1.0,"disabled":false,"availableModes":["3440x1440@144.00Hz"]},
+                    {"name":"IPAD","make":"","model":"","width":2420,"height":1668,"refreshRate":60.0,"x":8000,"y":0,"scale":2.0,"disabled":false,"availableModes":[]},
+                    {"name":"HEADLESS-2","make":"","model":"","width":1920,"height":1080,"refreshRate":60.0,"x":9000,"y":0,"scale":1.0,"disabled":false,"availableModes":[]},
+                    {"name":"HDMI-A-1","make":"","model":"","width":1920,"height":1080,"refreshRate":60.0,"x":3440,"y":0,"scale":1.0,"disabled":false,"availableModes":[]}]"#;
+        let screens = yggdrasil_wm::hyprland::parse_monitors(j);
+        let kept: Vec<String> = real_screens(screens).into_iter().map(|s| s.name).collect();
+        assert_eq!(kept, ["DP-1", "HDMI-A-1"], "a streaming screen made by the compositor is left out; a cable without EDID stays");
     }
 
     #[test]
