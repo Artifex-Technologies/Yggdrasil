@@ -399,7 +399,7 @@ pub fn spawn_server(tx: calloop::channel::Sender<NMsg>) {
     std::thread::spawn(move || {
         let mut told = false;
         loop {
-            let built = zbus::blocking::connection::Builder::session()
+            let built = crate::bus::session()
                 .and_then(|b| b.name("org.freedesktop.Notifications"))
                 .map(|b| b.replace_existing_names(true))
                 .and_then(|b| b.serve_at("/org/freedesktop/Notifications", Server { tx: tx.clone() }))

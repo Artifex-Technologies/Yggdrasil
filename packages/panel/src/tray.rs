@@ -112,7 +112,7 @@ pub fn fetch(conn: &Connection, key: &str) -> Option<TrayItem> {
 /// Registers as a host and keeps the panel told about the items. Runs on its own threads; returns at once.
 pub fn spawn(tx: calloop::channel::Sender<TrayMsg>) {
     std::thread::spawn(move || {
-        let Ok(conn) = Connection::session() else { return };
+        let Ok(conn) = crate::bus::session().and_then(|b| b.build()) else { return };
         let host = format!("org.kde.StatusNotifierHost-{}-1", std::process::id());
         if conn.request_name(host.as_str()).is_err() {
             return;
@@ -251,7 +251,7 @@ pub fn icon_in(dir: &str, name: &str, px: u32) -> Option<Pixmap> {
 pub fn call(item: &TrayItem, kind: &'static str, x: i32, y: i32) {
     let (bus, path) = (item.bus.clone(), item.path.clone());
     std::thread::spawn(move || {
-        if let Ok(conn) = Connection::session() {
+        if let Ok(conn) = crate::bus::session().and_then(|b| b.build()) {
             if let Ok(p) = Proxy::new(&conn, bus, path, "org.kde.StatusNotifierItem") {
                 let _ = p.call::<_, _, ()>(kind, &(x, y));
             }
@@ -326,7 +326,7 @@ fn menu_from_value(v: &zbus::zvariant::Value) -> Option<MenuItem> {
 
 /// Reads an item's menu: the entries under the root.
 pub fn fetch_menu(bus: &str, path: &str) -> Option<Vec<MenuItem>> {
-    let conn = Connection::session().ok()?;
+    let conn = crate::bus::session().and_then(|b| b.build()).ok()?;
     let p = Proxy::new(&conn, bus.to_string(), path.to_string(), "com.canonical.dbusmenu").ok()?;
     let _ = p.call::<_, _, bool>("AboutToShow", &(0i32,)); // some apps build the menu only now
     let reply = p.call_method("GetLayout", &(0i32, -1i32, Vec::<String>::new()));
@@ -358,7 +358,7 @@ pub fn fetch_menu(bus: &str, path: &str) -> Option<Vec<MenuItem>> {
 pub fn menu_event(bus: &str, path: &str, id: i32) {
     let (bus, path) = (bus.to_string(), path.to_string());
     std::thread::spawn(move || {
-        if let Ok(conn) = Connection::session() {
+        if let Ok(conn) = crate::bus::session().and_then(|b| b.build()) {
             if let Ok(p) = Proxy::new(&conn, bus, path, "com.canonical.dbusmenu") {
                 let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as u32).unwrap_or(0);
                 let _ = p.call::<_, _, ()>("Event", &(id, "clicked", zbus::zvariant::Value::from(0i32), stamp));

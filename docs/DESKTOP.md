@@ -240,6 +240,21 @@ write-once-and-reload. **Not tested, because it needs the real machine:**
   and the folders of the icon packs in use (inotify, 2026-11-13), and takes up a package's burst of files once it has been
   quiet for 0.5 s. Folders that are not there yet (Flatpak before its first app) are waited for. Past the inotify watch
   limit the panel says so once in its log and looks every 4 s instead, as it used to.
+- The panel is idle when nothing happens (2026-11-13): no timer ticks, no program is started, nothing is looked at. Its short
+  timers run only during what they are for (a held key, the dock's peek over a full-screen window, a drag to the notch, the
+  dock's window list) and are dropped when it ends; the clock wakes on the minute (every second only while seconds show); the
+  desktops, network and Bluetooth are read again when the compositor or NetworkManager and BlueZ signal a change; the add-ons,
+  the volume and the brightness wait for theirs. Measured headless (our compositor `--headless`, a private D-Bus, voluntary
+  context switches from /proc): the event loop woke 2255 times a minute before and 4 after; all its threads 3345 before and
+  about 200 after (about 100 with the screen-reader support off). `the_panel_ticks_only_while_something_goes_on`
+  (packages/compositor/tests/apps.rs) holds it there. Left to do elsewhere:
+  - **The `blocking` crate's thread pool** (blocking 1.7, through zbus) keeps its idle threads and wakes each twice a second
+    for as long as the program runs. The panel's own D-Bus connections are made on sockets it opens itself, so they never
+    start it; AccessKit's (the screen-reader support) still does: 120 wake-ups a minute. A fix belongs upstream
+    (smol-rs/blocking: let idle threads end, or wait without a timeout).
+  - **Heimdall's alerts are polled** every 5 s over its local API (24-30 wake-ups a minute), since the API has no stream. A
+    long poll or a stream in Heimdall would let the panel wait instead.
+  - The Night Light keeper (yggdrasil-conf, shared with Settings) still looks at hyprsunset every 30 s.
 - Which monitor games use when fullscreen, and workspace assignment per monitor.
 
 ## Optional software

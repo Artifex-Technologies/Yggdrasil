@@ -14,6 +14,7 @@ mod apps;
 mod appwatch;
 mod assist;
 mod assistant;
+mod bus;
 mod calendar;
 mod capture;
 mod cheatsheet;
@@ -4884,7 +4885,7 @@ fn main() {
     // The D-Bus service runs on its own thread and hands requests to the event loop through a channel.
     let (bus_tx, bus_rx) = calloop::channel::channel::<BusMsg>();
     std::thread::spawn(move || {
-        let conn = zbus::blocking::connection::Builder::session()
+        let conn = crate::bus::session()
             .and_then(|b| b.name("org.yggdrasil.Panel"))
             .and_then(|b| b.serve_at("/Panel", PanelBus(bus_tx)))
             .and_then(|b| b.build());

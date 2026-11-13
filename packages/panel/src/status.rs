@@ -210,7 +210,7 @@ pub fn spawn(tx: calloop::channel::Sender<Status>) {
 fn watch_system_bus(wake: mpsc::Sender<Parts>) {
     use std::collections::HashMap;
     use zbus::zvariant::{OwnedObjectPath, OwnedValue};
-    let Ok(conn) = zbus::blocking::Connection::system() else { return };
+    let Ok(conn) = crate::bus::system().and_then(|b| b.build()) else { return };
     let Ok(dbus) = zbus::blocking::fdo::DBusProxy::new(&conn) else { return };
     let rules = [
         "type='signal',sender='org.freedesktop.NetworkManager'",

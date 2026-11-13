@@ -118,10 +118,7 @@ pub fn spawn() {
         loop {
             let w = Watcher::default();
             // no replace_existing_names: kded's watcher is left alone until it goes away by itself
-            let built = zbus::blocking::connection::Builder::session()
-                .and_then(|b| b.name(NAME))
-                .and_then(|b| b.serve_at(PATH, w.clone()))
-                .and_then(|b| b.build());
+            let built = crate::bus::session().and_then(|b| b.name(NAME)).and_then(|b| b.serve_at(PATH, w.clone())).and_then(|b| b.build());
             match built {
                 Ok(conn) => {
                     eprintln!("yggdrasil-panel: serving the tray registry");

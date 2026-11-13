@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use zbus::blocking::{Connection, MessageIterator};
+use zbus::blocking::MessageIterator;
 use zbus::zvariant::{OwnedObjectPath, OwnedValue};
 use zbus::MatchRule;
 
@@ -79,7 +79,7 @@ fn announce(tx: &calloop::channel::Sender<NMsg>, d: &Drive, arrived: bool) {
 
 pub fn spawn(tx: calloop::channel::Sender<NMsg>) {
     std::thread::spawn(move || {
-        let Ok(conn) = Connection::system() else { return };
+        let Ok(conn) = crate::bus::system().and_then(|b| b.build()) else { return };
         let Ok(rule) = MatchRule::builder()
             .msg_type(zbus::message::Type::Signal)
             .sender("org.freedesktop.UDisks2")
