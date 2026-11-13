@@ -3,8 +3,8 @@
 <policyconfig>
   <vendor>Yggdrasil</vendor>
   <action id="org.yggdrasil.battery.set-limit">
-    <description>Change the battery's charge limit</description>
-    <message>Authentication is required to change the battery's charge limit</message>
+    <description>Change the battery's charge limit, or how long a closed laptop sleeps before hibernating</description>
+    <message>Authentication is required to change the laptop's battery and sleep settings</message>
     <defaults>
       <allow_any>no</allow_any>
       <allow_inactive>no</allow_inactive>

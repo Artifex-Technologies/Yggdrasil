@@ -8,6 +8,8 @@
 //!   battery json            the battery for Settings > Power: {"present", "percent", "status", "time", "health", "cycles", "limit"}
 //!   battery set-limit N     (root, through pkexec) stop charging at N % (50 to 100), kept in /etc/yggdrasil/charge-limit
 //!   battery restore         (root, yggdrasil-charge-limit.service at boot) the kept limit again, for laptops that forget it
+//!   battery sleep-delay S   (root, through pkexec) how long the lid's suspend-then-hibernate sleeps before hibernating (60 to
+//!                           86400 seconds), in /etc/systemd/sleep.conf.d/50-yggdrasil-lid.conf (Settings > Power, the lid)
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -411,6 +413,31 @@ fn restore() -> i32 {
     }
 }
 
+/// The drop-in for suspend-then-hibernate's delay (the idle package ships the default, 25 minutes, under /usr/lib).
+pub const SLEEP_DELAY_CONF: &str = "/etc/systemd/sleep.conf.d/50-yggdrasil-lid.conf";
+
+pub fn sleep_delay_text(secs: u32) -> String {
+    format!("# Written by Settings > Power (the lid): suspend-then-hibernate hibernates after this long asleep.\n[Sleep]\nHibernateDelaySec={secs}s\n")
+}
+
+fn sleep_delay(arg: Option<&String>) -> i32 {
+    let Some(secs) = arg.and_then(|a| a.parse::<u32>().ok()).filter(|n| (60..=86_400).contains(n)) else {
+        eprintln!("battery: sleep-delay takes seconds from 60 to 86400");
+        return 2;
+    };
+    let path = std::path::Path::new(SLEEP_DELAY_CONF);
+    if let Some(d) = path.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    match std::fs::write(path, sleep_delay_text(secs)) {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("battery: {}: {e}", path.display());
+            1
+        }
+    }
+}
+
 fn json() -> i32 {
     let v = match system_battery() {
         None => serde_json::json!({"present": false}),
@@ -445,8 +472,9 @@ pub fn main(args: &[String]) -> i32 {
         Some("json") => json(),
         Some("set-limit") => set_limit(args.get(1)),
         Some("restore") => restore(),
+        Some("sleep-delay") => sleep_delay(args.get(1)),
         _ => {
-            eprintln!("usage: battery watch | press ID | json | set-limit N | restore");
+            eprintln!("usage: battery watch | press ID | json | set-limit N | restore | sleep-delay SECONDS");
             2
         }
     }
@@ -551,6 +579,14 @@ mod tests {
         for other in [Some("watch"), Some("press"), Some("json"), Some("restore"), None] {
             assert!(!allowed_through_pkexec(other), "{other:?}");
         }
+    }
+
+    #[test]
+    fn the_sleep_delay_drop_in() {
+        assert_eq!(
+            sleep_delay_text(1500),
+            "# Written by Settings > Power (the lid): suspend-then-hibernate hibernates after this long asleep.\n[Sleep]\nHibernateDelaySec=1500s\n"
+        );
     }
 
     #[test]

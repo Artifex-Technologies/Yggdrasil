@@ -15,6 +15,7 @@
 
 mod dim;
 mod inhibit;
+mod lid;
 mod lights;
 mod lock;
 mod policy;
@@ -276,6 +277,8 @@ fn main() {
     inhibit::spawn();
     // in Yggdrasil's own session, the lock requests are ours to answer
     lock::spawn();
+    // the lid: lock, then sleep and hibernate (a laptop only; logind's own handling while this is not running)
+    lid::spawn(config_path());
     let (conf, mut conf_time) = read_conf();
     let conn = match Connection::connect_to_env() {
         Ok(c) => c,

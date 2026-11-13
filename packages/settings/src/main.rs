@@ -254,7 +254,7 @@ enum Msg {
     Displays(sys::Displays),
     Sound(sys::Sound),
     Appearance(sys::Appearance),
-    Power(sys::Power),
+    Power(Box<sys::Power>),
     Firewall(bool),
     Account(users::Account, String, Vec<users::Account>, Vec<(String, String)>),
     AccountDone(Result<String, String>),
@@ -677,7 +677,7 @@ impl App {
                 }
                 Page::Sound => Msg::Sound(sys::sound()),
                 Page::Appearance => Msg::Appearance(sys::appearance()),
-                Page::Power => Msg::Power(sys::power()),
+                Page::Power => Msg::Power(Box::new(sys::power())),
                 Page::Firewall => Msg::Firewall(sys::firewall_on()),
                 Page::Users => {
                     let _ = tx.send(Msg::Fingerprint(laptop_ui::fingerprint()));
@@ -750,7 +750,7 @@ impl App {
                 Msg::Displays(v) => self.data.displays = Some(v),
                 Msg::Sound(v) => self.data.sound = Some(v),
                 Msg::Appearance(v) => self.data.appearance = Some(v),
-                Msg::Power(v) => self.data.power = Some(v),
+                Msg::Power(v) => self.data.power = Some(*v),
                 Msg::Firewall(v) => self.data.firewall = Some(v),
                 Msg::Account(a, k, all, groups) => {
                     self.data.account = Some((a, k));
@@ -2881,8 +2881,79 @@ impl App {
                 }
             });
         });
+        // a laptop's lid (yggdrasil-idle's lid.rs): lock, then sleep, then hibernate, counted from closing
+        let mut lid_delay: Option<i64> = None;
+        if p.battery.is_some() {
+            const SLEEP: [(i64, &str); 7] = [
+                (1, "Right away"),
+                (60, "1 minute"),
+                (300, "5 minutes"),
+                (600, "10 minutes"),
+                (900, "15 minutes"),
+                (1800, "30 minutes"),
+                (0, "Never (stays awake)"),
+            ];
+            const HIBERNATE: [(i64, &str); 6] =
+                [(0, "Never"), (900, "15 minutes"), (1800, "30 minutes"), (3600, "1 hour"), (7200, "2 hours"), (14400, "4 hours")];
+            let name = |list: &[(i64, &str)], v: i64| {
+                list.iter().find(|c| c.0 == v).map(|c| c.1.to_string()).unwrap_or_else(|| format!("{} minutes", v / 60))
+            };
+            let before = idle.clone();
+            ui::group(ui, pal, Some("When the lid is closed"), |ui| {
+                ui::row(ui, pal, true, "Lock the screen", Some("At once, when the lid closes"), |ui| {
+                    if ui::switch(ui, pal, &mut idle.lid_lock).changed() {
+                        idle_changed = true;
+                    }
+                });
+                ui::row(ui, pal, false, "Sleep after", Some("With an external screen connected it stays awake"), |ui| {
+                    ui.add_enabled_ui(p.idle.can_sleep, |ui| {
+                        egui::ComboBox::from_id_salt("lid-sleep").selected_text(name(&SLEEP, idle.lid_sleep)).show_ui(ui, |ui| {
+                            for (v, l) in SLEEP {
+                                if ui.selectable_label(idle.lid_sleep == v, l).clicked() {
+                                    idle.lid_sleep = v;
+                                    idle_changed = true;
+                                }
+                            }
+                        });
+                    });
+                });
+                let can_hib = p.idle.can_hibernate && idle.lid_sleep != 0;
+                ui::row(
+                    ui,
+                    pal,
+                    false,
+                    "Hibernate after",
+                    Some(if p.idle.can_hibernate {
+                        "Counted from closing the lid: everything is kept on the disk and the battery is no longer used"
+                    } else {
+                        "Not available on this computer"
+                    }),
+                    |ui| {
+                        ui.add_enabled_ui(can_hib, |ui| {
+                            egui::ComboBox::from_id_salt("lid-hib").selected_text(name(&HIBERNATE, idle.lid_hibernate)).show_ui(ui, |ui| {
+                                for (v, l) in HIBERNATE {
+                                    if ui.selectable_label(idle.lid_hibernate == v, l).clicked() {
+                                        idle.lid_hibernate = v;
+                                        idle_changed = true;
+                                    }
+                                }
+                            });
+                        });
+                    },
+                );
+            });
+            // suspend-then-hibernate wakes the computer after the system's HibernateDelaySec: kept at hibernate - sleep (an
+            // administrator's password, through the battery helper, only when it has to change)
+            if (idle.lid_sleep, idle.lid_hibernate) != (before.lid_sleep, before.lid_hibernate) {
+                lid_delay = sys::lid_delay(&idle).filter(|&d| d != sys::hibernate_delay());
+            }
+        }
         if idle_changed {
             self.change(ctx, move || sys::write_idle(&idle));
+        }
+        if let Some(d) = lid_delay {
+            let arg = d.to_string();
+            self.change(ctx, move || sys::act("pkexec", &["/usr/lib/yggdrasil/battery", "sleep-delay", &arg]));
         }
         if let Some((mode, which, v)) = limit {
             self.change(ctx, move || {

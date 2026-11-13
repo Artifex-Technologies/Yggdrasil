@@ -1371,6 +1371,11 @@ pub struct Idle {
     pub can_hibernate: bool,
     /// Why sleeping is not possible, when something switched it off (a systemd setting).
     pub sleep_note: String,
+    /// A laptop's lid (yggdrasil-idle's lid.rs): lock when it closes; sleep after `lid_sleep` seconds closed (0 = never, stays
+    /// awake); hibernate `lid_hibernate` seconds after closing (0 = never).
+    pub lid_lock: bool,
+    pub lid_sleep: i64,
+    pub lid_hibernate: i64,
 }
 
 impl Default for Idle {
@@ -1388,6 +1393,9 @@ impl Default for Idle {
             can_sleep: true,
             can_hibernate: true,
             sleep_note: String::new(),
+            lid_lock: true,
+            lid_sleep: 300,
+            lid_hibernate: 1800,
         }
     }
 }
@@ -1406,6 +1414,10 @@ pub fn parse_idle(text: &str) -> Idle {
             i.lights_off = !matches!(v.trim(), "0" | "no" | "false");
             continue;
         }
+        if k.trim() == "lid_lock" {
+            i.lid_lock = !matches!(v.trim(), "0" | "no" | "false" | "off");
+            continue;
+        }
         let Ok(n) = v.trim().parse::<i64>() else { continue };
         match k.trim() {
             "screensaver" => i.screensaver = n / 60,
@@ -1416,6 +1428,8 @@ pub fn parse_idle(text: &str) -> Idle {
             "lock" => i.lock = n / 60,
             "suspend" => i.sleep = n / 60,
             "hibernate" => i.hibernate = n / 60,
+            "lid_sleep" => i.lid_sleep = n.max(0),
+            "lid_hibernate" => i.lid_hibernate = n.max(0),
             _ => {}
         }
     }
@@ -1424,8 +1438,19 @@ pub fn parse_idle(text: &str) -> Idle {
 
 pub fn idle_text(i: &Idle) -> String {
     format!(
-        "# Written by Settings > Power (lights_off: Peripherals > Keyboard). yggdrasil-idle acts on these (seconds of inactivity, 0 = never).\nmode = act\nscreensaver = {}\ndim = {}\ndim_level = {}\nlights_off = {}\nblank = {}\ndisplay_off = {}\nlock = {}\nsuspend = {}\nhibernate = {}\n",
-        i.screensaver * 60, i.dim * 60, i.dim_level, i.lights_off as u8, i.blank * 60, i.screen_off * 60, i.lock * 60, i.sleep * 60, i.hibernate * 60
+        "# Written by Settings > Power (lights_off: Peripherals > Keyboard). yggdrasil-idle acts on these (seconds of inactivity, 0 = never).\nmode = act\nscreensaver = {}\ndim = {}\ndim_level = {}\nlights_off = {}\nblank = {}\ndisplay_off = {}\nlock = {}\nsuspend = {}\nhibernate = {}\n# the lid (a laptop): lock when it closes, sleep after lid_sleep seconds, hibernate lid_hibernate seconds after closing\nlid_lock = {}\nlid_sleep = {}\nlid_hibernate = {}\n",
+        i.screensaver * 60,
+        i.dim * 60,
+        i.dim_level,
+        i.lights_off as u8,
+        i.blank * 60,
+        i.screen_off * 60,
+        i.lock * 60,
+        i.sleep * 60,
+        i.hibernate * 60,
+        i.lid_lock as u8,
+        i.lid_sleep,
+        i.lid_hibernate
     )
 }
 
@@ -1469,6 +1494,35 @@ pub fn set_lights_off(on: bool) -> Result<(), String> {
     write_idle(&i)
 }
 
+/// The system's HibernateDelaySec for suspend-then-hibernate, in seconds: Yggdrasil's drop-in in /etc (written by the battery
+/// helper), else the one the idle package ships (25 minutes).
+pub fn hibernate_delay() -> i64 {
+    ["/etc/systemd/sleep.conf.d/50-yggdrasil-lid.conf", "/usr/lib/systemd/sleep.conf.d/50-yggdrasil-lid.conf"]
+        .iter()
+        .find_map(|f| std::fs::read_to_string(f).ok().and_then(|t| parse_delay(&t)))
+        .unwrap_or(1500)
+}
+
+/// `HibernateDelaySec=1500s` / `25min` / `1h` -> seconds.
+pub fn parse_delay(text: &str) -> Option<i64> {
+    let v = text.lines().find_map(|l| l.trim().strip_prefix("HibernateDelaySec="))?.trim();
+    let num: String = v.chars().take_while(char::is_ascii_digit).collect();
+    let unit: String = v.chars().skip_while(char::is_ascii_digit).collect();
+    let n: i64 = num.parse().ok()?;
+    Some(match unit.trim() {
+        "" | "s" | "sec" => n,
+        "min" | "m" => n * 60,
+        "h" | "hr" => n * 3600,
+        _ => return None,
+    })
+}
+
+/// The delay suspend-then-hibernate needs for these lid settings (hibernate counted from closing, sleep after lid_sleep), or
+/// None when the lid does not use it.
+pub fn lid_delay(i: &Idle) -> Option<i64> {
+    (i.lid_sleep > 0 && i.lid_hibernate > i.lid_sleep).then_some(i.lid_hibernate - i.lid_sleep)
+}
+
 pub fn write_idle(i: &Idle) -> Result<(), String> {
     let p = idle_conf_path();
     if let Some(d) = p.parent() {
@@ -1481,6 +1535,22 @@ pub fn write_idle(i: &Idle) -> Result<(), String> {
 #[cfg(test)]
 mod ini_tests {
     use super::*;
+
+    #[test]
+    fn the_lids_settings_go_round_and_set_the_delay() {
+        let i = parse_idle("lid_lock = 0\nlid_sleep = 60\nlid_hibernate = 0\n");
+        assert_eq!((i.lid_lock, i.lid_sleep, i.lid_hibernate), (false, 60, 0));
+        let d = Idle::default();
+        assert_eq!((d.lid_lock, d.lid_sleep, d.lid_hibernate), (true, 300, 1800));
+        let back = parse_idle(&idle_text(&d));
+        assert_eq!((back.lid_lock, back.lid_sleep, back.lid_hibernate), (true, 300, 1800));
+        assert_eq!(lid_delay(&d), Some(1500));
+        assert_eq!(lid_delay(&Idle { lid_hibernate: 0, ..Idle::default() }), None);
+        assert_eq!(lid_delay(&Idle { lid_sleep: 0, ..Idle::default() }), None);
+        assert_eq!(parse_delay("[Sleep]\nHibernateDelaySec=25min\n"), Some(1500));
+        assert_eq!(parse_delay("HibernateDelaySec=1500s"), Some(1500));
+        assert_eq!(parse_delay("HibernateDelaySec=2h"), Some(7200));
+    }
 
     #[test]
     fn reads_and_sets_one_value() {
@@ -1518,6 +1588,9 @@ mod idle_tests {
             can_sleep: true,
             can_hibernate: true,
             sleep_note: String::new(),
+            lid_lock: false,
+            lid_sleep: 60,
+            lid_hibernate: 3600,
         };
         assert_eq!(parse_idle(&idle_text(&i)), i);
     }

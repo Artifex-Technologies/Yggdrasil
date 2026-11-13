@@ -41,4 +41,10 @@ Exec=/usr/bin/yggdrasil-idle
 NoDisplay=true
 X-KDE-autostart-phase=2
 EOT
+  # the lid's suspend-then-hibernate (Settings > Power > When the lid is closed): asleep 25 minutes, then hibernate (closed 5 min,
+  # then 30 min from closing); Settings writes /etc/systemd/sleep.conf.d/50-yggdrasil-lid.conf when the times change
+  install -Dm644 /dev/stdin "$pkgdir/usr/lib/systemd/sleep.conf.d/50-yggdrasil-lid.conf" <<'EOT'
+[Sleep]
+HibernateDelaySec=25min
+EOT
 }
