@@ -260,6 +260,25 @@ impl Hyprland {
         self.eval(&format!("hl.config({{ input = {{ kb_layout = {layout:?}, kb_variant = {variant:?} }} }})")).is_some()
     }
 
+    /// The mice and keyboards (`devices`).
+    pub fn input_devices(&self) -> Option<Vec<crate::input::InputDevice>> {
+        parse_devices(&self.query("devices")?)
+    }
+
+    /// Settings > Peripherals, once input.conf holds `now`: the settings for every mouse and keyboard through Hyprland's Lua at
+    /// once. A mouse's own settings are `hl.device` rules, which Hyprland keeps until its config is read again: when those
+    /// changed, it reads it again (the session's yggdrasil.lua reads input.conf), so a rule taken away is gone too.
+    pub fn apply_input(&self, before: &crate::input::InputConf, now: &crate::input::InputConf) -> Result<(), String> {
+        if before.devices != now.devices {
+            return self.reload();
+        }
+        match self.eval(&now.hyprland_lua()) {
+            Some(r) if r.to_lowercase().contains("error") => Err(r.trim().to_string()),
+            Some(_) => Ok(()),
+            None => Err("Hyprland did not answer".into()),
+        }
+    }
+
     // The session's own keys (yggdrasil-snap, yggdrasil-close): they act on the focused window.
 
     pub fn focus_direction(&self, d: char) -> bool {
@@ -395,6 +414,21 @@ pub fn parse_desktops(workspaces: &str, active: &str) -> Desktops {
     ids.dedup();
     let at = current.and_then(|c| ids.iter().position(|&id| id == c)).unwrap_or(0);
     Desktops { ids, at }
+}
+
+/// `devices`: the mice (Hyprland's "mice" list, touchpads included) and keyboards, by name.
+pub fn parse_devices(json: &str) -> Option<Vec<crate::input::InputDevice>> {
+    use crate::input::{DeviceKind, InputDevice};
+    let v: Value = serde_json::from_str(json).ok()?;
+    let list = |key: &str, kind: DeviceKind| {
+        v[key]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(move |d| Some(InputDevice { name: d["name"].as_str()?.to_string(), kind }))
+            .collect::<Vec<_>>()
+    };
+    v.is_object().then(|| [list("mice", DeviceKind::Pointer), list("keyboards", DeviceKind::Keyboard)].concat())
 }
 
 /// `getoption NAME` for a number: its "float" field.

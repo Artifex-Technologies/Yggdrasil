@@ -7,6 +7,8 @@
 //! (1920x1080 at 1.25, to its right); four windows, one on the hidden "minimized" workspace. `monitors-minimized-open.json` has that
 //! workspace open over DP-1; `getoption-hidden.json` is the pointer timeout yggdrasil-idle sets while the screen is dimmed;
 //! `binds.json`, `layers.json` (the panel on DP-1) and `configerrors.txt` are the shortcut list, the panels and two config mistakes.
+//! `devices.json` (Settings > Peripherals) is a mouse in three parts (a pointer twice and a keyboard for its extra buttons), a
+//! touchpad and a keyboard, with made-up names.
 //! `wire.txt` is what hyprctl writes to the socket for each command line, recorded against a stand-in socket in a sandbox.
 
 use std::collections::HashMap;
@@ -53,6 +55,7 @@ impl FakeHyprland {
             ("j/binds", "binds.json"),
             ("j/layers", "layers.json"),
             ("/configerrors", "configerrors.txt"),
+            ("j/devices", "devices.json"),
         ] {
             table.insert(q.into(), fixture(file));
         }
@@ -379,6 +382,36 @@ fn close_on_hyprland() {
         h.take(),
         dispatches(&["j/activewindow", r#"/dispatch hl.dsp.window.move({ workspace = "special:minimized", follow = false })"#])
     );
+}
+
+#[test]
+fn settings_peripherals_on_hyprland() {
+    use yggdrasil_wm::input::{self, Accel, DeviceKind, InputConf, Pointer};
+    let h = FakeHyprland::start("input", &[]);
+    let d = h.desk();
+    let devices = d.input_devices().unwrap();
+    assert_eq!(h.take(), ["j/devices"]);
+    assert_eq!(devices.iter().filter(|x| x.kind == DeviceKind::Keyboard).count(), 2);
+    assert_eq!(input::mice(&devices), ["example-gaming-mouse"], "one mouse, its parts together; the touchpad has its own settings");
+
+    // every mouse: Hyprland's Lua at once, everything not set back to its default
+    let before = InputConf::default();
+    let mut now = InputConf { repeat_delay: Some(300), ..Default::default() };
+    now.all = Pointer { sensitivity: Some(-0.5), accel: Some(Accel::Flat), ..Default::default() };
+    assert_eq!(d.apply_input(&before, &now), Ok(()));
+    assert_eq!(
+        h.take(),
+        [
+            r#"/eval hl.config({ input = { sensitivity = -0.5, accel_profile = "flat", scroll_factor = 1, natural_scroll = false, left_handed = false, repeat_rate = 25, repeat_delay = 300 } })"#
+        ]
+    );
+    // one mouse's own settings: Hyprland reads its config again (the session reads input.conf), so a rule taken away goes too
+    let mut one = now.clone();
+    one.devices.insert("example-gaming-mouse".into(), Pointer { left_handed: Some(true), ..Default::default() });
+    assert_eq!(d.apply_input(&now, &one), Ok(()));
+    assert_eq!(h.take(), ["/reload"]);
+    assert_eq!(d.apply_input(&one, &now), Ok(()));
+    assert_eq!(h.take(), ["/reload"]);
 }
 
 #[test]

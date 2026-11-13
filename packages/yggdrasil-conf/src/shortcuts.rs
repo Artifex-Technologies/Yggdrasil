@@ -1,4 +1,4 @@
-//! The keyboard shortcuts as people read them ("Win + Shift + S", "Screenshots"), shared by Settings > Keyboard Shortcuts, the panel's
+//! The keyboard shortcuts as people read them ("Win + Shift + S", "Screenshots"), shared by Settings > Peripherals > Keyboard > Shortcuts, the panel's
 //! cheat sheet (Super+/) and docs/SHORTCUTS.md. Live binds come from the compositor (on Hyprland `hyprctl -j binds`, parsed by the
 //! caller into `Bind`); the doc is made from the session's own file (`from_lua`), and a test keeps it current.
 
@@ -254,7 +254,7 @@ pub fn markdown(list: &[Shortcut]) -> String {
     let mut s = String::from(
         "# Keyboard shortcuts\n\nYggdrasil's shortcuts on Hyprland, as `packages/session/hyprland/yggdrasil.lua` sets them (this file is made from it:\n\
          `YGGDRASIL_WRITE_DOCS=1 cargo test -p yggdrasil-conf` in `packages/yggdrasil-conf` writes it again; a test fails while it is out\n\
-         of date). Settings > Keyboard Shortcuts and the cheat sheet (Win + /) show the live list, your own additions included.\n",
+         of date). Settings > Peripherals > Keyboard > Shortcuts and the cheat sheet (Win + /) show the live list, your own additions included.\n",
     );
     for g in GROUPS {
         let rows: Vec<&Shortcut> = list.iter().filter(|x| x.group == g).collect();
@@ -273,7 +273,7 @@ pub fn markdown(list: &[Shortcut]) -> String {
 /// groups as docs/SHORTCUTS.md, one heading each.
 pub fn readme_section(list: &[Shortcut]) -> String {
     let mut s = String::from(
-        "## Keyboard shortcuts\n\nThe desktop's own (Win is the Super key). Settings > Keyboard Shortcuts and Win + / show the live list, your own\n\
+        "## Keyboard shortcuts\n\nThe desktop's own (Win is the Super key). Settings > Peripherals > Keyboard > Shortcuts and Win + / show the live list, your own\n\
          additions included; [docs/SHORTCUTS.md](docs/SHORTCUTS.md) is the same list. This part is made from\n\
          `packages/session/hyprland/yggdrasil.lua` (`YGGDRASIL_WRITE_DOCS=1 cargo test` in `packages/yggdrasil-conf`).\n",
     );

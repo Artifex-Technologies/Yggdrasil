@@ -65,6 +65,46 @@ Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known abou
 
   ![Settings > Games](../assets/screenshots/settings-games.png)
 
+- **Peripherals** (`yggdrasil-settings peripherals`, `mouse`, `keyboard`; 2026-11-12): the mouse and the keyboard, each on its own
+  page, with the lights, DPI and polling rate of the devices that have them. It took the old Keyboard page's place in the
+  sidebar; `yggdrasil-settings keyboard:shortcuts` and `shortcuts` still open the shortcut list.
+  - **Mouse:** pointer speed, mouse acceleration (adaptive, or flat as most games want), scroll speed, natural scrolling and
+    which side the main button is on, for every mouse, and under "Each mouse" for one mouse alone (its switch gives it settings
+    of its own, starting from everyone's). Find my mouse moved here from Keyboard.
+  - **Keyboard:** repeat delay and rate with a box to try them, the layout and its variant (the system's, for every account and
+    the sign-in screen: `localectl set-x11-keymap`, which asks for the password, then the running session at once), and
+    "Keyboard and mouse lights off while dimmed", moved here from Power (the same `lights_off` in
+    `~/.config/yggdrasil/idle.conf`). Below them Shortcuts, Spelling and languages, and the Color Picker, as before.
+  - **Where the settings go:** `~/.config/yggdrasil/input.conf` (its form is in `packages/wm/src/input.rs`), which the session's
+    `yggdrasil.lua` reads at every start and reload, so they survive restarts; and the running compositor through yggdrasil-wm
+    (`Desk::apply_input`): on Hyprland its Lua (`hl.config({ input = ... })`) at once, and a reload when a mouse's own settings
+    change (Hyprland keeps `hl.device` rules until its config is read again). A mouse's settings are given to its other parts
+    too (Hyprland lists a mouse's extra buttons as NAME-1, NAME-2, ...). **Not on Yggdrasil's own compositor yet:** there the
+    file is kept and the page says so; the compositor is meant to read the same input.conf on start and `reload` (an item for
+    its gap list, with libinput on the hardware backend).
+  - **Razer** (when OpenRazer is installed): each device from OpenRazer's daemon on the session bus (`org.razer`), what it
+    offers read from its introspection: the battery, a mouse's DPI (in steps of 50, up to its own maximum) and polling rate, and
+    every lighting zone (the whole device, logo, scroll wheel, backlight, left and right) with its brightness, its effect (off,
+    one colour, spectrum, breathing, wave: only those the device has) and its colour. Keyboards and keypads are on the Keyboard
+    page, mice and mouse mats on the Mouse page, anything else on Peripherals itself. Every call has a 2-second limit and runs
+    off the window's thread; a colour is sent once it has stayed put for 0.4 s; the daemon is never started by asking (a row
+    offers "Start it" when it is installed but not running). `src/razer.rs`.
+  - **Other makers:** a row that opens Polychromatic, Solaar (Logitech), ckb-next (Corsair), OpenRGB or Piper when installed;
+    with none of them and no OpenRazer, one line points to Agora > Devices.
+  - **Tests:** the OpenRazer client against a made-up daemon on a peer-to-peer D-Bus socket pair (devices, zones and effects
+    from introspection, every change reaching the right method, a daemon that hangs giving up at the time limit); the
+    input.conf form, its writer (temporary folders only) and the Hyprland requests (yggdrasil-wm, against its stand-in
+    socket); the session's reader in plain Lua (`packages/session/tests/input-conf.lua`). The screenshots are made-up devices
+    (`tests/fixtures/peripherals.json`) on Yggdrasil's headless compositor.
+  - **Cost** (release build on the headless compositor, Mesa's software renderer, three runs each, before and after): the
+    window shows after 0.154-0.174 s and 0.164 s; idle 0.9-1.1 % and 0.9-1.0 % of a core on the Keyboard page; 148-149 MB and
+    151 MB resident (115-116 MB and 117-118 MB proportional), the extra being the layout list and the bigger page. The program
+    is 0.6 MB larger. No new libraries (zbus was there for Wi-Fi).
+
+  ![Settings > Peripherals > Mouse](../assets/screenshots/settings-peripherals-mouse.png)
+  ![Settings > Peripherals > Mouse, a Razer mouse](../assets/screenshots/settings-peripherals-razer.png)
+  ![Settings > Peripherals > Keyboard](../assets/screenshots/settings-peripherals-keyboard.png)
+
 ## How it works
 
 - **labyrinth-launch ID** starts an app inside its own systemd scope and slice (`lapp_<id>.slice`; no dash in the name, so it

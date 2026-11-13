@@ -1,0 +1,55 @@
+{
+"mice": [
+    {
+        "address": "0x5a0000a01000",
+        "name": "example-gaming-mouse",
+        "defaultSpeed": 0.00000,
+        "scrollFactor": -1.00
+    },
+    {
+        "address": "0x5a0000a02000",
+        "name": "example-gaming-mouse-2",
+        "defaultSpeed": 0.00000,
+        "scrollFactor": -1.00
+    },
+    {
+        "address": "0x5a0000a03000",
+        "name": "example-laptop-touchpad",
+        "defaultSpeed": 0.00000,
+        "scrollFactor": -1.00
+    }
+],
+"keyboards": [
+    {
+        "address": "0x5a0000b01000",
+        "name": "example-gaming-mouse-1",
+        "rules": "",
+        "model": "",
+        "layout": "us",
+        "variant": "",
+        "options": "",
+        "active_layout_index": 0,
+        "active_keymap": "English (US)",
+        "capsLock": false,
+        "numLock": false,
+        "main": false
+    },
+    {
+        "address": "0x5a0000b02000",
+        "name": "example-keyboard",
+        "rules": "",
+        "model": "",
+        "layout": "us",
+        "variant": "",
+        "options": "",
+        "active_layout_index": 0,
+        "active_keymap": "English (US)",
+        "capsLock": false,
+        "numLock": false,
+        "main": true
+    }
+],
+"tablets": [],
+"touch": [],
+"switches": []
+}

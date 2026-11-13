@@ -1,6 +1,6 @@
 #!/bin/sh
 # yggdrasil-idle runs this with "lights-off" when the screen dims, goes off or shows the screensaver, with "lights-on" when you
-# are back, and with "lights-on" once when it starts (Settings > Power: "Keyboard and mouse lights off while dimmed"). It turns
+# are back, and with "lights-on" once when it starts (Settings > Peripherals > Keyboard: "Keyboard and mouse lights off while dimmed"). It turns
 # off, and then back to how they were:
 #   * Razer keyboards, mice, keypads and mouse mats, through openrazer's daemon (if it runs): each lighting zone it has (the
 #     whole device, logo, scroll wheel, backlight, left and right strips)

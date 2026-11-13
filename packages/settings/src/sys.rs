@@ -1219,7 +1219,7 @@ pub fn parse_idle(text: &str) -> Idle {
 
 pub fn idle_text(i: &Idle) -> String {
     format!(
-        "# Written by Settings > Power. yggdrasil-idle acts on these (seconds of inactivity, 0 = never).\nmode = act\nscreensaver = {}\ndim = {}\ndim_level = {}\nlights_off = {}\nblank = {}\ndisplay_off = {}\nlock = {}\nsuspend = {}\nhibernate = {}\n",
+        "# Written by Settings > Power (lights_off: Peripherals > Keyboard). yggdrasil-idle acts on these (seconds of inactivity, 0 = never).\nmode = act\nscreensaver = {}\ndim = {}\ndim_level = {}\nlights_off = {}\nblank = {}\ndisplay_off = {}\nlock = {}\nsuspend = {}\nhibernate = {}\n",
         i.screensaver * 60, i.dim * 60, i.dim_level, i.lights_off as u8, i.blank * 60, i.screen_off * 60, i.lock * 60, i.sleep * 60, i.hibernate * 60
     )
 }
@@ -1249,6 +1249,21 @@ pub fn read_idle() -> Idle {
 }
 
 /// Saves the timers (yggdrasil-idle reads them).
+/// "Keyboard and mouse lights off while dimmed" (Settings > Peripherals > Keyboard): idle.conf's `lights_off`.
+pub fn lights_off() -> bool {
+    std::fs::read_to_string(idle_conf_path()).map(|t| parse_idle(&t).lights_off).unwrap_or(Idle::default().lights_off)
+}
+
+/// Sets `lights_off` alone; the timers in idle.conf stay as they are.
+pub fn set_lights_off(on: bool) -> Result<(), String> {
+    if crate::fixture::get().is_some() {
+        return Err("A made-up system (a fixture): nothing is changed.".into());
+    }
+    let mut i = std::fs::read_to_string(idle_conf_path()).map(|t| parse_idle(&t)).unwrap_or_default();
+    i.lights_off = on;
+    write_idle(&i)
+}
+
 pub fn write_idle(i: &Idle) -> Result<(), String> {
     let p = idle_conf_path();
     if let Some(d) = p.parent() {

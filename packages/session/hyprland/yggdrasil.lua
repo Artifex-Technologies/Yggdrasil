@@ -153,6 +153,67 @@ do
   end
 end
 
+-- The mouse and keyboard (Settings > Peripherals; ~/.config/yggdrasil/input.conf, its form in packages/wm/src/input.rs): pointer
+-- speed, acceleration, scrolling, left-handed and key repeat for every mouse and keyboard, and a mouse's own settings in a
+-- [name] section (given to its other parts, name-1 to name-9, too: Hyprland lists a mouse's extra buttons as more devices). A
+-- line that is not understood is left out. Settings gives a change to the running session at once; this keeps it.
+local function input_settings()
+  local f = io.open(config_home .. "/yggdrasil/input.conf", "r")
+  if not f then return end
+  local function num(v, lo, hi)
+    local n = tonumber(v)
+    if n == nil or n ~= n then return nil end
+    return math.max(lo, math.min(hi, n))
+  end
+  local function yes(v)
+    if v == "1" or v == "yes" or v == "true" or v == "on" then return true end
+    if v == "0" or v == "no" or v == "false" or v == "off" then return false end
+    return nil
+  end
+  local pointer = {
+    sensitivity = function(v) return num(v, -1, 1) end,
+    scroll_factor = function(v) return num(v, 0.1, 5) end,
+    accel_profile = function(v) if v == "flat" or v == "adaptive" then return v end end,
+    natural_scroll = yes,
+    left_handed = yes,
+  }
+  local keyboard = {
+    repeat_rate = function(v) local n = num(v, 1, 100) return n and math.floor(n) end,
+    repeat_delay = function(v) local n = num(v, 100, 2000) return n and math.floor(n) end,
+  }
+  -- section: nil while reading every device's lines, a mouse's table in its [name] section, false in a refused one
+  local all, mice, section = {}, {}, nil
+  for raw in f:lines() do
+    local line = raw:gsub("#.*", "")
+    if line:match("^%s*%[") then
+      local name = line:match("^%s*%[%s*([%l%d%-_%.:%+%(%)]+)%s*%]%s*$")
+      section = name and { name = name, set = {} } or false
+      if section then table.insert(mice, section) end
+    else
+      local k, v = line:match("^%s*([%w_]+)%s*=%s*(%S+)%s*$")
+      local read = k and (pointer[k] or (section == nil and keyboard[k]) or nil)
+      local value = nil
+      if read then value = read(v) end
+      if value ~= nil and section ~= false then (section and section.set or all)[k] = value end
+    end
+  end
+  f:close()
+  if next(all) then hl.config({ input = all }) end
+  for _, m in ipairs(mice) do
+    if next(m.set) then
+      for n = 0, 9 do
+        local spec = { name = n == 0 and m.name or (m.name .. "-" .. n) }
+        for k, v in pairs(m.set) do spec[k] = v end
+        hl.device(spec)
+      end
+    end
+  end
+end
+do
+  local ok, err = pcall(input_settings)
+  if not ok then io.stderr:write(("yggdrasil: input.conf: %s\n"):format(err)) end
+end
+
 -- Windows float, centred, at the size the program asks for...
 hl.window_rule({ name = "windows-float", match = { class = ".*" }, float = true, center = true })
 

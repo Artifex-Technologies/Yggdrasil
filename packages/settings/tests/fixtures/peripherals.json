@@ -1,0 +1,30 @@
+{
+  "run": {
+    "hyprctl -j devices": "{\"mice\": [{\"address\": \"0x5a0000a01000\", \"name\": \"example-gaming-mouse\", \"defaultSpeed\": 0.0, \"scrollFactor\": -1.0}, {\"address\": \"0x5a0000a02000\", \"name\": \"example-gaming-mouse-2\", \"defaultSpeed\": 0.0, \"scrollFactor\": -1.0}, {\"address\": \"0x5a0000a04000\", \"name\": \"example-office-mouse\", \"defaultSpeed\": 0.0, \"scrollFactor\": -1.0}], \"keyboards\": [{\"address\": \"0x5a0000b01000\", \"name\": \"example-keyboard\", \"layout\": \"us\", \"variant\": \"\", \"main\": true}], \"tablets\": [], \"touch\": [], \"switches\": []}",
+    "localectl status": "System Locale: LANG=en_US.UTF-8\n    VC Keymap: us\n   X11 Layout: us\n"
+  },
+  "razer": [
+    {
+      "id": "EXAMPLEKBD01",
+      "name": "Razer Keyboard (example)",
+      "kind": "keyboard",
+      "zones": [
+        {"kind": "main", "brightness": 70.0, "effects": ["off", "static", "spectrum", "breathing", "wave"], "effect": "static", "color": [124, 84, 214]}
+      ],
+      "battery": [86.0, false]
+    },
+    {
+      "id": "EXAMPLEMSE01",
+      "name": "Razer Mouse (example)",
+      "kind": "mouse",
+      "zones": [
+        {"kind": "logo", "brightness": 100.0, "effects": ["off", "static", "spectrum", "wave"], "effect": "spectrum", "color": [0, 255, 0]},
+        {"kind": "scroll", "brightness": 60.0, "effects": ["off", "static", "spectrum", "wave"], "effect": "static", "color": [124, 84, 214]}
+      ],
+      "dpi": {"x": 1600, "y": 1600, "max": 30000},
+      "poll": [1000, [125, 500, 1000]],
+      "battery": [54.0, true]
+    }
+  ],
+  "tools": ["openrazer-daemon", "solaar"]
+}

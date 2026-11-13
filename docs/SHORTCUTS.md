@@ -2,7 +2,7 @@
 
 Yggdrasil's shortcuts on Hyprland, as `packages/session/hyprland/yggdrasil.lua` sets them (this file is made from it:
 `YGGDRASIL_WRITE_DOCS=1 cargo test -p yggdrasil-conf` in `packages/yggdrasil-conf` writes it again; a test fails while it is out
-of date). Settings > Keyboard Shortcuts and the cheat sheet (Win + /) show the live list, your own additions included.
+of date). Settings > Peripherals > Keyboard > Shortcuts and the cheat sheet (Win + /) show the live list, your own additions included.
 
 ## Windows
 

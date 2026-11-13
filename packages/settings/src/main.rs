@@ -20,7 +20,9 @@ mod gpu;
 mod icons;
 mod limbo_ui;
 mod netconf;
+mod peripherals;
 mod printers;
+mod razer;
 mod readout;
 mod restore;
 mod security;
@@ -67,8 +69,8 @@ enum Page {
     DefaultApps,
     /// The assistant the operating system provides (only when it has one: its assistant integration).
     Assistant,
-    /// Keyboard shortcuts now; typing (spelling, languages) joins it as a tab.
-    Keyboard,
+    /// The mouse and the keyboard (peripherals.rs), the keyboard's shortcuts and spelling inside it.
+    Peripherals,
     About,
     /// Shown under About while Developer options are on.
     Developer,
@@ -88,7 +90,7 @@ enum SecSub {
     Limbo,
 }
 
-/// The pages inside Keyboard.
+/// The pages inside Peripherals > Keyboard.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum KeySub {
     Main,
@@ -119,11 +121,13 @@ const PAGES: [(Page, &str, Icon, &str, &str); 19] = [
     (Page::Displays, "Displays", Icon::Display, "Devices", "monitor screen resolution refresh night light scale"),
     (Page::Sound, "Sound", Icon::Sound, "Devices", "audio volume speaker microphone output input"),
     (
-        Page::Keyboard,
-        "Keyboard",
+        Page::Peripherals,
+        "Peripherals",
         Icon::Keyboard,
         "Devices",
-        "shortcuts keys hotkeys typing spelling spell check languages dictionary words find my mouse color picker",
+        "mouse keyboard pointer speed acceleration scrolling left-handed buttons repeat layout lights rgb razer logitech corsair \
+         dpi polling rate battery shortcuts keys hotkeys typing spelling spell check languages dictionary words find my mouse \
+         color picker",
     ),
     (Page::Printers, "Printers", Icon::Printer, "Devices", "print scanner"),
     (Page::Power, "Power", Icon::Power, "Devices", "battery sleep suspend graphics card gpu processor cpu fans pump cooling"),
@@ -303,6 +307,8 @@ struct App {
     /// Which part of Appearance is open.
     app_sub: AppSub,
     key_sub: KeySub,
+    /// Peripherals: its Mouse and Keyboard pages (peripherals.rs).
+    peri: peripherals::State,
     spell: spelling::State,
     /// The lock screen previews are being (or have been) drawn for this visit to the page.
     lock_previews_started: bool,
@@ -452,6 +458,7 @@ impl App {
             } else {
                 KeySub::Main
             },
+            peri: peripherals::State::on(start_peripheral()),
             spell: Default::default(),
             lock_previews_started: false,
             boot_info: None,
@@ -502,6 +509,9 @@ impl App {
 
     /// Read a page's state on a background thread.
     fn load(&mut self, page: Page, ctx: &egui::Context) {
+        if page == Page::Peripherals {
+            self.peri.open(ctx);
+        }
         self.refreshed = std::time::Instant::now();
         self.loading = Some(page);
         let tx = self.tx.clone();
@@ -533,7 +543,7 @@ impl App {
                     yggdrasil_conf::integrations::first("assistant").map(|i| i.controls()).unwrap_or_default(),
                 )),
                 Page::Printers => Msg::Printers(printers::load()),
-                Page::Keyboard | Page::Developer | Page::Games => return,
+                Page::Peripherals | Page::Developer | Page::Games => return,
             };
             let _ = tx.send(msg);
             ctx.request_repaint();
@@ -665,13 +675,25 @@ fn start_sub() -> String {
     std::env::args().nth(1).unwrap_or_default().to_lowercase().split_once(':').map(|(_, s)| s.to_string()).unwrap_or_default()
 }
 
+/// Which page inside Peripherals to open on: `yggdrasil-settings mouse`, `keyboard` (`keyboard:shortcuts`, `shortcuts`),
+/// `peripherals:mouse`, `peripherals:keyboard`.
+fn start_peripheral() -> peripherals::Sub {
+    let arg = std::env::args().nth(1).unwrap_or_default().to_lowercase();
+    let (page, sub) = arg.split_once(':').unwrap_or((arg.as_str(), ""));
+    match (page, sub) {
+        ("mouse", _) | ("peripherals", "mouse") => peripherals::Sub::Mouse,
+        ("keyboard" | "shortcuts", _) | ("peripherals", "keyboard" | "shortcuts" | "spelling") => peripherals::Sub::Keyboard,
+        _ => peripherals::Sub::Main,
+    }
+}
+
 /// `yggdrasil-settings displays` opens on a page (for links from the top bar or other apps).
 fn start_page() -> Page {
     let arg = std::env::args().nth(1).unwrap_or_default().to_lowercase();
     let arg = arg.split(':').next().unwrap_or_default().to_string();
-    // the old page name, from links made before Keyboard Shortcuts became Keyboard
-    if arg == "shortcuts" {
-        return Page::Keyboard;
+    // the old page names: Keyboard Shortcuts became Keyboard, and Keyboard went into Peripherals with Mouse
+    if matches!(arg.as_str(), "shortcuts" | "keyboard" | "mouse") {
+        return Page::Peripherals;
     }
     PAGES
         .iter()
@@ -685,6 +707,9 @@ impl eframe::App for App {
         theme::apply_accessibility(ui.ctx());
         let ctx = ui.ctx().clone();
         self.receive(&ctx);
+        if self.page == Page::Peripherals {
+            self.peri.poll(&ctx);
+        }
         // Read the open page again every few seconds, so a change made somewhere else (Fylgja's dark mode, the
         // panel, a command) shows up without closing Settings. Not while something is being dragged or typed, not
         // for pages that are slow to read (Wi-Fi scans, Bluetooth discovery, the package list), and not when
@@ -816,8 +841,9 @@ impl eframe::App for App {
                         if resp.clicked() && p == Page::Games {
                             self.games.reload();
                         }
-                        if resp.clicked() && p == Page::Keyboard {
+                        if resp.clicked() && p == Page::Peripherals {
                             self.key_sub = KeySub::Main;
+                            self.peri.sub = peripherals::Sub::Main;
                         }
                         if resp.clicked() {
                             self.distress.close();
@@ -886,7 +912,7 @@ impl eframe::App for App {
                         Page::Printers => self.page_printers(ui, &pal, &ctx),
                         Page::DateTime => self.page_time(ui, &pal, &ctx),
                         Page::Apps => self.page_apps(ui, &pal, &ctx),
-                        Page::Keyboard => self.page_keyboard(ui, &pal, &ctx),
+                        Page::Peripherals => self.page_peripherals(ui, &pal, &ctx),
                         Page::Developer => self.page_developer(ui, &pal, &ctx),
                         Page::Games => self.games.page(ui, &pal, &ctx),
                     }
@@ -2983,11 +3009,6 @@ impl App {
                     idle_changed = true;
                 }
             });
-            ui::row(ui, pal, false, "Keyboard and mouse lights off while dimmed", Some("Also while the screen is off or shows the screensaver; they come back with you. Razer keyboards, mice and mouse mats (openrazer) and laptop keyboard backlights"), |ui| {
-                if ui::switch(ui, pal, &mut idle.lights_off).changed() {
-                    idle_changed = true;
-                }
-            });
         });
         if idle_changed {
             self.change(ctx, move || sys::write_idle(&idle));
@@ -4570,7 +4591,26 @@ fn color_picker_section(ui: &mut egui::Ui, pal: &Palette) {
 }
 
 impl App {
-    /// Keyboard: a short page that leads to the shortcut list (its own page) and holds the tools that live on a key.
+    /// Peripherals: the way to Mouse and Keyboard, and those two pages.
+    fn page_peripherals(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
+        match self.peri.sub {
+            peripherals::Sub::Main => self.peri.main_page(ui, pal),
+            peripherals::Sub::Mouse => {
+                ui.horizontal(|ui| {
+                    if ui::quiet(ui, pal, "\u{2039}  Peripherals").clicked() {
+                        self.peri.sub = peripherals::Sub::Main;
+                    }
+                    ui.label(RichText::new("Mouse").size(18.0).strong());
+                });
+                ui.add_space(6.0);
+                self.peri.mouse_page(ui, pal, ctx);
+            }
+            peripherals::Sub::Keyboard => self.page_keyboard(ui, pal, ctx),
+        }
+    }
+
+    /// Peripherals > Keyboard: typing, the layout and lights (peripherals.rs), then the shortcut list and spelling (their own
+    /// pages) and the tool that lives on a key.
     fn page_keyboard(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         if self.key_sub != KeySub::Main {
             // the way back: Download more languages goes back to Spelling and languages, the others to Keyboard
@@ -4593,7 +4633,15 @@ impl App {
             }
             return;
         }
-        ui::group(ui, pal, None, |ui| {
+        ui.horizontal(|ui| {
+            if ui::quiet(ui, pal, "\u{2039}  Peripherals").clicked() {
+                self.peri.sub = peripherals::Sub::Main;
+            }
+            ui.label(RichText::new("Keyboard").size(18.0).strong());
+        });
+        ui.add_space(6.0);
+        self.peri.keyboard_page(ui, pal, ctx);
+        ui::group(ui, pal, Some("Keys and languages"), |ui| {
             if ui::nav_row(
                 ui,
                 pal,
@@ -4616,23 +4664,10 @@ impl App {
                 self.spell.reload();
             }
         });
-        shortcut_tools(ui, pal);
+        // the tool that lives on a shortcut key (Find my mouse is on the Mouse page)
+        color_picker_section(ui, pal);
+        self.peri.tool_rows(ui, pal);
     }
-}
-
-/// The tools that live on a shortcut key (on the Keyboard page, not in the shortcut list).
-fn shortcut_tools(ui: &mut egui::Ui, pal: &Palette) {
-    ui.add_space(8.0);
-    // Find my mouse (the panel; ~/.config/yggdrasil/tools.conf)
-    let mut tools = yggdrasil_conf::tools::ToolsConf::load();
-    ui::group(ui, pal, Some("Tools"), |ui| {
-        ui::row(ui, pal, true, "Find my mouse", Some("Press Ctrl twice: a spotlight shows where the pointer is"), |ui| {
-            if ui::switch(ui, pal, &mut tools.find_mouse).changed() {
-                let _ = tools.save();
-            }
-        });
-    });
-    color_picker_section(ui, pal);
 }
 
 fn page_shortcuts(ui: &mut egui::Ui, pal: &Palette) {

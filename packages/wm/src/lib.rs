@@ -11,6 +11,7 @@
 //! Every exchange is bounded in time and size (sock.rs), and a socket is only spoken to when it is this user's own.
 
 pub mod hyprland;
+pub mod input;
 pub mod own;
 pub mod sock;
 
@@ -398,6 +399,23 @@ impl Desk {
         match self {
             Desk::Hyprland(h) => h.set_keyboard(layout, variant),
             Desk::Own(o) => o.set_keyboard(layout, variant),
+        }
+    }
+
+    /// The mice and keyboards the compositor has (None: it did not answer, or cannot list them: Yggdrasil's own compositor).
+    pub fn input_devices(&self) -> Option<Vec<input::InputDevice>> {
+        match self {
+            Desk::Hyprland(h) => h.input_devices(),
+            Desk::Own(_) => None,
+        }
+    }
+
+    /// The mouse and keyboard settings from now on (Settings > Peripherals), after `now` was saved to input.conf; `before` is
+    /// what was in force until then. On Yggdrasil's own compositor: `input::NOT_YET`.
+    pub fn apply_input(&self, before: &input::InputConf, now: &input::InputConf) -> Result<(), String> {
+        match self {
+            Desk::Hyprland(h) => h.apply_input(before, now),
+            Desk::Own(_) => Err(input::NOT_YET.into()),
         }
     }
 
