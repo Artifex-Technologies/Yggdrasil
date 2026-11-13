@@ -5,7 +5,7 @@ It stands on `hicolor` only. **No KDE (Breeze), macOS (MacTahoe) or GNOME (Adwai
 
 ## What it holds
 - **The system's own icons**: folders (and the Documents, Downloads, Music, Pictures, Videos, Desktop folders), the home folder, drives, the trash (empty and full), file types.
-- **Yggdrasil's apps**: Settings, Minos, the Marketplace, Calculator, plus Sarina, Heimdall, Limbo and Daedalus CAD.
+- **Yggdrasil's apps**: Settings, Minos, the Marketplace, Calculator, plus Sarina, Heimdall, Limbo, Daedalus CAD and Icarus.
 - **The default app icon** (`application-default-icon`, also named `application-x-executable`, `applications-other` and `unknown`): a plain four-square mark. **An app that no pack has an icon for gets this one**, in the dock, the start menu,
   notifications, the Marketplace and Settings > Apps, instead of a coloured letter.
 - **App logos** (about 90, a selection from [Simple Icons](https://github.com/simple-icons/simple-icons), CC0; the logos stay their owners' trademarks), made per user by `liki-build` for the apps installed on that computer.

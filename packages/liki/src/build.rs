@@ -76,6 +76,7 @@ const EXTRA: &[(&str, &str)] = &[("proton-vpn", "protonvpn"), ("proton-pass", "p
 const NATIVE: &[(&str, &[(&str, &str)])] = &[
     ("sarina", &[("apps", "sarina"), ("apps", "labyrinth-sarina")]),
     ("daedalus", &[("apps", "daedalus-cad")]),
+    ("icarus", &[("apps", "icarus")]),
     ("heimdall", &[("apps", "heimdall")]),
     ("limbo", &[("apps", "limbo")]),
     ("marketplace", &[("apps", "agora"), ("apps", "applications-all")]),

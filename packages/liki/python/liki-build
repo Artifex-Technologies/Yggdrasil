@@ -73,6 +73,7 @@ EXTRA = {"proton-vpn": "protonvpn", "proton-pass": "proton", "proton-mail": "pro
 NATIVE = {
     "sarina": [("apps", n) for n in ("sarina", "labyrinth-sarina")],
     "daedalus": [("apps", "daedalus-cad")],
+    "icarus": [("apps", "icarus")],
     "heimdall": [("apps", "heimdall")],
     "limbo": [("apps", "limbo")],
     "marketplace": [("apps", n) for n in ("agora", "applications-all")],
