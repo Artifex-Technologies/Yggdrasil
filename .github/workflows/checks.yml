@@ -83,8 +83,9 @@ jobs:
     container: archlinux:latest
     steps:
       - name: Tools
-        # mesa and libglvnd: Settings draws through EGL in software (llvmpipe); grim: the screenshot tool, through wlr-screencopy
-        run: pacman -Syu --noconfirm --needed git rust base-devel pkgconf wayland libxkbcommon fontconfig ttf-dejavu dbus pixman mesa libglvnd libinput pam libxcrypt grim
+        # mesa and libglvnd: Settings draws through EGL in software (llvmpipe); grim: the screenshot tool, through wlr-screencopy;
+        # cage: the login screen's compositor (the greeter's three-screen test)
+        run: pacman -Syu --noconfirm --needed git rust base-devel pkgconf wayland libxkbcommon fontconfig ttf-dejavu dbus pixman mesa libglvnd libinput pam libxcrypt grim cage
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0, pinned by commit
         with:
           persist-credentials: false
@@ -113,6 +114,9 @@ jobs:
           YGGDRASIL_TEST_CURSORS="$GITHUB_WORKSPACE/target/test-cursors" \
           YGGDRASIL_TEST_APPS_REQUIRED=1 \
             cargo test --locked --test apps --test behaviour --test tools --test keys --test look --test outputs --test places --test capture --test pointer --test input -- --test-threads=2
+      - name: The login screen on three screens in cage (the sign-in on the main display only, the others black)
+        timeout-minutes: 5
+        run: cd packages/lock && YGGDRASIL_TEST_CAGE_REQUIRED=1 cargo test --locked --test greeter_screens
       - name: The screenshot command still runs (scripts/screenshots.sh, a few of Settings' pages; the pictures are not compared)
         timeout-minutes: 10
         run: |

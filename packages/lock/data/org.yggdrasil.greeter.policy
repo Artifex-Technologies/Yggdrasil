@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN" "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!-- The login screen's main display: at each sign-in, and when Settings > Displays changes it, the panel hands the account's
+     choice (a monitor's maker, model and connector, nothing else) to the login screen, which cannot read home folders. Anyone
+     signed in at this computer may, without a password (it is their own screen choice, checked strictly by the helper); nobody
+     else may, so it never asks. -->
+<policyconfig>
+  <vendor>Yggdrasil</vendor>
+  <action id="org.yggdrasil.greeter.main-display">
+    <description>Show the login screen on your main display</description>
+    <message>Authentication is required to choose the login screen's display</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/yggdrasil/greeter-display</annotate>
+  </action>
+</policyconfig>

@@ -21,20 +21,21 @@ _version "$startdir" "$_src"
 
 build() {
   cd "$_src"
-  cargo build --release --locked --target-dir "$srcdir/target"
-}
+  cargo build --release --locked --target-dir "$srcdir/target"}
 
 check() {
   cd "$_src"
-  cargo test --release --locked --target-dir "$srcdir/target"
-}
+  cargo test --release --locked --target-dir "$srcdir/target"}
 
 package() {
   install -Dm755 "$srcdir/target/release/yggdrasil-lock" "$pkgdir/usr/bin/yggdrasil-lock"
   install -Dm755 "$srcdir/target/release/yggdrasil-greeter" "$pkgdir/usr/bin/yggdrasil-greeter"
+  # the main display at the login screen: the session hands its choice over through pkexec (no password for whoever is signed
+  # in here); the helper writes /var/lib/yggdrasil/greeter/display.conf, readable by all
+  install -Dm755 "$srcdir/target/release/yggdrasil-greeter-display" "$pkgdir/usr/lib/yggdrasil/greeter-display"
+  install -Dm644 "$_src/data/org.yggdrasil.greeter.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.greeter.policy"
   # the screen between signing in and the desktop (Yggdrasil's session starts it)
   install -Dm755 "$srcdir/target/release/yggdrasil-splash" "$pkgdir/usr/bin/yggdrasil-splash"
   # screenshots of anything on the screen (it captures first, then you choose on the frozen picture)
   install -Dm755 "$srcdir/target/release/yggdrasil-shot" "$pkgdir/usr/bin/yggdrasil-shot"
-
 }

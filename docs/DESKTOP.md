@@ -233,7 +233,8 @@ write-once-and-reload. **Not tested, because it needs the real machine:**
   model (the port only decides between two alike), so it stays main on another port; when it is unplugged the top-left one
   takes over. Notifications, the on-screen volume and the menus opened by a key follow it, and Yggdrasil's own compositor
   makes it X11's primary monitor. The panel watches the settings folder (inotify) and the screens (Wayland events), so the
-  dock moves at once.
+  dock moves at once. The login screen shows its sign-in on the same display (the panel hands the choice over; see
+  [LOGIN_SCREEN.md](LOGIN_SCREEN.md)).
 - Which monitor games use when fullscreen, and workspace assignment per monitor.
 
 ## Optional software

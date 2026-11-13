@@ -134,6 +134,103 @@ fn top_left(screens: &[Seen], among: impl Iterator<Item = usize>) -> Option<usiz
     among.min_by_key(|&i| (screens[i].x, screens[i].y, i))
 }
 
+// ---------------------------------------------------------------- the login screen's copy
+//
+// The login screen runs as the `greeter` account and cannot read anyone's home folder, so the session hands it the choice:
+// at each sign-in, and when the choice changes, the panel runs `pkexec /usr/lib/yggdrasil/greeter-display MAKE MODEL CONNECTOR`
+// (polkit action org.yggdrasil.greeter.main-display: yes for whoever is signed in at this computer, no for anyone else), which
+// writes this file as root, readable by all. It holds only the three values; the most recent sign-in's choice wins, and a
+// sign-in without a choice leaves it as it is. The login screen treats it as untrusted: anything odd and it is not used.
+
+/// Where the login screen's copy is kept (the folder is root's, 0755; the file 0644).
+pub const SYSTEM_PATH: &str = "/var/lib/yggdrasil/greeter/display.conf";
+/// The most bytes the copy may have: three short lines and a comment.
+pub const SYSTEM_MAX: usize = 1024;
+/// The most characters a maker's or model's name may have (EDID names are 13; the PNP list's makers are longer).
+const NAME_MAX: usize = 64;
+
+/// A maker's or model's name as the copy may hold it: 1 to 64 printable characters (ASCII, or letters and digits of other
+/// scripts), no control or invisible formatting characters, no spaces around it.
+fn system_name_ok(v: &str) -> bool {
+    let n = v.chars().count();
+    (1..=NAME_MAX).contains(&n)
+        && v.trim() == v
+        && v.chars().all(|c| c == ' ' || c.is_ascii_graphic() || (!c.is_ascii() && c.is_alphanumeric()))
+}
+
+/// A connector's name as the kernel and the compositors give it: DP-1, HDMI-A-1, eDP-1, HEADLESS-2.
+fn system_connector_ok(v: &str) -> bool {
+    (1..=32).contains(&v.len()) && v.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
+
+/// A choice the copy can hold: a maker and a model (and a connector, or none), or a connector alone.
+fn system_ok(c: &MainDisplay) -> bool {
+    let named = !c.make.is_empty() || !c.model.is_empty();
+    (!named || (system_name_ok(&c.make) && system_name_ok(&c.model)))
+        && (c.connector.is_empty() || system_connector_ok(&c.connector))
+        && !c.is_empty()
+}
+
+/// Reads the copy strictly: only comment lines, blank lines and `main_make`, `main_model`, `main_connector` (each at most once),
+/// with values that pass the checks above. Anything else, and the whole file is ignored (None).
+pub fn parse_system(text: &str) -> Option<MainDisplay> {
+    if text.len() > SYSTEM_MAX {
+        return None;
+    }
+    let mut c = MainDisplay::default();
+    let mut seen = [false; 3];
+    for line in text.split('\n') {
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        if line.trim_matches(' ').is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let (k, v) = line.split_once('=')?;
+        let (k, v) = (k.trim_matches(' '), v.trim_matches(' '));
+        let i = ["main_make", "main_model", "main_connector"].iter().position(|x| *x == k)?;
+        if std::mem::replace(&mut seen[i], true) {
+            return None;
+        }
+        *[&mut c.make, &mut c.model, &mut c.connector][i] = v.to_string();
+    }
+    system_ok(&c).then_some(c)
+}
+
+/// The copy's text for a choice; None when the choice could not be read back by `parse_system` (it is then not written).
+pub fn system_text(c: &MainDisplay) -> Option<String> {
+    let t = format!(
+        "# The main display at the login screen, from the latest sign-in (written by /usr/lib/yggdrasil/greeter-display)\n\
+         main_make = {}\nmain_model = {}\nmain_connector = {}\n",
+        c.make, c.model, c.connector
+    );
+    (parse_system(&t).as_ref() == Some(c)).then_some(t)
+}
+
+/// The root helper that writes the copy (packages/lock, through pkexec).
+pub const SYSTEM_HELPER: &str = "/usr/lib/yggdrasil/greeter-display";
+
+/// What the session runs so the login screen's copy holds this account's choice (`pkexec` and the helper with the three values),
+/// given what the copy holds now. None when there is nothing to do: no choice (another account's stays), the copy holds it
+/// already, or it is a choice the copy could not hold.
+pub fn share_command(choice: Option<&MainDisplay>, copy: Option<&MainDisplay>) -> Option<Vec<String>> {
+    let c = choice.filter(|c| copy != Some(*c) && system_text(c).is_some())?;
+    Some(vec!["pkexec".into(), SYSTEM_HELPER.into(), c.make.clone(), c.model.clone(), c.connector.clone()])
+}
+
+/// Reads the copy at `path` when it can be trusted: a plain file (never through a link, never a pipe that would block),
+/// owned by `owner` (root, for the real one), writable by nobody else, no bigger than SYSTEM_MAX. Else None.
+pub fn load_system(path: &std::path::Path, owner: u32) -> Option<MainDisplay> {
+    use std::io::Read;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    let f = std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK).open(path).ok()?;
+    let m = f.metadata().ok()?;
+    if !m.is_file() || m.uid() != owner || m.mode() & 0o022 != 0 || m.len() > SYSTEM_MAX as u64 {
+        return None;
+    }
+    let mut buf = Vec::with_capacity(m.len() as usize);
+    f.take(SYSTEM_MAX as u64 + 1).read_to_end(&mut buf).ok()?;
+    parse_system(std::str::from_utf8(&buf).ok()?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,5 +301,116 @@ mod tests {
         let back = MainDisplay::parse(&t).unwrap();
         assert_eq!((back.make.as_str(), back.model.as_str(), back.connector.as_str()), ("Odd Maker", "M=1", "DP-1"));
         assert_eq!(MainDisplay::parse("junk\nmain_model = UW34\nfoo = bar\n").map(|c| c.model), Some("UW34".into()));
+    }
+
+    fn choice(make: &str, model: &str, connector: &str) -> MainDisplay {
+        MainDisplay { make: make.into(), model: model.into(), connector: connector.into() }
+    }
+
+    #[test]
+    fn the_system_copy_is_written_and_read_back() {
+        for c in [
+            choice("Example Display", "UW34", "DP-1"),
+            choice("Sample Screens", "Tall27", ""),
+            choice("", "", "HEADLESS-2"),
+            choice("Écrans d'Exemple", "Modèle 9 (rev. B)", "HDMI-A-1"),
+        ] {
+            let t = system_text(&c).unwrap_or_else(|| panic!("{c:?}"));
+            assert_eq!(parse_system(&t), Some(c.clone()));
+            assert_eq!(parse_system(&t.replace('\n', "\r\n")), Some(c), "Windows line ends");
+        }
+        let ok = "main_make = Example Display\nmain_model = UW34\nmain_connector = DP-1\n";
+        assert_eq!(parse_system(&format!("# a comment\n\n{ok}  \n")).map(|c| c.model), Some("UW34".into()));
+    }
+
+    #[test]
+    fn a_choice_the_copy_cannot_hold_is_not_written() {
+        for c in [
+            MainDisplay::default(),
+            choice("Odd\nMaker", "M", "DP-1"),
+            choice(" Padded", "M", "DP-1"),
+            choice("Maker", "", "DP-1"),
+            choice("Maker", "M", "DP 1"),
+            choice("Maker", "M", "../../etc"),
+            choice(&"x".repeat(65), "M", "DP-1"),
+            choice("Maker", "M", &"D".repeat(33)),
+            choice("Maker\u{202e}", "M", "DP-1"),
+            choice("Maker", "M\u{200b}", "DP-1"),
+        ] {
+            assert_eq!(system_text(&c), None, "{c:?}");
+        }
+        assert!(system_text(&choice(&"x".repeat(64), "M", "DP-1")).is_some(), "64 is the most");
+    }
+
+    #[test]
+    fn a_hostile_system_copy_is_ignored_whole() {
+        let ok = "main_make = Example Display\nmain_model = UW34\nmain_connector = DP-1\n";
+        assert!(parse_system(ok).is_some());
+        let hostile = [
+            String::new(),
+            "# only a comment\n".to_string(),
+            format!("{ok}main_make = Other\n"),                        // a key twice
+            format!("{ok}wallpaper = /etc/shadow\n"),                  // a key the copy does not have
+            format!("{ok}junk\n"),                                     // a line that is not key = value
+            ok.replace("UW34", "UW\u{1b}[2J34"),                       // a terminal escape
+            ok.replace("UW34", "UW\u{0}34"),                           // a NUL
+            ok.replace("UW34", "\u{202e}43WU"),                        // right-to-left override
+            ok.replace("UW34", "\tUW34"),                              // a tab
+            ok.replace("DP-1", "DP-1;rm -rf /"),                       // not a connector name
+            ok.replace("DP-1", "/dev/dri/card0"),                      // a path
+            ok.replace("UW34", ""),                                    // a maker without a model
+            ok.replace("UW34", &"9".repeat(65)),                       // too long
+            format!("{ok}#{}\n", "x".repeat(SYSTEM_MAX)),              // too big as a whole
+            "main_make = \nmain_model = \nmain_connector = \n".into(), // nothing chosen
+            ok.replace("main_model", " main_model\u{a0}"),             // an odd key
+            ok.replace('\n', "\r"),                                    // one long line
+        ];
+        for t in &hostile {
+            assert_eq!(parse_system(t), None, "{t:?}");
+        }
+    }
+
+    #[test]
+    fn the_session_hands_its_choice_over_only_when_it_changed() {
+        let mine = choice("Example Display", "UW34", "DP-1");
+        let theirs = choice("Sample Screens", "Tall27", "DP-3");
+        let cmd = share_command(Some(&mine), Some(&theirs)).unwrap();
+        assert_eq!(cmd, ["pkexec", SYSTEM_HELPER, "Example Display", "UW34", "DP-1"], "the latest sign-in wins");
+        assert!(share_command(Some(&mine), None).is_some(), "no copy yet");
+        assert_eq!(share_command(Some(&mine), Some(&mine)), None, "already there: no pkexec at every sign-in");
+        assert_eq!(share_command(None, Some(&theirs)), None, "no choice: another account's stays");
+        assert_eq!(share_command(Some(&choice("Odd\nMaker", "M", "DP-1")), None), None, "one the copy cannot hold");
+    }
+
+    #[test]
+    fn the_system_copy_is_read_only_when_it_can_be_trusted() {
+        use std::os::unix::fs::PermissionsExt;
+        let me = unsafe { libc::geteuid() };
+        let d = std::env::temp_dir().join(format!("ygg-display-system-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let f = d.join("display.conf");
+        let c = choice("Example Display", "UW34", "DP-1");
+        std::fs::write(&f, system_text(&c).unwrap()).unwrap();
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(load_system(&f, me), Some(c.clone()));
+        assert_eq!(load_system(&f, me.wrapping_add(1)), None, "owned by someone else");
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o666)).unwrap();
+        assert_eq!(load_system(&f, me), None, "writable by others");
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let link = d.join("link.conf");
+        std::os::unix::fs::symlink(&f, &link).unwrap();
+        assert_eq!(load_system(&link, me), None, "never through a link");
+        let fifo = d.join("fifo.conf");
+        let p = std::ffi::CString::new(fifo.to_str().unwrap()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(p.as_ptr(), 0o644) }, 0);
+        assert_eq!(load_system(&fifo, me), None, "a pipe is not waited on");
+        assert_eq!(load_system(&d, me), None, "a folder");
+        assert_eq!(load_system(&d.join("missing"), me), None);
+        std::fs::write(&f, format!("{}#{}\n", system_text(&c).unwrap(), "x".repeat(SYSTEM_MAX))).unwrap();
+        assert_eq!(load_system(&f, me), None, "too big");
+        std::fs::write(&f, [b"main_make = \xff\xfe\n".as_slice()].concat()).unwrap();
+        assert_eq!(load_system(&f, me), None, "not UTF-8");
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

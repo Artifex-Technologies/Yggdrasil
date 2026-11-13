@@ -755,6 +755,27 @@ fn new_buffer(shm: &WlShm, qh: &QueueHandle<State>, w: u32, h: u32) -> Option<Bu
     Some(Buffer { buffer, map, w, h, busy })
 }
 
+/// The login screen's copy of the main display brought up to this account's choice, at sign-in and when the choice changes
+/// (yggdrasil_conf::display::share_command): the helper runs as root through pkexec, which never asks (polkit says yes to
+/// whoever is signed in at this computer, no to anyone else). Nothing when the helper is not installed or the copy holds it.
+fn hand_main_display_to_login_screen(choice: Option<&yggdrasil_conf::display::MainDisplay>) {
+    use yggdrasil_conf::display as d;
+    if !std::path::Path::new(d::SYSTEM_HELPER).is_file() {
+        return;
+    }
+    let copy = d::load_system(std::path::Path::new(d::SYSTEM_PATH), 0);
+    let Some(cmd) = d::share_command(choice, copy.as_ref()) else { return };
+    // waited for on a thread of its own: never on the one that draws, and no process left behind
+    std::thread::spawn(move || {
+        let _ = std::process::Command::new(&cmd[0])
+            .args(&cmd[1..])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    });
+}
+
 fn run(cmd: &[&str]) {
     let Some((p, a)) = cmd.split_first() else { return };
     let _ = std::process::Command::new(p)
@@ -1944,6 +1965,7 @@ impl State {
             yggdrasil_conf::display::FILE => {
                 let c = yggdrasil_conf::display::load();
                 if c != self.main_choice {
+                    hand_main_display_to_login_screen(c.as_ref());
                     self.main_choice = c;
                     self.built_for = None;
                 }
@@ -4656,6 +4678,8 @@ fn main() {
     let (heard_tx, heard_rx) = calloop::channel::channel::<String>();
     let (say_tx, say_rx) = calloop::channel::channel::<String>();
     let (viz_tx, viz_rx) = calloop::channel::channel::<()>();
+    let main_choice = yggdrasil_conf::display::load();
+    hand_main_display_to_login_screen(main_choice.as_ref());
     let mut state = State {
         qh: qh.clone(),
         conn: conn.clone(),
@@ -4695,7 +4719,7 @@ fn main() {
         outputs: HashMap::new(),
         layout: read_layout(),
         layout_stale: false,
-        main_choice: yggdrasil_conf::display::load(),
+        main_choice,
         built_for: None,
         pointer_surface: None,
         covered: vec![],

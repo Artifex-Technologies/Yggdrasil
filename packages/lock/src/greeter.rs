@@ -4,6 +4,9 @@
 //! Settings: /etc/yggdrasil/greeter.conf (`design = split`, `session = yggdrasil`, `wallpaper = /path/to/picture`). The session is the
 //! name of a file in /usr/share/wayland-sessions (as other login screens list them), or a command; without one, the first session there.
 //! Tab (or Down) and Shift+Tab (or Up) switch user while nothing is typed; Enter signs in; Escape clears what was typed.
+//! With several screens the sign-in is on the main display only and the others are black (screens.rs); which one is main comes
+//! from the latest sign-in's choice, /var/lib/yggdrasil/greeter/display.conf (`YGGDRASIL_GREETER_DISPLAY` overrides the path,
+//! for tests), read strictly and only when root owns it.
 //! Exit status: 0 the session was started (greetd takes over), 2 setup problem.
 
 // shared with the lock screen, which also reads its own lock.conf, wallpaper and avatar
@@ -11,6 +14,7 @@
 mod design;
 mod draw;
 mod greetd;
+mod screens;
 mod state;
 
 use std::os::fd::AsFd;
@@ -27,17 +31,26 @@ use wayland_client::protocol::{
     wl_buffer::{self, WlBuffer},
     wl_compositor::WlCompositor,
     wl_keyboard::{self, WlKeyboard},
+    wl_output::{self, WlOutput},
     wl_registry,
     wl_seat::{self, WlSeat},
     wl_shm::{self, WlShm},
     wl_shm_pool::WlShmPool,
+    wl_subcompositor::WlSubcompositor,
+    wl_subsurface::WlSubsurface,
     wl_surface::WlSurface,
 };
 use wayland_client::{delegate_noop, Connection, Dispatch, Proxy, QueueHandle, WEnum};
+use wayland_protocols::wp::single_pixel_buffer::v1::client::wp_single_pixel_buffer_manager_v1::WpSinglePixelBufferManagerV1;
+use wayland_protocols::wp::viewporter::client::{wp_viewport::WpViewport, wp_viewporter::WpViewporter};
 use wayland_protocols::xdg::shell::client::{
     xdg_surface::{self, XdgSurface},
     xdg_toplevel::{self, XdgToplevel},
     xdg_wm_base::{self, XdgWmBase},
+};
+use wayland_protocols::xdg::xdg_output::zv1::client::{
+    zxdg_output_manager_v1::ZxdgOutputManagerV1,
+    zxdg_output_v1::{self, ZxdgOutputV1},
 };
 use xkbcommon::xkb;
 
@@ -49,11 +62,38 @@ struct User {
     avatar: Option<Pixmap>,
 }
 
+/// A connected screen: what wl_output and xdg-output say about it.
+struct Output {
+    /// Its name in the registry (to drop it when it goes).
+    global: u32,
+    wl: WlOutput,
+    xdg: Option<ZxdgOutputV1>,
+    screen: screens::Screen,
+}
+
+/// How the window is made black: one black pixel stretched over it (wp_viewporter and wp_single_pixel_buffer, cage has both:
+/// no memory at all), else a buffer of zeros the window's size (XRGB: zeros are black, nothing to paint).
+enum Black {
+    Pixel { buf: WlBuffer, viewport: WpViewport },
+    Zeros(Option<WlBuffer>),
+}
+
 struct App {
     qh: QueueHandle<App>,
     conn: Connection,
     shm: WlShm,
+    /// The full-screen window, black; over all the screens with cage.
     surface: WlSurface,
+    /// The sign-in, a subsurface of the window over the main display (screens.rs).
+    ui: WlSurface,
+    sub: WlSubsurface,
+    black: Black,
+    /// The window size the black was last set for.
+    black_for: (u32, u32),
+    xdg_outputs: Option<ZxdgOutputManagerV1>,
+    outputs: Vec<Output>,
+    /// The main display chosen at the latest sign-in (the system copy), if any.
+    main_choice: Option<yggdrasil_conf::display::MainDisplay>,
     size: (u32, u32),
     configured: bool,
     xkb: Option<xkb::State>,
@@ -80,27 +120,80 @@ struct App {
 
 impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for App {
     fn event(
-        _: &mut Self,
-        _: &wl_registry::WlRegistry,
-        _: wl_registry::Event,
+        app: &mut Self,
+        reg: &wl_registry::WlRegistry,
+        e: wl_registry::Event,
         _: &GlobalListContents,
         _: &Connection,
-        _: &QueueHandle<Self>,
+        qh: &QueueHandle<Self>,
     ) {
+        // screens plugged in or out (or switched off and on) while the login screen is up
+        match e {
+            wl_registry::Event::Global { name, interface, version } if interface == WlOutput::interface().name => {
+                app.add_output(reg, name, version, qh)
+            }
+            wl_registry::Event::GlobalRemove { name } => {
+                if let Some(i) = app.outputs.iter().position(|o| o.global == name) {
+                    let o = app.outputs.remove(i);
+                    if let Some(x) = o.xdg {
+                        x.destroy();
+                    }
+                    if o.wl.version() >= 3 {
+                        o.wl.release();
+                    }
+                    app.draw();
+                }
+            }
+            _ => {}
+        }
     }
 }
 delegate_noop!(App: WlCompositor);
 delegate_noop!(App: ignore WlShm);
 delegate_noop!(App: ignore WlShmPool);
 delegate_noop!(App: ignore WlSurface);
+delegate_noop!(App: WlSubcompositor);
+delegate_noop!(App: WlSubsurface);
+delegate_noop!(App: WpViewporter);
+delegate_noop!(App: WpViewport);
+delegate_noop!(App: WpSinglePixelBufferManagerV1);
+delegate_noop!(App: ZxdgOutputManagerV1);
+
+impl Dispatch<WlOutput, u32> for App {
+    fn event(app: &mut Self, _: &WlOutput, e: wl_output::Event, global: &u32, _: &Connection, _: &QueueHandle<Self>) {
+        let Some(o) = app.outputs.iter_mut().find(|o| o.global == *global) else { return };
+        match e {
+            wl_output::Event::Geometry { make, model, .. } => (o.screen.make, o.screen.model) = (make, model),
+            wl_output::Event::Name { name } => o.screen.connector = name,
+            wl_output::Event::Done => app.draw(),
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<ZxdgOutputV1, u32> for App {
+    fn event(app: &mut Self, _: &ZxdgOutputV1, e: zxdg_output_v1::Event, global: &u32, _: &Connection, _: &QueueHandle<Self>) {
+        let Some(o) = app.outputs.iter_mut().find(|o| o.global == *global) else { return };
+        match e {
+            zxdg_output_v1::Event::LogicalPosition { x, y } => (o.screen.rect.x, o.screen.rect.y) = (x, y),
+            zxdg_output_v1::Event::LogicalSize { width, height } => (o.screen.rect.w, o.screen.rect.h) = (width, height),
+            // wl_output's name (version 4) comes first where there is one
+            zxdg_output_v1::Event::Name { name } if o.screen.connector.is_empty() => o.screen.connector = name,
+            // before version 3 the place is complete here; from 3 on, at wl_output's done
+            zxdg_output_v1::Event::Done => app.draw(),
+            _ => {}
+        }
+    }
+}
 
 /// A new picture every second, each in a buffer of its own that is destroyed when the compositor gives it back. One that does not
 /// give them back (a screen that is off) would gather a screenful a second; with this many still out, a frame is left out.
 const MAX_IN_FLIGHT: u32 = 3;
 
-impl Dispatch<wl_buffer::WlBuffer, ()> for App {
-    fn event(app: &mut Self, b: &WlBuffer, e: wl_buffer::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
-        if let wl_buffer::Event::Release = e {
+/// A buffer's data: true for a picture of the sign-in (destroyed when given back), false for the black (kept while shown).
+impl Dispatch<wl_buffer::WlBuffer, bool> for App {
+    fn event(app: &mut Self, b: &WlBuffer, e: wl_buffer::Event, frame: &bool, _: &Connection, _: &QueueHandle<Self>) {
+        if let (wl_buffer::Event::Release, true) = (e, frame) {
             b.destroy();
             app.in_flight = app.in_flight.saturating_sub(1);
         }
@@ -178,6 +271,38 @@ impl Dispatch<WlKeyboard, ()> for App {
 }
 
 impl App {
+    fn add_output(&mut self, reg: &wl_registry::WlRegistry, global: u32, version: u32, qh: &QueueHandle<Self>) {
+        let wl: WlOutput = reg.bind(global, version.min(4), qh, global);
+        let xdg = self.xdg_outputs.as_ref().map(|m| m.get_xdg_output(&wl, qh, global));
+        self.outputs.push(Output { global, wl, xdg, screen: Default::default() });
+    }
+
+    /// Makes the window black for its size (when that changed): the stretched pixel, or a new buffer of zeros. Returns the
+    /// buffer it replaced, to be destroyed once the window is committed.
+    fn set_black(&mut self) -> Option<WlBuffer> {
+        let (w, h) = self.size;
+        self.black_for = self.size;
+        let old = match &mut self.black {
+            Black::Pixel { buf, viewport } => {
+                viewport.set_destination(w as i32, h as i32);
+                self.surface.attach(Some(buf), 0, 0);
+                None
+            }
+            Black::Zeros(cur) => {
+                let size = w as usize * h as usize * 4;
+                let fd = rustix::fs::memfd_create(c"yggdrasil-greeter-black", rustix::fs::MemfdFlags::CLOEXEC).ok()?;
+                rustix::fs::ftruncate(&fd, size as u64).ok()?;
+                let pool = self.shm.create_pool(fd.as_fd(), size as i32, &self.qh, ());
+                let buf = pool.create_buffer(0, w as i32, h as i32, (w * 4) as i32, wl_shm::Format::Xrgb8888, &self.qh, false);
+                pool.destroy();
+                self.surface.attach(Some(&buf), 0, 0);
+                cur.replace(buf)
+            }
+        };
+        self.surface.damage(0, 0, w as i32, h as i32);
+        old
+    }
+
     fn key(&mut self, code: u32) {
         let Some(x) = &self.xkb else { return };
         let kc = xkb::Keycode::new(code + 8);
@@ -259,10 +384,12 @@ impl App {
     }
 
     fn draw(&mut self) {
-        let (w, h) = self.size;
-        if !self.configured || w == 0 || h == 0 || self.in_flight >= MAX_IN_FLIGHT {
+        if !self.configured || self.size.0 == 0 || self.size.1 == 0 || self.in_flight >= MAX_IN_FLIGHT {
             return;
         }
+        let screens: Vec<screens::Screen> = self.outputs.iter().map(|o| o.screen.clone()).collect();
+        let area = screens::sign_in_area(&screens, self.size, self.main_choice.as_ref());
+        let (w, h) = (area.w.max(1) as u32, area.h.max(1) as u32);
         let Some(mut pix) = Pixmap::new(w, h) else { return };
         let key = (w, h);
         if !self.walls.contains_key(&key) {
@@ -311,12 +438,20 @@ impl App {
             dst[3] = src[3];
         }
         let pool = self.shm.create_pool(file.as_fd(), size as i32, &self.qh, ());
-        let buf = pool.create_buffer(0, w as i32, h as i32, stride as i32, wl_shm::Format::Argb8888, &self.qh, ());
+        let buf = pool.create_buffer(0, w as i32, h as i32, stride as i32, wl_shm::Format::Argb8888, &self.qh, true);
         pool.destroy();
         self.in_flight += 1;
-        self.surface.attach(Some(&buf), 0, 0);
-        self.surface.damage_buffer(0, 0, w as i32, h as i32);
+        self.ui.attach(Some(&buf), 0, 0);
+        self.ui.damage_buffer(0, 0, w as i32, h as i32);
+        self.ui.commit();
+        // the sign-in is a synchronised subsurface: its picture, its place and the black under it all show with the window's
+        // commit, in one frame
+        self.sub.set_position(area.x, area.y);
+        let old = if self.black_for != self.size { self.set_black() } else { None };
         self.surface.commit();
+        if let Some(b) = old {
+            b.destroy();
+        }
     }
 }
 
@@ -503,6 +638,7 @@ fn main() {
     let (globals, queue) = registry_queue_init::<App>(&conn).unwrap_or_else(|e| die(&e.to_string()));
     let qh = queue.handle();
     let compositor: WlCompositor = globals.bind(&qh, 1..=6, ()).unwrap_or_else(|_| die("no wl_compositor"));
+    let subcompositor: WlSubcompositor = globals.bind(&qh, 1..=1, ()).unwrap_or_else(|_| die("no wl_subcompositor"));
     let shm: WlShm = globals.bind(&qh, 1..=1, ()).unwrap_or_else(|_| die("no wl_shm"));
     let _seat: WlSeat = globals.bind(&qh, 1..=7, ()).unwrap_or_else(|_| die("no wl_seat"));
     let wm: XdgWmBase = globals.bind(&qh, 1..=6, ()).unwrap_or_else(|_| die("no xdg_wm_base"));
@@ -520,12 +656,19 @@ fn main() {
     let sessions = sessions_in(std::path::Path::new(SESSIONS), conf("session").as_deref());
 
     let surface = compositor.create_surface(&qh, ());
-    let xs = wm.get_xdg_surface(&surface, &qh, ());
-    let top = xs.get_toplevel(&qh, ());
-    top.set_title("Sign in".into());
-    top.set_app_id("yggdrasil-greeter".into());
-    top.set_fullscreen(None);
-    surface.commit();
+    let ui = compositor.create_surface(&qh, ());
+    let sub = subcompositor.get_subsurface(&ui, &surface, &qh, ());
+    let black =
+        match (globals.bind::<WpViewporter, _, _>(&qh, 1..=1, ()), globals.bind::<WpSinglePixelBufferManagerV1, _, _>(&qh, 1..=1, ())) {
+            (Ok(vp), Ok(px)) => {
+                Black::Pixel { buf: px.create_u32_rgba_buffer(0, 0, 0, u32::MAX, &qh, false), viewport: vp.get_viewport(&surface, &qh, ()) }
+            }
+            _ => Black::Zeros(None),
+        };
+    let main_choice = match std::env::var_os("YGGDRASIL_GREETER_DISPLAY") {
+        Some(p) => yggdrasil_conf::display::load_system(std::path::Path::new(&p), unsafe { libc::geteuid() }),
+        None => yggdrasil_conf::display::load_system(std::path::Path::new(yggdrasil_conf::display::SYSTEM_PATH), 0),
+    };
 
     let (tx, rx) = channel::<Result<(), Fail>>();
     let mut app = App {
@@ -533,6 +676,13 @@ fn main() {
         conn: conn.clone(),
         shm,
         surface,
+        ui,
+        sub,
+        black,
+        black_for: (0, 0),
+        xdg_outputs: globals.bind(&qh, 1..=3, ()).ok(),
+        outputs: vec![],
+        main_choice,
         size: (1280, 720),
         configured: false,
         xkb: None,
@@ -554,6 +704,21 @@ fn main() {
         test_keys: std::env::var("YGGDRASIL_GREETER_TEST_KEYS").ok(),
     };
     let _ = &app.conn;
+    // the screens and their places, known before the window's first configure
+    let mut queue = queue;
+    for (name, version) in globals
+        .contents()
+        .with_list(|l| l.iter().filter(|g| g.interface == WlOutput::interface().name).map(|g| (g.name, g.version)).collect::<Vec<_>>())
+    {
+        app.add_output(globals.registry(), name, version, &qh);
+    }
+    queue.roundtrip(&mut app).unwrap_or_else(|e| die(&e.to_string()));
+    let xs = wm.get_xdg_surface(&app.surface, &qh, ());
+    let top = xs.get_toplevel(&qh, ());
+    top.set_title("Sign in".into());
+    top.set_app_id("yggdrasil-greeter".into());
+    top.set_fullscreen(None);
+    app.surface.commit();
     let mut event_loop: EventLoop<App> = EventLoop::try_new().unwrap_or_else(|_| die("no event loop"));
     WaylandSource::new(conn.clone(), queue).insert(event_loop.handle()).unwrap_or_else(|_| die("cannot watch the Wayland connection"));
     event_loop

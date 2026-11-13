@@ -13,6 +13,11 @@ path = "src/main.rs"
 name = "yggdrasil-greeter"
 path = "src/greeter.rs"
 
+# hands an account's main display to the login screen (root, through pkexec: /usr/lib/yggdrasil/greeter-display)
+[[bin]]
+name = "yggdrasil-greeter-display"
+path = "src/greeter_display.rs"
+
 [[bin]]
 name = "yggdrasil-splash"
 path = "src/splash.rs"
