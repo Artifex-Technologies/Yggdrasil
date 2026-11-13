@@ -655,6 +655,18 @@ fn off_writes_nothing_dark_when_the_list_cannot_be_written() {
     assert!(w.lock().unwrap().calls.iter().all(|c| !c.starts_with("set") && !c.starts_with("login")));
 }
 
+/// White space around a value is only the space between fields: "1 " (the input `non_numbers_are_refused` once drew, CI run of
+/// 89367ed) is the number 1, and white space inside a value makes it two fields, refused.
+#[test]
+fn white_space_around_a_number() {
+    let (z, _, set) = ZONES[0];
+    assert_eq!(parse_line(&format!("razer 0 {z} {set} 1 ")), Some(Entry::Razer { id: "0".into(), zone: 0, value: 1.0 }));
+    assert_eq!(parse_line(&format!("razer 0 {z} {set}\u{3000}2\t")), Some(Entry::Razer { id: "0".into(), zone: 0, value: 2.0 }));
+    assert_eq!(parse_line("leds a_kbd_backlight - - 3 "), Some(Entry::Leds { name: "a_kbd_backlight".into(), value: 3 }));
+    assert_eq!(parse_line(&format!("razer 0 {z} {set} 1 2")), None);
+    assert_eq!(parse_line("leds a_kbd_backlight - - 1 x"), None);
+}
+
 fn entry() -> impl Strategy<Value = Entry> {
     prop_oneof![
         ("[A-Za-z0-9_]{1,64}", 0..ZONES.len(), 1.0f64..=100.0).prop_map(|(id, zone, value)| Entry::Razer { id, zone, value }),
@@ -679,10 +691,12 @@ proptest! {
         }
     }
 
-    /// Lines shaped like good ones with a value that is not a plain number are never put back.
+    /// Lines shaped like good ones with a value that is not a plain number are never put back. A line is split at white space,
+    /// so the value is what `v` holds between its white space: "1 " is the number 1 (put back, see `white_space_around_a_number`).
     #[test]
     fn non_numbers_are_refused(id in "[A-Za-z0-9_]{1,16}", zone in 0..ZONES.len(), v in "\\PC{0,12}") {
-        prop_assume!(!v.bytes().all(|c| c.is_ascii_digit() || c == b'.') || v.is_empty() || v.matches('.').count() > 1 || v == ".");
+        let t = v.trim();
+        prop_assume!(!t.bytes().all(|c| c.is_ascii_digit() || c == b'.') || t.is_empty() || t.matches('.').count() > 1 || t == ".");
         let (z, _, set) = ZONES[zone];
         prop_assert_eq!(parse_line(&format!("razer {id} {z} {set} {v}")), None);
         prop_assert_eq!(parse_line(&format!("leds {id}_kbd_backlight - - {v}")), None);
