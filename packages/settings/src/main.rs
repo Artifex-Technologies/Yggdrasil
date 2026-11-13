@@ -153,7 +153,6 @@ const PAGES: [(Page, &str, Icon, &str, &str); 22] = [
     ),
     (Page::Assistant, "Assistant", Icon::Sound, "Personal", "voice"),
     (Page::Apps, "Apps", Icon::Apps, "Apps", "installed optional software uninstall minos"),
-    (Page::DefaultApps, "Default apps", Icon::Apps, "Apps", "browser mail music video open with"),
     (
         Page::Games,
         "Games",
@@ -172,6 +171,7 @@ const PAGES: [(Page, &str, Icon, &str, &str); 22] = [
     (Page::Restore, "Restore points", Icon::Restart, "Privacy & security", "snapshot backup rollback undo"),
     (Page::Users, "Users", Icon::User, "System", "account people"),
     (Page::Developer, "Developer Mode", Icon::Keyboard, "System", "developer options"),
+    (Page::DefaultApps, "Default Apps", Icon::Apps, "Apps", "browser mail music video open with"),
     (Page::About, "About", Icon::Info, "General", "version system information hardware"),
     (Page::DateTime, "Date & Time", Icon::Clock, "General", "clock timezone"),
     (Page::Storage, "Storage", Icon::Gear, "General", "disk space free used"),
@@ -182,6 +182,7 @@ const PAGES: [(Page, &str, Icon, &str, &str); 22] = [
 fn parent(page: Page) -> Option<Page> {
     match page {
         Page::About | Page::DateTime | Page::Storage | Page::Language => Some(Page::General),
+        Page::DefaultApps => Some(Page::Apps),
         _ => None,
     }
 }

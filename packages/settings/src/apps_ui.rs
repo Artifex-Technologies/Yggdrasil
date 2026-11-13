@@ -19,7 +19,7 @@ pub enum Confirm {
     ClearData(String),
 }
 
-pub const SORTS: [&str; 3] = ["Usage", "Size", "A to Z"];
+pub const SORTS: [&str; 3] = ["A to Z", "Usage", "Size"];
 
 fn human(bytes: u64) -> String {
     let b = bytes as f64;
@@ -81,14 +81,14 @@ fn sorted<'a>(apps: &'a [AppInfo], sort: usize, sizes: &HashMap<String, u64>, fi
         })
         .collect();
     match sort {
-        0 => v.sort_by(|a, b| {
+        1 => v.sort_by(|a, b| {
             b.seconds
                 .cmp(&a.seconds)
                 .then(b.launches.cmp(&a.launches))
                 .then(b.last_used.cmp(&a.last_used))
                 .then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
         }),
-        1 => v.sort_by(|a, b| {
+        2 => v.sort_by(|a, b| {
             sizes.get(&b.id).unwrap_or(&0).cmp(sizes.get(&a.id).unwrap_or(&0)).then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
         }),
         _ => v.sort_by_key(|a| a.name.to_lowercase()),
@@ -96,11 +96,45 @@ fn sorted<'a>(apps: &'a [AppInfo], sort: usize, sizes: &HashMap<String, u64>, fi
     v
 }
 
+/// The letter an app is listed under in A to Z: its first letter, "#" for a digit or anything else.
+pub fn letter(name: &str) -> String {
+    match name.chars().next() {
+        Some(c) if c.is_alphabetic() => c.to_uppercase().collect(),
+        _ => "#".into(),
+    }
+}
+
+/// The list cut into its letters' sections, in order (A to Z only).
+pub fn by_letter<'a>(list: &[&'a AppInfo]) -> Vec<(String, Vec<&'a AppInfo>)> {
+    let mut out: Vec<(String, Vec<&AppInfo>)> = Vec::new();
+    for a in list {
+        let l = letter(&a.name);
+        match out.last_mut() {
+            Some((k, v)) if *k == l => v.push(a),
+            _ => out.push((l, vec![a])),
+        }
+    }
+    out
+}
+
 impl App {
+    /// Apps, as on a tablet: Default Apps (and the system's optional software and Minos) on a card at the top, then every
+    /// installed app, A to Z under its letter, with a search.
     pub(crate) fn page_apps(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
-        if self.app_sel.is_none() {
-            if let Some(i) = ui::segmented(ui, pal, &["Installed", "Optional software", "Minos"], self.app_tab) {
-                self.app_tab = i;
+        if self.app_sel.is_none() && self.app_tab == 0 {
+            let mut open_defaults = false;
+            ui::group(ui, pal, None, |ui| {
+                open_defaults = ui::nav_row(ui, pal, true, "Default Apps", Some("Manage default apps"), |_| {});
+                if ui::nav_row(ui, pal, false, "Optional software", Some("Parts of the system you can add or take away"), |_| {}) {
+                    self.app_tab = 1;
+                }
+                if ui::nav_row(ui, pal, false, "Minos", Some("The file manager's windows and tabs"), |_| {}) {
+                    self.app_tab = 2;
+                }
+            });
+            if open_defaults {
+                self.open_page(crate::Page::DefaultApps, ctx);
+                return;
             }
         }
         match (self.app_tab, self.app_sel.clone()) {
@@ -114,25 +148,37 @@ impl App {
 
     fn app_list(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         let Some(apps) = self.data.installed.clone() else { return crate::loading(ui) };
-        ui.add_space(8.0);
+        ui.add_space(14.0);
+        ui::field(ui, pal, &mut self.app_filter, "Search apps", ui.available_width() - 22.0, false);
+        ui.add_space(6.0);
         ui.horizontal(|ui| {
             ui.label(RichText::new("Sort by").color(pal.dim));
             if let Some(i) = ui::segmented(ui, pal, &SORTS, self.app_sort) {
                 self.app_sort = i;
             }
             ui.add_space(8.0);
-            ui.add(egui::TextEdit::singleline(&mut self.app_filter).hint_text("Find an app").desired_width(180.0));
-            ui.add_space(8.0);
             ui.checkbox(&mut self.app_system, "Show system tools");
         });
         let list = sorted(&apps, self.app_sort, &self.app_sizes, &self.app_filter, self.app_system);
+        // A to Z: a card per letter, the letter over it; by usage or size one card
+        let sections = if self.app_sort == 0 { by_letter(&list) } else { vec![(String::new(), list)] };
         let mut action: Option<(String, &'static str)> = None;
-        ui::group(ui, pal, None, |ui| {
-            if list.is_empty() {
+        if sections.iter().all(|(_, v)| v.is_empty()) {
+            ui::group(ui, pal, None, |ui| {
                 ui.add_space(12.0);
                 ui.label(RichText::new("No apps match.").color(pal.dim));
                 ui.add_space(12.0);
-            }
+            });
+        }
+        for (head, list) in sections.iter().filter(|(_, v)| !v.is_empty()) {
+            ui::group(ui, pal, (!head.is_empty()).then_some(head.as_str()), |ui| self.app_rows(ui, pal, list, &mut action));
+        }
+        self.app_list_action(ctx, &apps, action);
+    }
+
+    /// The rows of one card of the list: icon, name and what is known, and restart, close and remove on the right.
+    fn app_rows(&self, ui: &mut egui::Ui, pal: &Palette, list: &[&AppInfo], action: &mut Option<(String, &'static str)>) {
+        {
             for (i, a) in list.iter().enumerate() {
                 if i > 0 {
                     let r = ui.available_rect_before_wrap();
@@ -184,19 +230,22 @@ impl App {
                         .layout(egui::Layout::right_to_left(egui::Align::Center)),
                 );
                 if icon_button(&mut buttons, pal, Icon::Trash, "Remove", true, true).clicked() {
-                    action = Some((a.id.clone(), "remove"));
+                    *action = Some((a.id.clone(), "remove"));
                 }
                 if icon_button(&mut buttons, pal, Icon::Close, "Close", !a.running.is_empty(), false).clicked() {
-                    action = Some((a.id.clone(), "close"));
+                    *action = Some((a.id.clone(), "close"));
                 }
                 if icon_button(&mut buttons, pal, Icon::Restart, "Restart", !a.running.is_empty(), false).clicked() {
-                    action = Some((a.id.clone(), "restart"));
+                    *action = Some((a.id.clone(), "restart"));
                 }
                 if resp.clicked() && action.is_none() {
-                    action = Some((a.id.clone(), "open"));
+                    *action = Some((a.id.clone(), "open"));
                 }
             }
-        });
+        }
+    }
+
+    fn app_list_action(&mut self, ctx: &egui::Context, apps: &[AppInfo], action: Option<(String, &'static str)>) {
         if let Some((id, what)) = action {
             let app = apps.iter().find(|a| a.id == id).cloned();
             match (what, app) {
@@ -648,4 +697,26 @@ fn stop_app(a: &AppInfo) -> Result<(), String> {
     args.extend(a.running.iter().cloned());
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
     crate::sys::act("systemctl", &refs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn app(name: &str) -> AppInfo {
+        AppInfo { id: name.to_lowercase(), name: name.into(), ..Default::default() }
+    }
+
+    #[test]
+    fn a_to_z_has_a_section_per_letter() {
+        let apps = [app("calculator"), app("Agora"), app("7-Zip"), app("Ägypten"), app("Browser"), app("Builder")];
+        let list = sorted(&apps, 0, &HashMap::new(), "", true);
+        let s = by_letter(&list);
+        let heads: Vec<&str> = s.iter().map(|(h, _)| h.as_str()).collect();
+        assert_eq!(heads, ["#", "A", "B", "C", "Ä"]);
+        assert_eq!(s[2].1.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), ["Browser", "Builder"]);
+        // the search narrows the list first
+        let list = sorted(&apps, 0, &HashMap::new(), "bu", true);
+        assert_eq!(by_letter(&list).len(), 1);
+    }
 }

@@ -96,6 +96,11 @@ impl App {
                 l.extend(t);
             }
             Page::Apps => {
+                match self.app_tab {
+                    1 => l.push("Optional software".into()),
+                    2 => l.push("Minos".into()),
+                    _ => {}
+                }
                 if let Some(id) = &self.app_sel {
                     let name = self.data.installed.as_ref().and_then(|a| a.iter().find(|a| &a.id == id)).map(|a| a.name.clone());
                     l.push(name.unwrap_or_else(|| id.clone()));
@@ -164,8 +169,12 @@ impl App {
                 self.distress.close();
             }
             Page::Apps => {
-                self.app_sel = None;
-                self.app_confirm = None;
+                if self.app_sel.is_some() {
+                    self.app_sel = None;
+                    self.app_confirm = None;
+                } else {
+                    self.app_tab = 0;
+                }
             }
             Page::Peripherals => match (self.peri.sub, self.key_sub) {
                 (peripherals::Sub::Keyboard, KeySub::SpellDownload) => self.key_sub = KeySub::Spelling,
@@ -207,6 +216,7 @@ impl App {
             Page::Apps => {
                 self.app_sel = None;
                 self.app_confirm = None;
+                self.app_tab = 0;
             }
             Page::Peripherals => {
                 self.peri.sub = peripherals::Sub::Main;

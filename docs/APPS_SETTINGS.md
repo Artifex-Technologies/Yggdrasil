@@ -25,14 +25,16 @@ rows, a row that opens a page ending in ›, and a small grey note under a card 
 
 ## The pages
 
-- **Installed** (tab): every visible desktop entry, sortable by Usage (how often it was opened from here), Size (its folders
-  under ~/.config, ~/.cache, ~/.local/share, ~/.var/app) or A to Z. System tools (settings panels, Avahi, ...) are hidden
+- **The list** (2026-11-13, as on a tablet): a card at the top with Default Apps ("Manage default apps", no longer in the
+  sidebar; `yggdrasil-settings default` still opens it, inside Apps), Optional software and Minos (they were tabs), then a
+  search field and every visible desktop entry A to Z, a card per letter. It can also be sorted by Usage (how often it was
+  opened from here) or Size (its folders under ~/.config, ~/.cache, ~/.local/share, ~/.var/app). System tools (settings panels, Avahi, ...) are hidden
   unless "Show system tools" is ticked. Each row has icon-only buttons: restart, close (both only while it runs), remove
   (asks first; shows the package; the desktop's own packages are refused).
 - **An app's page** (click a row, or `yggdrasil-settings apps:ID`): Network (switch; click the name too), open at login,
   status, storage with Clear cache and Clear data (the latter lists the folders and asks for the password), the privacy
   sandbox, Remove.
-- **Optional software** and **Minos** are the other two tabs.
+- **Optional software** and **Minos** are rows on the card at the top, each its own page.
 - **Developer options** (About: click the logo five times while holding the ` key): adds "Any connection / Ethernet only /
   Wi-Fi only" next to an app's network switch, and the selected power mode's CPU and graphics-card limits under Power. Stored as
   `developer = yes` in ~/.config/yggdrasil/panel.conf.
@@ -150,8 +152,8 @@ About only when switched on, have no picture.
 | **Appearance**: light or dark, the accent, wallpapers, icons. | ![Settings > Appearance](../assets/screenshots/settings-appearance.png) |
 | **Appearance > Lock screen**: the designs with their previews. | ![Settings > Appearance > Lock screen](../assets/screenshots/settings-lock-screen-designs.png) |
 | **Sarina**: the operating system's assistant, from its integration. | ![Settings > Sarina](../assets/screenshots/settings-assistant.png) |
-| **Apps**: installed apps by use. | ![Settings > Apps](../assets/screenshots/settings-apps-list.png) |
-| **Default apps**: what opens each kind of file. | ![Settings > Default apps](../assets/screenshots/settings-default-apps.png) |
+| **Apps**: Default Apps, Optional software and Minos on a card at the top, then every installed app A to Z under its letter, with a search. | ![Settings > Apps](../assets/screenshots/settings-apps-list.png) |
+| **Apps > Default Apps**: what opens each kind of file. | ![Settings > Apps > Default Apps](../assets/screenshots/settings-default-apps.png) |
 | **Games**: graphics cards, game fixes, frame generation per game. | ![Settings > Games](../assets/screenshots/settings-games.png) |
 | **Security**: the security monitor, the password logs, the distress password, Limbo. | ![Settings > Security](../assets/screenshots/settings-security.png) |
 | **Security > Distress password**: it opens only after your account password. | ![Settings > Security > Distress password](../assets/screenshots/settings-distress-open.png) |
