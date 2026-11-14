@@ -120,6 +120,10 @@ pub struct Snapshot {
     pub wifi_on: bool,
     pub devices: Vec<NetDevice>,
     pub networks: Vec<Wifi>,
+    /// The adapters' hardware addresses (`mac::adapters`; empty unless asked for).
+    pub addresses: Vec<crate::mac::Adapter>,
+    /// Whether the system gives each Wi-Fi network a private address of its own (`mac::nm_private_wifi`).
+    pub private_wifi: bool,
 }
 
 impl Snapshot {
@@ -129,6 +133,7 @@ impl Snapshot {
             wifi_on: nmcli(&["radio", "wifi"]).is_some_and(|s| s.trim() == "enabled"),
             devices: net_devices(&nmcli(&["-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device"]).unwrap_or_default()),
             networks: wifi_list(&nmcli(&["-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "device", "wifi", "list"]).unwrap_or_default()),
+            ..Snapshot::default()
         }
     }
 
@@ -138,7 +143,7 @@ impl Snapshot {
         Snapshot {
             wifi_on: nmcli(&["radio", "wifi"]).is_some_and(|s| s.trim() == "enabled"),
             devices: net_devices(&nmcli(&["-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device"]).unwrap_or_default()),
-            networks: vec![],
+            ..Snapshot::default()
         }
     }
 

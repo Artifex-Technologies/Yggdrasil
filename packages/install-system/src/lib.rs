@@ -20,6 +20,8 @@
 //!
 //! yggdrasil-install-system --check < plan.json      only check the plan, change nothing
 //! yggdrasil-install-system --disks                  the disks it could install onto (JSON), with their partitions and free space
+//! yggdrasil-install-system --prefetch < choices      fetch beforehand what the install will download (src/prefetch.rs):
+//!                                                    {"browsers": [...], "extras": [...]} on one line; stops when stdin closes
 //! ```
 //!
 //! What it prints, one line each (the installer reads these): `STEP n N text` (step n of N has started), `INFO text`
@@ -37,6 +39,7 @@ pub mod conf;
 pub mod disks;
 pub mod install;
 pub mod plan;
+pub mod prefetch;
 pub mod py;
 pub mod pyjson;
 pub mod sys;
@@ -78,6 +81,45 @@ fn traceback(sys: &mut dyn System, e: Fail) -> i32 {
 pub fn read_plan(bytes: &[u8]) -> Result<Py, pyjson::NotJson> {
     let text = std::str::from_utf8(bytes).map_err(|_| pyjson::NotJson)?;
     loads(if text.is_empty() { "{}" } else { text }, PLAN_NESTING)
+}
+
+/// `--prefetch`: the choices on the first line of `stdin`; the rest of it is watched on a thread of its own, and its end (the
+/// window closing it, or going away) stops the fetching between two packages. Returns the exit code.
+pub fn prefetch_main(stdin: Box<dyn std::io::BufRead + Send>, env: &Env, host: Host, sys: &mut dyn System) -> i32 {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let mut stdin = stdin;
+    let mut line = String::new();
+    let _ = stdin.read_line(&mut line);
+    let stopped = std::sync::Arc::new(AtomicBool::new(false));
+    let flag = stopped.clone();
+    std::thread::spawn(move || {
+        let mut rest = vec![];
+        let _ = stdin.read_to_end(&mut rest);
+        flag.store(true, Ordering::SeqCst);
+    });
+    prefetch_with(&line, env, host, sys, &|| stopped.load(Ordering::SeqCst))
+}
+
+/// `--prefetch` with the choices' line in hand and `stop` saying when to stop.
+pub fn prefetch_with(line: &str, env: &Env, host: Host, sys: &mut dyn System, stop: &dyn Fn() -> bool) -> i32 {
+    let conf = conf::installer_integration(&host.integration_dirs.iter().map(String::as_str).collect::<Vec<_>>());
+    let release = conf::os_release(&host.os_release);
+    let os = match conf::configure(&conf, &release, env.sfs.as_deref(), env.target.as_deref()) {
+        Ok(os) => os,
+        Err(e) => return traceback(sys, e),
+    };
+    let dir = host.prefetch.clone();
+    let mut ctx = Ctx { os, host, sys, bound: false };
+    let Ok(choices) = read_plan(line.trim().as_bytes()) else {
+        return match ctx.say("ERROR", "the choices are not JSON") {
+            Ok(()) => 2,
+            Err(e) => traceback(ctx.sys, e),
+        };
+    };
+    match ctx.prefetch(&choices, &dir, stop) {
+        Ok(code) => code,
+        Err(e) => traceback(ctx.sys, e),
+    }
 }
 
 /// The program: its arguments (without its own name), standard input, environment, the live system's places and the

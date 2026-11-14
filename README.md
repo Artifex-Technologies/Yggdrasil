@@ -206,8 +206,8 @@ Applications are shown as windows on a 1920×1080 desktop, in the dark style. Ev
 | *The installer: choosing partitions beside Windows (sample disks).* | *The installer: the account (sample name).* |
 | ![The installer, time zone](assets/screenshots/installer-timezone.png) | ![Settings, Date & Time](assets/screenshots/settings-date-time-light.png) |
 | *The installer: the time zone on the map, or in the short list beside it.* | *Settings: Date & Time in the light style, the same map and list.* |
-| ![The installer, network](assets/screenshots/installer-network.png) | ![The installer, welcome](assets/screenshots/installer-welcome.png) |
-| *The installer: join a network first, or go on without one (made-up networks).* | *The installer: welcome and language.* |
+| ![The installer, network](assets/screenshots/installer-network.png) | ![The installer, hidden network](assets/screenshots/installer-network-hidden.png) |
+| *The installer: join a network first, or go on without one (made-up networks and addresses).* | *The installer: a hidden network, with this computer's real address for a network that reserves one.* |
 
 Every page of Settings, each with a picture: [docs/APPS_SETTINGS.md](docs/APPS_SETTINGS.md#every-page).
 

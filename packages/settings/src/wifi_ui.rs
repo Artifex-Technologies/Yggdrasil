@@ -7,6 +7,7 @@
 
 use crate::{devices, loading, netconf, sys, ui, wifihealth, App};
 use eframe::egui::{self, RichText};
+use yggdrasil_netjoin::join::Request;
 use yggdrasil_ui::theme::Palette;
 use yggdrasil_wifiscan as scan;
 
@@ -87,31 +88,84 @@ fn header(ui: &mut egui::Ui, pal: &Palette, sub: &str) {
     ui.add_space(8.0);
 }
 
-/// The password box for a secured Wi-Fi network: Some(true) to connect (the Connect button, or Enter, with a password typed),
-/// Some(false) to give up (Cancel, or Escape), None while it stays open. The box keeps the keyboard while the window is open,
-/// so Enter is read from the frame's keys: it never "loses focus" (it takes it back every frame), which is why Enter used to
-/// do nothing here.
-pub(crate) fn password_window(ctx: &egui::Context, pal: &Palette, ssid: &str, pw: &mut String) -> Option<bool> {
+/// The window for joining a secured Wi-Fi network (its password), or a hidden one (its name, its security, the password):
+/// Some(true) to connect (the Connect button, or Enter, with what it needs typed), Some(false) to give up (Cancel, or Escape),
+/// None while it stays open. The password box keeps the keyboard while the window is open (the name box takes it while a
+/// hidden network's name is empty), so Enter is read from the frame's keys: it never "loses focus" (it takes it back every
+/// frame), which is why Enter used to do nothing here. Below: the hardware address the network will see, with the choice of
+/// this computer's real one for networks that reserve or allow addresses (`address_choice`).
+pub(crate) fn password_window(ctx: &egui::Context, pal: &Palette, r: &mut Request, n: &sys::Network) -> Option<bool> {
     let mut done = None;
-    egui::Window::new(format!("Connect to “{ssid}”"))
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-        .show(ctx, |ui| {
-            ui.label("Password");
-            ui.add(egui::TextEdit::singleline(pw).password(true).desired_width(280.0)).request_focus();
+    let title = if r.hidden { "Join a hidden network".to_string() } else { format!("Connect to “{}”", r.ssid) };
+    egui::Window::new(title).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0)).show(
+        ctx,
+        |ui| {
+            if r.hidden {
+                ui.label("Network name");
+                let name = ui.add(egui::TextEdit::singleline(&mut r.ssid).desired_width(280.0));
+                if r.ssid.is_empty() {
+                    name.request_focus();
+                }
+                ui.add_space(4.0);
+                ui.label("Security");
+                if let Some(k) = ui::segmented(ui, pal, &["None", "WPA/WPA2/WPA3 Personal"], usize::from(r.secured)) {
+                    r.secured = k == 1;
+                }
+                ui.add_space(4.0);
+            }
+            let asks = !r.hidden || r.secured;
+            if asks {
+                ui.label("Password");
+                let pw = ui.add(egui::TextEdit::singleline(&mut r.password).password(true).desired_width(280.0));
+                if !r.hidden || !r.ssid.is_empty() {
+                    pw.request_focus();
+                }
+            }
+            ui.add_space(6.0);
+            address_choice(ui, pal, r, n);
             let (enter, escape) = ui.input(|i| (i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Escape)));
             ui.add_space(6.0);
+            let ready = !r.ssid.trim().is_empty() && (!asks || !r.password.is_empty());
             ui.horizontal(|ui| {
-                if (ui::action(ui, pal, "Connect").clicked() || enter) && !pw.is_empty() {
+                if (ui::action(ui, pal, "Connect").clicked() || enter) && ready {
                     done = Some(true);
                 }
                 if ui::quiet(ui, pal, "Cancel").clicked() || escape {
                     done = Some(false);
                 }
             });
-        });
+        },
+    );
     done
+}
+
+/// The address the network will see (yggdrasil-netjoin's `seen_by_network`), each with a Copy button; while the system gives
+/// each network a private address, the choice of this computer's real one instead.
+pub(crate) fn address_choice(ui: &mut egui::Ui, pal: &Palette, r: &mut Request, n: &sys::Network) {
+    if n.private_wifi {
+        ui.checkbox(&mut r.real_address, "Use this computer's real address (for networks that reserve or allow addresses)");
+    }
+    let seen = yggdrasil_netjoin::mac::seen_by_network(&n.addresses, n.private_wifi, r.real_address);
+    let many = seen.len() > 1;
+    for (label, mac) in seen {
+        ui.horizontal(|ui| match mac {
+            Some(m) => {
+                let what = if many { format!("{label}: address (MAC) {m}") } else { format!("This computer's Wi-Fi address (MAC): {m}") };
+                ui.label(RichText::new(what).color(pal.dim));
+                if ui::quiet(ui, pal, "Copy").clicked() {
+                    ui.ctx().copy_text(m);
+                }
+            }
+            None => {
+                let what = if many {
+                    format!("{label}: a private address of its own for this network")
+                } else {
+                    "A private address of its own for this network (made as it joins)".to_string()
+                };
+                ui.label(RichText::new(what).color(pal.dim));
+            }
+        });
+    }
 }
 
 impl App {
@@ -169,6 +223,7 @@ impl App {
         let parts = sections(&n);
         let mut connect: Option<(String, bool)> = None;
         let mut join: Option<String> = None;
+        let mut join_hidden = false;
         // the switch, and the network this computer is on right under it, on one card
         ui::group(ui, pal, Some("Wi-Fi"), |ui| {
             ui::row(ui, pal, true, "Wi-Fi", Some(if has_wifi { "Connect to wireless networks" } else { "No Wi-Fi adapter found" }), |ui| {
@@ -234,7 +289,14 @@ impl App {
                         air_open = Some(AirKey { ssid: String::new(), bssid: Some(ap.bss.bssid) });
                     }
                 }
+                // one that hides its name is joined by its name: typed here, with its security and password
+                if ui::nav_row(ui, pal, false, "Hidden network…", Some("Join a network that does not broadcast its name"), |_| {}) {
+                    join_hidden = true;
+                }
             });
+            if join_hidden {
+                self.wifi_join = Some(Request { hidden: true, secured: true, ..Request::default() });
+            }
             ui.add_space(8.0);
             if ui::quiet(ui, pal, "Scan again").clicked() {
                 self.change(ctx, || {
@@ -255,7 +317,7 @@ impl App {
         }
         if let Some((ssid, ask)) = connect {
             if ask {
-                self.wifi_password = Some((ssid, String::new()));
+                self.wifi_join = Some(Request::new(&ssid, ""));
             } else {
                 self.change(ctx, move || sys::act("nmcli", &["device", "wifi", "connect", &ssid]));
             }
@@ -337,7 +399,7 @@ impl App {
         if let Some(w) = listed {
             if ui::action(ui, pal, "Join this network").clicked() {
                 if w.secured {
-                    self.wifi_password = Some((w.ssid.clone(), String::new()));
+                    self.wifi_join = Some(Request::new(&w.ssid, ""));
                 } else {
                     let ssid = w.ssid.clone();
                     self.change(ctx, move || sys::act("nmcli", &["device", "wifi", "connect", &ssid]));
@@ -977,30 +1039,44 @@ mod tests {
         assert_eq!(span(3 * 86_400), "3 days");
     }
 
-    /// The password window driven headless (an egui context with made-up keys, nothing drawn): Enter connects once a password
-    /// is typed, Escape gives up.
+    /// The join window driven headless (an egui context with made-up keys, nothing drawn): Enter connects once a password
+    /// is typed, Escape gives up; a hidden network is asked for by its name first.
     #[test]
     fn enter_connects_and_escape_cancels() {
         let ctx = egui::Context::default();
         let pal = yggdrasil_ui::theme::palette(true);
+        let n = sys::Network::default();
         let key = |k| egui::Event::Key { key: k, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE };
-        let frame = |pw: &mut String, events: Vec<egui::Event>| {
+        let frame = |r: &mut Request, events: Vec<egui::Event>| {
             let input = egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1024.0, 768.0))),
                 events,
                 ..Default::default()
             };
             let mut done = None;
-            ctx.run_ui(input, |ui| done = password_window(ui.ctx(), &pal, "Home", pw)).drop_without_applying_deltas();
+            ctx.run_ui(input, |ui| done = password_window(ui.ctx(), &pal, r, &n)).drop_without_applying_deltas();
             done
         };
-        let mut pw = String::new();
-        assert_eq!(frame(&mut pw, vec![]), None, "open, waiting");
-        assert_eq!(frame(&mut pw, vec![key(egui::Key::Enter)]), None, "Enter with no password does nothing");
-        assert_eq!(frame(&mut pw, vec![egui::Event::Text("hunter22".into())]), None);
-        assert_eq!(pw, "hunter22", "the box has the keyboard from the start");
-        assert_eq!(frame(&mut pw, vec![key(egui::Key::Enter)]), Some(true), "Enter connects");
-        assert_eq!(frame(&mut pw, vec![]), None, "and only on the frame it was pressed");
-        assert_eq!(frame(&mut pw, vec![key(egui::Key::Escape)]), Some(false), "Escape cancels");
+        let mut r = Request::new("Home", "");
+        assert_eq!(frame(&mut r, vec![]), None, "open, waiting");
+        assert_eq!(frame(&mut r, vec![key(egui::Key::Enter)]), None, "Enter with no password does nothing");
+        assert_eq!(frame(&mut r, vec![egui::Event::Text("hunter22".into())]), None);
+        assert_eq!(r.password, "hunter22", "the box has the keyboard from the start");
+        assert_eq!(frame(&mut r, vec![key(egui::Key::Enter)]), Some(true), "Enter connects");
+        assert_eq!(frame(&mut r, vec![]), None, "and only on the frame it was pressed");
+        assert_eq!(frame(&mut r, vec![key(egui::Key::Escape)]), Some(false), "Escape cancels");
+        assert!(!r.real_address, "the system's own address unless asked");
+        // a hidden network: its name first, then (secured) its password
+        let mut h = Request { hidden: true, secured: true, ..Request::default() };
+        assert_eq!(frame(&mut h, vec![]), None, "open, waiting");
+        assert_eq!(frame(&mut h, vec![egui::Event::Text("Quiet".into())]), None);
+        assert_eq!(h.ssid, "Quiet", "the name box has the keyboard while the name is empty");
+        assert_eq!(frame(&mut h, vec![key(egui::Key::Enter)]), None, "no password yet");
+        frame(&mut h, vec![]);
+        assert_eq!(frame(&mut h, vec![egui::Event::Text("hunter22".into())]), None);
+        assert_eq!(h.password, "hunter22");
+        assert_eq!(frame(&mut h, vec![key(egui::Key::Enter)]), Some(true));
+        let mut open = Request { hidden: true, secured: false, ssid: "Quiet".into(), ..Request::default() };
+        assert_eq!(frame(&mut open, vec![key(egui::Key::Enter)]), Some(true), "an open hidden network needs no password");
     }
 }

@@ -41,6 +41,7 @@ only, in one call (`mount --rbind --make-rslave`), and the cleanup makes everyth
 | `reserved_logins` | account names not offered, beyond every account the medium already has and root, live and greeter | |
 | `min_size_gb` | the smallest disk | 30 |
 | `browsers`, `extras` | the lists for the Browsers and optional-parts pages (below; the window reads them too) | no such page |
+| `prefetch` | `yes`: the window runs `COMMAND --prefetch` (with pkexec) while the person chooses, once online (below) | nothing is fetched beforehand |
 | `components` | what each optional part installs and switches on | |
 | `first_login` | where chosen parts the medium lacks are written down (`{"user", "components"}`) for the OS's own first-login program | they are left for Agora |
 
@@ -97,6 +98,40 @@ page back; going back to Welcome and on again decides anew. The summary always h
 Wi-Fi adapter" when there is no Wi-Fi adapter. When a Wi-Fi adapter turns up after the page was skipped for want of one (a USB
 adapter plugged in at the summary), the step comes back and the summary offers "Join a Wi-Fi network".
 
+Below the list, **Hidden network…** opens a form for a network that does not broadcast its name: the name, the security (None,
+or WPA/WPA2/WPA3 Personal) and the password. The profile is marked hidden (`802-11-wireless.hidden`), so NetworkManager asks
+for the network by name, and it is activated without an access point in hand (`/` as the specific object); a refused one is
+deleted like any other.
+
+**Hardware addresses (MAC).** For networks that reserve addresses or only let known ones in, the page shows each Wi-Fi
+adapter's own address, labelled (built in, or USB with the adapter's name), with a Copy button, and the wired adapter's address
+beside the wired state. The password and hidden-network forms show the address the network will see. NetworkManager's
+configuration decides that (`wifi.cloned-mac-address` in a `[connection*]` section of NetworkManager.conf or conf.d, read the
+way NetworkManager reads it: `yggdrasil-netjoin`'s `mac::private_wifi_address`). Without such a setting the network sees the
+adapter's own address, and the forms show it. With one that gives each network a private address of its own (stable, random)
+the address is only made as the computer joins, so the forms say so and offer **Use this computer's real address (for networks
+that reserve or allow addresses)**: ticked, the new profile gets `cloned-mac-address=permanent` (on D-Bus,
+`assigned-mac-address`) and the form shows the adapter's permanent address (`PermHwAddress`). Nothing else changes the OS's
+default. Labyrinth's medium has such a setting (its security monitor, Heimdall, ships `wifi.cloned-mac-address=stable`), and
+Heimdall's Wi-Fi guard also switches a profile with the real address back to a private one for the next connection on a network
+it does not trust: the real address holds for the connection made here; for it to stay on the installed system, the network
+is trusted in Heimdall there (`sudo heimdall-wifi-guard trust` while connected). The demo's addresses are made up
+(`02:00:00:00:00:01`).
+
+**A network that turns up later.** After the Network step every page up to the summary watches the adapters (the adapter list
+only, every 4 seconds, no scan). A cable plugged in and connected needs nothing: the offline notes go and the summary's
+Network line changes. A Wi-Fi adapter plugged in while offline (a USB one) brings a banner on the page: **Join a Wi-Fi
+network** opens the Network step (shown again if it was skipped), and a join that works, or Next, returns to the page it came
+from; **Not now** dismisses it. The summary has the same button while offline with Wi-Fi.
+
+**Getting ready while choosing** (`prefetch = yes` in the integration). As soon as the computer is online, at whatever page,
+the window runs `pkexec COMMAND --prefetch` with the choices as one line of JSON on its standard input (`{"browsers": [...],
+"extras": [...]}`, as the plan names them), and the summary shows a quiet line ("Getting ready: 3 of 7 packages downloaded").
+One run at a time: when the choices change and then stay put for 2 seconds, the running one is stopped (its standard input is
+closed) and a new one starts once it has gone; what it already fetched stays. Going offline stops it, coming back online starts
+it again, starting the install stops it, and nothing ever waits on it: if it fails, the install downloads as it always did.
+What it does is the install program's (yggdrasil-install-system, below).
+
 A network joined here is a NetworkManager profile of the live session, so yggdrasil-install-system copies it to the new system
 with the others (above): the installed system is online at its first start. The live account needs NetworkManager's
 permission to add and activate a profile without a password prompt; Labyrinth's live medium gives its live account (wheel)
@@ -106,6 +141,19 @@ page with made-up networks and joins nothing.
 
 ## The contract with the OS's program
 
+- `COMMAND --prefetch` (as root, when the integration says `prefetch = yes`) fetches beforehand what the install will
+  download for the choices on the first line of its standard input, and stops when standard input is closed. The Rust
+  program: the chosen browsers' packages the medium lacks and the repository packages of the chosen optional parts it lacks
+  (with their dependencies), first with the medium's package lists (copied into a private database), as the install's own
+  `pacman -S` would get them; when the mirrors have moved on, with fresh lists (in the private database only) and the updates,
+  as its `pacman -Syu` fallback would. One package at a time (`pacman -Swdd`), one download at a time (its own pacman.conf
+  with `ParallelDownloads = 1`), under `nice -n 19 ionice -c 3`, into `/run/yggdrasil-install/prefetch/pkg` (memory on the
+  live medium), and only when the packages fit with 256 MB to spare. The live system's own package database is never
+  written (the private one links its installed list read only), and nothing is installed. It says `PREFETCH done total` as
+  each package is in, `DONE`, `STOPPED`, or `WARN`/`ERROR` with why (exit code 3: not done, the install downloads as usual).
+  The install copies what is there (plain package and signature files only, never a link or a half download) into the new
+  system's `/var/cache/pacman/pkg` before its own pacman runs, which takes them (checking each signature, as always) instead
+  of downloading them again.
 - `COMMAND --disks` prints the disks it could install onto, as JSON: `[{"path", "size", "model", "removable", "big_enough",
   "table", "partitions": [{"path", "number", "start", "size", "fstype", "label", "efi", "mounted"}], "free": [{"start", "size"}]}]`
   (bytes). It runs as the live user (no root needed) and never offers the live medium itself.

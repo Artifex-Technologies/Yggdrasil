@@ -36,6 +36,17 @@ assistant), Apps, Privacy & security, System. Settings opens on General all the 
   open. The apps' share counts the apps open now; apps already closed would need a small record kept in the background,
   which I left out.
 
+- **Wi-Fi & Network** (`src/wifi_ui.rs`): joining goes through `packages/netjoin` (shared with the installer), NetworkManager's
+  AddAndActivateConnection over D-Bus with the password inside the message. Since 2026-11-14 Other Networks ends with
+  **Hidden network…**: the name, the security (None or WPA/WPA2/WPA3 Personal) and the password, for a network that does not
+  broadcast its name (the profile is marked hidden). The join window shows the address the network will see, with a Copy
+  button: the adapter's own one, or, while NetworkManager's configuration gives each Wi-Fi network a private address (as
+  Labyrinth's Heimdall does), "a private address of its own" and the choice **Use this computer's real address (for networks
+  that reserve or allow addresses)**, which gives the new profile `cloned-mac-address=permanent` and shows the adapter's
+  permanent address. A saved network's own page keeps its Private address choice (Private, New each time, Real, Custom) as
+  before. Heimdall's Wi-Fi guard switches a profile on a network it does not trust back to a private address after it
+  connects; trusting the network in Heimdall keeps the real one.
+
 - **Bluetooth** (`src/bluetooth_ui.rs`), laid out like Wi-Fi: the switch; My Devices (paired, each Connected or Not
   Connected; a tap connects, the (i) opens its page with its kind, battery, address, Connect/Disconnect and Forget This
   Device, asked twice); Other Devices, found while the page is open (a tap pairs, trusts and connects; a code to compare or

@@ -42,6 +42,11 @@ pub struct Host {
     pub resolv_conf: String,
     /// the live system's saved networks (NetworkManager's /etc/NetworkManager/system-connections)
     pub nm_connections: String,
+    /// where --prefetch keeps what it fetched (prefetch::DIR)
+    pub prefetch: String,
+    /// the live system's pacman database (/var/lib/pacman) and pacman.conf, which --prefetch reads
+    pub pacman_db: String,
+    pub pacman_conf: String,
 }
 
 impl Host {
@@ -53,6 +58,9 @@ impl Host {
             efi: "/sys/firmware/efi".into(),
             resolv_conf: "/etc/resolv.conf".into(),
             nm_connections: NM_CONNECTIONS.into(),
+            prefetch: crate::prefetch::DIR.into(),
+            pacman_db: "/var/lib/pacman".into(),
+            pacman_conf: "/etc/pacman.conf".into(),
         }
     }
 }
@@ -1175,6 +1183,7 @@ FILES+=(/crypto_keyfile.bin)
         self.bind_mounts()?;
         self.write_fstab(&fstab)?;
         self.set_up(p)?;
+        self.use_prefetched()?;
         self.set_up_browsers(p)?;
         self.set_up_extras(p)?;
         if encrypted {

@@ -41,10 +41,34 @@ pub struct Offer {
     pub rsn_flags: u32,
 }
 
-/// Joins `ssid` with `password` through NetworkManager on the system bus, and waits (up to 90 s) until it is connected.
-pub fn connect(ssid: &str, password: &str) -> Result<(), String> {
+/// What to join.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Request {
+    pub ssid: String,
+    /// Nothing for an open network.
+    pub password: String,
+    /// A network that does not broadcast its name: the profile says so (802-11-wireless.hidden), so NetworkManager asks for it
+    /// by name, and it is activated without an access point in hand.
+    pub hidden: bool,
+    /// For a hidden network out of the scan list: whether it asks for a password (WPA, WPA2 or WPA3 Personal). A network in the
+    /// scan list says so itself.
+    pub secured: bool,
+    /// This computer's real hardware address on this network (cloned-mac-address "permanent"), for networks that reserve or
+    /// allow addresses; otherwise the system's default (which may be a private address of its own for each network).
+    pub real_address: bool,
+}
+
+impl Request {
+    /// A network by name, with its password (empty for an open one).
+    pub fn new(ssid: &str, password: &str) -> Request {
+        Request { ssid: ssid.into(), password: password.into(), ..Request::default() }
+    }
+}
+
+/// Joins through NetworkManager on the system bus, and waits (up to 90 s) until it is connected.
+pub fn join(r: &Request) -> Result<(), String> {
     let bus = Connection::system().map_err(|e| format!("NetworkManager could not be reached: {e}"))?;
-    connect_on(&bus, ssid, password, Duration::from_secs(90), Duration::from_millis(250))
+    join_on(&bus, r, Duration::from_secs(90), Duration::from_millis(250))
 }
 
 fn object<'a>(bus: &'a Connection, path: &'a str, iface: &'a str) -> Result<Proxy<'a>, String> {
@@ -89,8 +113,25 @@ pub fn settings(ssid: &str, password: &str, offer: Option<Offer>) -> HashMap<&'s
     out
 }
 
-/// `connect` on a given bus, waiting up to `limit` and looking every `every`.
-pub fn connect_on(bus: &Connection, ssid: &str, password: &str, limit: Duration, every: Duration) -> Result<(), String> {
+/// The whole profile for a request: `settings`, and whether the network is hidden and which hardware address it gets.
+/// ("assigned-mac-address" is nmcli's cloned-mac-address on D-Bus.)
+pub fn profile(r: &Request, offer: Option<Offer>) -> HashMap<&'static str, HashMap<&'static str, Value<'static>>> {
+    // a hidden network out of sight: open, or WPA/WPA2/WPA3 Personal as the person said
+    let offer = offer.or(if r.hidden && !r.secured { Some(Offer::default()) } else { None });
+    let mut out = settings(&r.ssid, &r.password, offer);
+    let wifi = out.entry("802-11-wireless").or_default();
+    if r.hidden {
+        wifi.insert("hidden", Value::from(true));
+    }
+    if r.real_address {
+        wifi.insert("assigned-mac-address", Value::from("permanent"));
+    }
+    out
+}
+
+/// `join` on a given bus, waiting up to `limit` and looking every `every`.
+pub fn join_on(bus: &Connection, r: &Request, limit: Duration, every: Duration) -> Result<(), String> {
+    let ssid = r.ssid.as_str();
     let nm = object(bus, NM_PATH, NM)?;
     let devices: Vec<OwnedObjectPath> = nm.call("GetDevices", &()).map_err(|e| e.to_string())?;
     // the Wi-Fi adapters, and on them the strongest access point with this name
@@ -120,7 +161,7 @@ pub fn connect_on(bus: &Connection, ssid: &str, password: &str, limit: Duration,
         None => (first.ok_or("No Wi-Fi adapter found.")?, OwnedObjectPath::from(ObjectPath::from_static_str_unchecked("/")), None),
     };
     let (profile, active): (OwnedObjectPath, OwnedObjectPath) =
-        nm.call("AddAndActivateConnection", &(settings(ssid, password, offer), &device, &ap)).map_err(|e| e.to_string())?;
+        nm.call("AddAndActivateConnection", &(profile(r, offer), &device, &ap)).map_err(|e| e.to_string())?;
     let until = Instant::now() + limit;
     let timed_out = loop {
         // a connection that failed is soon gone from the bus: that is a failure too
@@ -150,170 +191,9 @@ pub fn connect_on(bus: &Connection, ssid: &str, password: &str, limit: Duration,
 
 #[cfg(test)]
 mod tests {
-    //! A made-up NetworkManager on a private peer-to-peer D-Bus connection (a socket pair in this process): no bus, no real
-    //! NetworkManager, nothing on the computer is changed.
     use super::*;
-    use std::sync::{Arc, Mutex};
+    use crate::fake_nm::{world, WPA2};
     use zbus::zvariant::OwnedValue;
-
-    type Asked = Arc<Mutex<Vec<(HashMap<String, HashMap<String, OwnedValue>>, String, String)>>>;
-
-    struct Nm {
-        asked: Asked,
-    }
-
-    #[zbus::interface(name = "org.freedesktop.NetworkManager")]
-    impl Nm {
-        fn get_devices(&self) -> Vec<OwnedObjectPath> {
-            ["/d/eth", "/d/wlan", "/d/usb"].iter().map(|p| OwnedObjectPath::try_from(*p).unwrap()).collect()
-        }
-
-        fn add_and_activate_connection(
-            &self,
-            connection: HashMap<String, HashMap<String, OwnedValue>>,
-            device: OwnedObjectPath,
-            specific_object: OwnedObjectPath,
-        ) -> (OwnedObjectPath, OwnedObjectPath) {
-            self.asked.lock().unwrap().push((connection, device.to_string(), specific_object.to_string()));
-            (OwnedObjectPath::try_from("/s/new").unwrap(), OwnedObjectPath::try_from("/a/new").unwrap())
-        }
-    }
-
-    struct Device(u32, (u32, u32));
-
-    #[zbus::interface(name = "org.freedesktop.NetworkManager.Device")]
-    impl Device {
-        #[zbus(property)]
-        fn device_type(&self) -> u32 {
-            self.0
-        }
-        #[zbus(property)]
-        fn state_reason(&self) -> (u32, u32) {
-            self.1
-        }
-    }
-
-    struct Wireless(Vec<&'static str>);
-
-    #[zbus::interface(name = "org.freedesktop.NetworkManager.Device.Wireless")]
-    impl Wireless {
-        fn get_all_access_points(&self) -> Vec<OwnedObjectPath> {
-            self.0.iter().map(|p| OwnedObjectPath::try_from(*p).unwrap()).collect()
-        }
-    }
-
-    struct Ap(&'static [u8], u8, Offer);
-
-    #[zbus::interface(name = "org.freedesktop.NetworkManager.AccessPoint")]
-    impl Ap {
-        #[zbus(property)]
-        fn ssid(&self) -> Vec<u8> {
-            self.0.to_vec()
-        }
-        #[zbus(property)]
-        fn strength(&self) -> u8 {
-            self.1
-        }
-        #[zbus(property)]
-        fn flags(&self) -> u32 {
-            self.2.flags
-        }
-        #[zbus(property)]
-        fn wpa_flags(&self) -> u32 {
-            self.2.wpa_flags
-        }
-        #[zbus(property)]
-        fn rsn_flags(&self) -> u32 {
-            self.2.rsn_flags
-        }
-    }
-
-    struct Active(Arc<Mutex<Vec<u32>>>);
-
-    #[zbus::interface(name = "org.freedesktop.NetworkManager.Connection.Active")]
-    impl Active {
-        /// each read gives the next state of the list (the last one stays)
-        #[zbus(property)]
-        fn state(&self) -> u32 {
-            let mut s = self.0.lock().unwrap();
-            if s.len() > 1 {
-                s.remove(0)
-            } else {
-                s[0]
-            }
-        }
-    }
-
-    struct Profile(Arc<Mutex<bool>>);
-
-    #[zbus::interface(name = "org.freedesktop.NetworkManager.Settings.Connection")]
-    impl Profile {
-        fn delete(&self) {
-            *self.0.lock().unwrap() = true;
-        }
-    }
-
-    const WPA2: Offer = Offer { flags: 1, wpa_flags: 0, rsn_flags: 0x188 };
-
-    /// A NetworkManager with a wired adapter and two Wi-Fi adapters (a built-in one, and a USB one plugged in after it). The
-    /// built-in one hears two access points named "Home" (the second stronger), one "Other" and a weak "Far"; the USB one a
-    /// weaker "Home", "Far" strongly and "Usb-Only". The new connection goes through `states`, and the adapters' last reason is
-    /// `reason`.
-    struct World {
-        bus: Connection,
-        _server: Connection,
-        asked: Asked,
-        deleted: Arc<Mutex<bool>>,
-    }
-
-    // unix_stream: deprecated only because a build with zbus's tokio feature would lack it, and this one has no tokio
-    #[allow(deprecated)]
-    fn world(states: Vec<u32>, reason: u32, home: Offer) -> World {
-        let (a, b) = std::os::unix::net::UnixStream::pair().unwrap();
-        let asked: Asked = Arc::default();
-        let deleted = Arc::new(Mutex::new(false));
-        let (asked2, deleted2) = (asked.clone(), deleted.clone());
-        let server = std::thread::spawn(move || {
-            zbus::blocking::connection::Builder::unix_stream(a)
-                .server(zbus::Guid::generate())
-                .unwrap()
-                .p2p()
-                .serve_at(NM_PATH, Nm { asked: asked2 })
-                .unwrap()
-                .serve_at("/d/eth", Device(1, (100, 0)))
-                .unwrap()
-                .serve_at("/d/wlan", Device(WIFI, (30, reason)))
-                .unwrap()
-                .serve_at("/d/wlan", Wireless(vec!["/ap/1", "/ap/2", "/ap/3", "/ap/4"]))
-                .unwrap()
-                .serve_at("/d/usb", Device(WIFI, (30, reason)))
-                .unwrap()
-                .serve_at("/d/usb", Wireless(vec!["/ap/5", "/ap/6", "/ap/7"]))
-                .unwrap()
-                .serve_at("/ap/4", Ap(b"Far", 20, WPA2))
-                .unwrap()
-                .serve_at("/ap/5", Ap(b"Home", 55, home))
-                .unwrap()
-                .serve_at("/ap/6", Ap(b"Far", 80, WPA2))
-                .unwrap()
-                .serve_at("/ap/7", Ap(b"Usb-Only", 50, WPA2))
-                .unwrap()
-                .serve_at("/ap/1", Ap(b"Home", 40, home))
-                .unwrap()
-                .serve_at("/ap/2", Ap(b"Home", 70, home))
-                .unwrap()
-                .serve_at("/ap/3", Ap(b"Other", 90, WPA2))
-                .unwrap()
-                .serve_at("/a/new", Active(Arc::new(Mutex::new(states))))
-                .unwrap()
-                .serve_at("/s/new", Profile(deleted2))
-                .unwrap()
-                .build()
-                .unwrap()
-        });
-        let bus = zbus::blocking::connection::Builder::unix_stream(b).p2p().build().unwrap();
-        World { bus, _server: server.join().unwrap(), asked, deleted }
-    }
 
     fn text(v: &OwnedValue) -> String {
         String::try_from(v.try_clone().unwrap()).unwrap()
@@ -324,7 +204,7 @@ mod tests {
     #[test]
     fn the_password_goes_to_networkmanager_in_a_message() {
         let w = world(vec![1, 1, ACTIVATED], 0, WPA2);
-        assert_eq!(connect_on(&w.bus, "Home", "hunter22", Duration::from_secs(10), FAST), Ok(()));
+        assert_eq!(join_on(&w.bus, &Request::new("Home", "hunter22"), Duration::from_secs(10), FAST), Ok(()));
         let asked = w.asked.lock().unwrap();
         let (conn, device, ap) = &asked[0];
         assert_eq!((device.as_str(), ap.as_str()), ("/d/wlan", "/ap/2"), "the Wi-Fi adapter, the strongest access point named so");
@@ -338,39 +218,79 @@ mod tests {
     fn with_two_wifi_adapters_the_one_that_hears_the_network_best_joins_it() {
         // heard by both: the USB adapter hears it better
         let w = world(vec![ACTIVATED], 0, WPA2);
-        assert_eq!(connect_on(&w.bus, "Far", "pw", Duration::from_secs(10), FAST), Ok(()));
+        assert_eq!(join_on(&w.bus, &Request::new("Far", "pw"), Duration::from_secs(10), FAST), Ok(()));
         let (_, device, ap) = &w.asked.lock().unwrap()[0];
         assert_eq!((device.as_str(), ap.as_str()), ("/d/usb", "/ap/6"));
         // heard by the USB adapter alone
         let w = world(vec![ACTIVATED], 0, WPA2);
-        assert_eq!(connect_on(&w.bus, "Usb-Only", "pw", Duration::from_secs(10), FAST), Ok(()));
+        assert_eq!(join_on(&w.bus, &Request::new("Usb-Only", "pw"), Duration::from_secs(10), FAST), Ok(()));
         let (_, device, ap) = &w.asked.lock().unwrap()[0];
         assert_eq!((device.as_str(), ap.as_str()), ("/d/usb", "/ap/7"));
         // heard by both, the built-in one better
         let w = world(vec![ACTIVATED], 0, WPA2);
-        assert_eq!(connect_on(&w.bus, "Home", "pw", Duration::from_secs(10), FAST), Ok(()));
+        assert_eq!(join_on(&w.bus, &Request::new("Home", "pw"), Duration::from_secs(10), FAST), Ok(()));
         assert_eq!(w.asked.lock().unwrap()[0].1, "/d/wlan");
+    }
+
+    #[test]
+    fn a_hidden_network_is_asked_for_by_name() {
+        let hidden = |secured| Request { ssid: "Quiet".into(), password: "hunter22".into(), hidden: true, secured, ..Request::default() };
+        let w = world(vec![1, ACTIVATED], 0, WPA2);
+        assert_eq!(join_on(&w.bus, &hidden(true), Duration::from_secs(10), FAST), Ok(()));
+        let (conn, device, ap) = &w.asked.lock().unwrap()[0];
+        assert_eq!((device.as_str(), ap.as_str()), ("/d/wlan", "/"), "no access point in hand: activated by the profile alone");
+        assert!(bool::try_from(conn["802-11-wireless"]["hidden"].try_clone().unwrap()).unwrap());
+        assert_eq!(text(&conn["802-11-wireless-security"]["key-mgmt"]), "wpa-psk", "WPA/WPA2/WPA3 Personal");
+        assert_eq!(text(&conn["802-11-wireless-security"]["psk"]), "hunter22");
+        assert!(!conn["802-11-wireless"].contains_key("assigned-mac-address"), "the system's own address choice");
+        let w = world(vec![ACTIVATED], 0, WPA2);
+        assert_eq!(join_on(&w.bus, &Request { password: String::new(), ..hidden(false) }, Duration::from_secs(10), FAST), Ok(()));
+        let (conn, _, _) = &w.asked.lock().unwrap()[0];
+        assert!(!conn.contains_key("802-11-wireless-security"), "an open hidden network: no password");
+        // a refused hidden network is not kept either
+        let w = world(vec![1, DEACTIVATED], NO_SECRETS, WPA2);
+        assert_eq!(join_on(&w.bus, &hidden(true), Duration::from_secs(10), FAST), Err("The password was not accepted.".into()));
+        assert!(*w.deleted.lock().unwrap());
+    }
+
+    #[test]
+    fn the_real_address_for_networks_that_reserve_one() {
+        let w = world(vec![ACTIVATED], 0, WPA2);
+        let r = Request { real_address: true, ..Request::new("Home", "hunter22") };
+        assert_eq!(join_on(&w.bus, &r, Duration::from_secs(10), FAST), Ok(()));
+        let (conn, _, _) = &w.asked.lock().unwrap()[0];
+        assert_eq!(text(&conn["802-11-wireless"]["assigned-mac-address"]), "permanent");
+        assert!(!conn["802-11-wireless"].contains_key("hidden"));
+        let p = profile(&Request { real_address: true, hidden: true, ..Request::new("Quiet", "") }, None);
+        assert_eq!(p["802-11-wireless"]["assigned-mac-address"], Value::from("permanent"));
+        assert_eq!(p["802-11-wireless"]["hidden"], Value::from(true));
     }
 
     #[test]
     fn a_refused_password_is_not_kept() {
         let w = world(vec![1, DEACTIVATED], NO_SECRETS, WPA2);
-        assert_eq!(connect_on(&w.bus, "Home", "wrong", Duration::from_secs(10), FAST), Err("The password was not accepted.".into()));
+        assert_eq!(
+            join_on(&w.bus, &Request::new("Home", "wrong"), Duration::from_secs(10), FAST),
+            Err("The password was not accepted.".into())
+        );
         assert!(*w.deleted.lock().unwrap());
         let w = world(vec![1], 0, WPA2);
-        assert_eq!(connect_on(&w.bus, "Home", "x", Duration::from_millis(20), FAST), Err("“Home” did not answer in time.".into()));
+        assert_eq!(
+            join_on(&w.bus, &Request::new("Home", "x"), Duration::from_millis(20), FAST),
+            Err("“Home” did not answer in time.".into())
+        );
         assert!(*w.deleted.lock().unwrap());
     }
 
     #[test]
     fn a_network_out_of_sight_and_wep() {
         let w = world(vec![ACTIVATED], 0, WPA2);
-        assert_eq!(connect_on(&w.bus, "Hidden", "hunter22", Duration::from_secs(10), FAST), Ok(()));
+        assert_eq!(join_on(&w.bus, &Request::new("Hidden", "hunter22"), Duration::from_secs(10), FAST), Ok(()));
         let (conn, device, ap) = &w.asked.lock().unwrap()[0];
         assert_eq!((device.as_str(), ap.as_str()), ("/d/wlan", "/"));
         assert_eq!(text(&conn["802-11-wireless-security"]["key-mgmt"]), "wpa-psk");
         let w = world(vec![ACTIVATED], 0, Offer { flags: PRIVACY, wpa_flags: 0, rsn_flags: 0 });
-        assert_eq!(connect_on(&w.bus, "Home", "abcde", Duration::from_secs(10), FAST), Ok(()));
+        assert_eq!(join_on(&w.bus, &Request::new("Home", "abcde"), Duration::from_secs(10), FAST), Ok(()));
         let (conn, _, _) = &w.asked.lock().unwrap()[0];
         assert_eq!(text(&conn["802-11-wireless-security"]["wep-key0"]), "abcde");
         assert_eq!(u32::try_from(conn["802-11-wireless-security"]["wep-key-type"].try_clone().unwrap()).unwrap(), 1);

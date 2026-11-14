@@ -181,6 +181,10 @@ pub struct Network {
     pub makers: std::sync::Arc<std::collections::HashMap<[u8; 3], String>>,
     /// What Settings remembers between visits: when each access point was first and last heard, each network's last lease.
     pub memory: std::sync::Arc<crate::wifimem::Memory>,
+    /// The adapters' hardware addresses (yggdrasil-netjoin, read over D-Bus; none with a fixture), and whether the system gives
+    /// each Wi-Fi network a private address of its own (NetworkManager's configuration): the join window shows them.
+    pub addresses: Vec<yggdrasil_netjoin::mac::Adapter>,
+    pub private_wifi: bool,
 }
 
 impl Network {
@@ -335,6 +339,8 @@ pub fn network() -> Network {
         air_error: String::new(),
         makers: Default::default(),
         memory: Default::default(),
+        addresses: if crate::fixture::get().is_some() { vec![] } else { yggdrasil_netjoin::mac::adapters() },
+        private_wifi: crate::fixture::get().is_none() && yggdrasil_netjoin::mac::nm_private_wifi(),
     };
     // the connection to the router (not a VPN or Tailscale's tunnel)
     let home = n.live.iter().filter(|(_, l)| !l.router.is_empty()).map(|(u, _)| u.clone()).min();

@@ -119,6 +119,21 @@ pub struct Fake {
     pub fail_at: Option<usize>,
     /// for each call, whether it failed
     pub failed: Vec<bool>,
+    /// the package mirrors, for --prefetch
+    pub mirror: Mirror,
+}
+
+/// The package mirrors as --prefetch meets them (through `nice ... pacman ...`).
+#[derive(Clone, Debug)]
+pub struct Mirror {
+    /// no network
+    pub offline: bool,
+    /// the medium's package lists name versions the mirrors no longer have (a download with them fails)
+    pub medium_old: bool,
+    /// fresh lists were fetched (pacman -Sy, into the private database)
+    pub synced: bool,
+    /// free bytes where the packages go
+    pub avail: i128,
 }
 
 pub fn medium() -> Vec<(String, String)> {
@@ -165,6 +180,46 @@ impl Fake {
             random_calls: 0,
             fail_at: None,
             failed: vec![],
+            mirror: Mirror { offline: false, medium_old: false, synced: false, avail: 8 * GB },
+        }
+    }
+
+    /// pacman as --prefetch runs it (after `nice -n 19 ionice -c 3`): -Sp/-Sup list what would be downloaded (each target and
+    /// a library it needs, an update too after -Sy), -Swdd "downloads" one into --cachedir.
+    fn mirror_pacman(&mut self, a: &[String]) -> Output {
+        let opt = |k: &str| a.iter().position(|x| x == k).and_then(|i| a.get(i + 1)).cloned().unwrap_or_default();
+        let op = a.iter().find(|x| x.starts_with("-S")).cloned().unwrap_or_default();
+        let names: Vec<String> = a.iter().skip_while(|x| *x != "%r/%n %s").skip(1).cloned().collect();
+        match op.as_str() {
+            "-Sp" | "-Sup" => {
+                if op == "-Sup" && !self.mirror.synced {
+                    return out(1, "", "error: no fresh lists\n");
+                }
+                let mut l: Vec<String> = names.iter().map(|n| format!("extra/{n} 30000000")).collect();
+                l.push("core/libexample 2000000".into());
+                if op == "-Sup" {
+                    l.push("core/systemd-update 9000000".into());
+                }
+                out(0, &(l.join("\n") + "\n"), "")
+            }
+            "-Sy" => {
+                if self.mirror.offline {
+                    return out(1, "", "error: failed to synchronize all databases\n");
+                }
+                self.mirror.synced = true;
+                out(0, "", "")
+            }
+            "-Swdd" => {
+                if self.mirror.offline || (self.mirror.medium_old && !self.mirror.synced) {
+                    return out(1, "", "error: failed retrieving file (404)\n");
+                }
+                let name = a.last().unwrap().rsplit('/').next().unwrap().to_string();
+                let dir = opt("--cachedir");
+                std::fs::create_dir_all(&dir).unwrap();
+                std::fs::write(format!("{dir}/{name}-1-1-x86_64.pkg.tar.zst"), "package").unwrap();
+                out(0, "", "")
+            }
+            _ => out(1, "", "pacman: unexpected\n"),
         }
     }
 
@@ -397,6 +452,10 @@ impl System for Fake {
                 out(0, "", "")
             }
             "chroot" => self.inside(&argv[4..]),
+            // --prefetch: pacman -Q on the live system itself, its pacman (low priority), and the room left
+            "pacman" => self.inside(argv),
+            "nice" => self.mirror_pacman(argv),
+            "df" => out(0, &format!("Avail\n{}\n", self.mirror.avail), ""),
             _ => out(0, "", ""),
         })
     }
@@ -472,6 +531,14 @@ impl Live {
         dir.write("firmware/efi/efivars/x", "");
         dir.write("resolv.conf", "# made up\n");
         dir.write("medium/airootfs.sfs", "squashfs\n");
+        // the live system's pacman: its installed list, the medium's package lists and its pacman.conf (for --prefetch)
+        dir.write("pacman/local/ALPM_DB_VERSION", "9\n");
+        dir.write("pacman/sync/core.db", "the medium's core list");
+        dir.write("pacman/sync/extra.db", "the medium's extra list");
+        dir.write(
+            "pacman.conf",
+            "[options]\nParallelDownloads = 5\nSigLevel = Required DatabaseOptional\n[core]\nInclude = /etc/pacman.d/mirrorlist\n",
+        );
         std::fs::create_dir_all(dir.path("target")).unwrap();
         let host = Host {
             integration_dirs: vec![dir.path("share/integrations"), dir.path("etc/integrations")],
@@ -480,6 +547,9 @@ impl Live {
             efi: dir.path("firmware/efi"),
             resolv_conf: dir.path("resolv.conf"),
             nm_connections: dir.path("nm/system-connections"),
+            prefetch: dir.path("prefetch"),
+            pacman_db: dir.path("pacman"),
+            pacman_conf: dir.path("pacman.conf"),
         };
         let env = Env { sfs: Some(dir.path("medium/airootfs.sfs")), target: Some(dir.path("target")) };
         Live { dir, host, env }
@@ -497,6 +567,11 @@ impl Live {
     pub fn run(&self, fake: &mut Fake, args: &[&str], plan: &str) -> i32 {
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
         install_system::main_with(&args, &mut plan.as_bytes(), &self.env, self.host.clone(), fake)
+    }
+
+    /// --prefetch with these choices; `stop` says when standard input closed.
+    pub fn prefetch(&self, fake: &mut Fake, choices: &str, stop: &dyn Fn() -> bool) -> i32 {
+        install_system::prefetch_with(choices, &self.env, self.host.clone(), fake, stop)
     }
 
     pub fn read(&self, rest: &str) -> String {

@@ -339,7 +339,8 @@ struct App {
     rx: Receiver<Msg>,
     loading: Option<Page>,
     status: String,
-    wifi_password: Option<(String, String)>,
+    /// The join window: a secured network's password, or a hidden network's name, security and password (wifi_ui).
+    wifi_join: Option<yggdrasil_netjoin::join::Request>,
     /// Wi-Fi & Network: the saved network whose own page is open (its profile's id), what is being changed on it, and
     /// whether "Forget" was asked.
     net_open: Option<String>,
@@ -510,7 +511,7 @@ impl App {
             rx,
             loading: None,
             status: String::new(),
-            wifi_password: None,
+            wifi_join: None,
             net_open: None,
             net_draft: None,
             net_forget: false,
@@ -1848,11 +1849,12 @@ impl App {
     }
 
     fn wifi_dialog(&mut self, ctx: &egui::Context, pal: &Palette) {
-        let Some((ssid, pw)) = &mut self.wifi_password else { return };
-        let Some(ok) = wifi_ui::password_window(ctx, pal, ssid, pw) else { return };
-        if let Some((ssid, pw)) = self.wifi_password.take().filter(|_| ok) {
+        let n = self.data.network.clone().unwrap_or_default();
+        let Some(r) = &mut self.wifi_join else { return };
+        let Some(ok) = wifi_ui::password_window(ctx, pal, r, &n) else { return };
+        if let Some(r) = self.wifi_join.take().filter(|_| ok) {
             // over D-Bus: on nmcli's command line every program could read the password (/proc/PID/cmdline)
-            self.change(ctx, move || wifijoin::connect(&ssid, &pw));
+            self.change(ctx, move || wifijoin::join(&r));
         }
     }
 

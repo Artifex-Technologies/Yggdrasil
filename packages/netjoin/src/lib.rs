@@ -4,3 +4,7 @@
 
 pub mod join;
 pub mod list;
+pub mod mac;
+
+#[cfg(test)]
+mod fake_nm;

@@ -7,6 +7,9 @@ Installed as `/usr/bin/yggdrasil-install-system` (package `yggdrasil-installer`)
 
 - the plan as one JSON object on standard input (passwords never on a command line), `--check` (the plan only), `--disks`
   (the disks it could install onto, as JSON);
+- since 2026-11-14 (Rust only, nothing the script did): `--prefetch`, the packages the install will download fetched
+  beforehand while the window's choices are made (`src/prefetch.rs`; docs/INSTALLER.md), and the install taking them from
+  there;
 - the same lines out (`STEP n N text`, `INFO`, `WARN`, `ERROR`, `DONE`) and exit codes (0 done, 2 a refused plan, 1 stopped
   or not root);
 - the same programs run with the same arguments in the same order (lsblk, wipefs, sfdisk, cryptsetup, mkfs.*, mount,
@@ -24,6 +27,7 @@ docs/INSTALLER.md describes the plan, the steps and the contract with the window
 | `src/disks.rs` | `--disks` and the check of the chosen disk (lsblk), free space |
 | `src/catalog.rs` | the browsers, optional parts and components lists |
 | `src/install.rs` | the steps |
+| `src/prefetch.rs` | `--prefetch`, and the install's use of what it fetched (tests: `tests/prefetch.rs`) |
 | `src/sys.rs` | running programs; the tests put a made-up computer in its place |
 
 ## Fixed in both

@@ -10,6 +10,7 @@
 
 mod network;
 mod partitions;
+mod prefetch;
 
 // The computer as the live system shows it (/sys, /proc), for the `chosen_if_usb`, `usb_kind` and `chosen_if_machine` rules: the
 // same code that offers the software later on the installed system (packages/device-offers).
@@ -436,6 +437,10 @@ struct App {
     failed: Option<String>,
     /// The Network step: what NetworkManager sees, a join under way, whether the step is skipped (online by cable).
     net: network::Net,
+    /// Where the Network step returns to after a join, when it was opened from a later page (a USB Wi-Fi adapter plugged in).
+    return_to: Option<Page>,
+    /// Getting the install's downloads ready while the person chooses (the install program's --prefetch).
+    prefetch: prefetch::Prefetch,
     /// Screenshots only (`--demo PAGE`): sample disks and names, and nothing can be installed.
     demo: bool,
 }
@@ -482,11 +487,24 @@ fn demo_disks() -> Vec<Disk> {
 }
 
 impl App {
-    /// `--demo welcome|network|keyboard|timezone|disk|disk-manual|account|browsers|summary`: a page filled with sample choices, for
+    /// `--demo welcome|network|network-hidden|keyboard|timezone|disk|disk-manual|account|browsers|summary`: a page filled with sample choices, for
     /// screenshots. Made-up networks too: NetworkManager is never asked and nothing is joined.
     fn demo(&mut self, what: &str) {
         self.demo = true;
         self.net = network::Net::new(network::DEMO);
+        self.prefetch = prefetch::Prefetch::new(None, prefetch::start_with_pkexec);
+        self.net.snap = Some(network::demo_snapshot());
+        if what == "network-hidden" {
+            // the hidden network's form, filled in, with this computer's real address chosen (made-up names and addresses)
+            self.net.form = Some(yggdrasil_netjoin::join::Request {
+                ssid: "Example-Hidden".into(),
+                password: "sample-password".into(),
+                hidden: true,
+                secured: true,
+                real_address: true,
+            });
+            self.net.scroll_to_form = 2;
+        }
         self.disks = demo_disks();
         self.disk = Some("/dev/nvme0n1".into());
         self.crypt_pw = "sample-passphrase".into();
@@ -514,7 +532,7 @@ impl App {
         self.page = match what {
             "browsers" => Page::Browsers,
             "extras" => Page::Extras,
-            "network" => Page::Network,
+            "network" | "network-hidden" => Page::Network,
             "keyboard" => Page::Keyboard,
             "timezone" => Page::TimeZone,
             "disk" | "disk-manual" => Page::Disk,
@@ -574,6 +592,14 @@ impl App {
             log: vec![],
             failed: None,
             net: network::Net::new(network::SYSTEM),
+            return_to: None,
+            // only when the OS asks for it (`prefetch = yes` in its installer integration): it runs the install program as root
+            prefetch: prefetch::Prefetch::new(
+                yggdrasil_conf::integrations::first("installer")
+                    .filter(|i| i.get("prefetch") == Some("yes"))
+                    .and_then(|i| i.command("command")),
+                prefetch::start_with_pkexec,
+            ),
             demo: false,
         };
         let list = yggdrasil_conf::integrations::first("installer").and_then(|i| i.get("browsers").map(str::to_string));
@@ -611,6 +637,15 @@ impl App {
     fn next_page(&self, from: Page) -> Option<Page> {
         let pages = self.pages();
         pages.iter().position(|p| *p == from).and_then(|i| pages.get(i + 1)).copied()
+    }
+
+    /// The Network step opened from a later page (`from`): shown again (it may have been skipped), and back to `from` after a
+    /// join or Next.
+    fn open_network(&mut self, from: Page) -> Page {
+        self.net.skip_page = false;
+        self.net.new_adapter = false;
+        self.return_to = Some(from);
+        Page::Network
     }
 
     /// The page before `from` (Back).
@@ -781,10 +816,24 @@ impl App {
         plan
     }
 
+    /// What the install will download depends on: the browsers and optional parts chosen (as the plan says them).
+    fn choices(&self) -> String {
+        let mut c = serde_json::Map::new();
+        if !self.browsers.is_empty() {
+            c.insert("browsers".into(), serde_json::json!(self.chosen_browsers));
+        }
+        if !self.extras.is_empty() {
+            c.insert("extras".into(), serde_json::json!(self.chosen_extras));
+        }
+        serde_json::Value::Object(c).to_string()
+    }
+
     fn start_install(&mut self, ctx: &egui::Context) {
         if self.demo {
             return;
         }
+        // the install takes over: getting ready stops (what it fetched is used)
+        self.prefetch = prefetch::Prefetch::new(None, prefetch::start_with_pkexec);
         let Some(cmd) = self.command.clone() else { return };
         let plan = self.plan().to_string();
         let (tx, rx) = channel();
@@ -911,6 +960,25 @@ impl eframe::App for App {
         if self.page == Page::Welcome && self.net.decided() {
             go = self.next_page(Page::Welcome);
         }
+        // the network, on every page up to the summary: the Network page looks at everything, the others at the adapters only
+        // (a cable or a USB Wi-Fi adapter plugged in later)
+        match self.page {
+            Page::Network => self.net.tick(&ctx, std::time::Duration::from_secs(4)),
+            Page::Installing | Page::Done => {}
+            // a first full look while the language is chosen, so the Network page has its list at once
+            Page::Welcome if self.net.snap.is_none() => self.net.tick(&ctx, std::time::Duration::from_secs(3600)),
+            _ => self.net.watch(&ctx, std::time::Duration::from_secs(4)),
+        }
+        // after a join opened from a later page: back there
+        if self.page == Page::Network && std::mem::take(&mut self.net.joined) {
+            go = self.return_to.take().or(go);
+        }
+        if !matches!(self.page, Page::Installing | Page::Done) {
+            self.prefetch.tick(self.net.online(), &self.choices(), std::time::Instant::now());
+            if self.prefetch.running.is_some() {
+                ctx.request_repaint_after(std::time::Duration::from_secs(1));
+            }
+        }
         let mut install = false;
 
         egui::CentralPanel::default().frame(egui::Frame::new().fill(pal.bg).inner_margin(Margin { left: 28, right: 12, top: 8, bottom: 18 })).show(ui, |ui| {
@@ -940,6 +1008,21 @@ impl eframe::App for App {
                 ui.set_min_height(body_h);
                 // a long page (manual partitions, the summary of them) scrolls; the buttons below stay where they are
                 egui::ScrollArea::vertical().id_salt(("page", self.page as u8)).max_height(body_h).auto_shrink([false, false]).show(ui, |ui| {
+                // a USB Wi-Fi adapter plugged in on a later page, while offline: join a network, then come back here
+                if self.net.new_adapter && !self.net.online() && !matches!(self.page, Page::Welcome | Page::Network | Page::Installing | Page::Done) {
+                    egui::Frame::new().fill(pal.field).corner_radius(CornerRadius::same(8)).inner_margin(Margin::same(10)).show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label("A Wi-Fi adapter was plugged in.");
+                            if ui.add(egui::Button::new(RichText::new("Join a Wi-Fi network").color(pal.on_accent())).fill(pal.accent)).clicked() {
+                                go = Some(self.open_network(self.page));
+                            }
+                            if ui.button("Not now").clicked() {
+                                self.net.new_adapter = false;
+                            }
+                        });
+                    });
+                    ui.add_space(10.0);
+                }
                 match self.page {
                     Page::Welcome => {
                         heading(ui, &pal, &format!("Welcome to {}", self.os), "This puts it on this computer's disk. It takes a few minutes; nothing is sent anywhere.");
@@ -950,12 +1033,9 @@ impl eframe::App for App {
                         let mut loc = self.locale.clone();
                         pick_list(ui, &pal, "locales", &self.locales, &mut loc, (body_h - 140.0).max(120.0), locale_label);
                         self.locale = loc;
-                        // a first look at the network while the language is chosen, so the next page has it at once
-                        self.net.tick(&ctx, std::time::Duration::from_secs(3600));
                     }
                     Page::Network => {
                         heading(ui, &pal, "Connect to a network", "Drivers, browsers and updates are fetched while installing. A network joined here is kept for the installed system.");
-                        self.net.tick(&ctx, std::time::Duration::from_secs(4));
                         network::page(ui, &pal, &mut self.net);
                     }
                     Page::Keyboard => {
@@ -1133,7 +1213,6 @@ impl eframe::App for App {
                     }
                     Page::Summary => {
                         heading(ui, &pal, "Ready to install", "Check the choices. Nothing has been changed yet.");
-                        self.net.tick(&ctx, std::time::Duration::from_secs(10));
                         let net_state = self.net.state();
                         let disk = self.chosen_disk();
                         let rows = [
@@ -1182,9 +1261,15 @@ impl eframe::App for App {
                             ui.add_space(10.0);
                             ui.add(egui::Label::new(RichText::new(note).color(pal.amber)).wrap());
                             // offline with Wi-Fi (an adapter plugged in after the step was skipped, or the step skipped): back to it
-                            if self.net.snap.as_ref().is_some_and(|s| s.has_wifi()) && self.pages().contains(&Page::Network) && ui.button("Join a Wi-Fi network").clicked() {
-                                go = Some(Page::Network);
+                            if self.net.snap.as_ref().is_some_and(|s| s.has_wifi()) && ui.button("Join a Wi-Fi network").clicked() {
+                                go = Some(self.open_network(Page::Summary));
                             }
+                        }
+                        // getting the downloads ready (quietly; nothing waits on it)
+                        let ready = self.prefetch.status.line();
+                        if !ready.is_empty() {
+                            ui.add_space(6.0);
+                            ui.label(RichText::new(ready).color(pal.dim));
                         }
                         ui.add_space(16.0);
                         let agree = if self.manual_mode { "I understand that the changes listed above are made to the disk (deleted and formatted partitions lose what is on them)" } else { "I understand that everything on this disk will be erased" };
@@ -1255,6 +1340,8 @@ impl eframe::App for App {
                             } else if page == Page::Welcome {
                                 // whether the Network page is needed: asked now, the next page once it is known
                                 self.net.start_deciding(&ctx);
+                            } else if page == Page::Network && self.return_to.is_some() {
+                                go = self.return_to.take();
                             } else {
                                 go = self.next_page(page);
                             }
@@ -1276,6 +1363,9 @@ impl eframe::App for App {
             });
         });
         if let Some(p) = go {
+            if self.page == Page::Network && p != Page::Network {
+                self.return_to = None;
+            }
             self.page = p;
         }
         if install {
@@ -1421,7 +1511,7 @@ mod tests {
         let mut app = App::new();
         app.demo("disk-manual");
         assert!(app.demo && app.command.is_none() && app.page == Page::Disk && app.manual_mode);
-        assert!((app.net.backend.join)("Example-5G", "x").is_err(), "the demo joins no network");
+        assert!((app.net.backend.join)(&yggdrasil_netjoin::join::Request::new("Example-5G", "x")).is_err(), "the demo joins no network");
         let d = app.chosen_disk().unwrap().clone();
         assert_eq!(app.manual.problem(d.size, &d.parts, &d.table), None, "{:?}", app.manual.problem(d.size, &d.parts, &d.table));
         assert_eq!(app.missing(Page::Disk), None);
@@ -1433,18 +1523,23 @@ mod tests {
         NetDevice { device: format!("{kind}0"), kind: kind.into(), state: state.into(), connection: String::new() }
     }
     fn wired() -> Snapshot {
-        Snapshot { wifi_on: true, devices: vec![dev("ethernet", "connected"), dev("wifi", "disconnected")], networks: vec![] }
+        Snapshot {
+            wifi_on: true,
+            devices: vec![dev("ethernet", "connected"), dev("wifi", "disconnected")],
+            networks: vec![],
+            ..Snapshot::default()
+        }
     }
     fn wired_no_wifi() -> Snapshot {
-        Snapshot { wifi_on: false, devices: vec![dev("ethernet", "connected")], networks: vec![] }
+        Snapshot { wifi_on: false, devices: vec![dev("ethernet", "connected")], networks: vec![], ..Snapshot::default() }
     }
     fn cable_out_no_wifi() -> Snapshot {
-        Snapshot { wifi_on: false, devices: vec![dev("ethernet", "unavailable")], networks: vec![] }
+        Snapshot { wifi_on: false, devices: vec![dev("ethernet", "unavailable")], networks: vec![], ..Snapshot::default() }
     }
     fn unplugged() -> Snapshot {
         network::demo_snapshot()
     }
-    fn no_join(_: &str, _: &str) -> Result<(), String> {
+    fn no_join(_: &yggdrasil_netjoin::join::Request) -> Result<(), String> {
         panic!("nothing is joined in these tests")
     }
     fn backend(adapters: fn() -> Snapshot) -> network::Backend {
@@ -1537,6 +1632,47 @@ mod tests {
             app.net.poll();
         }
         assert!(!app.pages().contains(&Page::Network));
+    }
+
+    #[test]
+    fn a_network_joined_later_returns_to_where_the_person_was() {
+        let mut app = App::new();
+        app.net = network::Net::new(backend(cable_out_no_wifi));
+        assert_eq!(leave_welcome(&mut app), Some(Page::Keyboard), "no Wi-Fi at the start: no Network page");
+        // a USB Wi-Fi adapter at the disk page: the banner's button opens the Network step, and Next or a join goes back
+        app.page = Page::Disk;
+        assert_eq!(app.open_network(Page::Disk), Page::Network);
+        assert!(app.pages().contains(&Page::Network) && !app.net.new_adapter);
+        assert_eq!(app.return_to, Some(Page::Disk));
+        // a cable plugged in instead: nothing to ask, the summary says so and the notes go
+        app.net.snap = Some(wired_no_wifi());
+        assert!(app.net.online());
+        assert_eq!(app.net.state().summary(), "Connected (wired)");
+        assert_eq!(network::summary_note(app.net.snap.as_ref()), None);
+    }
+
+    #[test]
+    fn getting_ready_follows_the_choices() {
+        let mut app = App::new();
+        app.set_browsers(parse_browsers(r#"{"browsers":[{"id":"vivaldi","chosen":true},{"id":"librewolf"}]}"#));
+        assert_eq!(app.choices(), r#"{"browsers":["vivaldi"]}"#, "no optional parts offered: none named");
+        app.toggle_browser("librewolf");
+        app.set_extras(parse_extras(r#"{"extras":[{"id":"razer","chosen":true}]}"#, &|_| false, &Hardware::default()));
+        assert_eq!(app.choices(), r#"{"browsers":["vivaldi","librewolf"],"extras":["razer"]}"#);
+        // the demo never starts it
+        app.demo("summary");
+        app.prefetch.tick(true, &app.choices(), std::time::Instant::now() + prefetch::SETTLE * 10);
+        assert!(app.prefetch.running.is_none() && app.prefetch.status == prefetch::Status::Idle);
+    }
+
+    #[test]
+    fn the_demo_hidden_network_form_uses_made_up_values() {
+        let mut app = App::new();
+        app.demo("network-hidden");
+        assert_eq!(app.page, Page::Network);
+        let f = app.net.form.clone().unwrap();
+        assert!(f.hidden && f.secured && f.real_address && f.ssid.starts_with("Example"));
+        assert!(app.net.snap.as_ref().unwrap().addresses.iter().all(|a| a.real().starts_with("02:00:00:00:00:")));
     }
 
     #[test]

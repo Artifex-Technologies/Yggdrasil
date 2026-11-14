@@ -60,6 +60,9 @@ fuzz_target!(|data: &[u8]| {
         efi: "/nonexistent".into(),
         resolv_conf: "/nonexistent".into(),
         nm_connections: "/nonexistent".into(),
+        prefetch: "/nonexistent".into(),
+        pacman_db: "/nonexistent".into(),
+        pacman_conf: "/nonexistent".into(),
     };
     let env = install_system::Env { sfs: Some("/nonexistent".into()), target: Some("/nonexistent/target".into()) };
     let mut sys = Nothing::default();

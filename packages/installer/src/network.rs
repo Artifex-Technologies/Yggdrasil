@@ -11,7 +11,9 @@ use std::sync::mpsc::{channel, Receiver};
 use std::time::{Duration, Instant};
 
 use eframe::egui::{self, vec2, Align2, CornerRadius, FontId, RichText, Sense, Stroke};
+use yggdrasil_netjoin::join::Request;
 use yggdrasil_netjoin::list::{nmcli, Snapshot, Wifi};
+use yggdrasil_netjoin::mac::{self, Adapter};
 use yggdrasil_ui::theme::Palette;
 
 /// What the page (and the summary) says while the computer is offline.
@@ -127,12 +129,26 @@ pub struct Backend {
     pub rescan: fn(),
     /// Switch Wi-Fi on.
     pub radio_on: fn() -> Result<(), String>,
-    /// Join a network (an empty password for an open one).
-    pub join: fn(&str, &str) -> Result<(), String>,
+    /// Join a network (a hidden one too; with this computer's real address when asked).
+    pub join: fn(&Request) -> Result<(), String>,
+}
+
+/// The adapters' addresses (over D-Bus, read only), asked again only when the adapters change (a USB one plugged in).
+fn addresses_for(s: &Snapshot) -> Vec<Adapter> {
+    static LAST: std::sync::Mutex<(Vec<String>, Vec<Adapter>)> = std::sync::Mutex::new((Vec::new(), Vec::new()));
+    let names: Vec<String> = s.devices.iter().map(|d| d.device.clone()).collect();
+    let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+    if last.0 != names || last.1.is_empty() {
+        *last = (names, mac::adapters());
+    }
+    last.1.clone()
 }
 
 fn system_read() -> Snapshot {
-    Snapshot::read(nmcli)
+    let mut s = Snapshot::read(nmcli);
+    s.addresses = addresses_for(&s);
+    s.private_wifi = mac::nm_private_wifi();
+    s
 }
 fn system_adapters() -> Snapshot {
     Snapshot::adapters(nmcli)
@@ -151,7 +167,7 @@ pub const SYSTEM: Backend = Backend {
     adapters: system_adapters,
     rescan: system_rescan,
     radio_on: system_radio_on,
-    join: yggdrasil_netjoin::join::connect,
+    join: yggdrasil_netjoin::join::join,
 };
 
 /// The made-up computer of `--demo`: a Wi-Fi adapter, an Ethernet port without a cable, and networks with made-up names.
@@ -164,6 +180,14 @@ pub fn demo_snapshot() -> Snapshot {
         connection: String::new(),
     };
     let net = |n: &str, signal: u8, secured: bool| Wifi { in_use: false, ssid: n.into(), signal, secured };
+    // made-up, locally administered addresses
+    let adapter = |d: &str, kind: &str, a: &str| Adapter {
+        device: d.into(),
+        kind: kind.into(),
+        address: a.into(),
+        permanent: a.into(),
+        ..Adapter::default()
+    };
     Snapshot {
         wifi_on: true,
         devices: vec![dev("eth0", "ethernet", "unavailable"), dev("wlan0", "wifi", "disconnected")],
@@ -173,6 +197,8 @@ pub fn demo_snapshot() -> Snapshot {
             net("Cafe-Example", 47, true),
             net("Example-2G", 22, true),
         ],
+        addresses: vec![adapter("eth0", "ethernet", "02:00:00:00:00:10"), adapter("wlan0", "wifi", "02:00:00:00:00:01")],
+        private_wifi: true,
     }
 }
 fn demo_rescan() {
@@ -181,7 +207,7 @@ fn demo_rescan() {
 fn demo_radio_on() -> Result<(), String> {
     Err("This is a demo: nothing is changed.".into())
 }
-fn demo_join(_: &str, _: &str) -> Result<(), String> {
+fn demo_join(_: &Request) -> Result<(), String> {
     std::thread::sleep(Duration::from_millis(800));
     Err("This is a demo: nothing is joined.".into())
 }
@@ -190,6 +216,8 @@ pub const DEMO: Backend =
 
 enum Msg {
     Read(Snapshot),
+    /// The adapters only (the watch on the other pages): the networks and addresses stay as they were.
+    Adapters(Snapshot),
     Joined(String, Result<(), String>, Snapshot),
     Radio(Result<(), String>, Snapshot),
 }
@@ -200,9 +228,9 @@ pub struct Net {
     read_at: Option<Instant>,
     /// The one read, scan or join under way.
     pending: Option<Receiver<Msg>>,
-    /// The secured network whose password box is open, and what is typed in it.
-    pub chosen: Option<String>,
-    pub password: String,
+    /// The open form: a network's password (and address choice), or a hidden network's name, security and password. The
+    /// password leaves with the join and is not kept.
+    pub form: Option<Request>,
     /// The network being joined.
     pub joining: Option<String>,
     /// The last join's outcome: (it worked, what to say).
@@ -213,6 +241,13 @@ pub struct Net {
     skipped_without_wifi: bool,
     /// The decision as Welcome is left, under way on a thread.
     deciding: Option<Receiver<Snapshot>>,
+    /// A Wi-Fi adapter appeared since the last look (a USB one plugged in): the other pages offer to join a network.
+    pub new_adapter: bool,
+    /// A join worked (the page returns to where the person came from, when they came from further on).
+    pub joined: bool,
+    /// A form was just opened: the page scrolls it into view (on this many frames: the first one may not know the page's full
+    /// height yet).
+    pub scroll_to_form: u8,
 }
 
 impl Net {
@@ -222,14 +257,21 @@ impl Net {
             snap: None,
             read_at: None,
             pending: None,
-            chosen: None,
-            password: String::new(),
+            form: None,
             joining: None,
             message: None,
             skip_page: false,
             skipped_without_wifi: false,
             deciding: None,
+            new_adapter: false,
+            joined: false,
+            scroll_to_form: 0,
         }
+    }
+
+    /// Whether the computer is online now.
+    pub fn online(&self) -> bool {
+        matches!(self.state(), State::Wired | State::Wifi(_))
     }
 
     pub fn state(&self) -> State {
@@ -285,6 +327,10 @@ impl Net {
     }
 
     fn take(&mut self, s: Snapshot) {
+        let wifi = |s: &Snapshot| s.devices.iter().filter(|d| d.kind == "wifi").count();
+        if self.snap.as_ref().is_some_and(|old| wifi(&s) > wifi(old)) {
+            self.new_adapter = true;
+        }
         if self.skipped_without_wifi && s.has_wifi() {
             // a Wi-Fi adapter appeared after the page was skipped for want of one: the page is offered again
             self.skip_page = false;
@@ -312,6 +358,18 @@ impl Net {
         }
     }
 
+    /// On the pages after this one: the adapters only (quick, no scan), every `every`, so a cable or a USB Wi-Fi adapter plugged
+    /// in later is noticed (the notes go, the summary's line changes, a page offers to join).
+    pub fn watch(&mut self, ctx: &egui::Context, every: Duration) {
+        self.poll();
+        if self.pending.is_none() && self.read_at.is_none_or(|t| t.elapsed() >= every) {
+            let adapters = self.backend.adapters;
+            self.read_at = Some(Instant::now());
+            self.run(ctx, move || Msg::Adapters(adapters()));
+        }
+        ctx.request_repaint_after(every);
+    }
+
     /// Takes in what a thread found; looks again when the last look is older than `every`.
     pub fn tick(&mut self, ctx: &egui::Context, every: Duration) {
         self.poll();
@@ -327,6 +385,12 @@ impl Net {
         self.pending = None;
         match m {
             Msg::Read(s) => self.take(s),
+            Msg::Adapters(a) => {
+                let old = self.snap.clone().unwrap_or_default();
+                let addresses =
+                    if a.devices.iter().map(|d| &d.device).eq(old.devices.iter().map(|d| &d.device)) { old.addresses } else { vec![] };
+                self.take(Snapshot { networks: old.networks, addresses, private_wifi: old.private_wifi, ..a });
+            }
             Msg::Radio(r, s) => {
                 self.take(s);
                 if let Err(e) = r {
@@ -339,7 +403,8 @@ impl Net {
                 self.read_at = Some(Instant::now());
                 self.message = Some(match r {
                     Ok(()) => {
-                        self.chosen = None;
+                        self.form = None;
+                        self.joined = true;
                         (true, format!("Connected to “{ssid}”. The installed system keeps this network."))
                     }
                     Err(e) => (false, e),
@@ -371,8 +436,9 @@ impl Net {
         }
     }
 
-    /// Join `ssid` with what is typed (nothing for an open network). The password leaves this page with the join and is not kept.
-    pub fn join(&mut self, ctx: &egui::Context, ssid: &str) {
+    /// Join what the form says (an open network: `Request::new(name, "")`). The password leaves this page with the join and is
+    /// not kept; the form stays open (empty password) to try again when it did not work.
+    pub fn join(&mut self, ctx: &egui::Context, r: Request) {
         if self.pending.is_some() && self.joining.is_none() {
             // a look is under way: its answer is dropped, the join's own look follows it
             self.pending = None;
@@ -380,14 +446,16 @@ impl Net {
         if self.pending.is_some() {
             return;
         }
-        let pw = std::mem::take(&mut self.password);
+        if let Some(f) = &mut self.form {
+            f.password.clear();
+        }
         let (join, read) = (self.backend.join, self.backend.read);
-        let ssid = ssid.to_string();
+        let ssid = r.ssid.clone();
         self.joining = Some(ssid.clone());
         self.message = None;
         self.run(ctx, move || {
-            let r = join(&ssid, &pw);
-            Msg::Joined(ssid, r, read())
+            let done = join(&r);
+            Msg::Joined(ssid, done, read())
         });
     }
 }
@@ -411,17 +479,25 @@ fn marks(p: &egui::Painter, rect: egui::Rect, pal: &Palette, w: &Wifi, fg: egui:
     }
 }
 
-fn wifi_row(ui: &mut egui::Ui, pal: &Palette, w: &Wifi, open: bool) -> egui::Response {
+fn row_frame(ui: &mut egui::Ui, pal: &Palette, accent: bool, open: bool) -> (egui::Rect, egui::Response) {
     let (rect, r) = ui.allocate_exact_size(vec2(460.0, 36.0), Sense::click());
-    let p = ui.painter();
-    let fill = if w.in_use {
+    let fill = if accent {
         pal.accent
     } else if r.hovered() || open {
         pal.hover
     } else {
         pal.field
     };
-    p.rect_filled(rect, CornerRadius::same(8), fill);
+    ui.painter().rect_filled(rect, CornerRadius::same(8), fill);
+    if r.hovered() && !accent {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    (rect, r)
+}
+
+fn wifi_row(ui: &mut egui::Ui, pal: &Palette, w: &Wifi, open: bool) -> egui::Response {
+    let (rect, r) = row_frame(ui, pal, w.in_use, open);
+    let p = ui.painter();
     let fg = if w.in_use { pal.on_accent() } else { pal.text };
     let label = if w.in_use { format!("✔  {}", w.ssid) } else { w.ssid.clone() };
     p.text(rect.left_center() + vec2(12.0, 0.0), Align2::LEFT_CENTER, label, FontId::proportional(14.0), fg);
@@ -429,16 +505,115 @@ fn wifi_row(ui: &mut egui::Ui, pal: &Palette, w: &Wifi, open: bool) -> egui::Res
         p.text(rect.right_center() - vec2(66.0, 0.0), Align2::RIGHT_CENTER, "Connected", FontId::proportional(12.0), fg);
     }
     marks(p, rect, pal, w, fg);
-    if r.hovered() && !w.in_use {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-    }
     r
+}
+
+/// An address with a Copy button beside it.
+fn address_line(ui: &mut egui::Ui, pal: &Palette, text: &str, mac: &str) {
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(format!("{text} {mac}")).color(pal.dim));
+        if ui.small_button("Copy").on_hover_text("Copy the address").clicked() {
+            ui.ctx().copy_text(mac.to_string());
+        }
+    });
+}
+
+enum FormAct {
+    None,
+    Join,
+    Cancel,
+}
+
+/// The form under a network's row, or the hidden network's: its name and security (hidden), the password (when it asks for
+/// one), the address the network will see with the choice of this computer's real one (while the system gives each network a
+/// private address), Join and Cancel.
+fn form(ui: &mut egui::Ui, pal: &Palette, f: &mut Request, snap: &Snapshot, scroll: &mut u8) -> FormAct {
+    let mut act = FormAct::None;
+    let asks = if f.hidden { f.secured } else { snap.networks.iter().find(|w| w.ssid == f.ssid).is_none_or(|w| w.secured) };
+    let shown = egui::Frame::new().inner_margin(egui::Margin { left: 12, right: 0, top: 6, bottom: 6 }).show(ui, |ui| {
+        let mut enter = false;
+        if f.hidden {
+            let name =
+                ui.add(egui::TextEdit::singleline(&mut f.ssid).hint_text("Network name").desired_width(300.0).margin(vec2(8.0, 6.0)));
+            if f.ssid.is_empty() && ui.memory(|m| m.focused().is_none()) {
+                name.request_focus();
+            }
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.label("Security");
+                for (secured, label) in [(false, "None"), (true, "WPA/WPA2/WPA3 Personal")] {
+                    let on = f.secured == secured;
+                    let b = egui::Button::new(RichText::new(label).color(if on { pal.on_accent() } else { pal.text })).fill(if on {
+                        pal.accent
+                    } else {
+                        pal.field
+                    });
+                    if ui.add(b).clicked() {
+                        f.secured = secured;
+                    }
+                }
+            });
+            ui.add_space(4.0);
+        }
+        if asks {
+            let hint = if f.hidden || f.ssid.is_empty() { "Password".to_string() } else { format!("Password for “{}”", f.ssid) };
+            let r = ui.add(
+                egui::TextEdit::singleline(&mut f.password).hint_text(hint).password(true).desired_width(300.0).margin(vec2(8.0, 6.0)),
+            );
+            if ui.memory(|m| m.focused().is_none()) && !(f.hidden && f.ssid.is_empty()) {
+                r.request_focus();
+            }
+            enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            ui.add_space(4.0);
+        }
+        if snap.private_wifi {
+            ui.checkbox(&mut f.real_address, "Use this computer's real address (for networks that reserve or allow addresses)");
+        }
+        let seen = mac::seen_by_network(&snap.addresses, snap.private_wifi, f.real_address);
+        let many = seen.len() > 1;
+        for (label, m) in seen {
+            match m {
+                Some(m) => address_line(
+                    ui,
+                    pal,
+                    &if many { format!("{label}: address (MAC)") } else { "This computer's Wi-Fi address (MAC):".into() },
+                    &m,
+                ),
+                None => {
+                    let what = if many {
+                        format!("{label}: a private address of its own for this network")
+                    } else {
+                        "A private address of its own for this network (made as it joins).".into()
+                    };
+                    ui.label(RichText::new(what).color(pal.dim));
+                }
+            }
+        }
+        ui.add_space(4.0);
+        let ready = !f.ssid.trim().is_empty() && (!asks || !f.password.is_empty());
+        ui.horizontal(|ui| {
+            let b = egui::Button::new(RichText::new("Join").color(pal.on_accent())).fill(pal.accent).min_size(vec2(70.0, 30.0));
+            if (ui.add_enabled(ready, b).clicked() || enter) && ready {
+                act = FormAct::Join;
+            }
+            if ui.button("Cancel").clicked() {
+                act = FormAct::Cancel;
+            }
+        });
+    });
+    if *scroll > 0 {
+        *scroll -= 1;
+        shown.response.scroll_to_me(Some(egui::Align::BOTTOM));
+    }
+    act
 }
 
 /// The page itself.
 pub fn page(ui: &mut egui::Ui, pal: &Palette, net: &mut Net) {
     let ctx = ui.ctx().clone();
     let st = net.state();
+    let snap = net.snap.clone().unwrap_or_default();
+    let address_of = |device: &str| snap.addresses.iter().find(|a| a.device == device).map(|a| a.address.clone()).filter(|a| !a.is_empty());
     match &st {
         State::Checking => {
             ui.horizontal(|ui| {
@@ -448,6 +623,10 @@ pub fn page(ui: &mut egui::Ui, pal: &Palette, net: &mut Net) {
         }
         State::Wired => {
             ui.label(RichText::new("✔  Connected by cable (Ethernet)").strong().color(pal.green));
+            let wired = snap.devices.iter().find(|d| d.kind == "ethernet" && d.state.starts_with("connected"));
+            if let Some(m) = wired.and_then(|d| address_of(&d.device)) {
+                address_line(ui, pal, "Wired address (MAC):", &m);
+            }
             ui.label(RichText::new("You are online. Press Next to go on.").color(pal.dim));
         }
         State::Wifi(n) => {
@@ -459,10 +638,17 @@ pub fn page(ui: &mut egui::Ui, pal: &Palette, net: &mut Net) {
         }
         State::Offline => {}
     }
-    let snap = net.snap.clone().unwrap_or_default();
     if !snap.wired_up() && snap.cable() {
         ui.add_space(4.0);
         ui.label(RichText::new("A network cable is plugged in; waiting for it to connect…").color(pal.dim));
+        if let Some(m) = snap
+            .devices
+            .iter()
+            .find(|d| d.kind == "ethernet" && yggdrasil_netjoin::list::cable_in(&d.state))
+            .and_then(|d| address_of(&d.device))
+        {
+            address_line(ui, pal, "Wired address (MAC):", &m);
+        }
     }
     if snap.has_wifi() {
         ui.add_space(12.0);
@@ -473,6 +659,18 @@ pub fn page(ui: &mut egui::Ui, pal: &Palette, net: &mut Net) {
                 RichText::new(format!(
                     "{adapters} Wi-Fi adapters: the networks either one hears; a network is joined on the one that hears it best."
                 ))
+                .color(pal.dim),
+            );
+        }
+        // each adapter's own address, for networks that reserve or allow addresses
+        for a in snap.addresses.iter().filter(|a| a.kind == "wifi" && !a.real().is_empty()) {
+            address_line(ui, pal, &format!("{} · address (MAC)", a.label()), a.real());
+        }
+        if snap.private_wifi && !snap.addresses.is_empty() {
+            ui.label(
+                RichText::new(
+                    "Networks see a private address of their own unless “Use this computer's real address” is ticked when joining.",
+                )
                 .color(pal.dim),
             );
         }
@@ -487,58 +685,57 @@ pub fn page(ui: &mut egui::Ui, pal: &Palette, net: &mut Net) {
                 ui.label(RichText::new("No networks found yet.").color(pal.dim));
             }
             let mut click: Option<Wifi> = None;
-            let mut join: Option<String> = None;
-            let mut cancel = false;
+            let mut act = FormAct::None;
             let joining = net.joining.is_some();
             for w in &snap.networks {
-                let open = net.chosen.as_deref() == Some(w.ssid.as_str());
+                let open = net.form.as_ref().is_some_and(|f| !f.hidden && f.ssid == w.ssid);
                 if wifi_row(ui, pal, w, open).clicked() && !w.in_use && !joining {
                     click = Some(w.clone());
                 }
-                if open && !joining {
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        ui.add_space(12.0);
-                        let r = ui.add(
-                            egui::TextEdit::singleline(&mut net.password)
-                                .hint_text(format!("Password for “{}”", w.ssid))
-                                .password(true)
-                                .desired_width(250.0)
-                                .margin(vec2(8.0, 6.0)),
-                        );
-                        if ui.memory(|m| m.focused().is_none()) {
-                            r.request_focus();
-                        }
-                        let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                        let b = egui::Button::new(RichText::new("Join").color(pal.on_accent())).fill(pal.accent).min_size(vec2(70.0, 30.0));
-                        if (ui.add_enabled(!net.password.is_empty(), b).clicked() || enter) && !net.password.is_empty() {
-                            join = Some(w.ssid.clone());
-                        }
-                        if ui.button("Cancel").clicked() {
-                            cancel = true;
-                        }
-                    });
+                if let (true, false, Some(f)) = (open, joining, net.form.as_mut()) {
+                    act = form(ui, pal, f, &snap, &mut net.scroll_to_form);
                 }
                 ui.add_space(4.0);
             }
-            if cancel {
-                net.chosen = None;
-                net.password.clear();
+            // a network that does not broadcast its name: joined by its name
+            let hidden_open = net.form.as_ref().is_some_and(|f| f.hidden);
+            let (rect, r) = row_frame(ui, pal, false, hidden_open);
+            ui.painter().text(
+                rect.left_center() + vec2(12.0, 0.0),
+                Align2::LEFT_CENTER,
+                "Hidden network…",
+                FontId::proportional(14.0),
+                pal.text,
+            );
+            if r.clicked() && !joining {
+                net.message = None;
+                net.form = Some(Request { hidden: true, secured: true, ..Request::default() });
+                net.scroll_to_form = 2;
+            }
+            if let (true, false, Some(f)) = (hidden_open, joining, net.form.as_mut()) {
+                act = form(ui, pal, f, &snap, &mut net.scroll_to_form);
+            }
+            match act {
+                FormAct::Join => {
+                    if let Some(f) = net.form.clone() {
+                        net.join(&ctx, f);
+                    }
+                }
+                FormAct::Cancel => net.form = None,
+                FormAct::None => {}
             }
             if let Some(w) = click {
                 net.message = None;
-                if w.secured {
-                    if net.chosen.as_deref() != Some(w.ssid.as_str()) {
-                        net.password.clear();
+                if w.secured || snap.private_wifi {
+                    // a password to type, or the address to choose first
+                    if !net.form.as_ref().is_some_and(|f| !f.hidden && f.ssid == w.ssid) {
+                        net.form = Some(Request::new(&w.ssid, ""));
+                        net.scroll_to_form = 2;
                     }
-                    net.chosen = Some(w.ssid);
                 } else {
-                    net.chosen = None;
-                    join = Some(w.ssid);
+                    net.form = None;
+                    net.join(&ctx, Request::new(&w.ssid, ""));
                 }
-            }
-            if let Some(ssid) = join {
-                net.join(&ctx, &ssid);
             }
             ui.add_space(4.0);
             ui.horizontal(|ui| {
@@ -580,7 +777,7 @@ mod tests {
     }
 
     fn snap(devices: Vec<NetDevice>, networks: Vec<Wifi>) -> Snapshot {
-        Snapshot { wifi_on: true, devices, networks }
+        Snapshot { wifi_on: true, devices, networks, ..Snapshot::default() }
     }
 
     #[test]
@@ -625,7 +822,8 @@ mod tests {
         assert!(s.networks.iter().all(|w| w.ssid.contains("Example")));
         assert_eq!(state(Some(&s)), State::Offline);
         assert!(s.has_wifi() && !s.cable());
-        assert!((DEMO.join)("Example-5G", "x").is_err());
+        assert!((DEMO.join)(&Request::new("Example-5G", "x")).is_err());
+        assert!(s.addresses.iter().all(|a| a.real().starts_with("02:00:00:00:00:")), "made-up, locally administered addresses");
         assert!((DEMO.radio_on)().is_err());
     }
 
@@ -710,7 +908,8 @@ mod tests {
     fn fake_read() -> Snapshot {
         snap(vec![dev("wifi", "disconnected", "")], vec![Wifi { in_use: false, ssid: "Example-5G".into(), signal: 70, secured: true }])
     }
-    fn fake_join(ssid: &str, pw: &str) -> Result<(), String> {
+    fn fake_join(r: &Request) -> Result<(), String> {
+        let (ssid, pw) = (r.ssid.as_str(), r.password.as_str());
         assert_eq!(ssid, "Example-5G");
         if pw == "right" {
             Ok(())
@@ -733,20 +932,70 @@ mod tests {
     fn a_wrong_password_says_so_and_is_not_kept() {
         let ctx = egui::Context::default();
         let mut net = Net::new(FAKE);
-        net.chosen = Some("Example-5G".into());
-        net.password = "wrong".into();
-        net.join(&ctx, "Example-5G");
-        assert!(net.password.is_empty(), "the password leaves the page with the join");
+        net.form = Some(Request::new("Example-5G", "wrong"));
+        net.join(&ctx, net.form.clone().unwrap());
+        assert_eq!(net.form.as_ref().unwrap().password, "", "the password leaves the page with the join");
         assert_eq!(net.joining.as_deref(), Some("Example-5G"));
         wait(&mut net);
         assert_eq!(net.joining, None);
         assert_eq!(net.message, Some((false, "The password was not accepted.".into())));
-        assert_eq!(net.chosen.as_deref(), Some("Example-5G"), "the box stays open to try again");
-        net.password = "right".into();
-        net.join(&ctx, "Example-5G");
+        assert_eq!(net.form.as_ref().map(|f| f.ssid.as_str()), Some("Example-5G"), "the form stays open to try again");
+        assert!(!net.joined);
+        net.form.as_mut().unwrap().password = "right".into();
+        net.join(&ctx, net.form.clone().unwrap());
         wait(&mut net);
         assert!(net.message.as_ref().is_some_and(|(ok, m)| *ok && m.contains("Example-5G")));
-        assert_eq!(net.chosen, None);
-        assert!(net.password.is_empty());
+        assert_eq!(net.form, None);
+        assert!(net.joined, "a join that worked: the page may return to where the person came from");
+    }
+
+    static ASKED: std::sync::Mutex<Vec<Request>> = std::sync::Mutex::new(Vec::new());
+    fn recording_join(r: &Request) -> Result<(), String> {
+        ASKED.lock().unwrap().push(r.clone());
+        Ok(())
+    }
+
+    #[test]
+    fn a_hidden_network_and_the_real_address_go_to_the_join() {
+        let ctx = egui::Context::default();
+        let mut net = Net::new(Backend { join: recording_join, ..FAKE });
+        let hidden = Request { ssid: "Example-Hidden".into(), password: "pw".into(), hidden: true, secured: true, real_address: true };
+        net.form = Some(hidden.clone());
+        net.join(&ctx, hidden.clone());
+        wait(&mut net);
+        assert_eq!(ASKED.lock().unwrap().as_slice(), [hidden], "name, security, password and the address choice, as typed");
+        assert!(net.joined && net.form.is_none());
+    }
+
+    static WATCH_CALLS: AtomicUsize = AtomicUsize::new(0);
+    /// What the watch on the later pages sees: offline with the built-in adapter, then a USB Wi-Fi adapter, then a cable.
+    fn later_on() -> Snapshot {
+        let usb = NetDevice { device: "wlan1".into(), kind: "wifi".into(), state: "disconnected".into(), connection: String::new() };
+        match WATCH_CALLS.fetch_add(1, Ordering::SeqCst) {
+            0 => snap(vec![dev("ethernet", "unavailable", ""), dev("wifi", "disconnected", "")], vec![]),
+            1 => snap(vec![dev("ethernet", "unavailable", ""), dev("wifi", "disconnected", ""), usb], vec![]),
+            _ => snap(vec![dev("ethernet", "connected", "Wired 1"), dev("wifi", "disconnected", ""), usb], vec![]),
+        }
+    }
+
+    #[test]
+    fn the_later_pages_notice_an_adapter_or_a_cable() {
+        let ctx = egui::Context::default();
+        let mut net = Net::new(Backend { adapters: later_on, ..FAKE });
+        let known = Wifi { in_use: false, ssid: "Example-5G".into(), signal: 70, secured: true };
+        net.snap = Some(Snapshot { networks: vec![known.clone()], private_wifi: true, ..later_on() });
+        net.watch(&ctx, Duration::ZERO);
+        wait(&mut net);
+        assert!(net.new_adapter, "a USB Wi-Fi adapter plugged in");
+        assert_eq!(net.state(), State::Offline);
+        let s = net.snap.clone().unwrap();
+        assert_eq!(s.networks, [known], "the watch asks for the adapters only: the networks stay");
+        assert!(s.private_wifi);
+        net.new_adapter = false;
+        net.watch(&ctx, Duration::ZERO);
+        wait(&mut net);
+        assert_eq!(net.state(), State::Wired, "a cable plugged in and connected");
+        assert!(net.online() && net.state().note().is_none(), "the notes go");
+        assert!(!net.new_adapter);
     }
 }

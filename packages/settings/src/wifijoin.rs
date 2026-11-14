@@ -6,10 +6,11 @@
 //! strongest access point with that name is chosen, NetworkManager works out the rest (WPA2, WPA3, the mixed modes), Settings
 //! waits until it is connected, and a new profile that did not connect is deleted again (a mistyped password is not kept).
 
-/// Joins `ssid` with `password` through NetworkManager on the system bus, and waits (up to 90 s) until it is connected.
-pub fn connect(ssid: &str, password: &str) -> Result<(), String> {
+/// Joins a network (a hidden one too, and with this computer's real address when asked) through NetworkManager on the system
+/// bus, and waits (up to 90 s) until it is connected.
+pub fn join(r: &yggdrasil_netjoin::join::Request) -> Result<(), String> {
     if crate::fixture::get().is_some() {
         return Err("A made-up system (a fixture): nothing is changed.".into());
     }
-    yggdrasil_netjoin::join::connect(ssid, password)
+    yggdrasil_netjoin::join::join(r)
 }
