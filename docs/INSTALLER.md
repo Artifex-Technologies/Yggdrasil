@@ -73,24 +73,36 @@ The wired connection when a cable is in, and the Wi-Fi networks in range (name, 
 connected one marked, Scan again). Choosing a secured network opens a password box under it; Join hands the password to
 NetworkManager in a D-Bus message (AddAndActivateConnection, through `packages/netjoin`, the same code as Settings' Wi-Fi join),
 never on a command line, and shows the progress and the outcome: a wrong password says so, and the profile it made is deleted
-again. An open network is joined with one click. Wi-Fi switched off has a Turn on button; a computer without a Wi-Fi adapter
-gets no Wi-Fi list, only the wired state (or "no network hardware"). The list is read with `nmcli -t` (read only) every few
-seconds while the page is open.
+again. An open network is joined with one click. Wi-Fi switched off has a Turn on button. The adapters and the list are read
+with `nmcli -t` (read only) every 4 seconds while the page is open, so a USB Wi-Fi adapter plugged in meanwhile shows up with
+its networks. With two Wi-Fi adapters the list is what either one hears (the page says so), and a join goes to the adapter
+that hears the chosen network best.
 
-Nothing on the page holds Next back. While offline, Next reads Skip, a "Continue without a network" button does the same, and
-the page says, in amber, that without a network the system may not get everything it needs: drivers and software for the
-devices found (Razer, Corsair, mice and keyboards), browsers that are not on the medium, and the latest updates; they come once
-it is connected in Settings > Wi-Fi & Network. The summary repeats that note while offline and has a Network line.
+Nothing on the page holds Next back. While offline, Next reads Skip, and the page says, in amber, that without a network the
+system may not get everything it needs: drivers and software for the devices found (Razer, Corsair, mice and keyboards),
+browsers that are not on the medium, and the latest updates; they come once it is connected in Settings > Wi-Fi & Network.
 
-When the computer is online by cable as Welcome is left (asked of NetworkManager right then), the page is not shown at all:
-Welcome goes straight to Keyboard and Back returns to Welcome; the summary says "Connected (wired)". Pulling the cable later
-does not bring the page back; going back to Welcome and on again decides anew.
+Whether the page is shown is decided as Welcome's Next is pressed, from NetworkManager's adapters right then (so the page never
+disappears while on screen):
+
+- online by cable: not shown;
+- a cable in that NetworkManager is still connecting (getting an address): Welcome shows "Checking the network…" for up to
+  5 seconds, then decides again (connected: not shown);
+- no Wi-Fi adapter at all, cable or not: not shown (the page would have nothing to offer);
+- otherwise shown.
+
+Without the page Welcome goes straight to Keyboard and Back returns to Welcome. Pulling the cable later does not bring the
+page back; going back to Welcome and on again decides anew. The summary always has a Network line ("Connected (wired)",
+"Connected to … (Wi-Fi)", "Not connected"). While offline it repeats the amber note, adding "plug in a network cable or a USB
+Wi-Fi adapter" when there is no Wi-Fi adapter. When a Wi-Fi adapter turns up after the page was skipped for want of one (a USB
+adapter plugged in at the summary), the step comes back and the summary offers "Join a Wi-Fi network".
 
 A network joined here is a NetworkManager profile of the live session, so yggdrasil-install-system copies it to the new system
 with the others (above): the installed system is online at its first start. The live account needs NetworkManager's
 permission to add and activate a profile without a password prompt; Labyrinth's live medium gives its live account (wheel)
-every polkit action without a password (`49-live-nopasswd.rules`, removed by its clean-up), which covers it. `--demo network`
-shows the page with made-up networks and joins nothing.
+every polkit action without a password (`49-live-nopasswd.rules`, removed by its clean-up), which covers it. USB Wi-Fi adapters
+work with the kernel's own drivers and the firmware the OS carries (Labyrinth: docs/HARDWARE.md). `--demo network` shows the
+page with made-up networks and joins nothing.
 
 ## The contract with the OS's program
 

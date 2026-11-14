@@ -226,6 +226,14 @@ mod tests {
         assert_eq!(s.wifi_up().as_deref(), Some("Example-5G"));
         let s = Snapshot::read(fake("disabled\n", "eth0:ethernet:connecting (getting IP configuration):Wired 1\n", ""));
         assert!(!s.wifi_on && !s.wired_up() && s.cable() && !s.has_wifi());
+        // two Wi-Fi adapters (a USB one beside the built-in one): connected through the second
+        let s = Snapshot::read(fake(
+            "enabled\n",
+            "wlan0:wifi:disconnected:\nwlan1:wifi:connected:Example-5G\n",
+            ":Example-2G:40:WPA2\n*:Example-5G:70:WPA2\n",
+        ));
+        assert!(s.has_wifi() && s.devices.len() == 2);
+        assert_eq!(s.wifi_up().as_deref(), Some("Example-5G"));
         let a = Snapshot::adapters(fake("enabled\n", "eth0:ethernet:connected:Wired 1\n", ":Example-5G:70:WPA2\n"));
         assert!(a.wired_up() && a.networks.is_empty(), "the adapters alone: no scan list asked for");
         let s = Snapshot::read(|_: &[&str]| None);

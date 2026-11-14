@@ -1,9 +1,11 @@
 //! The Network step, right after Welcome: join a network before installing, or go on without one. Wired is shown when a cable is
 //! in, the Wi-Fi networks in range when the computer has Wi-Fi (none of it when it has no adapter); a secured network asks for
 //! its password, joined through NetworkManager's D-Bus call (yggdrasil-netjoin, the same as Settings': the password never on a
-//! command line, a profile that failed is not kept). Nothing on this page blocks Next. When the computer is already online by
-//! cable as Welcome is left, the page is not shown at all. A network joined here goes to the installed system with the rest of
-//! the live session's NetworkManager profiles (yggdrasil-install-system).
+//! command line, a profile that failed is not kept). Nothing on this page blocks Next. As Welcome is left the page is decided
+//! (`decision`): not shown when the computer is online by cable, or has no Wi-Fi adapter at all. The adapters are read again
+//! with every look, so a USB Wi-Fi adapter plugged in while the page is open shows up with its networks; with two adapters the
+//! list is what both hear, and a join goes to the one that hears the network best. A network joined here goes to the installed
+//! system with the rest of the live session's NetworkManager profiles (yggdrasil-install-system).
 
 use std::sync::mpsc::{channel, Receiver};
 use std::time::{Duration, Instant};
@@ -16,6 +18,47 @@ use yggdrasil_ui::theme::Palette;
 pub const OFFLINE_NOTE: &str = "Without a network the system may not get everything it needs: drivers and software for the devices \
      found here (Razer, Corsair, mice and keyboards), browsers that are not on this medium, and the latest updates. You can connect \
      later in Settings > Wi-Fi & Network; they come then.";
+
+/// Added on the summary when the computer is offline and has no Wi-Fi adapter.
+pub const PLUG_IN: &str = "To connect now, plug in a network cable or a USB Wi-Fi adapter.";
+
+/// Whether the page is needed, from the adapters as Welcome is left.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Decision {
+    /// Online by cable, or no Wi-Fi adapter (the page would have nothing to offer).
+    Skip,
+    Show,
+    /// A cable is in and NetworkManager is still connecting it (getting an address): ask again in a moment.
+    Wait,
+}
+
+pub fn decision(s: &Snapshot) -> Decision {
+    if !s.has_wifi() || s.wired_up() {
+        Decision::Skip
+    } else if s.devices.iter().any(|d| d.kind == "ethernet" && d.state.starts_with("connecting")) {
+        Decision::Wait
+    } else {
+        Decision::Show
+    }
+}
+
+/// The adapters, asked again every `every` while a cable is still connecting, for at most `limit`.
+pub fn settle(adapters: fn() -> Snapshot, limit: Duration, every: Duration) -> Snapshot {
+    let until = Instant::now() + limit;
+    loop {
+        let s = adapters();
+        if decision(&s) != Decision::Wait || Instant::now() >= until {
+            return s;
+        }
+        std::thread::sleep(every);
+    }
+}
+
+/// The summary's amber note: the offline note, and how to connect now when there is no Wi-Fi adapter.
+pub fn summary_note(s: Option<&Snapshot>) -> Option<String> {
+    let note = state(s).note()?;
+    Some(if s.is_some_and(|s| s.has_wifi()) { note.to_string() } else { format!("{note} {PLUG_IN}") })
+}
 
 /// Where the computer is on the network.
 #[derive(Clone, Debug, PartialEq)]
@@ -164,8 +207,12 @@ pub struct Net {
     pub joining: Option<String>,
     /// The last join's outcome: (it worked, what to say).
     pub message: Option<(bool, String)>,
-    /// Online by cable as Welcome was left: the page is not shown.
+    /// Online by cable, or without a Wi-Fi adapter, as Welcome was left: the page is not shown.
     pub skip_page: bool,
+    /// Skipped for want of a Wi-Fi adapter: a later look that finds one (a USB adapter plugged in) offers the page again.
+    skipped_without_wifi: bool,
+    /// The decision as Welcome is left, under way on a thread.
+    deciding: Option<Receiver<Snapshot>>,
 }
 
 impl Net {
@@ -180,6 +227,8 @@ impl Net {
             joining: None,
             message: None,
             skip_page: false,
+            skipped_without_wifi: false,
+            deciding: None,
         }
     }
 
@@ -191,16 +240,57 @@ impl Net {
         self.pending.is_some()
     }
 
-    /// Leaving Welcome: whether the page is needed. Asked of the adapters there and then (not of an older look), so a cable
-    /// plugged in a moment ago counts; the page then stays as decided while it is on screen.
-    pub fn decide(&mut self) {
-        let a = (self.backend.adapters)();
-        self.skip_page = a.wired_up();
+    /// Leaving Welcome: whether the page is needed, asked of the adapters there and then (not of an older look), so a cable
+    /// plugged in a moment ago counts; up to 5 s while a cable is still connecting. On a thread: Welcome shows a spinner until
+    /// `decided` says it is done. The page then stays as decided while it is on screen.
+    pub fn start_deciding(&mut self, ctx: &egui::Context) {
+        if self.deciding.is_some() {
+            return;
+        }
+        let (tx, rx) = channel();
+        self.deciding = Some(rx);
+        let (adapters, ctx) = (self.backend.adapters, ctx.clone());
+        std::thread::spawn(move || {
+            let _ = tx.send(settle(adapters, Duration::from_secs(5), Duration::from_millis(250)));
+            ctx.request_repaint();
+        });
+    }
+
+    pub fn deciding(&self) -> bool {
+        self.deciding.is_some()
+    }
+
+    /// True once, when the decision started by `start_deciding` has come.
+    pub fn decided(&mut self) -> bool {
+        let Some(s) = self.deciding.as_ref().and_then(|rx| rx.try_recv().ok()) else { return false };
+        self.deciding = None;
+        self.apply(s);
+        true
+    }
+
+    /// The decision without a thread (the tests).
+    #[cfg(test)]
+    pub fn decide_now(&mut self, limit: Duration, every: Duration) {
+        self.apply(settle(self.backend.adapters, limit, every));
+    }
+
+    fn apply(&mut self, a: Snapshot) {
+        self.skip_page = decision(&a) == Decision::Skip;
+        self.skipped_without_wifi = self.skip_page && !a.has_wifi();
         if self.skip_page {
-            // the summary says "Connected (wired)" from this until the next look
+            // the summary speaks from this until the next look
             let networks = self.snap.take().map(|s| s.networks).unwrap_or_default();
             self.snap = Some(Snapshot { networks, ..a });
         }
+    }
+
+    fn take(&mut self, s: Snapshot) {
+        if self.skipped_without_wifi && s.has_wifi() {
+            // a Wi-Fi adapter appeared after the page was skipped for want of one: the page is offered again
+            self.skip_page = false;
+            self.skipped_without_wifi = false;
+        }
+        self.snap = Some(s);
     }
 
     fn run(&mut self, ctx: &egui::Context, work: impl FnOnce() -> Msg + Send + 'static) {
@@ -236,15 +326,15 @@ impl Net {
         let Ok(m) = rx.try_recv() else { return };
         self.pending = None;
         match m {
-            Msg::Read(s) => self.snap = Some(s),
+            Msg::Read(s) => self.take(s),
             Msg::Radio(r, s) => {
-                self.snap = Some(s);
+                self.take(s);
                 if let Err(e) = r {
                     self.message = Some((false, e));
                 }
             }
             Msg::Joined(ssid, r, s) => {
-                self.snap = Some(s);
+                self.take(s);
                 self.joining = None;
                 self.read_at = Some(Instant::now());
                 self.message = Some(match r {
@@ -302,14 +392,6 @@ impl Net {
     }
 }
 
-/// What the page asks of the installer.
-#[derive(PartialEq, Eq, Debug)]
-pub enum Act {
-    None,
-    /// "Continue without a network": on to the next step.
-    Skip,
-}
-
 /// Four bars and, for a secured network, a lock, drawn at the right end of `rect`.
 fn marks(p: &egui::Painter, rect: egui::Rect, pal: &Palette, w: &Wifi, fg: egui::Color32) {
     let lit = bars(w.signal);
@@ -354,10 +436,9 @@ fn wifi_row(ui: &mut egui::Ui, pal: &Palette, w: &Wifi, open: bool) -> egui::Res
 }
 
 /// The page itself.
-pub fn page(ui: &mut egui::Ui, pal: &Palette, net: &mut Net) -> Act {
+pub fn page(ui: &mut egui::Ui, pal: &Palette, net: &mut Net) {
     let ctx = ui.ctx().clone();
     let st = net.state();
-    let mut act = Act::None;
     match &st {
         State::Checking => {
             ui.horizontal(|ui| {
@@ -385,7 +466,16 @@ pub fn page(ui: &mut egui::Ui, pal: &Palette, net: &mut Net) -> Act {
     }
     if snap.has_wifi() {
         ui.add_space(12.0);
+        let adapters = snap.devices.iter().filter(|d| d.kind == "wifi").count();
         ui.label(RichText::new("Wi-Fi").strong().color(pal.dim));
+        if adapters > 1 {
+            ui.label(
+                RichText::new(format!(
+                    "{adapters} Wi-Fi adapters: the networks either one hears; a network is joined on the one that hears it best."
+                ))
+                .color(pal.dim),
+            );
+        }
         ui.add_space(4.0);
         if !snap.wifi_on {
             ui.label("Wi-Fi is switched off.");
@@ -476,17 +566,13 @@ pub fn page(ui: &mut egui::Ui, pal: &Palette, net: &mut Net) -> Act {
     if let Some(note) = st.note() {
         ui.add_space(14.0);
         ui.add(egui::Label::new(RichText::new(note).color(pal.amber)).wrap());
-        ui.add_space(8.0);
-        if ui.add(egui::Button::new("Continue without a network").min_size(vec2(220.0, 32.0))).clicked() {
-            act = Act::Skip;
-        }
     }
-    act
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use yggdrasil_netjoin::list::NetDevice;
 
     fn dev(kind: &str, state: &str, conn: &str) -> NetDevice {
@@ -541,6 +627,82 @@ mod tests {
         assert!(s.has_wifi() && !s.cable());
         assert!((DEMO.join)("Example-5G", "x").is_err());
         assert!((DEMO.radio_on)().is_err());
+    }
+
+    #[test]
+    fn the_rules_as_welcome_is_left() {
+        let wifi = || dev("wifi", "disconnected", "");
+        assert_eq!(decision(&snap(vec![dev("ethernet", "connected", "Wired 1"), wifi()], vec![])), Decision::Skip, "online by cable");
+        assert_eq!(
+            decision(&snap(vec![dev("ethernet", "connecting (getting IP configuration)", "Wired 1"), wifi()], vec![])),
+            Decision::Wait,
+            "a cable in, still getting its address"
+        );
+        assert_eq!(decision(&snap(vec![dev("ethernet", "connecting (prepare)", "")], vec![])), Decision::Skip, "no Wi-Fi: no wait");
+        assert_eq!(decision(&snap(vec![dev("ethernet", "connected", "Wired 1")], vec![])), Decision::Skip);
+        assert_eq!(decision(&snap(vec![dev("ethernet", "unavailable", "")], vec![])), Decision::Skip, "no Wi-Fi, no cable");
+        assert_eq!(decision(&Snapshot::default()), Decision::Skip, "no network hardware at all");
+        assert_eq!(decision(&snap(vec![dev("ethernet", "unavailable", ""), wifi()], vec![])), Decision::Show);
+        assert_eq!(
+            decision(&snap(vec![dev("ethernet", "disconnected", ""), wifi()], vec![])),
+            Decision::Show,
+            "a cable that did not connect"
+        );
+        assert_eq!(decision(&snap(vec![wifi()], vec![])), Decision::Show);
+    }
+
+    static CONNECTING_CALLS: AtomicUsize = AtomicUsize::new(0);
+    /// A cable that is still connecting for the first two looks, then connected.
+    fn connects_on_the_third_look() -> Snapshot {
+        let state = if CONNECTING_CALLS.fetch_add(1, Ordering::SeqCst) < 2 { "connecting (getting IP configuration)" } else { "connected" };
+        snap(vec![dev("ethernet", state, "Wired 1"), dev("wifi", "disconnected", "")], vec![])
+    }
+    fn never_connects() -> Snapshot {
+        snap(vec![dev("ethernet", "connecting (getting IP configuration)", "Wired 1"), dev("wifi", "disconnected", "")], vec![])
+    }
+
+    #[test]
+    fn a_cable_still_connecting_is_waited_for_a_moment() {
+        let ms = Duration::from_millis;
+        let mut net = Net::new(Backend { adapters: connects_on_the_third_look, ..FAKE });
+        net.decide_now(ms(5000), ms(1));
+        assert!(net.skip_page, "it connected while Welcome waited: no page");
+        assert_eq!(CONNECTING_CALLS.load(Ordering::SeqCst), 3);
+        assert_eq!(net.state(), State::Wired);
+        let mut net = Net::new(Backend { adapters: never_connects, ..FAKE });
+        let t = Instant::now();
+        net.decide_now(ms(60), ms(5));
+        assert!(t.elapsed() >= ms(60) && t.elapsed() < ms(2000), "waits its limit, no longer");
+        assert!(!net.skip_page, "still connecting after the wait: the page is shown");
+    }
+
+    static PLUG_CALLS: AtomicUsize = AtomicUsize::new(0);
+    /// The built-in adapter alone for the first look; then a USB adapter beside it, hearing a network of its own.
+    fn usb_adapter_plugged_in() -> Snapshot {
+        let net = |n: &str, signal: u8| Wifi { in_use: false, ssid: n.into(), signal, secured: true };
+        if PLUG_CALLS.fetch_add(1, Ordering::SeqCst) == 0 {
+            snap(vec![dev("wifi", "disconnected", "")], vec![net("Example-5G", 40)])
+        } else {
+            let usb = NetDevice { device: "wlan1".into(), kind: "wifi".into(), state: "disconnected".into(), connection: String::new() };
+            snap(vec![dev("wifi", "disconnected", ""), usb], vec![net("Example-5G", 70), net("Example-Far", 55)])
+        }
+    }
+
+    #[test]
+    fn an_adapter_plugged_in_while_the_page_is_open_shows_up() {
+        let ctx = egui::Context::default();
+        let mut net = Net::new(Backend { read: usb_adapter_plugged_in, ..FAKE });
+        let wifi_count = |n: &Net| n.snap.as_ref().map(|s| s.devices.iter().filter(|d| d.kind == "wifi").count());
+        net.tick(&ctx, Duration::ZERO);
+        wait(&mut net);
+        assert_eq!(wifi_count(&net), Some(1));
+        assert_eq!(net.snap.as_ref().unwrap().networks.len(), 1);
+        // the next look (the page's 4 s refresh) reads the adapters again
+        net.tick(&ctx, Duration::ZERO);
+        wait(&mut net);
+        assert_eq!(wifi_count(&net), Some(2), "the USB adapter is there");
+        let names: Vec<String> = net.snap.as_ref().unwrap().networks.iter().map(|w| w.ssid.clone()).collect();
+        assert_eq!(names, ["Example-5G", "Example-Far"], "the networks either adapter hears");
     }
 
     // ---- joining, with a made-up NetworkManager behind the page (never the real one)

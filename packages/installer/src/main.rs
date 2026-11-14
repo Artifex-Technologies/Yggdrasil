@@ -606,12 +606,9 @@ impl App {
             .collect()
     }
 
-    /// The page after `from` (Next). Leaving Welcome decides whether the Network page is needed: not when the computer is online
-    /// by cable right then (decided here, so the page never disappears while it is on screen).
-    fn next_page(&mut self, from: Page) -> Option<Page> {
-        if from == Page::Welcome {
-            self.net.decide();
-        }
+    /// The page after `from` (Next). Leaving Welcome, the Network page is decided first (`network::Net::start_deciding`, then
+    /// this once `decided`), so the page never disappears while it is on screen.
+    fn next_page(&self, from: Page) -> Option<Page> {
         let pages = self.pages();
         pages.iter().position(|p| *p == from).and_then(|i| pages.get(i + 1)).copied()
     }
@@ -911,6 +908,9 @@ impl eframe::App for App {
         let pal = theme::palette_for(dark, accent);
         self.poll();
         let mut go: Option<Page> = None;
+        if self.page == Page::Welcome && self.net.decided() {
+            go = self.next_page(Page::Welcome);
+        }
         let mut install = false;
 
         egui::CentralPanel::default().frame(egui::Frame::new().fill(pal.bg).inner_margin(Margin { left: 28, right: 12, top: 8, bottom: 18 })).show(ui, |ui| {
@@ -956,9 +956,7 @@ impl eframe::App for App {
                     Page::Network => {
                         heading(ui, &pal, "Connect to a network", "Drivers, browsers and updates are fetched while installing. A network joined here is kept for the installed system.");
                         self.net.tick(&ctx, std::time::Duration::from_secs(4));
-                        if network::page(ui, &pal, &mut self.net) == network::Act::Skip {
-                            go = self.next_page(Page::Network);
-                        }
+                        network::page(ui, &pal, &mut self.net);
                     }
                     Page::Keyboard => {
                         heading(ui, &pal, "Keyboard", "The layout of your keyboard. Type in the box to try it.");
@@ -1180,9 +1178,13 @@ impl eframe::App for App {
                                 }
                             }
                         }
-                        if let Some(note) = net_state.note() {
+                        if let Some(note) = network::summary_note(self.net.snap.as_ref()) {
                             ui.add_space(10.0);
                             ui.add(egui::Label::new(RichText::new(note).color(pal.amber)).wrap());
+                            // offline with Wi-Fi (an adapter plugged in after the step was skipped, or the step skipped): back to it
+                            if self.net.snap.as_ref().is_some_and(|s| s.has_wifi()) && self.pages().contains(&Page::Network) && ui.button("Join a Wi-Fi network").clicked() {
+                                go = Some(Page::Network);
+                            }
                         }
                         ui.add_space(16.0);
                         let agree = if self.manual_mode { "I understand that the changes listed above are made to the disk (deleted and formatted partitions lose what is on them)" } else { "I understand that everything on this disk will be erased" };
@@ -1243,12 +1245,16 @@ impl eframe::App for App {
                         let missing = self.missing(page);
                         let label = if last { "Install" } else if page == Page::Network && self.net.state().note().is_some() { "Skip" } else { "Next" };
                         let next = egui::Button::new(RichText::new(label).color(pal.on_accent())).fill(if last { pal.red } else { pal.accent }).min_size(vec2(110.0, 34.0));
-                        let r = ui.add_enabled(missing.is_none() && (self.command.is_some() || self.demo), next);
+                        let checking = page == Page::Welcome && self.net.deciding();
+                        let r = ui.add_enabled(missing.is_none() && !checking && (self.command.is_some() || self.demo), next);
                         if let Some(m) = missing.clone() {
                             r.on_disabled_hover_text(m);
                         } else if r.clicked() {
                             if last {
                                 install = true;
+                            } else if page == Page::Welcome {
+                                // whether the Network page is needed: asked now, the next page once it is known
+                                self.net.start_deciding(&ctx);
                             } else {
                                 go = self.next_page(page);
                             }
@@ -1260,6 +1266,10 @@ impl eframe::App for App {
                         }
                         if let Some(m) = missing {
                             ui.label(RichText::new(m).color(pal.dim));
+                        }
+                        if checking {
+                            ui.label(RichText::new("Checking the network…").color(pal.dim));
+                            ui.spinner();
                         }
                     }
                 }
@@ -1417,27 +1427,34 @@ mod tests {
         assert_eq!(app.missing(Page::Disk), None);
     }
 
-    fn wired() -> yggdrasil_netjoin::list::Snapshot {
-        let d = |kind: &str, state: &str| yggdrasil_netjoin::list::NetDevice {
-            device: format!("{kind}0"),
-            kind: kind.into(),
-            state: state.into(),
-            connection: String::new(),
-        };
-        yggdrasil_netjoin::list::Snapshot {
-            wifi_on: true,
-            devices: vec![d("ethernet", "connected"), d("wifi", "disconnected")],
-            networks: vec![],
-        }
+    use yggdrasil_netjoin::list::{NetDevice, Snapshot};
+
+    fn dev(kind: &str, state: &str) -> NetDevice {
+        NetDevice { device: format!("{kind}0"), kind: kind.into(), state: state.into(), connection: String::new() }
     }
-    fn unplugged() -> yggdrasil_netjoin::list::Snapshot {
+    fn wired() -> Snapshot {
+        Snapshot { wifi_on: true, devices: vec![dev("ethernet", "connected"), dev("wifi", "disconnected")], networks: vec![] }
+    }
+    fn wired_no_wifi() -> Snapshot {
+        Snapshot { wifi_on: false, devices: vec![dev("ethernet", "connected")], networks: vec![] }
+    }
+    fn cable_out_no_wifi() -> Snapshot {
+        Snapshot { wifi_on: false, devices: vec![dev("ethernet", "unavailable")], networks: vec![] }
+    }
+    fn unplugged() -> Snapshot {
         network::demo_snapshot()
     }
     fn no_join(_: &str, _: &str) -> Result<(), String> {
         panic!("nothing is joined in these tests")
     }
-    fn backend(adapters: fn() -> yggdrasil_netjoin::list::Snapshot) -> network::Backend {
+    fn backend(adapters: fn() -> Snapshot) -> network::Backend {
         network::Backend { read: adapters, adapters, rescan: || {}, radio_on: || Ok(()), join: no_join }
+    }
+    /// Welcome's Next: the decision (as the window's thread makes it, here without the thread), then the next page.
+    fn leave_welcome(app: &mut App) -> Option<Page> {
+        let fast = std::time::Duration::from_millis(1);
+        app.net.decide_now(fast * 50, fast);
+        app.next_page(Page::Welcome)
     }
 
     #[test]
@@ -1445,39 +1462,81 @@ mod tests {
         let mut app = App::new();
         app.net = network::Net::new(backend(unplugged));
         assert_eq!(app.pages()[..3], [Page::Welcome, Page::Network, Page::Keyboard]);
-        assert_eq!(app.next_page(Page::Welcome), Some(Page::Network), "offline: the page is shown");
+        assert_eq!(leave_welcome(&mut app), Some(Page::Network), "Wi-Fi, offline: the page is shown");
         assert_eq!(app.prev_page(Page::Network), Some(Page::Welcome));
         assert_eq!(app.prev_page(Page::Keyboard), Some(Page::Network));
-        for s in [None, Some(unplugged()), Some(wired()), Some(yggdrasil_netjoin::list::Snapshot::default())] {
+        for s in [None, Some(unplugged()), Some(wired()), Some(Snapshot::default())] {
             app.net.snap = s;
             assert_eq!(app.missing(Page::Network), None, "Next is never held back by the network");
         }
-        // offline: the note stays on the page and the summary
+        // offline: the note stays on the page and the summary (with Wi-Fi: no "plug in" there)
         app.net.snap = Some(unplugged());
         assert_eq!(app.net.state().note(), Some(network::OFFLINE_NOTE));
-        // a computer without any network hardware: the page still comes, with the same note and no Wi-Fi list
-        app.net = network::Net::new(backend(yggdrasil_netjoin::list::Snapshot::default));
-        assert_eq!(app.next_page(Page::Welcome), Some(Page::Network));
-        app.net.snap = Some(Default::default());
-        assert_eq!(app.net.state(), network::State::NoHardware);
-        assert_eq!(app.net.state().note(), Some(network::OFFLINE_NOTE));
+        assert_eq!(network::summary_note(app.net.snap.as_ref()).as_deref(), Some(network::OFFLINE_NOTE));
     }
 
     #[test]
     fn online_by_cable_skips_the_network_step() {
         let mut app = App::new();
         app.net = network::Net::new(backend(wired));
-        assert_eq!(app.next_page(Page::Welcome), Some(Page::Keyboard), "wired and connected as Welcome is left: no Network page");
+        assert_eq!(leave_welcome(&mut app), Some(Page::Keyboard), "wired and connected as Welcome is left: no Network page");
         assert!(!app.pages().contains(&Page::Network));
         assert_eq!(app.prev_page(Page::Keyboard), Some(Page::Welcome), "Back from Keyboard goes to Welcome");
         assert_eq!(app.net.state(), network::State::Wired);
         assert_eq!(app.net.state().summary(), "Connected (wired)");
-        assert_eq!(app.net.state().note(), None, "and the summary has no offline note");
+        assert_eq!(network::summary_note(app.net.snap.as_ref()), None, "and the summary has no offline note");
         // the cable taken out at Keyboard: nothing bounces back, the page stays away
         app.net.backend = backend(unplugged);
         assert!(!app.pages().contains(&Page::Network));
         // back at Welcome with the cable out: Next decides again
-        assert_eq!(app.next_page(Page::Welcome), Some(Page::Network));
+        assert_eq!(leave_welcome(&mut app), Some(Page::Network));
+    }
+
+    #[test]
+    fn without_a_wifi_adapter_the_network_step_is_skipped() {
+        for adapters in [wired_no_wifi as fn() -> Snapshot, cable_out_no_wifi, Snapshot::default] {
+            let mut app = App::new();
+            app.net = network::Net::new(backend(adapters));
+            assert_eq!(leave_welcome(&mut app), Some(Page::Keyboard), "no Wi-Fi adapter: nothing to offer, cable or not");
+            assert!(!app.pages().contains(&Page::Network));
+        }
+        // offline and skipped: the summary still says so, and how to connect now
+        let mut app = App::new();
+        app.net = network::Net::new(backend(cable_out_no_wifi));
+        leave_welcome(&mut app);
+        assert_eq!(app.net.state().summary(), "Not connected");
+        let note = network::summary_note(app.net.snap.as_ref()).unwrap();
+        assert!(note.starts_with(network::OFFLINE_NOTE) && note.ends_with(network::PLUG_IN), "{note}");
+    }
+
+    #[test]
+    fn a_usb_wifi_adapter_plugged_in_after_the_skip_brings_the_step_back() {
+        let ctx = egui::Context::default();
+        let mut app = App::new();
+        app.net = network::Net::new(backend(cable_out_no_wifi));
+        assert_eq!(leave_welcome(&mut app), Some(Page::Keyboard));
+        // the summary's next look finds a USB Wi-Fi adapter
+        app.net.backend = backend(unplugged);
+        app.net.refresh(&ctx);
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while app.net.busy() && std::time::Instant::now() < until {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            app.net.poll();
+        }
+        assert!(app.pages().contains(&Page::Network), "the step is offered again");
+        assert_eq!(network::summary_note(app.net.snap.as_ref()).as_deref(), Some(network::OFFLINE_NOTE));
+        // a page skipped because of the cable is not brought back by a look
+        let mut app = App::new();
+        app.net = network::Net::new(backend(wired));
+        leave_welcome(&mut app);
+        app.net.backend = backend(unplugged);
+        app.net.refresh(&ctx);
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while app.net.busy() && std::time::Instant::now() < until {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            app.net.poll();
+        }
+        assert!(!app.pages().contains(&Page::Network));
     }
 
     #[test]

@@ -165,7 +165,7 @@ mod tests {
     #[zbus::interface(name = "org.freedesktop.NetworkManager")]
     impl Nm {
         fn get_devices(&self) -> Vec<OwnedObjectPath> {
-            ["/d/eth", "/d/wlan"].iter().map(|p| OwnedObjectPath::try_from(*p).unwrap()).collect()
+            ["/d/eth", "/d/wlan", "/d/usb"].iter().map(|p| OwnedObjectPath::try_from(*p).unwrap()).collect()
         }
 
         fn add_and_activate_connection(
@@ -255,8 +255,10 @@ mod tests {
 
     const WPA2: Offer = Offer { flags: 1, wpa_flags: 0, rsn_flags: 0x188 };
 
-    /// A NetworkManager with a wired and a Wi-Fi adapter, two access points named "Home" (the second stronger) and one
-    /// "Other"; the new connection goes through `states`, and the adapter's last reason is `reason`.
+    /// A NetworkManager with a wired adapter and two Wi-Fi adapters (a built-in one, and a USB one plugged in after it). The
+    /// built-in one hears two access points named "Home" (the second stronger), one "Other" and a weak "Far"; the USB one a
+    /// weaker "Home", "Far" strongly and "Usb-Only". The new connection goes through `states`, and the adapters' last reason is
+    /// `reason`.
     struct World {
         bus: Connection,
         _server: Connection,
@@ -282,7 +284,19 @@ mod tests {
                 .unwrap()
                 .serve_at("/d/wlan", Device(WIFI, (30, reason)))
                 .unwrap()
-                .serve_at("/d/wlan", Wireless(vec!["/ap/1", "/ap/2", "/ap/3"]))
+                .serve_at("/d/wlan", Wireless(vec!["/ap/1", "/ap/2", "/ap/3", "/ap/4"]))
+                .unwrap()
+                .serve_at("/d/usb", Device(WIFI, (30, reason)))
+                .unwrap()
+                .serve_at("/d/usb", Wireless(vec!["/ap/5", "/ap/6", "/ap/7"]))
+                .unwrap()
+                .serve_at("/ap/4", Ap(b"Far", 20, WPA2))
+                .unwrap()
+                .serve_at("/ap/5", Ap(b"Home", 55, home))
+                .unwrap()
+                .serve_at("/ap/6", Ap(b"Far", 80, WPA2))
+                .unwrap()
+                .serve_at("/ap/7", Ap(b"Usb-Only", 50, WPA2))
                 .unwrap()
                 .serve_at("/ap/1", Ap(b"Home", 40, home))
                 .unwrap()
@@ -318,6 +332,24 @@ mod tests {
         assert_eq!(text(&conn["802-11-wireless-security"]["psk"]), "hunter22");
         assert!(!conn["802-11-wireless-security"].contains_key("key-mgmt"), "NetworkManager picks WPA2 or WPA3 from the access point");
         assert!(!*w.deleted.lock().unwrap(), "a profile that connected is kept");
+    }
+
+    #[test]
+    fn with_two_wifi_adapters_the_one_that_hears_the_network_best_joins_it() {
+        // heard by both: the USB adapter hears it better
+        let w = world(vec![ACTIVATED], 0, WPA2);
+        assert_eq!(connect_on(&w.bus, "Far", "pw", Duration::from_secs(10), FAST), Ok(()));
+        let (_, device, ap) = &w.asked.lock().unwrap()[0];
+        assert_eq!((device.as_str(), ap.as_str()), ("/d/usb", "/ap/6"));
+        // heard by the USB adapter alone
+        let w = world(vec![ACTIVATED], 0, WPA2);
+        assert_eq!(connect_on(&w.bus, "Usb-Only", "pw", Duration::from_secs(10), FAST), Ok(()));
+        let (_, device, ap) = &w.asked.lock().unwrap()[0];
+        assert_eq!((device.as_str(), ap.as_str()), ("/d/usb", "/ap/7"));
+        // heard by both, the built-in one better
+        let w = world(vec![ACTIVATED], 0, WPA2);
+        assert_eq!(connect_on(&w.bus, "Home", "pw", Duration::from_secs(10), FAST), Ok(()));
+        assert_eq!(w.asked.lock().unwrap()[0].1, "/d/wlan");
     }
 
     #[test]
