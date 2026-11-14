@@ -32,8 +32,12 @@ Only one program can own the name `org.freedesktop.Notifications`. What decides 
   and `labyrinth-panel-mode on` removed those panels so Plasma let go of the name; that script no longer exists.)
 - **mako** is still installed and ships a D-Bus *activation* file for the name in `/usr/share/dbus-1/services`, so an early
   notification could wake it. Labyrinth OS therefore ships a file that comes first,
-  `/usr/local/share/dbus-1/services/org.freedesktop.Notifications.service`, which runs `labyrinth-notify-activate`: it starts
-  the panel if it is not running and waits until the panel owns the name. (A per-user copy in
+  `/usr/local/share/dbus-1/services/org.freedesktop.Notifications.service`. Since 2026-11-14 it names the panel's own unit,
+  `SystemdService=app-yggdrasil\x2dpanel@autostart.service` (the one systemd makes from the autostart entry), so D-Bus asks
+  systemd to start the panel there: it gets the unit's drop-in (restart after a crash) and is the same panel the session's
+  autostart and the crash recovery look after, never a second one beside them. dbus-broker passes the escaped name to systemd as
+  written (checked with a test unit). Its `Exec=labyrinth-notify-activate` stays for a D-Bus daemon without systemd
+  activation: it starts the panel if it is not running and waits until the panel owns the name. (A per-user copy in
   `~/.local/share/dbus-1/services/`, written by the old `labyrinth-panel-mode`, may still be there on machines that had KDE. It
   comes before the system's file and names `/usr/local/bin/labyrinth-notify-activate`, gone since labyrinth-tools moved it to
   `/usr/bin` (2026-11-11): every notification sent while the panel is down then fails to start anything (203/EXEC). No package
