@@ -23,12 +23,12 @@ options=('!lto')
 
 _src="$startdir/../../installer"
 _sys="$startdir/../../install-system"
-# the Network step's joining and reading (shared with Settings; a path dependency, so its commits count already)
+# the Network step's joining and reading (shared with Settings)
 _netjoin="$startdir/../../netjoin"
 # The version is the system's (VERSION at the top of this repository); the build number counts the commits since that release
 # which touch the folders above, the crates they use and this recipe (scripts/package-version.sh, Labyrinth_OS docs/VERSIONING.md)
 . "$startdir/../../../scripts/package-version.sh"
-_version "$startdir" "$_src" "$_sys"
+_version "$startdir" "$_src" "$_sys" "$_netjoin"
 
 build() {
   cd "$_src"
