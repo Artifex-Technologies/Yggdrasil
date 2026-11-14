@@ -8,6 +8,7 @@
 //! line), answers `--disks` with the disks it could install onto, and reports with one line each: `STEP n N text`, `INFO`,
 //! `WARN`, `ERROR text`, `DONE`. See docs/INSTALLER.md.
 
+mod network;
 mod partitions;
 
 // The computer as the live system shows it (/sys, /proc), for the `chosen_if_usb`, `usb_kind` and `chosen_if_machine` rules: the
@@ -24,6 +25,7 @@ use yggdrasil_ui::theme::{self, Palette};
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Page {
     Welcome,
+    Network,
     Keyboard,
     TimeZone,
     Disk,
@@ -35,8 +37,8 @@ enum Page {
     Done,
 }
 
-const PAGES: [Page; 8] =
-    [Page::Welcome, Page::Keyboard, Page::TimeZone, Page::Disk, Page::Account, Page::Browsers, Page::Extras, Page::Summary];
+const PAGES: [Page; 9] =
+    [Page::Welcome, Page::Network, Page::Keyboard, Page::TimeZone, Page::Disk, Page::Account, Page::Browsers, Page::Extras, Page::Summary];
 
 /// A browser the operating system offers to install (its installer integration's `browsers` file).
 #[derive(Clone, Debug, PartialEq)]
@@ -432,6 +434,8 @@ struct App {
     step: (usize, usize, String),
     log: Vec<Report>,
     failed: Option<String>,
+    /// The Network step: what NetworkManager sees, a join under way, whether the step is skipped (online by cable).
+    net: network::Net,
     /// Screenshots only (`--demo PAGE`): sample disks and names, and nothing can be installed.
     demo: bool,
 }
@@ -478,9 +482,11 @@ fn demo_disks() -> Vec<Disk> {
 }
 
 impl App {
-    /// `--demo welcome|keyboard|timezone|disk|disk-manual|account|browsers|summary`: a page filled with sample choices, for screenshots.
+    /// `--demo welcome|network|keyboard|timezone|disk|disk-manual|account|browsers|summary`: a page filled with sample choices, for
+    /// screenshots. Made-up networks too: NetworkManager is never asked and nothing is joined.
     fn demo(&mut self, what: &str) {
         self.demo = true;
+        self.net = network::Net::new(network::DEMO);
         self.disks = demo_disks();
         self.disk = Some("/dev/nvme0n1".into());
         self.crypt_pw = "sample-passphrase".into();
@@ -508,6 +514,7 @@ impl App {
         self.page = match what {
             "browsers" => Page::Browsers,
             "extras" => Page::Extras,
+            "network" => Page::Network,
             "keyboard" => Page::Keyboard,
             "timezone" => Page::TimeZone,
             "disk" | "disk-manual" => Page::Disk,
@@ -566,6 +573,7 @@ impl App {
             step: (0, 0, String::new()),
             log: vec![],
             failed: None,
+            net: network::Net::new(network::SYSTEM),
             demo: false,
         };
         let list = yggdrasil_conf::integrations::first("installer").and_then(|i| i.get("browsers").map(str::to_string));
@@ -584,13 +592,34 @@ impl App {
         app
     }
 
-    /// The pages shown: the Browsers page only when the OS offers browsers, the optional parts' page only when it offers some.
+    /// The pages shown: the Network page unless the computer was online by cable as Welcome was left, the Browsers page only when
+    /// the OS offers browsers, the optional parts' page only when it offers some.
     fn pages(&self) -> Vec<Page> {
         PAGES
             .iter()
             .copied()
-            .filter(|p| (*p != Page::Browsers || !self.browsers.is_empty()) && (*p != Page::Extras || !self.extras.is_empty()))
+            .filter(|p| {
+                (*p != Page::Network || !self.net.skip_page)
+                    && (*p != Page::Browsers || !self.browsers.is_empty())
+                    && (*p != Page::Extras || !self.extras.is_empty())
+            })
             .collect()
+    }
+
+    /// The page after `from` (Next). Leaving Welcome decides whether the Network page is needed: not when the computer is online
+    /// by cable right then (decided here, so the page never disappears while it is on screen).
+    fn next_page(&mut self, from: Page) -> Option<Page> {
+        if from == Page::Welcome {
+            self.net.decide();
+        }
+        let pages = self.pages();
+        pages.iter().position(|p| *p == from).and_then(|i| pages.get(i + 1)).copied()
+    }
+
+    /// The page before `from` (Back).
+    fn prev_page(&self, from: Page) -> Option<Page> {
+        let pages = self.pages();
+        pages.iter().position(|p| *p == from).filter(|i| *i > 0).map(|i| pages[i - 1])
     }
 
     fn set_extras(&mut self, (title, intro, list): (String, String, Vec<Extra>)) {
@@ -921,6 +950,15 @@ impl eframe::App for App {
                         let mut loc = self.locale.clone();
                         pick_list(ui, &pal, "locales", &self.locales, &mut loc, (body_h - 140.0).max(120.0), locale_label);
                         self.locale = loc;
+                        // a first look at the network while the language is chosen, so the next page has it at once
+                        self.net.tick(&ctx, std::time::Duration::from_secs(3600));
+                    }
+                    Page::Network => {
+                        heading(ui, &pal, "Connect to a network", "Drivers, browsers and updates are fetched while installing. A network joined here is kept for the installed system.");
+                        self.net.tick(&ctx, std::time::Duration::from_secs(4));
+                        if network::page(ui, &pal, &mut self.net) == network::Act::Skip {
+                            go = self.next_page(Page::Network);
+                        }
                     }
                     Page::Keyboard => {
                         heading(ui, &pal, "Keyboard", "The layout of your keyboard. Type in the box to try it.");
@@ -1097,11 +1135,14 @@ impl eframe::App for App {
                     }
                     Page::Summary => {
                         heading(ui, &pal, "Ready to install", "Check the choices. Nothing has been changed yet.");
+                        self.net.tick(&ctx, std::time::Duration::from_secs(10));
+                        let net_state = self.net.state();
                         let disk = self.chosen_disk();
                         let rows = [
                             ("Language", locale_label(&self.locale)),
                             ("Keyboard", self.kb_chosen().map(KbChoice::label).unwrap_or_else(|| self.keymap.clone())),
                             ("Time zone", self.zones.catalog().label(&self.zone)),
+                            ("Network", net_state.summary()),
                             ("Disk", disk.map(|d| format!("{} ({}, {}), {}", if d.model.is_empty() { "Disk" } else { &d.model }, size_text(d.size), d.path, if self.manual_mode { "partitions chosen below" } else { "erased" })).unwrap_or_default()),
                             ("Encryption", if self.encrypt { "on".to_string() } else { "off".to_string() }),
                             ("Account", format!("{} ({})", self.name.trim(), self.login)),
@@ -1138,6 +1179,10 @@ impl eframe::App for App {
                                     ui.label(format!("•  {line}"));
                                 }
                             }
+                        }
+                        if let Some(note) = net_state.note() {
+                            ui.add_space(10.0);
+                            ui.add(egui::Label::new(RichText::new(note).color(pal.amber)).wrap());
                         }
                         ui.add_space(16.0);
                         let agree = if self.manual_mode { "I understand that the changes listed above are made to the disk (deleted and formatted partitions lose what is on them)" } else { "I understand that everything on this disk will be erased" };
@@ -1194,11 +1239,10 @@ impl eframe::App for App {
                         }
                     }
                     page => {
-                        let pages = self.pages();
-                        let i = pages.iter().position(|p| *p == page).unwrap_or(0);
                         let last = page == Page::Summary;
                         let missing = self.missing(page);
-                        let next = egui::Button::new(RichText::new(if last { "Install" } else { "Next" }).color(pal.on_accent())).fill(if last { pal.red } else { pal.accent }).min_size(vec2(110.0, 34.0));
+                        let label = if last { "Install" } else if page == Page::Network && self.net.state().note().is_some() { "Skip" } else { "Next" };
+                        let next = egui::Button::new(RichText::new(label).color(pal.on_accent())).fill(if last { pal.red } else { pal.accent }).min_size(vec2(110.0, 34.0));
                         let r = ui.add_enabled(missing.is_none() && (self.command.is_some() || self.demo), next);
                         if let Some(m) = missing.clone() {
                             r.on_disabled_hover_text(m);
@@ -1206,11 +1250,13 @@ impl eframe::App for App {
                             if last {
                                 install = true;
                             } else {
-                                go = Some(pages[i + 1]);
+                                go = self.next_page(page);
                             }
                         }
-                        if i > 0 && ui.add(egui::Button::new("Back").min_size(vec2(90.0, 34.0))).clicked() {
-                            go = Some(pages[i - 1]);
+                        if let Some(back) = self.prev_page(page) {
+                            if ui.add(egui::Button::new("Back").min_size(vec2(90.0, 34.0))).clicked() {
+                                go = Some(back);
+                            }
                         }
                         if let Some(m) = missing {
                             ui.label(RichText::new(m).color(pal.dim));
@@ -1365,9 +1411,73 @@ mod tests {
         let mut app = App::new();
         app.demo("disk-manual");
         assert!(app.demo && app.command.is_none() && app.page == Page::Disk && app.manual_mode);
+        assert!((app.net.backend.join)("Example-5G", "x").is_err(), "the demo joins no network");
         let d = app.chosen_disk().unwrap().clone();
         assert_eq!(app.manual.problem(d.size, &d.parts, &d.table), None, "{:?}", app.manual.problem(d.size, &d.parts, &d.table));
         assert_eq!(app.missing(Page::Disk), None);
+    }
+
+    fn wired() -> yggdrasil_netjoin::list::Snapshot {
+        let d = |kind: &str, state: &str| yggdrasil_netjoin::list::NetDevice {
+            device: format!("{kind}0"),
+            kind: kind.into(),
+            state: state.into(),
+            connection: String::new(),
+        };
+        yggdrasil_netjoin::list::Snapshot {
+            wifi_on: true,
+            devices: vec![d("ethernet", "connected"), d("wifi", "disconnected")],
+            networks: vec![],
+        }
+    }
+    fn unplugged() -> yggdrasil_netjoin::list::Snapshot {
+        network::demo_snapshot()
+    }
+    fn no_join(_: &str, _: &str) -> Result<(), String> {
+        panic!("nothing is joined in these tests")
+    }
+    fn backend(adapters: fn() -> yggdrasil_netjoin::list::Snapshot) -> network::Backend {
+        network::Backend { read: adapters, adapters, rescan: || {}, radio_on: || Ok(()), join: no_join }
+    }
+
+    #[test]
+    fn the_network_step_comes_after_welcome_and_never_blocks_next() {
+        let mut app = App::new();
+        app.net = network::Net::new(backend(unplugged));
+        assert_eq!(app.pages()[..3], [Page::Welcome, Page::Network, Page::Keyboard]);
+        assert_eq!(app.next_page(Page::Welcome), Some(Page::Network), "offline: the page is shown");
+        assert_eq!(app.prev_page(Page::Network), Some(Page::Welcome));
+        assert_eq!(app.prev_page(Page::Keyboard), Some(Page::Network));
+        for s in [None, Some(unplugged()), Some(wired()), Some(yggdrasil_netjoin::list::Snapshot::default())] {
+            app.net.snap = s;
+            assert_eq!(app.missing(Page::Network), None, "Next is never held back by the network");
+        }
+        // offline: the note stays on the page and the summary
+        app.net.snap = Some(unplugged());
+        assert_eq!(app.net.state().note(), Some(network::OFFLINE_NOTE));
+        // a computer without any network hardware: the page still comes, with the same note and no Wi-Fi list
+        app.net = network::Net::new(backend(yggdrasil_netjoin::list::Snapshot::default));
+        assert_eq!(app.next_page(Page::Welcome), Some(Page::Network));
+        app.net.snap = Some(Default::default());
+        assert_eq!(app.net.state(), network::State::NoHardware);
+        assert_eq!(app.net.state().note(), Some(network::OFFLINE_NOTE));
+    }
+
+    #[test]
+    fn online_by_cable_skips_the_network_step() {
+        let mut app = App::new();
+        app.net = network::Net::new(backend(wired));
+        assert_eq!(app.next_page(Page::Welcome), Some(Page::Keyboard), "wired and connected as Welcome is left: no Network page");
+        assert!(!app.pages().contains(&Page::Network));
+        assert_eq!(app.prev_page(Page::Keyboard), Some(Page::Welcome), "Back from Keyboard goes to Welcome");
+        assert_eq!(app.net.state(), network::State::Wired);
+        assert_eq!(app.net.state().summary(), "Connected (wired)");
+        assert_eq!(app.net.state().note(), None, "and the summary has no offline note");
+        // the cable taken out at Keyboard: nothing bounces back, the page stays away
+        app.net.backend = backend(unplugged);
+        assert!(!app.pages().contains(&Page::Network));
+        // back at Welcome with the cable out: Next decides again
+        assert_eq!(app.next_page(Page::Welcome), Some(Page::Network));
     }
 
     #[test]

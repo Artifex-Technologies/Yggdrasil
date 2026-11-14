@@ -24,7 +24,7 @@ version that runs in a window ([docs/COMPOSITOR.md](docs/COMPOSITOR.md)). The ch
 | `packages/minos` | `minos` | the file manager, and (through `packages/portal`) the open and save dialog of every program ([keys](docs/keys/minos.md)) |
 | `packages/market` | `agora` | Agora, the app store: the catalog, the Arch repositories, the AUR and Flathub in one place ([docs/MARKETPLACE.md](docs/MARKETPLACE.md)) |
 | `packages/lock` | `yggdrasil-lock`, `yggdrasil-greeter`, `yggdrasil-shot` | the lock screen and the login screen with selectable designs ([docs/LOCKSCREEN.md](docs/LOCKSCREEN.md), [docs/LOGIN_SCREEN.md](docs/LOGIN_SCREEN.md)), the boot splash, and the screenshot tool (Print: freezes the screen first, so open menus can be captured) |
-| `packages/installer` | `yggdrasil-installer` | the installer's window: language, keyboard (by type: QWERTY, QWERTZ, AZERTY, Dvorak, Colemak), time zone, disk (erase, or choose partitions beside Windows), account; the OS supplies the install steps ([docs/INSTALLER.md](docs/INSTALLER.md)) |
+| `packages/installer` | `yggdrasil-installer` | the installer's window: language, network (Wi-Fi or wired, or skip; not shown when a cable is connected), keyboard (by type: QWERTY, QWERTZ, AZERTY, Dvorak, Colemak), time zone, disk (erase, or choose partitions beside Windows), account; the OS supplies the install steps ([docs/INSTALLER.md](docs/INSTALLER.md)) |
 | `packages/player` | `yggdrasil-player` | video player: VLC (libVLC) in Yggdrasil's window |
 | `packages/idle` | `yggdrasil-idle` | dims, blacks out the screen (pointer hidden), locks, turns the screen off and sleeps when you are away; keyboard and mouse lights off with the screen ([README](packages/idle/README.md)) |
 | `packages/polkit` | `yggdrasil-polkit` | the password box for administrator actions, Wi-Fi and VPN passwords, and Bluetooth pairing |
@@ -46,6 +46,7 @@ version that runs in a window ([docs/COMPOSITOR.md](docs/COMPOSITOR.md)). The ch
 | `packages/controllers` | `yggdrasil-controllers` | game controllers in the top bar: battery, rumble test, light bar colour, notifications |
 | `packages/gamepads` | | the game controller library that Settings and the controllers add-on share (reads sysfs) |
 | `packages/geolocate` | | where the computer roughly is, for Weather's automatic place and Settings' automatic time zone: its IP address only, through beaconDB (no Wi-Fi networks, no hardware IDs), and nothing while a VPN is on |
+| `packages/netjoin` | | joining a Wi-Fi network through NetworkManager's D-Bus call (the password never on a command line; a profile that failed is deleted) and nmcli's adapters and network list, shared by Settings and the installer's Network step |
 | `packages/wifiscan` | | what nearby Wi-Fi networks broadcast, for Settings: the kernel's last scan read over nl80211 (no root, nothing sent), the information elements parsed as hostile input (property-tested), makers from the IEEE list |
 | `packages/agent-usage` | `yggdrasil-agent-usage` | a top bar add-on: how much of Claude's weekly and 5-hour limits is used |
 | `packages/browser-warm` | `yggdrasil-browser-warm` | keeps the default browser running with no windows, so new windows and links open almost at once |
@@ -205,6 +206,8 @@ Applications are shown as windows on a 1920×1080 desktop, in the dark style. Ev
 | *The installer: choosing partitions beside Windows (sample disks).* | *The installer: the account (sample name).* |
 | ![The installer, time zone](assets/screenshots/installer-timezone.png) | ![Settings, Date & Time](assets/screenshots/settings-date-time-light.png) |
 | *The installer: the time zone on the map, or in the short list beside it.* | *Settings: Date & Time in the light style, the same map and list.* |
+| ![The installer, network](assets/screenshots/installer-network.png) | ![The installer, welcome](assets/screenshots/installer-welcome.png) |
+| *The installer: join a network first, or go on without one (made-up networks).* | *The installer: welcome and language.* |
 
 Every page of Settings, each with a picture: [docs/APPS_SETTINGS.md](docs/APPS_SETTINGS.md#every-page).
 

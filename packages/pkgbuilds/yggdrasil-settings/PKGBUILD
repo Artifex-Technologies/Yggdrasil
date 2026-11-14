@@ -35,11 +35,12 @@ _src="$startdir/../../settings"
 _power="$startdir/../../power-helpers"
 _helpers="$startdir/../../settings-helpers"
 _wifiscan="$startdir/../../wifiscan"
+_netjoin="$startdir/../../netjoin"
 _laptop="$startdir/../../laptop"
 # The version is the system's (VERSION at the top of this repository); the build number counts the commits since that release
 # which touch the folders above, the crates they use and this recipe (scripts/package-version.sh, Labyrinth_OS docs/VERSIONING.md)
 . "$startdir/../../../scripts/package-version.sh"
-_version "$startdir" "$_src" "$_power" "$_helpers" "$_wifiscan" "$_laptop"
+_version "$startdir" "$_src" "$_power" "$_helpers" "$_wifiscan" "$_netjoin" "$_laptop"
 
 build() {
   cd "$_src"
@@ -65,6 +66,9 @@ check() {
   cargo test --release --locked --target-dir "$srcdir/target"
   # Wi-Fi & Network's reader of what networks broadcast (built into Settings): its parsers on random and damaged input
   cd "$_wifiscan"
+  cargo test --release --locked --target-dir "$srcdir/target"
+  # joining a Wi-Fi network (shared with the installer): a made-up NetworkManager on a private socket pair, nmcli's lists
+  cd "$_netjoin"
   cargo test --release --locked --target-dir "$srcdir/target"
   # a laptop's tablet mode, rotation and fingerprint reader: a private D-Bus daemon with a pretend iio-sensor-proxy and fprintd,
   # a pretend Hyprland socket and /sys, a PAM file in a temporary folder; no sensor, screen, reader or PAM file is touched

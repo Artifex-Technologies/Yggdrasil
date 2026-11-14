@@ -95,6 +95,7 @@ shots() {
     shot calculator                     desktop app yggdrasil-calculator
     shot saga-md                        desktop app saga-md "/home/alex/Documents/Trip plan.md"
     shot installer-welcome              desktop app yggdrasil-installer --demo welcome
+    shot installer-network              desktop app yggdrasil-installer --demo network
     shot installer-keyboard             desktop app yggdrasil-installer --demo keyboard
     shot installer-timezone             desktop app yggdrasil-installer --demo timezone
     shot installer-timezone-light       desktop app yggdrasil-installer --demo timezone

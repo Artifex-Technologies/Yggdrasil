@@ -55,7 +55,8 @@ plans (a refused plan runs nothing; no plan ever names another disk to a disk to
 
 ## The pages
 
-Welcome (language) → Keyboard (first the arrangement: QWERTY, QWERTZ, AZERTY, Dvorak, Colemak or other alphabets; then the
+Welcome (language) → Network (since 2026-11-14: instead of asking for a network before the installer starts, its first step
+is joining one; below) → Keyboard (first the arrangement: QWERTY, QWERTZ, AZERTY, Dvorak, Colemak or other alphabets; then the
 layouts of that kind by name, Dvorak and Colemak being variants; the live session switches to the one chosen, so the box on the
 page tries it) → Time zone (a world map with the zone bands, click your part of it, and a short list of about 80 friendly zones
 grouped by UTC offset, searchable by city, country or offset: packages/tzpicker, the same picker as Settings'; the live system's
@@ -65,6 +66,31 @@ account name made from it, computer's name, password twice) → Browsers (only w
 and which is the default; none is allowed, with a note that Agora has them) → the optional parts (only when the OS offers some,
 e.g. Labyrinth's AI and security: Sarina, Heimdall) → Summary (and a box to tick: the disk is erased) → Installing
 (progress, notes, errors) → Done (Restart now). Next stays greyed out with the reason beside it until a page is complete.
+
+### Network
+
+The wired connection when a cable is in, and the Wi-Fi networks in range (name, signal bars, a lock for a secured one, the
+connected one marked, Scan again). Choosing a secured network opens a password box under it; Join hands the password to
+NetworkManager in a D-Bus message (AddAndActivateConnection, through `packages/netjoin`, the same code as Settings' Wi-Fi join),
+never on a command line, and shows the progress and the outcome: a wrong password says so, and the profile it made is deleted
+again. An open network is joined with one click. Wi-Fi switched off has a Turn on button; a computer without a Wi-Fi adapter
+gets no Wi-Fi list, only the wired state (or "no network hardware"). The list is read with `nmcli -t` (read only) every few
+seconds while the page is open.
+
+Nothing on the page holds Next back. While offline, Next reads Skip, a "Continue without a network" button does the same, and
+the page says, in amber, that without a network the system may not get everything it needs: drivers and software for the
+devices found (Razer, Corsair, mice and keyboards), browsers that are not on the medium, and the latest updates; they come once
+it is connected in Settings > Wi-Fi & Network. The summary repeats that note while offline and has a Network line.
+
+When the computer is online by cable as Welcome is left (asked of NetworkManager right then), the page is not shown at all:
+Welcome goes straight to Keyboard and Back returns to Welcome; the summary says "Connected (wired)". Pulling the cable later
+does not bring the page back; going back to Welcome and on again decides anew.
+
+A network joined here is a NetworkManager profile of the live session, so yggdrasil-install-system copies it to the new system
+with the others (above): the installed system is online at its first start. The live account needs NetworkManager's
+permission to add and activate a profile without a password prompt; Labyrinth's live medium gives its live account (wheel)
+every polkit action without a password (`49-live-nopasswd.rules`, removed by its clean-up), which covers it. `--demo network`
+shows the page with made-up networks and joins nothing.
 
 ## The contract with the OS's program
 

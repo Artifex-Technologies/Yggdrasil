@@ -29,8 +29,10 @@ yggdrasil-appusage = { path = "../appusage" }
 jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo"] }
 # Wi-Fi & Network: what nearby networks broadcast (the kernel's scan list, read without root or sending anything)
 yggdrasil-wifiscan = { path = "../wifiscan" }
-# joining a Wi-Fi network: the password goes to NetworkManager over D-Bus, never on a command line (already in the tree:
-# eframe's accessibility uses it)
+# joining a Wi-Fi network (the password goes to NetworkManager over D-Bus, never on a command line) and nmcli's Wi-Fi list
+# and adapters: shared with the installer's Network step
+yggdrasil-netjoin = { path = "../netjoin" }
+# Bluetooth, the battery, Razer devices and VPNs over D-Bus (already in the tree: eframe's accessibility uses it)
 zbus = "5"
 serde_json = "1.0.151"
 serde = { version = "1", features = ["derive"] }
@@ -38,5 +40,5 @@ serde = { version = "1", features = ["derive"] }
 yggdrasil-tzpicker = { path = "../tzpicker" }
 
 [dev-dependencies]
-# the Wi-Fi tests talk to a made-up NetworkManager over a socket pair (peer to peer: no bus)
+# the Razer tests talk to a made-up daemon over a socket pair (peer to peer: no bus)
 zbus = { version = "5", features = ["p2p"] }

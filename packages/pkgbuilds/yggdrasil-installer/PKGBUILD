@@ -11,6 +11,8 @@ arch=('x86_64')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
 license=('MPL-2.0')
 depends=('gcc-libs' 'glibc' 'polkit' 'systemd'
+         # the Network step: the adapters and networks (nmcli) and joining one (its D-Bus API)
+         'networkmanager'
          # what yggdrasil-install-system runs
          'util-linux' 'cryptsetup' 'btrfs-progs' 'dosfstools' 'squashfs-tools' 'grub' 'efibootmgr')
 optdepends=('e2fsprogs: ext4 for partitions chosen by hand'
@@ -21,6 +23,8 @@ options=('!lto')
 
 _src="$startdir/../../installer"
 _sys="$startdir/../../install-system"
+# the Network step's joining and reading (shared with Settings; a path dependency, so its commits count already)
+_netjoin="$startdir/../../netjoin"
 # The version is the system's (VERSION at the top of this repository); the build number counts the commits since that release
 # which touch the folders above, the crates they use and this recipe (scripts/package-version.sh, Labyrinth_OS docs/VERSIONING.md)
 . "$startdir/../../../scripts/package-version.sh"
@@ -39,6 +43,9 @@ check() {
   # the install program on a made-up computer that runs nothing (every program it would run is answered in the test itself),
   # random plans, and the program itself only for what changes nothing (--check, --disks, a refused plan)
   cd "$_sys"
+  cargo test --release --locked --target-dir "$srcdir/target"
+  # joining a network against a made-up NetworkManager on a private socket pair, and nmcli's lists: nothing is joined
+  cd "$_netjoin"
   cargo test --release --locked --target-dir "$srcdir/target"
 }
 

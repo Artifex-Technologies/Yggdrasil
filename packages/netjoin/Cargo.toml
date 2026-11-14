@@ -1,0 +1,18 @@
+[package]
+name = "yggdrasil-netjoin"
+version = "0.1.0"
+edition = "2021"
+description = "Joining a Wi-Fi network through NetworkManager's D-Bus call (the password never on a command line) and reading the adapters and nearby networks; shared by Settings and the installer"
+license = "MPL-2.0"
+
+[lib]
+name = "yggdrasil_netjoin"
+path = "src/lib.rs"
+
+[dependencies]
+# NetworkManager's AddAndActivateConnection (already in the tree of every egui app: eframe's accessibility uses it)
+zbus = "5"
+
+[dev-dependencies]
+# the join tests talk to a made-up NetworkManager over a socket pair (peer to peer: no bus)
+zbus = { version = "5", features = ["p2p"] }

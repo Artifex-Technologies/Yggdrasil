@@ -4217,9 +4217,17 @@ dependencies = [
  "serde_json",
  "yggdrasil-conf",
  "yggdrasil-device-offers",
+ "yggdrasil-netjoin",
  "yggdrasil-tzpicker",
  "yggdrasil-ui",
  "yggdrasil-wm",
+]
+
+[[package]]
+name = "yggdrasil-netjoin"
+version = "0.1.0"
+dependencies = [
+ "zbus",
 ]
 
 [[package]]

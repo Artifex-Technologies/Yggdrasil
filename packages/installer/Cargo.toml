@@ -18,6 +18,9 @@ yggdrasil-wm = { path = "../wm" }
 yggdrasil-ui = { path = "../yggdrasil-ui" }
 # the time zone page: the map and the short list, shared with Settings
 yggdrasil-tzpicker = { path = "../tzpicker" }
+# the Network step: joining a network (the password over D-Bus, never on a command line) and the adapters and networks in
+# range, shared with Settings
+yggdrasil-netjoin = { path = "../netjoin" }
 eframe = "0.36.2"
 serde_json = "1.0.151"
 

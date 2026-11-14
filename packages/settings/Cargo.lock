@@ -4529,6 +4529,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "yggdrasil-netjoin"
+version = "0.1.0"
+dependencies = [
+ "zbus",
+]
+
+[[package]]
 name = "yggdrasil-pycompat"
 version = "0.1.0"
 dependencies = [
@@ -4550,6 +4557,7 @@ dependencies = [
  "yggdrasil-colorpicker",
  "yggdrasil-conf",
  "yggdrasil-gamepads",
+ "yggdrasil-netjoin",
  "yggdrasil-spell",
  "yggdrasil-tzpicker",
  "yggdrasil-ui",
