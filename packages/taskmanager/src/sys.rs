@@ -1,6 +1,5 @@
-//! The whole machine: processor (and each core), memory, disks, network adapters and the graphics card, for the Performance
-//! tab. Everything comes from /proc and /sys except an NVIDIA card's numbers, which only its driver's nvidia-smi gives (read
-//! only while the Performance tab is open: it costs a few hundredths of a second each time).
+//! The whole machine: processor (and each core), memory, disks and network adapters, for the Performance tab, from /proc
+//! and /sys. The graphics cards are gpu.rs's.
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -115,36 +114,6 @@ pub struct Adapter {
     pub speed: Option<u64>,
     pub recv_rate: f64,
     pub send_rate: f64,
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Gpu {
-    pub name: String,
-    pub util: f32,
-    pub mem_used: u64,
-    pub mem_total: u64,
-    pub temp: Option<f32>,
-    pub power: Option<f32>,
-    pub clock: Option<u32>,
-}
-
-/// One line of `nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,clocks.gr
-/// --format=csv,noheader,nounits` (memory in MiB).
-pub fn parse_nvidia(line: &str) -> Option<Gpu> {
-    let f: Vec<&str> = line.split(',').map(str::trim).collect();
-    if f.len() < 4 {
-        return None;
-    }
-    let num = |i: usize| f.get(i).and_then(|x| x.parse::<f32>().ok());
-    Some(Gpu {
-        name: f[0].to_string(),
-        util: num(1)?,
-        mem_used: (num(2)? as u64) << 20,
-        mem_total: (num(3)? as u64) << 20,
-        temp: num(4),
-        power: num(5),
-        clock: num(6).map(|c| c as u32),
-    })
 }
 
 #[derive(Clone, Debug, Default)]
@@ -263,7 +232,6 @@ pub struct Snapshot {
     pub mem: Mem,
     pub disks: Vec<Disk>,
     pub adapters: Vec<Adapter>,
-    pub gpu: Option<Gpu>,
     pub uptime: f64,
 }
 
@@ -273,49 +241,15 @@ pub struct SysSampler {
     disk_prev: HashMap<String, (u64, u64, u64)>,
     net_prev: HashMap<String, (u64, u64)>,
     at: Option<Instant>,
-    gpu_at: Option<Instant>,
-    gpu: Option<Gpu>,
 }
 
 fn sysfs(path: String) -> Option<String> {
     std::fs::read_to_string(path).ok().map(|s| s.trim().to_string())
 }
 
-/// An AMD card's numbers from its driver's files (no program to run).
-fn amd_gpu() -> Option<Gpu> {
-    for i in 0..4 {
-        let base = format!("/sys/class/drm/card{i}/device");
-        let Some(util) = sysfs(format!("{base}/gpu_busy_percent")).and_then(|s| s.parse::<f32>().ok()) else { continue };
-        let num = |f: &str| sysfs(format!("{base}/{f}")).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
-        return Some(Gpu {
-            name: "AMD graphics".into(),
-            util,
-            mem_used: num("mem_info_vram_used"),
-            mem_total: num("mem_info_vram_total"),
-            temp: None,
-            power: None,
-            clock: None,
-        });
-    }
-    None
-}
-
-fn nvidia_gpu() -> Option<Gpu> {
-    let out = std::process::Command::new("nvidia-smi")
-        .args([
-            "--query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,clocks.gr",
-            "--format=csv,noheader,nounits",
-        ])
-        .stdin(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()?;
-    parse_nvidia(String::from_utf8_lossy(&out.stdout).lines().next()?)
-}
-
 impl SysSampler {
-    /// The machine now. `with_gpu`: also the graphics card (NVIDIA: at most every 2 s).
-    pub fn sample(&mut self, with_gpu: bool) -> Snapshot {
+    /// The machine now.
+    pub fn sample(&mut self) -> Snapshot {
         let now = Instant::now();
         let dt = self.at.map(|t| now.duration_since(t).as_secs_f64()).unwrap_or(0.0);
         let mut snap = Snapshot::default();
@@ -394,14 +328,6 @@ impl SysSampler {
         }
         self.net_prev = net;
 
-        if with_gpu {
-            let due = self.gpu_at.map(|t| now.duration_since(t).as_secs_f64() >= 2.0).unwrap_or(true);
-            if due {
-                self.gpu = amd_gpu().or_else(nvidia_gpu);
-                self.gpu_at = Some(now);
-            }
-            snap.gpu = self.gpu.clone();
-        }
         self.at = Some(now);
         snap
     }
@@ -441,15 +367,6 @@ mod tests {
     }
 
     #[test]
-    fn nvidia_line() {
-        let g = parse_nvidia("NVIDIA GeForce RTX 2080 Ti, 22, 1416, 11264, 25.72, 34.53, 420").unwrap();
-        assert_eq!((g.util, g.mem_used, g.mem_total, g.clock), (22.0, 1416 << 20, 11264 << 20, Some(420)));
-        let g = parse_nvidia("Some Card, 5, 100, 200, [N/A], [N/A], [N/A]").unwrap();
-        assert_eq!((g.temp, g.power), (None, None));
-        assert!(parse_nvidia("garbage").is_none());
-    }
-
-    #[test]
     fn cpuinfo_and_sizes() {
         let s = "processor : 0\nmodel name : Intel(R)  Core(TM) i9\nphysical id : 0\ncore id : 0\nflags : fpu vmx sse\n\nprocessor : 1\nphysical id : 0\ncore id : 0\n\nprocessor : 2\nphysical id : 0\ncore id : 1\n";
         let c = parse_cpuinfo(s);
@@ -460,8 +377,7 @@ mod tests {
     #[test]
     fn a_real_look() {
         let mut s = SysSampler::default();
-        let a = s.sample(false);
+        let a = s.sample();
         assert!(a.mem.total > 0 && !a.cores.is_empty());
-        assert!(a.gpu.is_none(), "no graphics card query unless asked");
     }
 }

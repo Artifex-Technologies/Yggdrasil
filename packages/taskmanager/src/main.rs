@@ -2,10 +2,15 @@
 //! App history, Startup apps, Users, Details, Services) in the Yggdrasil look, light or dark like the rest of the desktop.
 //!
 //! The numbers are read in a background thread (once a second by default; the speed can be changed or paused), so the window
-//! stays smooth; the graphics card is asked only while the Performance tab shows, and services only while their tab does.
+//! stays smooth; the graphics cards are asked only while a tab that shows them is open (Processes, Details, Performance),
+//! and services only while their tab does.
 //! Ctrl+Shift+Esc opens it, or brings an open one to the front.
 
 mod desk;
+mod drm;
+mod gpu;
+mod nvml;
+mod ollama;
 mod procs;
 mod services;
 mod startup;
@@ -95,7 +100,23 @@ struct History {
     mem: VecDeque<f32>,
     disks: HashMap<String, DiskHistory>,
     nets: HashMap<String, (VecDeque<f32>, VecDeque<f32>)>,
-    gpu: VecDeque<f32>,
+    gpus: HashMap<String, GpuHistory>,
+}
+
+/// A graphics card over the last minute: busy share, each engine's, and memory in use (bytes).
+#[derive(Default)]
+struct GpuHistory {
+    util: VecDeque<f32>,
+    engines: Vec<(String, VecDeque<f32>)>,
+    mem_ctrl: VecDeque<f32>,
+    dedicated: VecDeque<f32>,
+    shared: VecDeque<f32>,
+}
+
+impl GpuHistory {
+    fn engine(&self, name: &str) -> Option<&VecDeque<f32>> {
+        self.engines.iter().find(|e| e.0 == name).map(|e| &e.1)
+    }
 }
 
 fn push(q: &mut VecDeque<f32>, v: f32) {
@@ -117,6 +138,7 @@ struct Data {
     procs: Vec<Proc>,
     groups: Vec<Group>,
     sys: sys::Snapshot,
+    gpu: gpu::Snapshot,
     hist: History,
     services: Vec<services::Service>,
     services_at: Option<Instant>,
@@ -133,6 +155,8 @@ struct Shared {
     tab: AtomicU8,
     interval_ms: AtomicU64,
     refresh_now: AtomicBool,
+    /// A graphics card's own page is open on the Performance tab.
+    gpu_page: AtomicBool,
 }
 
 fn parse_sessions(json: &str) -> Vec<Session> {
@@ -155,14 +179,27 @@ fn parse_sessions(json: &str) -> Vec<Session> {
 fn sampler(shared: Arc<Shared>, ctx: egui::Context) {
     let mut ps = procs::Sampler::new();
     let mut ss = sys::SysSampler::default();
+    let mut gs = gpu::GpuSampler::default();
     let apps = desk::Apps::load();
     let me = unsafe { libc::getuid() };
     loop {
         let tab = Tab::from_code(shared.tab.load(Ordering::Relaxed));
-        let procs = ps.sample();
+        let mut procs = ps.sample();
+        // the graphics cards only for the tabs that show them
+        let want = match tab {
+            Tab::Processes | Tab::Details => gpu::Want { devices: false, procs: true, page: false },
+            Tab::Performance => gpu::Want { devices: true, procs: false, page: shared.gpu_page.load(Ordering::Relaxed) },
+            _ => gpu::Want::default(),
+        };
+        let gsnap = gs.sample(&procs, me, want);
+        if !gsnap.procs.is_empty() {
+            for p in procs.iter_mut() {
+                p.gpu = gsnap.procs.get(&p.pid).cloned();
+            }
+        }
         let wins = if matches!(tab, Tab::Processes | Tab::History | Tab::Users) { desk::windows() } else { vec![] };
         let groups = procs::group(&procs, &wins, me, &|c, t, e| apps.name(c, t, e));
-        let snap = ss.sample(tab == Tab::Performance);
+        let snap = ss.sample();
         let now = Instant::now();
         let stale = |at: Option<Instant>, secs: u64| at.map(|t| now.duration_since(t) >= Duration::from_secs(secs)).unwrap_or(true);
         let forced = shared.refresh_now.swap(false, Ordering::Relaxed);
@@ -208,13 +245,38 @@ fn sampler(shared: Arc<Shared>, ctx: egui::Context) {
                 push(&mut e.0, a.send_rate as f32);
                 push(&mut e.1, a.recv_rate as f32);
             }
-            if let Some(g) = &snap.gpu {
-                push(&mut h.gpu, g.util);
+            for g in &gsnap.devices {
+                let e = h.gpus.entry(g.key.clone()).or_default();
+                if let Some(u) = g.util {
+                    push(&mut e.util, u);
+                }
+                for (name, u) in &g.engines {
+                    match e.engines.iter_mut().find(|x| &x.0 == name) {
+                        Some(x) => push(&mut x.1, *u),
+                        None => {
+                            let mut q = VecDeque::new();
+                            push(&mut q, *u);
+                            e.engines.push((name.clone(), q));
+                        }
+                    }
+                }
+                if let Some(m) = g.mem_ctrl {
+                    push(&mut e.mem_ctrl, m);
+                }
+                if let Some(m) = g.dedicated {
+                    push(&mut e.dedicated, m as f32);
+                }
+                if let Some(m) = g.shared {
+                    push(&mut e.shared, m as f32);
+                }
             }
             d.threads = procs.iter().filter(|p| !p.kernel).map(|p| p.threads as u64).sum();
             d.procs = procs;
             d.groups = groups;
             d.sys = snap;
+            if want.devices || want.procs {
+                d.gpu = gsnap;
+            }
             if let Some(s) = svcs {
                 d.services = s;
                 d.services_at = Some(now);
@@ -350,6 +412,10 @@ enum Col {
     Desc,
     Startup,
     Kind,
+    Gpu,
+    GpuEngine,
+    GpuMem,
+    GpuShared,
 }
 
 #[derive(Clone, Copy)]
@@ -387,8 +453,13 @@ fn header(ui: &mut egui::Ui, pal: &Palette, cols: &[Column], totals: &HashMap<Co
             if sort.0 == col.col {
                 sort.1 = !sort.1;
             } else {
-                *sort =
-                    (col.col, !matches!(col.col, Col::Name | Col::User | Col::Status | Col::Cmd | Col::Desc | Col::Kind | Col::Startup));
+                *sort = (
+                    col.col,
+                    !matches!(
+                        col.col,
+                        Col::Name | Col::User | Col::Status | Col::Cmd | Col::Desc | Col::Kind | Col::Startup | Col::GpuEngine
+                    ),
+                );
             }
         }
         let align = if col.right { Align2::RIGHT_BOTTOM } else { Align2::LEFT_BOTTOM };
@@ -481,7 +552,7 @@ enum PerfItem {
     Mem,
     Disk(usize),
     Net(usize),
-    Gpu,
+    Gpu(usize),
 }
 
 struct App {
@@ -511,12 +582,13 @@ struct App {
 }
 
 impl App {
-    fn new(cc: &eframe::CreationContext, tab: Tab) -> App {
+    fn new(cc: &eframe::CreationContext, tab: Tab, perf: PerfItem) -> App {
         let shared = Arc::new(Shared {
             data: Mutex::new(Data::default()),
             tab: AtomicU8::new(tab.code()),
             interval_ms: AtomicU64::new(Speed::Normal.ms()),
             refresh_now: AtomicBool::new(false),
+            gpu_page: AtomicBool::new(matches!(perf, PerfItem::Gpu(_))),
         });
         let s = shared.clone();
         let ctx = cc.egui_ctx.clone();
@@ -535,7 +607,7 @@ impl App {
             sel_pid: None,
             sel_service: None,
             sel_startup: None,
-            perf: PerfItem::Cpu,
+            perf,
             per_core: false,
             confirm: None,
             run: None,
@@ -861,7 +933,33 @@ impl eframe::App for App {
                         ("Priority", format!("{} (nice {})", priority(p.nice), p.nice)),
                         ("Read from disk", size(p.read)),
                         ("Written to disk", size(p.written)),
-                    ] {
+                    ]
+                    .into_iter()
+                    .chain(
+                        p.gpu
+                            .as_ref()
+                            .map(|g| {
+                                let mut mem = vec![];
+                                if let Some(m) = g.dedicated {
+                                    mem.push(format!("{} on the card", mb(m)));
+                                }
+                                if let Some(m) = g.shared {
+                                    mem.push(format!("{} shared", mb(m)));
+                                }
+                                let share = if g.engine.is_empty() {
+                                    "holds a graphics card".to_string()
+                                } else {
+                                    format!("{:.1}% ({})", g.util, g.engine)
+                                };
+                                [
+                                    ("Graphics", share),
+                                    ("Graphics memory", if mem.is_empty() { "not counted by the driver".into() } else { mem.join(", ") }),
+                                    ("Graphics libraries", if g.apis.is_empty() { "none seen".into() } else { g.apis.join(", ") }),
+                                ]
+                            })
+                            .into_iter()
+                            .flatten(),
+                    ) {
                         ui.label(RichText::new(k).color(pal.dim));
                         ui.add(egui::Label::new(v).wrap());
                         ui.end_row();
@@ -1010,6 +1108,10 @@ fn sort_groups(v: &mut [&Group], sort: (Col, bool)) {
             Col::Read => a.read.cmp(&b.read),
             Col::Written => a.written.cmp(&b.written),
             Col::Started => b.started.partial_cmp(&a.started).unwrap_or(std::cmp::Ordering::Equal),
+            Col::Gpu => a.gpu.partial_cmp(&b.gpu).unwrap_or(std::cmp::Ordering::Equal),
+            Col::GpuEngine => a.gpu_engine.cmp(&b.gpu_engine),
+            Col::GpuMem => a.gpu_mem.cmp(&b.gpu_mem),
+            Col::GpuShared => a.gpu_shared.cmp(&b.gpu_shared),
             _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
         };
         if sort.1 {
@@ -1032,6 +1134,10 @@ fn sort_procs(v: &mut [&Proc], sort: (Col, bool)) {
             Col::Priority => a.nice.cmp(&b.nice),
             Col::Status => a.state.cmp(&b.state),
             Col::Cmd => a.cmd.cmp(&b.cmd),
+            Col::Gpu => gpu_util(a).partial_cmp(&gpu_util(b)).unwrap_or(std::cmp::Ordering::Equal),
+            Col::GpuEngine => gpu_engine(a).cmp(gpu_engine(b)),
+            Col::GpuMem => a.gpu.as_ref().and_then(|g| g.dedicated).cmp(&b.gpu.as_ref().and_then(|g| g.dedicated)),
+            Col::GpuShared => a.gpu.as_ref().and_then(|g| g.shared).cmp(&b.gpu.as_ref().and_then(|g| g.shared)),
             _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()).then(a.pid.cmp(&b.pid)),
         };
         if sort.1 {
@@ -1040,6 +1146,83 @@ fn sort_procs(v: &mut [&Proc], sort: (Col, bool)) {
             o
         }
     });
+}
+
+fn gpu_util(p: &Proc) -> Option<f32> {
+    p.gpu.as_ref().map(|g| g.util)
+}
+
+fn gpu_engine(p: &Proc) -> &str {
+    p.gpu.as_ref().map(|g| g.engine.as_str()).unwrap_or("")
+}
+
+/// A graphics share for a cell: blank when the process holds no card (not "0%", which would claim it was measured).
+fn gpu_pct(v: Option<f32>) -> String {
+    v.map(|u| format!("{u:.1}%")).unwrap_or_default()
+}
+
+fn opt_mb(v: Option<u64>) -> String {
+    v.map(mb).unwrap_or_default()
+}
+
+/// The graphics columns a table gets on this machine: none when no card gives per-process numbers; the engine only when
+/// there is room; shared memory only when some driver counts it.
+fn gpu_columns(data: &Data, width: f32, details: bool) -> Vec<Column> {
+    if !data.gpu.per_process {
+        return vec![];
+    }
+    let mut v = vec![c(Col::Gpu, "GPU", 70.0, true)];
+    if width >= if details { 1100.0 } else { 820.0 } {
+        v.push(c(Col::GpuEngine, "GPU engine", 150.0, false));
+    }
+    v.push(c(Col::GpuMem, "GPU memory", 100.0, true));
+    if details && data.procs.iter().any(|p| p.gpu.as_ref().is_some_and(|g| g.shared.is_some())) {
+        v.push(c(Col::GpuShared, "Shared GPU", 100.0, true));
+    }
+    v
+}
+
+/// The graphics cells of a row, from column `from` on (with the heat behind the share and the memory).
+#[allow(clippy::too_many_arguments)]
+fn gpu_cells(
+    ui: &egui::Ui,
+    pal: &Palette,
+    dark: bool,
+    cols: &[Column],
+    cells: &[Rect],
+    from: usize,
+    g: (Option<f32>, &str, Option<u64>, Option<u64>),
+    vram: u64,
+    color: Option<Color32>,
+) {
+    for (col, r) in cols.iter().zip(cells).skip(from) {
+        match col.col {
+            Col::Gpu => {
+                ui.painter().rect_filled(r.shrink2(vec2(0.0, 1.0)), CornerRadius::ZERO, heat(pal, dark, g.0.unwrap_or(0.0) / 50.0));
+                cell_text(ui, pal, *r, &gpu_pct(g.0), true, color);
+            }
+            Col::GpuEngine => cell_text(ui, pal, *r, g.1, false, Some(pal.dim)),
+            Col::GpuMem => {
+                let x = g.2.map(|m| m as f64 / vram.max(1) as f64 * 4.0).unwrap_or(0.0) as f32;
+                ui.painter().rect_filled(r.shrink2(vec2(0.0, 1.0)), CornerRadius::ZERO, heat(pal, dark, x));
+                cell_text(ui, pal, *r, &opt_mb(g.2), true, color);
+            }
+            Col::GpuShared => cell_text(ui, pal, *r, &opt_mb(g.3), true, color),
+            _ => {}
+        }
+    }
+}
+
+/// The header totals of the graphics columns: the busiest card's share and how full the cards' memory is.
+fn gpu_totals(data: &Data, totals: &mut HashMap<Col, String>) {
+    if let Some(u) = data.gpu.devices.iter().filter_map(|d| d.util).reduce(f32::max) {
+        totals.insert(Col::Gpu, format!("{u:.0}%"));
+    }
+    let used: u64 = data.gpu.devices.iter().filter(|d| !d.mem_yours).filter_map(|d| d.dedicated).sum();
+    let total: u64 = data.gpu.devices.iter().filter(|d| !d.mem_yours && d.dedicated.is_some()).filter_map(|d| d.dedicated_total).sum();
+    if total > 0 {
+        totals.insert(Col::GpuMem, format!("{:.0}%", used as f64 / total as f64 * 100.0));
+    }
 }
 
 /// A row in the Processes tab.
@@ -1173,21 +1356,24 @@ impl App {
         let mem_total = data.sys.mem.total.max(1);
         let disk_total: f64 = data.sys.disks.iter().map(|d| d.read_rate + d.write_rate).sum();
         let disk_active = data.sys.disks.iter().map(|d| d.active).fold(0.0f32, f32::max);
-        let totals: HashMap<Col, String> = [
+        let mut totals: HashMap<Col, String> = [
             (Col::Cpu, format!("{:.0}%", data.sys.cpu)),
             (Col::Mem, format!("{:.0}%", data.sys.mem.used() as f64 / mem_total as f64 * 100.0)),
             (Col::Disk, format!("{disk_active:.0}%")),
         ]
         .into_iter()
         .collect();
+        gpu_totals(data, &mut totals);
         let _ = disk_total;
-        let cols = [
+        let mut cols = vec![
             c(Col::Name, "Name", 0.0, false),
             c(Col::Status, "Status", 110.0, false),
             c(Col::Cpu, "CPU", 80.0, true),
             c(Col::Mem, "Memory", 100.0, true),
             c(Col::Disk, "Disk", 90.0, true),
         ];
+        cols.extend(gpu_columns(data, ui.available_width(), false));
+        let vram: u64 = data.gpu.devices.iter().filter_map(|d| d.dedicated_total).sum();
         header(ui, pal, &cols, &totals, &mut self.proc_sort);
 
         let mut rows: Vec<Row> = vec![];
@@ -1284,6 +1470,7 @@ impl App {
                         cell_text(ui, pal, cells[2], &format!("{:.1}%", g.cpu), true, None);
                         cell_text(ui, pal, cells[3], &mb(g.mem), true, None);
                         cell_text(ui, pal, cells[4], &rate(g.disk), true, None);
+                        gpu_cells(ui, pal, dark, &cols, &cells, 5, (g.gpu, &g.gpu_engine, g.gpu_mem, g.gpu_shared), vram, None);
                         if resp.clicked() {
                             self.sel_pid = Some(g.root);
                         }
@@ -1331,6 +1518,18 @@ impl App {
                         cell_text(ui, pal, cells[2], &format!("{:.1}%", p.cpu), true, None);
                         cell_text(ui, pal, cells[3], &mb(p.mem), true, None);
                         cell_text(ui, pal, cells[4], &rate(p.disk), true, None);
+                        let pg = p.gpu.as_ref();
+                        gpu_cells(
+                            ui,
+                            pal,
+                            dark,
+                            &cols,
+                            &cells,
+                            5,
+                            (gpu_util(p), gpu_engine(p), pg.and_then(|g| g.dedicated), pg.and_then(|g| g.shared)),
+                            vram,
+                            None,
+                        );
                         if resp.clicked() {
                             self.sel_pid = Some(p.pid);
                         }
@@ -1358,7 +1557,7 @@ impl App {
                 }
             }
         });
-        let cols = [
+        let mut cols = vec![
             c(Col::Name, "Name", 190.0, false),
             c(Col::Pid, "PID", 70.0, true),
             c(Col::Status, "Status", 100.0, false),
@@ -1367,8 +1566,10 @@ impl App {
             c(Col::Mem, "Memory", 90.0, true),
             c(Col::Threads, "Threads", 70.0, true),
             c(Col::Priority, "Priority", 100.0, false),
-            c(Col::Cmd, "Command line", 0.0, false),
         ];
+        cols.extend(gpu_columns(data, ui.available_width(), true));
+        cols.push(c(Col::Cmd, "Command line", 0.0, false));
+        let vram: u64 = data.gpu.devices.iter().filter_map(|d| d.dedicated_total).sum();
         header(ui, pal, &cols, &HashMap::new(), &mut self.detail_sort);
         let mut ps: Vec<&Proc> = data
             .procs
@@ -1414,7 +1615,21 @@ impl App {
                 cell_text(ui, pal, cells[5], &mb(p.mem), true, None);
                 cell_text(ui, pal, cells[6], &p.threads.to_string(), true, None);
                 cell_text(ui, pal, cells[7], priority(p.nice), false, None);
-                cell_text(ui, pal, cells[8], &p.cmd, false, Some(pal.dim));
+                let pg = p.gpu.as_ref();
+                gpu_cells(
+                    ui,
+                    pal,
+                    dark,
+                    &cols[..cols.len() - 1],
+                    &cells,
+                    8,
+                    (gpu_util(p), gpu_engine(p), pg.and_then(|g| g.dedicated), pg.and_then(|g| g.shared)),
+                    vram,
+                    None,
+                );
+                if let Some(last) = cells.last() {
+                    cell_text(ui, pal, *last, &p.cmd, false, Some(pal.dim));
+                }
                 if resp.clicked() {
                     self.sel_pid = Some(p.pid);
                 }
@@ -1819,6 +2034,231 @@ fn cache(bytes: u64) -> String {
     }
 }
 
+/// "NVIDIA GeForce RTX 2080 Ti" -> "RTX 2080 Ti", for the narrow list on the left.
+fn short_gpu_name(name: &str) -> String {
+    name.trim_start_matches("NVIDIA ").trim_start_matches("GeForce ").trim_start_matches("AMD ").trim_start_matches("Intel ").to_string()
+}
+
+/// PCIe generation and lanes: "PCIe 3.0 x16".
+fn pcie(link: (u32, u32)) -> String {
+    format!("PCIe {}.0 x{}", link.0, link.1)
+}
+
+/// The numbers of a card's page that it gives, three to a row, as Windows lays them out; the ones it does not give are left
+/// out rather than shown as 0 or "-".
+fn gpu_stats(g: &gpu::Device) -> Vec<(&'static str, String, bool)> {
+    let mut v: Vec<(&'static str, String, bool)> = vec![];
+    let used_of = |u: u64, t: Option<u64>| match t {
+        Some(t) => format!("{}/{}", gib(u), gib(t)),
+        None => gib(u),
+    };
+    if let Some(u) = g.util {
+        v.push(("Utilization", format!("{u:.0}%"), true));
+    }
+    if let Some(u) = g.dedicated {
+        v.push((if g.mem_yours { "Dedicated memory (yours)" } else { "Dedicated GPU memory" }, used_of(u, g.dedicated_total), true));
+    }
+    if let Some(u) = g.shared {
+        v.push((if g.mem_yours { "Shared memory (yours)" } else { "Shared GPU memory" }, used_of(u, g.shared_total), true));
+    }
+    if let Some(t) = g.temp {
+        v.push(("Temperature", format!("{t:.0} °C"), false));
+    }
+    if let Some(p) = g.power {
+        let s = match g.power_limit {
+            Some(l) => format!("{p:.0} W / {l:.0} W"),
+            None => format!("{p:.1} W"),
+        };
+        v.push(("Power (limit)", s, false));
+    }
+    let mhz = |now: Option<u32>, max: Option<u32>| match (now, max) {
+        (Some(n), Some(m)) => Some(format!("{n} / {m} MHz")),
+        (Some(n), None) => Some(format!("{n} MHz")),
+        _ => None,
+    };
+    if let Some(c) = mhz(g.clock, g.clock_max) {
+        v.push(("Core clock (max)", c, false));
+    }
+    if let Some(c) = mhz(g.mem_clock, g.mem_clock_max) {
+        v.push(("Memory clock (max)", c, false));
+    }
+    match (g.fan_pct, g.fan_rpm) {
+        (Some(p), Some(r)) => v.push(("Fan", format!("{p:.0}% ({r} RPM)"), false)),
+        (Some(p), None) => v.push(("Fan", format!("{p:.0}%"), false)),
+        (None, Some(r)) => v.push(("Fan", format!("{r} RPM"), false)),
+        _ => {}
+    }
+    if let Some(t) = g.pcie_tx {
+        v.push(("PCIe send", rate(t), false));
+    }
+    if let Some(r) = g.pcie_rx {
+        v.push(("PCIe receive", rate(r), false));
+    }
+    v
+}
+
+/// The card's fixed facts for the right-hand column.
+fn gpu_facts(g: &gpu::Device) -> Vec<(&'static str, String)> {
+    let mut v: Vec<(&'static str, String)> = vec![];
+    v.push((
+        "Driver",
+        match &g.driver_version {
+            Some(ver) => format!("{} {ver}", g.driver),
+            None => g.driver.clone(),
+        },
+    ));
+    if let Some(c) = &g.cuda {
+        v.push(("CUDA (driver)", c.clone()));
+    }
+    if let Some(i) = g.integrated {
+        v.push(("Kind", if i { "Integrated".into() } else { "Dedicated card".into() }));
+    }
+    if let Some(l) = g.link {
+        let s = match g.link_max {
+            Some(m) if m != l => format!("{} (up to {})", pcie(l), pcie(m)),
+            _ => pcie(l),
+        };
+        v.push(("Link", s));
+    }
+    if let Some(loc) = &g.location {
+        v.push(("PCI location", loc.clone()));
+    }
+    v
+}
+
+impl App {
+    #[allow(clippy::too_many_arguments)]
+    fn gpu_page(&mut self, ui: &mut egui::Ui, pal: &Palette, data: &Data, i: usize, g: &gpu::Device, q: &GpuHistory, col: Color32) {
+        let w = ui.available_width();
+        let caption = |ui: &mut egui::Ui, left: &str, right: &str| {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(left).small().color(pal.dim));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(RichText::new(right).small().color(pal.dim));
+                });
+            });
+        };
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(format!("GPU {i}")).size(24.0).strong());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(RichText::new(&g.name).size(15.0).color(pal.dim));
+            });
+        });
+        // the engines, two to a row as on Windows (one large graph when the card gives only its overall share)
+        if g.engines.is_empty() {
+            caption(ui, "Utilization", "100%");
+            let (r, _) = ui.allocate_exact_size(vec2(w, 240.0), Sense::hover());
+            graph(ui, pal, r, &q.util, 100.0, col, true);
+        } else {
+            let empty = VecDeque::new();
+            let mut graphs: Vec<(&str, f32, &VecDeque<f32>)> =
+                g.engines.iter().map(|(n, u)| (n.as_str(), *u, q.engine(n).unwrap_or(&empty))).collect();
+            // the memory controller beside the engines (NVIDIA and AMD say how busy it is)
+            if let Some(m) = g.mem_ctrl {
+                graphs.push(("Memory controller", m, &q.mem_ctrl));
+            }
+            let per_row = if graphs.len() == 1 { 1 } else { 2 };
+            let cw = (w - 12.0 * (per_row as f32 - 1.0)) / per_row as f32;
+            let gh = if graphs.len() <= 2 { 180.0 } else { 120.0 };
+            for row in graphs.chunks(per_row) {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 12.0;
+                    for (name, u, hist) in row {
+                        ui.vertical(|ui| {
+                            ui.set_width(cw);
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(*name).small().color(pal.dim));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.label(RichText::new(format!("{u:.0}%")).small().color(pal.dim));
+                                });
+                            });
+                            let (r, _) = ui.allocate_exact_size(vec2(cw, gh), Sense::hover());
+                            graph(ui, pal, r, hist, 100.0, col, true);
+                        });
+                    }
+                });
+                ui.add_space(4.0);
+            }
+            if g.engines_yours {
+                ui.label(
+                    RichText::new(
+                        "Engines: what your own programs use (other accounts' programs are not readable without administrator rights).",
+                    )
+                    .small()
+                    .color(pal.dim),
+                );
+            }
+        }
+        ui.add_space(6.0);
+        for (title, used, total, hist) in [
+            (
+                if g.mem_yours { "Dedicated memory your programs hold" } else { "Dedicated GPU memory usage" },
+                g.dedicated,
+                g.dedicated_total,
+                &q.dedicated,
+            ),
+            (if g.mem_yours { "Shared memory your programs hold" } else { "Shared GPU memory usage" }, g.shared, g.shared_total, &q.shared),
+        ] {
+            if used.is_none() {
+                continue;
+            }
+            let top = total.map(|t| t as f32).unwrap_or_else(|| rate_scale(peak(hist)));
+            caption(ui, title, &total.map(gib).unwrap_or_default());
+            let (r, _) = ui.allocate_exact_size(vec2(w, 60.0), Sense::hover());
+            graph(ui, pal, r, hist, top, col, true);
+            ui.add_space(4.0);
+        }
+        ui.add_space(8.0);
+        let stats = gpu_stats(g);
+        let facts = gpu_facts(g);
+        ui.columns(2, |cols| {
+            egui::Grid::new("gpu-live").num_columns(3).spacing([24.0, 10.0]).show(&mut cols[0], |ui| {
+                for (n, (k, v, big)) in stats.iter().enumerate() {
+                    stat(ui, pal, k, v, *big);
+                    if n % 3 == 2 {
+                        ui.end_row();
+                    }
+                }
+            });
+            egui::Grid::new("gpu-fixed").num_columns(2).spacing([16.0, 4.0]).show(&mut cols[1], |ui| {
+                for (k, v) in &facts {
+                    ui.label(RichText::new(*k).color(pal.dim));
+                    ui.label(v);
+                    ui.end_row();
+                }
+            });
+        });
+        // what runs on the cards: Ollama's models, when it is running
+        if let Some(models) = &data.gpu.models {
+            ui.add_space(14.0);
+            ui.label(RichText::new("AI models (Ollama)").size(15.0).strong());
+            if models.is_empty() {
+                ui.label(RichText::new("Ollama is running; no model is loaded.").small().color(pal.dim));
+            } else {
+                egui::Grid::new("models").num_columns(5).spacing([20.0, 4.0]).striped(true).show(ui, |ui| {
+                    for h in ["Model", "Size", "In graphics memory", "Context", "Unloads at"] {
+                        ui.label(RichText::new(h).small().color(pal.dim));
+                    }
+                    ui.end_row();
+                    for m in models {
+                        let mut name = m.name.clone();
+                        if !m.params.is_empty() {
+                            name += &format!("  {} {}", m.params, m.quant);
+                        }
+                        ui.label(name);
+                        ui.label(gib(m.size));
+                        ui.label(format!("{} ({:.0}%)", gib(m.size_vram), m.on_gpu()));
+                        ui.label(m.context.map(|c| c.to_string()).unwrap_or_default());
+                        // "2026-11-15T15:04:05.1+01:00" -> "15:04"
+                        ui.label(m.expires.split('T').nth(1).map(|t| t.chars().take(5).collect::<String>()).unwrap_or_default());
+                        ui.end_row();
+                    }
+                });
+            }
+        }
+    }
+}
+
 impl App {
     fn performance(&mut self, ui: &mut egui::Ui, pal: &Palette, data: &Data, acts: &mut Vec<Act>) {
         let _ = acts;
@@ -1863,18 +2303,18 @@ impl App {
                 rate_scale(peak(q)),
             ));
         }
-        if let Some(g) = &data.sys.gpu {
-            items.push((
-                PerfItem::Gpu,
-                "GPU 0".into(),
-                format!("{}  {:.0}%", g.name.trim_start_matches("NVIDIA ").trim_start_matches("GeForce "), g.util),
-                gpu_col,
-                &h.gpu,
-                100.0,
-            ));
-        } else if h.gpu.is_empty() {
-            // the first look at the card comes with the next refresh
+        for (i, g) in data.gpu.devices.iter().enumerate() {
+            let q = h.gpus.get(&g.key).map(|e| &e.util).unwrap_or(&empty);
+            let mut sub = short_gpu_name(&g.name);
+            if let Some(u) = g.util {
+                sub += &format!("  {u:.0}%");
+            }
+            if let Some(t) = g.temp {
+                sub += &format!(" ({t:.0} °C)");
+            }
+            items.push((PerfItem::Gpu(i), format!("GPU {i}"), sub, gpu_col, q, 100.0));
         }
+        self.shared.gpu_page.store(matches!(self.perf, PerfItem::Gpu(_)), Ordering::Relaxed);
         let avail = ui.available_rect_before_wrap();
         let list_w = 230.0;
         let list = Rect::from_min_size(avail.min, vec2(list_w, avail.height()));
@@ -1908,8 +2348,8 @@ impl App {
                         self.perf = *item;
                     }
                 }
-                if data.sys.gpu.is_none() {
-                    ui.label(RichText::new("Looking at the graphics card...").small().color(pal.dim));
+                if data.gpu.devices.is_empty() && data.generation < 2 {
+                    ui.label(RichText::new("Looking at the graphics cards...").small().color(pal.dim));
                 }
             });
         });
@@ -2116,26 +2556,14 @@ impl App {
                     ui.end_row();
                 });
             }
-            PerfItem::Gpu => {
-                let Some(g) = &data.sys.gpu else {
-                    ui.label("No graphics card numbers yet.");
+            PerfItem::Gpu(i) => {
+                let Some(g) = data.gpu.devices.get(i) else {
+                    ui.label("That graphics card is gone.");
                     return;
                 };
-                title(ui, "GPU 0", &g.name);
-                caption(ui, "Utilization", "100%");
-                let (r, _) = ui.allocate_exact_size(vec2(w, 280.0), Sense::hover());
-                graph(ui, pal, r, &h.gpu, 100.0, gpu_col, true);
-                caption(ui, "60 seconds", "0");
-                ui.add_space(10.0);
-                egui::Grid::new("gpu").num_columns(3).spacing([28.0, 10.0]).show(ui, |ui| {
-                    stat(ui, pal, "Utilization", &format!("{:.0}%", g.util), true);
-                    stat(ui, pal, "Dedicated memory", &format!("{}/{}", gib(g.mem_used), gib(g.mem_total)), true);
-                    stat(ui, pal, "Temperature", &g.temp.map(|t| format!("{t:.0} °C")).unwrap_or("-".into()), true);
-                    ui.end_row();
-                    stat(ui, pal, "Power", &g.power.map(|p| format!("{p:.0} W")).unwrap_or("-".into()), false);
-                    stat(ui, pal, "Clock", &g.clock.map(|c| format!("{c} MHz")).unwrap_or("-".into()), false);
-                    ui.end_row();
-                });
+                let empty = GpuHistory::default();
+                let q = h.gpus.get(&g.key).unwrap_or(&empty);
+                self.gpu_page(ui, pal, data, i, g, q, gpu_col);
             }
         }
     }
@@ -2164,9 +2592,13 @@ fn already_open() -> bool {
     true
 }
 
-/// `--tab performance` (or processes, history, startup, users, details, services): the tab it opens on.
+/// `--tab performance` (or processes, history, startup, users, details, services; `gpu` is Performance on the first
+/// graphics card): the tab it opens on.
 fn start_tab(args: &[String]) -> Tab {
     let want = args.iter().position(|a| a == "--tab").and_then(|i| args.get(i + 1)).map(|s| s.to_lowercase()).unwrap_or_default();
+    if want == "gpu" {
+        return Tab::Performance;
+    }
     TABS.iter()
         .find(|(_, name)| name.to_lowercase().replace("app ", "").starts_with(&want) && !want.is_empty())
         .map(|t| t.0)
@@ -2176,6 +2608,7 @@ fn start_tab(args: &[String]) -> Tab {
 fn main() -> eframe::Result {
     let args: Vec<String> = std::env::args().collect();
     let tab = start_tab(&args);
+    let perf = if args.windows(2).any(|w| w[0] == "--tab" && w[1].eq_ignore_ascii_case("gpu")) { PerfItem::Gpu(0) } else { PerfItem::Cpu };
     if already_open() {
         return Ok(());
     }
@@ -2189,7 +2622,7 @@ fn main() -> eframe::Result {
             .with_decorations(false),
         ..Default::default()
     };
-    let r = eframe::run_native("Task Manager", options, Box::new(move |cc| Ok(Box::new(App::new(cc, tab)))));
+    let r = eframe::run_native("Task Manager", options, Box::new(move |cc| Ok(Box::new(App::new(cc, tab, perf)))));
     let _ = std::fs::remove_file(pidfile());
     r
 }
@@ -2257,6 +2690,7 @@ mod tests {
         assert_eq!(a("performance"), Tab::Performance);
         assert_eq!(a("history"), Tab::History);
         assert_eq!(a("Services"), Tab::Services);
+        assert_eq!(a("gpu"), Tab::Performance);
         assert_eq!(start_tab(&["x".into()]), Tab::Processes);
         assert_eq!(a(""), Tab::Processes);
     }

@@ -101,6 +101,8 @@ pub struct Proc {
     pub written: u64,
     /// A kernel thread (no program of its own).
     pub kernel: bool,
+    /// What it does on the graphics cards, when it holds one and that can be read (gpu.rs).
+    pub gpu: Option<crate::gpu::ProcGpu>,
 }
 
 impl Proc {
@@ -240,6 +242,7 @@ impl Sampler {
                 read: read_b,
                 written,
                 kernel,
+                gpu: None,
             });
         }
         self.fixed.retain(|k, _| live.contains(k));
@@ -316,6 +319,12 @@ pub struct Group {
     pub started: f64,
     pub uid: u32,
     pub suspended: bool,
+    /// Graphics: its processes' shares added up (0-100), the engine of the busiest one and the memory they hold; None when
+    /// none of them holds a card.
+    pub gpu: Option<f32>,
+    pub gpu_engine: String,
+    pub gpu_mem: Option<u64>,
+    pub gpu_shared: Option<u64>,
 }
 
 impl Group {
@@ -403,6 +412,7 @@ pub fn group(procs: &[Proc], windows: &[Window], my_uid: u32, name_of: &dyn Fn(&
     }
     for g in &mut out {
         let mut all_stopped = true;
+        let mut best = 0.0f32;
         for pid in &g.pids {
             if let Some(p) = by_pid.get(pid) {
                 g.cpu += p.cpu;
@@ -413,6 +423,20 @@ pub fn group(procs: &[Proc], windows: &[Window], my_uid: u32, name_of: &dyn Fn(&
                 g.read += p.read;
                 g.written += p.written;
                 all_stopped &= matches!(p.state, 'T' | 't');
+                if let Some(pg) = &p.gpu {
+                    let before = g.gpu.unwrap_or(0.0);
+                    if g.gpu_engine.is_empty() || pg.util > best {
+                        best = pg.util;
+                        g.gpu_engine = pg.engine.clone();
+                    }
+                    g.gpu = Some((before + pg.util).min(100.0));
+                    if let Some(m) = pg.dedicated {
+                        g.gpu_mem = Some(g.gpu_mem.unwrap_or(0) + m);
+                    }
+                    if let Some(m) = pg.shared {
+                        g.gpu_shared = Some(g.gpu_shared.unwrap_or(0) + m);
+                    }
+                }
             }
         }
         g.suspended = all_stopped && !g.pids.is_empty();
@@ -520,6 +544,21 @@ mod tests {
         assert_eq!((sshd[0].kind(), sshd[0].pids.len()), (Kind::System, 2));
         assert!(!g.iter().any(|g| g.name == "kthreadd"), "kernel threads are not listed");
         assert_eq!(g.iter().filter(|g| g.name == "systemd").count(), 2, "systemd and the user's systemd: different accounts");
+    }
+
+    #[test]
+    fn an_apps_graphics_add_up() {
+        use crate::gpu::ProcGpu;
+        let gp =
+            |util: f32, engine: &str, mem: Option<u64>| Some(ProcGpu { util, engine: engine.into(), dedicated: mem, ..Default::default() });
+        let mut procs = vec![p(10, 1, "browser", 1000, 1.0, 10), p(11, 10, "browser", 1000, 1.0, 10), p(12, 10, "browser", 1000, 1.0, 10)];
+        procs[1].gpu = gp(30.0, "GPU 0 - 3D", Some(100));
+        procs[2].gpu = gp(5.0, "GPU 0 - Video decode", None);
+        let wins = vec![Window { address: "0x1".into(), pid: 10, class: "b".into(), title: "t".into() }];
+        let g = group(&procs, &wins, 1000, &|_, _, _| "Browser".to_string());
+        assert_eq!((g[0].gpu, g[0].gpu_engine.as_str(), g[0].gpu_mem, g[0].gpu_shared), (Some(35.0), "GPU 0 - 3D", Some(100), None));
+        let solo = group(&[p(20, 1, "sh", 1000, 0.0, 1)], &[], 1000, &|_, _, _| String::new());
+        assert_eq!(solo[0].gpu, None, "no card: nothing, not 0%");
     }
 
     #[test]
