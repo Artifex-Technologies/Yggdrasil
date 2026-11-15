@@ -79,7 +79,15 @@ assistant), Apps, Privacy & security, System. Settings opens on General all the 
   and switches: `heimdall-private-mic status --json` when the page opens (and with the page's usual reading while it stays
   open), `heimdall-private-mic on|off` when the switch moves (argv, no shell; it takes effect at once and is kept). Without
   Heimdall's program the row says "Not installed"; on but with the node missing it says to log out and in again. How it works
-  and what it cannot do is in Heimdall's docs.
+  and what it cannot do is in Heimdall's docs. On Labyrinth OS Sarina's voice input records the private microphone like every
+  app; there is no exception and no switch for one.
+
+- **Sarina's voice input uses the real microphone** (LykanOS only, 2026-11-15): a second switch under Private microphone, off
+  by default, shown only when /etc/os-release says `ID=lykanos` and `heimdall-private-mic status --json` says
+  `"lykanos":true`, and only while the private microphone is on. On, the one stream of Sarina's voice questions (the panel's
+  Super+S recording, which names itself with the node property `heimdall.private-mic.exempt = "sarina-voice"`) records the
+  real microphone; every other app stays on the private one. It runs `heimdall-private-mic sarina-raw on|off` (argv). The
+  property is on every voice recording and means nothing unless that switch is on, so Labyrinth OS ignores it.
 
 - **Appearance > Wallpaper** has a preview card on top (`src/wallpaper.rs`): the lock screen and the desktop side by side in
   the current wallpaper, style, accent, icon pack and lock screen design. The lock screen is the lock's own drawing

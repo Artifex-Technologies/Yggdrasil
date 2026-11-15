@@ -4258,6 +4258,8 @@ impl App {
     pub(crate) fn private_mic_group(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
         let Some(state) = self.data.private_mic else { return };
         let mut want: Option<bool> = None;
+        let mut want_sarina: Option<bool> = None;
+        let sarina = privmic::sarina_row(state);
         ui::group(ui, pal, Some("Privacy"), |ui| {
             ui::row(ui, pal, true, "Private microphone", Some(privmic::ABOUT), |ui| match (privmic::note(state), state) {
                 (None, Some(m)) => {
@@ -4270,7 +4272,22 @@ impl App {
                     ui.label(RichText::new(note.unwrap_or_default()).color(pal.dim));
                 }
             });
+            // LykanOS only (privmic::sarina_row): never shown on Labyrinth OS, where Sarina records the private one too
+            if let (true, Some(m)) = (sarina, state) {
+                ui::row(ui, pal, false, privmic::SARINA_TITLE, Some(privmic::SARINA_ABOUT), |ui| {
+                    let mut on = m.sarina_raw;
+                    if ui::switch(ui, pal, &mut on).changed() {
+                        want_sarina = Some(on);
+                    }
+                });
+            }
         });
+        if let Some(on) = want_sarina {
+            if let Some(Some(m)) = self.data.private_mic.as_mut() {
+                m.sarina_raw = on;
+            }
+            self.change(ctx, move || privmic::set_sarina_raw(on));
+        }
         if let Some(w) = state.and_then(privmic::warning) {
             ui::footnote(ui, pal, w);
         }
