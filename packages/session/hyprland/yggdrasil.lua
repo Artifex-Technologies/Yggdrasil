@@ -322,6 +322,9 @@ end
 for _, screen in ipairs(tiling_screens()) do
   hl.window_rule({ name = "tile-on-" .. screen, match = { class = ".*", workspace = "m[" .. screen .. "]" }, tile = true })
 end
+-- ...but an app drawn as one fixed card floats there too: Argus, laid out at its own size like qFlipper, filled a whole tiled
+-- screen with the card in one corner (2026-11-15). Later rules win, so this comes after the tiling ones.
+hl.window_rule({ name = "card-apps-float", match = { class = "^(argus-app)$" }, float = true, center = true })
 
 -- Where a window goes so that it keeps clear of the bar and the dock and opens no bigger than its screen (keep-clear.lua, with
 -- plain-Lua tests in packages/session/tests/keep-clear.lua); used by the window places below and the keep-clear block after them.
