@@ -11,6 +11,7 @@ pub mod fmt;
 pub mod listing;
 pub mod places;
 pub mod preview;
+pub mod privacy;
 pub mod run;
 pub mod search;
 pub mod state;

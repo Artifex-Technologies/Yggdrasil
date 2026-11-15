@@ -16,6 +16,7 @@ use minos_core::devices;
 use minos_core::listing::{self, Entry, Sort, SortKey};
 use minos_core::places::{self, CloudPlace, CloudState};
 use minos_core::preview::{self, Body, PreviewData};
+use minos_core::privacy;
 use minos_core::run;
 use minos_core::search::{display_relative, Search};
 use minos_core::state::{SavedTab, State, ViewMode, GALLERY_SIZES};
@@ -42,6 +43,73 @@ struct Transfer {
 
 /// What a transfer did: (source, where it went) for each item.
 type Done = Vec<(PathBuf, PathBuf)>;
+
+/// Right-click > Scrub location sounds, running on its own thread (see App::start_scrub): a small window with its progress, then
+/// whether it worked, until closed.
+struct ScrubJob {
+    id: u64,
+    /// The original's name, for the window's title.
+    name: String,
+    /// The copy being written (it did not exist before: removed again if the scrub is stopped or fails).
+    out: PathBuf,
+    /// How far, in thousandths.
+    frac: Arc<std::sync::atomic::AtomicU32>,
+    pid: u32,
+    rx: Receiver<Result<PathBuf, String>>,
+    result: Option<Result<PathBuf, String>>,
+    stopped: bool,
+}
+
+/// What the menu learnt about a file's sound (privacy::has_audio, on a thread when the menu first opens on it): the file's size
+/// and change time it was read for, and the answer (None while it is being read).
+type AudioProbes = Arc<std::sync::Mutex<HashMap<PathBuf, ((u64, Option<std::time::SystemTime>), Option<bool>)>>>;
+const AUDIO_PROBES_ID: &str = "minos-audio-probes";
+
+/// The Privacy part of a file's menu (privacy.rs): nothing is read until the menu is open on the file; then its first bytes, and
+/// for a video ffprobe (3 s at most) on a thread. While that runs the entry shows greyed.
+fn privacy_menu(ui: &mut egui::Ui, e: &Entry, actions: &mut Vec<Action>) {
+    if !privacy::on_path(privacy::SCRUB_TOOL) {
+        return;
+    }
+    let Ok(meta) = std::fs::metadata(&e.path) else { return };
+    let stamp = (meta.len(), meta.modified().ok());
+    let probes = ui.ctx().data_mut(|d| d.get_temp_mut_or_default::<AudioProbes>(egui::Id::new(AUDIO_PROBES_ID)).clone());
+    let known = probes.lock().ok().and_then(|m| m.get(&e.path).filter(|(s, _)| *s == stamp).map(|(_, a)| *a));
+    let has_audio = match known {
+        Some(a) => a,
+        None => {
+            if let Ok(mut m) = probes.lock() {
+                m.insert(e.path.clone(), (stamp, None));
+            }
+            let (path, ctx) = (e.path.clone(), ui.ctx().clone());
+            std::thread::spawn(move || {
+                let a = privacy::has_audio(&path, Duration::from_secs(3));
+                if let Ok(mut m) = probes.lock() {
+                    m.insert(path, (stamp, Some(a)));
+                }
+                ctx.request_repaint();
+            });
+            None
+        }
+    };
+    let facts = privacy::Facts { scrub_installed: true, has_audio: has_audio.unwrap_or(false) };
+    let list = privacy::entries(facts);
+    if has_audio.is_none() {
+        ui.separator();
+        ui.add_enabled(false, egui::Button::new(privacy::Entry::ScrubSounds.label())).on_disabled_hover_text("Looking for sound in it...");
+        return;
+    }
+    if list.is_empty() {
+        return;
+    }
+    ui.separator();
+    for entry in list {
+        if ui.button(entry.label()).on_hover_text(entry.hint()).clicked() {
+            actions.push(Action::Privacy(entry, e.path.clone()));
+            ui.close();
+        }
+    }
+}
 
 enum TEvent {
     Conflict(PathBuf, PathBuf, Sender<Option<fileops::Decision>>),
@@ -171,6 +239,8 @@ enum Action {
     OpenFile(PathBuf),
     /// Right-click > Run in terminal, for a program or script marked as runnable.
     RunInTerminal(PathBuf),
+    /// Right-click > a Privacy entry on a file (privacy.rs).
+    Privacy(privacy::Entry, PathBuf),
     Cut(Vec<PathBuf>),
     Copy(Vec<PathBuf>),
     Paste(usize),
@@ -683,6 +753,11 @@ fn entry_interact(
             if e.usage.is_none() && !archive::inside(&e.path) && run::runnable(&e.path) && ui.button("Run in terminal").clicked() {
                 actions.push(Action::RunInTerminal(e.path.clone()));
                 ui.close();
+            }
+            // Privacy: one file at a time, on this computer (not inside an archive, not a cloud file not downloaded yet)
+            let local = !matches!(drive_avail(cx.st, e), Some(cloud::Avail::Cloud | cloud::Avail::Partial));
+            if targets.len() == 1 && e.usage.is_none() && !archive::inside(&e.path) && local {
+                privacy_menu(ui, e, actions);
             }
         }
         ui.separator();
@@ -2028,6 +2103,9 @@ struct App {
     rename: Option<RenameDlg>,
     rename_unseen: u8,
     transfer: Option<Transfer>,
+    /// Right-click > Scrub location sounds, each running or showing how it ended.
+    scrubs: Vec<ScrubJob>,
+    scrub_next: u64,
     status: String,
     drives: Vec<places::Drive>,
     /// Recently closed tabs (pane, folder), newest last, for Ctrl+Shift+T.
@@ -2167,6 +2245,8 @@ impl App {
             rename: None,
             rename_unseen: 0,
             transfer: None,
+            scrubs: Vec::new(),
+            scrub_next: 0,
             status: String::new(),
             drives,
             closed_tabs: Vec::new(),
@@ -2342,6 +2422,123 @@ impl App {
         self.status = format!("{} {n} item(s)...", if mv { "Moving" } else { "Copying" });
         self.transfer =
             Some(Transfer { rx, prog, what, started: Instant::now(), samples: Default::default(), ask: None, sticky: None, all: false });
+    }
+
+    /// Right-click > Scrub location sounds: heimdall-scrub writes "name (scrubbed).ext" beside the file (a new name, never over
+    /// one) on a thread; its window shows how far it is.
+    fn start_scrub(&mut self, ctx: &egui::Context, input: PathBuf) {
+        let out = privacy::scrubbed_path(&input, &|p| p.symlink_metadata().is_ok());
+        let name = input.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let running = match privacy::Running::start(&input, &out) {
+            Ok(r) => r,
+            Err(e) => {
+                self.status = format!("Could not scrub {name}: {e}");
+                return;
+            }
+        };
+        let pid = running.id();
+        let frac = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let (tx, rx) = channel();
+        let (f, c) = (frac.clone(), ctx.clone());
+        std::thread::spawn(move || {
+            let r = running.finish(&mut |x| {
+                f.store((x * 1000.0) as u32, std::sync::atomic::Ordering::Relaxed);
+                c.request_repaint();
+            });
+            let _ = tx.send(r);
+            c.request_repaint();
+        });
+        self.scrub_next += 1;
+        self.status = format!("Scrubbing {name}...");
+        self.scrubs.push(ScrubJob { id: self.scrub_next, name, out, frac, pid, rx, result: None, stopped: false });
+    }
+
+    /// The scrubs' windows: progress and Stop while one runs, then Done (with Show) or Failed, until closed.
+    fn poll_scrubs(&mut self, ctx: &egui::Context) {
+        let red = palette_for(self.st.dark, self.st.accent()).red;
+        let mut close = vec![];
+        let mut show: Option<PathBuf> = None;
+        let mut status: Option<String> = None;
+        for (i, job) in self.scrubs.iter_mut().enumerate() {
+            if job.result.is_none() {
+                if let Ok(r) = job.rx.try_recv() {
+                    if r.is_err() || job.stopped {
+                        // a partial copy is not left behind (the name was free when the scrub started, so it is ours)
+                        let _ = std::fs::remove_file(&job.out);
+                    }
+                    let r = if job.stopped { Err("Stopped".to_string()) } else { r };
+                    status = Some(match &r {
+                        Ok(p) => format!("Scrubbed copy saved: {}", p.file_name().unwrap_or_default().to_string_lossy()),
+                        Err(e) => format!("Scrubbing {} failed: {e}", job.name),
+                    });
+                    job.result = Some(r);
+                }
+            }
+            let mut open = true;
+            egui::Window::new(format!("Scrub location sounds: {}", job.name))
+                .id(egui::Id::new(("minos-scrub", job.id)))
+                .collapsible(false)
+                .resizable(false)
+                .anchor(Align2::RIGHT_BOTTOM, vec2(-16.0, -16.0 - 120.0 * i as f32))
+                .default_width(380.0)
+                .show(ctx, |ui| {
+                    ui.set_min_width(360.0);
+                    match &job.result {
+                        None => {
+                            let f = job.frac.load(std::sync::atomic::Ordering::Relaxed) as f32 / 1000.0;
+                            ui.add(egui::ProgressBar::new(f).text(format!("{:.0}%", f * 100.0)).animate(f == 0.0));
+                            ui.add_space(4.0);
+                            ui.label(RichText::new("Removing aircraft sounds and mains hum; the original stays as it is").small());
+                            if ui.button("Stop").clicked() && !job.stopped {
+                                job.stopped = true;
+                                // SAFETY: kill(2) on the child we started and have not waited for yet
+                                unsafe { libc::kill(job.pid as libc::pid_t, libc::SIGTERM) };
+                            }
+                        }
+                        Some(Ok(p)) => {
+                            ui.label(RichText::new("Done").strong());
+                            ui.label(format!("Saved as {}", p.file_name().unwrap_or_default().to_string_lossy()));
+                            ui.horizontal(|ui| {
+                                if ui.button("Show").clicked() {
+                                    show = Some(p.clone());
+                                    open = false;
+                                }
+                                if ui.button("Close").clicked() {
+                                    open = false;
+                                }
+                            });
+                        }
+                        Some(Err(e)) => {
+                            ui.label(RichText::new(if job.stopped { "Stopped" } else { "Failed" }).strong().color(red));
+                            if !job.stopped {
+                                ui.label(e);
+                            }
+                            ui.label(RichText::new("No copy was kept; the original is untouched").small());
+                            if ui.button("Close").clicked() {
+                                open = false;
+                            }
+                        }
+                    }
+                });
+            if !open {
+                close.push(job.id);
+            }
+        }
+        if let Some(s) = status {
+            self.status = s;
+            self.reload_all();
+        }
+        self.scrubs.retain(|j| !close.contains(&j.id));
+        if let Some(p) = show {
+            if let Some(dir) = p.parent().map(Path::to_path_buf) {
+                let (pi, hidden) = (self.focus, self.st.show_hidden);
+                let sort = self.panes[pi].sort;
+                let t = self.panes[pi].cur();
+                t.navigate(dir, sort, hidden);
+                t.selected.clear();
+                t.selected.insert(p);
+            }
+        }
     }
 
     /// Take what the transfer thread reports, and show the "already exists" dialog while it waits for an answer.
@@ -2954,6 +3151,7 @@ impl App {
                         finish_pick(&[p]);
                     }
                 }
+                Action::Privacy(privacy::Entry::ScrubSounds, p) => self.start_scrub(ctx, p),
                 Action::RunInTerminal(p) => {
                     if let Err(e) = run::run_in_terminal(&p) {
                         self.status =
@@ -4283,6 +4481,7 @@ impl eframe::App for App {
         }
 
         self.poll_transfer(&ctx);
+        self.poll_scrubs(&ctx);
         self.pump_dnd(&ctx, _frame);
         if let Some(p) = egui::DragAndDrop::payload::<DragPaths>(&ctx) {
             if let Some(pos) = ctx.pointer_latest_pos() {
