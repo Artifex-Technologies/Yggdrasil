@@ -55,8 +55,9 @@
   "/usr/lib/yggdrasil/account groups": "{\"libvirt\": \"Run virtual machines\", \"docker\": \"Run Docker containers (this is administrator-level access)\", \"gamemode\": \"Ask for the games performance mode\"}",
   "timedatectl show": "Timezone=America/Denver\nLocalRTC=no\nCanNTP=yes\nNTP=yes\nNTPSynchronized=yes\n",
   "systemctl --user is-enabled yggdrasil-autozone.timer": "disabled\n",
-  "pacman -Q *": "example 1.0-1\n"
+  "pacman -Q *": "example 1.0-1\n",
+  "heimdall-private-mic status --json": "{\"enforce\":true,\"node\":true}\n"
  },
- "tools": ["tailscale", "networkmanager-openvpn"],
+ "tools": ["tailscale", "networkmanager-openvpn", "heimdall-private-mic"],
  "cameras": ["Example Webcam"]
 }

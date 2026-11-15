@@ -418,6 +418,8 @@ impl App {
             });
         });
         ui::footnote(ui, pal, "The microphone is listened to only for the level, and only while this page is open; nothing is kept.");
+        ui.add_space(8.0);
+        self.private_mic_group(ui, pal, ctx);
         if !cmds.is_empty() {
             // the meter follows a new device: started again on the next frame
             self.mic_meter = None;

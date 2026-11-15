@@ -31,6 +31,7 @@ mod nav;
 mod netconf;
 mod peripherals;
 mod printers;
+mod privmic;
 mod razer;
 mod readout;
 mod restore;
@@ -276,6 +277,8 @@ enum Msg {
     /// Displays > Tablet mode (a 2-in-1 only) and Users > Fingerprint (a reader only), sent ahead of their page's data.
     Tablet(Option<laptop_ui::Tablet>),
     Fingerprint(Option<laptop_ui::Fingerprint>),
+    /// Security and Peripherals > Microphone: the private microphone (None: its state could not be read), sent ahead of their page's data.
+    PrivateMic(Option<privmic::Mic>),
     Defaults(Vec<defaults::Row>),
     Assistant(Vec<controls::State>),
     Printers(printers::State),
@@ -317,6 +320,8 @@ struct Data {
     defaults: Option<Vec<defaults::Row>>,
     assistant: Option<Vec<controls::State>>,
     printers: Option<printers::State>,
+    /// None until read; Some(None) when it could not be read.
+    private_mic: Option<Option<privmic::Mic>>,
 }
 
 #[derive(Default)]
@@ -686,14 +691,20 @@ impl App {
                     let (all, groups) = users::all();
                     Msg::Account(me, users::keyring_state(), all, groups)
                 }
-                Page::Security => Msg::Security(security::overview()),
+                Page::Security => {
+                    let _ = tx.send(Msg::PrivateMic(privmic::load()));
+                    Msg::Security(security::overview())
+                }
                 Page::Restore => Msg::Restore(restore::load()),
                 Page::DateTime => Msg::Time(sys::time()),
                 Page::Storage => Msg::Storage(general::storage()),
                 Page::Battery => Msg::Battery(battery::load()),
                 Page::Vpn => Msg::Vpn(vpn::load()),
                 Page::Accessibility => Msg::Access(accessibility::load()),
-                Page::Peripherals => Msg::Media(media::load()),
+                Page::Peripherals => {
+                    let _ = tx.send(Msg::PrivateMic(privmic::load()));
+                    Msg::Media(media::load())
+                }
                 Page::Language => Msg::Language(general::language()),
                 Page::Apps => {
                     let _ = tx.send(Msg::Installed(load_installed(&tx)));
@@ -817,6 +828,10 @@ impl App {
                 }
                 Msg::Fingerprint(v) => {
                     self.data.fingerprint = v;
+                    continue;
+                }
+                Msg::PrivateMic(v) => {
+                    self.data.private_mic = Some(v);
                     continue;
                 }
                 Msg::AppSizes(m) => {
@@ -3374,6 +3389,8 @@ impl App {
                 }
             });
         }
+        ui.add_space(8.0);
+        self.private_mic_group(ui, pal, ctx);
         if let Some(s) = open {
             self.sec_sub = s;
             self.logins = None;
@@ -4233,6 +4250,36 @@ impl App {
                     });
                 }
             }
+        }
+    }
+
+    /// The private microphone's switch, a card of its own (Security, and Peripherals > Microphone). Read when the page opens;
+    /// switching runs `heimdall-private-mic on|off` and reads the page again.
+    pub(crate) fn private_mic_group(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
+        let Some(state) = self.data.private_mic else { return };
+        let mut want: Option<bool> = None;
+        ui::group(ui, pal, Some("Privacy"), |ui| {
+            ui::row(ui, pal, true, "Private microphone", Some(privmic::ABOUT), |ui| match (privmic::note(state), state) {
+                (None, Some(m)) => {
+                    let mut on = m.enforce;
+                    if ui::switch(ui, pal, &mut on).changed() {
+                        want = Some(on);
+                    }
+                }
+                (note, _) => {
+                    ui.label(RichText::new(note.unwrap_or_default()).color(pal.dim));
+                }
+            });
+        });
+        if let Some(w) = state.and_then(privmic::warning) {
+            ui::footnote(ui, pal, w);
+        }
+        if let Some(on) = want {
+            // shown at once; the page reads the real state again when the change is done
+            if let Some(Some(m)) = self.data.private_mic.as_mut() {
+                m.enforce = on;
+            }
+            self.change(ctx, move || privmic::set(on));
         }
     }
 

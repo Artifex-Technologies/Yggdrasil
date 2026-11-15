@@ -71,6 +71,16 @@ assistant), Apps, Privacy & security, System. Settings opens on General all the 
   Microphone: the input device, a level meter while the page is open (`pw-record`, 16 kHz mono, the loudest sample of each
   50 ms; stopped when the page is left), volume and mute. Sound keeps the output and a row to Microphone.
 
+- **Private microphone** (`src/privmic.rs`, 2026-11-15): a switch on Security under Privacy, and the same switch under
+  Peripherals > Microphone. Heimdall's "Microphone (private)" sits between the real microphone and every app (calls in the
+  browser, Teams, Zoom, Webex, Discord, recorders), and takes out the sounds that can place or date a call or a recording:
+  aircraft overhead (their pitch glide can be matched to public flight tracks) and mains hum (it follows the power grid's
+  frequency, which is logged). It is on by default; I turn it off for music, where the full bass matters. Settings only asks
+  and switches: `heimdall-private-mic status --json` when the page opens (and with the page's usual reading while it stays
+  open), `heimdall-private-mic on|off` when the switch moves (argv, no shell; it takes effect at once and is kept). Without
+  Heimdall's program the row says "Not installed"; on but with the node missing it says to log out and in again. How it works
+  and what it cannot do is in Heimdall's docs.
+
 - **Appearance > Wallpaper** has a preview card on top (`src/wallpaper.rs`): the lock screen and the desktop side by side in
   the current wallpaper, style, accent, icon pack and lock screen design. The lock screen is the lock's own drawing
   (`yggdrasil-lock --preview` of the design in use, 640x360, nothing locked; a likeness drawn by Settings stands in while it
@@ -221,7 +231,7 @@ About only when switched on, have no picture.
 | **Apps**: Default Apps, Optional software and Minos on a card at the top, then every installed app A to Z under its letter, with a search. | ![Settings > Apps](../assets/screenshots/settings-apps-list.png) |
 | **Apps > Default Apps**: what opens each kind of file. | ![Settings > Apps > Default Apps](../assets/screenshots/settings-default-apps.png) |
 | **Games**: graphics cards, game fixes, frame generation per game. | ![Settings > Games](../assets/screenshots/settings-games.png) |
-| **Security**: the security monitor, the password logs, the distress password, Limbo. | ![Settings > Security](../assets/screenshots/settings-security.png) |
+| **Security**: the security monitor, the password logs, the distress password, Limbo, the private microphone. | ![Settings > Security](../assets/screenshots/settings-security.png) |
 | **Security > Distress password**: it opens only after your account password. | ![Settings > Security > Distress password](../assets/screenshots/settings-distress-open.png) |
 | **Security > Distress password, the settings**: the password, and how many times within how long. | ![Settings > Security > Distress password, the settings](../assets/screenshots/settings-distress.png) |
 | **Security > Distress password, the two sections**: Section 1, and Section 2 that asks for your password again. | ![Settings > Security > Distress password, the two sections](../assets/screenshots/settings-distress-sections.png) |
