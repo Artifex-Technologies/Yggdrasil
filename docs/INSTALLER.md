@@ -48,9 +48,9 @@ only, in one call (`mount --rbind --make-rslave`), and the cleanup makes everyth
 Paths are absolute, without `..`.
 
 Since 2026-11-11 it is Rust (`packages/install-system`, see its README): the same plan, checks and messages, the same programs
-with the same arguments in the same order, the same files and exit codes as the Python script it replaced, which I keep in
-`packages/installer/helpers/python` for a rollback (its tests: `python3 -m unittest discover -s helpers/tests` in
-`packages/installer`). `parity/compare.py` runs both on made-up computers in a namespace of their own, with every disk tool a
+with the same arguments in the same order, the same files and exit codes as the Python script it replaced, which I kept in
+`packages/installer/helpers/python` with its tests for a rollback until 2026-11-15 (git has them). `parity/compare.py`
+takes the script from git and runs both on made-up computers in a namespace of their own, with every disk tool a
 stand-in, and compares everything they do; `cargo test` runs the install on a made-up computer in the test itself, with random
 plans (a refused plan runs nothing; no plan ever names another disk to a disk tool).
 

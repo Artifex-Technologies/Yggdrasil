@@ -1,5 +1,5 @@
 # Agora: apps in one place (built from packages/market in this repository), with its administrator helper pkg-root from
-# packages/agora-helpers (Rust; the Python script it replaced is kept in packages/market/helpers/python for a rollback), and the
+# packages/agora-helpers (Rust since 2026-11-10), and the
 # sudo stand-in it gives yay (Rust since 2026-11-12, was the shell script packages/market/helpers/sudo), and the device-software
 # offer from packages/device-offers (2026-11-13: once online, or when such a device is plugged in, one notification offers what
 # Agora has for this computer's devices; started by systemd, udev and NetworkManager's dispatcher, nothing stays running).

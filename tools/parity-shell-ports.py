@@ -15,10 +15,10 @@ The session's launcher (yggdrasil-session, ported 2026-11-13) runs in a user, mo
 stand-in Hyprland that writes down its environment and crashes, is killed or signs out on cue, stand-ins for systemctl,
 systemd-cat, udevadm, fc-match and notify-send, /proc/driver replaced by an empty folder (or one with a made-up NVIDIA driver),
 and everything it leaves running (the log copier, the monitor watch, a notice ten seconds after a crash) ends with the
-namespace. Its old script is the test fixture packages/session/tests/fixtures/yggdrasil-session.sh, read from the working tree
-(it goes on 2026-11-20, a week after the switch; then from git, the last commit that has it). One change went into both after
-the switch, on 2026-11-13: after a crash the session's programs are stopped before Hyprland starts again (systemctl --user stop
-yggdrasil-session.target graphical-session.target), so the next autostart starts them afresh.
+namespace. Its old script was the test fixture packages/session/tests/fixtures/yggdrasil-session.sh until 2026-11-15 and comes
+from git at its own commit (PINNED below: the last change to the fixture, as it was when it went), not at --old: one change went
+into both after the switch, on 2026-11-13: after a crash the session's programs are stopped before Hyprland starts again
+(systemctl --user stop yggdrasil-session.target graphical-session.target), so the next autostart starts them afresh.
 
 For each case both run in a fresh copy of the world, and these are compared: exit code, standard output, standard error, the
 calls the stand-ins wrote down (in order) and every file left in the world (type, mode, content). Known differences by design
@@ -63,8 +63,9 @@ SCRIPTS = {
     "agora-sudo": ("agora-helpers", "packages/market/helpers/sudo"),
     "yggdrasil-session": ("session", "packages/session/tests/fixtures/yggdrasil-session.sh"),
 }
-# read from the working tree, not from git at --old: the launcher's script, kept as a test fixture until 2026-11-20
-FIXTURES = {"yggdrasil-session"}
+# scripts taken from a commit of their own, whatever --old says: the launcher's script, the session's test fixture from the
+# switch until 2026-11-15, at the commit of its last change
+PINNED = {"yggdrasil-session": "111a103"}
 # the real tools a world's PATH has (after the stand-ins)
 TOOLS = ["bash", "sh", "env", "cat", "head", "tail", "cut", "sort", "rm", "mv", "cp", "mkdir", "basename", "dirname", "date",
          "seq", "sleep", "mktemp", "printf", "echo", "find", "xargs", "sed", "awk", "grep", "readlink", "touch", "true", "false",
@@ -125,10 +126,11 @@ def old_scripts(rev):
     os.makedirs(d)
     out = {}
     for name, (_, path) in SCRIPTS.items():
-        if rev == "worktree" or name in FIXTURES:
+        r = PINNED.get(name, rev)
+        if r == "worktree":
             data = open(os.path.join(REPO, path), "rb").read()
         else:
-            data = subprocess.run(["git", "-C", REPO, "show", f"{rev}:{path}"], capture_output=True, check=True).stdout
+            data = subprocess.run(["git", "-C", REPO, "show", f"{r}:{path}"], capture_output=True, check=True).stdout
         p = os.path.join(d, name)
         with open(p, "wb") as f:
             f.write(data)
@@ -877,7 +879,7 @@ exit 0
 def main():
     global ARGS, SCRATCH
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--old", default=OLD_REV, help="the scripts' revision (default %(default)s; 'worktree' for the files as they are)")
+    ap.add_argument("--old", default=OLD_REV, help="the scripts' revision (default %(default)s; 'worktree' for the files as they are; not for those in PINNED)")
     ap.add_argument("--only", help="comma-separated: " + ", ".join(PROGRAMS))
     ap.add_argument("--bench", type=int, default=0, metavar="N", help="also time the everyday cases N times per side")
     ap.add_argument("--steady", type=int, default=60, metavar="S", help="with --bench: the session's steady state over S seconds (0: not measured)")

@@ -1,4 +1,4 @@
-//! Liki's tools in Rust, replacing the Python scripts at the same paths (kept in `python/` for a rollback) with the same
+//! Liki's tools in Rust, replacing the Python scripts at the same paths (kept in `python/` until 2026-11-15) with the same
 //! arguments, output, exit codes and files:
 //!
 //!   build.rs     liki-build: the icon pack of app logos (Simple Icons, CC0) and Liki's own glyphs, as SVG text

@@ -32,14 +32,13 @@ behind has the same format and is put back once. The port changed two things on 
 
 `cargo test` runs, besides the rest:
 
-- **the differential**: the old shell hook (`tests/fixtures/keyboard-lights.sh`, byte for byte the last version, kept only
-  for this until a week's soak has passed, 2026-11-19) and the Rust code on the same made-up worlds. The hook gets a
-  stand-in busctl and sleep on the PATH (canned answers from files, never a bus); the Rust code a made-up openrazer daemon
-  and logind on peer-to-peer D-Bus connections inside the test; both a scratch folder for `/sys/class/leds`. Each step's
-  calls, list and resulting brightness must be the same: my desk (a keyboard at 75, a mouse at 0 with its logo at 75 and
-  wheel at 40, a keypad, a mouse mat, a headset, a name D-Bus refuses, two laptop backlights), no daemon, a list left from
-  an earlier session with a daemon that comes up late, a daemon that never comes, and a hostile list. The two deliberate
-  differences above are checked on each side on their own.
+- **the made-up worlds**: the Rust code against a made-up openrazer daemon and logind on peer-to-peer D-Bus connections
+  inside the test, with a scratch folder for `/sys/class/leds`; each step's calls, list and resulting brightness are
+  checked: my desk (a keyboard at 75, a mouse at 0 with its logo at 75 and wheel at 40, a keypad, a mouse mat, a headset, a
+  name D-Bus refuses, two laptop backlights), no daemon, a list left from an earlier session with a daemon that comes up
+  late, a daemon that never comes, a hostile list, and the two deliberate differences above. Until 2026-11-15 these were a
+  differential against the old shell hook (`tests/fixtures/keyboard-lights.sh`), run with a stand-in busctl on the PATH;
+  the hook went after its week's soak, and git keeps it with the differential (commit f9c76a5).
 - **property tests** on the list's parser: random bytes, non-numbers, huge values and bad names are never put back, and
   what the Rust code writes reads back the same.
 
@@ -63,9 +62,5 @@ does. Median, with the 10th to 90th percentile.
 Every busctl call was a process of its own, and every `$(...)` and pipe in the hook another: 175 processes to turn off
 eight lights. The idle log also stopped starting `date` for each line.
 
-To measure again (in user, mount and PID namespaces of their own, with the real buses' sockets covered by empty folders, so
-neither openrazer nor logind can be reached even by mistake):
-
-    cargo test --release --no-run          # prints the test binary's path: target/release/deps/yggdrasil_idle-HASH
-    uid=$(id -u)
-    unshare -rmpf --mount-proc sh -c 'mount -t tmpfs none /run/user/'"$uid"' && mount -t tmpfs none /run/dbus && exec "$0" --exact lights::tests::measure --ignored --nocapture' ../../target/release/deps/yggdrasil_idle-HASH
+The ignored test `measure` went with the hook on 2026-11-15; to measure again, check out commit f9c76a5, where it and its
+instructions are (it runs in user, mount and PID namespaces of its own, with the real buses' sockets covered).

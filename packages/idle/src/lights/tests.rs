@@ -1,26 +1,19 @@
 //! The lights, tested without a bus, a daemon or a device.
 //!
-//! Differential: the retired shell hook (tests/fixtures/keyboard-lights.sh, byte for byte the hook of commit 840fbc7, kept
-//! only for this comparison: it goes after a week's soak, 2026-11-19) and this module run on the same made-up world, and the
-//! calls each makes, the list each writes and the brightness each leaves are compared step by step. The shell hook gets a
-//! stand-in busctl and sleep on the PATH (canned answers from files, never a bus; the real buses' addresses point nowhere);
-//! this module gets a made-up openrazer daemon and logind on private peer-to-peer D-Bus connections (socket pairs in this
-//! process). Both sides' backlights are a scratch folder standing in for /sys/class/leds.
+//! The made-up worlds: this module runs against a made-up openrazer daemon and logind on private peer-to-peer D-Bus
+//! connections (socket pairs in this process), with a scratch folder standing in for /sys/class/leds, and the calls it makes,
+//! the list it writes and the brightness it leaves are checked step by step. Until 2026-11-15 these were a differential
+//! against the retired shell hook (packages/idle/tests/fixtures/keyboard-lights.sh, the hook of commit 840fbc7), which went
+//! after its week's soak; git keeps it, and this file as it was (f9c76a5), with the timing test `measure`.
 //!
 //! Then the list's parser on hostile input (property tests): garbage, huge and non-numeric values are never put back.
-//!
-//! `measure` (ignored; run by hand, see packages/idle/README.md) times both against a made-up daemon on a private bus.
 
 use super::*;
 use std::collections::BTreeMap;
-use std::os::unix::fs::PermissionsExt;
-use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use proptest::prelude::*;
-
-const OLD_HOOK: &str = include_str!("../../tests/fixtures/keyboard-lights.sh");
 
 /// openrazer's zone interfaces and methods as the daemon names them (written out here, not taken from `ZONES`).
 const OPENRAZER: [(&str, &str, &str); 6] = [
@@ -90,14 +83,6 @@ struct Seen {
     leds: BTreeMap<String, String>,
 }
 
-fn op_arg(op: Op) -> &'static str {
-    if op == Op::Off {
-        "lights-off"
-    } else {
-        "lights-on"
-    }
-}
-
 fn leds_now(dir: &Path) -> BTreeMap<String, String> {
     let mut m = BTreeMap::new();
     for e in fs::read_dir(dir).unwrap().flatten() {
@@ -113,158 +98,6 @@ fn make_leds(dir: &Path, w: &World) {
         fs::write(dir.join(l.name).join("brightness"), format!("{}\n", l.brightness)).unwrap();
         fs::write(dir.join(l.name).join("max_brightness"), format!("{}\n", l.max)).unwrap();
     }
-}
-
-// ---- the old hook, with stand-ins on the PATH ----
-
-/// busctl as the hook uses it, answering from the made-up world in $FAKE (never a bus). It refuses what the real one would
-/// refuse before sending anything (an object path with characters D-Bus does not allow, a double it cannot read), and logs
-/// only the calls a daemon would have answered.
-const STAND_IN_BUSCTL: &str = r#"#!/bin/sh
-w=$FAKE
-[ "$1" = --user ] && shift
-case $1 in
-status)
-  [ "$2" = org.razer ] || exit 1
-  echo look >>"$w/calls"
-  n=$(cat "$w/looks"); echo $((n + 1)) >"$w/looks"
-  [ -e "$w/up_after" ] && [ "$n" -ge "$(cat "$w/up_after")" ] || exit 1
-  : >"$w/up"
-  exit 0 ;;
-call) shift ;;
-*) exit 1 ;;
-esac
-dest=$1 path=$2 iface=$3 method=$4
-shift 4
-case $dest in
-org.freedesktop.login1)
-  [ "$path $iface $method $1 $2" = "/org/freedesktop/login1/session/auto org.freedesktop.login1.Session SetBrightness ssu leds" ] || exit 1
-  case $4 in ''|*[!0-9]*) exit 1 ;; esac
-  [ -d "$LEDS/$3" ] || exit 1
-  echo "login SetBrightness leds $3 $4" >>"$w/calls"
-  echo "$4" >"$LEDS/$3/brightness"
-  exit 0 ;;
-org.razer) ;;
-*) exit 1 ;;
-esac
-[ -e "$w/up" ] || exit 1
-case $path in
-/org/razer)
-  [ "$iface $method" = "razer.devices getDevices" ] || exit 1
-  echo devices >>"$w/calls"
-  set -- $(cat "$w/order")
-  printf 'as %s' "$#"
-  for d; do printf ' "%s"' "$d"; done
-  echo
-  exit 0 ;;
-/org/razer/device/*) id=${path#/org/razer/device/} ;;
-*) exit 1 ;;
-esac
-case $id in ''|*[!A-Za-z0-9_]*) echo "Invalid object path" >&2; exit 1 ;; esac
-d=$w/razer/$id
-[ -d "$d" ] || exit 1
-case $iface in
-razer.device.misc)
-  [ "$method" = getDeviceType ] || exit 1
-  echo "type $id" >>"$w/calls"
-  printf 's "%s"\n' "$(cat "$d/type")"
-  exit 0 ;;
-razer.device.lighting.*) zone=${iface#razer.device.lighting.} ;;
-*) exit 1 ;;
-esac
-case $zone in ''|*[!a-z]*) exit 1 ;; esac
-z=$d/$zone
-[ -d "$z" ] || exit 1
-if [ "$method" = "$(cat "$z/get")" ] && [ $# = 0 ]; then
-  echo "get $id $zone $method" >>"$w/calls"
-  echo "d $(cat "$z/value")"
-  exit 0
-fi
-if [ "$method" = "$(cat "$z/set")" ] && [ "$1" = d ] && [ $# = 2 ]; then
-  case $2 in ''|*[!0-9.]*|*.*.*) echo "Failed to parse" >&2; exit 1 ;; esac
-  echo "set $id $zone $method $2" >>"$w/calls"
-  echo "$2" >"$z/value"
-  exit 0
-fi
-exit 1
-"#;
-
-/// The old hook, reading its backlights from `leds` instead of /sys/class/leds.
-fn hook_text(leds: &Path) -> String {
-    const GLOB: &str = "for d in /sys/class/leds/*kbd_backlight*; do";
-    assert_eq!(OLD_HOOK.matches(GLOB).count(), 1);
-    OLD_HOOK.replace(GLOB, &format!("for d in {}/*kbd_backlight*; do", leds.display()))
-}
-
-const STAND_IN_SLEEP: &str = "#!/bin/sh\necho pause >>\"$FAKE/calls\"\n";
-
-fn shell_side(world: &World, ops: &[Op]) -> Vec<Seen> {
-    let s = Scratch::new();
-    let (bin, fake, leds, xdg) = (s.0.join("bin"), s.0.join("fake"), s.0.join("leds"), s.0.join("xdg-state"));
-    for d in [&bin, &fake, &leds, &xdg.join("yggdrasil")] {
-        fs::create_dir_all(d).unwrap();
-    }
-    for (name, text) in [("busctl", STAND_IN_BUSCTL), ("sleep", STAND_IN_SLEEP)] {
-        fs::write(bin.join(name), text).unwrap();
-        fs::set_permissions(bin.join(name), fs::Permissions::from_mode(0o755)).unwrap();
-    }
-    fs::write(fake.join("calls"), "").unwrap();
-    fs::write(fake.join("looks"), "0\n").unwrap();
-    if let Some(n) = world.razer_up_after {
-        fs::write(fake.join("up_after"), format!("{n}\n")).unwrap();
-    }
-    fs::write(fake.join("order"), world.devices.iter().map(|d| d.id).collect::<Vec<_>>().join(" ")).unwrap();
-    for d in &world.devices {
-        let dd = fake.join("razer").join(d.id);
-        fs::create_dir_all(&dd).unwrap();
-        fs::write(dd.join("type"), d.kind).unwrap();
-        for (zone, value) in &d.zones {
-            let (_, get, set) = OPENRAZER.iter().find(|z| z.0 == *zone).unwrap();
-            let z = dd.join(zone);
-            fs::create_dir_all(&z).unwrap();
-            fs::write(z.join("value"), value).unwrap();
-            fs::write(z.join("get"), get).unwrap();
-            fs::write(z.join("set"), set).unwrap();
-        }
-    }
-    make_leds(&leds, world);
-    let state = xdg.join("yggdrasil").join(STATE);
-    if let Some(t) = world.state {
-        fs::write(&state, t).unwrap();
-    }
-    // the hook, with the scratch backlights in place of /sys/class/leds
-    let hook = s.0.join("keyboard-lights");
-    fs::write(&hook, hook_text(&leds)).unwrap();
-    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default());
-    let mut seen = vec![];
-    for op in ops {
-        let st = Command::new("sh")
-            .arg(&hook)
-            .arg(op_arg(*op))
-            .env("PATH", &path)
-            .env("FAKE", &fake)
-            .env("LEDS", &leds)
-            .env("XDG_STATE_HOME", &xdg)
-            .env("HOME", &s.0)
-            .env("LC_ALL", "C")
-            // were a real busctl ever reached, it would find no bus
-            .env("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent/ygg-test")
-            .env("DBUS_SYSTEM_BUS_ADDRESS", "unix:path=/nonexistent/ygg-test")
-            .status()
-            .unwrap();
-        assert!(st.success());
-        let calls = fs::read_to_string(fake.join("calls")).unwrap().lines().map(String::from).collect();
-        fs::write(fake.join("calls"), "").unwrap();
-        let mut razer = BTreeMap::new();
-        for d in &world.devices {
-            for (zone, _) in &d.zones {
-                let v = fs::read_to_string(fake.join("razer").join(d.id).join(zone).join("value")).unwrap();
-                razer.insert(format!("{} {zone}", d.id), v.trim().to_string());
-            }
-        }
-        seen.push(Seen { calls, state: fs::read_to_string(&state).ok(), razer, leds: leds_now(&leds) });
-    }
-    seen
 }
 
 // ---- this module, with made-up daemons ----
@@ -478,19 +311,9 @@ fn desk() -> World {
     }
 }
 
-fn same(world: World, ops: &[Op]) -> Vec<Seen> {
-    let old = shell_side(&world, ops);
-    let new = rust_side(&world, ops);
-    for (i, (o, n)) in old.iter().zip(&new).enumerate() {
-        assert_eq!(o, n, "step {i} ({:?}) differs: old hook left, Rust right", ops[i]);
-    }
-    assert_eq!(old.len(), new.len());
-    new
-}
-
 #[test]
-fn same_as_the_hook_on_the_desk() {
-    let seen = same(desk(), &[Op::Off, Op::Off, Op::On, Op::On]);
+fn the_desk() {
+    let seen = rust_side(&desk(), &[Op::Off, Op::Off, Op::On, Op::On]);
     // what was lit is listed, then turned off; the second off changes nothing; on puts it all back and forgets the list
     assert_eq!(
         seen[0].state.as_deref(),
@@ -512,15 +335,15 @@ fn same_as_the_hook_on_the_desk() {
 }
 
 #[test]
-fn same_as_the_hook_without_the_daemon() {
-    let seen = same(World { razer_up_after: None, ..desk() }, &[Op::Off, Op::On]);
+fn without_the_daemon() {
+    let seen = rust_side(&World { razer_up_after: None, ..desk() }, &[Op::Off, Op::On]);
     assert_eq!(seen[0].state.as_deref(), Some("leds yggtest_b_kbd_backlight - - 1\nleds yggtest_kbd_backlight - - 2\n"));
     assert_eq!(seen[1].leds["yggtest_kbd_backlight"], "2");
 }
 
-/// A list an earlier session (the old hook) left, put back once; the daemon comes up after three looks a second apart.
+/// A list an earlier session (or the old hook) left, put back once; the daemon comes up after three looks a second apart.
 #[test]
-fn same_as_the_hook_with_a_list_left_over_and_a_late_daemon() {
+fn a_list_left_over_and_a_late_daemon() {
     let world = World {
         devices: vec![dev("KBD0001", "keyboard", &[("brightness", "0")]), dev("MSE0001", "mouse", &[("brightness", "0"), ("logo", "0")])],
         razer_up_after: Some(3),
@@ -529,7 +352,7 @@ fn same_as_the_hook_with_a_list_left_over_and_a_late_daemon() {
         ),
         leds: vec![led("yggtest_kbd_backlight", "0", "3")],
     };
-    let seen = same(world, &[Op::On, Op::On]);
+    let seen = rust_side(&world, &[Op::On, Op::On]);
     assert_eq!(seen[0].calls.iter().filter(|c| *c == "pause").count(), 3);
     assert_eq!(seen[0].razer["KBD0001 brightness"], "75");
     assert_eq!(seen[0].leds["yggtest_kbd_backlight"], "2");
@@ -538,23 +361,23 @@ fn same_as_the_hook_with_a_list_left_over_and_a_late_daemon() {
 
 /// The daemon never comes: 30 pauses, the backlight is put back, the list goes.
 #[test]
-fn same_as_the_hook_when_the_daemon_never_comes() {
+fn the_daemon_never_comes() {
     let world = World {
         devices: vec![dev("KBD0001", "keyboard", &[("brightness", "0")])],
         razer_up_after: None,
         state: Some("razer KBD0001 brightness setBrightness 75\nleds yggtest_kbd_backlight - - 2\n"),
         leds: vec![led("yggtest_kbd_backlight", "0", "3")],
     };
-    let seen = same(world, &[Op::On]);
+    let seen = rust_side(&world, &[Op::On]);
     assert_eq!(seen[0].calls.iter().filter(|c| *c == "pause").count(), 30);
     assert_eq!(seen[0].calls.iter().filter(|c| *c == "look").count(), 31);
     assert_eq!(seen[0].razer["KBD0001 brightness"], "0");
     assert_eq!(seen[0].leds["yggtest_kbd_backlight"], "2");
 }
 
-/// Lines both refuse: not numbers, too few or too many fields, names that are not names. One good line among them.
+/// Lines the old hook refused too: not numbers, too few or too many fields, names that are not names. One good line among them.
 #[test]
-fn same_as_the_hook_on_a_hostile_list() {
+fn a_hostile_list() {
     let world = World {
         devices: vec![dev("KBD0001", "keyboard", &[("brightness", "0")]), dev("MSE0001", "mouse", &[("logo", "0")])],
         razer_up_after: Some(0),
@@ -576,23 +399,23 @@ fn same_as_the_hook_on_a_hostile_list() {
         ),
         leds: vec![led("yggtest_kbd_backlight", "0", "3")],
     };
-    let seen = same(world, &[Op::On]);
+    let seen = rust_side(&world, &[Op::On]);
+    // only the two good lines reach a daemon (the calls the old hook made on this list too)
+    assert_eq!(seen[0].calls, ["look", "set MSE0001 logo setLogoBrightness 20", "set KBD0001 brightness setBrightness 40"]);
     assert_eq!(seen[0].razer["KBD0001 brightness"], "40");
     assert_eq!(seen[0].razer["MSE0001 logo"], "20");
     assert_eq!(seen[0].leds["yggtest_kbd_backlight"], "0");
 }
 
-/// Where the Rust one deliberately differs, each side checked on its own.
+/// Where the Rust one deliberately differs from the old hook (its differential showed the hook's side until 2026-11-15).
 #[test]
-fn where_the_rust_one_differs() {
+fn where_the_old_hook_was_wrong() {
     // 1. A laptop backlight is named "vendor::kbd_backlight": the old hook turned it off but refused the name when putting
     //    it back (its check allowed no ':'), so it stayed dark. The Rust one puts it back.
     let laptop = World { devices: vec![], leds: vec![led("yggtest::kbd_backlight", "2", "3")], razer_up_after: None, state: None };
-    let old = shell_side(&laptop, &[Op::Off, Op::On]);
-    let new = rust_side(&laptop, &[Op::Off, Op::On]);
-    assert_eq!(old[0], new[0], "turning off is the same");
-    assert_eq!(old[1].leds["yggtest::kbd_backlight"], "0", "the old hook left it dark");
-    assert_eq!(new[1].leds["yggtest::kbd_backlight"], "2", "the Rust one puts it back");
+    let seen = rust_side(&laptop, &[Op::Off, Op::On]);
+    assert_eq!(seen[0].leds["yggtest::kbd_backlight"], "0", "turned off");
+    assert_eq!(seen[1].leds["yggtest::kbd_backlight"], "2", "and put back");
     // 2. Values out of range in a list: the old hook passed any digits on (150 to a Razer zone, 99 to a backlight whose
     //    maximum is 3); the Rust one puts back nothing above 100 or above the light's own maximum.
     let wild = World {
@@ -601,11 +424,9 @@ fn where_the_rust_one_differs() {
         razer_up_after: Some(0),
         state: Some("razer KBD0001 brightness setBrightness 150\nleds yggtest_kbd_backlight - - 99\n"),
     };
-    let old = shell_side(&wild, &[Op::On]);
-    let new = rust_side(&wild, &[Op::On]);
-    assert_eq!((old[0].razer["KBD0001 brightness"].as_str(), old[0].leds["yggtest_kbd_backlight"].as_str()), ("150", "99"));
-    assert_eq!((new[0].razer["KBD0001 brightness"].as_str(), new[0].leds["yggtest_kbd_backlight"].as_str()), ("0", "0"));
-    assert_eq!(new[0].state, None, "the list is gone either way");
+    let seen = rust_side(&wild, &[Op::On]);
+    assert_eq!((seen[0].razer["KBD0001 brightness"].as_str(), seen[0].leds["yggtest_kbd_backlight"].as_str()), ("0", "0"));
+    assert_eq!(seen[0].state, None, "the list is gone either way");
 }
 
 // ---- the list ----
@@ -724,179 +545,4 @@ proptest! {
     fn written_lines_read_back(e in entry()) {
         prop_assert_eq!(parse_line(&e.line()), Some(e));
     }
-}
-
-// ---- the measurements (by hand: packages/idle/README.md) ----
-
-/// The made-up daemons, in a process of their own on a private bus (`measure` starts this test binary again for it).
-#[test]
-#[ignore]
-fn fake_daemons_process() {
-    let (Ok(addr), Ok(leds)) = (std::env::var("YGG_TEST_FAKE_BUS"), std::env::var("YGG_TEST_FAKE_LEDS")) else { return };
-    let w = Arc::new(Mutex::new(Shared::new(&desk(), Path::new(&leds))));
-    let conn = zbus::blocking::connection::Builder::address(addr.as_str()).unwrap().build().unwrap();
-    conn.request_name(RAZER).unwrap();
-    conn.request_name(LOGIN).unwrap();
-    serve(conn, w);
-    println!("ready");
-    std::thread::sleep(Duration::from_secs(3600));
-}
-
-fn percentile(v: &mut [f64], p: f64) -> f64 {
-    v.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    v[((v.len() - 1) as f64 * p).round() as usize]
-}
-
-fn rusage(who: i32) -> f64 {
-    // SAFETY: getrusage fills the struct it is given
-    let mut u: libc::rusage = unsafe { std::mem::zeroed() };
-    unsafe { libc::getrusage(who, &mut u) };
-    let t = |tv: libc::timeval| tv.tv_sec as f64 * 1000.0 + tv.tv_usec as f64 / 1000.0;
-    t(u.ru_utime) + t(u.ru_stime)
-}
-
-/// Times the old hook (the real busctl) and this module against the made-up daemons on a private bus with no service files
-/// (nothing can be started on it), and counts the processes the hook starts. Never near the real buses: the private bus's
-/// address is given to both, and before anything runs it is checked that no org.razer answers there.
-#[test]
-#[ignore]
-fn measure() {
-    use std::io::BufRead;
-    let s = Scratch::new();
-    let leds = s.0.join("leds");
-    let xdg = s.0.join("xdg-state");
-    fs::create_dir_all(xdg.join("yggdrasil")).unwrap();
-    fs::create_dir_all(&leds).unwrap();
-    make_leds(&leds, &desk());
-    let conf = s.0.join("bus.conf");
-    fs::write(
-        &conf,
-        format!(
-            "<!DOCTYPE busconfig PUBLIC \"-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN\" \
-             \"http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd\">\n<busconfig><type>session</type>\
-             <listen>unix:path={}/bus</listen><auth>EXTERNAL</auth><policy context=\"default\">\
-             <allow send_destination=\"*\" eavesdrop=\"true\"/><allow eavesdrop=\"true\"/><allow own=\"*\"/></policy></busconfig>\n",
-            s.0.display()
-        ),
-    )
-    .unwrap();
-    let mut bus = Command::new("dbus-daemon")
-        .arg(format!("--config-file={}", conf.display()))
-        .args(["--nofork", "--print-address=1"])
-        .stdout(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
-    let mut addr = String::new();
-    std::io::BufReader::new(bus.stdout.take().unwrap()).read_line(&mut addr).unwrap();
-    let addr = addr.trim().to_string();
-    let env = |c: &mut Command| {
-        c.env("DBUS_SESSION_BUS_ADDRESS", &addr)
-            .env("DBUS_SYSTEM_BUS_ADDRESS", &addr)
-            .env("XDG_STATE_HOME", &xdg)
-            .env("HOME", &s.0)
-            .env("LC_ALL", "C");
-    };
-    let mut probe = Command::new("busctl");
-    probe.args(["--user", "status", "org.razer"]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
-    env(&mut probe);
-    assert!(!probe.status().unwrap().success(), "an org.razer answers before the made-up one: not the private bus");
-    let mut fake = Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "lights::tests::fake_daemons_process", "--ignored", "--nocapture", "--test-threads=1"])
-        .env("YGG_TEST_FAKE_BUS", &addr)
-        .env("YGG_TEST_FAKE_LEDS", &leds)
-        .stdout(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
-    let mut out = std::io::BufReader::new(fake.stdout.take().unwrap());
-    let mut line = String::new();
-    while !line.contains("ready") {
-        line.clear();
-        assert!(out.read_line(&mut line).unwrap() > 0, "the made-up daemons did not start");
-    }
-    let hook = s.0.join("keyboard-lights");
-    fs::write(&hook, hook_text(&leds)).unwrap();
-    let at = Places { state_dir: xdg.join("yggdrasil"), leds_dir: leds.clone() };
-    let runs = 30;
-    let (mut sh_off, mut sh_on, mut rs_off, mut rs_on) = (vec![], vec![], vec![], vec![]);
-    let (mut sh_cpu_off, mut sh_cpu_on, mut rs_cpu_off, mut rs_cpu_on) = (vec![], vec![], vec![], vec![]);
-    let shell = |op: Op| {
-        let mut c = Command::new("sh");
-        c.arg(&hook).arg(op_arg(op));
-        env(&mut c);
-        let (t, cpu) = (Instant::now(), rusage(libc::RUSAGE_CHILDREN));
-        assert!(c.status().unwrap().success());
-        let x = (t.elapsed().as_secs_f64() * 1000.0, rusage(libc::RUSAGE_CHILDREN) - cpu);
-        if op == Op::Off {
-            // it reached the made-up daemon: the six Razer zones and two backlights are listed
-            let listed = fs::read_to_string(at.state_dir.join(STATE)).unwrap_or_default();
-            assert_eq!(listed.lines().count(), 8, "the old hook listed {listed:?}");
-        }
-        x
-    };
-    let rust = |op: Op| {
-        let (t, cpu) = (Instant::now(), rusage(libc::RUSAGE_SELF));
-        let r = run(op, &at, &mut Live::at(&addr)).unwrap();
-        let x = (t.elapsed().as_secs_f64() * 1000.0, rusage(libc::RUSAGE_SELF) - cpu);
-        assert_eq!((r.done, r.failed), (8, 0), "{op:?}");
-        x
-    };
-    // two warm-up rounds, then old and new taking turns
-    for i in 0..runs + 2 {
-        let order: [bool; 2] = if i % 2 == 0 { [true, false] } else { [false, true] };
-        for old in order {
-            let (off, on) = if old { (shell(Op::Off), shell(Op::On)) } else { (rust(Op::Off), rust(Op::On)) };
-            assert_eq!(leds_now(&leds)["yggtest_kbd_backlight"], "2");
-            if i < 2 {
-                continue;
-            }
-            let (a, b, c, d) = if old {
-                (&mut sh_off, &mut sh_on, &mut sh_cpu_off, &mut sh_cpu_on)
-            } else {
-                (&mut rs_off, &mut rs_on, &mut rs_cpu_off, &mut rs_cpu_on)
-            };
-            a.push(off.0);
-            b.push(on.0);
-            c.push(off.1);
-            d.push(on.1);
-        }
-    }
-    // the processes the hook starts: the last PID given out, before and after (the whole measurement runs in a PID namespace
-    // of its own, README; nothing else starts there meanwhile, which the two rounds agreeing shows)
-    let last_pid = || -> u32 { fs::read_to_string("/proc/sys/kernel/ns_last_pid").unwrap().trim().parse().unwrap() };
-    let count = |op: Op| -> u32 {
-        let before = last_pid();
-        shell(op);
-        last_pid() - before
-    };
-    let (p_off, p_on) = (count(Op::Off), count(Op::On));
-    // and the threads the Rust one starts (a D-Bus connection's own), which take PIDs from the same counter
-    let threads = |op: Op| -> u32 {
-        let before = last_pid();
-        rust(op);
-        last_pid() - before
-    };
-    let (t_off, t_on) = (threads(Op::Off), threads(Op::On));
-    assert_eq!((p_off, p_on), (count(Op::Off), count(Op::On)), "something else started processes meanwhile");
-    let own_ns = std::process::id() < 100;
-    let _ = fake.kill();
-    let _ = fake.wait();
-    let _ = bus.kill();
-    let _ = bus.wait();
-    let show = |name: &str, wall: &mut Vec<f64>, cpu: &mut Vec<f64>| {
-        println!(
-            "{name}: wall median {:.2} ms (p10 {:.2}, p90 {:.2}); CPU median {:.2} ms",
-            percentile(wall, 0.5),
-            percentile(wall, 0.1),
-            percentile(wall, 0.9),
-            percentile(cpu, 0.5)
-        );
-    };
-    show("old hook, lights-off", &mut sh_off, &mut sh_cpu_off);
-    show("Rust, lights-off", &mut rs_off, &mut rs_cpu_off);
-    show("old hook, lights-on", &mut sh_on, &mut sh_cpu_on);
-    show("Rust, lights-on", &mut rs_on, &mut rs_cpu_on);
-    println!(
-        "processes started by the old hook: lights-off {p_off}, lights-on {p_on}; by the Rust one: 0 (threads: {t_off}, {t_on}){}",
-        if own_ns { "" } else { " (not in a PID namespace of its own: the hook's counts may include others)" }
-    );
 }

@@ -35,9 +35,9 @@ Python script, which also started systemctl every 30 seconds.
 
 ## The Python script
 
-It is kept in `python/` with its tests, for a rollback, until this one has run a while: it was
-`/usr/local/bin/labyrinth-appusage` in Labyrinth OS's image. `parity/compare.py` runs both on the same inputs (scope names,
-usage files, this computer's own scopes) and shows they decide and write the same.
+It was `/usr/local/bin/labyrinth-appusage` in Labyrinth OS's image, and was kept in `python/` with its tests, for a
+rollback, until 2026-11-15; git has it. `parity/compare.py` takes it from there (the last commit that had it) and runs
+both on the same inputs (scope names, usage files, this computer's own scopes) to show they decide and write the same.
 
 ## Why Rust: measured
 

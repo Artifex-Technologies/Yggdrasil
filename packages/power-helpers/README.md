@@ -26,7 +26,8 @@ code and replaces only the outside) on the same fake trees, in dry runs, and com
 
     cargo build --release --bins --examples && python3 parity/compare.py [-v]
 
-The Python scripts stay in `packages/settings/helpers/python/` with their tests, for a rollback.
+The Python scripts were kept in `packages/settings/helpers/python/` with their tests, for a rollback, until 2026-11-15; the
+parity script takes them from git (`--git`, the last commit that had them by default).
 
 ## Why Rust: measured
 

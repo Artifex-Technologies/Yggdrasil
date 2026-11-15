@@ -1,4 +1,4 @@
-//! casefan: the case fans and the pump on a Corsair Commander Pro. A port of packages/settings/helpers/python/casefan with
+//! casefan: the case fans and the pump on a Corsair Commander Pro. A port of the Python casefan (in git; removed 2026-11-15) with
 //! the same commands, setting, output, exit codes and messages; the help text below is the Python docstring.
 
 use std::path::{Path, PathBuf};

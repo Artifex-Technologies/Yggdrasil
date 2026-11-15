@@ -1,8 +1,7 @@
 # Yggdrasil's installer window (Rust, egui) and yggdrasil-install-system, the program that does the work from an archiso live
 # medium: partitions, encryption, btrfs, copying the system, the account, GRUB. The OS names itself, its clean-up and finishing
 # programs and its lists in an integration file of kind "installer" (docs/INSTALLER.md); it may name a program of its own instead.
-# Built from packages/installer (the window) and packages/install-system (the install program, Rust; the Python script it
-# replaced is kept in packages/installer/helpers/python for a rollback).
+# Built from packages/installer (the window) and packages/install-system (the install program, Rust since 2026-11-11).
 pkgname=yggdrasil-installer
 pkgver=1.0.0
 pkgrel=1

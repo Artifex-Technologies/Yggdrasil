@@ -11,9 +11,12 @@ for the Rust side, which sets the pointer through yggdrasil-wm). Nothing of this
      the marker, an old stylesheet that imports colors.css, kdeglobals with odd content, xsettingsd's file, installed cursor
      themes) and KDE programs or not; exit code, output, the stand-ins' calls and every file afterwards must be the same.
 
-    compare.py [--python FILE] [--bin DIR] [-v]
+    compare.py [--git REV | --python FILE] [--bin DIR] [-v]
+
+--git: the commit to take the Python ygg-theme from (default: OLD_REV below, packages/theme/python/)
 """
 import argparse
+import atexit
 import importlib.machinery
 import importlib.util
 import os
@@ -23,6 +26,24 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
+# the old side, the Python ygg-theme: removed on 2026-11-15 (its rollback week was over), so it comes from git;
+# OLD_REV is the last commit that had it (--git another commit, --python a file of your own)
+OLD_REV = "f9c76a5"
+
+
+def from_git(rev, *paths):
+    """REPO's PATHS as they were at REV, each written under its own name into one scratch folder (removed at exit), which
+    is returned."""
+    d = tempfile.mkdtemp(prefix="parity-old-")
+    atexit.register(shutil.rmtree, d, True)
+    for path in paths:
+        data = subprocess.run(["git", "-C", REPO, "show", f"{rev}:{path}"], capture_output=True, check=True).stdout
+        out = os.path.join(d, os.path.basename(path))
+        with open(out, "wb") as f:
+            f.write(data)
+        os.chmod(out, 0o755)
+    return d
 
 
 class StandInHyprland:
@@ -103,11 +124,12 @@ def snapshot(root):
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--git", default=OLD_REV)
     ap.add_argument("--python")
     ap.add_argument("--bin", default=os.path.normpath(os.path.join(HERE, "..", "..", "..", "target", "release")))
     ap.add_argument("-v", action="store_true")
     a = ap.parse_args()
-    py = a.python or next(p for p in (os.path.join(HERE, "..", "python", "ygg-theme"), os.path.join(HERE, "..", "bin", "ygg-theme")) if os.path.exists(p))
+    py = a.python or os.path.join(from_git(a.git, "packages/theme/python/ygg-theme"), "ygg-theme")
     rs = os.path.join(a.bin, "ygg-theme")
     retint = os.path.join(a.bin, "examples", "theme_retint")
     scratch = tempfile.mkdtemp(prefix="ygg-theme-parity-")

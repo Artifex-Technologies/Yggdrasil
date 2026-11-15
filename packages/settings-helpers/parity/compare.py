@@ -16,13 +16,15 @@ byte for byte, apart from what differs on purpose. The locale is en_US.UTF-8 (pk
   - game-fix: for a catalogue that is not JSON, the parser's own words after "cannot read FILE: " (Python's json and
     serde_json say it differently).
 
-    compare.py [--python DIR] [--bin DIR] [--only NAME] [-v]
+    compare.py [--git REV | --python DIR] [--bin DIR] [--only NAME] [-v]
 
---python: the folder with the Python account, bootscreen, game-fix and gpu-run (default: ../../settings/helpers/python,
-          else ../../settings/helpers)
+--git: the commit to take the Python account, bootscreen, game-fix and gpu-run from (default: OLD_REV below,
+       packages/settings/helpers/python/)
+--python: a folder with the four scripts instead
 --bin: the folder with the Rust binaries (default: ../../../target/release; build with cargo build --release)
 """
 import argparse
+import atexit
 import json
 import os
 import shutil
@@ -31,7 +33,25 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-HELPERS = os.path.normpath(os.path.join(HERE, "..", "..", "settings", "helpers"))
+REPO = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
+# the old side, the Python account, bootscreen, game-fix and gpu-run: removed on 2026-11-15 (their rollback week was over), so they come from git;
+# OLD_REV is the last commit that had them (--git another commit, --python a folder of your own)
+OLD_REV = "f9c76a5"
+
+
+def from_git(rev, *paths):
+    """REPO's PATHS as they were at REV, each written under its own name into one scratch folder (removed at exit), which
+    is returned."""
+    d = tempfile.mkdtemp(prefix="parity-old-")
+    atexit.register(shutil.rmtree, d, True)
+    for path in paths:
+        data = subprocess.run(["git", "-C", REPO, "show", f"{rev}:{path}"], capture_output=True, check=True).stdout
+        out = os.path.join(d, os.path.basename(path))
+        with open(out, "wb") as f:
+            f.write(data)
+        os.chmod(out, 0o755)
+    return d
+HELPERS = ("account", "bootscreen", "game-fix", "gpu-run")
 CATALOGUE = os.path.normpath(os.path.join(HERE, "..", "..", "settings", "data", "game-fixes.json"))
 SANDBOX = os.path.join(HERE, "sandbox.sh")
 ARGS = None
@@ -40,10 +60,13 @@ WORLD = os.path.join(SCRATCH, "world")
 
 
 def py_helper(name):
-    for d in ([ARGS.python] if ARGS.python else []) + [os.path.join(HELPERS, "python"), HELPERS]:
-        if os.path.exists(os.path.join(d, name)):
-            return os.path.join(d, name)
-    raise SystemExit(f"compare: no Python {name} (give --python)")
+    """The Python script of a helper: in --python, else taken from git at --git (once)."""
+    if not ARGS.python:
+        ARGS.python = from_git(ARGS.git, *(f"packages/settings/helpers/python/{h}" for h in HELPERS))
+    p = os.path.join(ARGS.python, name)
+    if not os.path.exists(p):
+        raise SystemExit(f"compare: no Python {name} in {ARGS.python}")
+    return p
 
 
 def write(path, data, mode=None):
@@ -644,6 +667,7 @@ def gpurun_cases(py, rs):
 def main():
     global ARGS
     ap = argparse.ArgumentParser()
+    ap.add_argument("--git", default=OLD_REV)
     ap.add_argument("--python")
     ap.add_argument("--bin", default=os.path.normpath(os.path.join(HERE, "..", "..", "..", "target", "release")))
     ap.add_argument("--only")

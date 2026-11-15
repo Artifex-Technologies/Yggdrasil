@@ -1,4 +1,4 @@
-//! gpufan: the NVIDIA graphics card's fans. A port of packages/settings/helpers/python/gpufan with the same commands,
+//! gpufan: the NVIDIA graphics card's fans. A port of the Python gpufan (in git; removed 2026-11-15) with the same commands,
 //! setting, output, exit codes and messages; the help text below is the Python docstring.
 
 use std::path::{Path, PathBuf};

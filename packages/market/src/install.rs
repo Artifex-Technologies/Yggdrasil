@@ -78,7 +78,7 @@ pub type Shared = Arc<Mutex<Job>>;
 
 /// A stand-in for `sudo` that asks through the desktop's password box (pkexec), for yay and for an OS's component command (AGORA_SUDO).
 const SUDO_WRAPPER: &str = "/usr/lib/agora/sudo";
-/// Runs one narrow pacman command as root and can cancel and clean it up (see packages/agora-helpers; the Python script it replaced is packages/market/helpers/python/pkg-root).
+/// Runs one narrow pacman command as root and can cancel and clean it up (see packages/agora-helpers; the Python script it replaced is in git, packages/market/helpers/python/pkg-root until 2026-11-15).
 const ROOT_HELPER: &str = "/usr/lib/agora/pkg-root";
 /// Replaced by the job's cancel file when it starts.
 const CANCEL: &str = "{CANCEL}";

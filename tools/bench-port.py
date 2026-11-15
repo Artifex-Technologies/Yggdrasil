@@ -2,7 +2,7 @@
 """bench-port: each program ported to Rust against the Python script it replaces, on the same safe inputs.
 
 The old version of each program comes from git history (`git show COMMIT:PATH`, the commit before its port; see OLD
-below), so these numbers can be made again after the Python copies kept for a rollback are deleted. The new version is
+below), so these numbers can be made again now that the Python copies kept for a rollback are gone (2026-11-15). The new version is
 this repository's release build in target/release (cargo build --release in each package first).
 
 Every run is safe: --help, read-only commands and the parity scripts' made-up worlds (scratch folders, stand-in tools on

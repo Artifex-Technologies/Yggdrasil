@@ -21,7 +21,7 @@ overlapping members, CRCs), its compiled `appfilter.xml` as the script's own par
 libexpat, the same parser Python's ElementTree used (opened at run time; the package depends on `expat`). A member is never
 read past its stated size.
 
-## Bugs fixed (in the Rust tools and in the Python scripts kept for a rollback)
+## Bugs fixed (in the Rust tools and in the Python scripts, which were kept for a rollback until 2026-11-15)
 
 - `liki-minos-icon - - plain` (the style as "-") looked for a picture called `-.svg` and stopped where the pack has no
   file-manager icon; an accent given that was not three numbers went into bash's arithmetic, which runs `a[$(command)]` as
@@ -85,8 +85,8 @@ whole archives, the archives' own fields).
 
 ## The Python scripts
 
-They stay in `python/` with the same fixes, for a rollback, until these have run a while; `tests/test_liki_icon_import.py`
-still tests that one.
+They were kept in `python/` with the same fixes, for a rollback, until 2026-11-15, with `tests/test_liki_icon_import.py`;
+git has them, and `parity/compare.py` takes them from there (the last commit that had them; `--git` another).
 
 ## Why Rust: measured
 

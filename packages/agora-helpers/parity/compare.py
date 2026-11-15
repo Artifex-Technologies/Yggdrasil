@@ -9,9 +9,12 @@ stand-in's calls, the installed list and the cache folder afterwards must be the
 name or --ignore list that ends in a newline passed the script's patterns ($ matches before a final newline in Python) and
 is refused here (exit code 2).
 
-    compare.py [--python FILE] [--bin DIR] [-v]
+    compare.py [--git REV | --python FILE] [--bin DIR] [-v]
+
+--git: the commit to take the Python pkg-root from (default: OLD_REV below, packages/market/helpers/python/)
 """
 import argparse
+import atexit
 import os
 import shutil
 import subprocess
@@ -20,6 +23,24 @@ import tempfile
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
+# the old side, the Python pkg-root: removed on 2026-11-15 (its rollback week was over), so it comes from git;
+# OLD_REV is the last commit that had it (--git another commit, --python a file of your own)
+OLD_REV = "f9c76a5"
+
+
+def from_git(rev, *paths):
+    """REPO's PATHS as they were at REV, each written under its own name into one scratch folder (removed at exit), which
+    is returned."""
+    d = tempfile.mkdtemp(prefix="parity-old-")
+    atexit.register(shutil.rmtree, d, True)
+    for path in paths:
+        data = subprocess.run(["git", "-C", REPO, "show", f"{rev}:{path}"], capture_output=True, check=True).stdout
+        out = os.path.join(d, os.path.basename(path))
+        with open(out, "wb") as f:
+            f.write(data)
+        os.chmod(out, 0o755)
+    return d
 SANDBOX = os.path.join(HERE, "..", "tests", "sandbox.sh")
 GOOD = "/run/user/1000/agora/x.cancel"
 
@@ -83,16 +104,12 @@ def run(cmd, w, env, cancel_after):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--python", default=None)
+    ap.add_argument("--git", default=OLD_REV)
+    ap.add_argument("--python")
     ap.add_argument("--bin", default=os.path.normpath(os.path.join(HERE, "..", "..", "..", "target", "release")))
     ap.add_argument("-v", action="store_true")
     a = ap.parse_args()
-    py = a.python
-    if not py:
-        for d in (os.path.join(HERE, "..", "..", "market", "helpers", "python"), os.path.join(HERE, "..", "..", "market", "helpers")):
-            if os.path.exists(os.path.join(d, "pkg-root")):
-                py = os.path.join(d, "pkg-root")
-                break
+    py = a.python or os.path.join(from_git(a.git, "packages/market/helpers/python/pkg-root"), "pkg-root")
     rs = os.path.join(a.bin, "pkg-root")
     scratch = tempfile.mkdtemp(prefix="pkg-root-parity-")
     w = os.path.join(scratch, "w")

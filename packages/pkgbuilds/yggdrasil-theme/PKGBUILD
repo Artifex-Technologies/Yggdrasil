@@ -1,7 +1,7 @@
 # Yggdrasil's look for the programs it does not write (Qt, KDE and GTK programs) and its mouse cursors: packages/theme.
 # It replaces the WhiteSur KDE, GTK and cursor themes: a colour scheme (used with Qt's own Fusion style), GTK colours on GTK's own Adwaita,
 # and cursors drawn by ygg-cursors. Nothing is downloaded and no other theme package is needed. ygg-theme and ygg-cursors are
-# Rust (packages/theme/src; the Python scripts they replaced are kept in packages/theme/python for a rollback). ygg-cursors
+# Rust (packages/theme/src). ygg-cursors
 # draws the cursors once here at build time, every pixel as the Python script drew it with Pillow (the help cursor's "?" with
 # FreeType, laid out by libraqm, in the font fc-match names; Pillow's own default font when there is none).
 pkgname=yggdrasil-theme

@@ -8,7 +8,8 @@ is in each package's README ("Why Rust: measured") and in the main README; this 
 `tools/bench-port.py` (Python, standard library only) runs the old and the new version of each program on the same inputs:
 
 - **Old versions come from git**, not from the copies kept for a rollback: `git show COMMIT:PATH` into a scratch folder,
-  the commit just before each port (table below). The numbers can be made again after the `python/` folders are gone.
+  the commit just before each port (table below). The numbers can be made again now that the `python/` folders are gone
+  (2026-11-15).
 - **New versions** are this repository's release builds (`cargo build --release` in each package, `target/release/`).
 - **Same inputs, safe ones only**: `--help`, read-only commands, and the made-up worlds of each package's parity script
   (scratch folders, stand-in tools on the PATH, fake hwmon and sysfs trees with a stand-in graphics card, dry runs). The
@@ -272,11 +273,11 @@ and its peak memory may be one of them.
 ### The lights hook ([packages/idle](../packages/idle/README.md))
 
 Not a Python script but a shell hook (`keyboard-lights`, run through busctl), ported into yggdrasil-idle on 2026-11-12 and
-measured differently: not with `tools/bench-port.py` but with the package's own ignored test `lights::tests::measure`. The old
-hook (from the package's test fixtures, the real busctl) and the Rust code run against the same made-up openrazer daemon and
-logind, a process of their own on a private bus with no service files, in user, mount and PID namespaces with the real
-buses' sockets covered. Six Razer zones and two backlights lit; 30 runs each after two warm-up rounds, taking turns. The
-processes are counted from the PID namespace's last PID.
+measured differently: not with `tools/bench-port.py` but with the package's own ignored test `lights::tests::measure` (it
+and the hook, a test fixture, went on 2026-11-15; both are in git at f9c76a5). The old hook (with the real busctl) and the
+Rust code run against the same made-up openrazer daemon and logind, a process of their own on a private bus with no service
+files, in user, mount and PID namespaces with the real buses' sockets covered. Six Razer zones and two backlights lit; 30
+runs each after two warm-up rounds, taking turns. The processes are counted from the PID namespace's last PID.
 
 | case | metric | old (sh + busctl) | Rust | change |
 | --- | --- | --- | --- | --- |

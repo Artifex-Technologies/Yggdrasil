@@ -30,9 +30,10 @@
 //! refused (nothing was done), 1 the install stopped (or it was not run as root).
 //!
 //! The steps, what belongs to the operating system (its installer integration file and /etc/os-release) and the contract
-//! with the window are described in docs/INSTALLER.md. This is the Rust port of the Python script kept in
-//! packages/installer/helpers/python/install-system (for a rollback): the same plan, checks and messages, the same programs
-//! with the same arguments in the same order, the same files and exit codes (parity/compare.py runs both).
+//! with the window are described in docs/INSTALLER.md. This is the Rust port of the Python script (kept in
+//! packages/installer/helpers/python/install-system for a rollback until 2026-11-15; git has it): the same plan, checks and
+//! messages, the same programs with the same arguments in the same order, the same files and exit codes (parity/compare.py
+//! runs both, the script taken from git).
 
 pub mod catalog;
 pub mod conf;

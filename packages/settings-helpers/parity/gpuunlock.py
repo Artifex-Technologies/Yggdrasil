@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""gpuunlock: the Rust helper and the Python script it replaces (with the shell grub.d fragment of each), run as programs in the
+"""gpuunlock: the Rust helper and the Python script it replaced (with the shell grub.d fragment of each), run as programs in the
 same made-up worlds, side by side. Each world is a whole file system of its own (gpuunlock-sandbox.sh: user, mount, network
 and process namespaces from `unshare -rmnpf`, then pivot_root into the world): a made-up /sys with its graphics cards, /proc
 with the command line, boot id and NVIDIA driver files, /etc/default/grub, /boot/grub/grub.cfg, the state folder, the
@@ -19,10 +19,11 @@ afterwards (contents and modes), byte for byte, with the time of day as the one 
 Not in the cases, as they differ by design (the README says why): a JSON file with NaN or Infinity in it, output of a program
 that is not UTF-8, an entry.cfg that is not UTF-8 or has a NUL in it, a redirect from Ollama's port.
 
-    gpuunlock.py [--python FILE] [--fragment FILE] [--git REV] [--bin FILE] [--only TEXT] [-v]
+    gpuunlock.py [--git REV | --python FILE --fragment FILE] [--bin FILE] [--only TEXT] [-v]
 
---python, --fragment: the old helper and fragment (default: ../../settings/helpers/python/gpuunlock and 41_gpu_unlock, the
-                      copies kept for a rollback); --git REV takes both from git instead (before the switch: ff5b6de)
+--git: the commit to take the old helper and fragment from (default ff5b6de, the commit before the switch, with the eight
+       fixes; the copies kept for a rollback until 2026-11-15 were the same files)
+--python, --fragment: the old helper and fragment as files instead
 --bin: the Rust gpuunlock (default: ../../../target/release/gpuunlock; cargo build --release)
 """
 import argparse
@@ -644,18 +645,20 @@ SIDES = {}
 def main():
     global ARGS
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--python", default=os.path.join(SETTINGS, "helpers", "python", "gpuunlock"))
-    ap.add_argument("--fragment", default=os.path.join(SETTINGS, "helpers", "python", "41_gpu_unlock"))
-    ap.add_argument("--git", help="take the old helper and fragment from this commit (before the switch: ff5b6de)")
+    ap.add_argument("--git", default="ff5b6de", help="take the old helper and fragment from this commit (default: %(default)s, before the switch)")
+    ap.add_argument("--python")
+    ap.add_argument("--fragment")
     ap.add_argument("--bin", default=os.path.join(REPO, "target", "release", "gpuunlock"))
     ap.add_argument("--only")
     ap.add_argument("-v", action="store_true")
     ARGS = ap.parse_args()
-    if ARGS.git:
+    if ARGS.python or ARGS.fragment:
+        if not (ARGS.python and ARGS.fragment):
+            raise SystemExit("gpuunlock: --python and --fragment go together")
+        old, old_frag = open(ARGS.python, "rb").read(), open(ARGS.fragment, "rb").read()
+    else:
         show = lambda p: subprocess.run(["git", "-C", REPO, "show", f"{ARGS.git}:{p}"], capture_output=True, check=True).stdout
         old, old_frag = show("packages/settings/helpers/gpuunlock"), show("packages/settings/data/41_gpu_unlock")
-    else:
-        old, old_frag = open(ARGS.python, "rb").read(), open(ARGS.fragment, "rb").read()
     SIDES["python"] = (old, old_frag)
     with open(ARGS.bin, "rb") as f, open(os.path.join(SETTINGS, "data", "41_gpu_unlock"), "rb") as g:
         SIDES["rust"] = (f.read(), g.read())

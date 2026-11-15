@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""compare: the Rust liki-build, liki-icns and liki-icon-import and the Python scripts they replace (python/), run as
+"""compare: the Rust liki-build, liki-icns and liki-icon-import and the Python scripts they replaced (python/ in git), run as
 programs on the same made-up worlds: HOME is a scratch folder made again for each run at the same path, the tools they
 call (gtk-update-icon-cache) are stand-ins on the PATH that write down how they were called and leave a fixed cache file,
 and every file read or written is in the scratch folder (the system's own /usr/share/applications is read by both, as it
@@ -21,9 +21,12 @@ files afterwards (contents, modes, links), byte for byte, apart from what differ
      bytes changed, cut, repeated (the drawable names come back in the message when nothing matches, so the text decoding
      is compared too).
 
-    compare.py [--python DIR] [--bin DIR] [--only build|icns|import] [--fuzz N] [--seed N] [-v]
+    compare.py [--git REV | --python DIR] [--bin DIR] [--only build|icns|import] [--fuzz N] [--seed N] [-v]
+
+--git: the commit to take the three Python scripts from (default: OLD_REV below, packages/liki/python/)
 """
 import argparse
+import atexit
 import io
 import json
 import os
@@ -37,6 +40,24 @@ import zipfile
 import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
+# the old side, the Python liki-build, liki-icns and liki-icon-import: removed on 2026-11-15 (their rollback week was over), so they come from git;
+# OLD_REV is the last commit that had them (--git another commit, --python a folder of your own)
+OLD_REV = "f9c76a5"
+
+
+def from_git(rev, *paths):
+    """REPO's PATHS as they were at REV, each written under its own name into one scratch folder (removed at exit), which
+    is returned."""
+    d = tempfile.mkdtemp(prefix="parity-old-")
+    atexit.register(shutil.rmtree, d, True)
+    for path in paths:
+        data = subprocess.run(["git", "-C", REPO, "show", f"{rev}:{path}"], capture_output=True, check=True).stdout
+        out = os.path.join(d, os.path.basename(path))
+        with open(out, "wb") as f:
+            f.write(data)
+        os.chmod(out, 0o755)
+    return d
 PKG = os.path.dirname(HERE)
 SHARE = os.path.join(PKG, "share")
 ARGS = None
@@ -572,13 +593,15 @@ def crafted_zip_cases(pack, base, plain):
 def main():
     global ARGS
     ap = argparse.ArgumentParser()
-    ap.add_argument("--python", default=os.path.join(PKG, "python"))
+    ap.add_argument("--git", default=OLD_REV)
+    ap.add_argument("--python")
     ap.add_argument("--bin", default=os.path.normpath(os.path.join(PKG, "..", "..", "target", "release")))
     ap.add_argument("--only")
     ap.add_argument("--fuzz", type=int, default=300)
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("-v", "--verbose", action="store_true")
     ARGS = ap.parse_args()
+    ARGS.python = ARGS.python or from_git(ARGS.git, *(f"packages/liki/python/{t}" for t in ("liki-build", "liki-icns", "liki-icon-import")))
     rng = random.Random(ARGS.seed)
     try:
         if ARGS.only in (None, "build"):

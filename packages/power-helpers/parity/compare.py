@@ -14,13 +14,15 @@ Then the merged service (`power run`, one process for the four loops): on the sa
 part, the same lines in the same order as each Rust helper run on its own followed by what its old unit's ExecStopPost ran
 (`casefan reset` / `gpufan reset`), with the same exit codes. Each of its lines is "[part] ..." (merged_case).
 
-    compare.py [--python DIR] [--bin DIR] [--sample ROOT]... [--seeds N] [-v]
+    compare.py [--git REV | --python DIR] [--bin DIR] [--sample ROOT]... [--seeds N] [-v]
 
---python: the folder with the Python tune, casefan, gpufan and powerlimit (default: each from ../../settings/helpers/python,
-          else ../../settings/helpers)
+--git: the commit to take the Python tune, casefan, gpufan and powerlimit from (default: OLD_REV below,
+       packages/settings/helpers/python/)
+--python: a folder with the four scripts instead
 --bin: the folder with the Rust binaries (default: ../../../target/release; build with cargo build --release --bins --examples)
 """
 import argparse
+import atexit
 import difflib
 import importlib.machinery
 import importlib.util
@@ -37,17 +39,36 @@ import tempfile
 from contextlib import redirect_stderr
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
+# the old side, the Python tune, casefan, gpufan and powerlimit: removed on 2026-11-15 (their rollback week was over), so they come from git;
+# OLD_REV is the last commit that had them (--git another commit, --python a folder of your own)
+OLD_REV = "f9c76a5"
+
+
+def from_git(rev, *paths):
+    """REPO's PATHS as they were at REV, each written under its own name into one scratch folder (removed at exit), which
+    is returned."""
+    d = tempfile.mkdtemp(prefix="parity-old-")
+    atexit.register(shutil.rmtree, d, True)
+    for path in paths:
+        data = subprocess.run(["git", "-C", REPO, "show", f"{rev}:{path}"], capture_output=True, check=True).stdout
+        out = os.path.join(d, os.path.basename(path))
+        with open(out, "wb") as f:
+            f.write(data)
+        os.chmod(out, 0o755)
+    return d
 STOCK = [50, 50, 48, 48, 47, 47, 47, 47]
-HELPERS = os.path.normpath(os.path.join(HERE, "..", "..", "settings", "helpers"))
+HELPERS = ("tune", "casefan", "gpufan", "powerlimit")
 
 
 def py_helper(args, name):
-    """The Python script of a helper: in --python, else where the package keeps it (helpers/python after a switch to Rust,
-    helpers before)."""
-    for d in ([args.python] if args.python else []) + [os.path.join(HELPERS, "python"), HELPERS]:
-        if os.path.exists(os.path.join(d, name)):
-            return os.path.join(d, name)
-    raise SystemExit(f"compare: no Python {name} (give --python)")
+    """The Python script of a helper: in --python, else taken from git at --git (once)."""
+    if not args.python:
+        args.python = from_git(args.git, *(f"packages/settings/helpers/python/{h}" for h in HELPERS))
+    p = os.path.join(args.python, name)
+    if not os.path.exists(p):
+        raise SystemExit(f"compare: no Python {name} in {args.python}")
+    return p
 
 
 # ---------------------------------------------------------------- fake trees
@@ -519,6 +540,7 @@ def replay_all(args):
 
 def main(argv):
     ap = argparse.ArgumentParser()
+    ap.add_argument("--git", default=OLD_REV)
     ap.add_argument("--python")
     ap.add_argument("--bin", default=os.path.normpath(os.path.join(HERE, "..", "..", "..", "target", "release")))
     ap.add_argument("--sample", action="append", default=[])

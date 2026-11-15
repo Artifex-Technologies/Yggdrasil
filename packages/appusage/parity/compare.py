@@ -13,13 +13,15 @@ folder is written.
 What differs on purpose is not compared here: the service counts each app's real running time from its scope's start to its
 end (the script added 30 s for each sample that found it running), and writes every five minutes instead of every 30 s.
 
-    compare.py [--python SCRIPT] [--bin DIR] [--seeds N] [-v]
+    compare.py [--git REV | --python SCRIPT] [--bin DIR] [--seeds N] [-v]
 
---python: the Python labyrinth-appusage (default: ../python/labyrinth-appusage)
+--git: the commit to take the Python labyrinth-appusage from (default: OLD_REV below, packages/appusage/python/)
+--python: the script as a file instead
 --bin: the folder with labyrinth-appusage and examples/appusage_replay (default: ../../../target/release; build with
        cargo build --release --bins --examples)
 """
 import argparse
+import atexit
 import importlib.machinery
 import importlib.util
 import json
@@ -31,6 +33,24 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
+# the old side, the Python labyrinth-appusage: removed on 2026-11-15 (its rollback week was over), so it comes from git;
+# OLD_REV is the last commit that had it (--git another commit, --python a file of your own)
+OLD_REV = "f9c76a5"
+
+
+def from_git(rev, *paths):
+    """REPO's PATHS as they were at REV, each written under its own name into one scratch folder (removed at exit), which
+    is returned."""
+    d = tempfile.mkdtemp(prefix="parity-old-")
+    atexit.register(shutil.rmtree, d, True)
+    for path in paths:
+        data = subprocess.run(["git", "-C", REPO, "show", f"{rev}:{path}"], capture_output=True, check=True).stdout
+        out = os.path.join(d, os.path.basename(path))
+        with open(out, "wb") as f:
+            f.write(data)
+        os.chmod(out, 0o755)
+    return d
 
 
 def load(path):
@@ -100,12 +120,13 @@ def same_file(py_text, rust_text, py_before, rust_before):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--python", default=os.path.join(HERE, "..", "python", "labyrinth-appusage"))
+    ap.add_argument("--git", default=OLD_REV)
+    ap.add_argument("--python")
     ap.add_argument("--bin", default=os.path.join(HERE, "..", "..", "..", "target", "release"))
     ap.add_argument("--seeds", type=int, default=40)
     ap.add_argument("-v", action="store_true")
     a = ap.parse_args()
-    py = load(a.python)
+    py = load(a.python or os.path.join(from_git(a.git, "packages/appusage/python/labyrinth-appusage"), "labyrinth-appusage"))
     replay = os.path.join(a.bin, "examples", "appusage_replay")
     binary = os.path.join(a.bin, "labyrinth-appusage")
     failures = 0

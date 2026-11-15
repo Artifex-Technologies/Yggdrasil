@@ -1,5 +1,5 @@
 //! tune: the processor's turbo multipliers, power limits and turbo, and the graphics card's clock offsets, with the crash
-//! guard. A port of packages/settings/helpers/python/tune with the same commands, files, output, exit codes and log lines;
+//! guard. A port of the Python tune (in git; removed 2026-11-15) with the same commands, files, output, exit codes and log lines;
 //! the help text below is the Python docstring.
 //!
 //! One change inside `watch`: the kernel's messages (for the graphics driver's Xid errors) come straight from /dev/kmsg, not

@@ -19,15 +19,17 @@ on standard error. On top of that, for every case:
     arguments, not in what the programs print, not in any file;
   - a plan that is refused (exit code 2) runs no program at all.
 
-    compare.py [--python FILE] [--bin FILE] [--only TEXT] [--fuzz N] [--fuzz-install N] [--seed N] [--corpus DIR] [-j N] [-v] [--show]
+    compare.py [--git REV | --python FILE] [--bin FILE] [--only TEXT] [--fuzz N] [--fuzz-install N] [--seed N] [--corpus DIR] [-j N] [-v] [--show]
 
---python: the script (default: ../../installer/helpers/python/install-system, else ../../installer/helpers/install-system)
+--git: the commit to take the Python script from (default: OLD_REV below, packages/installer/helpers/python/install-system)
+--python: the script as a file instead
 --bin: the Rust program (default: ../../../target/release/yggdrasil-install-system; cargo build --release)
 --fuzz N: N random plans (mutated ones, random JSON, random bytes), each run as an install
 --fuzz-install N: N random plans that pass the checks, each run as a whole install
 --corpus DIR: every file in DIR (the fuzz target's corpus, say) as a plan, each run as an install
 """
 import argparse
+import atexit
 import copy
 import json
 import os
@@ -40,6 +42,24 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
+# the old side, the Python install-system: removed on 2026-11-15 (its rollback week was over), so it comes from git;
+# OLD_REV is the last commit that had it (--git another commit, --python a file of your own)
+OLD_REV = "f9c76a5"
+
+
+def from_git(rev, *paths):
+    """REPO's PATHS as they were at REV, each written under its own name into one scratch folder (removed at exit), which
+    is returned."""
+    d = tempfile.mkdtemp(prefix="parity-old-")
+    atexit.register(shutil.rmtree, d, True)
+    for path in paths:
+        data = subprocess.run(["git", "-C", REPO, "show", f"{rev}:{path}"], capture_output=True, check=True).stdout
+        out = os.path.join(d, os.path.basename(path))
+        with open(out, "wb") as f:
+            f.write(data)
+        os.chmod(out, 0o755)
+    return d
 FAKE = os.path.join(HERE, "fake.py")
 SANDBOX = os.path.join(HERE, "sandbox.sh")
 TOOLS = ["lsblk", "findmnt", "sfdisk", "wipefs", "cryptsetup", "mkfs.btrfs", "mkfs.ext4", "mkfs.xfs", "mkfs.vfat", "mkswap", "mount",
@@ -736,6 +756,7 @@ def fuzz_installs(rng, n):
 def main():
     global ARGS, PYTHON, BIN, SCRATCH
     ap = argparse.ArgumentParser()
+    ap.add_argument("--git", default=OLD_REV)
     ap.add_argument("--python")
     ap.add_argument("--bin")
     ap.add_argument("--only")
@@ -747,8 +768,7 @@ def main():
     ap.add_argument("-v", action="store_true")
     ap.add_argument("--show", action="store_true", help="print the script's output and calls for each case")
     ARGS = ap.parse_args()
-    helpers = os.path.normpath(os.path.join(HERE, "..", "..", "installer", "helpers"))
-    PYTHON = ARGS.python or next(p for p in (os.path.join(helpers, "python", "install-system"), os.path.join(helpers, "install-system")) if os.path.exists(p))
+    PYTHON = ARGS.python or os.path.join(from_git(ARGS.git, "packages/installer/helpers/python/install-system"), "install-system")
     BIN = ARGS.bin or os.path.normpath(os.path.join(HERE, "..", "..", "..", "target", "release", "yggdrasil-install-system"))
     SCRATCH = tempfile.mkdtemp(prefix="install-system-parity-")
     # what the program counts on, with this computer's own mount(8), on scratch tmpfs folders in a throwaway namespace

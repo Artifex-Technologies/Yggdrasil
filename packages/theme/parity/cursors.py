@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""cursors: the Rust ygg-cursors and the Python script it replaces (python/ygg-cursors, Pillow), run as programs on the same
+"""cursors: the Rust ygg-cursors and the Python script it replaced (python/ygg-cursors in git, Pillow), run as programs on the same
 output folders: the same exit code, standard output and standard error, the same files and links, every X cursor file byte
 for byte (the format is written by the tools themselves, so the same pixels make the same file), and the preview sheet's
 decoded pixels exactly (the PNG encoders differ, not the picture). Where an X cursor file differs, the header, the table
@@ -10,9 +10,12 @@ variable font, one without a "?", a colour bitmap font FreeType cannot size), a 
 name found in the font folders, nothing, and no fc-match at all (Pillow's own default font). Nothing of this user's own is
 read or written: HOME is a scratch folder.
 
-    cursors.py [--python FILE] [--bin FILE] [-v]
+    cursors.py [--git REV | --python FILE] [--bin FILE] [-v]
+
+--git: the commit to take the Python ygg-cursors from (default: OLD_REV below, packages/theme/python/)
 """
 import argparse
+import atexit
 import os
 import shutil
 import struct
@@ -21,6 +24,24 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
+# the old side, the Python ygg-cursors: removed on 2026-11-15 (its rollback week was over), so it comes from git;
+# OLD_REV is the last commit that had it (--git another commit, --python a file of your own)
+OLD_REV = "f9c76a5"
+
+
+def from_git(rev, *paths):
+    """REPO's PATHS as they were at REV, each written under its own name into one scratch folder (removed at exit), which
+    is returned."""
+    d = tempfile.mkdtemp(prefix="parity-old-")
+    atexit.register(shutil.rmtree, d, True)
+    for path in paths:
+        data = subprocess.run(["git", "-C", REPO, "show", f"{rev}:{path}"], capture_output=True, check=True).stdout
+        out = os.path.join(d, os.path.basename(path))
+        with open(out, "wb") as f:
+            f.write(data)
+        os.chmod(out, 0o755)
+    return d
 PKG = os.path.dirname(HERE)
 ARGS = None
 SCRATCH = tempfile.mkdtemp(prefix="ygg-cursors-parity-")
@@ -159,10 +180,12 @@ def case(name, argv, setup=lambda: None, fc=None, no_fc=False, env=None):
 def main():
     global ARGS
     ap = argparse.ArgumentParser()
-    ap.add_argument("--python", default=os.path.join(PKG, "python", "ygg-cursors"))
+    ap.add_argument("--git", default=OLD_REV)
+    ap.add_argument("--python")
     ap.add_argument("--bin", default=os.path.normpath(os.path.join(PKG, "..", "..", "target", "release", "ygg-cursors")))
     ap.add_argument("-v", "--verbose", action="store_true")
     ARGS = ap.parse_args()
+    ARGS.python = ARGS.python or os.path.join(from_git(ARGS.git, "packages/theme/python/ygg-cursors"), "ygg-cursors")
     try:
         case("the theme and the preview, the system's fc-match", ["@/out", "--preview"])
         fonts = "/usr/share/fonts"

@@ -6,8 +6,8 @@
 //! The environment reaches systemd and D-Bus, and the session target (the autostart folder) starts, from Hyprland's own
 //! configuration (packages/session/hyprland/yggdrasil.lua, its last `exec_cmd`), once Hyprland's display is there.
 //!
-//! A bash script until 2026-11-13 (packages/session/tests/fixtures/yggdrasil-session.sh, kept for the differential in
-//! tools/parity-shell-ports.py until 2026-11-20); this does what it did, in the same order, with the same calls, files, log
+//! A bash script until 2026-11-13 (then the test fixture packages/session/tests/fixtures/yggdrasil-session.sh until
+//! 2026-11-15; tools/parity-shell-ports.py takes it from git); this does what it did, in the same order, with the same calls, files, log
 //! lines and exit code, in one process: the script's log copy loop and monitor log were background shells that started `ls`,
 //! `head`, `grep` and `sleep` every five seconds for the whole session; here they are two threads that start nothing.
 

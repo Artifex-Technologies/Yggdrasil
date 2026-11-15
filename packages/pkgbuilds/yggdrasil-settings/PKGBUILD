@@ -1,9 +1,8 @@
 # Settings: the everyday settings in one app (GNOME-style), for Yggdrasil.
 # Built from packages/settings in this repository (and the shared look in packages/yggdrasil-ui), with Settings > Power's
-# root helpers tune, casefan, gpufan and powerlimit from packages/power-helpers (Rust; the Python scripts they replaced are
-# kept in packages/settings/helpers/python for a rollback), whose loops run in one root service, yggdrasil-power, and the
-# on-demand helpers account, bootscreen, game-fix, yggdrasil-gpu-run and gpuunlock from packages/settings-helpers (Rust; their
-# Python scripts are kept there too), and a laptop's tablet watcher and fingerprint helper from packages/laptop. Nothing in it
+# root helpers tune, casefan, gpufan and powerlimit from packages/power-helpers (Rust), whose loops run in one root service,
+# yggdrasil-power, and the on-demand helpers account, bootscreen, game-fix, yggdrasil-gpu-run and gpuunlock from
+# packages/settings-helpers (Rust), and a laptop's tablet watcher and fingerprint helper from packages/laptop. Nothing in it
 # is Python any more.
 pkgname=yggdrasil-settings
 pkgver=1.0.0

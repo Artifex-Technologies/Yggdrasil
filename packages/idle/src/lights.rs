@@ -140,26 +140,15 @@ pub struct Live {
     session: Option<Option<Connection>>,
     system: Option<Option<Connection>>,
     razer_up: bool,
-    /// Both buses at this address instead (the measurements: a private bus with made-up daemons).
-    address: Option<String>,
 }
 
 impl Live {
     pub fn new() -> Live {
-        Live { session: None, system: None, razer_up: false, address: None }
-    }
-
-    #[cfg(test)]
-    pub fn at(address: &str) -> Live {
-        Live { address: Some(address.into()), ..Live::new() }
+        Live { session: None, system: None, razer_up: false }
     }
 
     fn connect(&self, system: bool) -> Option<Connection> {
-        let b = match (&self.address, system) {
-            (Some(a), _) => zbus::blocking::connection::Builder::address(a.as_str()),
-            (None, false) => zbus::blocking::connection::Builder::session(),
-            (None, true) => zbus::blocking::connection::Builder::system(),
-        };
+        let b = if system { zbus::blocking::connection::Builder::system() } else { zbus::blocking::connection::Builder::session() };
         b.map(|b| b.method_timeout(TIMEOUT)).and_then(|b| b.build()).ok()
     }
 }

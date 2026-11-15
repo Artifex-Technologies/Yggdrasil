@@ -1,8 +1,8 @@
 # Settings > Apps, Developer options, and the per-app controls
 
 Built 2026-10-15/16. Code: `packages/settings/src/appmgr.rs` (what is known about each app, and changes to it),
-`apps_ui.rs` (the pages), the power-limit helper `packages/power-helpers/src/powerlimit.rs` (installed as `/usr/lib/yggdrasil/powerlimit`; the Python one it replaced is in `helpers/python/`;
-`tests/test_settings_powerlimit.py`), and, for the per-app network rules and sandbox, the operating system's launcher declared in its
+`apps_ui.rs` (the pages), the power-limit helper `packages/power-helpers/src/powerlimit.rs` (installed as `/usr/lib/yggdrasil/powerlimit`; the Python one it replaced and
+its tests were kept in `helpers/python/` and `tests/` until 2026-11-15), and, for the per-app network rules and sandbox, the operating system's launcher declared in its
 `apps` integration (INTEGRATIONS.md; on Labyrinth `labyrinth-launch` and `labyrinth-appnet`, tested in Labyrinth's repository).
 `cargo test` in `packages/settings`.
 
@@ -357,8 +357,8 @@ About only when switched on, have no picture.
   Python for now.
   - **Status:** the package installs the Rust tune, casefan, gpufan and powerlimit at the same `/usr/lib/yggdrasil/` paths
     (tune, casefan and gpufan since pkgrel 35, powerlimit since 36, with the merged service below). The Python scripts and
-    their tests are kept in `helpers/python/` until the Rust ones have run a while; to go back, reinstall the package before
-    (pkgrel 35 for the merged service, 34 for the Python helpers).
+    their tests were kept in `helpers/python/` for a rollback until 2026-11-15 (git has them); the packages before
+    (pkgrel 35 for the merged service, 34 for the Python helpers) are the way back.
   - **Light:** no crate but libc, no async runtime, one thread each; libnvidia-ml is opened at run time (dlopen), so
     without the NVIDIA driver they run and say so. `tune watch` reads the kernel's messages from `/dev/kmsg` instead of a
     `journalctl -k -f` child (journalctl only when /dev/kmsg cannot be opened; the service logs which one it reads).
@@ -439,7 +439,7 @@ About only when switched on, have no picture.
     the first entry with the option, printed by `/etc/grub.d/41_gpu_unlock` only while armed. The owner picks it by hand at
     a restart; it is never the default.
   - **Following an attempt:** `yggdrasil-gpu-unlock-boot.service` and `-verify.service` follow it. The attempt is known by
-    the option in /proc/cmdline, the result by the module's kernel log, and the entry goes away after its one try. The helper is Rust since 2026-11-13 (`packages/settings-helpers`, `gpuunlock`; the fragment calls `gpuunlock grub-entry`). Tests: `packages/settings-helpers/src/gpuunlock_tests.rs`, and `parity/gpuunlock.py` against the Python script kept in `helpers/python/` until 2026-11-20 (CI runs both). A debug build reads the status from
+    the option in /proc/cmdline, the result by the module's kernel log, and the entry goes away after its one try. The helper is Rust since 2026-11-13 (`packages/settings-helpers`, `gpuunlock`; the fragment calls `gpuunlock grub-entry`). Tests: `packages/settings-helpers/src/gpuunlock_tests.rs`, and `parity/gpuunlock.py` against the Python script, taken from git (`ff5b6de`, the commit before the switch; the copy kept in `helpers/python/` with its tests went on 2026-11-15). A debug build reads the status from
   `$YGGDRASIL_GPUUNLOCK_FIXTURE` (for screenshots of the other states).
 
 ## Ask before connecting (built 2026-10-16)

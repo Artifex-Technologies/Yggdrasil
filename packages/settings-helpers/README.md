@@ -76,8 +76,10 @@ baseline, and 34 shapes of entry.cfg through both fragments).
 
 ## The Python scripts
 
-They stay in `packages/settings/helpers/python/` with their tests, for a rollback, until these have run a while
-(`gpuunlock` and its shell fragment until 2026-11-20).
+They were kept in `packages/settings/helpers/python/` with their tests, for a rollback, until 2026-11-15 (a little before
+their dates: I approved it); git has them. The parity scripts take them from there: `parity/compare.py` from the last
+commit that had them (`--git` another), `parity/gpuunlock.py` from `ff5b6de`, the commit before the switch, whose helper
+and fragment are the same files.
 
 ## Why Rust: measured
 

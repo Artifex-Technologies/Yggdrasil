@@ -2,8 +2,9 @@
 
 The program behind Yggdrasil's installer window: it installs the operating system from its live medium (archiso) onto a disk.
 Installed as `/usr/bin/yggdrasil-install-system` (package `yggdrasil-installer`), named by an OS's installer integration file
-(`command = /usr/bin/yggdrasil-install-system`). It replaces the Python script of the same name, which I keep in
-`packages/installer/helpers/python/install-system` for a rollback, with the same interface:
+(`command = /usr/bin/yggdrasil-install-system`). It replaces the Python script of the same name, which I kept in
+`packages/installer/helpers/python/install-system` for a rollback until 2026-11-15 (git has it; `parity/compare.py` takes it
+from there), with the same interface:
 
 - the plan as one JSON object on standard input (passwords never on a command line), `--check` (the plan only), `--disks`
   (the disks it could install onto, as JSON);
