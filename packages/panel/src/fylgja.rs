@@ -591,14 +591,27 @@ fn quiet(mut c: Command) -> Option<Child> {
     c.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().ok()
 }
 
+/// The node properties of the voice-input recording. Heimdall's private microphone knows Sarina's voice input by
+/// `heimdall.private-mic.exempt`: on LykanOS, with its "Sarina's voice input uses the real microphone" switch on, this one
+/// stream records the real microphone; everywhere else (Labyrinth OS always) the property is ignored and it records the
+/// private microphone like every app.
+pub const RECORD_PROPS: &str = r#"{ heimdall.private-mic.exempt = "sarina-voice" node.description = "Sarina voice input" }"#;
+
+/// pw-record's arguments for a voice question written to `path` (mono, 16 kHz, 16-bit: what speech tools want).
+pub fn record_args(path: &std::path::Path) -> Vec<std::ffi::OsString> {
+    let mut v: Vec<std::ffi::OsString> =
+        ["--rate", "16000", "--channels", "1", "--format", "s16", "--properties", RECORD_PROPS].iter().map(Into::into).collect();
+    v.push(path.as_os_str().to_owned());
+    v
+}
+
 /// Starts recording the microphone (mono, 16 kHz, what speech tools want) to a new file.
 pub fn start_recording() -> Result<(Child, PathBuf), String> {
     let dir = voice_dir().ok_or("Could not make a private folder for the recording.")?;
     let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let path = dir.join(format!("ask-{stamp}.wav"));
     let child = Command::new("pw-record")
-        .args(["--rate", "16000", "--channels", "1", "--format", "s16"])
-        .arg(&path)
+        .args(record_args(&path))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -1641,6 +1654,19 @@ mod tests {
         assert_eq!(spoken_part("Heard: \"what time is it\"\n\nIt is noon."), "It is noon.");
         assert_eq!(spoken_part("It is noon."), "It is noon.");
         assert_eq!(spoken_part("Heard: \"x\""), "");
+    }
+
+    /// The voice question's recording says it is Sarina's voice input (Heimdall's LykanOS-only exception reads it) and
+    /// keeps speech tools' format; the file comes last.
+    #[test]
+    fn the_recording_names_itself_for_the_private_microphone() {
+        let a = record_args(std::path::Path::new("/run/user/1000/v/ask-1.wav"));
+        let s: Vec<&str> = a.iter().map(|x| x.to_str().unwrap()).collect();
+        assert_eq!(&s[..6], ["--rate", "16000", "--channels", "1", "--format", "s16"]);
+        let p = s.iter().position(|x| *x == "--properties").unwrap();
+        assert!(s[p + 1].contains(r#"heimdall.private-mic.exempt = "sarina-voice""#));
+        assert!(s[p + 1].starts_with('{') && s[p + 1].ends_with('}'));
+        assert_eq!(s.last(), Some(&"/run/user/1000/v/ask-1.wav"));
     }
 
     use super::*;
