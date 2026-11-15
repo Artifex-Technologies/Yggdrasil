@@ -301,7 +301,7 @@ fn a_failure_anywhere_never_unmounts_the_live_dev() {
         "no separate call"
     );
     // each call of the install fails in turn, with the cleanup's own `mount --make-rslave TARGET` working or failing too
-    for k in 0..whole.calls.len() {
+    for (k, (call, _)) in whole.calls.iter().enumerate() {
         for slave_fails in [false, true] {
             let live = Live::new();
             let mut f = live.fake();
@@ -311,7 +311,7 @@ fn a_failure_anywhere_never_unmounts_the_live_dev() {
             }
             let code = live.run(&mut f, &[], &encrypted);
             live_mounts_safe(&f, &live.target())
-                .unwrap_or_else(|e| panic!("call {k} failing ({:?}), make-rslave failing {slave_fails}: {e}", whole.calls[k].0));
+                .unwrap_or_else(|e| panic!("call {k} failing ({call:?}), make-rslave failing {slave_fails}: {e}"));
             assert!(code == 1 || (code == 0 && f.out.last().unwrap() == "DONE"), "call {k}: {code} {:?}", f.out.last());
         }
     }

@@ -1235,17 +1235,17 @@ impl App {
             );
         });
         ui::group(ui, pal, Some("Each workspace"), |ui| {
-            for n in 0..4 {
+            for (n, per) in c.per.iter_mut().enumerate().take(4) {
                 let label = |p: Option<Profile>| match p {
                     None => "Use the default",
                     Some(Profile::Standard) => "Always standard",
                     Some(Profile::Tiling) => "Always tiling",
                 };
                 ui::row(ui, pal, n == 0, &format!("Workspace {}", n + 1), None, |ui| {
-                    egui::ComboBox::from_id_salt(("ws", n)).selected_text(label(c.per[n])).show_ui(ui, |ui| {
+                    egui::ComboBox::from_id_salt(("ws", n)).selected_text(label(*per)).show_ui(ui, |ui| {
                         for p in [None, Some(Profile::Standard), Some(Profile::Tiling)] {
-                            if ui.selectable_label(c.per[n] == p, label(p)).clicked() {
-                                c.per[n] = p;
+                            if ui.selectable_label(*per == p, label(p)).clicked() {
+                                *per = p;
                             }
                         }
                     });

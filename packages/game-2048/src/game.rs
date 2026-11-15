@@ -211,9 +211,9 @@ impl Game {
 
     pub fn free(&self) -> Vec<(usize, usize)> {
         let mut v = vec![];
-        for x in 0..self.size {
-            for y in 0..self.size {
-                if self.cells[x][y] == 0 {
+        for (x, col) in self.cells.iter().enumerate().take(self.size) {
+            for (y, &c) in col.iter().enumerate().take(self.size) {
+                if c == 0 {
                     v.push((x, y));
                 }
             }
