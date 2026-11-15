@@ -11,7 +11,8 @@ use crate::switcher;
 use crate::tiling::{self, Profile};
 use crate::toplevels::Toplevels;
 use smithay::backend::input::{
-    AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, InputEvent, KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent,
+    AbsolutePositionEvent, Axis, AxisSource, ButtonState, Device, Event, InputBackend, InputEvent, KeyboardKeyEvent, PointerAxisEvent,
+    PointerButtonEvent, PointerMotionEvent,
 };
 use smithay::backend::renderer::element::memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement};
 use smithay::backend::renderer::element::surface::{render_elements_from_surface_tree, WaylandSurfaceRenderElement};
@@ -19,7 +20,6 @@ use smithay::backend::renderer::element::Kind;
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::backend::renderer::pixman::PixmanRenderer;
 use smithay::backend::renderer::utils::on_commit_buffer_handler;
-use smithay::backend::winit::WinitInput;
 use smithay::delegate_xdg_decoration;
 use smithay::desktop::{layer_map_for_output, LayerSurface, PopupKind, PopupManager, Space, Window, WindowSurfaceType};
 use smithay::input::keyboard::{FilterResult, KeyboardHandle};
@@ -172,6 +172,8 @@ pub struct App {
     pub _tablet_state: smithay::wayland::tablet_manager::TabletManagerState,
     /// What the pointer should look like, for the backend to show (nested: the host window's cursor).
     pub cursor_hook: Option<CursorHook>,
+    /// Switches to another virtual terminal (Ctrl+Alt+Fn): set by the hardware backend (udev.rs), which owns the session.
+    pub vt_switch: Option<Box<dyn FnMut(i32)>>,
     /// Wakes the drawing: the screen is drawn only when something changed (a program committed a picture, input, a setting).
     ping: smithay::reexports::calloop::ping::Ping,
     pub display_handle: DisplayHandle,
@@ -505,6 +507,7 @@ impl App {
             _cursor_shape_state: smithay::wayland::cursor_shape::CursorShapeManagerState::new::<Self>(dh),
             _tablet_state: smithay::wayland::tablet_manager::TabletManagerState::new::<Self>(dh),
             cursor_hook: None,
+            vt_switch: None,
             seat_state,
             data_device_state: DataDeviceState::new::<Self>(dh),
             _output_manager_state: OutputManagerState::new_with_xdg_output::<Self>(dh),
@@ -2302,21 +2305,32 @@ impl App {
         self.give_keyboard(surface, serial);
     }
 
-    /// Input from the nested window (winit). The headless backend calls the same steps (key, pointer_to, button) with input of
-    /// its own, made from the control socket: never from a real device.
-    pub fn on_input(&mut self, event: InputEvent<WinitInput>) {
+    /// Input from the nested window (winit) or from the devices themselves (libinput, the hardware backend in udev.rs). The
+    /// headless backend calls the same steps (key, pointer_to, button) with input of its own, made from the control socket: never
+    /// from a real device. `own_settings`: the devices are this compositor's (hardware), so input.conf's scroll factor is applied
+    /// here (libinput itself is told the speed, profile, natural scrolling and left-handed buttons); nested, the host applied them.
+    pub fn on_input<B: InputBackend>(&mut self, event: InputEvent<B>, own_settings: bool) {
         match event {
             InputEvent::Keyboard { event } => self.key(event.key_code(), event.state(), event.time_msec()),
             InputEvent::PointerMotionAbsolute { event } => {
-                let size = self.output.current_mode().map(|m| m.size).unwrap_or_default();
-                let pos = event.position_transformed(size.to_logical(1));
+                // a tablet, a touch screen used as a pointer, a virtual machine's pointer: the whole of the screens
+                let area = self.space.outputs().map(output_rect).reduce(|a, b| a.merge(b)).unwrap_or_else(|| output_rect(&self.output));
+                let pos = event.position_transformed(area.size) + area.loc.to_f64();
                 self.pointer_to(pos, event.time_msec());
+            }
+            InputEvent::PointerMotion { event } => {
+                // a mouse or touchpad: moved by what libinput made of the movement (its speed and acceleration), kept on the screens
+                let to = self.pointer_location + event.delta();
+                let to = self.nearest_on_screens(to).unwrap_or(to);
+                self.pointer_to(to, event.time_msec());
             }
             InputEvent::PointerButton { event } => self.button(event.button_code(), event.state(), event.time_msec()),
             InputEvent::PointerAxis { event } => {
                 self.input_seen();
                 let pointer = self.pointer.clone();
-                let amount = |a: Axis| event.amount(a).unwrap_or_else(|| event.amount_v120(a).unwrap_or(0.0) * 15.0 / 120.0);
+                let factor =
+                    if own_settings { crate::input::mouse(&self.input, &event.device().name()).scroll.abs().max(0.01) } else { 1.0 };
+                let amount = |a: Axis| factor * event.amount(a).unwrap_or_else(|| event.amount_v120(a).unwrap_or(0.0) * 15.0 / 120.0);
                 let mut frame = AxisFrame::new(event.time_msec()).source(event.source());
                 for a in [Axis::Horizontal, Axis::Vertical] {
                     let v = amount(a);
@@ -2349,10 +2363,23 @@ impl App {
         let keyboard = self.keyboard.clone();
         let serial = SERIAL_COUNTER.next_serial();
         let repeating_before = self.repeating;
+        let mut vt = None;
         let taken = keyboard.input::<Action, _>(self, code, state, serial, time, |app, mods, handle| {
+            // Ctrl+Alt+F1..F12 (xkb's XF86Switch_VT_n): another virtual terminal, before anything else (also while locked: the
+            // session stays locked behind it). Only on the hardware backend, which knows how (nested and headless: a plain key).
+            if state == KeyState::Pressed && app.vt_switch.is_some() {
+                if let Some(n) = shortcuts::switch_vt(handle.modified_sym().raw()) {
+                    app.taken.push(u32::from(code));
+                    vt = Some(n);
+                    return FilterResult::Intercept(Action::None);
+                }
+            }
             let sym = handle.raw_latin_sym_or_raw_current_sym().map(|s| shortcuts::lower(s.raw())).unwrap_or(0);
             app.key_filter(u32::from(code), state, mods, sym)
         });
+        if let (Some(n), Some(f)) = (vt, self.vt_switch.as_mut()) {
+            f(n);
+        }
         if let Some(a) = taken {
             if self.repeating.is_some() && self.repeating != repeating_before {
                 self.start_repeat(a.clone());

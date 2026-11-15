@@ -1,15 +1,17 @@
 //! yggdrasil-compositor: Yggdrasil's own Wayland compositor, on Smithay, in development (the session runs on Hyprland meanwhile).
 //!
-//! It runs nested in a window (winit backend) or headless (virtual outputs in memory, for tests), so it cannot touch the real
-//! session:
+//! It runs nested in a window (winit backend), headless (virtual outputs in memory, for tests), or on the hardware from a text
+//! console (DRM/KMS, udev.rs; developed in a virtual machine, never started inside a running desktop):
 //!
 //!   yggdrasil-compositor [OPTIONS] [--run COMMAND ARGS... [--run COMMAND ...]]
 //!       opens a window and serves a Wayland socket (its name is printed as WAYLAND_DISPLAY=...);
 //!       programs given with --run are started inside it (options go before the first --run)
 //!   yggdrasil-compositor --headless [--outputs N] [--size WxH] [--scale S] [--output WxH[@S]]... [--run ...]
 //!       no window, no GPU: outputs drawn in memory with the software renderer, a control socket for tests (headless.rs)
+//!   yggdrasil-compositor --drm [--run ...]
+//!       the hardware backend: drives the screens itself, started from a text console (udev.rs)
 //!   yggdrasil-compositor ctl COMMAND...
-//!       sends one command to a headless compositor (outputs, resize, scale, screenshot, windows, layers, quit)
+//!       sends one command to a headless or hardware compositor's control socket (control.rs, headless.rs)
 //!
 //! X11 programs run through XWayland, started with the compositor (its display is printed as DISPLAY=...);
 //! YGGDRASIL_COMPOSITOR_XWAYLAND=0 leaves it out (headless leaves it out unless it is 1).
@@ -17,6 +19,7 @@
 //! See docs/COMPOSITOR.md for what is built and what is not.
 
 mod capture;
+mod control;
 mod deco;
 mod draw;
 mod grabs;
@@ -36,6 +39,7 @@ mod state;
 mod switcher;
 mod tiling;
 mod toplevels;
+mod udev;
 mod wmctl;
 mod x11asked;
 mod xwayland;
@@ -102,8 +106,14 @@ fn start_programs(run: &[Vec<String>], wayland: &str, x11: Option<u32>) {
         if let Some(n) = x11 {
             c.env("DISPLAY", format!(":{n}"));
         }
-        if let Err(e) = c.spawn() {
-            eprintln!("yggdrasil-compositor: cannot start {}: {e}", cmd[0]);
+        match c.spawn() {
+            // reaped in the background (as the shortcuts' programs are): one that ends leaves no defunct process
+            Ok(mut child) => {
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
+            }
+            Err(e) => eprintln!("yggdrasil-compositor: cannot start {}: {e}", cmd[0]),
         }
     }
 }
@@ -186,11 +196,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(String::as_str) == Some("ctl") {
-        std::process::exit(headless::ctl(&args[1..]));
+        std::process::exit(control::ctl(&args[1..]));
     }
     let (opts, run) = split_args(&args);
     if headless::wanted(&opts) {
         return run_headless(&opts, run);
+    }
+    if udev::wanted(&opts) {
+        return udev::run(run);
     }
 
     let event_loop: EventLoop<App> = EventLoop::try_new()?;
@@ -284,7 +297,7 @@ fn run_nested(
             output.change_current_state(Some(Mode { size, refresh: 60_000 }), None, None, None);
             app.output_resized();
         }
-        WinitEvent::Input(event) => app.on_input(event),
+        WinitEvent::Input(event) => app.on_input(event, false),
         WinitEvent::Redraw => {
             let mut backend = backend.borrow_mut();
             let damage: Option<Vec<Rectangle<i32, smithay::utils::Physical>>> = {

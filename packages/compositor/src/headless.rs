@@ -57,9 +57,6 @@
 //! the screens are listed and changed through wlr-output-management (outputmgmt.rs) and Settings' monitors.lua (outputs.rs).
 
 use std::cell::RefCell;
-use std::io::{BufRead, BufReader, Read, Write};
-use std::os::unix::fs::PermissionsExt;
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -232,10 +229,12 @@ pub struct Headless {
     pending: bool,
     last: Instant,
     start: Instant,
-    /// Control-socket connections that asked to `watch` the desktops (the panel), and the desktops they were last told of.
-    watchers: Vec<UnixStream>,
-    desktops_seen: Option<(usize, [usize; crate::state::WORKSPACES])>,
+    /// The control socket's watchers (control.rs).
+    control: crate::control::Control,
 }
+
+/// The commands, for an unknown one's answer.
+const USAGE: &str = "outputs, resize NAME WxH, scale NAME S, add-output WxH[@S], remove-output NAME, screenshot NAME FILE [pointer], pointer-look, windows, layers, free, focus, workspace, lock, key COMBO, key-down COMBO, key-up COMBO, type TEXT, pointer X Y, click [BUTTON], pointer-move DX DY, scroll DY [DX], input, power NAME on|off, clock [stop|run|+MS], quit; for the tools: clients, active, workspaces, workspace N, activate ID, close ID, minimize ID, maximize ID on|off|toggle, send ID N, place ID X Y W H, cursor, screens, pointer-timeout [S], modifiers";
 
 /// About 60 frames a second at most, however often programs commit.
 const FRAME: Duration = Duration::from_millis(16);
@@ -257,23 +256,8 @@ impl Headless {
             pending: false,
             last: Instant::now() - FRAME,
             start: Instant::now(),
-            watchers: vec![],
-            desktops_seen: None,
+            control: Default::default(),
         })
-    }
-
-    /// After every pass of the loop: the watchers hear "desktops" when the desktops changed (the one shown, or how many windows
-    /// one holds). Nothing is written while they stay as they were; a watcher that has gone (or stopped reading) is dropped.
-    fn tell_watchers(&mut self, app: &App) {
-        if self.watchers.is_empty() {
-            return;
-        }
-        let now = app.desktops_key();
-        if self.desktops_seen == Some(now) {
-            return;
-        }
-        self.desktops_seen = Some(now);
-        self.watchers.retain(|mut w| w.write_all(b"desktops\n").is_ok());
     }
 
     /// A picture for every output in the space, none for those that left it.
@@ -604,24 +588,21 @@ pub fn run(
     })?;
     app.wake();
 
-    let ctl = runtime.join(format!("yggdrasil-compositor-{}.ctl", app.socket));
-    let _ = std::fs::remove_file(&ctl);
-    let listener = UnixListener::bind(&ctl).map_err(|e| format!("cannot make the control socket {}: {e}", ctl.display()))?;
-    std::fs::set_permissions(&ctl, std::fs::Permissions::from_mode(0o600))?;
-    listener.set_nonblocking(true)?;
-    println!("YGGDRASIL_COMPOSITOR_CTL={}", ctl.display());
-    let _ = std::io::stdout().flush();
+    let (listener, ctl) = crate::control::listen(&runtime, &app.socket)?;
     let h4 = h.clone();
     handle.insert_source(Generic::new(listener, Interest::READ, LoopMode::Level), move |_, l, app| {
         while let Ok((stream, _)) = l.accept() {
-            serve(stream, app, &mut h4.borrow_mut());
+            let mut b = h4.borrow_mut();
+            let mut control = std::mem::take(&mut b.control);
+            control.serve(stream, app, &mut |words, app| command(words, app, &mut b), USAGE);
+            b.control = control;
         }
         Ok(PostAction::Continue)
     })?;
 
     event_loop.run(None, &mut app, |app| {
         let _ = app.display_handle.flush_clients();
-        h.borrow_mut().tell_watchers(app);
+        h.borrow_mut().control.tell_watchers(app);
     })?;
     // the loop's sources hold handles to the loop itself, so they are never dropped and the Wayland socket would stay behind
     let _ = std::fs::remove_file(&ctl);
@@ -630,67 +611,33 @@ pub fn run(
     Ok(())
 }
 
-/// One command from the control socket, answered on it.
-fn serve(stream: UnixStream, app: &mut App, h: &mut Headless) {
-    let _ = stream.set_nonblocking(false);
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
-    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
-    let mut line = String::new();
-    let mut reader = BufReader::new(&stream).take(4096);
-    if reader.read_line(&mut line).is_err() {
-        return;
+/// The headless backend's own commands (the rest are control.rs's): None for a command that is not one of them.
+fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Option<Result<Vec<String>, String>> {
+    const OWN: [&str; 14] = [
+        "resize",
+        "add-output",
+        "remove-output",
+        "screenshot",
+        "key",
+        "key-down",
+        "key-up",
+        "type",
+        "pointer",
+        "click",
+        "pointer-move",
+        "scroll",
+        "input",
+        "clock",
+    ];
+    if !words.first().is_some_and(|w| OWN.contains(w)) {
+        return None;
     }
-    let words: Vec<&str> = line.split_whitespace().collect();
-    // the connection stays open, and gets a line "desktops" now and whenever they change (the panel's desktops wait on it)
-    if words == ["watch"] {
-        let mut s = &stream;
-        if stream.set_nonblocking(true).is_ok() && s.write_all(b"desktops\n").is_ok() {
-            if h.watchers.is_empty() {
-                h.desktops_seen = Some(app.desktops_key());
-            }
-            h.watchers.push(stream);
-        }
-        return;
-    }
-    let answer = match command(&words, app, h) {
-        Ok(lines) => lines.into_iter().map(|l| l + "\n").collect::<String>() + "ok\n",
-        Err(e) => format!("error: {e}\n"),
-    };
-    let mut s = &stream;
-    let _ = s.write_all(answer.as_bytes());
+    Some(own_command(words, app, h))
 }
 
-fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String>, String> {
-    // the desktop commands Yggdrasil's own tools use (wmctl.rs) come first
-    if let Some(r) = crate::wmctl::command(words, app) {
-        return r;
-    }
+fn own_command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String>, String> {
     let output = |name: &str, app: &App| app.head(name).map(|hd| hd.output.clone()).ok_or_else(|| format!("no output {name}"));
     match words {
-        ["outputs"] => Ok(app
-            .heads
-            .list
-            .iter()
-            .map(|hd| {
-                let o = &hd.output;
-                let m = o.current_mode().map(|m| m.size).unwrap_or_default();
-                let l = state::logical_size(o);
-                let at = o.current_location();
-                format!(
-                    "{} {}x{} scale={} at={},{} logical={}x{}{}{}",
-                    o.name(),
-                    m.w,
-                    m.h,
-                    o.current_scale().fractional_scale(),
-                    at.x,
-                    at.y,
-                    l.w,
-                    l.h,
-                    if app.power.is_on(o) { "" } else { " power=off" },
-                    if hd.enabled { "" } else { " disabled" }
-                )
-            })
-            .collect()),
         ["resize", name, size] => {
             let o = output(name, app)?;
             let (w, hh) = parse_size(size).ok_or_else(|| format!("{size}: give WIDTHxHEIGHT"))?;
@@ -702,13 +649,6 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String
             o.set_preferred(mode);
             let mut want = app.head(name).ok_or("the output went away")?.now();
             want.mode = mode;
-            app.configure_outputs(vec![(name.to_string(), want)], false)?;
-            Ok(vec![])
-        }
-        ["scale", name, s] => {
-            let v = parse_scale(s).ok_or_else(|| format!("{s}: give a number from 0.25 to 8"))?;
-            let mut want = app.head(name).ok_or_else(|| format!("no output {name}"))?.now();
-            want.scale = v;
             app.configure_outputs(vec![(name.to_string(), want)], false)?;
             Ok(vec![])
         }
@@ -738,39 +678,12 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String
             write_png(&s.image, Path::new(path), pointer.as_ref().map(|(p, at)| (&**p, *at)))?;
             Ok(vec![])
         }
-        ["pointer-look"] => Ok(vec![app.pointer_look()]),
-        ["windows"] => Ok(app
-            .window_infos()
-            .into_iter()
-            .map(|i| {
-                let (title, app_id) = state::title_app(&i.window);
-                let size = i.window.geometry().size;
-                let (title, app_id) = (crate::wmctl::field(&title), crate::wmctl::field(&app_id));
-                format!("{app_id}\t{title}\t{},{}\t{}x{}\t{}\t{}", i.at.x, i.at.y, size.w, size.h, i.workspace + 1, i.states.join(","))
-            })
-            .collect()),
-        ["focus"] => Ok(vec![app.focus_info()]),
-        ["free"] => Ok(app
-            .space
-            .outputs()
-            .map(|o| {
-                let r = app.free_area(o);
-                format!("{}\t{},{}\t{}x{}", o.name(), r.loc.x, r.loc.y, r.size.w, r.size.h)
-            })
-            .collect()),
-        ["workspace"] => Ok(vec![(app.workspace() + 1).to_string()]),
-        ["lock"] => {
-            let mut lines = vec![if app.locked { "locked" } else { "unlocked" }.to_string()];
-            for (o, size) in app.lock_infos() {
-                let (w, hh) = size.map(|s| (s.w, s.h)).unwrap_or((0, 0));
-                lines.push(format!("{}\t{w}x{hh}", o.name()));
-            }
-            Ok(lines)
-        }
         ["key", combos @ ..] if !combos.is_empty() => {
             let mut all = vec![];
             for c in combos {
-                all.push(combo(c).ok_or_else(|| format!("{c}: unknown key (names: super, ctrl, alt, shift, Return, Escape, Tab, Left ..., a-z, 0-9, F1-F12)"))?);
+                all.push(combo(c).ok_or_else(|| {
+                    format!("{c}: unknown key (names: super, ctrl, alt, shift, Return, Escape, Tab, Left ..., a-z, 0-9, F1-F12)")
+                })?);
             }
             for keys in all {
                 for k in &keys {
@@ -848,7 +761,8 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String
             use smithay::backend::input::{Axis, AxisSource};
             let num = |v: &str| v.parse::<f64>().ok().filter(|v| v.is_finite() && v.abs() <= 10_000.0).ok_or("scroll DY [DX]: numbers");
             let m = crate::input::mouse(&app.input, crate::input::HEADLESS_MOUSE);
-            let (vy, vx) = (crate::input::scroll(&m, num(dy)?), crate::input::scroll(&m, rest.first().map(|v| num(v)).transpose()?.unwrap_or(0.0)));
+            let (vy, vx) =
+                (crate::input::scroll(&m, num(dy)?), crate::input::scroll(&m, rest.first().map(|v| num(v)).transpose()?.unwrap_or(0.0)));
             let t = h.ms();
             app.wake();
             let pointer = app.pointer.clone();
@@ -870,16 +784,6 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String
                 crate::input::describe(crate::input::HEADLESS_MOUSE, &m),
             ])
         }
-        ["power", name, on] => {
-            let o = output(name, app)?;
-            let on = match *on {
-                "on" => true,
-                "off" => false,
-                v => return Err(format!("{v}: on or off")),
-            };
-            app.set_output_power(&o, on);
-            Ok(vec![])
-        }
         ["clock"] => Ok(vec![format!("{} {}", if app.clock.running() { "running" } else { "stopped" }, app.clock.now().as_millis())]),
         ["clock", "stop"] => {
             app.clock.stop();
@@ -899,15 +803,7 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String
             app.wake();
             Ok(vec![])
         }
-        ["quit"] => {
-            app.quit();
-            Ok(vec![])
-        }
-        [] => Err("no command".into()),
-        _ => Err(format!(
-            "unknown command {:?} (outputs, resize NAME WxH, scale NAME S, add-output WxH[@S], remove-output NAME, screenshot NAME FILE [pointer], pointer-look, windows, layers, free, focus, workspace, lock, key COMBO, key-down COMBO, key-up COMBO, type TEXT, pointer X Y, click [BUTTON], pointer-move DX DY, scroll DY [DX], input, power NAME on|off, clock [stop|run|+MS], quit; for the tools: clients, active, workspaces, workspace N, activate ID, close ID, minimize ID, maximize ID on|off|toggle, send ID N, place ID X Y W H, cursor, screens, pointer-timeout [S], modifiers)",
-            words.join(" ")
-        )),
+        _ => Err(format!("{}: wrong words (the commands: {USAGE})", words.join(" "))),
     }
 }
 
@@ -1000,62 +896,6 @@ fn press(app: &mut App, h: &Headless, code: u32, down: bool) {
     use smithay::backend::input::KeyState;
     let state = if down { KeyState::Pressed } else { KeyState::Released };
     app.key((code + 8).into(), state, h.ms());
-}
-
-/// `yggdrasil-compositor ctl [--socket PATH] COMMAND...`: send one command to a headless compositor and print the answer. The
-/// socket is --socket, else $YGGDRASIL_COMPOSITOR_CTL, else the only one in $XDG_RUNTIME_DIR. Exit 0 on "ok", 1 on an error,
-/// 2 when no compositor was found.
-pub fn ctl(args: &[String]) -> i32 {
-    let (path, words): (Option<PathBuf>, &[String]) = match args {
-        [flag, p, rest @ ..] if flag == "--socket" => (Some(PathBuf::from(p)), rest),
-        _ => (None, args),
-    };
-    let path = path.or_else(|| std::env::var_os("YGGDRASIL_COMPOSITOR_CTL").map(PathBuf::from)).or_else(|| {
-        let dir = std::env::var_os("XDG_RUNTIME_DIR")?;
-        let found: Vec<PathBuf> = std::fs::read_dir(dir)
-            .ok()?
-            .flatten()
-            .map(|e| e.path())
-            .filter(|p| {
-                p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("yggdrasil-compositor-") && n.ends_with(".ctl"))
-            })
-            .collect();
-        (found.len() == 1).then(|| found[0].clone())
-    });
-    let Some(path) = path else {
-        eprintln!("yggdrasil-compositor ctl: no headless compositor found (give --socket PATH or YGGDRASIL_COMPOSITOR_CTL)");
-        return 2;
-    };
-    let mut stream = match UnixStream::connect(&path) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("yggdrasil-compositor ctl: {}: {e}", path.display());
-            return 2;
-        }
-    };
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
-    if stream.write_all(format!("{}\n", words.join(" ")).as_bytes()).is_err() {
-        return 2;
-    }
-    let mut answer = String::new();
-    let _ = stream.read_to_string(&mut answer);
-    let mut lines: Vec<&str> = answer.lines().collect();
-    match lines.pop() {
-        Some("ok") => {
-            for l in lines {
-                println!("{l}");
-            }
-            0
-        }
-        Some(e) => {
-            eprintln!("yggdrasil-compositor ctl: {}", e.trim_start_matches("error: "));
-            1
-        }
-        None => {
-            eprintln!("yggdrasil-compositor ctl: no answer");
-            1
-        }
-    }
 }
 
 #[cfg(test)]

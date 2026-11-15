@@ -369,6 +369,13 @@ pub fn is_escape(sym: u32) -> bool {
     sym == keysyms::KEY_Escape
 }
 
+/// The virtual terminal a key asks for: xkb gives Ctrl+Alt+F1..F12 as XF86Switch_VT_1..12 (the hardware backend switches).
+pub fn switch_vt(modified_sym: u32) -> Option<i32> {
+    (keysyms::KEY_XF86Switch_VT_1..=keysyms::KEY_XF86Switch_VT_12)
+        .contains(&modified_sym)
+        .then(|| (modified_sym - keysyms::KEY_XF86Switch_VT_1) as i32 + 1)
+}
+
 /// The media keys (volume, microphone, player, brightness) work on the lock screen too, whatever they are bound to (the session's
 /// Hyprland binds them with `locked = true`); no other shortcut runs while the screen is locked.
 pub fn works_locked(sym: u32) -> bool {
@@ -498,5 +505,13 @@ mod tests {
         for (i, a) in d.iter().enumerate() {
             assert!(!d[i + 1..].iter().any(|x| x.mods == a.mods && x.sym == a.sym), "{:?}", a);
         }
+    }
+
+    #[test]
+    fn ctrl_alt_f_keys_are_virtual_terminals() {
+        assert_eq!(switch_vt(keysyms::KEY_XF86Switch_VT_1), Some(1));
+        assert_eq!(switch_vt(keysyms::KEY_XF86Switch_VT_12), Some(12));
+        assert_eq!(switch_vt(keysyms::KEY_F1), None, "F1 on its own is a plain key");
+        assert_eq!(switch_vt(keysyms::KEY_XF86Switch_VT_12 + 1), None);
     }
 }

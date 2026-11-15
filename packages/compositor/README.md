@@ -1,10 +1,11 @@
 # yggdrasil-compositor
 
 Yggdrasil's own Wayland compositor, in Rust on [Smithay](https://github.com/Smithay/smithay). **Nothing switches to it.** My
-plan (2026-11-10): Hyprland stays the daily compositor while the rest of Yggdrasil is ported to Rust; only after those ports does
-this one get a hardware (DRM/KMS) backend, and it replaces Hyprland only once it passes the checklist at the end of this file on
-my own PC. Until then it runs nested in a window or headless, and its headless mode is where Yggdrasil's own programs are
-tested on it. The longer history (nested mode, XWayland, what was tried by hand) is in [docs/COMPOSITOR.md](../../docs/COMPOSITOR.md).
+plan (2026-11-10) was to give it a hardware (DRM/KMS) backend only after the rest of Yggdrasil is ported to Rust; Hyprland's
+display crashes changed that on 2026-11-14: the hardware backend is the next big project, and its first milestone (below) runs on
+a virtual GPU and screen in a virtual machine. It replaces Hyprland only once it passes the checklist at the end of this file on
+my own PC. Until then my desktop stays on Hyprland; the compositor runs nested in a window, headless (where Yggdrasil's own
+programs are tested on it) or in the test machine. The longer history (nested mode, XWayland, what was tried by hand) is in [docs/COMPOSITOR.md](../../docs/COMPOSITOR.md).
 
 ## The headless test mode
 
@@ -38,7 +39,7 @@ standard window list, ext-foreign-toplevel-list, is offered nested too.
 
 | File | What it checks | Runs |
 | --- | --- | --- |
-| `src/*` unit tests (47) | options, sizes and scales, the refused runtime folder and session bus, shortcuts (the table held to the session's `yggdrasil.lua`: every bind, its words, release and repeat), tiling with the session's gaps, placement (the same cases as `keep-clear.lua`, its `open()` too), the look (the session's values, Hyprland's curve, opening, moving and closing, the corners' pixels), the keyboard files (the installer's, localectl's, vconsole.conf), Settings' monitors.lua (its lines, the last rule naming a screen winning), the window-places lines, the pointer (appearance.conf's `cursor`, XCURSOR_SIZE, painting it over a picture, the plain arrow), input.conf (a mouse's section over every mouse's, the defaults, buttons, scrolling, speed) | `cargo test`, CI `rust` |
+| `src/*` unit tests (51) | options, sizes and scales, the hardware backend's (its options, a screen's make and model from its EDID, a refresh's length, Ctrl+Alt+Fn as virtual terminals), the refused runtime folder and session bus, shortcuts (the table held to the session's `yggdrasil.lua`: every bind, its words, release and repeat), tiling with the session's gaps, placement (the same cases as `keep-clear.lua`, its `open()` too), the look (the session's values, Hyprland's curve, opening, moving and closing, the corners' pixels), the keyboard files (the installer's, localectl's, vconsole.conf), Settings' monitors.lua (its lines, the last rule naming a screen winning), the window-places lines, the pointer (appearance.conf's `cursor`, XCURSOR_SIZE, painting it over a picture, the plain arrow), input.conf (a mouse's section over every mouse's, the defaults, buttons, scrolling, speed) | `cargo test`, CI `rust` |
 | `tests/headless.rs` (6) | outputs (size, scale, name, place), a bar and a window drawn where they belong, size and scale changes reaching programs, `quit` | `cargo test`, CI `rust` |
 | `tests/behaviour.rs` (14) | with the tests' own small clients: the bar and dock reserve their room; windows open centred in the rest (one bigger than it made to fit, less the gap), kept clear of a dock that appears, back from maximize at a normal size; Super+Up/Left/Down; full screen over the bar and dock; workspaces by keys; the keyboard following new windows, clicks and an exclusive panel, typing reaching the window; the lock on every output taking every key, a second locker refused, a crashed one leaving the screen locked and a new one taking over; only the media keys' shortcuts working while locked; screen copies (whole, part, scale 2, with damage, while locked, a wrong buffer); grim's picture equal to the screen; screens off and on; idle and resume | `cargo test`, CI `rust` and `compositor-headless` |
 | `tests/tools.rs` (6) | yggdrasil-wm, the layer Yggdrasil's tools share, on it: found before a Hyprland named in the environment; windows (with their processes), screens, the free room, the pointer and the desktops read; desktops shown and a window sent to another; a window placed, snapped, maximized and back, minimized and closed; a tiled one floated where it is put; the pointer timeout set and put back; a title with a line break stays one line; the Task Manager's bring-to-front and close, the clipboard's paste into an editor and a terminal (none into the lock screen), Settings' focus by class, the shortcut list, reload, the pointer theme, the keyboard layout, layers; exit ends it | `cargo test`, CI `rust` and `compositor-headless` |
@@ -282,8 +283,11 @@ by the program's own title bar, Super+drag, xdg-activation, idle inhibit, clipbo
    D-Bus: the environment arrives with this compositor's display, the session target starts and stops, a compositor killed
    under the session is started again. Left: the launcher choosing this compositor itself, and the autostart without Hyprland's
    Lua.
-11. **The hardware backend** (DRM/KMS), developed in a Limbo virtual machine, never on the live session: libseat, udev and hotplug,
-   GBM/EGL and Smithay's DrmCompositor with page-flip pacing, libinput, then the checklist below.
+11. **The hardware backend** (DRM/KMS), developed in a virtual machine, never on the live session. Milestone 1 done 2026-11-15
+   (above, `src/udev.rs`): libseat (logind and seatd), udev GPUs and connectors, GBM/EGL with OpenGL ES or pixman on dumb
+   buffers, a DrmCompositor per screen paced by the page flip, libinput, virtual terminals, a clean exit; the panel, Settings and
+   foot drawn and used in the VM. Next: the laptop milestone (internal screen and lid, real hotplug, default scale, suspend),
+   then NVIDIA (explicit sync, hybrid GPUs, several monitors, VRR, direct scanout, tearing), then the checklist below.
 12. **The bake-off:** the same games and the CAD model measured against Hyprland (`tools/bakeoff`), and only then a decision.
 
 ## Checklist before it may replace Hyprland on my PC
@@ -296,12 +300,61 @@ and a way back:
 - [ ] Scaling: fractional scales sharp for Wayland programs, a sensible size for X11 programs
 - [ ] VRR: on for full screen games only (the session's `vrr = 2`), no flicker on the desktop
 - [ ] Direct scanout of full screen games (`direct_scanout = 2`) and tearing allowed for games that ask (wp-tearing-control)
-- [ ] The lock, idle dimming, screens off and on, suspend and resume, a VT switch and back
+- [ ] The lock, idle dimming, screens off and on, suspend and resume, a VT switch and back (the VT switch works in the test machine, 2026-11-15)
 - [ ] Screenshots (yggdrasil-shot, the colour picker) and Sunshine streaming to the iPad
 - [ ] Every shortcut of the session's table, the media keys on the lock screen (with the real yggdrasil-mediakey)
 - [ ] Frame times, 1% lows and input feel at least as good as Hyprland's in the bake-off games; idle CPU and memory measured
+
+## The hardware backend (milestone 1, 2026-11-15)
+
+    yggdrasil-compositor --drm [--run COMMAND ...]        (--backend drm and --backend udev are the same)
+
+It drives the screens itself, started from a text console (a virtual terminal) as the user logged in there (`src/udev.rs`).
+It refuses to start inside a desktop (WAYLAND_DISPLAY, DISPLAY or HYPRLAND_INSTANCE_SIGNATURE set; libseat would refuse
+anyway, the desktop's session holds the GPU). It is developed in a virtual machine and never started on my running desktop.
+
+| Part | How | Checked |
+| --- | --- | --- |
+| Seat | libseat through Smithay's session backend: logind (the default) or seatd, the GPU and input devices opened without root | both, in the VM: logind from an autologin on tty1, seatd from ssh |
+| GPUs | udev lists them (the boot GPU first; it renders for programs) and tells when one comes or goes | one virtio GPU, with virgl (3D) and without |
+| Screens | every connected connector (not a VR headset's "non-desktop") gets a free CRTC and an `Output` named as the kernel names it (DP-1, HDMI-A-1, eDP-1, Virtual-1) with all its modes, its size in millimetres and make and model from its EDID; Settings' monitors.lua sets mode, scale and place (outputs.rs, as headless); a mode changed later (wlr-output-management) is set on the CRTC at the next frame; a screen plugged in or out (a udev "change") is added or removed | Settings > Displays showed "RHT QEMU Monitor (Virtual-1)", 1920x1080 at 75 Hz; `wlr-randr --mode 1280x1024` changed the scanout to 1280x1024 and the panels followed, and back; EDID parsing has a unit test; hotplug is written, not yet tried (one virtual screen) |
+| Drawing | hardware EGL on the GPU's GBM device: OpenGL ES (GlesRenderer), GBM buffers, programs' GPU buffers (linux-dmabuf with the render node in the default feedback, wl_drm); otherwise (no 3D, EGL only in software, or `YGGDRASIL_COMPOSITOR_RENDERER=pixman`) dumb buffers drawn with pixman; one Smithay `DrmCompositor` per screen, the pointer as a cursor element (on the cursor plane when the GPU has one) | virgl: "draws with OpenGL ES"; no 3D: "no hardware OpenGL ES (EGL is software only): drawing in software"; the same desktop drawn both ways |
+| Frames | drawn only after a wake-up (a commit, input, a setting), never again before the page flip's vblank; a frame with no change is not sent and the next waits one refresh; nothing is drawn and no timer runs while nothing changes but the 2-second look at the config files | `YGGDRASIL_COMPOSITOR_DEBUG=1` prints each frame: with only the panel, one empty frame (nothing sent) every 2 s |
+| Input | libinput (keyboards, mice, touchpads, a VM's tablet): keys and shortcuts as in the other backends, relative and absolute pointer motion, buttons, the wheel; input.conf's speed, profile, natural scrolling and left-handed buttons set on each device (again when the file changes), its scroll factor applied here | typing into foot through the VM's USB keyboard, the tablet moving the pointer and clicking Settings' pages |
+| Virtual terminals | Ctrl+Alt+F1..F12 switch (xkb's XF86Switch_VT_n, also while locked); away: the screens are no longer drawn and libinput is suspended; back: the GPU is taken again and every screen drawn whole | Ctrl+Alt+F2/F3/F4 to the text login and Ctrl+Alt+F1 back, with seatd and with logind, GLES and pixman; logind needs polkit for the switch (the guest had none at first: "Permission denied") |
+| Ending | `ctl quit`, SIGTERM, SIGINT, SIGHUP (through a signalfd): the screens and the seat are let go, the sockets removed, the console comes back | after `ctl quit` and after `kill -TERM`, tty1's shell prompt was back on the screen and no socket was left |
+| Control socket | the same as headless for the tools (yggdrasil-wm) and `outputs`, `scale`, `power`, `windows`, `focus`, `lock`, `quit`; no input is made from it (only the devices give input) | `ctl outputs`, `ctl windows`, `ctl quit` in the VM |
+
+Not in it yet, in the order of the next milestones: the laptop (Intel iGPU: the internal screen and the lid switch, a screen
+plugged in and out for real, a default scale from the screen's size, suspend and resume), then NVIDIA (explicit sync,
+linux-drm-syncobj-v1; a GPU drawing for another, Smithay's GpuManager/MultiRenderer, for hybrid laptops; several monitors; VRR;
+direct scanout of full screen games tuned per GPU; wp-tearing-control; 10-bit), and meanwhile: a screen switched off through
+DPMS (wlr-output-power draws it black now), a screen Settings switches off taken off its CRTC, screen copies (wlr-screencopy and
+ext-image-copy-capture: the panel's previews, grim, Sunshine), presentation-time feedback, VR headsets leased (drm-lease), relative
+pointer and pointer constraints for games, gamma and night light, and libinput's touchpad settings (tap to click).
+
+**Lightness**, measured in the VM (QEMU, 4 vCPUs; CPU of all the compositor's threads from /proc/PID/task/*/schedstat over 60 s
+of idling, nothing moving; release build, 1920x1080 at 75 Hz, the panel's bar, notch and dock; XWayland running):
+
+| Renderer | With the panel only | Panel and Settings open | Resident memory |
+| --- | --- | --- | --- |
+| OpenGL ES (virgl) | 7.2 ms in 60 s = 0.012 % of a core, 34 wake-ups | 215 ms = 0.36 % (Settings commits a new picture several times a second while idle: its own loop, to look at in Settings) | 62-64 MB (44 MB of it the GPU driver's libraries, file-backed) |
+| pixman, chosen (`YGGDRASIL_COMPOSITOR_RENDERER=pixman`) | 4.4 ms = 0.0074 %, 34 wake-ups | 25.5 ms = 0.043 % | 22.6 MB |
+| pixman, fallen back to (no 3D) | 4.6 ms = 0.0077 % | | 49.5 MB (Mesa's software EGL was loaded to find out, and stays mapped) |
+
+The 34 wake-ups a minute are the 2-second look at the config files (and its frame with nothing to send). For a small machine
+without a GPU driver, `YGGDRASIL_COMPOSITOR_RENDERER=pixman` keeps Mesa out altogether.
+
+**The test machine** (`tests/drm-vm.sh`, `tests/drm-vm.py`): an Arch guest of my own, run as me with plain QEMU (no root; Limbo's
+own guests have no display and need root, so it only lends its Arch cloud image as a read-only base), memory capped (4 GB in a
+6 GB scope), a virtio GPU with virgl through the host's render node (`boot gl`) or without 3D (`boot 2d`), a USB keyboard and
+tablet. `provision` installs what the guest needs (mesa, seatd, libinput, polkit, foot, XWayland, fonts, wlr-randr) and logs `ygg`
+in on tty1 by itself; `deploy` copies the release builds in; `start [ARGS]` runs the compositor on tty1 through logind (default:
+the panel and Settings); `shot NAME [KEYS]` presses keys and saves the screen (through QEMU's VNC socket, which reads the virgl
+picture back); `type`, `click`, `move` give input; `ctl`, `measure`, `stop`. Screenshots stay in the VM's folder, not here.
 
 ## Building and running the tests
 
     cargo test                                  # unit, headless, behaviour and tools tests (the app tests skip)
     packages/compositor/tests/apps-podman.sh    # with the panel, Settings, the lock, snap and close, in a container
+    packages/compositor/tests/drm-vm.sh boot    # the hardware backend in its test machine (above): boot, provision, deploy, start

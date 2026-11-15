@@ -12,8 +12,9 @@ jobs:
     container: archlinux:latest
     steps:
       - name: Tools
-        # pixman: the compositor's software renderer (its headless tests run a compositor in the container)
-        run: pacman -Syu --noconfirm --needed git rust base-devel pkgconf wayland libxkbcommon fontconfig pam dbus libxcrypt libinput mesa libvlc pixman
+        # pixman: the compositor's software renderer (its headless tests run a compositor in the container); seatd: libseat, which
+        # the compositor's hardware backend links (it is never started here)
+        run: pacman -Syu --noconfirm --needed git rust base-devel pkgconf wayland libxkbcommon fontconfig pam dbus libxcrypt libinput mesa libvlc pixman seatd
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0, pinned by commit
         with:
           persist-credentials: false
@@ -61,7 +62,7 @@ jobs:
     container: archlinux:latest
     steps:
       - name: Tools
-        run: pacman -Syu --noconfirm --needed git rust base-devel pkgconf wayland libxkbcommon fontconfig dbus ttf-dejavu pixman mesa libinput
+        run: pacman -Syu --noconfirm --needed git rust base-devel pkgconf wayland libxkbcommon fontconfig dbus ttf-dejavu pixman mesa libinput seatd
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0, pinned by commit
         with:
           persist-credentials: false
@@ -85,7 +86,7 @@ jobs:
       - name: Tools
         # mesa and libglvnd: Settings draws through EGL in software (llvmpipe); grim: the screenshot tool, through wlr-screencopy;
         # cage: the login screen's compositor (the greeter's three-screen test)
-        run: pacman -Syu --noconfirm --needed git rust base-devel pkgconf wayland libxkbcommon fontconfig ttf-dejavu dbus pixman mesa libglvnd libinput pam libxcrypt grim cage
+        run: pacman -Syu --noconfirm --needed git rust base-devel pkgconf wayland libxkbcommon fontconfig ttf-dejavu dbus pixman mesa libglvnd libinput pam libxcrypt grim cage seatd
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0, pinned by commit
         with:
           persist-credentials: false

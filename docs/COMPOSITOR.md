@@ -5,12 +5,37 @@ lock, the idle manager, the panel and the login screen all run on one compositor
 
 **Today (2026-11-04):** Yggdrasil's desktop runs as its own session on **Hyprland 0.57** (`packages/session`, `yggdrasil-session`,
 configured in `packages/session/hyprland/yggdrasil.lua`). Hyprland is the real compositor; this one is still in progress and runs
-nested in a window (below) or headless, with no screen at all, for tests (2026-11-10, next section). KDE, and with it KWin, is gone
+nested in a window (below) or headless, with no screen at all, for tests (2026-11-10, next section), and since 2026-11-15 on the
+screen of a virtual machine (the hardware backend's first milestone). KDE, and with it KWin, is gone
 (2026-10-24).
 
 **The plan (2026-11-10):** Hyprland stays the daily compositor while the rest of Yggdrasil is ported to Rust; once that is done,
 this compositor replaces it. The headless mode is the first step: our own desktop pieces are tested on our own compositor in CI,
-long before it drives a real screen.
+long before it drives a real screen. **Changed 2026-11-14:** Hyprland's display crashes made the hardware backend the next big
+project; its first milestone (2026-11-15, next section) drives a virtual GPU and screen in a virtual machine.
+
+## The hardware backend: milestone 1 (2026-11-15)
+
+    yggdrasil-compositor --drm [--run COMMAND ...]
+
+Started from a text console, it drives the screens itself (`src/udev.rs`): libseat (logind or seatd), udev for the GPUs and
+their connectors, OpenGL ES on GBM/EGL where the GPU has hardware 3D and pixman on dumb buffers where it has not, a Smithay
+`DrmCompositor` per screen with frames paced by the page flip (and none drawn while nothing changes), libinput, Ctrl+Alt+Fn to
+other virtual terminals and back, and a clean exit (`ctl quit` or a signal) that gives the console back. The control socket
+moved to `src/control.rs` so both backends serve Yggdrasil's tools; the headless test commands stay headless-only.
+
+Checked in a virtual machine of my own (`packages/compositor/tests/drm-vm.sh`: an Arch guest under plain QEMU as my user, on
+Limbo's Arch cloud image, with a virtio GPU with and without virgl, a USB keyboard and tablet; Limbo's own guests have no display
+and need root): the panel's bar, notch and dock and Settings drawn on the virtual screen, Settings > Displays naming the screen
+from its EDID ("RHT QEMU Monitor (Virtual-1)", 1920x1080 at 75 Hz), a mode change from wlr-randr reaching the CRTC, foot typed
+into and clicked through libinput, Ctrl+Alt+F2/F3/F4 and back with logind and with seatd, with OpenGL ES and with pixman, and
+the console back after `ctl quit` and after SIGTERM. Idle (60 s, only the panel): 0.012 % of a core with OpenGL ES, 0.0074 % with
+pixman; 62-64 MB resident with OpenGL ES (44 MB of it the GPU driver's libraries), 22.6 MB with pixman. Every number and what is
+left: [packages/compositor/README.md](../packages/compositor/README.md#the-hardware-backend-milestone-1-2026-11-15).
+
+What the VM taught: logind lets a session switch terminals only through polkit (`org.freedesktop.login1.chvt`, allowed for the
+active session): without polkit the switch is refused; Labyrinth has polkit. QEMU's `screendump` has no surface for a virgl
+picture under egl-headless; its VNC server reads it back, so the test machine takes screenshots through VNC.
 
 ## Headless: the hidden test mode (built 2026-11-10)
 
@@ -231,7 +256,11 @@ Not built yet (in the order I would do them):
    (a virtual keyboard and pointer driven from the control socket, inside the compositor only, never the real devices),
    ext-foreign-toplevel-list and ext-image-copy-capture (the panel's window previews), and drawing the pointer. All done by
    2026-11-12.
-7. **The hardware backend** (DRM/KMS), what it needs, in order:
+7. **The hardware backend** (DRM/KMS), what it needs, in order (milestone 1, 2026-11-15, has the seat with pause and resume,
+   udev GPUs and connectors as outputs with their modes and EDID, GBM/EGL or pixman with a DrmCompositor per screen paced by the
+   page flip, libinput for keys, pointer and wheel with input.conf on each device, the compositor drawing the pointer; left: real
+   hotplug tried, direct scanout and dmabuf feedback's scanout tranches, relative motion and pointer constraints, everything for
+   NVIDIA, VRR, tearing, gamma):
    - a seat: libseat (logind or seatd) through Smithay's session backend, to open the GPU and input devices without root, and
      to give them up on a VT switch and take them back (pause and resume);
    - udev to find the GPUs and the connectors and to follow hotplug; each connector becomes an `Output` with its real modes and
@@ -268,7 +297,9 @@ over its 800 ms animation, and nothing is drawn once it has settled. After the k
 and 5, the same set): idle 0.006 % of a core, 26.4-26.5 MB resident (before: 0.005-0.006 %, 26.2-26.3 MB). After the keyboard, screens and window places (gap items 3 and
 5, the same day): idle 0.006 % of a core, 26.4-26.5 MB resident (from 26.3). After the window previews and the pointer (gap items
 6 and 7, the same set, five runs): idle 0.006 % of a core (560-621 µs in 10 s, before 547-572), 26.5-26.8 MB resident (before
-26.6-26.7); a window's picture for the dock costs 1.1-1.2 ms of CPU (800x600), and the pointer costs nothing while it rests. Its memory nested (about 117 MB) is mostly the graphics driver's context; the panel is about 89 MB, the idle manager 3 MB, the polkit agent 8 MB. Still to measure and trim: the panel's memory,
+26.6-26.7); a window's picture for the dock costs 1.1-1.2 ms of CPU (800x600), and the pointer costs nothing while it rests. On the hardware (the test machine, 2026-11-15, 60 s with the panel): 0.012 % of a core with OpenGL ES (62-64 MB resident, 44
+MB of it the GPU driver's libraries), 0.0074 % with pixman (22.6 MB); its only wake-ups then are the 2-second look at the config
+files. Its memory nested (about 117 MB) is mostly the graphics driver's context; the panel is about 89 MB, the idle manager 3 MB, the polkit agent 8 MB. Still to measure and trim: the panel's memory,
 start-up time of each program, and the compositor's cost with several large windows.
 Settings > Power's root services (tune, casefan, gpufan) are Rust since 2026-11-09 (docs/APPS_SETTINGS.md): about 2.8 MB each on
 their own, plus about 26 MB while libnvidia-ml is initialised (the NVIDIA driver's own cost, the same in any language), and tune
