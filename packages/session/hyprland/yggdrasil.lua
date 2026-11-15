@@ -322,9 +322,13 @@ end
 for _, screen in ipairs(tiling_screens()) do
   hl.window_rule({ name = "tile-on-" .. screen, match = { class = ".*", workspace = "m[" .. screen .. "]" }, tile = true })
 end
--- ...but an app drawn as one fixed card floats there too: Argus, laid out at its own size like qFlipper, filled a whole tiled
--- screen with the card in one corner (2026-11-15). Later rules win, so this comes after the tiling ones.
-hl.window_rule({ name = "card-apps-float", match = { class = "^(argus-app)$" }, float = true, center = true })
+-- ...but small tools float there too, at their own size: alone on a tiled screen, Argus and the Task Manager filled all of it
+-- (2026-11-15). Bigger apps (Minos, Agora, Saga MD, the player) still tile. Later rules win, so this comes after the tiling ones.
+local small_tools = {
+  "argus-app", "yggdrasil-taskmanager", "yggdrasil-settings", "yggdrasil-calculator", "yggdrasil-authenticator",
+  "yggdrasil-clipboard", "yggdrasil-keyring-sync", "yggdrasil-polkit", "yggdrasil-2048", "yggdrasil-sudoku",
+}
+hl.window_rule({ name = "small-tools-float", match = { class = "^(" .. table.concat(small_tools, "|") .. ")$" }, float = true, center = true })
 
 -- Where a window goes so that it keeps clear of the bar and the dock and opens no bigger than its screen (keep-clear.lua, with
 -- plain-Lua tests in packages/session/tests/keep-clear.lua); used by the window places below and the keep-clear block after them.
