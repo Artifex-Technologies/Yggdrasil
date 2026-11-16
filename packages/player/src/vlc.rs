@@ -377,11 +377,12 @@ impl Drop for Player {
 }
 
 /// libVLC's options. Off the network by default: VLC never looks up a file's tags or its cover art online
-/// (`--no-metadata-network-access`; `--album-art=0`, art only when asked for, which this player never does), so playing a
-/// file tells nobody what is being played. A stream still plays from its own address.
-fn vlc_args(debug: bool) -> [&'static str; 7] {
+/// (`--no-metadata-network-access`: in VLC 3 the online tag and cover-art finders both check it; the old `--album-art` policy
+/// is gone, VLC 3.0.24 only warns about it), so playing a file tells nobody what is being played. A stream still plays from
+/// its own address.
+fn vlc_args(debug: bool) -> [&'static str; 6] {
     let talk = if debug { "--verbose=2" } else { "--quiet" };
-    ["--no-video-title-show", "--no-osd", "--no-snapshot-preview", talk, "--no-stats", "--no-metadata-network-access", "--album-art=0"]
+    ["--no-video-title-show", "--no-osd", "--no-snapshot-preview", talk, "--no-stats", "--no-metadata-network-access"]
 }
 
 #[cfg(test)]
@@ -417,7 +418,7 @@ mod tests {
         for debug in [false, true] {
             let a = vlc_args(debug);
             assert!(a.contains(&"--no-metadata-network-access"));
-            assert!(a.contains(&"--album-art=0"), "cover art only when asked for (never)");
+            assert!(!a.iter().any(|x| x.starts_with("--album-art")), "VLC 3 no longer has it (it only warns)");
             assert!(!a.iter().any(|x| x.contains("metadata-network-access") && !x.starts_with("--no-")), "nothing turns it back on");
         }
     }

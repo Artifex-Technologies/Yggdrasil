@@ -24,7 +24,7 @@ A living-room mode of Yggdrasil: run from the couch with a game controller or a 
 `yggdrasil-player` (packages/player; shown as "VLC": VLC in Yggdrasil's look, the default for videos) is the desktop player the
 HTPC will build on: libVLC 3 plays (all VLC-specific code in `src/vlc.rs`), the window around the picture is Yggdrasil's own,
 and the screen does not dim or lock while a video plays. On the desktop it simply plays from the start.
-It looks nothing up online (2026-11-15, the privacy pack): libVLC runs with `--no-metadata-network-access` and `--album-art=0`,
+It looks nothing up online (2026-11-15, the privacy pack): libVLC runs with `--no-metadata-network-access` (VLC 3's online tag and cover-art finders both obey it),
 so VLC never fetches a file's tags or cover art from the internet and playing a file tells nobody what is playing (a stream
 still plays from its own address). On Labyrinth OS the player also starts on "Ask" in the per-app network rules, like the other
 viewers (Settings > Security > Privacy).
