@@ -344,13 +344,14 @@ impl App {
 
     // ------------------------------------------------------------ pieces
 
-    /// The app's icon in `rect`: the system icon if there is one, else a coloured tile with its first letter.
+    /// The app's icon in `rect`: the vendor's (installed, Flathub's, or the catalog's `icon_url`), else its brand logo, else the
+    /// pack's, else a coloured tile with its first letter.
     fn icon(&self, ui: &egui::Ui, rect: Rect, e: &Entry) {
         let p = ui.painter();
         let names: Vec<&str> = [e.icon.as_str(), e.id.as_str()].into_iter().filter(|n| !n.is_empty()).collect();
         let r = rect.width() * 0.22;
         // the vendor's own icon first; the pack's only when there is none anywhere
-        if let Some(path) = vendor::find(&names, &e.flathub, self.online == Some(true), ui.ctx()) {
+        if let Some(path) = vendor::find(&names, &e.flathub, &e.id, &e.icon_url, self.online == Some(true), ui.ctx()) {
             egui::Image::new(format!("file://{}", path.display()))
                 .fit_to_exact_size(rect.size())
                 .corner_radius(CornerRadius::same(r as u8))
@@ -483,6 +484,7 @@ impl App {
             preinstalled: false,
             repo: String::new(),
             logo: String::new(),
+            icon_url: String::new(),
             recommends: vec![],
         };
         if let Some((prog, args)) = install::command(&dummy, install::Op::UpdateAll) {

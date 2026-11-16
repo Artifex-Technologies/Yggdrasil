@@ -99,6 +99,9 @@ pub struct Entry {
     /// A logo from Liki's brand set (Simple Icons) for an app with no icon of its own, by its name there ("docker"); only from the
     /// operating system's catalog.
     pub logo: String,
+    /// The app's icon on the web (https; best pinned to a commit), for an app whose icon is neither on this computer nor on Flathub:
+    /// fetched only with the online switch on and kept only if it is a PNG or SVG (vendor.rs); only from the operating system's catalog.
+    pub icon_url: String,
     /// Other entries (by id) worth having with this one, shown on its page as "Recommended with ..." (Steam: controller support);
     /// only from the operating system's catalog.
     pub recommends: Vec<String>,
@@ -168,6 +171,7 @@ pub fn parse_catalog(text: &str, from: &str, trusted: bool) -> Result<Catalog, S
             appstream: if trusted { s(a, "appstream") } else { String::new() },
             flathub: if trusted { s(a, "flathub") } else { String::new() },
             logo: if trusted { s(a, "logo") } else { String::new() },
+            icon_url: Some(s(a, "icon_url")).filter(|u| trusted && crate::vendor::fetchable(u)).unwrap_or_default(),
             recommends: if trusted { strings(&a["recommends"]) } else { vec![] },
             id,
             name,
@@ -249,6 +253,7 @@ pub fn parse_omarchy(text: &str, from: &str) -> Result<Catalog, String> {
                 preinstalled: false,
                 repo: String::new(),
                 logo: String::new(),
+                icon_url: String::new(),
                 recommends: vec![],
             });
         }
@@ -649,6 +654,19 @@ mod tests {
         assert_eq!(c.apps.len(), 1);
         assert_eq!(c.apps[0].id, "c");
         assert!(!c.apps[0].reviewed, "an added repository cannot mark itself reviewed");
+    }
+
+    #[test]
+    fn only_the_systems_catalog_names_an_icon_address_and_only_https() {
+        let t = r#"{"name":"x","apps":[
+          {"id":"a","name":"A","category":"Work","source":{"type":"pacman","packages":["a"]},"icon_url":"https://e.org/a.png"},
+          {"id":"b","name":"B","category":"Work","source":{"type":"pacman","packages":["b"]},"icon_url":"http://e.org/b.png"}]}"#;
+        let ours = parse_catalog(t, "x", true).unwrap();
+        assert_eq!((ours.apps[0].icon_url.as_str(), ours.apps[1].icon_url.as_str()), ("https://e.org/a.png", ""));
+        let added = parse_catalog(t, "x", false).unwrap();
+        assert!(added.apps.iter().all(|a| a.icon_url.is_empty()), "an added repository cannot make Agora fetch an address");
+        let c = parse_catalog(SAMPLE, "Sample", true).unwrap();
+        assert!(c.apps.iter().find(|a| a.id == "pdfcraft").unwrap().icon_url.starts_with("https://raw.githubusercontent.com/"));
     }
 
     #[test]

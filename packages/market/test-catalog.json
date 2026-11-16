@@ -5,7 +5,7 @@
   "aur_updates_ok": ["same-as-upstream-bin"],
   "apps": [
     {"id": "krita", "name": "Krita", "subtitle": "Digital painting", "category": "Create", "subcategory": "Graphics & Design", "source": {"type": "pacman", "packages": ["krita"]}, "reviewed": true},
-    {"id": "pdfcraft", "name": "PDFCraft", "subtitle": "PDF tools", "category": "Work", "subcategory": "Documents", "source": {"type": "aur", "packages": ["pdfcraft-bin"]}, "reviewed": true},
+    {"id": "pdfcraft", "name": "PDFCraft", "subtitle": "PDF tools", "category": "Work", "subcategory": "Documents", "source": {"type": "aur", "packages": ["pdfcraft-bin"]}, "reviewed": true, "icon_url": "https://raw.githubusercontent.com/storytold/pdfcraft/e191b0ea69b7dcc4e554c1c4e51b6214bec1c590/assets/app-icon/hicolor/128x128/apps/ai.storyteller.pdfcraft.png"},
     {"id": "gimp", "name": "GIMP", "subtitle": "Image editor", "category": "Create", "subcategory": "Graphics & Design", "source": {"type": "flatpak", "app": "org.gimp.GIMP"}, "reviewed": true},
     {"id": "ghidra", "name": "Ghidra", "subtitle": "Reverse engineering", "category": "Develop", "subcategory": "Tools", "source": {"type": "pacman", "packages": ["ghidra"]}, "reviewed": true, "editions": ["lab"]}
   ]
