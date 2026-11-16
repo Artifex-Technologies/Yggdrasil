@@ -1,7 +1,8 @@
 # Why Rust: measured
 
 Every program I ported from Python to Rust, measured against the Python it replaced, on the same inputs. The short version
-is in each package's README ("Why Rust: measured") and in the main README; this page has the method and every case.
+is in each package's README ("Why Rust: measured") and in [RUST_MIGRATION.md](RUST_MIGRATION.md); this page has the method
+and every case.
 
 ## How these numbers were measured
 
