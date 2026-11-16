@@ -445,6 +445,17 @@ fn settings_opens_centred_maximizes_and_closes() {
     comp.must("key super+q");
     assert_eq!(s.wait_exit(30), Some(0), "Settings ends when its window is closed: {}", s.log());
     assert!(comp.window("yggdrasil-settings").is_none());
+
+    // SIGTERM (a shutdown or a log out): it closes as its window's button does, at once, and leaves no socket behind
+    let mut s = App::start(&comp, &settings, Some(&bus), &soft);
+    wait_for(&comp, &mut s, 120, "Settings again", |c| c.window("yggdrasil-settings").is_some_and(|w| w.size.0 > 0));
+    let sock = comp.dir.join("run/yggdrasil-settings.sock");
+    assert!(sock.exists(), "its single-instance socket");
+    // SAFETY: a signal to our own child
+    unsafe { libc::kill(s.child.id() as i32, libc::SIGTERM) };
+    assert_eq!(s.wait_exit(10), Some(0), "Settings closes on SIGTERM: {}", s.log());
+    assert!(!sock.exists(), "its socket removed");
+    assert!(comp.window("yggdrasil-settings").is_none());
 }
 
 #[test]

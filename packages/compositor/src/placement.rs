@@ -4,6 +4,8 @@
 //!   bigger than that room is made as big as the room less the outer gap and centred in it (keep-clear's `open`), and so is a
 //!   remembered place that no longer fits its screen (the scale changed since);
 //! - a window keeps clear of the bar and the dock: one that reaches under them is moved out (and shortened if it must be);
+//! - a window whose screen gets smaller (another mode or scale), or goes, is pulled back inside the free room of the screen it
+//!   is on, bare screen edges too (made to fit along a side where it has become longer than the room);
 //! - a window back from maximize or full screen that still covers nearly all the free room gets a normal size: three quarters
 //!   of the room each way, centred.
 //!
@@ -18,6 +20,12 @@ fn rect(x: i32, y: i32, w: i32, h: i32) -> Rect {
     Rectangle::new((x, y).into(), (w, h).into())
 }
 
+/// A window that covers its whole screen exactly (a borderless game or a video), give or take a pixel.
+fn covers(win: Rect, screen: Rect) -> bool {
+    let close = |a: i32, b: i32| (a - b).abs() <= 1;
+    close(win.loc.x, screen.loc.x) && close(win.loc.y, screen.loc.y) && close(win.size.w, screen.size.w) && close(win.size.h, screen.size.h)
+}
+
 /// One axis: a window from p, len long, kept inside lo..hi (shortened when it does not fit).
 fn fit_axis(p: i32, len: i32, lo: i32, hi: i32) -> (i32, i32) {
     let len = len.min(hi - lo);
@@ -29,12 +37,7 @@ fn fit_axis(p: i32, len: i32, lo: i32, hi: i32) -> (i32, i32) {
 /// reserved on them count (a window may still hang off a bare screen edge), and a window that covers its whole screen exactly (a
 /// borderless game or a video) is left alone.
 pub fn fit(win: Rect, screen: Rect, zone: Rect) -> Option<Rect> {
-    let close = |a: i32, b: i32| (a - b).abs() <= 1;
-    if close(win.loc.x, screen.loc.x)
-        && close(win.loc.y, screen.loc.y)
-        && close(win.size.w, screen.size.w)
-        && close(win.size.h, screen.size.h)
-    {
+    if covers(win, screen) {
         return None;
     }
     let (top, left) = (zone.loc.y - screen.loc.y, zone.loc.x - screen.loc.x);
@@ -59,12 +62,7 @@ pub fn fit(win: Rect, screen: Rect, zone: Rect) -> Option<Rect> {
 /// session's gaps_out; none when the room would be under 100 less it) and centred in it; one that fits is only kept clear of
 /// the bar and the dock (`fit`). None when it may stay as it is; a window covering its whole screen is left alone.
 pub fn open(win: Rect, screen: Rect, zone: Rect, gap: i32) -> Option<Rect> {
-    let close = |a: i32, b: i32| (a - b).abs() <= 1;
-    if close(win.loc.x, screen.loc.x)
-        && close(win.loc.y, screen.loc.y)
-        && close(win.size.w, screen.size.w)
-        && close(win.size.h, screen.size.h)
-    {
+    if covers(win, screen) {
         return None;
     }
     let (fw, fh) = (zone.size.w, zone.size.h);
@@ -82,15 +80,33 @@ pub fn open(win: Rect, screen: Rect, zone: Rect, gap: i32) -> Option<Rect> {
     (out != win).then_some(out)
 }
 
+/// A window whose screen changed under it (a smaller mode, another scale, or its screen gone and the window moved to another):
+/// pulled back inside the free room on every side, bare screen edges too, so none of it is left off the screen, and kept clear
+/// of the bar and the dock. It keeps its place where it can; along a side where it is longer than the room it is made as long as
+/// the room less `gap` (as `open`; none when the room would be under 100 less it) and centred. None when it is inside already;
+/// a window covering its whole screen is left alone.
+pub fn inside(win: Rect, screen: Rect, zone: Rect, gap: i32) -> Option<Rect> {
+    if covers(win, screen) || zone.size.w < 1 || zone.size.h < 1 {
+        return None;
+    }
+    let gap = gap.clamp(0, 64);
+    let axis = |p: i32, len: i32, lo: i32, room: i32| {
+        if len <= room {
+            return fit_axis(p, len, lo, lo + room);
+        }
+        let gap = if room - 2 * gap < 100 { 0 } else { gap };
+        (lo + gap, room - 2 * gap)
+    };
+    let (x, w) = axis(win.loc.x, win.size.w, zone.loc.x, zone.size.w);
+    let (y, h) = axis(win.loc.y, win.size.h, zone.loc.y, zone.size.h);
+    let out = rect(x, y, w, h);
+    (out != win).then_some(out)
+}
+
 /// A window back from maximize or full screen: when it still covers nearly all the free room (90 % each way), a normal size,
 /// three quarters of the room, centred in it. None when its own size is fine.
 pub fn normal(win: Rect, screen: Rect, zone: Rect) -> Option<Rect> {
-    let close = |a: i32, b: i32| (a - b).abs() <= 1;
-    if close(win.loc.x, screen.loc.x)
-        && close(win.loc.y, screen.loc.y)
-        && close(win.size.w, screen.size.w)
-        && close(win.size.h, screen.size.h)
-    {
+    if covers(win, screen) {
         return None;
     }
     let (fw, fh) = (zone.size.w as f64, zone.size.h as f64);
@@ -173,6 +189,29 @@ mod tests {
         // turned into a tablet (portrait, 800x1280 to lay out)
         let (s, z) = (rect(0, 0, 800, 1280), rect(0, 28, 800, 1182));
         assert_eq!(open(rect(-204, 216, 1208, 806), s, z, 8), Some(rect(8, 216, 784, 806)), "portrait screen");
+    }
+
+    #[test]
+    fn a_window_is_pulled_back_inside_a_screen_that_changed() {
+        // 1920x1080 became 1280x1024 (bar 32, dock 64): Settings at 430,164 1060x720 hung 210 off the right edge
+        let (s, z) = (rect(0, 0, 1280, 1024), rect(0, 32, 1280, 928));
+        assert_eq!(inside(rect(430, 164, 1060, 720), s, z, 8), Some(rect(220, 164, 1060, 720)), "moved in, its size and height kept");
+        assert_eq!(fit(rect(430, 164, 1060, 720), s, z), None, "a bare edge alone would have let it hang off");
+        assert_eq!(inside(rect(100, 500, 600, 480), s, z, 8), Some(rect(100, 480, 600, 480)), "out of the dock's room");
+        assert_eq!(inside(rect(-300, 0, 600, 400), s, z, 8), Some(rect(0, 32, 600, 400)), "off the left edge and under the bar");
+        assert_eq!(inside(rect(100, 100, 600, 400), s, z, 8), None, "inside already");
+        assert_eq!(inside(rect(0, 0, 1280, 1024), s, z, 8), None, "borderless full screen");
+        // scale 2 on top (640x512 to lay out): longer than the room both ways, the room less the gap
+        let (s, z) = (rect(0, 0, 640, 512), rect(0, 32, 640, 416));
+        assert_eq!(inside(rect(220, 164, 1060, 720), s, z, 8), Some(rect(8, 40, 624, 400)));
+        // longer one way only: that way the room less the gap, the other way its place kept
+        assert_eq!(inside(rect(20, 100, 900, 200), s, z, 8), Some(rect(8, 100, 624, 200)));
+        // a screen to the right of another, nothing reserved
+        let s = rect(1280, 0, 800, 600);
+        assert_eq!(inside(rect(1900, -40, 400, 300), s, s, 8), Some(rect(1680, 0, 400, 300)));
+        // a room too small for the gap: all of it
+        let (s, z) = (rect(0, 0, 110, 150), rect(0, 20, 110, 110));
+        assert_eq!(inside(rect(0, 0, 300, 300), s, z, 8), Some(rect(0, 20, 110, 110)));
     }
 
     #[test]

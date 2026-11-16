@@ -14,7 +14,7 @@ pub struct Fonts {
 }
 
 fn fc_match(pattern: &str) -> Option<PathBuf> {
-    let out = std::process::Command::new("fc-match").args(["-f", "%{file}", pattern]).output().ok()?;
+    let out = crate::plain_signals(&mut std::process::Command::new("fc-match")).args(["-f", "%{file}", pattern]).output().ok()?;
     let p = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim().to_string());
     p.is_file().then_some(p)
 }

@@ -642,14 +642,16 @@ fn own_command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<St
             let o = output(name, app)?;
             let (w, hh) = parse_size(size).ok_or_else(|| format!("{size}: give WIDTHxHEIGHT"))?;
             let mode = Mode { size: (w, hh).into(), refresh: 60_000 };
-            // another screen of this size: its own mode is that one, and the old one is gone
-            for old in [o.current_mode(), o.preferred_mode()].into_iter().flatten().filter(|m| *m != mode) {
-                o.delete_mode(old);
-            }
+            // another screen of this size: its own mode is that one, and the old one is gone (once the windows have seen where
+            // the screen was: with its mode deleted first it had no size)
+            let olds: Vec<Mode> = [o.current_mode(), o.preferred_mode()].into_iter().flatten().filter(|m| *m != mode).collect();
             o.set_preferred(mode);
             let mut want = app.head(name).ok_or("the output went away")?.now();
             want.mode = mode;
             app.configure_outputs(vec![(name.to_string(), want)], false)?;
+            for old in olds {
+                o.delete_mode(old);
+            }
             Ok(vec![])
         }
         ["add-output", spec] => {

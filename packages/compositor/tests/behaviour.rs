@@ -192,6 +192,53 @@ fn windows_keep_clear_of_a_dock_that_appears_and_come_back_from_maximize_at_a_no
     assert_eq!(info.rect(), before);
 }
 
+/// A screen that gets smaller (another mode, then another scale) or goes: floating windows are pulled back inside the free room
+/// of their screen, none left partly off it, on other desktops too (in the test machine, Settings hung off the right of a
+/// 1920x1080 screen switched to 1280x1024).
+#[test]
+fn windows_are_pulled_back_inside_a_screen_that_gets_smaller_or_goes() {
+    let _l = limit(60, "windows inside a smaller screen");
+    let comp = Compositor::start(&["--size", "1920x1080"]);
+    let mut c = comp.connect();
+    let _ = bar_and_dock(&mut c);
+    // as Settings opens: 1060x720, centred in the free room 0,32 1920x984
+    let s = c.window("test.settings", "Settings");
+    c.draw(&s, (1060, 720), BLUE);
+    assert_eq!(comp.window("test.settings").unwrap().rect(), (430, 164, 1060, 720));
+    // a wide one on the second desktop
+    comp.must("key super+ctrl+2");
+    let d = c.window("test.other", "Other");
+    c.draw(&d, (800, 300), YELLOW);
+    assert_eq!(comp.window("test.other").unwrap().rect(), (560, 374, 800, 300));
+    comp.must("key super+ctrl+1");
+
+    // 1280x1024: both moved in from the right edge (bare: no dock there), size and height kept
+    comp.must("resize HEADLESS-1 1280x1024");
+    assert_eq!(comp.window("test.settings").unwrap().rect(), (220, 164, 1060, 720));
+    let other = comp.window("test.other").unwrap();
+    assert_eq!((other.rect(), other.workspace), ((480, 374, 800, 300), 2));
+    let pic = comp.screenshot("HEADLESS-1");
+    assert!(pic.fills((230, 174, 1040, 700), RGB_BLUE, 0), "the whole window on the screen");
+
+    // scale 2 (640x512 to lay out, free room 0,32 640x416): longer than the room, made the room less the gap; the wide one
+    // only as wide, and up out of the dock's room
+    comp.must("scale HEADLESS-1 2");
+    assert_eq!(settle(&comp, &mut c, &s, "test.settings", BLUE).rect(), (8, 40, 624, 400));
+    assert_eq!(c.state.wins[d.index].size, (624, 300), "the one on the second desktop told its new size");
+    comp.must("key super+ctrl+2");
+    assert_eq!(settle(&comp, &mut c, &d, "test.other", YELLOW).rect(), (8, 148, 624, 300));
+    comp.must("key super+ctrl+1");
+
+    // a window on a second screen, unplugged: on the first at its place there, then pulled in
+    assert_eq!(comp.must("add-output 1024x768"), ["HEADLESS-2"]);
+    comp.must("pointer 900 300");
+    let e = c.window("test.e", "E");
+    c.draw(&e, (400, 300), BLUE);
+    assert_eq!(comp.window("test.e").unwrap().rect(), (952, 234, 400, 300), "centred on the second screen");
+    comp.must("remove-output HEADLESS-2");
+    assert_eq!(comp.window("test.e").unwrap().rect(), (240, 148, 400, 300));
+}
+
 #[test]
 fn shortcuts_maximize_snap_and_minimize() {
     let _l = limit(60, "shortcuts");

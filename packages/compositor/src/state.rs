@@ -454,6 +454,18 @@ pub fn ignores_maximize(w: &Window) -> bool {
 }
 
 /// Tell an X11 window where it is and how big (X11 programs place their menus from it). Wayland windows are left alone.
+/// The size the compositor asked a window for while the program has not drawn it at that size yet.
+pub fn asked_size(w: &Window) -> Option<smithay::utils::Size<i32, Logical>> {
+    let t = w.toplevel()?;
+    let pending = t.with_pending_state(|p| p.size);
+    pending.filter(|p| p.w > 0 && p.h > 0 && Some(*p) != t.current_state().size)
+}
+
+/// A window's size as it will be: the one asked for while the program has not drawn it yet, else its own.
+fn size_to_be(w: &Window) -> smithay::utils::Size<i32, Logical> {
+    asked_size(w).unwrap_or_else(|| w.geometry().size)
+}
+
 pub fn x11_place(w: &Window, loc: Point<i32, Logical>, size: smithay::utils::Size<i32, Logical>) {
     if let Some(x) = w.x11_surface() {
         let _ = x.configure(Rectangle::new(loc, size));
@@ -824,7 +836,7 @@ impl App {
     /// Put a window at `r`, asking it for the new size when that differs.
     fn place_at(&mut self, w: &Window, r: Rectangle<i32, Logical>) {
         if let Some(t) = w.toplevel() {
-            if r.size != w.geometry().size {
+            if r.size != size_to_be(w) {
                 t.with_pending_state(|s| s.size = Some(r.size));
                 t.send_pending_configure();
             }
@@ -919,7 +931,8 @@ impl App {
         // every floating window is mapped again in order, so the stacking stays as it was
         for w in self.floating_shown() {
             let Some(loc) = self.space.element_location(&w) else { continue };
-            let r = Rectangle::new(loc, w.geometry().size);
+            // the size asked for when the program has not drawn it yet (a screen just changed under it: windows_follow_outputs)
+            let r = Rectangle::new(loc, size_to_be(&w));
             if r.size.w <= 0 || r.size.h <= 0 {
                 continue;
             }
@@ -1326,6 +1339,7 @@ impl App {
     fn spawn(&self, cmd: &str) {
         // /bin/sh by its path: the commands are looked up on the compositor's PATH by the shell (the tests give one of stand-ins)
         let mut c = std::process::Command::new("/bin/sh");
+        crate::plain_signals(&mut c);
         // X11 programs go to this compositor's XWayland, never to the host's X server
         c.arg("-c").arg(cmd).env_remove("DISPLAY").env_remove("HYPRLAND_INSTANCE_SIGNATURE");
         if let Some(n) = self.x11_display {
@@ -1939,10 +1953,7 @@ impl App {
             }
             let full = win_has(&w, xdg_toplevel::State::Fullscreen);
             // where it should be: its place, and the size the compositor asked for while the program has not drawn it yet
-            let asked = w.toplevel().and_then(|t| {
-                let pending = t.with_pending_state(|p| p.size);
-                pending.filter(|p| p.w > 0 && p.h > 0 && Some(*p) != t.current_state().size)
-            });
+            let asked = asked_size(&w);
             let goal = Rectangle::new(loc, asked.unwrap_or(geo.size));
             let wl = w.user_data().get_or_insert(|| std::cell::RefCell::new(crate::look::WinLook::default()));
             let (rect, alpha) = crate::look::place(&mut wl.borrow_mut(), goal, asked.is_some(), self.look.animate, grabbed, now);
@@ -2102,38 +2113,67 @@ impl App {
 
     /// The screens changed (`before`: the name and rectangle of each that was on): windows go along with their screen, keeping
     /// their place on it, and those on a screen that went move to the first one; then each is fitted to its screen again
-    /// (maximized, full screen and snapped ones to its room, floating ones kept clear of the bar and the dock). Windows on other
-    /// desktops and minimized ones are moved alike.
+    /// (maximized, full screen and snapped ones to its room; floating ones pulled back inside its free room, so a smaller mode or
+    /// scale leaves none of them off the screen, and kept clear of the bar and the dock). Windows on other desktops and minimized
+    /// ones are moved alike.
     pub fn windows_follow_outputs(&mut self, before: &[(String, Rectangle<i32, Logical>)]) {
         use xdg_toplevel::State as S;
         for o in self.space.outputs().cloned().collect::<Vec<_>>() {
             layer_map_for_output(&o).arrange();
         }
-        let now: Vec<(String, Rectangle<i32, Logical>)> = self.space.outputs().map(|o| (o.name(), output_rect(o))).collect();
-        let main = self.output.name();
-        let follow = |r: Rectangle<i32, Logical>| -> Option<Rectangle<i32, Logical>> {
+        let now: Vec<(Output, Rectangle<i32, Logical>)> = self.space.outputs().map(|o| (o.clone(), output_rect(o))).collect();
+        let main = self.output.clone();
+        // where a window goes with its screen, and that screen; None when its screen stayed as it was
+        let follow = |r: Rectangle<i32, Logical>| -> Option<(Rectangle<i32, Logical>, Output)> {
             let mid = Point::<i32, Logical>::from((r.loc.x + r.size.w / 2, r.loc.y + r.size.h / 2));
             let (name, old) = before.iter().find(|(_, o)| o.contains(mid))?;
-            let (_, new) = now.iter().find(|(n, _)| n == name).or_else(|| now.iter().find(|(n, _)| *n == main))?;
-            (new != old).then(|| Rectangle::new(new.loc + (r.loc - old.loc), r.size))
+            let (o, new) = now.iter().find(|(o, _)| o.name() == *name).or_else(|| now.iter().find(|(o, _)| *o == main))?;
+            (new != old).then(|| (Rectangle::new(new.loc + (r.loc - old.loc), r.size), o.clone()))
         };
-        for (_, r) in &mut self.saved {
-            if let Some(n) = follow(*r) {
-                *r = n;
+        let gap = self.look.gaps_out;
+        // inside the screen it went with (a window that covered its old screen exactly, a borderless game, covers the new one)
+        let inside = |app: &Self, r: Rectangle<i32, Logical>, old: Rectangle<i32, Logical>, o: &Output| {
+            let screen = output_rect(o);
+            if before.iter().any(|(_, b)| *b == old) {
+                return screen;
             }
+            crate::placement::inside(r, screen, app.free_area(o), gap).unwrap_or(r)
+        };
+        // which one (an index), where it was, where it goes with its screen, and that screen
+        type Moved = (usize, Rectangle<i32, Logical>, Rectangle<i32, Logical>, Output);
+        let saved: Vec<Moved> = self.saved.iter().enumerate().filter_map(|(i, (_, r))| follow(*r).map(|(n, o)| (i, *r, n, o))).collect();
+        for (i, r, n, o) in saved {
+            self.saved[i].1 = inside(self, n, r, &o);
         }
-        for (w, _, at) in &mut self.parked {
-            if let Some(n) = follow(Rectangle::new(*at, w.geometry().size)) {
-                *at = n.loc;
+        let parked: Vec<Moved> = self
+            .parked
+            .iter()
+            .enumerate()
+            .filter_map(|(i, (w, _, at))| {
+                let r = Rectangle::new(*at, size_to_be(w));
+                follow(r).map(|(n, o)| (i, r, n, o))
+            })
+            .collect();
+        for (i, r, n, o) in parked {
+            let w = self.parked[i].0.clone();
+            let floating = ![S::Maximized, S::Fullscreen, S::TiledLeft, S::TiledRight].into_iter().any(|st| win_has(&w, st));
+            let n = if floating { inside(self, n, r, &o) } else { n };
+            self.parked[i].2 = n.loc;
+            if n.size != r.size {
+                if let Some(t) = w.toplevel() {
+                    t.with_pending_state(|s| s.size = Some(n.size));
+                    t.send_pending_configure();
+                }
             }
+            x11_place(&w, n.loc, n.size);
         }
         for w in self.space.elements().cloned().collect::<Vec<_>>() {
             let Some(loc) = self.space.element_location(&w) else { continue };
-            let Some(n) = follow(Rectangle::new(loc, w.geometry().size)) else { continue };
+            let r = Rectangle::new(loc, size_to_be(&w));
+            let Some((n, o)) = follow(r) else { continue };
             self.space.map_element(w.clone(), n.loc, false);
             x11_place(&w, n.loc, n.size);
             let Some(s) = surface_of(&w) else { continue };
-            let o = self.window_output(&w);
             if win_has(&w, S::Fullscreen) {
                 self.fullscreen(&w);
             } else if win_has(&w, S::Maximized) {
@@ -2143,8 +2183,8 @@ impl App {
                 let area = self.half(&o, left);
                 self.fit_window(&w, area, if left { S::TiledLeft } else { S::TiledRight });
             } else if !self.is_tiled(&w, &s) {
-                let (screen, zone) = (output_rect(&o), self.free_area(&o));
-                if let Some(f) = crate::placement::fit(n, screen, zone) {
+                let f = inside(self, n, r, &o);
+                if f != n {
                     self.place_at(&w, f);
                 }
             }

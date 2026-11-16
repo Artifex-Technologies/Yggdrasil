@@ -30,12 +30,19 @@ and need root): the panel's bar, notch and dock and Settings drawn on the virtua
 from its EDID ("RHT QEMU Monitor (Virtual-1)", 1920x1080 at 75 Hz), a mode change from wlr-randr reaching the CRTC, foot typed
 into and clicked through libinput, Ctrl+Alt+F2/F3/F4 and back with logind and with seatd, with OpenGL ES and with pixman, and
 the console back after `ctl quit` and after SIGTERM. Idle (60 s, only the panel): 0.012 % of a core with OpenGL ES, 0.0074 % with
-pixman; 62-64 MB resident with OpenGL ES (44 MB of it the GPU driver's libraries), 22.6 MB with pixman. Every number and what is
+pixman (with Settings open too: 0.31-0.36 % until Settings stopped waking to look for changes on 2026-11-15, 0.008 % since); 62-64 MB resident with OpenGL ES (44 MB of it the GPU driver's libraries), 22.6 MB with pixman. Every number and what is
 left: [packages/compositor/README.md](../packages/compositor/README.md#the-hardware-backend-milestone-1-2026-11-15).
 
 What the VM taught: logind lets a session switch terminals only through polkit (`org.freedesktop.login1.chvt`, allowed for the
 active session): without polkit the switch is refused; Labyrinth has polkit. QEMU's `screendump` has no surface for a virgl
 picture under egl-headless; its VNC server reads it back, so the test machine takes screenshots through VNC.
+
+Three things the first run found, fixed the same day: Settings drew a new picture every few seconds while idle (it now wakes
+only for a change: docs/APPS_SETTINGS.md); the programs the compositor starts inherited SIGTERM, SIGINT and SIGHUP blocked from
+its signalfd, so Settings never ended on SIGTERM (they are unblocked for them now, and Settings closes on them itself); and a
+screen switched to a smaller mode left Settings partly off it (floating windows are now pulled back inside the free room of
+their screen when its mode or scale changes or it goes, on the headless and hardware backends alike: `placement::inside`,
+`tests/behaviour.rs`).
 
 ## Headless: the hidden test mode (built 2026-11-10)
 

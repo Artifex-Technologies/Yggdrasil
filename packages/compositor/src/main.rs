@@ -97,10 +97,27 @@ fn gpu_buffers(
     app.dmabuf_import = Some(Box::new(move |d| r.borrow_mut().renderer().import_dmabuf(d, None).is_ok()));
 }
 
+/// A program the compositor starts takes SIGTERM, SIGINT and SIGHUP as any program does. The hardware backend blocks them for
+/// its signalfd (udev.rs), and a blocked mask is passed on to the programs it starts: in the test machine (2026-11-15) Settings
+/// never saw SIGTERM, so a shutdown waited for it.
+pub fn plain_signals(c: &mut std::process::Command) -> &mut std::process::Command {
+    use std::os::unix::process::CommandExt;
+    // SAFETY: between fork and exec only async-signal-safe calls (sigemptyset, pthread_sigmask) on a set of the child's own
+    unsafe {
+        c.pre_exec(|| {
+            let mut set: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&mut set);
+            libc::pthread_sigmask(libc::SIG_SETMASK, &set, std::ptr::null_mut());
+            Ok(())
+        })
+    }
+}
+
 /// Start the --run programs: on this compositor's Wayland socket, and X11 ones on its XWayland (never the host's X server).
 fn start_programs(run: &[Vec<String>], wayland: &str, x11: Option<u32>) {
     for cmd in run {
         let mut c = std::process::Command::new(&cmd[0]);
+        plain_signals(&mut c);
         // never the running desktop's compositor: Yggdrasil's tools (yggdrasil-wm) would act on Hyprland's windows otherwise
         c.args(&cmd[1..]).env("WAYLAND_DISPLAY", wayland).env_remove("DISPLAY").env_remove("HYPRLAND_INSTANCE_SIGNATURE");
         if let Some(n) = x11 {
@@ -356,5 +373,37 @@ mod tests {
         let (opts, run) = split_args(&a);
         assert_eq!(opts, ["--headless", "--size", "800x600"]);
         assert_eq!(run, vec![vec!["foot", "-e", "true"], vec!["panel"]]);
+    }
+
+    /// The signals blocked in the thread that starts a program (the hardware backend blocks them for its signalfd) are not
+    /// blocked in the program.
+    #[test]
+    fn programs_started_take_the_end_signals() {
+        let blocked_in_child = |plain: bool| {
+            std::thread::spawn(move || {
+                // SAFETY: the mask of this thread only
+                unsafe {
+                    let mut set: libc::sigset_t = std::mem::zeroed();
+                    libc::sigemptyset(&mut set);
+                    for s in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
+                        libc::sigaddset(&mut set, s);
+                    }
+                    libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
+                }
+                let mut c = std::process::Command::new("/bin/sh");
+                c.args(["-c", "grep SigBlk /proc/self/status"]);
+                if plain {
+                    super::plain_signals(&mut c);
+                }
+                let out = c.output().expect("sh runs");
+                let line = String::from_utf8_lossy(&out.stdout).to_string();
+                u64::from_str_radix(line.trim().trim_start_matches("SigBlk:").trim(), 16).expect("a mask")
+            })
+            .join()
+            .unwrap()
+        };
+        let term = 1u64 << (libc::SIGTERM - 1);
+        assert_ne!(blocked_in_child(false) & term, 0, "without it the mask is passed on");
+        assert_eq!(blocked_in_child(true), 0, "nothing blocked");
     }
 }

@@ -177,8 +177,9 @@ const BLACK: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 /// Run the hardware backend until `quit`, a signal, or the loop is stopped.
 pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
     check_env()?;
-    // the signals that end it are taken through a signalfd (blocked here, before any thread or child exists; children get a
-    // clear mask from std's Command)
+    // the signals that end it are taken through a signalfd (blocked here, before any thread or child exists; the programs it
+    // starts get them unblocked again: main.rs plain_signals. XWayland, which Smithay starts, keeps them blocked; it ends with
+    // the compositor)
     let signals = block_signals()?;
     let mut event_loop: EventLoop<App> = EventLoop::try_new()?;
     let display: Display<App> = Display::new()?;
