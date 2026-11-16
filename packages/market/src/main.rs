@@ -7,6 +7,7 @@ mod catalog;
 mod details;
 mod history;
 mod install;
+mod names;
 mod vendor;
 
 use std::collections::{HashMap, HashSet};
@@ -62,6 +63,8 @@ struct App {
     /// Errors per repository, by index into `repos`.
     repo_status: Vec<String>,
     apps: Vec<Entry>,
+    /// Look-alike names (names.rs), by index into `apps`; all None while the privacy pack's warnings are off.
+    name_flags: Vec<Option<names::Flag>>,
     installed: Installed,
     busy: HashSet<String>,
     /// Installs, removals and updates run inside the Marketplace (newest last), and which of them show their log.
@@ -127,6 +130,7 @@ impl App {
             repos: catalog::load_repos(),
             repo_status: vec![],
             apps: vec![],
+            name_flags: vec![],
             installed: Installed::default(),
             busy: HashSet::new(),
             jobs: vec![],
@@ -195,6 +199,11 @@ impl App {
             }
         }
         self.apps = cats.iter().flat_map(|c| c.apps.clone()).collect();
+        self.name_flags = if yggdrasil_ui::privacy_prefs::get(yggdrasil_ui::privacy_prefs::LOOKALIKE_WARNINGS) {
+            names::flags(&self.apps, catalog::os_name())
+        } else {
+            vec![None; self.apps.len()]
+        };
         self.catalogs = cats;
     }
 
@@ -757,10 +766,17 @@ impl App {
         self.icon(ui, Rect::from_min_size(rect.min + vec2(6.0, 8.0), vec2(48.0, 48.0)), &e);
         let tx = rect.left() + 64.0;
         let max_w = rect.width() - 64.0 - 86.0;
-        let name = fit(ui, &e.name, 14.5, max_w, true);
+        let flagged = self.name_flags.get(idx).is_some_and(|f| f.is_some());
+        // a look-alike name is drawn with its hidden characters written out, and marked where the subtitle goes
+        let shown = if flagged { yggdrasil_ui::lookalike::visible(&e.name) } else { e.name.clone() };
+        let name = fit(ui, &shown, 14.5, max_w, true);
         ui.painter().text(pos2(tx, rect.top() + 22.0), Align2::LEFT_CENTER, name, FontId::proportional(14.5), self.pal.text);
-        let sub = fit(ui, &e.subtitle, 12.0, max_w, false);
-        ui.painter().text(pos2(tx, rect.top() + 42.0), Align2::LEFT_CENTER, sub, FontId::proportional(12.0), self.pal.dim);
+        let (sub, col) = if flagged {
+            (fit(ui, &format!("Look-alike name \u{b7} {}", e.subtitle), 12.0, max_w, false), self.pal.amber)
+        } else {
+            (fit(ui, &e.subtitle, 12.0, max_w, false), self.pal.dim)
+        };
+        ui.painter().text(pos2(tx, rect.top() + 42.0), Align2::LEFT_CENTER, sub, FontId::proportional(12.0), col);
         if !e.reviewed {
             ui.painter().circle_filled(pos2(rect.right() - 92.0, rect.top() + 12.0), 3.0, self.pal.amber);
         }
@@ -1083,7 +1099,9 @@ impl App {
         ui.add_space(6.0);
         let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 120.0), Sense::hover());
         self.icon(ui, Rect::from_min_size(rect.min, vec2(110.0, 110.0)), &e);
-        ui.painter().text(rect.left_top() + vec2(130.0, 24.0), Align2::LEFT_CENTER, &e.name, FontId::proportional(28.0), self.pal.text);
+        let flag = self.name_flags.get(idx).cloned().flatten();
+        let shown = if flag.is_some() { yggdrasil_ui::lookalike::visible(&e.name) } else { e.name.clone() };
+        ui.painter().text(rect.left_top() + vec2(130.0, 24.0), Align2::LEFT_CENTER, shown, FontId::proportional(28.0), self.pal.text);
         ui.painter().text(rect.left_top() + vec2(130.0, 54.0), Align2::LEFT_CENTER, &e.subtitle, FontId::proportional(14.0), self.pal.dim);
         let os = catalog::os_name();
         let (badge, bcol) =
@@ -1123,6 +1141,36 @@ impl App {
             );
         }
         let installed = self.installed.has(&e);
+        // a look-alike name: why, and what it really is
+        if let Some(f) = &flag {
+            let program = installed
+                .then(|| desktop_id(&e))
+                .flatten()
+                .and_then(|id| names::exec_of(&id))
+                .map(|x| names::program_of_exec(&x))
+                .filter(|p| !p.is_empty());
+            egui::Frame::new()
+                .fill(self.pal.amber.gamma_multiply(0.12))
+                .stroke(Stroke::new(1.0, self.pal.amber))
+                .corner_radius(CornerRadius::same(10))
+                .inner_margin(egui::Margin::same(12))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(RichText::new("Look-alike name").strong().color(self.pal.amber));
+                    ui.label(format!("This name may be imitating another app. {}", f.words));
+                    let mut what = format!("What it really is: {}, from {}.", names::what_it_is(&e), e.from);
+                    if let Some(p) = program {
+                        what.push_str(&format!(" It starts {p}."));
+                    }
+                    ui.label(RichText::new(what).size(12.5).color(self.pal.dim));
+                    ui.label(
+                        RichText::new(format!("Its name as written: {}", yggdrasil_ui::lookalike::visible(&e.name)))
+                            .size(12.5)
+                            .color(self.pal.dim),
+                    );
+                });
+            ui.add_space(8.0);
+        }
         let can_remove = installed && !e.preinstalled && catalog::remove_script(&e).is_some();
         let idle = !self.is_running(&e.id) && !self.busy.contains(&e.id);
         let mut x = 232.0;

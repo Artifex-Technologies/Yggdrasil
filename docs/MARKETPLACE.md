@@ -10,6 +10,17 @@ No hidden installs. **Get** opens a terminal (Ghostty) and runs the command show
 - **Repositories you add** (Sources, bottom of the sidebar): an https address to a catalog file, or the Omarchy plugin registry. Adding shows a warning and needs a tick: *(the system) has not tested or reviewed anything from this source; it is up to you to decide what to trust.* Their apps are marked "Not reviewed by" the system (an amber dot in lists, a notice on the page). A repository cannot mark itself reviewed, cannot define components, and package names that are not plain names are dropped (they end up in a shell command).
 - **Omarchy plugins** (`omacom/omarchy-plugin-marketplace` registry.json, ~5,600 listings): browse and search only. They are QML for Omarchy's own shell and run unsandboxed there, so there is no install button; **View** opens the plugin's repository. Plugins tagged `games` show under Play. See `OMARCHY_PLUGINS.md`. The plugins I wanted (timer, health, browser warm-up, agent usage, Proton Authenticator, controllers, 2048, Sudoku) were instead rewritten in Rust as native apps; they are in the system's catalog (Plugins, or Play for the games) and install like any reviewed app (THIRD_PARTY_NOTICES.md names each original).
 
+## Look-alike names (2026-11-15)
+A listing whose name imitates another is marked "Look-alike name" (amber, where the subtitle is) in every list, and its name is
+drawn with hidden characters written out (`<U+200B>`). That is a name with letters from another alphabet ("Vivаldi" with a
+Cyrillic а), fullwidth or mathematical letters, invisible or direction-changing characters (`yggdrasil-ui/src/lookalike.rs`, the
+same check as Heimdall's and Labyrinth's), and an unreviewed listing that looks like an app of the system's reviewed list ("G1MP"
+against "GIMP") or takes its very name from another source. Its page says why in plain words and what it really is: where it
+installs from and the package or Flatpak id, the source it was listed by, and, once installed, the program its menu entry starts.
+On while Settings > Security > Privacy > "Warn about look-alike names" is (`lookalike_warnings` in
+`~/.config/heimdall/privacy.json`; read when the lists are built). Code: `src/names.rs`. Agora has no Flathub or AUR search of
+its own, so the names it lists come from the catalogs only; those are the ones checked.
+
 ## Device software, offered by itself (2026-11-13)
 Software for this computer's devices (Razer, Corsair, Logitech, gaming mice, printers, a laptop's fingerprint reader) is offered
 without opening Agora: once the computer is online, when such a USB device is plugged in, and at sign-in, one notification names
