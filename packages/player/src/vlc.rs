@@ -388,17 +388,28 @@ fn vlc_args(debug: bool) -> [&'static str; 7] {
 mod tests {
     use super::*;
 
-    /// libvlc_new refuses an option it does not know (NULL): these are VLC 3's.
+    /// libvlc_new refuses an option it does not know (NULL): these are VLC 3's. Where libVLC cannot start at all (a build
+    /// machine with the library but not its plugins), there is nothing to ask and the test says so.
     #[test]
     fn libvlc_takes_the_options() {
-        let args: Vec<CString> = vlc_args(false).iter().map(|a| CString::new(*a).unwrap()).collect();
-        let argv: Vec<*const c_char> = args.iter().map(|a| a.as_ptr()).collect();
-        // SAFETY: the arguments live until the call returns; the instance is released at once
-        unsafe {
-            let inst = libvlc_new(argv.len() as c_int, argv.as_ptr());
-            assert!(!inst.is_null(), "libvlc refused an option");
-            libvlc_release(inst);
+        let start = |list: &[&str]| {
+            let args: Vec<CString> = list.iter().map(|a| CString::new(*a).unwrap()).collect();
+            let argv: Vec<*const c_char> = args.iter().map(|a| a.as_ptr()).collect();
+            // SAFETY: the arguments live until the call returns; the instance is released at once
+            unsafe {
+                let inst = libvlc_new(argv.len() as c_int, argv.as_ptr());
+                let ok = !inst.is_null();
+                if ok {
+                    libvlc_release(inst);
+                }
+                ok
+            }
+        };
+        if !start(&["--quiet"]) {
+            eprintln!("libVLC does not start here (no plugins?): the options cannot be checked");
+            return;
         }
+        assert!(start(&vlc_args(false)), "libvlc refused an option");
     }
 
     #[test]
