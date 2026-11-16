@@ -9,6 +9,7 @@ pub mod devices;
 pub mod fileops;
 pub mod fmt;
 pub mod listing;
+pub mod opener;
 pub mod places;
 pub mod preview;
 pub mod privacy;

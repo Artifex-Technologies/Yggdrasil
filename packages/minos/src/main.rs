@@ -580,14 +580,9 @@ fn file_uri(p: &Path) -> String {
     }
 }
 
+/// Opens a file with its default app, through the operating system's app launcher where it has one (opener.rs).
 fn open_with_system(path: &Path) {
-    #[cfg(target_os = "linux")]
-    let opener = "xdg-open";
-    #[cfg(target_os = "macos")]
-    let opener = "open";
-    #[cfg(target_os = "windows")]
-    let opener = "explorer";
-    let _ = std::process::Command::new(opener).arg(path).spawn();
+    minos_core::opener::open(path);
 }
 
 fn fmt_time(t: std::time::SystemTime) -> String {
