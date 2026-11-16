@@ -60,30 +60,38 @@ struct ScrubJob {
     stopped: bool,
 }
 
-/// What the menu learnt about a file's sound (privacy::has_audio, on a thread when the menu first opens on it): the file's size
-/// and change time it was read for, and the answer (None while it is being read).
-type AudioProbes = Arc<std::sync::Mutex<HashMap<PathBuf, ((u64, Option<std::time::SystemTime>), Option<bool>)>>>;
-const AUDIO_PROBES_ID: &str = "minos-audio-probes";
+/// Right-click > Remove hidden info, running on its own thread (see App::start_strip): a small window while it works, then
+/// what was removed (or that nothing was hidden), until closed.
+struct StripJob {
+    id: u64,
+    name: String,
+    /// The copy asked for (it did not exist before: removed again if the strip is stopped or fails).
+    out: PathBuf,
+    pid: u32,
+    rx: Receiver<Result<privacy::Stripped, String>>,
+    result: Option<Result<privacy::Stripped, String>>,
+    stopped: bool,
+}
 
-/// The Privacy part of a file's menu (privacy.rs): nothing is read until the menu is open on the file; then its first bytes, and
-/// for a video ffprobe (3 s at most) on a thread. While that runs the entry shows greyed.
-fn privacy_menu(ui: &mut egui::Ui, e: &Entry, actions: &mut Vec<Action>) {
-    if !privacy::on_path(privacy::SCRUB_TOOL) {
-        return;
-    }
-    let Ok(meta) = std::fs::metadata(&e.path) else { return };
-    let stamp = (meta.len(), meta.modified().ok());
-    let probes = ui.ctx().data_mut(|d| d.get_temp_mut_or_default::<AudioProbes>(egui::Id::new(AUDIO_PROBES_ID)).clone());
-    let known = probes.lock().ok().and_then(|m| m.get(&e.path).filter(|(s, _)| *s == stamp).map(|(_, a)| *a));
-    let has_audio = match known {
+/// What the menu learnt about a file (privacy::has_audio, privacy::can_strip: on a thread when the menu first opens on it): the
+/// file's size and change time it was read for, and the answer (None while it is being read).
+type Probes = Arc<std::sync::Mutex<HashMap<PathBuf, ((u64, Option<std::time::SystemTime>), Option<bool>)>>>;
+const AUDIO_PROBES_ID: &str = "minos-audio-probes";
+const STRIP_PROBES_ID: &str = "minos-strip-probes";
+
+/// The answer `ask` gave for this file as it is now, or None while it is asked (on a thread, the first time).
+fn probe(ui: &egui::Ui, id: &str, path: &Path, stamp: (u64, Option<std::time::SystemTime>), ask: fn(&Path) -> bool) -> Option<bool> {
+    let probes = ui.ctx().data_mut(|d| d.get_temp_mut_or_default::<Probes>(egui::Id::new(id)).clone());
+    let known = probes.lock().ok().and_then(|m| m.get(path).filter(|(s, _)| *s == stamp).map(|(_, a)| *a));
+    match known {
         Some(a) => a,
         None => {
             if let Ok(mut m) = probes.lock() {
-                m.insert(e.path.clone(), (stamp, None));
+                m.insert(path.to_path_buf(), (stamp, None));
             }
-            let (path, ctx) = (e.path.clone(), ui.ctx().clone());
+            let (path, ctx) = (path.to_path_buf(), ui.ctx().clone());
             std::thread::spawn(move || {
-                let a = privacy::has_audio(&path, Duration::from_secs(3));
+                let a = ask(&path);
                 if let Ok(mut m) = probes.lock() {
                     m.insert(path, (stamp, Some(a)));
                 }
@@ -91,22 +99,49 @@ fn privacy_menu(ui: &mut egui::Ui, e: &Entry, actions: &mut Vec<Action>) {
             });
             None
         }
-    };
-    let facts = privacy::Facts { scrub_installed: true, has_audio: has_audio.unwrap_or(false) };
-    let list = privacy::entries(facts);
-    if has_audio.is_none() {
-        ui.separator();
-        ui.add_enabled(false, egui::Button::new(privacy::Entry::ScrubSounds.label())).on_disabled_hover_text("Looking for sound in it...");
+    }
+}
+
+/// The Privacy part of a file's menu (privacy.rs): nothing is read until the menu is open on the file; then its first bytes, and
+/// for a video ffprobe (3 s at most), and heimdall-strip --can, on threads. While those run the entries show greyed.
+fn privacy_menu(ui: &mut egui::Ui, e: &Entry, actions: &mut Vec<Action>) {
+    let scrub = privacy::on_path(privacy::SCRUB_TOOL);
+    let strip = privacy::on_path(privacy::STRIP_TOOL) && yggdrasil_ui::privacy_prefs::get(yggdrasil_ui::privacy_prefs::REMOVE_HIDDEN_INFO);
+    if !scrub && !strip {
         return;
     }
-    if list.is_empty() {
+    let Ok(meta) = std::fs::metadata(&e.path) else { return };
+    let stamp = (meta.len(), meta.modified().ok());
+    let has_audio =
+        if scrub { probe(ui, AUDIO_PROBES_ID, &e.path, stamp, |p| privacy::has_audio(p, Duration::from_secs(3))) } else { Some(false) };
+    let strippable =
+        if strip { probe(ui, STRIP_PROBES_ID, &e.path, stamp, |p| privacy::can_strip(p, Duration::from_secs(3))) } else { Some(false) };
+    let facts = privacy::Facts {
+        scrub_installed: scrub,
+        has_audio: has_audio.unwrap_or(false),
+        strip_on: strip,
+        strippable: strippable.unwrap_or(false),
+    };
+    let list = privacy::entries(facts);
+    let waiting: Vec<(privacy::Entry, &str)> = [
+        (has_audio.is_none(), privacy::Entry::ScrubSounds, "Looking for sound in it..."),
+        (strippable.is_none(), privacy::Entry::RemoveHidden, "Looking at what kind of file it is..."),
+    ]
+    .into_iter()
+    .filter_map(|(w, en, why)| w.then_some((en, why)))
+    .collect();
+    if list.is_empty() && waiting.is_empty() {
         return;
     }
     ui.separator();
-    for entry in list {
-        if ui.button(entry.label()).on_hover_text(entry.hint()).clicked() {
-            actions.push(Action::Privacy(entry, e.path.clone()));
-            ui.close();
+    for entry in [privacy::Entry::ScrubSounds, privacy::Entry::RemoveHidden] {
+        if list.contains(&entry) {
+            if ui.button(entry.label()).on_hover_text(entry.hint()).clicked() {
+                actions.push(Action::Privacy(entry, e.path.clone()));
+                ui.close();
+            }
+        } else if let Some((_, why)) = waiting.iter().find(|(w, _)| *w == entry) {
+            ui.add_enabled(false, egui::Button::new(entry.label())).on_disabled_hover_text(*why);
         }
     }
 }
@@ -2106,6 +2141,8 @@ struct App {
     /// Right-click > Scrub location sounds, each running or showing how it ended.
     scrubs: Vec<ScrubJob>,
     scrub_next: u64,
+    /// Right-click > Remove hidden info, the same way.
+    strips: Vec<StripJob>,
     status: String,
     drives: Vec<places::Drive>,
     /// Recently closed tabs (pane, folder), newest last, for Ctrl+Shift+T.
@@ -2247,6 +2284,7 @@ impl App {
             transfer: None,
             scrubs: Vec::new(),
             scrub_next: 0,
+            strips: Vec::new(),
             status: String::new(),
             drives,
             closed_tabs: Vec::new(),
@@ -2529,6 +2567,137 @@ impl App {
             self.reload_all();
         }
         self.scrubs.retain(|j| !close.contains(&j.id));
+        if let Some(p) = show {
+            if let Some(dir) = p.parent().map(Path::to_path_buf) {
+                let (pi, hidden) = (self.focus, self.st.show_hidden);
+                let sort = self.panes[pi].sort;
+                let t = self.panes[pi].cur();
+                t.navigate(dir, sort, hidden);
+                t.selected.clear();
+                t.selected.insert(p);
+            }
+        }
+    }
+
+    /// Right-click > Remove hidden info: heimdall-strip writes "name (clean).ext" beside the file (a new name, never over one) on
+    /// a thread; its window shows what it removed.
+    fn start_strip(&mut self, ctx: &egui::Context, input: PathBuf) {
+        let out = privacy::clean_path(&input, &|p| p.symlink_metadata().is_ok());
+        let name = input.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let running = match privacy::Stripping::start(&input, &out) {
+            Ok(r) => r,
+            Err(e) => {
+                self.status = format!("Could not clean {name}: {e}");
+                return;
+            }
+        };
+        let pid = running.id();
+        let (tx, rx) = channel();
+        let c = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(running.finish());
+            c.request_repaint();
+        });
+        // one counter for both kinds of job: their windows' ids stay apart
+        self.scrub_next += 1;
+        self.status = format!("Removing hidden info from {name}...");
+        self.strips.push(StripJob { id: self.scrub_next, name, out, pid, rx, result: None, stopped: false });
+    }
+
+    /// The Remove hidden info windows: Stop while one runs, then what was removed (with Show), nothing found, or Failed.
+    fn poll_strips(&mut self, ctx: &egui::Context) {
+        let red = palette_for(self.st.dark, self.st.accent()).red;
+        let mut close = vec![];
+        let mut show: Option<PathBuf> = None;
+        let mut status: Option<String> = None;
+        let below = self.scrubs.len();
+        for (i, job) in self.strips.iter_mut().enumerate() {
+            if job.result.is_none() {
+                if let Ok(r) = job.rx.try_recv() {
+                    if r.is_err() || job.stopped {
+                        // a partial copy is not left behind (the name was free when it started, so it is ours)
+                        let _ = std::fs::remove_file(&job.out);
+                    }
+                    let r = if job.stopped { Err("Stopped".to_string()) } else { r };
+                    status = Some(match &r {
+                        Ok(privacy::Stripped { wrote: Some(p), .. }) => {
+                            format!("Clean copy saved: {}", p.file_name().unwrap_or_default().to_string_lossy())
+                        }
+                        Ok(_) => format!("Nothing hidden was found in {}", job.name),
+                        Err(e) => format!("Removing hidden info from {} failed: {e}", job.name),
+                    });
+                    job.result = Some(r);
+                }
+            }
+            let mut open = true;
+            egui::Window::new(format!("Remove hidden info: {}", job.name))
+                .id(egui::Id::new(("minos-strip", job.id)))
+                .collapsible(false)
+                .resizable(false)
+                .anchor(Align2::RIGHT_BOTTOM, vec2(-16.0, -16.0 - 120.0 * (below + i) as f32))
+                .default_width(380.0)
+                .show(ctx, |ui| {
+                    ui.set_min_width(360.0);
+                    match &job.result {
+                        None => {
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.label("Writing a clean copy; the original stays as it is");
+                            });
+                            if ui.button("Stop").clicked() && !job.stopped {
+                                job.stopped = true;
+                                // SAFETY: kill(2) on the child we started and have not waited for yet
+                                unsafe { libc::kill(job.pid as libc::pid_t, libc::SIGTERM) };
+                            }
+                        }
+                        Some(Ok(privacy::Stripped { wrote: Some(p), removed })) => {
+                            ui.label(RichText::new("Done").strong());
+                            ui.label(format!("Saved as {}", p.file_name().unwrap_or_default().to_string_lossy()));
+                            if !removed.is_empty() {
+                                ui.add_space(4.0);
+                                ui.label(RichText::new("Removed:").small());
+                                for r in removed.iter().take(40) {
+                                    ui.label(RichText::new(format!("• {r}")).small());
+                                }
+                            }
+                            ui.horizontal(|ui| {
+                                if ui.button("Show").clicked() {
+                                    show = Some(p.clone());
+                                    open = false;
+                                }
+                                if ui.button("Close").clicked() {
+                                    open = false;
+                                }
+                            });
+                        }
+                        Some(Ok(_)) => {
+                            ui.label(RichText::new("Nothing hidden was found").strong());
+                            ui.label(RichText::new("No copy was made: the file has nothing to remove").small());
+                            if ui.button("Close").clicked() {
+                                open = false;
+                            }
+                        }
+                        Some(Err(e)) => {
+                            ui.label(RichText::new(if job.stopped { "Stopped" } else { "Failed" }).strong().color(red));
+                            if !job.stopped {
+                                ui.label(e);
+                            }
+                            ui.label(RichText::new("No copy was kept; the original is untouched").small());
+                            if ui.button("Close").clicked() {
+                                open = false;
+                            }
+                        }
+                    }
+                });
+            if !open {
+                close.push(job.id);
+            }
+        }
+        if let Some(s) = status {
+            self.status = s;
+            self.reload_all();
+        }
+        self.strips.retain(|j| !close.contains(&j.id));
         if let Some(p) = show {
             if let Some(dir) = p.parent().map(Path::to_path_buf) {
                 let (pi, hidden) = (self.focus, self.st.show_hidden);
@@ -3152,6 +3321,7 @@ impl App {
                     }
                 }
                 Action::Privacy(privacy::Entry::ScrubSounds, p) => self.start_scrub(ctx, p),
+                Action::Privacy(privacy::Entry::RemoveHidden, p) => self.start_strip(ctx, p),
                 Action::RunInTerminal(p) => {
                     if let Err(e) = run::run_in_terminal(&p) {
                         self.status =
@@ -4482,6 +4652,7 @@ impl eframe::App for App {
 
         self.poll_transfer(&ctx);
         self.poll_scrubs(&ctx);
+        self.poll_strips(&ctx);
         self.pump_dnd(&ctx, _frame);
         if let Some(p) = egui::DragAndDrop::payload::<DragPaths>(&ctx) {
             if let Some(pos) = ctx.pointer_latest_pos() {

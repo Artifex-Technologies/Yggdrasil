@@ -1,8 +1,12 @@
 //! The shared look of Yggdrasil's own apps, so Minos, Settings and whatever comes next match:
 //! the palette and egui theme (`theme`) and the self-drawn title bar with traffic lights
-//! (`chrome`), and one window per app that its own command toggles (`single`).
+//! (`chrome`), and one window per app that its own command toggles (`single`). Also what every app that shows names or files
+//! shares for privacy: the look-alike check of names (`lookalike`, the same file as Heimdall's) and the privacy pack's switches
+//! (`privacy_prefs`).
 
 pub mod chrome;
+pub mod lookalike;
+pub mod privacy_prefs;
 pub mod single;
 pub mod sysicon;
 pub mod theme;

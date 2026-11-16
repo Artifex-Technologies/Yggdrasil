@@ -4191,6 +4191,7 @@ version = "0.1.0"
 dependencies = [
  "eframe",
  "resvg",
+ "serde_json",
  "yggdrasil-conf",
  "yggdrasil-wm",
 ]

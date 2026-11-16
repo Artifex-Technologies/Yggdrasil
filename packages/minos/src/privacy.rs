@@ -1,17 +1,24 @@
 //! Right-click > Privacy: things that take what a file gives away about you out of a copy of it, never out of the file itself.
 //!
-//! The one entry so far is **Scrub location sounds**, for a file with sound in it (an audio file, or a video with an audio
-//! track): Heimdall's `heimdall-scrub` writes a copy, "name (scrubbed).ext" beside the original, in which the sounds that can
-//! place or date a recording are gone (aircraft overhead, whose pitch glide can be matched to flight tracks; mains hum, which
-//! follows the power grid's frequency) and the file's hidden information (dates, places, the device) is stripped. The picture of
-//! a video is copied untouched. The entry shows only where heimdall-scrub is installed.
+//! **Scrub location sounds**, for a file with sound in it (an audio file, or a video with an audio track): Heimdall's
+//! `heimdall-scrub` writes a copy, "name (scrubbed).ext" beside the original, in which the sounds that can place or date a
+//! recording are gone (aircraft overhead, whose pitch glide can be matched to flight tracks; mains hum, which follows the power
+//! grid's frequency) and the file's hidden information (dates, places, the device) is stripped. The picture of a video is copied
+//! untouched. The entry shows only where heimdall-scrub is installed.
 //!
 //! Whether a file has sound is read from its content, not its name: the first bytes say what kind of file it is; a container
 //! that may or may not carry sound (MP4, Matroska, AVI...) is asked with `ffprobe` (a few seconds at most). Nothing is read
 //! until the menu is opened on the file.
 //!
-//! `Entry` is the list the menu draws; a further privacy entry (taking the hidden information out of any file) goes next to
-//! Scrub there, with its own condition in `entries` and its own runner.
+//! **Remove hidden info**, for any file Heimdall's `heimdall-strip` can clean (photos, videos, music, PDFs, Office and
+//! LibreOffice documents, ZIP files): a copy "name (clean).ext" beside the original without what is hidden in it (the place a
+//! photo was taken, the camera, the author, the company, who changed it last, the template's path, comments and dates). The
+//! window then lists what was removed. Whether a file can be cleaned is asked of `heimdall-strip --can`, which reads only its
+//! first bytes, when the menu first opens on it. The entry shows where heimdall-strip is installed and Settings > Security >
+//! Privacy > "Remove hidden info in Minos" is on (`remove_hidden_info` in the privacy pack's switches,
+//! yggdrasil_ui::privacy_prefs).
+//!
+//! `Entry` is the list the menu draws, each entry with its own condition in `entries` and its own runner.
 
 use std::ffi::{OsStr, OsString};
 use std::io::{BufRead, BufReader, Read};
@@ -22,18 +29,23 @@ use std::time::{Duration, Instant};
 
 /// Heimdall's file tool.
 pub const SCRUB_TOOL: &str = "heimdall-scrub";
+/// Heimdall's tool that takes the hidden information out of a copy.
+pub const STRIP_TOOL: &str = "heimdall-strip";
 
 /// An entry of the Privacy part of the menu.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Entry {
     /// A copy without the sounds that can place or date it.
     ScrubSounds,
+    /// A copy without the hidden information (place, device, author, dates).
+    RemoveHidden,
 }
 
 impl Entry {
     pub fn label(self) -> &'static str {
         match self {
             Entry::ScrubSounds => "Scrub location sounds",
+            Entry::RemoveHidden => "Remove hidden info",
         }
     }
 
@@ -42,15 +54,22 @@ impl Entry {
             Entry::ScrubSounds => {
                 "Save a copy beside it without the sounds that can place or date it (aircraft overhead, mains hum) and without its hidden information"
             }
+            Entry::RemoveHidden => {
+                "Save a copy beside it without its hidden information: where it was made, the device, the author, comments and dates"
+            }
         }
     }
 }
 
-/// What the menu knows about a file: the tools that are installed, and whether it has sound.
+/// What the menu knows about a file: the tools that are installed (and switched on), whether it has sound, and whether
+/// heimdall-strip can clean it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Facts {
     pub scrub_installed: bool,
     pub has_audio: bool,
+    /// heimdall-strip is installed and "Remove hidden info in Minos" is on.
+    pub strip_on: bool,
+    pub strippable: bool,
 }
 
 /// The Privacy entries for a file, in menu order.
@@ -58,6 +77,9 @@ pub fn entries(f: Facts) -> Vec<Entry> {
     let mut v = vec![];
     if f.scrub_installed && f.has_audio {
         v.push(Entry::ScrubSounds);
+    }
+    if f.strip_on && f.strippable {
+        v.push(Entry::RemoveHidden);
     }
     v
 }
@@ -199,6 +221,16 @@ pub fn on_path(program: &str) -> bool {
 /// The scrubbed copy's path: "name (scrubbed).ext" beside the original, or "name (scrubbed 2).ext", 3... when that is taken.
 /// `taken` says whether a path exists (the file system, or a test's list). The name's bytes are kept as they are.
 pub fn scrubbed_path(original: &Path, taken: &dyn Fn(&Path) -> bool) -> PathBuf {
+    copy_path(original, "scrubbed", taken)
+}
+
+/// The cleaned copy's path: "name (clean).ext" beside the original, or "name (clean 2).ext", 3... when that is taken.
+pub fn clean_path(original: &Path, taken: &dyn Fn(&Path) -> bool) -> PathBuf {
+    copy_path(original, "clean", taken)
+}
+
+/// "name (WORD).ext" beside the original, or "name (WORD 2).ext", 3... when that is taken.
+fn copy_path(original: &Path, word: &str, taken: &dyn Fn(&Path) -> bool) -> PathBuf {
     let dir = original.parent().unwrap_or(Path::new("."));
     let name = original.file_name().unwrap_or(OsStr::new("recording")).as_bytes();
     // the extension: after the last dot, unless the dot starts the name (".hidden") or ends it
@@ -208,7 +240,7 @@ pub fn scrubbed_path(original: &Path, taken: &dyn Fn(&Path) -> bool) -> PathBuf 
     };
     let make = |n: u32| {
         let mut v = stem.to_vec();
-        v.extend_from_slice(if n == 1 { b" (scrubbed)".to_vec() } else { format!(" (scrubbed {n})").into_bytes() }.as_slice());
+        v.extend_from_slice(if n == 1 { format!(" ({word})") } else { format!(" ({word} {n})") }.as_bytes());
         v.extend_from_slice(ext);
         dir.join(OsString::from_vec(v))
     };
@@ -236,12 +268,17 @@ pub fn parse_line(line: &str) -> Option<Line> {
 
 /// The words of a failure for the notice: heimdall-scrub's own message without its "heimdall-scrub: " prefix, else the exit.
 pub fn failure(stderr: &str, code: Option<i32>) -> String {
-    let msg =
-        stderr.lines().rev().map(str::trim).find(|l| !l.is_empty()).map(|l| l.strip_prefix("heimdall-scrub: ").unwrap_or(l).to_string());
+    failure_of(SCRUB_TOOL, stderr, code)
+}
+
+/// The words of a failure of `tool`: its last line without the "TOOL: " prefix, else the exit.
+pub fn failure_of(tool: &str, stderr: &str, code: Option<i32>) -> String {
+    let prefix = format!("{tool}: ");
+    let msg = stderr.lines().rev().map(str::trim).find(|l| !l.is_empty()).map(|l| l.strip_prefix(prefix.as_str()).unwrap_or(l).to_string());
     match (msg, code) {
         (Some(m), _) => m,
-        (None, Some(c)) => format!("heimdall-scrub stopped with exit code {c}"),
-        (None, None) => "heimdall-scrub was stopped".into(),
+        (None, Some(c)) => format!("{tool} stopped with exit code {c}"),
+        (None, None) => format!("{tool} was stopped"),
     }
 }
 
@@ -296,6 +333,107 @@ impl Running {
             (true, None) => Err("heimdall-scrub did not say it wrote the copy".into()),
             (false, _) => Err(failure(&stderr, status.code())),
         }
+    }
+}
+
+/// Whether heimdall-strip can clean `p` (`heimdall-strip --can IN` exits 0), `limit` at most; a missing tool or no answer
+/// in time is no.
+pub fn can_strip(p: &Path, limit: Duration) -> bool {
+    if !std::fs::metadata(p).is_ok_and(|m| m.is_file()) {
+        return false;
+    }
+    can_strip_with(Path::new(STRIP_TOOL), p, limit)
+}
+
+fn can_strip_with(tool: &Path, p: &Path, limit: Duration) -> bool {
+    let Ok(mut child) = Command::new(tool).arg("--can").arg(p).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn()
+    else {
+        return false;
+    };
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(st)) => return st.success(),
+            Ok(None) if start.elapsed() < limit => std::thread::sleep(Duration::from_millis(10)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
+}
+
+/// What heimdall-strip did: the copy it wrote (None: nothing hidden was found, so no copy was made) and what it removed.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Stripped {
+    pub wrote: Option<PathBuf>,
+    pub removed: Vec<String>,
+}
+
+/// Reads the JSON line of `heimdall-strip --json`: `{"wrote":"/path" or null,"removed":["GPS position (EXIF)", ...]}`
+/// (the last such line counts). Anything else is None.
+pub fn parse_strip(stdout: &str) -> Option<Stripped> {
+    stdout.lines().rev().map(str::trim).filter(|l| l.starts_with('{')).find_map(|l| {
+        let v: serde_json::Value = serde_json::from_str(l).ok()?;
+        let wrote = match v.get("wrote")? {
+            serde_json::Value::Null => None,
+            serde_json::Value::String(s) if !s.is_empty() => Some(PathBuf::from(s)),
+            _ => return None,
+        };
+        let removed = v.get("removed")?.as_array()?.iter().map(|x| x.as_str().map(String::from)).collect::<Option<Vec<_>>>()?;
+        Some(Stripped { wrote, removed })
+    })
+}
+
+/// A running heimdall-strip: the child, so it can be stopped.
+pub struct Stripping {
+    child: std::process::Child,
+}
+
+impl Stripping {
+    /// Starts `heimdall-strip --json IN OUT` (argv, never a shell line).
+    pub fn start(input: &Path, output: &Path) -> Result<Stripping, String> {
+        Self::start_with(Path::new(STRIP_TOOL), input, output)
+    }
+
+    fn start_with(tool: &Path, input: &Path, output: &Path) -> Result<Stripping, String> {
+        Command::new(tool)
+            .arg("--json")
+            .arg(input)
+            .arg(output)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map(|child| Stripping { child })
+            .map_err(|e| format!("could not start {STRIP_TOOL}: {e}"))
+    }
+
+    /// The process id, for Stop.
+    pub fn id(&self) -> u32 {
+        self.child.id()
+    }
+
+    /// Waits for it to end. Ok: what it wrote and removed.
+    pub fn finish(mut self) -> Result<Stripped, String> {
+        let err_reader = self.child.stderr.take().map(|e| {
+            std::thread::spawn(move || {
+                let mut s = String::new();
+                let _ = BufReader::new(e).take(64 * 1024).read_to_string(&mut s);
+                s
+            })
+        });
+        let mut out = String::new();
+        if let Some(o) = self.child.stdout.take() {
+            let _ = BufReader::new(o).take(1024 * 1024).read_to_string(&mut out);
+        }
+        let status = self.child.wait().map_err(|e| e.to_string())?;
+        let stderr = err_reader.and_then(|h| h.join().ok()).unwrap_or_default();
+        if !status.success() {
+            return Err(failure_of(STRIP_TOOL, &stderr, status.code()));
+        }
+        parse_strip(&out).ok_or_else(|| "heimdall-strip did not say what it did".into())
     }
 }
 
@@ -379,10 +517,83 @@ mod tests {
 
     #[test]
     fn the_entry_needs_the_tool_and_sound() {
-        assert_eq!(entries(Facts { scrub_installed: true, has_audio: true }), [Entry::ScrubSounds]);
-        assert!(entries(Facts { scrub_installed: false, has_audio: true }).is_empty(), "heimdall-scrub not installed");
-        assert!(entries(Facts { scrub_installed: true, has_audio: false }).is_empty());
+        let f = Facts::default();
+        assert_eq!(entries(Facts { scrub_installed: true, has_audio: true, ..f }), [Entry::ScrubSounds]);
+        assert!(entries(Facts { scrub_installed: false, has_audio: true, ..f }).is_empty(), "heimdall-scrub not installed");
+        assert!(entries(Facts { scrub_installed: true, has_audio: false, ..f }).is_empty());
         assert_eq!(Entry::ScrubSounds.label(), "Scrub location sounds");
+    }
+
+    #[test]
+    fn remove_hidden_info_needs_the_tool_switched_on_and_a_file_it_can_clean() {
+        let f = Facts::default();
+        assert_eq!(entries(Facts { strip_on: true, strippable: true, ..f }), [Entry::RemoveHidden]);
+        assert!(entries(Facts { strip_on: false, strippable: true, ..f }).is_empty(), "not installed, or switched off");
+        assert!(entries(Facts { strip_on: true, strippable: false, ..f }).is_empty());
+        let all = Facts { scrub_installed: true, has_audio: true, strip_on: true, strippable: true };
+        assert_eq!(entries(all), [Entry::ScrubSounds, Entry::RemoveHidden], "beside the scrub, after it");
+        assert_eq!(Entry::RemoveHidden.label(), "Remove hidden info");
+    }
+
+    #[test]
+    fn the_clean_copy_is_named_beside_the_original() {
+        let none = |_: &Path| false;
+        let p = |s: &str| PathBuf::from(s);
+        assert_eq!(clean_path(&p("/m/IMG_0042.jpg"), &none), p("/m/IMG_0042 (clean).jpg"));
+        assert_eq!(clean_path(&p("/m/report.final.docx"), &none), p("/m/report.final (clean).docx"));
+        let taken = |q: &Path| q == Path::new("/m/a (clean).pdf");
+        assert_eq!(clean_path(&p("/m/a.pdf"), &taken), p("/m/a (clean 2).pdf"));
+    }
+
+    #[test]
+    fn the_strip_answer_is_read() {
+        assert_eq!(
+            parse_strip("{\"wrote\":\"/m/a (clean).jpg\",\"removed\":[\"GPS position (EXIF)\",\"Camera (EXIF)\"]}\n"),
+            Some(Stripped {
+                wrote: Some(PathBuf::from("/m/a (clean).jpg")),
+                removed: vec!["GPS position (EXIF)".into(), "Camera (EXIF)".into()]
+            })
+        );
+        assert_eq!(parse_strip("{\"wrote\":null,\"removed\":[]}"), Some(Stripped::default()), "nothing hidden");
+        assert_eq!(parse_strip("note\n{\"wrote\":null,\"removed\":[]}\n"), Some(Stripped::default()), "other lines are skipped");
+        assert_eq!(parse_strip("{\"wrote\":3,\"removed\":[]}"), None);
+        assert_eq!(parse_strip("{\"wrote\":null,\"removed\":[1]}"), None);
+        assert_eq!(parse_strip("{\"wrote\":null}"), None);
+        assert_eq!(parse_strip(""), None);
+        assert_eq!(failure_of(STRIP_TOOL, "heimdall-strip: not a file it knows\n", Some(1)), "not a file it knows");
+        assert_eq!(failure_of(STRIP_TOOL, "", Some(2)), "heimdall-strip stopped with exit code 2");
+    }
+
+    /// The strip runner and the --can question against a stand-in heimdall-strip (a shell script, run by its full path).
+    #[test]
+    fn the_strip_runner_reads_the_tool() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = std::env::temp_dir().join(format!("minos-strip-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        let tool = d.join("heimdall-strip");
+        std::fs::write(
+            &tool,
+            "#!/bin/sh\nif [ \"$1\" = --can ]; then case \"$2\" in *.jpg) echo jpeg; exit 0;; *) exit 1;; esac; fi\n\
+             [ \"$1\" = --json ] || exit 2\n\
+             case \"$2\" in *bad*) echo 'heimdall-strip: the file is damaged' >&2; exit 1;; *plain*) echo '{\"wrote\":null,\"removed\":[]}'; exit 0;; esac\n\
+             : > \"$3\"; printf '{\"wrote\":\"%s\",\"removed\":[\"GPS position (EXIF)\"]}\\n' \"$3\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let photo = d.join("a.jpg");
+        std::fs::write(&photo, b"x").unwrap();
+        assert!(can_strip_with(&tool, &photo, Duration::from_secs(5)));
+        assert!(!can_strip_with(&tool, &d.join("a.txt"), Duration::from_secs(5)));
+        assert!(!can_strip_with(&d.join("missing-tool"), &photo, Duration::from_secs(5)), "no tool: no");
+        let out = d.join("a (clean).jpg");
+        let r = Stripping::start_with(&tool, &photo, &out).unwrap().finish();
+        assert_eq!(r, Ok(Stripped { wrote: Some(out.clone()), removed: vec!["GPS position (EXIF)".into()] }));
+        assert!(out.exists());
+        let r = Stripping::start_with(&tool, &d.join("plain.jpg"), &d.join("plain (clean).jpg")).unwrap().finish();
+        assert_eq!(r, Ok(Stripped::default()));
+        let r = Stripping::start_with(&tool, &d.join("bad.jpg"), &d.join("bad (clean).jpg")).unwrap().finish();
+        assert_eq!(r, Err("the file is damaged".to_string()));
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     /// The runner against a stand-in heimdall-scrub (a shell script on PATH): progress, the path, a failure's message.

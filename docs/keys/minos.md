@@ -24,3 +24,14 @@ bytes, and for a video ffprobe (3 seconds at most), only once the menu is opened
 entry is there only when heimdall-scrub is installed, for one file at a time, and not inside an archive or for a cloud file not
 downloaded yet. Code: `src/privacy.rs` (the menu's Privacy entries; the place for more of them) and `start_scrub` / `poll_scrubs`
 in `src/main.rs`.
+
+**Right-click > Remove hidden info** (2026-11-15; on one file Heimdall's `heimdall-strip` can clean: photos, videos, music, PDFs,
+Office and LibreOffice documents, ZIP files): it writes a copy beside it, "name (clean).ext" ("name (clean 2).ext" when that is
+taken; never over a file, the original never changed), without what is hidden in it: the place a photo or video was taken (GPS),
+the camera or phone, the author, the company, who changed it last, the template's path, comments and dates. The window lists what
+was removed, with Show; when nothing was hidden it says so and no copy is made; a stopped or failed one leaves no copy. Whether
+a file can be cleaned is asked of `heimdall-strip --can FILE` (it reads the first bytes) once the menu is opened on it; while that
+runs the entry is greyed. The entry is there when heimdall-strip is installed and Settings > Security > Privacy > "Remove hidden
+info in Minos" is on (the default; `remove_hidden_info` in `~/.config/heimdall/privacy.json`). Minos runs `heimdall-strip --json
+IN OUT` (argv, never a shell) and reads its one JSON line. Code: `src/privacy.rs` and `start_strip` / `poll_strips` in
+`src/main.rs`.
