@@ -33,8 +33,10 @@ mod peripherals;
 mod printers;
 mod privmic;
 mod privpack;
+mod quit;
 mod razer;
 mod readout;
+mod refresh;
 mod restore;
 mod security;
 mod single;
@@ -247,6 +249,7 @@ fn parent(page: Page) -> Option<Page> {
     }
 }
 
+#[derive(Debug)]
 enum Msg {
     /// Another `yggdrasil-settings PAGE` was started: turn to that page and come to the front (single.rs)
     Open(String),
@@ -498,8 +501,11 @@ struct App {
     /// The shape and colouring chosen for the Liki pack (indexes into BRAND_SHAPES and BRAND_STYLES).
     brand_shape: usize,
     brand_style: usize,
-    /// When the open page was last read, so it can be read again now and then and follow changes made elsewhere.
-    refreshed: std::time::Instant,
+    /// The open page read again now and then on a thread of its own, waking the window only for a change (refresh.rs; none
+    /// in the tests)
+    refresher: Option<refresh::Refresher>,
+    /// A file in the settings folder was written (refresh::watch_config): the text size and the look are read again
+    config_changed: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Displays > Night Light: its settings, whether it is on now, and the thread that runs hyprsunset (read when first shown).
     night: Option<(nightlight::Settings, bool, Sender<nightlight::Cmd>)>,
     /// Settings > Displays: the display selected, a drag in the arrangement box, "Keep these display settings?".
@@ -511,6 +517,9 @@ struct App {
 impl App {
     fn new(ctx: &egui::Context) -> Self {
         let mut app = App::bare();
+        app.refresher = Some(refresh::Refresher::start(app.tx.clone(), ctx.clone()));
+        refresh::apply_accessibility(ctx);
+        refresh::watch_config(ctx.clone(), app.config_changed.clone());
         app.load(app.page, ctx);
         // the pages later `yggdrasil-settings PAGE` hand to this one (single.rs)
         let (tx, ctx2) = (app.tx.clone(), ctx.clone());
@@ -668,7 +677,8 @@ impl App {
             owners: Default::default(),
             brand_shape: 0,
             brand_style: 0,
-            refreshed: std::time::Instant::now(),
+            refresher: None,
+            config_changed: Default::default(),
             night: None,
             displays_ui: Default::default(),
             last_path: Vec::new(),
@@ -688,57 +698,22 @@ impl App {
         if page == Page::Apps {
             self.lookalike_warn = privpack::pref(yggdrasil_ui::privacy_prefs::LOOKALIKE_WARNINGS);
         }
-        self.refreshed = std::time::Instant::now();
         self.loading = Some(page);
         let tx = self.tx.clone();
         let ctx = ctx.clone();
+        let shown = self.refresher.clone();
         std::thread::spawn(move || {
-            let msg = match page {
-                Page::About => Msg::About(sys::about()),
-                Page::Network => Msg::Network(sys::network()),
-                Page::Bluetooth => Msg::Bluetooth(sys::bluetooth()),
-                Page::Displays => {
-                    let _ = tx.send(Msg::Tablet(laptop_ui::tablet()));
-                    Msg::Displays(sys::displays())
-                }
-                Page::Sound => Msg::Sound(sys::sound()),
-                Page::Appearance => Msg::Appearance(sys::appearance()),
-                Page::Power => Msg::Power(Box::new(sys::power())),
-                Page::Firewall => Msg::Firewall(sys::firewall_on()),
-                Page::Users => {
-                    let _ = tx.send(Msg::Fingerprint(laptop_ui::fingerprint()));
-                    let me = users::account();
-                    let (all, groups) = users::all();
-                    Msg::Account(me, users::keyring_state(), all, groups)
-                }
-                Page::Security => {
-                    let _ = tx.send(Msg::PrivateMic(privmic::load()));
-                    let _ = tx.send(Msg::PrivacyPack(privpack::load()));
-                    Msg::Security(security::overview())
-                }
-                Page::Restore => Msg::Restore(restore::load()),
-                Page::DateTime => Msg::Time(sys::time()),
-                Page::Storage => Msg::Storage(general::storage()),
-                Page::Battery => Msg::Battery(battery::load()),
-                Page::Vpn => Msg::Vpn(vpn::load()),
-                Page::Accessibility => Msg::Access(accessibility::load()),
-                Page::Peripherals => {
-                    let _ = tx.send(Msg::PrivateMic(privmic::load()));
-                    Msg::Media(media::load())
-                }
-                Page::Language => Msg::Language(general::language()),
-                Page::Apps => {
-                    let _ = tx.send(Msg::Installed(load_installed(&tx)));
-                    Msg::Apps(sys::apps())
-                }
-                Page::DefaultApps => Msg::Defaults(defaults::load()),
-                Page::Assistant => Msg::Assistant(controls::load(
-                    yggdrasil_conf::integrations::first("assistant").map(|i| i.controls()).unwrap_or_default(),
-                )),
-                Page::Printers => Msg::Printers(printers::load()),
-                Page::Developer | Page::Games | Page::General => return,
-            };
-            let _ = tx.send(msg);
+            let msgs = read_page(page, &tx);
+            if msgs.is_empty() {
+                return;
+            }
+            // what the page shows now: reading it again wakes the window only when that changes
+            if let Some(r) = &shown {
+                r.seen(&page_key(page), &msgs);
+            }
+            for m in msgs {
+                let _ = tx.send(m);
+            }
             ctx.request_repaint();
         });
     }
@@ -948,8 +923,10 @@ fn page_from(arg: &str) -> Page {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        theme::apply_accessibility(ui.ctx());
         let ctx = ui.ctx().clone();
+        if self.config_changed.swap(false, std::sync::atomic::Ordering::AcqRel) {
+            refresh::apply_accessibility(&ctx);
+        }
         self.receive(&ctx);
         if self.page == Page::Peripherals {
             self.peri.poll(&ctx);
@@ -957,7 +934,8 @@ impl eframe::App for App {
         // Read the open page again every few seconds, so a change made somewhere else (Fylgja's dark mode, the
         // panel, a command) shows up without closing Settings. Not while something is being dragged or typed, not
         // for pages that are slow to read (Wi-Fi scans, Bluetooth discovery, the package list), and not when
-        // the window is in the background.
+        // the window is in the background. Read on a thread of its own (refresh.rs), which wakes the window only when what it
+        // read differs from what the page shows.
         let refreshable = matches!(
             self.page,
             Page::About | Page::Displays | Page::Sound | Page::Appearance | Page::Firewall | Page::DateTime | Page::Security
@@ -998,49 +976,30 @@ impl eframe::App for App {
         if !(self.page == Page::Security && self.sec_sub == SecSub::Limbo) {
             self.limbo_panel = None;
         }
-        if refreshable {
-            let idle = self.loading.is_none()
-                && !ctx.input(|i| i.pointer.any_down())
-                && ctx.memory(|m| m.focused().is_none())
-                && ctx.input(|i| i.viewport().focused != Some(false));
-            if idle && self.refreshed.elapsed() >= std::time::Duration::from_secs(4) {
-                let page = self.page;
-                self.load(page, &ctx);
-            }
-            ctx.request_repaint_after(std::time::Duration::from_secs(4));
-        } else if self.page == Page::Battery {
+        let pointer_down = ctx.input(|i| i.pointer.any_down());
+        let typing = ctx.memory(|m| m.focused().is_some());
+        let background = ctx.input(|i| i.viewport().focused == Some(false));
+        let page = self.page;
+        let every = |secs| Duration::from_secs(secs);
+        let read_page: refresh::Read = std::sync::Arc::new(move |tx| read_page(page, tx));
+        let (want, paused) = if refreshable {
+            (Some((page_key(page), every(4), read_page)), pointer_down || typing || background)
+        } else if page == Page::Battery {
             // the charge, the history and the apps' share: again every 30 seconds while the page is open, never otherwise
-            let idle = self.loading.is_none() && ctx.input(|i| i.viewport().focused != Some(false));
-            if idle && self.refreshed.elapsed() >= std::time::Duration::from_secs(30) {
-                self.load(Page::Battery, &ctx);
-            }
-            ctx.request_repaint_after(std::time::Duration::from_secs(30));
-        } else if self.page == Page::Bluetooth
-            && self.data.bluetooth.as_ref().is_some_and(|b| !b.pads.is_empty() || !b.paired_pads.is_empty())
-        {
+            (Some((page_key(page), every(30), read_page)), background)
+        } else if page == Page::Bluetooth && self.data.bluetooth.as_ref().is_some_and(|b| !b.pads.is_empty() || !b.paired_pads.is_empty()) {
             // controllers listed: their battery (and whether they are connected) stays current
-            let idle = self.loading.is_none() && !ctx.input(|i| i.pointer.any_down()) && ctx.input(|i| i.viewport().focused != Some(false));
-            if idle && self.refreshed.elapsed() >= std::time::Duration::from_secs(5) {
-                let page = self.page;
-                self.load(page, &ctx);
-            }
-            ctx.request_repaint_after(std::time::Duration::from_secs(5));
-        } else if self.page == Page::Apps && self.app_tab == 0 && self.app_confirm.is_none() {
+            (Some((page_key(page), every(5), read_page)), pointer_down || background)
+        } else if page == Page::Apps && self.app_tab == 0 && self.app_confirm.is_none() {
             // the app list: running or not, new launches, and changes made from the command line
-            let idle = self.loading.is_none()
-                && !ctx.input(|i| i.pointer.any_down())
-                && ctx.memory(|m| m.focused().is_none())
-                && ctx.input(|i| i.viewport().focused != Some(false));
-            if idle && self.refreshed.elapsed() >= std::time::Duration::from_secs(4) {
-                self.refreshed = std::time::Instant::now();
-                let (tx, c) = (self.tx.clone(), ctx.clone());
-                std::thread::spawn(move || {
-                    let theme = sys::current_icon_theme();
-                    let _ = tx.send(Msg::Installed(appmgr::list_apps(&theme)));
-                    c.request_repaint();
-                });
-            }
-            ctx.request_repaint_after(std::time::Duration::from_secs(4));
+            let list: refresh::Read = std::sync::Arc::new(|_| vec![Msg::Installed(appmgr::list_apps(&sys::current_icon_theme()))]);
+            (Some(("app-list".to_string(), every(4), list)), pointer_down || typing || background)
+        } else {
+            (None, false)
+        };
+        if let Some(r) = &self.refresher {
+            r.pause(paused || self.loading.is_some());
+            r.want(want);
         }
         chrome::resize_edges(&ctx);
         let accent = theme::system_accent();
@@ -1200,9 +1159,71 @@ impl eframe::App for App {
         // on top of any page: a display change waits for its answer wherever one goes meanwhile
         displays_ui::prompt(&ctx, &pal, &mut self.displays_ui);
         chrome::outline(&ctx, &pal);
-        // Keep live values (volume, connections) fresh while the window is open.
-        ctx.request_repaint_after(Duration::from_secs(5));
     }
+
+    /// The window closed (its button, Super+Q, or SIGTERM: quit.rs): the next Settings starts as the open one.
+    fn on_exit(&mut self) {
+        single::stop();
+    }
+}
+
+/// The key a page's looks go by (refresh.rs).
+fn page_key(page: Page) -> String {
+    format!("{page:?}")
+}
+
+/// What a page shows, read (on a thread of its own: some pages take a while): its messages, a part of the page first where it
+/// has one (Displays' tablet mode, Users' fingerprint reader, the private microphone). The installed apps' sizes come later on
+/// `tx` from a thread of their own.
+fn read_page(page: Page, tx: &Sender<Msg>) -> Vec<Msg> {
+    let mut ahead = vec![];
+    let msg = match page {
+        Page::About => Msg::About(sys::about()),
+        Page::Network => Msg::Network(sys::network()),
+        Page::Bluetooth => Msg::Bluetooth(sys::bluetooth()),
+        Page::Displays => {
+            ahead.push(Msg::Tablet(laptop_ui::tablet()));
+            Msg::Displays(sys::displays())
+        }
+        Page::Sound => Msg::Sound(sys::sound()),
+        Page::Appearance => Msg::Appearance(sys::appearance()),
+        Page::Power => Msg::Power(Box::new(sys::power())),
+        Page::Firewall => Msg::Firewall(sys::firewall_on()),
+        Page::Users => {
+            ahead.push(Msg::Fingerprint(laptop_ui::fingerprint()));
+            let me = users::account();
+            let (all, groups) = users::all();
+            Msg::Account(me, users::keyring_state(), all, groups)
+        }
+        Page::Security => {
+            ahead.push(Msg::PrivateMic(privmic::load()));
+            ahead.push(Msg::PrivacyPack(privpack::load()));
+            Msg::Security(security::overview())
+        }
+        Page::Restore => Msg::Restore(restore::load()),
+        Page::DateTime => Msg::Time(sys::time()),
+        Page::Storage => Msg::Storage(general::storage()),
+        Page::Battery => Msg::Battery(battery::load()),
+        Page::Vpn => Msg::Vpn(vpn::load()),
+        Page::Accessibility => Msg::Access(accessibility::load()),
+        Page::Peripherals => {
+            ahead.push(Msg::PrivateMic(privmic::load()));
+            Msg::Media(media::load())
+        }
+        Page::Language => Msg::Language(general::language()),
+        Page::Apps => {
+            ahead.push(Msg::Installed(load_installed(tx)));
+            Msg::Apps(sys::apps())
+        }
+        Page::DefaultApps => Msg::Defaults(defaults::load()),
+        Page::Assistant => {
+            Msg::Assistant(controls::load(yggdrasil_conf::integrations::first("assistant").map(|i| i.controls()).unwrap_or_default()))
+        }
+        Page::Printers => Msg::Printers(printers::load()),
+        Page::Developer | Page::Games | Page::General => return vec![],
+    };
+    ahead.push(msg);
+    ahead
 }
 
 /// The installed apps, and (in the background) how much space each takes.
@@ -4890,9 +4911,11 @@ fn first_scan(l: &devices::List) -> i64 {
 }
 
 fn main() -> eframe::Result {
+    // first, before any thread: SIGTERM, SIGINT and SIGHUP close the window (quit.rs)
+    let signals = quit::install().map_err(|e| eprintln!("yggdrasil-settings: the end signals: {e}")).ok();
     // Power > Graphics card's pop-out: the same panel in a window (and process) of its own
     if let Some(kind) = readout::Kind::from_args() {
-        return readout::window_main(kind);
+        return readout::window_main(kind, signals);
     }
     // one Settings at a time: an open one takes this page and comes to the front
     if single::hand_over(&std::env::args().nth(1).unwrap_or_default()) {
@@ -4913,6 +4936,9 @@ fn main() -> eframe::Result {
         options,
         Box::new(|cc| {
             egui_extras::install_image_loaders(&cc.egui_ctx);
+            if let Some(s) = signals {
+                quit::close_on_signals(&cc.egui_ctx, s, single::stop);
+            }
             Ok(Box::new(App::new(&cc.egui_ctx)))
         }),
     )

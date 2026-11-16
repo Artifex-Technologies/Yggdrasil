@@ -43,6 +43,13 @@ pub fn listen(on_request: impl Fn(String) + Send + 'static) {
     });
 }
 
+/// This Settings ends: its socket goes, so the next one starts as the open one at once.
+pub fn stop() {
+    if let Some(path) = socket_path() {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

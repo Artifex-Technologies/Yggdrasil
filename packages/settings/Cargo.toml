@@ -36,6 +36,9 @@ yggdrasil-netjoin = { path = "../netjoin" }
 zbus = "5"
 serde_json = "1.0.151"
 serde = { version = "1", features = ["derive"] }
+# SIGTERM, SIGINT and SIGHUP close the window (quit.rs); the settings folder watched for changes made elsewhere (refresh.rs).
+# Already in the tree (eframe, zbus)
+libc = "0.2"
 # Date & time's map and short list of time zones (shared with the installer)
 yggdrasil-tzpicker = { path = "../tzpicker" }
 

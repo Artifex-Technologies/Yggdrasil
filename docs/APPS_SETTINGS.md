@@ -278,6 +278,24 @@ About only when switched on, have no picture.
 
 ## How it works
 
+- **Nothing drawn while nothing changes** (2026-11-15, `src/refresh.rs`): egui draws a whole new picture each time the window
+  wakes, and on a compositor that draws with the GPU each picture is a buffer to compose. Settings used to wake every 5 seconds
+  on every page, every second for the text size (the shared look's check of panel.conf) and every 4 seconds on the pages that
+  follow changes made elsewhere, only to look. Now those pages (About, Displays, Sound, Appearance, Firewall, Date & Time,
+  Security, VPN, Power; Battery every 30 s, Bluetooth's controllers every 5 s, the app list every 4 s) are read again on a
+  thread of their own, and the window wakes only when what was read differs from what the page shows; the reads stop while
+  something is dragged or typed and while the window is in the background. The settings folder is watched with inotify (the
+  text size, reduced motion, the style and the accent wake it when written). Live readouts (the graphics card's and the
+  processor's graphs, the fans, the camera and the microphone) still draw while they are on screen, and only then. Measured
+  in the compositor's test machine (`packages/compositor/tests/drm-vm.sh`, OpenGL ES on virgl, 60 s idle with the panel and
+  Settings on General): the compositor 185 ms of CPU = 0.31 % of a core before, 4.7 ms = 0.008 % after (the panel alone:
+  0.012 %); Settings itself 0.6 ms in 30 s. On Displays: 0.71 % before, 0.020 % after. Headless (Mesa in software, 30 s on
+  General): 10 new pictures and 0.93 % of a core in Settings before, none and 0.001 % after.
+- **SIGTERM, SIGINT and SIGHUP** (2026-11-15, `src/quit.rs`) close the window as its close button does, and the
+  single-instance socket goes with it (a forced end after 3 s if the window cannot draw any more). Before, Settings started by
+  my compositor on the hardware inherited these signals blocked and never ended on them, so a shutdown waited for it ("A
+  stop job is running"); the compositor no longer passes them on blocked either. Tests: `quit.rs` (each signal, with the
+  mask blocked by the parent and not), `tests/apps.rs` in the compositor (the real Settings ends with 0 on SIGTERM).
 - **labyrinth-launch ID** starts an app inside its own systemd scope and slice (`lapp_<id>.slice`; no dash in the name, so it
   sits directly under the user manager). The panel (dock, start menu) and Settings use it. It counts launches
   (~/.local/share/labyrinth/app-usage.json) and applies the app's sandbox settings

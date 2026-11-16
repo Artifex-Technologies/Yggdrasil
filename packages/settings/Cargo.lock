@@ -4551,6 +4551,7 @@ dependencies = [
  "egui_extras",
  "image",
  "jiff",
+ "libc",
  "serde",
  "serde_json",
  "yggdrasil-appusage",

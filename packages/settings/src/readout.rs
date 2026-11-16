@@ -181,7 +181,7 @@ impl eframe::App for Window {
 }
 
 /// The pop-out's own `main`. Only one of each kind at a time: a second start brings the first to the front and ends.
-pub fn window_main(kind: Kind) -> eframe::Result {
+pub fn window_main(kind: Kind, signals: Option<std::fs::File>) -> eframe::Result {
     let dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into());
     let lock = std::fs::File::create(format!("{dir}/{}-window.lock", kind.app_id())).ok();
     if lock.as_ref().is_some_and(|f| f.try_lock().is_err()) {
@@ -203,6 +203,9 @@ pub fn window_main(kind: Kind) -> eframe::Result {
         kind.title(),
         options,
         Box::new(move |cc| {
+            if let Some(s) = signals {
+                crate::quit::close_on_signals(&cc.egui_ctx, s, || {});
+            }
             let body = match kind {
                 Kind::Gpu => Body::Gpu(gpu::Panel::new(&cc.egui_ctx)),
                 Kind::Cpu => Body::Cpu(cpu::Panel::new(&cc.egui_ctx)),
