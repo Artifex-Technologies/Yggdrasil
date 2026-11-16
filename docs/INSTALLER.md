@@ -114,9 +114,13 @@ that reserve or allow addresses)**: ticked, the new profile gets `cloned-mac-add
 `assigned-mac-address`) and the form shows the adapter's permanent address (`PermHwAddress`). Nothing else changes the OS's
 default. Labyrinth's medium has such a setting (its security monitor, Heimdall, ships `wifi.cloned-mac-address=stable`), and
 Heimdall's Wi-Fi guard also switches a profile with the real address back to a private one for the next connection on a network
-it does not trust: the real address holds for the connection made here; for it to stay on the installed system, the network
-is trusted in Heimdall there (`sudo heimdall-wifi-guard trust` while connected). The demo's addresses are made up
-(`02:00:00:00:00:01`).
+it does not treat as home: the real address holds for the connection made here; for it to stay on the installed system, the
+network is made a home network with the real address in Heimdall there (`sudo heimdall-wifi-guard trust --home --real-address`
+while connected). Since Heimdall's trust levels (2026-11-15), plain `sudo heimdall-wifi-guard trust` only makes a network
+**trusted**: no "untrusted" notices, every protection kept, a private address. `trust --home` is a home network (the device list
+and discovery on), and `heimdall-wifi-guard discoverable on|off` lets others on one network find this computer whatever its
+level (the switch on the network's page in Settings > Wi-Fi & Network). Heimdall's docs/WIFI_TRUST.md. The demo's addresses are
+made up (`02:00:00:00:00:01`).
 
 **A network that turns up later.** After the Network step every page up to the summary watches the adapters (the adapter list
 only, every 4 seconds, no scan). A cable plugged in and connected needs nothing: the offline notes go and the summary's
