@@ -238,11 +238,8 @@ impl Player {
         start: Option<f64>,
     ) -> Result<Player, String> {
         // YGGDRASIL_PLAYER_DEBUG=1: VLC says what it does (on standard error)
-        let talk = if std::env::var_os("YGGDRASIL_PLAYER_DEBUG").is_some() { "--verbose=2" } else { "--quiet" };
-        let args: Vec<CString> = ["--no-video-title-show", "--no-osd", "--no-snapshot-preview", talk, "--no-stats"]
-            .iter()
-            .map(|a| CString::new(*a).unwrap())
-            .collect();
+        let args: Vec<CString> =
+            vlc_args(std::env::var_os("YGGDRASIL_PLAYER_DEBUG").is_some()).iter().map(|a| CString::new(*a).unwrap()).collect();
         let argv: Vec<*const c_char> = args.iter().map(|a| a.as_ptr()).collect();
         let caudio = match audio {
             Some(a) => Some(CString::new(a).map_err(|_| "the address has a zero byte".to_string())?),
@@ -379,9 +376,40 @@ impl Drop for Player {
     }
 }
 
+/// libVLC's options. Off the network by default: VLC never looks up a file's tags or its cover art online
+/// (`--no-metadata-network-access`; `--album-art=0`, art only when asked for, which this player never does), so playing a
+/// file tells nobody what is being played. A stream still plays from its own address.
+fn vlc_args(debug: bool) -> [&'static str; 7] {
+    let talk = if debug { "--verbose=2" } else { "--quiet" };
+    ["--no-video-title-show", "--no-osd", "--no-snapshot-preview", talk, "--no-stats", "--no-metadata-network-access", "--album-art=0"]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// libvlc_new refuses an option it does not know (NULL): these are VLC 3's.
+    #[test]
+    fn libvlc_takes_the_options() {
+        let args: Vec<CString> = vlc_args(false).iter().map(|a| CString::new(*a).unwrap()).collect();
+        let argv: Vec<*const c_char> = args.iter().map(|a| a.as_ptr()).collect();
+        // SAFETY: the arguments live until the call returns; the instance is released at once
+        unsafe {
+            let inst = libvlc_new(argv.len() as c_int, argv.as_ptr());
+            assert!(!inst.is_null(), "libvlc refused an option");
+            libvlc_release(inst);
+        }
+    }
+
+    #[test]
+    fn vlc_looks_nothing_up_online() {
+        for debug in [false, true] {
+            let a = vlc_args(debug);
+            assert!(a.contains(&"--no-metadata-network-access"));
+            assert!(a.contains(&"--album-art=0"), "cover art only when asked for (never)");
+            assert!(!a.iter().any(|x| x.contains("metadata-network-access") && !x.starts_with("--no-")), "nothing turns it back on");
+        }
+    }
 
     #[test]
     fn big_pictures_are_scaled_to_3840_wide_keeping_the_shape() {
