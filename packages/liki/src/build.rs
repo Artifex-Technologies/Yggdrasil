@@ -90,6 +90,10 @@ const NATIVE: &[(&str, &[(&str, &str)])] = &[
         &[("apps", "yggdrasil-calculator"), ("apps", "accessories-calculator"), ("apps", "org.kde.kcalc"), ("apps", "calculator")],
     ),
     ("timer", &[("apps", "yggdrasil-timer")]),
+    (
+        "taskmanager",
+        &[("apps", "yggdrasil-taskmanager"), ("apps", "utilities-system-monitor"), ("apps", "org.kde.plasma-systemmonitor")],
+    ),
     ("health", &[("apps", "yggdrasil-health")]),
     ("browser-warm", &[("apps", "yggdrasil-browser-warm")]),
     ("clipboard", &[("apps", "yggdrasil-clipboard")]),

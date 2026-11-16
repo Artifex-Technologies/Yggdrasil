@@ -31,4 +31,6 @@ check() {
 package() {
   install -Dm755 "$srcdir/target/release/yggdrasil-taskmanager" "$pkgdir/usr/bin/yggdrasil-taskmanager"
   install -Dm644 "$_src/yggdrasil-taskmanager.desktop" "$pkgdir/usr/share/applications/yggdrasil-taskmanager.desktop"
+  # the icon for icon themes that are not Liki (Liki draws the same glyph from packages/liki)
+  install -Dm644 "$_src/yggdrasil-taskmanager.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/yggdrasil-taskmanager.svg"
 }
