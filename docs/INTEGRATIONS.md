@@ -159,6 +159,8 @@ settings = %h/.config/labyrinth/apps               # ID.json per app, read by th
                                                    #   "folders", "see_others"}; written by Settings > Apps
 usage = %h/.local/share/labyrinth/app-usage.json   # {ID: {"launches", "last", "seconds"}}: "sort by usage"
 network = /usr/bin/labyrinth-appnet                # run with pkexec: `set ID allow|block|ethernet|wifi|ask`
+                                                   #   optional: `viewers status --json` (no pkexec) prints {"on": bool, "apps": [ids]},
+                                                   #   `viewers on|off` (pkexec): viewer apps start on "ask" (Security > Privacy)
 network_rules = /etc/labyrinth/app-network.json    # {"rules": {UID: {ID: mode}}}, readable by the user
 network_ask = /run/labyrinth/appnet-ask.sock       # {"op":"list"} and {"op":"forget","app","ip"}, one JSON line each way
 ```

@@ -197,7 +197,15 @@ impl App {
                 left.add_space(8.0);
                 left.vertical(|ui| {
                     ui.add_space(2.0);
-                    ui.add(egui::Label::new(RichText::new(&a.name).size(14.0)).truncate());
+                    if self.lookalike_warn && yggdrasil_ui::lookalike::check(&a.name).suspicious() {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Look-alike name").size(11.0).strong().color(pal.amber))
+                                .on_hover_text("Its name imitates another one: open it to see the program it really is");
+                            ui.add(egui::Label::new(RichText::new(yggdrasil_ui::lookalike::visible(&a.name)).size(14.0)).truncate());
+                        });
+                    } else {
+                        ui.add(egui::Label::new(RichText::new(&a.name).size(14.0)).truncate());
+                    }
                     let size = self.app_sizes.get(&a.id).map(|b| human(*b)).unwrap_or_default();
                     let mut bits: Vec<String> = vec![];
                     if !a.running.is_empty() {
@@ -273,12 +281,20 @@ impl App {
         ui.horizontal(|ui| {
             app_icon(ui, pal, &a, 40.0);
             ui.vertical(|ui| {
-                ui.label(RichText::new(&a.name).size(20.0).strong());
+                ui.label(RichText::new(yggdrasil_ui::lookalike::visible(&a.name)).size(20.0).strong());
                 if !a.comment.is_empty() {
                     ui.add(egui::Label::new(RichText::new(&a.comment).size(12.0).color(pal.dim)).truncate());
                 }
             });
         });
+        // a name that imitates another (letters of another alphabet, hidden characters): what it really is
+        if let Some((why, what)) = crate::privpack::name_warning(&a.name, &a.exec, self.lookalike_warn) {
+            ui::group(ui, pal, None, |ui| {
+                ui.label(RichText::new("Look-alike name").strong().color(pal.amber));
+                ui.label(format!("This name may be imitating another app. {why}"));
+                ui.label(RichText::new(format!("{what} Its id: {}.", a.id)).size(12.0).color(pal.dim));
+            });
+        }
 
         let mut net: Option<NetMode> = None;
         let mut startup: Option<bool> = None;

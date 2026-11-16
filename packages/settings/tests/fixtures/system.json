@@ -56,8 +56,9 @@
   "timedatectl show": "Timezone=America/Denver\nLocalRTC=no\nCanNTP=yes\nNTP=yes\nNTPSynchronized=yes\n",
   "systemctl --user is-enabled yggdrasil-autozone.timer": "disabled\n",
   "pacman -Q *": "example 1.0-1\n",
-  "heimdall-private-mic status --json": "{\"enforce\":true,\"node\":true}\n"
+  "heimdall-private-mic status --json": "{\"enforce\":true,\"node\":true}\n",
+  "labyrinth-appnet viewers status --json": "{\"on\":true,\"apps\":[\"org.gnome.Papers\",\"libreoffice-writer\",\"org.gnome.Loupe\",\"yggdrasil-player\"]}\n"
  },
- "tools": ["tailscale", "networkmanager-openvpn", "heimdall-private-mic"],
+ "tools": ["tailscale", "networkmanager-openvpn", "heimdall-private-mic", "heimdall-fileguard", "heimdall-strip", "labyrinth-appnet"],
  "cameras": ["Example Webcam"]
 }

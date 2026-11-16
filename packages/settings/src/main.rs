@@ -32,6 +32,7 @@ mod netconf;
 mod peripherals;
 mod printers;
 mod privmic;
+mod privpack;
 mod razer;
 mod readout;
 mod restore;
@@ -279,6 +280,7 @@ enum Msg {
     Fingerprint(Option<laptop_ui::Fingerprint>),
     /// Security and Peripherals > Microphone: the private microphone (None: its state could not be read), sent ahead of their page's data.
     PrivateMic(Option<privmic::Mic>),
+    PrivacyPack(privpack::Pack),
     Defaults(Vec<defaults::Row>),
     Assistant(Vec<controls::State>),
     Printers(printers::State),
@@ -322,6 +324,18 @@ struct Data {
     printers: Option<printers::State>,
     /// None until read; Some(None) when it could not be read.
     private_mic: Option<Option<privmic::Mic>>,
+    /// The privacy pack's switches (Security > Privacy), None until read.
+    privacy_pack: Option<privpack::Pack>,
+}
+
+/// A row of the privacy pack: title, grey line, the note instead of a switch, the switch's state, the pref it sets (None: the
+/// viewers' rule).
+type PackRow = (&'static str, &'static str, Option<&'static str>, bool, Option<&'static str>);
+
+/// A switch of the privacy pack that was moved: one of the person's prefs, or the viewers' rule (with the password).
+enum PackChange {
+    Pref(&'static str, bool),
+    Viewers(bool),
 }
 
 #[derive(Default)]
@@ -451,6 +465,8 @@ struct App {
     ws_conf: workspaces::Conf,
     app_sort: usize,
     app_sel: Option<String>,
+    /// Settings > Apps marks names that imitate others (the privacy pack's lookalike_warnings, read when the page opens).
+    lookalike_warn: bool,
     /// What you decided for the open app in Ask mode, refreshed every few seconds.
     ask_cache: Option<(std::time::Instant, String, Vec<appmgr::Decision>)>,
     // Developer options: logo clicks (while the ` key is held) toward the unlock, and its confirmation
@@ -629,6 +645,7 @@ impl App {
             ws_conf: workspaces::load(),
             app_sort: 0,
             app_sel: None,
+            lookalike_warn: true,
             ask_cache: None,
             dev_clicks: 0,
             dev_last: std::time::Instant::now(),
@@ -668,6 +685,9 @@ impl App {
         if page == Page::Peripherals {
             self.peri.open(ctx);
         }
+        if page == Page::Apps {
+            self.lookalike_warn = privpack::pref(yggdrasil_ui::privacy_prefs::LOOKALIKE_WARNINGS);
+        }
         self.refreshed = std::time::Instant::now();
         self.loading = Some(page);
         let tx = self.tx.clone();
@@ -693,6 +713,7 @@ impl App {
                 }
                 Page::Security => {
                     let _ = tx.send(Msg::PrivateMic(privmic::load()));
+                    let _ = tx.send(Msg::PrivacyPack(privpack::load()));
                     Msg::Security(security::overview())
                 }
                 Page::Restore => Msg::Restore(restore::load()),
@@ -832,6 +853,10 @@ impl App {
                 }
                 Msg::PrivateMic(v) => {
                     self.data.private_mic = Some(v);
+                    continue;
+                }
+                Msg::PrivacyPack(v) => {
+                    self.data.privacy_pack = Some(v);
                     continue;
                 }
                 Msg::AppSizes(m) => {
@@ -3390,7 +3415,7 @@ impl App {
             });
         }
         ui.add_space(8.0);
-        self.private_mic_group(ui, pal, ctx);
+        self.private_mic_group(ui, pal, ctx, true);
         if let Some(s) = open {
             self.sec_sub = s;
             self.logins = None;
@@ -4254,11 +4279,13 @@ impl App {
     }
 
     /// The private microphone's switch, a card of its own (Security, and Peripherals > Microphone). Read when the page opens;
-    /// switching runs `heimdall-private-mic on|off` and reads the page again.
-    pub(crate) fn private_mic_group(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
+    /// switching runs `heimdall-private-mic on|off` and reads the page again. On Security (`pack`) the card also has the privacy
+    /// pack's switches (privpack.rs), one per part.
+    pub(crate) fn private_mic_group(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context, pack: bool) {
         let Some(state) = self.data.private_mic else { return };
         let mut want: Option<bool> = None;
         let mut want_sarina: Option<bool> = None;
+        let mut pack_change: Option<PackChange> = None;
         let sarina = privmic::sarina_row(state);
         ui::group(ui, pal, Some("Privacy"), |ui| {
             ui::row(ui, pal, true, "Private microphone", Some(privmic::ABOUT), |ui| match (privmic::note(state), state) {
@@ -4281,7 +4308,29 @@ impl App {
                     }
                 });
             }
+            if pack {
+                pack_change = self.privacy_pack_rows(ui, pal);
+            }
         });
+        match pack_change {
+            Some(PackChange::Pref(key, on)) => {
+                if let Some(p) = self.data.privacy_pack.as_mut() {
+                    match key {
+                        yggdrasil_ui::privacy_prefs::DOWNLOADS_GUARD => p.guard_on = on,
+                        yggdrasil_ui::privacy_prefs::REMOVE_HIDDEN_INFO => p.strip_on = on,
+                        _ => p.lookalike_on = on,
+                    }
+                }
+                self.change(ctx, move || privpack::set_pref(key, on));
+            }
+            Some(PackChange::Viewers(on)) => {
+                if let Some(Some(v)) = self.data.privacy_pack.as_mut().map(|p| p.viewers.as_mut()) {
+                    v.on = on;
+                }
+                self.change(ctx, move || privpack::set_viewers(on));
+            }
+            None => {}
+        }
         if let Some(on) = want_sarina {
             if let Some(Some(m)) = self.data.private_mic.as_mut() {
                 m.sarina_raw = on;
@@ -4298,6 +4347,41 @@ impl App {
             }
             self.change(ctx, move || privmic::set(on));
         }
+    }
+
+    /// The privacy pack's rows, inside the Privacy card (privpack.rs); what was switched, if anything.
+    fn privacy_pack_rows(&self, ui: &mut egui::Ui, pal: &Palette) -> Option<PackChange> {
+        use yggdrasil_ui::privacy_prefs as prefs;
+        let Some(p) = self.data.privacy_pack else {
+            ui::row(ui, pal, false, privpack::GUARD_TITLE, Some(privpack::GUARD_ABOUT), |ui| {
+                ui.label(RichText::new("Reading...").color(pal.dim));
+            });
+            return None;
+        };
+        let mut out = None;
+        let rows: [PackRow; 4] = [
+            (privpack::GUARD_TITLE, privpack::GUARD_ABOUT, privpack::note(p.guard_installed), p.guard_on, Some(prefs::DOWNLOADS_GUARD)),
+            (privpack::STRIP_TITLE, privpack::STRIP_ABOUT, privpack::note(p.strip_installed), p.strip_on, Some(prefs::REMOVE_HIDDEN_INFO)),
+            (privpack::VIEWERS_TITLE, privpack::VIEWERS_ABOUT, privpack::viewers_note(p.viewers), p.viewers.is_some_and(|v| v.on), None),
+            (privpack::LOOKALIKE_TITLE, privpack::LOOKALIKE_ABOUT, None, p.lookalike_on, Some(prefs::LOOKALIKE_WARNINGS)),
+        ];
+        for (title, about, note, state, key) in rows {
+            ui::row(ui, pal, false, title, Some(about), |ui| match note {
+                Some(n) => {
+                    ui.label(RichText::new(n).color(pal.dim));
+                }
+                None => {
+                    let mut on = state;
+                    if ui::switch(ui, pal, &mut on).changed() {
+                        out = Some(match key {
+                            Some(k) => PackChange::Pref(k, on),
+                            None => PackChange::Viewers(on),
+                        });
+                    }
+                }
+            });
+        }
+        out
     }
 
     fn page_firewall(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {

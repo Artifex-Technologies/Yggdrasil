@@ -89,6 +89,31 @@ assistant), Apps, Privacy & security, System. Settings opens on General all the 
   real microphone; every other app stays on the private one. It runs `heimdall-private-mic sarina-raw on|off` (argv). The
   property is on every voice recording and means nothing unless that switch is on, so Labyrinth OS ignores it.
 
+- **The privacy pack** (`src/privpack.rs`, 2026-11-15): four more switches in the same Privacy card on Security, one per part,
+  all on by default. I want people safe without having to find these, so off is the choice that needs a click.
+  - **Check downloads**: Heimdall's downloads guard (`heimdall-fileguard`, a user service) looks at each finished download
+    (~/Downloads and the torrent clients' download folders) and says in a notification when the file would contact a server
+    as soon as it is opened (an Office template on the web, a PDF that opens a web address by itself, a playlist or shortcut
+    pointing online). It never changes the file. "Not installed" without the program.
+  - **Remove hidden info in Minos**: shows Minos' right-click entry (docs/keys/minos.md), which writes a copy without the
+    place a photo was taken, the device, the author and the rest. "Not installed" without `heimdall-strip`.
+  - **Viewer apps ask before going online**: the per-app network rules start PDF viewers, office apps, image viewers and media
+    players on "Ask", so the first time one tries to connect a notification asks. This one is the system's setting for the
+    person, so it runs `pkexec NETWORK viewers on|off` (NETWORK is the apps integration's `network` command,
+    docs/INTEGRATIONS.md) and asks for the password; the page reads `NETWORK viewers status --json`
+    (`{"on":bool,"apps":[ids]}`). "Not available" when the system's rules have no such command.
+  - **Warn about look-alike names**: Settings > Apps and Agora put "Look-alike name" beside an app whose name imitates another
+    (a Cyrillic а in "Vivаldi", fullwidth or mathematical letters, invisible or direction-changing characters). The app's page
+    then says why in plain words, shows the name with its hidden characters written out (`<U+200B>`), and the program it
+    really starts. The check is Unicode's TR39 in a small form (`yggdrasil-ui/src/lookalike.rs`, the same file as Heimdall's
+    and Labyrinth's), so every place decides the same way.
+
+  The three switches that belong to the person (downloads guard, Remove hidden info, look-alike warnings) are one file,
+  `~/.config/heimdall/privacy.json`: `{"downloads_guard": true, "remove_hidden_info": true, "lookalike_warnings": true}`. Each
+  is on unless the file says `false` (a missing file or key is on). Settings writes it whole (a temporary file, then a rename)
+  and keeps any other key; Heimdall's guard follows it by itself; Minos and Agora read it when they need it
+  (`yggdrasil-ui/src/privacy_prefs.rs`). A made-up system (the screenshots' fixture) shows every switch on and changes nothing.
+
 - **Appearance > Wallpaper** has a preview card on top (`src/wallpaper.rs`): the lock screen and the desktop side by side in
   the current wallpaper, style, accent, icon pack and lock screen design. The lock screen is the lock's own drawing
   (`yggdrasil-lock --preview` of the design in use, 640x360, nothing locked; a likeness drawn by Settings stands in while it
