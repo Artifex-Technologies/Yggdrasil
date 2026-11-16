@@ -52,6 +52,7 @@ mod wifi_ui;
 mod wifihealth;
 mod wifijoin;
 mod wifimem;
+mod wifitrust;
 mod workspaces;
 mod zones_ui;
 
@@ -293,6 +294,8 @@ enum Msg {
     Spell(Result<String, String>),
     /// Wi-Fi & Network > Wi-Fi checks finished (the security monitor's report), or why not.
     WifiHealth(Result<wifihealth::Report, String>),
+    /// A saved Wi-Fi network's Heimdall level and discoverable switch were read (after a change: why it did not take).
+    WifiTrust(wifitrust::Trust, Option<String>),
     Done(Page, Result<(), String>),
 }
 
@@ -368,6 +371,10 @@ struct App {
     net_open: Option<String>,
     net_draft: Option<netconf::Profile>,
     net_forget: bool,
+    /// The open saved Wi-Fi network's Heimdall level and discoverable switch (wifitrust.rs), and the profile being read or
+    /// changed (the switch waits meanwhile: a change waits for the password).
+    wifi_trust: Option<wifitrust::Trust>,
+    wifi_trust_busy: Option<String>,
     /// The saved network's page was opened from Previously connected networks (its back button returns there).
     net_from_history: bool,
     /// Wi-Fi & Network: a network that is not saved, whose page is open (wifi_ui.rs).
@@ -544,6 +551,8 @@ impl App {
             wifi_join: None,
             net_open: None,
             net_draft: None,
+            wifi_trust: None,
+            wifi_trust_busy: None,
             net_forget: false,
             net_from_history: false,
             wifi_air: None,
@@ -840,6 +849,14 @@ impl App {
                 }
                 Msg::DirSize(p, n) => {
                     self.dir_sizes.insert(p, n);
+                    continue;
+                }
+                Msg::WifiTrust(t, err) => {
+                    self.wifi_trust_busy = None;
+                    if let Some(e) = err {
+                        self.status = e;
+                    }
+                    self.wifi_trust = Some(t);
                     continue;
                 }
                 Msg::WifiHealth(r) => {

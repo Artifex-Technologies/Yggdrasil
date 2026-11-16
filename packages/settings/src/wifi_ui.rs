@@ -5,7 +5,7 @@
 //! one also what it gave this computer and This Network (its devices, Wi-Fi checks). Below the lists, Previously connected
 //! networks: every saved Wi-Fi network, the most recent first.
 
-use crate::{devices, loading, netconf, sys, ui, wifihealth, App};
+use crate::{devices, loading, netconf, sys, ui, wifihealth, wifitrust, App};
 use eframe::egui::{self, RichText};
 use yggdrasil_netjoin::join::Request;
 use yggdrasil_ui::theme::Palette;
@@ -187,6 +187,10 @@ impl App {
         }
         if let Some(uuid) = self.net_open.clone() {
             return self.network_page(ui, pal, ctx, &n, &uuid);
+        }
+        // back on the list: a network's Heimdall card is read again when its page opens next
+        if self.wifi_trust_busy.is_none() {
+            self.wifi_trust = None;
         }
         if let Some(k) = self.wifi_air.clone() {
             return self.air_page(ui, pal, ctx, &n, &k);
@@ -576,6 +580,10 @@ impl App {
         });
         ui.add_space(8.0);
         if saved.wifi {
+            self.trust_group(ui, pal, ctx, uuid);
+            ui.add_space(8.0);
+        }
+        if saved.wifi {
             match air {
                 Some(a) => air_sections(ui, pal, n, a),
                 None => {
@@ -746,6 +754,83 @@ impl App {
             self.net_from_history = false;
             self.status.clear();
         }
+    }
+}
+
+impl App {
+    /// A saved Wi-Fi network's Heimdall card (wifitrust.rs): its trust level, and the switch that lets others on the network
+    /// discover this computer. Read when the page opens; flipping the switch starts Heimdall's unit (polkit asks for the
+    /// password) and reads it again.
+    fn trust_group(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context, uuid: &str) {
+        let fresh = self.wifi_trust.as_ref().filter(|t| t.uuid == uuid).cloned();
+        if fresh.is_none() && self.wifi_trust_busy.is_none() {
+            let id = uuid.to_string();
+            self.trust_thread(ctx, uuid, move || (wifitrust::load(&id), None));
+        }
+        let busy = self.wifi_trust_busy.is_some();
+        let mut want: Option<bool> = None;
+        let mut foot: Option<&str> = None;
+        ui::group(ui, pal, Some("Heimdall"), |ui| {
+            let Some(t) = &fresh else {
+                ui::row(ui, pal, true, wifitrust::DISC_TITLE, Some(wifitrust::DISC_ABOUT), |ui| {
+                    ui.label(RichText::new("Reading...").color(pal.dim));
+                });
+                return;
+            };
+            let mut first = true;
+            if let Some(l) = t.level {
+                ui::row(ui, pal, true, "Trust level", Some(l.about()), |ui| {
+                    ui.label(RichText::new(l.label()).color(pal.dim));
+                });
+                first = false;
+            }
+            ui::row(ui, pal, first, wifitrust::DISC_TITLE, Some(wifitrust::DISC_ABOUT), |ui| match t.disc {
+                Ok(d) => {
+                    let mut on = d != wifitrust::Disc::Off;
+                    let free = !busy && d != wifitrust::Disc::Home;
+                    if ui.add_enabled_ui(free, |ui| ui::switch(ui, pal, &mut on)).inner.changed() {
+                        want = Some(on);
+                    }
+                    if busy {
+                        ui.label(RichText::new("Waiting...").color(pal.dim));
+                    }
+                }
+                Err(_) => {
+                    let mut off = false;
+                    ui.add_enabled_ui(false, |ui| ui::switch(ui, pal, &mut off));
+                }
+            });
+            foot = match t.disc {
+                Ok(wifitrust::Disc::Home) => Some("Always on for home networks."),
+                Err(m) => Some(m.note()),
+                Ok(_) => None,
+            };
+        });
+        if let Some(f) = foot {
+            ui::footnote(ui, pal, f);
+        }
+        if let Some(on) = want {
+            self.status.clear();
+            let id = uuid.to_string();
+            self.trust_thread(ctx, uuid, move || {
+                let asked = wifitrust::set(&id, on);
+                let t = wifitrust::load(&id);
+                let err = asked.err().or_else(|| wifitrust::check(&t, on).err());
+                (t, err)
+            });
+        }
+    }
+
+    /// Reads (or changes, then reads) a network's Heimdall card on a thread of its own; the page waits for it meanwhile.
+    fn trust_thread(&mut self, ctx: &egui::Context, uuid: &str, f: impl FnOnce() -> (wifitrust::Trust, Option<String>) + Send + 'static) {
+        self.wifi_trust_busy = Some(uuid.to_string());
+        let tx = self.tx.clone();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let (t, err) = f();
+            let _ = tx.send(crate::Msg::WifiTrust(t, err));
+            ctx.request_repaint();
+        });
     }
 }
 
