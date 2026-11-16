@@ -198,6 +198,10 @@ impl App {
                 None => self.wifi_air = Some(AirKey { ssid: name, bssid: None }),
             }
         }
+        // Several connections at once (multilink_ui.rs), opened from the list
+        if let Some(p) = self.multilink.as_mut() {
+            return p.show(ui, pal, ctx);
+        }
         // the connected network's page opens Devices and Wi-Fi checks; their back buttons return to it
         if self.lan_open {
             return self.devices_page(ui, pal, ctx, &n);
@@ -332,6 +336,18 @@ impl App {
                 let sub = format!("{saved_wifi} saved, the most recent first");
                 history = ui::nav_row(ui, pal, true, "Previously connected networks", Some(&sub), |_| {});
             });
+        }
+        // Heimdall's heimdall-multilink, when it is installed (multilink_ui.rs)
+        let mut multilink = false;
+        if crate::multilink_ui::installed() {
+            ui::group(ui, pal, None, |ui| {
+                let sub = "Wi-Fi, Ethernet and a phone together, for more speed";
+                multilink = ui::nav_row(ui, pal, true, "Several connections at once", Some(sub), |_| {});
+            });
+        }
+        if multilink {
+            self.multilink = Some(crate::multilink_ui::Panel::new(ctx));
+            self.status.clear();
         }
         if let Some((ssid, ask)) = connect {
             if ask {

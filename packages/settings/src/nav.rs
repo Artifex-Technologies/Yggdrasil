@@ -35,6 +35,9 @@ impl App {
         let mut l: Vec<String> = Vec::new();
         match self.page {
             Page::Network => {
+                if self.multilink.is_some() {
+                    l.push("Several connections at once".into());
+                }
                 let net = self.data.network.as_ref();
                 if self.wifi_history || self.net_open.is_some() && self.net_from_history {
                     l.push("Previously connected networks".into());
@@ -152,7 +155,9 @@ impl App {
         }
         match self.page {
             Page::Network => {
-                if self.lan_dev.is_some() {
+                if self.multilink.is_some() {
+                    self.multilink = None;
+                } else if self.lan_dev.is_some() {
                     self.lan_dev = None;
                     self.lan_rename = None;
                 } else if self.lan_open {
@@ -215,6 +220,7 @@ impl App {
     pub(crate) fn rewind(&mut self, page: Page) {
         match page {
             Page::Network => {
+                self.multilink = None;
                 self.net_open = None;
                 self.net_draft = None;
                 self.net_forget = false;

@@ -55,6 +55,16 @@ assistant), Apps, Privacy & security, System. Settings opens on General all the 
   in the background or minimised, a network is being joined, or Settings has quit; the scanning thread then waits without
   waking. Tests: the schedule (never more often than every 12 s, also when the page is closed and opened again) and the list
   order, without NetworkManager; the request against a made-up NetworkManager on a private socket.
+  Since 2026-11-15, **Several connections at once** (`src/multilink_ui.rs`, shown when Heimdall's `heimdall-multilink-git` is
+  installed; Heimdall/docs/MULTILINK.md) has its own page under the lists. It has the switch, every connection with its role
+  (**Use**, **Backup only**, **Off**), and under **Limits** a largest share of new connections (none, 25, 50 or 75 %) and a
+  data cap in MB per day or month. While the feature is on, each connection's line shows its speed now and its share of new
+  connections, and the top line shows the combined speed. Notes under the cards say when it helps and when it does not: the
+  connections must reach the internet by different ways (Wi-Fi and Ethernet from one router do not), one download over one
+  connection is never faster, sites may ask for a login again, and it pauses with a VPN on. Changes run `pkexec
+  /usr/bin/heimdall-multilink on|off|set ...` (the administrator's password, remembered for a few minutes). The figures come
+  from the service's status file once a second, and from `heimdall-multilink status --json` every 5 seconds while it is off.
+  They are read only while the page is open and the window is in front, and the window is woken only when they changed.
 
 - **Bluetooth** (`src/bluetooth_ui.rs`), laid out like Wi-Fi: the switch; My Devices (paired, each Connected or Not
   Connected; a tap connects, the (i) opens its page with its kind, battery, address, Connect/Disconnect and Forget This

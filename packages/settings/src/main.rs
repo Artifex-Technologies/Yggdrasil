@@ -27,6 +27,7 @@ mod icons;
 mod laptop_ui;
 mod limbo_ui;
 mod media;
+mod multilink_ui;
 mod nav;
 mod netconf;
 mod peripherals;
@@ -398,6 +399,8 @@ struct App {
     lan_rename: Option<String>,
     /// Wi-Fi & Network > Wi-Fi checks: the page is open, a check is running, the last result.
     wifi_check_open: bool,
+    /// Wi-Fi & Network > Several connections at once, while it is open (multilink_ui.rs)
+    multilink: Option<multilink_ui::Panel>,
     wifi_check_running: bool,
     wifi_check: Option<Result<wifihealth::Report, String>>,
     // Security page
@@ -578,6 +581,7 @@ impl App {
             lan_names: devices::read_names(),
             lan_rename: None,
             wifi_check_open: start_sub() == "checks",
+            multilink: None,
             wifi_check_running: false,
             wifi_check: None,
             sec_filter: 1,
@@ -1024,6 +1028,7 @@ impl eframe::App for App {
                 n.map(|n| n.devices.iter().filter(|d| d.kind == "wifi").map(|d| d.device.clone()).collect()).unwrap_or_default();
             let wifi_page = !self.lan_open
                 && !self.wifi_check_open
+                && self.multilink.is_none()
                 && !self.wifi_history
                 && self.net_open.as_ref().is_none_or(|u| n.is_some_and(|n| n.saved.iter().any(|p| &p.uuid == u && p.wifi)));
             let on = self.page == Page::Network
@@ -1033,6 +1038,10 @@ impl eframe::App for App {
                 && !background
                 && self.wifi_join.is_none();
             s.set(on, adapters);
+        }
+        // its live figures are read only while its page is open and the window is in front
+        if let Some(p) = &self.multilink {
+            p.pause(background);
         }
         let page = self.page;
         let every = |secs| Duration::from_secs(secs);
