@@ -354,25 +354,77 @@ pub fn network() -> Network {
     remember(&mut n, unix_now());
     // the makers of the access points (made-up addresses have none) and of the vendor extras they announce
     let seen_before = n.saved.iter().flat_map(|p| p.seen_bssids.iter()).filter_map(|b| yggdrasil_wifiscan::parse_mac(b));
-    let heard = n.air.iter().flat_map(|a| a.aps.iter()).map(|a| a.bss.bssid);
-    let mut want: Vec<[u8; 3]> =
-        heard.chain(seen_before).filter(|m| !yggdrasil_wifiscan::oui::is_local(m)).map(|m| [m[0], m[1], m[2]]).collect();
-    want.extend(n.air.iter().flat_map(|a| a.aps.iter()).flat_map(|a| a.info.vendors.iter()).map(|v| v.oui));
+    n.makers = std::sync::Arc::new(makers(prefixes(&n.air, seen_before)));
+    n
+}
+
+/// The address prefixes to name the makers of: the access points heard and `more` (made-up addresses have none), and the
+/// vendor extras the access points announce.
+fn prefixes(air: &[yggdrasil_wifiscan::Network], more: impl Iterator<Item = [u8; 6]>) -> Vec<[u8; 3]> {
+    let heard = air.iter().flat_map(|a| a.aps.iter()).map(|a| a.bss.bssid);
+    let mut want: Vec<[u8; 3]> = heard.chain(more).filter(|m| !yggdrasil_wifiscan::oui::is_local(m)).map(|m| [m[0], m[1], m[2]]).collect();
+    want.extend(air.iter().flat_map(|a| a.aps.iter()).flat_map(|a| a.info.vendors.iter()).map(|v| v.oui));
     want.sort();
     want.dedup();
-    n.makers = std::sync::Arc::new(makers(want));
-    n
+    want
+}
+
+/// The Wi-Fi lists read again after a scan (wifi_live.rs), without the rest of the page: NetworkManager's list as it stands
+/// (nmcli is told not to scan itself), what the radio heard, the makers of the access points heard and Settings' memory of
+/// when each was heard.
+#[derive(Debug)]
+pub struct Air {
+    pub networks: Vec<Wifi>,
+    pub air: std::sync::Arc<Vec<yggdrasil_wifiscan::Network>>,
+    pub air_error: String,
+    pub makers: std::collections::HashMap<[u8; 3], String>,
+    pub memory: std::sync::Arc<crate::wifimem::Memory>,
+}
+
+/// `Air` on these Wi-Fi adapters.
+pub fn wifi_air(devices: &[String]) -> Air {
+    let list = run("nmcli", &["-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "device", "wifi", "list", "--rescan", "no"]);
+    let (heard, air_error) = air(devices);
+    let mut m = crate::wifimem::load();
+    if note_heard(&mut m, &heard, unix_now()) && crate::fixture::get().is_none() {
+        let _ = crate::wifimem::save(&m);
+    }
+    let makers = makers(prefixes(&heard, std::iter::empty()));
+    Air {
+        networks: wifi_list(&list.unwrap_or_default()),
+        air: std::sync::Arc::new(heard),
+        air_error,
+        makers,
+        memory: std::sync::Arc::new(m),
+    }
+}
+
+impl Network {
+    /// Takes the Wi-Fi lists read again after a scan; the rest of the page stays as it was read.
+    pub fn take_air(&mut self, a: Air) {
+        self.networks = a.networks;
+        self.air = a.air;
+        self.air_error = a.air_error;
+        std::sync::Arc::make_mut(&mut self.makers).extend(a.makers);
+        self.memory = a.memory;
+    }
+}
+
+/// Notes when each access point heard was last heard; true when the memory should be written.
+fn note_heard(m: &mut crate::wifimem::Memory, air: &[yggdrasil_wifiscan::Network], now: i64) -> bool {
+    let mut write = false;
+    for ap in air.iter().flat_map(|a| a.aps.iter()) {
+        let ago = i64::from(ap.bss.seen_ms_ago.unwrap_or(0)) / 1000;
+        write |= m.note_seen(&yggdrasil_wifiscan::mac_text(&ap.bss.bssid), now - ago);
+    }
+    write
 }
 
 /// Notes what was heard and the saved networks' leases in Settings' memory (wifimem.rs), and keeps it in `n` for the pages.
 /// With a fixture it is read, never written.
 fn remember(n: &mut Network, now: i64) {
     let mut m = crate::wifimem::load();
-    let mut write = false;
-    for ap in n.air.iter().flat_map(|a| a.aps.iter()) {
-        let ago = i64::from(ap.bss.seen_ms_ago.unwrap_or(0)) / 1000;
-        write |= m.note_seen(&yggdrasil_wifiscan::mac_text(&ap.bss.bssid), now - ago);
-    }
+    let mut write = note_heard(&mut m, &n.air, now);
     for p in &n.saved {
         if let Some(l) = n.live.get(&p.uuid).filter(|l| !l.v4.is_empty() || !l.router.is_empty()) {
             write |= m.note_lease(&p.uuid, crate::wifimem::Lease::from_live(l, now));

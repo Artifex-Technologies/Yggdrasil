@@ -3,9 +3,10 @@
 //! (i). The (i) opens the network's own page: for any network, what it broadcasts (read from the kernel's last scan without
 //! sending anything: yggdrasil-wifiscan); for a saved one also what NetworkManager keeps and its settings; for the connected
 //! one also what it gave this computer and This Network (its devices, Wi-Fi checks). Below the lists, Previously connected
-//! networks: every saved Wi-Fi network, the most recent first.
+//! networks: every saved Wi-Fi network, the most recent first. While the list is on screen Settings keeps looking for
+//! networks (wifi_live.rs): no Scan button, the list stays in place as results come in.
 
-use crate::{devices, loading, netconf, sys, ui, wifihealth, wifitrust, App};
+use crate::{devices, loading, netconf, sys, ui, wifi_live, wifihealth, wifitrust, App};
 use eframe::egui::{self, RichText};
 use yggdrasil_netjoin::join::Request;
 use yggdrasil_ui::theme::Palette;
@@ -20,28 +21,44 @@ pub struct AirKey {
 
 /// The main list's parts: the network in use, Known Networks (saved and in range), Other Networks (the rest in range, by
 /// NetworkManager's list) and the access points that hide their name (heard by the radio, not in NetworkManager's list).
+/// The last three in the order they are shown (wifi_live::Shown), each with whether it is faded (not heard in the last scan).
 pub(crate) struct Sections<'a> {
     pub connected: Option<&'a sys::Wifi>,
-    pub known: Vec<(&'a sys::Wifi, &'a netconf::Profile)>,
-    pub other: Vec<&'a sys::Wifi>,
-    pub hidden: Vec<&'a scan::Network>,
+    pub known: Vec<(&'a sys::Wifi, &'a netconf::Profile, bool)>,
+    pub other: Vec<(&'a sys::Wifi, bool)>,
+    pub hidden: Vec<(&'a scan::Network, bool)>,
 }
 
-pub(crate) fn sections(n: &sys::Network) -> Sections<'_> {
+pub(crate) fn sections<'a>(n: &'a sys::Network, shown: &'a wifi_live::Shown) -> Sections<'a> {
     let saved_for = |ssid: &str| n.saved.iter().find(|p| p.wifi && p.ssid == ssid);
+    let connected = n.networks.iter().find(|w| w.in_use);
+    let listed = || shown.named.rows().filter(|(w, _)| connected.is_none_or(|c| c.ssid != w.ssid));
     Sections {
-        connected: n.networks.iter().find(|w| w.in_use),
-        known: n.networks.iter().filter(|w| !w.in_use).filter_map(|w| saved_for(&w.ssid).map(|p| (w, p))).collect(),
-        other: n.networks.iter().filter(|w| !w.in_use && saved_for(&w.ssid).is_none()).collect(),
-        // not the hidden, encrypted twin of an open guest network in range (Enhanced Open in transition mode): a phone shows that
-        // network once, and so does this list
-        hidden: n
-            .air
-            .iter()
-            .filter(|a| a.hidden())
-            .filter(|a| !(a.best().security().kind == scan::SecKind::Owe && n.air.iter().any(|o| o.best().security().owe_twin)))
-            .collect(),
+        connected,
+        known: listed().filter_map(|(w, faded)| saved_for(&w.ssid).map(|p| (w, p, faded))).collect(),
+        other: listed().filter(|(w, _)| saved_for(&w.ssid).is_none()).collect(),
+        hidden: shown.hidden.rows().collect(),
     }
+}
+
+/// The access points that hide their name, as the radio heard them; not the hidden, encrypted twin of an open guest network in
+/// range (Enhanced Open in transition mode): a phone shows that network once, and so does this list.
+pub(crate) fn hidden_heard(n: &sys::Network) -> impl Iterator<Item = &scan::Network> {
+    n.air
+        .iter()
+        .filter(|a| a.hidden())
+        .filter(|a| !(a.best().security().kind == scan::SecKind::Owe && n.air.iter().any(|o| o.best().security().owe_twin)))
+}
+
+/// A row of the list, faded when its network was not heard in the last scan (it stays in its place until it is forgotten).
+fn faded_row<R>(ui: &mut egui::Ui, faded: bool, row: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    ui.scope(|ui| {
+        if faded {
+            ui.multiply_opacity(0.45);
+        }
+        row(ui)
+    })
+    .inner
 }
 
 /// Every saved Wi-Fi network, the most recently connected first.
@@ -50,6 +67,9 @@ pub(crate) fn history(n: &sys::Network) -> Vec<&netconf::Profile> {
     list.sort_by_key(|p| std::cmp::Reverse(p.last_connected));
     list
 }
+
+/// Under a network not heard in the last scan (faded in the list until it is forgotten, two minutes on).
+const NOT_HEARD: &str = "Not heard just now";
 
 /// "12 h", "30 min", "2 days".
 fn span(secs: u64) -> String {
@@ -224,7 +244,7 @@ impl App {
         let mut toggled = false;
         let listing = n.wifi_on && has_wifi;
         let saved_for = |ssid: &str| n.saved.iter().find(|p| p.wifi && p.ssid == ssid);
-        let parts = sections(&n);
+        let parts = sections(&n, &self.wifi_shown);
         let mut connect: Option<(String, bool)> = None;
         let mut join: Option<String> = None;
         let mut join_hidden = false;
@@ -244,17 +264,14 @@ impl App {
                 }
             }
         });
-        if toggled {
-            let arg = if wifi_on { "on" } else { "off" };
-            self.change(ctx, move || sys::act("nmcli", &["radio", "wifi", arg]));
-        }
         if listing {
             // Known Networks: saved, in range, not the one in use. A click joins; the (i) opens its page.
             let Sections { known, other, hidden, .. } = parts;
             if !known.is_empty() {
                 ui::group(ui, pal, Some("Known Networks"), |ui| {
-                    for (i, (w, p)) in known.iter().enumerate() {
-                        match ui::net_row(ui, pal, i == 0, false, &w.ssid, None, w.secured, Some(w.signal)) {
+                    for (i, (w, p, faded)) in known.iter().enumerate() {
+                        let sub = faded.then_some(NOT_HEARD);
+                        match faded_row(ui, *faded, |ui| ui::net_row(ui, pal, i == 0, false, &w.ssid, sub, w.secured, Some(w.signal))) {
                             ui::NetClick::Row => join = Some(p.uuid.clone()),
                             ui::NetClick::Info => open = Some(p.uuid.clone()),
                             ui::NetClick::None => {}
@@ -267,29 +284,25 @@ impl App {
                 if other.is_empty() && hidden.is_empty() {
                     ui::row(ui, pal, true, if known.is_empty() { "No networks found" } else { "No other networks found" }, None, |_| {});
                 }
-                for (i, w) in other.iter().enumerate() {
-                    match ui::net_row(ui, pal, i == 0, false, &w.ssid, None, w.secured, Some(w.signal)) {
+                for (i, (w, faded)) in other.iter().enumerate() {
+                    let sub = faded.then_some(NOT_HEARD);
+                    match faded_row(ui, *faded, |ui| ui::net_row(ui, pal, i == 0, false, &w.ssid, sub, w.secured, Some(w.signal))) {
                         ui::NetClick::Row => connect = Some((w.ssid.clone(), w.secured)),
                         ui::NetClick::Info => air_open = Some(AirKey { ssid: w.ssid.clone(), bssid: None }),
                         ui::NetClick::None => {}
                     }
                 }
-                for (i, a) in hidden.iter().enumerate() {
+                for (i, (a, faded)) in hidden.iter().enumerate() {
                     let ap = a.best();
                     let maker = n.maker(&ap.bss.bssid);
-                    let sub = [maker, ap.band().label()].iter().filter(|s| !s.is_empty()).copied().collect::<Vec<_>>().join(" · ");
+                    let heard = if *faded { NOT_HEARD } else { "" };
+                    let sub = [maker, ap.band().label(), heard].iter().filter(|s| !s.is_empty()).copied().collect::<Vec<_>>().join(" · ");
                     // nothing to join without its name: the row opens its page too
-                    if ui::net_row(
-                        ui,
-                        pal,
-                        other.is_empty() && i == 0,
-                        false,
-                        "Hidden network",
-                        Some(&sub),
-                        ap.security().kind.secured(),
-                        Some(ap.quality()),
-                    ) != ui::NetClick::None
-                    {
+                    let first = other.is_empty() && i == 0;
+                    let (secured, quality) = (ap.security().kind.secured(), Some(ap.quality()));
+                    let click =
+                        faded_row(ui, *faded, |ui| ui::net_row(ui, pal, first, false, "Hidden network", Some(&sub), secured, quality));
+                    if click != ui::NetClick::None {
                         air_open = Some(AirKey { ssid: String::new(), bssid: Some(ap.bss.bssid) });
                     }
                 }
@@ -301,14 +314,15 @@ impl App {
             if join_hidden {
                 self.wifi_join = Some(Request { hidden: true, secured: true, ..Request::default() });
             }
-            ui.add_space(8.0);
-            if ui::quiet(ui, pal, "Scan again").clicked() {
-                self.change(ctx, || {
-                    let _ = sys::act("nmcli", &["device", "wifi", "rescan"]);
-                    std::thread::sleep(std::time::Duration::from_secs(3));
-                    Ok(())
-                });
+            // looking all the while the list is on screen (wifi_live.rs): a quiet line instead of a Scan button
+            if self.wifi_scan.as_ref().is_some_and(wifi_live::Scanner::on) {
+                ui.add_space(4.0);
+                ui.label(RichText::new("Searching…").size(12.0).color(pal.dim));
             }
+        }
+        if toggled {
+            let arg = if wifi_on { "on" } else { "off" };
+            self.change(ctx, move || sys::act("nmcli", &["radio", "wifi", arg]));
         }
         // every saved Wi-Fi network, in range or not (to look at, change or forget)
         let saved_wifi = n.saved.iter().filter(|p| p.wifi).count();
@@ -414,7 +428,11 @@ impl App {
         match net {
             Some(a) => air_sections(ui, pal, n, a),
             None if !n.air_error.is_empty() => note(ui, pal, &format!("What it broadcasts could not be read: {}.", n.air_error)),
-            None => note(ui, pal, "Not heard in the last scan. Scan again on the Wi-Fi page, or move closer."),
+            None => note(
+                ui,
+                pal,
+                "Not heard in the last scan. Settings keeps looking while this page is open: move closer, and it shows up here.",
+            ),
         }
     }
 
@@ -1094,10 +1112,12 @@ mod tests {
     #[test]
     fn the_list_in_its_sections() {
         let n = made_up();
-        let s = sections(&n);
+        let mut shown = wifi_live::Shown::default();
+        shown.update(std::time::Instant::now(), &n);
+        let s = sections(&n, &shown);
         assert_eq!(s.connected.map(|w| w.ssid.as_str()), Some("Lantern Hall"));
-        assert_eq!(s.known.iter().map(|(w, _)| w.ssid.as_str()).collect::<Vec<_>>(), vec!["Birchwood Library"]);
-        let mut other: Vec<&str> = s.other.iter().map(|w| w.ssid.as_str()).collect();
+        assert_eq!(s.known.iter().map(|(w, ..)| w.ssid.as_str()).collect::<Vec<_>>(), vec!["Birchwood Library"]);
+        let mut other: Vec<&str> = s.other.iter().map(|(w, _)| w.ssid.as_str()).collect();
         other.sort();
         assert_eq!(other, vec!["CoffeeCat Guest", "Harbor Lights 7", "Northgate Office"]);
         assert_eq!(s.hidden.len(), 1, "the access point that hides its name");
@@ -1114,6 +1134,24 @@ mod tests {
         assert_eq!((w.manufacturer.as_str(), w.serial.as_str()), ("Example Networks", "EXN0042-7781"));
         assert_eq!(n.air_for("Harbor Lights 7").unwrap().generation(), scan::Generation::Wifi7);
         assert_eq!(n.live[&n.saved[0].uuid].lease_secs, Some(86_400));
+    }
+
+    /// The made-up fixture: what the radio heard counts as heard, the hidden access point is listed by its address.
+    #[test]
+    fn the_page_read_fills_both_lists() {
+        let n = made_up();
+        let mut sh = wifi_live::Shown::default();
+        sh.update(std::time::Instant::now(), &n);
+        assert_eq!(sh.named.rows().count(), n.networks.len());
+        assert_eq!(sh.hidden.rows().count(), 1);
+        assert!(sh.hidden.rows().all(|(_, faded)| !faded));
+        // the radio's list could not be read: NetworkManager's list is all there is, nothing faded
+        let mut blind = n.clone();
+        blind.air = Default::default();
+        blind.air_error = "no adapter".into();
+        let mut sh = wifi_live::Shown::default();
+        sh.update(std::time::Instant::now(), &blind);
+        assert!(sh.named.rows().all(|(_, faded)| !faded));
     }
 
     #[test]

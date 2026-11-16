@@ -46,6 +46,15 @@ assistant), Apps, Privacy & security, System. Settings opens on General all the 
   permanent address. A saved network's own page keeps its Private address choice (Private, New each time, Real, Custom) as
   before. Heimdall's Wi-Fi guard switches a profile on a network it does not trust back to a private address after it
   connects; trusting the network in Heimdall keeps the real one.
+  Since 2026-11-15 there is no **Scan again** button: while the list, or a Wi-Fi network's own page (its "Last seen"), is on
+  screen and the window is in front, Settings asks NetworkManager for a scan every 12 seconds (NetworkManager allows one
+  about every 10) and reads the lists 5 seconds later (`src/wifi_live.rs`; the request is RequestScan over D-Bus in
+  `packages/netjoin/src/scan.rs`). A quiet "Searching…" under the lists says so. The list stays in place as results come in:
+  a network keeps its row when its signal changes, a new one is added at the end, one not heard in the last scan is faded
+  ("Not heard just now") and one not heard for two minutes goes. Nothing is scanned while the page is closed, the window is
+  in the background or minimised, a network is being joined, or Settings has quit; the scanning thread then waits without
+  waking. Tests: the schedule (never more often than every 12 s, also when the page is closed and opened again) and the list
+  order, without NetworkManager; the request against a made-up NetworkManager on a private socket.
 
 - **Bluetooth** (`src/bluetooth_ui.rs`), laid out like Wi-Fi: the switch; My Devices (paired, each Connected or Not
   Connected; a tap connects, the (i) opens its page with its kind, battery, address, Connect/Disconnect and Forget This
@@ -287,7 +296,8 @@ About only when switched on, have no picture.
   thread of their own, and the window wakes only when what was read differs from what the page shows; the reads stop while
   something is dragged or typed and while the window is in the background. The settings folder is watched with inotify (the
   text size, reduced motion, the style and the accent wake it when written). Live readouts (the graphics card's and the
-  processor's graphs, the fans, the camera and the microphone) still draw while they are on screen, and only then. Measured
+  processor's graphs, the fans, the camera and the microphone) still draw while they are on screen, and only then; the Wi-Fi
+  list wakes the window once per scan (every 12 s) while it is on screen and the window is in front. Measured
   in the compositor's test machine (`packages/compositor/tests/drm-vm.sh`, OpenGL ES on virgl, 60 s idle with the panel and
   Settings on General): the compositor 185 ms of CPU = 0.31 % of a core before, 4.7 ms = 0.008 % after (the panel alone:
   0.012 %); Settings itself 0.6 ms in 30 s. On Displays: 0.71 % before, 0.020 % after. Headless (Mesa in software, 30 s on

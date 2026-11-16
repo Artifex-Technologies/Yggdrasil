@@ -15,15 +15,15 @@ use zbus::blocking::{proxy, Connection, Proxy};
 use zbus::proxy::CacheProperties;
 use zbus::zvariant::{ObjectPath, OwnedObjectPath, Value};
 
-const NM: &str = "org.freedesktop.NetworkManager";
-const NM_PATH: &str = "/org/freedesktop/NetworkManager";
-const DEVICE: &str = "org.freedesktop.NetworkManager.Device";
-const WIRELESS: &str = "org.freedesktop.NetworkManager.Device.Wireless";
+pub(crate) const NM: &str = "org.freedesktop.NetworkManager";
+pub(crate) const NM_PATH: &str = "/org/freedesktop/NetworkManager";
+pub(crate) const DEVICE: &str = "org.freedesktop.NetworkManager.Device";
+pub(crate) const WIRELESS: &str = "org.freedesktop.NetworkManager.Device.Wireless";
 const ACCESS_POINT: &str = "org.freedesktop.NetworkManager.AccessPoint";
 const ACTIVE: &str = "org.freedesktop.NetworkManager.Connection.Active";
 const PROFILE: &str = "org.freedesktop.NetworkManager.Settings.Connection";
 /// NM_DEVICE_TYPE_WIFI
-const WIFI: u32 = 2;
+pub(crate) const WIFI: u32 = 2;
 /// NM_802_11_AP_FLAGS_PRIVACY: an access point that asks for a key (with no WPA flags: WEP)
 const PRIVACY: u32 = 0x1;
 /// NM_ACTIVE_CONNECTION_STATE_ACTIVATED and _DEACTIVATED
@@ -71,7 +71,7 @@ pub fn join(r: &Request) -> Result<(), String> {
     join_on(&bus, r, Duration::from_secs(90), Duration::from_millis(250))
 }
 
-fn object<'a>(bus: &'a Connection, path: &'a str, iface: &'a str) -> Result<Proxy<'a>, String> {
+pub(crate) fn object<'a>(bus: &'a Connection, path: &'a str, iface: &'a str) -> Result<Proxy<'a>, String> {
     proxy::Builder::new(bus)
         .destination(NM)
         .and_then(|b| b.path(path))

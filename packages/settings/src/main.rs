@@ -48,6 +48,7 @@ mod ui;
 mod users;
 mod vpn;
 mod wallpaper;
+mod wifi_live;
 mod wifi_ui;
 mod wifihealth;
 mod wifijoin;
@@ -296,6 +297,8 @@ enum Msg {
     WifiHealth(Result<wifihealth::Report, String>),
     /// A saved Wi-Fi network's Heimdall level and discoverable switch were read (after a change: why it did not take).
     WifiTrust(wifitrust::Trust, Option<String>),
+    /// Wi-Fi & Network: the Wi-Fi lists read again after a scan (wifi_live.rs).
+    WifiAir(sys::Air),
     Done(Page, Result<(), String>),
 }
 
@@ -379,6 +382,10 @@ struct App {
     net_from_history: bool,
     /// Wi-Fi & Network: a network that is not saved, whose page is open (wifi_ui.rs).
     wifi_air: Option<wifi_ui::AirKey>,
+    /// The Wi-Fi lists as shown, in a steady order (wifi_live.rs), and the thread that scans while they are on screen (none in
+    /// the tests: nothing is ever scanned there)
+    wifi_shown: wifi_live::Shown,
+    wifi_scan: Option<wifi_live::Scanner>,
     /// Wi-Fi & Network > Previously connected networks is open.
     wifi_history: bool,
     /// `yggdrasil-settings network:wifi=NAME`: that network's page, opened once the list is read.
@@ -525,6 +532,7 @@ impl App {
     fn new(ctx: &egui::Context) -> Self {
         let mut app = App::bare();
         app.refresher = Some(refresh::Refresher::start(app.tx.clone(), ctx.clone()));
+        app.wifi_scan = Some(wifi_live::Scanner::start(app.tx.clone(), ctx.clone()));
         refresh::apply_accessibility(ctx);
         refresh::watch_config(ctx.clone(), app.config_changed.clone());
         app.load(app.page, ctx);
@@ -556,6 +564,8 @@ impl App {
             net_forget: false,
             net_from_history: false,
             wifi_air: None,
+            wifi_shown: wifi_live::Shown::default(),
+            wifi_scan: None,
             // `yggdrasil-settings network:known` opens Previously connected networks
             wifi_history: start_sub() == "known",
             wifi_start: std::env::args().nth(1).and_then(|a| {
@@ -762,7 +772,10 @@ impl App {
                     });
                 }
                 Msg::About(v) => self.data.about = Some(v),
-                Msg::Network(v) => self.data.network = Some(v),
+                Msg::Network(v) => {
+                    self.wifi_shown.update(std::time::Instant::now(), &v);
+                    self.data.network = Some(v);
+                }
                 Msg::Bluetooth(v) => self.data.bluetooth = Some(v),
                 Msg::Displays(v) => self.data.displays = Some(v),
                 Msg::Sound(v) => self.data.sound = Some(v),
@@ -857,6 +870,13 @@ impl App {
                         self.status = e;
                     }
                     self.wifi_trust = Some(t);
+                    continue;
+                }
+                Msg::WifiAir(a) => {
+                    if let Some(n) = self.data.network.as_mut() {
+                        n.take_air(a);
+                        self.wifi_shown.update(std::time::Instant::now(), n);
+                    }
                     continue;
                 }
                 Msg::WifiHealth(r) => {
@@ -995,7 +1015,25 @@ impl eframe::App for App {
         }
         let pointer_down = ctx.input(|i| i.pointer.any_down());
         let typing = ctx.memory(|m| m.focused().is_some());
-        let background = ctx.input(|i| i.viewport().focused == Some(false));
+        let background = ctx.input(|i| i.viewport().focused == Some(false) || i.viewport().minimized == Some(true));
+        // Wi-Fi networks are looked for only while the list or a Wi-Fi network's own page is on screen, the window is in front
+        // and no network is being joined (wifi_live.rs); otherwise the scanning thread waits and nothing runs
+        if let Some(s) = &self.wifi_scan {
+            let n = self.data.network.as_ref();
+            let adapters: Vec<String> =
+                n.map(|n| n.devices.iter().filter(|d| d.kind == "wifi").map(|d| d.device.clone()).collect()).unwrap_or_default();
+            let wifi_page = !self.lan_open
+                && !self.wifi_check_open
+                && !self.wifi_history
+                && self.net_open.as_ref().is_none_or(|u| n.is_some_and(|n| n.saved.iter().any(|p| &p.uuid == u && p.wifi)));
+            let on = self.page == Page::Network
+                && wifi_page
+                && n.is_some_and(|n| n.wifi_on)
+                && !adapters.is_empty()
+                && !background
+                && self.wifi_join.is_none();
+            s.set(on, adapters);
+        }
         let page = self.page;
         let every = |secs| Duration::from_secs(secs);
         let read_page: refresh::Read = std::sync::Arc::new(move |tx| read_page(page, tx));

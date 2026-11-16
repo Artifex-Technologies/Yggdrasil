@@ -66,11 +66,22 @@ impl Device {
     }
 }
 
-/// A Wi-Fi adapter's access points and its permanent address.
-struct Wireless(Vec<&'static str>, &'static str);
+/// The adapters asked to scan, in order (by their object path).
+pub type Scans = Arc<Mutex<Vec<&'static str>>>;
+
+/// A Wi-Fi adapter's access points and its permanent address; its object path, the scans asked of it and whether it
+/// refuses them (as NetworkManager does right after a scan).
+struct Wireless(Vec<&'static str>, &'static str, &'static str, Scans, bool);
 
 #[zbus::interface(name = "org.freedesktop.NetworkManager.Device.Wireless")]
 impl Wireless {
+    fn request_scan(&self, _options: HashMap<String, OwnedValue>) -> zbus::fdo::Result<()> {
+        self.3.lock().unwrap().push(self.2);
+        if self.4 {
+            return Err(zbus::fdo::Error::Failed("Scanning not allowed immediately following previous scan".into()));
+        }
+        Ok(())
+    }
     fn get_all_access_points(&self) -> Vec<OwnedObjectPath> {
         self.0.iter().map(|p| OwnedObjectPath::try_from(*p).unwrap()).collect()
     }
@@ -152,6 +163,7 @@ pub struct World {
     _server: Connection,
     pub asked: Asked,
     pub deleted: Arc<Mutex<bool>>,
+    pub scans: Scans,
 }
 
 // unix_stream: deprecated only because a build with zbus's tokio feature would lack it, and this one has no tokio
@@ -160,7 +172,8 @@ pub fn world(states: Vec<u32>, reason: u32, home: Offer) -> World {
     let (a, b) = std::os::unix::net::UnixStream::pair().unwrap();
     let asked: Asked = Arc::default();
     let deleted = Arc::new(Mutex::new(false));
-    let (asked2, deleted2) = (asked.clone(), deleted.clone());
+    let scans: Scans = Arc::default();
+    let (asked2, deleted2, scans2) = (asked.clone(), deleted.clone(), scans.clone());
     let server = std::thread::spawn(move || {
         zbus::blocking::connection::Builder::unix_stream(a)
             .server(zbus::Guid::generate())
@@ -174,11 +187,11 @@ pub fn world(states: Vec<u32>, reason: u32, home: Offer) -> World {
             .unwrap()
             .serve_at("/d/wlan", Device(WIFI, (30, reason), "wlan0", "02:00:00:00:00:99", "iwlwifi", "pci-0000:00:14.3"))
             .unwrap()
-            .serve_at("/d/wlan", Wireless(vec!["/ap/1", "/ap/2", "/ap/3", "/ap/4"], "02:00:00:00:00:01"))
+            .serve_at("/d/wlan", Wireless(vec!["/ap/1", "/ap/2", "/ap/3", "/ap/4"], "02:00:00:00:00:01", "/d/wlan", scans2.clone(), false))
             .unwrap()
             .serve_at("/d/usb", Device(WIFI, (30, reason), "wlan1", "02:00:00:00:00:98", "rtw88_8812au", "pci-0000:00:14.0-usb-0:2:1.0"))
             .unwrap()
-            .serve_at("/d/usb", Wireless(vec!["/ap/5", "/ap/6", "/ap/7"], "02:00:00:00:00:02"))
+            .serve_at("/d/usb", Wireless(vec!["/ap/5", "/ap/6", "/ap/7"], "02:00:00:00:00:02", "/d/usb", scans2, true))
             .unwrap()
             .serve_at("/ap/4", Ap(b"Far", 20, WPA2))
             .unwrap()
@@ -202,5 +215,5 @@ pub fn world(states: Vec<u32>, reason: u32, home: Offer) -> World {
             .unwrap()
     });
     let bus = zbus::blocking::connection::Builder::unix_stream(b).p2p().build().unwrap();
-    World { bus, _server: server.join().unwrap(), asked, deleted }
+    World { bus, _server: server.join().unwrap(), asked, deleted, scans }
 }
