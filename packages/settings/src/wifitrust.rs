@@ -8,9 +8,9 @@
 //!   `/run/heimdall-wifi-guard/state.json`, which knows when a trusted network does not count as trusted this time (another
 //!   router for a home network, or a saved password that changed).
 //! - **Change**: start `heimdall-wifi-discoverable-on@UUID.service` or `heimdall-wifi-discoverable-off@UUID.service` through
-//!   systemd's D-Bus `StartUnit(name, "replace")`, allowing interactive authorization: Heimdall's polkit rule
-//!   (`50-heimdall-wifi-discoverable.rules`) asks for an administrator's password and keeps it for a few minutes (the owner's
-//!   choice). The units run `heimdall-wifi-guard discoverable on|off --uuid UUID` as root; then the state is read again.
+//!   systemd's D-Bus `StartUnit(name, "replace")`, allowing interactive authorization: polkit's own default for starting units
+//!   (`org.freedesktop.systemd1.manage-units`, `auth_admin_keep`) asks for an administrator's password and keeps it for a few
+//!   minutes (the owner's choice; Heimdall ships no rule of its own for it). The units run `heimdall-wifi-guard discoverable on|off --uuid UUID` as root; then the state is read again.
 //!
 //! A made-up system (fixture) answers the guard from its `run` entries, has Heimdall when its `tools` list the guard, has no
 //! level, and refuses every change.
@@ -134,8 +134,8 @@ pub fn level_in_state(text: &str, uuid: &str) -> Option<Level> {
     Level::parse(v.get("level")?.as_str()?)
 }
 
-/// The unit that turns it on or off for this profile; None for anything that is not a NetworkManager profile id (the polkit
-/// rule allows only lowercase hex digits and dashes there).
+/// The unit that turns it on or off for this profile; None for anything that is not a NetworkManager profile id (the guard
+/// takes only lowercase hex digits and dashes there).
 pub fn unit_name(uuid: &str, on: bool) -> Option<String> {
     let ok = uuid.len() == 36 && uuid.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b) || b == b'-');
     ok.then(|| format!("heimdall-wifi-discoverable-{}@{uuid}.service", if on { "on" } else { "off" }))
@@ -278,7 +278,7 @@ mod tests {
         assert_eq!(unit_name(ID, true).as_deref(), Some("heimdall-wifi-discoverable-on@0d6f1c8e-3b2a-4c5d-9e8f-7a6b5c4d3e2f.service"));
         assert_eq!(unit_name(ID, false).as_deref(), Some("heimdall-wifi-discoverable-off@0d6f1c8e-3b2a-4c5d-9e8f-7a6b5c4d3e2f.service"));
         assert_eq!(unit_name("../../etc/x", true), None);
-        assert_eq!(unit_name(&ID.to_uppercase(), true), None, "the polkit rule allows lowercase only");
+        assert_eq!(unit_name(&ID.to_uppercase(), true), None, "the guard takes lowercase only");
         assert_eq!(unit_name("", true), None);
     }
 
