@@ -3,7 +3,10 @@
 Yggdrasil's task manager (`yggdrasil-taskmanager`), laid out like the one on Windows 11, in the desktop's look (light or dark,
 the accent colour from Settings). Ctrl+Shift+Esc opens it; pressing it again brings the open one to the front.
 
-![The Task Manager, Performance](../../assets/screenshots/taskmanager.png)
+| | |
+| --- | --- |
+| ![The Task Manager, Processes](../../assets/screenshots/taskmanager-processes.png) | ![The Task Manager, a graphics card's page](../../assets/screenshots/taskmanager.png) |
+| *Processes, with the GPU, GPU engine and GPU memory columns.* | *Performance: a graphics card's engines and memory (a made-up AMD card; `scripts/screenshots.sh`).* |
 
 | Tab | What it shows and does |
 |:--|:--|

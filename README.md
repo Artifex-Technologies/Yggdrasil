@@ -202,6 +202,8 @@ Applications are shown as windows on a 1920×1080 desktop, in the dark style. Ev
 | *Settings: Games. The graphics cards (with two or more, a Steam launch option runs a game on the one you pick), game fixes with Undo, and frame generation per game.* | *Settings: Peripherals > Mouse. Pointer speed, acceleration, scrolling and the main button, for every mouse or one by one.* |
 | ![Minos](assets/screenshots/minos-explorer.png) | ![The Task Manager](assets/screenshots/taskmanager.png) |
 | *Minos, the file manager: tabs, places, details.* | *The Task Manager (Ctrl + Shift + Esc): Performance, a graphics card's page.* |
+| ![Settings, Security, Privacy](assets/screenshots/settings-security-privacy.png) | ![Minos, right-click on a recording](assets/screenshots/minos-privacy-menu.png) |
+| *Settings: Security > Privacy. The private microphone and the privacy pack, each with its own switch, all on by default.* | *Minos: right-click > Scrub location sounds and Remove hidden info, each writing a cleaned copy beside the file.* |
 | ![Agora](assets/screenshots/marketplace.png) | ![Saga MD](assets/screenshots/saga-md.png) |
 | *Agora, the app store.* | *Saga MD, the Markdown reader.* |
 | ![The calculator](assets/screenshots/calculator.png) | ![The installer, keyboard](assets/screenshots/installer-keyboard.png) |
@@ -225,7 +227,7 @@ One command makes every picture above and in docs/ from this repository's own bu
 (`yggdrasil-compositor --headless`, [docs/COMPOSITOR.md](docs/COMPOSITOR.md)) with the panel, and never touches the running
 desktop: nothing opens on the screen, and it all runs in a bubblewrap sandbox with a blank /home, /run and /tmp, so the desktop's
 runtime folder, its session and system buses, the network and the input devices are not there. The made-up computer is in
-`tests/screenshots` (the account, a home folder with a few files, the processor and memory, a laptop's sensors, and
+`tests/screenshots` (the account, a home folder with a few files, the processor and memory, a graphics card, a laptop's sensors, and
 stand-ins for the programs the apps run directly) and in Settings' fixtures (`packages/settings/tests/fixtures`: `system.json`,
 `laptop.json`, `wifi.json`, `peripherals.json`, read only by a debug build). It takes about 10 minutes; each picture waits until
 the screen stops changing. The installer pictures use `yggdrasil-installer --demo PAGE`, and the lock screen is its test build

@@ -265,6 +265,7 @@ About only when switched on, have no picture.
 | **Apps > Default Apps**: what opens each kind of file. | ![Settings > Apps > Default Apps](../assets/screenshots/settings-default-apps.png) |
 | **Games**: graphics cards, game fixes, frame generation per game. | ![Settings > Games](../assets/screenshots/settings-games.png) |
 | **Security**: the security monitor, the password logs, the distress password, Limbo, the private microphone. | ![Settings > Security](../assets/screenshots/settings-security.png) |
+| **Security > Privacy**: the private microphone and the privacy pack's four switches. | ![Settings > Security > Privacy](../assets/screenshots/settings-security-privacy.png) |
 | **Security > Distress password**: it opens only after your account password. | ![Settings > Security > Distress password](../assets/screenshots/settings-distress-open.png) |
 | **Security > Distress password, the settings**: the password, and how many times within how long. | ![Settings > Security > Distress password, the settings](../assets/screenshots/settings-distress.png) |
 | **Security > Distress password, the two sections**: Section 1, and Section 2 that asks for your password again. | ![Settings > Security > Distress password, the two sections](../assets/screenshots/settings-distress-sections.png) |

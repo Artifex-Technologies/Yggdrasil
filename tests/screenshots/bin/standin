@@ -15,5 +15,6 @@ case "$(basename "$0") $*" in
 "labyrinth-quarantine list --json") echo '[]' ;;
 "labyrinth-security-setting auto-quarantine status") echo on ;;
 "systemctl "*) exit 0 ;;
+"heimdall-strip --can "*) exit 0 ;;
 *) exit 1 ;;
 esac

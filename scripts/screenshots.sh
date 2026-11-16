@@ -13,8 +13,8 @@
 #
 # Each picture is 1920x1080: the panel (wallpaper, top bar, dock) with the app as a window, in the dark style (in the light style
 # for a name ending in "-light"). The made-up system is in tests/screenshots: the account "alex" (Alex Example) on "example-pc",
-# a home folder with a few files, stand-ins for the programs the apps run directly (tests/screenshots/bin/standin), and a
-# laptop's sensors; Settings' pages get theirs from its fixtures (packages/settings/tests/fixtures: system.json, laptop.json,
+# a home folder with a few files, stand-ins for the programs the apps run directly (tests/screenshots/bin/standin), a
+# laptop's sensors and, for the desktop, a graphics card (tests/screenshots/drm: an AMD card's sysfs files, made-up numbers); Settings' pages get theirs from its fixtures (packages/settings/tests/fixtures: system.json, laptop.json,
 # wifi.json, peripherals.json, displays-single.json). Two sandboxes are made, a
 # desktop computer and a laptop (a battery, no fan controller).
 #
@@ -39,7 +39,8 @@ declare -A ACTIONS=(
     [settings-displays-connect]="tap 1413 517"
     [settings-lock-screen-designs]="wait 30"
     [settings-wallpaper]="wait 30"
-    [taskmanager]="tap 474 265"
+    [taskmanager]="tap 474 265; wait 3; tap 735 430; wait 5"
+    [minos-privacy-menu]="pointer 900 300; click right; wait 3"
     [calculator]="type 1299*12"
 )
 shots() {
@@ -79,6 +80,7 @@ shots() {
     shot settings-default-apps          desktop settings default system
     shot settings-games                 desktop settings games system
     shot settings-security              desktop settings security system
+    shot settings-security-privacy      desktop settings security system 560
     shot settings-distress-open         desktop settings security:distress system
     shot settings-distress              desktop settings security:distress-demo system
     shot settings-distress-sections     desktop settings security:distress-demo-mid system
@@ -90,6 +92,8 @@ shots() {
     shot settings-date-time-light       desktop settings datetime system
     shot settings-about                 desktop settings about system
     shot minos-explorer                 desktop app minos /home/alex/Documents
+    shot minos-privacy-menu             desktop app minos /home/alex/Music
+    shot taskmanager-processes          desktop app yggdrasil-taskmanager
     shot taskmanager                    desktop app yggdrasil-taskmanager
     shot marketplace                    desktop app agora
     shot calculator                     desktop app yggdrasil-calculator
@@ -170,6 +174,10 @@ sandbox() {
         # no fan controller (Settings shows a laptop's own fans then), and a laptop's sensors
         [ -d /usr/lib/yggdrasil ] && args+=(--tmpfs /usr/lib/yggdrasil)
         args+=(--ro-bind "$data/laptop/hwmon" /sys/class/hwmon)
+    else
+        # a made-up graphics card instead of the real ones (the Task Manager reads /sys/class/drm; /dev has no NVIDIA nodes, so
+        # NVML finds nothing)
+        args+=(--ro-bind "$data/drm" /sys/class/drm)
     fi
     local p
     for p in /usr/bin/yggdrasil-gpu-run /usr/lib/yggdrasil/game-fix /usr/bin/labyrinth-sarina-setting /usr/bin/labyrinth-quarantine \
@@ -197,7 +205,7 @@ inside() {
     if [ -f "$wall" ]; then echo "$wall" > "$HOME/.config/yggdrasil/wallpaper"; fi
     # programs found by name: the stand-ins, and this build's lock screen for Settings' lock screen previews
     local n
-    for n in snapper systemctl; do ln -s "$data/bin/standin" "$work/bin/$n"; done
+    for n in snapper systemctl heimdall-strip; do ln -s "$data/bin/standin" "$work/bin/$n"; done
     ln -s "$target/debug/yggdrasil-lock" "$work/bin/yggdrasil-lock"
     export PATH=$work/bin:/usr/bin XDG_RUNTIME_DIR=$work/run XDG_CURRENT_DESKTOP=Yggdrasil XDG_SESSION_TYPE=wayland
     export LIBGL_ALWAYS_SOFTWARE=1 NO_AT_BRIDGE=1
