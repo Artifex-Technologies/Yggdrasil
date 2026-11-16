@@ -2,7 +2,7 @@
 
 **Status 2026-11-04: KDE is replaced.** It was removed from the owner's PC on 2026-10-24 and from the code on 2026-10-26 (nothing of
 KDE is started, called or linked). Yggdrasil runs as its own session on Hyprland 0.57 (`packages/session`); Yggdrasil's own compositor
-is still in progress and runs only nested in a window (COMPOSITOR.md). The list of KDE pieces below is kept as the record of the order
+is still in progress: nested, headless, and since 2026-11-15 on a virtual machine's screen through DRM/KMS (COMPOSITOR.md). The list of KDE pieces below is kept as the record of the order
 they were replaced in, with what took each one's place.
 
 Decided 2026-10-15 (owner): **keep CachyOS as the base**, and slowly replace most of KDE with Labyrinth's
@@ -61,7 +61,7 @@ today is given in *italics* after it.
 8. **Compositor** (replaces KWin), last. A Rust compositor on a library such as Smithay. It needs input,
    several monitors, fractional scaling, drag and drop, screen sharing, games and the NVIDIA driver to be solid
    first. Only start it when everything above is stable. *Today: Hyprland is the compositor (chosen 2026-10-23 by the bake-off in
-   COMPOSITOR.md); Yggdrasil's own Smithay compositor is a first version that runs only nested, and its hardware backend is not built.*
+   COMPOSITOR.md); Yggdrasil's own Smithay compositor runs nested and headless, and its hardware backend (DRM/KMS) reached its first milestone on 2026-11-15 in a virtual machine; it is the next big project (2026-11-14), the laptop first.*
 
 ## Familiar first
 

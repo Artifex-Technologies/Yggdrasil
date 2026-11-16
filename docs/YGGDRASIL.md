@@ -15,7 +15,7 @@ Chymaera OS; [LykanOS](https://github.com/Artifex-Technologies/LykanOS)) will us
 | Lock screen, login screen | `yggdrasil-lock`, `yggdrasil-greeter` (package `yggdrasil-lock`) | designs shared |
 | Idle manager (dim, black screen, lock, screen off, sleep) | `yggdrasil-idle` | the pointer hides while dimmed or black. Black screen keeps the monitor on (black pixels; kind to OLEDs), unlike screen off, which some monitors treat as unplugging |
 | Polkit agent, keyring sync, distress password | `yggdrasil-polkit`, `yggdrasil-keyring-sync`, `labyrinth-distress` (+ PAM module) | |
-| Compositor | `yggdrasil-compositor` | first version, nested only (COMPOSITOR.md); Hyprland is the compositor today |
+| Compositor | `yggdrasil-compositor` | in progress: nested, headless, and the DRM/KMS backend's first milestone in a virtual machine (2026-11-15, COMPOSITOR.md); Hyprland is the compositor today |
 | Calculator, weather | `yggdrasil-calculator`, `yggdrasil-weather` | small apps |
 | Saga MD (Markdown reader) | `saga-md` | Markdown and text files, formatted or as their source (replaced ghostwriter, KDE's, 2026-11-08) |
 | Look for other programs (colour scheme, GTK colours, cursors) | `ygg-theme`, `ygg-cursors` (package `yggdrasil-theme`; [THEME.md](THEME.md)) | replaced WhiteSur |

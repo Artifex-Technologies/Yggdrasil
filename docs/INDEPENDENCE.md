@@ -2,7 +2,7 @@
 
 > **Status 2026-11-04: KDE is gone.** It was removed from the owner's PC on 2026-10-24 and from the code on 2026-10-26 (commit 93cd99d:
 > nothing of KDE is started, called or linked). Yggdrasil runs as its own session on Hyprland 0.57 (`packages/session`); its own
-> compositor is still in progress and runs only nested. Part 1 below is kept as the record of the audit of 2026-10-23; the "Now"
+> compositor is still in progress (nested, headless, and since 2026-11-15 the hardware backend's first milestone in a virtual machine). Part 1 below is kept as the record of the audit of 2026-10-23; the "Now"
 > notes say what is true today. Kept on purpose: the tray protocol's standard `org.kde` names and `X-KDE` autostart keys other programs
 > use. **Since 2026-11-08 nothing of ours reads a KDE settings file:** the accent and the icon pack are in `appearance.conf`, the tiling
 > screens in `tiling` (the one-time imports from `kdeglobals` and `kwinrc` are gone), and `ygg-theme` writes KDE's files (`kdeglobals`,
@@ -68,7 +68,7 @@ Hopper) then talk to it through one small adapter.
 
 | KDE piece | What it did (2026-10-23) | Replacement |
 | --- | --- | --- |
-| `kwin` (+ `kwin-scripts-krohnkite`, `/usr/share/kwin` scripts) | draws every window, input, the Wayland protocols the panel uses (`plasma-window-management`, `org_kde_plasma_shell`), tiling, rules | `yggdrasil-compositor` (Rust, Smithay): standard protocols (layer-shell, foreign-toplevel, output management, screencopy). **Now (2026-11-04):** Hyprland won the bake-off and is the compositor; KWin and Krohnkite are gone. `yggdrasil-compositor` is still a first version that runs only nested; its hardware backend is not built. |
+| `kwin` (+ `kwin-scripts-krohnkite`, `/usr/share/kwin` scripts) | draws every window, input, the Wayland protocols the panel uses (`plasma-window-management`, `org_kde_plasma_shell`), tiling, rules | `yggdrasil-compositor` (Rust, Smithay): standard protocols (layer-shell, foreign-toplevel, output management, screencopy). **Now (2026-11-04):** Hyprland won the bake-off and is the compositor; KWin and Krohnkite are gone. `yggdrasil-compositor` is still in progress; **since 2026-11-15** its hardware backend (DRM/KMS) drives a virtual machine's screen ([COMPOSITOR.md](COMPOSITOR.md)). |
 | `kglobalaccel` | global shortcuts, including KWin's own | shortcuts inside the compositor. **Now (2026-11-04):** Hyprland binds every key; kglobalacceld is gone (the KDE Frameworks library `kglobalaccel` is still installed only because a KDE-based app, ghostwriter, needs it). |
 | KWin D-Bus calls in Yggdrasil (`org.kde.KWin` in 15 files) | effects, reconfigure, screenshots, colour pick | the compositor's own interface. **Now (2026-11-04):** no `org.kde.KWin` call is left in Yggdrasil. |
 
