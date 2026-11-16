@@ -1,8 +1,9 @@
 # Keyboard shortcuts
 
-Yggdrasil's shortcuts on Hyprland, as `packages/session/hyprland/yggdrasil.lua` sets them (this file is made from it:
-`YGGDRASIL_WRITE_DOCS=1 cargo test -p yggdrasil-conf` in `packages/yggdrasil-conf` writes it again; a test fails while it is out
-of date). Settings > Peripherals > Keyboard > Shortcuts and the cheat sheet (Win + /) show the live list, your own additions included.
+The desktop's own (Win is the Super key) as `packages/session/hyprland/yggdrasil.lua` sets them, then each app's. The
+desktop's part is made from that file (`YGGDRASIL_WRITE_DOCS=1 cargo test -p yggdrasil-conf` in `packages/yggdrasil-conf` writes it
+again; a test fails while it is out of date); the apps' part, from "In the apps" on, is written by hand. Settings > Peripherals >
+Keyboard > Shortcuts and the cheat sheet (Win + /) show the live list, your own additions included.
 
 ## Windows
 
@@ -93,3 +94,22 @@ of date). Settings > Peripherals > Keyboard > Shortcuts and the cheat sheet (Win
 | WLAN | Airplane mode |
 | NotificationCenter | Notifications |
 | Favorites | Star key |
+
+## In the apps
+
+Each app's main keys; the link has all of them.
+
+| App | Main keys | All of them |
+| --- | --- | --- |
+| Top bar, dock, start menu | Esc closes any popup; in the start menu type to search, Enter opens; Win + / any key closes the shortcuts card | [keys/panel.md](keys/panel.md) |
+| Minos (files) | Ctrl + T / W new / close tab, Alt + ← / → back / forward, Ctrl + F search, Ctrl + L address, F2 rename, Delete to the bin, F3 preview | [keys/minos.md](keys/minos.md) |
+| Clipboard (Win + V) | ↑ ↓ move, Enter copies, Shift + Enter pastes, Tab history / snippets, Ctrl + P pin, Ctrl + N new snippet | [keys/clipboard.md](keys/clipboard.md) |
+| Color Picker (Win + Shift + C) | arrows move one pixel, wheel zooms, Enter or click picks, Esc cancels | [keys/colorpicker.md](keys/colorpicker.md) |
+| Screenshot, lock and login screens | screenshot: drag an area, click a window, Enter whole screen; lock: Enter unlocks, Esc clears; login: Tab another user, F2 session | [keys/lock-and-login.md](keys/lock-and-login.md) |
+| Authenticator | type to search, ↑ ↓ move, Enter copies the code | [keys/authenticator.md](keys/authenticator.md) |
+| Calculator | type the sum, Enter works it out, Esc clears | [keys/calculator.md](keys/calculator.md) |
+| Saga MD (Markdown) | Ctrl + E formatted / source, Ctrl + S save, Ctrl + O open, Alt + ← back, Ctrl + + / − / 0 text size | [keys/saga-md.md](keys/saga-md.md) |
+| Video player | Space or K play / pause, ← → or J / L step, ↑ ↓ volume, M mute, F full screen, O open | [keys/player.md](keys/player.md) |
+| 2048 | arrows, WASD or HJKL slide, U undo, N new game | [keys/2048.md](keys/2048.md) |
+| Sudoku | arrows or HJKL move, 1-9 place, N notes, U undo, Shift + H hint, P pause | [keys/sudoku.md](keys/sudoku.md) |
+| Settings, Agora, installer | no shortcuts of their own (Tab, Enter and typing as usual) | [keys/settings-agora-installer.md](keys/settings-agora-installer.md) |

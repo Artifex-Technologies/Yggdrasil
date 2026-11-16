@@ -5,7 +5,7 @@ KDE is gone: it was removed from the owner's PC on 2026-10-24 and from the code 
 Yggdrasil session on Hyprland 0.57 (`packages/session`, `yggdrasil-session`), with Yggdrasil's own top bar, dock, lock screen
 and login screen. Windows float by default; screens set to tile in Settings > Displays tile them Omarchy-style, which Hyprland
 window rules now do instead of Krohnkite. Plasma, the KWin scripts, Krohnkite, Klassy, the WhiteSur themes and
-`labyrinth-plasma-setup` named below are no longer used. The shortcuts in use today are in the main README.
+`labyrinth-plasma-setup` named below are no longer used. The shortcuts in use today are in [SHORTCUTS.md](SHORTCUTS.md).
 
 As it was on 2026-10-11: Labyrinth shipped two desktops and you picked one at the login screen. Both share the same apps,
 files, Minos, installer, snapshots and settings.

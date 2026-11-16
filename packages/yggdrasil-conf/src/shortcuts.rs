@@ -18,6 +18,9 @@ pub struct Shortcut {
     pub group: &'static str,
 }
 
+/// Where the hand-written part of docs/SHORTCUTS.md starts: the apps' own keys.
+pub const APPS_HEADING: &str = "## In the apps";
+
 /// The groups, in the order they are shown.
 pub const GROUPS: [&str; 8] = ["Windows", "Desktops", "Apps", "System", "Mouse", "Screenshots", "Media keys", "Other"];
 
@@ -249,12 +252,13 @@ fn parse_lua(text: &str, expand: bool) -> Vec<Bind> {
     binds
 }
 
-/// docs/SHORTCUTS.md from the shortcuts.
+/// The desktop's part of docs/SHORTCUTS.md from the shortcuts (the apps' part follows it, written by hand from `APPS_HEADING`).
 pub fn markdown(list: &[Shortcut]) -> String {
     let mut s = String::from(
-        "# Keyboard shortcuts\n\nYggdrasil's shortcuts on Hyprland, as `packages/session/hyprland/yggdrasil.lua` sets them (this file is made from it:\n\
-         `YGGDRASIL_WRITE_DOCS=1 cargo test -p yggdrasil-conf` in `packages/yggdrasil-conf` writes it again; a test fails while it is out\n\
-         of date). Settings > Peripherals > Keyboard > Shortcuts and the cheat sheet (Win + /) show the live list, your own additions included.\n",
+        "# Keyboard shortcuts\n\nThe desktop's own (Win is the Super key) as `packages/session/hyprland/yggdrasil.lua` sets them, then each app's. The\n\
+         desktop's part is made from that file (`YGGDRASIL_WRITE_DOCS=1 cargo test -p yggdrasil-conf` in `packages/yggdrasil-conf` writes it\n\
+         again; a test fails while it is out of date); the apps' part, from \"In the apps\" on, is written by hand. Settings > Peripherals >\n\
+         Keyboard > Shortcuts and the cheat sheet (Win + /) show the live list, your own additions included.\n",
     );
     for g in GROUPS {
         let rows: Vec<&Shortcut> = list.iter().filter(|x| x.group == g).collect();
@@ -267,36 +271,6 @@ pub fn markdown(list: &[Shortcut]) -> String {
         }
     }
     s
-}
-
-/// The desktop's shortcuts as a section of README.md (between `<!-- shortcuts:start -->` and `<!-- shortcuts:end -->`): the same
-/// groups as docs/SHORTCUTS.md, one heading each.
-pub fn readme_section(list: &[Shortcut]) -> String {
-    let mut s = String::from(
-        "## Keyboard shortcuts\n\nThe desktop's own (Win is the Super key). Settings > Peripherals > Keyboard > Shortcuts and Win + / show the live list, your own\n\
-         additions included; [docs/SHORTCUTS.md](docs/SHORTCUTS.md) is the same list. This part is made from\n\
-         `packages/session/hyprland/yggdrasil.lua` (`YGGDRASIL_WRITE_DOCS=1 cargo test` in `packages/yggdrasil-conf`).\n",
-    );
-    for g in GROUPS {
-        let rows: Vec<&Shortcut> = list.iter().filter(|x| x.group == g).collect();
-        if rows.is_empty() {
-            continue;
-        }
-        s.push_str(&format!("\n### {g}\n\n| Keys | What it does |\n| --- | --- |\n"));
-        for r in rows {
-            s.push_str(&format!("| {} | {} |\n", r.keys.replace('|', "\\|"), r.what.replace('|', "\\|")));
-        }
-    }
-    s
-}
-
-/// `readme` with the part between the shortcut markers replaced by `section` (None when the markers are missing).
-pub fn splice_readme(readme: &str, section: &str) -> Option<String> {
-    const START: &str = "<!-- shortcuts:start -->";
-    const END: &str = "<!-- shortcuts:end -->";
-    let a = readme.find(START)? + START.len();
-    let b = readme[a..].find(END)? + a;
-    Some(format!("{}\n{}{}", &readme[..a], section, &readme[b..]))
 }
 
 #[cfg(test)]
@@ -381,34 +355,25 @@ for key, what in pairs({
         assert_eq!(binds.len(), 8);
     }
 
-    /// docs/SHORTCUTS.md and the README's shortcut section are made from the session file; with YGGDRASIL_WRITE_DOCS=1 this
-    /// writes them, otherwise it fails when either is stale.
+    /// docs/SHORTCUTS.md's desktop part is made from the session file; with YGGDRASIL_WRITE_DOCS=1 this writes it (the apps' part
+    /// after it is kept as it is), otherwise it fails when it is stale.
     #[test]
     fn the_shortcuts_doc_is_current() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let Ok(lua) = std::fs::read_to_string(root.join("packages/session/hyprland/yggdrasil.lua")) else { return };
-        let list = from_lua(&lua);
-        let want = markdown(&list);
         let doc = root.join("docs/SHORTCUTS.md");
-        let readme = root.join("README.md");
-        let have_readme = std::fs::read_to_string(&readme).unwrap_or_default();
-        let want_readme = splice_readme(&have_readme, &readme_section(&list))
-            .expect("README.md has the <!-- shortcuts:start --> and <!-- shortcuts:end --> markers");
+        let have = std::fs::read_to_string(&doc).unwrap_or_default();
+        let apps = have.find(APPS_HEADING).map(|i| &have[i..]).expect("docs/SHORTCUTS.md has the apps' part (## In the apps)");
+        let want = format!("{}\n{}", markdown(&from_lua(&lua)), apps);
         if std::env::var_os("YGGDRASIL_WRITE_DOCS").is_some() {
             std::fs::write(&doc, &want).unwrap();
-            std::fs::write(&readme, &want_readme).unwrap();
         }
         let have = std::fs::read_to_string(&doc).unwrap_or_default();
         assert!(have == want, "docs/SHORTCUTS.md is out of date: YGGDRASIL_WRITE_DOCS=1 cargo test in packages/yggdrasil-conf");
-        let have_readme = std::fs::read_to_string(&readme).unwrap_or_default();
-        assert!(
-            have_readme == want_readme,
-            "README.md's shortcuts are out of date: YGGDRASIL_WRITE_DOCS=1 cargo test in packages/yggdrasil-conf"
-        );
     }
 
     #[test]
-    fn the_readme_part_is_spliced_and_find_my_mouse_reads_as_a_double_tap() {
+    fn find_my_mouse_reads_as_a_double_tap() {
         let lua = r#"
 cmd("CTRL + CONTROL_L", "x", { release = true, non_consuming = true, desc = "Find my mouse (press Ctrl twice)" })
 hl.bind("SUPER + SHIFT + Z", hl.dsp.exec_cmd("y"), { desc = "Window zones for the window in front" })
@@ -417,8 +382,5 @@ hl.bind("SUPER + SHIFT + Z", hl.dsp.exec_cmd("y"), { desc = "Window zones for th
         let get = |k: &str| list.iter().find(|s| s.keys == k).map(|s| (s.what.clone(), s.group));
         assert_eq!(get("Ctrl twice"), Some(("Find my mouse".into(), "Mouse")));
         assert_eq!(get("Win + Shift + Z"), Some(("Window zones for the window in front".into(), "Windows")));
-        let r = splice_readme("a\n<!-- shortcuts:start -->\nold\n<!-- shortcuts:end -->\nb\n", "new\n").unwrap();
-        assert_eq!(r, "a\n<!-- shortcuts:start -->\nnew\n<!-- shortcuts:end -->\nb\n");
-        assert!(splice_readme("no markers", "x").is_none());
     }
 }
