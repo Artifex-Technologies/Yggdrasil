@@ -6,6 +6,7 @@ description = "A Yggdrasil bar add-on: how much of Claude's weekly and 5-hour li
 license = "MPL-2.0"
 
 [dependencies]
+libc = "0.2"
 serde_json = "1"
 
 [profile.release]

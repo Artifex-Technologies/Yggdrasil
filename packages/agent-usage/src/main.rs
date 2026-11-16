@@ -82,6 +82,33 @@ fn until(t: i64, now: i64) -> String {
     }
 }
 
+/// The local wall-clock time of `t`, the way the phone app shows a reset: "2:14 PM" today, "Tue 9:00 AM" within the
+/// week, "Nov 18, 9:00 AM" later. The system's own time zone (localtime_r reads /etc/localtime and TZ).
+fn clock(t: i64, now: i64) -> String {
+    fn local(t: i64) -> Option<libc::tm> {
+        let tt: libc::time_t = t as libc::time_t;
+        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+        // SAFETY: both pointers are valid for the call; localtime_r is the reentrant form.
+        let r = unsafe { libc::localtime_r(&tt, &mut tm) };
+        (!r.is_null()).then_some(tm)
+    }
+    let (Some(a), Some(n)) = (local(t), local(now)) else { return String::new() };
+    let h12 = match a.tm_hour % 12 {
+        0 => 12,
+        h => h,
+    };
+    let time = format!("{}:{:02} {}", h12, a.tm_min, if a.tm_hour < 12 { "AM" } else { "PM" });
+    const DAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    if a.tm_year == n.tm_year && a.tm_yday == n.tm_yday {
+        time
+    } else if t - now < 6 * 86400 {
+        format!("{} {time}", DAYS[a.tm_wday.rem_euclid(7) as usize])
+    } else {
+        format!("{} {}, {time}", MONTHS[a.tm_mon.rem_euclid(12) as usize], a.tm_mday)
+    }
+}
+
 /// One limit window from the endpoint: utilization 0..100 and the reset time.
 struct Window {
     title: String,
@@ -145,7 +172,7 @@ fn record(payload: &Value, now: i64, note: &str) -> Value {
     let lines: Vec<Value> = ws
         .iter()
         .map(|w| {
-            let mut n = w.resets.map(|r| format!("resets in {}", until(r, now))).unwrap_or_default();
+            let mut n = w.resets.map(|r| format!("resets {} (in {})", clock(r, now), until(r, now))).unwrap_or_default();
             let mut alert = false;
             if w.title.starts_with("Weekly") {
                 if let Some(p) = pace {
@@ -261,6 +288,17 @@ mod tests {
         assert_eq!(parse_time(&json!(1_800_000_000_000i64)), Some(1_800_000_000));
         assert_eq!(until(3600 * 16, 0), "16h");
         assert_eq!(until(86400 * 3 + 3600 * 4, 0), "3d 4h");
+    }
+
+    #[test]
+    fn resets_show_a_clock_time() {
+        let now = 1_800_000_000;
+        let today = clock(now, now);
+        assert!(today.ends_with(" AM") || today.ends_with(" PM"), "{today}");
+        assert!(!today.contains(','), "today has no date: {today}");
+        let later = clock(now + 3 * 86400, now);
+        assert!(["Sun ", "Mon ", "Tue ", "Wed ", "Thu ", "Fri ", "Sat "].iter().any(|d| later.starts_with(d)), "{later}");
+        assert!(clock(now + 20 * 86400, now).contains(", "), "a later date has its month and day");
     }
 
     #[test]
