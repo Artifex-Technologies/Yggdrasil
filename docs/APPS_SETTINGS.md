@@ -554,3 +554,16 @@ namespace); `sudo bash tests/appnet_ask/kernel_log_check.sh` (the real kernel lo
 - Per-app Location and "which other apps it can see" for Flatpak apps (Flatpak overrides could do both).
 - A network-usage logger per app (the running-time logger exists).
 - A right-click "App settings" entry in the dock that runs `yggdrasil-settings apps:ID`.
+- **What kind of network this is** (planned 2026-11-16): on a saved Wi-Fi network's own (i) page, in the Heimdall group next
+  to the trust level and the discoverable switch, a choice "This network is: Home router · Mesh · Phone hotspot · Travel /
+  hotel · Other", with Heimdall's suggestion shown inline ("Looks like a phone hotspot") and never applied by itself; the first
+  time a network can't be classified, the "joined a new network" notification asks once (with "decide later"). Heimdall
+  stores it with the trusted network and uses it for the router fingerprint (a phone hotspot's address changing between
+  sessions is expected; changing within a session, or two routers at once, is not, for any kind). See Heimdall's
+  docs/WIFI_TRUST.md for the field and the command that sets it.
+- **What kind of device this is** (planned 2026-11-16): in Wi-Fi & Network > Devices on a home network, a choice per device
+  (TV, phone, computer, game console, speaker, printer, smart device, router, other) to correct the device list's guess.
+- **Protective mode** (planned, after training): when Heimdall is confident a man-in-the-middle is real on a learned network,
+  restrict traffic while keeping the connection (pin the known router, drop address offers and IPv6 router announcements from
+  anything else, keep DNS on the known servers, use the VPN if set up), with a notice and an undo. It switches on only after
+  an observe-only period per network and a threshold I approve. Design: Heimdall's docs/WIFI_TRUST.md.
