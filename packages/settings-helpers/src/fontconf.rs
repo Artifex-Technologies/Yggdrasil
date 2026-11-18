@@ -1,5 +1,5 @@
 //! fontconf: the computer's system font, which the login screen and every account without its own choice use (Settings >
-//! Appearance > Font, "Use on the login screen"), run as root through pkexec:
+//! Appearance > Fonts, "Use on the login screen"), run as root through pkexec:
 //!
 //!   fontconf set SANS MONO     the ids of yggdrasil_conf::fonts' choices, or "-" for none of each; both "-" removes the file
 //!
@@ -14,7 +14,7 @@ use yggdrasil_conf::fonts::{self, Prefs};
 /// The work, with the file's path given (tests write in a scratch folder).
 pub fn run(argv: &[String], path: &Path) -> i32 {
     let usage = || {
-        eprintln!("usage: fontconf set SANS MONO   (ids from Settings > Appearance > Font, or - for none)");
+        eprintln!("usage: fontconf set SANS MONO   (ids from Settings > Appearance > Fonts, or - for none)");
         2
     };
     let [_, cmd, sans, mono] = argv else { return usage() };

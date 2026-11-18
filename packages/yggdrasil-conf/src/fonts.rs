@@ -1,5 +1,5 @@
 //! The system font: which family the desktop and every program use for ordinary text (`sans-serif`) and for code and terminals
-//! (`monospace`). Chosen in the installer and in Settings > Appearance > Font; Noto Sans and Noto Sans Mono when nothing is
+//! (`monospace`). Chosen in the installer and in Settings > Appearance > Fonts; Noto Sans and Noto Sans Mono when nothing is
 //! chosen. It is a fontconfig file, so every program that asks fontconfig for "sans-serif" follows it (GTK, Qt, browsers,
 //! Yggdrasil's own panel, lock screen and apps):
 //!
@@ -165,7 +165,7 @@ pub fn render(p: &Prefs) -> Option<String> {
     }
     let mut t = String::from(
         "<?xml version=\"1.0\"?>\n<!DOCTYPE fontconfig SYSTEM \"urn:fontconfig:fonts.dtd\">\n\
-         <!-- Written by Yggdrasil (the installer, Settings > Appearance > Font): the system font. Change it there. -->\n\
+         <!-- Written by Yggdrasil (the installer, Settings > Appearance > Fonts): the system font. Change it there. -->\n\
          <fontconfig>\n  <description>Yggdrasil: the chosen system font</description>\n",
     );
     // "sans" and "system-ui" are what some programs ask for instead of "sans-serif"
@@ -230,7 +230,7 @@ pub fn save_to(path: &Path, p: &Prefs) -> std::io::Result<()> {
     }
 }
 
-/// Your own choice (Settings > Appearance > Font).
+/// Your own choice (Settings > Appearance > Fonts).
 pub fn save_user(p: &Prefs) -> std::io::Result<()> {
     save_to(&user_path(), p)
 }

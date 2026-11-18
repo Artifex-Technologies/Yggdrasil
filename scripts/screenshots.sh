@@ -86,6 +86,7 @@ shots() {
     shot settings-cooling-curves        desktop settings power:cooling system 700
     shot settings-appearance            desktop settings appearance system
     shot settings-font                  desktop settings appearance:font system
+    shot settings-fonts-installed       desktop settings appearance:font system 1250
     shot settings-lock-screen-designs   desktop settings appearance:lock system
     shot settings-wallpaper             desktop settings appearance:wallpaper system
     shot settings-assistant             desktop settings assistant system

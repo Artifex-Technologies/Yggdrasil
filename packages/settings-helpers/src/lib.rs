@@ -4,7 +4,7 @@
 //!   account     /usr/lib/yggdrasil/account     Settings > Users, through pkexec: list, groups, add, admin, remove, name,
 //!                                              password, login, sudo, group
 //!   bootscreen  /usr/lib/yggdrasil/bootscreen  Settings > Appearance > Boot screen: get, and set through pkexec
-//!   fontconf    /usr/lib/yggdrasil/fontconf    Settings > Appearance > Font: the login screen's font, through pkexec
+//!   fontconf    /usr/lib/yggdrasil/fontconf    Settings > Appearance > Fonts: the login screen's font, through pkexec
 //!   game-fix    /usr/lib/yggdrasil/game-fix    Settings > Games > Game fixes: list, apply, undo
 //!   gpu-run     /usr/bin/yggdrasil-gpu-run     Settings > Games: a program on a chosen graphics card (a Steam launch option)
 //!   battery     /usr/lib/yggdrasil/battery     The top bar's battery and its drop-down, low-battery warnings, the charge

@@ -7,7 +7,7 @@ paths with the same interface: commands, arguments, JSON, files, exit codes and 
 | --- | --- | --- | --- |
 | `account` | `/usr/lib/yggdrasil/account` | Settings > Users: list, groups, add, admin, remove, name, password, login, sudo, group | through pkexec (`list`, `groups`: no) |
 | `bootscreen` | `/usr/lib/yggdrasil/bootscreen` | Appearance > Boot screen: get, set animation / messages / picture FILE | `set` through pkexec |
-| `fontconf` | `/usr/lib/yggdrasil/fontconf` | Appearance > Font: `set SANS MONO`, the computer's font (the login screen's) | through pkexec |
+| `fontconf` | `/usr/lib/yggdrasil/fontconf` | Appearance > Fonts: `set SANS MONO`, the computer's font (the login screen's) | through pkexec |
 | `game-fix` | `/usr/lib/yggdrasil/game-fix` | Games > Game fixes: list [--json], apply, undo | no |
 | `gpu-run` | `/usr/bin/yggdrasil-gpu-run` | Games: a program on a chosen graphics card (a Steam launch option) | no |
 | `gpuunlock` | `/usr/lib/yggdrasil/gpuunlock` | Power > Graphics card unlock: status, arm, disarm, reenable, release, boot, verify, bench; `grub-entry` for `/etc/grub.d/41_gpu_unlock` | through pkexec and its two services (`status`, `bench`: no) |

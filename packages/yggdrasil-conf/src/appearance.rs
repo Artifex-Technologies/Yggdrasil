@@ -7,7 +7,7 @@
 //! accent = 124,84,214   # r,g,b; absent: the operating system's default accent
 //! icons = Liki          # the icon pack; absent: Liki
 //! cursor = macOS        # the pointer theme (ygg-theme); absent: Yggdrasil's own
-//! font = lexend          # the fonts last chosen in Settings > Appearance > Font (a note: the choice itself is fontconfig's
+//! font = lexend          # the fonts last chosen in Settings > Appearance > Fonts (a note: the choice itself is fontconfig's
 //! font_mono = noto-sans-mono   # file, fonts.rs; writing it here tells the panel, which watches this folder, to load them anew)
 //! ```
 //!
@@ -108,7 +108,7 @@ pub fn render_fonts(sans: &str, mono: &str, old: &str) -> String {
     text
 }
 
-/// Notes the fonts chosen in Settings > Appearance > Font (ids from fonts::SANS and fonts::MONO only), so the panel takes
+/// Notes the fonts chosen in Settings > Appearance > Fonts (ids from fonts::SANS and fonts::MONO only), so the panel takes
 /// them up at once.
 pub fn note_fonts(sans: &str, mono: &str) -> std::io::Result<()> {
     if crate::fonts::sans(sans).is_none() || crate::fonts::mono(mono).is_none() {

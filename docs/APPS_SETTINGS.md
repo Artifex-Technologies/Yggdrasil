@@ -199,7 +199,7 @@ assistant), Apps, Privacy & security, System. Settings opens on General all the 
   top bar, a window with the accent's border, the dock with the first pinned apps in the icon pack). Both are made again
   only when one of those changes, and dropped when the page is left.
 
-- **Appearance > Font** (`src/fonts_ui.rs`, since 2026-11-18; `yggdrasil-settings appearance:font`): the system font, for text
+- **Appearance > Fonts** (`src/fonts_ui.rs`, since 2026-11-18; `yggdrasil-settings appearance:fonts`): the system font, for text
   and for code and terminals, chosen from a short list, each with a line of text in it and a plain note on what it was made for:
   Noto Sans (the default), Atkinson Hyperlegible and Atkinson Hyperlegible Next (the Braille Institute's, for low vision
   readers), Lexend and OpenDyslexic; for code Noto Sans Mono, Atkinson Hyperlegible Mono and OpenDyslexic Mono. A font that is
@@ -228,6 +228,21 @@ assistant), Apps, Privacy & security, System. Settings opens on General all the 
     and +4.7 MB; with the system's Noto Sans and Noto Sans Mono 13 ms (6 to 9 ms of it the fc-match calls, run side by side)
     and +7.1 MB; with Atkinson Hyperlegible Next and Mono 7.5 ms and +5.2 MB. The real bold face is loaded only by an app that
     asks for it (`fonts::want_bold`, the installer's headings): it would add about 1.4 MB to every app that never draws it.
+  - **Adding and removing fonts**, below the choice, like Windows 11's Fonts page (`src/fontlib.rs`): a drop area ("Drag and
+    drop to install": .ttf, .otf, .ttc, .woff2, or a .zip of them) and "Browse and install fonts" (the desktop's file
+    chooser, the FileChooser portal); then the installed fonts as cards, each with a sample line drawn in it (on a thread of its
+    own, only for the cards on screen), its name and how many styles it has, a search box above them, and on each card "···"
+    with Remove for a font you added (the system's are removed with their package, not here). Your fonts go to
+    `~/.local/share/fonts` (no password), then `fc-cache` for that folder. Dropping works on Wayland through yggdrasil-ui's
+    `dnd.rs` (Minos's drag and drop, shared since 2026-11-18: winit has none there).
+  - **Every file is checked before it is installed**, whatever it came from. It is first copied into a private folder
+    (`~/.cache/yggdrasil/font-import`, 0700); Heimdall's file guard checks that copy (`heimdall-fileguard scan --json`; a .zip
+    is unpacked by the guard itself, `heimdall-fileguard extract --json --only ttf,otf,ttc,woff2`, with its own limits:
+    Settings never unpacks an archive); Settings reads it as a font (skrifa, Rust and memory-safe: a name, a character map,
+    letters; WOFF2 by its header and fontconfig's own reading in a process of its own), 50 MB at most; and that same copy is
+    what goes into the fonts folder. Refused (by the guard, or not a font): nothing is installed and the reason is shown. A
+    warning: shown, with "Install anyway". A guard without `scan` and `extract` (an older Heimdall) or none at all: the page
+    says installing needs a newer Heimdall privacy package and takes nothing.
 
 - **Accessibility** (`src/accessibility.rs`, near the top of the sidebar; Appearance keeps a row to it): text and control
   size, pointer size, zoom, colour filters, reduce motion, and rows to key repeat and the on-screen keyboard. What each does
@@ -370,7 +385,8 @@ About only when switched on, have no picture.
 | **Power > Cooling**: a fan controller's pump and fans, each with its speed now. | ![Settings > Power > Cooling](../assets/screenshots/settings-cooling.png) |
 | **Power > Cooling, a fan's curves**: the processor's curve, dragged point by point. | ![Settings > Power > Cooling, a fan's curves](../assets/screenshots/settings-cooling-curves.png) |
 | **Appearance**: light or dark, the accent, the pages inside it, a row to Accessibility. | ![Settings > Appearance](../assets/screenshots/settings-appearance.png) |
-| **Appearance > Font**: the system font for text and for code, each in its own letters, the text size, the login screen's font. | ![Settings > Appearance > Font](../assets/screenshots/settings-font.png) |
+| **Appearance > Fonts**: the system font for text and for code, each in its own letters, the text size, the login screen's font. | ![Settings > Appearance > Fonts](../assets/screenshots/settings-font.png) |
+| **Appearance > Fonts**, further down: adding fonts (here waiting for a newer Heimdall) and the installed fonts as cards. | ![Settings > Appearance > Fonts, the installed fonts](../assets/screenshots/settings-fonts-installed.png) |
 | **Appearance > Wallpaper**: the lock screen and the desktop previewed side by side, the wallpapers below. | ![Settings > Appearance > Wallpaper](../assets/screenshots/settings-wallpaper.png) |
 | **Appearance > Lock screen**: the designs with their previews. | ![Settings > Appearance > Lock screen](../assets/screenshots/settings-lock-screen-designs.png) |
 | **Sarina**: the operating system's assistant, from its integration. | ![Settings > Sarina](../assets/screenshots/settings-assistant.png) |

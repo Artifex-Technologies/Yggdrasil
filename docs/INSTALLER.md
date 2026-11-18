@@ -77,7 +77,7 @@ and a short note on what it was made for. Clicking one switches the installer's 
 setting is not changed). The page is left out when the medium has nothing besides the defaults. The plan carries
 `"font": id` and `"font_mono": id` (left out for the defaults), and the summary has a Font line. The install program writes
 the computer's fontconfig file, `/etc/fonts/conf.d/56-yggdrasil-font.conf`, which the login screen and the new account use;
-Settings > Appearance > Font changes it later (APPS_SETTINGS.md).
+Settings > Appearance > Fonts changes it later (APPS_SETTINGS.md).
 
 ![The installer's Font page](../assets/screenshots/installer-font.png)
 

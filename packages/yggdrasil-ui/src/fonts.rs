@@ -1,5 +1,5 @@
 //! The system font in Yggdrasil's egui apps: the files fontconfig names for `sans-serif` (regular and bold) and `monospace`,
-//! the same that the panel, the lock screen and every other program use, so a font chosen in Settings > Appearance > Font
+//! the same that the panel, the lock screen and every other program use, so a font chosen in Settings > Appearance > Fonts
 //! (yggdrasil_conf::fonts) shows here too. egui's own fonts stay behind them for whatever a system font lacks (emoji, symbols).
 //!
 //! - `install(ctx)` at the app's start (in eframe's creation callback, so the first frame already has them);
@@ -251,7 +251,7 @@ fn add_previews(defs: &mut FontDefinitions) {
     }
 }
 
-/// Each installed choice as a family of its own (`preview_name`), for a line of text in it (Settings > Appearance > Font, the
+/// Each installed choice as a family of its own (`preview_name`), for a line of text in it (Settings > Appearance > Fonts, the
 /// installer's Font page). Drawn only once `has_family` says it is there.
 pub fn show_previews(ctx: &egui::Context, found: &[Found]) {
     *PREVIEWS.lock().unwrap_or_else(|e| e.into_inner()) =

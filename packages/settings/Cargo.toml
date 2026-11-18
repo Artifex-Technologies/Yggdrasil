@@ -44,6 +44,10 @@ serde = { version = "1", features = ["derive"] }
 # SIGTERM, SIGINT and SIGHUP close the window (quit.rs); the settings folder watched for changes made elsewhere (refresh.rs).
 # Already in the tree (eframe, zbus)
 libc = "0.2"
+# Appearance > Fonts: a font added there is read as a font before it is installed, and each installed family's sample line is
+# drawn (skrifa: egui's own font reader; tiny-skia: the shared look's SVG renderer). Both already in the tree
+skrifa = "0.44"
+tiny-skia = "0.12"
 # Date & time's map and short list of time zones (shared with the installer)
 yggdrasil-tzpicker = { path = "../tzpicker" }
 

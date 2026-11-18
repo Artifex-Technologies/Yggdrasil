@@ -1,7 +1,7 @@
 # Accessibility audit (2026-10-16)
 
 **Status 2026-11-18:** fonts made for reading: Atkinson Hyperlegible (and Next, and Mono) for low vision, Lexend, OpenDyslexic
-(and Mono), chosen in the installer's Font page and in Settings > Appearance > Font, for the whole system through fontconfig
+(and Mono), chosen in the installer's Font page and in Settings > Appearance > Fonts, for the whole system through fontconfig
 (the login screen too). Details: APPS_SETTINGS.md, INSTALLER.md.
 
 **Status 2026-11-13:** Settings has an Accessibility page (`packages/settings/src/accessibility.rs`, near the top of the

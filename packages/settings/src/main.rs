@@ -20,6 +20,7 @@ mod displays_ui;
 mod distress;
 mod fans;
 mod fixture;
+mod fontlib;
 mod fonts_ui;
 mod games;
 mod general;
@@ -467,8 +468,13 @@ struct App {
     zone_picker: Option<yggdrasil_tzpicker::Picker>,
     /// What the icon-pack install box holds: a folder, an archive or a link.
     icon_src: String,
-    /// Appearance > Font: the fonts to choose from as found here (None: look again on the next visit).
+    /// Appearance > Fonts: the fonts to choose from as found here (None: look again on the next visit).
     font_found: Option<Vec<yggdrasil_ui::fonts::Found>>,
+    /// Appearance > Fonts: adding fonts and the installed ones.
+    font_lib: fonts_ui::Library,
+    /// Files dropped on the window from other programs (winit has none on Wayland; yggdrasil-ui's dnd), for the Fonts page.
+    dnd: Option<yggdrasil_ui::dnd::Dnd>,
+    dnd_tried: bool,
     // Apps page
     app_tab: usize,
     /// Which part of Appearance is open.
@@ -661,6 +667,9 @@ impl App {
             zone_picker: None,
             icon_src: String::new(),
             font_found: None,
+            font_lib: Default::default(),
+            dnd: None,
+            dnd_tried: false,
             app_tab: 0,
             bar_addons: None,
             app_sub: match start_sub().as_str() {
@@ -780,6 +789,29 @@ impl App {
     }
 
     /// Run a change on a background thread, then reload the page.
+    /// Files dragged over the window and dropped on it: for Appearance > Fonts only (elsewhere a drop does nothing).
+    fn pump_dnd(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
+        if !self.dnd_tried {
+            self.dnd_tried = true;
+            self.dnd = yggdrasil_ui::dnd::init(frame, ctx);
+        }
+        let on_fonts = self.page == Page::Appearance && self.app_sub == AppSub::Font;
+        let Some(dnd) = &mut self.dnd else { return };
+        while let Ok(ev) = dnd.events.try_recv() {
+            match ev {
+                yggdrasil_ui::dnd::DndEvent::Hover(_) => self.font_lib.hover = on_fonts,
+                yggdrasil_ui::dnd::DndEvent::Leave => self.font_lib.hover = false,
+                yggdrasil_ui::dnd::DndEvent::Drop { paths, .. } => {
+                    self.font_lib.hover = false;
+                    if on_fonts {
+                        self.font_lib.dropped.extend(paths);
+                    }
+                }
+                yggdrasil_ui::dnd::DndEvent::Finished => dnd.finished(),
+            }
+        }
+    }
+
     fn change(&mut self, ctx: &egui::Context, f: impl FnOnce() -> Result<(), String> + Send + 'static) {
         let tx = self.tx.clone();
         let page = self.page;
@@ -1027,8 +1059,9 @@ fn page_from(arg: &str) -> Page {
 }
 
 impl eframe::App for App {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.pump_dnd(&ctx, frame);
         if self.config_changed.swap(false, std::sync::atomic::Ordering::AcqRel) {
             refresh::apply_accessibility(&ctx);
         }
@@ -2338,9 +2371,19 @@ impl App {
                 ) {
                     self.app_sub = AppSub::Bar;
                 }
-                if ui::nav_row(ui, pal, false, "Font", Some("The letters everywhere: easier to read for low vision or dyslexia"), |_| {}) {
+                if ui::nav_row(
+                    ui,
+                    pal,
+                    false,
+                    "Fonts",
+                    Some("The system font (easier to read for low vision or dyslexia), adding and removing fonts"),
+                    |_| {},
+                ) {
                     self.app_sub = AppSub::Font;
                     self.font_found = None;
+                    self.font_lib.list = None;
+                    self.font_lib.guard = None;
+                    self.font_lib.textures.clear();
                 }
                 if ui::nav_row(ui, pal, false, "Icons", Some("Icon packs and the mouse pointer"), |_| {}) {
                     self.app_sub = AppSub::Icons;

@@ -27,12 +27,13 @@ optdepends=('ufw: firewall page'
             'iio-sensor-proxy: a 2-in-1 turns its screen with the device (tablet mode)'
             'wvkbd: the on-screen keyboard in tablet mode, from Agora'
             'fprintd: Users > Fingerprint, from Agora'
-            'ttf-atkinson-hyperlegible: Appearance > Font'
-            'ttf-atkinson-hyperlegible-next: Appearance > Font'
-            'ttf-atkinson-hyperlegible-mono: Appearance > Font (monospace)'
-            'ttf-lexend: Appearance > Font'
-            'otf-opendyslexic: Appearance > Font'
-            'otf-opendyslexic-mono: Appearance > Font (monospace)')
+            'ttf-atkinson-hyperlegible: Appearance > Fonts'
+            'ttf-atkinson-hyperlegible-next: Appearance > Fonts'
+            'ttf-atkinson-hyperlegible-mono: Appearance > Fonts (monospace)'
+            'ttf-lexend: Appearance > Fonts'
+            'otf-opendyslexic: Appearance > Fonts'
+            'otf-opendyslexic-mono: Appearance > Fonts (monospace)'
+            "heimdall-private-mic-git: Appearance > Fonts: Heimdall's file guard, which checks every font before it is added")
 makedepends=('cargo')
 options=('!lto')
 
@@ -121,7 +122,7 @@ package() {
   install -Dm644 "$_src/data/yggdrasil-autozone.timer" "$pkgdir/usr/lib/systemd/user/yggdrasil-autozone.timer"
   install -Dm644 "$_src/data/50-yggdrasil-timezone.rules" "$pkgdir/usr/share/polkit-1/rules.d/50-yggdrasil-timezone.rules"
   install -Dm644 "$_src/data/org.yggdrasil.bootscreen.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.bootscreen.policy"
-  # Appearance > Font: the computer's font, which the login screen uses (/etc/fonts/conf.d/56-yggdrasil-font.conf; your own is
+  # Appearance > Fonts: the computer's font, which the login screen uses (/etc/fonts/conf.d/56-yggdrasil-font.conf; your own is
   # written by Settings itself, no password)
   install -Dm755 "$srcdir/target/release/fontconf" "$pkgdir/usr/lib/yggdrasil/fontconf"
   install -Dm644 "$_src/data/org.yggdrasil.fontconf.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.fontconf.policy"

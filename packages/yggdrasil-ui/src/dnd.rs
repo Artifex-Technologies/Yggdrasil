@@ -1,8 +1,7 @@
-//! Drag and drop between windows and programs on Wayland. winit (what egui runs on) has no
-//! drag and drop on Wayland at all, so this speaks the protocol itself, on its own event queue on
-//! the window's connection: files dragged out of Minos leave as a `text/uri-list` (any other window,
-//! the desktop, another Minos can take them), and files dropped on Minos from anywhere come back as
-//! `DndEvent::Drop`. Dragging inside one window is still egui's own (it needs no protocol).
+//! Drag and drop between windows and programs on Wayland (Minos's, shared since 2026-11-18 for Settings > Appearance > Fonts).
+//! winit (what egui runs on) has no drag and drop on Wayland at all, so this speaks the protocol itself, on its own event queue
+//! on the window's connection: files dragged out of a window leave as a `text/uri-list` (any other window, the desktop, another
+//! Minos can take them), and files dropped on it from anywhere come back as `DndEvent::Drop`. Dragging inside one window is still egui's own (it needs no protocol).
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -113,7 +112,7 @@ pub fn init(frame: &eframe::Frame, ctx: &eframe::egui::Context) -> Option<Dnd> {
     };
     queue.roundtrip(&mut st).ok()?;
     std::thread::Builder::new()
-        .name("minos-dnd".into())
+        .name("yggdrasil-dnd".into())
         .spawn(move || {
             // Not blocking_dispatch: the window's own thread reads the same socket, and when it reads first
             // our events sit in this queue with nobody to wake us (so a drop target waiting on the data

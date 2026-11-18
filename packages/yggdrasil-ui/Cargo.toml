@@ -17,3 +17,9 @@ yggdrasil-wm = { path = "../wm" }
 # the privacy pack's switches file (privacy_prefs.rs)
 serde_json = "1"
 resvg = { version = "0.48", default-features = false, features = ["raster-images"] }
+# dnd.rs: files dragged in from other programs and out to them on Wayland (winit has no drag and drop there); Minos and
+# Settings > Appearance > Fonts. All already in the tree through winit
+wayland-client = "0.31"
+wayland-backend = { version = "0.3", features = ["client_system"] }
+raw-window-handle = "0.6"
+libc = "0.2"

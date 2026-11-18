@@ -4179,8 +4179,12 @@ name = "yggdrasil-ui"
 version = "0.1.0"
 dependencies = [
  "eframe",
+ "libc",
+ "raw-window-handle",
  "resvg",
  "serde_json",
+ "wayland-backend",
+ "wayland-client",
  "yggdrasil-conf",
  "yggdrasil-wm",
 ]

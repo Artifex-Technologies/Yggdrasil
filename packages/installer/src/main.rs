@@ -1120,7 +1120,7 @@ impl eframe::App for App {
                         self.locale = loc;
                     }
                     Page::Font => {
-                        heading(ui, &pal, "Font", "The letters used everywhere on the system, here too. Choose the easiest to read; Settings > Appearance > Font changes it later.");
+                        heading(ui, &pal, "Font", "The letters used everywhere on the system, here too. Choose the easiest to read; Settings > Appearance > Fonts changes it later.");
                         if let Some((sans, mono)) = font_page(ui, &pal, &self.font_found, self.font, self.font_mono) {
                             self.font = sans;
                             self.font_mono = mono;
