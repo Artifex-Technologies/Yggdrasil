@@ -115,7 +115,20 @@ The panel runs the command on a thread of its own (30-second limit, 64 KiB of ou
 its card. The command prints `{"text": "...", "state": "ok" | "warn" | "alert" | "off", "lines": [{"title", "value", "percent"
 (0-100, draws a meter), "note", "alert"}], "help": "..."}`. "off" or no text hides the pill; warn is amber, alert red. Text is
 drawn as given (cut short, control characters removed): an add-on can show things, never run anything through the panel. Add-ons
-are installed as packages (Agora lists them under Plugins), so removing the package removes the pill.
+are installed as packages (Agora lists them under Plugins), so removing the package removes the pill. Settings > Appearance > Top bar
+and dock lists every add-on with a switch: one switched off is hidden and its program is not run, without removing it (the ids are
+in `~/.config/yggdrasil/bar-hidden`, one per line; the panel reads the list again when it changes).
+
+A `command` add-on can also name folders to watch, so it is run when something changes instead of on a short interval:
+
+```
+watch = %h/.claude/sessions /var/lib/x/sessions   # absolute (%h is the home folder), at most 8
+```
+
+A file written, made or removed in one runs the command again, at most once a minute (a folder that is not there yet is waited
+for). The folders are watched with inotify, never looked at on a timer, so `interval` can stay long (it is only the backstop).
+`"ring": 0-100` in the JSON draws a small ring before the text, filled that far, in the text's colour (amber or red with the
+state): how far a limit is used, say.
 
 Instead of `command`, an add-on can name `file = %h/.local/state/NAME/bar.json` (the same JSON, read again as soon as it
 changes: its folder is watched; no file yet means just the icon, if any) or a fixed `text = 2FA` (or no text at all: the icon alone, a button for the add-on's window). Any of them can add:
@@ -128,6 +141,17 @@ settings = /usr/bin/yggdrasil-weather-settings   # the card gets a Settings butt
 
 The JSON may name an `"icon"` (an icon name, replacing the conf's while it does) and carry `"until": UNIX-SECONDS`; `{countdown}` in its text is then drawn as the time left (m:ss or h:mm:ss) and
 redrawn by the panel every second, so a countdown needs no program running every second.
+
+#### The Agents item (packages/agent-usage)
+
+`agents.conf`, shipped with the Agent usage add-on, is one item for every AI agent on the computer: the pill is the number of
+agents running and a ring for the busiest limit; its card lists each agent (Claude Code's sessions, Sarina, other agents' usage
+records) with its state (working, idle, stopped), its usage and reset time where known, and when it last did something. It runs
+`yggdrasil-agent-usage --agents`, which reads Claude Code's own session notes, the Agent usage reading for Claude's limits and, when
+the assistant has one, `sarina fleet-status --json`; it watches the folders those come from and is otherwise run every ten
+minutes. It is read-only: its card's one button opens the add-on's README ("How to start one"); starting an agent stays a command
+in a terminal that asks first (`sarina fleet-launch`). Without the assistant it shows Claude's sessions and limits; with no agent
+at all the pill is off.
 
 #### Cards you can use (`card` and `act`)
 

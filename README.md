@@ -52,7 +52,7 @@ started, called or linked. Yggdrasil's own compositor is in progress: it runs ne
 | `packages/geolocate` | | where the computer roughly is, for Weather's automatic place and Settings' automatic time zone: its IP address only, through beaconDB (no Wi-Fi networks, no hardware IDs), and nothing while a VPN is on |
 | `packages/netjoin` | | joining a Wi-Fi network through NetworkManager's D-Bus call (the password never on a command line; a profile that failed is deleted) and nmcli's adapters and network list, shared by Settings and the installer's Network step |
 | `packages/wifiscan` | | what nearby Wi-Fi networks broadcast, for Settings: the kernel's last scan read over nl80211 (no root, nothing sent), the information elements parsed as hostile input (property-tested), the vendor extras it recognises (makers come from Heimdall's `heimdall-macvendor` crate: all four IEEE registries, longest prefix first) |
-| `packages/agent-usage` | `yggdrasil-agent-usage` | a top bar add-on: how much of Claude's weekly and 5-hour limits is used |
+| `packages/agent-usage` | `yggdrasil-agent-usage` | two top bar add-ons: how much of Claude's weekly and 5-hour limits is used, and Agents (every AI agent running, its state, usage and last activity) |
 | `packages/browser-warm` | `yggdrasil-browser-warm` | keeps the default browser running with no windows, so new windows and links open almost at once |
 | `packages/game-2048`, `packages/sudoku` | `yggdrasil-2048`, `yggdrasil-sudoku` | games: 2048 and Sudoku |
 | `packages/pycompat` | | the few Python behaviours the Rust ports keep (how json.dumps prints, int() and strip() on text ...), so they print and decide as the scripts did |

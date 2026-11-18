@@ -531,7 +531,9 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
         } else {
             isz as f32 + 6.0 * s
         };
-        let aw = paint::text_width(&fonts.regular, 12.0 * s, &text) + 20.0 * s + icon_w;
+        // a ring (how far a limit is used, say) after the icon, before the text
+        let ring_w = if a.ring.is_some() { isz as f32 + 6.0 * s } else { 0.0 };
+        let aw = paint::text_width(&fonts.regular, 12.0 * s, &text) + 20.0 * s + icon_w + ring_w;
         *rx -= aw;
         pill(pix, *rx, aw);
         if hover == Some(hits.len()) {
@@ -547,7 +549,12 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
                 paint::draw_pixmap(pix, ic, (*rx + 10.0 * s) as i32, (cy - isz as f32 / 2.0).round() as i32);
             }
         }
-        paint::draw_text(pix, &fonts.regular, 12.0 * s, *rx + 10.0 * s + icon_w, cy, col, &text);
+        if let Some(p) = a.ring {
+            let (rcx, rr) = (*rx + 10.0 * s + icon_w + isz as f32 / 2.0, isz as f32 / 2.0 - 1.5 * s);
+            paint::stroke_arc(pix, rcx, cy, rr, 2.2 * s, 1.0, (lk.text.0, lk.text.1, lk.text.2, 60));
+            paint::stroke_arc(pix, rcx, cy, rr, 2.2 * s, p / 100.0, col);
+        }
+        paint::draw_text(pix, &fonts.regular, 12.0 * s, *rx + 10.0 * s + icon_w + ring_w, cy, col, &text);
         hits.push(Hit { rect: (*rx, 0.0, aw, h), action: Action::Addon(i) });
         *rx -= 6.0 * s;
     };
@@ -654,7 +661,8 @@ pub fn paint_bar(pix: &mut Pixmap, s: f32, slim: bool, m: &Model, fonts: &Fonts,
                 } else {
                     20.0 * s
                 };
-                paint::text_width(&fonts.regular, 12.0 * s, &text) + 26.0 * s + icon_w
+                let ring_w = if a.ring.is_some() { 20.0 * s } else { 0.0 };
+                paint::text_width(&fonts.regular, 12.0 * s, &text) + 26.0 * s + icon_w + ring_w
             })
             .sum();
         let system_w = (if m.status.bt != crate::status::Bt::Missing { 2.0 } else { 1.0 }) * 34.0 * s;

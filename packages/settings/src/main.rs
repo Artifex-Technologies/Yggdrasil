@@ -183,7 +183,7 @@ const PAGES: [(Page, &str, Icon, &str, &str); 26] = [
         "Appearance",
         Icon::Appearance,
         "Personal",
-        "theme dark light accent wallpaper icons top bar notifications lock screen workspaces boot",
+        "theme dark light accent wallpaper icons top bar add-ons plugins notifications lock screen workspaces boot",
     ),
     (Page::Assistant, "Assistant", Icon::Sound, "Personal", "voice"),
     (Page::Apps, "Apps", Icon::Apps, "Apps", "installed optional software uninstall minos"),
@@ -464,6 +464,8 @@ struct App {
     app_tab: usize,
     /// Which part of Appearance is open.
     app_sub: AppSub,
+    /// Appearance > Top bar and dock: the top bar's add-ons (id, name, shown), read when the page is first shown.
+    bar_addons: Option<Vec<(String, String, bool)>>,
     key_sub: KeySub,
     /// Peripherals: its Mouse and Keyboard pages (peripherals.rs).
     peri: peripherals::State,
@@ -648,6 +650,7 @@ impl App {
             zone_picker: None,
             icon_src: String::new(),
             app_tab: 0,
+            bar_addons: None,
             app_sub: match start_sub().as_str() {
                 "icons" => AppSub::Icons,
                 "bar" => AppSub::Bar,
@@ -2548,6 +2551,43 @@ impl App {
             });
         }
         if self.app_sub == AppSub::Bar {
+            // the add-ons in the top bar (installed from Agora's Plugins, say): each can be hidden without removing it
+            let list = self.bar_addons.get_or_insert_with(|| {
+                let hidden = yggdrasil_conf::bar_hidden::load();
+                yggdrasil_conf::integrations::of_kind("bar-item")
+                    .into_iter()
+                    .filter(|i| i.id() != "yggdrasil-battery")
+                    .map(|i| {
+                        let id = i.id();
+                        let shown = !hidden.contains(&id);
+                        (id, i.get("name").unwrap_or("Add-on").to_string(), shown)
+                    })
+                    .collect()
+            });
+            let mut toggled: Option<(String, bool)> = None;
+            if !list.is_empty() {
+                ui::group(ui, pal, Some("Top bar add-ons"), |ui| {
+                    for (k, (id, name, shown)) in list.iter_mut().enumerate() {
+                        ui::row(
+                            ui,
+                            pal,
+                            k == 0,
+                            name,
+                            Some("Shown in the top bar; off hides it and stops it running, without removing it"),
+                            |ui| {
+                                if ui::switch(ui, pal, shown).changed() {
+                                    toggled = Some((id.clone(), *shown));
+                                }
+                            },
+                        );
+                    }
+                });
+            }
+            if let Some((id, shown)) = toggled {
+                self.change(ctx, move || yggdrasil_conf::bar_hidden::set(&id, !shown));
+            }
+        }
+        if self.app_sub == AppSub::Bar {
             ui::group(ui, pal, Some("Start menu"), |ui| {
                 let themes = ["Windows", "Folders"];
                 let current = if conf.start_theme == yggdrasil_conf::StartTheme::Folders { 1 } else { 0 };
@@ -2580,125 +2620,6 @@ impl App {
                 ) {
                     open_access = true;
                 }
-            });
-        }
-        if self.app_sub == AppSub::Bar {
-            ui::group(ui, pal, Some("Dock"), |ui| {
-                let positions = ["Bottom", "Left", "Right"];
-                let pos_index = match conf.dock_pos {
-                    yggdrasil_conf::DockPos::Bottom => 0,
-                    yggdrasil_conf::DockPos::Left => 1,
-                    yggdrasil_conf::DockPos::Right => 2,
-                };
-                ui::row(ui, pal, true, "Position", Some("Which edge of the screen; left and right are vertical"), |ui| {
-                    if let Some(i) = ui::segmented(ui, pal, &positions, pos_index) {
-                        conf.dock_pos = [yggdrasil_conf::DockPos::Bottom, yggdrasil_conf::DockPos::Left, yggdrasil_conf::DockPos::Right][i];
-                        conf_changed = true;
-                    }
-                });
-                let mut gap = conf.dock_gap as f32;
-                ui::row(
-                    ui,
-                    pal,
-                    false,
-                    "Distance from edge",
-                    Some("How far the dock floats off the screen edge; 0 puts it right on the edge"),
-                    |ui| {
-                        let r = ui::slider_range(ui, pal, &mut gap, 0.0..=yggdrasil_conf::DOCK_GAP_MAX as f32, " px");
-                        if r.drag_stopped() || (r.changed() && !r.dragged()) {
-                            conf.dock_gap = gap as u32;
-                            conf_changed = true;
-                        }
-                    },
-                );
-                let mut size = conf.dock_icon as f32;
-                ui::row(ui, pal, false, "Size", Some("Icon size"), |ui| {
-                    let r = ui::slider_range(
-                        ui,
-                        pal,
-                        &mut size,
-                        yggdrasil_conf::DOCK_ICON_MIN as f32..=yggdrasil_conf::DOCK_ICON_MAX as f32,
-                        " px",
-                    );
-                    if r.drag_stopped() || (r.changed() && !r.dragged()) {
-                        conf.dock_icon = size as u32;
-                        conf_changed = true;
-                    }
-                });
-                let mut opacity = conf.dock_opacity as f32;
-                ui::row(ui, pal, false, "Background", Some("Opacity of the dock's shelf; 0% leaves just the icons"), |ui| {
-                    let r = ui::slider(ui, pal, &mut opacity);
-                    if r.drag_stopped() || (r.changed() && !r.dragged()) {
-                        conf.dock_opacity = opacity as u32;
-                        conf_changed = true;
-                    }
-                });
-                ui::row(ui, pal, false, "Color", Some("Match the theme's purple, or follow only dark and light"), |ui| {
-                    if let Some(i) = ui::segmented(ui, pal, &modes, mode_index(conf.dock_color)) {
-                        conf.dock_color = mode_of(i);
-                        conf_changed = true;
-                    }
-                });
-            });
-        }
-        if self.app_sub == AppSub::Bar {
-            ui::group(ui, pal, Some("Top bar"), |ui| {
-                let mut opacity = conf.bar_opacity as f32;
-                ui::row(ui, pal, true, "Background", Some("Opacity of the bar; 0% leaves just its text"), |ui| {
-                    let r = ui::slider(ui, pal, &mut opacity);
-                    if r.drag_stopped() || (r.changed() && !r.dragged()) {
-                        conf.bar_opacity = opacity as u32;
-                        conf_changed = true;
-                    }
-                });
-                ui::row(ui, pal, false, "Color", Some("Match the theme's purple, or follow only dark and light"), |ui| {
-                    if let Some(i) = ui::segmented(ui, pal, &modes, mode_index(conf.bar_color)) {
-                        conf.bar_color = mode_of(i);
-                        conf_changed = true;
-                    }
-                });
-            });
-        }
-        if self.app_sub == AppSub::Bar {
-            ui::group(ui, pal, Some("Start menu"), |ui| {
-                let themes = ["Windows", "Folders"];
-                let current = if conf.start_theme == yggdrasil_conf::StartTheme::Folders { 1 } else { 0 };
-                ui::row(
-                    ui,
-                    pal,
-                    true,
-                    "Theme",
-                    Some("Windows: pinned apps and every app in a list. Folders: narrow, apps in folders by kind, and a power button"),
-                    |ui| {
-                        if let Some(i) = ui::segmented(ui, pal, &themes, current) {
-                            conf.start_theme =
-                                if i == 1 { yggdrasil_conf::StartTheme::Folders } else { yggdrasil_conf::StartTheme::Windows };
-                            conf_changed = true;
-                        }
-                    },
-                );
-            });
-        }
-        if self.app_sub == AppSub::Main {
-            ui::group(ui, pal, Some("Accessibility"), |ui| {
-                let sizes = ["100%", "125%", "150%", "200%"];
-                let cur = match conf.text_scale {
-                    0..=112 => 0,
-                    113..=137 => 1,
-                    138..=174 => 2,
-                    _ => 3,
-                };
-                ui::row(ui, pal, true, "Text and control size", Some("Makes everything in the desktop's own apps (Settings, Minos, the admin password box, Calculator) larger. The top bar, dock and start menu follow the screen scale in Displays for now"), |ui| {
-                if let Some(i) = ui::segmented(ui, pal, &sizes, cur) {
-                    conf.text_scale = [100, 125, 150, 200][i];
-                    conf_changed = true;
-                }
-            });
-                ui::row(ui, pal, false, "Reduce motion", Some("No fades or slides in the desktop's own apps"), |ui| {
-                    if ui::switch(ui, pal, &mut conf.reduce_motion).changed() {
-                        conf_changed = true;
-                    }
-                });
             });
         }
         if self.app_sub == AppSub::Bar {

@@ -32,7 +32,15 @@
 //! `act` with an id the card listed. `interval = 0` runs a command add-on only when its card opens and after presses.
 //!
 //! The JSON may also name an `"icon"` (replacing the conf's while it does), and carry `"until": UNIX-SECONDS`: "{countdown}" in its text is then drawn as the time left (m:ss, or h:mm:ss), redrawn
-//! every second by the panel itself, so a countdown needs no program running every second.
+//! every second by the panel itself, so a countdown needs no program running every second. `"ring": 0-100` draws a small
+//! ring before the text, filled that far (in the text's colour: amber or red with the state).
+//!
+//! A command add-on can also name folders to watch (`watch = %h/.claude/sessions /var/lib/x`, absolute, at most 8): a file
+//! written, made or removed in one runs the command again, at most once a minute, instead of waiting for its interval. A
+//! folder that is not there yet is waited for. The folders are watched (inotify), never looked at on a timer.
+//!
+//! Add-ons the user hid in Settings (`~/.config/yggdrasil/bar-hidden`, yggdrasil_conf::bar_hidden) are left out altogether:
+//! no pill and their programs are not run.
 
 use std::io::Read;
 use std::process::{Command, Stdio};
@@ -56,7 +64,12 @@ pub struct Addon {
     pub icon: String,
     pub settings: Option<Vec<String>>,
     pub act: Option<Vec<String>>,
+    /// Folders whose changes run a command add-on again (at most once a minute).
+    pub watch: Vec<std::path::PathBuf>,
 }
+
+/// A command add-on is run again for a change in its watched folders at most this often.
+const WATCH_GAP: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum Level {
@@ -150,6 +163,8 @@ pub struct View {
     pub act: Option<Vec<String>>,
     /// Read the add-on again at this moment while its card is open.
     pub refresh_at: Option<i64>,
+    /// A small ring before the text, filled this far (0-100).
+    pub ring: Option<f32>,
 }
 
 impl View {
@@ -188,10 +203,12 @@ fn expand(p: &str) -> std::path::PathBuf {
     std::path::PathBuf::from(p.replace("%h", &home))
 }
 
-/// The installed add-ons.
+/// The installed add-ons, less the ones hidden in Settings.
 pub fn load() -> Vec<Addon> {
+    let hidden = yggdrasil_conf::bar_hidden::load();
     yggdrasil_conf::integrations::of_kind("bar-item")
         .into_iter()
+        .filter(|i| !hidden.contains(&i.id()))
         .filter_map(|i| {
             let name = i.get("name").unwrap_or("Add-on").to_string();
             let feed = if let Some(cmd) = i.command("command") {
@@ -212,9 +229,15 @@ pub fn load() -> Vec<Addon> {
                 icon: i.get("icon").unwrap_or("").to_string(),
                 settings: i.command("settings"),
                 act: i.command("act"),
+                watch: watch_dirs(i.get("watch").unwrap_or("")),
             })
         })
         .collect()
+}
+
+/// The folders of a `watch` value: absolute ones only (after %h), at most 8.
+fn watch_dirs(v: &str) -> Vec<std::path::PathBuf> {
+    v.split_whitespace().map(expand).filter(|p| p.is_absolute() && !p.as_os_str().is_empty()).take(8).collect()
 }
 
 fn clip(s: &str, n: usize) -> String {
@@ -258,6 +281,7 @@ pub fn parse(id: &str, name: &str, out: &str) -> View {
         icon: icon_name(v["icon"].as_str().unwrap_or("")),
         card,
         refresh_at: v["refresh_at"].as_i64(),
+        ring: v["ring"].as_f64().filter(|p| p.is_finite()).map(|p| p.clamp(0.0, 100.0) as f32),
         ..Default::default()
     }
 }
@@ -471,11 +495,17 @@ impl Now {
 pub fn spawn(shared: Arc<Mutex<Vec<View>>>, now: Arc<Now>, changed: calloop::channel::Sender<()>) {
     std::thread::spawn(move || {
         use rustix::fs::inotify::WatchFlags as W;
-        let lists = [yggdrasil_conf::dirs::system_data().join("integrations"), yggdrasil_conf::dirs::system_config().join("integrations")];
+        // the integration folders, and the config folder for the add-ons hidden in Settings
+        let lists = [
+            yggdrasil_conf::dirs::system_data().join("integrations"),
+            yggdrasil_conf::dirs::system_config().join("integrations"),
+            yggdrasil_conf::dirs::config(),
+        ];
         let mask = W::CLOSE_WRITE | W::CREATE | W::DELETE | W::MOVED_FROM | W::MOVED_TO;
         let mut watch = crate::folders::FolderWatch::new(lists.to_vec(), mask).ok();
         let mut addons: Vec<Addon> = vec![];
         let mut due: Vec<Instant> = vec![];
+        let mut last: Vec<Instant> = vec![];
         let mut stamps: Vec<Option<(std::time::SystemTime, u64)>> = vec![];
         let mut relist = true;
         let mut forced = false;
@@ -486,6 +516,7 @@ pub fn spawn(shared: Arc<Mutex<Vec<View>>>, now: Arc<Now>, changed: calloop::cha
                 if fresh != addons {
                     addons = fresh;
                     due = addons.iter().map(|_| Instant::now()).collect();
+                    last = addons.iter().map(|_| Instant::now()).collect();
                     stamps = addons.iter().map(|_| None).collect();
                     if let Ok(mut v) = shared.lock() {
                         v.retain(|x| addons.iter().any(|a| a.id == x.id));
@@ -497,6 +528,7 @@ pub fn spawn(shared: Arc<Mutex<Vec<View>>>, now: Arc<Now>, changed: calloop::cha
                         Feed::File(p) => p.parent().map(|d| d.to_path_buf()),
                         _ => None,
                     }));
+                    folders.extend(addons.iter().flat_map(|a| a.watch.iter().cloned()));
                     if let Some(w) = watch.as_mut() {
                         w.set_targets(folders);
                     }
@@ -514,6 +546,7 @@ pub fn spawn(shared: Arc<Mutex<Vec<View>>>, now: Arc<Now>, changed: calloop::cha
                             continue;
                         }
                         due[i] = Instant::now() + Duration::from_secs((*interval).max(60));
+                        last[i] = Instant::now();
                     }
                     // a file: read again when it changed, or at once when asked
                     Feed::File(p) => {
@@ -555,7 +588,14 @@ pub fn spawn(shared: Arc<Mutex<Vec<View>>>, now: Arc<Now>, changed: calloop::cha
             if seen {
                 if let Some(w) = watch.as_mut() {
                     // an integration folder (or the folder above a missing one): the list again; a file's folder: its stamp tells
-                    relist = w.changed().iter().any(|d| lists.iter().any(|l| l.starts_with(d)));
+                    let dirs = w.changed();
+                    relist = dirs.iter().any(|d| lists.iter().any(|l| l.starts_with(d)));
+                    // a watched folder: that command add-on again, a minute after its last run at the soonest
+                    for (i, a) in addons.iter().enumerate() {
+                        if matches!(a.feed, Feed::Command { .. }) && a.watch.iter().any(|t| dirs.iter().any(|d| t.starts_with(d))) {
+                            due[i] = due[i].min(last[i] + WATCH_GAP);
+                        }
+                    }
                 }
             }
             forced = asked && now.take();
@@ -584,6 +624,28 @@ mod tests {
     }
 
     #[test]
+    fn a_ring_is_read_and_clamped() {
+        assert_eq!(parse("x", "X", r#"{"text":"2","ring":42.5}"#).ring, Some(42.5));
+        assert_eq!(parse("x", "X", r#"{"text":"2","ring":250}"#).ring, Some(100.0));
+        assert_eq!(parse("x", "X", r#"{"text":"2","ring":-3}"#).ring, Some(0.0));
+        assert_eq!(parse("x", "X", r#"{"text":"2","ring":"half"}"#).ring, None);
+        assert_eq!(parse("x", "X", r#"{"text":"2"}"#).ring, None);
+    }
+
+    #[test]
+    fn watched_folders_are_absolute_and_few() {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let want: Vec<std::path::PathBuf> = [format!("{home}/.claude/sessions"), "/var/lib/x".into()]
+            .iter()
+            .map(std::path::PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .collect();
+        assert_eq!(watch_dirs("%h/.claude/sessions relative/dir /var/lib/x"), want);
+        assert_eq!(watch_dirs(&"/a ".repeat(20)).len(), 8);
+        assert!(watch_dirs("").is_empty());
+    }
+
+    #[test]
     fn a_countdown_is_drawn_from_until() {
         let v = parse("timer", "Timer", r#"{"text":"Tea {countdown}","until":1000}"#);
         assert_eq!(v.display(1000 - 125), "Tea 2:05");
@@ -605,6 +667,7 @@ mod tests {
             icon: "timer-symbolic".into(),
             settings: None,
             act: None,
+            watch: vec![],
         };
         assert_eq!((read(&a).text.as_str(), read(&a).off), ("", false), "no file yet: no text, the icon still shows");
         std::fs::write(&f, r#"{"state":"off","text":"x"}"#).unwrap();

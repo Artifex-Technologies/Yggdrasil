@@ -10,6 +10,8 @@
 //!
 //!   yggdrasil-agent-usage --bar     the JSON the bar reads
 //!   yggdrasil-agent-usage           the same, readable
+//!   yggdrasil-agent-usage --agents  the Agents item's JSON (agents.rs): every agent, its state, usage and last activity
+//!   yggdrasil-agent-usage --act ID  a press on the Agents card (only "howto": this package's README)
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -17,6 +19,8 @@ use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
+
+mod agents;
 
 const ENDPOINT: &str = "https://api.anthropic.com/api/oauth/usage";
 const REUSE_SECS: i64 = 240;
@@ -259,8 +263,17 @@ fn collect() -> Value {
 }
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--agents") {
+        println!("{}", agents::collect(now()));
+        return;
+    }
+    if let Some(i) = args.iter().position(|a| a == "--act") {
+        agents::act(args.get(i + 1).map(String::as_str).unwrap_or(""));
+        return;
+    }
     let rec = collect();
-    if std::env::args().any(|a| a == "--bar") {
+    if args.iter().any(|a| a == "--bar") {
         println!("{rec}");
         return;
     }
