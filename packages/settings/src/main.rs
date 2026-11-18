@@ -3322,6 +3322,29 @@ impl App {
                             ui.add(egui::Label::new(egui::RichText::new(body).size(12.5).color(pal.dim)).wrap());
                             ui.add_space(4.0);
                         }
+                        // the ATT&CK techniques the check watches for (names from the alert, plain text); MITRE's page only on a click
+                        if !a.attack.is_empty() {
+                            ui.label(egui::RichText::new("What this check watches for").strong().size(12.5).color(pal.text));
+                            for t in &a.attack {
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label(egui::RichText::new(&t.name).size(12.5).color(pal.dim));
+                                    if let Some(url) = security::technique_url(&t.id) {
+                                        if ui
+                                            .link(egui::RichText::new(&t.id).size(11.0))
+                                            .on_hover_text("MITRE ATT&CK's page about it")
+                                            .clicked()
+                                        {
+                                            sys::spawn("xdg-open", &[&url]);
+                                        }
+                                    }
+                                });
+                            }
+                            ui.label(
+                                egui::RichText::new("MITRE ATT&CK names for what the check looks for, not proof that it happened.")
+                                    .size(11.0)
+                                    .color(pal.dim),
+                            );
+                        }
                     });
                 }
             }

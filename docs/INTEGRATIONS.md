@@ -87,7 +87,12 @@ switch.a_auto_quarantine = Move certain malware to quarantine automatically | ..
 ```
 
 An alert is `{"time": RFC 3339, "detector_id", "severity": "info" | "warning" | "critical", "summary", "event": {"Fields": {...}}}`
-(`process`, `remote_addr`, `remote_port` and `app` are used when present). The panel turns them into notifications under `name`
+(`process`, `remote_addr`, `remote_port` and `app` are used when present). Its optional `explain` (`{"what", "serious", "done",
+"do"}`) is shown under Explain; its `explain.attack` (`[{"id", "name"}]`, the MITRE ATT&CK techniques the check watches for,
+Heimdall since 2026-11-18) is shown there as the names with the ID beside them, small. A click on an ID opens
+`https://attack.mitre.org/techniques/<ID with "." as "/">/`; nothing is fetched otherwise. Both are untrusted: an ID that is not
+`T` and four digits (with `.` and three more for a sub-technique) is dropped, a name is plain text without control or direction
+characters, at most 120 characters, and at most 8 are shown. The panel turns them into notifications under `name`
 (Settings > Notifications chooses how many); Settings > Security gets a page named `name` with the state, alerts, new connections,
 the quarantine, the scan, the declared controls and, while the assistant is contained, a "Restore and release" button, and what the monitor holds in its own quarantine with Release and It's malware. Each part appears only when its key is there.
 

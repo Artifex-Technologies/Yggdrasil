@@ -19,6 +19,57 @@ pub struct Alert {
     pub remote: String,
     /// The monitor's own plain-language explanation (what happened, how serious, what it did, what to do), when it gives one.
     pub explain: Option<[String; 4]>,
+    /// The MITRE ATT&CK techniques the alert's check watches for (its explanation's `attack`): what the check looks for, never
+    /// a claim that a technique was used or is covered. Empty when it names none.
+    pub attack: Vec<Technique>,
+}
+
+/// One ATT&CK technique as an alert names it. Both come from the monitor's API and are treated as untrusted: the ID is kept
+/// only when it has a technique's shape, the name is plain text cut short.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Technique {
+    /// "T1557" or "T1557.002".
+    pub id: String,
+    /// MITRE's name, a sub-technique as "Parent: Sub".
+    pub name: String,
+}
+
+/// Whether ID has an ATT&CK technique's shape: T and four digits, and for a sub-technique a dot and three more.
+pub fn technique_id(id: &str) -> bool {
+    let b = id.as_bytes();
+    let digits = |r: &[u8]| r.iter().all(u8::is_ascii_digit);
+    match b.len() {
+        5 => b[0] == b'T' && digits(&b[1..]),
+        9 => b[0] == b'T' && digits(&b[1..5]) && b[5] == b'.' && digits(&b[6..]),
+        _ => false,
+    }
+}
+
+/// MITRE's page for a technique (a sub-technique's dot becomes a slash), only for an ID of the right shape. Opened only when
+/// the person clicks it.
+pub fn technique_url(id: &str) -> Option<String> {
+    technique_id(id).then(|| format!("https://attack.mitre.org/techniques/{}/", id.replace('.', "/")))
+}
+
+/// An observed name made safe to show: no control or direction characters, at most 120 characters.
+fn plain_name(s: &str) -> String {
+    let direction = |c: char| matches!(c, '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}');
+    let kept: String = s.chars().filter(|c| !c.is_control() && !direction(*c)).take(120).collect();
+    kept.trim().to_string()
+}
+
+/// The techniques of an alert's explanation (`explain.attack`, `[{"id", "name"}]`): at most 8, each with a technique's ID and a
+/// name.
+fn techniques(explain: Option<&Value>) -> Vec<Technique> {
+    let Some(list) = explain.and_then(|x| x.get("attack")).and_then(|a| a.as_array()) else { return vec![] };
+    list.iter()
+        .filter_map(|t| {
+            let id = t.get("id")?.as_str()?;
+            let name = plain_name(t.get("name")?.as_str()?);
+            (technique_id(id) && !name.is_empty()).then(|| Technique { id: id.to_string(), name })
+        })
+        .take(8)
+        .collect()
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -216,6 +267,7 @@ pub fn parse_alerts(body: &str) -> Vec<Alert> {
                     };
                     Some([part("what")?, part("serious")?, part("done")?, part("do")?])
                 }),
+                attack: techniques(a.get("explain")),
             })
         })
         .collect();
@@ -344,6 +396,39 @@ mod tests {
         assert_eq!(a[0].explain.as_ref().map(|e| e[0].as_str()), Some("Something triedto reach"), "control characters dropped");
         assert_eq!(a[0].explain.as_ref().map(|e| e[3].as_str()), Some("Nothing"));
         assert!(a[1].explain.is_none());
+    }
+
+    #[test]
+    fn an_alert_names_the_techniques_its_check_watches_for() {
+        let body = r#"[{"time":"2026-11-18T10:00:00Z","detector_id":"lan-watch","severity":"critical","summary":"x",
+            "explain":{"what":"a","serious":"b","done":"c","do":"d","attack":[
+              {"id":"T1557.002","name":"Adversary-in-the-Middle: ARP Cache Poisoning"},
+              {"id":"T1200","name":"Hardware\u202eAdditions\n"},
+              {"id":"javascript:alert(1)","name":"bad id"},
+              {"id":"T1557/../x","name":"bad id"},
+              {"id":"T1040","name":"   "},
+              {"name":"no id"}]}},
+            {"time":"2026-11-18T09:00:00Z","detector_id":"inbound","severity":"info","summary":"no tags","explain":{"what":"a","serious":"b","done":"c","do":"d"}}]"#;
+        let a = parse_alerts(body);
+        let ids: Vec<&str> = a[0].attack.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, ["T1557.002", "T1200"], "only IDs of a technique's shape, with a name");
+        assert_eq!(a[0].attack[0].name, "Adversary-in-the-Middle: ARP Cache Poisoning");
+        assert_eq!(a[0].attack[1].name, "HardwareAdditions", "direction and control characters dropped");
+        assert!(a[1].attack.is_empty());
+        let long = format!(
+            r#"[{{"time":"2026-11-18T10:00:00Z","detector_id":"x","severity":"info","explain":{{"attack":[{{"id":"T1059","name":"{}"}}]}}}}]"#,
+            "n".repeat(500)
+        );
+        assert_eq!(parse_alerts(&long)[0].attack[0].name.chars().count(), 120);
+    }
+
+    #[test]
+    fn mitres_page_only_for_a_techniques_id() {
+        assert_eq!(technique_url("T1557.002").as_deref(), Some("https://attack.mitre.org/techniques/T1557/002/"));
+        assert_eq!(technique_url("T1200").as_deref(), Some("https://attack.mitre.org/techniques/T1200/"));
+        for bad in ["", "T12", "t1200", "T1200.", "T1200.02", "T1200.0021", "T12a0", "T1200/../", "TA0001", "T1557.002 "] {
+            assert_eq!(technique_url(bad), None, "{bad:?}");
+        }
     }
 
     #[test]
