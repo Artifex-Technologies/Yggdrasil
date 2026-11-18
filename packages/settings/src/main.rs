@@ -44,6 +44,7 @@ mod single;
 mod spelling;
 mod starkey;
 mod sys;
+mod sysupdate;
 mod tune;
 mod ui;
 mod users;
@@ -77,6 +78,8 @@ enum Page {
     General,
     /// Inside General: each disk's use.
     Storage,
+    /// Inside General: the system's package updates (sysupdate.rs), and a row to Agora's app updates.
+    SoftwareUpdate,
     /// Inside General: the system's language and region.
     Language,
     /// A computer with a battery only (battery.rs).
@@ -149,7 +152,7 @@ enum AppSub {
 // top. Settings opens on General all the same. The words after the name are
 // what the search also finds the page by: what is inside it, not only its title. A page with a parent (`parent`) is a row on
 // that page instead of in the sidebar; the search still finds it.
-const PAGES: [(Page, &str, Icon, &str, &str); 25] = [
+const PAGES: [(Page, &str, Icon, &str, &str); 26] = [
     (Page::Network, "Wi-Fi & Network", Icon::Wifi, "Connections", "internet ethernet proxy"),
     (Page::Bluetooth, "Bluetooth", Icon::Bluetooth, "Connections", "headphones controller pair"),
     (Page::Vpn, "VPN", Icon::Key, "Connections", "vpn wireguard openvpn ikev2 tailscale tunnel"),
@@ -206,6 +209,7 @@ const PAGES: [(Page, &str, Icon, &str, &str); 25] = [
     (Page::About, "About", Icon::Info, "General", "version system information hardware"),
     (Page::DateTime, "Date & Time", Icon::Clock, "General", "clock timezone"),
     (Page::Storage, "Storage", Icon::Gear, "General", "disk space free used"),
+    (Page::SoftwareUpdate, "Software Update", Icon::Gear, "General", "updates upgrade packages pacman version"),
     (Page::Language, "Language & Region", Icon::Keyboard, "General", "locale formats country"),
 ];
 
@@ -246,7 +250,7 @@ mod visibility_tests {
 /// The page a page is a row on (it is not in the sidebar of its own).
 fn parent(page: Page) -> Option<Page> {
     match page {
-        Page::About | Page::DateTime | Page::Storage | Page::Language => Some(Page::General),
+        Page::About | Page::DateTime | Page::Storage | Page::SoftwareUpdate | Page::Language => Some(Page::General),
         Page::DefaultApps => Some(Page::Apps),
         _ => None,
     }
@@ -274,6 +278,10 @@ enum Msg {
     Password(Result<(), String>),
     Time(sys::Time),
     Storage(general::Storage),
+    /// Software Update: the kept answer (true: read when the page opened) or a check's.
+    SysUpdates(sysupdate::State, bool),
+    /// Software Update > Update History: the newest transactions in pacman's log.
+    UpdHistory(Vec<yggdrasil_updates::history::Transaction>),
     Battery(battery::Info),
     Vpn(vpn::State),
     Media(media::Info),
@@ -321,6 +329,7 @@ struct Data {
     firewall: Option<bool>,
     time: Option<sys::Time>,
     storage: Option<general::Storage>,
+    sys_updates: Option<sysupdate::State>,
     battery: Option<battery::Info>,
     vpn: Option<vpn::State>,
     access: Option<accessibility::State>,
@@ -402,6 +411,14 @@ struct App {
     /// Wi-Fi & Network > Several connections at once, while it is open (multilink_ui.rs)
     multilink: Option<multilink_ui::Panel>,
     wifi_check_running: bool,
+    /// Software Update: the repositories are being asked (a check runs on a thread of its own), the part open, Update
+    /// History's transactions (read when it opens) and the clock's format for "Checked 10:42".
+    sys_checking: bool,
+    upd_sub: sysupdate::Sub,
+    sys_history: Option<Vec<yggdrasil_updates::history::Transaction>>,
+    sys_clock24: bool,
+    /// Until when automatic checks are paused (yggdrasil_updates::pause), read when the page opens.
+    sys_paused: Option<i64>,
     wifi_check: Option<Result<wifihealth::Report, String>>,
     // Security page
     sec_filter: usize,
@@ -583,6 +600,11 @@ impl App {
             wifi_check_open: start_sub() == "checks",
             multilink: None,
             wifi_check_running: false,
+            sys_checking: false,
+            upd_sub: sysupdate::Sub::Main,
+            sys_history: None,
+            sys_clock24: true,
+            sys_paused: None,
             wifi_check: None,
             sec_filter: 1,
             sec_open: None,
@@ -837,6 +859,24 @@ impl App {
                 }
                 Msg::Time(v) => self.data.time = Some(v),
                 Msg::Storage(v) => self.data.storage = Some(v),
+                Msg::UpdHistory(h) => self.sys_history = Some(h),
+                Msg::SysUpdates(v, opened) => {
+                    let now = yggdrasil_updates::pause::now();
+                    if opened {
+                        self.sys_paused = yggdrasil_updates::pause::until(now);
+                    }
+                    // on opening, an old answer is asked again (only then: nothing is checked while the page is closed), unless
+                    // updates are paused
+                    let again = opened && v.stale(now) && self.sys_paused.is_none();
+                    if !opened {
+                        self.sys_checking = false;
+                    }
+                    self.data.sys_updates = Some(v);
+                    self.sys_clock24 = yggdrasil_conf::PanelConf::load().clock_24h;
+                    if again {
+                        self.check_sys_updates(ctx);
+                    }
+                }
                 Msg::Battery(v) => self.data.battery = Some(v),
                 Msg::Vpn(v) => self.data.vpn = Some(v),
                 Msg::Access(v) => self.data.access = Some(v),
@@ -1192,6 +1232,7 @@ impl eframe::App for App {
                     match self.page {
                         Page::General => self.page_general(ui, &pal),
                         Page::Storage => self.page_storage(ui, &pal),
+                        Page::SoftwareUpdate => self.page_software_update(ui, &pal, &ctx),
                         Page::Battery => self.page_battery(ui, &pal, &ctx),
                         Page::Vpn => self.page_vpn(ui, &pal, &ctx),
                         Page::Accessibility => self.page_accessibility(ui, &pal, &ctx),
@@ -1267,6 +1308,7 @@ fn read_page(page: Page, tx: &Sender<Msg>) -> Vec<Msg> {
         Page::Restore => Msg::Restore(restore::load()),
         Page::DateTime => Msg::Time(sys::time()),
         Page::Storage => Msg::Storage(general::storage()),
+        Page::SoftwareUpdate => Msg::SysUpdates(sysupdate::cached(), true),
         Page::Battery => Msg::Battery(battery::load()),
         Page::Vpn => Msg::Vpn(vpn::load()),
         Page::Accessibility => Msg::Access(accessibility::load()),

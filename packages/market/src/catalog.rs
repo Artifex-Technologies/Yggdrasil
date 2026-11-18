@@ -440,13 +440,8 @@ pub fn remove_script(e: &Entry) -> Option<String> {
     })
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct Update {
-    pub name: String,
-    pub old: String,
-    pub new: String,
-    pub aur: bool,
-}
+/// One package that can be updated (the shared checker's, packages/updates).
+pub use yggdrasil_updates::Update;
 
 /// Programs the operating system builds from its own build files: they may share a name with unrelated AUR packages, so they are never
 /// updated from the AUR. From the integration's `own_builds` folder (one folder per package) and its catalog's `local_builds` list.
@@ -539,61 +534,17 @@ fn local_builds_in(catalog: &str) -> Vec<String> {
     strings(&c["local_builds"]).into_iter().filter(|n| !ok.contains(n)).collect()
 }
 
-fn parse_updates(text: &str, aur: bool) -> Vec<Update> {
-    text.lines()
-        .filter_map(|l| {
-            let mut it = l.split_whitespace();
-            let (name, old, arrow, new) = (it.next()?, it.next()?, it.next()?, it.next()?);
-            (arrow == "->").then(|| Update { name: name.to_string(), old: old.to_string(), new: new.to_string(), aur })
-        })
-        .collect()
-}
-
 fn newer(new: &str, old: &str) -> bool {
     std::process::Command::new("vercmp").args([new, old]).output().map(|o| String::from_utf8_lossy(&o.stdout).trim() == "1").unwrap_or(true)
 }
 
-/// What can be updated right now. The repositories are asked afresh (a private copy of the sync databases is refreshed without root, like
-/// checkupdates does), the AUR through yay; the operating system's own builds and anything that would go backwards are left out. Needs
-/// the network.
+/// What can be updated right now: the repositories asked afresh through the shared checker (packages/updates: a private copy of the
+/// sync databases refreshed without root, like checkupdates does), the AUR through yay; the operating system's own builds and anything
+/// that would go backwards are left out. Needs the network.
 pub fn check_updates() -> Vec<Update> {
-    let mut out: Vec<Update> = vec![];
-    let run_dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/tmp")).join("agora");
-    let tmp = run_dir.join(format!("updates-db-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&tmp);
-    let made =
-        std::fs::create_dir_all(tmp.join("sync")).is_ok() && std::os::unix::fs::symlink("/var/lib/pacman/local", tmp.join("local")).is_ok();
-    if made {
-        if let Ok(rd) = std::fs::read_dir("/var/lib/pacman/sync") {
-            for e in rd.flatten() {
-                let _ = std::fs::copy(e.path(), tmp.join("sync").join(e.file_name()));
-            }
-        }
-        let db = tmp.to_string_lossy().into_owned();
-        // A copy of pacman.conf that does not check signatures: without root the keyring cannot be read, so repositories that
-        // require signed databases (CachyOS's) would fail. This only lists names and versions; the real update still checks everything.
-        let conf: String = std::fs::read_to_string("/etc/pacman.conf")
-            .unwrap_or_default()
-            .lines()
-            .filter(|l| !l.trim_start().starts_with("SigLevel") && !l.trim_start().starts_with("LocalFileSigLevel"))
-            .map(|l| if l.trim() == "[options]" { "[options]\nSigLevel = Never".to_string() } else { l.to_string() })
-            .collect::<Vec<_>>()
-            .join("\n");
-        let conf_path = tmp.join("pacman.conf");
-        let _ = std::fs::write(&conf_path, conf);
-        let cf = conf_path.to_string_lossy().into_owned();
-        let _ = std::process::Command::new("fakeroot")
-            .args(["--", "pacman", "-Sy", "--config", &cf, "--dbpath", &db, "--logfile", "/dev/null"])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-        out = parse_updates(&run("pacman", &["-Qu", "--config", &cf, "--dbpath", &db]), false);
-    } else {
-        out = parse_updates(&run("pacman", &["-Qu"]), false);
-    }
-    let _ = std::fs::remove_dir_all(&tmp);
+    let mut out = yggdrasil_updates::check_repos(false).updates;
     let skip = local_builds();
-    for u in parse_updates(&run("yay", &["-Qua"]), true) {
+    for u in yggdrasil_updates::parse_updates(&run("yay", &["-Qua"]), true) {
         if !skip.contains(&u.name) && newer(&u.new, &u.old) && !out.iter().any(|x| x.name == u.name) {
             out.push(u);
         }
@@ -684,13 +635,6 @@ mod tests {
         let other = for_edition(c, "lab");
         assert!(one.apps.iter().all(|a| a.id != "ghidra"));
         assert!(other.apps.iter().any(|a| a.id == "ghidra") && other.apps.iter().any(|a| a.id == "krita"));
-    }
-
-    #[test]
-    fn update_lines_are_read() {
-        let u = parse_updates("krita 5.3.4-1 -> 5.3.5-1\nvivaldi 7.0-1 -> 7.1-1 [3d]\nnoise\n", false);
-        assert_eq!(u.len(), 2);
-        assert_eq!((u[0].name.as_str(), u[0].old.as_str(), u[0].new.as_str()), ("krita", "5.3.4-1", "5.3.5-1"));
     }
 
     #[test]

@@ -155,7 +155,7 @@ impl App {
         };
         app.rebuild(ctx, false);
         app.refresh_installed(ctx);
-        app.check_updates(ctx);
+        app.auto_check(ctx);
         // AGORA_PAGE=tab:Create | categories | updates | sources | detail:krita | search:word (for screenshots and tests)
         if let Ok(p) = std::env::var("AGORA_PAGE") {
             let (kind, arg) = p.split_once(':').unwrap_or((p.as_str(), ""));
@@ -214,6 +214,16 @@ impl App {
             let _ = tx.send(Msg::Fetched(i, catalog::fetch(&url)));
             ctx.request_repaint();
         });
+    }
+
+    /// The check Agora makes by itself (at its start, then every half hour while open): none while updates are paused
+    /// (Settings > General > Software Update > Pause updates); the next one is due half an hour later.
+    fn auto_check(&mut self, ctx: &egui::Context) {
+        if yggdrasil_updates::pause::until(yggdrasil_updates::pause::now()).is_some() {
+            self.last_check = Some(Instant::now());
+            return;
+        }
+        self.check_updates(ctx);
     }
 
     /// Look for updates in the background (it needs the network and takes a few seconds).
@@ -1616,7 +1626,7 @@ impl eframe::App for App {
             && self.last_check.map(|t| t.elapsed() > Duration::from_secs(1800)).unwrap_or(true)
             && self.jobs.iter().all(|j| j.lock().map(|g| g.status != install::Status::Running).unwrap_or(true))
         {
-            self.check_updates(&ctx);
+            self.auto_check(&ctx);
         }
 
         // sidebar: search, then the sections

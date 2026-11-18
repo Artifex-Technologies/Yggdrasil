@@ -1,0 +1,12 @@
+[package]
+name = "yggdrasil-updates"
+version = "0.1.0"
+edition = "2021"
+description = "What the package repositories can update, asked without root and without touching pacman's own databases (a private copy, as checkupdates does): shared by Agora's Updates and Settings > General > Software Update"
+license = "MPL-2.0"
+
+[lib]
+name = "yggdrasil_updates"
+path = "src/lib.rs"
+
+[dependencies]

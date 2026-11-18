@@ -147,6 +147,7 @@ dependencies = [
  "serde_json",
  "yggdrasil-conf",
  "yggdrasil-ui",
+ "yggdrasil-updates",
 ]
 
 [[package]]
@@ -4402,6 +4403,10 @@ dependencies = [
  "yggdrasil-conf",
  "yggdrasil-wm",
 ]
+
+[[package]]
+name = "yggdrasil-updates"
+version = "0.1.0"
 
 [[package]]
 name = "yggdrasil-wm"

@@ -1,11 +1,12 @@
-//! General, as on a tablet: the page Settings opens on. Rows to About, Software Update (Agora's Updates), Storage, Date & Time,
-//! Keyboard and Language & Region. About and Date & Time are pages of their own that moved in here from the sidebar; Storage
-//! and Language & Region are new and small; Keyboard is Peripherals' own page.
+//! General, as on a tablet: the page Settings opens on. Rows to About, Software Update (the system's updates, sysupdate.rs, and
+//! a row to Agora's app updates), Storage, Date & Time, Keyboard and Language & Region. About and Date & Time are pages of their
+//! own that moved in here from the sidebar; Storage and Language & Region are new and small; Keyboard is Peripherals' own page.
 
 use eframe::egui::{self, RichText};
 use yggdrasil_ui::theme::Palette;
 
-use crate::{loading, peripherals, sys, ui, App, Page};
+use crate::icons::Icon;
+use crate::{loading, peripherals, sys, sysupdate, ui, App, Page};
 
 /// One mounted disk as `df` sees it.
 #[derive(Clone, Debug, PartialEq)]
@@ -178,7 +179,7 @@ pub fn locale_name(code: &str) -> String {
     format!("{lang} ({region})")
 }
 
-/// Agora on its Updates page: the software updates of the whole system (packages and apps) are Agora's.
+/// Agora on its Updates page, which installs updates (the system's and the apps') with its own progress and one password.
 fn open_updates() {
     if crate::fixture::get().is_some() {
         return;
@@ -189,6 +190,53 @@ fn open_updates() {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn();
+}
+
+/// A row of More options: an icon, the title (and a grey line), the count if any, and a chevron. True when clicked.
+fn option_row(ui: &mut egui::Ui, pal: &Palette, first: bool, icon: Icon, title: &str, sub: Option<&str>, count: &str) -> bool {
+    let bg = ui.painter().add(egui::Shape::Noop);
+    let id = ui.next_auto_id();
+    let r = ui.scope(|ui| {
+        ui::row_with(
+            ui,
+            pal,
+            first,
+            |ui| {
+                ui.horizontal(|ui| {
+                    let (rect, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
+                    crate::icons::paint(ui.painter(), rect, icon, pal.text);
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(title).size(14.0));
+                });
+            },
+            sub,
+            |ui| {
+                ui.label(RichText::new("\u{203a}").size(20.0).color(pal.dim));
+                if !count.is_empty() {
+                    ui.label(RichText::new(count).color(pal.dim));
+                }
+            },
+        );
+    });
+    let resp = ui.interact(r.response.rect, id.with("opt"), egui::Sense::click());
+    if resp.hovered() {
+        let mut hl = r.response.rect.expand2(egui::vec2(6.0, 0.0));
+        hl.min.y += if first { 3.0 } else { 4.0 };
+        hl.max.y -= 3.0;
+        ui.painter().set(bg, egui::Shape::rect_filled(hl, egui::CornerRadius::same(8), pal.hover));
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    resp.clicked()
+}
+
+/// Two upright bars, the pause sign, in the size of the other rows' icons.
+fn pause_icon(ui: &mut egui::Ui, pal: &Palette) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::hover());
+    for x in [6.0, 12.0] {
+        let bar = egui::Rect::from_min_size(rect.min + egui::vec2(x, 3.0), egui::vec2(3.0, 14.0));
+        ui.painter().rect_stroke(bar, egui::CornerRadius::same(1), egui::Stroke::new(1.5, pal.text), egui::StrokeKind::Middle);
+    }
+    ui.add_space(6.0);
 }
 
 /// The operating system's version (VERSION_ID, else BUILD_ID, in os-release), for the Software Update row.
@@ -221,10 +269,9 @@ impl App {
                     ui.label(RichText::new(&version).color(pal.dim));
                 }
             }) {
-                open_updates();
+                open = Some(Page::SoftwareUpdate);
             }
         });
-        ui::footnote(ui, pal, "Updates for the system and your apps are in Agora; Software Update opens them there.");
         ui::group(ui, pal, None, |ui| {
             if ui::nav_row(ui, pal, true, "Storage", None, |_| {}) {
                 open = Some(Page::Storage);
@@ -285,6 +332,238 @@ impl App {
         if let Some(p) = open {
             self.open_page(p, ui.ctx());
         }
+    }
+
+    /// Ask the repositories on a thread of its own; the answer comes back as Msg::SysUpdates.
+    pub(crate) fn check_sys_updates(&mut self, ctx: &egui::Context) {
+        if self.sys_checking {
+            return;
+        }
+        self.sys_checking = true;
+        let (tx, ctx) = (self.tx.clone(), ctx.clone());
+        std::thread::spawn(move || {
+            let _ = tx.send(crate::Msg::SysUpdates(sysupdate::check(), false));
+            ctx.request_repaint();
+        });
+    }
+
+    /// General > Software Update: the big update icon with its badge, the state and when it was checked, Check for updates
+    /// (Install updates once the assistant approved exactly these updates); then More options (Available Updates, Pause
+    /// updates, Update history, App Updates) and Help with updates.
+    pub(crate) fn page_software_update(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context) {
+        match self.upd_sub {
+            sysupdate::Sub::Available => return self.page_available_updates(ui, pal),
+            sysupdate::Sub::History => return self.page_update_history(ui, pal),
+            sysupdate::Sub::Main => {}
+        }
+        let Some(s) = self.data.sys_updates.clone() else { return loading(ui) };
+        let now = yggdrasil_updates::pause::now();
+        let approved = matches!(s.validation, sysupdate::Validation::Approved(_)) && !s.updates.is_empty();
+        let mut check = false;
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(72.0, 72.0), egui::Sense::hover());
+            crate::icons::paint(ui.painter(), rect.shrink(8.0), Icon::Restart, pal.accent);
+            // the badge: up to date, updates waiting, or approved by the assistant
+            let badge = egui::Rect::from_center_size(rect.right_bottom() - egui::vec2(14.0, 14.0), egui::vec2(26.0, 26.0));
+            let (fill, mark) = if approved {
+                (pal.accent, Some(Icon::Shield))
+            } else if s.updates.is_empty() && s.checked > 0 {
+                (pal.green, Some(Icon::Check))
+            } else if !s.updates.is_empty() {
+                (pal.accent, None)
+            } else {
+                (egui::Color32::TRANSPARENT, None)
+            };
+            if fill != egui::Color32::TRANSPARENT {
+                let r = if mark.is_some() { 12.0 } else { 7.0 };
+                ui.painter().circle_filled(badge.center(), r, fill);
+                if let Some(m) = mark {
+                    crate::icons::paint(ui.painter(), badge.shrink(7.0), m, egui::Color32::WHITE);
+                }
+            }
+            ui.add_space(12.0);
+            ui.vertical(|ui| {
+                ui.add_space(12.0);
+                ui.label(RichText::new(sysupdate::headline(&s, self.sys_checking)).size(20.0).strong());
+                ui.label(RichText::new(sysupdate::last_checked(&s, now, self.sys_clock24)).color(pal.dim));
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if self.sys_checking {
+                    ui.spinner();
+                } else if approved {
+                    if ui::action(ui, pal, "Install updates").clicked() {
+                        open_updates();
+                    }
+                } else if ui::action(ui, pal, "Check for updates").clicked() {
+                    check = true;
+                }
+            });
+        });
+        if let Some(note) = s.validation.note() {
+            ui::footnote(ui, pal, &note);
+        }
+        ui.add_space(12.0);
+        let mut go: Option<sysupdate::Sub> = None;
+        let mut pause: Option<bool> = None;
+        let paused = self.sys_paused;
+        ui::group(ui, pal, Some("More options"), |ui| {
+            let n = s.updates.len();
+            let sub = match n {
+                0 => "None right now".to_string(),
+                _ if s.download == 0 => format!("{n} to install, already downloaded"),
+                _ => format!("{n} to install, {} to download", sysupdate::size(s.download)),
+            };
+            if option_row(ui, pal, true, Icon::Info, "Available Updates", Some(&sub), &n.to_string()) {
+                go = Some(sysupdate::Sub::Available);
+            }
+            let (title, sub) = match paused {
+                Some(t) => (format!("Paused until {}", sysupdate::day(t)), "Nothing looks for updates by itself until then"),
+                None => (
+                    "Pause updates".to_string(),
+                    "No automatic checks for a week; pacman in a terminal is never held. Game time already holds them during games",
+                ),
+            };
+            ui::row_with(
+                ui,
+                pal,
+                false,
+                |ui| {
+                    ui.horizontal(|ui| {
+                        pause_icon(ui, pal);
+                        ui.label(RichText::new(&title).size(14.0));
+                    });
+                },
+                Some(sub),
+                |ui| {
+                    let label = if paused.is_some() { "Resume" } else { "Pause for 1 week" };
+                    if ui::quiet(ui, pal, label).clicked() {
+                        pause = Some(paused.is_none());
+                    }
+                },
+            );
+            if option_row(ui, pal, false, Icon::Clock, "Update history", Some("Every update and install, newest first"), "") {
+                go = Some(sysupdate::Sub::History);
+            }
+            if option_row(ui, pal, false, Icon::Apps, "App Updates", Some("Apps, Flatpaks and the system's own apps, in Agora"), "") {
+                open_updates();
+            }
+        });
+        ui.add_space(12.0);
+        ui::group(ui, pal, Some("Related support"), |ui| {
+            egui::CollapsingHeader::new(RichText::new("Help with updates").size(14.0)).id_salt("upd-help").show(ui, |ui| {
+                for line in [
+                    "Check for updates asks the update servers what is new, without changing anything; it never needs a password.",
+                    "Installing is Agora's: its Updates page installs the system's and the apps' updates with one administrator password, and shows its progress.",
+                    "Update history lists every update and install, including those made with pacman in a terminal.",
+                    "More in the Yggdrasil documentation: docs/APPS_SETTINGS.md, Software Update.",
+                ] {
+                    ui.add(egui::Label::new(RichText::new(line).color(pal.dim)).wrap());
+                }
+            });
+        });
+        if check {
+            self.check_sys_updates(ctx);
+        }
+        if let Some(on) = pause {
+            let r =
+                if on { yggdrasil_updates::pause::pause(now, yggdrasil_updates::pause::WEEK) } else { yggdrasil_updates::pause::resume() };
+            match r {
+                Ok(()) => self.sys_paused = yggdrasil_updates::pause::until(now),
+                Err(e) => self.status = format!("Not changed: {e}"),
+            }
+        }
+        if let Some(g) = go {
+            self.upd_sub = g;
+            if g == sysupdate::Sub::History {
+                self.sys_history = None;
+                let (tx, ctx) = (self.tx.clone(), ctx.clone());
+                std::thread::spawn(move || {
+                    let _ = tx.send(crate::Msg::UpdHistory(sysupdate::history()));
+                    ctx.request_repaint();
+                });
+            }
+        }
+    }
+
+    /// Software Update > Available Updates: each update with its versions, size and repository, the kernel, drivers and the
+    /// base system first; installing them is Agora's.
+    fn page_available_updates(&mut self, ui: &mut egui::Ui, pal: &Palette) {
+        let Some(s) = self.data.sys_updates.clone() else { return loading(ui) };
+        if s.updates.is_empty() {
+            ui::group(ui, pal, None, |ui| ui::row(ui, pal, true, "No updates right now", None, |_| {}));
+            return;
+        }
+        ui::group(ui, pal, None, |ui| {
+            let sub = format!("{} to download · Agora installs them with one administrator password", sysupdate::size(s.download));
+            ui::row(ui, pal, true, &format!("{} updates", s.updates.len()), Some(&sub), |ui| {
+                if ui::action(ui, pal, "Update in Agora").clicked() {
+                    open_updates();
+                }
+            });
+        });
+        for g in sysupdate::GROUPS {
+            let list: Vec<&yggdrasil_updates::Update> = s.updates.iter().filter(|u| sysupdate::group(u) == g).collect();
+            if list.is_empty() {
+                continue;
+            }
+            ui.add_space(8.0);
+            ui::group(ui, pal, Some(&format!("{g} ({})", list.len())), |ui| {
+                for (i, u) in list.iter().enumerate() {
+                    let mut sub = vec![format!("{} -> {}", u.old, u.new)];
+                    if !u.repo.is_empty() {
+                        sub.push(u.repo.clone());
+                    }
+                    ui::row(ui, pal, i == 0, &u.name, Some(&sub.join(" · ")), |ui| {
+                        let size = if u.size == 0 { "downloaded".to_string() } else { sysupdate::size(u.size) };
+                        ui.label(RichText::new(size).color(pal.dim));
+                    });
+                }
+            });
+        }
+    }
+
+    /// Software Update > Update History: every package transaction in pacman's log, newest first, each opening to its packages.
+    fn page_update_history(&mut self, ui: &mut egui::Ui, pal: &Palette) {
+        let Some(h) = self.sys_history.clone() else { return loading(ui) };
+        if h.is_empty() {
+            ui::group(ui, pal, None, |ui| ui::row(ui, pal, true, "No updates or installs recorded", None, |_| {}));
+            return;
+        }
+        ui::group(ui, pal, None, |ui| {
+            for (i, t) in h.iter().enumerate() {
+                if i > 0 {
+                    ui.separator();
+                }
+                let counts: Vec<String> = t.counts().iter().map(|(c, n)| format!("{n} {}", c.word())).collect();
+                let mut head = format!("{}  ·  {}", t.started.get(..16).unwrap_or(&t.started).replace('T', " "), counts.join(", "));
+                match t.outcome {
+                    yggdrasil_updates::history::Outcome::Completed => {}
+                    yggdrasil_updates::history::Outcome::Failed => head.push_str("  ·  failed"),
+                    yggdrasil_updates::history::Outcome::Unfinished => head.push_str("  ·  did not finish"),
+                }
+                egui::CollapsingHeader::new(RichText::new(head).strong()).id_salt(("upd-hist", i)).show(ui, |ui| {
+                    if !t.command.is_empty() {
+                        ui.label(RichText::new(&t.command).monospace().size(12.0).color(pal.dim));
+                    }
+                    for p in &t.packages {
+                        let v = match p.change {
+                            yggdrasil_updates::history::Change::Upgraded | yggdrasil_updates::history::Change::Downgraded => {
+                                format!("{} -> {}", p.old, p.new)
+                            }
+                            yggdrasil_updates::history::Change::Removed => p.old.clone(),
+                            _ => p.new.clone(),
+                        };
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(p.change.word()).size(12.0).color(pal.dim));
+                            ui.label(&p.name);
+                            ui.label(RichText::new(v).color(pal.dim));
+                        });
+                    }
+                });
+            }
+        });
+        ui::footnote(ui, pal, "From pacman's log: updates and installs made here, in Agora or in a terminal (the newest 300).");
     }
 
     /// General > Language & Region: the system's language (and region) for every account.

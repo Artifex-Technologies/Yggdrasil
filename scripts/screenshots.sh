@@ -42,6 +42,8 @@ declare -A ACTIONS=(
     [taskmanager]="tap 474 265; wait 3; tap 735 430; wait 5"
     [minos-privacy-menu]="pointer 900 300; click right; wait 3"
     [calculator]="type 1299*12"
+    [settings-software-update-available]="tap 816 425; wait 2"
+    [settings-software-update-history]="tap 806 567; wait 3; tap 795 300; wait 2"
     [settings-network-heimdall]="tap 1435 364; wait 4; scroll 200; wait 1; scroll 200; wait 1; scroll 200; wait 1; scroll 150; wait 2"
 )
 shots() {
@@ -53,6 +55,9 @@ shots() {
     shot settings-general               desktop settings general system
     shot settings-accessibility         desktop settings accessibility system
     shot settings-storage               desktop settings storage system
+    shot settings-software-update       desktop settings software system
+    shot settings-software-update-available desktop settings software system
+    shot settings-software-update-history desktop settings software system
     shot settings-language              desktop settings language system
     shot settings-network               desktop settings network wifi
     shot settings-network-heimdall      desktop settings network wifi

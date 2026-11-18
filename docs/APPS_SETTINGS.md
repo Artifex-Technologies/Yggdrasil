@@ -19,11 +19,39 @@ assistant), Apps, Privacy & security, System. Settings opens on General all the 
   open page's sidebar row returns it to its first level. Each level keeps its own scroll position; a level just opened starts at
   its top. Before this a sub-page's own back button scrolled away with the page (the new level kept the old one's scroll
   offset), so the way back was often out of sight.
-- **General** is the page Settings opens on: About, Software Update (opens Agora on its Updates page; the system's version
-  beside it), Storage (each disk's use, read when the page opens), Date & Time, Keyboard (Peripherals > Keyboard) and
+- **General** is the page Settings opens on: About, Software Update (below; the system's version beside it), Storage (each disk's use, read when the page opens), Date & Time, Keyboard (Peripherals > Keyboard) and
   Language & Region (`localectl`: the system's language for every account, and a separate format region when there is one).
   About and Date & Time moved here from the sidebar; the search still finds them, and `yggdrasil-settings about`,
   `datetime`, `storage` and `language` open them inside General. A page inside another is marked by `parent()` in main.rs.
+  **Software Update** (`src/sysupdate.rs`, since 2026-11-17; laid out like Windows 11's Windows Update page, drawn in
+  Yggdrasil's look) has a big update icon with a badge (a green check when up to date, an accent dot when updates wait, a
+  shield when the assistant approved them), "You're up to date" or "6 updates available" with "Last checked: Today, 21:20"
+  (12- or 24-hour as the panel's clock), and Check for updates. Checking needs no root and never touches pacman's own
+  databases: it is Agora's checker, moved into `packages/updates` (yggdrasil-updates) so both use one, which refreshes a
+  private copy of the sync databases in the session's runtime folder with `fakeroot pacman -Sy --dbpath`, as checkupdates
+  does, and asks `pacman -Sup` for each package's download size and repository. The page checks when it opens if the last
+  check is over 15 minutes old (and updates are not paused), and on the button; never in the background (there is no timer).
+  The last answer is kept in `~/.cache/yggdrasil/system-updates`, so the page shows it at once. **More options**:
+  - **Available Updates** (the count): every update with old -> new version, size ("downloaded" when pacman's cache has it)
+    and repository, grouped Kernel, Drivers and firmware, System (the core repositories), Apps and libraries; "Update in
+    Agora" opens Agora's Updates, which installs them (one administrator password, its progress and cancel). Settings runs no
+    package command.
+  - **Pause updates**: "Pause for 1 week" (Resume while paused): no automatic checks, neither this page's on opening nor
+    Agora's at its start and every half hour (`yggdrasil_updates::pause`, `~/.local/state/yggdrasil/updates-paused-until`).
+    Asking by hand still works, and pacman in a terminal is never held; Game time already holds updates during games.
+  - **Update history**: every package transaction in pacman's log (`/var/log/pacman.log`, readable by all), newest first (the
+    newest 300), each opening to the command that ran it and every package upgraded, installed, removed, downgraded or
+    reinstalled with its versions; a terminal's `pacman -Syu` and Agora's updates alike. The parser is
+    `yggdrasil_updates::history`, kept apart from the window so an assistant can use it to tell which update came before a
+    problem (the hook for Sarina's update follow-up).
+  - **App Updates** opens Agora's Updates (apps, Flatpaks, our own packages). No count: Agora works it out live (yay and
+    Flatpak over the network), which is not cheap enough for this page.
+  - **Related support > Help with updates**: a few lines on what each part does.
+  **Validated before installing**: Sarina (optional) is to try updates in a Limbo guest before they are installed (her
+  limbo-validate, with a profile I write). Not built yet; the hook is `sysupdate::validation`: with no assistant nothing is
+  said; with one, "Not validated yet: Sarina's update check comes later" until its integration names an `update_verdict`
+  file (docs/INTEGRATIONS.md) whose verdict covers exactly the updates available now. Only "approved" turns Check for updates
+  into **Install updates** (which opens Agora's Updates) and the badge into a shield.
 
 - **Battery** (`src/battery.rs`; in the sidebar only on a computer with a battery of its own, a power_supply of type
   Battery that is not a device's): the charge in large type with "Last charged to N%" and a bar (a line at the charge
@@ -267,6 +295,9 @@ About only when switched on, have no picture.
 | --- | --- |
 | **Accessibility**: text and pointer size, zoom, colour filters, reduce motion. | ![Settings > Accessibility](../assets/screenshots/settings-accessibility.png) |
 | **General**: the page Settings opens on. | ![Settings > General](../assets/screenshots/settings-general.png) |
+| **General > Software Update**: 6 made-up updates, More options (`system.json`). | ![Settings > General > Software Update](../assets/screenshots/settings-software-update.png) |
+| **General > Software Update > Available Updates**: grouped, with versions, sizes and repositories. | ![Settings > Software Update > Available Updates](../assets/screenshots/settings-software-update-available.png) |
+| **General > Software Update > Update History**: pacman's log (made up), one transaction open. | ![Settings > Software Update > Update History](../assets/screenshots/settings-software-update-history.png) |
 | **General > Storage**: each disk's use (`system.json`'s made-up disks). | ![Settings > General > Storage](../assets/screenshots/settings-storage.png) |
 | **General > Language & Region**: the system's language, a separate region for dates and times. | ![Settings > General > Language & Region](../assets/screenshots/settings-language.png) |
 | **Wi-Fi & Network**: the network in use, Known Networks and Other Networks (`wifi.json`). | ![Settings > Wi-Fi & Network](../assets/screenshots/settings-network.png) |
@@ -570,6 +601,10 @@ namespace); `sudo bash tests/appnet_ask/kernel_log_check.sh` (the real kernel lo
 - **The network kind, suggested and asked once** (from the 2026-11-16 plan; the choice itself is done): Heimdall's suggestion
   shown inline beside "This network is" ("Looks like a phone hotspot"), never applied by itself, once Heimdall offers one, and
   the "joined a new network" notification asking once (with "decide later") when a network cannot be classified.
+- **Software Update, validated updates** (planned): Sarina's limbo-validate trying the available updates in a Limbo guest and
+  writing the `update_verdict` file Settings already reads; and Sarina reading Update History (`yggdrasil_updates::history`)
+  to name the update that came before a problem. Advanced options (check automatically, update source, AUR updates) are left
+  out until such settings exist.
 - **Protective mode** (planned, after training): when Heimdall is confident a man-in-the-middle is real on a learned network,
   restrict traffic while keeping the connection (pin the known router, drop address offers and IPv6 router announcements from
   anything else, keep DNS on the known servers, use the VPN if set up), with a notice and an undo. It switches on only after

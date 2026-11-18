@@ -67,6 +67,11 @@ impl App {
                     l.push("Add VPN Configuration".into());
                 }
             }
+            Page::SoftwareUpdate => match self.upd_sub {
+                crate::sysupdate::Sub::Main => {}
+                crate::sysupdate::Sub::Available => l.push("Available Updates".into()),
+                crate::sysupdate::Sub::History => l.push("Update History".into()),
+            },
             Page::Bluetooth => {
                 if let Some(mac) = &self.bt_open {
                     let d = self.data.bluetooth.as_ref().and_then(|b| b.devices.iter().find(|d| &d.mac == mac));
@@ -186,6 +191,7 @@ impl App {
                 self.bt_forget = false;
             }
             Page::Appearance => self.app_sub = AppSub::Main,
+            Page::SoftwareUpdate => self.upd_sub = crate::sysupdate::Sub::Main,
             Page::Power => {
                 self.power_fans = false;
                 self.power_gpu = false;
@@ -243,6 +249,7 @@ impl App {
                 self.pad_add = None;
             }
             Page::Appearance => self.app_sub = AppSub::Main,
+            Page::SoftwareUpdate => self.upd_sub = crate::sysupdate::Sub::Main,
             Page::Power => {
                 self.power_fans = false;
                 self.power_gpu = false;

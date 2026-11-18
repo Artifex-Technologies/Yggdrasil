@@ -11,6 +11,8 @@ path = "src/main.rs"
 
 [dependencies]
 yggdrasil-conf = { path = "../yggdrasil-conf" }
+# what the repositories can update (shared with Settings > General > Software Update)
+yggdrasil-updates = { path = "../updates" }
 eframe = "0.36.2"
 egui_extras = { version = "0.36.2", features = ["file", "image", "svg"] }
 yggdrasil-ui = { path = "../yggdrasil-ui" }
