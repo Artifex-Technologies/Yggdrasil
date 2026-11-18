@@ -4413,8 +4413,11 @@ impl App {
         let Some(state) = self.data.private_mic else { return };
         let mut want: Option<bool> = None;
         let mut want_sarina: Option<bool> = None;
+        let mut want_disguise: Option<bool> = None;
+        let mut want_preset: Option<privmic::Preset> = None;
         let mut pack_change: Option<PackChange> = None;
         let sarina = privmic::sarina_row(state);
+        let disguise = privmic::disguise_row(state);
         ui::group(ui, pal, Some("Privacy"), |ui| {
             ui::row(ui, pal, true, "Private microphone", Some(privmic::ABOUT), |ui| match (privmic::note(state), state) {
                 (None, Some(m)) => {
@@ -4435,6 +4438,22 @@ impl App {
                         want_sarina = Some(on);
                     }
                 });
+            }
+            // "Disguise my voice" (Heimdall's VOICE_DISGUISE.md): a switch, and the preset while it is on
+            if let (true, Some(Some((on_now, preset)))) = (disguise, state.map(|m| m.disguise)) {
+                ui::row(ui, pal, false, privmic::DISGUISE_TITLE, Some(privmic::DISGUISE_ABOUT), |ui| {
+                    let mut on = on_now;
+                    if ui::switch(ui, pal, &mut on).changed() {
+                        want_disguise = Some(on);
+                    }
+                });
+                if on_now {
+                    ui::row(ui, pal, false, privmic::DISGUISE_PRESET_TITLE, None, |ui| {
+                        if let Some(i) = ui::segmented(ui, pal, &privmic::Preset::LABELS, preset.index()) {
+                            want_preset = privmic::Preset::ALL.get(i).copied();
+                        }
+                    });
+                }
             }
             if pack {
                 pack_change = self.privacy_pack_rows(ui, pal);
@@ -4464,6 +4483,18 @@ impl App {
                 m.sarina_raw = on;
             }
             self.change(ctx, move || privmic::set_sarina_raw(on));
+        }
+        if let Some(on) = want_disguise {
+            if let Some(Some(privmic::Mic { disguise: Some(d), .. })) = self.data.private_mic.as_mut() {
+                d.0 = on;
+            }
+            self.change(ctx, move || privmic::set_disguise(on));
+        }
+        if let Some(p) = want_preset {
+            if let Some(Some(privmic::Mic { disguise: Some(d), .. })) = self.data.private_mic.as_mut() {
+                *d = (true, p);
+            }
+            self.change(ctx, move || privmic::set_disguise_preset(p));
         }
         if let Some(w) = state.and_then(privmic::warning) {
             ui::footnote(ui, pal, w);

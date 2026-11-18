@@ -8,6 +8,11 @@
 //! record the real microphone (`heimdall-private-mic sarina-raw on|off`, off by default); every other app stays on the
 //! private one. On Labyrinth OS and anywhere else that switch is never shown: Sarina records the private microphone like
 //! every app.
+//!
+//! "Disguise my voice" (off by default): the private microphone also shifts the voice's pitch and formants, so it is not
+//! recognised at a casual listen (Heimdall's docs/VOICE_DISGUISE.md; it can be partly undone, and the row says so). A switch
+//! and, while it is on, the preset (Lower or Higher): `heimdall-private-mic disguise on|off|lower|higher`. Shown only while
+//! the private microphone is on and only when Heimdall's program reports it (an older one leaves the field out).
 
 use crate::sys;
 
@@ -27,6 +32,34 @@ pub struct Mic {
     pub lykanos: bool,
     /// LykanOS only: Sarina's voice input records the real microphone (off by default).
     pub sarina_raw: bool,
+    /// The voice disguise, when Heimdall's program knows it: on or off, and the preset.
+    pub disguise: Option<(bool, Preset)>,
+}
+
+/// The voice disguise's presets, as Heimdall's program names them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Preset {
+    #[default]
+    Lower,
+    Higher,
+}
+
+impl Preset {
+    pub const ALL: [Preset; 2] = [Preset::Lower, Preset::Higher];
+    /// The segmented control's labels, in `ALL`'s order.
+    pub const LABELS: [&'static str; 2] = ["Lower", "Higher"];
+
+    /// The word `heimdall-private-mic disguise` takes.
+    pub fn arg(self) -> &'static str {
+        match self {
+            Preset::Lower => "lower",
+            Preset::Higher => "higher",
+        }
+    }
+
+    pub fn index(self) -> usize {
+        Preset::ALL.iter().position(|p| *p == self).unwrap_or(0)
+    }
 }
 
 /// What `heimdall-private-mic status --json` says.
@@ -36,22 +69,36 @@ pub struct Status {
     pub node: bool,
     pub lykanos: bool,
     pub sarina_raw: bool,
+    pub disguise: Option<(bool, Preset)>,
 }
 
 /// One line of `heimdall-private-mic status --json`: `{"enforce":true,"node":true,"lykanos":false,"sarina_raw":false}`.
 /// `enforce` and `node` must be there; the two later fields count as false when an older program leaves them out.
-/// Anything else is None (the row then says the state could not be read).
+/// `"disguise":false,"disguise_preset":"lower"` (newer still) give `disguise`; without them it is None and the disguise row
+/// is not shown. A preset name this build does not know counts as Lower. Anything else is None (the row then says the
+/// state could not be read).
 pub fn parse_status(text: &str) -> Option<Status> {
     let v: serde_json::Value = serde_json::from_str(text.trim()).ok()?;
     let later = |k: &str| match v.get(k) {
         None => Some(false),
         Some(x) => x.as_bool(),
     };
+    let disguise = match v.get("disguise") {
+        None => None,
+        Some(d) => {
+            let preset = match v.get("disguise_preset").and_then(|p| p.as_str()) {
+                Some("higher") => Preset::Higher,
+                _ => Preset::Lower,
+            };
+            Some((d.as_bool()?, preset))
+        }
+    };
     Some(Status {
         enforce: v.get("enforce")?.as_bool()?,
         node: v.get("node")?.as_bool()?,
         lykanos: later("lykanos")?,
         sarina_raw: later("sarina_raw")?,
+        disguise,
     })
 }
 
@@ -85,7 +132,7 @@ pub fn load() -> Option<Mic> {
     let s = parse_status(&sys::run(TOOL, &["status", "--json"])?)?;
     // both must say LykanOS: the file here, and Heimdall's program (which honours the setting only there)
     let lykanos = s.lykanos && this_is_lykanos();
-    Some(Mic { installed: true, enforce: s.enforce, node: s.node, lykanos, sarina_raw: lykanos && s.sarina_raw })
+    Some(Mic { installed: true, enforce: s.enforce, node: s.node, lykanos, sarina_raw: lykanos && s.sarina_raw, disguise: s.disguise })
 }
 
 /// Switch it on or off (takes effect at once, kept across restarts).
@@ -96,6 +143,28 @@ pub fn set(on: bool) -> Result<(), String> {
 /// LykanOS only: let Sarina's voice input record the real microphone, or not.
 pub fn set_sarina_raw(on: bool) -> Result<(), String> {
     sys::act(TOOL, &["sarina-raw", if on { "on" } else { "off" }])
+}
+
+/// "Disguise my voice" on or off (takes effect at once, kept across restarts).
+pub fn set_disguise(on: bool) -> Result<(), String> {
+    sys::act(TOOL, &["disguise", if on { "on" } else { "off" }])
+}
+
+/// Another preset (also switches the disguise on).
+pub fn set_disguise_preset(p: Preset) -> Result<(), String> {
+    sys::act(TOOL, &["disguise", p.arg()])
+}
+
+/// The disguise rows' titles and grey line: honest about what it does not do.
+pub const DISGUISE_TITLE: &str = "Disguise my voice";
+pub const DISGUISE_ABOUT: &str = "Shifts your voice's pitch and formants so it is not recognised at a casual listen. A determined \
+     listener can partly undo it";
+pub const DISGUISE_PRESET_TITLE: &str = "Voice";
+
+/// The disguise rows are shown: the program knows the disguise and the private microphone is on (with it off, apps record
+/// the real microphone).
+pub fn disguise_row(m: Option<Mic>) -> bool {
+    m.is_some_and(|m| m.installed && m.enforce && m.disguise.is_some())
 }
 
 /// The row's grey line under the title.
@@ -138,9 +207,16 @@ mod tests {
         assert_eq!(parse_status(r#"{"node": false, "enforce": false}"#), Some(Status::default()));
         assert_eq!(
             parse_status(r#"{"enforce":true,"node":true,"lykanos":true,"sarina_raw":true}"#),
-            Some(Status { enforce: true, node: true, lykanos: true, sarina_raw: true })
+            Some(Status { enforce: true, node: true, lykanos: true, sarina_raw: true, disguise: None })
         );
         assert_eq!(parse_status(r#"{"enforce":true,"node":true,"lykanos":"yes"}"#), None, "a later field not a boolean");
+        let d =
+            parse_status(r#"{"enforce":true,"node":true,"lykanos":false,"sarina_raw":false,"disguise":true,"disguise_preset":"higher"}"#);
+        assert_eq!(d.map(|s| s.disguise), Some(Some((true, Preset::Higher))));
+        let d = parse_status(r#"{"enforce":true,"node":true,"disguise":false,"disguise_preset":"something new"}"#);
+        assert_eq!(d.map(|s| s.disguise), Some(Some((false, Preset::Lower))), "an unknown preset is Lower");
+        assert_eq!(parse_status(r#"{"enforce":true,"node":true}"#).map(|s| s.disguise), Some(None), "an older program");
+        assert_eq!(parse_status(r#"{"enforce":true,"node":true,"disguise":"on"}"#), None, "not a boolean");
         assert_eq!(parse_status(r#"{"enforce":"yes","node":true}"#), None, "not a boolean");
         assert_eq!(parse_status(r#"{"enforce":true}"#), None, "a field missing");
         assert_eq!(parse_status("enforce: on"), None);
@@ -167,6 +243,19 @@ mod tests {
     }
 
     #[test]
+    fn the_disguise_rows_need_the_program_to_know_it_and_the_microphone_on() {
+        let m = Mic { installed: true, enforce: true, node: true, disguise: Some((false, Preset::Lower)), ..Mic::default() };
+        assert!(disguise_row(Some(m)));
+        assert!(!disguise_row(Some(Mic { disguise: None, ..m })), "an older Heimdall");
+        assert!(!disguise_row(Some(Mic { enforce: false, ..m })), "the private microphone off");
+        assert!(!disguise_row(Some(Mic { installed: false, ..m })));
+        assert!(!disguise_row(None));
+        assert_eq!(Preset::LABELS.len(), Preset::ALL.len());
+        assert_eq!(Preset::Higher.index(), 1);
+        assert_eq!(Preset::Higher.arg(), "higher");
+    }
+
+    #[test]
     fn the_row_says_why_it_cannot_be_switched() {
         assert_eq!(note(None), Some("Could not be read"));
         assert_eq!(note(Some(Mic::default())), Some("Not installed"));
@@ -181,6 +270,7 @@ mod tests {
         assert!(f.tools.iter().any(|t| t == TOOL));
         let s = parse_status(&f.answer(TOOL, &["status", "--json"]).unwrap()).unwrap();
         assert!(s.enforce && s.node && !s.lykanos && !s.sarina_raw);
+        assert_eq!(s.disguise, Some((false, Preset::Lower)), "the screenshots show the disguise row, off");
     }
 
     #[test]

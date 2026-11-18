@@ -158,6 +158,15 @@ assistant), Apps, Privacy & security, System. Settings opens on General all the 
   real microphone; every other app stays on the private one. It runs `heimdall-private-mic sarina-raw on|off` (argv). The
   property is on every voice recording and means nothing unless that switch is on, so Labyrinth OS ignores it.
 
+- **Disguise my voice** (2026-11-18): a switch under Private microphone, off by default, and while it is on a "Voice" row
+  with Lower or Higher. The private microphone then shifts my voice's pitch and formants, with a little variation per
+  session, so it is not recognised at a casual listen. The row's grey line says plainly that a determined listener can partly
+  undo it (it is light signal processing; how and how well is in Heimdall's docs/VOICE_DISGUISE.md). It runs
+  `heimdall-private-mic disguise on|off|lower|higher` (argv, as my own user like the other two switches: the setting lives
+  in my WirePlumber, so no password is asked) and reads `"disguise"` and `"disguise_preset"` from `status --json`. It is
+  shown only while the private microphone is on (off, apps record the real microphone) and only when Heimdall's program
+  reports the disguise (an older one leaves the fields out, and the row stays hidden).
+
 - **The privacy pack** (`src/privpack.rs`, 2026-11-15): four more switches in the same Privacy card on Security, one per part,
   all on by default. I want people safe without having to find these, so off is the choice that needs a click.
   - **Check downloads**: Heimdall's downloads guard (`heimdall-fileguard`, a user service) looks at each finished download
