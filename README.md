@@ -142,3 +142,19 @@ Some pages appear only when the operating system provides what they need (for ex
 Labyrinth's `labyrinth-distress`, and the security monitor's pages need a `security` integration such as Heimdall's).
 
 Licence: Mozilla Public License 2.0 ([LICENSE](LICENSE)). See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for what is built on, under its own licences.
+
+## Artifex Ecosystem
+
+| Repository | What it is |
+| --- | --- |
+| [Labyrinth_OS](https://github.com/Artifex-Technologies/Labyrinth_OS) | privacy- and security-first Linux distribution (CachyOS-based), made for gaming too |
+| [LykanOS](https://github.com/Artifex-Technologies/LykanOS) | the security edition, built on the same desktop and tools |
+| [Yggdrasil](https://github.com/Artifex-Technologies/Yggdrasil) | **this repository**: the desktop environment both systems use (panel, Settings, Agora, Minos, the compositor) |
+| [Sarina](https://github.com/Artifex-Technologies/Sarina) | optional local AI assistant that runs on this computer |
+| [Heimdall](https://github.com/Artifex-Technologies/Heimdall) | the security agent: watches the computer, its network and Sarina |
+| [Limbo](https://github.com/Artifex-Technologies/Limbo) | disposable sandboxes for apps, Windows programs and untrusted files |
+| [Kairos](https://github.com/Artifex-Technologies/Kairos) | frame generation for games (a Vulkan layer) |
+| [Argus_App](https://github.com/Artifex-Technologies/Argus_App) | desktop console for the Flipper Zero (a qFlipper fork) |
+| [Argus_Firmware](https://github.com/Artifex-Technologies/Argus_Firmware) | Flipper Zero firmware fork |
+| [Daedalus_CAD](https://github.com/Artifex-Technologies/Daedalus_CAD) | 3D modelling and CAD (SketchUp-style) |
+| [Icarus](https://github.com/Artifex-Technologies/Icarus) | vehicle diagnostics and tuning |
