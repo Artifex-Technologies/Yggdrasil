@@ -369,6 +369,9 @@ impl Drop for Out {
 
 struct Assets {
     fonts: paint::Fonts,
+    /// The font settings' files when `fonts` were loaded (yggdrasil_conf::fonts::signature): Settings > Appearance > Font notes a new
+    /// choice in appearance.conf, and the fonts are loaded again when these changed.
+    font_sig: u64,
     icons: paint::Icons,
 }
 
@@ -1984,6 +1987,15 @@ impl State {
             "appearance.conf" => {
                 if paint::refresh_accent() {
                     self.dirty = true;
+                }
+                // the system font (Settings > Appearance > Font)
+                let sig = yggdrasil_conf::fonts::signature();
+                if sig != self.assets.font_sig {
+                    if let Some(f) = paint::Fonts::load() {
+                        self.assets.fonts = f;
+                        self.assets.font_sig = sig;
+                        self.dirty = true;
+                    }
                 }
                 let dark = system_dark();
                 if dark != self.model.dark {
@@ -4756,7 +4768,7 @@ fn main() {
             now_secs: 0,
         },
         a11y: None,
-        assets: Assets { fonts, icons: paint::Icons::new() },
+        assets: Assets { fonts, font_sig: yggdrasil_conf::fonts::signature(), icons: paint::Icons::new() },
         surfs: vec![],
         next_surf: 0,
         outputs: HashMap::new(),

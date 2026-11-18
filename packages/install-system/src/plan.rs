@@ -188,6 +188,14 @@ pub fn check_plan(p: &Py, os: &Os, ask: &mut Ask) -> Option<String> {
     if p.at("keymap_variant").truthy() && !fits(p.at("keymap_variant"), keymap_ok) {
         return Some("unknown keyboard variant".into());
     }
+    // the system font: one of the choices by id (fontconfig's file is written from the list, never from the plan's text)
+    for (key, list) in [("font", yggdrasil_conf::fonts::SANS), ("font_mono", yggdrasil_conf::fonts::MONO)] {
+        if let Some(v) = p.get(key) {
+            if !v.as_str().is_some_and(|id| list.iter().any(|c| c.id == id)) {
+                return Some("unknown font chosen".into());
+            }
+        }
+    }
     if let Some(chosen) = p.get("browsers") {
         let known: Vec<String> = catalog::entries(os.browsers_file.as_deref(), "browsers").into_iter().map(|b| catalog::id(&b)).collect();
         let fine = chosen.as_list().is_some_and(|l| l.iter().all(|b| b.as_str().is_some_and(|b| known.iter().any(|k| k == b))));

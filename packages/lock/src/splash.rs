@@ -20,7 +20,7 @@ mod draw;
 use std::os::fd::AsFd;
 use std::time::{Duration, Instant};
 
-use ab_glyph::{point, Font, FontVec, PxScale, ScaleFont};
+use ab_glyph::{point, Font, FontVec, PxScale, ScaleFont, VariableFont};
 use calloop::timer::{TimeoutAction, Timer};
 use calloop::EventLoop;
 use calloop_wayland_source::WaylandSource;
@@ -129,7 +129,9 @@ fn level_color(accent: (u8, u8, u8), level: usize) -> (u8, u8, u8, u8) {
 
 impl Atlas {
     fn new(accent: (u8, u8, u8)) -> Option<Atlas> {
-        let font = FontVec::try_from_vec(std::fs::read(font_file("monospace")?).ok()?).ok()?;
+        let mut font = FontVec::try_from_vec(std::fs::read(font_file("monospace")?).ok()?).ok()?;
+        // a variable font at the regular weight (Atkinson Hyperlegible Mono's file starts at ExtraLight)
+        font.set_variation(b"wght", 400.0);
         let scaled = font.as_scaled(PxScale::from(19.0));
         let mut cells = vec![];
         for (i, ch) in GLYPHS.chars().enumerate() {

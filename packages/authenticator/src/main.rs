@@ -397,7 +397,14 @@ fn main() -> eframe::Result {
             .with_decorations(false),
         ..Default::default()
     };
-    eframe::run_native("Authenticator", options, Box::new(|_| Ok(Box::new(App::new()))))
+    eframe::run_native(
+        "Authenticator",
+        options,
+        Box::new(|cc| {
+            yggdrasil_ui::fonts::install(&cc.egui_ctx);
+            Ok(Box::new(App::new()))
+        }),
+    )
 }
 
 #[cfg(test)]

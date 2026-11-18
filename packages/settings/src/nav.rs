@@ -81,6 +81,7 @@ impl App {
             Page::Appearance => {
                 let t = match self.app_sub {
                     AppSub::Main => None,
+                    AppSub::Font => Some("Font"),
                     AppSub::Icons => Some("Icons"),
                     AppSub::Bar => Some("Top bar and dock"),
                     AppSub::Notifs => Some("Notifications"),

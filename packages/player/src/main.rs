@@ -738,7 +738,14 @@ fn main() -> eframe::Result {
             .with_decorations(false),
         ..Default::default()
     };
-    eframe::run_native("VLC", options, Box::new(move |cc| Ok(Box::new(App::new(start, &cc.egui_ctx)))))
+    eframe::run_native(
+        "VLC",
+        options,
+        Box::new(move |cc| {
+            yggdrasil_ui::fonts::install(&cc.egui_ctx);
+            Ok(Box::new(App::new(start, &cc.egui_ctx)))
+        }),
+    )
 }
 
 #[cfg(test)]

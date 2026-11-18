@@ -7,6 +7,8 @@
 //! accent = 124,84,214   # r,g,b; absent: the operating system's default accent
 //! icons = Liki          # the icon pack; absent: Liki
 //! cursor = macOS        # the pointer theme (ygg-theme); absent: Yggdrasil's own
+//! font = lexend          # the fonts last chosen in Settings > Appearance > Font (a note: the choice itself is fontconfig's
+//! font_mono = noto-sans-mono   # file, fonts.rs; writing it here tells the panel, which watches this folder, to load them anew)
 //! ```
 //!
 //! Nothing is read from KDE's settings files (2026-11-08): the values that were kept there were moved here.
@@ -92,6 +94,36 @@ pub fn render_icons(id: &str, old: &str) -> String {
     text
 }
 
+/// The file's text with `font` and `font_mono` set to these choices' ids, every other line kept.
+pub fn render_fonts(sans: &str, mono: &str, old: &str) -> String {
+    let mut text = String::new();
+    for line in old.lines() {
+        let key = line.split('#').next().unwrap_or("").split_once('=').map(|(k, _)| k.trim());
+        if !matches!(key, Some("font" | "font_mono")) && !line.trim().is_empty() {
+            text.push_str(line);
+            text.push('\n');
+        }
+    }
+    text.push_str(&format!("font = {sans}\nfont_mono = {mono}\n"));
+    text
+}
+
+/// Notes the fonts chosen in Settings > Appearance > Font (ids from fonts::SANS and fonts::MONO only), so the panel takes
+/// them up at once.
+pub fn note_fonts(sans: &str, mono: &str) -> std::io::Result<()> {
+    if crate::fonts::sans(sans).is_none() || crate::fonts::mono(mono).is_none() {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "not one of the fonts"));
+    }
+    let p = path();
+    if let Some(d) = p.parent() {
+        std::fs::create_dir_all(d)?;
+    }
+    let old = std::fs::read_to_string(&p).unwrap_or_default();
+    let tmp = p.with_extension("conf.tmp");
+    std::fs::write(&tmp, render_fonts(sans, mono, &old))?;
+    std::fs::rename(tmp, p)
+}
+
 /// Choose the icon pack (Settings > Appearance > Icons).
 pub fn set_icon_pack(id: &str) -> std::io::Result<()> {
     if id.is_empty() || id.contains('/') || id.starts_with('.') || id.contains('\n') {
@@ -169,6 +201,12 @@ mod tests {
         assert_eq!(parse_icons("icons = ../etc\n"), None, "a name, not a path");
         assert_eq!(render_icons("Liki", "style = dark\nicons = Old\naccent = 1,2,3\n"), "style = dark\naccent = 1,2,3\nicons = Liki\n");
         assert_eq!(render_icons("Liki", ""), "icons = Liki\n");
+        assert_eq!(
+            render_fonts("lexend", "noto-sans-mono", "style = dark\nfont = opendyslexic\nicons = Liki\nfont_mono = x\n"),
+            "style = dark\nicons = Liki\nfont = lexend\nfont_mono = noto-sans-mono\n"
+        );
+        // the style and accent writer keeps the note
+        assert!(render(&Appearance::default(), "font = lexend\n").contains("font = lexend\n"));
         let a = Appearance { dark: true, accent: Some([1, 2, 3]) };
         assert_eq!(render(&a, "icons = Liki\n"), "style = dark\naccent = 1,2,3\nicons = Liki\n", "a style change keeps the pack");
     }

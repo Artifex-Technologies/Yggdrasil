@@ -1,7 +1,7 @@
 # Settings: the everyday settings in one app (GNOME-style), for Yggdrasil.
 # Built from packages/settings in this repository (and the shared look in packages/yggdrasil-ui), with Settings > Power's
 # root helpers tune, casefan, gpufan and powerlimit from packages/power-helpers (Rust), whose loops run in one root service,
-# yggdrasil-power, and the on-demand helpers account, bootscreen, game-fix, yggdrasil-gpu-run and gpuunlock from
+# yggdrasil-power, and the on-demand helpers account, bootscreen, fontconf, game-fix, yggdrasil-gpu-run and gpuunlock from
 # packages/settings-helpers (Rust), and a laptop's tablet watcher and fingerprint helper from packages/laptop. Nothing in it
 # is Python any more.
 pkgname=yggdrasil-settings
@@ -26,7 +26,13 @@ optdepends=('ufw: firewall page'
             'lsfg-vk: Games: frame generation (Lossless Scaling), from Agora'
             'iio-sensor-proxy: a 2-in-1 turns its screen with the device (tablet mode)'
             'wvkbd: the on-screen keyboard in tablet mode, from Agora'
-            'fprintd: Users > Fingerprint, from Agora')
+            'fprintd: Users > Fingerprint, from Agora'
+            'ttf-atkinson-hyperlegible: Appearance > Font'
+            'ttf-atkinson-hyperlegible-next: Appearance > Font'
+            'ttf-atkinson-hyperlegible-mono: Appearance > Font (monospace)'
+            'ttf-lexend: Appearance > Font'
+            'otf-opendyslexic: Appearance > Font'
+            'otf-opendyslexic-mono: Appearance > Font (monospace)')
 makedepends=('cargo')
 options=('!lto')
 
@@ -115,6 +121,10 @@ package() {
   install -Dm644 "$_src/data/yggdrasil-autozone.timer" "$pkgdir/usr/lib/systemd/user/yggdrasil-autozone.timer"
   install -Dm644 "$_src/data/50-yggdrasil-timezone.rules" "$pkgdir/usr/share/polkit-1/rules.d/50-yggdrasil-timezone.rules"
   install -Dm644 "$_src/data/org.yggdrasil.bootscreen.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.bootscreen.policy"
+  # Appearance > Font: the computer's font, which the login screen uses (/etc/fonts/conf.d/56-yggdrasil-font.conf; your own is
+  # written by Settings itself, no password)
+  install -Dm755 "$srcdir/target/release/fontconf" "$pkgdir/usr/lib/yggdrasil/fontconf"
+  install -Dm644 "$_src/data/org.yggdrasil.fontconf.policy" "$pkgdir/usr/share/polkit-1/actions/org.yggdrasil.fontconf.policy"
   # applies the limits on every power-mode change (a part of yggdrasil-power); the operating system decides whether it is on
   install -Dm644 "$_src/data/yggdrasil-powerlimit.service" "$pkgdir/usr/lib/systemd/system/yggdrasil-powerlimit.service"
   # the graphics card unlock (Power, Developer options; offered only on a card in the support table): the helper, its table,

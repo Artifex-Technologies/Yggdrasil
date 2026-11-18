@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use ab_glyph::{point, Font, FontVec, PxScale, ScaleFont};
+use ab_glyph::{point, Font, FontVec, PxScale, ScaleFont, VariableFont};
 use resvg::tiny_skia::{self, Color, FillRule, Paint, Path as SkPath, PathBuilder, Pixmap, Transform};
 
 pub type Rgba = (u8, u8, u8, u8);
@@ -155,10 +155,14 @@ fn fc_match(pattern: &str) -> Option<PathBuf> {
 impl Fonts {
     /// The system's default sans (Noto Sans in the image), regular and bold.
     pub fn load() -> Option<Fonts> {
-        let load = |pat: &str| -> Option<FontVec> { FontVec::try_from_vec(std::fs::read(fc_match(pat)?).ok()?).ok() };
-        let regular = load("sans-serif")?;
-        let bold = load("sans-serif:bold")
-            .unwrap_or_else(|| FontVec::try_from_vec(std::fs::read(fc_match("sans-serif").unwrap()).unwrap()).unwrap());
+        // a variable font (one file for every weight) at the weight asked for; its file's own default need not be regular
+        let load = |pat: &str, weight: f32| -> Option<FontVec> {
+            let mut f = FontVec::try_from_vec(std::fs::read(fc_match(pat)?).ok()?).ok()?;
+            f.set_variation(b"wght", weight);
+            Some(f)
+        };
+        let regular = load("sans-serif", 400.0)?;
+        let bold = load("sans-serif:bold", 700.0).or_else(|| load("sans-serif", 400.0))?;
         Some(Fonts { regular, bold })
     }
 }

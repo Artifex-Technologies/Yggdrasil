@@ -2622,7 +2622,14 @@ fn main() -> eframe::Result {
             .with_decorations(false),
         ..Default::default()
     };
-    let r = eframe::run_native("Task Manager", options, Box::new(move |cc| Ok(Box::new(App::new(cc, tab, perf)))));
+    let r = eframe::run_native(
+        "Task Manager",
+        options,
+        Box::new(move |cc| {
+            yggdrasil_ui::fonts::install(&cc.egui_ctx);
+            Ok(Box::new(App::new(cc, tab, perf)))
+        }),
+    );
     let _ = std::fs::remove_file(pidfile());
     r
 }

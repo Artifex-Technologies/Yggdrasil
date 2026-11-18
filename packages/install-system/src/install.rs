@@ -676,6 +676,15 @@ impl Ctx<'_> {
             &self.t("/etc/X11/xorg.conf.d/00-keyboard.conf"),
             &format!("Section \"InputClass\"\n    Identifier \"system-keyboard\"\n    MatchIsKeyboard \"on\"\n    Option \"XkbLayout\" \"{layout}\"\n{v_opt}EndSection\n"),
         )?;
+        // the system font (the Font page): the computer's fontconfig file, which the login screen and the new account use;
+        // nothing for the defaults
+        let id = |k: &str| p.get(k).and_then(Py::as_str).unwrap_or("").to_string();
+        let fonts = yggdrasil_conf::fonts::Prefs::from_ids(&id("font"), &id("font_mono")).unwrap_or_default();
+        if yggdrasil_conf::fonts::render(&fonts).is_some() {
+            let f = self.t(yggdrasil_conf::fonts::SYSTEM_PATH);
+            yggdrasil_conf::fonts::save_to(std::path::Path::new(&f), &fonts).map_err(|e| py::oserror(&e, &f))?;
+            self.say("INFO", &format!("system font: {}, {}", fonts.sans_choice().name, fonts.mono_choice().name))?;
+        }
         // time zone and the hardware clock in UTC
         let lt = self.t("/etc/localtime");
         if py::lexists(&lt) {

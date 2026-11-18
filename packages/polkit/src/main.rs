@@ -162,5 +162,12 @@ fn dialog() -> eframe::Result {
             .with_always_on_top(),
         ..Default::default()
     };
-    eframe::run_native("Authentication required", options, Box::new(move |cc| Ok(Box::new(ui::App::new(rx, ctx_slot, &cc.egui_ctx)))))
+    eframe::run_native(
+        "Authentication required",
+        options,
+        Box::new(move |cc| {
+            yggdrasil_ui::fonts::install(&cc.egui_ctx);
+            Ok(Box::new(ui::App::new(rx, ctx_slot, &cc.egui_ctx)))
+        }),
+    )
 }

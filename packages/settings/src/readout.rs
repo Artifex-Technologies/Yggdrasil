@@ -203,6 +203,7 @@ pub fn window_main(kind: Kind, signals: Option<std::fs::File>) -> eframe::Result
         kind.title(),
         options,
         Box::new(move |cc| {
+            yggdrasil_ui::fonts::install(&cc.egui_ctx);
             if let Some(s) = signals {
                 crate::quit::close_on_signals(&cc.egui_ctx, s, || {});
             }

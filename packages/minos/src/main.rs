@@ -4860,6 +4860,7 @@ fn main() -> eframe::Result {
         "Minos",
         options,
         Box::new(|cc| {
+            yggdrasil_ui::fonts::install(&cc.egui_ctx);
             since_start("window and renderer ready");
             egui_extras::install_image_loaders(&cc.egui_ctx);
             let mut st = State::config_path().as_deref().map(State::load_from).unwrap_or_default();

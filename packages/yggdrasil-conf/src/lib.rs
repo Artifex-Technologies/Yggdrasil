@@ -14,6 +14,7 @@ pub fn own_session() -> bool {
 pub mod dirs;
 pub mod display;
 pub mod dock;
+pub mod fonts;
 pub mod integrations;
 pub mod keep_running;
 pub mod nightlight;

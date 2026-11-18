@@ -199,6 +199,36 @@ assistant), Apps, Privacy & security, System. Settings opens on General all the 
   top bar, a window with the accent's border, the dock with the first pinned apps in the icon pack). Both are made again
   only when one of those changes, and dropped when the page is left.
 
+- **Appearance > Font** (`src/fonts_ui.rs`, since 2026-11-18; `yggdrasil-settings appearance:font`): the system font, for text
+  and for code and terminals, chosen from a short list, each with a line of text in it and a plain note on what it was made for:
+  Noto Sans (the default), Atkinson Hyperlegible and Atkinson Hyperlegible Next (the Braille Institute's, for low vision
+  readers), Lexend and OpenDyslexic; for code Noto Sans Mono, Atkinson Hyperlegible Mono and OpenDyslexic Mono. A font that is
+  not installed says so and cannot be chosen (on Labyrinth all are in the base system; elsewhere they are the packages
+  `ttf-atkinson-hyperlegible`, `ttf-atkinson-hyperlegible-next`, `ttf-atkinson-hyperlegible-mono`, `ttf-lexend`,
+  `otf-opendyslexic` and `otf-opendyslexic-mono`). How it works:
+  - The choice is a fontconfig file (`yggdrasil-conf/src/fonts.rs`): `~/.config/fontconfig/conf.d/56-yggdrasil-font.conf`
+    prefers the family for `sans-serif` (and `sans`, `system-ui`) and for `monospace`, so every program that asks fontconfig
+    follows it. Settings writes it at once, no password; only families from the list are ever written. Nothing chosen: no
+    file, and Noto Sans as before.
+  - **Login screen:** the computer's file, `/etc/fonts/conf.d/56-yggdrasil-font.conf`, which the login screen and every
+    account without a choice of its own use. "Use these fonts on the login screen" writes it through pkexec and
+    `/usr/lib/yggdrasil/fontconf set SANS MONO` (ids from the list or `-`; `org.yggdrasil.fontconf.set`, an administrator's
+    password, kept a few minutes). The installer writes it too. Your own file is read first (50-user.conf), so it wins over
+    the computer's, and either wins over the distribution's Noto Sans (60-latin.conf).
+  - **Size:** the same "Text and control size" as Accessibility (panel.conf's `text_scale`), repeated here; no second size.
+  - **Who follows, and when:** Yggdrasil's egui apps (Settings, Minos, Agora, Calculator, Task Manager, Saga MD, Clipboard,
+    the password box, Keyring, Player, Authenticator, Sudoku, 2048, the installer) within a second
+    (`yggdrasil-ui/src/fonts.rs`: they load the fc-matched regular and monospace files over egui's own fonts, which stay behind
+    them for emoji and symbols, and look at the two files' metadata once a second); the top bar and dock at once (Settings notes
+    the choice in appearance.conf, which the panel watches); the lock screen at the next lock; the login screen, the colour
+    picker, the boot screen's messages and Yggdrasil's own compositor at their next start; GTK, Qt and other programs when they
+    start again. A variable font (one file for every weight: Atkinson Hyperlegible Next and Mono, Lexend) is set to the
+    regular weight, and the bold weight for bold, everywhere (its file's default can be ExtraLight).
+  - Cost (measured 2026-11-18, release build, an egui context laying out a page of text twice): egui's own fonts alone 3.8 ms
+    and +4.7 MB; with the system's Noto Sans and Noto Sans Mono 13 ms (6 to 9 ms of it the fc-match calls, run side by side)
+    and +7.1 MB; with Atkinson Hyperlegible Next and Mono 7.5 ms and +5.2 MB. The real bold face is loaded only by an app that
+    asks for it (`fonts::want_bold`, the installer's headings): it would add about 1.4 MB to every app that never draws it.
+
 - **Accessibility** (`src/accessibility.rs`, near the top of the sidebar; Appearance keeps a row to it): text and control
   size, pointer size, zoom, colour filters, reduce motion, and rows to key repeat and the on-screen keyboard. What each does
   and what is still missing: docs/ACCESSIBILITY.md.
@@ -340,6 +370,7 @@ About only when switched on, have no picture.
 | **Power > Cooling**: a fan controller's pump and fans, each with its speed now. | ![Settings > Power > Cooling](../assets/screenshots/settings-cooling.png) |
 | **Power > Cooling, a fan's curves**: the processor's curve, dragged point by point. | ![Settings > Power > Cooling, a fan's curves](../assets/screenshots/settings-cooling-curves.png) |
 | **Appearance**: light or dark, the accent, the pages inside it, a row to Accessibility. | ![Settings > Appearance](../assets/screenshots/settings-appearance.png) |
+| **Appearance > Font**: the system font for text and for code, each in its own letters, the text size, the login screen's font. | ![Settings > Appearance > Font](../assets/screenshots/settings-font.png) |
 | **Appearance > Wallpaper**: the lock screen and the desktop previewed side by side, the wallpapers below. | ![Settings > Appearance > Wallpaper](../assets/screenshots/settings-wallpaper.png) |
 | **Appearance > Lock screen**: the designs with their previews. | ![Settings > Appearance > Lock screen](../assets/screenshots/settings-lock-screen-designs.png) |
 | **Sarina**: the operating system's assistant, from its integration. | ![Settings > Sarina](../assets/screenshots/settings-assistant.png) |

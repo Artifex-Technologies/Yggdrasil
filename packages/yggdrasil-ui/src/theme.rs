@@ -226,8 +226,9 @@ pub fn apply_opacity(ctx: &egui::Context, dark: bool, accent: Option<[u8; 3]>, p
     });
 }
 
-/// Text size and reduced motion from Settings > Appearance (read from panel.conf at most once a second, so a change shows without a restart).
-/// Call it at the top of every frame of every app.
+/// Text size and reduced motion from Settings > Accessibility (read from panel.conf at most once a second, so a change shows without a
+/// restart), and the system font from Settings > Appearance > Font (`fonts::refresh`, the same second). Call it at the top of every
+/// frame of every app.
 pub fn apply_accessibility(ctx: &egui::Context) {
     let id = egui::Id::new("yggdrasil-accessibility-checked");
     let now = ctx.input(|i| i.time);
@@ -243,6 +244,7 @@ pub fn apply_accessibility(ctx: &egui::Context) {
     }
     let anim = if c.reduce_motion { 0.0 } else { 1.0 / 12.0 };
     ctx.all_styles_mut(|s| s.animation_time = anim);
+    crate::fonts::refresh(ctx);
     ctx.request_repaint_after(std::time::Duration::from_secs(1));
 }
 

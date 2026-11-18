@@ -8,7 +8,7 @@ use fake::{Disk, Live, MIB};
 use install_system::pyjson::{s, Py};
 use proptest::prelude::*;
 
-const KEYS: [&str; 27] = [
+const KEYS: [&str; 29] = [
     "mode",
     "disk",
     "user",
@@ -20,6 +20,8 @@ const KEYS: [&str; 27] = [
     "locale",
     "keymap",
     "keymap_variant",
+    "font",
+    "font_mono",
     "encrypt",
     "encrypt_password",
     "browsers",

@@ -1800,6 +1800,7 @@ fn main() -> eframe::Result {
         "Agora",
         options,
         Box::new(|cc| {
+            yggdrasil_ui::fonts::install(&cc.egui_ctx);
             egui_extras::install_image_loaders(&cc.egui_ctx);
             Ok(Box::new(App::new(&cc.egui_ctx)))
         }),

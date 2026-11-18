@@ -92,7 +92,6 @@ struct App {
     note: Option<(String, Instant)>,
     watch: Arc<Watch>,
     disk_changed: bool,
-    fonts: bool,
     picked: Arc<Mutex<Option<Option<PathBuf>>>>,
     close_ok: bool,
     scroll_top: bool,
@@ -105,7 +104,7 @@ impl App {
         egui_extras::install_image_loaders(&cc.egui_ctx);
         // Ctrl+plus and minus size the page, not the whole window
         cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
-        let fonts = install_fonts(&cc.egui_ctx);
+        yggdrasil_ui::fonts::set_extra(&cc.egui_ctx, doc_fonts);
         let watch = Arc::new(Watch::default());
         {
             let (w, ctx) = (watch.clone(), cc.egui_ctx.clone());
@@ -132,7 +131,6 @@ impl App {
             note: None,
             watch,
             disk_changed: false,
-            fonts,
             picked: Arc::new(Mutex::new(None)),
             close_ok: false,
             scroll_top: false,
@@ -449,33 +447,34 @@ fn pick_file() -> Option<PathBuf> {
     uris.first().and_then(|u| path_from_uri(u))
 }
 
-/// The page's own fonts (the system's sans and mono, with real bold and italic), as named families: the window's own text keeps
-/// egui's like every Yggdrasil app. False when fontconfig finds none (the page then shows bold as brighter text).
-fn install_fonts(ctx: &egui::Context) -> bool {
-    fn fc_file(pattern: &str) -> Option<PathBuf> {
-        let out = std::process::Command::new("fc-match").args(["-f", "%{file}", pattern]).output().ok()?;
-        let p = PathBuf::from(String::from_utf8_lossy(&out.stdout).trim());
-        (p.is_file() && matches!(ext(&p).as_str(), "ttf" | "otf")).then_some(p)
-    }
+/// The page's own fonts (the system's sans and mono, with real bold and italic), as named families beside the window's (which
+/// follow the system font through yggdrasil_ui::fonts, like every Yggdrasil app). Added with every reload of the fonts, so a font
+/// chosen in Settings shows on the page too; all five or none (the page then shows bold as brighter text, `has_doc_fonts`).
+fn doc_fonts(defs: &mut egui::FontDefinitions) {
     let want = [
-        ("doc", "sans:regular"),
-        ("doc-b", "sans:bold"),
-        ("doc-i", "sans:italic"),
-        ("doc-bi", "sans:bold:italic"),
-        ("doc-mono", "monospace:regular"),
+        ("doc", "sans:regular", 400.0),
+        ("doc-b", "sans:bold", 700.0),
+        ("doc-i", "sans:italic", 400.0),
+        ("doc-bi", "sans:bold:italic", 700.0),
+        ("doc-mono", "monospace:regular", 400.0),
     ];
-    let mut defs = egui::FontDefinitions::default();
-    let prop = defs.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
-    let mono = defs.families.get(&FontFamily::Monospace).cloned().unwrap_or_default();
-    for (name, pattern) in want {
-        let Some(bytes) = fc_file(pattern).and_then(|f| std::fs::read(f).ok()) else { return false };
-        defs.font_data.insert(name.to_string(), Arc::new(egui::FontData::from_owned(bytes)));
-        let mut list = vec![name.to_string()];
-        list.extend(if name == "doc-mono" { mono.clone() } else { prop.clone() });
-        defs.families.insert(FontFamily::Name(name.into()), list);
+    let files = yggdrasil_ui::fonts::fc_files(&want.map(|w| w.1));
+    let mut faces = vec![];
+    for ((name, _, weight), file) in want.into_iter().zip(files) {
+        let Some(bytes) = file.and_then(|f| std::fs::read(f).ok()) else { return };
+        faces.push((name, yggdrasil_ui::fonts::face(bytes, weight)));
     }
-    ctx.set_fonts(defs);
-    true
+    let mono = defs.families.get(&FontFamily::Monospace).cloned().unwrap_or_default();
+    for (name, face) in faces {
+        yggdrasil_ui::fonts::add_family(defs, name, face);
+        if name == "doc-mono" {
+            defs.families.insert(FontFamily::Name(name.into()), [vec![name.to_string()], mono.clone()].concat());
+        }
+    }
+}
+
+fn has_doc_fonts(ctx: &egui::Context) -> bool {
+    yggdrasil_ui::fonts::has_family(ctx, "doc-mono")
 }
 
 // ---------------------------------------------------------------- drawing the page
@@ -1013,7 +1012,7 @@ impl eframe::App for App {
                                 ui.set_width(width);
                                 let mut page = Page {
                                     pal: &pal,
-                                    fonts: self.fonts,
+                                    fonts: has_doc_fonts(ui.ctx()),
                                     size: BASE_SIZE * zoom,
                                     width,
                                     dir: doc.path.parent(),
@@ -1040,8 +1039,10 @@ impl eframe::App for App {
                         sa = sa.vertical_scroll_offset(0.0);
                     }
                     sa.show(ui, |ui| {
-                        let font =
-                            FontId::new(13.5 * zoom, if self.fonts { FontFamily::Name("doc-mono".into()) } else { FontFamily::Monospace });
+                        let font = FontId::new(
+                            13.5 * zoom,
+                            if has_doc_fonts(ui.ctx()) { FontFamily::Name("doc-mono".into()) } else { FontFamily::Monospace },
+                        );
                         let size = vec2(ui.available_width(), ui.available_height());
                         egui::Frame::new().inner_margin(Margin::symmetric(18, 14)).show(ui, |ui| {
                             if doc.readonly.is_some() {

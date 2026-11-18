@@ -510,7 +510,14 @@ fn main() -> std::process::ExitCode {
             .with_decorations(false),
         ..Default::default()
     };
-    match eframe::run_native("Clipboard", options, Box::new(|_| Ok(Box::new(App::new())))) {
+    match eframe::run_native(
+        "Clipboard",
+        options,
+        Box::new(|cc| {
+            yggdrasil_ui::fonts::install(&cc.egui_ctx);
+            Ok(Box::new(App::new()))
+        }),
+    ) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("yggdrasil-clipboard: {e}");

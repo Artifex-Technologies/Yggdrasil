@@ -567,7 +567,14 @@ fn main() -> eframe::Result {
             .with_decorations(false),
         ..Default::default()
     };
-    eframe::run_native("Calculator", options, Box::new(|_| Ok(Box::new(Calc::new()))))
+    eframe::run_native(
+        "Calculator",
+        options,
+        Box::new(|cc| {
+            yggdrasil_ui::fonts::install(&cc.egui_ctx);
+            Ok(Box::new(Calc::new()))
+        }),
+    )
 }
 
 #[cfg(test)]

@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use ab_glyph::{point, Font, FontVec, PxScale, ScaleFont};
+use ab_glyph::{point, Font, FontVec, PxScale, ScaleFont, VariableFont};
 use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, PremultipliedColorU8, Transform};
 
 pub type Rgba = (u8, u8, u8, u8);
@@ -21,9 +21,14 @@ fn fc_match(pattern: &str) -> Option<PathBuf> {
 
 impl Fonts {
     pub fn load() -> Option<Fonts> {
-        let load = |pat: &str| -> Option<FontVec> { FontVec::try_from_vec(std::fs::read(fc_match(pat)?).ok()?).ok() };
-        let regular = load("sans-serif")?;
-        let bold = load("sans-serif:bold").or_else(|| load("sans-serif"))?;
+        // a variable font (one file for every weight) at the weight asked for; its file's own default need not be regular
+        let load = |pat: &str, weight: f32| -> Option<FontVec> {
+            let mut f = FontVec::try_from_vec(std::fs::read(fc_match(pat)?).ok()?).ok()?;
+            f.set_variation(b"wght", weight);
+            Some(f)
+        };
+        let regular = load("sans-serif", 400.0)?;
+        let bold = load("sans-serif:bold", 700.0).or_else(|| load("sans-serif", 400.0))?;
         Some(Fonts { regular, bold })
     }
 }

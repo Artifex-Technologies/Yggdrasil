@@ -622,6 +622,7 @@ dependencies = [
  "ring",
  "serde_json",
  "ureq",
+ "yggdrasil-conf",
  "yggdrasil-geolocate",
  "yggdrasil-pycompat",
  "yggdrasil-wm",

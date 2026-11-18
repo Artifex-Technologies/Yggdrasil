@@ -56,7 +56,7 @@ plans (a refused plan runs nothing; no plan ever names another disk to a disk to
 
 ## The pages
 
-Welcome (language) → Network (since 2026-11-14: instead of asking for a network before the installer starts, its first step
+Welcome (language) → Font (since 2026-11-18, below) → Network (since 2026-11-14: instead of asking for a network before the installer starts, its first step
 is joining one; below) → Keyboard (first the arrangement: QWERTY, QWERTZ, AZERTY, Dvorak, Colemak or other alphabets; then the
 layouts of that kind by name, Dvorak and Colemak being variants; the live session switches to the one chosen, so the box on the
 page tries it) → Time zone (a world map with the zone bands, click your part of it, and a short list of about 80 friendly zones
@@ -67,6 +67,19 @@ account name made from it, computer's name, password twice) → Browsers (only w
 and which is the default; none is allowed, with a note that Agora has them) → the optional parts (only when the OS offers some,
 e.g. Labyrinth's AI and security: Sarina, Heimdall) → Summary (and a box to tick: the disk is erased) → Installing
 (progress, notes, errors) → Done (Restart now). Next stays greyed out with the reason beside it until a page is complete.
+
+### Font
+
+The system font, chosen early so the rest of the installer can be read in it: the fonts for text and for code and terminals
+from yggdrasil-conf's list (Noto Sans, Atkinson Hyperlegible, Atkinson Hyperlegible Next, Lexend, OpenDyslexic; Noto Sans Mono,
+Atkinson Hyperlegible Mono, OpenDyslexic Mono), only those the medium has, each as a card with its name, a line of text in it
+and a short note on what it was made for. Clicking one switches the installer's own window to it at once (the live system's
+setting is not changed). The page is left out when the medium has nothing besides the defaults. The plan carries
+`"font": id` and `"font_mono": id` (left out for the defaults), and the summary has a Font line. The install program writes
+the computer's fontconfig file, `/etc/fonts/conf.d/56-yggdrasil-font.conf`, which the login screen and the new account use;
+Settings > Appearance > Font changes it later (APPS_SETTINGS.md).
+
+![The installer's Font page](../assets/screenshots/installer-font.png)
 
 ### Network
 
@@ -169,6 +182,10 @@ page with made-up networks and joins nothing.
    "user": {"name": "Ada Lovelace", "login": "ada", "password": "..."},
    "hostname": "ada-laptop", "timezone": "Europe/Berlin", "locale": "de_DE.UTF-8", "keymap": "de", "keymap_variant": ""}
   ```
+
+  Optional: `"font"` and `"font_mono"`, ids from yggdrasil-conf's font list (`atkinson-hyperlegible-next`,
+  `opendyslexic-mono`, ...); any other value is refused ("unknown font chosen"). The file is written from the list, never from
+  the plan's text.
 
   With partitions chosen by hand, `"mode": "manual"` and, on the chosen disk only:
 

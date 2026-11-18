@@ -26,6 +26,7 @@ use yggdrasil_ui::theme::{self, Palette};
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Page {
     Welcome,
+    Font,
     Network,
     Keyboard,
     TimeZone,
@@ -38,8 +39,18 @@ enum Page {
     Done,
 }
 
-const PAGES: [Page; 9] =
-    [Page::Welcome, Page::Network, Page::Keyboard, Page::TimeZone, Page::Disk, Page::Account, Page::Browsers, Page::Extras, Page::Summary];
+const PAGES: [Page; 10] = [
+    Page::Welcome,
+    Page::Font,
+    Page::Network,
+    Page::Keyboard,
+    Page::TimeZone,
+    Page::Disk,
+    Page::Account,
+    Page::Browsers,
+    Page::Extras,
+    Page::Summary,
+];
 
 /// A browser the operating system offers to install (its installer integration's `browsers` file).
 #[derive(Clone, Debug, PartialEq)]
@@ -394,6 +405,10 @@ fn os_name() -> String {
 
 struct App {
     page: Page,
+    /// The Font page: the fonts to choose from as found on the medium, and the chosen ones' ids (yggdrasil_conf::fonts).
+    font_found: Vec<yggdrasil_ui::fonts::Found>,
+    font: &'static str,
+    font_mono: &'static str,
     command: Option<Vec<String>>,
     os: String,
     locales: Vec<String>,
@@ -534,6 +549,7 @@ impl App {
             "extras" => Page::Extras,
             "network" | "network-hidden" => Page::Network,
             "keyboard" => Page::Keyboard,
+            "font" => Page::Font,
             "timezone" => Page::TimeZone,
             "disk" | "disk-manual" => Page::Disk,
             "account" => Page::Account,
@@ -547,6 +563,9 @@ impl App {
         let os = os_name();
         let mut app = App {
             page: Page::Welcome,
+            font_found: yggdrasil_ui::fonts::find_choices(),
+            font: yggdrasil_conf::fonts::SANS[0].id,
+            font_mono: yggdrasil_conf::fonts::MONO[0].id,
             command,
             hostname: os
                 .to_lowercase()
@@ -618,7 +637,7 @@ impl App {
         app
     }
 
-    /// The pages shown: the Network page unless the computer was online by cable as Welcome was left, the Browsers page only when
+    /// The pages shown: the Font page when the medium has a font besides the defaults, the Network page unless the computer was online by cable as Welcome was left, the Browsers page only when
     /// the OS offers browsers, the optional parts' page only when it offers some.
     fn pages(&self) -> Vec<Page> {
         PAGES
@@ -626,6 +645,7 @@ impl App {
             .copied()
             .filter(|p| {
                 (*p != Page::Network || !self.net.skip_page)
+                    && (*p != Page::Font || font_page_wanted(&self.font_found))
                     && (*p != Page::Browsers || !self.browsers.is_empty())
                     && (*p != Page::Extras || !self.extras.is_empty())
             })
@@ -793,6 +813,15 @@ impl App {
             "keymap": self.keymap,
             "keymap_variant": self.keymap_variant,
         });
+        // the system font (left out when it is the default: then the installed system has no font file)
+        if let Some(obj) = plan.as_object_mut() {
+            if self.font != yggdrasil_conf::fonts::SANS[0].id {
+                obj.insert("font".into(), serde_json::json!(self.font));
+            }
+            if self.font_mono != yggdrasil_conf::fonts::MONO[0].id {
+                obj.insert("font_mono".into(), serde_json::json!(self.font_mono));
+            }
+        }
         if !self.browsers.is_empty() {
             if let Some(obj) = plan.as_object_mut() {
                 obj.insert("browsers".into(), serde_json::json!(self.chosen_browsers));
@@ -889,8 +918,64 @@ impl App {
     }
 }
 
+/// Whether the medium has any font to choose besides the defaults (otherwise there is no Font page).
+fn font_page_wanted(found: &[yggdrasil_ui::fonts::Found]) -> bool {
+    found.iter().any(|f| f.file.is_some() && f.choice != &yggdrasil_conf::fonts::SANS[0] && f.choice != &yggdrasil_conf::fonts::MONO[0])
+}
+
+fn font_summary(sans: &str, mono: &str) -> String {
+    let name =
+        |id: &str, list: &[yggdrasil_conf::fonts::Choice]| list.iter().find(|c| c.id == id).map(|c| c.name).unwrap_or(id).to_string();
+    format!("{}, {} for code", name(sans, yggdrasil_conf::fonts::SANS), name(mono, yggdrasil_conf::fonts::MONO))
+}
+
+/// The Font page's two lists (the fonts the medium has), each with a line of text in it; the new choice when one was clicked.
+fn font_page(
+    ui: &mut egui::Ui,
+    pal: &Palette,
+    found: &[yggdrasil_ui::fonts::Found],
+    sans: &'static str,
+    mono: &'static str,
+) -> Option<(&'static str, &'static str)> {
+    if !found.is_empty() && !yggdrasil_ui::fonts::has_family(ui.ctx(), &yggdrasil_ui::fonts::preview_name(found[0].choice.id)) {
+        yggdrasil_ui::fonts::show_previews(ui.ctx(), found);
+    }
+    let mut out = None;
+    for (title, list, chosen, is_mono) in
+        [("Text", yggdrasil_conf::fonts::SANS, sans, false), ("Code and terminals", yggdrasil_conf::fonts::MONO, mono, true)]
+    {
+        ui.add_space(6.0);
+        ui.label(RichText::new(title).color(pal.dim));
+        for c in list.iter().filter(|c| found.iter().any(|f| f.choice == *c && f.file.is_some())) {
+            let on = c.id == chosen;
+            let fill = if on { pal.select } else { pal.field };
+            let r =
+                egui::Frame::new().fill(fill).corner_radius(CornerRadius::same(8)).inner_margin(Margin::symmetric(12, 8)).show(ui, |ui| {
+                    ui.set_width(ui.available_width().min(620.0));
+                    ui.label(RichText::new(c.name).family(yggdrasil_ui::fonts::bold()).color(if on { pal.accent } else { pal.text }));
+                    let fam = yggdrasil_ui::fonts::preview_name(c.id);
+                    if yggdrasil_ui::fonts::has_family(ui.ctx(), &fam) {
+                        let sample = if is_mono {
+                            "let total = items.len() + 10; // Il1 O0"
+                        } else {
+                            "Reading is easier when Il1 and O0 look different."
+                        };
+                        ui.label(RichText::new(sample).size(18.0).family(egui::FontFamily::Name(fam.into())));
+                    }
+                    ui.add(egui::Label::new(RichText::new(c.note).size(12.5).color(pal.dim)).wrap());
+                });
+            let r = r.response.interact(egui::Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+            if r.clicked() && !on {
+                out = Some(if is_mono { (sans, c.id) } else { (c.id, mono) });
+            }
+            ui.add_space(4.0);
+        }
+    }
+    out
+}
+
 fn heading(ui: &mut egui::Ui, pal: &Palette, title: &str, sub: &str) {
-    ui.label(RichText::new(title).size(24.0).strong().color(pal.text));
+    ui.label(RichText::new(title).size(24.0).family(yggdrasil_ui::fonts::bold()).color(pal.text));
     ui.add_space(2.0);
     ui.label(RichText::new(sub).color(pal.dim));
     ui.add_space(14.0);
@@ -1033,6 +1118,17 @@ impl eframe::App for App {
                         let mut loc = self.locale.clone();
                         pick_list(ui, &pal, "locales", &self.locales, &mut loc, (body_h - 140.0).max(120.0), locale_label);
                         self.locale = loc;
+                    }
+                    Page::Font => {
+                        heading(ui, &pal, "Font", "The letters used everywhere on the system, here too. Choose the easiest to read; Settings > Appearance > Font changes it later.");
+                        if let Some((sans, mono)) = font_page(ui, &pal, &self.font_found, self.font, self.font_mono) {
+                            self.font = sans;
+                            self.font_mono = mono;
+                            let fam = |id: &str, list: &'static [yggdrasil_conf::fonts::Choice]| list.iter().find(|c| c.id == id).map(|c| c.family).unwrap_or("sans-serif");
+                            let (s, m) = (fam(sans, yggdrasil_conf::fonts::SANS), fam(mono, yggdrasil_conf::fonts::MONO));
+                            // this window shows the choice at once (the live system's own setting is not changed)
+                            yggdrasil_ui::fonts::preview_families(&ctx, Some((s, m)));
+                        }
                     }
                     Page::Network => {
                         heading(ui, &pal, "Connect to a network", "Drivers, browsers and updates are fetched while installing. A network joined here is kept for the installed system.");
@@ -1224,6 +1320,7 @@ impl eframe::App for App {
                             ("Encryption", if self.encrypt { "on".to_string() } else { "off".to_string() }),
                             ("Account", format!("{} ({})", self.name.trim(), self.login)),
                             ("Computer's name", self.hostname.clone()),
+                            ("Font", if font_page_wanted(&self.font_found) { font_summary(self.font, self.font_mono) } else { String::new() }),
                             ("Browsers", if self.browsers.is_empty() {
                                 String::new()
                             } else if self.chosen_browsers.is_empty() {
@@ -1385,7 +1482,15 @@ fn main() -> eframe::Result {
             .with_decorations(false),
         ..Default::default()
     };
-    eframe::run_native("Install", options, Box::new(|_| Ok(Box::new(App::new()))))
+    eframe::run_native(
+        "Install",
+        options,
+        Box::new(|cc| {
+            // the system font, with the real bold face for the headings
+            yggdrasil_ui::fonts::want_bold(&cc.egui_ctx);
+            Ok(Box::new(App::new()))
+        }),
+    )
 }
 
 #[cfg(test)]
@@ -1436,6 +1541,25 @@ mod tests {
         app.set_browsers(vec![]);
         assert!(!app.pages().contains(&Page::Browsers), "no list from the OS: no page");
         assert!(app.plan().get("browsers").is_none(), "and the plan says nothing about browsers");
+    }
+
+    #[test]
+    fn the_font_page_shows_when_the_medium_has_fonts_and_the_plan_names_a_choice() {
+        use yggdrasil_conf::fonts::{MONO, SANS};
+        use yggdrasil_ui::fonts::Found;
+        let here = |c: &'static yggdrasil_conf::fonts::Choice| Found { choice: c, file: Some("/usr/share/fonts/x.ttf".into()) };
+        let mut app = App::new();
+        app.font_found = vec![here(&SANS[0]), here(&MONO[0]), Found { choice: &SANS[3], file: None }];
+        assert!(!app.pages().contains(&Page::Font), "only the defaults: nothing to choose");
+        app.font_found.push(here(&SANS[2]));
+        assert_eq!(app.pages()[..2], [Page::Welcome, Page::Font], "right after the language");
+        assert!(app.plan().get("font").is_none() && app.plan().get("font_mono").is_none(), "the defaults need no file");
+        app.font = SANS[2].id;
+        app.font_mono = MONO[1].id;
+        let plan = app.plan();
+        assert_eq!(plan["font"], "atkinson-hyperlegible-next");
+        assert_eq!(plan["font_mono"], "atkinson-hyperlegible-mono");
+        assert_eq!(font_summary(app.font, app.font_mono), "Atkinson Hyperlegible Next, Atkinson Hyperlegible Mono for code");
     }
 
     #[test]

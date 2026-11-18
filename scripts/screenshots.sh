@@ -18,6 +18,9 @@
 # wifi.json, peripherals.json, displays-single.json). Two sandboxes are made, a
 # desktop computer and a laptop (a battery, no fan controller).
 #
+# YGG_SHOT_FONTS=DIR adds the font files in DIR (the account's own fonts inside), for the Font pages' pictures on a computer
+# that does not have the fonts to choose from installed (Labyrinth's font packages, unpacked).
+#
 # Needs bwrap (bubblewrap), dbus-daemon and busctl. In CI (CI=true, already a throw-away container) it runs without bwrap.
 set -euo pipefail
 
@@ -82,6 +85,7 @@ shots() {
     shot settings-cooling               desktop settings power:cooling system
     shot settings-cooling-curves        desktop settings power:cooling system 700
     shot settings-appearance            desktop settings appearance system
+    shot settings-font                  desktop settings appearance:font system
     shot settings-lock-screen-designs   desktop settings appearance:lock system
     shot settings-wallpaper             desktop settings appearance:wallpaper system
     shot settings-assistant             desktop settings assistant system
@@ -108,6 +112,7 @@ shots() {
     shot calculator                     desktop app yggdrasil-calculator
     shot saga-md                        desktop app saga-md "/home/alex/Documents/Trip plan.md"
     shot installer-welcome              desktop app yggdrasil-installer --demo welcome
+    shot installer-font                 desktop app yggdrasil-installer --demo font
     shot installer-network              desktop app yggdrasil-installer --demo network
     shot installer-network-hidden       desktop app yggdrasil-installer --demo network-hidden
     shot installer-keyboard             desktop app yggdrasil-installer --demo keyboard
@@ -178,6 +183,7 @@ sandbox() {
         --ro-bind "$data/etc/hostname" /etc/hostname --ro-bind "$data/etc/passwd" /etc/passwd --ro-bind "$data/etc/group" /etc/group
     )
     local d
+    [ -n "${YGG_SHOT_FONTS:-}" ] && args+=(--ro-bind "$YGG_SHOT_FONTS" /run/ygg/fonts)
     for d in /var/tmp /media /mnt /srv /var/lib/AccountsService /sys/class/input; do [ -d "$d" ] && args+=(--tmpfs "$d"); done
     # this repository's own bar items for the pictures (the Agents item), beside the system's
     [ -d /usr/share/yggdrasil/integrations ] && args+=(--overlay-src /usr/share/yggdrasil/integrations --overlay-src "$data/integrations"
@@ -213,6 +219,8 @@ inside() {
     mkdir -p "$HOME" "$work/run" "$work/bin"
     chmod 0700 "$work/run"
     cp -r "$data/home/." "$HOME/"
+    # extra fonts for the Font pages (YGG_SHOT_FONTS outside)
+    if [ -d /run/ygg/fonts ]; then mkdir -p "$HOME/.local/share/fonts" && cp -r /run/ygg/fonts/. "$HOME/.local/share/fonts/"; fi
     # the operating system's wallpaper as the chosen one (the lock screen draws only a chosen wallpaper)
     local wall
     wall=$(sed -n 's/^wallpaper *= *//p' /usr/share/yggdrasil/integrations/*.conf 2>/dev/null | head -1) || true

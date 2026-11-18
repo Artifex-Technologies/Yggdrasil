@@ -20,6 +20,7 @@ mod displays_ui;
 mod distress;
 mod fans;
 mod fixture;
+mod fonts_ui;
 mod games;
 mod general;
 mod gpu;
@@ -138,6 +139,7 @@ enum KeySub {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AppSub {
     Main,
+    Font,
     Icons,
     Bar,
     Notifs,
@@ -183,7 +185,7 @@ const PAGES: [(Page, &str, Icon, &str, &str); 26] = [
         "Appearance",
         Icon::Appearance,
         "Personal",
-        "theme dark light accent wallpaper icons top bar add-ons plugins notifications lock screen workspaces boot",
+        "theme dark light accent wallpaper icons font typeface dyslexia dyslexic hyperlegible lexend top bar add-ons plugins notifications lock screen workspaces boot",
     ),
     (Page::Assistant, "Assistant", Icon::Sound, "Personal", "voice"),
     (Page::Apps, "Apps", Icon::Apps, "Apps", "installed optional software uninstall minos"),
@@ -465,6 +467,8 @@ struct App {
     zone_picker: Option<yggdrasil_tzpicker::Picker>,
     /// What the icon-pack install box holds: a folder, an archive or a link.
     icon_src: String,
+    /// Appearance > Font: the fonts to choose from as found here (None: look again on the next visit).
+    font_found: Option<Vec<yggdrasil_ui::fonts::Found>>,
     // Apps page
     app_tab: usize,
     /// Which part of Appearance is open.
@@ -656,10 +660,12 @@ impl App {
             name_edit: None,
             zone_picker: None,
             icon_src: String::new(),
+            font_found: None,
             app_tab: 0,
             bar_addons: None,
             app_sub: match start_sub().as_str() {
                 "icons" => AppSub::Icons,
+                "font" | "fonts" => AppSub::Font,
                 "bar" => AppSub::Bar,
                 "notifs" => AppSub::Notifs,
                 "wallpaper" => AppSub::Wallpaper,
@@ -2332,6 +2338,10 @@ impl App {
                 ) {
                     self.app_sub = AppSub::Bar;
                 }
+                if ui::nav_row(ui, pal, false, "Font", Some("The letters everywhere: easier to read for low vision or dyslexia"), |_| {}) {
+                    self.app_sub = AppSub::Font;
+                    self.font_found = None;
+                }
                 if ui::nav_row(ui, pal, false, "Icons", Some("Icon packs and the mouse pointer"), |_| {}) {
                     self.app_sub = AppSub::Icons;
                 }
@@ -2410,6 +2420,9 @@ impl App {
         }
         if self.app_sub == AppSub::Lock {
             self.lock_page(ui, pal, ctx);
+        }
+        if self.app_sub == AppSub::Font {
+            self.font_page(ui, pal, ctx);
         }
         if self.app_sub == AppSub::Workspaces {
             self.workspaces_page(ui, pal, ctx);
@@ -5073,6 +5086,7 @@ fn main() -> eframe::Result {
         "Settings",
         options,
         Box::new(|cc| {
+            yggdrasil_ui::fonts::install(&cc.egui_ctx);
             egui_extras::install_image_loaders(&cc.egui_ctx);
             if let Some(s) = signals {
                 quit::close_on_signals(&cc.egui_ctx, s, single::stop);

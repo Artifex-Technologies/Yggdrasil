@@ -73,5 +73,12 @@ fn main() -> eframe::Result {
             .with_app_id("yggdrasil-keyring-sync"),
         ..Default::default()
     };
-    eframe::run_native("Keyring", options, Box::new(|cc| Ok(Box::new(ui::App::new(&cc.egui_ctx)))))
+    eframe::run_native(
+        "Keyring",
+        options,
+        Box::new(|cc| {
+            yggdrasil_ui::fonts::install(&cc.egui_ctx);
+            Ok(Box::new(ui::App::new(&cc.egui_ctx)))
+        }),
+    )
 }

@@ -18,6 +18,8 @@ path = "src/bin/yggdrasil-install-system.rs"
 # getrandom, geteuid, getpwnam and chmod's modes
 libc = "0.2"
 yggdrasil-pycompat = { path = "../pycompat" }
+# the system font chosen on the Font page: the choices and their fontconfig file
+yggdrasil-conf = { path = "../yggdrasil-conf" }
 
 [dev-dependencies]
 # property tests: random plans (the checks never panic; a refused plan never runs a disk command)

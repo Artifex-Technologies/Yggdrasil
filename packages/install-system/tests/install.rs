@@ -160,6 +160,10 @@ fn a_refused_plan_runs_nothing() {
         (&manual_plan(&[("new_table", "\"false\"")]), "ERROR a new partition table is chosen with true or false"),
         (&manual_plan(&[("delete", "[true]")]), "ERROR a partition to delete is not a number"),
         (&plan_with(&[("browsers", r#"["opera"]"#)]), "ERROR unknown browser chosen"),
+        (&plan_with(&[("font", "\"Comic Sans MS\"")]), "ERROR unknown font chosen"),
+        (&plan_with(&[("font", "\"opendyslexic-mono\"")]), "ERROR unknown font chosen"),
+        (&plan_with(&[("font_mono", "\"lexend\"")]), "ERROR unknown font chosen"),
+        (&plan_with(&[("font", "1")]), "ERROR unknown font chosen"),
     ] {
         let mut f = live.fake();
         assert_eq!(live.run(&mut f, &[], p), 2, "{p}");
@@ -213,6 +217,26 @@ fn a_failure_stops_and_unmounts() {
     let tail: Vec<&Vec<String>> = f.calls.iter().rev().take(2).map(|(a, _)| a).collect();
     assert_eq!(tail[1], &["umount", "-R", &live.target()]);
     assert_eq!(tail[0], &["cryptsetup", "close", "example-root"]);
+}
+
+#[test]
+fn the_chosen_font_is_the_computers() {
+    let live = Live::new();
+    let mut f = live.fake();
+    let p = plan_with(&[("font", "\"atkinson-hyperlegible-next\""), ("font_mono", "\"opendyslexic-mono\"")]);
+    assert_eq!(live.run(&mut f, &[], &p), 0, "{:?}", f.out);
+    let conf = live.read("etc/fonts/conf.d/56-yggdrasil-font.conf");
+    assert!(conf.contains("<family>sans-serif</family>\n    <prefer><family>Atkinson Hyperlegible Next</family></prefer>"), "{conf}");
+    assert!(conf.contains("<prefer><family>OpenDyslexicMono</family></prefer>"));
+    assert!(f.out.contains(&"INFO system font: Atkinson Hyperlegible Next, OpenDyslexic Mono".to_string()));
+    use std::os::unix::fs::PermissionsExt;
+    let path = format!("{}/etc/fonts/conf.d/56-yggdrasil-font.conf", live.target());
+    assert_eq!(std::fs::metadata(path).unwrap().permissions().mode() & 0o777, 0o644);
+    // nothing chosen: no file (Noto Sans)
+    let live = Live::new();
+    let mut f = live.fake();
+    assert_eq!(live.run(&mut f, &[], &plan().dumps()), 0, "{:?}", f.out);
+    assert!(!std::path::Path::new(&format!("{}/etc/fonts/conf.d/56-yggdrasil-font.conf", live.target())).exists());
 }
 
 #[test]

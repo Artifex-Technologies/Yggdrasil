@@ -8,7 +8,8 @@
 //!  "user": {"name": "Full Name", "login": "me", "password": "..."},
 //!  "hostname": "my-pc", "timezone": "Europe/Berlin", "locale": "en_US.UTF-8", "keymap": "us", "keymap_variant": "",
 //!  "browsers": ["vivaldi", "librewolf"], "default_browser": "vivaldi",      (optional; ids from the OS's browser list)
-//!  "extras": ["heimdall"]}                                                  (optional; ids from the OS's optional parts)
+//!  "extras": ["heimdall"],                                                  (optional; ids from the OS's optional parts)
+//!  "font": "lexend", "font_mono": "opendyslexic-mono"}     (optional; yggdrasil-conf's font list: /etc/fonts/conf.d/56-yggdrasil-font.conf)
 //!
 //! Partitions chosen by hand instead of the whole disk ("mode": "manual"; only on the chosen disk):
 //! {"disk": "/dev/nvme0n1", "mode": "manual", "new_table": false,
