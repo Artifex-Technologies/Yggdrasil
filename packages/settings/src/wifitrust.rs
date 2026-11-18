@@ -12,6 +12,11 @@
 //!   (`org.freedesktop.systemd1.manage-units`, `auth_admin_keep`) asks for an administrator's password and keeps it for a few
 //!   minutes (the owner's choice; Heimdall ships no rule of its own for it). The units run `heimdall-wifi-guard discoverable on|off --uuid UUID` as root; then the state is read again.
 //!
+//! - **Kind** of a trusted or home network ("This network is": home router, mesh, phone hotspot, travel, other; Heimdall's
+//!   "What kind of network a trusted one is"): read with `heimdall-wifi-guard kind --uuid UUID` (`NAME: kind KIND`), set with
+//!   `pkexec /usr/bin/heimdall-wifi-guard kind KIND --uuid UUID` (polkit's default for pkexec: the administrator's password).
+//!   The guard refuses an untrusted network, so the page does not ask it then.
+//!
 //! A made-up system (fixture) answers the guard from its `run` entries, has Heimdall when its `tools` list the guard, has no
 //! level, and refuses every change.
 
@@ -92,6 +97,67 @@ impl Missing {
     }
 }
 
+/// What kind of network a trusted one is (the owner's choice; Heimdall judges a different router on it by this).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NetKind {
+    HomeRouter,
+    Mesh,
+    PhoneHotspot,
+    Travel,
+    Other,
+}
+
+impl NetKind {
+    pub const ALL: [NetKind; 5] = [NetKind::HomeRouter, NetKind::Mesh, NetKind::PhoneHotspot, NetKind::Travel, NetKind::Other];
+
+    /// The guard's word for it.
+    pub fn word(self) -> &'static str {
+        match self {
+            NetKind::HomeRouter => "home-router",
+            NetKind::Mesh => "mesh",
+            NetKind::PhoneHotspot => "phone-hotspot",
+            NetKind::Travel => "travel",
+            NetKind::Other => "other",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            NetKind::HomeRouter => "Home router",
+            NetKind::Mesh => "Mesh",
+            NetKind::PhoneHotspot => "Phone hotspot",
+            NetKind::Travel => "Travel / hotel",
+            NetKind::Other => "Other",
+        }
+    }
+
+    /// The grey line under the choice: what Heimdall makes of it.
+    pub fn about(self) -> &'static str {
+        match self {
+            NetKind::HomeRouter => "Heimdall knows the router by its hardware address",
+            NetKind::Mesh => "Several access points of one mesh are expected",
+            NetKind::PhoneHotspot => "A new router address after the hotspot restarts is expected",
+            NetKind::Travel | NetKind::Other => "Heimdall judges the router as it does a home router's",
+        }
+    }
+
+    fn parse(word: &str) -> Option<NetKind> {
+        NetKind::ALL.into_iter().find(|k| k.word() == word)
+    }
+}
+
+/// The kind as the page shows it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KindState {
+    Set(NetKind),
+    /// An untrusted network has no kind ("Trust this network first").
+    NotTrusted,
+    Missing(Missing),
+}
+
+pub const KIND_TITLE: &str = "This network is";
+pub const KIND_NOT_TRUSTED: &str = "Trust this network first";
+
 /// What the page shows for one saved network.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Trust {
@@ -99,6 +165,7 @@ pub struct Trust {
     /// None: not known (no Heimdall, or its file could not be read).
     pub level: Option<Level>,
     pub disc: Result<Disc, Missing>,
+    pub kind: KindState,
 }
 
 /// The guard's answer: `NAME: discoverable on`, `on (home)` or `off` (the name may itself hold ": discoverable ", so the end
@@ -111,6 +178,25 @@ pub fn parse_discoverable(text: &str) -> Option<Disc> {
         "off" => Some(Disc::Off),
         "on (home)" => Some(Disc::Home),
         _ => None,
+    }
+}
+
+/// The guard's answer to `kind --uuid UUID`: `NAME: kind KIND` (the end decides, as for discoverable). Anything else (an older
+/// guard's usage text, a refusal) is None.
+pub fn parse_kind(text: &str) -> Option<NetKind> {
+    let line = text.lines().rev().map(str::trim).find(|l| !l.is_empty())?;
+    let (_, word) = line.rsplit_once(": kind ")?;
+    NetKind::parse(word)
+}
+
+/// What to show for the kind, from the level and the guard's answer (None: no answer). A network known to be untrusted is
+/// not asked; one the guard did not answer for while it may be trusted needs a newer Heimdall (the `kind` command came with
+/// the network kinds) unless it turned out untrusted after all.
+pub fn kind_state(level: Option<Level>, answer: Option<NetKind>) -> KindState {
+    match (level, answer) {
+        (Some(Level::Untrusted), _) => KindState::NotTrusted,
+        (_, Some(k)) => KindState::Set(k),
+        (_, None) => KindState::Missing(Missing::Newer),
     }
 }
 
@@ -154,7 +240,7 @@ fn units_present() -> bool {
 pub fn load(uuid: &str) -> Trust {
     let uuid = uuid.to_string();
     if !crate::privpack::installed(GUARD) {
-        return Trust { uuid, level: None, disc: Err(Missing::Heimdall) };
+        return Trust { uuid, level: None, disc: Err(Missing::Heimdall), kind: KindState::Missing(Missing::Heimdall) };
     }
     let level = if crate::fixture::get().is_some() {
         None
@@ -169,7 +255,38 @@ pub fn load(uuid: &str) -> Trust {
         Some(d) if units_present() => Ok(d),
         _ => Err(Missing::Newer),
     };
-    Trust { uuid, level, disc }
+    let answer = if level == Some(Level::Untrusted) {
+        None
+    } else {
+        crate::sys::run(GUARD, &["kind", "--uuid", &uuid]).and_then(|t| parse_kind(&t))
+    };
+    Trust { uuid, level, disc, kind: kind_state(level, answer) }
+}
+
+/// Set the kind: the guard as root through pkexec (polkit asks for the administrator's password). Then `load` and
+/// `check_kind` tell whether it took.
+pub fn set_kind(uuid: &str, kind: NetKind) -> Result<(), String> {
+    if unit_name(uuid, true).is_none() {
+        return Err("This network's profile id is not one Heimdall accepts.".into());
+    }
+    crate::sys::act("pkexec", &[&format!("/usr/bin/{GUARD}"), "kind", kind.word(), "--uuid", uuid]).map_err(|e| {
+        // pkexec's own answers when the password box was closed or the password was wrong
+        if e.is_empty() || e.contains("Not authorized") || e.contains("dismissed") {
+            "Not changed: the administrator's password was not given.".to_string()
+        } else {
+            e
+        }
+    })
+}
+
+/// After a change of kind: an error when the kind read again is not the one asked for.
+pub fn check_kind(t: &Trust, want: NetKind) -> Result<(), String> {
+    match t.kind {
+        KindState::Set(k) if k == want => Ok(()),
+        KindState::Set(_) => Err("Heimdall did not change it.".into()),
+        KindState::NotTrusted => Err(format!("{KIND_NOT_TRUSTED}.")),
+        KindState::Missing(m) => Err(m.note().into()),
+    }
 }
 
 /// Turn it on or off: start the unit over systemd's D-Bus, letting polkit ask for the password, and wait for its job to end.
@@ -283,8 +400,38 @@ mod tests {
     }
 
     #[test]
+    fn the_guards_kind_parses() {
+        assert_eq!(parse_kind("Birchwood Library: kind home-router\n"), Some(NetKind::HomeRouter));
+        assert_eq!(parse_kind("Maple Street: kind mesh\n"), Some(NetKind::Mesh));
+        assert_eq!(parse_kind("Pocket: kind phone-hotspot"), Some(NetKind::PhoneHotspot));
+        assert_eq!(parse_kind("Harbor Inn: kind travel\n\n"), Some(NetKind::Travel));
+        assert_eq!(parse_kind("x: kind mesh: kind other"), Some(NetKind::Other), "the end decides");
+        assert_eq!(parse_kind("Pocket: kind phone-hotspot. Heimdall judges a different router on it by this."), None, "a change's answer");
+        assert_eq!(parse_kind("x: kind Mesh"), None);
+        assert_eq!(parse_kind("usage: heimdall-wifi-guard pre-up|up|down ..."), None, "an older guard");
+        assert_eq!(parse_kind(""), None);
+        for k in NetKind::ALL {
+            assert_eq!(NetKind::parse(k.word()), Some(k));
+        }
+    }
+
+    #[test]
+    fn the_kind_only_for_a_trusted_network() {
+        assert_eq!(kind_state(Some(Level::Untrusted), Some(NetKind::Mesh)), KindState::NotTrusted);
+        assert_eq!(kind_state(Some(Level::Untrusted), None), KindState::NotTrusted);
+        assert_eq!(kind_state(Some(Level::Trusted), Some(NetKind::Mesh)), KindState::Set(NetKind::Mesh));
+        assert_eq!(kind_state(Some(Level::Home), None), KindState::Missing(Missing::Newer), "a guard without the kind command");
+        assert_eq!(kind_state(None, Some(NetKind::Travel)), KindState::Set(NetKind::Travel), "level unknown: the guard decides");
+        let t = |kind| Trust { uuid: ID.into(), level: Some(Level::Home), disc: Ok(Disc::Home), kind };
+        assert_eq!(check_kind(&t(KindState::Set(NetKind::Mesh)), NetKind::Mesh), Ok(()));
+        assert!(check_kind(&t(KindState::Set(NetKind::HomeRouter)), NetKind::Mesh).is_err());
+        assert_eq!(check_kind(&t(KindState::NotTrusted), NetKind::Mesh), Err("Trust this network first.".into()));
+        assert_eq!(set_kind("../x", NetKind::Mesh), Err("This network's profile id is not one Heimdall accepts.".into()));
+    }
+
+    #[test]
     fn a_change_is_checked_against_what_is_read_again() {
-        let t = |disc| Trust { uuid: ID.into(), level: None, disc };
+        let t = |disc| Trust { uuid: ID.into(), level: None, disc, kind: KindState::NotTrusted };
         assert_eq!(check(&t(Ok(Disc::On)), true), Ok(()));
         assert_eq!(check(&t(Ok(Disc::Off)), false), Ok(()));
         assert!(check(&t(Ok(Disc::Off)), true).unwrap_err().contains("journalctl -u heimdall-wifi-discoverable-on@"));

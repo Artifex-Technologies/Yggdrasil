@@ -792,9 +792,10 @@ impl App {
 }
 
 impl App {
-    /// A saved Wi-Fi network's Heimdall card (wifitrust.rs): its trust level, and the switch that lets others on the network
-    /// discover this computer. Read when the page opens; flipping the switch starts Heimdall's unit (polkit asks for the
-    /// password) and reads it again.
+    /// A saved Wi-Fi network's Heimdall card (wifitrust.rs): its trust level, the switch that lets others on the network
+    /// discover this computer, and what kind of network it is. Read when the page opens; flipping the switch starts Heimdall's
+    /// unit, choosing a kind runs Heimdall's guard through pkexec (polkit asks for the password either way), and it is read
+    /// again.
     fn trust_group(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context, uuid: &str) {
         let fresh = self.wifi_trust.as_ref().filter(|t| t.uuid == uuid).cloned();
         if fresh.is_none() && self.wifi_trust_busy.is_none() {
@@ -803,6 +804,7 @@ impl App {
         }
         let busy = self.wifi_trust_busy.is_some();
         let mut want: Option<bool> = None;
+        let mut want_kind: Option<wifitrust::NetKind> = None;
         let mut foot: Option<&str> = None;
         ui::group(ui, pal, Some("Heimdall"), |ui| {
             let Some(t) = &fresh else {
@@ -834,6 +836,32 @@ impl App {
                     ui.add_enabled_ui(false, |ui| ui::switch(ui, pal, &mut off));
                 }
             });
+            let about = match t.kind {
+                wifitrust::KindState::Set(k) => k.about(),
+                wifitrust::KindState::NotTrusted => wifitrust::KIND_NOT_TRUSTED,
+                wifitrust::KindState::Missing(m) => m.note(),
+            };
+            ui::row(ui, pal, false, wifitrust::KIND_TITLE, Some(about), |ui| {
+                let cur = match t.kind {
+                    wifitrust::KindState::Set(k) => Some(k),
+                    _ => None,
+                };
+                if busy {
+                    ui.label(RichText::new("Waiting...").color(pal.dim));
+                }
+                ui.add_enabled_ui(cur.is_some() && !busy, |ui| {
+                    egui::ComboBox::from_id_salt(("net-kind", &t.uuid))
+                        .selected_text(cur.map_or("Not set", |k| k.label()))
+                        .width(160.0)
+                        .show_ui(ui, |ui| {
+                            for k in wifitrust::NetKind::ALL {
+                                if ui.selectable_label(cur == Some(k), k.label()).clicked() && cur != Some(k) {
+                                    want_kind = Some(k);
+                                }
+                            }
+                        });
+                });
+            });
             foot = match t.disc {
                 Ok(wifitrust::Disc::Home) => Some("Always on for home networks."),
                 Err(m) => Some(m.note()),
@@ -850,6 +878,16 @@ impl App {
                 let asked = wifitrust::set(&id, on);
                 let t = wifitrust::load(&id);
                 let err = asked.err().or_else(|| wifitrust::check(&t, on).err());
+                (t, err)
+            });
+        }
+        if let Some(k) = want_kind {
+            self.status.clear();
+            let id = uuid.to_string();
+            self.trust_thread(ctx, uuid, move || {
+                let asked = wifitrust::set_kind(&id, k);
+                let t = wifitrust::load(&id);
+                let err = asked.err().or_else(|| wifitrust::check_kind(&t, k).err());
                 (t, err)
             });
         }

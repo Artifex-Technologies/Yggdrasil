@@ -42,6 +42,7 @@ declare -A ACTIONS=(
     [taskmanager]="tap 474 265; wait 3; tap 735 430; wait 5"
     [minos-privacy-menu]="pointer 900 300; click right; wait 3"
     [calculator]="type 1299*12"
+    [settings-network-heimdall]="tap 1435 364; wait 4; scroll 200; wait 1; scroll 200; wait 1; scroll 200; wait 1; scroll 150; wait 2"
 )
 shots() {
     shot desktop                        desktop panel desktop
@@ -54,6 +55,7 @@ shots() {
     shot settings-storage               desktop settings storage system
     shot settings-language              desktop settings language system
     shot settings-network               desktop settings network wifi
+    shot settings-network-heimdall      desktop settings network wifi
     shot settings-bluetooth             desktop settings bluetooth system
     shot settings-vpn                   desktop settings vpn system
     shot settings-vpn-add               desktop settings vpn:add system

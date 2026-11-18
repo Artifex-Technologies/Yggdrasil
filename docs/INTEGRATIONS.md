@@ -75,6 +75,7 @@ release = /usr/bin/heimdalld contain release   # run with pkexec: put back the a
 held_release = /usr/bin/heimdalld immunity release   # optional: its own quarantine (GET /v1/quarantine on the api); run with pkexec + ID
 held_confirm = /usr/bin/heimdalld immunity confirm   # with held_release: "It's malware" for a held file (pkexec + ID)
 devices_scan = /usr/bin/systemctl start heimdall-lan-scan.service   # optional: Wi-Fi & Network > Devices (the list is GET /v1/lan/devices on the api); this looks again now
+devices_kind = /usr/bin/heimdalld lan kind   # optional, with devices_scan: run with pkexec + MAC KIND (or "guess"): what the owner says a device is
 wifi_check = /usr/bin/heimdalld wifi-health --json   # optional: Wi-Fi & Network > Wi-Fi checks; Settings adds --speed for the download test; prints the report as JSON
 switch.a_auto_quarantine = Move certain malware to quarantine automatically | ... | /usr/local/bin/labyrinth-security-setting auto-quarantine
 ```
@@ -87,7 +88,10 @@ the quarantine, the scan, the declared controls and, while the assistant is cont
 With `devices_scan`, Settings > Wi-Fi & Network gets **Devices** (under This Network, on the connected network's own page): `GET /v1/lan/devices` answers `{"networks": [{"uuid", "ssid",
 "last_scan", "devices": [{"mac", "ip", "name", "vendor", "model", "kind", "services", "private_mac", "first_seen",
 "last_seen"}]}], "status", "status_uuid"}` (`kind`: router, this, tv, speaker, printer, phone, computer, console, smart, private,
-other; `status`: scanned, not_trusted, router_changed, offline). With `wifi_check`, it gets **Wi-Fi checks** (there too): the command prints
+other; `owner_kind`, when present: what the owner said it is, shown over `kind`; `status`: scanned, not_trusted, router_changed,
+offline). With `devices_kind`, a device's page offers "This device is" (tv, phone, computer, console, speaker, printer, smart,
+router, other, or back to the guess); Settings runs `pkexec` with the command, the hardware address and the word, then reads
+the list again. With `wifi_check`, it gets **Wi-Fi checks** (there too): the command prints
 `{"connected", "summary", "verdict": "good" | "warn" | "bad", "link": {"ssid", "band", "channel", "width", "signal_dbm",
 "rx_mbps", "tx_mbps"}, "findings": [{"check", "status": "good" | "info" | "warn" | "bad", "title", "detail"}]}`. A monitor's
 new-device alert (`detector_id` "lan-watch", `event_kind` "new_lan_device") opens Devices when clicked.

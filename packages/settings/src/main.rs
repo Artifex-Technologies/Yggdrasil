@@ -1738,7 +1738,7 @@ impl App {
         };
         if let Some(mac) = self.lan_dev.clone() {
             if let Some(d) = l.devices.iter().find(|d| d.mac == mac) {
-                return self.device_page(ui, pal, d, &l, now);
+                return self.device_page(ui, pal, ctx, d, &l, now);
             }
             self.lan_dev = None;
         }
@@ -1770,8 +1770,11 @@ impl App {
                 for (i, d) in list.iter().enumerate() {
                     let name = devices::shown_name(d, &self.lan_names);
                     // the router and this computer are already named for what they are
-                    let mut sub =
-                        if matches!(d.kind.as_str(), "router" | "this") { vec![] } else { vec![devices::kind_name(&d.kind).to_string()] };
+                    let mut sub = if matches!(devices::shown_kind(d), "router" | "this") {
+                        vec![]
+                    } else {
+                        vec![devices::kind_name(devices::shown_kind(d)).to_string()]
+                    };
                     if !d.vendor.is_empty() && !name.contains(&d.vendor) {
                         sub.push(d.vendor.clone());
                     }
@@ -1890,10 +1893,11 @@ impl App {
         });
     }
 
-    /// One device: its name (the owner may give it one), what it is, its addresses, services, first and last seen.
-    fn device_page(&mut self, ui: &mut egui::Ui, pal: &Palette, d: &devices::Device, l: &devices::List, now: i64) {
+    /// One device: its name (the owner may give it one), what it is (the owner may correct the guess), its addresses,
+    /// services, first and last seen.
+    fn device_page(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context, d: &devices::Device, l: &devices::List, now: i64) {
         let name = devices::shown_name(d, &self.lan_names);
-        ui.label(RichText::new(devices::kind_name(&d.kind)).size(12.0).color(pal.dim));
+        ui.label(RichText::new(devices::kind_name(devices::shown_kind(d))).size(12.0).color(pal.dim));
         ui.add_space(8.0);
         let mut rename = self.lan_rename.take();
         let mut save: Option<String> = None;
@@ -1940,6 +1944,44 @@ impl App {
             rename = None;
         }
         self.lan_rename = rename;
+        if d.kind != "this" {
+            ui.add_space(8.0);
+            let mut choose: Option<&'static str> = None;
+            ui::group(ui, pal, Some("What it is"), |ui| {
+                let own = devices::OWNER_KINDS.contains(&d.owner_kind.as_str());
+                let can = devices::can_set_kind();
+                let sub = match (own, can) {
+                    (true, _) => format!("Your choice; {}'s guess was {}", l.monitor, devices::kind_name(&d.kind).to_lowercase()),
+                    (false, true) => format!("{}'s guess; correct it if it is wrong", l.monitor),
+                    (false, false) => format!("{}'s guess (it cannot keep a correction)", l.monitor),
+                };
+                ui::row(ui, pal, true, "This device is", Some(&sub), |ui| {
+                    let shown = devices::kind_name(devices::shown_kind(d));
+                    if !can {
+                        ui.label(RichText::new(shown).color(pal.dim));
+                        return;
+                    }
+                    egui::ComboBox::from_id_salt(("device-kind", &d.mac)).selected_text(shown).width(200.0).show_ui(ui, |ui| {
+                        for k in devices::OWNER_KINDS {
+                            if ui.selectable_label(own && d.owner_kind == k, devices::kind_name(k)).clicked() && !(own && d.owner_kind == k)
+                            {
+                                choose = Some(k);
+                            }
+                        }
+                        if own {
+                            ui.separator();
+                            if ui.selectable_label(false, format!("{}'s guess", l.monitor)).clicked() {
+                                choose = Some("guess");
+                            }
+                        }
+                    });
+                });
+            });
+            if let Some(k) = choose {
+                let mac = d.mac.clone();
+                self.change(ctx, move || devices::set_kind(&mac, k));
+            }
+        }
         ui.add_space(8.0);
         ui::group(ui, pal, Some("About"), |ui| {
             let mut first = true;

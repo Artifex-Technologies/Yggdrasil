@@ -65,6 +65,18 @@ assistant), Apps, Privacy & security, System. Settings opens on General all the 
   /usr/bin/heimdall-multilink on|off|set ...` (the administrator's password, remembered for a few minutes). The figures come
   from the service's status file once a second, and from `heimdall-multilink status --json` every 5 seconds while it is off.
   They are read only while the page is open and the window is in front, and the window is woken only when they changed.
+  Since 2026-11-17 a saved network's Heimdall group (`src/wifitrust.rs`) also has **This network is** (Home router, Mesh,
+  Phone hotspot, Travel / hotel, Other) under the trust level and the discoverable switch, with what Heimdall makes of the
+  choice under it. It is read with `heimdall-wifi-guard kind --uuid UUID` when the page opens and set with `pkexec
+  /usr/bin/heimdall-wifi-guard kind KIND --uuid UUID` (polkit's default: the administrator's password), then read again. On an
+  untrusted network the list is shown off with "Trust this network first", and the guard is not asked. Heimdall has no
+  suggestion of its own yet, so none is shown (the to-do is in Heimdall's docs/WIFI_TRUST.md).
+  Also since 2026-11-17, a device's page in **Devices** has **What it is**: "This device is" with TV or streaming stick, Phone
+  or tablet, Computer, Game console, Speaker, Printer, Smart-home device, Router or Other, correcting the list's guess (the
+  grey line names the guess once corrected, and the list offers the guess back). The security integration keeps it: its
+  `devices_kind` command (Heimdall: `heimdalld lan kind`, docs/INTEGRATIONS.md) runs through pkexec with the hardware address
+  and the kind, and the list's `owner_kind` is shown over `kind` everywhere in Devices. Without `devices_kind` the guess is
+  shown and cannot be changed. Nothing is polled for either: both are read when their page opens and after a change.
 
 - **Bluetooth** (`src/bluetooth_ui.rs`), laid out like Wi-Fi: the switch; My Devices (paired, each Connected or Not
   Connected; a tap connects, the (i) opens its page with its kind, battery, address, Connect/Disconnect and Forget This
@@ -258,6 +270,7 @@ About only when switched on, have no picture.
 | **General > Storage**: each disk's use (`system.json`'s made-up disks). | ![Settings > General > Storage](../assets/screenshots/settings-storage.png) |
 | **General > Language & Region**: the system's language, a separate region for dates and times. | ![Settings > General > Language & Region](../assets/screenshots/settings-language.png) |
 | **Wi-Fi & Network**: the network in use, Known Networks and Other Networks (`wifi.json`). | ![Settings > Wi-Fi & Network](../assets/screenshots/settings-network.png) |
+| **Wi-Fi & Network > a network**: the Heimdall group, with the discoverable switch and "This network is" (`wifi.json`). | ![Settings > Wi-Fi & Network > Lantern Hall](../assets/screenshots/settings-network-heimdall.png) |
 | **Bluetooth**: My Devices (Connected / Not Connected, an (i) each), Other Devices found nearby, a game controller. | ![Settings > Bluetooth](../assets/screenshots/settings-bluetooth.png) |
 | **VPN**: a VPN and a WireGuard connection, Tailscale. | ![Settings > VPN](../assets/screenshots/settings-vpn.png) |
 | **VPN > Add VPN Configuration**: WireGuard from a file or pasted. | ![Settings > VPN > Add VPN Configuration](../assets/screenshots/settings-vpn-add.png) |
@@ -554,15 +567,9 @@ namespace); `sudo bash tests/appnet_ask/kernel_log_check.sh` (the real kernel lo
 - Per-app Location and "which other apps it can see" for Flatpak apps (Flatpak overrides could do both).
 - A network-usage logger per app (the running-time logger exists).
 - A right-click "App settings" entry in the dock that runs `yggdrasil-settings apps:ID`.
-- **What kind of network this is** (planned 2026-11-16): on a saved Wi-Fi network's own (i) page, in the Heimdall group next
-  to the trust level and the discoverable switch, a choice "This network is: Home router · Mesh · Phone hotspot · Travel /
-  hotel · Other", with Heimdall's suggestion shown inline ("Looks like a phone hotspot") and never applied by itself; the first
-  time a network can't be classified, the "joined a new network" notification asks once (with "decide later"). Heimdall
-  stores it with the trusted network and uses it for the router fingerprint (a phone hotspot's address changing between
-  sessions is expected; changing within a session, or two routers at once, is not, for any kind). See Heimdall's
-  docs/WIFI_TRUST.md for the field and the command that sets it.
-- **What kind of device this is** (planned 2026-11-16): in Wi-Fi & Network > Devices on a home network, a choice per device
-  (TV, phone, computer, game console, speaker, printer, smart device, router, other) to correct the device list's guess.
+- **The network kind, suggested and asked once** (from the 2026-11-16 plan; the choice itself is done): Heimdall's suggestion
+  shown inline beside "This network is" ("Looks like a phone hotspot"), never applied by itself, once Heimdall offers one, and
+  the "joined a new network" notification asking once (with "decide later") when a network cannot be classified.
 - **Protective mode** (planned, after training): when Heimdall is confident a man-in-the-middle is real on a learned network,
   restrict traffic while keeping the connection (pin the known router, drop address offers and IPv6 router announcements from
   anything else, keep DNS on the known servers, use the VPN if set up), with a notice and an undo. It switches on only after
