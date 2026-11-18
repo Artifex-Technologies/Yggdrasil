@@ -17,6 +17,12 @@
 //!   `pkexec /usr/bin/heimdall-wifi-guard kind KIND --uuid UUID` (polkit's default for pkexec: the administrator's password).
 //!   The guard refuses an untrusted network, so the page does not ask it then.
 //!
+//! - **A wired network** (Heimdall's docs/WIFI_TRUST.md, "Wired networks"): untrusted unless made home, which binds it to
+//!   its router. Read from `heimdall-wifi-guard status` (no root): the list line `  NAME: home (wired), router ...` and, for the
+//!   wired network connected now, `wired now: NAME, LEVEL; a hardware address of its own here: yes|no`. Made home with `pkexec
+//!   /usr/bin/heimdall-wifi-guard trust --home [--real-address] --uuid UUID` (only while it is the one connected: the guard
+//!   refuses another), back to untrusted with `pkexec /usr/bin/heimdall-wifi-guard untrust UUID`; then read again.
+//!
 //! A made-up system (fixture) answers the guard from its `run` entries, has Heimdall when its `tools` list the guard, has no
 //! level, and refuses every change.
 
@@ -266,10 +272,18 @@ pub fn load(uuid: &str) -> Trust {
 /// Set the kind: the guard as root through pkexec (polkit asks for the administrator's password). Then `load` and
 /// `check_kind` tell whether it took.
 pub fn set_kind(uuid: &str, kind: NetKind) -> Result<(), String> {
+    as_root(uuid, &["kind", kind.word(), "--uuid", uuid])
+}
+
+/// The guard as root through pkexec, for the profile UUID (checked first: the guard takes only a profile id there).
+fn as_root(uuid: &str, args: &[&str]) -> Result<(), String> {
     if unit_name(uuid, true).is_none() {
         return Err("This network's profile id is not one Heimdall accepts.".into());
     }
-    crate::sys::act("pkexec", &[&format!("/usr/bin/{GUARD}"), "kind", kind.word(), "--uuid", uuid]).map_err(|e| {
+    let guard = format!("/usr/bin/{GUARD}");
+    let mut all = vec![guard.as_str()];
+    all.extend_from_slice(args);
+    crate::sys::act("pkexec", &all).map_err(|e| {
         // pkexec's own answers when the password box was closed or the password was wrong
         if e.is_empty() || e.contains("Not authorized") || e.contains("dismissed") {
             "Not changed: the administrator's password was not given.".to_string()
@@ -277,6 +291,98 @@ pub fn set_kind(uuid: &str, kind: NetKind) -> Result<(), String> {
             e
         }
     })
+}
+
+/// A wired network's state in Heimdall.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WiredState {
+    /// Made home (bound to its router).
+    pub home: bool,
+    /// For the wired network connected now: whether this computer uses a hardware address of its own there (false: the real
+    /// one). None when it is not the one connected.
+    pub own_address: Option<bool>,
+}
+
+/// What the page shows for one saved wired network.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Wired {
+    pub uuid: String,
+    pub state: Result<WiredState, Missing>,
+}
+
+pub const WIRED_HOME_TITLE: &str = "This is my home network";
+pub const WIRED_HOME_ABOUT: &str = "The device list may look around here. Heimdall knows its router by its hardware address: \
+     plugged in elsewhere, it is untrusted again";
+pub const WIRED_UNTRUSTED_ABOUT: &str = "Untrusted: a hardware address of its own and no computer name sent";
+pub const WIRED_REAL_TITLE: &str = "Keep my real hardware address";
+pub const WIRED_REAL_ABOUT: &str = "The router reserves an address for this computer";
+pub const WIRED_NEEDS_LINK: &str = "Connect to it first: Heimdall makes the network connected now home.";
+pub const WIRED_NEWER: &str = "Needs a newer Heimdall (one with wired home networks).";
+
+/// A wired network's state from the guard's `status`, for the profile named NAME (`connected`: it is the wired network up now).
+/// The list line `  NAME: home (wired)...` says home; for the connected one the `wired now: NAME, LEVEL; a hardware address of
+/// its own here: yes|no` line says both. None when this is not the guard's status, or when the wired network connected now
+/// has no `wired now` line (a Heimdall from before wired networks).
+pub fn parse_wired_status(text: &str, name: &str, connected: bool) -> Option<WiredState> {
+    if !text.lines().any(|l| l.starts_with("networks you trust")) {
+        return None;
+    }
+    let listed_home = text.lines().any(|l| {
+        l.strip_prefix("  ")
+            .and_then(|r| r.strip_prefix(name))
+            .and_then(|r| r.strip_prefix(": "))
+            .is_some_and(|r| r.starts_with("home (wired)"))
+    });
+    let now = text.lines().find_map(|l| {
+        let rest = l.strip_prefix("wired now: ")?;
+        let (left, own) = rest.rsplit_once("; a hardware address of its own here: ")?;
+        let (n, level) = left.rsplit_once(", ")?;
+        let own = match own.trim() {
+            "yes" => true,
+            "no" => false,
+            _ => return None,
+        };
+        Some((n, level, own))
+    });
+    if !connected {
+        return Some(WiredState { home: listed_home, own_address: None });
+    }
+    match now {
+        Some((n, level, own)) if n == name => Some(WiredState { home: level == "home", own_address: Some(own) }),
+        // another wired network is the one up (two cables): this one is known only from the list
+        Some(_) => Some(WiredState { home: listed_home, own_address: None }),
+        None => None,
+    }
+}
+
+/// Read a saved wired network's state (on a background thread: it starts the guard).
+pub fn load_wired(uuid: &str, name: &str, connected: bool) -> Wired {
+    let uuid = uuid.to_string();
+    if !crate::privpack::installed(GUARD) {
+        return Wired { uuid, state: Err(Missing::Heimdall) };
+    }
+    let read = crate::sys::run(GUARD, &["status"]).and_then(|t| parse_wired_status(&t, name, connected));
+    Wired { uuid, state: read.ok_or(Missing::Newer) }
+}
+
+/// Make it home (with the real hardware address there when `real`), or back to untrusted: the guard as root through pkexec.
+/// Then `load_wired` and `check_wired` tell whether it took.
+pub fn set_wired(uuid: &str, home: bool, real: bool) -> Result<(), String> {
+    match (home, real) {
+        (true, true) => as_root(uuid, &["trust", "--home", "--real-address", "--uuid", uuid]),
+        (true, false) => as_root(uuid, &["trust", "--home", "--uuid", uuid]),
+        (false, _) => as_root(uuid, &["untrust", uuid]),
+    }
+}
+
+/// After a change: an error when the state read again is not the one asked for.
+pub fn check_wired(w: &Wired, home: bool) -> Result<(), String> {
+    match w.state {
+        Ok(s) if s.home == home => Ok(()),
+        Ok(_) => Err("Heimdall did not change it.".into()),
+        Err(Missing::Newer) => Err(WIRED_NEWER.into()),
+        Err(m) => Err(m.note().into()),
+    }
 }
 
 /// After a change of kind: an error when the kind read again is not the one asked for.
@@ -427,6 +533,41 @@ mod tests {
         assert!(check_kind(&t(KindState::Set(NetKind::HomeRouter)), NetKind::Mesh).is_err());
         assert_eq!(check_kind(&t(KindState::NotTrusted), NetKind::Mesh), Err("Trust this network first.".into()));
         assert_eq!(set_kind("../x", NetKind::Mesh), Err("This network's profile id is not one Heimdall accepts.".into()));
+    }
+
+    // heimdall-wifi-guard status, as it prints a wired home network (Heimdall packaging/net/heimdall-wifi-guard, cmd_status)
+    const STATUS: &str = "networks you trust:\n  Maple Street: home (WPA2-Personal), router 00:00:5e:00:53:01\n  \
+        Wired connection 1: home (wired), router 00:00:5e:00:53:02\nVPN: not set up (heimdall-wifi-guard vpn-import FILE.conf)\n\
+        wired now: Wired connection 1, home; a hardware address of its own here: no\ndevices reaching this computer: none\n";
+
+    #[test]
+    fn a_wired_networks_state_from_the_guards_status() {
+        let s = |home, own| Some(WiredState { home, own_address: own });
+        assert_eq!(parse_wired_status(STATUS, "Wired connection 1", true), s(true, Some(false)));
+        assert_eq!(parse_wired_status(STATUS, "Wired connection 1", false), s(true, None), "from the list when not connected");
+        assert_eq!(parse_wired_status(STATUS, "Wired connection 2", false), s(false, None));
+        assert_eq!(parse_wired_status(STATUS, "Maple Street", false), s(false, None), "a Wi-Fi network of that name is not it");
+        assert_eq!(parse_wired_status(STATUS, "Wired", false), s(false, None), "a name is matched whole");
+        let away = "networks you trust: none\nVPN: not set up\nwired now: Office, untrusted; a hardware address of its own here: yes\n";
+        assert_eq!(parse_wired_status(away, "Office", true), s(false, Some(true)));
+        assert_eq!(parse_wired_status(away, "Lab", true), s(false, None), "two cables: another one is up");
+        let odd = "networks you trust: none\nwired now: A, b, home; a hardware address of its own here: yes\n";
+        assert_eq!(parse_wired_status(odd, "A, b", true), s(true, Some(true)), "a comma in the name: the end decides");
+        let older = "networks you trust: none\nVPN: not set up\nnow on: Cafe, untrusted (open)\n";
+        assert_eq!(parse_wired_status(older, "Wired connection 1", true), None, "a Heimdall from before wired networks");
+        assert_eq!(parse_wired_status("usage: heimdall-wifi-guard ...", "x", false), None);
+    }
+
+    #[test]
+    fn a_wired_change_is_checked_and_only_for_a_profile_id() {
+        let w = |state| Wired { uuid: ID.into(), state };
+        let st = |home| Ok(WiredState { home, own_address: None });
+        assert_eq!(check_wired(&w(st(true)), true), Ok(()));
+        assert_eq!(check_wired(&w(st(false)), false), Ok(()));
+        assert_eq!(check_wired(&w(st(false)), true), Err("Heimdall did not change it.".into()));
+        assert_eq!(check_wired(&w(Err(Missing::Newer)), true), Err(WIRED_NEWER.into()));
+        assert_eq!(set_wired("--home", true, true), Err("This network's profile id is not one Heimdall accepts.".into()));
+        assert_eq!(set_wired("x; rm", false, false), Err("This network's profile id is not one Heimdall accepts.".into()));
     }
 
     #[test]

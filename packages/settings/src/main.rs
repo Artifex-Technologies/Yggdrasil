@@ -306,6 +306,8 @@ enum Msg {
     WifiHealth(Result<wifihealth::Report, String>),
     /// A saved Wi-Fi network's Heimdall level and discoverable switch were read (after a change: why it did not take).
     WifiTrust(wifitrust::Trust, Option<String>),
+    /// A saved wired network's Heimdall state was read (after a change: why it did not take).
+    WiredTrust(wifitrust::Wired, Option<String>),
     /// Wi-Fi & Network: the Wi-Fi lists read again after a scan (wifi_live.rs).
     WifiAir(sys::Air),
     Done(Page, Result<(), String>),
@@ -388,6 +390,9 @@ struct App {
     /// changed (the switch waits meanwhile: a change waits for the password).
     wifi_trust: Option<wifitrust::Trust>,
     wifi_trust_busy: Option<String>,
+    /// The open saved wired network's Heimdall state, and the "Keep my real hardware address" choice for making it home.
+    wired_trust: Option<wifitrust::Wired>,
+    wired_real: bool,
     /// The saved network's page was opened from Previously connected networks (its back button returns there).
     net_from_history: bool,
     /// Wi-Fi & Network: a network that is not saved, whose page is open (wifi_ui.rs).
@@ -583,6 +588,8 @@ impl App {
             net_draft: None,
             wifi_trust: None,
             wifi_trust_busy: None,
+            wired_trust: None,
+            wired_real: false,
             net_forget: false,
             net_from_history: false,
             wifi_air: None,
@@ -917,6 +924,14 @@ impl App {
                         self.status = e;
                     }
                     self.wifi_trust = Some(t);
+                    continue;
+                }
+                Msg::WiredTrust(w, err) => {
+                    self.wifi_trust_busy = None;
+                    if let Some(e) = err {
+                        self.status = e;
+                    }
+                    self.wired_trust = Some(w);
                     continue;
                 }
                 Msg::WifiAir(a) => {

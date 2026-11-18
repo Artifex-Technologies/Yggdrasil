@@ -99,6 +99,16 @@ assistant), Apps, Privacy & security, System. Settings opens on General all the 
   /usr/bin/heimdall-wifi-guard kind KIND --uuid UUID` (polkit's default: the administrator's password), then read again. On an
   untrusted network the list is shown off with "Trust this network first", and the guard is not asked. Heimdall has no
   suggestion of its own yet, so none is shown (the to-do is in Heimdall's docs/WIFI_TRUST.md).
+  Since 2026-11-18 a saved **wired** network's page has a Heimdall group too (`wired_trust_group` in `src/wifi_ui.rs`, the
+  model in `src/wifitrust.rs`; Heimdall's docs/WIFI_TRUST.md, "Wired networks"). A wired network is untrusted (a hardware
+  address of its own, no computer name sent) until made home. **This is my home network** has **Make it home**, with **Keep
+  my real hardware address** (for a router that reserves an address for this computer) beside it; it runs `pkexec
+  /usr/bin/heimdall-wifi-guard trust --home [--real-address] --uuid UUID` and works only while that network is the one
+  connected (the guard binds home to the router it sees; otherwise the button is off and a note says to connect first). A
+  home network shows **Forget** (`pkexec /usr/bin/heimdall-wifi-guard untrust UUID`) and, while connected, whether the
+  hardware address there is the real one. The state is read from `heimdall-wifi-guard status` when the page opens and after a
+  change: the line `  NAME: home (wired), router ...`, and for the connected one `wired now: NAME, LEVEL; a hardware address
+  of its own here: yes|no`. A Heimdall without that line for the connected wired network gets "Needs a newer Heimdall".
   Also since 2026-11-17, a device's page in **Devices** has **What it is**: "This device is" with TV or streaming stick, Phone
   or tablet, Computer, Game console, Speaker, Printer, Smart-home device, Router or Other, correcting the list's guess (the
   grey line names the guess once corrected, and the list offers the guess back). The security integration keeps it: its

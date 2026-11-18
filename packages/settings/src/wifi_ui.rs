@@ -215,6 +215,7 @@ impl App {
         // back on the list: a network's Heimdall card is read again when its page opens next
         if self.wifi_trust_busy.is_none() {
             self.wifi_trust = None;
+            self.wired_trust = None;
         }
         if let Some(k) = self.wifi_air.clone() {
             return self.air_page(ui, pal, ctx, &n, &k);
@@ -615,8 +616,10 @@ impl App {
         ui.add_space(8.0);
         if saved.wifi {
             self.trust_group(ui, pal, ctx, uuid);
-            ui.add_space(8.0);
+        } else {
+            self.wired_trust_group(ui, pal, ctx, &saved.name, uuid, live.is_some());
         }
+        ui.add_space(8.0);
         if saved.wifi {
             match air {
                 Some(a) => air_sections(ui, pal, n, a),
@@ -891,6 +894,95 @@ impl App {
                 (t, err)
             });
         }
+    }
+
+    /// A saved wired network's Heimdall card (wifitrust.rs, Heimdall's docs/WIFI_TRUST.md "Wired networks"): untrusted (a
+    /// hardware address of its own, no name sent) or home, bound to its router. Read from the guard's status when the page opens;
+    /// "Make it home" (with the real hardware address there, if chosen) and "Forget" run the guard through pkexec, then it is
+    /// read again. Only the wired network connected now can be made home: the guard checks its router.
+    fn wired_trust_group(&mut self, ui: &mut egui::Ui, pal: &Palette, ctx: &egui::Context, name: &str, uuid: &str, connected: bool) {
+        let fresh = self.wired_trust.as_ref().filter(|w| w.uuid == uuid).cloned();
+        if fresh.is_none() && self.wifi_trust_busy.is_none() {
+            let (id, nm) = (uuid.to_string(), name.to_string());
+            self.wired_thread(ctx, uuid, move || (wifitrust::load_wired(&id, &nm, connected), None));
+        }
+        let busy = self.wifi_trust_busy.is_some();
+        let mut want: Option<(bool, bool)> = None;
+        let mut foot: Option<&str> = None;
+        ui::group(ui, pal, Some("Heimdall"), |ui| {
+            let Some(w) = &fresh else {
+                ui::row(ui, pal, true, wifitrust::WIRED_HOME_TITLE, None, |ui| {
+                    ui.label(RichText::new("Reading...").color(pal.dim));
+                });
+                return;
+            };
+            let st = match w.state {
+                Ok(st) => st,
+                Err(m) => {
+                    ui::row(ui, pal, true, wifitrust::WIRED_HOME_TITLE, Some(wifitrust::WIRED_UNTRUSTED_ABOUT), |_| {});
+                    foot = Some(if m == wifitrust::Missing::Newer { wifitrust::WIRED_NEWER } else { m.note() });
+                    return;
+                }
+            };
+            if st.home {
+                ui::row(ui, pal, true, "Home network", Some(wifitrust::WIRED_HOME_ABOUT), |ui| {
+                    if busy {
+                        ui.label(RichText::new("Waiting...").color(pal.dim));
+                    } else if ui::quiet(ui, pal, "Forget").on_hover_text("Untrusted again: an address of its own, no name sent").clicked() {
+                        want = Some((false, false));
+                    }
+                });
+                if let Some(own) = st.own_address {
+                    let (t, sub) = if own {
+                        ("One of its own", "From the next connection on, if you chose the real one")
+                    } else {
+                        ("The real one", "The router sees this computer as itself")
+                    };
+                    ui::row(ui, pal, false, "Hardware address here", Some(sub), |ui| {
+                        ui.label(RichText::new(t).color(pal.dim));
+                    });
+                }
+                return;
+            }
+            ui::row(ui, pal, true, wifitrust::WIRED_HOME_TITLE, Some(wifitrust::WIRED_UNTRUSTED_ABOUT), |ui| {
+                if busy {
+                    ui.label(RichText::new("Waiting...").color(pal.dim));
+                } else if ui.add_enabled_ui(connected, |ui| ui::action(ui, pal, "Make it home")).inner.clicked() {
+                    want = Some((true, self.wired_real));
+                }
+            });
+            ui::row(ui, pal, false, wifitrust::WIRED_REAL_TITLE, Some(wifitrust::WIRED_REAL_ABOUT), |ui| {
+                ui.add_enabled_ui(connected && !busy, |ui| ui::switch(ui, pal, &mut self.wired_real));
+            });
+            if !connected {
+                foot = Some(wifitrust::WIRED_NEEDS_LINK);
+            }
+        });
+        if let Some(f) = foot {
+            ui::footnote(ui, pal, f);
+        }
+        if let Some((home, real)) = want {
+            self.status.clear();
+            let (id, nm) = (uuid.to_string(), name.to_string());
+            self.wired_thread(ctx, uuid, move || {
+                let asked = wifitrust::set_wired(&id, home, real);
+                let w = wifitrust::load_wired(&id, &nm, connected);
+                let err = asked.err().or_else(|| wifitrust::check_wired(&w, home).err());
+                (w, err)
+            });
+        }
+    }
+
+    /// The wired card's reading (or change, then reading) on a thread of its own; the card waits for it meanwhile.
+    fn wired_thread(&mut self, ctx: &egui::Context, uuid: &str, f: impl FnOnce() -> (wifitrust::Wired, Option<String>) + Send + 'static) {
+        self.wifi_trust_busy = Some(uuid.to_string());
+        let tx = self.tx.clone();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let (w, err) = f();
+            let _ = tx.send(crate::Msg::WiredTrust(w, err));
+            ctx.request_repaint();
+        });
     }
 
     /// Reads (or changes, then reads) a network's Heimdall card on a thread of its own; the page waits for it meanwhile.
