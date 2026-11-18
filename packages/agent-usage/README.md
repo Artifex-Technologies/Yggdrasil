@@ -13,6 +13,8 @@ Answers are cached for four minutes. No Claude Code sign-in: no pill.
 
 ## Agents (a second bar item from the same package)
 
+![The Agents item's card, made-up agents](../../assets/screenshots/agents.png)
+
 `agents.conf` adds **Agents**: the number of AI agents running, with a ring for the busiest limit any of them is near. Its card
 lists every agent this computer knows of with its state (working, idle, stopped), its usage and reset time where known, and when
 it last did something:

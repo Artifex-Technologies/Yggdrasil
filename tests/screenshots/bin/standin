@@ -14,6 +14,10 @@ case "$(basename "$0") $*" in
 "labyrinth-sarina-setting tone status") echo on ;;
 "labyrinth-quarantine list --json") echo '[]' ;;
 "labyrinth-security-setting auto-quarantine status") echo on ;;
+"sarina fleet-status --json")
+  # the Agents picture's made-up fleet (written by scripts/screenshots.sh's agents_demo); none before it
+  [ -f "$HOME/.local/state/agents-demo/fleet.json" ] && exec cat "$HOME/.local/state/agents-demo/fleet.json"
+  exit 1 ;;
 "systemctl "*) exit 0 ;;
 "heimdall-strip --can "*) exit 0 ;;
 *) exit 1 ;;

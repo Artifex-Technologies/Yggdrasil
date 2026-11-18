@@ -30,10 +30,11 @@ SIZE=1920x1080
 # shot NAME MACHINE KIND ARGS...
 #   settings PAGE FIXTURE [SCROLL]   yggdrasil-settings PAGE with packages/settings/tests/fixtures/FIXTURE.json (scrolled SCROLL px)
 #   app PROGRAM [ARGS...]            one of target/debug's programs as a window
-#   panel desktop|start|calendar|fylgja N   the panel alone, its start menu, calendar, or Fylgja on section N
+#   panel desktop|plain|start|calendar|fylgja N   the panel alone (with or without made-up notifications), its start menu,
+#                                    calendar, or Fylgja on section N
 #   lock                             the lock screen (its test-auth build)
 # and what to do in the window before the picture, ";" between the steps: `tap X Y` (a click there), `wait S` (seconds) or any
-# compositor control command (`yggdrasil-compositor ctl`, e.g. `type TEXT`)
+# compositor control command (`yggdrasil-compositor ctl`, e.g. `type TEXT`); `agents-demo` writes the Agents item's made-up agents
 declare -A ACTIONS=(
     [settings-cooling-curves]="tap 1408 273"
     [settings-displays-connect]="tap 1413 517"
@@ -45,6 +46,7 @@ declare -A ACTIONS=(
     [settings-software-update-available]="tap 816 425; wait 2"
     [settings-software-update-history]="tap 806 567; wait 3; tap 795 300; wait 2"
     [settings-network-heimdall]="tap 1435 364; wait 4; scroll 200; wait 1; scroll 200; wait 1; scroll 200; wait 1; scroll 150; wait 2"
+    [agents]="agents-demo; wait 70; tap 1605 14; wait 3"
 )
 shots() {
     shot desktop                        desktop panel desktop
@@ -114,6 +116,8 @@ shots() {
     shot installer-disk-manual          desktop app yggdrasil-installer --demo disk-manual
     shot installer-account              desktop app yggdrasil-installer --demo account
     shot lock-screen                    desktop lock
+    # last: the Agents pill stays in the bar once its made-up agents are written
+    shot agents                         desktop panel plain
 }
 
 # ------------------------------------------------------------------ the outside: build, then one sandbox per machine
@@ -136,7 +140,7 @@ outside() {
     fi
     if [ $build = 1 ]; then
         local p
-        for p in compositor panel settings minos taskmanager market calculator saga-md installer lock; do
+        for p in compositor panel settings minos taskmanager market calculator saga-md installer lock agent-usage; do
             (cd "$repo/packages/$p" && cargo build --locked)
         done
         # the lock screen's test build (a stand-in password check) goes to a folder of its own, never mixed with the real one
@@ -175,6 +179,9 @@ sandbox() {
     )
     local d
     for d in /var/tmp /media /mnt /srv /var/lib/AccountsService /sys/class/input; do [ -d "$d" ] && args+=(--tmpfs "$d"); done
+    # this repository's own bar items for the pictures (the Agents item), beside the system's
+    [ -d /usr/share/yggdrasil/integrations ] && args+=(--overlay-src /usr/share/yggdrasil/integrations --overlay-src "$data/integrations"
+        --ro-overlay /usr/share/yggdrasil/integrations)
     # no batteries (a wireless mouse's would show its name; Settings' laptop battery comes from its fixture)
     args+=(--tmpfs /sys/class/power_supply)
     if [ "$machine" = laptop ]; then
@@ -214,6 +221,10 @@ inside() {
     local n
     for n in snapper systemctl heimdall-strip; do ln -s "$data/bin/standin" "$work/bin/$n"; done
     ln -s "$target/debug/yggdrasil-lock" "$work/bin/yggdrasil-lock"
+    # the Agents item asks this stand-in instead of the assistant (outside PATH: nothing else finds it)
+    mkdir -p "$work/agents"
+    ln -s "$data/bin/standin" "$work/agents/sarina"
+    export YGGDRASIL_AGENTS_SARINA=$work/agents/sarina
     export PATH=$work/bin:/usr/bin XDG_RUNTIME_DIR=$work/run XDG_CURRENT_DESKTOP=Yggdrasil XDG_SESSION_TYPE=wayland
     export LIBGL_ALWAYS_SOFTWARE=1 NO_AT_BRIDGE=1
     unset WAYLAND_DISPLAY DISPLAY HYPRLAND_INSTANCE_SIGNATURE DBUS_SESSION_BUS_ADDRESS
@@ -272,6 +283,7 @@ EOF
         panel)
             case "$1" in
             desktop) notifications ;;
+            plain) ;;
             start) panel_call ToggleStart ;;
             calendar) panel_call ToggleCalendar ;;
             fylgja)
@@ -303,6 +315,7 @@ EOF
             case "${1:-}" in
             '') ;;
             wait) pause "$2" ;;
+            agents-demo) agents_demo ;;
             # the pointer is put near and moved there by the virtual mouse (a program sees it arrive), then clicked
             tap) ctl pointer $(($2 - 14)) $(($3 - 10)) > /dev/null && ctl pointer-move 14 10 > /dev/null && pause 0.3 && ctl click > /dev/null ;;
             *) ctl "$@" > /dev/null ;;
@@ -349,6 +362,28 @@ notifications() {
         IFS='|' read -r app title body <<< "$n"
         /usr/bin/busctl --address="$DBUS_SESSION_BUS_ADDRESS" call org.freedesktop.Notifications /org/freedesktop/Notifications \
             org.freedesktop.Notifications Notify "susssasa{sv}i" "$app" 0 "" "$title" "$body" 0 0 8000 > /dev/null
+    done
+}
+
+# the Agents item's made-up agents: Claude's limits (a fresh cached reading and a made-up sign-in, so nothing is asked of
+# Anthropic), two Claude Code sessions named after processes that run during the pictures (so they count as running), and the
+# assistant's fleet (the stand-in prints it): the assistant idle, one agent with a limit, one whose record is old
+agents_demo() {
+    local now sess=$HOME/.claude/sessions state=$HOME/.local/state/agents-demo
+    printf -v now '%(%s)T' -1
+    mkdir -p "$sess" "$HOME/.cache/yggdrasil/agent-usage" "$state"
+    printf '{"claudeAiOauth":{"accessToken":"made-up","expiresAt":%s}}\n' $(((now + 86400) * 1000)) > "$HOME/.claude/.credentials.json"
+    printf '{"fetched_at":%s,"payload":{"seven_day":{"utilization":38,"resets_at":%s},"five_hour":{"utilization":64,"resets_at":%s}}}\n' \
+        "$now" $((now + 4 * 86400)) $((now + 7200)) > "$HOME/.cache/yggdrasil/agent-usage/claude.json"
+    utc() { TZ=UTC printf "%(%Y-%m-%dT%H:%M:%SZ)T" "$1"; }
+    printf '{"agents":[{"id":"codex","name":"Codex","ready":true,"stale":false,"updatedAt":"%s","limits":[{"label":"Weekly","percentUsed":23,"resetsAt":"%s"}],"statusText":""},{"id":"gemini","name":"Gemini","ready":true,"stale":true,"updatedAt":"%s","limits":[],"statusText":"no limit data"}],"self":{"id":"sarina","name":"Sarina","running":true,"lastActive":"%s"}}\n' \
+        "$(utc $((now - 240)))" "$(utc $((now + 3 * 86400)))" "$(utc $((now - 3 * 3600)))" "$(utc $((now - 1500)))" > "$state/fleet.json"
+    local pid status name ago st
+    for pid in "${pids[@]:0:2}"; do
+        if [ "$pid" = "${pids[0]}" ]; then status=busy name=photo-site ago=20; else status=idle name=trip-planner ago=840; fi
+        read -r -a st < "/proc/$pid/stat"
+        printf '{"pid":%s,"procStart":"%s","status":"%s","name":"%s","updatedAt":%s,"kind":"interactive"}\n' \
+            "$pid" "${st[21]}" "$status" "$name" $(((now - ago) * 1000)) > "$sess/$pid.json"
     done
 }
 

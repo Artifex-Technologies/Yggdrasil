@@ -153,6 +153,8 @@ minutes. It is read-only: its card's one button opens the add-on's README ("How 
 in a terminal that asks first (`sarina fleet-launch`). Without the assistant it shows Claude's sessions and limits; with no agent
 at all the pill is off.
 
+![The Agents item's card, made-up agents](../assets/screenshots/agents.png)
+
 #### Cards you can use (`card` and `act`)
 
 An add-on whose card has controls lists them in `"card"`, an array of blocks drawn in order (after `lines`, before `help`), and names
