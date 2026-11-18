@@ -23,6 +23,11 @@ Keyboard > Shortcuts and the cheat sheet (Win + /) show the live list, your own 
 | Alt + Tab | Next window |
 | Alt + Shift + Tab | Previous window |
 
+Planned with our own compositor (not in the Hyprland session): Alt + Tab shows live pictures of the windows while Alt is held
+(today: text cards in the compositor, a plain jump in Hyprland), and **Win + Tab** opens the deck: the windows stand fanned out
+in 3D, Tab, the arrow keys or the mouse wheel flip through them, Enter or a click picks one, Escape closes it (a flat grid on
+chips too weak for 3D).
+
 ## Desktops
 
 | Keys | What it does |

@@ -293,6 +293,19 @@ portal, polkit), and each of them can be developed and tested on this compositor
 Debugging: `YGGDRASIL_COMPOSITOR_DEBUG=1` prints pointer positions, button presses and move requests. To drive it from a script, move the host pointer
 with `ydotool` in small steps (the host accelerates movement by about 1.7x) and read the positions it prints.
 
+## Planned: window switching (2026-11-18)
+
+My wish, after using Windows at work: switching windows should feel as good as there, with something of our own on top.
+- **Alt + Tab / Alt + Shift + Tab:** the switcher that exists (`src/switcher.rs`: a row of cards while Alt is held, most
+  recently used first, release to pick, Escape to cancel) gets live pictures of the windows instead of text cards, rendered
+  from the windows' own buffers at card size, only while it is open.
+- **Win + Tab, the deck:** the windows stand one behind the other in perspective, fanned out like a deck of cards; Tab,
+  Shift + Tab, the arrow keys or the mouse wheel flip the front card to the back, Enter or a click picks one, Escape closes
+  it. Our own look (Yggdrasil's colours and corners, a short eased flip), inspired by Windows 7's Flip 3D, not a copy of it.
+  Drawn as textured quads with a perspective transform in the GLES renderer, only while open; where the chip is too weak
+  (measured: a frame of the deck over budget), it falls back to a flat grid, so a Raspberry Pi stays light.
+- Both come after the real-screen milestones (laptop, then NVIDIA), and both get rows in the headless key-binding test.
+
 ## Lightness (a rule for all of Yggdrasil)
 Yggdrasil must stay as light and quick as the features allow, on any machine, including old and small ones. For the compositor that means: nothing is drawn while
 nothing changes (a frame is drawn only after a program committed a picture, input arrived or a setting changed, and a frame with no change is not even sent on);
