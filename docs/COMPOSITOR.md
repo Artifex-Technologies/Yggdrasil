@@ -296,12 +296,18 @@ with `ydotool` in small steps (the host accelerates movement by about 1.7x) and 
 ## Planned: window switching (2026-11-18)
 
 My wish, after using Windows at work: switching windows should feel as good as there, with something of our own on top.
-- **Alt + Tab / Alt + Shift + Tab:** the switcher that exists (`src/switcher.rs`: a row of cards while Alt is held, most
-  recently used first, release to pick, Escape to cancel) gets live pictures of the windows instead of text cards, rendered
-  from the windows' own buffers at card size, only while it is open.
+- **Alt + Tab / Alt + Shift + Tab, the standard switcher (like Windows 11's, in Yggdrasil's design):** while Alt is held,
+  every window appears as a card on a dimmed, softly blurred desktop, in rows that wrap and stay centred. Each card is a
+  live picture of the window at its own shape (wide windows wide, narrow ones narrow, all the same height in a row), with
+  a small title bar on top: the app's icon and the window's title. Tab moves to the next card, Shift + Tab back, the arrow
+  keys and the mouse work too; letting go of Alt switches to the chosen window, Escape cancels. Windows that share the
+  screen side by side (snapped halves, a tiled screen) show as one wide group card ("Group | Calculator and 1 other
+  window"), and choosing it brings the whole group forward. Most recently used first. Today's `src/switcher.rs` (a row of
+  text cards) becomes this; the pictures are rendered from the windows' own buffers at card size, only while it is open.
 - **Win + Tab, the deck:** the windows stand one behind the other in perspective, fanned out like a deck of cards; Tab,
   Shift + Tab, the arrow keys or the mouse wheel flip the front card to the back, Enter or a click picks one, Escape closes
-  it. Our own look (Yggdrasil's colours and corners, a short eased flip), inspired by Windows 7's Flip 3D, not a copy of it.
+  it. Our own look (Yggdrasil's colours and corners, a short eased flip), inspired by Windows 7's Flip 3D, not a copy of it. Both switchers share the same card
+  style (Yggdrasil's colours, corners, font and the accent outline on the chosen card), so they read as one family.
   Drawn as textured quads with a perspective transform in the GLES renderer, only while open; where the chip is too weak
   (measured: a frame of the deck over budget), it falls back to a flat grid, so a Raspberry Pi stays light.
 - Both come after the real-screen milestones (laptop, then NVIDIA), and both get rows in the headless key-binding test.
