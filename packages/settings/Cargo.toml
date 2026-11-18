@@ -31,6 +31,9 @@ yggdrasil-appusage = { path = "../appusage" }
 jiff = { version = "0.2", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo"] }
 # Wi-Fi & Network: what nearby networks broadcast (the kernel's scan list, read without root or sending anything)
 yggdrasil-wifiscan = { path = "../wifiscan" }
+# who made an access point, and the company a vendor extra belongs to: Heimdall's maker lookup (all four IEEE registries, no
+# dependencies), pinned to a commit
+heimdall-macvendor = { git = "https://github.com/Artifex-Technologies/Heimdall", rev = "e92c45858ee20166b4a07aeeca1ca5810c97bf10" }
 # joining a Wi-Fi network (the password goes to NetworkManager over D-Bus, never on a command line) and nmcli's Wi-Fi list
 # and adapters: shared with the installer's Network step
 yggdrasil-netjoin = { path = "../netjoin" }

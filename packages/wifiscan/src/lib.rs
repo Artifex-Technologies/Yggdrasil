@@ -3,8 +3,8 @@
 //! The kernel keeps the last scan's results, with every access point's information elements as they came over the air.
 //! `nl80211::scan_dump` reads that list (NL80211_CMD_GET_SCAN, a dump any user may ask for): it sends nothing on the radio and
 //! starts no scan. `ie` reads the elements (security, Wi-Fi generation, channel width, WPS and the device details it
-//! announces, country, 802.11k/v/r), `oui` names the makers from the IEEE list on disk, and this file groups access points by
-//! network name and sums each one up.
+//! announces, country, 802.11k/v/r), `oui` names the vendor-specific elements it recognises, and this file groups access points
+//! by network name and sums each one up. (Who made an access point is Heimdall's crate `heimdall-macvendor`, used by Settings.)
 //!
 //! Everything read from the air is hostile input: anyone in range can send any bytes. The parsers are bounds-checked, capped
 //! and tested with random and mutated input (tests/hostile.rs).

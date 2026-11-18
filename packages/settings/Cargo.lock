@@ -1440,6 +1440,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "heimdall-macvendor"
+version = "0.1.0"
+source = "git+https://github.com/Artifex-Technologies/Heimdall?rev=e92c45858ee20166b4a07aeeca1ca5810c97bf10#e92c45858ee20166b4a07aeeca1ca5810c97bf10"
+
+[[package]]
 name = "hermit-abi"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4549,6 +4554,7 @@ version = "0.1.0"
 dependencies = [
  "eframe",
  "egui_extras",
+ "heimdall-macvendor",
  "image",
  "jiff",
  "libc",

@@ -51,7 +51,7 @@ started, called or linked. Yggdrasil's own compositor is in progress: it runs ne
 | `packages/tzpicker` | | the time zone picker that Settings > Date & Time and the installer share: a world map and a short list ([README](packages/tzpicker/README.md)) |
 | `packages/geolocate` | | where the computer roughly is, for Weather's automatic place and Settings' automatic time zone: its IP address only, through beaconDB (no Wi-Fi networks, no hardware IDs), and nothing while a VPN is on |
 | `packages/netjoin` | | joining a Wi-Fi network through NetworkManager's D-Bus call (the password never on a command line; a profile that failed is deleted) and nmcli's adapters and network list, shared by Settings and the installer's Network step |
-| `packages/wifiscan` | | what nearby Wi-Fi networks broadcast, for Settings: the kernel's last scan read over nl80211 (no root, nothing sent), the information elements parsed as hostile input (property-tested), makers from the IEEE list |
+| `packages/wifiscan` | | what nearby Wi-Fi networks broadcast, for Settings: the kernel's last scan read over nl80211 (no root, nothing sent), the information elements parsed as hostile input (property-tested), the vendor extras it recognises (makers come from Heimdall's `heimdall-macvendor` crate: all four IEEE registries, longest prefix first) |
 | `packages/agent-usage` | `yggdrasil-agent-usage` | a top bar add-on: how much of Claude's weekly and 5-hour limits is used |
 | `packages/browser-warm` | `yggdrasil-browser-warm` | keeps the default browser running with no windows, so new windows and links open almost at once |
 | `packages/game-2048`, `packages/sudoku` | `yggdrasil-2048`, `yggdrasil-sudoku` | games: 2048 and Sudoku |

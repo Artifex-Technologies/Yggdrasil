@@ -177,8 +177,6 @@ pub struct Network {
     /// copied, when the page takes its copy of the data each frame.
     pub air: std::sync::Arc<Vec<yggdrasil_wifiscan::Network>>,
     pub air_error: String,
-    /// The makers of the access points shown, by the first three bytes of their addresses (the IEEE list, offline).
-    pub makers: std::sync::Arc<std::collections::HashMap<[u8; 3], String>>,
     /// What Settings remembers between visits: when each access point was first and last heard, each network's last lease.
     pub memory: std::sync::Arc<crate::wifimem::Memory>,
     /// The adapters' hardware addresses (yggdrasil-netjoin, read over D-Bus; none with a fixture), and whether the system gives
@@ -198,11 +196,20 @@ impl Network {
             .find(|a| !a.hidden() && a.ssid == ssid.as_bytes())
             .or_else(|| self.air.iter().find(|a| !a.hidden() && a.name() == ssid))
     }
+}
 
-    /// Who made an access point ("" when not known: a made-up address, or not in the list).
-    pub fn maker(&self, mac: &[u8; 6]) -> &str {
-        self.makers.get(&[mac[0], mac[1], mac[2]]).map(String::as_str).unwrap_or("")
+/// Who made an access point ("" when not known: a made-up address, or not in the IEEE's lists). Heimdall's maker lookup
+/// (`heimdall-macvendor`): all four IEEE registries when downloaded, else hwdata's lists, read once and kept.
+pub fn maker(mac: &[u8; 6]) -> &'static str {
+    match heimdall_macvendor::lookup(mac) {
+        heimdall_macvendor::Answer::Vendor(v) => v.short,
+        _ => "",
     }
+}
+
+/// The company a vendor-specific element names by its 24-bit identifier.
+pub fn element_maker(oui: [u8; 3]) -> Option<&'static str> {
+    heimdall_macvendor::global().lookup_oui(oui).map(|v| v.short)
 }
 
 /// The kernel's last scan results on the Wi-Fi adapters (or a fixture's made-up ones), grouped by name.
@@ -219,23 +226,6 @@ fn air(devices: &[String]) -> (Vec<yggdrasil_wifiscan::Network>, String) {
         }
     }
     (yggdrasil_wifiscan::group(all), if devices.is_empty() { String::new() } else { err })
-}
-
-/// The makers of these address prefixes, from the IEEE list on disk. Each prefix is looked up once per run (the list is a
-/// few megabytes).
-fn makers(want: Vec<[u8; 3]>) -> std::collections::HashMap<[u8; 3], String> {
-    static CACHE: std::sync::Mutex<BTreeMap<[u8; 3], Option<String>>> = std::sync::Mutex::new(BTreeMap::new());
-    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
-    let mut missing: Vec<[u8; 3]> = want.iter().filter(|p| !cache.contains_key(*p)).copied().collect();
-    missing.sort();
-    missing.dedup();
-    if !missing.is_empty() {
-        let found = yggdrasil_wifiscan::oui::makers(std::path::Path::new(yggdrasil_wifiscan::oui::OUI_PATH), &missing);
-        for p in missing {
-            cache.insert(p, found.get(&p).cloned());
-        }
-    }
-    want.into_iter().filter_map(|p| cache.get(&p).cloned().flatten().map(|n| (p, n))).collect()
 }
 
 pub fn unix_now() -> i64 {
@@ -337,7 +327,6 @@ pub fn network() -> Network {
         lan: None,
         air: Default::default(),
         air_error: String::new(),
-        makers: Default::default(),
         memory: Default::default(),
         addresses: if crate::fixture::get().is_some() { vec![] } else { yggdrasil_netjoin::mac::adapters() },
         private_wifi: crate::fixture::get().is_none() && yggdrasil_netjoin::mac::nm_private_wifi(),
@@ -352,32 +341,18 @@ pub fn network() -> Network {
         n.air_error = err;
     }
     remember(&mut n, unix_now());
-    // the makers of the access points (made-up addresses have none) and of the vendor extras they announce
-    let seen_before = n.saved.iter().flat_map(|p| p.seen_bssids.iter()).filter_map(|b| yggdrasil_wifiscan::parse_mac(b));
-    n.makers = std::sync::Arc::new(makers(prefixes(&n.air, seen_before)));
+    // the makers' lists are read here, off the window's thread, the first time
+    heimdall_macvendor::global();
     n
 }
 
-/// The address prefixes to name the makers of: the access points heard and `more` (made-up addresses have none), and the
-/// vendor extras the access points announce.
-fn prefixes(air: &[yggdrasil_wifiscan::Network], more: impl Iterator<Item = [u8; 6]>) -> Vec<[u8; 3]> {
-    let heard = air.iter().flat_map(|a| a.aps.iter()).map(|a| a.bss.bssid);
-    let mut want: Vec<[u8; 3]> = heard.chain(more).filter(|m| !yggdrasil_wifiscan::oui::is_local(m)).map(|m| [m[0], m[1], m[2]]).collect();
-    want.extend(air.iter().flat_map(|a| a.aps.iter()).flat_map(|a| a.info.vendors.iter()).map(|v| v.oui));
-    want.sort();
-    want.dedup();
-    want
-}
-
 /// The Wi-Fi lists read again after a scan (wifi_live.rs), without the rest of the page: NetworkManager's list as it stands
-/// (nmcli is told not to scan itself), what the radio heard, the makers of the access points heard and Settings' memory of
-/// when each was heard.
+/// (nmcli is told not to scan itself), what the radio heard and Settings' memory of when each was heard.
 #[derive(Debug)]
 pub struct Air {
     pub networks: Vec<Wifi>,
     pub air: std::sync::Arc<Vec<yggdrasil_wifiscan::Network>>,
     pub air_error: String,
-    pub makers: std::collections::HashMap<[u8; 3], String>,
     pub memory: std::sync::Arc<crate::wifimem::Memory>,
 }
 
@@ -389,14 +364,7 @@ pub fn wifi_air(devices: &[String]) -> Air {
     if note_heard(&mut m, &heard, unix_now()) && crate::fixture::get().is_none() {
         let _ = crate::wifimem::save(&m);
     }
-    let makers = makers(prefixes(&heard, std::iter::empty()));
-    Air {
-        networks: wifi_list(&list.unwrap_or_default()),
-        air: std::sync::Arc::new(heard),
-        air_error,
-        makers,
-        memory: std::sync::Arc::new(m),
-    }
+    Air { networks: wifi_list(&list.unwrap_or_default()), air: std::sync::Arc::new(heard), air_error, memory: std::sync::Arc::new(m) }
 }
 
 impl Network {
@@ -405,7 +373,6 @@ impl Network {
         self.networks = a.networks;
         self.air = a.air;
         self.air_error = a.air_error;
-        std::sync::Arc::make_mut(&mut self.makers).extend(a.makers);
         self.memory = a.memory;
     }
 }

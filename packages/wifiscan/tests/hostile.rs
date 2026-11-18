@@ -3,7 +3,7 @@
 //! or control character through to the screen.
 
 use proptest::prelude::*;
-use yggdrasil_wifiscan::{craft, group, ie, nl80211, oui, parse_fixture, Ap, Bss};
+use yggdrasil_wifiscan::{craft, group, ie, nl80211, parse_fixture, Ap, Bss};
 
 fn beacons() -> Vec<Vec<u8>> {
     use craft::{Beacon, Sec};
@@ -149,11 +149,8 @@ proptest! {
     }
 
     #[test]
-    fn fixture_text_and_maker_list_on_random_input(text in "\\PC{0,400}", raw in proptest::collection::vec(any::<u8>(), 0..400)) {
+    fn fixture_text_on_random_input(text in "\\PC{0,400}") {
         let _ = parse_fixture(&text);
-        let _ = oui::makers_from(&raw[..], &[[0, 0, 0], [2, 0, 0]]);
-        let s = oui::short_vendor(&text);
-        prop_assert!(!s.chars().any(ie::invisible));
     }
 
     #[test]

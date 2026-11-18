@@ -298,7 +298,7 @@ impl App {
                 }
                 for (i, (a, faded)) in hidden.iter().enumerate() {
                     let ap = a.best();
-                    let maker = n.maker(&ap.bss.bssid);
+                    let maker = sys::maker(&ap.bss.bssid);
                     let heard = if *faded { NOT_HEARD } else { "" };
                     let sub = [maker, ap.band().label(), heard].iter().filter(|s| !s.is_empty()).copied().collect::<Vec<_>>().join(" · ");
                     // nothing to join without its name: the row opens its page too
@@ -916,7 +916,7 @@ fn seen_before(ui: &mut egui::Ui, pal: &Palette, n: &sys::Network, saved: &netco
     ui::group(ui, pal, Some(&format!("Access points seen for it ({})", aps.len())), |ui| {
         for (i, m) in aps.iter().enumerate() {
             let text = scan::mac_text(m);
-            let mut sub = vec![maker_text(n, m)];
+            let mut sub = vec![maker_text(m)];
             if let Some((_, last)) = n.memory.heard(&text) {
                 sub.push(format!("last heard {}", devices::ago(now, last)));
             }
@@ -926,11 +926,11 @@ fn seen_before(ui: &mut egui::Ui, pal: &Palette, n: &sys::Network, saved: &netco
 }
 
 /// Who made an access point, or why that is not known.
-fn maker_text(n: &sys::Network, m: &[u8; 6]) -> String {
-    if scan::oui::is_local(m) {
+fn maker_text(m: &[u8; 6]) -> String {
+    if heimdall_macvendor::is_local(m) {
         return "Made-up address (often a second network on the same router)".into();
     }
-    match n.maker(m) {
+    match sys::maker(m) {
         "" => "Maker not in the list".into(),
         s => s.to_string(),
     }
@@ -1066,7 +1066,7 @@ fn air_sections(ui: &mut egui::Ui, pal: &Palette, n: &sys::Network, a: &scan::Ne
     ui::group(ui, pal, Some(&heading), |ui| {
         for (i, ap) in a.aps.iter().enumerate() {
             let mac = scan::mac_text(&ap.bss.bssid);
-            let mut sub = vec![maker_text(n, &ap.bss.bssid), ap.band().label().to_string()];
+            let mut sub = vec![maker_text(&ap.bss.bssid), ap.band().label().to_string()];
             if let Some(c) = ap.channel() {
                 sub.push(format!("channel {c}"));
             }
@@ -1098,7 +1098,7 @@ fn air_sections(ui: &mut egui::Ui, pal: &Palette, n: &sys::Network, a: &scan::Ne
     for v in &info.vendors {
         let name = match scan::oui::element_name(v.oui, v.kind) {
             Some(s) => s.to_string(),
-            None => match n.makers.get(&v.oui) {
+            None => match sys::element_maker(v.oui) {
                 Some(m) => format!("{m}'s own"),
                 None => format!(
                     "{:02X}-{:02X}-{:02X}{}",
