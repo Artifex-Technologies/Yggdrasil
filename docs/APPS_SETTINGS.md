@@ -199,23 +199,44 @@ assistant), Apps, Privacy & security, System. Settings opens on General all the 
   top bar, a window with the accent's border, the dock with the first pinned apps in the icon pack). Both are made again
   only when one of those changes, and dropped when the page is left.
 
-- **Appearance > Fonts** (`src/fonts_ui.rs`, since 2026-11-18; `yggdrasil-settings appearance:fonts`): the system font, for text
-  and for code and terminals, chosen from a short list, each with a line of text in it and a plain note on what it was made for:
-  Noto Sans (the default), Atkinson Hyperlegible and Atkinson Hyperlegible Next (the Braille Institute's, for low vision
-  readers), Lexend and OpenDyslexic; for code Noto Sans Mono, Atkinson Hyperlegible Mono and OpenDyslexic Mono. A font that is
-  not installed says so and cannot be chosen (on Labyrinth all are in the base system; elsewhere they are the packages
+- **Appearance > Fonts** (`src/fonts_ui.rs`, since 2026-11-18; `yggdrasil-settings appearance:fonts`), laid out like Windows
+  11's Fonts page since my first try of it the same evening: **Add fonts** at the top (the drop area and "Browse and install
+  fonts"), then **System font** as two rows, **Text** and **Code and terminals**, each showing the font in use drawn in its own
+  letters and opening a page of its own (Appearance › Fonts › Text, `appearance:font-text`; `appearance:font-code`), then the
+  installed fonts as cards. Each kind's page lists the choices, each with a line of text in it, a plain note on what it was
+  made for, and Use or In use: Noto Sans (the default), Atkinson Hyperlegible and Atkinson Hyperlegible Next (the Braille
+  Institute's, for low vision readers), Lexend and OpenDyslexic; for code Noto Sans Mono, Atkinson Hyperlegible Mono and
+  OpenDyslexic Mono. A font that is not installed says so and cannot be chosen (on Labyrinth all are in the base system; elsewhere they are the packages
   `ttf-atkinson-hyperlegible`, `ttf-atkinson-hyperlegible-next`, `ttf-atkinson-hyperlegible-mono`, `ttf-lexend`,
   `otf-opendyslexic` and `otf-opendyslexic-mono`). How it works:
   - The choice is a fontconfig file (`yggdrasil-conf/src/fonts.rs`): `~/.config/fontconfig/conf.d/56-yggdrasil-font.conf`
     prefers the family for `sans-serif` (and `sans`, `system-ui`) and for `monospace`, so every program that asks fontconfig
-    follows it. Settings writes it at once, no password; only families from the list are ever written. Nothing chosen: no
-    file, and Noto Sans as before.
-  - **Login screen:** the computer's file, `/etc/fonts/conf.d/56-yggdrasil-font.conf`, which the login screen and every
-    account without a choice of its own use. "Use these fonts on the login screen" writes it through pkexec and
-    `/usr/lib/yggdrasil/fontconf set SANS MONO` (ids from the list or `-`; `org.yggdrasil.fontconf.set`, an administrator's
-    password, kept a few minutes). The installer writes it too. Your own file is read first (50-user.conf), so it wins over
-    the computer's, and either wins over the distribution's Noto Sans (60-latin.conf).
-  - **Size:** the same "Text and control size" as Accessibility (panel.conf's `text_scale`), repeated here; no second size.
+    follows it. Only families from the list are ever written. Nothing chosen: no file, and Noto Sans as before.
+  - **The font chosen is the system font, the login screen's too** (no separate switch since 2026-11-18). Use writes your own
+    file at once, no password, and then the computer's, `/etc/fonts/conf.d/56-yggdrasil-font.conf` (the login screen's, and
+    every account's without a choice of its own), through pkexec and `/usr/lib/yggdrasil/fontconf set SANS MONO` (ids from the
+    list or `-`; `org.yggdrasil.fontconf.set`, an administrator's password kept a few minutes, like the other system-wide
+    changes in Settings). When the computer's file already says the same, no password is asked. Password cancelled: your own
+    choice still applies, and a small note under the fonts says "The login screen keeps Noto Sans until the font is set
+    again", with "Set again" beside it (the note is read from the two files, so it is there after a restart too). The
+    installer writes both files. Your own file is read first (50-user.conf), so it wins over the computer's, and either wins
+    over the distribution's Noto Sans (60-latin.conf).
+  - **No size here:** text size is display scaling's and Accessibility's "Text and control size" (panel.conf's `text_scale`);
+    the Fonts page no longer repeats it.
+  - **A stale font cache** (found on my PC on 2026-11-18): after `pacman -S ttf-atkinson-hyperlegible` and, in the same
+    second, `pacman -U` of the other five font packages, `fc-list` showed only Atkinson Hyperlegible; `fc-cache -v` said
+    "/usr/share/fonts/TTF: skipping, existing cache is valid: 4 fonts". Fontconfig keeps a folder's cache while the folder's
+    modification time is the same, and Arch's fontconfig 2.18.4 records it in whole seconds only (the cache's nanoseconds
+    field is 0). The first transaction's hook (`fc-cache -s`) cached /usr/share/fonts/TTF with its 4 files at 21:37:31.28;
+    the second put five more in at 21:37:31.72, the same second, so its hook kept the old cache, and the cache of
+    /usr/share/fonts, made in that second too, did not list the new OTF folder at all. Reproduced with a scratch fontconfig
+    (`FONTCONFIG_FILE`, a cache folder of its own). The fontconfig upgrade minutes earlier and the files' own times play no
+    part. "Skipping, looped directory detected" is harmless (a folder reached twice). Two fixes: Labyrinth's five font
+    recipes run `fc-list -q FAMILY || fc-cache -fs /usr/share/fonts` after installing (only when their font is not listed:
+    about two seconds), and Settings, the first time the Fonts page opens, compares `fc-list : family` with the choices'
+    files on disk (`Choice::file`, where each package puts its regular face): a font whose file is there but which is not
+    listed makes it run `fc-cache -f` once (your own cache, no password; fontconfig takes the newer of the two caches) and
+    read the fonts again (`fontlib::heal`). Until that is done such a font says "Looking for it…", not "Not installed".
   - **Who follows, and when:** Yggdrasil's egui apps (Settings, Minos, Agora, Calculator, Task Manager, Saga MD, Clipboard,
     the password box, Keyring, Player, Authenticator, Sudoku, 2048, the installer) within a second
     (`yggdrasil-ui/src/fonts.rs`: they load the fc-matched regular and monospace files over egui's own fonts, which stay behind
@@ -228,9 +249,9 @@ assistant), Apps, Privacy & security, System. Settings opens on General all the 
     and +4.7 MB; with the system's Noto Sans and Noto Sans Mono 13 ms (6 to 9 ms of it the fc-match calls, run side by side)
     and +7.1 MB; with Atkinson Hyperlegible Next and Mono 7.5 ms and +5.2 MB. The real bold face is loaded only by an app that
     asks for it (`fonts::want_bold`, the installer's headings): it would add about 1.4 MB to every app that never draws it.
-  - **Adding and removing fonts**, below the choice, like Windows 11's Fonts page (`src/fontlib.rs`): a drop area ("Drag and
+  - **Adding and removing fonts**, like Windows 11's Fonts page (`src/fontlib.rs`): at the top a drop area ("Drag and
     drop to install": .ttf, .otf, .ttc, .woff2, or a .zip of them) and "Browse and install fonts" (the desktop's file
-    chooser, the FileChooser portal); then the installed fonts as cards, each with a sample line drawn in it (on a thread of its
+    chooser, the FileChooser portal); below the system font the installed fonts as cards, each with a sample line drawn in it (on a thread of its
     own, only for the cards on screen), its name and how many styles it has, a search box above them, and on each card "···"
     with Remove for a font you added (the system's are removed with their package, not here). Your fonts go to
     `~/.local/share/fonts` (no password), then `fc-cache` for that folder. Dropping works on Wayland through yggdrasil-ui's
@@ -385,8 +406,10 @@ About only when switched on, have no picture.
 | **Power > Cooling**: a fan controller's pump and fans, each with its speed now. | ![Settings > Power > Cooling](../assets/screenshots/settings-cooling.png) |
 | **Power > Cooling, a fan's curves**: the processor's curve, dragged point by point. | ![Settings > Power > Cooling, a fan's curves](../assets/screenshots/settings-cooling-curves.png) |
 | **Appearance**: light or dark, the accent, the pages inside it, a row to Accessibility. | ![Settings > Appearance](../assets/screenshots/settings-appearance.png) |
-| **Appearance > Fonts**: the system font for text and for code, each in its own letters, the text size, the login screen's font. | ![Settings > Appearance > Fonts](../assets/screenshots/settings-font.png) |
-| **Appearance > Fonts**, further down: adding fonts (here waiting for a newer Heimdall) and the installed fonts as cards. | ![Settings > Appearance > Fonts, the installed fonts](../assets/screenshots/settings-fonts-installed.png) |
+| **Appearance > Fonts**: adding fonts first (here waiting for a newer Heimdall), then the system font's two rows, each in its own letters, then the installed fonts. | ![Settings > Appearance > Fonts](../assets/screenshots/settings-font.png) |
+| **Appearance › Fonts › Text**: the fonts for text, each with a line in it, and Use (for you and the login screen). | ![Settings > Appearance > Fonts > Text](../assets/screenshots/settings-font-text.png) |
+| **Appearance › Fonts › Code and terminals**: the same for terminals and code. | ![Settings > Appearance > Fonts > Code and terminals](../assets/screenshots/settings-font-code.png) |
+| **Appearance > Fonts**, further down: the installed fonts as cards, each with a sample, and the search box. | ![Settings > Appearance > Fonts, the installed fonts](../assets/screenshots/settings-fonts-installed.png) |
 | **Appearance > Wallpaper**: the lock screen and the desktop previewed side by side, the wallpapers below. | ![Settings > Appearance > Wallpaper](../assets/screenshots/settings-wallpaper.png) |
 | **Appearance > Lock screen**: the designs with their previews. | ![Settings > Appearance > Lock screen](../assets/screenshots/settings-lock-screen-designs.png) |
 | **Sarina**: the operating system's assistant, from its integration. | ![Settings > Sarina](../assets/screenshots/settings-assistant.png) |

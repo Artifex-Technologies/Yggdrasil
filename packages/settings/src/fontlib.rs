@@ -553,6 +553,68 @@ pub fn refresh_cache(dir: &Path) {
     let _ = Command::new("fc-cache").arg("-f").arg(dir).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
 }
 
+// ------------------------------------------------------------------------------------------------ a stale font cache
+
+/// The families `fc-list : family` lists (a font's names on one line, comma-separated; an escaped comma is part of a name).
+pub fn parse_families(text: &str) -> std::collections::HashSet<String> {
+    let mut out = std::collections::HashSet::new();
+    for line in text.lines() {
+        let mut name = String::new();
+        let mut chars = line.chars();
+        while let Some(c) = chars.next() {
+            match c {
+                '\\' => name.extend(chars.next()),
+                ',' => {
+                    out.insert(std::mem::take(&mut name).trim().to_string());
+                }
+                c => name.push(c),
+            }
+        }
+        out.insert(name.trim().to_string());
+    }
+    out.remove("");
+    out
+}
+
+/// The families fontconfig lists now (None: fc-list did not answer).
+pub fn listed(fc_list: &str) -> Option<std::collections::HashSet<String>> {
+    let o = Command::new(fc_list).args([":", "family"]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+    o.status.success().then(|| parse_families(&String::from_utf8_lossy(&o.stdout)))
+}
+
+/// The fonts to choose from whose file is where its package puts it, but which fontconfig does not list.
+pub fn unlisted(listed: &std::collections::HashSet<String>, exists: impl Fn(&Path) -> bool) -> Vec<&'static yggdrasil_conf::fonts::Choice> {
+    yggdrasil_conf::fonts::SANS
+        .iter()
+        .chain(yggdrasil_conf::fonts::MONO)
+        .filter(|c| !listed.contains(c.family) && exists(Path::new(c.file)))
+        .collect()
+}
+
+/// What `heal` found.
+#[derive(Debug, PartialEq)]
+pub enum Healed {
+    /// Every font whose file is here is listed (or fontconfig is not there to ask).
+    Fine,
+    /// The cache was made again; these are still not listed.
+    Refreshed(Vec<&'static yggdrasil_conf::fonts::Choice>),
+}
+
+/// A stale cache: fontconfig keeps a folder's cache while the folder's modification time, in whole seconds, is the same, so
+/// files added in the same second as the cache was made stay unlisted (two pacman transactions in one second did it:
+/// APPS_SETTINGS.md). When a font's files are on disk but fontconfig does not list it, your own cache is made again
+/// (`fc-cache -f`, no password: it goes to ~/.cache/fontconfig, which fontconfig prefers when it is newer) and the list read
+/// again. Run once per run of Settings, on a thread of its own (about two seconds on a desktop with Noto's 600 files).
+pub fn heal(fc_list: &str, fc_cache: &str, exists: impl Fn(&Path) -> bool) -> Healed {
+    let Some(before) = listed(fc_list) else { return Healed::Fine };
+    if unlisted(&before, &exists).is_empty() {
+        return Healed::Fine;
+    }
+    let _ = Command::new(fc_cache).arg("-f").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
+    let after = listed(fc_list).unwrap_or_default();
+    Healed::Refreshed(unlisted(&after, &exists))
+}
+
 // ------------------------------------------------------------------------------------------------ the sample line
 
 /// The sample drawn in a font: a coverage mask (one byte per pixel) `width` x `height`, or None when the font cannot be read or

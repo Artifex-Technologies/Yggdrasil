@@ -1,5 +1,5 @@
 //! fontconf: the computer's system font, which the login screen and every account without its own choice use (Settings >
-//! Appearance > Fonts, "Use on the login screen"), run as root through pkexec:
+//! Appearance > Fonts: Use sets your own font and this one, so the login screen matches), run as root through pkexec:
 //!
 //!   fontconf set SANS MONO     the ids of yggdrasil_conf::fonts' choices, or "-" for none of each; both "-" removes the file
 //!

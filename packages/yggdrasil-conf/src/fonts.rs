@@ -27,6 +27,9 @@ pub struct Choice {
     pub name: &'static str,
     /// A short, plain description (modest: what it was made for, not what it does for anyone).
     pub note: &'static str,
+    /// Its regular face where its package puts it (Labyrinth's and Arch's packages): Settings looks for it there when fontconfig
+    /// does not list the family, which means fontconfig's cache is stale (APPS_SETTINGS.md, "a stale font cache").
+    pub file: &'static str,
 }
 
 /// Fonts for ordinary text, the default first.
@@ -36,42 +39,60 @@ pub const SANS: &[Choice] = &[
         family: "Noto Sans",
         name: "Noto Sans",
         note: "The default: clear and plain, with letters for almost every language",
+        file: "/usr/share/fonts/noto/NotoSans-Regular.ttf",
     },
     Choice {
         id: "atkinson-hyperlegible",
         family: "Atkinson Hyperlegible",
         name: "Atkinson Hyperlegible",
         note: "Designed by the Braille Institute for low vision readers: letters that are hard to mix up, like I, l and 1",
+        file: "/usr/share/fonts/TTF/AtkinsonHyperlegible-Regular.ttf",
     },
     Choice {
         id: "atkinson-hyperlegible-next",
         family: "Atkinson Hyperlegible Next",
         name: "Atkinson Hyperlegible Next",
         note: "The newer Atkinson Hyperlegible (2024), with more weights and languages, for low vision readers",
+        file: "/usr/share/fonts/TTF/AtkinsonHyperlegibleNext-VF.ttf",
     },
-    Choice { id: "lexend", family: "Lexend", name: "Lexend", note: "Wide letters with even spacing, designed to make reading less tiring" },
+    Choice {
+        id: "lexend",
+        family: "Lexend",
+        name: "Lexend",
+        note: "Wide letters with even spacing, designed to make reading less tiring",
+        file: "/usr/share/fonts/TTF/Lexend-VF.ttf",
+    },
     Choice {
         id: "opendyslexic",
         family: "OpenDyslexic",
         name: "OpenDyslexic",
         note: "Designed to make reading easier with dyslexia: heavier letter bottoms. Some find it helps, some do not",
+        file: "/usr/share/fonts/OTF/OpenDyslexic-Regular.otf",
     },
 ];
 
 /// Fonts for code and terminals, the default first.
 pub const MONO: &[Choice] = &[
-    Choice { id: "noto-sans-mono", family: "Noto Sans Mono", name: "Noto Sans Mono", note: "The default, matching Noto Sans" },
+    Choice {
+        id: "noto-sans-mono",
+        family: "Noto Sans Mono",
+        name: "Noto Sans Mono",
+        note: "The default, matching Noto Sans",
+        file: "/usr/share/fonts/noto/NotoSansMono-Regular.ttf",
+    },
     Choice {
         id: "atkinson-hyperlegible-mono",
         family: "Atkinson Hyperlegible Mono",
         name: "Atkinson Hyperlegible Mono",
         note: "The Braille Institute's monospaced Atkinson Hyperlegible, for low vision readers",
+        file: "/usr/share/fonts/TTF/AtkinsonHyperlegibleMono-VF.ttf",
     },
     Choice {
         id: "opendyslexic-mono",
         family: "OpenDyslexicMono",
         name: "OpenDyslexic Mono",
         note: "The monospaced OpenDyslexic (an older design, from 2016)",
+        file: "/usr/share/fonts/OTF/OpenDyslexicMono-Regular.otf",
     },
 ];
 
@@ -256,6 +277,19 @@ pub fn signature_of(paths: &[PathBuf]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_choice_says_where_its_package_puts_it() {
+        let all: Vec<&Choice> = SANS.iter().chain(MONO).collect();
+        for c in &all {
+            assert!(c.file.starts_with("/usr/share/fonts/") && !c.file.contains(".."), "{}", c.id);
+            assert!([".ttf", ".otf"].iter().any(|e| c.file.ends_with(e)), "{}", c.id);
+        }
+        let mut ids: Vec<&str> = all.iter().map(|c| c.id).collect();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), all.len());
+    }
 
     #[test]
     fn nothing_chosen_is_no_file_and_the_defaults() {

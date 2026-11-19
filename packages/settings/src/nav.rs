@@ -78,21 +78,7 @@ impl App {
                     l.push(d.map(|d| d.name.clone()).unwrap_or_else(|| "Device".into()));
                 }
             }
-            Page::Appearance => {
-                let t = match self.app_sub {
-                    AppSub::Main => None,
-                    AppSub::Font => Some("Fonts"),
-                    AppSub::Icons => Some("Icons"),
-                    AppSub::Bar => Some("Top bar and dock"),
-                    AppSub::Notifs => Some("Notifications"),
-                    AppSub::Wallpaper => Some("Wallpaper"),
-                    AppSub::Minos => Some("Minos"),
-                    AppSub::Lock => Some("Lock screen"),
-                    AppSub::Workspaces => Some("Workspaces"),
-                    AppSub::Boot => Some("Boot screen"),
-                };
-                l.extend(t.map(String::from));
-            }
+            Page::Appearance => l.extend(appearance_levels(self.app_sub).iter().map(|s| s.to_string())),
             Page::Power => {
                 if self.power_fans {
                     l.push("Cooling".into());
@@ -191,7 +177,7 @@ impl App {
                 self.bt_open = None;
                 self.bt_forget = false;
             }
-            Page::Appearance => self.app_sub = AppSub::Main,
+            Page::Appearance => self.app_sub = appearance_up(self.app_sub),
             Page::SoftwareUpdate => self.upd_sub = crate::sysupdate::Sub::Main,
             Page::Power => {
                 self.power_fans = false;
@@ -325,6 +311,32 @@ impl App {
     }
 }
 
+/// The levels of an Appearance page, outermost first: "Fonts", then "Text" for Fonts > Text.
+fn appearance_levels(sub: AppSub) -> &'static [&'static str] {
+    match sub {
+        AppSub::Main => &[],
+        AppSub::Font => &["Fonts"],
+        AppSub::FontText => &["Fonts", crate::fonts_ui::TEXT_TITLE],
+        AppSub::FontCode => &["Fonts", crate::fonts_ui::CODE_TITLE],
+        AppSub::Icons => &["Icons"],
+        AppSub::Bar => &["Top bar and dock"],
+        AppSub::Notifs => &["Notifications"],
+        AppSub::Wallpaper => &["Wallpaper"],
+        AppSub::Minos => &["Minos"],
+        AppSub::Lock => &["Lock screen"],
+        AppSub::Workspaces => &["Workspaces"],
+        AppSub::Boot => &["Boot screen"],
+    }
+}
+
+/// One level up from an Appearance page: Fonts > Text back to Fonts, the rest to Appearance itself.
+fn appearance_up(sub: AppSub) -> AppSub {
+    match sub {
+        AppSub::FontText | AppSub::FontCode => AppSub::Font,
+        _ => AppSub::Main,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -413,6 +425,22 @@ mod tests {
         assert_eq!(a.page, Page::General);
         assert_eq!(a.path(), ["General"]);
         assert!(!a.back());
+    }
+
+    #[test]
+    fn the_font_pages_go_back_to_fonts() {
+        let mut a = app();
+        a.page = Page::Appearance;
+        a.app_sub = AppSub::FontText;
+        assert_eq!(a.path(), ["Appearance", "Fonts", "Text"]);
+        assert!(a.back());
+        assert_eq!(a.path(), ["Appearance", "Fonts"]);
+        assert!(a.back());
+        assert_eq!(a.path(), ["Appearance"]);
+        a.app_sub = AppSub::FontCode;
+        assert_eq!(a.path(), ["Appearance", "Fonts", "Code and terminals"]);
+        a.rewind(Page::Appearance);
+        assert_eq!(a.path(), ["Appearance"]);
     }
 
     #[test]

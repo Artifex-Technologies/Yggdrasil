@@ -236,3 +236,61 @@ fn a_sample_is_drawn() {
     assert!(render_sample(b"not a font", 0, "Aa", 24.0).is_none());
     assert!(render_sample(&font_bytes(), 0, "   ", 24.0).is_none(), "spaces only: nothing to show");
 }
+
+#[test]
+fn fc_lists_families_are_read() {
+    let got = parse_families("Noto Sans\nAtkinson Hyperlegible Mono,Atkinson Hyperlegible Mono ExtraLight\nA\\,B\n\n");
+    let want: std::collections::HashSet<String> =
+        ["Noto Sans", "Atkinson Hyperlegible Mono", "Atkinson Hyperlegible Mono ExtraLight", "A,B"].iter().map(|s| s.to_string()).collect();
+    assert_eq!(got, want);
+}
+
+/// Stand-ins for fc-list and fc-cache: fc-list lists Noto Sans (and Lexend once fc-cache has run, as a stale cache made
+/// again would), fc-cache logs how it was run.
+fn cache_standins(dir: &Path, after: &str) -> (String, String) {
+    let (list, cache, done) = (dir.join("fc-list"), dir.join("fc-cache"), dir.join("refreshed"));
+    std::fs::write(
+        &list,
+        format!(
+            "#!/bin/sh\n[ \"$*\" = ': family' ] || exit 2\necho 'Noto Sans'\necho 'Noto Sans Mono'\n[ -e '{}' ] && printf '%s\\n' '{after}'\nexit 0\n",
+            done.display()
+        ),
+    )
+    .unwrap();
+    std::fs::write(&cache, format!("#!/bin/sh\necho \"$@\" >> '{}'\n", done.display())).unwrap();
+    for p in [&list, &cache] {
+        std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    (list.display().to_string(), cache.display().to_string())
+}
+
+#[test]
+fn a_stale_cache_is_made_again_once() {
+    let lexend = Path::new(yggdrasil_conf::fonts::sans("lexend").unwrap().file);
+    let noto = Path::new(yggdrasil_conf::fonts::SANS[0].file);
+    let noto_mono = Path::new(yggdrasil_conf::fonts::MONO[0].file);
+    // Lexend's file is on disk but not listed: fc-cache -f, and then it is
+    let d = tmp("heal");
+    let (list, cache) = cache_standins(&d, "Lexend");
+    let here = |p: &Path| p == lexend || p == noto || p == noto_mono;
+    assert_eq!(heal(&list, &cache, here), Healed::Refreshed(vec![]));
+    assert_eq!(std::fs::read_to_string(d.join("refreshed")).unwrap(), "-f\n", "your own cache, forced, run once");
+    // listed already: nothing is run
+    let d = tmp("heal-fine");
+    let (list, cache) = cache_standins(&d, "Lexend");
+    assert_eq!(heal(&list, &cache, |p| p == noto || p == noto_mono), Healed::Fine);
+    assert!(!d.join("refreshed").exists());
+    // not on disk either (not installed): nothing is run
+    assert_eq!(heal(&list, &cache, |_| false), Healed::Fine);
+    assert!(!d.join("refreshed").exists());
+    // still missing after the cache was made again: said so (the page then says "Not installed.")
+    let d = tmp("heal-still");
+    let (list, cache) = cache_standins(&d, "Something Else");
+    let got = heal(&list, &cache, here);
+    assert_eq!(got, Healed::Refreshed(vec![yggdrasil_conf::fonts::sans("lexend").unwrap()]));
+    // no fontconfig at all: nothing to do
+    assert_eq!(heal("/nonexistent/fc-list", &cache, here), Healed::Fine);
+    for t in ["heal", "heal-fine", "heal-still"] {
+        let _ = std::fs::remove_dir_all(std::env::temp_dir().join(format!("ygg-fontlib-{t}-{}", std::process::id())));
+    }
+}

@@ -43,6 +43,8 @@ declare -A ACTIONS=(
     [settings-displays-connect]="tap 1413 517"
     [settings-lock-screen-designs]="wait 30"
     [settings-wallpaper]="wait 30"
+    [settings-font]="wait 20"
+    [settings-fonts-installed]="wait 20"
     [taskmanager]="tap 474 265; wait 3; tap 735 430; wait 5"
     [minos-privacy-menu]="pointer 900 300; click right; wait 3"
     [calculator]="type 1299*12"
@@ -86,7 +88,9 @@ shots() {
     shot settings-cooling-curves        desktop settings power:cooling system 700
     shot settings-appearance            desktop settings appearance system
     shot settings-font                  desktop settings appearance:font system
-    shot settings-fonts-installed       desktop settings appearance:font system 1250
+    shot settings-font-text             desktop settings appearance:font-text system
+    shot settings-font-code             desktop settings appearance:font-code system
+    shot settings-fonts-installed       desktop settings appearance:font system 420
     shot settings-lock-screen-designs   desktop settings appearance:lock system
     shot settings-wallpaper             desktop settings appearance:wallpaper system
     shot settings-assistant             desktop settings assistant system

@@ -141,6 +141,9 @@ enum KeySub {
 enum AppSub {
     Main,
     Font,
+    /// Fonts > Text and Fonts > Code and terminals: the choices for each.
+    FontText,
+    FontCode,
     Icons,
     Bar,
     Notifs,
@@ -675,6 +678,8 @@ impl App {
             app_sub: match start_sub().as_str() {
                 "icons" => AppSub::Icons,
                 "font" | "fonts" => AppSub::Font,
+                "font-text" | "fonts-text" => AppSub::FontText,
+                "font-code" | "fonts-code" => AppSub::FontCode,
                 "bar" => AppSub::Bar,
                 "notifs" => AppSub::Notifs,
                 "wallpaper" => AppSub::Wallpaper,
@@ -2464,7 +2469,7 @@ impl App {
         if self.app_sub == AppSub::Lock {
             self.lock_page(ui, pal, ctx);
         }
-        if self.app_sub == AppSub::Font {
+        if matches!(self.app_sub, AppSub::Font | AppSub::FontText | AppSub::FontCode) {
             self.font_page(ui, pal, ctx);
         }
         if self.app_sub == AppSub::Workspaces {

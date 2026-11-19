@@ -370,10 +370,31 @@ pub fn nav_row(
     subtitle: Option<&str>,
     extra: impl FnOnce(&mut egui::Ui),
 ) -> bool {
+    nav_row_with(
+        ui,
+        pal,
+        first,
+        |ui| {
+            ui.add(egui::Label::new(RichText::new(title).size(14.0)).wrap());
+        },
+        subtitle,
+        extra,
+    )
+}
+
+/// The same with a title drawn by `title` (more than one line of text, or text in a font of its own).
+pub fn nav_row_with(
+    ui: &mut egui::Ui,
+    pal: &Palette,
+    first: bool,
+    title: impl FnOnce(&mut egui::Ui),
+    subtitle: Option<&str>,
+    extra: impl FnOnce(&mut egui::Ui),
+) -> bool {
     let bg = ui.painter().add(egui::Shape::Noop);
     let id = ui.next_auto_id();
     let r = ui.scope(|ui| {
-        row(ui, pal, first, title, subtitle, |ui| {
+        row_with(ui, pal, first, title, subtitle, |ui| {
             ui.label(RichText::new("\u{203a}").size(20.0).color(pal.dim));
             extra(ui);
         });
