@@ -229,7 +229,7 @@ page with made-up networks and joins nothing.
   offer the same software later (once online, or when such a device is plugged in). The plan carries `"extras": [ids chosen]`; with
   no file there is no page and no key. (Labyrinth installs what the medium does not carry at the first login, online.)
 
-Modes: `erase` (the whole disk) and `manual` (partitions chosen by hand, Calamares-style). Still to come: shrinking a partition
+Modes: `erase` (the whole disk) and `manual` (partitions chosen by hand, Calamares-style). Not supported: shrinking a partition
 to make room automatically ("install alongside"), and partitions on more than one disk in one install.
 
 ## How the program installs
