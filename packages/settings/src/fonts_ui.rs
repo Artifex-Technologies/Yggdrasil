@@ -330,7 +330,7 @@ fn list(ui: &mut egui::Ui, pal: &Palette, found: &[Found], choices: &[Choice], c
     let mut click = None;
     for (i, c) in choices.iter().enumerate() {
         let here = found.iter().find(|f| f.choice == c).is_some_and(|f| f.file.is_some());
-        let note = if here { c.note.to_string() } else { format!("{} Not installed.", c.note) };
+        let note = if here { c.note.to_string() } else { format!("{}. Not installed.", c.note.trim_end_matches('.')) };
         ui::row_with(
             ui,
             pal,
