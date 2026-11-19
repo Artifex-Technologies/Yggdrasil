@@ -20,7 +20,7 @@ It replaced the WhiteSur KDE, GTK and cursor themes (about 29 MB, GPL-3, macOS-s
 ## Why this and not a bigger theme
 Lightweight (a few text files and one small cursor set, nothing running), stable (it uses Qt's and GTK's own styles, which every release keeps working), secure and private (nothing is downloaded, no third-party theme code or scripts are installed or run, no network), and one palette for everything.
 
-## Not done yet
+## Known limitations
 - KDE's platform theme (`plasma-integration`) is gone with KDE and `qt6ct` is not installed. In the Yggdrasil session plain Qt programs use Qt's own portal theme (`QT_QPA_PLATFORMTHEME=xdgdesktopportal`, set by `yggdrasil-session`), which gives them dark or light and the accent, not every colour of the scheme; programs built on KDE's libraries read the full scheme from `kdeglobals` (written only while one is installed). How closely each Qt program matches has not been checked.
 - A light variant exists but has had much less use than the dark one; check it before relying on it.
 - GTK 4 programs that do not use libadwaita get GTK's own shapes in Yggdrasil's colours; the accent in the system theme file is the default purple (a changed accent reaches them only through `~/.config/gtk-4.0/gtk.css`, which GTK 4 loads after the theme, so it does, but some small parts of GTK's theme keep their built-in values).

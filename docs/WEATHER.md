@@ -70,5 +70,5 @@ against the real services at a neutral test point: forecast, bar output, recordi
 the no-location path all worked. Not built on Linux; no PKGBUILD run; the recording
 timer and the bar have never run together; the learning has never seen real history.
 
-Not built: a graphical weather window (the bar tooltip and `forecast` table are the
-display for now), NWS alerts, a radar view, and any provider beyond the two above.
+Known limitations: no graphical weather window (the bar tooltip and the `forecast` table are the
+display), no NWS alerts, no radar view, and no provider beyond the two above.

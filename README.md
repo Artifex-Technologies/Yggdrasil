@@ -9,7 +9,7 @@ operating system: what an OS adds (an assistant, a security monitor, an installe
 
 Status: Yggdrasil runs as its own session on [Hyprland](https://hyprland.org) (`yggdrasil-session`), with Yggdrasil's own top bar,
 dock, Settings, file manager, app store, lock and login screens, password box and installer. KDE is gone: nothing of it is
-started, called or linked. Yggdrasil's own compositor is in progress: it runs nested in a window, headless for tests, and since 2026-11-15 on a real screen through DRM/KMS (the hardware backend's first milestone, tried in a virtual machine; laptop tests next) ([docs/COMPOSITOR.md](docs/COMPOSITOR.md)); Hyprland stays the desktop's compositor until it is ready. Every program and helper of the desktop is Rust; the old Python and shell copies kept for a rollback were removed on 2026-11-15. The checklist for a desktop of its own:
+started, called or linked. Yggdrasil's own compositor is in progress: it runs nested in a window, headless for tests, and since 2026-11-15 on a real screen through DRM/KMS (the hardware backend's first milestone, tried in a virtual machine) ([docs/COMPOSITOR.md](docs/COMPOSITOR.md)); Hyprland stays the desktop's compositor until it is ready. Every program and helper of the desktop is Rust; the old Python and shell copies kept for a rollback were removed on 2026-11-15. The checklist for a desktop of its own:
 [docs/INDEPENDENCE.md](docs/INDEPENDENCE.md).
 
 **How it is tested.** Every push runs the `checks` workflow in an Arch container: each crate is formatted, linted, tested and

@@ -113,11 +113,3 @@ Each app's main keys; the link has all of them.
 | 2048 | arrows, WASD or HJKL slide, U undo, N new game | [keys/2048.md](keys/2048.md) |
 | Sudoku | arrows or HJKL move, 1-9 place, N notes, U undo, Shift + H hint, P pause | [keys/sudoku.md](keys/sudoku.md) |
 | Settings, Agora, installer | no shortcuts of their own (Tab, Enter and typing as usual) | [keys/settings-agora-installer.md](keys/settings-agora-installer.md) |
-
-## Planned
-
-Planned with our own compositor (not in the Hyprland session): Alt + Tab shows every window as a live card in wrapping rows
-while Alt is held, Tab moving through them (like Windows 11's, in Yggdrasil's design; today: text cards in the compositor, a
-plain jump in Hyprland), and **Win + Tab** opens the deck: the windows stand fanned out
-in 3D, Tab, the arrow keys or the mouse wheel flip through them, Enter or a click picks one, Escape closes it (a flat grid on
-chips too weak for 3D).

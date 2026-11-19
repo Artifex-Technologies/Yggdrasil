@@ -30,6 +30,6 @@ The switch in the title bar, or **Ctrl+E**, changes between the two. There is ne
 - Saving writes a new copy beside the file and puts it in place, so a crash never leaves half a file. Files you cannot write, and
   files that are not UTF-8 text, open read-only.
 
-Not done yet: find on the page, syntax colours in code blocks, line numbers in the source.
+Known limitations: no find on the page, no syntax colours in code blocks, no line numbers in the source.
 
     saga-md [--source] [--zoom PERCENT] [FILE[#heading]]

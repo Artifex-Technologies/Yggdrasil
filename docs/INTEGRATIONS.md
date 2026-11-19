@@ -29,7 +29,7 @@ runtime = labyrinth-sarina         # folder in $XDG_RUNTIME_DIR where it reports
 shortcut = Super+S                 # the talk key Yggdrasil registers, a tap starts a hands-free conversation, a tap ends it (Ctrl+Alt+S is a second way in)
 question = /usr/local/bin/labyrinth-ask-sarina --voice   # optional: a typed question, added as the last argument; prints the answer; should only read
 crash_question = The program {program} just crashed ({signal}). Look into it: ...   # optional: how the crash watch asks
-update_verdict = /var/lib/sarina/update-verdict   # optional (planned): its verdict on the available system updates, below
+update_verdict = /var/lib/sarina/update-verdict   # optional: its verdict on the available system updates, below
 ```
 
 With `update_verdict`, Settings > General > Software Update reads the file each time it shows the updates: the first line is

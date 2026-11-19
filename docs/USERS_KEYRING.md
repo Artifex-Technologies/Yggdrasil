@@ -1,6 +1,6 @@
 # Users page and the keyring sync tool
 
-Two pieces that keep the login password and gnome-keyring's login keyring together (see DESKTOP_ROADMAP.md, "Keeping the keyring password ...").
+Two pieces that keep the login password and gnome-keyring's login keyring together.
 
 ## Settings > Users (`packages/settings/src/users.rs`, `page_users` in main.rs)
 - Shows who you are (name, login, administrator or standard, home folder) and the state of the keyring (unlocked / locked / not running).
@@ -10,7 +10,7 @@ Two pieces that keep the login password and gnome-keyring's login keyring togeth
   `/etc/pam.d/passwd`) changes the keyring's password with it. KDE's Users page (gone with KDE) used AccountsService, which has no old password and would leave the keyring behind.
   Failures are put in plain words ("The current password is not right.", "The new password is too weak: ...", "do not match").
 - Tested with a stand-in `passwd` (right answers, wrong current password, weak new password); the real `passwd` was never run by the tests.
-- **Not built:** adding and removing other accounts, changing the full name or the account type (they need administrator actions through polkit).
+- **Other accounts:** adding and removing them, the full name and the account type go through the account helper (`/usr/lib/yggdrasil/account`, packages/settings-helpers), with an administrator's password through pkexec.
 
 ## yggdrasil-keyring-sync (`packages/keyring-sync`)
 - Runs at login (`/etc/xdg/autostart/yggdrasil-keyring-sync.desktop` in the profile) and does nothing unless the login keyring is locked.

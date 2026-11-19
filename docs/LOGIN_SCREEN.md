@@ -62,5 +62,5 @@ The sign-in (clock, account, password) is on the **main display** only; every ot
   sign-in like with SDDM) and `/etc/labyrinth/greeter.conf` (now `/etc/yggdrasil/greeter.conf`).
 - To try it in a virtual machine (Limbo): `pacman -S greetd cage`, `systemctl disable sddm`, `systemctl enable greetd`, restart.
   A way back: `systemctl disable greetd; systemctl enable sddm` from a text console (Ctrl+Alt+F3).
-- Not done: power buttons, an on-screen keyboard, the accessibility settings of
-  [ACCESSIBILITY.md](ACCESSIBILITY.md), and a picture for accounts that have none in AccountsService.
+- Known limitations: no power buttons, no on-screen keyboard, none of the accessibility settings of
+  [ACCESSIBILITY.md](ACCESSIBILITY.md), and no picture for accounts that have none in AccountsService.

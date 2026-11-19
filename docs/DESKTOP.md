@@ -274,7 +274,7 @@ installer currently uses zram only, so today Hibernate does **not** appear. To g
 the install needs a swap file or partition of about 64 GB (~6% of the 1 TB disk) plus
 resume configuration. That is a decision for you; see the end of this file.
 
-## Not done / unknown
+## Known limitations and laptop notes
 
 - **Left buttons for non-GTK windows.** Hyprland draws no title bars. Qt, Electron
   and Firefox windows follow their own settings. The `hyprbars` plugin can draw
@@ -285,7 +285,8 @@ resume configuration. That is a decision for you; see the end of this file.
 - **The bar has no popups** (no slider panel for volume or Wi-Fi); clicking opens the
   matching app (pavucontrol, nm-connection-editor, blueman). A Quickshell shell like
   Omarchy's would add them; it needs the Omarchy repo's packages, which LykanOS (formerly
-  Chymaera OS) also has not adopted.
+  Chymaera OS) also has not adopted. **Now:** this was Waybar; Yggdrasil's own panel replaced it, with drop-downs of its own
+  (the battery's, the volume and brightness pop-up).
 - **Battery** (2026-11-13): on a laptop, the battery sits beside the clock; its drop-down has the power mode and the charge
   limit, and Settings > Power the same (Settings' `battery` helper, a bar add-on). Brightness is in the volume and brightness pop-up.
 - **Tablet mode and rotation** (2026-11-13, for a 2-in-1 such as the ThinkPad X1 Yoga): `/usr/lib/yggdrasil/tablet watch`
@@ -296,28 +297,20 @@ resume configuration. That is a decision for you; see the end of this file.
   is claimed only while it is followed. Hyprland loses the turn when it rereads its config, so the watcher turns it again on
   `configreloaded`. The on-screen keyboard (wvkbd from the AUR, Agora's "On-screen keyboard") shows while folded and no keyboard
   is plugged in by USB or Bluetooth (read from /sys, no input device is opened). Settings > Displays: Lock rotation, and the
-  keyboard switch (~/.config/yggdrasil/tablet.conf). Not yet: Yggdrasil's own compositor cannot turn a screen (its
-  output management refuses a transform), so there the watcher shows the keyboard only; the turn direction and the touch
-  turn are to be checked on the laptop (my laptop checklist, in my private plans).
+  keyboard switch (~/.config/yggdrasil/tablet.conf). Yggdrasil's own compositor cannot turn a screen (its
+  output management refuses a transform), so there the watcher shows the keyboard only. The turn direction and the touch
+  turn have not been checked on a laptop yet.
 - **Fingerprint reader** (2026-11-13): fprintd and libfprint are an online component (Agora's "Fingerprint reader"; the
   installer ticks it when a reader libfprint supports is plugged in). Settings > Users > Fingerprint enrols a finger (fprintd
   asks for your password through the polkit agent) and removes them. **Fingerprint for sudo** is a switch there, off until you
   turn it on: `pkexec /usr/lib/yggdrasil/fingerprint sudo on` (org.yggdrasil.fingerprint.sudo, an administrator's password every
   time) puts a marker line and `auth sufficient pam_fprintd.so` at the top of /etc/pam.d/sudo; "sufficient", so no finger
   (Ctrl+C, the time running out, no reader) falls through to the password as before. `sudo off` takes exactly those two lines
-  out. The plan for the rest, not done:
-  1. **Lock screen:** not through PAM (with pam_fprintd in its stack, a typed password would first wait for a finger). The
-     lock talks to fprintd itself: VerifyStart while the password field is shown, unlock on `verify-match`, the password still
-     works at any moment; a switch "Unlock with fingerprint" beside the sudo one, off by default. After three failed fingers,
-     only the password.
-  2. **Password boxes (polkit):** our polkit agent runs polkit's helper over PAM's `polkit-1` stack; the same marked-line
-     approach for `polkit-1`, a third switch, once the agent shows "Touch the reader" from PAM's text messages.
-  3. **Login screen:** last, and maybe never: the disk's encryption needs the password at boot anyway, and the keyring is opened
-     with the login password.
+  out. The lock screen, the password boxes (polkit) and the login screen do not take a fingerprint.
 - **Weather privacy:** Open-Meteo and aviationweather.gov receive the coordinates of the
   place you set (never guessed from your IP). See WEATHER.md.
-- **`minos` has no package yet**, so the `SUPER + SHIFT + F` binding will not
-  open it on an installed system until we write one.
+- **`minos` had no package yet** (2026-10-11), so the `SUPER + SHIFT + F` binding did not
+  open it on an installed system. **Now:** `packages/pkgbuilds/yggdrasil-minos` packages it.
 - **Package names**: all but the CachyOS/our-own ones were checked against Arch's live
   package database (84 of 97 found). Not found there and so unverified: the
   `linux-cachyos*` kernels, `proton-cachyos`, `protonup-qt` (likely AUR or a CachyOS

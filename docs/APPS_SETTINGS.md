@@ -682,19 +682,12 @@ namespace); `sudo bash tests/appnet_ask/kernel_log_check.sh` (the real kernel lo
 - The Optional software tab and the start of removing packages use pkexec; the live image has a passwordless polkit rule, so
   prompts only appear on an installed system.
 
-## Not done yet
+## Known limitations
 
-- Per-app Location and "which other apps it can see" for Flatpak apps (Flatpak overrides could do both).
-- A network-usage logger per app (the running-time logger exists).
-- A right-click "App settings" entry in the dock that runs `yggdrasil-settings apps:ID`.
-- **The network kind, suggested and asked once** (from the 2026-11-16 plan; the choice itself is done): Heimdall's suggestion
-  shown inline beside "This network is" ("Looks like a phone hotspot"), never applied by itself, once Heimdall offers one, and
-  the "joined a new network" notification asking once (with "decide later") when a network cannot be classified.
-- **Software Update, validated updates** (planned): Sarina's limbo-validate trying the available updates in a Limbo guest and
-  writing the `update_verdict` file Settings already reads; and Sarina reading Update History (`yggdrasil_updates::history`)
-  to name the update that came before a problem. Advanced options (check automatically, update source, AUR updates) are left
-  out until such settings exist.
-- **Protective mode** (planned, after training): when Heimdall is confident a man-in-the-middle is real on a learned network,
-  restrict traffic while keeping the connection (pin the known router, drop address offers and IPv6 router announcements from
-  anything else, keep DNS on the known servers, use the VPN if set up), with a notice and an undo. It switches on only after
-  an observe-only period per network and a threshold I approve. Design: Heimdall's docs/WIFI_TRUST.md.
+- Flatpak apps: no per-app Location or "which other apps it can see" here (Flatpak has its own permissions).
+- No network usage per app (the running time is counted).
+- The dock has no right-click "App settings" entry; `yggdrasil-settings apps:ID` opens an app's page.
+- Software Update: the updates count as validated only when an assistant writes the `update_verdict` file (docs/INTEGRATIONS.md);
+  there are no advanced options (check automatically, update source, AUR updates).
+- The network kind ("This network is") is your choice only: Heimdall's suggestion is not shown, and a new network that cannot
+  be classified is not asked about.

@@ -3,7 +3,7 @@
 Yggdrasil's own Wayland compositor, in Rust on [Smithay](https://github.com/Smithay/smithay). **Nothing switches to it.** My
 plan (2026-11-10) was to give it a hardware (DRM/KMS) backend only after the rest of Yggdrasil is ported to Rust; Hyprland's
 display crashes changed that on 2026-11-14: the hardware backend is the next big project, and its first milestone (below) runs on
-a virtual GPU and screen in a virtual machine. It replaces Hyprland only once it passes the checklist at the end of this file on
+a virtual GPU and screen in a virtual machine. It replaces Hyprland only once it passes the checks at the end of this file on
 my own PC. Until then my desktop stays on Hyprland; the compositor runs nested in a window, headless (where Yggdrasil's own
 programs are tested on it) or in the test machine. The longer history (nested mode, XWayland, what was tried by hand) is in [docs/COMPOSITOR.md](../../docs/COMPOSITOR.md).
 
@@ -130,14 +130,14 @@ The session's behaviour is set in `packages/session/hyprland/yggdrasil.lua` (wit
 Wine's WM_STATE), Alt+Tab switcher, Super+T and tiling workspaces, window controls for server-side decoration, move and resize
 by the program's own title bar, Super+drag, xdg-activation, idle inhibit, clipboard and primary selection.
 
-**Not yet (the gap), in the order I would close it:**
+**The gap to Hyprland, item by item** (what each item has, and what it still lacks):
 1. **What is left of "our tools call hyprctl"** (every tool moved to yggdrasil-wm on 2026-11-12, above). Hyprland's own on purpose:
    hyprsunset's night light (its own socket; this compositor has no gamma control yet, item 11), the Hyprland plugin builder
    (`yggdrasil-hypr-plugin`), the magnifier (`yggdrasil-zoom`, Hyprland's zoom: its keys are bound here, it zooms nothing yet),
    the config-error toast's event socket and
    xmove (both do nothing elsewhere), and Settings' own Hyprland file and night light. Settings > Displays lists and changes this
    compositor's screens (it writes `monitors.lua` and reloads through yggdrasil-wm, as on Hyprland; the compositor takes the file
-   on reload, item 3). Still to come: the control socket on the real session (today only headless), and ext-workspace so other
+   on reload, item 3). Missing: the control socket on the real session (today only headless), and ext-workspace so other
    programs see this compositor's desktops the standard way (its windows they see through ext-foreign-toplevel-list since item 6).
 2. ~~The shortcut table~~, closed 2026-11-12: the built-in table is the session's (`src/shortcuts.rs`; a unit test reads
    `yggdrasil.lua` and fails on any bind missing on either side), with its words and the same command lines (Super+N, Super+S
@@ -286,24 +286,16 @@ by the program's own title bar, Super+drag, xdg-activation, idle inhibit, clipbo
 11. **The hardware backend** (DRM/KMS), developed in a virtual machine, never on the live session. Milestone 1 done 2026-11-15
    (above, `src/udev.rs`): libseat (logind and seatd), udev GPUs and connectors, GBM/EGL with OpenGL ES or pixman on dumb
    buffers, a DrmCompositor per screen paced by the page flip, libinput, virtual terminals, a clean exit; the panel, Settings and
-   foot drawn and used in the VM. Next: the laptop milestone (internal screen and lid, real hotplug, default scale, suspend),
-   then NVIDIA (explicit sync, hybrid GPUs, several monitors, VRR, direct scanout, tearing), then the checklist below.
+   foot drawn and used in the VM.
 12. **The bake-off:** the same games and the CAD model measured against Hyprland (`tools/bakeoff`), and only then a decision.
 
-## Checklist before it may replace Hyprland on my PC
+## Before it replaces Hyprland
 
-Each item is checked on my own machine (NVIDIA, more than one screen), from a separate login entry, with Hyprland's entry kept
-and a way back:
-- [ ] NVIDIA: nvidia-drm with modeset, GBM, the desktop and a game drawn without corruption; a machine with two GPUs picks the right one
-- [ ] Explicit sync (linux-drm-syncobj-v1): no flicker and no frames out of order in games and in Vivaldi
-- [ ] Several monitors: places and modes as Settings > Displays says, unplugging and plugging back, the dock following the main screen
-- [ ] Scaling: fractional scales sharp for Wayland programs, a sensible size for X11 programs
-- [ ] VRR: on for full screen games only (the session's `vrr = 2`), no flicker on the desktop
-- [ ] Direct scanout of full screen games (`direct_scanout = 2`) and tearing allowed for games that ask (wp-tearing-control)
-- [ ] The lock, idle dimming, screens off and on, suspend and resume, a VT switch and back (the VT switch works in the test machine, 2026-11-15)
-- [ ] Screenshots (yggdrasil-shot, the colour picker) and Sunshine streaming to the iPad
-- [ ] Every shortcut of the session's table, the media keys on the lock screen (with the real yggdrasil-mediakey)
-- [ ] Frame times, 1% lows and input feel at least as good as Hyprland's in the bake-off games; idle CPU and memory measured
+It replaces Hyprland on a machine only after it has been checked there from a separate login entry, with Hyprland's entry kept
+as the way back: NVIDIA (modeset, explicit sync, a machine with two GPUs), several monitors and their places, fractional scaling,
+VRR, direct scanout and tearing for games, the lock, idle dimming, suspend and resume, screenshots and streaming, every shortcut
+of the session's table, and frame times against Hyprland in the bake-off. Of these only a VT switch has been tried on a real
+(virtual) screen, in the test machine on 2026-11-15.
 
 ## The hardware backend (milestone 1, 2026-11-15)
 

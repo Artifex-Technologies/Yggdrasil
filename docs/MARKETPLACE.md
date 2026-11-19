@@ -39,8 +39,8 @@ integration's `devices`, the installer's own list); see packages/device-offers/R
 ```
 `source.type` is `pacman`, `aur` (packages) or `flatpak` (`app`). `category` is any text (Create, Work, Play and Develop get their own tabs).
 
-## Not done yet
-Installing plugins from the Omarchy registry (not planned: the ones wanted were rewritten in Rust, above), in-app progress instead of a terminal, ratings, screenshots, the Artifex apps (waiting to learn which), a start-menu pin, remembering search history. (Pin to dock: built 2026-11-07, on an installed app's page when it has a menu
+## Known limitations
+Plugins from the Omarchy registry are not installed (the ones wanted were rewritten in Rust, above). No ratings, no pin to the start menu from an app's page, and searches are not remembered. (Pin to dock: built 2026-11-07, on an installed app's page when it has a menu
 entry; `yggdrasil_conf::dock`, which the panel re-reads within a second.)
 
 ## Descriptions and screenshots (added 2026-10-17)
@@ -57,7 +57,7 @@ Installs, removals and updates of **reviewed** apps now run inside the Marketpla
 - Commands: `pkexec pacman -S/-Rs --noconfirm` (repositories), `yay -S --noconfirm --sudo /usr/lib/agora/sudo` (AUR), `flatpak install --user` (Flathub), the integration's `component` command with `install`/`remove` (components, with `AGORA_SUDO=/usr/lib/agora/sudo`), `yay -Syu` for "Update everything".
 - Administrator rights are asked for through the desktop's own password box (polkit); `/usr/lib/agora/sudo` is a stand-in for `sudo` that yay and the component command use. A dismissed box shows as "Cancelled".
 - Apps from repositories you added are not run this way: they still open a terminal, so their prompts (an AUR build file, for instance) can be read before saying yes.
-- Not done: queueing several installs, per-package progress for AUR builds (the bar moves on gently while it builds).
+- Limits: installs are not queued, and an AUR build has no per-package progress (the bar moves on gently while it builds).
 
 ## Cancel, history, smoother bar (2026-10-17)
 - **Cancel** (on the progress card): the user-level programs (yay, makepkg, flatpak) are stopped through their process group; the administrator part runs inside `/usr/lib/agora/pkg-root` (started with pkexec, one password box), which watches a cancel file in `/run/user/<uid>/agora/` and, on cancel, stops pacman, removes the packages that run had added (the set of installed packages before and after) and the package files it downloaded. The Marketplace removes an AUR build's folders in `~/.cache/yay` and uninstalls a Flatpak it had just added. A cancelled install is not put in the history. `pkg-root` (packages/agora-helpers) accepts only `pacman` install and remove commands with a short list of options, plain package names, and a cancel file inside the invoking user's runtime folder (`packages/agora-helpers/tests/pkg_root.rs`).

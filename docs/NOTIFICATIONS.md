@@ -51,11 +51,11 @@ Only one program can own the name `org.freedesktop.Notifications`. What decides 
 - **Do not disturb:** a switch at the bottom of the list and in Settings > Appearance > Notifications (`notify_dnd`). No pop-ups while on (critical ones still show); everything is still kept.
 - **Unread badge:** a purple count beside the clock in the bar for notifications that arrived since the list was last looked at (Fylgja's Notifications section, or the pane, counts as looking). Click it to open the list. Kept in memory only.
 
-## Not built yet (list for later)
-- The theme option (macOS look vs a more Windows-like look) in Settings > Appearance.
-- Inline reply. (Quiet hours and pop-ups by app: built 2026-11-07, below.)
-- A notification sound; images/avatars sent by apps (`image-data`).
-- Heimdall alerts de-duplicated when it replays old session alerts after a restart.
+## Known limitations
+- One layout only: the macOS-style top bar and dock (no Windows-style taskbar).
+- No inline reply.
+- No notification sound, and images or avatars that apps send (`image-data`) are not shown.
+- Heimdall's alerts can show twice when Heimdall replays its session's alerts after a restart.
 
 ## Quiet hours and pop-ups by app (2026-11-07)
 

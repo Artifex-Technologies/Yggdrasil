@@ -77,10 +77,10 @@ components, one per line. It asks nothing and does not check for internet.
 - the no-network case once more inside `unshare -rn`, skipped where user namespaces are not allowed;
 - the udev rule, checked with `udevadm verify`.
 
-## Not done
+## Known limitations
 
-- Bluetooth-only devices are not seen: nothing is plugged in by USB.
-- Settings > Peripherals does not list the offers yet, and "Don't ask again" cannot be undone from Settings: Agora installs them
-  anyway, or delete the line from the file above.
-- Not yet tried on a real installed system. The udev and dispatcher triggers need root to install, so only the programs and files
-  are tested here.
+- Bluetooth-only devices are not seen: only devices plugged in by USB are.
+- Settings > Peripherals does not list the offers, and "Don't ask again" cannot be undone from Settings (Agora installs them
+  anyway, or delete the line from the file above).
+- Tested with stand-ins only: the udev and dispatcher triggers need root to install, so only the programs and files are tested
+  here; it has not run on a real installed system.

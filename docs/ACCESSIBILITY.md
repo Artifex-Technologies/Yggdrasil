@@ -47,36 +47,26 @@ Minos and the other egui apps most likely never switch their accessibility on, e
 panel) watches `IsEnabled` and does work (see the test above). The fix is upstream (a newer egui/eframe) or carrying a patch; **recheck
 with Orca before trusting the table below**, and again when eframe is upgraded.
 
-## What is missing (in the order that hurts most)
+## Known limitations (2026-11-19)
 
-1. **Panel and screen readers: built 2026-10-16 (bar, dock, pop-ups, kept notifications; not the start menu, calendar, Fylgja or lock screen yet).** `packages/panel/src/a11y.rs` describes the surfaces through AccessKit (accesskit 0.25 + accesskit_unix 0.24); a reader's click on a node is sent back as the same action as a real click. Verified by reading the tree over AT-SPI in a nested session (`tests/a11y/nested_panel_a11y.sh`): "Top bar" (Start menu, Desktops, Fylgja, Network, Bluetooth, Clock), "Dock" (every app and the trash), "Kept notifications", each button offering `click`. **Not verified:** a real screen reader reading it, and the click from a reader actually opening the menu. Original finding: **Panel not exposed to screen readers.** A blind user cannot open an app, read a notification, or see the clock. Fix: give
-   `yggdrasil-panel` an AT-SPI tree with `accesskit_unix` (it supports toolkits that are not winit): one node per button, the start menu list,
-   toasts (with their action buttons) and the notification list, with roles and names. Announce new notifications (live region).
-2. **Lock screen silent.** Announce "Screen locked. Enter your password" and "Wrong password" (the same AccessKit route, plus a
-   short audible cue for people without a reader). Keep the keyboard path exactly as it is.
-3. **No keyboard path to the dock, bar, tray and toast buttons.** Add a focus ring and a shortcut to move into the panel (for example
-   Super+Tab for the dock, Super+N for the newest notification's buttons: Allow / Deny prompts from "Ask before connecting" are otherwise mouse-only).
-4. **Text size and reduce motion: built for the egui apps (2026-10-16), not yet for the panel.** Settings > Appearance > Accessibility sets 100/125/150/200 % for Settings, Minos, the admin password box, Calculator and the keyring tool (egui zoom, applied within a second), and "Reduce motion" for their animations. The bar, dock, start menu, toasts and lock screen still follow only the screen scale. Original finding: **No text size setting.** Settings > Appearance has display scale (fractional) but no "text size" for our apps. Add a 100/125/150/200 % setting
-   read by the panel and every egui app (`pixels_per_point` multiplier), so low-vision users need not enlarge the whole desktop.
-5. **No high-contrast or reduced-motion setting, no big-cursor setting.** Add a high-contrast palette variant in `yggdrasil-ui`, a "reduce
-   motion" switch (animations in the panel are short, but there are some), and cursor size in Settings.
-6. **Not shipped:** Orca, Speech Dispatcher, eSpeak NG, braille. Added now as the optional component `accessibility` (and in the
-   "everything" preset). **Super+Alt+S starts or stops Orca since 2026-11-07** (`yggdrasil-screen-reader`, in yggdrasil-session; it
-   says how to install Orca when it is missing). Still to do: install it on every machine by default, and a boot-menu entry that
-   starts the live ISO with speech (archiso's `accessibility=on` / espeakup).
-7. **Sticky/slow/bounce keys, mouse keys, the magnifier: missing now.** They came from KDE (kaccess and KWin effects), which is gone.
-   Hyprland 0.57 has no setting for sticky, slow or bounce keys or mouse keys (checked in its option list, `hyprctl descriptions`).
-   It does have a zoom around the pointer (`cursor:zoom_factor`, 1 to 10), but Yggdrasil binds no key to it and Settings has no
-   switch for it, so for a user there was no magnifier. **The magnifier keys since 2026-11-07:** Super+Alt+= zooms in around the
-   pointer, Super+Alt+- out, Super+Alt+0 off (`yggdrasil-zoom`, steps of half a time up to 8; not yet tried on screen). To do: a
-   switch and the zoom level in Settings, and sticky keys in Yggdrasil itself or in the compositor (libinput supports sticky/bounce
-   keys only partly). Yggdrasil's own compositor must offer
-   them too when it runs the real session.
-8. **On-screen keyboard: for tablet mode since 2026-11-13, not yet for accessibility.** wvkbd (in the AUR; squeekboard is in
-   Arch's repositories since, but pulls in GNOME's libraries) is Agora's "On-screen keyboard" component, and on a 2-in-1 the
-   tablet watcher shows it while the screen is folded and no keyboard is plugged in (DESKTOP.md, "Tablet mode and rotation").
-   Still missing: a way to open it on demand (a top-bar button or a key), and one on our own lock screen and password box, which
-   draw their own fields; for those our own keyboard (a panel surface on the virtual-keyboard protocol) is still the plan.
+1. **Screen readers and the panel:** the bar, dock, pop-ups and kept notifications are described to screen readers
+   (`packages/panel/src/a11y.rs`, AccessKit over AT-SPI; checked by reading the tree in a nested session,
+   `tests/a11y/nested_panel_a11y.sh`); the start menu, calendar, Fylgja and the lock screen are not.
+2. **The lock screen is silent:** it announces nothing ("Screen locked", "Wrong password") and gives no audible cue.
+3. **No keyboard path to the dock, bar, tray and toast buttons:** they are mouse-only, the Allow / Deny prompts of "Ask before
+   connecting" included.
+4. **Text size and reduce motion** (Settings > Accessibility) apply to the egui apps (Settings, Minos, the password box,
+   Calculator, the keyring tool); the bar, dock, start menu, toasts and lock screen follow only the screen scale.
+5. **No high-contrast palette.** The pointer's size is in Settings > Accessibility.
+6. **Orca, Speech Dispatcher and eSpeak NG come as the optional component `accessibility`** (and in the "everything" preset), not
+   by default. Super+Alt+S starts or stops Orca (`yggdrasil-screen-reader`) and says how to install it when it is missing. The
+   live ISO has no boot entry that starts with speech, and there is no braille support.
+7. **No sticky, slow or bounce keys, no mouse keys and no mono audio:** the keys came from KDE, which is gone, and Hyprland 0.57
+   has no setting for them. The magnifier is Hyprland's zoom around the pointer (Super+Alt+= / - / 0, and Zoom in Settings >
+   Accessibility); Yggdrasil's own compositor does not zoom yet.
+8. **On-screen keyboard:** wvkbd (Agora's "On-screen keyboard") shows in tablet mode on a 2-in-1 while no keyboard is plugged in
+   (DESKTOP.md, "Tablet mode and rotation"). It cannot be opened on demand, and the lock screen and password box, which draw
+   their own fields, have none.
 
 ## Already fine
 

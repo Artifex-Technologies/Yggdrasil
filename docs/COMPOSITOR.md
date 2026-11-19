@@ -249,68 +249,17 @@ To try it: `yggdrasil-compositor --run xterm` (typing, its menus on Ctrl+click, 
 (`--run steam`: its menus, the clipboard both ways with a Wayland program, minimize and restore from the dock), then a Proton
 game full screen (no see-through patches, keys and mouse reach it). `YGGDRASIL_COMPOSITOR_DEBUG=1` also shows XWayland's own messages.
 
-Not built yet (in the order I would do them):
-1. Trying resize, maximize, full screen and minimize by hand, and X11 programs (above): xterm, Steam, a Proton game.
-2. The protocol `ext-workspace` for other programs (the panel's workspace buttons follow this compositor's workspaces through
-   yggdrasil-wm since 2026-11-12). Key repeat for the volume keys was done on 2026-11-12.
-4. More workspaces than four.
-5. Built 2026-11-04, not yet tried by hand: a full screen window in front covers the top bar and dock (they go behind it and get
-   no pointer; the Overlay layer stays in front). Also built 2026-11-04, not yet tried by hand: GPU clients (linux-dmabuf, with default feedback naming the render node), idle inhibit,
-   primary selection, cursor shapes (the nested window's pointer follows them), xdg-activation (only with a token from the
-   person's own input in the last 10 s). Fractional scale is now tested headless (2026-11-10), at 1, 1.25, 1.5 and 2.
-6. **More of our programs in the headless tests** (2026-11-10 has the panel's leak test and the backend's own tests): the lock
-   screen (ext-session-lock, one surface per output, built for it), the idle manager, Settings; for that, input in the headless mode
-   (a virtual keyboard and pointer driven from the control socket, inside the compositor only, never the real devices),
-   ext-foreign-toplevel-list and ext-image-copy-capture (the panel's window previews), and drawing the pointer. All done by
-   2026-11-12.
-7. **The hardware backend** (DRM/KMS), what it needs, in order (milestone 1, 2026-11-15, has the seat with pause and resume,
-   udev GPUs and connectors as outputs with their modes and EDID, GBM/EGL or pixman with a DrmCompositor per screen paced by the
-   page flip, libinput for keys, pointer and wheel with input.conf on each device, the compositor drawing the pointer; left: real
-   hotplug tried, direct scanout and dmabuf feedback's scanout tranches, relative motion and pointer constraints, everything for
-   NVIDIA, VRR, tearing, gamma):
-   - a seat: libseat (logind or seatd) through Smithay's session backend, to open the GPU and input devices without root, and
-     to give them up on a VT switch and take them back (pause and resume);
-   - udev to find the GPUs and the connectors and to follow hotplug; each connector becomes an `Output` with its real modes and
-     its EDID make, model and size. The several-outputs work of the headless mode (a scene, panels and a lock surface per output,
-     the pointer finding its output) is already the code a multi-monitor desktop needs; outputs must also come and go while
-     running, and be placed as Settings > Displays says (wlr-output-management), not only side by side;
-   - GBM and EGL on the GPU, and Smithay's `DrmCompositor` per output: frames paced by the page flip (vblank) instead of the
-     headless 16 ms timer, direct scanout of full screen games on a plane, dmabuf feedback with scanout tranches;
-   - libinput for the keyboard, mouse and touchpad: `on_input` is written for the nested window's events today and must take any
-     input backend, with relative pointer motion, pointer constraints and acceleration, and the compositor drawing the pointer
-     itself (an xcursor theme; nested, the host draws it);
-   - NVIDIA: nvidia-drm with modeset on, explicit sync (linux-drm-syncobj-v1, which NVIDIA needs to avoid flicker and frames out
-     of order), and a GPU manager for machines with two GPUs;
-   - VRR (the connector's VRR_ENABLED property) and tearing control (wp-tearing-control) for games; gamma and night light.
-   This is what would let it run the real session instead of Hyprland; it is developed in a virtual machine (Limbo), never on the
-   live session, and the headless tests keep running in CI the whole time.
-8. Screen recording and screenshots (the portal). Output management for Settings > Displays is there headless since 2026-11-12
-   (wlr-output-management and Settings' `monitors.lua`).
-
-Why not before: the roadmap puts the compositor last, once the pieces around it are stable; they now are (panel, lock, idle, greeter,
-portal, polkit), and each of them can be developed and tested on this compositor in a window, and since 2026-11-10 headless in CI.
+Known limitations (2026-11-19): it does not run the real session; Hyprland does. Resize, maximize, full screen and minimize,
+X11 programs (xterm, Steam, a Proton game), a full screen window covering the top bar and dock, GPU clients (linux-dmabuf), idle
+inhibit, primary selection, cursor shapes and xdg-activation are built but not yet tried by hand. Other programs cannot see its
+workspaces through `ext-workspace` (the panel follows them through yggdrasil-wm), and it has four workspaces. On the hardware
+backend, hotplug has not been tried on real hardware, and there is no direct scanout, no relative pointer motion or pointer
+constraints, nothing NVIDIA needs (explicit sync, a machine with two GPUs), no VRR, tearing control or gamma (night light), and no
+screen recording or screenshots through the portal. It is developed in a virtual machine, never on the live session, and the
+headless tests run in CI the whole time.
 
 Debugging: `YGGDRASIL_COMPOSITOR_DEBUG=1` prints pointer positions, button presses and move requests. To drive it from a script, move the host pointer
 with `ydotool` in small steps (the host accelerates movement by about 1.7x) and read the positions it prints.
-
-## Planned: window switching (2026-11-18)
-
-My wish, after using Windows at work: switching windows should feel as good as there, with something of our own on top.
-- **Alt + Tab / Alt + Shift + Tab, the standard switcher (like Windows 11's, in Yggdrasil's design):** while Alt is held,
-  every window appears as a card on a dimmed, softly blurred desktop, in rows that wrap and stay centred. Each card is a
-  live picture of the window at its own shape (wide windows wide, narrow ones narrow, all the same height in a row), with
-  a small title bar on top: the app's icon and the window's title. Tab moves to the next card, Shift + Tab back, the arrow
-  keys and the mouse work too; letting go of Alt switches to the chosen window, Escape cancels. Windows that share the
-  screen side by side (snapped halves, a tiled screen) show as one wide group card ("Group | Calculator and 1 other
-  window"), and choosing it brings the whole group forward. Most recently used first. Today's `src/switcher.rs` (a row of
-  text cards) becomes this; the pictures are rendered from the windows' own buffers at card size, only while it is open.
-- **Win + Tab, the deck:** the windows stand one behind the other in perspective, fanned out like a deck of cards; Tab,
-  Shift + Tab, the arrow keys or the mouse wheel flip the front card to the back, Enter or a click picks one, Escape closes
-  it. Our own look (Yggdrasil's colours and corners, a short eased flip), inspired by Windows 7's Flip 3D, not a copy of it. Both switchers share the same card
-  style (Yggdrasil's colours, corners, font and the accent outline on the chosen card), so they read as one family.
-  Drawn as textured quads with a perspective transform in the GLES renderer, only while open; where the chip is too weak
-  (measured: a frame of the deck over budget), it falls back to a flat grid, so a Raspberry Pi stays light.
-- Both come after the real-screen milestones (laptop, then NVIDIA), and both get rows in the headless key-binding test.
 
 ## Lightness (a rule for all of Yggdrasil)
 Yggdrasil must stay as light and quick as the features allow, on any machine, including old and small ones. For the compositor that means: nothing is drawn while
@@ -325,8 +274,8 @@ and 5, the same set): idle 0.006 % of a core, 26.4-26.5 MB resident (before: 0.0
 6 and 7, the same set, five runs): idle 0.006 % of a core (560-621 µs in 10 s, before 547-572), 26.5-26.8 MB resident (before
 26.6-26.7); a window's picture for the dock costs 1.1-1.2 ms of CPU (800x600), and the pointer costs nothing while it rests. On the hardware (the test machine, 2026-11-15, 60 s with the panel): 0.012 % of a core with OpenGL ES (62-64 MB resident, 44
 MB of it the GPU driver's libraries), 0.0074 % with pixman (22.6 MB); its only wake-ups then are the 2-second look at the config
-files. Its memory nested (about 117 MB) is mostly the graphics driver's context; the panel is about 89 MB, the idle manager 3 MB, the polkit agent 8 MB. Still to measure and trim: the panel's memory,
-start-up time of each program, and the compositor's cost with several large windows.
+files. Its memory nested (about 117 MB) is mostly the graphics driver's context; the panel is about 89 MB, the idle manager 3 MB, the polkit agent 8 MB. Not measured yet: the start-up time of each program,
+and the compositor's cost with several large windows.
 Settings > Power's root services (tune, casefan, gpufan) are Rust since 2026-11-09 (docs/APPS_SETTINGS.md): about 2.8 MB each on
 their own, plus about 26 MB while libnvidia-ml is initialised (the NVIDIA driver's own cost, the same in any language), and tune
 reads /dev/kmsg instead of keeping a journalctl child (about 46 MB). The Python versions were about 40 MB each with swap counted.
@@ -350,9 +299,8 @@ The table is round 1 as it was set up:
 
 MangoHud measures every Vulkan game started there (Proton games are): 20 s after the game starts, 90 s of frame times, no overlay,
 into `~/bakeoff/NAME-vrrX/`. `yggdrasil-bakeoff report` compares average FPS, 1% and 0.1% lows, frame-time spread and stutters.
-Round 1 is with variable refresh off everywhere; round 2 (`yggdrasil-bakeoff vrr on`) with it on. Still to add: input latency (needs
-a camera or a photodiode, or at least the owner's judgement), and the CAD model in Daedalus. Yggdrasil's own compositor joins once it
-runs on the hardware (today it runs nested only).
+Round 1 is with variable refresh off everywhere; round 2 (`yggdrasil-bakeoff vrr on`) with it on. Not measured: input latency (it needs
+a camera or a photodiode), and the CAD model in Daedalus; Yggdrasil's own compositor has not been through the bake-off.
 
 ## Title bars in the Hyprland session (2026-10-24)
 
