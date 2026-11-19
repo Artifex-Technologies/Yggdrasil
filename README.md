@@ -1,5 +1,7 @@
 # Yggdrasil
 
+[![checks](https://github.com/Artifex-Technologies/Yggdrasil/actions/workflows/checks.yml/badge.svg)](https://github.com/Artifex-Technologies/Yggdrasil/actions/workflows/checks.yml)
+
 **Yggdrasil** is a desktop environment written in Rust. It is the desktop of [Labyrinth OS](https://github.com/Artifex-Technologies/Labyrinth_OS)
 and is built to be reused by other systems (LykanOS, formerly Chymaera OS, will use it too), so nothing here may depend on one
 operating system: what an OS adds (an assistant, a security monitor, an installer's steps) it describes in integration files
@@ -9,6 +11,12 @@ Status: Yggdrasil runs as its own session on [Hyprland](https://hyprland.org) (`
 dock, Settings, file manager, app store, lock and login screens, password box and installer. KDE is gone: nothing of it is
 started, called or linked. Yggdrasil's own compositor is in progress: it runs nested in a window, headless for tests, and since 2026-11-15 on a real screen through DRM/KMS (the hardware backend's first milestone, tried in a virtual machine; laptop tests next) ([docs/COMPOSITOR.md](docs/COMPOSITOR.md)); Hyprland stays the desktop's compositor until it is ready. Every program and helper of the desktop is Rust; the old Python and shell copies kept for a rollback were removed on 2026-11-15. The checklist for a desktop of its own:
 [docs/INDEPENDENCE.md](docs/INDEPENDENCE.md).
+
+**How it is tested.** Every push runs the `checks` workflow in an Arch container: each crate is formatted, linted, tested and
+audited; the panel runs a stress test for leaks on a headless compositor; Yggdrasil's own compositor runs headless with the
+real programs on it, and the login screen runs in cage on three screens; the session's configuration and the package
+recipes are parsed. Every program ported from Python was measured against the Python it replaced, on the same inputs:
+[docs/PORT_NUMBERS.md](docs/PORT_NUMBERS.md).
 
 ![The desktop: the top bar, the dock, and notification pop-ups at the bottom right](assets/screenshots/desktop.png)
 

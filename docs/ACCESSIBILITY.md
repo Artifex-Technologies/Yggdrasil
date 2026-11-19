@@ -19,7 +19,7 @@ KDE's: `kaccess` (sticky, slow and bounce keys, mouse keys), KWin's zoom and hig
 are no sticky, slow or bounce keys, no mouse keys, no screen magnifier, no high-contrast mode and no on-screen keyboard. Details in
 the table and in items 7 and 8 below.
 
-Why now (2026-10-16): `docs/KDE_INVENTORY.md` says `kaccess` and the screen reader hook must not be dropped without a plan. Labyrinth's own desktop
+Why now (2026-10-16): my inventory of what KDE did on this machine (in my private plans) says `kaccess` and the screen reader hook must not be dropped without a plan. Labyrinth's own desktop
 pieces (panel, lock screen, polkit box, Settings, Minos) are replacing KDE's, so each one has to keep, or provide, what KDE gave.
 This is a read-only audit of the code and the machine, plus a plan. Nothing was tested with a real screen reader or by a person who relies
 on one: those results are listed as "unverified".

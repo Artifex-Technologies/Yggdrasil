@@ -298,7 +298,7 @@ resume configuration. That is a decision for you; see the end of this file.
   is plugged in by USB or Bluetooth (read from /sys, no input device is opened). Settings > Displays: Lock rotation, and the
   keyboard switch (~/.config/yggdrasil/tablet.conf). Not yet: Yggdrasil's own compositor cannot turn a screen (its
   output management refuses a transform), so there the watcher shows the keyboard only; the turn direction and the touch
-  turn are to be checked on the laptop (Labyrinth OS docs/LAPTOP.md).
+  turn are to be checked on the laptop (my laptop checklist, in my private plans).
 - **Fingerprint reader** (2026-11-13): fprintd and libfprint are an online component (Agora's "Fingerprint reader"; the
   installer ticks it when a reader libfprint supports is plugged in). Settings > Users > Fingerprint enrols a finger (fprintd
   asks for your password through the polkit agent) and removes them. **Fingerprint for sudo** is a switch there, off until you

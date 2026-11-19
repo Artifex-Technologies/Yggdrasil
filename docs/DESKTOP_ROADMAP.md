@@ -16,7 +16,7 @@ Replacing the base distribution was considered and rejected: its kernel, optimis
 are real work the project would otherwise have to do and keep patched, and none of it is where the goals are
 won. What the project builds sits above that layer.
 
-See also [KDE_INVENTORY.md](KDE_INVENTORY.md): everything KDE did on the running machine on 2026-10-16, what replaced it, effort, and the suggested order (a record now; KDE is gone).
+The full list of what KDE did is [INDEPENDENCE.md](INDEPENDENCE.md) (KDE is gone).
 
 ## Already ours
 

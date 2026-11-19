@@ -10,7 +10,7 @@
 > Still missing since KDE left: what `kaccess` and KWin gave for accessibility (sticky keys, magnifier and the rest; ACCESSIBILITY.md).
 
 The single checklist for making Yggdrasil a desktop environment of its own (audited 2026-10-23 from the running machine and both
-repositories; it replaces the partial snapshot in [KDE_INVENTORY.md](KDE_INVENTORY.md)). Two goals:
+repositories; it replaces an earlier partial snapshot, now in my private plans). Two goals:
 
 1. **No KDE.** Every KDE piece is either rewritten in Rust as part of Yggdrasil, replaced by a small standard non-KDE component, or removed.
 2. **No Labyrinth inside Yggdrasil.** Yggdrasil is the desktop; Labyrinth OS, LykanOS and any other system install it. Nothing in
