@@ -178,29 +178,35 @@ pub fn view(b: Option<&Bat>, profile: &str, profiles: &[String]) -> serde_json::
     }
     let mut card = vec![];
     if !profiles.is_empty() {
+        // one row of buttons, the chosen one in the accent (as Settings' segmented choices), its note underneath
         card.push(serde_json::json!({"section": "POWER MODE"}));
-        let rows: Vec<_> = PROFILES
+        let offered: Vec<_> = PROFILES.iter().filter(|(id, _, _)| profiles.iter().any(|p| p == id)).collect();
+        let buttons: Vec<_> = offered
             .iter()
-            .filter(|(id, _, _)| profiles.iter().any(|p| p == id))
-            .map(|(id, title, note)| serde_json::json!({"id": format!("profile:{id}"), "title": title, "note": note, "on": *id == profile}))
+            .map(|(id, title, _)| serde_json::json!({"id": format!("profile:{id}"), "label": title, "accent": *id == profile}))
             .collect();
-        card.push(serde_json::json!({"list": rows}));
+        card.push(serde_json::json!({"buttons": buttons, "columns": offered.len()}));
+        if let Some((_, _, note)) = offered.iter().find(|(id, _, _)| *id == profile) {
+            card.push(serde_json::json!({"text": note, "dim": true}));
+        }
     }
     if let Some(limit) = b.limit {
         card.push(serde_json::json!({"section": "CHARGE LIMIT"}));
-        let rows: Vec<_> = LIMITS
+        let buttons: Vec<_> = LIMITS
             .iter()
-            .map(|&l| {
-                let note = match l {
-                    60 => "Plugged in most of the time",
-                    80 => "Best for the battery's life",
-                    90 => "A little more for the road",
-                    _ => "A full charge",
-                };
-                serde_json::json!({"id": format!("limit:{l}"), "title": format!("{l} %"), "note": note, "on": l == limit})
-            })
+            .map(|&l| serde_json::json!({"id": format!("limit:{l}"), "label": format!("{l}%"), "accent": l == limit}))
             .collect();
-        card.push(serde_json::json!({"list": rows}));
+        card.push(serde_json::json!({"buttons": buttons, "columns": LIMITS.len()}));
+        let note = match limit {
+            60 => "Plugged in most of the time",
+            80 => "Best for the battery's life",
+            90 => "A little more for the road",
+            100 => "A full charge",
+            _ => "",
+        };
+        if !note.is_empty() {
+            card.push(serde_json::json!({"text": note, "dim": true}));
+        }
     }
     serde_json::json!({
         "text": format!("{} %", b.percent),
@@ -208,7 +214,6 @@ pub fn view(b: Option<&Bat>, profile: &str, profiles: &[String]) -> serde_json::
         "state": state,
         "lines": lines,
         "card": card,
-        "help": "Settings > Power has the same, and more.",
     })
 }
 
@@ -592,11 +597,17 @@ mod tests {
         let v = view(Some(&b), "balanced", &profiles);
         assert_eq!((v["text"].as_str(), v["state"].as_str()), (Some("15 %"), Some("warn")));
         let card = v["card"].as_array().unwrap();
-        let modes = card[1]["list"].as_array().unwrap();
-        assert_eq!(modes.len(), 2);
-        assert_eq!((modes[1]["id"].as_str(), modes[1]["on"].as_bool()), (Some("profile:balanced"), Some(true)));
-        let limits = card[3]["list"].as_array().unwrap();
-        assert!(limits.iter().any(|r| r["id"] == "limit:80" && r["on"] == true));
+        // each choice is a row of buttons side by side (as Settings), the chosen one in the accent, its note underneath
+        let modes = card[1]["buttons"].as_array().unwrap();
+        assert_eq!((modes.len(), card[1]["columns"].as_u64()), (2, Some(2)));
+        assert_eq!((modes[1]["id"].as_str(), modes[1]["accent"].as_bool()), (Some("profile:balanced"), Some(true)));
+        assert_eq!(modes[0]["accent"].as_bool(), Some(false));
+        assert_eq!(card[2]["text"], "The everyday choice");
+        let limits = card[4]["buttons"].as_array().unwrap();
+        assert_eq!((limits.len(), card[4]["columns"].as_u64()), (4, Some(4)));
+        assert!(limits.iter().any(|r| r["id"] == "limit:80" && r["label"] == "80%" && r["accent"] == true));
+        assert_eq!(limits.iter().filter(|r| r["accent"] == true).count(), 1);
+        assert_eq!(card[5]["text"], "Best for the battery's life");
         assert_eq!(view(None, "", &[])["state"], "off");
     }
 
