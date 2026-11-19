@@ -247,7 +247,7 @@ fn fc_lists_families_are_read() {
 
 /// Stand-ins for fc-list and fc-cache: fc-list lists Noto Sans (and Lexend once fc-cache has run, as a stale cache made
 /// again would), fc-cache logs how it was run.
-fn cache_standins(dir: &Path, after: &str) -> (String, String) {
+fn cache_standins(dir: &Path, after: &str) -> (Vec<String>, Vec<String>) {
     let (list, cache, done) = (dir.join("fc-list"), dir.join("fc-cache"), dir.join("refreshed"));
     std::fs::write(
         &list,
@@ -258,10 +258,8 @@ fn cache_standins(dir: &Path, after: &str) -> (String, String) {
     )
     .unwrap();
     std::fs::write(&cache, format!("#!/bin/sh\necho \"$@\" >> '{}'\n", done.display())).unwrap();
-    for p in [&list, &cache] {
-        std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
-    (list.display().to_string(), cache.display().to_string())
+    let sh = |p: &Path| vec!["/bin/sh".to_string(), p.display().to_string()];
+    (sh(&list), sh(&cache))
 }
 
 #[test]
@@ -289,7 +287,7 @@ fn a_stale_cache_is_made_again_once() {
     let got = heal(&list, &cache, here);
     assert_eq!(got, Healed::Refreshed(vec![yggdrasil_conf::fonts::sans("lexend").unwrap()]));
     // no fontconfig at all: nothing to do
-    assert_eq!(heal("/nonexistent/fc-list", &cache, here), Healed::Fine);
+    assert_eq!(heal(&["/nonexistent/fc-list".to_string()], &cache, here), Healed::Fine);
     for t in ["heal", "heal-fine", "heal-still"] {
         let _ = std::fs::remove_dir_all(std::env::temp_dir().join(format!("ygg-fontlib-{t}-{}", std::process::id())));
     }

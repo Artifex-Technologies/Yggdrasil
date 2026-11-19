@@ -346,10 +346,11 @@ pub struct Tools {
     /// Your own fontconfig file and the computer's.
     pub mine: PathBuf,
     pub computer: PathBuf,
-    /// pkexec, for the computer's file (None: not asked, as on a made-up system).
-    pub pkexec: Option<String>,
-    pub fc_list: String,
-    pub fc_cache: String,
+    /// pkexec, for the computer's file (None: not asked, as on a made-up system). Each program with its first arguments
+    /// (fontlib::command).
+    pub pkexec: Option<Vec<String>>,
+    pub fc_list: Vec<String>,
+    pub fc_cache: Vec<String>,
     /// Tell the panel through appearance.conf.
     pub tell_panel: bool,
 }
@@ -359,9 +360,9 @@ impl Default for Tools {
         Tools {
             mine: fonts::user_path(),
             computer: PathBuf::from(fonts::SYSTEM_PATH),
-            pkexec: crate::fixture::get().is_none().then(|| "pkexec".to_string()),
-            fc_list: "fc-list".into(),
-            fc_cache: "fc-cache".into(),
+            pkexec: crate::fixture::get().is_none().then(|| vec!["pkexec".to_string()]),
+            fc_list: vec!["fc-list".into()],
+            fc_cache: vec!["fc-cache".into()],
             tell_panel: true,
         }
     }
@@ -460,8 +461,8 @@ pub enum LoginResult {
 }
 
 /// The computer's file through pkexec and the helper.
-pub fn set_login(pkexec: &str, args: [&str; 2]) -> LoginResult {
-    let out = std::process::Command::new(pkexec)
+pub fn set_login(pkexec: &[String], args: [&str; 2]) -> LoginResult {
+    let out = fontlib::command(pkexec)
         .args([HELPER, "set", args[0], args[1]])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -474,7 +475,7 @@ pub fn set_login(pkexec: &str, args: [&str; 2]) -> LoginResult {
             let e = String::from_utf8_lossy(&o.stderr).trim().to_string();
             LoginResult::Failed(if e.is_empty() { "The login screen's font could not be set.".into() } else { e })
         }
-        Err(e) => LoginResult::Failed(format!("{pkexec}: {e}")),
+        Err(e) => LoginResult::Failed(format!("{}: {e}", pkexec.join(" "))),
     }
 }
 
@@ -870,7 +871,6 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn choosing_keeps_the_other_family() {
@@ -945,13 +945,12 @@ mod tests {
         let copy = if code == 0 { format!("cp '{}' '{}'\n", mine.display(), computer.display()) } else { String::new() };
         let script = dir.join("pkexec");
         std::fs::write(&script, format!("#!/bin/sh\necho \"$@\" >> '{}'\n{copy}echo refused >&2\nexit {code}\n", log.display())).unwrap();
-        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
         let tools = Tools {
             mine,
             computer,
-            pkexec: Some(script.display().to_string()),
-            fc_list: "false".into(),
-            fc_cache: "false".into(),
+            pkexec: Some(vec!["/bin/sh".into(), script.display().to_string()]),
+            fc_list: vec!["false".into()],
+            fc_cache: vec!["false".into()],
             tell_panel: false,
         };
         (dir, tools)
@@ -966,7 +965,7 @@ mod tests {
             (1, LoginResult::Failed("refused".into())),
         ] {
             let (dir, t) = scratch(&format!("answer-{code}"), code);
-            assert_eq!(set_login(t.pkexec.as_deref().unwrap(), ["lexend", "-"]), want, "{code}");
+            assert_eq!(set_login(t.pkexec.as_ref().unwrap(), ["lexend", "-"]), want, "{code}");
             assert_eq!(std::fs::read_to_string(dir.join("pkexec.log")).unwrap(), format!("{HELPER} set lexend -\n"));
             std::fs::remove_dir_all(&dir).unwrap();
         }

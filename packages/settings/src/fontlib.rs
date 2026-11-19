@@ -576,9 +576,17 @@ pub fn parse_families(text: &str) -> std::collections::HashSet<String> {
     out
 }
 
+/// A program and its first arguments, as a command. The tests' stand-ins run as `/bin/sh SCRIPT`: a script just written is
+/// never run directly, which fails with "Text file busy" while another test's child process still holds it open.
+pub fn command(argv: &[String]) -> Command {
+    let mut c = Command::new(argv.first().map(String::as_str).unwrap_or(""));
+    c.args(argv.iter().skip(1));
+    c
+}
+
 /// The families fontconfig lists now (None: fc-list did not answer).
-pub fn listed(fc_list: &str) -> Option<std::collections::HashSet<String>> {
-    let o = Command::new(fc_list).args([":", "family"]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+pub fn listed(fc_list: &[String]) -> Option<std::collections::HashSet<String>> {
+    let o = command(fc_list).args([":", "family"]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
     o.status.success().then(|| parse_families(&String::from_utf8_lossy(&o.stdout)))
 }
 
@@ -605,12 +613,12 @@ pub enum Healed {
 /// APPS_SETTINGS.md). When a font's files are on disk but fontconfig does not list it, your own cache is made again
 /// (`fc-cache -f`, no password: it goes to ~/.cache/fontconfig, which fontconfig prefers when it is newer) and the list read
 /// again. Run once per run of Settings, on a thread of its own (about two seconds on a desktop with Noto's 600 files).
-pub fn heal(fc_list: &str, fc_cache: &str, exists: impl Fn(&Path) -> bool) -> Healed {
+pub fn heal(fc_list: &[String], fc_cache: &[String], exists: impl Fn(&Path) -> bool) -> Healed {
     let Some(before) = listed(fc_list) else { return Healed::Fine };
     if unlisted(&before, &exists).is_empty() {
         return Healed::Fine;
     }
-    let _ = Command::new(fc_cache).arg("-f").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
+    let _ = command(fc_cache).arg("-f").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
     let after = listed(fc_list).unwrap_or_default();
     Healed::Refreshed(unlisted(&after, &exists))
 }
