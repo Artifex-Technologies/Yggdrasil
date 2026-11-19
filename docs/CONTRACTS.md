@@ -32,6 +32,13 @@ design, session and wallpaper, [LOGIN_SCREEN.md](LOGIN_SCREEN.md)), and the powe
 `case-fans.json`, `gpu-fan.json` ([packages/power-helpers](../packages/power-helpers/README.md)).
 Used by: Labyrinth OS (its ISO profile ships defaults), LykanOS (`greeter.conf`, `idle.conf`).
 
+### The `yggdrasil-ui` crate (a git dependency)
+
+The egui apps' shared look: palette and accent, widgets, the system font, accessibility (`theme::apply_accessibility`),
+drop-downs (`packages/yggdrasil-ui`). Programs outside this repository depend on it by git URL pinned to a commit, so a change
+to its public functions reaches them only when they move their pin.
+Used by: Icarus (`crates/icarus-app`), and every egui app here.
+
 ### The compositor's headless mode and control socket (`yggdrasil-compositor --headless`)
 
 Virtual outputs, a virtual keyboard and mouse, window lists and screenshots driven over a control socket, for tests only
