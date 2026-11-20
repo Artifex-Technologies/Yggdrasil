@@ -1614,7 +1614,7 @@ impl State {
                     // one last, empty frame: the surface stays, see-through
                     self.draw(i);
                 } else {
-                    self.surfs.remove(i).destroy();
+                    self.take_surf(i).destroy();
                 }
                 let _ = self.conn.flush();
             }
@@ -1687,7 +1687,7 @@ impl State {
         self.finder = Some(finder::Spot { x, y, start: Instant::now() });
         // a new spotlight replaces one still showing (on whichever screen)
         if let Some(i) = self.surfs.iter().position(|s| s.kind == Kind::Finder) {
-            self.surfs.remove(i).destroy();
+            self.take_surf(i).destroy();
         }
         self.add_overlay(output, Kind::Finder, "yggdrasil-find-mouse", false);
         // about sixty frames a second while it shows, then nothing
@@ -1711,8 +1711,7 @@ impl State {
         if done {
             self.finder = None;
             if let Some(i) = i {
-                self.surfs.remove(i).destroy();
-                self.pointer_surface = None;
+                self.take_surf(i).destroy();
             }
         } else if let Some(i) = i {
             self.draw(i);
@@ -1777,15 +1776,14 @@ impl State {
     fn close_identify(&mut self) {
         self.identify_until = None;
         while let Some(i) = self.surfs.iter().position(|s| matches!(s.kind, Kind::Identify(_))) {
-            self.surfs.remove(i).destroy();
+            self.take_surf(i).destroy();
         }
     }
 
     fn close_cheat(&mut self) {
         self.cheat = None;
         if let Some(i) = self.surfs.iter().position(|s| s.kind == Kind::Cheat) {
-            self.surfs.remove(i).destroy();
-            self.pointer_surface = None;
+            self.take_surf(i).destroy();
         }
         self.dirty = true;
     }
@@ -1936,9 +1934,8 @@ impl State {
     fn end_confirm(&mut self, go: bool) {
         let Some(c) = self.confirm.take() else { return };
         if let Some(i) = self.surfs.iter().position(|s| s.kind == Kind::Confirm) {
-            let s = self.surfs.remove(i);
+            let s = self.take_surf(i);
             s.destroy();
-            self.pointer_surface = None;
         }
         if go {
             run(&["yggdrasil-logout", c.verb()]);
@@ -2045,9 +2042,8 @@ impl State {
             return;
         }
         if let Some(i) = self.surfs.iter().position(|s| s.kind == Kind::Osd) {
-            let s = self.surfs.remove(i);
+            let s = self.take_surf(i);
             s.destroy();
-            self.pointer_surface = None;
         }
         self.osd = None;
     }
@@ -2117,9 +2113,8 @@ impl State {
         let have = self.surfs.iter().position(|s| s.kind == Kind::Toast);
         if self.toasts.is_empty() {
             if let Some(i) = have {
-                let s = self.surfs.remove(i);
+                let s = self.take_surf(i);
                 s.destroy();
-                self.pointer_surface = None;
             }
             return;
         }
@@ -2608,9 +2603,8 @@ impl State {
         }
         self.tab_on = false;
         if let Some(i) = self.surfs.iter().position(|s| s.kind == Kind::Popup) {
-            let s = self.surfs.remove(i);
+            let s = self.take_surf(i);
             s.destroy();
-            self.pointer_surface = None;
         }
         self.popup = None;
         self.fy_active.store(false, Ordering::Relaxed);
@@ -4113,9 +4107,8 @@ impl Dispatch<ZwlrLayerSurfaceV1, usize> for State {
                     if state.surfs[i].kind == Kind::Popup {
                         state.close_popup();
                     } else {
-                        let s = state.surfs.remove(i);
+                        let s = state.take_surf(i);
                         s.destroy();
-                        state.pointer_surface = None;
                     }
                 }
             }
@@ -4278,6 +4271,27 @@ impl Dispatch<WlTouch, ()> for State {
             }
             _ => {}
         }
+    }
+}
+
+/// Where the pointer's surface is in the list once the surface at `removed` is taken out: gone with it, one place down when it
+/// came after it, else the same.
+fn shifted(pointer: Option<usize>, removed: usize) -> Option<usize> {
+    match pointer {
+        Some(p) if p == removed => None,
+        Some(p) if p > removed => Some(p - 1),
+        p => p,
+    }
+}
+
+impl State {
+    /// Takes a surface out of the list, keeping track of the one the pointer is on. Forgetting it whenever any surface went
+    /// (a popover closing, the volume pop-up going) left the pointer on the dock or bar unknown: the compositor sends no new
+    /// Enter while the pointer stays put, so every click there was ignored until the pointer left and came back (the dock and
+    /// the calendar "froze" on the laptop, 2026-11-20).
+    fn take_surf(&mut self, i: usize) -> Surf {
+        self.pointer_surface = shifted(self.pointer_surface, i);
+        self.surfs.remove(i)
     }
 }
 
@@ -5841,5 +5855,18 @@ mod cleanup_tests {
             Pick { drop: vec![], then: Then::Wait },
             "held ones are never let go"
         );
+    }
+}
+
+#[cfg(test)]
+mod pointer_surface_tests {
+    use super::shifted;
+
+    #[test]
+    fn the_pointer_surface_follows_a_removal() {
+        assert_eq!(shifted(Some(2), 2), None, "the pointer's own surface went");
+        assert_eq!(shifted(Some(3), 1), Some(2), "one before it went");
+        assert_eq!(shifted(Some(1), 3), Some(1), "one after it went");
+        assert_eq!(shifted(None, 0), None);
     }
 }
