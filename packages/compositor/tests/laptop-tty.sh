@@ -20,6 +20,7 @@
 #
 #   laptop-tty.sh                 the compositor, the panel, Settings and a terminal (foot, else ghostty)
 #   laptop-tty.sh -- ARGS ...     more for the compositor (--run COMMAND ...)
+#   YGG_PANEL_TRACE=1 laptop-tty.sh   the same, with the panel's Wayland messages in the log (WAYLAND_DEBUG=client)
 # Environment: YGG_PANEL, YGG_SETTINGS, YGG_TERMINAL (the programs, by name or path; empty: left out),
 # YGGDRASIL_COMPOSITOR_RENDERER=pixman (software drawing), YGG_NO_DBUS=1 (no bus of its own).
 set -eu
@@ -58,7 +59,13 @@ TERMINAL=${YGG_TERMINAL-$(pick foot ghostty)}
 if [ -z "${YGG_NO_DBUS:-}" ] && command -v dbus-update-activation-environment >/dev/null 2>&1; then
   set -- "$@" --run dbus-update-activation-environment WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE
 fi
-[ -n "$PANEL" ] && set -- "$@" --run "$PANEL"
+# YGG_PANEL_TRACE=1: the panel's Wayland messages (WAYLAND_DEBUG=client) into the log too, for a touch or popup bug; the log
+# grows quickly (every frame), so for a short run
+if [ -n "$PANEL" ] && [ -n "${YGG_PANEL_TRACE:-}" ]; then
+  set -- "$@" --run env WAYLAND_DEBUG=client "$PANEL"
+elif [ -n "$PANEL" ]; then
+  set -- "$@" --run "$PANEL"
+fi
 [ -n "$SETTINGS" ] && set -- "$@" --run "$SETTINGS"
 [ -n "$TERMINAL" ] && set -- "$@" --run "$TERMINAL"
 
