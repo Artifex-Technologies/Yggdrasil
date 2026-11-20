@@ -50,8 +50,8 @@ mod tests {
     fn writes_and_removes_the_computers_file() {
         let dir = std::env::temp_dir().join(format!("fontconf-{}", std::process::id()));
         let path = dir.join("conf.d").join(fonts::FILE);
-        assert_eq!(run(&args(&["fontconf", "set", "atkinson-hyperlegible", "-"]), &path), 0);
-        assert_eq!(fonts::load_from(&path), Prefs { sans: Some("atkinson-hyperlegible"), mono: None });
+        assert_eq!(run(&args(&["fontconf", "set", "noto-sans", "-"]), &path), 0);
+        assert_eq!(fonts::load_from(&path), Prefs { sans: Some("noto-sans"), mono: None });
         assert_eq!(run(&args(&["fontconf", "set", "-", "opendyslexic-mono"]), &path), 0);
         assert_eq!(fonts::load_from(&path), Prefs { sans: None, mono: Some("opendyslexic-mono") });
         assert_eq!(run(&args(&["fontconf", "set", "-", "-"]), &path), 0);

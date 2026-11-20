@@ -813,7 +813,8 @@ impl App {
             "keymap": self.keymap,
             "keymap_variant": self.keymap_variant,
         });
-        // the system font (left out when it is the default: then the installed system has no font file)
+        // the system font (left out when it is the default: then the installed system has no font file of its own, and
+        // yggdrasil-theme's default file applies)
         if let Some(obj) = plan.as_object_mut() {
             if self.font != yggdrasil_conf::fonts::SANS[0].id {
                 obj.insert("font".into(), serde_json::json!(self.font));
@@ -1551,15 +1552,16 @@ mod tests {
         let mut app = App::new();
         app.font_found = vec![here(&SANS[0]), here(&MONO[0]), Found { choice: &SANS[3], file: None }];
         assert!(!app.pages().contains(&Page::Font), "only the defaults: nothing to choose");
-        app.font_found.push(here(&SANS[2]));
+        app.font_found.push(here(&SANS[1]));
         assert_eq!(app.pages()[..2], [Page::Welcome, Page::Font], "right after the language");
         assert!(app.plan().get("font").is_none() && app.plan().get("font_mono").is_none(), "the defaults need no file");
-        app.font = SANS[2].id;
+        assert_eq!(font_summary(app.font, app.font_mono), "Atkinson Hyperlegible, Atkinson Hyperlegible Mono for code", "the default");
+        app.font = SANS[1].id;
         app.font_mono = MONO[1].id;
         let plan = app.plan();
         assert_eq!(plan["font"], "atkinson-hyperlegible-next");
-        assert_eq!(plan["font_mono"], "atkinson-hyperlegible-mono");
-        assert_eq!(font_summary(app.font, app.font_mono), "Atkinson Hyperlegible Next, Atkinson Hyperlegible Mono for code");
+        assert_eq!(plan["font_mono"], "opendyslexic-mono");
+        assert_eq!(font_summary(app.font, app.font_mono), "Atkinson Hyperlegible Next, OpenDyslexic Mono for code");
     }
 
     #[test]

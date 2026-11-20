@@ -134,7 +134,9 @@ impl Atlas {
         font.set_variation(b"wght", 400.0);
         let scaled = font.as_scaled(PxScale::from(19.0));
         let mut cells = vec![];
-        for (i, ch) in GLYPHS.chars().enumerate() {
+        // only the characters the font has (Atkinson Hyperlegible Mono, the default, has no Greek): a missing one would be drawn
+        // as the font's empty box
+        for (i, ch) in GLYPHS.chars().filter(|&ch| font.glyph_id(ch).0 != 0).enumerate() {
             // the alpha of the character, mirrored for some like the film's
             let (w, h) = (CELL_W as usize, CELL_H as usize);
             let mut alpha = vec![0f32; w * h];
@@ -164,7 +166,7 @@ impl Atlas {
             });
             cells.push(levels);
         }
-        Some(Atlas { cells })
+        (!cells.is_empty()).then_some(Atlas { cells })
     }
 }
 
@@ -410,7 +412,7 @@ impl App {
             })
             .collect();
         pool.destroy();
-        let glyphs = GLYPHS.chars().count();
+        let glyphs = self.glyphs();
         let n = (w as f32 / CELL_W) as usize + 1;
         let cols = (0..n).map(|_| new_column(&mut self.rng, h as f32, glyphs, true)).collect();
         let s = &mut self.screens[i];
@@ -439,6 +441,11 @@ impl App {
         }
     }
 
+    /// How many characters the columns pick from: those the font has (Atlas::new).
+    fn glyphs(&self) -> usize {
+        self.atlas.as_ref().map_or(GLYPHS.chars().count(), |a| a.cells.len())
+    }
+
     /// How far the fade-out has gone (1 = fully shown).
     fn shown(&self) -> f32 {
         match self.fading {
@@ -457,7 +464,7 @@ impl App {
 
     fn draw_inner(&mut self, i: usize) {
         let shown = self.shown();
-        let (glyphs, accent) = (GLYPHS.chars().count(), self.accent);
+        let (glyphs, accent) = (self.glyphs(), self.accent);
         let qh = self.qh.clone();
         let s = &mut self.screens[i];
         if !s.configured || s.bufs.is_empty() {

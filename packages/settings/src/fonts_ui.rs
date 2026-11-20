@@ -881,18 +881,21 @@ mod tests {
 
     #[test]
     fn the_login_screen_gets_what_is_in_effect() {
-        let now = Now { mine: Prefs { sans: Some("atkinson-hyperlegible"), mono: None }, computer: Prefs::default() };
+        let now = Now { mine: Prefs { sans: Some("noto-sans"), mono: None }, computer: Prefs::default() };
         let eff = now.effective();
-        assert_eq!(login_args(&eff), ["atkinson-hyperlegible", "-"]);
+        assert_eq!(login_args(&eff), ["noto-sans", "-"]);
         assert!(!login_matches(&now.computer, &eff));
-        // your own Noto Sans over the computer's OpenDyslexic: the login screen goes back to the default (no file)
-        let now = Now { mine: Prefs { sans: Some("noto-sans"), mono: None }, computer: Prefs { sans: Some("opendyslexic"), mono: None } };
+        // your own Atkinson Hyperlegible over the computer's OpenDyslexic: the login screen goes back to the default (no file)
+        let now = Now {
+            mine: Prefs { sans: Some("atkinson-hyperlegible"), mono: None },
+            computer: Prefs { sans: Some("opendyslexic"), mono: None },
+        };
         assert_eq!(login_args(&now.effective()), ["-", "-"]);
         assert!(!login_matches(&now.computer, &now.effective()));
         // the computer's choice with nothing of your own: already the same
-        let now = Now { mine: Prefs::default(), computer: Prefs { sans: Some("lexend"), mono: Some("atkinson-hyperlegible-mono") } };
+        let now = Now { mine: Prefs::default(), computer: Prefs { sans: Some("lexend"), mono: Some("opendyslexic-mono") } };
         assert!(login_matches(&now.computer, &now.effective()));
-        assert_eq!(login_args(&now.effective()), ["lexend", "atkinson-hyperlegible-mono"]);
+        assert_eq!(login_args(&now.effective()), ["lexend", "opendyslexic-mono"]);
     }
 
     #[test]
@@ -920,9 +923,9 @@ mod tests {
         let now = Now { mine: Prefs::default(), computer: Prefs { sans: Some("atkinson-hyperlegible-next"), mono: None } };
         let p = plan(&now, "atkinson-hyperlegible-next", Kind::Text);
         assert_eq!(p.login, None);
-        // back to Noto Sans: the computer's file goes (both "-")
+        // back to Atkinson Hyperlegible, the default: the computer's file goes (both "-")
         let now = Now { mine: Prefs { sans: Some("lexend"), mono: None }, computer: Prefs { sans: Some("lexend"), mono: None } };
-        assert_eq!(plan(&now, "noto-sans", Kind::Text).login, Some(["-", "-"]));
+        assert_eq!(plan(&now, "atkinson-hyperlegible", Kind::Text).login, Some(["-", "-"]));
     }
 
     #[test]
@@ -930,9 +933,12 @@ mod tests {
         let same = Now { mine: Prefs { sans: Some("lexend"), mono: None }, computer: Prefs { sans: Some("lexend"), mono: None } };
         assert_eq!(login_note(&same), None);
         let text = Now { mine: Prefs { sans: Some("lexend"), mono: None }, computer: Prefs::default() };
-        assert_eq!(login_note(&text).as_deref(), Some("The login screen keeps Noto Sans until the font is set again."));
+        assert_eq!(login_note(&text).as_deref(), Some("The login screen keeps Atkinson Hyperlegible until the font is set again."));
         let both = Now { mine: Prefs { sans: Some("lexend"), mono: Some("opendyslexic-mono") }, computer: Prefs::default() };
-        assert_eq!(login_note(&both).as_deref(), Some("The login screen keeps Noto Sans and Noto Sans Mono until the font is set again."));
+        assert_eq!(
+            login_note(&both).as_deref(),
+            Some("The login screen keeps Atkinson Hyperlegible and Atkinson Hyperlegible Mono until the font is set again.")
+        );
     }
 
     /// A scratch folder with a stand-in pkexec that logs its arguments and answers `code` (0 also copies your file over the
@@ -1070,9 +1076,9 @@ mod tests {
                 "Browse and install fonts",
                 "System font",
                 TEXT_TITLE,
-                "Noto Sans",
+                "Atkinson Hyperlegible",
                 CODE_TITLE,
-                "Noto Sans Mono",
+                "Atkinson Hyperlegible Mono",
                 "Installed fonts (0)",
             ],
         );
@@ -1090,7 +1096,7 @@ mod tests {
     }
 
     #[test]
-    fn a_kinds_page_lists_its_choices_noto_first() {
+    fn a_kinds_page_lists_its_choices_the_default_first() {
         let (dir, t) = scratch("kinds", 0);
         let mut p = Page::new(t);
         for (sub, kind) in [(crate::AppSub::FontText, Kind::Text), (crate::AppSub::FontCode, Kind::Code)] {
@@ -1098,7 +1104,7 @@ mod tests {
             let texts = p.frame(vec![]);
             let names: Vec<&str> = kind.choices().iter().map(|c| c.name).collect();
             order(&texts, &names);
-            assert_eq!(names[0], if kind == Kind::Text { "Noto Sans" } else { "Noto Sans Mono" });
+            assert_eq!(names[0], if kind == Kind::Text { "Atkinson Hyperlegible" } else { "Atkinson Hyperlegible Mono" });
             assert_eq!(texts.iter().filter(|(t, _)| t == "In use").count(), 1);
             assert_eq!(texts.iter().filter(|(t, _)| t == "Use").count(), names.len() - 1);
             assert!(texts.iter().any(|(t, _)| t == kind.what()));
@@ -1111,8 +1117,8 @@ mod tests {
         let (dir, t) = scratch("use", 0);
         let mut p = Page::new(t.clone());
         p.app.app_sub = crate::AppSub::FontText;
-        // the Use buttons: Atkinson Hyperlegible, Next, Lexend, OpenDyslexic
-        p.click("Use", 2);
+        // the Use buttons: Atkinson Hyperlegible Next, Lexend, OpenDyslexic, Noto Sans
+        p.click("Use", 1);
         assert_eq!(fonts::load_from(&t.mine), Prefs { sans: Some("lexend"), mono: None }, "your file at once");
         p.wait_for_login();
         assert_eq!(std::fs::read_to_string(dir.join("pkexec.log")).unwrap(), format!("{HELPER} set lexend -\n"));
@@ -1121,13 +1127,13 @@ mod tests {
         assert!(!texts.iter().any(|(t, _)| t.starts_with("The login screen keeps")));
         assert_eq!(texts.iter().filter(|(t, _)| t == "In use").count(), 1);
         order(&texts, &["Lexend", "In use", "OpenDyslexic"]);
-        // a code font: the login screen gets both, the text font as it was
+        // a code font (the Use buttons: OpenDyslexic Mono, Noto Sans Mono): the login screen gets both, the text font as it was
         p.app.app_sub = crate::AppSub::FontCode;
         p.click("Use", 0);
         p.wait_for_login();
-        assert_eq!(fonts::load_from(&t.mine), Prefs { sans: Some("lexend"), mono: Some("atkinson-hyperlegible-mono") });
+        assert_eq!(fonts::load_from(&t.mine), Prefs { sans: Some("lexend"), mono: Some("opendyslexic-mono") });
         let log = std::fs::read_to_string(dir.join("pkexec.log")).unwrap();
-        assert_eq!(log.lines().nth(1), Some(format!("{HELPER} set lexend atkinson-hyperlegible-mono").as_str()));
+        assert_eq!(log.lines().nth(1), Some(format!("{HELPER} set lexend opendyslexic-mono").as_str()));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1138,9 +1144,9 @@ mod tests {
         p.app.app_sub = crate::AppSub::FontText;
         p.click("Use", 0);
         p.wait_for_login();
-        assert_eq!(fonts::load_from(&t.mine), Prefs { sans: Some("atkinson-hyperlegible"), mono: None });
+        assert_eq!(fonts::load_from(&t.mine), Prefs { sans: Some("atkinson-hyperlegible-next"), mono: None });
         assert!(!t.computer.exists(), "the computer's file is not written");
-        let note = "The login screen keeps Noto Sans until the font is set again.";
+        let note = "The login screen keeps Atkinson Hyperlegible until the font is set again.";
         let texts = p.frame(vec![]);
         assert!(texts.iter().any(|(t, _)| t == note), "{texts:?}");
         assert!(p.app.status.is_empty(), "a cancelled password is no error");
@@ -1150,7 +1156,10 @@ mod tests {
         assert!(p.frame(vec![]).iter().any(|(t, _)| t == note));
         p.click("Set again", 0);
         p.wait_for_login();
-        assert_eq!(std::fs::read_to_string(dir.join("pkexec.log")).unwrap(), format!("{HELPER} set atkinson-hyperlegible -\n").repeat(2));
+        assert_eq!(
+            std::fs::read_to_string(dir.join("pkexec.log")).unwrap(),
+            format!("{HELPER} set atkinson-hyperlegible-next -\n").repeat(2)
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

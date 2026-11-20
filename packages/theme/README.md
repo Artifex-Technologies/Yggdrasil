@@ -21,6 +21,14 @@ retinted in 47 accents dark and light, and apply and cursor on every combination
 stand-ins for gsettings, systemctl, hyprctl and pkill (and, for the Rust side, which sets the pointer through yggdrasil-wm, a
 stand-in Hyprland socket that writes the same call down); output, calls and files must be the same.
 
+## The default system font
+
+`data/58-yggdrasil-default-font.conf`, installed in `/usr/share/fontconfig/conf.avail` with a link in `conf.default` (Arch's
+way: fontconfig's pacman hook links it into `/etc/fonts/conf.d`), prefers Atkinson Hyperlegible for `sans-serif`, `sans` and
+`system-ui` and Atkinson Hyperlegible Mono for `monospace`, on a system where no font was chosen. A chosen font
+(`56-yggdrasil-font.conf`) wins; the package depends on the two fonts. Its test is in yggdrasil-conf (`fonts.rs`,
+`the_default_file_names_the_defaults`), next to the list it must match. Details: docs/APPS_SETTINGS.md, Appearance > Fonts.
+
 ## ygg-cursors
 
 `ygg-cursors OUTDIR [--preview]` draws the cursor theme (the package runs it when it is built): 22 shapes, 96 names, five

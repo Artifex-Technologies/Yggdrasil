@@ -1,5 +1,9 @@
 # Accessibility audit (2026-10-16)
 
+**Status 2026-11-19:** Atkinson Hyperlegible is the system font by default, and Atkinson Hyperlegible Mono for code and
+terminals (yggdrasil-theme's fontconfig file, `58-yggdrasil-default-font.conf`; Noto Sans stays a choice). Settings depends on
+all six reading fonts and the theme on the two defaults, so a system installed before gets them with its next update.
+
 **Status 2026-11-18:** fonts made for reading: Atkinson Hyperlegible (and Next, and Mono) for low vision, Lexend, OpenDyslexic
 (and Mono), chosen in the installer's Font page and in Settings > Appearance > Fonts, for the whole system through fontconfig
 (the login screen too). Details: APPS_SETTINGS.md, INSTALLER.md.

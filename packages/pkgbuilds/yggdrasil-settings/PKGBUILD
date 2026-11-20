@@ -14,8 +14,13 @@ conflicts=('labyrinth-settings')
 replaces=('labyrinth-settings')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
 license=('MPL-2.0')
+# the six reading fonts: Appearance > Fonts offers them on every system (Atkinson Hyperlegible and Atkinson Hyperlegible Mono,
+# the defaults, come with yggdrasil-theme too; fonts depend on nothing, so no cycle). Arch's ttf-atkinson-hyperlegible, the
+# other five from Labyrinth's [labyrinth] repository
 depends=('gcc-libs' 'yggdrasil-spell' 'libxkbcommon' 'wayland' 'vulkan-icd-loader' 'libglvnd' 'fontconfig'
-         'networkmanager' 'bluez-utils' 'libpulse' 'power-profiles-daemon' 'pciutils' 'polkit')
+         'networkmanager' 'bluez-utils' 'libpulse' 'power-profiles-daemon' 'pciutils' 'polkit'
+         'ttf-atkinson-hyperlegible' 'ttf-atkinson-hyperlegible-next' 'ttf-atkinson-hyperlegible-mono' 'ttf-lexend'
+         'otf-opendyslexic' 'otf-opendyslexic-mono')
 optdepends=('ufw: firewall page'
             'hwdata: Wi-Fi & Network: who made each access point (the IEEE list, read offline; pciutils brings it too)'
             "cuda: the graphics card unlock's correctness check and benchmark (gpuunlock bench)"
@@ -27,12 +32,6 @@ optdepends=('ufw: firewall page'
             'iio-sensor-proxy: a 2-in-1 turns its screen with the device (tablet mode)'
             'wvkbd: the on-screen keyboard in tablet mode, from Agora'
             'fprintd: Users > Fingerprint, from Agora'
-            'ttf-atkinson-hyperlegible: Appearance > Fonts'
-            'ttf-atkinson-hyperlegible-next: Appearance > Fonts'
-            'ttf-atkinson-hyperlegible-mono: Appearance > Fonts (monospace)'
-            'ttf-lexend: Appearance > Fonts'
-            'otf-opendyslexic: Appearance > Fonts'
-            'otf-opendyslexic-mono: Appearance > Fonts (monospace)'
             "heimdall-private-mic-git: Appearance > Fonts: Heimdall's file guard, which checks every font before it is added")
 makedepends=('cargo')
 options=('!lto')

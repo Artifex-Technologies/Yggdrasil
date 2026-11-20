@@ -232,7 +232,7 @@ fn the_chosen_font_is_the_computers() {
     use std::os::unix::fs::PermissionsExt;
     let path = format!("{}/etc/fonts/conf.d/56-yggdrasil-font.conf", live.target());
     assert_eq!(std::fs::metadata(path).unwrap().permissions().mode() & 0o777, 0o644);
-    // nothing chosen: no file (Noto Sans)
+    // nothing chosen: no file (the default, Atkinson Hyperlegible: yggdrasil-theme's file)
     let live = Live::new();
     let mut f = live.fake();
     assert_eq!(live.run(&mut f, &[], &plan().dumps()), 0, "{:?}", f.out);

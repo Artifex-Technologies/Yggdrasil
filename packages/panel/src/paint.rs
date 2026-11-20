@@ -153,7 +153,7 @@ fn fc_match(pattern: &str) -> Option<PathBuf> {
 }
 
 impl Fonts {
-    /// The system's default sans (Noto Sans in the image), regular and bold.
+    /// The system's sans-serif font (the chosen one, or Atkinson Hyperlegible by default), regular and bold.
     pub fn load() -> Option<Fonts> {
         // a variable font (one file for every weight) at the weight asked for; its file's own default need not be regular
         let load = |pat: &str, weight: f32| -> Option<FontVec> {

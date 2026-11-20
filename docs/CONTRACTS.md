@@ -32,6 +32,14 @@ design, session and wallpaper, [LOGIN_SCREEN.md](LOGIN_SCREEN.md)), and the powe
 `case-fans.json`, `gpu-fan.json` ([packages/power-helpers](../packages/power-helpers/README.md)).
 Used by: Labyrinth OS (its ISO profile ships defaults), LykanOS (`greeter.conf`, `idle.conf`).
 
+### The default system font (`/usr/share/fontconfig/conf.avail/58-yggdrasil-default-font.conf`)
+
+yggdrasil-theme's fontconfig file, linked into `/etc/fonts/conf.d` by fontconfig's own pacman hook: Atkinson Hyperlegible for
+`sans-serif`, `sans` and `system-ui`, Atkinson Hyperlegible Mono for `monospace`, the first choices of `yggdrasil-conf`'s
+`fonts.rs`. A chosen font (`56-yggdrasil-font.conf`, the user's or the computer's, [APPS_SETTINGS.md](APPS_SETTINGS.md))
+is read before it and wins; it wins over the distribution's `60-latin.conf`.
+Used by: every program that asks fontconfig for a generic family on a system with yggdrasil-theme (Labyrinth OS, LykanOS).
+
 ### The `yggdrasil-ui` crate (a git dependency)
 
 The egui apps' shared look: palette and accent, widgets, the system font, accessibility (`theme::apply_accessibility`),
@@ -52,4 +60,5 @@ Used by: the Argus app's `argus-tools/crates/argus-app/smoke-yggdrasil.sh` (the 
 | `heimdall-fileguard scan --json` and `extract --json` | Heimdall | Settings > Appearance > Fonts (every added font file) |
 | `~/.config/heimdall/privacy.json` (`downloads_guard`, `remove_hidden_info`, `lookalike_warnings`, ...) | Heimdall | Settings > Security > Privacy writes it (`yggdrasil_ui::privacy_prefs`); Minos, Settings and Agora read it |
 | `heimdall-multilink status --json` | Heimdall | Settings > Wi-Fi & Network > Several connections at once |
+| The reading font packages `ttf-atkinson-hyperlegible-next`, `ttf-atkinson-hyperlegible-mono`, `ttf-lexend`, `otf-opendyslexic`, `otf-opendyslexic-mono` (and Arch's `ttf-atkinson-hyperlegible`) | Labyrinth OS's `[labyrinth]` repository (its docs/CONTRACTS.md) | yggdrasil-theme's depends (the two defaults), yggdrasil-settings' (all six) |
 | `sarina fleet-status --json` | Sarina | the Agents bar add-on (`packages/agent-usage`) |

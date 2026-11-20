@@ -265,8 +265,8 @@ fn cache_standins(dir: &Path, after: &str) -> (Vec<String>, Vec<String>) {
 #[test]
 fn a_stale_cache_is_made_again_once() {
     let lexend = Path::new(yggdrasil_conf::fonts::sans("lexend").unwrap().file);
-    let noto = Path::new(yggdrasil_conf::fonts::SANS[0].file);
-    let noto_mono = Path::new(yggdrasil_conf::fonts::MONO[0].file);
+    let noto = Path::new(yggdrasil_conf::fonts::sans("noto-sans").unwrap().file);
+    let noto_mono = Path::new(yggdrasil_conf::fonts::mono("noto-sans-mono").unwrap().file);
     // Lexend's file is on disk but not listed: fc-cache -f, and then it is
     let d = tmp("heal");
     let (list, cache) = cache_standins(&d, "Lexend");

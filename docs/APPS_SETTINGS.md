@@ -204,23 +204,34 @@ assistant), Apps, Privacy & security, System. Settings opens on General all the 
   fonts"), then **System font** as two rows, **Text** and **Code and terminals**, each showing the font in use drawn in its own
   letters and opening a page of its own (Appearance › Fonts › Text, `appearance:font-text`; `appearance:font-code`), then the
   installed fonts as cards. Each kind's page lists the choices, each with a line of text in it, a plain note on what it was
-  made for, and Use or In use: Noto Sans (the default), Atkinson Hyperlegible and Atkinson Hyperlegible Next (the Braille
-  Institute's, for low vision readers), Lexend and OpenDyslexic; for code Noto Sans Mono, Atkinson Hyperlegible Mono and
-  OpenDyslexic Mono. A font that is not installed says so and cannot be chosen (on Labyrinth all are in the base system; elsewhere they are the packages
-  `ttf-atkinson-hyperlegible`, `ttf-atkinson-hyperlegible-next`, `ttf-atkinson-hyperlegible-mono`, `ttf-lexend`,
-  `otf-opendyslexic` and `otf-opendyslexic-mono`). How it works:
+  made for, and Use or In use: Atkinson Hyperlegible (the default since 2026-11-19) and Atkinson Hyperlegible Next (the
+  Braille Institute's, for low vision readers), Lexend, OpenDyslexic and Noto Sans (the default until then, with letters for
+  almost every language); for code Atkinson Hyperlegible Mono (the default), OpenDyslexic Mono and Noto Sans Mono. A font
+  that is not installed says so and cannot be chosen. The package depends on all six, `ttf-atkinson-hyperlegible` (Arch's),
+  `ttf-atkinson-hyperlegible-next`, `ttf-atkinson-hyperlegible-mono`, `ttf-lexend`, `otf-opendyslexic` and
+  `otf-opendyslexic-mono` (Labyrinth's `[labyrinth]` repository), so an update brings them to a system installed without
+  them. How it works:
   - The choice is a fontconfig file (`yggdrasil-conf/src/fonts.rs`): `~/.config/fontconfig/conf.d/56-yggdrasil-font.conf`
     prefers the family for `sans-serif` (and `sans`, `system-ui`) and for `monospace`, so every program that asks fontconfig
-    follows it. Only families from the list are ever written. Nothing chosen: no file, and Noto Sans as before.
+    follows it. Only families from the list are ever written. Nothing chosen: no file, and the default.
+  - **The default is a file of its own**, yggdrasil-theme's `/usr/share/fontconfig/conf.avail/58-yggdrasil-default-font.conf`
+    (the source: `packages/theme/data`), linked from `/usr/share/fontconfig/conf.default` as fontconfig's own files are, so
+    fontconfig's pacman hook links it into `/etc/fonts/conf.d` (and unlinks it when the package goes). It prefers Atkinson
+    Hyperlegible for `sans-serif`, `sans` and `system-ui` and Atkinson Hyperlegible Mono for `monospace`, so a system with no
+    56 file (installed before, or with the defaults) has them too. The theme package depends on those two fonts. At 58 it is
+    read after both 56 files, so a chosen font wins, and before the distribution's 60-latin.conf (Noto Sans and DejaVu).
+    `the_default_file_names_the_defaults` (yggdrasil-conf) checks that it names exactly the first of each list, and runs
+    `fc-pattern` on a scratch configuration: fontconfig reads it without a complaint, it comes before a stand-in
+    60-latin.conf, and a 56 file render() wrote comes before it, for all four generic names.
   - **The font chosen is the system font, the login screen's too** (no separate switch since 2026-11-18). Use writes your own
     file at once, no password, and then the computer's, `/etc/fonts/conf.d/56-yggdrasil-font.conf` (the login screen's, and
     every account's without a choice of its own), through pkexec and `/usr/lib/yggdrasil/fontconf set SANS MONO` (ids from the
     list or `-`; `org.yggdrasil.fontconf.set`, an administrator's password kept a few minutes, like the other system-wide
     changes in Settings). When the computer's file already says the same, no password is asked. Password cancelled: your own
-    choice still applies, and a small note under the fonts says "The login screen keeps Noto Sans until the font is set
-    again", with "Set again" beside it (the note is read from the two files, so it is there after a restart too). The
-    installer writes both files. Your own file is read first (50-user.conf), so it wins over the computer's, and either wins
-    over the distribution's Noto Sans (60-latin.conf).
+    choice still applies, and a small note under the fonts says "The login screen keeps Atkinson Hyperlegible until the font
+    is set again", with "Set again" beside it (the note is read from the two files, so it is there after a restart too). The
+    installer writes the computer's file. Your own file is read first (50-user.conf), so it wins over the computer's, and
+    either wins over the default (58) and the distribution's Noto Sans (60-latin.conf).
   - **No size here:** text size is display scaling's and Accessibility's "Text and control size" (panel.conf's `text_scale`);
     the Fonts page no longer repeats it.
   - **A stale font cache** (found on my PC on 2026-11-18): after `pacman -S ttf-atkinson-hyperlegible` and, in the same

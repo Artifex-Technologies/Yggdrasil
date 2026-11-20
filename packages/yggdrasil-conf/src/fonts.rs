@@ -1,18 +1,21 @@
 //! The system font: which family the desktop and every program use for ordinary text (`sans-serif`) and for code and terminals
-//! (`monospace`). Chosen in the installer and in Settings > Appearance > Fonts; Noto Sans and Noto Sans Mono when nothing is
-//! chosen. It is a fontconfig file, so every program that asks fontconfig for "sans-serif" follows it (GTK, Qt, browsers,
-//! Yggdrasil's own panel, lock screen and apps):
+//! (`monospace`). Chosen in the installer and in Settings > Appearance > Fonts; Atkinson Hyperlegible and Atkinson Hyperlegible
+//! Mono when nothing is chosen. It is a fontconfig file, so every program that asks fontconfig for "sans-serif" follows it
+//! (GTK, Qt, browsers, Yggdrasil's own panel, lock screen and apps):
 //!
 //! ```text
 //! ~/.config/fontconfig/conf.d/56-yggdrasil-font.conf    yours (Settings writes it)
 //! /etc/fonts/conf.d/56-yggdrasil-font.conf              the computer's: the login screen and anyone without their own
 //!                                                       (the installer writes it; Settings through pkexec and `fontconf`)
+//! /etc/fonts/conf.d/58-yggdrasil-default-font.conf      the default, the first of SANS and of MONO: yggdrasil-theme's
+//!                                                       (packages/theme/data, in /usr/share/fontconfig/conf.avail and
+//!                                                       conf.default, linked here by fontconfig's own pacman hook)
 //! ```
 //!
 //! Each holds one `<alias>` per generic family it sets, preferring the chosen family. Fontconfig reads the user's files at
-//! 50-user.conf, before the system file at 56 and the distribution's defaults at 60-latin.conf, and the first preference
-//! read wins: so your own choice beats the computer's, and either beats Noto Sans. Only the families listed here are ever
-//! written, so the file never carries text from anywhere else.
+//! 50-user.conf, before the system file at 56, the default at 58 and the distribution's defaults at 60-latin.conf (Noto Sans
+//! and DejaVu), and the first preference read wins: so your own choice beats the computer's, and either beats the default.
+//! Only the families listed here are ever written, so the file never carries text from anywhere else.
 
 use std::path::{Path, PathBuf};
 
@@ -35,17 +38,10 @@ pub struct Choice {
 /// Fonts for ordinary text, the default first.
 pub const SANS: &[Choice] = &[
     Choice {
-        id: "noto-sans",
-        family: "Noto Sans",
-        name: "Noto Sans",
-        note: "The default: clear and plain, with letters for almost every language",
-        file: "/usr/share/fonts/noto/NotoSans-Regular.ttf",
-    },
-    Choice {
         id: "atkinson-hyperlegible",
         family: "Atkinson Hyperlegible",
         name: "Atkinson Hyperlegible",
-        note: "Designed by the Braille Institute for low vision readers: letters that are hard to mix up, like I, l and 1",
+        note: "The default. Designed by the Braille Institute for low vision readers: letters that are hard to mix up, like I, l and 1",
         file: "/usr/share/fonts/TTF/AtkinsonHyperlegible-Regular.ttf",
     },
     Choice {
@@ -69,22 +65,22 @@ pub const SANS: &[Choice] = &[
         note: "Designed to make reading easier with dyslexia: heavier letter bottoms. Some find it helps, some do not",
         file: "/usr/share/fonts/OTF/OpenDyslexic-Regular.otf",
     },
+    Choice {
+        id: "noto-sans",
+        family: "Noto Sans",
+        name: "Noto Sans",
+        note: "Clear and plain, with letters for almost every language",
+        file: "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+    },
 ];
 
 /// Fonts for code and terminals, the default first.
 pub const MONO: &[Choice] = &[
     Choice {
-        id: "noto-sans-mono",
-        family: "Noto Sans Mono",
-        name: "Noto Sans Mono",
-        note: "The default, matching Noto Sans",
-        file: "/usr/share/fonts/noto/NotoSansMono-Regular.ttf",
-    },
-    Choice {
         id: "atkinson-hyperlegible-mono",
         family: "Atkinson Hyperlegible Mono",
         name: "Atkinson Hyperlegible Mono",
-        note: "The Braille Institute's monospaced Atkinson Hyperlegible, for low vision readers",
+        note: "The default, matching Atkinson Hyperlegible: the Braille Institute's monospaced font for low vision readers",
         file: "/usr/share/fonts/TTF/AtkinsonHyperlegibleMono-VF.ttf",
     },
     Choice {
@@ -93,6 +89,13 @@ pub const MONO: &[Choice] = &[
         name: "OpenDyslexic Mono",
         note: "The monospaced OpenDyslexic (an older design, from 2016)",
         file: "/usr/share/fonts/OTF/OpenDyslexicMono-Regular.otf",
+    },
+    Choice {
+        id: "noto-sans-mono",
+        family: "Noto Sans Mono",
+        name: "Noto Sans Mono",
+        note: "Plain, matching Noto Sans, with letters for many languages",
+        file: "/usr/share/fonts/noto/NotoSansMono-Regular.ttf",
     },
 ];
 
@@ -296,8 +299,79 @@ mod tests {
         assert_eq!(render(&Prefs::default()), None);
         let p = parse("");
         assert_eq!(p, Prefs::default());
-        assert_eq!(p.sans_choice().family, "Noto Sans");
-        assert_eq!(p.mono_choice().family, "Noto Sans Mono");
+        assert_eq!(p.sans_choice().family, "Atkinson Hyperlegible");
+        assert_eq!(p.mono_choice().family, "Atkinson Hyperlegible Mono");
+    }
+
+    /// yggdrasil-theme's default file (58-yggdrasil-default-font.conf, in the module's table): well-formed, and it prefers exactly the defaults, the first of SANS and of
+    /// MONO, for the generic names the chosen font's file sets (so a computer with no file of its own shows what Settings says).
+    #[test]
+    fn the_default_file_names_the_defaults() {
+        let text = include_str!("../../theme/data/58-yggdrasil-default-font.conf");
+        assert!(text.starts_with("<?xml version=\"1.0\"?>\n<!DOCTYPE fontconfig SYSTEM \"urn:fontconfig:fonts.dtd\">\n"));
+        // the generic names and what each prefers, in order: what render() writes for the defaults, nothing else
+        let mut aliases = vec![];
+        let mut rest = text;
+        while let Some(i) = rest.find("<alias") {
+            let end = rest[i..].find("</alias>").expect("a closed alias") + i + "</alias>".len();
+            let fams = families(&rest[i..end]);
+            assert_eq!(fams.len(), 2, "one generic name and one family: {fams:?}");
+            aliases.push((fams[0].to_string(), fams[1].to_string()));
+            rest = &rest[end..];
+        }
+        let (sans, mono) = (SANS[0].family.to_string(), MONO[0].family.to_string());
+        let want = ["sans-serif", "sans", "system-ui"].map(|g| (g.to_string(), sans.clone()));
+        assert_eq!(aliases, [want.to_vec(), vec![("monospace".to_string(), mono)]].concat());
+        assert_eq!(text.matches("<family>").count(), 8, "no family outside the aliases");
+        assert_eq!(parse(text), Prefs { sans: Some(SANS[0].id), mono: Some(MONO[0].id) });
+        // fontconfig itself reads it without a complaint, after a chosen font's file and before the distribution's defaults
+        // (where its tools are installed; a configuration of its own in a scratch folder, nothing of the computer's)
+        let dir = std::env::temp_dir().join(format!("ygg-fonts-default-{}", std::process::id()));
+        let confd = dir.join("conf.d");
+        std::fs::create_dir_all(&confd).unwrap();
+        std::fs::write(confd.join("58-yggdrasil-default-font.conf"), text).unwrap();
+        let latin =
+            "<?xml version=\"1.0\"?>\n<fontconfig><alias><family>sans-serif</family><prefer><family>Noto Sans</family></prefer></alias>\
+                     <alias><family>monospace</family><prefer><family>Noto Sans Mono</family></prefer></alias></fontconfig>\n";
+        std::fs::write(confd.join("60-latin.conf"), latin).unwrap();
+        let conf = dir.join("fonts.conf");
+        let main = format!(
+            "<?xml version=\"1.0\"?>\n<fontconfig><cachedir>{0}</cachedir><include>{0}/conf.d</include></fontconfig>\n",
+            dir.display()
+        );
+        std::fs::write(&conf, main).unwrap();
+        // the families fontconfig tries for a generic name, in order ("sans\-serif": a bare hyphen starts a size in a pattern)
+        let tried = |generic: &str| -> Option<Vec<String>> {
+            let out = std::process::Command::new("fc-pattern")
+                .args(["-c", &generic.replace('-', "\\-"), "family"])
+                .env("FONTCONFIG_FILE", &conf)
+                .env_remove("FONTCONFIG_PATH")
+                .output()
+                .ok()?;
+            assert!(out.status.success() && out.stderr.is_empty(), "{}", String::from_utf8_lossy(&out.stderr));
+            let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+            let line = stdout.lines().find_map(|l| l.trim().strip_prefix("family:"))?.to_string();
+            Some(line.split('"').skip(1).step_by(2).map(str::to_string).collect())
+        };
+        let before = |l: &[String], a: &str, b: &str| {
+            let at = |n: &str| l.iter().position(|f| f == n).unwrap_or_else(|| panic!("{n} not in {l:?}"));
+            at(a) < at(b)
+        };
+        if let Some(l) = tried("sans-serif") {
+            assert!(before(&l, SANS[0].family, "Noto Sans"), "{l:?}");
+            let l = tried("monospace").unwrap();
+            assert!(before(&l, MONO[0].family, "Noto Sans Mono"), "{l:?}");
+            // a chosen font (the file render() writes, at 56) still wins
+            let chosen = render(&Prefs { sans: Some("lexend"), mono: Some("opendyslexic-mono") }).unwrap();
+            std::fs::write(confd.join(FILE), chosen).unwrap();
+            for g in ["sans-serif", "sans", "system-ui"] {
+                let l = tried(g).unwrap();
+                assert!(before(&l, "Lexend", SANS[0].family), "{g}: {l:?}");
+            }
+            let l = tried("monospace").unwrap();
+            assert!(before(&l, "OpenDyslexicMono", MONO[0].family), "{l:?}");
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

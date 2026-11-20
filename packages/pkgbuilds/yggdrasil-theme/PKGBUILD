@@ -1,4 +1,5 @@
-# Yggdrasil's look for the programs it does not write (Qt, KDE and GTK programs) and its mouse cursors: packages/theme.
+# Yggdrasil's look for the programs it does not write (Qt, KDE and GTK programs), its mouse cursors and the default system
+# font: packages/theme.
 # It replaces the WhiteSur KDE, GTK and cursor themes: a colour scheme (used with Qt's own Fusion style), GTK colours on GTK's own Adwaita,
 # and cursors drawn by ygg-cursors. Nothing is downloaded and no other theme package is needed. ygg-theme and ygg-cursors are
 # Rust (packages/theme/src). ygg-cursors
@@ -7,12 +8,14 @@
 pkgname=yggdrasil-theme
 pkgver=1.0.0
 pkgrel=1
-pkgdesc="Yggdrasil's colour scheme, GTK colours and mouse cursors (replaces the WhiteSur themes)"
+pkgdesc="Yggdrasil's colour scheme, GTK colours, mouse cursors and default font (replaces the WhiteSur themes)"
 arch=('x86_64')
 url="https://github.com/Artifex-Technologies/Yggdrasil"
 # MIT-CMU: the drawing translated from Pillow; CC0-1.0: the Aileron subset Pillow carries as its default font
 license=('MPL-2.0' 'MIT-CMU' 'CC0-1.0')
-depends=('glibc' 'gcc-libs')
+# the two Atkinson Hyperlegible fonts: the default system font, for text and for code (58-yggdrasil-default-font.conf below;
+# the mono one is from Labyrinth's [labyrinth] repository, the other from Arch's extra)
+depends=('glibc' 'gcc-libs' 'ttf-atkinson-hyperlegible' 'ttf-atkinson-hyperlegible-mono')
 # gtk4: GTK 4's own theme is read from it (at build time) to make Yggdrasil's; fontconfig, freetype2 and libraqm: the help
 # cursor's "?" (found with fc-match, opened at run time), as Pillow drew it
 makedepends=('cargo' 'gtk4' 'fontconfig' 'freetype2' 'libraqm')
@@ -67,4 +70,11 @@ package() {
   install -Dm644 /dev/stdin "$pkgdir/usr/lib/environment.d/50-yggdrasil-cursor.conf" <<<$'XCURSOR_THEME=Yggdrasil\nXCURSOR_SIZE=24'
   # minimize, maximize and close on every window, for apps that read GNOME's settings (glib2's hook compiles the schemas)
   install -Dm644 "$_src/data/90_yggdrasil.gschema.override" "$pkgdir/usr/share/glib-2.0/schemas/90_yggdrasil.gschema.override"
+  # the default system font, Atkinson Hyperlegible and Atkinson Hyperlegible Mono, for a computer and an account with no font
+  # chosen (yggdrasil-conf's fonts.rs: a chosen font's 56-yggdrasil-font.conf is read first and wins; this wins over the
+  # distribution's 60-latin.conf). Arch's way, as fontconfig's own files: the file in conf.avail and a link in conf.default,
+  # which fontconfig's pacman hook (40-fontconfig-config) links into /etc/fonts/conf.d, and unlinks when the package goes
+  install -Dm644 "$_src/data/58-yggdrasil-default-font.conf" "$pkgdir/usr/share/fontconfig/conf.avail/58-yggdrasil-default-font.conf"
+  install -d "$pkgdir/usr/share/fontconfig/conf.default"
+  ln -s ../conf.avail/58-yggdrasil-default-font.conf "$pkgdir/usr/share/fontconfig/conf.default/58-yggdrasil-default-font.conf"
 }

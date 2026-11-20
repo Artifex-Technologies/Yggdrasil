@@ -71,13 +71,14 @@ e.g. Labyrinth's AI and security: Sarina, Heimdall) → Summary (and a box to ti
 ### Font
 
 The system font, chosen early so the rest of the installer can be read in it: the fonts for text and for code and terminals
-from yggdrasil-conf's list (Noto Sans, Atkinson Hyperlegible, Atkinson Hyperlegible Next, Lexend, OpenDyslexic; Noto Sans Mono,
-Atkinson Hyperlegible Mono, OpenDyslexic Mono), only those the medium has, each as a card with its name, a line of text in it
+from yggdrasil-conf's list (Atkinson Hyperlegible, the default, Atkinson Hyperlegible Next, Lexend, OpenDyslexic, Noto Sans;
+Atkinson Hyperlegible Mono, the default, OpenDyslexic Mono, Noto Sans Mono), only those the medium has, each as a card with its name, a line of text in it
 and a short note on what it was made for. Clicking one switches the installer's own window to it at once (the live system's
 setting is not changed). The page is left out when the medium has nothing besides the defaults. The plan carries
 `"font": id` and `"font_mono": id` (left out for the defaults), and the summary has a Font line. The install program writes
 the computer's fontconfig file, `/etc/fonts/conf.d/56-yggdrasil-font.conf`, which the login screen and the new account use;
-Settings > Appearance > Fonts changes it later (APPS_SETTINGS.md).
+Settings > Appearance > Fonts changes it later (APPS_SETTINGS.md). With the defaults it writes no file: yggdrasil-theme's
+`58-yggdrasil-default-font.conf` gives Atkinson Hyperlegible and its Mono.
 
 ![The installer's Font page](../assets/screenshots/installer-font.png)
 
