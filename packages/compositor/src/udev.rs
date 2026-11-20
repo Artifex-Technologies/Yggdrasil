@@ -13,12 +13,15 @@
 //!   (DP-1, HDMI-A-1, eDP-1, Virtual-1) with all its modes, its size in millimetres and the make and model from its EDID;
 //!   Settings > Displays' monitors.lua then sets its mode, scale and place (outputs.rs, the same code as headless; a screen it
 //!   gives no scale gets one from its size, laptop.rs), and a mode changed later (wlr-output-management) is set on the CRTC at
-//!   the next frame. A screen unplugged gives its CRTC back (its DrmCompositor goes, which switches the CRTC off). A connector
+//!   the next frame (a mode within half a hertz of the one asked: 60 for a panel's 60.003 Hz). A screen unplugged gives its CRTC
+//!   back (its DrmCompositor goes, which switches the CRTC off) but stays a screen for 2 s (outputs.rs, UNPLUG_GRACE): a monitor
+//!   whose link bounces comes back with its windows and panels, only its CRTC set up again; one plugged in is set up once its
+//!   link has stayed for 0.7 s (SETTLE). A connector
 //!   that appears later (a DisplayPort hub or dock, MST, makes new connectors) has the device reset first: Smithay learns a
 //!   connector's properties only then (every screen is drawn whole again).
 //! - **The lid** (laptop.rs): closed while another screen is on, the laptop's screen leaves its CRTC as if unplugged; opened, it
 //!   comes back as monitors.lua says. Closed with no other screen: it stays, dark and switched off, for logind to suspend.
-//!   The tablet-mode switch is recorded (`switches`).
+//!   The tablet-mode switch is recorded (`switches`); both are known from the start (open and off until libinput says otherwise).
 //! - **Screens off**: one switched off by wlr-output-power (yggdrasil-idle) or in Settings has its CRTC switched off (the
 //!   DrmCompositor's `clear`: no picture, the panel's backlight off); on again, the mode is set again with a whole frame.
 //! - **Suspend and resume** (laptop.rs' SleepWatch: the kernel's word that the system woke): every DrmCompositor's state is read
@@ -159,6 +162,8 @@ struct Screen {
     modes: Vec<smithay::reexports::drm::control::Mode>,
     /// the mode the CRTC is set to
     mode: Mode,
+    /// a mode asked for that the screen has not (or that did not set): told once, not tried again until another is asked
+    missed: Option<Mode>,
     /// a frame was queued and its page flip has not happened yet
     queued: bool,
     /// something changed since it was last drawn
@@ -175,7 +180,17 @@ struct Device {
     token: RegistrationToken,
     /// the connectors the device had when it was opened or last reset (Smithay knows the properties of these only)
     known: Vec<connector::Handle>,
+    /// the connectors connected at the last look (a screen kept off by the lid too)
+    was_connected: Vec<connector::Handle>,
+    /// connectors plugged in a moment ago, set up once their link has stayed for SETTLE
+    settling: Vec<(connector::Handle, Instant)>,
+    /// a look at the connectors is due (a timer runs for the settling ones)
+    rescan_pending: bool,
 }
+
+/// How long a screen just plugged in waits before its first modeset: a monitor that is hunting between its inputs (or a cable
+/// pushed in) drops its link again within this, and is then never set up and torn down for nothing.
+const SETTLE: Duration = Duration::from_millis(700);
 
 pub struct Udev {
     session: LibSeatSession,
@@ -523,9 +538,11 @@ fn device_added(udev: &Rc<RefCell<Udev>>, handle: &LoopHandle<'static, App>, nod
     };
     eprintln!("yggdrasil-compositor: {} draws with {kind}", path.display());
     let known = gpu_drm(&gpu).resource_handles().map(|r| r.connectors().to_vec()).unwrap_or_default();
-    b.devices.insert(node, Device { node, gpu, screens: HashMap::new(), token, known });
+    let device =
+        Device { node, gpu, screens: HashMap::new(), token, known, was_connected: vec![], settling: vec![], rescan_pending: false };
+    b.devices.insert(node, device);
     drop(b);
-    Ok(scan(udev, node, &[]).0)
+    Ok(scan(udev, node, &[], &[], false).0)
 }
 
 /// A GPU's DRM device.
@@ -667,10 +684,19 @@ fn connector_name(c: &connector::Info) -> String {
 }
 
 /// Look at a GPU's connectors: new connected ones become screens (their outputs are returned), screens whose connector went
-/// are given up, and so are the ones named in `off` (the lid's), their CRTC switched off (their names are returned).
-fn scan(udev: &Rc<RefCell<Udev>>, node: DrmNode, off: &[String]) -> (Vec<Output>, Vec<String>) {
+/// are given up, and so are the ones named in `off` (the lid's), their CRTC switched off (their names are returned). A screen
+/// in `kept` (its link went a moment ago, outputs.rs' UNPLUG_GRACE) that is connected again gets its CRTC with the same Output.
+/// With `settle`, a connector just plugged in is set up only once its link stayed for SETTLE; the third value is then when to
+/// look again.
+fn scan(
+    udev: &Rc<RefCell<Udev>>,
+    node: DrmNode,
+    off: &[String],
+    kept: &[Output],
+    settle: bool,
+) -> (Vec<Output>, Vec<String>, Option<Duration>) {
     let mut b = udev.borrow_mut();
-    let Some(dev) = b.devices.get_mut(&node) else { return (vec![], vec![]) };
+    let Some(dev) = b.devices.get_mut(&node) else { return (vec![], vec![], None) };
     // a connector the device did not have (a DisplayPort hub or dock: MST): Smithay maps a connector's properties only when the
     // device is reset, so it is reset (every screen goes dark for a moment and is drawn whole again)
     let handles = gpu_drm(&dev.gpu).resource_handles().map(|r| r.connectors().to_vec()).unwrap_or_default();
@@ -683,7 +709,12 @@ fn scan(udev: &Rc<RefCell<Udev>>, node: DrmNode, off: &[String]) -> (Vec<Output>
     } else {
         dev.known = handles;
     }
-    let now: Vec<connector::Info> = connected(dev).into_iter().filter(|c| !off.contains(&connector_name(c))).collect();
+    let all = connected(dev);
+    let handles: Vec<connector::Handle> = all.iter().map(|c| c.handle()).collect();
+    let was = std::mem::replace(&mut dev.was_connected, handles.clone());
+    dev.settling.retain(|(h, _)| handles.contains(h));
+    let mut again: Option<Duration> = None;
+    let now: Vec<connector::Info> = all.into_iter().filter(|c| !off.contains(&connector_name(c))).collect();
     let mut gone = vec![];
     let lost: Vec<crtc::Handle> =
         dev.screens.iter().filter(|(_, s)| !now.iter().any(|c| c.handle() == s.connector)).map(|(c, _)| *c).collect();
@@ -699,30 +730,71 @@ fn scan(udev: &Rc<RefCell<Udev>>, node: DrmNode, off: &[String]) -> (Vec<Output>
             continue;
         }
         let name = connector_name(&conn);
+        let back = kept.iter().find(|o| o.name() == name).cloned();
+        if settle && back.is_none() {
+            let since = match dev.settling.iter().find(|(h, _)| *h == conn.handle()) {
+                Some((_, t)) => Some(*t),
+                None if !was.contains(&conn.handle()) => {
+                    eprintln!("yggdrasil-compositor: {name} plugged in: set up once its link has settled");
+                    dev.settling.push((conn.handle(), Instant::now()));
+                    Some(Instant::now())
+                }
+                None => None,
+            };
+            if let Some(t) = since {
+                let left = SETTLE.saturating_sub(t.elapsed());
+                if !left.is_zero() {
+                    again = Some(again.map_or(left, |a| a.min(left)));
+                    continue;
+                }
+                dev.settling.retain(|(h, _)| *h != conn.handle());
+            }
+        }
         let used: Vec<crtc::Handle> = dev.screens.keys().copied().collect();
         let drm = gpu_drm(&dev.gpu);
         let Some(crtc) = free_crtc(drm, &conn, &used) else {
             eprintln!("yggdrasil-compositor: {name}: no free CRTC for it");
             continue;
         };
-        let (make, model) = edid_names(drm, conn.handle());
         let modes = conn.modes().to_vec();
         let preferred = modes.iter().find(|m| m.mode_type().contains(ModeTypeFlags::PREFERRED)).copied().unwrap_or(modes[0]);
-        let (w, h) = conn.size().unwrap_or((0, 0));
-        let output =
-            Output::new(name.clone(), PhysicalProperties { size: (w as i32, h as i32).into(), subpixel: Subpixel::Unknown, make, model });
-        for m in &modes {
-            output.add_mode(Mode::from(*m));
+        let output = match back {
+            // back within the grace: the same output (its windows, panels and wl_output), at the mode it had where it still can
+            Some(o) => {
+                for m in &modes {
+                    if !o.modes().contains(&Mode::from(*m)) {
+                        o.add_mode(Mode::from(*m));
+                    }
+                }
+                o
+            }
+            None => {
+                let (make, model) = edid_names(drm, conn.handle());
+                let (w, h) = conn.size().unwrap_or((0, 0));
+                let o = Output::new(
+                    name.clone(),
+                    PhysicalProperties { size: (w as i32, h as i32).into(), subpixel: Subpixel::Unknown, make, model },
+                );
+                for m in &modes {
+                    o.add_mode(Mode::from(*m));
+                }
+                o.set_preferred(Mode::from(preferred));
+                o
+            }
+        };
+        let offered: Vec<Mode> = modes.iter().map(|m| Mode::from(*m)).collect();
+        let had = output.current_mode().and_then(|m| crate::outputs::closest_mode(&offered, m));
+        let start = had.and_then(|m| modes.iter().find(|x| Mode::from(**x) == m).copied()).unwrap_or(preferred);
+        let mode = Mode::from(start);
+        if output.current_mode() != Some(mode) {
+            output.change_current_state(Some(mode), Some(Transform::Normal), None, None);
         }
-        let mode = Mode::from(preferred);
-        output.set_preferred(mode);
-        output.change_current_state(Some(mode), Some(Transform::Normal), None, None);
         let planes = drm.planes(&crtc).ok();
         let made = match &mut dev.gpu {
             Gpu::Gles { renderer, manager } => manager
                 .initialize_output::<_, Elem>(
                     crtc,
-                    preferred,
+                    start,
                     &[conn.handle()],
                     &output,
                     planes,
@@ -734,7 +806,7 @@ fn scan(udev: &Rc<RefCell<Udev>>, node: DrmNode, off: &[String]) -> (Vec<Output>
             Gpu::Pixman { renderer, manager } => manager
                 .initialize_output::<_, PixElem>(
                     crtc,
-                    preferred,
+                    start,
                     &[conn.handle()],
                     &output,
                     planes,
@@ -762,6 +834,7 @@ fn scan(udev: &Rc<RefCell<Udev>>, node: DrmNode, off: &[String]) -> (Vec<Output>
                         drm,
                         modes,
                         mode,
+                        missed: None,
                         queued: false,
                         dirty: true,
                         not_before: Instant::now(),
@@ -772,22 +845,48 @@ fn scan(udev: &Rc<RefCell<Udev>>, node: DrmNode, off: &[String]) -> (Vec<Output>
             Err(e) => eprintln!("yggdrasil-compositor: {name}: {e}"),
         }
     }
-    (added, gone)
+    (added, gone, again)
 }
 
 /// A GPU's connectors changed (a screen plugged in or out, the lid): screens are added and removed to match. The new ones come
 /// first, so the last screen is never gone in between (the lid opened as the monitor is unplugged).
+/// A screen whose connector went is kept for a moment (outputs.rs: `output_unplugged`) and, back within it, keeps its windows and
+/// panels and gets a CRTC again with nothing else rebuilt; one the lid takes off goes at once.
 fn device_changed(udev: &Rc<RefCell<Udev>>, app: &mut App, node: DrmNode) {
     let off = lid_plan(udev, app);
-    let (added, gone) = scan(udev, node, &off);
+    let kept = app.leaving_outputs();
+    let (added, gone, again) = scan(udev, node, &off, &kept, true);
     for o in added {
+        if app.output_back(&o.name()) {
+            eprintln!("yggdrasil-compositor: {} came back: kept as it was", o.name());
+            continue;
+        }
         let scale = default_scale_of(&o);
         app.add_output(o, scale);
     }
     for name in gone {
-        if let Err(e) = app.remove_output(&name) {
-            eprintln!("yggdrasil-compositor: {name}: {e}");
+        if off.contains(&name) {
+            if let Err(e) = app.remove_output(&name) {
+                eprintln!("yggdrasil-compositor: {name}: {e}");
+            }
+        } else {
+            app.output_unplugged(&name);
         }
+    }
+    // a screen settling: looked at again when it has (one timer at a time)
+    let pending = udev.borrow().devices.get(&node).is_none_or(|d| d.rescan_pending);
+    if let (Some(d), false) = (again, pending) {
+        if let Some(dev) = udev.borrow_mut().devices.get_mut(&node) {
+            dev.rescan_pending = true;
+        }
+        let u = udev.clone();
+        let _ = app.loop_handle.insert_source(Timer::from_duration(d), move |_, _, app| {
+            if let Some(dev) = u.borrow_mut().devices.get_mut(&node) {
+                dev.rescan_pending = false;
+            }
+            device_changed(&u, app, node);
+            TimeoutAction::Drop
+        });
     }
     app.wake();
 }
@@ -928,6 +1027,12 @@ fn input_added(udev: &Rc<RefCell<Udev>>, app: &mut App, device: smithay::reexpor
             info.kind = kind;
             set_up_input(d, info, &app.input);
         }
+    }
+    // the lid and tablet-mode switches are known from the start (open and off until libinput's toggle says otherwise)
+    if device.has_capability(DeviceCapability::Switch) {
+        use smithay::reexports::input::event::switch::Switch;
+        let has = |s| device.switch_has_switch(s) == Ok(true);
+        b.switches.device_added(has(Switch::Lid), has(Switch::TabletMode));
     }
     let info = b.inputs.last().map(|(_, i)| i.clone());
     app.input_devices = b.inputs.iter().map(|(_, i)| i.clone()).collect();
@@ -1193,13 +1298,29 @@ macro_rules! frame {
 macro_rules! follow_mode {
     ($renderer:expr, $out:expr, $screen:expr, $elem:ty) => {{
         let want = $screen.output.current_mode();
-        if let Some(want) = want.filter(|w| *w != $screen.mode) {
-            match $screen.modes.iter().find(|m| Mode::from(**m) == want) {
+        if let Some(want) = want.filter(|w| *w != $screen.mode && $screen.missed != Some(*w)) {
+            // the screen's own mode within half a hertz of the one asked (outputs.rs; set so already by configure_outputs)
+            let offered: Vec<Mode> = $screen.modes.iter().map(|m| Mode::from(*m)).collect();
+            let found = crate::outputs::closest_mode(&offered, want).and_then(|c| $screen.modes.iter().find(|m| Mode::from(**m) == c));
+            match found {
                 Some(m) => match $out.use_mode::<_, $elem>(*m, &mut **$renderer, &DrmOutputRenderElements::default()) {
                     Ok(()) => $screen.mode = want,
-                    Err(e) => eprintln!("yggdrasil-compositor: {}: mode not set: {e}", $screen.output.name()),
+                    Err(e) => {
+                        // told once: not tried on every frame
+                        eprintln!("yggdrasil-compositor: {}: mode not set: {e}", $screen.output.name());
+                        $screen.missed = Some(want);
+                    }
                 },
-                None => eprintln!("yggdrasil-compositor: {}: the screen has no mode {:?}", $screen.output.name(), want),
+                None => {
+                    eprintln!(
+                        "yggdrasil-compositor: {}: the screen has no mode {}x{} at {} Hz",
+                        $screen.output.name(),
+                        want.size.w,
+                        want.size.h,
+                        want.refresh as f64 / 1000.0
+                    );
+                    $screen.missed = Some(want);
+                }
             }
         }
     }};

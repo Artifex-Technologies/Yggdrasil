@@ -6,7 +6,7 @@
 //!   Closed with no other screen, the panel stays, nothing is drawn on it and its CRTC is switched off: logind suspends (its
 //!   HandleLidSwitch), and when it does not (set to ignore, or an inhibitor) the panel is dark.
 //! - **The tablet-mode switch** (a 2-in-1 folded back): recorded and shown by the control socket's `switches`; nothing follows
-//!   from it yet.
+//!   from it yet. Both switches are known from the start (`Switches::device_added`).
 //! - **The default scale** of a screen Settings' monitors.lua gives none (`default_scale`): from its size and resolution.
 //! - **Waking from suspend** (`SleepWatch`): the kernel cancels a realtime timer set with TFD_TIMER_CANCEL_ON_SET when the
 //!   system resumes (and when the clock is set); the time the system was suspended (CLOCK_BOOTTIME runs on through a suspend,
@@ -59,8 +59,9 @@ pub fn lid_takes_off(lid_closed: bool, screens: &[(String, bool)]) -> Vec<String
     screens.iter().filter(|(n, _)| is_internal(n)).map(|(n, _)| n.clone()).collect()
 }
 
-/// The lid and the tablet-mode switch as libinput last told them (None: not told yet; libinput tells a switch that is on when
-/// its device appears).
+/// The lid and the tablet-mode switch as libinput last told them (None: no such switch seen). libinput has no way to ask a
+/// switch's state: it tells one that is on (the lid closed, tablet mode) with a toggle right after its device appears, so a
+/// switch whose device appeared is off (the lid open) until told otherwise (`device_added`).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Switches {
     pub lid_closed: Option<bool>,
@@ -85,6 +86,17 @@ impl Switches {
 
     pub fn lid_closed(&self) -> bool {
         self.lid_closed == Some(true)
+    }
+
+    /// A switch device appeared with a lid switch and/or a tablet-mode switch: each is off (open) until libinput's toggle says
+    /// it is on, so `switches` tells the state from the start. A switch already told stays as it is.
+    pub fn device_added(&mut self, lid: bool, tablet_mode: bool) {
+        if lid && self.lid_closed.is_none() {
+            self.lid_closed = Some(false);
+        }
+        if tablet_mode && self.tablet_mode.is_none() {
+            self.tablet_mode = Some(false);
+        }
     }
 }
 
@@ -216,6 +228,25 @@ mod tests {
         let s = Switches { lid_closed: Some(true), tablet_mode: Some(false) };
         assert_eq!(s.describe(), ["lid closed", "tablet-mode off"]);
         assert!(s.lid_closed() && !Switches::default().lid_closed());
+    }
+
+    #[test]
+    fn a_switch_is_known_from_its_device_on() {
+        // the laptop: lid-switch (a lid), then intel-hid-switches (tablet mode); nothing toggled: open and off from the start
+        let mut s = Switches::default();
+        s.device_added(false, false);
+        assert_eq!(s.describe(), ["lid unknown", "tablet-mode unknown"], "a device without these switches says nothing");
+        s.device_added(true, false);
+        s.device_added(false, true);
+        assert_eq!(s.describe(), ["lid open", "tablet-mode off"]);
+        // started closed: libinput's toggle right after the device came
+        let mut s = Switches::default();
+        s.device_added(true, true);
+        s.lid_closed = Some(true);
+        // a second tablet-mode device (thinkpad-extra-buttons) does not undo what was told
+        s.tablet_mode = Some(true);
+        s.device_added(true, true);
+        assert_eq!(s.describe(), ["lid closed", "tablet-mode on"]);
     }
 
     #[test]

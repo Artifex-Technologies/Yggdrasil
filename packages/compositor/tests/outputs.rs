@@ -381,3 +381,41 @@ fn a_laptops_own_screen_is_first_and_main_and_gets_main_back_after_the_lid() {
     comp.must("reload");
     assert_eq!(comp.must("main"), ["HDMI-A-1"], "the monitor chosen in Settings");
 }
+
+#[test]
+fn a_screen_whose_link_bounces_keeps_its_windows_and_panels() {
+    let _l = limit(60, "a link that bounces");
+    let comp = Compositor::start(&["--outputs", "2", "--size", "1280x720"]);
+    let mut c = comp.connect();
+    let bar =
+        c.layer_with(1, Layer::Top, "test-bar-2", Anchor::Top | Anchor::Left | Anchor::Right, (0, 32), 32, KeyboardInteractivity::None);
+    c.draw_layer(&bar, RED);
+    comp.must("pointer 1900 300");
+    let w = c.window("test.on2", "On 2");
+    c.draw(&w, (400, 300), BLUE);
+    let on2 = comp.window("test.on2").unwrap().rect();
+    assert!(on2.0 >= 1280, "{on2:?}");
+    let both = comp.must("outputs");
+    assert!(comp.ctl("replug HEADLESS-2").is_err(), "a screen that did not go cannot come back");
+
+    // the monitor drops its link and brings it back within a second, three times: nothing changes for programs
+    for _ in 0..3 {
+        comp.must("unplug HEADLESS-2");
+        assert_eq!(comp.must("outputs"), both, "kept while it may come back");
+        std::thread::sleep(Duration::from_millis(400));
+        comp.must("replug HEADLESS-2");
+    }
+    std::thread::sleep(Duration::from_millis(2500));
+    c.roundtrip();
+    assert_eq!(comp.must("outputs"), both, "still there after the grace");
+    assert_eq!(comp.window("test.on2").unwrap().rect(), on2, "the window stayed");
+    assert!(!c.state.layer_closed, "its panel was never closed");
+
+    // gone for good: after the grace it is removed, its panel closed and its window moved to the first screen
+    let t = Instant::now();
+    comp.must("unplug HEADLESS-2");
+    comp.wait(10, "the screen removed", |c| c.must("outputs").len() == 1);
+    assert!(t.elapsed() >= Duration::from_millis(1800), "not before the grace: {:?}", t.elapsed());
+    c.until("the bar closed", |s| s.layer_closed);
+    assert!(comp.window("test.on2").unwrap().rect().0 < 1280);
+}

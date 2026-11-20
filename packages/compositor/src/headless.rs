@@ -21,6 +21,8 @@
 //!                                laptop's own screen, as on the hardware), placed as Settings' file says or to the right of
 //!                                the others (a laptop's own screen first)
 //!   remove-output NAME           a screen is unplugged: its panels are closed, its windows move to the first screen
+//!   unplug NAME, replug NAME     a screen's link goes and comes back, as the hardware backend sees a connector: the screen is
+//!                                kept for 2 s (outputs.rs, UNPLUG_GRACE) and removed then unless replugged meanwhile
 //!   screenshot NAME FILE.png [pointer]
 //!                                draw what is pending and write the output's picture as a PNG; with "pointer", the pointer
 //!                                painted over it, as the screen shows it (pointer.rs: drawn as a cursor plane, not in the picture)
@@ -638,10 +640,12 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Option<Result<Vec
     if let Some(r) = touch_command(words, app, h) {
         return Some(r);
     }
-    const OWN: [&str; 15] = [
+    const OWN: [&str; 17] = [
         "resize",
         "add-output",
         "remove-output",
+        "unplug",
+        "replug",
         "screenshot",
         "key",
         "key-down",
@@ -740,6 +744,15 @@ fn own_command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<St
             app.remove_output(name)?;
             Ok(vec![])
         }
+        ["unplug", name] => {
+            output(name, app)?;
+            app.output_unplugged(name);
+            Ok(vec![])
+        }
+        ["replug", name] => match app.output_back(name) {
+            true => Ok(vec![]),
+            false => Err(format!("{name} is not leaving (add-output plugs in a new screen)")),
+        },
         ["screenshot", name, path, rest @ ..] if rest.is_empty() || rest == ["pointer"] => {
             if app.head(name).is_none_or(|hd| !hd.enabled) {
                 return Err(format!("no output {name} that is on"));
