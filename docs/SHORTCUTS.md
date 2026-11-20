@@ -112,4 +112,5 @@ Each app's main keys; the link has all of them.
 | Video player | Space or K play / pause, ← → or J / L step, ↑ ↓ volume, M mute, F full screen, O open | [keys/player.md](keys/player.md) |
 | 2048 | arrows, WASD or HJKL slide, U undo, N new game | [keys/2048.md](keys/2048.md) |
 | Sudoku | arrows or HJKL move, 1-9 place, N notes, U undo, Shift + H hint, P pause | [keys/sudoku.md](keys/sudoku.md) |
+| Window switcher (Alt + Tab, Yggdrasil's own compositor) | while Alt is held: Tab / Shift + Tab next / back, arrows move in the grid, Enter, letting go of Alt or a click switches, Esc cancels | [COMPOSITOR.md](COMPOSITOR.md#window-switching-alt--tab-2026-11-19) |
 | Settings, Agora, installer | no shortcuts of their own (Tab, Enter and typing as usual) | [keys/settings-agora-installer.md](keys/settings-agora-installer.md) |
