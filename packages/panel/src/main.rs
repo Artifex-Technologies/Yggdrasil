@@ -4219,6 +4219,9 @@ impl Dispatch<WlTouch, ()> for State {
                 }
                 state.touch_id = Some(id);
                 pointer_event(state, wl_pointer::Event::Enter { serial, surface, surface_x: x, surface_y: y });
+                // what is under the finger now decides, not what was under the last touch: Enter can stop early (while Fylgja
+                // or the window previews follow the pointer) and leave the notch's flag from before
+                state.hover_at(x as f32, y as f32);
                 // on the notch: the finger pulls Fylgja down (in any mode: laptop, tent or tablet)
                 if state.tab_hover && state.popup.is_none() {
                     state.start_pull(y as f32);
@@ -4240,6 +4243,7 @@ impl Dispatch<WlTouch, ()> for State {
                 state.touch_id = None;
                 if state.fy_pull.is_some() {
                     state.pull_released();
+                    state.touch_lifted();
                     return;
                 }
                 pointer_event(
@@ -4251,6 +4255,7 @@ impl Dispatch<WlTouch, ()> for State {
             wl_touch::Event::Cancel if state.touch_id.take().is_some() => {
                 if state.fy_pull.is_some() {
                     state.pull_released();
+                    state.touch_lifted();
                     return;
                 }
                 pointer_event(
