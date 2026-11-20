@@ -197,6 +197,35 @@ pub fn scroll(m: &Mouse, v: f64) -> f64 {
     v * m.scroll * if m.natural { -1.0 } else { 1.0 }
 }
 
+/// One scroll event as programs get it (wl_pointer's axis frame). `h` and `v` are libinput's value for the horizontal and the
+/// vertical axis (None: that axis is not in the event) and its wheel steps (120 a notch); `factor` is input.conf's scroll
+/// factor. A touchpad (finger) tells that an axis stopped with a value of 0 on it; only then is axis_stop sent for that axis.
+/// An axis that is not in the event did not stop: a vertical two-finger scroll is not a stop of the horizontal axis on every
+/// frame (the laptop, 2026-11-19).
+pub fn axis_frame(
+    time: u32,
+    source: smithay::backend::input::AxisSource,
+    factor: f64,
+    h: (Option<f64>, Option<f64>),
+    v: (Option<f64>, Option<f64>),
+) -> smithay::input::pointer::AxisFrame {
+    use smithay::backend::input::{Axis, AxisSource};
+    let mut frame = smithay::input::pointer::AxisFrame::new(time).source(source);
+    for (a, (amount, v120)) in [(Axis::Horizontal, h), (Axis::Vertical, v)] {
+        let value = factor * amount.unwrap_or_else(|| v120.unwrap_or(0.0) * 15.0 / 120.0);
+        if value != 0.0 {
+            frame = frame.value(a, value);
+            if let Some(d) = v120 {
+                frame = frame.v120(a, d as i32);
+            }
+        }
+        if source == AxisSource::Finger && amount == Some(0.0) {
+            frame = frame.stop(a);
+        }
+    }
+    frame
+}
+
 /// How far the pointer goes for a movement of the mouse (libinput's flat profile: times 1 + speed).
 pub fn motion(m: &Mouse, (dx, dy): (f64, f64)) -> (f64, f64) {
     let f = 1.0 + m.speed.clamp(-1.0, 1.0);
@@ -245,6 +274,24 @@ pub fn describe(name: &str, m: &Mouse) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_touchpad_scroll_stops_only_the_axis_that_stopped() {
+        use smithay::backend::input::AxisSource;
+        // a vertical two-finger scroll: the horizontal axis is not in the event, and it did not stop
+        let f = super::axis_frame(10, AxisSource::Finger, 1.0, (None, None), (Some(-3.5), None));
+        assert_eq!((f.axis, f.stop, f.source), ((0.0, -3.5), (false, false), Some(AxisSource::Finger)));
+        // the fingers lifted: libinput's 0 on the vertical axis is its stop
+        let f = super::axis_frame(20, AxisSource::Finger, 1.0, (None, None), (Some(0.0), None));
+        assert_eq!(f.stop, (false, true));
+        let f = super::axis_frame(20, AxisSource::Finger, 1.0, (Some(0.0), None), (Some(0.0), None));
+        assert_eq!(f.stop, (true, true), "both stopped");
+        // a wheel never stops; its notches are kept, the value comes from them when libinput gives none, times the factor
+        let f = super::axis_frame(30, AxisSource::Wheel, 2.0, (None, None), (None, Some(120.0)));
+        assert_eq!((f.axis, f.v120, f.stop), ((0.0, 30.0), Some((0, 120)), (false, false)));
+        let f = super::axis_frame(30, AxisSource::Wheel, 1.0, (None, None), (Some(0.0), Some(0.0)));
+        assert_eq!(f.stop, (false, false));
+    }
+
     use super::*;
 
     #[test]

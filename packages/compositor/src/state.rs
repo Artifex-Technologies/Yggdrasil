@@ -11,7 +11,7 @@ use crate::switcher;
 use crate::tiling::{self, Profile};
 use crate::toplevels::Toplevels;
 use smithay::backend::input::{
-    AbsolutePositionEvent, Axis, AxisSource, ButtonState, Device, Event, InputBackend, InputEvent, KeyboardKeyEvent, PointerAxisEvent,
+    AbsolutePositionEvent, Axis, ButtonState, Device, Event, InputBackend, InputEvent, KeyboardKeyEvent, PointerAxisEvent,
     PointerButtonEvent, PointerMotionEvent,
 };
 use smithay::backend::renderer::element::memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement};
@@ -24,7 +24,7 @@ use smithay::delegate_xdg_decoration;
 use smithay::desktop::{layer_map_for_output, LayerSurface, PopupKind, PopupManager, Space, Window, WindowSurfaceType};
 use smithay::input::keyboard::{keysyms, FilterResult, KeyboardHandle};
 use smithay::input::pointer::Focus;
-use smithay::input::pointer::{AxisFrame, ButtonEvent, CursorImageStatus, MotionEvent, PointerHandle};
+use smithay::input::pointer::{ButtonEvent, CursorImageStatus, MotionEvent, PointerHandle};
 use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::output::Output;
 use smithay::reexports::calloop::{LoopHandle, LoopSignal};
@@ -2554,20 +2554,8 @@ impl App {
                 self.input_seen();
                 let pointer = self.pointer.clone();
                 let factor = if own_settings { self.scroll_factor_of(&event.device().name()) } else { 1.0 };
-                let amount = |a: Axis| factor * event.amount(a).unwrap_or_else(|| event.amount_v120(a).unwrap_or(0.0) * 15.0 / 120.0);
-                let mut frame = AxisFrame::new(event.time_msec()).source(event.source());
-                for a in [Axis::Horizontal, Axis::Vertical] {
-                    let v = amount(a);
-                    if v != 0.0 {
-                        frame = frame.value(a, v);
-                        if let Some(d) = event.amount_v120(a) {
-                            frame = frame.v120(a, d as i32);
-                        }
-                    }
-                    if event.source() == AxisSource::Finger && v == 0.0 {
-                        frame = frame.stop(a);
-                    }
-                }
+                let of = |a: Axis| (event.amount(a), event.amount_v120(a));
+                let frame = crate::input::axis_frame(event.time_msec(), event.source(), factor, of(Axis::Horizontal), of(Axis::Vertical));
                 pointer.axis(self, frame);
                 pointer.frame(self);
             }
