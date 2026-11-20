@@ -3814,9 +3814,11 @@ impl State {
             }
             return;
         }
-        // One window: focus it, or minimize it if it already has focus. Several: go to the next.
+        // One window: focus it, or minimize it if it already has focus. Several: go to the next. A minimized window is never
+        // the one with focus, whatever the compositor's states still say: a click on it brings it back (a minimized window
+        // still marked active was minimized again by every click, so the dock seemed dead; the laptop, 2026-11-20).
         let wins = &self.model.wins;
-        let active_pos = item.wins.iter().position(|&i| wins[i].active());
+        let active_pos = item.wins.iter().position(|&i| wins[i].active() && !wins[i].minimized());
         let target = match active_pos {
             Some(p) if item.wins.len() == 1 => {
                 wins[item.wins[p]].minimize();
