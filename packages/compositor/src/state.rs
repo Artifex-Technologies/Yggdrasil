@@ -946,26 +946,33 @@ impl App {
 
     /// The keyboard goes back to the window used last on the workspace now showing (a panel's pop-up closed, or let go of it).
     pub fn focus_back(&mut self) {
-        let next = self.active_window().or_else(|| self.space.elements().rev().find_map(surface_of).filter(|s| s.alive()));
+        let next = self
+            .focus_order
+            .iter()
+            .find(|s| self.space.elements().any(|w| is_window_of(w, s)))
+            .cloned()
+            .or_else(|| self.space.elements().rev().find_map(surface_of));
         self.give_keyboard(next, SERIAL_COUNTER.next_serial());
     }
 
     /// The window used last on the workspace now showing (the one shown as active; a panel may have the keyboard meanwhile).
+    /// Only read here: which window is active is decided elsewhere.
     fn active_window(&self) -> Option<WlSurface> {
         self.focus_order.iter().find(|s| s.alive() && self.space.elements().any(|w| is_window_of(w, s))).cloned()
     }
 
     /// The keyboard stays with a panel (a layer surface) only while it is there: alive, on the layer map of a screen that is on,
     /// mapped (it has a picture) and asking for the keyboard. A panel that went (destroyed, its surface destroyed, unmapped, its
-    /// screen gone, or no longer asking) gives it back to the window used last, or to nobody: it must never hold the keyboard
-    /// with nothing left to show for it (on the laptop a pop-up that went kept it and no window got a key). Called when a panel
-    /// changes or goes, a surface is destroyed, and before every key. Windows and the lock keep their own rules.
+    /// screen gone, or no longer asking) gives it back through `focus_back` (the active window, or nobody): it must never hold
+    /// the keyboard with nothing left to show for it (on the laptop a pop-up that went kept it and no window got a key). Called
+    /// when a panel changes or goes, a surface is destroyed, and before every key. A window's keyboard and the lock's are left
+    /// to their own rules: nothing here raises, reorders or activates a window.
     pub fn keyboard_check(&mut self) {
         if self.locked {
             return;
         }
         let Some(KbFocus::Wl(f)) = self.keyboard.current_focus() else { return };
-        if f.alive() && (self.window_for(&f).is_some() || self.layer_holds(&f)) {
+        if self.window_for(&f).is_some() || (f.alive() && self.layer_holds(&f)) {
             return;
         }
         if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
