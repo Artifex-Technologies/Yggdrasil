@@ -31,8 +31,10 @@ PANEL_SWAP=""
 if [ -x "$OWN_PANEL" ]; then
   PANEL_SWAP="; systemctl --user stop 'app-yggdrasil*panel@autostart.service'; systemd-run --user --unit=yggdrasil-own-panel --collect -p PartOf=graphical-session.target -p Restart=on-failure $OWN_PANEL"
 fi
-# a Hyprland session that ran before leaves its signature in the user manager: not this session's
-AUTOSTART="systemctl --user unset-environment HYPRLAND_INSTANCE_SIGNATURE; systemctl --user import-environment WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE QT_QPA_PLATFORM GDK_BACKEND MOZ_ENABLE_WAYLAND ELECTRON_OZONE_PLATFORM_HINT; dbus-update-activation-environment --systemd --all; systemctl --user start yggdrasil-session.target$PANEL_SWAP; echo autostart started for \$XDG_CURRENT_DESKTOP on \$WAYLAND_DISPLAY"
+# a session that ended without its cleanup (killed, or the login screen restarted) can leave graphical-session.target and
+# yggdrasil-session.target active with their programs gone, and starting an active target starts nothing (no panel: a black
+# screen, YGG-91): so whatever is left is stopped first. A Hyprland session that ran before also leaves its signature behind.
+AUTOSTART="systemctl --user stop graphical-session.target; systemctl --user reset-failed; systemctl --user unset-environment HYPRLAND_INSTANCE_SIGNATURE; systemctl --user import-environment WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE QT_QPA_PLATFORM GDK_BACKEND MOZ_ENABLE_WAYLAND ELECTRON_OZONE_PLATFORM_HINT; dbus-update-activation-environment --systemd --all; systemctl --user start yggdrasil-session.target$PANEL_SWAP; echo autostart started for \$XDG_CURRENT_DESKTOP on \$WAYLAND_DISPLAY"
 
 say "starting $COMPOSITOR --drm"
 start=$(date +%s)

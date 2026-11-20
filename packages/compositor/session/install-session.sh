@@ -17,7 +17,7 @@
 #   /etc/yggdrasil/greeter.conf                                          `session = yggdrasil-compositor`; the file as it was is
 #                                                                        kept beside it, greeter.conf.before-own-compositor
 set -euo pipefail
-HERE=$(cd "$(dirname "$0")" && pwd)
+HERE=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)   # through the desktop shortcut too
 BUILD=${YGG_BUILD:-$HERE/../../../target/release}
 LIB=/usr/local/lib/yggdrasil-own
 ENTRY=/usr/share/wayland-sessions/yggdrasil-compositor.desktop
