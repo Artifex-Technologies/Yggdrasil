@@ -454,12 +454,22 @@ where
     Some(Piece { id: id.clone(), commit: CommitCounter::from(commit), geo, inner })
 }
 
-/// A solid strip (the border's straight parts).
+/// A solid strip (the border's straight parts, the window switcher's panel).
 pub struct Strip {
     id: Id,
     commit: CommitCounter,
     geo: Rectangle<i32, Physical>,
     color: Color32F,
+}
+
+impl Strip {
+    /// A strip of one colour (RGBA, not premultiplied) over `geo`; one that is fully opaque says so, and what it covers is not
+    /// drawn.
+    pub fn new(id: Id, geo: Rectangle<i32, Physical>, rgba: [u8; 4]) -> Strip {
+        let a = rgba[3] as f32 / 255.0;
+        let color = Color32F::new(rgba[0] as f32 / 255.0 * a, rgba[1] as f32 / 255.0 * a, rgba[2] as f32 / 255.0 * a, a);
+        Strip { id, commit: CommitCounter::default(), geo, color }
+    }
 }
 
 impl Element for Strip {
@@ -474,6 +484,13 @@ impl Element for Strip {
     }
     fn geometry(&self, _: Scale<f64>) -> Rectangle<i32, Physical> {
         self.geo
+    }
+    fn opaque_regions(&self, _: Scale<f64>) -> OpaqueRegions<i32, Physical> {
+        if self.color.a() >= 1.0 {
+            OpaqueRegions::from_slice(&[Rectangle::from_size(self.geo.size)])
+        } else {
+            OpaqueRegions::default()
+        }
     }
 }
 
@@ -711,11 +728,27 @@ impl<R: Renderer + ImportAll> Element for Clipped<R> {
         Rectangle::new((x0, y0).into(), (x1 - x0, y1 - y0).into())
     }
     fn damage_since(&self, scale: Scale<f64>, commit: Option<CommitCounter>) -> DamageSet<i32, Physical> {
-        if self.stretched() {
-            // only while an animation runs, when it is drawn anew each frame anyway
-            return DamageSet::from_slice(&[Rectangle::from_size(self.geometry(scale).size)]);
+        let damage = self.inner.damage_since(scale, commit);
+        if !self.stretched() {
+            return damage;
         }
-        self.inner.damage_since(scale, commit)
+        // what the program changed, stretched as its picture is (an animation moves the geometry, which the damage tracker
+        // redraws anyway; a picture drawn small, a card of the window switcher, redraws only what changed)
+        let (at, to) = (self.inner.geometry(scale).loc, self.geometry(scale).loc);
+        let (o, k) = (self.origin, self.rescale);
+        let map = |v: i32, o: i32, k: f64| o as f64 + (v - o) as f64 * k;
+        let out: Vec<Rectangle<i32, Physical>> = damage
+            .iter()
+            .map(|d| {
+                let (x, y) = (at.x + d.loc.x, at.y + d.loc.y);
+                let x0 = map(x, o.x, k.x).floor() as i32;
+                let y0 = map(y, o.y, k.y).floor() as i32;
+                let x1 = map(x + d.size.w, o.x, k.x).ceil() as i32;
+                let y1 = map(y + d.size.h, o.y, k.y).ceil() as i32;
+                Rectangle::new((x0 - to.x, y0 - to.y).into(), (x1 - x0, y1 - y0).into())
+            })
+            .collect();
+        DamageSet::from_slice(&out)
     }
     fn opaque_regions(&self, scale: Scale<f64>) -> OpaqueRegions<i32, Physical> {
         let Some((c, r, _)) = &self.clip else {

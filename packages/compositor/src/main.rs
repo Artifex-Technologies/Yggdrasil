@@ -24,6 +24,7 @@ mod deco;
 mod draw;
 mod grabs;
 mod headless;
+mod icons;
 mod input;
 mod keymap;
 mod laptop;
