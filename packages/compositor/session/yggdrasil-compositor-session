@@ -8,9 +8,14 @@
 # A way back: when the compositor ends badly within its first seconds (it could not take the screens, it crashed at start),
 # this starts the Hyprland session instead (/usr/bin/yggdrasil-session), so a broken build never leaves the login screen in
 # a loop. Its log: the user journal, `journalctl --user -t yggdrasil-compositor-session -t yggdrasil-compositor`.
+#
+# For a test from inside another desktop: YGGDRASIL_COMPOSITOR (a stand-in for the compositor), YGGDRASIL_SESSION_FALLBACK (a
+# stand-in for the Hyprland session) and YGGDRASIL_SESSION_TEST=1 (the user manager is left alone: nothing imported, started
+# or stopped, so the desktop the test runs in keeps its own session).
 set -u
 COMPOSITOR=${YGGDRASIL_COMPOSITOR:-yggdrasil-compositor}
-FALLBACK=/usr/bin/yggdrasil-session
+FALLBACK=${YGGDRASIL_SESSION_FALLBACK:-/usr/bin/yggdrasil-session}
+TEST=${YGGDRASIL_SESSION_TEST:-}
 TAG=yggdrasil-compositor-session
 
 export XDG_CURRENT_DESKTOP=Yggdrasil XDG_SESSION_DESKTOP=yggdrasil XDG_SESSION_TYPE=wayland
@@ -30,11 +35,14 @@ ran=$(( $(date +%s) - start ))
 say "the compositor ended after ${ran} s (status $status)"
 
 # the session's programs end with it (as yggdrasil-session does for Hyprland)
-systemctl --user stop yggdrasil-session.target graphical-session.target 2>/dev/null
-systemctl --user unset-environment WAYLAND_DISPLAY DISPLAY 2>/dev/null
+if [ -z "$TEST" ]; then
+  systemctl --user stop yggdrasil-session.target graphical-session.target 2>/dev/null
+  systemctl --user unset-environment WAYLAND_DISPLAY DISPLAY 2>/dev/null
+fi
 
-if [ "$ran" -lt 15 ] && [ -x "$FALLBACK" ]; then
-  say "it ended within ${ran} s: starting the Hyprland session instead"
+# ended badly and early: it never got going, so the Hyprland session instead (a sign-out, status 0, is never sent there)
+if [ "$status" -ne 0 ] && [ "$ran" -lt 15 ] && [ -x "$FALLBACK" ]; then
+  say "it ended badly within ${ran} s: starting the Hyprland session instead"
   exec "$FALLBACK"
 fi
 exit 0
