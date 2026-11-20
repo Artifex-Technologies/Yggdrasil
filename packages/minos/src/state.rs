@@ -28,6 +28,10 @@ pub struct Tag {
     pub color: [u8; 3],
 }
 
+/// The preview pane's narrowest and widest (its whole width, frame included).
+pub const PREVIEW_MIN: f32 = 220.0;
+pub const PREVIEW_MAX: f32 = 520.0;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct State {
@@ -52,6 +56,8 @@ pub struct State {
     pub gallery_size: usize,
     /// The right-hand preview pane.
     pub preview: bool,
+    /// The preview pane's width as it was last dragged to; it starts at the narrowest (PREVIEW_MIN).
+    pub preview_width: f32,
     /// Use the desktop's accent color (Settings > Appearance) for Minos's highlights. On by default.
     pub follow_accent: bool,
     /// The system accent last read; not saved. Set by the app while it runs.
@@ -97,6 +103,7 @@ impl Default for State {
             view: ViewMode::Details,
             gallery_size: 1,
             preview: true,
+            preview_width: PREVIEW_MIN,
             follow_accent: true,
             system_accent: None,
             opacity: 100,
@@ -210,9 +217,11 @@ mod tests {
         s.tabs.push(SavedTab { path: "/a".into(), pinned: true });
         s.toggle_favorite(Path::new("/fav"));
         s.toggle_tag(Path::new("/a"), "Red");
+        s.preview_width = 268.0;
         s.save_to(&file).unwrap();
         let l = State::load_from(&file);
         assert_eq!(l.tabs, s.tabs);
+        assert_eq!(l.preview_width, 268.0, "the preview pane's width is kept");
         assert_eq!(l.favorites, vec![PathBuf::from("/fav")]);
         assert_eq!(l.color_for(Path::new("/a")), Some([220, 70, 70]));
 
@@ -220,6 +229,7 @@ mod tests {
         std::fs::write(&file, r#"{"dark": false}"#).unwrap();
         let p = State::load_from(&file);
         assert!(!p.dark);
+        assert_eq!(p.preview_width, PREVIEW_MIN, "a file from before starts the pane at its narrowest");
         assert!(!p.tag_defs.is_empty());
         // Corrupt file falls back to defaults rather than panicking.
         std::fs::write(&file, "{{{").unwrap();

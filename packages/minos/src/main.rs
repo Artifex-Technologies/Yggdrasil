@@ -19,7 +19,7 @@ use minos_core::preview::{self, Body, PreviewData};
 use minos_core::privacy;
 use minos_core::run;
 use minos_core::search::{display_relative, Search};
-use minos_core::state::{SavedTab, State, ViewMode, GALLERY_SIZES};
+use minos_core::state::{SavedTab, State, ViewMode, GALLERY_SIZES, PREVIEW_MAX, PREVIEW_MIN};
 use minos_core::{expand_address, fileops, History, Tab};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use theme::{palette_for, Palette};
@@ -4416,14 +4416,20 @@ impl eframe::App for App {
                 self.pv.request(&ctx, want, drive);
             }
             self.pv.poll(&ctx);
-            egui::Panel::right("preview")
-                .default_size(310.0)
-                .max_size(520.0)
-                .min_size(220.0)
+            // the width the pane was last dragged to (the narrowest at first), kept for next time once the drag ends
+            let shown = egui::Panel::right("preview")
+                .default_size(self.st.preview_width.clamp(PREVIEW_MIN, PREVIEW_MAX))
+                .max_size(PREVIEW_MAX)
+                .min_size(PREVIEW_MIN)
                 .frame(egui::Frame::new().fill(pal.sidebar).inner_margin(egui::Margin::symmetric(14, 12)))
                 .show(ui, |ui| {
                     draw_preview(ui, &pal, &self.pv);
                 });
+            let width = shown.response.rect.width().round();
+            if (width - self.st.preview_width).abs() >= 1.0 && !ctx.input(|i| i.pointer.any_down()) {
+                self.st.preview_width = width;
+                self.dirty = true;
+            }
         }
 
         ctx.data_mut(|d| {
