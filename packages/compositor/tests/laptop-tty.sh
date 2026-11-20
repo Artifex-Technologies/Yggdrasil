@@ -48,10 +48,16 @@ done
 pick() { # the first of these programs there is
   for p in "$@"; do command -v "$p" >/dev/null 2>&1 && { command -v "$p"; return; }; done
 }
-PANEL=${YGG_PANEL-$(pick yggdrasil-panel)}
+# this checkout's panel when it has been built (a fix made with the compositor's is tried with it), else the installed one
+PANEL=${YGG_PANEL-$(pick "${BIN%/*}/yggdrasil-panel" yggdrasil-panel)}
 SETTINGS=${YGG_SETTINGS-$(pick yggdrasil-settings)}
 TERMINAL=${YGG_TERMINAL-$(pick foot ghostty)}
 
+# first, the session bus of its own learns where the screen is, so the services it starts on demand (the GTK portal: GTK's
+# window buttons, dark or light) can open it; not --systemd, which would change the desktop's own user manager
+if [ -z "${YGG_NO_DBUS:-}" ] && command -v dbus-update-activation-environment >/dev/null 2>&1; then
+  set -- "$@" --run dbus-update-activation-environment WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE
+fi
 [ -n "$PANEL" ] && set -- "$@" --run "$PANEL"
 [ -n "$SETTINGS" ] && set -- "$@" --run "$SETTINGS"
 [ -n "$TERMINAL" ] && set -- "$@" --run "$TERMINAL"
