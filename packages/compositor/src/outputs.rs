@@ -206,18 +206,22 @@ fn check(w: &Want) -> Result<(), String> {
 
 impl App {
     /// A screen appears (at start, or plugged in): its wl_output, and the mode, scale and place Settings' file gives it.
+    /// A laptop's own screen is listed before the others (Settings > Displays numbers it 1) and, unless placed elsewhere, laid
+    /// out first, at the left: also when it comes back after the lid.
     pub fn add_output(&mut self, output: Output, default_scale: f64) {
         let name = output.name();
-        self.heads.list.push(Head { output, enabled: false, global: None, default_scale, fixed_at: None });
-        let want = {
-            let h = self.heads.list.last().expect("just added");
-            want_from_rules(&self.heads.rules, &name, h.preferred(), default_scale)
+        let at = match crate::laptop::is_internal(&name) {
+            true => self.heads.list.iter().position(|h| !crate::laptop::is_internal(&h.output.name())).unwrap_or(self.heads.list.len()),
+            false => self.heads.list.len(),
         };
+        self.heads.list.insert(at, Head { output, enabled: false, global: None, default_scale, fixed_at: None });
+        let preferred = self.heads.list[at].preferred();
+        let want = want_from_rules(&self.heads.rules, &name, preferred, default_scale);
         // the rules may not switch the only screen off
         let want = if self.heads.list.iter().any(|h| h.enabled) { want } else { Want { enabled: true, ..want } };
         if let Err(e) = self.configure_outputs(vec![(name.clone(), want.clone())], false) {
             eprintln!("yggdrasil-compositor: {name}: {e}; it keeps its own mode and scale");
-            let plain = Want { enabled: true, mode: self.heads.list.last().expect("just added").preferred(), scale: 1.0, at: None };
+            let plain = Want { enabled: true, mode: preferred, scale: 1.0, at: None };
             let _ = self.configure_outputs(vec![(name, plain)], false);
         }
     }
@@ -315,8 +319,9 @@ impl App {
     }
 
     /// The main screen (windows maximize and the switcher shows there; X11 programs are told it is the primary one): the monitor
-    /// chosen in Settings > Displays when it is on (yggdrasil_conf::display), else the one that was main while it stays on, else
-    /// the first screen that is on.
+    /// chosen in Settings > Displays when it is on (yggdrasil_conf::display), else a laptop's own screen when it is on (my rule:
+    /// the built-in screen is main unless I choose another, so it gets main back when the lid opens), else the one that was main
+    /// while it stays on, else the first screen that is on.
     pub fn choose_main(&mut self) {
         let on: Vec<Output> = self.heads.list.iter().filter(|h| h.enabled).map(|h| h.output.clone()).collect();
         let props: Vec<(String, smithay::output::PhysicalProperties, Point<i32, Logical>)> =
@@ -326,7 +331,10 @@ impl App {
             .map(|(name, p, at)| yggdrasil_conf::display::Seen { connector: name, make: &p.make, model: &p.model, x: at.x, y: at.y })
             .collect();
         let chosen = self.main_choice.as_ref().and_then(|c| yggdrasil_conf::display::chosen(c, &seen)).map(|i| on[i].clone());
-        let main = chosen.or_else(|| on.iter().find(|o| **o == self.output).cloned()).or_else(|| on.first().cloned());
+        let main = chosen
+            .or_else(|| on.iter().find(|o| crate::laptop::is_internal(&o.name())).cloned())
+            .or_else(|| on.iter().find(|o| **o == self.output).cloned())
+            .or_else(|| on.first().cloned());
         let Some(main) = main.filter(|m| *m != self.output) else { return };
         self.output = main;
         if let Some(wm) = self.xwm.as_mut() {

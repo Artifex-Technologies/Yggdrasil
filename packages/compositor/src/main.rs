@@ -241,7 +241,7 @@ fn run_headless(opts: &[String], run: Vec<Vec<String>>) -> Result<(), Box<dyn st
     let display: Display<App> = Display::new()?;
     let dh = display.handle();
     let (ping, ping_source) = smithay::reexports::calloop::ping::make_ping()?;
-    let outputs: Vec<_> = specs.iter().enumerate().map(|(i, s)| headless::make_output(i + 1, s)).collect();
+    let outputs: Vec<_> = specs.iter().enumerate().map(|(i, s)| headless::make_output(format!("HEADLESS-{}", i + 1), s)).collect();
     toplevels::create_global(&dh);
     // screenshots and screen streaming (grim, Sunshine), and screens off and on (yggdrasil-idle): served from the pictures in memory
     screencopy::create_global(&dh);

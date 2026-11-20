@@ -8,6 +8,8 @@
 //!   scale NAME S                 change an output's scale
 //!   power NAME on|off            switch an output on or off (as wlr-output-power does)
 //!   pointer-look, windows, focus, free, workspace, lock   what is shown and who has the keyboard (headless.rs lists them)
+//!   main                         the main screen's name (outputs.rs: windows maximize and the switcher shows there; X11's
+//!                                primary)
 //!   switcher                     the window switcher while it is open: one line per card, "*" (chosen) or "-", the app ids
 //!                                of its windows (comma separated), its place and size (empty when out of sight); tab separated
 //!   watch                        the connection stays open and gets "desktops" whenever the desktops change (the panel)
@@ -144,6 +146,7 @@ fn command(words: &[&str], app: &mut App, extra: Extra, usage: &str) -> Result<V
             })
             .collect()),
         ["focus"] => Ok(vec![app.focus_info()]),
+        ["main"] => Ok(vec![app.output.name()]),
         ["switcher"] => Ok(app.switcher_info()),
         ["free"] => Ok(app
             .space

@@ -17,8 +17,9 @@
 //!                                off (wlr-output-power) and " disabled" for one switched off (Settings, wlr-output-management)
 //!   resize NAME WxH              the output becomes a screen of that size: its own (preferred) mode, which it is set to
 //!   scale NAME S                 change an output's scale
-//!   add-output WxH[@S]           a screen is plugged in (named HEADLESS-N, the next number), placed as Settings' file says or
-//!                                to the right of the others
+//!   add-output WxH[@S] [NAME]    a screen is plugged in (named HEADLESS-N, the next number, or NAME: eDP-1 is taken for a
+//!                                laptop's own screen, as on the hardware), placed as Settings' file says or to the right of
+//!                                the others (a laptop's own screen first)
 //!   remove-output NAME           a screen is unplugged: its panels are closed, its windows move to the first screen
 //!   screenshot NAME FILE.png [pointer]
 //!                                draw what is pending and write the output's picture as a PNG; with "pointer", the pointer
@@ -205,15 +206,21 @@ fn runtime_ok(dir: &Path, uid: u32, allow_shared: bool) -> Result<(), String> {
 }
 
 /// A virtual screen HEADLESS-n of this size and scale (its wl_output global and its place come with `App::add_output`).
-pub fn make_output(n: usize, s: &OutputSpec) -> Output {
+/// A virtual screen named `name` (HEADLESS-N, or as the kernel names a real one: eDP-1, HDMI-A-1).
+pub fn make_output(name: String, s: &OutputSpec) -> Output {
     let o = Output::new(
-        format!("HEADLESS-{n}"),
+        name,
         PhysicalProperties { size: (0, 0).into(), subpixel: Subpixel::Unknown, make: "Yggdrasil".into(), model: "headless".into() },
     );
     let mode = Mode { size: (s.w, s.h).into(), refresh: 60_000 };
     o.change_current_state(Some(mode), Some(Transform::Normal), Some(Scale::Fractional(s.scale)), None);
     o.set_preferred(mode);
     o
+}
+
+/// A name `add-output` may give a screen: letters, digits and dashes, as connectors are named (at most 32).
+fn output_name_ok(n: &str) -> bool {
+    !n.is_empty() && n.len() <= 32 && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
 /// One output's picture in memory and what is known to be on it.
@@ -710,13 +717,21 @@ fn own_command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<St
             }
             Ok(vec![])
         }
-        ["add-output", spec] => {
+        ["add-output", spec, named @ ..] if named.len() <= 1 => {
             let spec = parse_output(spec).ok_or_else(|| format!("{spec}: give WIDTHxHEIGHT or WIDTHxHEIGHT@SCALE"))?;
             if app.heads.list.len() >= 16 {
                 return Err("16 outputs at most".into());
             }
-            let o = make_output(h.next, &spec);
-            h.next += 1;
+            let name = match named.first() {
+                Some(n) if !output_name_ok(n) => return Err(format!("{n}: a connector's name, like eDP-1 or HDMI-A-1")),
+                Some(n) if app.head(n).is_some() => return Err(format!("{n} is already there")),
+                Some(n) => n.to_string(),
+                None => {
+                    h.next += 1;
+                    format!("HEADLESS-{}", h.next - 1)
+                }
+            };
+            let o = make_output(name, &spec);
             let name = o.name();
             app.add_output(o, spec.scale);
             Ok(vec![name])
