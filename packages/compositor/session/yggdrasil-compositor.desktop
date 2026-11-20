@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Yggdrasil (own compositor)
+Comment=Yggdrasil's desktop on its own compositor; the Yggdrasil session on Hyprland stays the way back (F2 on the login screen)
+Exec=/usr/local/bin/yggdrasil-compositor-session
+Type=Application
+DesktopNames=Yggdrasil
