@@ -64,7 +64,7 @@ fn a_panel_and_a_window_are_mapped_and_drawn() {
     c.roundtrip();
 
     let layers = comp.ctl("layers").unwrap();
-    assert!(layers.iter().any(|l| l == "HEADLESS-1\ttest-bar\tTop\t0,0\t800x40"), "the bar is mapped: {layers:?}");
+    assert!(layers.iter().any(|l| l == "HEADLESS-1\ttest-bar\tTop\t0,0\t800x40\tnone"), "the bar is mapped: {layers:?}");
     let windows = comp.ctl("windows").unwrap();
     let win = windows
         .iter()

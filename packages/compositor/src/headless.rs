@@ -27,9 +27,11 @@
 //!                                its hotspot) or hidden (resting: the pointer timeout; program: the program hid it)
 //!   windows                      one line per window: app id, title, place, size, workspace, states (tab separated; the
 //!                                states are active, floating or tiled, maximized, fullscreen, left, right, minimized)
-//!   layers                       one line per panel or background: output, namespace, layer, place and size (tab separated)
+//!   layers                       one line per panel or background: output, namespace, layer, place, size and what it asks of
+//!                                the keyboard: none, exclusive or on-demand (tab separated)
 //!   free                         one line per output: the room the panels leave free for windows (output, place, size)
-//!   focus                        what has the keyboard: window APP TITLE, layer NAMESPACE OUTPUT, lock OUTPUT, or none
+//!   focus                        what has the keyboard: window APP TITLE, layer NAMESPACE OUTPUT, lock OUTPUT, or none (also
+//!                                on the hardware backend; YGGDRASIL_COMPOSITOR_DEBUG logs each change as "keyboard: to ...")
 //!   workspace                    the workspace showing (1 to 4)
 //!   lock                         "locked" or "unlocked", then one line per lock surface: output and size
 //!   switcher                     the window switcher's cards while it is open (control.rs)

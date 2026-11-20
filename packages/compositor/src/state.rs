@@ -946,13 +946,43 @@ impl App {
 
     /// The keyboard goes back to the window used last on the workspace now showing (a panel's pop-up closed, or let go of it).
     pub fn focus_back(&mut self) {
-        let next = self
-            .focus_order
-            .iter()
-            .find(|s| self.space.elements().any(|w| is_window_of(w, s)))
-            .cloned()
-            .or_else(|| self.space.elements().rev().find_map(surface_of));
+        let next = self.active_window().or_else(|| self.space.elements().rev().find_map(surface_of).filter(|s| s.alive()));
         self.give_keyboard(next, SERIAL_COUNTER.next_serial());
+    }
+
+    /// The window used last on the workspace now showing (the one shown as active; a panel may have the keyboard meanwhile).
+    fn active_window(&self) -> Option<WlSurface> {
+        self.focus_order.iter().find(|s| s.alive() && self.space.elements().any(|w| is_window_of(w, s))).cloned()
+    }
+
+    /// The keyboard stays with a panel (a layer surface) only while it is there: alive, on the layer map of a screen that is on,
+    /// mapped (it has a picture) and asking for the keyboard. A panel that went (destroyed, its surface destroyed, unmapped, its
+    /// screen gone, or no longer asking) gives it back to the window used last, or to nobody: it must never hold the keyboard
+    /// with nothing left to show for it (on the laptop a pop-up that went kept it and no window got a key). Called when a panel
+    /// changes or goes, a surface is destroyed, and before every key. Windows and the lock keep their own rules.
+    pub fn keyboard_check(&mut self) {
+        if self.locked {
+            return;
+        }
+        let Some(KbFocus::Wl(f)) = self.keyboard.current_focus() else { return };
+        if f.alive() && (self.window_for(&f).is_some() || self.layer_holds(&f)) {
+            return;
+        }
+        if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
+            eprintln!("keyboard: {} went, the keyboard goes back", self.describe_focus(Some(&f)));
+        }
+        self.focus_back();
+    }
+
+    /// Whether `f` is a panel that may hold the keyboard (see `keyboard_check`).
+    fn layer_holds(&self, f: &WlSurface) -> bool {
+        use smithay::wayland::shell::wlr_layer::{KeyboardInteractivity, LayerSurfaceCachedState};
+        let mapped = self.space.outputs().any(|o| layer_map_for_output(o).layer_for_surface(f, WindowSurfaceType::TOPLEVEL).is_some());
+        mapped
+            && smithay::backend::renderer::utils::with_renderer_surface_state(f, |s| s.buffer().is_some()).unwrap_or(false)
+            && with_states(f, |st| {
+                st.cached_state.get::<LayerSurfaceCachedState>().current().keyboard_interactivity != KeyboardInteractivity::None
+            })
     }
 
     /// A panel's surface was committed: one that asks for the keyboard exclusively (the start menu) gets it as soon as it shows,
@@ -973,8 +1003,9 @@ impl App {
                 let kb = self.keyboard.clone();
                 kb.set_focus(self, Some(KbFocus::Wl(surface.clone())), SERIAL_COUNTER.next_serial());
             }
-        } else if has && (!shown || wants == KeyboardInteractivity::None) {
-            self.focus_back();
+        } else if has {
+            // hidden, or no longer asking
+            self.keyboard_check();
         }
     }
 
@@ -1377,9 +1408,18 @@ impl App {
         }
     }
 
+    /// The window the window shortcuts (close, maximize, snap ...) act on: the one with the keyboard, or, while a panel has it
+    /// (the start menu, a pop-up), the window that was active under it: the compositor's shortcuts come before a panel's
+    /// keyboard, as on Hyprland. Nothing while locked.
     fn focused(&self) -> Option<WlSurface> {
-        let f = self.focused_surface()?;
-        self.space.elements().any(|w| is_window_of(w, &f)).then_some(f)
+        if self.locked {
+            return None;
+        }
+        match self.focused_surface() {
+            Some(f) if self.space.elements().any(|w| is_window_of(w, &f)) => Some(f),
+            Some(f) if self.lock_surfaces.iter().any(|(_, l)| l.wl_surface() == &f) => None,
+            _ => self.active_window(),
+        }
     }
 
     pub fn run_action(&mut self, action: Action) {
@@ -2553,6 +2593,8 @@ impl App {
     /// A key went down or up (an xkb key code: the kernel's code + 8). Shortcuts are taken here; the rest goes to the focus.
     pub fn key(&mut self, code: smithay::input::keyboard::Keycode, state: KeyState, time: u32) {
         self.input_seen();
+        // a panel that went does not take this key (keyboard_check)
+        self.keyboard_check();
         let keyboard = self.keyboard.clone();
         let serial = SERIAL_COUNTER.next_serial();
         let repeating_before = self.repeating;
@@ -2736,17 +2778,26 @@ impl App {
 
     /// What has the keyboard: "window APP TITLE", "layer NAMESPACE OUTPUT", "lock OUTPUT", "surface" or "none" (tab separated).
     pub fn focus_info(&self) -> String {
-        let Some(f) = self.focused_surface() else { return "none".into() };
-        if let Some((o, _)) = self.lock_surfaces.iter().find(|(_, l)| l.wl_surface() == &f) {
+        self.describe_focus(self.focused_surface().as_ref())
+    }
+
+    /// What a surface with the keyboard is, as `focus` tells it (also in the debug log; reads no keyboard state, so it may be
+    /// called while the keyboard changes its focus).
+    fn describe_focus(&self, f: Option<&WlSurface>) -> String {
+        let Some(f) = f else { return "none".into() };
+        if !f.alive() {
+            return "gone".into();
+        }
+        if let Some((o, _)) = self.lock_surfaces.iter().find(|(_, l)| l.wl_surface() == f) {
             return format!("lock\t{}", o.name());
         }
-        if let Some(w) = self.window_for(&f) {
+        if let Some(w) = self.window_for(f) {
             let (title, app_id) = title_app(&w);
             return format!("window\t{app_id}\t{title}");
         }
         for o in self.space.outputs() {
             let map = layer_map_for_output(o);
-            if let Some(l) = map.layer_for_surface(&f, WindowSurfaceType::TOPLEVEL) {
+            if let Some(l) = map.layer_for_surface(f, WindowSurfaceType::TOPLEVEL) {
                 return format!("layer\t{}\t{}", l.namespace(), o.name());
             }
         }
@@ -2769,6 +2820,13 @@ impl CompositorHandler for App {
             return &x.compositor_state;
         }
         &client.get_data::<ClientState>().unwrap().compositor_state
+    }
+    /// A surface was destroyed: when it had the keyboard (a panel that ended its surface before its layer), the keyboard goes
+    /// back (keyboard_check).
+    fn destroyed(&mut self, surface: &WlSurface) {
+        if self.keyboard.current_focus() == Some(KbFocus::Wl(surface.clone())) {
+            self.keyboard_check();
+        }
     }
     fn commit(&mut self, surface: &WlSurface) {
         self.wake();
@@ -2932,6 +2990,9 @@ impl SeatHandler for App {
     /// The program with the keyboard is the one offered the clipboard and the middle-click selection (Smithay offers them only
     /// to the focused program; without this, what one program copied reached no other, X11 or Wayland).
     fn focus_changed(&mut self, seat: &Seat<Self>, focus: Option<&KbFocus>) {
+        if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
+            eprintln!("keyboard: to {}", self.describe_focus(focus.and_then(|f| f.surface()).as_ref()).replace('\t', " "));
+        }
         let client = focus.and_then(|f| f.surface()).and_then(|s| self.display_handle.get_client(s.id()).ok());
         smithay::wayland::selection::data_device::set_data_device_focus(&self.display_handle, seat, client.clone());
         smithay::wayland::selection::primary_selection::set_primary_focus(&self.display_handle, seat, client);
@@ -3101,17 +3162,15 @@ impl WlrLayerShellHandler for App {
 
     fn layer_destroyed(&mut self, surface: WlrLayerSurface) {
         self.wake();
-        let had_keyboard = self.focused_surface().as_ref() == Some(surface.wl_surface());
-        for o in self.space.outputs() {
-            let mut map = layer_map_for_output(o);
+        for o in self.heads.list.iter().map(|h| h.output.clone()).chain(self.space.outputs().cloned()).collect::<Vec<_>>() {
+            let mut map = layer_map_for_output(&o);
             let found = map.layers().find(|l| l.layer_surface() == &surface).cloned();
             if let Some(l) = found {
                 map.unmap_layer(&l);
             }
         }
-        if had_keyboard && !self.locked {
-            self.focus_back();
-        }
+        // the keyboard goes back to the window when it was this panel's
+        self.keyboard_check();
         self.keep_clear();
     }
 }

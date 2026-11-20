@@ -342,13 +342,22 @@ pub struct LayerInfo {
     pub layer: String,
     pub at: (i32, i32),
     pub size: (i32, i32),
+    /// none, exclusive or on-demand
+    pub keyboard: String,
 }
 
 impl LayerInfo {
     fn parse(l: &str) -> LayerInfo {
         let p: Vec<&str> = l.split('\t').collect();
-        assert_eq!(p.len(), 5, "a layers line: {l:?}");
-        LayerInfo { output: p[0].into(), namespace: p[1].into(), layer: p[2].into(), at: pair(p[3], ','), size: pair(p[4], 'x') }
+        assert_eq!(p.len(), 6, "a layers line: {l:?}");
+        LayerInfo {
+            output: p[0].into(),
+            namespace: p[1].into(),
+            layer: p[2].into(),
+            at: pair(p[3], ','),
+            size: pair(p[4], 'x'),
+            keyboard: p[5].into(),
+        }
     }
 }
 
