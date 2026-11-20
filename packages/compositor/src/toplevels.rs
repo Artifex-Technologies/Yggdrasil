@@ -61,7 +61,9 @@ fn describe(app: &App, window: &Window, minimized: bool) -> Option<Told> {
     if minimized {
         state.push(STATE_MINIMIZED);
     }
-    if app.focused_surface().as_ref() == Some(&surface) {
+    // a minimized window is never told as active, even while it still has the keyboard (nothing else took it): a dock that
+    // minimizes the active app's window on a click would minimize it again on every click instead of restoring it
+    if !minimized && app.focused_surface().as_ref() == Some(&surface) {
         state.push(STATE_ACTIVATED);
     }
     if state::win_has(window, S::Fullscreen) {
