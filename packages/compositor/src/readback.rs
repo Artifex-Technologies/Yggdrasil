@@ -4,8 +4,8 @@
 //! (and partly on planes), so a copy is drawn again: the same elements as the screen's frame (the lock screen's while locked,
 //! black while the screen is off or dark), with the GPU's renderer (OpenGL ES, or pixman on a machine without one),
 //! - into a picture of its own on the GPU, read back into the program's shared memory (XRGB8888 or ARGB8888; GL reads RGBA,
-//!   whose red and blue are swapped here, and from the bottom row up when the mapping says so), the pointer painted in when
-//!   asked, as headless; or
+//!   whose red and blue are swapped here; the rows come top first, as Smithay's renderers draw: see `draw_and_read`), the
+//!   pointer painted in when asked, as headless; or
 //! - straight into the program's GPU buffer (dmabuf: wlr-screencopy's linux_dmabuf, ext-image-copy-capture's dmabuf formats,
 //!   offered with OpenGL ES only, whole screens and windows; the pointer is not painted into a GPU buffer).
 //!
@@ -21,7 +21,7 @@ use smithay::backend::allocator::{Buffer, Fourcc};
 use smithay::backend::renderer::damage::OutputDamageTracker;
 use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
 use smithay::backend::renderer::element::{AsRenderElements, RenderElement};
-use smithay::backend::renderer::{Bind, ExportMem, Offscreen, Renderer, Texture, TextureMapping};
+use smithay::backend::renderer::{Bind, ExportMem, Offscreen, Renderer, Texture};
 use smithay::output::Output;
 use smithay::reexports::wayland_protocols::ext::image_copy_capture::v1::server::ext_image_copy_capture_frame_v1::FailureReason;
 use smithay::reexports::wayland_server::Resource;
@@ -37,13 +37,12 @@ pub struct Picture {
 }
 
 /// Pixels read from the GPU as they are to be handed on: `rgba` (GL's own order: red first in memory) has its red and blue
-/// swapped into XRGB8888's order, and a `flipped` picture (its bottom row first) is turned the right way up.
-pub fn to_xrgb(data: &[u8], w: usize, h: usize, rgba: bool, flipped: bool) -> Vec<u8> {
+/// swapped into XRGB8888's order. The rows stay in their order (top first).
+pub fn to_xrgb(data: &[u8], w: usize, h: usize, rgba: bool) -> Vec<u8> {
     let row = w * 4;
     let mut out = Vec::with_capacity(row * h);
     for y in 0..h {
-        let src_y = if flipped { h - 1 - y } else { y };
-        let Some(src) = data.get(src_y * row..(src_y + 1) * row) else { break };
+        let Some(src) = data.get(y * row..(y + 1) * row) else { break };
         if rgba {
             for px in src.as_chunks::<4>().0 {
                 out.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
@@ -55,7 +54,11 @@ pub fn to_xrgb(data: &[u8], w: usize, h: usize, rgba: bool, flipped: bool) -> Ve
     out
 }
 
-/// Draw `elements` into a picture of the renderer's own (`T`, in `format`) of `size` pixels at `scale`, and read it back.
+/// Draw `elements` into a picture of the renderer's own (`T`, in `format`) of `size` pixels at `scale`, and read it back, top
+/// row first. The mapping's `flipped()` is not followed: OpenGL ES' mappings always say flipped (GL's rows go bottom up), but
+/// Smithay's GLES renderer already draws upside down in GL's terms (its projection turns the picture over, so a buffer it drew
+/// has its top row first in memory, as a screen scans it out), and glReadPixels hands the rows in memory order. Turning it
+/// over again gave grim an upside-down picture on the laptop's GPU (YGG-80); pixman's pictures are top first and not flipped.
 fn draw_and_read<R, T, E>(
     renderer: &mut R,
     format: Fourcc,
@@ -80,10 +83,9 @@ where
         Ok(m) => (m, false),
         Err(_) => (renderer.copy_framebuffer(&fb, region, Fourcc::Abgr8888).map_err(|e| format!("read back: {e}"))?, true),
     };
-    let flipped = mapping.flipped();
     let bytes = renderer.map_texture(&mapping).map_err(|e| format!("read back: {e}"))?;
     let (w, h) = (size.w as usize, size.h as usize);
-    Ok(Picture { data: to_xrgb(bytes, w, h, rgba, flipped), stride: w * 4 })
+    Ok(Picture { data: to_xrgb(bytes, w, h, rgba), stride: w * 4 })
 }
 
 /// Draw `elements` straight into a program's GPU buffer, and wait until the GPU is done with it.
@@ -307,15 +309,65 @@ mod tests {
     use super::to_xrgb;
 
     #[test]
-    fn pixels_read_from_the_gpu_are_handed_on_in_xrgb_order_and_upright() {
+    fn pixels_read_from_the_gpu_are_handed_on_in_xrgb_order() {
         // two rows of two pixels, RGBA as GL reads them: red, green / blue, white
         let rgba = [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255];
-        let x = to_xrgb(&rgba, 2, 2, true, false);
+        let x = to_xrgb(&rgba, 2, 2, true);
         assert_eq!(&x[..4], &[0, 0, 255, 255], "red is the third byte in memory");
-        assert_eq!(&x[8..12], &[255, 0, 0, 255], "blue the first");
-        let f = to_xrgb(&rgba, 2, 2, true, true);
-        assert_eq!(&f[..4], &[255, 0, 0, 255], "the bottom row first: turned upright");
-        assert_eq!(to_xrgb(&x, 2, 2, false, false), x, "already in order");
-        assert_eq!(to_xrgb(&rgba[..12], 2, 2, true, false).len(), 8, "a short picture: the rows there are");
+        assert_eq!(&x[8..12], &[255, 0, 0, 255], "blue the first, in the second row: the rows keep their order");
+        assert_eq!(to_xrgb(&x, 2, 2, false), x, "already in order");
+        assert_eq!(to_xrgb(&rgba[..12], 2, 2, true).len(), 8, "a short picture: the rows there are");
+    }
+
+    /// A screen's copy drawn with OpenGL ES and read back into memory has its top row first: the GPU path of grim on the laptop
+    /// (2026-11-19) gave a picture upside down. Drawn with Mesa's software OpenGL ES (llvmpipe, through its software EGL device:
+    /// no GPU, no screen); skipped where there is none.
+    #[test]
+    fn a_copy_drawn_with_opengl_es_is_upright() {
+        use smithay::backend::allocator::Fourcc;
+        use smithay::backend::egl::{EGLContext, EGLDevice, EGLDisplay};
+        use smithay::backend::renderer::element::solid::SolidColorRenderElement;
+        use smithay::backend::renderer::element::{Id, Kind};
+        use smithay::backend::renderer::gles::{GlesRenderbuffer, GlesRenderer};
+        use smithay::backend::renderer::utils::CommitCounter;
+        use smithay::utils::{Rectangle, Transform};
+
+        let Some(device) = EGLDevice::enumerate().ok().and_then(|mut all| all.find(|d| d.is_software())) else {
+            eprintln!("no software EGL device (Mesa): skipped");
+            return;
+        };
+        // SAFETY: the display lives as long as the renderer made from it, both in this test
+        let Ok(display) = (unsafe { EGLDisplay::new(device) }) else {
+            eprintln!("the software EGL device gave no display: skipped");
+            return;
+        };
+        let context = EGLContext::new(&display).expect("an EGL context");
+        // SAFETY: the context is current only on this thread
+        let mut renderer = unsafe { GlesRenderer::new(context) }.expect("OpenGL ES");
+        let (w, h) = (64, 48);
+        // red across the top 8 rows, the rest the clear colour (blue)
+        let top = SolidColorRenderElement::new(
+            Id::new(),
+            Rectangle::new((0, 0).into(), (w, 8).into()),
+            CommitCounter::default(),
+            [1.0f32, 0.0, 0.0, 1.0],
+            Kind::Unspecified,
+        );
+        let pic = super::draw_and_read::<GlesRenderer, GlesRenderbuffer, _>(
+            &mut renderer,
+            Fourcc::Abgr8888,
+            (w, h).into(),
+            1.0,
+            Transform::Normal,
+            &[top],
+            [0.0, 0.0, 1.0, 1.0],
+        )
+        .expect("drawn and read back");
+        let px = |x: usize, y: usize| &pic.data[y * pic.stride + x * 4..y * pic.stride + x * 4 + 3];
+        // XRGB8888 in memory: blue, green, red
+        assert_eq!(px(5, 0), [0, 0, 255], "the top row is red");
+        assert_eq!(px(5, 7), [0, 0, 255]);
+        assert_eq!(px(5, 8), [255, 0, 0], "below it the clear colour");
+        assert_eq!(px(5, h as usize - 1), [255, 0, 0], "the bottom row too: not upside down");
     }
 }
