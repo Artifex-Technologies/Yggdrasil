@@ -384,10 +384,9 @@ impl App {
         self.choose_main();
     }
 
-    /// The main screen (windows maximize and the switcher shows there; X11 programs are told it is the primary one): the monitor
-    /// chosen in Settings > Displays when it is on (yggdrasil_conf::display), else a laptop's own screen when it is on (my rule:
-    /// the built-in screen is main unless I choose another, so it gets main back when the lid opens), else the one that was main
-    /// while it stays on, else the first screen that is on.
+    /// The main screen (windows maximize and the switcher shows there; X11 programs are told it is the primary one), as the
+    /// panel's dock and Settings have it (yggdrasil_conf::display::pick): the monitor chosen in Settings > Displays when it is
+    /// on, else a laptop's own screen (so it is main again when the lid opens), else the one at the top left.
     pub fn choose_main(&mut self) {
         let on: Vec<Output> = self.heads.list.iter().filter(|h| h.enabled).map(|h| h.output.clone()).collect();
         let props: Vec<(String, smithay::output::PhysicalProperties, Point<i32, Logical>)> =
@@ -396,11 +395,7 @@ impl App {
             .iter()
             .map(|(name, p, at)| yggdrasil_conf::display::Seen { connector: name, make: &p.make, model: &p.model, x: at.x, y: at.y })
             .collect();
-        let chosen = self.main_choice.as_ref().and_then(|c| yggdrasil_conf::display::chosen(c, &seen)).map(|i| on[i].clone());
-        let main = chosen
-            .or_else(|| on.iter().find(|o| crate::laptop::is_internal(&o.name())).cloned())
-            .or_else(|| on.iter().find(|o| **o == self.output).cloned())
-            .or_else(|| on.first().cloned());
+        let main = yggdrasil_conf::display::pick(self.main_choice.as_ref(), &seen).map(|i| on[i].clone());
         let Some(main) = main.filter(|m| *m != self.output) else { return };
         self.output = main;
         if let Some(wm) = self.xwm.as_mut() {

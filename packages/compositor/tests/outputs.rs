@@ -351,7 +351,7 @@ fn a_laptops_own_screen_is_first_and_main_and_gets_main_back_after_the_lid() {
     assert_eq!(comp.must("main"), ["HEADLESS-1"]);
     // a monitor, then the laptop's own panel, named as the kernel names them
     assert_eq!(comp.must("add-output 2560x1440 HDMI-A-1"), ["HDMI-A-1"]);
-    assert_eq!(comp.must("main"), ["HEADLESS-1"], "a monitor plugged in does not take main");
+    assert_eq!(comp.must("main"), ["HEADLESS-1"], "a monitor plugged in to the right does not take main");
     assert_eq!(comp.must("add-output 1920x1200@1.25 eDP-1"), ["eDP-1"]);
     assert_eq!(comp.must("main"), ["eDP-1"], "the laptop's own screen is main");
     comp.must("remove-output HEADLESS-1");
