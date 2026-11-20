@@ -3,10 +3,11 @@
 //! The panel's dock takes its window previews this way (packages/panel/src/capture.rs), on Hyprland and here alike. Smithay ships
 //! the window list (ext-foreign-toplevel-list, toplevels.rs) but not these two, so they are written here.
 //!
-//! Only the headless backend offers them today (headless.rs makes the pictures: a window drawn on its own, at its screen's scale,
-//! whether it is covered, on another desktop or minimized; a screen from its picture in memory); the nested window and the future
-//! hardware backend need a read-back from the GPU first. Shared memory only (ARGB8888 and XRGB8888); GPU buffers (dmabuf) come
-//! with the hardware backend. While the session is locked no window is copied (a screen's copy is the lock screen's picture, as
+//! The headless backend makes the pictures from memory (headless.rs: a window drawn on its own, at its screen's scale, whether it
+//! is covered, on another desktop or minimized; a screen from its picture in memory), the hardware backend draws them again on
+//! the GPU (readback.rs); the nested window offers none. Shared memory (ARGB8888 and XRGB8888) everywhere, and GPU buffers
+//! (dmabuf: the render node and the formats it draws into, `Capture::dmabuf`) on the hardware backend with OpenGL ES. While the
+//! session is locked no window is copied (a screen's copy is the lock screen's picture, as
 //! with wlr-screencopy). The pointer is painted into a screen's copy when the program asks (`paint_cursors`); a session for the
 //! pointer's own picture (create_pointer_cursor_session) is answered with a session that has stopped.
 
@@ -65,6 +66,15 @@ pub struct Pending {
 pub struct Capture {
     pub sessions: Vec<Session>,
     pub pending: Vec<Pending>,
+    /// GPU buffers copies may be made into (the hardware backend with OpenGL ES); None: shared memory only
+    pub dmabuf: Option<DmabufOffer>,
+}
+
+/// The GPU buffers a copy can be drawn into: the render node (its dev_t) and each format with its modifiers.
+#[derive(Clone, Debug, Default)]
+pub struct DmabufOffer {
+    pub device: u64,
+    pub formats: Vec<(smithay::backend::allocator::Fourcc, Vec<u64>)>,
 }
 
 /// What a frame object knows until its copy is asked for: the buffer attached and whether `capture` was sent.
@@ -147,7 +157,7 @@ impl App {
         let size = self.capture_size(&source);
         let stopped = size.is_none();
         if let Some(size) = size {
-            constraints(&resource, size);
+            constraints_with(&resource, size, self.capture.dmabuf.as_ref());
         } else {
             resource.stopped();
         }
@@ -165,11 +175,40 @@ impl App {
 }
 
 /// The buffer a session's copies need: its size, shared memory in ARGB8888 or XRGB8888.
-pub fn constraints(session: &ExtImageCopyCaptureSessionV1, (w, h): (u32, u32)) {
+pub fn constraints(session: &ExtImageCopyCaptureSessionV1, size: (u32, u32)) {
+    constraints_with(session, size, None);
+}
+
+/// The same, and the GPU buffers it may also be (the render node and the formats with their modifiers).
+pub fn constraints_with(session: &ExtImageCopyCaptureSessionV1, (w, h): (u32, u32), dmabuf: Option<&DmabufOffer>) {
     session.buffer_size(w, h);
     session.shm_format(wl_shm::Format::Argb8888);
     session.shm_format(wl_shm::Format::Xrgb8888);
+    if let Some(d) = dmabuf.filter(|d| !d.formats.is_empty()) {
+        session.dmabuf_device(d.device.to_ne_bytes().to_vec());
+        for (f, mods) in &d.formats {
+            session.dmabuf_format(*f as u32, mods.iter().flat_map(|m| m.to_ne_bytes()).collect());
+        }
+    }
     session.done();
+}
+
+impl App {
+    /// Tell a session (by its place in the list) its buffer's constraints again.
+    pub fn capture_constraints(&self, i: usize) {
+        if let Some(s) = self.capture.sessions.get(i) {
+            constraints_with(&s.resource, s.told, self.capture.dmabuf.as_ref());
+        }
+    }
+}
+
+/// Whether a GPU buffer takes a copy of this size: the size, and a format (and modifier) offered.
+pub fn dmabuf_fits(buffer: &WlBuffer, (w, h): (u32, u32), offer: Option<&DmabufOffer>) -> bool {
+    use smithay::backend::allocator::Buffer;
+    let (Some(offer), Ok(d)) = (offer, smithay::wayland::dmabuf::get_dmabuf(buffer)) else { return false };
+    let f = d.format();
+    (d.width(), d.height()) == (w, h)
+        && offer.formats.iter().any(|(code, mods)| *code == f.code && (mods.is_empty() || mods.contains(&u64::from(f.modifier))))
 }
 
 /// Whether a program's buffer takes a copy of this size: shared memory, one of the two formats, the size, room for every row.
@@ -218,6 +257,11 @@ pub fn fill(
         p.frame.failed(FailureReason::Unknown);
         return;
     }
+    ready(p, (w, h), when);
+}
+
+/// Tell the program its copy (all of it) is ready.
+pub fn ready(p: &Pending, (w, h): (u32, u32), when: std::time::Duration) {
     p.frame.transform(Transform::Normal);
     p.frame.damage(0, 0, w as i32, h as i32);
     let secs = when.as_secs();
@@ -442,7 +486,7 @@ impl Dispatch<ExtImageCopyCaptureFrameV1, FrameData> for App {
                     frame.failed(FailureReason::Stopped);
                     return;
                 }
-                if !buffer_fits(&buffer, s.told) {
+                if !buffer_fits(&buffer, s.told) && !dmabuf_fits(&buffer, s.told, state.capture.dmabuf.as_ref()) {
                     frame.failed(FailureReason::BufferConstraints);
                     return;
                 }

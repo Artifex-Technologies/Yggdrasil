@@ -404,6 +404,7 @@ impl State {
                                     scroll_factor: Some(all.scroll_factor.unwrap_or(1.0)),
                                     natural_scroll: Some(all.natural_scroll.unwrap_or(false)),
                                     left_handed: Some(all.left_handed.unwrap_or(false)),
+                                    ..Default::default()
                                 };
                                 conf.devices.insert(name.clone(), start);
                             } else {

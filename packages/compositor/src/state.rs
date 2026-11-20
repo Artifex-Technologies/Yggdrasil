@@ -282,6 +282,8 @@ pub struct App {
     pub cursor_theme: Option<(String, u32)>,
     /// Settings > Peripherals' mouse and keyboard settings (input.rs) and when their file was changed as last seen.
     pub input: yggdrasil_wm::input::InputConf,
+    /// the hardware backend's input devices (udev.rs), for `devices` and `input`; empty on the other backends
+    pub input_devices: Vec<crate::input::DeviceInfo>,
     input_time: Option<std::time::SystemTime>,
     /// The pointer the compositor draws (pointer.rs): what programs asked it to look like, when it last moved, the theme's pictures.
     pub cursor: crate::pointer::Pointer,
@@ -591,6 +593,7 @@ impl App {
             cursor: Default::default(),
             input_time: std::fs::metadata(yggdrasil_wm::input::InputConf::path()).and_then(|m| m.modified()).ok(),
             input: input_conf,
+            input_devices: vec![],
             toplevel_list: smithay::wayland::foreign_toplevel_list::ForeignToplevelListState::new::<Self>(dh),
             capture: Default::default(),
             kb_layout,
@@ -2310,10 +2313,14 @@ impl App {
 
     /// A click gives the keyboard to what is under the pointer (a window, raised, or a panel that asks for the keyboard).
     pub fn focus_under_pointer(&mut self, serial: Serial) {
+        self.focus_at(self.pointer_location, serial);
+    }
+
+    /// A click or a touch at `pos` gives the keyboard to what is there (as `focus_under_pointer`).
+    pub fn focus_at(&mut self, pos: Point<f64, Logical>, serial: Serial) {
         if self.locked {
             return;
         }
-        let pos = self.pointer_location;
         // a click in an X11 menu leaves the keyboard where it is (the menu's own window keeps it)
         if self.over_overlay(pos) {
             return;
@@ -2350,6 +2357,10 @@ impl App {
     /// from a real device. `own_settings`: the devices are this compositor's (hardware), so input.conf's scroll factor is applied
     /// here (libinput itself is told the speed, profile, natural scrolling and left-handed buttons); nested, the host applied them.
     pub fn on_input<B: InputBackend>(&mut self, event: InputEvent<B>, own_settings: bool) {
+        // the touchscreen and the pen (touch.rs)
+        if self.on_touch(&event) {
+            return;
+        }
         match event {
             InputEvent::Keyboard { event } => self.key(event.key_code(), event.state(), event.time_msec()),
             InputEvent::PointerMotionAbsolute { event } => {
@@ -2368,8 +2379,7 @@ impl App {
             InputEvent::PointerAxis { event } => {
                 self.input_seen();
                 let pointer = self.pointer.clone();
-                let factor =
-                    if own_settings { crate::input::mouse(&self.input, &event.device().name()).scroll.abs().max(0.01) } else { 1.0 };
+                let factor = if own_settings { self.scroll_factor_of(&event.device().name()) } else { 1.0 };
                 let amount = |a: Axis| factor * event.amount(a).unwrap_or_else(|| event.amount_v120(a).unwrap_or(0.0) * 15.0 / 120.0);
                 let mut frame = AxisFrame::new(event.time_msec()).source(event.source());
                 for a in [Axis::Horizontal, Axis::Vertical] {
@@ -2389,6 +2399,15 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    /// input.conf's scroll factor for a device, by libinput's name for it (a touchpad's own, input.rs).
+    fn scroll_factor_of(&self, raw: &str) -> f64 {
+        let s = match self.input_devices.iter().find(|d| d.raw == raw) {
+            Some(d) => crate::input::mouse_of(&crate::input::settings(&self.input, &d.name, d.kind)).scroll,
+            None => crate::input::mouse(&self.input, raw).scroll,
+        };
+        s.abs().max(0.01)
     }
 
     /// Any input: draw again soon, and the user is not idle.

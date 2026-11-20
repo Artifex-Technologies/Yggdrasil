@@ -202,6 +202,12 @@ pub fn command(words: &[&str], app: &mut App) -> Option<Result<Vec<String>, Stri
             }
             Ok(vec![])
         }
+        // the hardware backend's devices (touchpads and TrackPoints are pointers, as Hyprland lists them), else the headless ones
+        ["devices"] if !app.input_devices.is_empty() => Ok(app
+            .input_devices
+            .iter()
+            .map(|d| format!("{}\t{}", d.name, if d.kind.points() { "pointer" } else { d.kind.word() }))
+            .collect()),
         ["devices"] => {
             Ok(vec![format!("{}\tpointer", crate::input::HEADLESS_MOUSE), format!("{}\tkeyboard", crate::input::HEADLESS_KEYBOARD)])
         }

@@ -44,6 +44,18 @@ screen switched to a smaller mode left Settings partly off it (floating windows 
 their screen when its mode or scale changes or it goes, on the headless and hardware backends alike: `placement::inside`,
 `tests/behaviour.rs`).
 
+## The hardware backend: the laptop (built 2026-11-19, not yet tried on the laptop)
+
+What a laptop needs, for my ThinkPad X1 Yoga (Intel Iris Xe): the internal screen known by its connector (eDP, LVDS, DSI) and
+given a CRTC first; the lid (closed with a monitor on: the panel leaves its CRTC as if unplugged; alone: dark, for logind to
+suspend); the tablet-mode switch recorded; hotplug with CRTCs given back and docks' new MST connectors; a default scale from the
+screen's size (1.25 for the laptop's 14-inch 1920x1200 panel, as I set it on Hyprland); waking from a suspend told by the kernel
+(a timer cancelled on resume: no D-Bus) and every screen set up again; screens off as a CRTC switched off; the touchpad's and
+TrackPoint's settings from input.conf; the touchscreen as wl_touch and the pen as a pointer; and screen copies drawn again on the
+GPU (grim, the panel's previews). The rules have unit tests and the touchscreen a headless test; the rest is tried by hand on
+the laptop's text console with `packages/compositor/tests/laptop-tty.sh`. What each part does and whether it has been checked:
+[packages/compositor/README.md](../packages/compositor/README.md#the-laptop-milestone-2-built-2026-11-19).
+
 ## Headless: the hidden test mode (built 2026-11-10)
 
     yggdrasil-compositor --headless [--outputs N] [--size WxH] [--scale S] [--output WxH[@S]]... [--run COMMAND ...]

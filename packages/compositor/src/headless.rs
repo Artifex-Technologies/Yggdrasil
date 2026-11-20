@@ -42,6 +42,8 @@
 //!   pointer-move DX DY           move the virtual mouse: the pointer goes as far as its speed in input.conf says
 //!   scroll DY [DX]               turn its wheel (input.conf's scroll factor and natural scrolling applied)
 //!   input                        the mouse and keyboard settings in force (input.rs: Settings > Peripherals' input.conf)
+//!   touch-down ID X Y, touch-move ID X Y, touch-up ID
+//!                                a finger (ID 0 to 15) on a touchscreen, at X,Y of the touchscreen's screen (touch.rs)
 //!   power NAME on|off            switch an output on or off (as wlr-output-power does)
 //!   clock [stop|run|+MS]         the clock the animations run on: stop it, move a stopped one on, let it run again; without
 //!                                a word: "running" or "stopped" and its time (ms). For tests: a frame in an animation
@@ -234,7 +236,7 @@ pub struct Headless {
 }
 
 /// The commands, for an unknown one's answer.
-const USAGE: &str = "outputs, resize NAME WxH, scale NAME S, add-output WxH[@S], remove-output NAME, screenshot NAME FILE [pointer], pointer-look, windows, layers, free, focus, workspace, lock, key COMBO, key-down COMBO, key-up COMBO, type TEXT, pointer X Y, click [BUTTON], pointer-move DX DY, scroll DY [DX], input, power NAME on|off, clock [stop|run|+MS], quit; for the tools: clients, active, workspaces, workspace N, activate ID, close ID, minimize ID, maximize ID on|off|toggle, send ID N, place ID X Y W H, cursor, screens, pointer-timeout [S], modifiers";
+const USAGE: &str = "outputs, resize NAME WxH, scale NAME S, add-output WxH[@S], remove-output NAME, screenshot NAME FILE [pointer], pointer-look, windows, layers, free, focus, workspace, lock, key COMBO, key-down COMBO, key-up COMBO, type TEXT, pointer X Y, click [BUTTON], pointer-move DX DY, scroll DY [DX], input, touch-down ID X Y, touch-move ID X Y, touch-up ID, power NAME on|off, clock [stop|run|+MS], quit; for the tools: clients, active, workspaces, workspace N, activate ID, close ID, minimize ID, maximize ID on|off|toggle, send ID N, place ID X Y W H, cursor, screens, pointer-timeout [S], modifiers";
 
 /// About 60 frames a second at most, however often programs commit.
 const FRAME: Duration = Duration::from_millis(16);
@@ -613,6 +615,9 @@ pub fn run(
 
 /// The headless backend's own commands (the rest are control.rs's): None for a command that is not one of them.
 fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Option<Result<Vec<String>, String>> {
+    if let Some(r) = touch_command(words, app, h) {
+        return Some(r);
+    }
     const OWN: [&str; 14] = [
         "resize",
         "add-output",
@@ -633,6 +638,43 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Option<Result<Vec
         return None;
     }
     Some(own_command(words, app, h))
+}
+
+/// A finger on a touchscreen, made here (touch.rs): `touch-down ID X Y`, `touch-move ID X Y` (X, Y in the touchscreen's own
+/// logical size, as libinput gives a touch: the laptop's screen, else the main one) and `touch-up ID`, each a frame of its own.
+fn touch_command(words: &[&str], app: &mut App, h: &mut Headless) -> Option<Result<Vec<String>, String>> {
+    let slot = |id: &str| id.parse::<u32>().ok().filter(|n| *n < 16).map(|n| smithay::backend::input::TouchSlot::from(Some(n)));
+    let at = |app: &App, x: &str, y: &str| -> Option<smithay::utils::Point<f64, smithay::utils::Logical>> {
+        let (x, y) = (x.parse::<f64>().ok().filter(|v| v.is_finite())?, y.parse::<f64>().ok().filter(|v| v.is_finite())?);
+        let r = state::output_rect(&app.touch_output());
+        Some((r.loc.x as f64 + x.clamp(0.0, r.size.w as f64), r.loc.y as f64 + y.clamp(0.0, r.size.h as f64)).into())
+    };
+    let usage = || Err("touch-down ID X Y, touch-move ID X Y, touch-up ID (ID 0 to 15)".to_string());
+    let r = match words {
+        [w @ ("touch-down" | "touch-move"), id, x, y] => match (slot(id), at(app, x, y)) {
+            (Some(s), Some(p)) => {
+                if *w == "touch-down" {
+                    app.touch_down(s, p, h.ms());
+                } else {
+                    app.touch_motion(s, p, h.ms());
+                }
+                app.touch_frame();
+                Ok(vec![])
+            }
+            _ => usage(),
+        },
+        ["touch-up", id] => match slot(id) {
+            Some(s) => {
+                app.touch_up(s, h.ms());
+                app.touch_frame();
+                Ok(vec![])
+            }
+            None => usage(),
+        },
+        [w, ..] if w.starts_with("touch-") => usage(),
+        _ => return None,
+    };
+    Some(r)
 }
 
 fn own_command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<String>, String> {

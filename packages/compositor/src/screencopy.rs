@@ -2,10 +2,11 @@
 //! grim (and with it yggdrasil-shot and the colour picker) and Sunshine take screenshots and stream the screen this way on
 //! Hyprland. Smithay does not ship this protocol, so it is written here, like wlr-foreign-toplevel in toplevels.rs.
 //!
-//! Only the headless backend offers it today (headless.rs fills the copies from its pictures in memory); the nested window and the
-//! future hardware backend need a read-back from the GPU first. While the session is locked the picture is the lock screen's, so a
-//! copy never shows what the lock hides. Copies go in XRGB8888 (ARGB8888 is accepted too), shared memory only (no dmabuf yet).
-//! The pointer is painted in when the program asks (overlay_cursor: grim -c), as on Hyprland.
+//! The headless backend fills the copies from its pictures in memory (headless.rs), the hardware backend draws them again on the
+//! GPU (readback.rs); the nested window offers none. While the session is locked the picture is the lock screen's, so a copy
+//! never shows what the lock hides. Copies go in XRGB8888 (ARGB8888 is accepted too) in shared memory, and on the hardware
+//! backend with OpenGL ES also in a GPU buffer (version 3's linux_dmabuf, for a whole screen: `Screencopy::dmabuf`). The pointer
+//! is painted into shared memory when the program asks (overlay_cursor: grim -c), as on Hyprland.
 
 use std::collections::HashSet;
 use std::sync::Mutex;
@@ -40,6 +41,8 @@ pub struct Screencopy {
     pub pending: Vec<Copy>,
     /// (program, output) pairs that have had a copy: their next copy_with_damage waits for a change
     pub seen: HashSet<(ClientId, String)>,
+    /// the GPU buffer formats a whole screen's copy may go in (the hardware backend with OpenGL ES); empty: shared memory only
+    pub dmabuf: Vec<smithay::backend::allocator::Fourcc>,
 }
 
 /// What a frame object knows: the output and part asked for, and whether a copy was already asked of it.
@@ -87,6 +90,12 @@ impl App {
         let (w, h) = (region.size.w as u32, region.size.h as u32);
         frame.buffer(wl_shm::Format::Xrgb8888, w, h, w * 4);
         if frame.version() >= 3 {
+            // a whole screen may also go in a GPU buffer (a part of one: shared memory only)
+            if logical.is_none() {
+                for f in &self.screencopy.dmabuf {
+                    frame.linux_dmabuf(*f as u32, w, h);
+                }
+            }
             frame.buffer_done();
         }
     }
@@ -160,10 +169,16 @@ impl Dispatch<ZwlrScreencopyFrameV1, FrameData> for App {
                 && b.offset >= 0
                 && (b.offset as usize + b.stride as usize * b.height as usize) <= len
         });
-        if !matches!(fits, Ok(true)) {
+        let whole = output.current_mode().is_some_and(|m| m.size == r.size && r.loc == (0, 0).into());
+        let gpu_fits = whole
+            && smithay::wayland::dmabuf::get_dmabuf(&buffer).is_ok_and(|d| {
+                use smithay::backend::allocator::Buffer;
+                state.screencopy.dmabuf.contains(&d.format().code) && (d.width() as i32, d.height() as i32) == (r.size.w, r.size.h)
+            });
+        if !matches!(fits, Ok(true)) && !gpu_fits {
             frame.post_error(
                 zwlr_screencopy_frame_v1::Error::InvalidBuffer,
-                "the buffer must be shared memory, XRGB8888, of the size given",
+                "the buffer must be shared memory, XRGB8888, of the size given (or a GPU buffer of a format offered)",
             );
             return;
         }
@@ -209,6 +224,12 @@ pub fn fill(
         copy.frame.failed();
         return;
     }
+    ready(copy, when);
+}
+
+/// Tell the program its copy is ready (all of it changed, for copy_with_damage).
+pub fn ready(copy: &Copy, when: std::time::Duration) {
+    let r = copy.region;
     copy.frame.flags(zwlr_screencopy_frame_v1::Flags::empty());
     if copy.with_damage && copy.frame.version() >= 2 {
         copy.frame.damage(0, 0, r.size.w as u32, r.size.h as u32);
