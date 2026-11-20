@@ -53,6 +53,9 @@ use smithay::wayland::shell::xdg::{PopupSurface, PositionerState, ToplevelSurfac
 use smithay::xwayland::X11Surface;
 use std::collections::HashMap;
 
+mod stacking;
+use stacking::Under;
+
 smithay::render_elements! {
     /// What is drawn each frame: the programs' own pictures and the title bars the compositor adds.
     pub Elem<=GlesRenderer>;
@@ -687,7 +690,8 @@ impl App {
             }
             let _ = x.configure(area);
         }
-        self.space.map_element(window.clone(), area.loc, true);
+        // in place in the stack: a window made full screen or maximized from behind (a game asking again, a tool) stays behind
+        self.relocate(window, area.loc);
     }
 
     pub fn restore_window(&mut self, window: &Window) {
@@ -725,7 +729,7 @@ impl App {
             }
         }
         if let Some(r) = back {
-            self.space.map_element(window.clone(), r.loc, false);
+            self.relocate(window, r.loc);
         }
         self.retile();
     }
@@ -775,7 +779,7 @@ impl App {
             self.x11_snapped.retain(|s| s != &surface);
             let _ = x.configure(rect);
         }
-        self.space.map_element(window.clone(), rect.loc, false);
+        self.relocate(window, rect.loc);
         self.retile();
         true
     }
@@ -842,7 +846,7 @@ impl App {
         } else if let Some(x) = w.x11_surface() {
             let _ = x.configure(r);
         }
-        self.space.map_element(w.clone(), r.loc, false);
+        self.relocate(w, r.loc);
     }
 
     /// A new window's first picture (now its size is known): centred in the free room of the output it opens on, shortened to
@@ -862,8 +866,8 @@ impl App {
         let start = crate::placement::centred((size.w, size.h), zone);
         let opened = crate::placement::open(start, screen, zone, self.look.gaps_out).unwrap_or(start);
         let r = self.remembered_place(w).unwrap_or(opened);
+        // where it is in the stack: it was put in front when it opened, and a window clicked since then stays in front of it
         self.place_at(w, r);
-        self.space.raise_element(w, true);
     }
 
     /// Another window of the same program is open: one of the same class or of the same process (VS Code's dialogs are "code",
@@ -927,7 +931,7 @@ impl App {
             return;
         }
         self.clear_zones = zones;
-        // every floating window is mapped again in order, so the stacking stays as it was
+        // each moved in place in the stack (place_at), so a window behind a full screen one stays behind it
         for w in self.floating_shown() {
             let Some(loc) = self.space.element_location(&w) else { continue };
             // the size asked for when the program has not drawn it yet (a screen just changed under it: windows_follow_outputs)
@@ -994,6 +998,8 @@ impl App {
         self.opened_at.push(surface.clone());
         self.foreign_added(window);
         self.retile();
+        // the others are told they are no longer active (a full screen game under it would think it still has the keyboard)
+        self.mark_active(window);
         self.give_keyboard(Some(surface.clone()), SERIAL_COUNTER.next_serial());
         self.touch_focus(surface);
     }
@@ -1037,8 +1043,12 @@ impl App {
             }
             self.space.unmap_elem(&w);
         }
-        let next = self.space.elements().rev().find_map(surface_of);
-        self.give_keyboard(next, SERIAL_COUNTER.next_serial());
+        // the keyboard, and the active look, go to the window now in front
+        let next = self.space.elements().rev().find(|w| surface_of(w).is_some()).cloned();
+        if let Some(w) = &next {
+            self.mark_active(w);
+        }
+        self.give_keyboard(next.as_ref().and_then(surface_of), SERIAL_COUNTER.next_serial());
         self.retile();
     }
 
@@ -1068,6 +1078,11 @@ impl App {
 
     /// Give the keyboard to a surface (None: to nobody). The surface of an X11 window gets it as that X11 window (see KbFocus).
     pub fn give_keyboard(&mut self, surface: Option<WlSurface>, serial: Serial) {
+        // while locked the keyboard is the lock's (a window opening or closing behind it must not take what is typed into the
+        // lock); focus_back gives it to the window used last on unlocking
+        if self.locked {
+            return;
+        }
         let focus = surface.map(|s| {
             let x11 = self.window_for(&s).and_then(|w| w.x11_surface().cloned());
             match x11 {
@@ -1515,7 +1530,7 @@ impl App {
             } else {
                 continue;
             }
-            self.space.map_element(w.clone(), r.loc, false);
+            self.relocate(w, r.loc);
         }
     }
 
@@ -1871,64 +1886,15 @@ impl App {
         ))
     }
 
-    /// The window controls under the point (looking from the top window down; a window in front hides the controls of one behind it).
-    fn bar_at(&self, pos: Point<f64, Logical>) -> Option<(Window, Hit)> {
-        for w in self.space.elements().rev() {
-            if let Some(r) = self.bar_rect(w) {
-                if r.to_f64().contains(pos) {
-                    return Some((w.clone(), deco::hit(pos.x - r.loc.x as f64)));
-                }
-            }
-            if let Some(loc) = self.space.element_location(w) {
-                if Rectangle::new(loc, w.geometry().size).to_f64().contains(pos) {
-                    return None;
-                }
-            }
-        }
-        None
-    }
-
-    /// The resize grips just outside a decorated window (all four sides).
-    fn edge_at(&self, pos: Point<f64, Logical>) -> Option<(Window, ResizeEdge)> {
-        for w in self.space.elements().rev() {
-            if !self.bar_visible(w) {
-                continue;
-            }
-            let loc = self.space.element_location(w)?;
-            let size = w.geometry().size;
-            let inner = Rectangle::new(loc, size).to_f64();
-            let g = deco::GRIP as f64;
-            let outer = Rectangle::new((inner.loc.x - g, inner.loc.y - g).into(), (inner.size.w + 2.0 * g, inner.size.h + 2.0 * g).into());
-            if inner.contains(pos) {
-                return None;
-            }
-            if outer.contains(pos) {
-                let (left, right) = (pos.x < inner.loc.x, pos.x >= inner.loc.x + inner.size.w);
-                let (top, bottom) = (pos.y < inner.loc.y, pos.y >= inner.loc.y + inner.size.h);
-                let edge = match (left, right, top, bottom) {
-                    (true, _, true, _) => ResizeEdge::TopLeft,
-                    (_, true, true, _) => ResizeEdge::TopRight,
-                    (true, _, _, true) => ResizeEdge::BottomLeft,
-                    (_, true, _, true) => ResizeEdge::BottomRight,
-                    (true, ..) => ResizeEdge::Left,
-                    (_, true, ..) => ResizeEdge::Right,
-                    (_, _, true, _) => ResizeEdge::Top,
-                    (_, _, _, true) => ResizeEdge::Bottom,
-                    _ => return None,
-                };
-                return Some((w.clone(), edge));
-            }
-        }
-        None
-    }
-
     /// Super and the left button move the window under the pointer, Super and the right button resize it (from the nearest corner).
     fn super_drag(&mut self, serial: Serial, button: u32) -> bool {
         if !self.keyboard.modifier_state().logo || !(button == 0x110 || button == 0x111) {
             return false;
         }
         let pos = self.pointer_location;
-        let Some((window, loc)) = self.space.element_under(pos).map(|(w, l)| (w.clone(), l)) else { return false };
+        // the window in front at the pointer (not one behind a panel or another window: stacking.rs)
+        let Some(window) = self.under(pos).and_then(|u| u.window().cloned()) else { return false };
+        let Some(loc) = self.space.element_location(&window) else { return false };
         let Some(surface) = surface_of(&window) else { return false };
         let pointer = self.pointer.clone();
         let start = smithay::input::pointer::GrabStartData { focus: None, button, location: pos };
@@ -2058,7 +2024,8 @@ impl App {
         }
         // A full screen window in front (a game, a video) covers the top bar and the dock: the Top layer then goes behind the
         // windows. The Overlay layer (the lock's own picture, alerts that must be seen) stays in front.
-        let full_front = self.space.elements().last().is_some_and(|w| win_has(w, xdg_toplevel::State::Fullscreen));
+        // (on this screen alone, and the same rule the pointer follows: stacking.rs)
+        let full_front = self.fullscreen_in_front(output);
         layer_els(renderer, if full_front { &[Layer::Overlay][..] } else { &[Layer::Overlay, Layer::Top][..] }, &mut out);
         let now = self.clock.now();
         let s = output.current_scale().fractional_scale();
@@ -2305,7 +2272,7 @@ impl App {
             let Some(loc) = self.space.element_location(&w) else { continue };
             let r = Rectangle::new(loc, size_to_be(&w));
             let Some((n, o)) = follow(r) else { continue };
-            self.space.map_element(w.clone(), n.loc, false);
+            self.relocate(&w, n.loc);
             x11_place(&w, n.loc, n.size);
             let Some(s) = surface_of(&w) else { continue };
             if win_has(&w, S::Fullscreen) {
@@ -2406,40 +2373,10 @@ impl App {
         self.space.outputs().find(|o| output_rect(o).to_f64().contains(pos)).cloned().unwrap_or_else(|| self.output.clone())
     }
 
-    /// The surface under a point, and where that surface's origin is on screen. Panels on the top layers first, then windows, then
-    /// the layers behind them; while the session is locked, only the lock surface.
+    /// The surface under a point, and where that surface's origin is on screen: the frontmost one, in the order things are drawn
+    /// (stacking.rs); none over the compositor's own window controls and grips.
     pub fn surface_under(&self, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
-        let output = self.output_at(pos);
-        let origin = output.current_location();
-        if self.locked {
-            return self.lock_surfaces.iter().find(|(o, _)| o == &output).map(|(_, l)| (l.wl_surface().clone(), origin.to_f64()));
-        }
-        // X11 menus and tooltips are in front of everything
-        if let Some(x) = self.overlay_under(pos) {
-            return Some(x);
-        }
-        let map = layer_map_for_output(&output);
-        let local = pos - origin.to_f64();
-        let on_layer = |layer: Layer| {
-            let l = map.layer_under(layer, local)?;
-            let geo = map.layer_geometry(l)?;
-            let (s, p) = l.surface_under(local - geo.loc.to_f64(), WindowSurfaceType::ALL)?;
-            Some((s, (p + geo.loc + origin).to_f64()))
-        };
-        // behind a full screen window the top bar and dock are hidden, so they get no pointer either (see scene())
-        let full_front = self.space.elements().last().is_some_and(|w| win_has(w, xdg_toplevel::State::Fullscreen));
-        if let Some(x) = on_layer(Layer::Overlay).or_else(|| if full_front { None } else { on_layer(Layer::Top) }) {
-            return Some(x);
-        }
-        if self.bar_at(pos).is_some() || self.edge_at(pos).is_some() {
-            return None;
-        }
-        if let Some((window, loc)) = self.space.element_under(pos) {
-            if let Some((s, p)) = window.surface_under(pos - loc.to_f64(), WindowSurfaceType::ALL) {
-                return Some((s, (p + loc).to_f64()));
-            }
-        }
-        on_layer(Layer::Bottom).or_else(|| on_layer(Layer::Background))
+        self.under(pos).and_then(Under::surface)
     }
 
     /// A click gives the keyboard to what is under the pointer (a window, raised, or a panel that asks for the keyboard).
@@ -2452,24 +2389,25 @@ impl App {
         if self.over_overlay(pos) {
             return;
         }
-        let layer_hit = {
-            let output = self.output_at(pos);
-            let map = layer_map_for_output(&output);
-            let local = pos - output.current_location().to_f64();
-            [Layer::Overlay, Layer::Top].into_iter().find_map(|layer| map.layer_under(layer, local).cloned())
-        };
-        if let Some(l) = layer_hit {
-            use smithay::wayland::shell::wlr_layer::{KeyboardInteractivity, LayerSurfaceCachedState};
-            let wants = with_states(l.wl_surface(), |st| {
-                st.cached_state.get::<LayerSurfaceCachedState>().current().keyboard_interactivity != KeyboardInteractivity::None
-            });
-            if wants {
-                let kb = self.keyboard.clone();
-                kb.set_focus(self, Some(KbFocus::Wl(l.wl_surface().clone())), serial);
+        // what is in front there, as it is drawn (stacking.rs): a panel hidden behind a full screen window takes nothing
+        let window = match self.under(pos) {
+            Some(Under::Layer(l, layer, ..)) => {
+                use smithay::wayland::shell::wlr_layer::{KeyboardInteractivity, LayerSurfaceCachedState};
+                let wants = with_states(l.wl_surface(), |st| {
+                    st.cached_state.get::<LayerSurfaceCachedState>().current().keyboard_interactivity != KeyboardInteractivity::None
+                });
+                if wants && matches!(layer, Layer::Overlay | Layer::Top) {
+                    let kb = self.keyboard.clone();
+                    kb.set_focus(self, Some(KbFocus::Wl(l.wl_surface().clone())), serial);
+                }
+                return;
             }
-            return;
-        }
-        let Some((window, _)) = self.space.element_under(pos).map(|(w, l)| (w.clone(), l)) else { return };
+            Some(u) => match u.window() {
+                Some(w) => w.clone(),
+                None => return,
+            },
+            None => return,
+        };
         self.space.raise_element(&window, true);
         let surface = surface_of(&window);
         self.mark_active(&window);
@@ -2755,6 +2693,12 @@ impl CompositorHandler for App {
         self.wake();
         on_commit_buffer_handler::<Self>(surface);
         self.popups.commit(surface);
+        // a menu's (xdg_popup's) first commit is answered with its first configure: without it the program never shows the menu
+        if let Some(PopupKind::Xdg(p)) = self.popups.find_popup(surface) {
+            if !p.is_initial_configure_sent() {
+                let _ = p.send_configure();
+            }
+        }
         if !is_sync_subsurface(surface) {
             let mut root = surface.clone();
             while let Some(p) = get_parent(&root) {
