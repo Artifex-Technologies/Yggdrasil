@@ -226,10 +226,10 @@ be proven not to do that.
 (`packages/compositor/src/state/stacking.rs`):
 - **Drawing** (`scene`) walks it from the front: X11 menus, the Overlay layer, the Top layer (the bar and the dock), each window
   (its controls, its picture and its menus, its border), then the Bottom and Background layers.
-- **The pointer** (`under`, behind `surface_under`) walks the same list in the same order, so what a click lands on is what is
-  drawn there; the window controls and the resize grips are found in the same walk (a grip of a window
+- **The pointer and touch** (`under`, behind `surface_under`) walk the same list in the same order, so what a click or a
+  finger lands on is what is drawn there; the window controls and the resize grips are found in the same walk (a grip of a window
   behind another takes nothing).
-- **A click** gives the keyboard to what `under` found: a window is raised, told it is active and given the keyboard
+- **A click or a tap** gives the keyboard to what `under` found: a window is raised, told it is active and given the keyboard
   in one step; a panel only when it is in front there and asks for the keyboard.
 - **Raising** happens only together with the keyboard: a click, Alt + Tab, the dock, `activate`, a new window opening, a
   minimized one restored. Everything that only moves or resizes a window (maximize, full screen and back, snapping, tiling,
@@ -251,13 +251,13 @@ resize grip took clicks meant for the full screen window in front; the window un
 active, nor told it was again when the new one closed; a window closing behind the lock took the keyboard from it; a menu
 (xdg_popup) never got its first configure and so never showed. Opening, clicking, Alt + Tab and `activate` were already right.
 
-**Proof**: `packages/compositor/tests/fullscreen.rs` (8 tests, CI's `rust` job). Each check looks at four things at once: the
+**Proof**: `packages/compositor/tests/fullscreen.rs` (9 tests, CI's `rust` job). Each check looks at four things at once: the
 pixel at a probe point of the screen, the surface a click there reaches, the surface a key reaches, and which window the
 programs were told is active. Covered: a window opened over a full screen one; switching back and forth by Alt + Tab, by
 clicking and by the control socket's `activate`; minimize and restore; closing the window with the keyboard; leaving full
 screen and asking for it again, in front and behind; a menu that reaches past its window over the game, and a dialog with its
 parent; two screens; the dock growing; the screen getting smaller; a decorated window's hidden grips; the lock while windows
-open and close behind it.
+open and close behind it; a finger tapping the small window, the game outside it, where it was and where the hidden bar is.
 
 Known limitations: a menu has no grab (a click outside it does not close it, and it does not take the keyboard); there is no
 "always on top" or layer of its own for dialogs (a dialog is a window like any other, in front because it opened last); the

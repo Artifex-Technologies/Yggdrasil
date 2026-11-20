@@ -3,7 +3,7 @@
 //! screen game sometimes stays drawn while clicks pass through it into the game, or switching back is refused; these tests hold
 //! this compositor to one stacking order (src/state/stacking.rs) through opening, clicking, Alt+Tab, the control socket's
 //! `activate`, minimize and restore, closing, leaving full screen, menus and dialogs, a second screen, the lock, the bar and
-//! dock changing, the screen changing size, and a decorated window's resize grips.
+//! dock changing, the screen changing size, a decorated window's resize grips, and a finger on the touchscreen.
 //!
 //! Every check looks at all four: the screen's pixels at a probe point, the client that gets a click there, the client that
 //! gets a key, and the xdg_toplevel `activated` state the windows were sent.
@@ -450,6 +450,46 @@ fn the_lock_keeps_the_keyboard_when_windows_open_and_close_behind_it() {
     assert_eq!(s.c.state.keys.len(), before, "no key reached a window behind the lock");
     assert!(l.state.keys.len() >= 6, "the lock got the keys");
     assert_eq!(drawn(&s.comp, IN_B), RGB_RED, "only the lock is drawn");
+}
+
+/// A finger tapped at a point of the touchscreen (the first screen): where it landed on the surface it went to, in that
+/// surface's own coordinates (None when no surface of this client got it).
+fn tapped(comp: &Compositor, c: &mut Client, (x, y): (i32, i32)) -> Option<(f64, f64)> {
+    let before = c.state.touches.len();
+    comp.must(&format!("touch-down 0 {x} {y}"));
+    comp.must("touch-up 0");
+    let end = Instant::now() + Duration::from_millis(1500);
+    while !c.state.touches[before..].iter().any(|t| t.0 == "up") && Instant::now() < end {
+        c.roundtrip();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    c.state.touches[before..].iter().find(|t| t.0 == "down").map(|t| (t.2, t.3))
+}
+
+#[test]
+fn a_finger_follows_the_same_order_as_the_pointer() {
+    let _l = limit(90, "touch over a full screen window");
+    let mut s = setup();
+    let (a, b) = (s.a.clone_handles(), s.b.clone_handles());
+    // the first touch gives the seat its touch (on the bar, which takes no keyboard: nothing changes)
+    s.comp.must("touch-down 0 1 1");
+    s.comp.must("touch-up 0");
+    s.c.until("the seat has touch", |st| st.seat_caps & 4 != 0);
+    let _t = s.c.touch();
+    in_front(&mut s, &b, "test.b", RGB_YELLOW, IN_B, &[&a], "B opened");
+    // a tap in B lands on B (at its middle), and B stays in front
+    assert_eq!(tapped(&s.comp, &mut s.c, IN_B), Some((320.0, 240.0)), "a tap in B reaches B");
+    in_front(&mut s, &b, "test.b", RGB_YELLOW, IN_B, &[&a], "B tapped");
+    // a tap on A outside B lands on A and brings it forward; then a tap where B was, or where the bar is, lands on A
+    assert_eq!(tapped(&s.comp, &mut s.c, A_ONLY), Some((200.0, 450.0)), "a tap outside B reaches A");
+    in_front(&mut s, &a, "test.a", RGB_BLUE, IN_B, &[&b], "A tapped");
+    assert_eq!(tapped(&s.comp, &mut s.c, IN_B), Some((800.0, 434.0)), "a tap where B was reaches A");
+    assert_eq!(tapped(&s.comp, &mut s.c, ON_BAR), Some((800.0, 10.0)), "a tap where the hidden bar is reaches A");
+    in_front(&mut s, &a, "test.a", RGB_BLUE, IN_B, &[&b], "A tapped again");
+    // Alt+Tab back to B: a tap in B reaches B again
+    s.comp.must("key alt+Tab");
+    in_front(&mut s, &b, "test.b", RGB_YELLOW, IN_B, &[&a], "Alt+Tab to B");
+    assert_eq!(tapped(&s.comp, &mut s.c, IN_B), Some((320.0, 240.0)), "a tap in B reaches B");
 }
 
 /// Handles of a window to keep beside the test's set-up (the protocol objects are cheap clones of the same objects).
