@@ -32,10 +32,14 @@ PANEL_SWAP=""
 if [ -x "$OWN_PANEL" ]; then
   PANEL_SWAP="; systemctl --user stop 'app-yggdrasil*panel@autostart.service'; systemd-run --user --unit=yggdrasil-own-panel --collect -p PartOf=graphical-session.target -p Restart=on-failure $OWN_PANEL"
 fi
+# the sign-in animation first, as Hyprland's session starts it (yggdrasil.lua): yggdrasil-splash covers the screens until the
+# top bar is up (it asks this compositor through yggdrasil-wm) or twelve seconds have passed; Settings > Appearance > Boot
+# screen chooses what it shows, or off
+SPLASH="(yggdrasil-splash 2>&1 | systemd-cat -t yggdrasil-splash) & "
 # a session that ended without its cleanup (killed, or the login screen restarted) can leave graphical-session.target and
 # yggdrasil-session.target active with their programs gone, and starting an active target starts nothing (no panel: a black
 # screen, YGG-91): so whatever is left is stopped first. A Hyprland session that ran before also leaves its signature behind.
-AUTOSTART="systemctl --user stop graphical-session.target; systemctl --user reset-failed; systemctl --user unset-environment HYPRLAND_INSTANCE_SIGNATURE; systemctl --user import-environment WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE QT_QPA_PLATFORM GDK_BACKEND MOZ_ENABLE_WAYLAND ELECTRON_OZONE_PLATFORM_HINT; dbus-update-activation-environment --systemd --all; systemctl --user start yggdrasil-session.target$PANEL_SWAP; echo autostart started for \$XDG_CURRENT_DESKTOP on \$WAYLAND_DISPLAY"
+AUTOSTART="${SPLASH}systemctl --user stop graphical-session.target; systemctl --user reset-failed; systemctl --user unset-environment HYPRLAND_INSTANCE_SIGNATURE; systemctl --user import-environment WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE QT_QPA_PLATFORM GDK_BACKEND MOZ_ENABLE_WAYLAND ELECTRON_OZONE_PLATFORM_HINT; dbus-update-activation-environment --systemd --all; systemctl --user start yggdrasil-session.target$PANEL_SWAP; echo autostart started for \$XDG_CURRENT_DESKTOP on \$WAYLAND_DISPLAY"
 
 # Restart and Shut down: yggdrasil-logout closes every window, writes "reboot" or "poweroff" here and ends the compositor;
 # this does it once the compositor has let go of the screen (as yggdrasil-session does for Hyprland). Without it a Shut down
