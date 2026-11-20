@@ -22,7 +22,7 @@ use smithay::backend::renderer::pixman::PixmanRenderer;
 use smithay::backend::renderer::utils::on_commit_buffer_handler;
 use smithay::delegate_xdg_decoration;
 use smithay::desktop::{layer_map_for_output, LayerSurface, PopupKind, PopupManager, Space, Window, WindowSurfaceType};
-use smithay::input::keyboard::{FilterResult, KeyboardHandle};
+use smithay::input::keyboard::{keysyms, FilterResult, KeyboardHandle};
 use smithay::input::pointer::Focus;
 use smithay::input::pointer::{AxisFrame, ButtonEvent, CursorImageStatus, MotionEvent, PointerHandle};
 use smithay::input::{Seat, SeatHandler, SeatState};
@@ -152,8 +152,6 @@ use smithay::{
 pub type DmabufImport = Box<dyn FnMut(&smithay::backend::allocator::dmabuf::Dmabuf) -> bool>;
 /// Shows the pointer the way it should look.
 pub type CursorHook = Box<dyn FnMut(&CursorImageStatus)>;
-/// The switcher's picture, and the windows and the choice it was drawn for.
-type SwitcherArt = ((Vec<(String, String)>, usize), MemoryRenderBuffer);
 
 pub struct App {
     /// GPU pictures from programs (linux-dmabuf): the protocol's state, and how the renderer takes one in (set by the backend;
@@ -236,11 +234,12 @@ pub struct App {
     focus_order: Vec<WlSurface>,
     /// Windows in the order they were opened (tiling follows it).
     opened_at: Vec<WlSurface>,
-    /// The Alt+Tab switcher while it is open: the windows in order and which one is chosen.
-    switcher: Option<(Vec<WlSurface>, usize)>,
+    /// The Alt+Tab switcher while it is open (switcher.rs): its cards in order, the chosen one, its screen and pictures.
+    switcher: Option<switcher::Switcher>,
     /// The modifiers held down to keep the switcher open (those of the Tab binding): letting go of one picks the window.
     switcher_hold: Mods,
-    switcher_art: Option<SwitcherArt>,
+    /// A mouse button pressed on the switcher: its release is not passed on either.
+    switcher_button: Option<u32>,
     current_ws: usize,
     /// The workspace profiles from workspaces.conf, and what was chosen for the workspaces that ask.
     ws_conf: tiling::Conf,
@@ -565,7 +564,7 @@ impl App {
             opened_at: vec![],
             switcher: None,
             switcher_hold: Mods::default(),
-            switcher_art: None,
+            switcher_button: None,
             current_ws: 0,
             ws_conf: tiling::parse(&std::fs::read_to_string(tiling::config_path()).unwrap_or_default()),
             asked: [None; WORKSPACES],
@@ -1013,9 +1012,8 @@ impl App {
             self.decorated.retain(|x| x != s);
             self.focus_order.retain(|x| x != s);
             self.opened_at.retain(|x| x != s);
-            if let Some((list, i)) = &mut self.switcher {
-                list.retain(|x| x != s);
-                *i = (*i).min(list.len().saturating_sub(1));
+            if let Some(sw) = &mut self.switcher {
+                sw.forget(s);
             }
             self.bars.remove(s);
             self.saved.retain(|(x, _)| x != s);
@@ -1269,10 +1267,27 @@ impl App {
             return FilterResult::Intercept(Action::None);
         }
         if self.switcher.is_some() {
-            // while the switcher is open: Tab moves on (below), Escape cancels, letting go of Alt picks
+            // while the switcher is open: Tab moves on (below), the arrows move in the grid, Escape cancels, Enter or letting go
+            // of Alt picks
             if state == KeyState::Pressed && shortcuts::is_escape(sym) {
                 self.taken.push(code);
                 return FilterResult::Intercept(Action::CancelSwitcher);
+            }
+            if state == KeyState::Pressed && (sym == keysyms::KEY_Return || sym == keysyms::KEY_KP_Enter) {
+                self.taken.push(code);
+                return FilterResult::Intercept(Action::CommitSwitcher);
+            }
+            let arrow = match sym {
+                keysyms::KEY_Left => Some(switcher::Move::Left),
+                keysyms::KEY_Right => Some(switcher::Move::Right),
+                keysyms::KEY_Up => Some(switcher::Move::Up),
+                keysyms::KEY_Down => Some(switcher::Move::Down),
+                _ => None,
+            };
+            if let (KeyState::Pressed, Some(m)) = (state, arrow) {
+                self.taken.push(code);
+                self.switcher_step(m);
+                return FilterResult::Intercept(Action::None);
             }
             if state == KeyState::Released && shortcuts::is_held_modifier(sym, self.switcher_hold) {
                 self.queued.push(Action::CommitSwitcher);
@@ -1434,13 +1449,7 @@ impl App {
             Action::CancelSwitcher => {
                 self.switcher = None;
             }
-            Action::CommitSwitcher => {
-                if let Some((list, i)) = self.switcher.take() {
-                    if let Some(s) = list.get(i).cloned() {
-                        self.activate_surface(&s);
-                    }
-                }
-            }
+            Action::CommitSwitcher => self.commit_switcher(),
             Action::ToggleFloat => {
                 if let Some(s) = current {
                     self.toggle_floating(&s);
@@ -1633,29 +1642,164 @@ impl App {
             .collect()
     }
 
-    /// Alt+Tab: open the switcher (or move on in it). The window used last comes first.
+    /// Alt+Tab: open the switcher (or move on in it). The card used last comes first, and the first Tab chooses the one before
+    /// it (Shift+Tab the last).
     fn cycle(&mut self, dir: i32) {
+        self.wake();
         match &mut self.switcher {
-            Some((list, i)) => {
-                if !list.is_empty() {
-                    *i = (*i as i32 + dir).rem_euclid(list.len() as i32) as usize;
+            Some(sw) => {
+                if !sw.entries.is_empty() {
+                    sw.index = (sw.index as i32 + dir).rem_euclid(sw.entries.len() as i32) as usize;
                 }
             }
             None => {
-                let existing: Vec<WlSurface> = self.all_windows().iter().filter_map(|(w, _)| surface_of(w)).collect();
-                let mut list: Vec<WlSurface> = self.focus_order.iter().filter(|s| existing.contains(s)).cloned().collect();
-                for s in existing {
-                    if !list.contains(&s) {
-                        list.push(s);
-                    }
-                }
-                if list.len() < 2 {
+                let entries = self.switcher_entries();
+                if entries.len() < 2 {
                     return;
                 }
-                let i = if dir > 0 { 1 } else { list.len() - 1 };
-                self.switcher = Some((list, i));
+                let i = if dir > 0 { 1 } else { entries.len() - 1 };
+                let output = match self.focused_surface().and_then(|s| self.shown_window(&s)) {
+                    Some(w) => self.window_output(&w),
+                    None => self.output_at(self.pointer_location),
+                };
+                self.switcher = Some(switcher::Switcher::new(entries, i, output, accent()));
             }
         }
+    }
+
+    /// The switcher's cards, most recently used first: every window, those of a group (`groups`) together on one card at the
+    /// place of the one of them used last.
+    fn switcher_entries(&self) -> Vec<Vec<WlSurface>> {
+        let existing: Vec<WlSurface> = self.all_windows().iter().filter_map(|(w, _)| surface_of(w)).collect();
+        let mut list: Vec<WlSurface> = self.focus_order.iter().filter(|s| existing.contains(s)).cloned().collect();
+        for s in existing {
+            if !list.contains(&s) {
+                list.push(s);
+            }
+        }
+        let groups = self.groups();
+        let mut out: Vec<Vec<WlSurface>> = vec![];
+        for s in &list {
+            if out.iter().any(|e| e.contains(s)) {
+                continue;
+            }
+            match groups.iter().find(|g| g.contains(s)) {
+                Some(g) => out.push(list.iter().filter(|x| g.contains(x)).cloned().collect()),
+                None => out.push(vec![s.clone()]),
+            }
+        }
+        out
+    }
+
+    /// The windows that share a screen of the workspace showing, as the switcher groups them: on each screen, the windows
+    /// snapped to its halves (Super+Left and Super+Right) when both halves are taken, and the windows tiled there (a tiling
+    /// workspace, or a screen set to tile) when there are two or more. A window in neither is a card of its own.
+    pub fn groups(&self) -> Vec<Vec<WlSurface>> {
+        use xdg_toplevel::State as S;
+        let mut out = vec![];
+        for o in self.space.outputs() {
+            let here: Vec<(Window, WlSurface)> = self
+                .space
+                .elements()
+                .filter(|w| self.window_output(w) == *o && !self.peek.iter().any(|p| is_window_of(w, p)))
+                .filter_map(|w| surface_of(w).map(|s| (w.clone(), s)))
+                .collect();
+            let side = |st: S| here.iter().filter(|(_, s)| self.has_state(s, st)).map(|(_, s)| s.clone()).collect::<Vec<_>>();
+            let (left, right) = (side(S::TiledLeft), side(S::TiledRight));
+            if !left.is_empty() && !right.is_empty() {
+                out.push(left.into_iter().chain(right).collect());
+            }
+            let tiled: Vec<WlSurface> = here
+                .iter()
+                .filter(|(w, s)| self.is_tiled(w, s) && !self.has_state(s, S::TiledLeft) && !self.has_state(s, S::TiledRight))
+                .map(|(_, s)| s.clone())
+                .collect();
+            if tiled.len() >= 2 {
+                out.push(tiled);
+            }
+        }
+        out
+    }
+
+    /// The switcher's cards as it draws them: each card's windows with their places, its title and app.
+    fn switcher_cards(&self) -> Vec<switcher::Card> {
+        let Some(sw) = &self.switcher else { return vec![] };
+        sw.entries
+            .iter()
+            .map(|e| {
+                let windows: Vec<(Window, Point<i32, Logical>)> = e
+                    .iter()
+                    .filter_map(|s| self.window_for(s))
+                    .map(|w| {
+                        let at = self.space.element_location(&w).unwrap_or_default();
+                        (w, at)
+                    })
+                    .collect();
+                let (title, app_id) = windows.first().map(|(w, _)| title_app(w)).unwrap_or_default();
+                let title = if windows.len() > 1 { switcher::group_title(&title, windows.len() - 1) } else { title };
+                switcher::Card { windows, title, app_id }
+            })
+            .collect()
+    }
+
+    /// An arrow key in the switcher.
+    fn switcher_step(&mut self, m: switcher::Move) {
+        self.wake();
+        let cards = self.switcher_cards();
+        if let Some(sw) = &mut self.switcher {
+            let g = switcher::grid_of(sw, &cards);
+            sw.index = g.step(sw.index, m);
+        }
+    }
+
+    /// Letting go of Alt, Enter or a click: the chosen card's windows come forward (a minimized one back, one on another
+    /// workspace with it), its first window, the one used last, in front with the keyboard.
+    fn commit_switcher(&mut self) {
+        self.wake();
+        let Some(sw) = self.switcher.take() else { return };
+        let Some(e) = sw.entries.get(sw.index) else { return };
+        for s in e.iter().rev() {
+            self.activate_surface(s);
+        }
+    }
+
+    /// A mouse button while the switcher is open: a click on a card picks it, one outside the panel closes it. Taken in any case.
+    fn switcher_click(&mut self) {
+        let cards = self.switcher_cards();
+        let Some(sw) = &mut self.switcher else { return };
+        let g = switcher::grid_of(sw, &cards);
+        let at = self.pointer_location - sw.output.current_location().to_f64();
+        match g.hit(at) {
+            Some(i) => {
+                sw.index = i;
+                self.commit_switcher();
+            }
+            None if !g.panel.to_f64().contains(at) => {
+                self.wake();
+                self.switcher = None;
+            }
+            None => {}
+        }
+    }
+
+    /// What the switcher shows, for the control socket: one line per card (`*` the chosen one, else `-`; the app ids of its
+    /// windows; where the card is, empty when it is out of sight), or nothing while it is closed.
+    pub fn switcher_info(&self) -> Vec<String> {
+        let cards = self.switcher_cards();
+        let Some(sw) = &self.switcher else { return vec![] };
+        let g = switcher::grid_of(sw, &cards);
+        let o = sw.output.current_location();
+        cards
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                let apps: Vec<String> = c.windows.iter().map(|(w, _)| crate::wmctl::field(&title_app(w).1)).collect();
+                let r = g.cards[i];
+                let place =
+                    if g.shows(i) { format!("{},{}\t{}x{}", o.x + r.loc.x, o.y + r.loc.y, r.size.w, r.size.h) } else { String::new() };
+                format!("{}\t{}\t{}", if i == sw.index { "*" } else { "-" }, apps.join(","), place)
+            })
+            .collect()
     }
 
     /// Show another workspace: the windows of this one are put aside, those of the other come back.
@@ -1850,8 +1994,8 @@ impl App {
 
     /// What is drawn this frame, front to back: panels on the top layers, the windows with their title bars, then the layers behind.
     /// One output's part: everything is placed relative to the output's own corner and drawn at its scale (the nested window has
-    /// one output at 0,0 with scale 1; the headless backend may have several, side by side, at any scale). The switcher and the
-    /// profile question are shown on the first output only.
+    /// one output at 0,0 with scale 1; the headless backend may have several, side by side, at any scale). The switcher shows on
+    /// the screen that had the keyboard's window when it opened, the profile question on the first output.
     pub fn scene<R: Draw>(&mut self, renderer: &mut R, output: &Output) -> Vec<R::Elem>
     where
         R::TextureId: Send + Clone + 'static,
@@ -1896,21 +2040,11 @@ impl App {
                     }
                 }
             }
-            if let Some((list, index)) = self.switcher.clone() {
-                let entries: Vec<(String, String)> =
-                    list.iter().map(|s| self.window_for(s).map(|w| title_app(&w)).unwrap_or_else(|| xdg_title_app(s))).collect();
-                if self.switcher_art.as_ref().map(|(k, _)| k != &(entries.clone(), index)).unwrap_or(true) {
-                    if let Some(f) = &self.fonts {
-                        self.switcher_art = Some(((entries.clone(), index), switcher::make(f, &entries, index, accent())));
-                    }
-                }
-                if let Some((_, buf)) = &self.switcher_art {
-                    let (w, h) = switcher::size(switcher::visible(entries.len(), index).len());
-                    let p = at(origin + Point::from(((screen.w - w) / 2, (screen.h - h) / 2)));
-                    if let Ok(el) = MemoryRenderBufferRenderElement::from_buffer(renderer, p, buf, None, None, None, Kind::Unspecified) {
-                        out.push(R::Elem::from(el));
-                    }
-                }
+        }
+        if self.switcher.as_ref().is_some_and(|sw| sw.output == *output) {
+            let cards = self.switcher_cards();
+            if let Some(sw) = &mut self.switcher {
+                out.extend(switcher::elements(renderer, sw, &cards, self.fonts.as_ref()));
             }
         }
         // X11 menus and tooltips, last shown in front, over everything but the switcher and the profile question
@@ -2483,6 +2617,16 @@ impl App {
             // Super held for a Super+drag is not a tap of Super
             self.tap = None;
         }
+        // the switcher takes the mouse's buttons while it is open (and the release of a press it took)
+        if state == ButtonState::Pressed && self.switcher.is_some() && !self.locked {
+            self.switcher_button = Some(button);
+            self.switcher_click();
+            return;
+        }
+        if state == ButtonState::Released && self.switcher_button == Some(button) {
+            self.switcher_button = None;
+            return;
+        }
         if state == ButtonState::Pressed
             && !pointer.is_grabbed()
             && !self.locked
@@ -2969,6 +3113,7 @@ impl SessionLockHandler for App {
         self.lock_owner = Some(confirmation.ext_session_lock().clone());
         // From now on nothing of the session is drawn or receives input. Confirmed at once: the screen is already only the lock's.
         self.locked = true;
+        self.switcher = None;
         confirmation.lock();
         let kb = self.keyboard.clone();
         kb.set_focus(self, None, SERIAL_COUNTER.next_serial());
@@ -3045,8 +3190,9 @@ impl App {
     }
 }
 
-/// The accent for the switcher and chooser: the operating system's default (its branding), else Yggdrasil's.
+/// The accent for the switcher and chooser: the one chosen in Settings > Appearance, else the operating system's default (its
+/// branding), else Yggdrasil's. Read when one of them is drawn anew.
 fn accent() -> (u8, u8, u8) {
-    let a = yggdrasil_conf::integrations::default_accent();
+    let a = yggdrasil_conf::appearance::load().accent.unwrap_or_else(yggdrasil_conf::integrations::default_accent);
     (a[0], a[1], a[2])
 }

@@ -32,6 +32,10 @@
 //!   focus                        what has the keyboard: window APP TITLE, layer NAMESPACE OUTPUT, lock OUTPUT, or none
 //!   workspace                    the workspace showing (1 to 4)
 //!   lock                         "locked" or "unlocked", then one line per lock surface: output and size
+//!   switcher                     the window switcher's cards while it is open (control.rs)
+//!   frames                       how many frames were drawn since the start: "drawn N" (screens drawn with something changed
+//!                                on them) and "passes N" (times the screens were looked at); for tests that nothing is drawn
+//!                                while nothing changes
 //!   key COMBO...                 press and let go of keys, one combination after another: super+ctrl+2, Return, a,
 //!                                XF86AudioMute, ctrl (the left one; rctrl the right one)
 //!   key-down COMBO, key-up COMBO press keys and keep them down (a held key repeats its shortcut), let them go
@@ -231,10 +235,13 @@ pub struct Headless {
     start: Instant,
     /// The control socket's watchers (control.rs).
     control: crate::control::Control,
+    /// Frames drawn with a change on a screen, and passes over the screens (the `frames` command).
+    drawn: u64,
+    passes: u64,
 }
 
 /// The commands, for an unknown one's answer.
-const USAGE: &str = "outputs, resize NAME WxH, scale NAME S, add-output WxH[@S], remove-output NAME, screenshot NAME FILE [pointer], pointer-look, windows, layers, free, focus, workspace, lock, key COMBO, key-down COMBO, key-up COMBO, type TEXT, pointer X Y, click [BUTTON], pointer-move DX DY, scroll DY [DX], input, power NAME on|off, clock [stop|run|+MS], quit; for the tools: clients, active, workspaces, workspace N, activate ID, close ID, minimize ID, maximize ID on|off|toggle, send ID N, place ID X Y W H, cursor, screens, pointer-timeout [S], modifiers";
+const USAGE: &str = "outputs, resize NAME WxH, scale NAME S, add-output WxH[@S], remove-output NAME, screenshot NAME FILE [pointer], pointer-look, windows, layers, free, focus, workspace, lock, switcher, frames, key COMBO, key-down COMBO, key-up COMBO, type TEXT, pointer X Y, click [BUTTON], pointer-move DX DY, scroll DY [DX], input, power NAME on|off, clock [stop|run|+MS], quit; for the tools: clients, active, workspaces, workspace N, activate ID, close ID, minimize ID, maximize ID on|off|toggle, send ID N, place ID X Y W H, cursor, screens, pointer-timeout [S], modifiers";
 
 /// About 60 frames a second at most, however often programs commit.
 const FRAME: Duration = Duration::from_millis(16);
@@ -257,6 +264,8 @@ impl Headless {
             last: Instant::now() - FRAME,
             start: Instant::now(),
             control: Default::default(),
+            drawn: 0,
+            passes: 0,
         })
     }
 
@@ -283,6 +292,7 @@ impl Headless {
     /// Draw every output (only what changed), then tell the programs their frame is done.
     fn render(&mut self, app: &mut App) {
         self.sync(app);
+        self.passes += 1;
         // a window that has just closed: its last picture, from the screen, for its closing animation
         for c in app.closing.iter_mut().filter(|c| c.picture.is_none()) {
             if let Some((rect, picture)) = self.picture_of(c.rect, app.look.border) {
@@ -324,6 +334,7 @@ impl Headless {
                 changed(s.damage.render_output(&mut self.renderer, &mut target, age, &elements, [0.05f32, 0.05, 0.08, 1.0]))
             };
             s.drawn = done.is_some();
+            self.drawn += done.unwrap_or(false) as u64;
             s.changed |= done.unwrap_or(false) || age == 0;
             if done == Some(true) && !app.capture.sessions.is_empty() {
                 app.capture_output_changed(&s.output, false);
@@ -613,7 +624,7 @@ pub fn run(
 
 /// The headless backend's own commands (the rest are control.rs's): None for a command that is not one of them.
 fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Option<Result<Vec<String>, String>> {
-    const OWN: [&str; 14] = [
+    const OWN: [&str; 15] = [
         "resize",
         "add-output",
         "remove-output",
@@ -628,6 +639,7 @@ fn command(words: &[&str], app: &mut App, h: &mut Headless) -> Option<Result<Vec
         "scroll",
         "input",
         "clock",
+        "frames",
     ];
     if !words.first().is_some_and(|w| OWN.contains(w)) {
         return None;
@@ -680,6 +692,7 @@ fn own_command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<St
             write_png(&s.image, Path::new(path), pointer.as_ref().map(|(p, at)| (&**p, *at)))?;
             Ok(vec![])
         }
+        ["frames"] => Ok(vec![format!("drawn {}", h.drawn), format!("passes {}", h.passes)]),
         ["key", combos @ ..] if !combos.is_empty() => {
             let mut all = vec![];
             for c in combos {

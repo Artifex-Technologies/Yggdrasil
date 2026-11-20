@@ -14,7 +14,7 @@ yggdrasil-conf = { path = "../yggdrasil-conf" }
 # input.rs: Settings > Peripherals' input.conf, read with the parser Settings writes it with (the layer Yggdrasil's tools share)
 yggdrasil-wm = { path = "../wm" }
 smithay = { version = "0.7", default-features = false, features = ["backend_winit", "backend_egl", "backend_drm", "backend_gbm", "backend_udev", "backend_libinput", "backend_session_libseat", "renderer_gl", "renderer_pixman", "desktop", "wayland_frontend", "use_system_lib", "xwayland"] }
-tiny-skia = "0.11"
+tiny-skia = "0.12"
 # x11asked.rs: one property read on its own connection (already in the tree through smithay)
 x11rb = "0.13"
 ab_glyph = "0.2"
@@ -26,6 +26,8 @@ png = "0.17"
 libc = "0.2"
 # pointer.rs: the cursor theme's pictures (libXcursor's lookup and file format, in Rust); already in the tree through smithay
 xcursor = "0.3"
+# icons.rs: the apps' icons on the window switcher's cards (SVG, as the panel draws them; no text or raster support needed)
+resvg = { version = "0.48", default-features = false }
 
 [dev-dependencies]
 # tests/: a small Wayland client of the tests' own (tests/common) that speaks to the headless backend like the panel, a window,

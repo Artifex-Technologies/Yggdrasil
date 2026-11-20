@@ -8,6 +8,8 @@
 //!   scale NAME S                 change an output's scale
 //!   power NAME on|off            switch an output on or off (as wlr-output-power does)
 //!   pointer-look, windows, focus, free, workspace, lock   what is shown and who has the keyboard (headless.rs lists them)
+//!   switcher                     the window switcher while it is open: one line per card, "*" (chosen) or "-", the app ids
+//!                                of its windows (comma separated), its place and size (empty when out of sight); tab separated
 //!   watch                        the connection stays open and gets "desktops" whenever the desktops change (the panel)
 //!   quit                         end the compositor
 //! The headless backend adds its test commands (sizes, screens plugged in, screenshots, input made inside the compositor, the
@@ -142,6 +144,7 @@ fn command(words: &[&str], app: &mut App, extra: Extra, usage: &str) -> Result<V
             })
             .collect()),
         ["focus"] => Ok(vec![app.focus_info()]),
+        ["switcher"] => Ok(app.switcher_info()),
         ["free"] => Ok(app
             .space
             .outputs()
