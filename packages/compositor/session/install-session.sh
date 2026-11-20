@@ -12,8 +12,8 @@
 #   /usr/local/bin/yggdrasil-compositor                                  a link to the compositor (the session finds it there)
 #   /usr/local/bin/yggdrasil-compositor-session                          the session's start (this folder)
 #   /usr/share/wayland-sessions/yggdrasil-compositor.desktop             the login screen's entry (this folder)
-#   ~/.config/autostart/yggdrasil-panel.desktop                          the panel from these builds (yours; Hyprland's session
-#                                                                        uses it too, both are the "Yggdrasil" desktop)
+#   (the panel build runs only in the own compositor's session: its start stops the autostart folder's panel and runs this
+#   one in its place, so the Yggdrasil session on Hyprland, the way back, keeps the packaged panel exactly as it was)
 #   /etc/yggdrasil/greeter.conf                                          `session = yggdrasil-compositor`; the file as it was is
 #                                                                        kept beside it, greeter.conf.before-own-compositor
 set -euo pipefail
@@ -23,7 +23,6 @@ LIB=/usr/local/lib/yggdrasil-own
 ENTRY=/usr/share/wayland-sessions/yggdrasil-compositor.desktop
 GREETER=/etc/yggdrasil/greeter.conf
 BACKUP=$GREETER.before-own-compositor
-AUTOSTART=${XDG_CONFIG_HOME:-$HOME/.config}/autostart/yggdrasil-panel.desktop
 MODE=${1:-do}
 
 case "$MODE" in do|--check|--undo) ;; *) echo "usage: $0 [--check|--undo]" >&2; exit 2 ;; esac
@@ -42,7 +41,6 @@ if [ "$MODE" = --undo ]; then
   step "the files this added"
   run rm -f "$ENTRY" /usr/local/bin/yggdrasil-compositor-session /usr/local/bin/yggdrasil-compositor
   run rm -rf "$LIB"
-  user_run rm -f "$AUTOSTART"
   echo; echo "Done. Sign out: the login screen starts the Yggdrasil session on Hyprland again."
   exit 0
 fi
@@ -78,18 +76,8 @@ step "the session's start and the login screen's entry"
 run install -m755 "$HERE/yggdrasil-compositor-session" /usr/local/bin/yggdrasil-compositor-session
 run install -m644 "$HERE/yggdrasil-compositor.desktop" "$ENTRY"
 
-step "the panel from these builds, for your sessions ($AUTOSTART)"
-if [ -f "$AUTOSTART" ] && ! grep -q "^Exec=$LIB/yggdrasil-panel" "$AUTOSTART"; then
-  echo "   $AUTOSTART exists and is not this script's: left alone (the packaged panel stays)"
-else
-  if [ "$MODE" = --check ]; then
-    echo "   would write: a copy of /etc/xdg/autostart/yggdrasil-panel.desktop with Exec=$LIB/yggdrasil-panel"
-  else
-    mkdir -p "$(dirname "$AUTOSTART")"
-    sed "s|^Exec=.*|Exec=$LIB/yggdrasil-panel|" /etc/xdg/autostart/yggdrasil-panel.desktop > "$AUTOSTART"
-    echo "   written: $AUTOSTART"
-  fi
-fi
+step "the panel"
+echo "   $LIB/yggdrasil-panel runs only in the own compositor's session (its start swaps it in); the Hyprland session keeps the packaged panel"
 
 step "the login screen's default session ($GREETER)"
 echo "   now: $(grep '^session' "$GREETER" || echo 'no session line')"

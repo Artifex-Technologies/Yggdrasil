@@ -24,7 +24,15 @@ export QT_QPA_PLATFORM='wayland;xcb' GDK_BACKEND='wayland,x11' MOZ_ENABLE_WAYLAN
 say() { echo "$*" | systemd-cat -t "$TAG"; }
 
 # the autostart, once the compositor's sockets exist (it runs this as its first program, with WAYLAND_DISPLAY and DISPLAY set)
-AUTOSTART="systemctl --user import-environment WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE QT_QPA_PLATFORM GDK_BACKEND MOZ_ENABLE_WAYLAND ELECTRON_OZONE_PLATFORM_HINT; dbus-update-activation-environment --systemd --all; systemctl --user start yggdrasil-session.target; echo autostart started for \$XDG_CURRENT_DESKTOP on \$WAYLAND_DISPLAY"
+# this session's own panel build, when one is installed (install-session.sh puts it here): only this session runs it; the
+# autostart folder's panel (the packaged one, which the Hyprland session keeps) is stopped here once the session has started
+OWN_PANEL=${YGGDRASIL_OWN_PANEL:-/usr/local/lib/yggdrasil-own/yggdrasil-panel}
+PANEL_SWAP=""
+if [ -x "$OWN_PANEL" ]; then
+  PANEL_SWAP="; systemctl --user stop 'app-yggdrasil*panel@autostart.service'; systemd-run --user --unit=yggdrasil-own-panel --collect -p PartOf=graphical-session.target -p Restart=on-failure $OWN_PANEL"
+fi
+# a Hyprland session that ran before leaves its signature in the user manager: not this session's
+AUTOSTART="systemctl --user unset-environment HYPRLAND_INSTANCE_SIGNATURE; systemctl --user import-environment WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE QT_QPA_PLATFORM GDK_BACKEND MOZ_ENABLE_WAYLAND ELECTRON_OZONE_PLATFORM_HINT; dbus-update-activation-environment --systemd --all; systemctl --user start yggdrasil-session.target$PANEL_SWAP; echo autostart started for \$XDG_CURRENT_DESKTOP on \$WAYLAND_DISPLAY"
 
 say "starting $COMPOSITOR --drm"
 start=$(date +%s)
@@ -36,7 +44,7 @@ say "the compositor ended after ${ran} s (status $status)"
 
 # the session's programs end with it (as yggdrasil-session does for Hyprland)
 if [ -z "$TEST" ]; then
-  systemctl --user stop yggdrasil-session.target graphical-session.target 2>/dev/null
+  systemctl --user stop yggdrasil-own-panel.service yggdrasil-session.target graphical-session.target 2>/dev/null
   systemctl --user unset-environment WAYLAND_DISPLAY DISPLAY 2>/dev/null
 fi
 
