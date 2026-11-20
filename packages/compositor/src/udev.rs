@@ -84,7 +84,7 @@ use crate::input::{DeviceInfo, Kind as InputKind};
 use crate::laptop::Switches;
 use smithay::reexports::rustix::fs::OFlags;
 use smithay::reexports::wayland_server::Display;
-use smithay::utils::{DeviceFd, Transform};
+use smithay::utils::{DeviceFd, Logical, Rectangle, Size, Transform};
 use smithay::wayland::dmabuf::DmabufFeedbackBuilder;
 
 use crate::state::{App, Elem, PixElem};
@@ -1243,6 +1243,13 @@ fn after_frame(udev: &Rc<RefCell<Udev>>, app: &mut App) {
     let _ = app.display_handle.flush_clients();
 }
 
+/// The pointer picture's source rectangle (all of it, in its pixels) and the logical size that the screen's scale turns back
+/// into those pixels (rounded: at most a pixel off at a fractional scale).
+fn pointer_rect(pic: &crate::pointer::Picture, scale: f64) -> (Rectangle<f64, Logical>, Size<i32, Logical>) {
+    let logical = |px: u32| ((px as f64 / scale).round() as i32).max(1);
+    (Rectangle::from_size((pic.w as f64, pic.h as f64).into()), (logical(pic.w), logical(pic.h)).into())
+}
+
 /// The pointer for this screen, as an element on top (the DrmCompositor puts it on the cursor plane when it can).
 macro_rules! pointer_element {
     ($cache:expr, $app:expr, $renderer:expr, $output:expr) => {{
@@ -1263,8 +1270,20 @@ macro_rules! pointer_element {
                     $cache = Some((pic.clone(), buf));
                 }
                 let buf = &$cache.as_ref().expect("just set").1;
-                MemoryRenderBufferRenderElement::from_buffer(&mut **$renderer, (x as f64, y as f64), buf, None, None, None, Kind::Cursor)
-                    .ok()
+                // the picture is already in the screen's pixels (pointer_picture multiplies by the scale), so it is placed at
+                // its own size: Smithay multiplies an element's logical size by the scale once more, which drew the pointer
+                // 1.25 x 1.25 too big on a 1.25 screen (YGG-94). The whole picture is the source.
+                let (src, size) = pointer_rect(&pic, $output.current_scale().fractional_scale());
+                MemoryRenderBufferRenderElement::from_buffer(
+                    &mut **$renderer,
+                    (x as f64, y as f64),
+                    buf,
+                    None,
+                    Some(src),
+                    Some(size),
+                    Kind::Cursor,
+                )
+                .ok()
             }
             None => None,
         }
@@ -1466,6 +1485,18 @@ mod tests {
 
     fn v(s: &[&str]) -> Vec<String> {
         s.iter().map(|x| x.to_string()).collect()
+    }
+
+    #[test]
+    fn the_pointer_is_drawn_at_its_own_pixels() {
+        // YGG-94: on a scaled screen the picture (already scaled) must come out at its own size, not scaled again
+        for (scale, px) in [(1.0, 24u32), (1.25, 30), (1.5, 36), (2.0, 48), (1.25, 24), (1.75, 42)] {
+            let pic = crate::pointer::Picture { w: px, h: px, hot: (0, 0), data: vec![] };
+            let (src, size) = pointer_rect(&pic, scale);
+            assert_eq!(src.size, (px as f64, px as f64).into());
+            let shown = size.to_f64().to_physical(scale);
+            assert!((shown.w - px as f64).abs() <= 1.0, "scale {scale}: {px} px shown as {}", shown.w);
+        }
     }
 
     #[test]
