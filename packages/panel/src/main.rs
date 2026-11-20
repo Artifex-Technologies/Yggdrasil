@@ -4100,11 +4100,16 @@ impl Dispatch<ZwlrLayerSurfaceV1, usize> for State {
                 let _ = state.conn.flush();
             }
             zwlr_layer_surface_v1::Event::Closed => {
-                // The screen went away or the compositor revoked the surface; rebuild from scratch.
+                // The screen went away or the compositor revoked the surface; rebuild from scratch. The popover's surface
+                // closes the popover with it: removing only the surface left the panel thinking one was open.
                 if let Some(i) = state.surfs.iter().position(|s| s.id == *id) {
-                    let s = state.surfs.remove(i);
-                    s.destroy();
-                    state.pointer_surface = None;
+                    if state.surfs[i].kind == Kind::Popup {
+                        state.close_popup();
+                    } else {
+                        let s = state.surfs.remove(i);
+                        s.destroy();
+                        state.pointer_surface = None;
+                    }
                 }
             }
             _ => {}
