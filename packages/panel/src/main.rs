@@ -2672,6 +2672,11 @@ impl State {
         // judged against the settled card: while it slides down its bottom edge is still near the top,
         // and a pointer resting lower in the bar would close it before it ever showed
         let _ = cy;
+        // a card with nothing to show (the media stopped while it rested open) is no card: the popover goes at once
+        if !pinned && on_popup && cw <= 0.0 {
+            self.close_popup();
+            return true;
+        }
         if !pinned && on_popup && cw > 0.0 && (px < cx - 6.0 || px > cx + cw + 6.0 || py > ch + 6.0) {
             self.retract_fylgja();
             return true;
@@ -4974,7 +4979,10 @@ fn main() {
         .insert_source(tab_rx, |event, _, st| {
             if let calloop::channel::Event::Msg(g) = event {
                 let blocked = st.peek_blocked.map(|t| t.elapsed() < Duration::from_secs(4)).unwrap_or(false);
-                if g == st.tab_gen && st.tab_on && st.popup.is_none() && !blocked {
+                // only when it has something to show (the playing media): resting on the notch with nothing playing opened a
+                // full-size popover that drew nothing, took the clicks under it and, on a click, the keyboard
+                let shows = fylgja::visible(&st.model, &fylgja::FyState::default());
+                if g == st.tab_gen && st.tab_on && st.popup.is_none() && !blocked && shows {
                     let out = st.tab_output;
                     st.open_fylgja(out);
                 }

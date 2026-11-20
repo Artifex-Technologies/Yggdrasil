@@ -104,9 +104,20 @@ pub fn save(c: &MainDisplay) -> std::io::Result<()> {
 }
 
 /// Which of the connected screens is the main one (its place in `screens`): the chosen monitor when it is connected (`chosen`),
-/// else the one at the top left of the space (left first, then up). None only when there is no screen.
+/// else a laptop's own screen (`internal`), else the one at the top left of the space (left first, then up). None only when
+/// there is no screen.
 pub fn pick(choice: Option<&MainDisplay>, screens: &[Seen]) -> Option<usize> {
-    choice.and_then(|c| chosen(c, screens)).or_else(|| top_left(screens, 0..screens.len()))
+    choice
+        .and_then(|c| chosen(c, screens))
+        .or_else(|| top_left(screens, (0..screens.len()).filter(|&i| internal(screens[i].connector))))
+        .or_else(|| top_left(screens, 0..screens.len()))
+}
+
+/// A laptop's own screen (an embedded DisplayPort, LVDS or DSI panel): with nothing chosen it is display 1, the main one,
+/// whatever else is plugged in and wherever that is placed. The compositor and the panel both go by `pick`, so the main
+/// screen and the dock agree (after the lid is opened again, too).
+pub fn internal(connector: &str) -> bool {
+    ["eDP", "LVDS", "DSI"].iter().any(|p| connector.starts_with(p))
 }
 
 /// The chosen monitor among the connected screens, when it is one of them: by maker and model, and the connector it was on
@@ -250,6 +261,11 @@ mod tests {
         assert_eq!(pick(None, &[wide("DP-1", 0), above]), Some(1), "the same x: the higher one");
         assert_eq!(pick(None, &[Seen { x: -1920, ..tall("HDMI-A-1", 0) }, wide("DP-1", 0)]), Some(0), "left first");
         assert_eq!(pick(None, &[]), None);
+        // a laptop's own screen is main with nothing chosen, even when a monitor sits further left
+        assert_eq!(pick(None, &[wide("HDMI-A-1", -2560), wide("eDP-1", 0)]), Some(1), "the laptop's screen first");
+        assert_eq!(pick(None, &[wide("HDMI-A-1", 1536), wide("eDP-1", 0)]), Some(1));
+        assert_eq!(pick(None, &[wide("DP-1", 0), wide("HDMI-A-1", 1920)]), Some(0), "no laptop screen: the left one");
+        assert!(internal("eDP-1") && internal("LVDS-1") && internal("DSI-1") && !internal("DP-1") && !internal("HDMI-A-1"));
         assert_eq!(pick(Some(&MainDisplay::default()), &[tall("DP-3", 3440), wide("DP-1", 0)]), Some(1), "an empty choice is none");
     }
 
