@@ -57,8 +57,8 @@ Smithay's software renderer (pixman), so it runs in a CI container. Source: `src
   wl_output's whole-number scale (1.5 is sent as 2 there); the panels' first configure already carries it, and everything is drawn
   at the output's scale (a 1.5 output shows the panel sharp, not blown up).
 - **Several outputs** (this needed changes beyond the backend): each output has its own panels (layer map), its own lock surface
-  while locked, its own part of the scene, and the pointer finds the output it is on. The switcher and the profile question show on
-  the first output; windows open, maximize and go full screen there.
+  while locked, its own part of the scene, and the pointer finds the output it is on. The profile question shows on the first output, the
+  window switcher on the screen of the window with the keyboard; windows open, maximize and go full screen there.
 - **Control socket** in the compositor's own runtime folder (`$XDG_RUNTIME_DIR/yggdrasil-compositor-wayland-N.ctl`, mode 0600,
   printed as `YGGDRASIL_COMPOSITOR_CTL=...`), one line per connection; `yggdrasil-compositor ctl COMMAND` sends one:
   `outputs`, `resize HEADLESS-1 1280x720`, `scale HEADLESS-1 1.5`, `screenshot HEADLESS-1 /path/shot.png` (what is pending is drawn
@@ -153,6 +153,55 @@ session's `window-places` file, shared with the Hyprland session), windows openi
 (`~/.config/yggdrasil/tiling`) tile there, and Steam's own maximize request is ignored. `tests/outputs.rs` and `tests/places.rs`
 (with two PNG snapshots) run in CI's `compositor-headless` job and in `tests/apps-podman.sh`. Settings itself still refuses to
 change a screen on this compositor; that check is the one step left.
+
+## Window switching: Alt + Tab (2026-11-19)
+
+Switching windows should feel as good as on Windows 11, in Yggdrasil's own look (`src/switcher.rs`, `src/icons.rs`):
+- **Alt + Tab** opens a panel of cards in rows that wrap and stay centred on the screen of the window with the keyboard. Each card
+  is a live picture of its window at the window's own shape (wide windows wide, narrow ones narrow, every picture in the grid
+  the same height; 160 px, lower when the rows do not fit, and at 64 px only the rows around the chosen card), under a title bar
+  with the app's icon and the window's title. The window used last comes first and the first Tab chooses the one before it;
+  Alt + Shift + Tab opens on the window used longest ago.
+- While Alt is held: Tab moves on and Shift + Tab back (both round the ends), the arrow keys move in the grid (Left and Right
+  to the card before and after, Up and Down to the nearest card of the row above or below, all round the ends), Enter or letting go of Alt switches,
+  a click on a card switches to it, a click outside the panel or Escape closes it and nothing changes. Switching raises the
+  window and gives it the keyboard; a minimized window comes back, a window on another desktop is shown there.
+- **Group cards.** The compositor has no grouping of its own; what it groups is what shares a screen. On each screen of the
+  desktop showing, the windows snapped to its two halves (Super + Left and Super + Right; one on each side at least) are one
+  card, and the windows tiled there (a tiling desktop, or a screen set to tile in Settings) are one card when there are two or
+  more. The group card shows their pictures where they are on the screen, side by side, titled "Group | TITLE and N other
+  windows" with the icon of the one used last; choosing it brings them all forward, the one used last in front with the
+  keyboard. Every other window, minimized ones and those on other desktops included, is a card of its own.
+- **The look**: Yggdrasil's dark panel and cards, the accent chosen in Settings > Appearance (else the operating system's, else
+  Yggdrasil's purple) as the chosen card's outline, rounded corners as on the windows. The icon is the one the app's desktop
+  entry names (found from the window's app id, then the entry's StartupWMClass, as the dock finds it), from the icon pack chosen
+  in Settings, hicolor or Liki; an app without one gets the first letter of its name in an accent circle.
+- **What each renderer does.** Both renderers draw the cards the same way: each picture is the window's own texture, scaled
+  while it is drawn (with the renderer's linear filter), clipped to the card's rounded rectangle; nothing is copied. The
+  damage of a window is scaled with it, so a card is redrawn only where its window changed. With OpenGL ES that is a few small
+  textured quads per card; with pixman (the software renderer of the headless mode and of machines without a usable GPU) the
+  same pictures are scaled in software. I measured that the software renderer needs no snapshot cards (below), so it draws
+  them live too. The card frames, titles and icons are small pictures drawn once per opening (again only for a card whose
+  title or choice changed); the panel is four corner pictures and three solid bands, opaque, so nothing behind it is drawn.
+- **Lightness**: nothing of the switcher runs, is kept or asks for a frame while it is closed; open, it draws one frame and then
+  only when a window changes. Measured 2026-11-19 headless (release build, pixman, 1920x1080, four 800x600 windows, 5 s each,
+  two rounds): closed and still, 0 ms of CPU and no frame; open over still windows, 10 ms (the opening frame: the cards, the
+  icons looked up, the panel) and 1 frame; one window drawing about 20 times a second, 90 ms closed and 110-120 ms open (2.2-2.4 %
+  of a core), the same number of frames either way.
+- Win + Tab (the deck) is not built; the grid's layout and moves are plain functions of the cards' shapes and the screen's
+  size (`switcher::grid`), for its flat grid to use too.
+
+Proof: `tests/keys.rs`, four tests in CI's `rust` and `compositor-headless` jobs: the order (most recent first), Tab and
+Shift + Tab going round, Alt + Shift + Tab opening on the oldest, Escape cancelling, the arrows and Enter, switching on Alt's
+release; a minimized window brought back, a click on a card, a click outside; the snapped pair as one group card (wider than a
+tall window's, each window's colour on its side, a PNG snapshot `tests/snapshots/switcher-grid.png`) brought forward together;
+the frames drawn (the control socket's `frames`): none while open over still windows, a window's new picture showing on its
+card, one frame to close it and none after. The headless tests run without fonts (fontconfig is given an empty configuration),
+so the snapshot is the same on every machine; the titles are drawn when a font is found.
+
+Known limitations: there is no blur or dimming behind the panel (too dear for the software renderer); minimized windows and
+windows on other desktops show the last picture they drew (they are not asked for new ones); hovering a card does not choose
+it; it has not yet been tried by hand nested or in the test machine (the host keeps Alt + Tab nested).
 
 ## Status (2026-10-18): first version, runs nested in a window only
 
@@ -275,7 +324,8 @@ and 5, the same set): idle 0.006 % of a core, 26.4-26.5 MB resident (before: 0.0
 26.6-26.7); a window's picture for the dock costs 1.1-1.2 ms of CPU (800x600), and the pointer costs nothing while it rests. On the hardware (the test machine, 2026-11-15, 60 s with the panel): 0.012 % of a core with OpenGL ES (62-64 MB resident, 44
 MB of it the GPU driver's libraries), 0.0074 % with pixman (22.6 MB); its only wake-ups then are the 2-second look at the config
 files. Its memory nested (about 117 MB) is mostly the graphics driver's context; the panel is about 89 MB, the idle manager 3 MB, the polkit agent 8 MB. Not measured yet: the start-up time of each program,
-and the compositor's cost with several large windows.
+and the compositor's cost with several large windows. The window switcher (2026-11-19): nothing while closed; open, one frame
+and then only what changes (numbers in "Window switching" above).
 Settings > Power's root services (tune, casefan, gpufan) are Rust since 2026-11-09 (docs/APPS_SETTINGS.md): about 2.8 MB each on
 their own, plus about 26 MB while libnvidia-ml is initialised (the NVIDIA driver's own cost, the same in any language), and tune
 reads /dev/kmsg instead of keeping a journalctl child (about 46 MB). The Python versions were about 40 MB each with swap counted.

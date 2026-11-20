@@ -285,3 +285,288 @@ fn the_bindings_are_listed_with_the_sessions_words() {
     assert_eq!(ours, theirs);
     assert_eq!(ours.len(), 61);
 }
+
+// ------------------------------------------------------------------ the window switcher (Alt+Tab)
+
+const RED: u32 = 0xffff0000;
+const GREEN: u32 = 0xff00ff00;
+const MAGENTA: u32 = 0xffff00ff;
+const CYAN: u32 = 0xff00ffff;
+
+/// A compositor for the switcher's tests: no fonts (fontconfig finds none, so no text is drawn and the pictures are the same on
+/// every machine), Yggdrasil's purple chosen as the accent, and an icon for the app `test.b` (a red square in a ring).
+fn switcher_compositor(size: &str) -> Compositor {
+    let fonts = std::env::temp_dir().join(format!("ygg-keys-nofonts-{}.conf", std::process::id()));
+    std::fs::write(&fonts, "<?xml version=\"1.0\"?><fontconfig></fontconfig>\n").unwrap();
+    Compositor::start_env(&["--size", size], &[("FONTCONFIG_FILE", fonts.to_str().unwrap())], |dir| {
+        std::fs::write(dir.join("home/.config/yggdrasil/appearance.conf"), "style = dark\naccent = 124,84,214\n").unwrap();
+        let icons = dir.join("home/.local/share/icons/hicolor/scalable/apps");
+        std::fs::create_dir_all(&icons).unwrap();
+        std::fs::write(
+            icons.join("test.b.svg"),
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><circle cx="12" cy="12" r="11" fill="white"/><rect x="6" y="6" width="12" height="12" fill="red"/></svg>"#,
+        )
+        .unwrap();
+    })
+}
+
+/// A card of the switcher as the control socket lists it: chosen, the app ids of the card's windows, its place and size.
+type CardLine = (bool, String, Option<(i32, i32, i32, i32)>);
+
+fn cards(comp: &Compositor) -> Vec<CardLine> {
+    comp.must("switcher")
+        .iter()
+        .map(|l| {
+            let f: Vec<&str> = l.split('\t').collect();
+            let place = (f.len() >= 4 && !f[2].is_empty()).then(|| {
+                let (x, y) = pair(f[2], ',');
+                let (w, h) = pair(f[3], 'x');
+                (x, y, w, h)
+            });
+            (f[0] == "*", f[1].to_string(), place)
+        })
+        .collect()
+}
+
+/// The app ids in the switcher's order, and the chosen card's.
+fn order(comp: &Compositor) -> (Vec<String>, String) {
+    let c = cards(comp);
+    let chosen = c.iter().find(|(on, _, _)| *on).map(|(_, a, _)| a.clone()).unwrap_or_default();
+    (c.into_iter().map(|(_, a, _)| a).collect(), chosen)
+}
+
+fn focused_app(comp: &Compositor) -> String {
+    comp.focus().split('\t').nth(1).unwrap_or("").to_string()
+}
+
+fn id_of(comp: &Compositor, app: &str) -> String {
+    comp.must("clients").iter().find(|l| l.split('\t').nth(1) == Some(app)).unwrap().split('\t').next().unwrap().to_string()
+}
+
+fn frames_drawn(comp: &Compositor) -> u64 {
+    comp.must("frames")[0].strip_prefix("drawn ").unwrap().parse().unwrap()
+}
+
+#[test]
+fn alt_tab_goes_through_the_windows_most_recent_first() {
+    let _l = limit(90, "Alt+Tab");
+    let comp = switcher_compositor("1280x720");
+    let mut c = comp.connect();
+    let _input = c.input();
+    let mut wins = vec![];
+    for (app, colour) in [("test.a", BLUE), ("test.b", YELLOW), ("test.c", RED), ("test.d", GREEN)] {
+        let w = c.window(app, app);
+        c.draw(&w, (400, 300), colour);
+        wins.push(w);
+    }
+    comp.wait(10, "D has the keyboard", |c| focused_app(c) == "test.d");
+    let apps = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+
+    // Alt+Tab: the windows used last first, the one before the window in front chosen
+    comp.must("key-down alt");
+    comp.must("key Tab");
+    assert_eq!(order(&comp), (apps(&["test.d", "test.c", "test.b", "test.a"]), "test.c".into()));
+    // Tab moves on and goes round, Shift+Tab goes back (round the start too)
+    comp.must("key Tab");
+    assert_eq!(order(&comp).1, "test.b");
+    comp.must("key Tab");
+    comp.must("key Tab");
+    assert_eq!(order(&comp).1, "test.d", "round the end");
+    comp.must("key shift+Tab");
+    assert_eq!(order(&comp).1, "test.a", "Shift+Tab round the start");
+    comp.must("key shift+Tab");
+    assert_eq!(order(&comp).1, "test.b");
+    // the keys go to the switcher, not to the window
+    assert_eq!(focused_app(&comp), "test.d");
+    // letting go of Alt switches
+    comp.must("key-up alt");
+    assert!(cards(&comp).is_empty(), "closed");
+    assert_eq!(focused_app(&comp), "test.b");
+    assert_eq!(comp.windows().last().unwrap().app_id, "test.b", "raised in front");
+
+    // a quick Alt+Tab goes back to the window used before
+    comp.must("key alt+Tab");
+    assert_eq!(focused_app(&comp), "test.d");
+
+    // Alt+Shift+Tab opens on the window used longest ago; Escape cancels and nothing changes, also when Alt is let go after
+    comp.must("key-down alt");
+    comp.must("key shift+Tab");
+    assert_eq!(order(&comp), (apps(&["test.d", "test.b", "test.c", "test.a"]), "test.a".into()));
+    comp.must("key Escape");
+    assert!(cards(&comp).is_empty(), "Escape closes it");
+    comp.must("key-up alt");
+    assert_eq!(focused_app(&comp), "test.d");
+
+    // the arrows move in the grid, Enter picks
+    comp.must("key-down alt");
+    comp.must("key Tab");
+    comp.must("key Right");
+    assert_eq!(order(&comp).1, "test.c");
+    comp.must("key Left");
+    comp.must("key Left");
+    assert_eq!(order(&comp).1, "test.d");
+    comp.must("key Left");
+    assert_eq!(order(&comp).1, "test.a", "Left round the start");
+    comp.must("key Return");
+    assert!(cards(&comp).is_empty());
+    assert_eq!(focused_app(&comp), "test.a");
+    comp.must("key-up alt");
+    assert_eq!(focused_app(&comp), "test.a", "Alt let go after Enter switches nothing more");
+}
+
+#[test]
+fn alt_tab_brings_back_a_minimized_window_and_takes_a_click() {
+    let _l = limit(90, "Alt+Tab, minimized and clicked");
+    let comp = switcher_compositor("1280x720");
+    let mut c = comp.connect();
+    let _input = c.input();
+    for (app, colour) in [("test.a", BLUE), ("test.b", YELLOW), ("test.c", RED)] {
+        let w = c.window(app, app);
+        c.draw(&w, (400, 300), colour);
+    }
+    comp.wait(10, "C has the keyboard", |c| focused_app(c) == "test.c");
+    comp.must(&format!("minimize {}", id_of(&comp, "test.a")));
+    comp.wait(10, "A minimized", |c| c.window("test.a").is_some_and(|w| w.has("minimized")));
+
+    // a minimized window is a card too; choosing it brings it back with the keyboard
+    comp.must("key-down alt");
+    comp.must("key Tab");
+    let (apps, _) = order(&comp);
+    assert!(apps.contains(&"test.a".to_string()), "{apps:?}");
+    while order(&comp).1 != "test.a" {
+        comp.must("key Tab");
+    }
+    comp.must("key-up alt");
+    comp.wait(10, "A back", |c| c.window("test.a").is_some_and(|w| !w.has("minimized")));
+    assert_eq!(focused_app(&comp), "test.a");
+    let pic = comp.screenshot("HEADLESS-1");
+    assert!(pic.count((0, 0, 1280, 720), (0, 0, 255)) > 100_000, "A is drawn again");
+
+    // a click on a card switches to it (Alt still held: letting go after switches nothing more)
+    comp.must("key-down alt");
+    comp.must("key Tab");
+    let cs = cards(&comp);
+    let (_, _, place) = cs.iter().find(|(_, a, _)| a == "test.b").expect("B's card").clone();
+    let (x, y, w, h) = place.expect("B's card is shown");
+    comp.must(&format!("pointer {} {}", x + w / 2, y + h / 2));
+    comp.must("click");
+    assert!(cards(&comp).is_empty(), "the click closed it");
+    assert_eq!(focused_app(&comp), "test.b");
+    comp.must("key-up alt");
+    assert_eq!(focused_app(&comp), "test.b");
+    // a click outside the panel closes it and switches nothing
+    comp.must("key-down alt");
+    comp.must("key Tab");
+    comp.must("pointer 2 2");
+    comp.must("click");
+    assert!(cards(&comp).is_empty());
+    comp.must("key-up alt");
+    assert_eq!(focused_app(&comp), "test.b");
+}
+
+#[test]
+fn snapped_windows_are_one_group_card_and_come_forward_together() {
+    let _l = limit(90, "group cards");
+    let comp = switcher_compositor("1280x720");
+    let mut c = comp.connect();
+    let _input = c.input();
+    let a = c.window("test.a", "Calculator");
+    c.draw(&a, (400, 300), BLUE);
+    let b = c.window("test.b", "Notes");
+    c.draw(&b, (400, 300), YELLOW);
+    let cc = c.window("test.c", "Terminal");
+    c.draw(&cc, (500, 300), RED);
+    let d = c.window("test.d", "Tall");
+    c.draw(&d, (220, 420), MAGENTA);
+    let e = c.window("test.e", "Wide");
+    c.draw(&e, (640, 220), CYAN);
+    // A to the left half, B to the right one: a group
+    let snap = |c: &mut common::Client, w: &common::Window, app: &str, keys: &str, colour: u32| {
+        comp.must(&format!("activate {}", id_of(&comp, app)));
+        comp.must(&format!("key {keys}"));
+        c.roundtrip();
+        c.draw(w, (400, 300), colour);
+        let side = if keys.ends_with("Left") { "left" } else { "right" };
+        comp.wait(10, side, |comp| comp.window(app).is_some_and(|w| w.has(side)));
+    };
+    snap(&mut c, &a, "test.a", "super+Left", BLUE);
+    snap(&mut c, &b, "test.b", "super+Right", YELLOW);
+    comp.must(&format!("activate {}", id_of(&comp, "test.e")));
+    comp.wait(10, "E in front", |c| focused_app(c) == "test.e");
+
+    comp.must("key-down alt");
+    comp.must("key Tab");
+    let (apps, chosen) = order(&comp);
+    assert_eq!(apps, ["test.e", "test.b,test.a", "test.d", "test.c"], "the snapped pair is one card, B (used last) first");
+    assert_eq!(chosen, "test.b,test.a");
+    let cs = cards(&comp);
+    let group = cs[1].2.unwrap();
+    assert!(group.2 > cs[2].2.unwrap().2, "the group's card is wider than a tall window's: {cs:?}");
+    // the live pictures: each window's own colour on its card, the group's two side by side
+    let pic = comp.screenshot("HEADLESS-1");
+    let inside = |p: (i32, i32, i32, i32)| (p.0 + 8, p.1 + 8 + 28, p.2 - 16, p.3 - 16 - 28);
+    let (gx, gy, gw, gh) = inside(group);
+    assert!(pic.count((gx, gy, gw / 2, gh), (0, 0, 255)) > 500, "A on the left of the group's card");
+    assert!(pic.count((gx + gw / 2, gy, gw / 2, gh), (255, 255, 0)) > 500, "B on the right");
+    assert!(pic.count(inside(cs[2].2.unwrap()), (255, 0, 255)) > 500, "D on its card");
+    snapshot!(pic, "switcher-grid");
+
+    // choosing the group brings both forward, B with the keyboard
+    comp.must("key-up alt");
+    comp.wait(10, "B in front", |c| focused_app(c) == "test.b");
+    let mut ws: Vec<String> = comp.windows().iter().rev().take(2).map(|w| w.app_id.clone()).collect();
+    ws.sort();
+    assert_eq!(ws, ["test.a", "test.b"], "the two in front: {:?}", comp.windows());
+}
+
+#[test]
+fn the_switcher_draws_only_when_something_changes_and_nothing_once_closed() {
+    let _l = limit(90, "the switcher's frames");
+    let comp = switcher_compositor("1280x720");
+    let mut c = comp.connect();
+    let _input = c.input();
+    let a = c.window("test.a", "A");
+    c.draw(&a, (400, 300), BLUE);
+    let b = c.window("test.b", "B");
+    c.draw(&b, (400, 300), YELLOW);
+    comp.wait(10, "B has the keyboard", |c| focused_app(c) == "test.b");
+    let settle = || {
+        let mut last = frames_drawn(&comp);
+        loop {
+            std::thread::sleep(Duration::from_millis(150));
+            let now = frames_drawn(&comp);
+            if now == last {
+                return now;
+            }
+            last = now;
+        }
+    };
+    let idle = settle();
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(frames_drawn(&comp), idle, "nothing drawn while nothing changes");
+
+    // open: drawn once, then nothing while the windows stay as they are
+    comp.must("key-down alt");
+    comp.must("key Tab");
+    let open = settle();
+    assert!(open > idle, "the switcher was drawn");
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(frames_drawn(&comp), open, "an open switcher over still windows draws nothing more");
+    // a window that draws anew shows on its card (live)
+    let card = cards(&comp).into_iter().find(|(_, a, _)| a == "test.a").unwrap().2.unwrap();
+    let inside = (card.0 + 8, card.1 + 36, card.2 - 16, card.3 - 44);
+    assert!(comp.screenshot("HEADLESS-1").count(inside, (0, 0, 255)) > 500);
+    c.draw(&a, (400, 300), GREEN);
+    comp.wait(10, "A's card green", |comp| comp.screenshot("HEADLESS-1").count(inside, (0, 255, 0)) > 500);
+    let after = settle();
+    std::thread::sleep(Duration::from_millis(500));
+    assert_eq!(frames_drawn(&comp), after);
+
+    // closed (Escape, then Alt let go): one frame to take it away, then nothing
+    comp.must("key Escape");
+    comp.must("key-up alt");
+    let closed = settle();
+    assert!(closed > after, "drawn once more to take it away");
+    std::thread::sleep(Duration::from_millis(1000));
+    assert_eq!(frames_drawn(&comp), closed, "nothing drawn once closed");
+}
