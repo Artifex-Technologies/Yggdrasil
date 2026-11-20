@@ -4219,6 +4219,9 @@ impl Dispatch<WlTouch, ()> for State {
                 }
                 state.touch_id = Some(id);
                 pointer_event(state, wl_pointer::Event::Enter { serial, surface, surface_x: x, surface_y: y });
+                // what is under the finger now decides, not what was under the last touch: Enter can stop early (while Fylgja
+                // or the window previews follow the pointer) and leave the notch's flag from before
+                state.hover_at(x as f32, y as f32);
                 // on the notch: the finger pulls Fylgja down (in any mode: laptop, tent or tablet)
                 if state.tab_hover && state.popup.is_none() {
                     state.start_pull(y as f32);
@@ -4240,24 +4243,46 @@ impl Dispatch<WlTouch, ()> for State {
                 state.touch_id = None;
                 if state.fy_pull.is_some() {
                     state.pull_released();
+                    state.touch_lifted();
                     return;
                 }
                 pointer_event(
                     state,
                     wl_pointer::Event::Button { serial, time, button: 272, state: WEnum::Value(wl_pointer::ButtonState::Released) },
                 );
+                state.touch_lifted();
             }
             wl_touch::Event::Cancel if state.touch_id.take().is_some() => {
                 if state.fy_pull.is_some() {
                     state.pull_released();
+                    state.touch_lifted();
                     return;
                 }
                 pointer_event(
                     state,
                     wl_pointer::Event::Button { serial: 0, time: 0, button: 272, state: WEnum::Value(wl_pointer::ButtonState::Released) },
                 );
+                state.touch_lifted();
             }
             _ => {}
+        }
+    }
+}
+
+impl State {
+    /// A finger was lifted: unlike a pointer, nothing is under it any more, so nothing stays highlighted (the dock's icon, the
+    /// bar's buttons, the notch). Only the highlight: a pointer Leave would also start closing the window previews a tap opened.
+    fn touch_lifted(&mut self) {
+        if self.popup.is_none() {
+            self.tab_hover = false;
+        }
+        if self.dock_hover.take().is_some() {
+            self.dirty = true;
+        }
+        if let Some(i) = self.pointer_surface {
+            if self.surfs.get_mut(i).map(|s| s.hover.take().is_some()).unwrap_or(false) {
+                self.dirty = true;
+            }
         }
     }
 }
