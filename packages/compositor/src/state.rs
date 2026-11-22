@@ -190,6 +190,9 @@ pub struct App {
     pub data_device_state: DataDeviceState,
     pub _output_manager_state: OutputManagerState,
     pub _viewporter_state: ViewporterState,
+    /// games' relative motion and pointer locks (constraints.rs)
+    pub _relative_pointer_state: smithay::wayland::relative_pointer::RelativePointerManagerState,
+    pub _pointer_constraints_state: smithay::wayland::pointer_constraints::PointerConstraintsState,
     pub lock_state: SessionLockManagerState,
     pub idle_state: IdleNotifierState<Self>,
     pub seat: Seat<Self>,
@@ -535,6 +538,8 @@ impl App {
             data_device_state: DataDeviceState::new::<Self>(dh),
             _output_manager_state: OutputManagerState::new_with_xdg_output::<Self>(dh),
             _viewporter_state: ViewporterState::new::<Self>(dh),
+            _relative_pointer_state: smithay::wayland::relative_pointer::RelativePointerManagerState::new::<Self>(dh),
+            _pointer_constraints_state: smithay::wayland::pointer_constraints::PointerConstraintsState::new::<Self>(dh),
             lock_state: SessionLockManagerState::new::<Self, _>(dh, |_| true),
             idle_state: IdleNotifierState::new(dh, handle),
             seat,
@@ -2544,10 +2549,9 @@ impl App {
                 self.pointer_to(pos, event.time_msec());
             }
             InputEvent::PointerMotion { event } => {
-                // a mouse or touchpad: moved by what libinput made of the movement (its speed and acceleration), kept on the screens
-                let to = self.pointer_location + event.delta();
-                let to = self.nearest_on_screens(to).unwrap_or(to);
-                self.pointer_to(to, event.time_msec());
+                // a mouse or touchpad: moved by what libinput made of the movement (its speed and acceleration), kept on the
+                // screens, and told as relative motion to a game (constraints.rs: it stays put while a game has locked it)
+                self.pointer_moved_by(event.delta(), event.delta_unaccel(), event.time());
             }
             InputEvent::PointerButton { event } => self.button(event.button_code(), event.state(), event.time_msec()),
             InputEvent::PointerAxis { event } => {

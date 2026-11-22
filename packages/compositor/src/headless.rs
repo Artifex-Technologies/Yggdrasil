@@ -48,7 +48,8 @@
 //!   pointer X Y                  move the pointer to X,Y (logical, in the space of all outputs)
 //!   click [left|right|middle]    press and let go of a button of the virtual mouse where the pointer is (left-handed in
 //!                                input.conf: its left one is the right button)
-//!   pointer-move DX DY           move the virtual mouse: the pointer goes as far as its speed in input.conf says
+//!   pointer-move DX DY           move the virtual mouse: the pointer goes as far as its speed in input.conf says (and a game
+//!                                hears it as relative motion; a pointer lock holds the pointer where it is)
 //!   scroll DY [DX]               turn its wheel (input.conf's scroll factor and natural scrolling applied)
 //!   input                        the mouse and keyboard settings in force (input.rs: Settings > Peripherals' input.conf)
 //!   touch-down ID X Y, touch-move ID X Y, touch-up ID
@@ -837,11 +838,11 @@ fn own_command(words: &[&str], app: &mut App, h: &mut Headless) -> Result<Vec<St
         ["pointer-move", dx, dy] => {
             let num = |v: &str| v.parse::<f64>().ok().filter(|v| v.is_finite() && v.abs() <= 65536.0).ok_or("pointer-move DX DY: numbers");
             let m = crate::input::mouse(&app.input, crate::input::HEADLESS_MOUSE);
-            let (mx, my) = crate::input::motion(&m, (num(dx)?, num(dy)?));
-            let to = app.pointer_location + smithay::utils::Point::from((mx, my));
-            let to = app.nearest_on_screens(to).unwrap_or(to);
-            let t = h.ms();
-            app.pointer_to(to, t);
+            let raw = (num(dx)?, num(dy)?);
+            let (mx, my) = crate::input::motion(&m, raw);
+            // as a mouse's motion: told to a game as relative motion, held by its pointer lock (constraints.rs)
+            let t = h.ms() as u64 * 1000;
+            app.pointer_moved_by((mx, my).into(), raw.into(), t);
             Ok(vec![])
         }
         ["scroll", dy, rest @ ..] if rest.len() <= 1 => {

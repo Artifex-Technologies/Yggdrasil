@@ -38,7 +38,7 @@ resvg = { version = "0.48", default-features = false }
 # tests/: a small Wayland client of the tests' own (tests/common) that speaks to the headless backend like the panel, a window,
 # the lock screen, a screenshot tool and the idle manager do; and Yggdrasil's own programs started inside it (tests/apps.rs)
 wayland-client = "0.31"
-wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 
 [profile.release]

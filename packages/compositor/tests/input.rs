@@ -94,3 +94,61 @@ fn input_conf_is_taken_at_start_and_when_settings_applies_it() {
     d.apply_input(&now, &InputConf::default()).unwrap();
     c.until("the default key repeat", |s| s.repeat_info == Some((25, 600)));
 }
+
+#[test]
+fn a_game_gets_relative_motion_and_can_lock_or_confine_the_pointer() {
+    let _l = limit(60, "pointer locks");
+    let comp = Compositor::start(&["--size", "1280x720"]);
+    let mut c = comp.connect();
+    let (_k, p) = c.input();
+    let w = c.window("test.game", "Game");
+    c.draw(&w, (400, 300), 0xff0000ff);
+    let at = |comp: &Compositor| -> (f64, f64) {
+        let l = comp.must("cursor");
+        let (x, y) = l[0].split_once(' ').unwrap();
+        (x.parse().unwrap(), y.parse().unwrap())
+    };
+    comp.must("pointer 640 360");
+    let _rel = c.relative_motion(&p);
+
+    // a movement is told as relative motion (with and without the mouse's acceleration), and the pointer moves
+    comp.must("pointer-move 10 5");
+    c.roundtrip();
+    let (dx, dy, ux, uy) = *c.state.relative.last().expect("relative motion");
+    assert_eq!((ux, uy), (10.0, 5.0), "as the mouse moved");
+    assert!(dx != 0.0 && dy != 0.0);
+    let moved = at(&comp);
+    assert!(moved != (640.0, 360.0), "the pointer moved: {moved:?}");
+
+    // locked (a first-person game): active at once with the pointer over its window; the pointer stays, the motion goes on
+    let lock = c.lock_pointer(&w, &p);
+    c.roundtrip();
+    assert_eq!(c.state.held, ["locked"]);
+    assert_eq!(comp.must("pointer-held"), ["locked"]);
+    let n = c.state.relative.len();
+    comp.must("pointer-move 300 0");
+    c.roundtrip();
+    assert_eq!(at(&comp), moved, "a locked pointer stays");
+    assert_eq!(c.state.relative.len(), n + 1, "the game still hears the motion");
+    lock.destroy();
+    c.roundtrip();
+    assert_eq!(comp.must("pointer-held"), ["free"]);
+    comp.must("pointer-move 10 0");
+    assert!(at(&comp) != moved, "free again");
+
+    // confined (an edge-scrolling game): the pointer moves inside its window and no further
+    let conf = c.confine_pointer(&w, &p);
+    c.roundtrip();
+    assert_eq!(c.state.held.last(), Some(&"confined"));
+    assert_eq!(comp.must("pointer-held"), ["confined"]);
+    let inside = at(&comp);
+    comp.must("pointer-move 5000 0");
+    c.roundtrip();
+    let after = at(&comp);
+    let r = comp.window("test.game").unwrap().rect();
+    assert!(after.0 < (r.0 + r.2) as f64 && after.0 >= inside.0, "kept inside the window: {after:?} in {r:?}");
+    conf.destroy();
+    c.roundtrip();
+    comp.must("pointer-move 5000 0");
+    assert!(at(&comp).0 > (r.0 + r.2) as f64, "free again: {:?}", at(&comp));
+}

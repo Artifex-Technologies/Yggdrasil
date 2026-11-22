@@ -426,6 +426,10 @@ pub struct State {
     pub frames: HashMap<usize, u32>,
     /// the colour matrix managers told they are blocked (hyprland-ctm-control-v1), by the number they were bound with
     pub ctm_blocked: Vec<usize>,
+    /// relative motion told (zwp-relative-pointer-v1): (dx, dy, dx without acceleration, dy without)
+    pub relative: Vec<(f64, f64, f64, f64)>,
+    /// a pointer lock's or confinement's events, in order: "locked", "unlocked", "confined", "unconfined"
+    pub held: Vec<&'static str>,
     /// the last keymap's text (xkb's), and how many keymaps came
     pub keymap_text: String,
     pub keymaps: usize,
@@ -634,6 +638,32 @@ impl Client {
         let p = self.seat.get_pointer(&self.qh, ());
         self.roundtrip();
         (k, p)
+    }
+
+    /// Relative motion for the pointer, as a game asks for it (`state.relative` gets it).
+    pub fn relative_motion(&mut self, p: &WlPointer) -> ZwpRelativePointerV1 {
+        let m: ZwpRelativePointerManagerV1 = self.globals.bind(&self.qh, 1..=1, ()).expect("zwp-relative-pointer-manager-v1");
+        let r = m.get_relative_pointer(p, &self.qh, ());
+        self.roundtrip();
+        r
+    }
+
+    /// A lock of the pointer on a window, for as long as it lives (`state.held` gets "locked" and "unlocked").
+    pub fn lock_pointer(&mut self, w: &Window, p: &WlPointer) -> ZwpLockedPointerV1 {
+        let c: ZwpPointerConstraintsV1 = self.globals.bind(&self.qh, 1..=1, ()).expect("zwp-pointer-constraints-v1");
+        let l = c.lock_pointer(&w.surface, p, None, zwp_pointer_constraints_v1::Lifetime::Persistent, &self.qh, ());
+        w.surface.commit();
+        self.roundtrip();
+        l
+    }
+
+    /// The pointer kept inside a window, for as long as it lives (`state.held` gets "confined" and "unconfined").
+    pub fn confine_pointer(&mut self, w: &Window, p: &WlPointer) -> ZwpConfinedPointerV1 {
+        let c: ZwpPointerConstraintsV1 = self.globals.bind(&self.qh, 1..=1, ()).expect("zwp-pointer-constraints-v1");
+        let l = c.confine_pointer(&w.surface, p, None, zwp_pointer_constraints_v1::Lifetime::Persistent, &self.qh, ());
+        w.surface.commit();
+        self.roundtrip();
+        l
     }
 
     /// A buffer of one colour (ARGB), in a file the compositor maps.
@@ -1197,6 +1227,60 @@ delegate_noop!(State: ignore WlShm);
 delegate_noop!(State: ignore WlShmPool);
 delegate_noop!(State: ignore WlBuffer);
 delegate_noop!(State: ignore WlSurface);
+
+use wayland_protocols::wp::pointer_constraints::zv1::client::{
+    zwp_confined_pointer_v1::{self, ZwpConfinedPointerV1},
+    zwp_locked_pointer_v1::{self, ZwpLockedPointerV1},
+    zwp_pointer_constraints_v1::{self, ZwpPointerConstraintsV1},
+};
+use wayland_protocols::wp::relative_pointer::zv1::client::{
+    zwp_relative_pointer_manager_v1::ZwpRelativePointerManagerV1,
+    zwp_relative_pointer_v1::{self, ZwpRelativePointerV1},
+};
+delegate_noop!(State: ignore ZwpRelativePointerManagerV1);
+delegate_noop!(State: ignore ZwpPointerConstraintsV1);
+
+impl Dispatch<ZwpRelativePointerV1, ()> for State {
+    fn event(
+        st: &mut Self,
+        _: &ZwpRelativePointerV1,
+        event: zwp_relative_pointer_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let zwp_relative_pointer_v1::Event::RelativeMotion { dx, dy, dx_unaccel, dy_unaccel, .. } = event {
+            st.relative.push((dx, dy, dx_unaccel, dy_unaccel));
+        }
+    }
+}
+
+impl Dispatch<ZwpLockedPointerV1, ()> for State {
+    fn event(st: &mut Self, _: &ZwpLockedPointerV1, event: zwp_locked_pointer_v1::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        match event {
+            zwp_locked_pointer_v1::Event::Locked => st.held.push("locked"),
+            zwp_locked_pointer_v1::Event::Unlocked => st.held.push("unlocked"),
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<ZwpConfinedPointerV1, ()> for State {
+    fn event(
+        st: &mut Self,
+        _: &ZwpConfinedPointerV1,
+        event: zwp_confined_pointer_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            zwp_confined_pointer_v1::Event::Confined => st.held.push("confined"),
+            zwp_confined_pointer_v1::Event::Unconfined => st.held.push("unconfined"),
+            _ => {}
+        }
+    }
+}
 
 /// hyprland-ctm-control-v1's client side (the protocol hyprsunset speaks; the compositor's protocols/ file).
 #[allow(dead_code, non_camel_case_types, non_upper_case_globals, non_snake_case, unused_imports, missing_docs, clippy::all)]
