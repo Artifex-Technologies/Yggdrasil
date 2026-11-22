@@ -39,6 +39,7 @@
 //!   keyboard [LAYOUT [VARIANT]] the keyboard layout from now on (xkb names); without one, the one in use
 //!   devices                     the mice and keyboards: name and "pointer" or "keyboard" (tab separated); headless the virtual
 //!                               ones the control socket moves (Settings > Peripherals offers settings per mouse by these names)
+//!   ctm                         each screen's colour matrix (Night Light, ctm.rs): its name and nine numbers, row by row
 //!   transform [NAME N]          a screen's turn (wl_output's numbers: 0 upright, 1 to 3 turned 90° counter-clockwise each
 //!                               step, 4 to 7 mirrored); without them each screen's name and turn (tab separated)
 //!   exit                        end the session (yggdrasil-logout, once every window has closed)
@@ -96,6 +97,7 @@ pub fn command(words: &[&str], app: &mut App) -> Option<Result<Vec<String>, Stri
             app.activate_surface(&s);
             vec![]
         }),
+        ["ctm"] => Ok(app.ctm_lines()),
         ["transform"] => Ok(app.transforms()),
         ["transform", name, n] => n
             .parse::<u32>()

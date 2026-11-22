@@ -318,6 +318,8 @@ pub struct App {
     art: Vec<(u64, crate::look::Look, std::sync::Arc<crate::look::Art>)>,
     look_times: [Option<std::time::SystemTime>; 2],
     pub clock: crate::look::Clock,
+    /// the screens' colour matrices (ctm.rs: Night Light)
+    pub ctm: crate::ctm::Ctm,
     pub closing: Vec<crate::look::Closing>,
     /// The backend takes a closing window's last picture from the screen (headless); without that there is no closing animation.
     pub pictures_of_closing: bool,
@@ -617,6 +619,7 @@ impl App {
             art: vec![],
             look_times: [None, None],
             clock: Default::default(),
+            ctm: Default::default(),
             closing: vec![],
             pictures_of_closing: false,
         }

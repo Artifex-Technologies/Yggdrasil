@@ -424,6 +424,8 @@ pub struct State {
     pub keymap: bool,
     /// frame callbacks answered (wl_callback done), per window index (`Client::frame` asks for one)
     pub frames: HashMap<usize, u32>,
+    /// the colour matrix managers told they are blocked (hyprland-ctm-control-v1), by the number they were bound with
+    pub ctm_blocked: Vec<usize>,
     /// the last keymap's text (xkb's), and how many keymaps came
     pub keymap_text: String,
     pub keymaps: usize,
@@ -1195,6 +1197,35 @@ delegate_noop!(State: ignore WlShm);
 delegate_noop!(State: ignore WlShmPool);
 delegate_noop!(State: ignore WlBuffer);
 delegate_noop!(State: ignore WlSurface);
+
+/// hyprland-ctm-control-v1's client side (the protocol hyprsunset speaks; the compositor's protocols/ file).
+#[allow(dead_code, non_camel_case_types, non_upper_case_globals, non_snake_case, unused_imports, missing_docs, clippy::all)]
+pub mod ctm_proto {
+    use wayland_client;
+    use wayland_client::protocol::*;
+    pub mod __interfaces {
+        use wayland_client::protocol::__interfaces::*;
+        wayland_scanner::generate_interfaces!("protocols/hyprland-ctm-control-v1.xml");
+    }
+    use self::__interfaces::*;
+    wayland_scanner::generate_client_code!("protocols/hyprland-ctm-control-v1.xml");
+}
+use ctm_proto::hyprland_ctm_control_manager_v1::{self, HyprlandCtmControlManagerV1};
+
+impl Dispatch<HyprlandCtmControlManagerV1, usize> for State {
+    fn event(
+        st: &mut Self,
+        _: &HyprlandCtmControlManagerV1,
+        event: hyprland_ctm_control_manager_v1::Event,
+        n: &usize,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            hyprland_ctm_control_manager_v1::Event::Blocked => st.ctm_blocked.push(*n),
+        }
+    }
+}
 
 impl Dispatch<WlCallback, usize> for State {
     fn event(st: &mut Self, _: &WlCallback, event: wl_callback::Event, index: &usize, _: &Connection, _: &QueueHandle<Self>) {

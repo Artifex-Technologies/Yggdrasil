@@ -171,6 +171,9 @@ struct Screen {
     /// a frame with no change was drawn: the next one waits until then (a program that commits without changing anything
     /// does not spin the compositor)
     not_before: Instant,
+    /// the tint its CRTC's gamma table has (red, green, blue scale; ctm.rs); None: not set yet, or to be set again (after a
+    /// terminal had the screen, which may have reset it)
+    gamma: Option<[f64; 3]>,
 }
 
 struct Device {
@@ -272,6 +275,8 @@ pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
     let first = outputs.first().cloned().ok_or("no screen is connected")?;
 
     crate::toplevels::create_global(&dh);
+    // a screen's colour matrix (hyprsunset: Settings' Night Light), put into its CRTC's gamma table (`draw`)
+    crate::ctm::create_global(&dh);
     // screens off and on (yggdrasil-idle): the CRTC switched off
     crate::outputpower::create_global(&dh);
     // screenshots and the panel's previews, drawn again on the GPU (readback.rs)
@@ -339,6 +344,7 @@ pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
                         s.queued = false;
                         s.dirty = true;
                         s.off = false;
+                        s.gamma = None;
                         match &s.drm {
                             Out::Gles(o) => o.reset_buffers(),
                             Out::Pixman(o) => o.reset_buffers(),
@@ -840,6 +846,7 @@ fn scan(
                         queued: false,
                         dirty: true,
                         not_before: Instant::now(),
+                        gamma: None,
                     },
                 );
                 added.push(output);
@@ -1385,6 +1392,25 @@ fn draw(udev: &Rc<RefCell<Udev>>, app: &mut App, node: DrmNode, crtc: crtc::Hand
     let b = &mut *guard;
     let lid_closed = b.switches.lid_closed();
     let Some(dev) = b.devices.get_mut(&node) else { return };
+    // the screen's tint (Night Light) into its CRTC's gamma table, when it changed
+    let want = crate::ctm::channels(&app.ctm_of(&dev.screens.get(&crtc).map(|s| s.output.name()).unwrap_or_default()));
+    if dev.screens.get(&crtc).is_some_and(|s| s.gamma != Some(want)) {
+        let drm = gpu_drm(&dev.gpu);
+        let len = drm.get_crtc(crtc).map(|c| c.gamma_length() as usize).unwrap_or(0);
+        let r = if len < 2 {
+            Err("the screen has no gamma table".to_string())
+        } else {
+            let [r, g, bl] = want.map(|f| crate::ctm::ramp(f, len));
+            drm.set_gamma(crtc, &r, &g, &bl).map_err(|e| e.to_string())
+        };
+        if let Some(s) = dev.screens.get_mut(&crtc) {
+            if let Err(e) = r {
+                // said once: tried again only when the tint changes or the screen comes back from a terminal
+                eprintln!("yggdrasil-compositor: {}: no tint: {e}", s.output.name());
+            }
+            s.gamma = Some(want);
+        }
+    }
     let Some(screen) = dev.screens.get_mut(&crtc) else { return };
     screen.dirty = false;
     if dark(app, &screen.output, lid_closed && screen.internal) {

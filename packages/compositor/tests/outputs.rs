@@ -474,3 +474,51 @@ fn a_screen_turns_with_its_bar_and_windows_and_programs_are_told() {
     comp.must("reload");
     assert_eq!(comp.must("transform"), ["HEADLESS-1\t2"]);
 }
+
+#[test]
+fn night_light_sets_a_screens_colour_matrix_one_program_at_a_time() {
+    use common::ctm_proto::hyprland_ctm_control_manager_v1::HyprlandCtmControlManagerV1;
+    let _l = limit(60, "colour matrices");
+    let comp = Compositor::start(&["--outputs", "2", "--size", "1280x720"]);
+    let mut c = comp.connect();
+    let none = "1.000 0.000 0.000 0.000 1.000 0.000 0.000 0.000 1.000";
+    // (wl_fixed has steps of 1/256: these two are exact)
+    let warm = "1.000 0.000 0.000 0.000 0.750 0.000 0.000 0.000 0.500";
+    let matrices = |comp: &Compositor| comp.must("ctm");
+    assert_eq!(matrices(&comp), [format!("HEADLESS-1\t{none}"), format!("HEADLESS-2\t{none}")], "no tint at first");
+
+    // hyprsunset's way: a warm matrix for the first screen, then commit
+    let m: HyprlandCtmControlManagerV1 = c.globals.bind(&c.qh, 2..=2, 0usize).expect("hyprland-ctm-control-v1");
+    m.set_ctm_for_output(&c.wl_outputs[0], 1.0, 0.0, 0.0, 0.0, 0.75, 0.0, 0.0, 0.0, 0.5);
+    c.roundtrip();
+    assert_eq!(matrices(&comp)[0], format!("HEADLESS-1\t{none}"), "nothing before the commit");
+    m.commit();
+    c.roundtrip();
+    assert_eq!(matrices(&comp), [format!("HEADLESS-1\t{warm}"), format!("HEADLESS-2\t{none}")]);
+
+    // a second program is told it is blocked, and what it sets is ignored
+    let mut c2 = comp.connect();
+    let other: HyprlandCtmControlManagerV1 = c2.globals.bind(&c2.qh, 2..=2, 1usize).expect("a second manager");
+    c2.roundtrip();
+    assert_eq!(c2.state.ctm_blocked, [1]);
+    other.set_ctm_for_output(&c2.wl_outputs[1], 0.5, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.5);
+    other.commit();
+    c2.roundtrip();
+    assert_eq!(matrices(&comp)[1], format!("HEADLESS-2\t{none}"));
+
+    // a commit naming no screen takes the tint off every one; the program that counts going takes it off too
+    m.commit();
+    c.roundtrip();
+    assert_eq!(matrices(&comp)[0], format!("HEADLESS-1\t{none}"));
+    m.set_ctm_for_output(&c.wl_outputs[1], 1.0, 0.0, 0.0, 0.0, 0.75, 0.0, 0.0, 0.0, 0.5);
+    m.commit();
+    c.roundtrip();
+    assert_eq!(matrices(&comp)[1], format!("HEADLESS-2\t{warm}"));
+    m.destroy();
+    c.roundtrip();
+    assert_eq!(matrices(&comp), [format!("HEADLESS-1\t{none}"), format!("HEADLESS-2\t{none}")]);
+    // a matrix with a value below 0 is a protocol error for that program
+    let bad: HyprlandCtmControlManagerV1 = c2.globals.bind(&c2.qh, 2..=2, 2usize).expect("a manager again");
+    bad.set_ctm_for_output(&c2.wl_outputs[0], -1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);
+    assert!(c2.queue.roundtrip(&mut c2.state).is_err(), "refused");
+}
