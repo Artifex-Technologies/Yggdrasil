@@ -392,6 +392,8 @@ impl App {
         self.output_resized();
         self.keep_clear();
         self.output_list_changed();
+        // X11 programs follow the screens' scale (xwayland.rs)
+        self.follow_scale();
         Ok(())
     }
 

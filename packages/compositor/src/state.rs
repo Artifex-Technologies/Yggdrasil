@@ -278,6 +278,12 @@ pub struct App {
     pub x11_reader: Option<crate::x11asked::Reader>,
     pub xwayland_shell_state: smithay::wayland::xwayland_shell::XWaylandShellState,
     pub overlays: Vec<X11Surface>,
+    /// XWayland as a Wayland client: its client scale is the scale X11 programs draw at (xwayland.rs, follow_scale).
+    pub xwayland_client: Option<smithay::reexports::wayland_server::Client>,
+    /// Menus and tooltips whose geometry is still Smithay's rounded first one (xwayland.rs, unrounded), by X11 window id.
+    pub x11_rounded: Vec<u32>,
+    /// When xwayland.conf last changed, as `reload_config` last saw it.
+    pub xwayland_conf_time: Option<std::time::SystemTime>,
     pub loop_handle: LoopHandle<'static, App>,
     /// The shader that draws full screen X11 windows opaque, made the first time one is drawn (None if it failed to build).
     opaque_shader: Option<Option<smithay::backend::renderer::gles::GlesTexProgram>>,
@@ -601,6 +607,9 @@ impl App {
             x11_reader: None,
             xwayland_shell_state: smithay::wayland::xwayland_shell::XWaylandShellState::new::<Self>(dh),
             overlays: vec![],
+            xwayland_client: None,
+            x11_rounded: vec![],
+            xwayland_conf_time: None,
             loop_handle,
             opaque_shader: None,
             pointer_timeout: 0.0,
@@ -1716,6 +1725,12 @@ impl App {
             self.conf_times.2 = op_t;
             self.opaque_apps = crate::xwayland::parse_opaque(&std::fs::read_to_string(crate::xwayland::opaque_path()).unwrap_or_default());
         }
+        // X11 programs at the screens' resolution, or stretched (xwayland.conf)
+        let xw_t = mtime(crate::xwayland::xwayland_conf_path());
+        if xw_t != self.xwayland_conf_time {
+            self.xwayland_conf_time = xw_t;
+            self.follow_scale();
+        }
         // the system's keyboard layout (keymap.rs): changed with localectl or by the installer
         let kb_t = crate::keymap::files().map(mtime);
         if kb_t != self.kb_times {
@@ -2125,7 +2140,7 @@ impl App {
         }
         // X11 menus and tooltips, last shown in front, over everything but the switcher and the profile question
         for x in self.overlays.iter().rev() {
-            let loc = x.geometry().loc - origin;
+            let loc = self.overlay_geo(x).loc - origin;
             out.extend(
                 x.render_elements::<WaylandSurfaceRenderElement<R>>(renderer, loc.to_physical_precise_round(scale), scale, 1.0)
                     .into_iter()

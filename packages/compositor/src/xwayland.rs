@@ -25,7 +25,10 @@ use smithay::wayland::selection::primary_selection::{
 use smithay::wayland::selection::SelectionTarget;
 use smithay::wayland::xwayland_shell::{XWaylandShellHandler, XWaylandShellState};
 use smithay::xwayland::xwm::{Reorder, ResizeEdge as X11Edge, WmWindowProperty, XwmId};
-use smithay::xwayland::{X11Surface, X11Wm, XWayland, XWaylandEvent, XwmHandler};
+use smithay::xwayland::{X11Surface, X11Wm, XWayland, XWaylandClientData, XWaylandEvent, XwmHandler};
+use x11rb::connection::Connection as _;
+use x11rb::protocol::xproto::{AtomEnum, ConnectionExt as _, PropMode};
+use x11rb::wrapper::ConnectionExt as _;
 
 use crate::grabs::{MoveGrab, ResizeGrab};
 use crate::state::{self, App, KbFocus};
@@ -37,6 +40,9 @@ pub fn start(app: &mut App, handle: LoopHandle<'static, App>, then: Box<dyn FnOn
     let out = || if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() { Stdio::inherit() } else { Stdio::null() };
     let (xwayland, client) =
         XWayland::spawn(&app.display_handle, None, std::iter::empty::<(String, String)>(), true, out(), out(), |_| ())?;
+    // X11 programs at the screens' own resolution from the start (follow_scale), before XWayland reads the screens
+    app.xwayland_client = Some(client.clone());
+    app.follow_scale();
     let mut then = Some(then);
     let wm_handle = handle.clone();
     handle
@@ -53,6 +59,7 @@ pub fn start(app: &mut App, handle: LoopHandle<'static, App>, then: Box<dyn FnOn
                         let _ = wm.get_randr_primary_output();
                         app.xwm = Some(wm);
                         app.x11_display = Some(display_number);
+                        set_xft_dpi(display_number, app.x11_client_scale());
                         app.x11_reader = crate::x11asked::Reader::start(display_number, &wm_handle);
                         println!("DISPLAY=:{display_number}");
                     }
@@ -109,6 +116,71 @@ pub fn parse_opaque(text: &str) -> Vec<String> {
     text.lines().map(|l| l.split('#').next().unwrap_or("").trim().to_ascii_lowercase()).filter(|l| !l.is_empty()).collect()
 }
 
+/// `~/.config/yggdrasil/xwayland.conf`: `stretch = true` draws X11 programs as before 2026-11-22, stretched to the desktop's
+/// scale like a Wayland program that ignores it (the right size, but soft, and a game offered only the scaled-down resolution).
+pub fn xwayland_conf_path() -> std::path::PathBuf {
+    yggdrasil_conf::dirs::config().join("xwayland.conf")
+}
+
+pub fn parse_stretch(text: &str) -> bool {
+    text.lines().filter_map(|l| l.split('#').next().unwrap_or("").split_once('=')).any(|(k, v)| k.trim() == "stretch" && v.trim() == "true")
+}
+
+/// The scale X11 programs draw at (XWayland's client scale): the largest of the screens' that are on, so XWayland is told each
+/// screen's size in pixels and a game offers, and draws, the screen's own resolution (1920x1200 on a 1920x1200 screen at 125%,
+/// not 1536x960 stretched). As KDE's "apply scaling themselves" and Hyprland's force_zero_scaling. Never below 1 (Smithay 0.7
+/// divides by its whole part), and 1 with `stretch`.
+pub fn x11_scale(scales: impl Iterator<Item = f64>, stretch: bool) -> f64 {
+    if stretch {
+        return 1.0;
+    }
+    scales.fold(1.0, f64::max)
+}
+
+/// A new X11 window's geometry as it should be: Smithay 0.7 converts the first one (CreateNotify) with the scale rounded down to
+/// a whole number (1.25 taken as 1), so a menu shown where it was made, without moving, would be drawn a quarter too far out.
+pub fn unrounded(g: Rectangle<i32, Logical>, scale: f64) -> Rectangle<i32, Logical> {
+    let k = (scale as i32).max(1) as f64 / scale;
+    if (k - 1.0).abs() < 1e-9 {
+        return g;
+    }
+    let f = |v: i32| (v as f64 * k).round() as i32;
+    Rectangle::new((f(g.loc.x), f(g.loc.y)).into(), (f(g.size.w), f(g.size.h)).into())
+}
+
+/// X resources with Xft.dpi set to `dpi`, any earlier Xft.dpi line replaced.
+pub fn with_xft_dpi(old: &str, dpi: u32) -> String {
+    let mut s: String = old.lines().filter(|l| !l.trim_start().starts_with("Xft.dpi:")).map(|l| format!("{l}\n")).collect();
+    s.push_str(&format!("Xft.dpi:\t{dpi}\n"));
+    s
+}
+
+/// Tell X11 programs the DPI for the scale (Xft.dpi, 96 for each 1.0), as KDE does for programs that scale themselves: the fonts
+/// of GTK and Qt programs, and Chromium-based ones (Steam's window) whole, grow back to the desktop's size. On a thread of its
+/// own: the X server is a client of this compositor and may be waiting on it.
+fn set_xft_dpi(display: u32, scale: f64) {
+    let dpi = (96.0 * scale).round() as u32;
+    let _ = std::thread::Builder::new().name("xft-dpi".into()).spawn(move || {
+        let Ok((conn, screen)) = x11rb::rust_connection::RustConnection::connect(Some(&format!(":{display}"))) else { return };
+        let root = conn.setup().roots[screen].root;
+        let old = conn
+            .get_property(false, root, AtomEnum::RESOURCE_MANAGER, AtomEnum::STRING, 0, 1 << 20)
+            .ok()
+            .and_then(|c| c.reply().ok())
+            .map(|r| String::from_utf8_lossy(&r.value).into_owned())
+            .unwrap_or_default();
+        let _ = conn.change_property8(
+            PropMode::REPLACE,
+            root,
+            AtomEnum::RESOURCE_MANAGER,
+            AtomEnum::STRING,
+            with_xft_dpi(&old, dpi).as_bytes(),
+        );
+        // an answered request: everything before it has reached the server
+        let _ = conn.get_input_focus().map(|c| c.reply());
+    });
+}
+
 /// Is this window's program in opaque.conf?
 pub fn listed(x: &X11Surface, apps: &[String]) -> bool {
     let (c, i) = (x.class().to_ascii_lowercase(), x.instance().to_ascii_lowercase());
@@ -144,16 +216,59 @@ impl App {
         }
     }
 
+    /// The scale X11 programs draw at now (XWayland's client scale; 1 before XWayland runs).
+    pub fn x11_client_scale(&self) -> f64 {
+        self.xwayland_client
+            .as_ref()
+            .and_then(|c| c.get_data::<XWaylandClientData>())
+            .map(|d| d.compositor_state.client_scale())
+            .unwrap_or(1.0)
+    }
+
+    /// Set the scale X11 programs draw at to the screens' (`x11_scale`): at XWayland's start, when the screens change and when
+    /// xwayland.conf does. XWayland is told the screens again (their size in its pixels), every X11 window its place and size
+    /// in those pixels, and the programs their DPI.
+    pub fn follow_scale(&mut self) {
+        let Some(client) = self.xwayland_client.clone() else { return };
+        let Some(data) = client.get_data::<XWaylandClientData>() else { return };
+        let stretch = parse_stretch(&std::fs::read_to_string(xwayland_conf_path()).unwrap_or_default());
+        let want = x11_scale(self.heads.list.iter().filter(|h| h.enabled).map(|h| h.output.current_scale().fractional_scale()), stretch);
+        if data.compositor_state.client_scale() == want {
+            return;
+        }
+        data.compositor_state.set_client_scale(want);
+        for h in self.heads.list.iter().filter(|h| h.enabled) {
+            h.output.change_current_state(None, None, None, None);
+        }
+        for w in self.space.elements() {
+            if let Some(x) = w.x11_surface() {
+                let _ = x.configure(None);
+            }
+        }
+        if let Some(d) = self.x11_display {
+            set_xft_dpi(d, want);
+        }
+    }
+
+    /// Where an X11 menu or tooltip is: its geometry, set right while Smithay still has its rounded first one (`unrounded`).
+    pub fn overlay_geo(&self, x: &X11Surface) -> Rectangle<i32, Logical> {
+        if self.x11_rounded.contains(&x.window_id()) {
+            unrounded(x.geometry(), self.x11_client_scale())
+        } else {
+            x.geometry()
+        }
+    }
+
     /// Is the point over an X11 menu or tooltip? A click there is the menu's, not the window's behind it.
     pub fn over_overlay(&self, pos: Point<f64, Logical>) -> bool {
-        self.overlays.iter().any(|x| x.geometry().to_f64().contains(pos))
+        self.overlays.iter().any(|x| self.overlay_geo(x).to_f64().contains(pos))
     }
 
     /// The surface of an X11 menu or tooltip under the point, and where that surface's origin is on screen.
     pub fn overlay_under(&self, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
         for x in self.overlays.iter().rev() {
             let Some(s) = x.wl_surface() else { continue };
-            let loc = x.geometry().loc;
+            let loc = self.overlay_geo(x).loc;
             if let Some((s, p)) =
                 smithay::desktop::utils::under_from_surface_tree(&s, pos - loc.to_f64(), (0, 0), smithay::desktop::WindowSurfaceType::ALL)
             {
@@ -194,8 +309,20 @@ impl XwmHandler for App {
         self.xwm.as_mut().expect("an X11 window manager event without the window manager")
     }
 
-    fn new_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
-    fn new_override_redirect_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
+    /// A new X11 window: its first geometry set right (`unrounded`), which tells the X server the same place in its pixels.
+    fn new_window(&mut self, _xwm: XwmId, window: X11Surface) {
+        let s = self.x11_client_scale();
+        if s.fract() != 0.0 {
+            let _ = window.configure(unrounded(window.geometry(), s));
+        }
+    }
+
+    /// A new menu or tooltip: it cannot be configured, so its first geometry is set right where it is used, until it moves.
+    fn new_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
+        if self.x11_client_scale().fract() != 0.0 {
+            self.x11_rounded.push(window.window_id());
+        }
+    }
 
     /// A program shows a window: it is placed like a Wayland window (one after another, a little offset; tiled on a tiling
     /// workspace once its surface exists).
@@ -264,6 +391,7 @@ impl XwmHandler for App {
         self.wake();
         // normally it was unmapped first and is already forgotten
         self.overlays.retain(|x| !same(x, &window));
+        self.x11_rounded.retain(|id| *id != window.window_id());
         if self.x11_window(&window).is_some() {
             self.window_gone(None, |w| w.x11_surface().is_some_and(|x| same(x, &window)));
         }
@@ -311,9 +439,10 @@ impl XwmHandler for App {
     }
 
     /// Something moved or changed size in the X server. Managed windows are placed by the compositor and already known; menus
-    /// and tooltips are drawn from their own geometry, so only a new frame is needed.
-    fn configure_notify(&mut self, _xwm: XwmId, _window: X11Surface, _geometry: Rectangle<i32, Logical>, _above: Option<u32>) {
+    /// and tooltips are drawn from their own geometry (Smithay's, exact from now on), so only a new frame is needed.
+    fn configure_notify(&mut self, _xwm: XwmId, window: X11Surface, _geometry: Rectangle<i32, Logical>, _above: Option<u32>) {
         self.wake();
+        self.x11_rounded.retain(|id| *id != window.window_id());
     }
 
     fn property_notify(&mut self, _xwm: XwmId, window: X11Surface, property: WmWindowProperty) {
@@ -548,6 +677,34 @@ impl RenderElement<GlesRenderer> for OpaqueElement {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn x11_programs_draw_at_the_screens_resolution() {
+        use super::{parse_stretch, unrounded, with_xft_dpi, x11_scale};
+        use smithay::utils::Rectangle;
+        // the largest scale of the screens that are on; never below 1; 1 when xwayland.conf says stretch
+        assert_eq!(x11_scale([1.25].into_iter(), false), 1.25);
+        assert_eq!(x11_scale([1.0, 2.0].into_iter(), false), 2.0);
+        assert_eq!(x11_scale([0.75].into_iter(), false), 1.0);
+        assert_eq!(x11_scale(std::iter::empty(), false), 1.0);
+        assert_eq!(x11_scale([1.25].into_iter(), true), 1.0);
+        assert!(parse_stretch("# old way\nstretch = true\n"));
+        assert!(!parse_stretch("stretch = false\n# stretch = true\n"));
+        assert!(!parse_stretch(""));
+        // Smithay took a new window's 1000,500 1920x1200 (X11 pixels) at 1.25 as if the scale were 1
+        let g = Rectangle::new((1000, 500).into(), (1920, 1200).into());
+        assert_eq!(unrounded(g, 1.25), Rectangle::new((800, 400).into(), (1536, 960).into()));
+        assert_eq!(unrounded(g, 2.0), g, "a whole scale was converted right");
+        assert_eq!(unrounded(g, 1.0), g);
+        // at 2.5 it divided by 2: the rest of the way
+        assert_eq!(
+            unrounded(Rectangle::new((400, 200).into(), (800, 600).into()), 2.5),
+            Rectangle::new((320, 160).into(), (640, 480).into())
+        );
+        // the programs' DPI, the other resources kept
+        assert_eq!(with_xft_dpi("Xcursor.size:\t24\nXft.dpi:\t96\n", 120), "Xcursor.size:\t24\nXft.dpi:\t120\n");
+        assert_eq!(with_xft_dpi("", 96), "Xft.dpi:\t96\n");
+    }
+
     use super::*;
 
     #[test]
