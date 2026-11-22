@@ -563,7 +563,8 @@ impl App {
         let os = os_name();
         let mut app = App {
             page: Page::Welcome,
-            font_found: yggdrasil_ui::fonts::find_choices(),
+            // tests choose their fonts; the build machine's own fonts must not add a Font page to them
+            font_found: if cfg!(test) { Vec::new() } else { yggdrasil_ui::fonts::find_choices() },
             font: yggdrasil_conf::fonts::SANS[0].id,
             font_mono: yggdrasil_conf::fonts::MONO[0].id,
             command,
