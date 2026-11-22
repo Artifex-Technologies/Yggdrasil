@@ -178,7 +178,7 @@ fn folding_into_a_tablet_turns_the_screen_with_the_sensor_and_shows_the_keyboard
     let conf_path = dir.join("config/tablet.conf");
     let state = State { has_switch: true, tablet: false, orientation: None, conf: Conf::default(), plugged_keyboard: false, rotation: 0 };
     let osk = Osk::new(vec!["/usr/bin/sleep".into(), "60".into()]);
-    let mut w = Watcher::new(state, Some(h), Some(accel), osk, root.clone(), conf_path.clone());
+    let mut w = Watcher::new(state, Some(h), None, Some(accel), osk, root.clone(), conf_path.clone());
     assert_eq!(w.applied, Some(0), "the screen's turn, as Hyprland reports it");
 
     w.step();

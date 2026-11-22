@@ -113,6 +113,27 @@ impl Own {
         id(window).is_some_and(|w| self.act(&format!("activate {w}")))
     }
 
+    /// Each screen's turn, by name (wl_output's numbers: 0 upright, 1 to 3 turned 90° counter-clockwise each step, 4 to 7
+    /// mirrored): `transform`.
+    pub fn transforms(&self) -> Vec<(String, u32)> {
+        self.ask("transform")
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|l| {
+                let (name, t) = l.split_once('\t')?;
+                Some((name.to_string(), t.parse().ok().filter(|t| *t < 8)?))
+            })
+            .collect()
+    }
+
+    /// Turns a screen (`transform NAME N`): its picture, the layout, and where a touch or the pen lands on it.
+    pub fn set_transform(&self, name: &str, transform: u32) -> Result<(), String> {
+        if !crate::hyprland::plain_word(name) || transform > 7 {
+            return Err(format!("{name} {transform}: a screen's name and a turn from 0 to 7"));
+        }
+        self.ask(&format!("transform {name} {transform}")).map(|_| ())
+    }
+
     pub fn exit(&self) -> bool {
         self.act("exit")
     }

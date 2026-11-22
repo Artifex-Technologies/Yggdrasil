@@ -1,5 +1,5 @@
-//! The screens (outputs) and what they are set to: mode, scale, place and on or off. Three ways set them, all through
-//! `App::configure_outputs`:
+//! The screens (outputs) and what they are set to: mode, scale, place, turn (transform) and on or off. Four ways set them, all
+//! through `App::configure_outputs`:
 //! - **Settings > Displays' file**, `~/.config/yggdrasil/monitors.lua`, the same file the Hyprland session loads (Settings writes
 //!   it and asks the compositor to reload): `hl.monitor({ output = "DP-1", mode = "2560x1440@143.97", position = "0x0",
 //!   scale = 1.25 })` and `hl.monitor({ output = "HDMI-A-1", disabled = true })` lines. Read at start, when it changes (the
@@ -8,6 +8,11 @@
 //! - **wlr-output-management** (outputmgmt.rs), the standard protocol (wlr-randr, kanshi): changes for as long as the session runs,
 //!   as on Hyprland.
 //! - the headless backend's own commands: `resize` and `scale`, and screens added and removed (`add-output`, `remove-output`).
+//! - the control socket's `transform NAME N` on every backend (the tablet watcher turns a 2-in-1's screen with it).
+//!
+//! A turn is wl_output's numbering, as Hyprland's and Settings' `transform`: 0 upright, 1 to 3 the picture turned 90° counter-
+//! clockwise for each step, 4 to 7 the same mirrored. A screen keeps its turn until something sets another (monitors.lua's
+//! `transform`, when it says one; so reading Settings' file again does not undo the tablet watcher's turn).
 //!
 //! A screen that goes (removed or switched off) takes its panels with it (they are told `closed`) and its lock surface; the windows
 //! on it move to the first screen, keeping their place on it as far as it fits, and windows on a screen that moves go with it.
@@ -24,7 +29,7 @@ use std::time::Duration;
 use smithay::output::{Mode, Output, Scale};
 use smithay::reexports::calloop::RegistrationToken;
 use smithay::reexports::wayland_server::backend::GlobalId;
-use smithay::utils::{Logical, Point, Rectangle};
+use smithay::utils::{Logical, Point, Rectangle, Transform};
 
 use crate::state::{self, App};
 
@@ -47,6 +52,8 @@ pub struct Want {
     pub mode: Mode,
     pub scale: f64,
     pub at: Option<Point<i32, Logical>>,
+    /// None: the turn it has now
+    pub transform: Option<Transform>,
 }
 
 /// One `hl.monitor({ ... })` of monitors.lua. None: what the screen has by itself (its preferred mode, its default scale, the
@@ -58,7 +65,19 @@ pub struct Rule {
     pub mode: Option<Mode>,
     pub at: Option<Point<i32, Logical>>,
     pub scale: Option<f64>,
+    pub transform: Option<Transform>,
     pub disabled: bool,
+}
+
+/// A turn by wl_output's number (0 to 7).
+pub fn transform_from(n: u32) -> Option<Transform> {
+    use Transform::*;
+    [Normal, _90, _180, _270, Flipped, Flipped90, Flipped180, Flipped270].get(n as usize).copied()
+}
+
+/// A turn's wl_output number.
+pub fn transform_number(t: Transform) -> u32 {
+    (0..8).find(|&n| transform_from(n) == Some(t)).unwrap_or(0)
 }
 
 #[derive(Default)]
@@ -177,6 +196,7 @@ pub fn parse_rules(text: &str) -> Vec<Rule> {
                 "mode" => r.mode = parse_mode(&v),
                 "position" => r.at = parse_at(&v),
                 "scale" => r.scale = crate::headless::parse_scale(&v),
+                "transform" => r.transform = v.trim().parse().ok().and_then(transform_from),
                 "disabled" => r.disabled = v == "true",
                 _ => {}
             }
@@ -191,8 +211,14 @@ pub fn parse_rules(text: &str) -> Vec<Rule> {
 pub fn want_from_rules(rules: &[Rule], name: &str, preferred: Mode, default_scale: f64) -> Want {
     let rule = rules.iter().rev().find(|r| r.output == name).or_else(|| rules.iter().rev().find(|r| r.output.is_empty()));
     match rule {
-        None => Want { enabled: true, mode: preferred, scale: default_scale, at: None },
-        Some(r) => Want { enabled: !r.disabled, mode: r.mode.unwrap_or(preferred), scale: r.scale.unwrap_or(default_scale), at: r.at },
+        None => Want { enabled: true, mode: preferred, scale: default_scale, at: None, transform: None },
+        Some(r) => Want {
+            enabled: !r.disabled,
+            mode: r.mode.unwrap_or(preferred),
+            scale: r.scale.unwrap_or(default_scale),
+            at: r.at,
+            transform: r.transform,
+        },
     }
 }
 
@@ -208,6 +234,7 @@ impl Head {
             mode: self.output.current_mode().unwrap_or_else(|| self.preferred()),
             scale: self.output.current_scale().fractional_scale(),
             at: self.fixed_at,
+            transform: Some(self.output.current_transform()),
         }
     }
 }
@@ -243,7 +270,7 @@ impl App {
         let want = if self.heads.list.iter().any(|h| h.enabled) { want } else { Want { enabled: true, ..want } };
         if let Err(e) = self.configure_outputs(vec![(name.clone(), want.clone())], false) {
             eprintln!("yggdrasil-compositor: {name}: {e}; it keeps its own mode and scale");
-            let plain = Want { enabled: true, mode: preferred, scale: 1.0, at: None };
+            let plain = Want { enabled: true, mode: preferred, scale: 1.0, at: None, transform: None };
             let _ = self.configure_outputs(vec![(name, plain)], false);
         }
     }
@@ -332,6 +359,9 @@ impl App {
         for (h, w) in self.heads.list.iter_mut().zip(wants) {
             if h.output.current_mode() != Some(w.mode) || h.output.current_scale().fractional_scale() != w.scale {
                 h.output.change_current_state(Some(w.mode), None, Some(Scale::Fractional(w.scale)), None);
+            }
+            if let Some(t) = w.transform.filter(|t| *t != h.output.current_transform()) {
+                h.output.change_current_state(None, Some(t), None, None);
             }
             h.fixed_at = w.at;
             if w.enabled && !h.enabled {
@@ -439,6 +469,19 @@ impl App {
     pub fn head(&self, name: &str) -> Option<&Head> {
         self.heads.list.iter().find(|h| h.output.name() == name)
     }
+
+    /// Turns a screen (`transform NAME N`): its picture, the layout (a turned screen is as wide as it was high), its panels and
+    /// windows, and where a touch or the pen lands on it (touch.rs).
+    pub fn set_transform(&mut self, name: &str, t: Transform) -> Result<(), String> {
+        let mut w = self.head(name).ok_or_else(|| format!("no output {name}"))?.now();
+        w.transform = Some(t);
+        self.configure_outputs(vec![(name.to_string(), w)], false)
+    }
+
+    /// Each screen's name and turn (`transform`).
+    pub fn transforms(&self) -> Vec<String> {
+        self.heads.list.iter().map(|h| format!("{}\t{}", h.output.name(), transform_number(h.output.current_transform()))).collect()
+    }
 }
 
 #[cfg(test)]
@@ -465,6 +508,7 @@ mod tests {
                 mode: Some(mode(3440, 1440, 174_960)),
                 at: Some((0, 0).into()),
                 scale: Some(1.0),
+                transform: None,
                 disabled: false
             }
         );
@@ -479,6 +523,16 @@ mod tests {
         assert_eq!((r[0].output.as_str(), r[0].mode, r[0].at, r[0].scale), ("", None, None, Some(1.0)));
         assert_eq!(r[1].mode, Some(mode(800, 600, 60_000)));
         assert!(parse_rules("print('hl.monitor(')").is_empty());
+        // a turn (Settings' and Hyprland's `transform`, wl_output's numbers); anything else is no turn
+        let r = parse_rules(
+            "hl.monitor({ output = \"eDP-1\", mode = \"1920x1200@60\", position = \"0x0\", scale = 1.25, transform = 1 })\n\
+            hl.monitor({ output = \"DP-1\", transform = 7 })\nhl.monitor({ output = \"DP-2\", transform = 9 })\n",
+        );
+        assert_eq!(r.iter().map(|r| r.transform).collect::<Vec<_>>(), [Some(Transform::_90), Some(Transform::Flipped270), None]);
+        assert_eq!(
+            (0..9).map(|n| transform_from(n).map(transform_number)).collect::<Vec<_>>()[..8],
+            (0..8).map(Some).collect::<Vec<_>>()[..]
+        );
     }
 
     #[test]
@@ -499,8 +553,11 @@ mod tests {
         let rules =
             parse_rules("hl.monitor({ output = \"A\", scale = 2 })\nhl.monitor({ output = \"A\", scale = 1.5, position = \"100x0\" })\n");
         let pref = mode(1600, 900, 60_000);
-        assert_eq!(want_from_rules(&rules, "A", pref, 1.0), Want { enabled: true, mode: pref, scale: 1.5, at: Some((100, 0).into()) });
-        assert_eq!(want_from_rules(&rules, "B", pref, 1.25), Want { enabled: true, mode: pref, scale: 1.25, at: None });
+        assert_eq!(
+            want_from_rules(&rules, "A", pref, 1.0),
+            Want { enabled: true, mode: pref, scale: 1.5, at: Some((100, 0).into()), transform: None }
+        );
+        assert_eq!(want_from_rules(&rules, "B", pref, 1.25), Want { enabled: true, mode: pref, scale: 1.25, at: None, transform: None });
         let all = parse_rules("hl.monitor({ output = \"\", disabled = true })\nhl.monitor({ output = \"B\", scale = 2 })\n");
         assert!(!want_from_rules(&all, "A", pref, 1.0).enabled, "the rule for every screen");
         assert!(want_from_rules(&all, "B", pref, 1.0).enabled, "a rule of its own comes first");

@@ -499,6 +499,8 @@ pub struct HeadInfo {
     pub current: Option<ObjectId>,
     pub at: (i32, i32),
     pub scale: f64,
+    /// wl_output's number for its turn
+    pub transform: u32,
     pub finished: bool,
 }
 
@@ -1220,6 +1222,7 @@ impl Dispatch<ZwlrOutputManagerV1, ()> for State {
                 current: None,
                 at: (0, 0),
                 scale: 0.0,
+                transform: 0,
                 finished: false,
             }),
             zwlr_output_manager_v1::Event::Done { serial } => {
@@ -1248,6 +1251,7 @@ impl Dispatch<ZwlrOutputHeadV1, ()> for State {
             zwlr_output_head_v1::Event::CurrentMode { mode } => h.current = Some(mode.id()),
             zwlr_output_head_v1::Event::Position { x, y } => h.at = (x, y),
             zwlr_output_head_v1::Event::Scale { scale } => h.scale = scale,
+            zwlr_output_head_v1::Event::Transform { transform } => h.transform = transform.into_result().map(|t| t as u32).unwrap_or(99),
             zwlr_output_head_v1::Event::Finished => h.finished = true,
             _ => {}
         }

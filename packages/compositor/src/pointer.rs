@@ -271,7 +271,8 @@ impl App {
         let origin = output.current_location();
         let rel = self.pointer_location - origin.to_f64();
         let (x, y) = ((rel.x * scale).round() as i32 - pic.hot.0, (rel.y * scale).round() as i32 - pic.hot.1);
-        let size = output.current_mode()?.size;
+        // the output's pixels as its picture is laid out (a turned screen is as wide as it was high)
+        let size = output.current_transform().transform_size(output.current_mode()?.size);
         let on = x < size.w && y < size.h && x + pic.w as i32 > 0 && y + pic.h as i32 > 0;
         on.then_some((pic, (x, y)))
     }

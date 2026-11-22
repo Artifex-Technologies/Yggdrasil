@@ -12,8 +12,9 @@
 //! - The on-screen keyboard (wvkbd, an online component in Agora: "On-screen keyboard"): shown in tablet mode while no keyboard
 //!   is plugged in by USB or Bluetooth, closed otherwise. `keyboard = off` in tablet.conf never shows it.
 //!
-//! Yggdrasil's own compositor cannot turn a screen yet (its wlr-output-management refuses a transform), so there the watcher
-//! does the keyboard only.
+//! On Yggdrasil's own compositor the turn goes through its control socket (`transform NAME N`): the compositor turns the
+//! touchscreen and pen with the screen itself, and keeps the turn when Settings' file is read again, so nothing needs turning
+//! again. Its tablet-mode switch reaches the watcher as Hyprland's binds do (`tablet mode on|off`, run by the compositor).
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -23,6 +24,7 @@ use std::sync::mpsc::Sender;
 use std::time::Duration;
 
 use yggdrasil_wm::hyprland::{plain_word, Hyprland};
+use yggdrasil_wm::own::Own;
 use yggdrasil_wm::Screen;
 
 /// The on-screen keyboard: wvkbd's international layout (from the AUR, through Agora's "On-screen keyboard").
@@ -231,6 +233,19 @@ pub fn current(h: &Hyprland) -> Option<u32> {
     panel(&h.screens_all()).map(|s| s.transform)
 }
 
+/// Turns the built-in screen in Yggdrasil's own compositor (its touchscreen and pen turn with it there).
+pub fn rotate_own(o: &Own, transform: u32) -> Result<(), String> {
+    let screens = o.screens_all();
+    let s = panel(&screens).ok_or("no built-in screen")?;
+    o.set_transform(&s.name, transform)
+}
+
+/// The built-in screen's turn in Yggdrasil's own compositor now.
+pub fn current_own(o: &Own) -> Option<u32> {
+    let name = panel(&o.screens_all())?.name.clone();
+    o.transforms().into_iter().find(|(n, _)| *n == name).map(|(_, t)| t)
+}
+
 /// What the watcher hears.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
@@ -427,25 +442,35 @@ impl Drop for Osk {
 pub struct Watcher {
     pub state: State,
     pub hypr: Option<Hyprland>,
+    /// Yggdrasil's own compositor, when it is the one running
+    pub own: Option<Own>,
     pub accel: Option<Accel>,
     pub osk: Osk,
     /// /sys's root (the keyboards are looked for there again after each /dev/input change).
     pub root: PathBuf,
     pub conf_path: PathBuf,
-    /// The turn Hyprland has (None: unknown, turn it again).
+    /// The turn the compositor has (None: unknown, turn it again).
     pub applied: Option<u32>,
     /// What went wrong last, said once.
     last_error: Option<String>,
 }
 
 impl Watcher {
-    pub fn new(state: State, hypr: Option<Hyprland>, accel: Option<Accel>, osk: Osk, root: PathBuf, conf_path: PathBuf) -> Watcher {
-        let applied = hypr.as_ref().and_then(current);
+    pub fn new(
+        state: State,
+        hypr: Option<Hyprland>,
+        own: Option<Own>,
+        accel: Option<Accel>,
+        osk: Osk,
+        root: PathBuf,
+        conf_path: PathBuf,
+    ) -> Watcher {
+        let applied = hypr.as_ref().and_then(current).or_else(|| own.as_ref().and_then(current_own));
         let mut state = state;
         if let Some(a) = applied {
             state.rotation = a;
         }
-        Watcher { state, hypr, accel, osk, root, conf_path, applied, last_error: None }
+        Watcher { state, hypr, own, accel, osk, root, conf_path, applied, last_error: None }
     }
 
     fn note(&mut self, r: Result<(), String>) {
@@ -486,8 +511,12 @@ impl Watcher {
         let want = self.state.wanted();
         self.state.rotation = want;
         if self.applied != Some(want) {
-            if let Some(h) = &self.hypr {
-                let r = rotate(h, want);
+            let r = match (&self.hypr, &self.own) {
+                (Some(h), _) => Some(rotate(h, want)),
+                (None, Some(o)) => Some(rotate_own(o, want)),
+                (None, None) => None,
+            };
+            if let Some(r) = r {
                 if r.is_ok() {
                     self.applied = Some(want);
                 }
@@ -530,6 +559,71 @@ mod tests {
 
     fn yoga() -> State {
         State { has_switch: true, tablet: false, orientation: None, conf: Conf::default(), plugged_keyboard: false, rotation: 0 }
+    }
+
+    /// A stand-in for the own compositor's control socket: the laptop's screen (eDP-1, upright at first) and its turn; every
+    /// command asked is kept.
+    fn fake_own(dir: &Path) -> (Own, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+        use std::sync::{Arc, Mutex};
+        let ctl = dir.join("yggdrasil-compositor-test.ctl");
+        let listener = UnixListener::bind(&ctl).unwrap();
+        let asked = Arc::new(Mutex::new(vec![]));
+        let seen = asked.clone();
+        std::thread::spawn(move || {
+            let mut turn = 0u32;
+            for mut s in listener.incoming().map_while(Result::ok) {
+                let mut line = String::new();
+                if BufReader::new(&s).read_line(&mut line).is_err() {
+                    continue;
+                }
+                let line = line.trim().to_string();
+                let answer = match line.split(' ').collect::<Vec<_>>().as_slice() {
+                    ["screens", "all"] => {
+                        "eDP-1\t0,0\t1920x1200\t1.25\t0,28,0,76\tfocused\t60.00\t1920x1200@60.00Hz\ton\tAUO\tpanel\nok\n".to_string()
+                    }
+                    ["transform"] => format!("eDP-1\t{turn}\nok\n"),
+                    ["transform", "eDP-1", n] => match n.parse::<u32>() {
+                        Ok(n) if n < 8 => {
+                            turn = n;
+                            "ok\n".to_string()
+                        }
+                        _ => "error: not a turn\n".to_string(),
+                    },
+                    _ => "error: unknown\n".to_string(),
+                };
+                seen.lock().unwrap().push(line);
+                let _ = s.write_all(answer.as_bytes());
+            }
+        });
+        (Own { ctl }, asked)
+    }
+
+    #[test]
+    fn on_the_own_compositor_the_screen_is_turned_through_its_control_socket() {
+        let dir = std::env::temp_dir().join(format!("yggdrasil-tablet-own-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (own, asked) = fake_own(&dir);
+        let turns = |asked: &std::sync::Mutex<Vec<String>>| -> Vec<String> {
+            asked.lock().unwrap().iter().filter(|l| l.starts_with("transform ")).cloned().collect()
+        };
+        // folded into a tablet, held with its left edge up
+        let mut state = yoga();
+        state.tablet = true;
+        state.orientation = Some(Orientation::LeftUp);
+        let mut w = Watcher::new(state, None, Some(own), None, Osk::new(vec!["true".into()]), dir.clone(), dir.join("tablet.conf"));
+        assert_eq!(w.applied, Some(0), "the turn the compositor has at the start");
+        w.step();
+        assert_eq!(turns(&asked), ["transform eDP-1 1"]);
+        assert_eq!(w.applied, Some(1));
+        // nothing changed: nothing asked again
+        w.step();
+        assert_eq!(turns(&asked).len(), 1);
+        // opened as a laptop again: upright
+        w.handle(Event::Mode(false));
+        w.step();
+        assert_eq!(turns(&asked), ["transform eDP-1 1", "transform eDP-1 0"]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

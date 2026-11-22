@@ -403,6 +403,7 @@ pub fn run(run: Vec<Vec<String>>) -> Result<(), Box<dyn std::error::Error>> {
                     Some(Switch::TabletMode) => {
                         u.borrow_mut().switches.tablet_mode = Some(on);
                         eprintln!("yggdrasil-compositor: tablet mode {}", if on { "on" } else { "off" });
+                        app.tablet_mode(on);
                     }
                     _ => {}
                 }
@@ -787,7 +788,8 @@ fn scan(
         let start = had.and_then(|m| modes.iter().find(|x| Mode::from(**x) == m).copied()).unwrap_or(preferred);
         let mode = Mode::from(start);
         if output.current_mode() != Some(mode) {
-            output.change_current_state(Some(mode), Some(Transform::Normal), None, None);
+            // the mode only: a screen keeps its turn (outputs.rs)
+            output.change_current_state(Some(mode), None, None, None);
         }
         let planes = drm.planes(&crtc).ok();
         let made = match &mut dev.gpu {

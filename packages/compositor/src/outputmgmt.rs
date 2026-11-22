@@ -3,8 +3,8 @@
 //! ship it, so it is written here. What a program applies goes through `App::configure_outputs` (outputs.rs) like Settings'
 //! file, and lasts while the session runs (as on Hyprland: Settings' file is what is kept).
 //!
-//! Headless, any mode is accepted (a custom mode makes the picture that size); turning (transform) and variable refresh are not
-//! offered (a configuration asking for them fails).
+//! Headless, any mode is accepted (a custom mode makes the picture that size). A screen can be turned (transform, wl_output's
+//! numbering); variable refresh is not offered (a configuration asking for it fails).
 
 use std::sync::{Arc, Mutex};
 
@@ -42,6 +42,8 @@ pub struct HeadState {
     pub current: Option<Mode>,
     pub at: Point<i32, Logical>,
     pub scale: f64,
+    /// wl_output's number for its turn
+    pub transform: u32,
 }
 
 impl HeadState {
@@ -59,6 +61,7 @@ impl HeadState {
             current: o.current_mode(),
             at: o.current_location(),
             scale: o.current_scale().fractional_scale(),
+            transform: crate::outputs::transform_number(o.current_transform()),
         }
     }
 }
@@ -89,7 +92,8 @@ pub struct HeadSet {
     mode: Option<Mode>,
     scale: Option<f64>,
     at: Option<Point<i32, Logical>>,
-    /// turned, or variable refresh on: not offered here
+    transform: Option<u32>,
+    /// variable refresh on: not offered here
     unsupported: bool,
 }
 
@@ -123,7 +127,7 @@ fn tell_current(b: &BoundHead, s: &HeadState) {
         b.head.current_mode(m);
     }
     b.head.position(s.at.x, s.at.y);
-    b.head.transform(Transform::Normal);
+    b.head.transform(Transform::try_from(s.transform).unwrap_or(Transform::Normal));
     b.head.scale(s.scale);
 }
 
@@ -356,6 +360,7 @@ impl Dispatch<ZwlrOutputConfigurationV1, Mutex<Config>> for App {
                                 mode: s.mode.unwrap_or(now.mode),
                                 scale: s.scale.unwrap_or(now.scale),
                                 at: s.at.or(now.at),
+                                transform: s.transform.and_then(crate::outputs::transform_from).or(now.transform),
                             }
                         }
                     };
@@ -413,8 +418,12 @@ impl Dispatch<ZwlrOutputConfigurationHeadV1, (String, Arc<Mutex<HeadSet>>)> for 
                 s.at = Some((x, y).into());
             }
             Request::SetTransform { transform } => match transform.into_result() {
-                Ok(Transform::Normal) => {}
-                Ok(_) => s.unsupported = true,
+                Ok(t) => {
+                    if s.transform.is_some() {
+                        res.post_error(Error::AlreadySet, "the transform is already set");
+                    }
+                    s.transform = Some(t as u32);
+                }
                 Err(_) => res.post_error(Error::InvalidTransform, "not a transform"),
             },
             Request::SetScale { scale } => {

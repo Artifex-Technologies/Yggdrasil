@@ -1449,6 +1449,16 @@ impl App {
         });
     }
 
+    /// The tablet-mode switch changed (a 2-in-1 folded into a tablet, or opened): the tablet watcher is told, as the Hyprland
+    /// session's switch binds tell it (`/usr/lib/yggdrasil/tablet mode on|off`); it turns the built-in screen with the
+    /// accelerometer (`transform`) and shows the on-screen keyboard while no keyboard is plugged in.
+    pub fn tablet_mode(&self, on: bool) {
+        const TABLET: &str = "/usr/lib/yggdrasil/tablet";
+        if std::path::Path::new(TABLET).exists() {
+            self.spawn(&format!("{TABLET} mode {}", if on { "on" } else { "off" }));
+        }
+    }
+
     fn spawn(&self, cmd: &str) {
         // /bin/sh by its path: the commands are looked up on the compositor's PATH by the shell (the tests give one of stand-ins)
         let mut c = std::process::Command::new("/bin/sh");

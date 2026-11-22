@@ -419,3 +419,58 @@ fn a_screen_whose_link_bounces_keeps_its_windows_and_panels() {
     c.until("the bar closed", |s| s.layer_closed);
     assert!(comp.window("test.on2").unwrap().rect().0 < 1280);
 }
+
+/// A window's number in `clients`.
+fn number_of(comp: &Compositor, app_id: &str) -> String {
+    let lines = comp.must("clients");
+    let line = lines.iter().find(|l| l.split('\t').nth(1) == Some(app_id)).unwrap_or_else(|| panic!("{app_id} in {lines:?}"));
+    line.split('\t').next().unwrap().to_string()
+}
+
+#[test]
+fn a_screen_turns_with_its_bar_and_windows_and_programs_are_told() {
+    let _l = limit(60, "a screen turned");
+    let comp = Compositor::start(&["--size", "1600x900"]);
+    let mut c = comp.connect();
+    let mgr: ZwlrOutputManagerV1 = c.globals.bind(&c.qh, 4..=4, ()).expect("wlr-output-management");
+    c.until("the heads", |s| s.mgmt.dones >= 1);
+    assert_eq!(comp.must("transform"), ["HEADLESS-1\t0"], "upright at first");
+    let bar = c.layer_with(0, Layer::Top, "test-bar", Anchor::Top | Anchor::Left | Anchor::Right, (0, 32), 32, KeyboardInteractivity::None);
+    c.draw_layer(&bar, RED);
+    let w = c.window("test.w", "W");
+    c.draw(&w, (400, 300), BLUE);
+    comp.must(&format!("maximize {} on", number_of(&comp, "test.w")));
+    let wide = settle(&comp, &mut c, &w, "test.w", BLUE);
+    assert!(wide.has("maximized") && wide.size.0 > wide.size.1, "{wide:?}");
+
+    // turned a quarter (as the tablet watcher does when the laptop is held with its left edge up): the screen is as wide as it
+    // was high, the bar is told the new width, the maximized window refits upright, programs hear the turn
+    comp.must("transform HEADLESS-1 1");
+    assert_eq!(comp.must("transform"), ["HEADLESS-1\t1"]);
+    assert_eq!(comp.must("outputs"), ["HEADLESS-1 1600x900 scale=1 at=0,0 logical=900x1600"]);
+    c.until("the bar's new width", |s| s.layer_configures[&bar.index].last().is_some_and(|(w, _)| *w == 900));
+    c.until("the window told the new size", |s| s.wins[w.index].size.0 <= 900);
+    let upright = settle(&comp, &mut c, &w, "test.w", BLUE);
+    assert!(upright.has("maximized") && upright.size.0 <= 900 && upright.size.1 > upright.size.0, "{upright:?}");
+    c.until("the turn told", |s| s.mgmt.head("HEADLESS-1").transform == 1);
+    let pic = comp.screenshot("HEADLESS-1");
+    assert!(pic.count((0, 0, 1600, 900), (0, 0, 255)) > 1600 * 900 / 2, "the window still fills the turned screen");
+
+    // a program turns it back (wlr-output-management's set_transform); a turn that is not one is refused
+    let serial = c.state.mgmt.serial.unwrap();
+    let cfg = mgr.create_configuration(serial, &c.qh, 0);
+    let ch = cfg.enable_head(&c.state.mgmt.head("HEADLESS-1").head.clone(), &c.qh, ());
+    ch.set_transform(wayland_client::protocol::wl_output::Transform::Normal);
+    cfg.apply();
+    c.until("the answer", |s| s.mgmt.answers.contains_key(&0));
+    assert_eq!(c.state.mgmt.answers[&0], "succeeded");
+    assert_eq!(comp.must("outputs"), ["HEADLESS-1 1600x900 scale=1 at=0,0 logical=1600x900"]);
+    c.until("upright told", |s| s.mgmt.head("HEADLESS-1").transform == 0);
+    c.until("the bar wide again", |s| s.layer_configures[&bar.index].last().is_some_and(|(w, _)| *w == 1600));
+    assert!(comp.ctl("transform HEADLESS-1 9").is_err());
+    assert!(comp.ctl("transform NOPE 1").is_err());
+    // Settings' file names no turn: reading it again leaves the turn as it is
+    comp.must("transform HEADLESS-1 2");
+    comp.must("reload");
+    assert_eq!(comp.must("transform"), ["HEADLESS-1\t2"]);
+}

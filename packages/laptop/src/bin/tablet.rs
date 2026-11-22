@@ -35,16 +35,13 @@ fn watch() -> Result<(), String> {
     let run = runtime()?;
     let (tx, rx) = mpsc::channel();
     tablet::listen(&tablet::socket_path(&run), tx.clone()).map_err(|e| e.to_string())?;
-    let hypr = match yggdrasil_wm::Desk::detect() {
+    let (hypr, own) = match yggdrasil_wm::Desk::detect() {
         Some(yggdrasil_wm::Desk::Hyprland(h)) => {
             tablet::watch_hyprland(&h, tx.clone());
-            Some(h)
+            (Some(h), None)
         }
-        Some(yggdrasil_wm::Desk::Own(_)) => {
-            eprintln!("tablet: Yggdrasil's own compositor cannot turn a screen yet; the on-screen keyboard only");
-            None
-        }
-        None => None,
+        Some(yggdrasil_wm::Desk::Own(o)) => (None, Some(o)),
+        None => (None, None),
     };
     let accel =
         if accel_here { zbus::blocking::Connection::system().ok().and_then(|c| Accel::new(&c).ok()).filter(|a| a.present()) } else { None };
@@ -61,7 +58,7 @@ fn watch() -> Result<(), String> {
         plugged_keyboard: sysfs::plugged_keyboard(root),
         rotation: 0,
     };
-    let mut w = Watcher::new(state, hypr, accel, Osk::new(vec![tablet::OSK.into()]), root.to_path_buf(), conf_path);
+    let mut w = Watcher::new(state, hypr, own, accel, Osk::new(vec![tablet::OSK.into()]), root.to_path_buf(), conf_path);
     drop(tx);
     loop {
         w.step();
