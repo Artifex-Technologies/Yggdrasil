@@ -282,6 +282,22 @@ pub fn failure_of(tool: &str, stderr: &str, code: Option<i32>) -> String {
     }
 }
 
+/// Starts `cmd`, trying again for a moment while the program file is busy (ETXTBSY): a file just written can be held open
+/// for writing by a child another thread is forking at that instant, and exec then fails although nothing is wrong (seen
+/// in the parallel tests, which write their stand-in tools; a freshly installed tool could meet it too).
+fn spawn(cmd: &mut Command) -> std::io::Result<std::process::Child> {
+    let mut tries = 0;
+    loop {
+        match cmd.spawn() {
+            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy && tries < 50 => {
+                tries += 1;
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            r => return r,
+        }
+    }
+}
+
 /// A running scrub: the child, so it can be stopped.
 pub struct Running {
     child: std::process::Child,
@@ -290,16 +306,17 @@ pub struct Running {
 impl Running {
     /// Starts `heimdall-scrub --progress IN OUT` (argv, never a shell line).
     pub fn start(input: &Path, output: &Path) -> Result<Running, String> {
-        Command::new(SCRUB_TOOL)
-            .arg("--progress")
-            .arg(input)
-            .arg(output)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map(|child| Running { child })
-            .map_err(|e| format!("could not start {SCRUB_TOOL}: {e}"))
+        spawn(
+            Command::new(SCRUB_TOOL)
+                .arg("--progress")
+                .arg(input)
+                .arg(output)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped()),
+        )
+        .map(|child| Running { child })
+        .map_err(|e| format!("could not start {SCRUB_TOOL}: {e}"))
     }
 
     /// The process id, for Stop.
@@ -346,7 +363,7 @@ pub fn can_strip(p: &Path, limit: Duration) -> bool {
 }
 
 fn can_strip_with(tool: &Path, p: &Path, limit: Duration) -> bool {
-    let Ok(mut child) = Command::new(tool).arg("--can").arg(p).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn()
+    let Ok(mut child) = spawn(Command::new(tool).arg("--can").arg(p).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()))
     else {
         return false;
     };
@@ -398,14 +415,7 @@ impl Stripping {
     }
 
     fn start_with(tool: &Path, input: &Path, output: &Path) -> Result<Stripping, String> {
-        Command::new(tool)
-            .arg("--json")
-            .arg(input)
-            .arg(output)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
+        spawn(Command::new(tool).arg("--json").arg(input).arg(output).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()))
             .map(|child| Stripping { child })
             .map_err(|e| format!("could not start {STRIP_TOOL}: {e}"))
     }
@@ -612,15 +622,16 @@ mod tests {
         std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
         // run the stand-in by its full path: the test does not change PATH for the other tests
         let run = |input: &str, output: &Path| {
-            let child = Command::new(&tool)
-                .arg("--progress")
-                .arg(input)
-                .arg(output)
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .unwrap();
+            let child = spawn(
+                Command::new(&tool)
+                    .arg("--progress")
+                    .arg(input)
+                    .arg(output)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped()),
+            )
+            .unwrap();
             let mut seen = vec![];
             let r = Running { child }.finish(&mut |f| seen.push(f));
             (r, seen)
