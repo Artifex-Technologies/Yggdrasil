@@ -284,6 +284,9 @@ fn comes_up_and_ends_cleanly() {
             "fc-match -f %{file} sans-serif",
             "Hyprland --version",
             "systemd-cat -t yggdrasil-session echo starting Hyprland (Hyprland 0.0.0-nested)",
+            // a session that ended without its cleanup left nothing behind for this one's autostart (YGG-91)
+            "systemctl --user stop yggdrasil-session.target graphical-session.target",
+            "systemctl --user reset-failed",
             "Hyprland --config /usr/share/yggdrasil/hyprland/yggdrasil.lua",
             "autostart on WAYLAND_DISPLAY=wayland-",
             "systemctl --user import-environment WAYLAND_DISPLAY",

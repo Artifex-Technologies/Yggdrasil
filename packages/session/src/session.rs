@@ -119,6 +119,12 @@ pub fn main() -> ! {
     let mut crashes: Vec<u64> = vec![];
     let mut safe = false;
     let mut run = 0u32;
+    // A session that ended without its cleanup (killed, or the login screen restarted under it) leaves
+    // graphical-session.target and yggdrasil-session.target active with their programs gone, and the autostart's
+    // `systemctl --user start yggdrasil-session.target` then starts nothing: no panel, a black screen (2026-11-20, YGG-91).
+    // Whatever is left is stopped before the first Hyprland, as the own compositor's session does.
+    stop_session_programs();
+    let _ = Command::new("systemctl").args(["--user", "reset-failed"]).stderr(Stdio::null()).status();
     let code = loop {
         run += 1;
         let mut c = Command::new("Hyprland");
