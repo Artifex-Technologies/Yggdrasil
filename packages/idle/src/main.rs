@@ -24,6 +24,7 @@ mod power;
 use std::collections::HashMap;
 use std::io::Write;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 
 use policy::{blocked_by_inhibitors, due_at, marks, Config, Step};
@@ -272,6 +273,34 @@ fn read_conf() -> (Config, Option<std::time::SystemTime>) {
     (std::fs::read_to_string(&p).map(|t| Config::parse(&t)).unwrap_or_default(), m)
 }
 
+/// The screens for the machine's sleep (YGG-105): lock.rs's sleep thread asks, the main loop does it (it holds the Wayland
+/// connection). 0 nothing asked, 1 off, 2 on. Without it the lock screen stayed on, frozen, for the minute a hibernation image
+/// takes to write (logind freezes the session), and read as a hang.
+static SLEEP_SCREENS: AtomicU8 = AtomicU8::new(0);
+static SLEEP_SCREENS_DONE: AtomicBool = AtomicBool::new(false);
+
+/// Ask for the screens off before the machine sleeps (waiting until it is done, at most a second and a half: the main loop
+/// looks at least once a second), or on again when it wakes.
+pub fn screens_for_sleep(on: bool) {
+    SLEEP_SCREENS_DONE.store(false, Ordering::SeqCst);
+    SLEEP_SCREENS.store(if on { 2 } else { 1 }, Ordering::SeqCst);
+    if !on {
+        let until = Instant::now() + Duration::from_millis(1500);
+        while !SLEEP_SCREENS_DONE.load(Ordering::SeqCst) && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+}
+
+/// What the sleep thread asked for since the last look: Some(false) off, Some(true) on.
+fn take_sleep_screens() -> Option<bool> {
+    match SLEEP_SCREENS.swap(0, Ordering::SeqCst) {
+        1 => Some(false),
+        2 => Some(true),
+        _ => None,
+    }
+}
+
 fn main() {
     // "please don't sleep" requests from programs, as logind locks (waits while another program still answers them)
     inhibit::spawn();
@@ -338,6 +367,16 @@ fn main() {
             eprintln!("yggdrasil-idle: the Wayland connection ended");
             std::process::exit(1);
         }
+        // the machine sleeps (screens off once the lock is up) or has woken (on again, the lock screen in view)
+        if let Some(on) = take_sleep_screens() {
+            if let Some(p) = app.power.as_mut() {
+                if on == p.off {
+                    p.set(on);
+                }
+            }
+            let _ = conn.flush();
+            SLEEP_SCREENS_DONE.store(true, Ordering::SeqCst);
+        }
         let animating = app.dimmer.as_ref().map(|d| d.animating() || d.alpha > 0.0 && !d.is_shown()).unwrap_or(false);
         if let Some(guard) = conn.prepare_read() {
             use std::os::fd::AsRawFd;
@@ -378,5 +417,30 @@ fn main() {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod sleep_screens_tests {
+    use super::*;
+
+    #[test]
+    fn the_sleep_thread_asks_and_the_main_loop_does_it_once() {
+        // waking: asked, taken once, no waiting
+        screens_for_sleep(true);
+        assert_eq!(take_sleep_screens(), Some(true));
+        assert_eq!(take_sleep_screens(), None);
+        // going to sleep: the asker waits until the main loop has done it (a stand-in for the loop here)
+        let main_loop = std::thread::spawn(|| loop {
+            if let Some(on) = take_sleep_screens() {
+                SLEEP_SCREENS_DONE.store(true, Ordering::SeqCst);
+                return on;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        });
+        let t = Instant::now();
+        screens_for_sleep(false);
+        assert!(t.elapsed() < Duration::from_millis(1000), "it waited for the loop, not the full time");
+        assert!(!main_loop.join().unwrap(), "the screens were asked off");
     }
 }

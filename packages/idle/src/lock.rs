@@ -136,9 +136,14 @@ pub fn spawn() {
                 for s in sigs {
                     if s.body().deserialize::<bool>().unwrap_or(false) {
                         lock_before_sleep(&run2);
+                        // the screens off before the session is frozen: a hibernation image takes a minute to write
+                        crate::screens_for_sleep(false);
                         hold = None; // let go: now it may sleep
-                    } else if hold.is_none() {
-                        hold = inhibit_sleep(&m); // woke up: hold the next sleep back too
+                    } else {
+                        crate::screens_for_sleep(true); // woke up: the lock screen in view
+                        if hold.is_none() {
+                            hold = inhibit_sleep(&m); // hold the next sleep back too
+                        }
                     }
                 }
                 drop(hold);
