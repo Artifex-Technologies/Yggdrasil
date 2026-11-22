@@ -213,6 +213,10 @@ pub struct App {
     /// Copies of the screen asked for (wlr-screencopy, screencopy.rs) and outputs switched off (outputpower.rs): headless only.
     pub screencopy: crate::screencopy::Screencopy,
     pub power: crate::outputpower::OutputPower,
+    /// The first tap on the touchscreen while its screen is off (touch.rs, YGG-102): a second within `DOUBLE_TAP` wakes it.
+    pub touch_wake_at: Option<std::time::Instant>,
+    /// Fingers that went down on a screen that was off: their moves and lifts reach no program either.
+    pub touch_swallowed: Vec<smithay::backend::input::TouchSlot>,
     pub bindings: Vec<Binding>,
     /// A modifier key with a tap binding went down and nothing else was pressed since (its key code and what letting go does):
     /// Super on its own opens the start menu, Ctrl on its own is a tap of Find my mouse.
@@ -561,6 +565,8 @@ impl App {
             toplevels: Toplevels::default(),
             screencopy: Default::default(),
             power: Default::default(),
+            touch_wake_at: None,
+            touch_swallowed: vec![],
             bindings: {
                 let text = std::fs::read_to_string(shortcuts::config_path()).unwrap_or_default();
                 let (b, bad) = shortcuts::load(&text);

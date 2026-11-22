@@ -9,6 +9,10 @@
 //! A turned screen (`transform`, the tablet watcher's in a 2-in-1's tablet mode) turns where a touch or the pen lands the same way:
 //! libinput tells the point across the glass as it is built, and `on_glass` finds it in the turned picture.
 //!
+//! **A screen that is off** (idle turned it off; the laptop is awake): a single touch, a brush in a bag, wakes nothing and
+//! reaches no program; two taps within half a second (`DOUBLE_TAP`) turn the screens on, and the lock screen shows if it is
+//! locked. Both taps are the gesture and reach no program. A suspend is different: the touchscreen wakes the laptop by itself.
+//!
 //! The hardware backend gives these from libinput (udev.rs); the headless backend from its control socket (`touch-down`,
 //! `touch-move`, `touch-up`), for the tests.
 
@@ -63,6 +67,10 @@ impl App {
     /// A finger went down at `pos` (in the space of all screens).
     pub fn touch_down(&mut self, slot: smithay::backend::input::TouchSlot, pos: Point<f64, Logical>, time: u32) {
         self.wake();
+        if !self.power.is_on(&self.touch_output()) {
+            self.tap_on_dark_screen(slot, std::time::Instant::now());
+            return;
+        }
         self.idle_state.notify_activity(&self.seat);
         let touch = match self.seat.get_touch() {
             Some(t) => t,
@@ -79,6 +87,9 @@ impl App {
 
     pub fn touch_motion(&mut self, slot: smithay::backend::input::TouchSlot, pos: Point<f64, Logical>, time: u32) {
         self.wake();
+        if self.touch_swallowed.contains(&slot) {
+            return;
+        }
         let Some(touch) = self.seat.get_touch() else { return };
         let under = self.surface_under(pos);
         touch.motion(self, under, &MotionEvent { slot, location: pos, time });
@@ -86,8 +97,32 @@ impl App {
 
     pub fn touch_up(&mut self, slot: smithay::backend::input::TouchSlot, time: u32) {
         self.wake();
+        if let Some(i) = self.touch_swallowed.iter().position(|s| *s == slot) {
+            self.touch_swallowed.remove(i);
+            return;
+        }
         let Some(touch) = self.seat.get_touch() else { return };
         touch.up(self, &UpEvent { slot, serial: SERIAL_COUNTER.next_serial(), time });
+    }
+
+    /// A finger down while the touchscreen's screen is off: the first tap is remembered, a second within `DOUBLE_TAP` turns
+    /// every screen that is off on again and counts as activity (idle starts over, the lock screen shows). Neither reaches a
+    /// program, nor does what the finger does until it lifts.
+    fn tap_on_dark_screen(&mut self, slot: smithay::backend::input::TouchSlot, now: std::time::Instant) {
+        self.touch_swallowed.push(slot);
+        if !second_tap(self.touch_wake_at, now) {
+            self.touch_wake_at = Some(now);
+            return;
+        }
+        self.touch_wake_at = None;
+        let off: Vec<Output> = self.space.outputs().filter(|o| !self.power.is_on(o)).cloned().collect();
+        for o in &off {
+            self.set_output_power(o, true);
+        }
+        self.idle_state.notify_activity(&self.seat);
+        if std::env::var_os("YGGDRASIL_COMPOSITOR_DEBUG").is_some() {
+            eprintln!("two taps on a dark screen: {} screen(s) on", off.len());
+        }
     }
 
     /// The end of a group of touch changes (libinput says when; the headless commands after each one).
@@ -98,6 +133,7 @@ impl App {
     }
 
     pub fn touch_cancel(&mut self) {
+        self.touch_swallowed.clear();
         if let Some(touch) = self.seat.get_touch() {
             touch.cancel(self);
         }
@@ -138,8 +174,26 @@ impl App {
     }
 }
 
+/// Two taps on the touchscreen within this while its screen is off turn the screens on (YGG-102).
+pub const DOUBLE_TAP: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Is a tap at `now` the second of a double tap, after a first at `first`?
+pub fn second_tap(first: Option<std::time::Instant>, now: std::time::Instant) -> bool {
+    first.is_some_and(|t| now.saturating_duration_since(t) <= DOUBLE_TAP)
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn two_taps_within_half_a_second_wake_a_dark_screen() {
+        use std::time::{Duration, Instant};
+        let t = Instant::now();
+        assert!(!super::second_tap(None, t), "a first tap alone wakes nothing");
+        assert!(super::second_tap(Some(t), t + Duration::from_millis(300)));
+        assert!(super::second_tap(Some(t), t + Duration::from_millis(500)));
+        assert!(!super::second_tap(Some(t), t + Duration::from_millis(501)), "too far apart: a new first tap");
+    }
+
     #[test]
     fn the_pens_buttons_are_the_right_and_middle_ones() {
         assert_eq!(super::pen_button(0x14b), 0x111);
