@@ -8,9 +8,15 @@
 # A way back: when the compositor ends badly within its first seconds (it could not take the screens, it crashed at start),
 # this starts the Hyprland session instead (/usr/bin/yggdrasil-session), so a broken build never leaves the login screen in
 # a loop. Its log: the user journal, `journalctl --user -t yggdrasil-compositor-session -t yggdrasil-compositor`.
+#
+# For a test from inside another desktop: YGGDRASIL_COMPOSITOR (a stand-in for the compositor), YGGDRASIL_SESSION_FALLBACK (a
+# stand-in for the Hyprland session), YGGDRASIL_SYSTEMCTL (a stand-in for the system's systemctl reboot|poweroff) and
+# YGGDRASIL_SESSION_TEST=1 (the user manager is left alone: nothing imported, started
+# or stopped, so the desktop the test runs in keeps its own session).
 set -u
 COMPOSITOR=${YGGDRASIL_COMPOSITOR:-yggdrasil-compositor}
-FALLBACK=/usr/bin/yggdrasil-session
+FALLBACK=${YGGDRASIL_SESSION_FALLBACK:-/usr/bin/yggdrasil-session}
+TEST=${YGGDRASIL_SESSION_TEST:-}
 TAG=yggdrasil-compositor-session
 
 export XDG_CURRENT_DESKTOP=Yggdrasil XDG_SESSION_DESKTOP=yggdrasil XDG_SESSION_TYPE=wayland
@@ -19,7 +25,27 @@ export QT_QPA_PLATFORM='wayland;xcb' GDK_BACKEND='wayland,x11' MOZ_ENABLE_WAYLAN
 say() { echo "$*" | systemd-cat -t "$TAG"; }
 
 # the autostart, once the compositor's sockets exist (it runs this as its first program, with WAYLAND_DISPLAY and DISPLAY set)
-AUTOSTART="systemctl --user import-environment WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE QT_QPA_PLATFORM GDK_BACKEND MOZ_ENABLE_WAYLAND ELECTRON_OZONE_PLATFORM_HINT; dbus-update-activation-environment --systemd --all; systemctl --user start yggdrasil-session.target; echo autostart started for \$XDG_CURRENT_DESKTOP on \$WAYLAND_DISPLAY"
+# this session's own panel build, when one is installed (install-session.sh puts it here): only this session runs it; the
+# autostart folder's panel (the packaged one, which the Hyprland session keeps) is stopped here once the session has started
+OWN_PANEL=${YGGDRASIL_OWN_PANEL:-/usr/local/lib/yggdrasil-own/yggdrasil-panel}
+PANEL_SWAP=""
+if [ -x "$OWN_PANEL" ]; then
+  PANEL_SWAP="; systemctl --user stop 'app-yggdrasil*panel@autostart.service'; systemd-run --user --unit=yggdrasil-own-panel --collect -p PartOf=graphical-session.target -p Restart=on-failure $OWN_PANEL"
+fi
+# the sign-in animation first, as Hyprland's session starts it (yggdrasil.lua): yggdrasil-splash covers the screens until the
+# top bar is up (it asks this compositor through yggdrasil-wm) or twelve seconds have passed; Settings > Appearance > Boot
+# screen chooses what it shows, or off
+SPLASH="(yggdrasil-splash 2>&1 | systemd-cat -t yggdrasil-splash) & "
+# a session that ended without its cleanup (killed, or the login screen restarted) can leave graphical-session.target and
+# yggdrasil-session.target active with their programs gone, and starting an active target starts nothing (no panel: a black
+# screen, YGG-91): so whatever is left is stopped first. A Hyprland session that ran before also leaves its signature behind.
+AUTOSTART="${SPLASH}systemctl --user stop graphical-session.target; systemctl --user reset-failed; systemctl --user unset-environment HYPRLAND_INSTANCE_SIGNATURE; systemctl --user import-environment WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE QT_QPA_PLATFORM GDK_BACKEND MOZ_ENABLE_WAYLAND ELECTRON_OZONE_PLATFORM_HINT; dbus-update-activation-environment --systemd --all; systemctl --user start yggdrasil-session.target$PANEL_SWAP; echo autostart started for \$XDG_CURRENT_DESKTOP on \$WAYLAND_DISPLAY"
+
+# Restart and Shut down: yggdrasil-logout closes every window, writes "reboot" or "poweroff" here and ends the compositor;
+# this does it once the compositor has let go of the screen (as yggdrasil-session does for Hyprland). Without it a Shut down
+# was only a sign-out (2026-11-20). A note left from before (a session that never read it) is no order for this one.
+AFTER="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/yggdrasil-after-session"
+rm -f "$AFTER"
 
 say "starting $COMPOSITOR --drm"
 start=$(date +%s)
@@ -30,11 +56,27 @@ ran=$(( $(date +%s) - start ))
 say "the compositor ended after ${ran} s (status $status)"
 
 # the session's programs end with it (as yggdrasil-session does for Hyprland)
-systemctl --user stop yggdrasil-session.target graphical-session.target 2>/dev/null
-systemctl --user unset-environment WAYLAND_DISPLAY DISPLAY 2>/dev/null
+if [ -z "$TEST" ]; then
+  systemctl --user stop yggdrasil-own-panel.service yggdrasil-session.target graphical-session.target 2>/dev/null
+  systemctl --user unset-environment WAYLAND_DISPLAY DISPLAY 2>/dev/null
+fi
 
-if [ "$ran" -lt 15 ] && [ -x "$FALLBACK" ]; then
-  say "it ended within ${ran} s: starting the Hyprland session instead"
+# a Restart or Shut down asked for from the session
+if [ -f "$AFTER" ]; then
+  what=$(tr -d '\0\n' < "$AFTER")
+  rm -f "$AFTER"
+  case "$what" in
+    reboot|poweroff)
+      say "$what, now that the session has ended"
+      ${YGGDRASIL_SYSTEMCTL:-systemctl} "$what"
+      exit 0
+      ;;
+  esac
+fi
+
+# ended badly and early: it never got going, so the Hyprland session instead (a sign-out, status 0, is never sent there)
+if [ "$status" -ne 0 ] && [ "$ran" -lt 15 ] && [ -x "$FALLBACK" ]; then
+  say "it ended badly within ${ran} s: starting the Hyprland session instead"
   exec "$FALLBACK"
 fi
 exit 0
