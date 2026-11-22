@@ -497,6 +497,45 @@ fn the_keyboard_leaves_a_panel_that_goes_however_it_goes() {
     assert_eq!(line, "HEADLESS-1\ttest-popup-5\tOverlay\t0,0\t300x200\ton-demand");
 }
 
+/// A window closing while a panel's pop-up has the keyboard (the calendar open while a program ends): the pop-up keeps it,
+/// since what is typed belongs to what is open; once the pop-up goes, the keyboard goes to the window now in front.
+#[test]
+fn a_window_closing_leaves_the_keyboard_with_the_panel_that_has_it() {
+    let _l = limit(60, "a window closing under a pop-up");
+    let comp = Compositor::start(&["--output", "1280x720"]);
+    let mut c = comp.connect();
+    let (_k, _p) = c.input();
+    let a = c.window("test.a", "A");
+    c.draw(&a, (400, 300), BLUE);
+    let b = c.window("test.b", "B");
+    c.draw(&b, (400, 300), YELLOW);
+    c.roundtrip();
+    assert_eq!(comp.focus(), "window\ttest.b\tB");
+    let p = clicked_popup(&comp, &mut c, 0, "test-popup");
+
+    b.toplevel.destroy();
+    b.xdg.destroy();
+    b.surface.destroy();
+    c.roundtrip();
+    comp.wait(10, "B gone", |c| c.window("test.b").is_none());
+    c.roundtrip();
+    assert_eq!(comp.focus(), "layer\ttest-popup\tHEADLESS-1", "the pop-up keeps the keyboard when a window closes");
+    c.state.keys.clear();
+    comp.must("type s");
+    c.roundtrip();
+    assert_eq!(typed(&c.state.keys), [(p.surface.id(), KEY_S)], "keys still reach the pop-up");
+
+    p.layer.destroy();
+    p.surface.destroy();
+    c.roundtrip();
+    c.roundtrip();
+    assert_eq!(comp.focus(), "window\ttest.a\tA", "the pop-up gone, the window in front has the keyboard");
+    c.state.keys.clear();
+    comp.must("type s");
+    c.roundtrip();
+    assert_eq!(typed(&c.state.keys), [(a.surface.id(), KEY_S)], "keys reach A");
+}
+
 #[test]
 fn the_lock_covers_every_output_and_takes_all_input_until_unlocked() {
     let _l = limit(60, "session lock");

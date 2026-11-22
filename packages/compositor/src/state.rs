@@ -1084,13 +1084,30 @@ impl App {
             }
             self.space.unmap_elem(&w);
         }
-        // the keyboard, and the active look, go to the window now in front
+        // the active look goes to the window now in front, and so does the keyboard, unless a panel's pop-up has it (the
+        // calendar open while a program ends): what is typed belongs to what is open. The window in front is then the one used
+        // last, so the keyboard goes to it when the pop-up goes (keyboard_check, focus_back)
         let next = self.space.elements().rev().find(|w| surface_of(w).is_some()).cloned();
         if let Some(w) = &next {
             self.mark_active(w);
         }
-        self.give_keyboard(next.as_ref().and_then(surface_of), SERIAL_COUNTER.next_serial());
+        let next = next.as_ref().and_then(surface_of);
+        if self.panel_has_keyboard() {
+            if let Some(s) = &next {
+                self.touch_focus(s);
+            }
+        } else {
+            self.give_keyboard(next, SERIAL_COUNTER.next_serial());
+        }
         self.retile();
+    }
+
+    /// Whether a panel (a layer surface, not a window) has the keyboard and may keep it (`layer_holds`).
+    fn panel_has_keyboard(&self) -> bool {
+        match self.keyboard.current_focus() {
+            Some(KbFocus::Wl(f)) => f.alive() && self.window_for(&f).is_none() && self.layer_holds(&f),
+            _ => false,
+        }
     }
 
     /// The window of a surface, wherever it is (shown, minimized or on another workspace).
