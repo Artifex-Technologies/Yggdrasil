@@ -235,6 +235,8 @@ pub struct App {
     pub _decoration_state: XdgDecorationState,
     /// Windows, most recently used first (for the switcher).
     focus_order: Vec<WlSurface>,
+    /// Hidden windows asked to close, and when: their frame requests are answered for a while (`frames_to_close_in`).
+    close_frames: Vec<(WlSurface, std::time::Instant)>,
     /// Windows in the order they were opened (tiling follows it).
     opened_at: Vec<WlSurface>,
     /// The Alt+Tab switcher while it is open (switcher.rs): its cards in order, the chosen one, its screen and pictures.
@@ -323,6 +325,9 @@ pub struct App {
 
 /// How many workspaces there are.
 pub const WORKSPACES: usize = tiling::WORKSPACES;
+
+/// How long a hidden window asked to close has its frame requests answered (`App::frames_to_close_in`).
+const CLOSE_FRAMES: Duration = Duration::from_secs(5);
 
 #[derive(Default)]
 pub struct ClientState {
@@ -566,6 +571,7 @@ impl App {
             last_click: None,
             _decoration_state: XdgDecorationState::new::<Self>(dh),
             focus_order: vec![],
+            close_frames: vec![],
             opened_at: vec![],
             switcher: None,
             switcher_hold: Mods::default(),
@@ -1058,6 +1064,7 @@ impl App {
             self.capture_source_gone(|src| matches!(src, crate::capture::Source::Window(w) if w == s));
             self.decorated.retain(|x| x != s);
             self.focus_order.retain(|x| x != s);
+            self.close_frames.retain(|(x, _)| x != s);
             self.opened_at.retain(|x| x != s);
             if let Some(sw) = &mut self.switcher {
                 sw.forget(s);
@@ -1252,6 +1259,24 @@ impl App {
                 }
             }
         }
+        self.close_frames.retain(|(s, _)| s != surface);
+        self.close_frames.push((surface.clone(), std::time::Instant::now()));
+        self.frames_to_close_in(surface);
+    }
+
+    /// A window that is not drawn (minimized, or on another workspace) gets no frames, but a program may need some to act on
+    /// a close: an eframe program closes in its next frames, and a hidden Minos stopped a sign-out and a restart (2026-11-20).
+    /// So for CLOSE_FRAMES after it was asked, a hidden window's frame requests are answered at once (when asked, and on each
+    /// of its commits): only that window's, and only for a while, so a program that stays open (asking whether to save) does
+    /// not keep drawing for nothing. A window on screen has its frames as usual.
+    fn frames_to_close_in(&mut self, root: &WlSurface) {
+        self.close_frames.retain(|(s, at)| s.alive() && at.elapsed() < CLOSE_FRAMES);
+        if !self.close_frames.iter().any(|(s, _)| s == root) || self.space.elements().any(|w| is_window_of(w, root)) {
+            return;
+        }
+        let Some(w) = self.window_for(root) else { return };
+        let out = self.output.clone();
+        w.send_frame(&out, self.clock.now(), Some(Duration::ZERO), |_, _| Some(out.clone()));
     }
 
     pub fn minimize_surface(&mut self, surface: &WlSurface) {
@@ -2797,6 +2822,9 @@ impl CompositorHandler for App {
                 self.capture_window_changed(&root);
             }
             self.list_refresh(&root);
+            if !self.close_frames.is_empty() {
+                self.frames_to_close_in(&root);
+            }
             let found = self.space.elements().find(|w| is_window_of(w, &root)).cloned();
             if let Some(w) = found {
                 w.on_commit();

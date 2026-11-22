@@ -888,3 +888,56 @@ fn idle_is_told_after_the_timeout_and_input_ends_it() {
     comp.must("key shift");
     c.until("idle again", |s| s.idled.get(&0) == Some(&2));
 }
+
+/// A window's number in `clients`.
+fn number_of(comp: &Compositor, app_id: &str) -> String {
+    let lines = comp.must("clients");
+    let line = lines.iter().find(|l| l.split('\t').nth(1) == Some(app_id)).unwrap_or_else(|| panic!("{app_id} in {lines:?}"));
+    line.split('\t').next().unwrap().to_string()
+}
+
+/// A program asked to close while it is not drawn (minimized, or on another workspace) may need frames to act on it: an
+/// eframe program closes in its next frames, and a hidden window got none, so a sign-out and a restart found Minos still
+/// open (2026-11-20). After asking, the compositor answers its frame requests for a while.
+#[test]
+fn a_hidden_window_asked_to_close_gets_the_frames_to_close_in() {
+    let _l = limit(60, "a hidden window asked to close");
+    let comp = Compositor::start(&["--output", "1280x720"]);
+    let mut c = comp.connect();
+    let frames_come = |c: &mut Client, w: &Window, n: u32, what: &str| {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while c.frames(w) < n {
+            assert!(std::time::Instant::now() < deadline, "{what}: {} frames of {n}", c.frames(w));
+            std::thread::sleep(Duration::from_millis(20));
+            c.roundtrip();
+        }
+    };
+    for (app, how) in [("test.min", "minimized"), ("test.away", "on another workspace")] {
+        let w = c.window(app, "Hidden");
+        c.draw(&w, (400, 300), BLUE);
+        if how == "minimized" {
+            comp.must(&format!("minimize {}", number_of(&comp, app)));
+            comp.wait(10, "minimized", |c| c.window(app).is_some_and(|i| i.has("minimized")));
+        } else {
+            comp.must("workspace 2");
+        }
+        // a frame asked for while hidden is not answered: nothing of it is drawn
+        c.frame(&w);
+        std::thread::sleep(Duration::from_millis(300));
+        c.roundtrip();
+        assert_eq!(c.frames(&w), 0, "{how}: no frames while hidden");
+        // asked to close: the close comes, and so do the frames it closes in (eframe repaints twice to close)
+        comp.must(&format!("close {}", number_of(&comp, app)));
+        c.roundtrip();
+        assert!(c.state.wins[w.index].close_asked, "{how}: asked to close");
+        frames_come(&mut c, &w, 1, how);
+        c.frame(&w);
+        frames_come(&mut c, &w, 2, how);
+        w.toplevel.destroy();
+        w.xdg.destroy();
+        w.surface.destroy();
+        c.roundtrip();
+        comp.wait(10, "closed", |c| c.window(app).is_none());
+        comp.must("workspace 1");
+    }
+}

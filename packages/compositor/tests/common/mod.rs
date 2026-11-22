@@ -21,9 +21,9 @@ use std::time::{Duration, Instant};
 use wayland_client::backend::ObjectId;
 use wayland_client::globals::{registry_queue_init, GlobalList, GlobalListContents};
 use wayland_client::protocol::{
-    wl_buffer::WlBuffer, wl_compositor::WlCompositor, wl_keyboard, wl_keyboard::WlKeyboard, wl_output, wl_output::WlOutput, wl_pointer,
-    wl_pointer::WlPointer, wl_registry::WlRegistry, wl_seat, wl_seat::WlSeat, wl_shm, wl_shm::WlShm, wl_shm_pool::WlShmPool,
-    wl_surface::WlSurface, wl_touch, wl_touch::WlTouch,
+    wl_buffer::WlBuffer, wl_callback, wl_callback::WlCallback, wl_compositor::WlCompositor, wl_keyboard, wl_keyboard::WlKeyboard,
+    wl_output, wl_output::WlOutput, wl_pointer, wl_pointer::WlPointer, wl_registry::WlRegistry, wl_seat, wl_seat::WlSeat, wl_shm,
+    wl_shm::WlShm, wl_shm_pool::WlShmPool, wl_surface::WlSurface, wl_touch, wl_touch::WlTouch,
 };
 use wayland_client::{delegate_noop, event_created_child, Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum};
 use wayland_protocols::ext::foreign_toplevel_list::v1::client::{
@@ -422,6 +422,8 @@ pub struct State {
     pub kb_focus: Option<ObjectId>,
     pub keys: Vec<(ObjectId, u32)>,
     pub keymap: bool,
+    /// frame callbacks answered (wl_callback done), per window index (`Client::frame` asks for one)
+    pub frames: HashMap<usize, u32>,
     /// the last keymap's text (xkb's), and how many keymaps came
     pub keymap_text: String,
     pub keymaps: usize,
@@ -795,6 +797,18 @@ impl Client {
     }
 
     /// Draw a window in one colour: at the size it was last given, or `size` when it may choose.
+    /// Asks for a frame callback on the window's surface, as a program does before it draws again (`state.frames` counts them).
+    pub fn frame(&mut self, w: &Window) {
+        w.surface.frame(&self.qh, w.index);
+        w.surface.commit();
+        self.roundtrip();
+    }
+
+    /// How many of the window's frame callbacks were answered.
+    pub fn frames(&self, w: &Window) -> u32 {
+        self.state.frames.get(&w.index).copied().unwrap_or(0)
+    }
+
     pub fn draw(&mut self, w: &Window, size: (i32, i32), argb: u32) -> (i32, i32) {
         let given = self.state.wins[w.index].size;
         let (bw, bh) = if given.0 > 0 && given.1 > 0 { given } else { size };
@@ -1179,6 +1193,14 @@ delegate_noop!(State: ignore WlShm);
 delegate_noop!(State: ignore WlShmPool);
 delegate_noop!(State: ignore WlBuffer);
 delegate_noop!(State: ignore WlSurface);
+
+impl Dispatch<WlCallback, usize> for State {
+    fn event(st: &mut Self, _: &WlCallback, event: wl_callback::Event, index: &usize, _: &Connection, _: &QueueHandle<Self>) {
+        if let wl_callback::Event::Done { .. } = event {
+            *st.frames.entry(*index).or_default() += 1;
+        }
+    }
+}
 delegate_noop!(State: ignore ZwlrLayerShellV1);
 delegate_noop!(State: ignore ZxdgOutputManagerV1);
 delegate_noop!(State: ignore WpFractionalScaleManagerV1);
