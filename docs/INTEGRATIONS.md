@@ -258,4 +258,6 @@ Controls appear in the order of their IDs. A command that fails or is missing hi
 
 Anything every system needs is Yggdrasil's own: media keys, screen keys, user accounts, power limits, printers, the app launcher.
 Proton Drive in Minos is Minos's own feature too (an rclone mount; its user unit ships with Minos and runs only once you connect).
+Minos reads a folder on it, or on any FUSE or network drive, in the background: while the drive is slow to answer the tab says
+"Waiting for the drive to answer" and the window keeps working, and the disk list asks only the computer's own disks for their size.
 Those helpers live in Yggdrasil under `yggdrasil-*` names.

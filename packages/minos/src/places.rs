@@ -412,15 +412,82 @@ pub fn parse_lsblk(json: &str, usage: &dyn Fn(&Path) -> Option<(u64, u64)>) -> V
     disks
 }
 
-/// The disks in this computer, with their partitions and how full the mounted ones are.
+/// The disks in this computer, with their partitions and how full the mounted ones are. Only the disks' own mount points are
+/// asked for their size: asking every mount (as sysinfo's list does, FUSE mounts too) froze the window for seconds while
+/// Proton Drive's mount answered over a slow line (2026-11-22).
 pub fn disks() -> Vec<Disk> {
     let out = std::process::Command::new("lsblk")
         .args(["-J", "-b", "-o", "NAME,TYPE,SIZE,MODEL,FSTYPE,LABEL,PARTLABEL,MOUNTPOINTS,RM,HOTPLUG,TRAN"])
         .output();
     let Ok(out) = out else { return vec![] };
-    let sys = sysinfo::Disks::new_with_refreshed_list();
-    let usage = |m: &Path| sys.list().iter().find(|d| d.mount_point() == m).map(|d| (d.total_space(), d.available_space()));
-    parse_lsblk(&String::from_utf8_lossy(&out.stdout), &usage)
+    parse_lsblk(&String::from_utf8_lossy(&out.stdout), &space)
+}
+
+/// A mounted file system's size and free space in bytes (statvfs), as sysinfo counts them.
+fn space(m: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::ffi::CString::new(m.as_os_str().as_bytes()).ok()?;
+    let mut s = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    // SAFETY: `path` is a valid C string and `s` is written by statvfs before it is read (only when it returns 0).
+    let s = unsafe {
+        if libc::statvfs(path.as_ptr(), s.as_mut_ptr()) != 0 {
+            return None;
+        }
+        s.assume_init()
+    };
+    let block = s.f_frsize as u64;
+    Some((s.f_blocks as u64 * block, s.f_bavail as u64 * block))
+}
+
+/// Whether `p` is on a file system that can take seconds to answer, or never when its line is down: FUSE (Proton Drive through
+/// rclone, sshfs, the document portal) and network file systems. Read from /proc/self/mountinfo, without touching `p` itself.
+pub fn may_stall(p: &Path) -> bool {
+    std::fs::read_to_string("/proc/self/mountinfo").is_ok_and(|t| stalls_in(&t, p))
+}
+
+fn stalls_in(mountinfo: &str, p: &Path) -> bool {
+    // the deepest mount holding `p`; of two at the same place, the later one (it is the one on top)
+    let mut best: Option<(usize, bool)> = None;
+    for line in mountinfo.lines() {
+        let f: Vec<&str> = line.split(' ').collect();
+        let Some(sep) = f.iter().position(|x| *x == "-") else { continue };
+        let (Some(point), Some(fstype)) = (f.get(4), f.get(sep + 1)) else { continue };
+        let point = unescape_mount(point);
+        if p.starts_with(&point) && best.is_none_or(|(depth, _)| point.len() >= depth) {
+            best = Some((point.len(), slow_fs(fstype)));
+        }
+    }
+    best.is_some_and(|(_, slow)| slow)
+}
+
+fn slow_fs(fstype: &str) -> bool {
+    // fuseblk is a local disk through FUSE (NTFS with ntfs-3g)
+    (fstype.starts_with("fuse") && fstype != "fuseblk" && fstype != "fusectl")
+        || matches!(fstype, "nfs" | "nfs4" | "cifs" | "smb3" | "smbfs" | "9p" | "davfs" | "ceph" | "glusterfs" | "afs" | "sshfs")
+}
+
+/// mountinfo writes a space, tab, newline and backslash in a path as \040, \011, \012 and \134.
+fn unescape_mount(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        let octal = b
+            .get(i + 1..i + 4)
+            .filter(|d| b[i] == b'\\' && d.iter().all(|c| (b'0'..=b'7').contains(c)))
+            .and_then(|d| u8::try_from(d.iter().fold(0u32, |n, c| n * 8 + u32::from(c - b'0'))).ok());
+        match octal {
+            Some(byte) => {
+                out.push(byte);
+                i += 4;
+            }
+            None => {
+                out.push(b[i]);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 #[cfg(test)]
@@ -547,5 +614,32 @@ mod mount_tests {
         std::env::remove_var("MINOS_PROTON_DRIVE");
         let _ = std::fs::remove_dir_all(&d);
         assert!(!is_mount(Path::new("/tmp/does-not-exist-here")));
+    }
+
+    const MOUNTINFO: &str = "\
+22 1 0:21 / / rw,relatime shared:1 - btrfs /dev/nvme0n1p2 rw\n\
+40 22 0:40 / /home/u/ProtonDrive rw,nosuid shared:20 - fuse.rclone proton: rw,user_id=1000\n\
+41 22 0:41 / /home/u/Proton\\040Drive rw shared:21 - nfs4 server:/x rw\n\
+42 22 8:17 / /mnt/windows rw shared:22 - fuseblk /dev/sdb1 rw\n\
+43 40 0:43 / /home/u/ProtonDrive/local rw shared:23 - ext4 /dev/sdc1 rw\n";
+
+    #[test]
+    fn a_folder_on_fuse_or_the_network_may_stall_and_a_disk_does_not() {
+        let stalls = |p: &str| stalls_in(MOUNTINFO, Path::new(p));
+        assert!(stalls("/home/u/ProtonDrive"));
+        assert!(stalls("/home/u/ProtonDrive/Documents/My Games"));
+        assert!(stalls("/home/u/Proton Drive/x"), "a space in the mount point (\\040)");
+        assert!(!stalls("/home/u/ProtonDriveX"), "a longer name is not inside the mount");
+        assert!(!stalls("/home/u/Documents"));
+        assert!(!stalls("/mnt/windows/Games"), "fuseblk is a local disk");
+        assert!(!stalls("/home/u/ProtonDrive/local/a"), "a disk mounted inside the FUSE mount");
+        assert_eq!(unescape_mount("a\\040b\\134c\\999"), "a b\\c\\999");
+    }
+
+    #[test]
+    fn a_disks_size_comes_from_statvfs() {
+        let (total, free) = space(Path::new("/")).unwrap();
+        assert!(total > 0 && free <= total);
+        assert!(space(Path::new("/does/not/exist")).is_none());
     }
 }

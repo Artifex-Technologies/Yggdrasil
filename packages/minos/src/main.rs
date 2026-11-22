@@ -357,7 +357,21 @@ struct TabView {
     /// The address bar is showing an editable path instead of clickable segments.
     editing: bool,
     edit_fresh: bool,
+    /// The folder's listing while it is still on its way (a drive slow to answer): the list waits, the window does not.
+    pending: Option<Pending>,
+    /// The folder `entries` were listed from (None: This PC, a disk or an archive).
+    listed: Option<PathBuf>,
 }
+
+/// A folder listing read on its own thread.
+struct Pending {
+    dir: PathBuf,
+    rx: Receiver<std::io::Result<Vec<Entry>>>,
+}
+
+/// How long the window waits for a folder's listing before it draws "waiting" and lets the listing come in later. A folder on a
+/// local disk is listed well within it, so it shows at once, as before.
+const LISTING_WAIT: Duration = Duration::from_millis(150);
 
 impl TabView {
     fn new(path: PathBuf, pinned: bool, sort: Sort, hidden: bool) -> Self {
@@ -378,6 +392,8 @@ impl TabView {
             results: None,
             editing: false,
             edit_fresh: false,
+            pending: None,
+            listed: None,
         };
         t.reload(sort, hidden);
         t
@@ -405,6 +421,8 @@ impl TabView {
     fn reload(&mut self, sort: Sort, _hidden: bool) {
         let dir = self.dir();
         self.address = dir.to_string_lossy().into_owned();
+        self.pending = None;
+        let before = self.listed.take();
         if places::is_this_pc(&dir) {
             // The physical disks; with no lsblk, the mounted drives as before.
             let disks = places::disks();
@@ -437,7 +455,33 @@ impl TabView {
             self.selected.retain(|p| still.contains(p));
             return;
         }
-        match listing::read_dir(&dir) {
+        // listed on its own thread: a folder on a drive that is slow to answer (Proton Drive over a slow line took minutes on
+        // 2026-11-22) leaves the window working, and the list fills in when the drive answers (poll_listing)
+        let (tx, rx) = channel();
+        let d = dir.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(listing::read_dir(&d));
+        });
+        match rx.recv_timeout(LISTING_WAIT) {
+            Ok(listed) => self.take_listing(listed, dir, sort),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                // the same folder again (a refresh) keeps what it showed until the new listing is in
+                if before.as_ref() == Some(&dir) {
+                    self.listed = before;
+                } else {
+                    self.entries.clear();
+                }
+                self.error = None;
+                self.pending = Some(Pending { dir, rx });
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                self.take_listing(Err(std::io::Error::other("the listing stopped")), dir, sort)
+            }
+        }
+    }
+
+    fn take_listing(&mut self, listed: std::io::Result<Vec<Entry>>, dir: PathBuf, sort: Sort) {
+        match listed {
             Ok(mut e) => {
                 listing::sort_entries(&mut e, sort);
                 self.entries = e;
@@ -448,8 +492,24 @@ impl TabView {
                 self.error = Some(format!("{}: {err}", dir.display()));
             }
         }
+        self.listed = Some(dir);
         let still: BTreeSet<PathBuf> = self.entries.iter().map(|e| e.path.clone()).collect();
         self.selected.retain(|p| still.contains(p));
+    }
+
+    /// Takes a listing that came in late. True while one is still on its way (the window then looks again shortly).
+    fn poll_listing(&mut self, sort: Sort) -> bool {
+        let Some(p) = &self.pending else { return false };
+        let got = match p.rx.try_recv() {
+            Ok(listed) => listed,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return true,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => Err(std::io::Error::other("the listing stopped")),
+        };
+        let Some(p) = self.pending.take() else { return false };
+        if p.dir == self.dir() {
+            self.take_listing(got, p.dir, sort);
+        }
+        false
     }
 
     fn navigate(&mut self, path: PathBuf, sort: Sort, hidden: bool) {
@@ -504,6 +564,8 @@ struct Pane {
     active: usize,
     sort: Sort,
     watch: Option<Watch>,
+    /// The folder left without a watch: it is on a drive that may stall (places::may_stall).
+    unwatched: Option<PathBuf>,
 }
 
 impl Pane {
@@ -511,14 +573,15 @@ impl Pane {
         let sort = Sort::default();
         let mut tabs: Vec<TabView> = saved
             .iter()
-            .filter(|t| t.path.is_dir() || places::is_virtual(&t.path))
+            // a tab on a drive that may stall is kept unasked: looking whether it is still a folder waited on the drive
+            .filter(|t| places::may_stall(&t.path) || t.path.is_dir() || places::is_virtual(&t.path))
             .map(|t| TabView::new(t.path.clone(), t.pinned, sort, hidden))
             .collect();
         if tabs.is_empty() {
             tabs.push(TabView::new(fallback, false, sort, hidden));
         }
         let active = active.min(tabs.len() - 1);
-        Self { tabs, active, sort, watch: None }
+        Self { tabs, active, sort, watch: None, unwatched: None }
     }
 
     fn cur(&mut self) -> &mut TabView {
@@ -527,10 +590,16 @@ impl Pane {
 
     fn ensure_watch(&mut self, ctx: &egui::Context) {
         let dir = self.tabs[self.active].dir();
-        if self.watch.as_ref().is_some_and(|w| w.path == dir) {
+        if self.watch.as_ref().is_some_and(|w| w.path == dir) || self.unwatched.as_ref() == Some(&dir) {
             return;
         }
         self.watch = None;
+        if places::may_stall(&dir) {
+            // setting the watch waits on the drive, and FUSE and network drives do not report others' changes to it anyway
+            self.unwatched = Some(dir);
+            return;
+        }
+        self.unwatched = None;
         let (tx, rx) = channel();
         let c = ctx.clone();
         let Ok(mut w) = notify::recommended_watcher(move |r: notify::Result<notify::Event>| {
@@ -546,8 +615,9 @@ impl Pane {
         }
     }
 
-    /// Reload when the filesystem changed under us.
-    fn poll_watch(&mut self, hidden: bool) {
+    /// Reload when the filesystem changed under us, and take listings that came in late. True while a listing is still on
+    /// its way.
+    fn poll_watch(&mut self, hidden: bool) -> bool {
         let mut dirty = false;
         if let Some(w) = &self.watch {
             while w.rx.try_recv().is_ok() {
@@ -560,6 +630,11 @@ impl Pane {
         if dirty && t.results.is_none() {
             t.reload(sort, hidden);
         }
+        let mut waiting = false;
+        for t in &mut self.tabs {
+            waiting |= t.poll_listing(sort);
+        }
+        waiting
     }
 
     fn saved(&self) -> Vec<SavedTab> {
@@ -1612,6 +1687,10 @@ fn draw_pane(
     let t = &mut pane.tabs[active];
     if let Some(err) = &t.error {
         ui.colored_label(pal.red, err);
+        return;
+    }
+    if t.pending.is_some() && t.entries.is_empty() {
+        ui.colored_label(pal.dim, format!("Waiting for the drive to answer: {}", t.dir().display()));
         return;
     }
 
@@ -4098,7 +4177,9 @@ impl eframe::App for App {
         for (i, p) in self.panes.iter_mut().enumerate() {
             if i == 0 || split {
                 p.ensure_watch(&ctx);
-                p.poll_watch(hidden);
+                if p.poll_watch(hidden) {
+                    ctx.request_repaint_after(Duration::from_millis(100));
+                }
             }
         }
         while let Ok(d) = self.drives_rx.try_recv() {
@@ -4961,6 +5042,38 @@ mod session {
 fn accent_colour() -> Color32 {
     let a = yggdrasil_conf::integrations::default_accent();
     Color32::from_rgb(a[0], a[1], a[2])
+}
+
+#[cfg(test)]
+mod listing_tests {
+    use super::*;
+
+    #[test]
+    fn a_listing_that_comes_late_fills_the_tab_and_a_quick_one_shows_at_once() {
+        let d = std::env::temp_dir().join(format!("minos-late-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("a.txt"), "x").unwrap();
+        let sort = Sort::default();
+        let mut t = TabView::new(d.clone(), false, sort, false);
+        assert!(t.pending.is_none(), "a folder on a local disk is listed at once");
+        assert_eq!(t.entries.len(), 1);
+        // a drive that has not answered yet: the tab waits, and takes the listing when it comes
+        let (tx, rx) = channel();
+        t.entries.clear();
+        t.pending = Some(Pending { dir: d.clone(), rx });
+        assert!(t.poll_listing(sort), "still on its way");
+        tx.send(listing::read_dir(&d)).unwrap();
+        assert!(!t.poll_listing(sort));
+        assert!(t.pending.is_none());
+        assert_eq!(t.entries.len(), 1);
+        // a listing for a folder the tab has left is dropped
+        let (tx, rx) = channel();
+        t.pending = Some(Pending { dir: d.join("elsewhere"), rx });
+        tx.send(Ok(vec![])).unwrap();
+        assert!(!t.poll_listing(sort));
+        assert_eq!(t.entries.len(), 1);
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }
 
 #[cfg(test)]
