@@ -100,6 +100,13 @@ after the warm-up and after 20 rounds); the leaky panel (the parent of c79d95f) 
 rounds, about 490 MB). The same in the rootless podman container (`--podman`): main 9 mappings, pass; leaky 374, fail. For
 comparison headless sway in that container: main 12, pass; leaky 617, fail.
 
+**The panel with a finger** (`packages/panel/tests/touch.sh`, the same CI job, 2026-11-22): taps through the compositor's headless
+`touch-down`/`touch-up` on the start button, the notch (tap and pull) and away from each popover, and with `TOUCH_APP` a long press
+on that program's dock icon. It holds the laptop's touch bugs fixed: a tap outside a popover closes it while the finger is down,
+the compositor sends no `up` for the gone surface, and the panel had taken the finger as still down and ignored the next touch; a
+long press on a dock app minimized it as its window list opened. Proof: the panel before the fix fails "the next tap on the start
+button" and "a tap on the notch"; with it all pass (and the dock checks with the Calculator).
+
 **2026-11-12: Yggdrasil's own programs are tested on it** (details, the full list of commands and tests, what it matches of the
 Hyprland session and the order to close the gap: [packages/compositor/README.md](../packages/compositor/README.md)). The control
 socket now also makes input inside the compositor (`key`, `type`, `pointer`, `click`: no input device is opened) and reports

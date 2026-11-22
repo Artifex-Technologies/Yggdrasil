@@ -77,6 +77,8 @@ jobs:
           # a normal account, as for sway (the compositor itself would run as root, but nothing here needs that)
           useradd -m ci && chown -R ci "$GITHUB_WORKSPACE"
           su ci -c "cd '$GITHUB_WORKSPACE' && packages/panel/tests/leak-stress.sh --compositor yggdrasil target/debug/yggdrasil-panel"
+      - name: The panel with a finger (headless yggdrasil-compositor, YGG-79)
+        run: su ci -c "cd '$GITHUB_WORKSPACE' && packages/panel/tests/touch.sh target/debug/yggdrasil-panel"
   # Yggdrasil's own programs on its own compositor, headless (packages/compositor/tests/apps.rs): the panel (bar, dock, wallpaper,
   # a notification, the start menu taking the keyboard), Settings drawn in software, the lock screen (its test-auth build only,
   # never PAM) covering two outputs; and the protocol tests (tests/behaviour.rs) with grim required. No GPU, no input device: the

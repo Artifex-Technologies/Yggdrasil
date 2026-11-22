@@ -473,6 +473,9 @@ struct State {
     /// A pinned dock app pressed with the left button: its id, where the press was (on the dock, logical pixels) and whether it
     /// is being dragged. Released without moving it is a click; dragged along the dock it moves to another place.
     dock_press: Option<(String, (f32, f32), bool)>,
+    /// A finger on an app in the dock that is not pinned: it is clicked when the finger lifts (a tap), so a long press can list
+    /// the app's windows instead (pinned apps wait for the release anyway, in `dock_press`, as they can be dragged).
+    dock_tap: Option<String>,
     /// The thread that runs hyprsunset (Night Light).
     night_tx: std::sync::mpsc::Sender<nightlight::Cmd>,
     /// Nothing was playing when the small card was last asked for: do not ask again for a few seconds.
@@ -524,6 +527,9 @@ struct State {
     /// The touch screen (when the seat has one) and the finger being followed: taps act as clicks.
     touch: Option<WlTouch>,
     touch_id: Option<i32>,
+    /// The surface the finger in `touch_id` went down on (its `Surf::id`). When that surface goes while the finger is down (a tap
+    /// outside a popover closes it), the compositor sends no `up` for it, and without this the next touch was ignored.
+    touch_surf: Option<usize>,
     /// A finger pulling Fylgja down from the notch: where it touched (the bar's logical y), how far down the card hangs
     /// (0 to 1) and whether the finger has moved (a tap opens it fully).
     fy_pull: Option<(f32, f32, bool)>,
@@ -2593,6 +2599,14 @@ impl State {
         false
     }
 
+    /// Every popup surface goes (there should only ever be one; a second one left behind was invisible and took the clicks).
+    fn drop_popup_surfaces(&mut self) {
+        while let Some(i) = self.surfs.iter().position(|s| s.kind == Kind::Popup) {
+            let s = self.take_surf(i);
+            s.destroy();
+        }
+    }
+
     fn close_popup(&mut self) {
         self.thumbs.clear(); // pictures of windows are not kept
         previews::end_round();
@@ -2602,10 +2616,7 @@ impl State {
             self.cancel_voice();
         }
         self.tab_on = false;
-        if let Some(i) = self.surfs.iter().position(|s| s.kind == Kind::Popup) {
-            let s = self.take_surf(i);
-            s.destroy();
-        }
+        self.drop_popup_surfaces();
         self.popup = None;
         self.fy_active.store(false, Ordering::Relaxed);
         self.dirty = true;
@@ -3402,6 +3413,14 @@ impl State {
             (s.kind, s.w, s.h, s.hover, s.configured)
         };
         if !configured || w == 0 || h == 0 {
+            return;
+        }
+        // A popup surface with no popover to show would be drawn empty and still take every click over the screen (YGG-79,
+        // after touch use on the laptop): it goes instead, and the journal says so.
+        if kind == Kind::Popup && self.popup.is_none() {
+            eprintln!("yggdrasil-panel: a popup surface was left with nothing to show; removed (YGG-79)");
+            self.drop_popup_surfaces();
+            self.dirty = true;
             return;
         }
         self.scale_surface(i);
@@ -4220,9 +4239,14 @@ impl Dispatch<WlTouch, ()> for State {
         match event {
             wl_touch::Event::Down { serial, time, surface, id, x, y } => {
                 if state.touch_id.is_some() {
-                    return;
+                    // the earlier finger's surface is gone (its `up` never comes): that touch is over
+                    if state.touch_surf.is_some_and(|t| state.surfs.iter().any(|s| s.id == t)) {
+                        return;
+                    }
+                    state.touch_lifted();
                 }
                 state.touch_id = Some(id);
+                state.touch_surf = state.surf_index(&surface).map(|i| state.surfs[i].id);
                 pointer_event(state, wl_pointer::Event::Enter { serial, surface, surface_x: x, surface_y: y });
                 // what is under the finger now decides, not what was under the last touch: Enter can stop early (while Fylgja
                 // or the window previews follow the pointer) and leave the notch's flag from before
@@ -4258,6 +4282,7 @@ impl Dispatch<WlTouch, ()> for State {
                 state.touch_lifted();
             }
             wl_touch::Event::Cancel if state.touch_id.take().is_some() => {
+                state.dock_tap = None;
                 if state.fy_pull.is_some() {
                     state.pull_released();
                     state.touch_lifted();
@@ -4412,6 +4437,9 @@ fn pointer_event(state: &mut State, event: wl_pointer::Event) {
                     state.drag = None;
                 }
                 state.dock_drag_released();
+                if let Some(id) = state.dock_tap.take() {
+                    state.click(Action::Dock(id));
+                }
             }
             wl_pointer::Event::Button { state: WEnum::Value(wl_pointer::ButtonState::Pressed), button, .. } => {
                 // the shortcuts card: a click anywhere closes it
@@ -4557,6 +4585,10 @@ fn pointer_event(state: &mut State, event: wl_pointer::Event) {
                                 if let Action::Dock(id) = &hit.action {
                                     if state.model.pinned.contains(id) {
                                         state.dock_press = Some((id.clone(), state.pointer_pos, false));
+                                        return;
+                                    }
+                                    if state.touch_id.is_some() {
+                                        state.dock_tap = Some(id.clone());
                                         return;
                                     }
                                 }
@@ -4872,6 +4904,7 @@ fn main() {
         drag: None,
         drag_sent: (std::time::Instant::now(), 101),
         dock_press: None,
+        dock_tap: None,
         night_tx: nightlight::spawn(),
         peek_blocked: None,
         osd: None,
@@ -4904,6 +4937,7 @@ fn main() {
         tab_on: false,
         touch: None,
         touch_id: None,
+        touch_surf: None,
         fy_pull: None,
         tab_output: 0,
         rec: None,
@@ -5420,6 +5454,12 @@ impl State {
             if let Some((id, at, x, out)) = self.dock_hover.clone() {
                 if now >= at + HOVER {
                     self.dock_hover = None;
+                    // a finger held on the icon asked for its windows: lifting it is not also a tap on the icon (it minimized
+                    // or raised the app as the list opened)
+                    if self.touch_id.is_some() {
+                        self.dock_press = None;
+                        self.dock_tap = None;
+                    }
                     self.open_windows_popup(&id, x, out);
                 }
             }
